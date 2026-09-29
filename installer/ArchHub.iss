@@ -86,6 +86,9 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a Desktop shortcut"; GroupDescription: "Shortcuts:"
+; Ticked by default; choosing it is the person's consent (colleague_setup.py reads
+; the marker once). Unticked writes no marker, so no assistant setting is touched.
+Name: "connectassistants"; Description: "Connect my AI assistants to ArchHub (adds ArchHub's end-of-turn check to Claude Code, Codex and Gemini CLI; your other settings are kept)"; GroupDescription: "Assistants:"
 
 [Files]
 Source: "{#NodeRuntimePath}"; DestDir: "{app}\runtime"; DestName: "node.exe"; Flags: ignoreversion; Check: NodeRuntimeNeedsInstall
@@ -164,10 +167,18 @@ Filename: "{app}\{#AppExe}"; Description: "Open ArchHub now (the first open inst
 #include "host_file_staging.iss"
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  HookResult: Integer;
 begin
   { Only this user's registrations that load from this install's bridges\revit\. }
   if CurUninstallStep = usUninstall then
   begin
+    { Before [Files] go: take out exactly the end-of-turn entries this install
+      wrote (matched by its installed path); every other hook stays. }
+    if FileExists(ExpandConstant('{app}\.venv\Scripts\python.exe')) then
+      Exec(ExpandConstant('{app}\.venv\Scripts\python.exe'),
+           '-E -s -B -m nodelang.assistant_registration disconnect-hooks',
+           ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, HookResult);
     RemoveOwnRevitRegistrationsIn(ExpandConstant('{userappdata}') + '\Autodesk\Revit\Addins',
                                   ExpandConstant('{app}'));
     { Before [Files] removal deletes the shipped script this compares against. }
@@ -304,8 +315,18 @@ begin
   if CurStep = ssPostInstall then
     HostFilesInstalled();
   if CurStep = ssPostInstall then
+  begin
     if not SaveStringToFile(ExpandConstant('{app}\BUILD_ID'), '{#BuildId}', False) then
       RaiseException('The ArchHub build identity could not be saved. Run setup again.');
+    { The "Connect my AI assistants" choice; the first open honours it once. }
+    if WizardIsTaskSelected('connectassistants') then
+    begin
+      if not SaveStringToFile(ExpandConstant('{app}\.assistant-hooks-consent'), 'connect-assistants-v1', False) then
+        RaiseException('The assistant connection choice could not be saved. Run setup again.');
+    end
+    else
+      DeleteFile(ExpandConstant('{app}\.assistant-hooks-consent'));
+  end;
 end;
 
 { A colleague without Python is not sent away: the setup fetches the

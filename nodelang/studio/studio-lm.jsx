@@ -5637,7 +5637,7 @@ const SettingsAbout = ({ providers, release }) => {
 // when pressed: the press is the consent. A client that cannot take the entry says why.
 const ASSISTANT_NAMES = { 'claude-code':'Claude Code', codex:'Codex', opencode:'OpenCode', 'gemini-cli':'Gemini CLI' };
 const ASSISTANT_SAID = {
-  hook_only:'safety settings found; connection not configured', registered:'configured', ready_to_register:'not connected', conflict:'a different entry is there; left unchanged',
+  hook_only:'end-of-turn check set; no connection entry', registered:'configured', ready_to_register:'not connected', conflict:'a different entry is there; left unchanged',
   legacy_migration_required:'an old ArchHub entry is there; left unchanged', unsupported:'connection setup is unavailable',
   not_installed:'not installed', install_incomplete:'this install is incomplete', config_unreadable:'its settings file is unreadable',
   config_location_unverified:'its settings location is unverified', registration_unconfirmed:'the entry was not confirmed',
@@ -5699,13 +5699,17 @@ const SettingsAssistants = () => {
           <div style={{ flex:1, minWidth:0, lineHeight:1.3 }}>
             <div style={{ fontSize:13, fontWeight:500, color:LM.ink }}>{ASSISTANT_NAMES[c.client] || 'Assistant'}</div>
             <div style={{ fontSize:11.5, color:LM.inkMuted }}>{ASSISTANT_SAID[c.state] || 'Connection status unavailable'}</div>
-            {c.hooks && <div style={{fontSize:11.5, color:LM.inkMuted}}>{c.hooks.state === 'configured' ? 'Safety settings saved; activation not yet checked.' : c.hooks.available ? 'Safety settings are ready for review.' : c.hooks.state === 'unsupported' ? 'Not supported yet' : 'Safety setup needs attention.'}</div>}
+            {c.hooks && (c.hooks.events || []).map(e => (
+              <div key={e.event} style={{fontSize:11.5, color:LM.inkMuted}}>{e.said || 'Status unavailable'}</div>
+            ))}
+            {c.hooks && c.hooks.approval && <div style={{fontSize:11.5, color:LM.inkMuted}}>{c.hooks.approval}</div>}
+            {c.hooks && !c.hooks.available && <div style={{fontSize:11.5, color:LM.inkMuted}}>{c.hooks.state === 'per_session' ? 'Connects when you open a session' : c.hooks.state === 'unsupported' ? 'Not supported yet' : c.hooks.state === 'not_installed' ? 'Not installed' : c.hooks.state === 'install_required' ? 'Open the installed ArchHub to connect this assistant.' : 'Settings could not be read. Repair the assistant installation first.'}</div>}
           </div>
           {c.hooks && c.hooks.available && (
             <button onClick={() => previewHooks(c.client)} disabled={!!busy}
-              title="Review safety settings before applying changes"
+              title="Review what Repair will change before applying it"
               style={{...smallBtn(), padding:'3px 10px', fontStyle:'normal'}}>
-              Review safety
+              Repair
             </button>
           )}
 
@@ -5718,8 +5722,8 @@ const SettingsAssistants = () => {
       ))}
       {hookPreview && (
         <div role="region" aria-label="Review assistant safety settings" style={{padding:'12px 14px', borderTop:'1px solid '+LM.lineSoft}}>
-          <div>{ASSISTANT_NAMES[hookPreview.client] || 'Assistant'}: {hookPreview.changed ? 'Repair safety settings' : 'Safety settings already match'}</div>
-          <p>Repair ArchHub safety settings while keeping your other settings and an encrypted backup. The assistant may still need to approve and load the changes.</p>
+          <div>{ASSISTANT_NAMES[hookPreview.client] || 'Assistant'}: {hookPreview.migration ? 'Repair: move the end-of-turn check to this install' : hookPreview.changed ? 'Repair: add the end-of-turn check' : 'Already set; nothing to change'}</div>
+          <p>{hookPreview.description || 'Adds ArchHub\'s end-of-turn check while keeping your other settings and an encrypted backup. The assistant may still need to approve and load the changes.'}</p>
           <button onClick={repairHooks} disabled={!!busy || !hookPreview.changed} style={smallBtn()}>Apply reviewed repair</button>
           <button onClick={() => setHookPreview(null)} disabled={!!busy} style={smallBtn()}>Cancel</button>
         </div>

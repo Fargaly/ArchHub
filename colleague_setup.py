@@ -635,6 +635,40 @@ def _assistant_integration(root: Path, identity: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
+ASSISTANT_HOOKS_CONSENT = ".assistant-hooks-consent"
+ASSISTANT_HOOKS_CONSENT_TEXT = "connect-assistants-v1"
+
+
+def _assistant_hooks(root: Path) -> list:
+    """Honour the installer's "Connect my AI assistants to ArchHub" choice, once.
+
+    The installer writes the marker only when that option is ticked; the choice is
+    the consent. Unticked means no marker and nothing is written. Each installed
+    assistant gets ArchHub's end-of-turn check through the same consent path as
+    Settings > Assistants > Repair; everything else in its settings is kept.
+    """
+    marker = root / ASSISTANT_HOOKS_CONSENT
+    try:
+        chosen = marker.read_text(encoding="ascii").strip() == ASSISTANT_HOOKS_CONSENT_TEXT
+    except (OSError, UnicodeError):
+        chosen = False
+    if not chosen:
+        print("  assistants : not connected (the setup option was not chosen)")
+        return []
+    from nodelang.assistant_registration import connect_hooks_on_setup
+    results = connect_hooks_on_setup(consent=True)
+    said = {"configured": "end-of-turn check set", "not_installed": "not installed",
+            "not_connected": "not connected; use Settings > Assistants > Repair",
+            "conflict": "another ArchHub copy's check is set; left unchanged (review in Settings > Assistants)",
+            "stale": "an old check points at a missing file; left unchanged (review in Settings > Assistants)"}
+    for row in results:
+        print("  %-10s : %s" % (row["client"], said.get(row["state"], row["state"])))
+    if any(row["client"] == "codex" and row["state"] == "configured" for row in results):
+        print("  codex      : approve the new hook in Codex; ArchHub never approves it for you")
+    marker.unlink(missing_ok=True)
+    return results
+
+
 def verify_imports(root: Path) -> list[str]:
     """Import every required probe in a fresh child of the owned interpreter.
 
@@ -749,6 +783,10 @@ def main():
         _assistant_integration(Path(os.path.abspath(__file__)).parent, identity)
     except Exception as exc:  # noqa: BLE001 - the application must still open
         print("  assistant  : not connected (%s)" % type(exc).__name__)
+    try:
+        _assistant_hooks(Path(os.path.abspath(__file__)).parent)
+    except Exception as exc:  # noqa: BLE001 - the application must still open
+        print("  assistants : not connected (%s)" % type(exc).__name__)
     # The installer owns the shortcuts (Start menu + Desktop, both opening
     # ArchHub.vbs). Writing a second one here put two different ArchHub
     # entries on the Desktop.

@@ -77,9 +77,16 @@ def mcp_server_spec(client: str, *, existing=None, environment=None) -> dict:
             "remove": stale_entries(existing or {}), "ask": confirm_entries(existing or {})}
 
 
-def _codex_config(env) -> Path | None:
+def _codex_home(env) -> Path | None:
+    """The one effective Codex home: CODEX_HOME, else %USERPROFILE%\\.codex. Connection
+    entry, hooks, readiness and uninstall all use this."""
     home = env.get("CODEX_HOME") or (Path(env["USERPROFILE"]) / ".codex" if env.get("USERPROFILE") else None)
-    return Path(home) / "config.toml" if home else None
+    return Path(home) if home else None
+
+
+def _codex_config(env) -> Path | None:
+    home = _codex_home(env)
+    return home / "config.toml" if home else None
 
 
 def _toml_string(value: str) -> str:
@@ -219,38 +226,81 @@ __all__ = ["CLIENTS", "codex_entry", "codex_readiness", "install_roots", "mcp_se
 
 
 
-def preview_hooks(client, *, environment=None):
-    """Owner-facing preview; disclose neither the full config nor secret backup bytes."""
-    from .session_link_config import (observed_client_hook_binding, plan_client_hook_install,
-                                      SessionLinkConfigRefused)
-    env = os.environ if environment is None else environment
-    root, state = install_roots(env)
+_HOOK_FOLDERS = {"claude-code": ".claude", "codex": ".codex", "gemini-cli": ".gemini"}
+
+
+def _client_folder(client, env):
+    """The folder whose presence means this assistant is installed for this user."""
+    if client == "codex":
+        return _codex_home(env)
+    profile = env.get("USERPROFILE")
+    return Path(profile) / _HOOK_FOLDERS[client] if profile else None
+
+
+def _hook_homes(client, env):
+    from .session_link_config import SessionLinkConfigRefused
     if not env.get("USERPROFILE"):
         raise SessionLinkConfigRefused("client home directory is unavailable")
-    home = Path(env["USERPROFILE"])
-    executable, gate = observed_client_hook_binding(client, home=home)
-    plan = plan_client_hook_install(client, home=home, install_root=root,
-                                   python_executable=executable, gate_script=gate)
-    return {"client": client, "plan_digest": plan["plan_digest"], "changed": plan["changed"],
-            "events": plan["managed_events"], "activation": plan["activation"],
-            "description": "Repair ArchHub safety settings while keeping your other settings. "
-                           "Keep an encrypted backup of your current settings. "
-                           "The assistant may still need to approve and load the changes."}
+    codex_home = _codex_home(env) if client == "codex" else None
+    if codex_home is not None and not codex_home.is_absolute():
+        raise SessionLinkConfigRefused("CODEX_HOME must be an absolute folder")
+    return Path(env["USERPROFILE"]), codex_home
 
 
-def _repair_hooks(client, *, consent, plan_digest, environment=None):
+def _hook_plan(client, env, *, include_gate, migrate):
+    """One private plan: ArchHub's installed end-of-turn check, plus (Settings only) the
+    in-place spelling repair of an existing workspace gate. The gate is never added.
+    migrate (Settings only, reviewed) moves another or stale ArchHub copy's check here."""
     from .session_link_config import (observed_client_hook_binding, plan_client_hook_install,
-                                      apply_client_hook_install, SessionLinkConfigRefused)
+                                      SessionLinkConfigRefused)
+    if client not in _HOOK_FOLDERS:
+        raise SessionLinkConfigRefused("unsupported hook client")
+    root, state = install_roots(env)
+    home, codex_home = _hook_homes(client, env)
+    binding = (observed_client_hook_binding(client, home=home, optional=True, codex_home=codex_home)
+               if include_gate else None)
+    executable, gate = binding or (None, None)
+    plan = plan_client_hook_install(client, home=home, install_root=root, python_executable=executable,
+                                    gate_script=gate, stop_root=root, migrate=migrate,
+                                    codex_home=codex_home)
+    return plan, state
+
+
+_MIGRATION_WORDS = {
+    "mixed": ("This install's end-of-turn check is set, and so is another or an old one. "
+              "Repair moves it to this install and leaves only this install's."),
+    "other_copy": "Another ArchHub copy's end-of-turn check is set here. Repair moves it to this install.",
+    "stale": ("The end-of-turn check here points at a file that no longer exists (or a drive that is "
+              "not connected). Repair moves it to this install."),
+}
+
+
+def _migration_words(plan):
+    return _MIGRATION_WORDS["mixed" if "ours" in plan["stop_roles"] else plan["stop_binding"]]
+
+
+def preview_hooks(client, *, environment=None, include_gate=True, migrate=True):
+    """Owner-facing preview; disclose neither the full config nor secret backup bytes."""
+    env = os.environ if environment is None else environment
+    plan, _ = _hook_plan(client, env, include_gate=include_gate, migrate=migrate)
+    preview = {"client": client, "plan_digest": plan["plan_digest"], "changed": plan["changed"],
+               "events": plan["managed_events"], "activation": plan["activation"],
+               "stop_binding": plan["stop_binding"], "stop_roles": plan["stop_roles"],
+               "migration": plan["migration"],
+               "description": "Add ArchHub's end-of-turn check while keeping your other settings. "
+                              "Keep an encrypted backup of your current settings. "
+                              "The assistant may still need to approve and load the changes."}
+    if plan["migration"]:
+        preview["description"] = _migration_words(plan) + " " + preview["description"]
+    return preview
+
+
+def _repair_hooks(client, *, consent, plan_digest, environment=None, include_gate=True, migrate=True):
+    from .session_link_config import apply_client_hook_install, SessionLinkConfigRefused
     if consent is not True:
         raise SessionLinkConfigRefused("hook repair requires the reviewed user's consent")
     env = os.environ if environment is None else environment
-    root, state = install_roots(env)
-    if not env.get("USERPROFILE"):
-        raise SessionLinkConfigRefused("client home directory is unavailable")
-    home = Path(env["USERPROFILE"])
-    executable, gate = observed_client_hook_binding(client, home=home)
-    plan = plan_client_hook_install(client, home=home, install_root=root,
-                                   python_executable=executable, gate_script=gate)
+    plan, state = _hook_plan(client, env, include_gate=include_gate, migrate=migrate)
     if plan["plan_digest"] != plan_digest:
         raise SessionLinkConfigRefused("settings changed; review the current hook preview")
     backup_dir = state / "private-client-backups"
@@ -258,6 +308,8 @@ def _repair_hooks(client, *, consent, plan_digest, environment=None):
     _require_plain(backup_dir, "directory", may_be_absent=True)
     backup_dir.mkdir(parents=True, exist_ok=True)
     result = apply_client_hook_install(plan, expected_digest=plan_digest, backup_dir=backup_dir)
+    if result["changed"]:
+        _record_hook_write(state, client, plan, result)
     return {"client": client, "changed": result["changed"], "state": "configured",
             "activation_pending": True,
             "reason": "Settings are saved. We have not yet checked that the assistant is using them."}
@@ -272,14 +324,155 @@ def repair_hooks(client, *, consent, plan_digest, environment=None):
         return _repair_hooks(client, consent=consent, plan_digest=plan_digest, environment=environment)
 
 
-def hook_readiness(client, *, environment=None):
+def connect_hooks_on_setup(*, consent, environment=None) -> list:
+    """The installer's "Connect my AI assistants to ArchHub" choice, through the same consent
+    path as Settings > Repair: ArchHub's end-of-turn check for each assistant that is
+    installed. An existing workspace gate is left exactly as it is."""
     from .session_link_config import SessionLinkConfigRefused
-    if client not in ("claude-code", "codex", "gemini-cli"):
-        return {"available": False, "state": "unsupported", "reason": "Manage this assistant through its own connection settings."}
+    from .client_mcp_installation import RegistrationRefused
+    if consent is not True:
+        raise ValueError("connecting assistants needs the person's explicit consent")
+    env = os.environ if environment is None else environment
+    results = []
+    with _HOOK_REPAIR_LOCK:
+        for client in _HOOK_FOLDERS:
+            folder = _client_folder(client, env)
+            if folder is None or not folder.is_dir():
+                results.append({"client": client, "state": "not_installed"})
+                continue
+            try:
+                plan = preview_hooks(client, environment=env, include_gate=False, migrate=False)
+                if plan["stop_binding"] in ("other_copy", "stale"):
+                    # Never overwritten at setup, never called configured, even beside ours:
+                    # reviewed in Settings. Only a lone stale entry is reported as stale.
+                    lone_stale = plan["stop_binding"] == "stale" and "ours" not in plan["stop_roles"]
+                    results.append({"client": client, "changed": False,
+                                    "state": "stale" if lone_stale else "conflict",
+                                    "roles": plan["stop_roles"], "reason": _migration_words(plan)})
+                    continue
+                done = _repair_hooks(client, consent=True, plan_digest=plan["plan_digest"],
+                                     environment=env, include_gate=False, migrate=False)
+                results.append({"client": client, "state": "configured", "changed": done["changed"]})
+            except (SessionLinkConfigRefused, RegistrationRefused, OSError, ValueError):
+                results.append({"client": client, "state": "not_connected"})
+    return results
+
+
+_HOOK_RECEIPTS = "assistant-hooks.json"
+
+
+def _read_hook_receipts(state):
     try:
-        plan = preview_hooks(client, environment=environment)
-        return {"available": True, "state": "repair_available" if plan["changed"] else "configured",
-                "reason": "Safety settings can be reviewed here. We have not yet checked that the assistant is using them."}
+        value = json.loads((Path(state) / _HOOK_RECEIPTS).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return {}
+    return value if type(value) is dict else {}
+
+
+def _write_hook_receipts(state, receipts):
+    state = Path(state)
+    state.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(prefix=".assistant-hooks-", dir=state)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(receipts, stream, indent=2, sort_keys=True)
+        os.replace(name, state / _HOOK_RECEIPTS)
+    finally:
+        Path(name).unlink(missing_ok=True)
+
+
+def _record_hook_write(state, client, plan, result):
+    """What uninstall needs to put the file back exactly: the first write's prior bytes.
+    A later write on top keeps only the path-matched removal (no stale restore)."""
+    receipts = _read_hook_receipts(state)
+    receipts[client] = ({"target": plan["target"], "before": plan["before_digest"],
+                         "after": result.get("sha256"), "backup": result.get("backup")}
+                        if client not in receipts else
+                        {"target": plan["target"], "before": None, "after": None, "backup": None})
+    _write_hook_receipts(state, receipts)
+
+
+def disconnect_hooks_on_uninstall(environment=None) -> list:
+    """Uninstall: take out exactly the end-of-turn entries this install wrote; nothing else."""
+    from .session_link_config import remove_stop_hook, SessionLinkConfigRefused
+    from .client_mcp_installation import RegistrationRefused
+    env = os.environ if environment is None else environment
+    root, state = install_roots(env)
+    receipts = _read_hook_receipts(state)
+    results = []
+    with _HOOK_REPAIR_LOCK:
+        for client in _HOOK_FOLDERS:
+            try:
+                home, codex_home = _hook_homes(client, env)
+                backup_dir = state / "private-client-backups"
+                backup_dir.mkdir(parents=True, exist_ok=True)
+                results.append(remove_stop_hook(client, home=home, install_root=root,
+                                                receipt=receipts.get(client), backup_dir=backup_dir,
+                                                codex_home=codex_home))
+                receipts.pop(client, None)
+            except (SessionLinkConfigRefused, RegistrationRefused, OSError, ValueError):
+                results.append({"vendor": client, "changed": False, "method": "refused"})
+        _write_hook_receipts(state, receipts)
+    return results
+
+
+def main(argv=None) -> int:
+    import sys
+    args = sys.argv[1:] if argv is None else argv
+    if args != ["disconnect-hooks"]:
+        print("usage: python -m nodelang.assistant_registration disconnect-hooks", file=sys.stderr)
+        return 2
+    for row in disconnect_hooks_on_uninstall():
+        print("%s: %s" % (row["vendor"], row["method"]))
+    return 0
+
+
+_EVENT_WORDS = {
+    "on": "On",
+    "off": "Off",
+    "other_copy": "Set by another ArchHub copy; left unchanged until you Repair",
+    "stale": "Points at a missing file; left unchanged until you Repair",
+    "on_with_other_copy": "On, but another ArchHub copy's check is also set; Repair leaves only this install's",
+    "on_with_stale": "On, but an old check pointing at a missing file is also set; Repair leaves only this install's",
+}
+
+
+def hook_readiness(client, *, environment=None):
+    """Per event, in plain words, whether ArchHub's own hook is set for this assistant."""
+    from .session_link_config import SessionLinkConfigRefused, hook_event_states
+    env = os.environ if environment is None else environment
+    if client == "opencode":
+        return {"available": False, "state": "per_session", "events": [],
+                "reason": "Connects when you open a session"}
+    if client not in _HOOK_FOLDERS:
+        return {"available": False, "state": "unsupported", "events": [],
+                "reason": "Not supported yet"}
+    root, _ = install_roots(env)
+    folder = _client_folder(client, env)
+    if folder is None or not folder.is_dir():
+        return {"available": False, "state": "not_installed", "events": [],
+                "reason": "This assistant is not installed for this Windows user."}
+    if not (root / "BUILD_METADATA.json").is_file():
+        return {"available": False, "state": "install_required", "events": [],
+                "reason": "Open the installed ArchHub to connect this assistant."}
+    try:
+        home, codex_home = _hook_homes(client, env)
+        events = hook_event_states(client, home=home, install_root=root, codex_home=codex_home)
+        plan = preview_hooks(client, environment=env)
     except (SessionLinkConfigRefused, RegistrationRefused, OSError, ValueError):
-        return {"available": False, "state": "install_incomplete",
-                "reason": "The installed safety settings could not be identified. Repair the assistant installation first."}
+        return {"available": False, "state": "install_incomplete", "events": [],
+                "reason": "The assistant's settings could not be read. Repair the assistant installation first."}
+    for row in events:
+        row["said"] = "When a reply ends, ArchHub checks for open work: " + _EVENT_WORDS[row["state"]]
+    state = ("migration_available" if plan["migration"] else
+             "repair_available" if plan["changed"] or any(e["state"] != "on" for e in events) else "configured")
+    report = {"available": True, "state": state,
+              "events": events,
+              "reason": "Settings are saved separately from checking that the assistant is using them."}
+    if client == "codex":
+        report["approval"] = "Approve in Codex"
+    return report
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

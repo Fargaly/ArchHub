@@ -304,6 +304,263 @@ _HOOK_CLIENTS = {
     "gemini-cli": (".gemini/settings.json", "gemini", "BeforeTool", "AfterTool", 30000),
 }
 
+# ArchHub's own product hook: the end-of-turn check, run by the INSTALLED copy with
+# its own Python. The scope gate above is workspace governance and is never installed.
+_STOP_HOOKS = {
+    "claude-code": ("Stop", "claude-code", 30),
+    "codex": ("Stop", "codex", 30),
+    "gemini-cli": ("AfterAgent", "gemini", 30000),
+}
+_SHELL_META = ["\r", "\n", "&", "|", "<", ">", "^", "%", "$", "`", ";", "\"", "(", ")"]
+
+
+def installed_stop_hook(install_root):
+    """The installed interpreter and stop script; refuses a source checkout."""
+    from .client_mcp_installation import _require_plain
+    root = Path(install_root)
+    if not (root / "BUILD_METADATA.json").is_file():
+        raise SessionLinkConfigRefused("assistant hooks are installed only from the installed ArchHub")
+    python = root / ".venv" / "Scripts" / "python.exe"
+    script = root / "nodelang" / "native_stop_hook.py"
+    for path in (python, script):
+        if any(character in str(path) for character in _SHELL_META):
+            raise SessionLinkConfigRefused("hook path contains shell metacharacters")
+        _require_plain(path, "file")
+    return python, script
+
+
+def render_stop_hook(vendor, *, install_root):
+    """One end-of-turn entry for this client, pointing at the installed copy."""
+    if vendor not in _STOP_HOOKS:
+        raise SessionLinkConfigRefused("unsupported hook client")
+    python, script = installed_stop_hook(install_root)
+    event, flag, timeout = _STOP_HOOKS[vendor]
+    # Quoted forward-slash paths survive Claude Code's Git Bash on Windows.
+    quote = lambda value: '"' + str(value).replace("\\", "/") + '"'
+    hook = {"type": "command", "command": quote(python) + " " + quote(script) + " --vendor " + flag,
+            "timeout": timeout}
+    if vendor == "gemini-cli":
+        hook["name"] = "archhub-end-of-turn-check"
+    return {event: [{"hooks": [hook]}]}
+
+
+def settings_target(vendor, *, home, codex_home=None):
+    """The client's hook settings file. Codex honours CODEX_HOME (as _codex_config does)."""
+    if vendor == "codex" and codex_home is not None:
+        return Path(codex_home) / "hooks.json"
+    return Path(home) / _HOOK_CLIENTS[vendor][0]
+
+
+def _stop_hook_role(hook, vendor, script):
+    """'ours' for this install's stop script; for another ArchHub stop script,
+    'other_copy' when its file exists and 'stale' when it does not."""
+    parts = _hook_command_parts(hook)
+    if parts is None or parts[2] != ("--vendor", _STOP_HOOKS[vendor][1]):
+        return None
+    if Path(parts[1]).name.casefold() != "native_stop_hook.py":
+        return None
+    if os.path.normcase(os.path.normpath(parts[1])) == os.path.normcase(os.path.normpath(str(script))):
+        return "ours"
+    return "other_copy" if Path(parts[1]).is_file() else "stale"
+
+
+def merge_stop_hook(existing, managed, *, vendor, install_root, migrate=False):
+    """Add the installed stop entry once; keep every other hook, group and matcher.
+
+    Returns (settings, binding, observed): observed is every role the file held
+    before (ours, other_copy, stale); binding is the one that decides, and any
+    foreign entry wins over ours: other_copy, then stale, then ours, else absent.
+    Another copy's entry (live or stale) is never overwritten silently, even beside
+    ours: without migrate nothing changes; a reviewed migrate leaves exactly one."""
+    import copy
+    if type(existing) is not dict or vendor not in _STOP_HOOKS:
+        raise SessionLinkConfigRefused("invalid client settings")
+    _, script = installed_stop_hook(install_root)
+    result = copy.deepcopy(existing)
+    events = result.setdefault("hooks", {})
+    if type(events) is not dict:
+        raise SessionLinkConfigRefused("client hooks are not an object")
+    binding, observed = "absent", set()
+    for event, additions in managed.items():
+        groups = events.get(event, [])
+        if type(groups) is not list:
+            raise SessionLinkConfigRefused("client hook event is not an array")
+        desired = additions[0]["hooks"][0]
+        roles = []
+        for group in groups:
+            if type(group) is not dict or type(group.get("hooks")) is not list:
+                raise SessionLinkConfigRefused("unrecognized hook group")
+            roles += [_stop_hook_role(hook, vendor, script) for hook in group["hooks"]]
+        observed.update(role for role in roles if role)
+        for role in ("other_copy", "stale", "ours"):
+            if role in observed:
+                binding = role
+                break
+        if binding in ("other_copy", "stale") and not migrate:
+            events[event] = groups
+            continue
+        placed = False
+        eligible = ("ours", "other_copy", "stale") if migrate else ("ours",)
+        kept = []
+        for group in groups:
+            hooks = []
+            for hook in group["hooks"]:
+                role = _stop_hook_role(hook, vendor, script)
+                if role in eligible:
+                    if placed:
+                        continue  # exactly one end-of-turn check remains
+                    placed = True
+                    if (role != "ours" or _hook_command_identity(hook) != _hook_command_identity(desired)
+                            or _claude_bash_broken(hook, vendor)):
+                        # Our own script under another spelling, or a reviewed migration.
+                        hook = {**hook, "command": desired["command"]}
+                hooks.append(hook)
+            if group["hooks"] and not hooks:
+                continue  # a group left empty by the migration goes with it
+            group["hooks"] = hooks
+            kept.append(group)
+        groups = kept
+        if not placed:
+            groups.extend(copy.deepcopy(additions))
+        events[event] = groups
+    return result, binding, sorted(observed)
+
+
+def _restore_bytes(target, data, *, expected_digest):
+    """Put back the exact pre-install bytes (or drop a file ArchHub created), atomically."""
+    import tempfile
+    from .client_mcp_installation import _require_plain
+    _require_plain(target, "file")
+    _require_single_link(target)
+    if hashlib.sha256(target.read_bytes()).hexdigest() != expected_digest:
+        raise SessionLinkConfigRefused("client settings changed since ArchHub wrote them")
+    if data is None:
+        target.unlink()
+        return
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix="." + target.name + ".", suffix=".tmp",
+                                         dir=target.parent, delete=False) as staged:
+            temporary = Path(staged.name)
+            staged.write(data)
+            staged.flush()
+            os.fsync(staged.fileno())
+        _require_single_link(target)
+        if hashlib.sha256(target.read_bytes()).hexdigest() != expected_digest:
+            raise SessionLinkConfigRefused("client settings changed since ArchHub wrote them")
+        os.replace(temporary, target)
+        temporary = None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def remove_stop_hook(vendor, *, home, install_root, receipt=None, backup_dir, codex_home=None):
+    """Uninstall: take out exactly the end-of-turn entries of THIS install (matched by the
+    installed script path) and nothing else. Untouched since install: the exact prior
+    bytes come back from the protected backup. Changed since: only our entries go."""
+    from .client_mcp_installation import _require_plain
+    if vendor not in _STOP_HOOKS:
+        raise SessionLinkConfigRefused("unsupported hook client")
+    target = settings_target(vendor, home=home, codex_home=codex_home)
+    _require_plain(target, "file", may_be_absent=True)
+    if not target.exists():
+        return {"vendor": vendor, "changed": False, "method": "none"}
+    current = target.read_bytes()
+    digest = hashlib.sha256(current).hexdigest()
+    if (type(receipt) is dict and receipt.get("target") == str(target)
+            and receipt.get("after") == digest):
+        before = receipt.get("before")
+        if before == "absent":
+            _restore_bytes(target, None, expected_digest=digest)
+            return {"vendor": vendor, "changed": True, "method": "restored"}
+        if type(receipt.get("backup")) is str:
+            from .cell_secret_keys import unprotect_current_user_data
+            backup = Path(receipt["backup"])
+            _require_plain(backup, "file")
+            data = unprotect_current_user_data(backup.read_bytes(),
+                                               purpose="archhub.client-hook-backup/v1")
+            if hashlib.sha256(data).hexdigest() == before:
+                _restore_bytes(target, data, expected_digest=digest)
+                return {"vendor": vendor, "changed": True, "method": "restored"}
+    _, script = installed_stop_hook(install_root)
+    try:
+        existing = json.loads(current.decode("utf-8-sig"))
+    except (ValueError, UnicodeError):
+        raise SessionLinkConfigRefused("client settings are unreadable") from None
+    events = existing.get("hooks") if type(existing) is dict else None
+    event = _STOP_HOOKS[vendor][0]
+    groups = events.get(event) if type(events) is dict else None
+    if type(groups) is not list:
+        return {"vendor": vendor, "changed": False, "method": "none"}
+    import copy
+    result = copy.deepcopy(existing)
+    kept = []
+    for group in groups:
+        if type(group) is not dict or type(group.get("hooks")) is not list:
+            kept.append(group)
+            continue
+        hooks = [h for h in group["hooks"] if _stop_hook_role(h, vendor, script) != "ours"]
+        if hooks or len(hooks) == len(group["hooks"]):
+            kept.append({**group, "hooks": hooks})
+    if kept == groups:
+        return {"vendor": vendor, "changed": False, "method": "none"}
+    if kept:
+        result["hooks"][event] = kept
+    else:
+        result["hooks"].pop(event)
+    indent = 2
+    found = re.search(rb"\n([ \t]+)\S", current)
+    if found and found.group(1).startswith(b"\t"):
+        indent = "\t"
+    elif found and len(found.group(1)) == 4:
+        indent = 4
+    text = json.dumps(result, ensure_ascii=False, indent=indent) + "\n"
+    if current.startswith(b"\xef\xbb\xbf"):
+        text = "\ufeff" + text
+    from .cell_secret_keys import protect_current_user_data
+    write_with_backup(target, text, backup_dir, expected_digest=digest,
+                      protect_backup=lambda data: protect_current_user_data(
+                          data, purpose="archhub.client-hook-backup/v1"))
+    return {"vendor": vendor, "changed": True, "method": "taken_out"}
+
+
+def hook_event_states(vendor, *, home, install_root, codex_home=None):
+    """Per event, what this client's settings file says now; reads only."""
+    from .client_mcp_installation import _require_plain
+    if vendor not in _STOP_HOOKS:
+        raise SessionLinkConfigRefused("unsupported hook client")
+    target = settings_target(vendor, home=home, codex_home=codex_home)
+    _require_plain(target, "file", may_be_absent=True)
+    config = {}
+    if target.exists():
+        if target.stat().st_size > 4 * 1024 * 1024:
+            raise SessionLinkConfigRefused("client settings exceed the supported size")
+        try:
+            config = json.loads(target.read_text(encoding="utf-8-sig"))
+        except (UnicodeError, ValueError):
+            raise SessionLinkConfigRefused("client settings are unreadable") from None
+    events = config.get("hooks", {}) if type(config) is dict else None
+    if type(events) is not dict:
+        raise SessionLinkConfigRefused("client hook configuration is invalid")
+    _, script = installed_stop_hook(install_root)
+    event = _STOP_HOOKS[vendor][0]
+    groups = events.get(event, [])
+    roles = set()
+    for group in groups if type(groups) is list else []:
+        hooks = group.get("hooks") if type(group) is dict else None
+        for hook in hooks if type(hooks) is list else []:
+            role = _stop_hook_role(hook, vendor, script)
+            if role:
+                roles.add(role)
+    # Every observed role is kept; "on" never masks a foreign or stale entry beside it.
+    foreign = "other_copy" if "other_copy" in roles else "stale" if "stale" in roles else None
+    if foreign and "ours" in roles:
+        state = "on_with_" + foreign
+    else:
+        state = foreign or ("on" if "ours" in roles else "off")
+    return [{"event": event, "purpose": "end_of_turn_check", "state": state, "roles": sorted(roles)}]
+
 
 def render_client_hooks(vendor, *, python_executable, gate_script, install_root):
     """Render only the admitted adapter's tool events; no lifecycle or trust edits."""
@@ -432,12 +689,13 @@ def merge_client_hooks(existing, managed, *, vendor, known_owned_commands):
     return result
 
 
-def plan_client_hook_install(vendor, *, home, install_root, python_executable, gate_script):
+def plan_client_hook_install(vendor, *, home, install_root, python_executable=None, gate_script=None,
+                             stop_root=None, migrate=False, codex_home=None):
     """Private plan; callers expose only hook deltas and digest, never raw settings."""
     from .client_mcp_installation import _require_plain
     if vendor not in _HOOK_CLIENTS:
         raise SessionLinkConfigRefused("unsupported hook client")
-    target = Path(home) / _HOOK_CLIENTS[vendor][0]
+    target = settings_target(vendor, home=home, codex_home=codex_home)
     _require_plain(target, "file", may_be_absent=True)
     if not target.parent.is_dir():
         raise SessionLinkConfigRefused("client configuration directory is absent")
@@ -448,20 +706,31 @@ def plan_client_hook_install(vendor, *, home, install_root, python_executable, g
         existing = json.loads(before.decode("utf-8-sig")) if before is not None else {}
     except (ValueError, UnicodeError):
         raise SessionLinkConfigRefused("client settings are unreadable") from None
-    managed = render_client_hooks(vendor, python_executable=python_executable,
-                                  gate_script=gate_script, install_root=install_root)
-    gate = Path(gate_script)
-    interpreter = Path(python_executable)
-    # Only the exact configured adapter and its sibling legacy validator.
-    # A different interpreter/binding is not silently removed.
-    owned = []
-    for executable in (interpreter, interpreter.with_name("pythonw.exe")):
-        owned.append((os.path.normcase(os.path.normpath(str(executable))), os.path.normcase(os.path.normpath(str(gate))),
-                      ("--vendor", _HOOK_CLIENTS[vendor][1])))
-        if vendor == "codex":
-            owned.append((os.path.normcase(os.path.normpath(str(executable))),
-                          os.path.normcase(os.path.normpath(str(gate.with_name("pretooluse_validate.py")))), ()))
-    merged = merge_client_hooks(existing, managed, vendor=vendor, known_owned_commands=owned)
+    if type(existing) is not dict:
+        raise SessionLinkConfigRefused("invalid client settings")
+    managed, merged = {}, existing
+    gate = Path(gate_script) if gate_script is not None else None
+    interpreter = Path(python_executable) if python_executable is not None else None
+    if gate is not None:
+        # An existing workspace gate only (never installed here): repair its spelling in place.
+        managed = render_client_hooks(vendor, python_executable=python_executable,
+                                      gate_script=gate_script, install_root=install_root)
+        # Only the exact configured adapter and its sibling legacy validator.
+        # A different interpreter/binding is not silently removed.
+        owned = []
+        for executable in (interpreter, interpreter.with_name("pythonw.exe")):
+            owned.append((os.path.normcase(os.path.normpath(str(executable))), os.path.normcase(os.path.normpath(str(gate))),
+                          ("--vendor", _HOOK_CLIENTS[vendor][1])))
+            if vendor == "codex":
+                owned.append((os.path.normcase(os.path.normpath(str(executable))),
+                              os.path.normcase(os.path.normpath(str(gate.with_name("pretooluse_validate.py")))), ()))
+        merged = merge_client_hooks(merged, managed, vendor=vendor, known_owned_commands=owned)
+    stop_binding, stop_roles = None, []
+    if stop_root is not None:
+        stop = render_stop_hook(vendor, install_root=stop_root)
+        merged, stop_binding, stop_roles = merge_stop_hook(merged, stop, vendor=vendor,
+                                                           install_root=stop_root, migrate=migrate)
+        managed = {**managed, **stop}
     changed = existing != merged
     indent = 2  # Keep the file's own indent unit: 2 or 4 spaces, or a tab.
     found = re.search(rb"\n([ \t]+)\S", before) if before is not None else None
@@ -479,11 +748,14 @@ def plan_client_hook_install(vendor, *, home, install_root, python_executable, g
         return hashlib.sha256(data).hexdigest() if data is not None else "absent"
     before_digest, after_digest = digest(before), digest(after)
     plan_digest = hashlib.sha256(json.dumps(
-        [vendor, str(target), before_digest, after_digest, str(gate), str(interpreter)],
+        [vendor, str(target), before_digest, after_digest, str(gate), str(interpreter),
+         str(stop_root), bool(migrate)],
         ensure_ascii=True, separators=(",", ":")).encode()).hexdigest()
     return {"vendor": vendor, "target": str(target), "before_digest": before_digest,
             "after_digest": after_digest, "plan_digest": plan_digest, "changed": changed,
-            "text": text, "managed_events": list(managed),
+            "text": text, "managed_events": list(managed), "stop_binding": stop_binding,
+            "stop_roles": stop_roles,
+            "migration": bool(migrate) and stop_binding in ("other_copy", "stale"),
             "activation": "Settings are saved separately from checking that the assistant is using them."}
 
 
@@ -506,14 +778,18 @@ def apply_client_hook_install(plan, *, expected_digest, backup_dir):
 
 
 
-def observed_client_hook_binding(vendor, *, home):
-    """Reuse this client's exact existing adapter; absence is not installation proof."""
+def observed_client_hook_binding(vendor, *, home, optional=False, codex_home=None):
+    """Reuse this client's exact existing adapter; absence is not installation proof.
+
+    optional=True answers None when the client has no workspace gate at all."""
     from .runtime_hook_observer import VENDORS, GATES
     from .client_mcp_installation import _require_plain
     if vendor not in _HOOK_CLIENTS or vendor not in VENDORS:
         raise SessionLinkConfigRefused("unsupported hook client")
     spec = VENDORS[vendor]
-    path = Path(home) / _HOOK_CLIENTS[vendor][0]
+    path = settings_target(vendor, home=home, codex_home=codex_home)
+    if optional and not path.exists():
+        return None
     _require_plain(path, "file")
     if path.stat().st_size > 4 * 1024 * 1024:
         raise SessionLinkConfigRefused("client settings exceed the supported size")
@@ -545,6 +821,8 @@ def observed_client_hook_binding(vendor, *, home):
                     _require_plain(Path(executable), "file")
                     _require_plain(Path(script), "file")
                     bindings.setdefault(identity[:2], (executable, script))
+    if optional and not bindings:
+        return None
     if len(bindings) != 1:
         raise SessionLinkConfigRefused("one existing admitted hook binding is required; installed adapter unavailable")
     return next(iter(bindings.values()))

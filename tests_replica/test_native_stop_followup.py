@@ -190,3 +190,15 @@ def test_a_host_injected_reply_named_only_in_its_tag_answers_the_request(tmp_pat
                          + PLANNER + '" name="Next steps planning">\nACCEPT\n</cross-session-message>'}}
     entries = _send(0, ASK, to='Next steps planning [03f8c1]') + [reply, _prompt(105, 'task-notification')]
     assert _stop(tmp_path, entries, 5000) is None
+
+
+def test_followup_text_is_product_wording(tmp_path):
+    """Court: users see neutral product words; the behaviour is unchanged."""
+    (tmp_path / 'block').mkdir()
+    (tmp_path / 'queue').mkdir()
+    entries = _send(0, ASK) + [_prompt(5, 'task-notification')]
+    blocked = _stop(tmp_path / 'block', entries, 700)
+    assert blocked['reason'].startswith('Follow-up due: an agent request you sent has no reply yet.')
+    queued = _stop(tmp_path / 'queue', _send(0, ASK) + [_prompt(600, 'human')], 700)
+    for text in (blocked['reason'], queued['systemMessage']):
+        assert 'founder' not in text.casefold()

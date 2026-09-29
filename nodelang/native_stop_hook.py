@@ -539,7 +539,7 @@ def followup_decision(payload, *, now=None, guard_directory=None):
             if mark.get('last') == 'block':
                 mark.update(at=now, last='pass')  # the cadence counts from the pass
         if founder_turn and fresh:
-            decision = {'systemMessage': 'Follow-up queued (founder turn, not blocked): ' + '; '.join(
+            decision = {'systemMessage': 'Follow-up queued (your turn, not blocked): ' + '; '.join(
                 '%s re %s' % (item['to'], item['message_id']) for item in fresh)}
     else:
         due = []
@@ -552,7 +552,7 @@ def followup_decision(payload, *, now=None, guard_directory=None):
             elif mark.get('last') == 'block':
                 mark.update(at=now, last='pass')
         if due:
-            lines = ['FOLLOW-UP DUE before this turn ends (founder order: agents chase every unanswered request).']
+            lines = ['Follow-up due: an agent request you sent has no reply yet. Before this turn ends:']
             for item in due:
                 lines.append('- %s: %d unanswered request(s), last sent %d min ago (msg %s). Send FOLLOW-UP #%d re %s '
                              'restating the one question. Re-resolve the address with ListAgents; on the 2nd '

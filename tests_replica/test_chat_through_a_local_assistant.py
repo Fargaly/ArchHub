@@ -371,3 +371,42 @@ def test_a_claude_chat_on_another_version_still_answers(tmp_path, monkeypatch):
     finally:
         model_router.bind_local_cli_broker(None)
     assert answer["text"] == "About 100 mm."
+
+
+def test_simultaneous_first_reads_start_exactly_one_probe(tmp_path, monkeypatch):
+    """A bind racing a Settings read: many callers at once, one background read."""
+    import threading
+    program = tmp_path / "claude.exe"
+    program.write_bytes(b"x")
+    reads, release = [], threading.Event()
+
+    def slow(executable):
+        reads.append(executable)
+        release.wait(5)
+        return "2.1.169"
+    monkeypatch.setattr(model_router, "_read_version", slow)
+    import time
+
+    class SlowSet(set):
+        """Widens the check-then-claim window so an unlocked claim races for real."""
+        def __contains__(self, item):
+            present = super().__contains__(item)
+            time.sleep(0.05)
+            return present
+    monkeypatch.setattr(model_router, "_VERSION_PENDING", SlowSet())
+    go = threading.Barrier(8)
+
+    def caller():
+        go.wait()
+        model_router.installed_cli_version(program, wait=False)
+    callers = [threading.Thread(target=caller) for _ in range(8)]
+    for t in callers:
+        t.start()
+    for t in callers:
+        t.join(5)
+    release.set()
+    for _ in range(100):
+        if model_router.installed_cli_version(program, wait=False) == "2.1.169":
+            break
+        threading.Event().wait(0.02)
+    assert len(reads) == 1, "started %d probes" % len(reads)

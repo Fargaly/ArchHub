@@ -99,6 +99,7 @@ _CLI_FAIL_CLOSED = frozenset({"codex"})
 _REVERIFY = "re-verify it with the local-cli real courts, then record the version"
 _VERSION_CACHE: dict = {}
 _VERSION_PENDING: set = set()
+_VERSION_LOCK = threading.Lock()
 # Returned while a version is still being read in the background.
 CHECKING = "checking"
 
@@ -129,8 +130,11 @@ def installed_cli_version(executable, *, wait=True):
     if wait:
         _VERSION_CACHE[key] = _read_version(executable)
         return _VERSION_CACHE[key]
-    if key not in _VERSION_PENDING:
-        _VERSION_PENDING.add(key)
+    with _VERSION_LOCK:  # check and claim as one step: exactly one read per key
+        starting = key not in _VERSION_PENDING and key not in _VERSION_CACHE
+        if starting:
+            _VERSION_PENDING.add(key)
+    if starting:
 
         def read():
             try:

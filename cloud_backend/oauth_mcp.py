@@ -56,6 +56,7 @@ MAX_PENDING_PER_NETWORK = 100  # per caller network (an IPv4 /24, an IPv6 /48)
 MAX_STATE = 512
 MAX_FOUNDER_LANE = 20          # live requests in the founder's own lane, per founder account
 MAX_VERIFIED_PER_EMAIL = 2     # live Google-verified requests per signed-in account
+MAX_ENDED = 10000              # tombstones kept for ended sign-ins; the oldest go first
 FOUNDER_LANE_TTL = 180 * 24 * 3600
 CONSENT_COOKIE = '__Host-archhub_mcp_consent'
 FOUNDER_COOKIE = '__Host-archhub_mcp_founder'
@@ -86,10 +87,15 @@ CREATE TABLE IF NOT EXISTS oauth_pending (
     lane           TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS oauth_ended (
-    id           TEXT PRIMARY KEY,
-    redirect_uri TEXT NOT NULL,
-    state        TEXT NOT NULL,
-    expires_at   INTEGER NOT NULL
+    id            TEXT PRIMARY KEY,
+    redirect_uri  TEXT NOT NULL,
+    state         TEXT NOT NULL,
+    expires_at    INTEGER NOT NULL,
+    continue_hash TEXT
+);
+CREATE TABLE IF NOT EXISTS oauth_lane_epochs (
+    email TEXT PRIMARY KEY,
+    epoch INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS oauth_approvals (
     user_id     TEXT NOT NULL,
@@ -133,18 +139,19 @@ def _ensure() -> None:
         # A table made before these columns existed gains them.
         _add_column(con, 'network', "network TEXT NOT NULL DEFAULT '-'")
         _add_column(con, 'lane', "lane TEXT NOT NULL DEFAULT ''")
+        _add_column(con, 'continue_hash', 'continue_hash TEXT', table='oauth_ended')
 
 
-def _add_column(con, name: str, ddl: str) -> None:
+def _add_column(con, name: str, ddl: str, *, table: str = 'oauth_pending') -> None:
     """ALTER once. Two first requests after a deploy may both see the column
     missing; the second ALTER then fails and finds it present, which is fine.
     Any other failure is still an error."""
-    if name in {row[1] for row in con.execute('PRAGMA table_info(oauth_pending)')}:
+    if name in {row[1] for row in con.execute('PRAGMA table_info(%s)' % table)}:
         return
     try:
-        con.execute('ALTER TABLE oauth_pending ADD COLUMN ' + ddl)
+        con.execute('ALTER TABLE %s ADD COLUMN %s' % (table, ddl))
     except sqlite3.OperationalError:
-        if name not in {row[1] for row in con.execute('PRAGMA table_info(oauth_pending)')}:
+        if name not in {row[1] for row in con.execute('PRAGMA table_info(%s)' % table)}:
             raise
 
 
@@ -375,7 +382,7 @@ def _evict_oldest(con, where: str, args: tuple) -> bool:
     Google needs only some Google account, so neither buys a stranger's request
     protection; the founder's are protected by his lane, not by their state. The
     ended request leaves a tombstone so its person is told, not left hanging."""
-    row = con.execute('SELECT id, redirect_uri, state, expires_at FROM oauth_pending' + where +
+    row = con.execute('SELECT id, redirect_uri, state, expires_at, continue_hash FROM oauth_pending' + where +
                       ' ORDER BY approved ASC, verified_email IS NOT NULL, expires_at ASC, rowid ASC LIMIT 1',
                       args).fetchone()
     if row is None:
@@ -385,14 +392,22 @@ def _evict_oldest(con, where: str, args: tuple) -> bool:
 
 
 def _tombstone(con, row) -> None:
-    con.execute('INSERT OR REPLACE INTO oauth_ended (id, redirect_uri, state, expires_at) VALUES (?, ?, ?, ?)',
-                (row['id'], row['redirect_uri'], row['state'], int(row['expires_at']) + PENDING_TTL))
+    """Remember an ended request long enough to tell its person; keep at most MAX_ENDED."""
+    con.execute('INSERT OR REPLACE INTO oauth_ended (id, redirect_uri, state, expires_at, continue_hash) '
+                'VALUES (?, ?, ?, ?, ?)',
+                (row['id'], row['redirect_uri'], row['state'], int(row['expires_at']) + PENDING_TTL,
+                 row['continue_hash']))
+    over = con.execute('SELECT COUNT(*) FROM oauth_ended').fetchone()[0] - MAX_ENDED
+    if over > 0:
+        con.execute('DELETE FROM oauth_ended WHERE id IN (SELECT id FROM oauth_ended '
+                    'ORDER BY expires_at ASC, rowid ASC LIMIT ?)', (over,))
 
 
 def _end_expired(con) -> None:
     """Expired requests end with a tombstone; tombstones themselves expire."""
     now = int(time.time())
-    for row in con.execute('SELECT id, redirect_uri, state, expires_at FROM oauth_pending WHERE expires_at < ?',
+    for row in con.execute('SELECT id, redirect_uri, state, expires_at, continue_hash FROM oauth_pending '
+                           'WHERE expires_at < ?',
                            (now,)).fetchall():
         _tombstone(con, row)
     con.execute('DELETE FROM oauth_pending WHERE expires_at < ?', (now,))
@@ -407,13 +422,18 @@ _ENDED_PAGE = ('<!doctype html><meta charset=utf-8><meta name=viewport content="
                'Start again from your app (for example, connect ArchHub again in Spark or Notion).</p></body>')
 
 
-def ended_response(pending_id: str):
+def ended_response(pending_id: str, *, continue_secret: str = ''):
     """What a person sees when their sign-in is gone: back to their app with
-    error=access_denied when the request is known, else a plain explanation."""
+    error=access_denied when the request is known (by its id on Google's callback,
+    or by its continue value after Google), else a plain explanation."""
     _ensure()
     with db.connect() as con:
-        row = con.execute('SELECT * FROM oauth_ended WHERE id = ? AND expires_at >= ?',
-                          (pending_id or '', int(time.time()))).fetchone()
+        if continue_secret:
+            row = con.execute('SELECT * FROM oauth_ended WHERE continue_hash = ? AND expires_at >= ?',
+                              (_hash(continue_secret), int(time.time()))).fetchone()
+        else:
+            row = con.execute('SELECT * FROM oauth_ended WHERE id = ? AND expires_at >= ?',
+                              (pending_id or '', int(time.time()))).fetchone()
     if row is not None and _redirect_allowed(row['redirect_uri']):
         return RedirectResponse(_client_url(row['redirect_uri'], error='access_denied',
                                             error_description='the sign-in expired; start again',
@@ -424,12 +444,36 @@ def ended_response(pending_id: str):
 
 # -- the founder's lane ----------------------------------------------------------------------
 def _lane_key() -> bytes:
+    """The lane cookie's own HMAC key: the Google client secret under a label no other
+    use shares. With Google unconfigured there is no secret, so no lane key at all."""
     import google_auth
-    return hashlib.sha256(b'archhub-mcp-founder-lane|' + google_auth._state_secret()).digest()
+    if not config.google_login_enabled():
+        raise ValueError('no lane without Google sign-in configured')
+    secret = google_auth._state_secret()
+    if not secret:
+        raise ValueError('no lane without a server secret')
+    return hashlib.sha256(b'archhub-mcp-founder-lane|' + secret).digest()
+
+
+def _lane_epoch(email: str) -> int:
+    with db.connect() as con:
+        row = con.execute('SELECT epoch FROM oauth_lane_epochs WHERE email = ?', (email,)).fetchone()
+    return int(row[0]) if row else 0
+
+
+def revoke_founder_lanes(email: str) -> int:
+    """End every lane cookie minted so far for `email` (server-side); returns the new epoch."""
+    _ensure()
+    email = (email or '').strip().lower()
+    with db.connect() as con:
+        con.execute('INSERT INTO oauth_lane_epochs (email, epoch) VALUES (?, 1) '
+                    'ON CONFLICT(email) DO UPDATE SET epoch = epoch + 1', (email,))
+        return int(con.execute('SELECT epoch FROM oauth_lane_epochs WHERE email = ?', (email,)).fetchone()[0])
 
 
 def founder_lane_cookie(email: str) -> str:
-    body = base64.urlsafe_b64encode(json.dumps({'e': email, 'x': int(time.time()) + FOUNDER_LANE_TTL},
+    body = base64.urlsafe_b64encode(json.dumps({'e': email, 'x': int(time.time()) + FOUNDER_LANE_TTL,
+                                                'n': _lane_epoch(email)},
                                                separators=(',', ':')).encode()).decode().rstrip('=')
     return body + '.' + hmac.new(_lane_key(), body.encode(), hashlib.sha256).hexdigest()
 
@@ -442,15 +486,23 @@ def founder_lane(request: Request) -> str:
     re-checked on every use against the configured founder emails and suspension.
     """
     body, _, mac = request.cookies.get(FOUNDER_COOKIE, '').partition('.')
-    if not body or not hmac.compare_digest(mac, hmac.new(_lane_key(), body.encode(), hashlib.sha256).hexdigest()):
+    if not body or not body.isascii() or not mac.isascii():
+        return ''                      # compare_digest refuses non-ASCII text: that is no lane
+    try:
+        key = _lane_key()
+    except ValueError:
+        return ''
+    if not hmac.compare_digest(mac, hmac.new(key, body.encode(), hashlib.sha256).hexdigest()):
         return ''
     try:
         claims = json.loads(base64.urlsafe_b64decode(body + '=' * (-len(body) % 4)))
-        email, expires = str(claims['e']).strip().lower(), int(claims['x'])
+        email, expires, epoch = str(claims['e']).strip().lower(), int(claims['x']), int(claims.get('n', 0))
     except Exception:
         return ''
     if expires < int(time.time()) or email not in config.founder_emails():
         return ''
+    if epoch != _lane_epoch(email):
+        return ''                      # revoke_founder_lanes ended every earlier cookie''
     user = db.get_user_by_email(email)
     if user is None or user.get('suspended_at'):
         return ''
@@ -597,14 +649,17 @@ def continue_authorization(request: Request, c: str = ''):
     try:
         target, email = finish_authorization(c, request)
     except ValueError:
-        return ended_response('')
+        return ended_response('', continue_secret=c)
     answer = RedirectResponse(target, status_code=302, headers={'Referrer-Policy': 'no-referrer'})
     answer.delete_cookie(CONSENT_COOKIE, path='/', secure=True, httponly=True, samesite='lax')
     if email in config.founder_emails():
         # This browser just completed a founder sign-in Google verified: from now on
         # its requests use the founder's own lane.
-        answer.set_cookie(FOUNDER_COOKIE, founder_lane_cookie(email), max_age=FOUNDER_LANE_TTL, path='/',
-                          secure=True, httponly=True, samesite='lax')
+        try:
+            answer.set_cookie(FOUNDER_COOKIE, founder_lane_cookie(email), max_age=FOUNDER_LANE_TTL, path='/',
+                              secure=True, httponly=True, samesite='lax')
+        except ValueError:
+            pass                       # no server secret: no lane, the sign-in itself stands
     return answer
 
 

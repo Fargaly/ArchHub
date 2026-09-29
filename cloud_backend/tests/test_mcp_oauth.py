@@ -62,6 +62,10 @@ def _google(monkeypatch, email=FOUNDER):
     monkeypatch.setattr(google_auth, "build_authorization_url",
                         lambda **kw: started.update(kw) or "https://accounts.google.com/o/oauth2/v2/auth")
     monkeypatch.setattr(google_auth.config, "google_login_enabled", lambda: True)
+    # Production has both OAuth client values whenever Google sign-in is on; the
+    # lane key (oauth_mcp._lane_key) exists only then.
+    monkeypatch.setattr(google_auth.config, "GOOGLE_OAUTH_CLIENT_ID", "court-client.apps.googleusercontent.com")
+    monkeypatch.setattr(google_auth.config, "GOOGLE_OAUTH_CLIENT_SECRET", "court-google-client-secret")
     monkeypatch.setattr(google_auth, "_exchange_code_for_tokens", lambda code: {"id_token": "t"})
     monkeypatch.setattr(google_auth, "verify_id_token", lambda token: {"email": email, "email_verified": True})
     return started
@@ -826,7 +830,7 @@ def test_a_full_storage_ceiling_ends_even_a_verified_strangers_request_and_says_
     back = _continue_path(_callback(first, pending))    # Google verified; the continue step is pending
     assert _browser().get("/oauth/authorize", params=_authorize_params(client_id, challenge)).status_code == 200
     ended = first.get(back)
-    assert ended.status_code == 400 and "has ended" in ended.text, "the continue step says the sign-in ended"
+    assert ended.status_code == 302 and "error=access_denied" in ended.headers["location"],         "the continue step sends the person back to their app, saying the sign-in ended"
 
 
 def test_knowing_a_public_client_id_cannot_lock_that_client_out(client, monkeypatch):
@@ -1214,3 +1218,115 @@ def test_a_stolen_lane_cookie_buys_queue_priority_and_never_a_code_for_the_found
         owner = con.execute("SELECT u.email FROM oauth_codes c JOIN users u ON u.id = c.user_id WHERE c.code_hash = ?",
                             (hashlib.sha256(code.encode()).hexdigest(),)).fetchone()[0]
     assert owner == "thief@evil.example"
+
+
+# -- v3.6: the review of v3.5 --------------------------------------------------------------
+def _lane_browser(monkeypatch):
+    client = _browser()
+    founders, _, _, _ = _grant(client, monkeypatch)
+    assert client.cookies.get("__Host-archhub_mcp_founder")
+    return client, founders
+
+
+def _in_lane(client, founders):
+    import db
+    _, challenge = _pkce()
+    page = client.get("/oauth/authorize", params=_authorize_params(founders, challenge))
+    assert page.status_code == 200, page.status_code
+    pending = re.search(r'name=pending value="([^"]+)"', page.text).group(1)
+    with db.connect() as con:
+        return con.execute("SELECT lane FROM oauth_pending WHERE id = ?", (pending,)).fetchone()[0] == FOUNDER
+
+
+def test_F1_no_lane_without_google_configured_or_without_a_secret(monkeypatch):
+    import google_auth
+    client, founders = _lane_browser(monkeypatch)
+    assert _in_lane(client, founders)
+    monkeypatch.setattr(google_auth.config, "google_login_enabled", lambda: False)
+    assert not _in_lane(client, founders), "Google off: no lane key, no lane"
+    monkeypatch.setattr(google_auth.config, "google_login_enabled", lambda: True)
+    monkeypatch.setattr(google_auth.config, "GOOGLE_OAUTH_CLIENT_SECRET", "")
+    assert not _in_lane(client, founders), "an empty secret would make the lane key public: no lane"
+    # With an empty secret the key would be sha256(label), which anyone can compute:
+    # a cookie signed with it must still be no lane.
+    import base64 as b64
+    import hashlib as hl
+    import hmac as hm
+    body = b64.urlsafe_b64encode(json.dumps({"e": FOUNDER, "x": int(time.time()) + 3600, "n": 0},
+                                            separators=(",", ":")).encode()).decode().rstrip("=")
+    public = hl.sha256(b"archhub-mcp-founder-lane|").digest()
+    forged = _browser()
+    forged.cookies.set("__Host-archhub_mcp_founder", body + "." + hm.new(public, body.encode(), hl.sha256).hexdigest())
+    assert not _in_lane(forged, founders), "a cookie forged with the public empty-secret key is no lane"
+
+
+def test_F2_tombstones_are_capped_oldest_first(client, monkeypatch):
+    import db
+    import oauth_mcp
+    monkeypatch.setattr(oauth_mcp, "MAX_PENDING_ALL", 1)
+    monkeypatch.setattr(oauth_mcp, "MAX_ENDED", 2)
+    client_id = _register(client)
+    _, challenge = _pkce()
+    ids = []
+    for _ in range(4):
+        page = _browser().get("/oauth/authorize", params=_authorize_params(client_id, challenge))
+        ids.append(re.search(r'name=pending value="([^"]+)"', page.text).group(1))
+    with db.connect() as con:
+        ended = sorted(row[0] for row in con.execute("SELECT id FROM oauth_ended"))
+    assert ended == sorted(ids[1:3]), "three evictions, two tombstones kept: the newest"
+
+
+def test_F4_a_non_ascii_lane_cookie_is_no_lane_not_an_error(monkeypatch):
+    client, founders = _lane_browser(monkeypatch)
+    import db
+    weird = _browser()
+    raw = {"Cookie": "__Host-archhub_mcp_founder=été.é".encode("latin-1")}   # not ASCII on the wire
+    _, challenge = _pkce()
+    page = weird.get("/oauth/authorize", params=_authorize_params(founders, challenge), headers=raw)
+    assert page.status_code == 200, page.status_code
+    pending = re.search(r'name=pending value="([^"]+)"', page.text).group(1)
+    with db.connect() as con:
+        assert con.execute("SELECT lane FROM oauth_pending WHERE id = ?", (pending,)).fetchone()[0] == ""
+
+
+def test_F3_revoking_the_founders_lanes_ends_every_earlier_cookie(monkeypatch):
+    import oauth_mcp
+    client, founders = _lane_browser(monkeypatch)
+    assert _in_lane(client, founders)
+    assert oauth_mcp.revoke_founder_lanes(FOUNDER) == 1
+    assert not _in_lane(client, founders), "a revoked epoch ends the stolen or old cookie"
+    again = _browser()
+    _grant(again, monkeypatch)                                # a new sign-in mints the new epoch
+    assert _in_lane(again, founders)
+
+
+def test_F5_an_eviction_between_google_and_continue_sends_the_person_back_to_the_app(client, monkeypatch):
+    import oauth_mcp
+    monkeypatch.setattr(oauth_mcp, "MAX_PENDING_ALL", 1)
+    _google(monkeypatch, email="someone.else@studio.example")
+    client_id = _register(client)
+    _, challenge = _pkce()
+    first = _browser()
+    pending, csrf, _ = _consent_form(first, client_id, challenge)
+    assert first.post("/oauth/consent", data={"pending": pending, "csrf": csrf, "decision": "approve"}).status_code == 302
+    back = _continue_path(_callback(first, pending))           # verified; now on the continue step
+    assert _browser().get("/oauth/authorize", params=_authorize_params(client_id, challenge)).status_code == 200
+    ended = first.get(back)
+    assert ended.status_code == 302, ended.text
+    query = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(ended.headers["location"]).query))
+    assert ended.headers["location"].startswith(REDIRECT) and query["error"] == "access_denied" and query["state"] == "st-1"
+
+
+def test_the_lane_key_differs_from_any_other_labelled_use_of_the_secret(monkeypatch):
+    """A cookie signed under a different label (another feature's key) is not a lane."""
+    import base64 as b64
+    import hashlib as hl
+    import hmac as hm
+    import google_auth
+    client, founders = _lane_browser(monkeypatch)
+    body = b64.urlsafe_b64encode(json.dumps({"e": FOUNDER, "x": int(time.time()) + 3600, "n": 0},
+                                            separators=(",", ":")).encode()).decode().rstrip("=")
+    other = hl.sha256(b"archhub-mcp-ticket|" + google_auth._state_secret()).digest()
+    forged = _browser()
+    forged.cookies.set("__Host-archhub_mcp_founder", body + "." + hm.new(other, body.encode(), hl.sha256).hexdigest())
+    assert not _in_lane(forged, founders)

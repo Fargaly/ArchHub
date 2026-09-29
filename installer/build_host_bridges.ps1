@@ -88,7 +88,9 @@ function Build-Project([string]$Project, [string[]]$Properties, [string]$Payload
     if (-not (Test-Path -LiteralPath $Work)) { Copy-Item -LiteralPath $source -Destination $Work -Recurse }
     & $dotnet restore (Join-Path $Work $Project) @Properties -v q
     if ($LASTEXITCODE -ne 0) { throw "Restore failed for $Project ($($Properties -join ' '))." }
-    & $dotnet build (Join-Path $Work $Project) --no-restore -c Release -nologo -v q @Properties -o $Payload
+    # No shared compiler / MSBuild node servers: they outlive the build and hold
+    # the machine queue (run-heavy waits for every process the job started).
+    & $dotnet build (Join-Path $Work $Project) --no-restore -c Release -nologo -v q @Properties -o $Payload -p:UseSharedCompilation=false -nodeReuse:false
     if ($LASTEXITCODE -ne 0) { throw "Build failed for $Project ($($Properties -join ' '))." }
 }
 

@@ -727,6 +727,23 @@ def api_user_suspend(key: str, payload: dict = Body(default={}),
                                               "suspended_reason": row.get("suspended_reason")}})
 
 
+@router.post("/api/users/{key}/plan")
+def api_user_plan(key: str, payload: dict = Body(default={}),
+                  founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Change an account's tier; its message quota moves with it.
+
+    The same set_plan the cockpit command runs (route_command), so the error
+    vocabulary and the founder_action_log row are that path's own."""
+    account = _account(key)
+    if account is None:
+        return JSONResponse({"ok": False, "error": "no such user"}, status_code=404)
+    plan = str(payload.get("plan") or "").strip().lower()
+    result = route_command(
+        "set %s to %s" % (account["email"], plan),
+        actor=(founder.get("email") or "").strip().lower(),
+        args={"action": "set_plan", "email": account["email"], "plan": plan})
+    return JSONResponse(result, status_code=200 if result.get("ok") else 400)
+
 @router.post("/api/users/{key}/restore")
 def api_user_restore(key: str, founder: dict = Depends(require_founder)) -> JSONResponse:
     """Restore a suspended account; its unexpired sessions work again."""

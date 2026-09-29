@@ -59,7 +59,7 @@ const BRAIN_GATES = [
     decider:'you, again', def:'offered, not installed', revocable:'yes',
     passes:'office standards you accept', never:'a fact pushed into your head' },
   { id:'f2c', from:'firm', to:'community', label:'FIRM \u2192 COMMUNITY',
-    decider:'firm admin, then founder review', def:'closed', revocable:'yes, unpublish',
+    decider:'firm admin, then founder review (a solo account is its own firm; the founder review is in the cloud)', def:'closed', revocable:'yes, unpublish',
     passes:'ontology \u00b7 relationships \u00b7 reviewed taxonomy \u00b7 aggregated behaviour',
     never:'an instance \u2014 no project, client or person',
     note:'Checked server-side on the way in against membership. A write path is also a read path when contributing grants access \u2014 the repo already fixed the version of this bug that let a stranger write into a firm and become a permanent reader.' },

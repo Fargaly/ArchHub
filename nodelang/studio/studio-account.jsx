@@ -395,7 +395,7 @@ function SignUp({ onDone, onCancel, plan }) {
 
           {step === 3 && (
             <div>
-              <SHead title="Your brain" sub="It lives on your disk, not our servers and not a git remote. Sync is a folder you choose."/>
+              <SHead title="Your brain" sub="It lives on your disk. Project and client facts never leave this machine; a fact you choose to share goes to the ArchHub community after review."/>
               <div style={{ padding: '13px 14px', borderRadius: AC.rad.md, border: `1px solid ${AC.line}`, background: AC.bg }}>
                 <div style={{ fontFamily: AC.mono, fontSize: 9, color: AC.accent, letterSpacing: '0.14em' }}>SEEDED FROM THIS SIGN-UP</div>
                 <div style={{ marginTop: 8 }}>
@@ -682,8 +682,10 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
           <span style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.inkSoft }}>{facts ? facts + ' facts read' : 'facts not read yet'}</span>
         </div>
         <div style={{ fontSize: 12, color: AC.inkSoft, marginTop: 9, lineHeight: 1.55 }}>
-          Your brain is a folder on your disk. It is never uploaded to us and never pushed to a
-          git remote — sync is a directory you nominate, so the practice controls the copy.
+          Your brain lives on this machine. Nothing is uploaded unless you share it: a fact you
+          share (Settings &#x2192; Brain &#x2192; share) goes to the ArchHub community, and the founder
+          reviews it before other members see it. What others share reaches you held for your
+          acceptance. Sharing is refused when a fact names the client folder or a project code.
         </div>
         <div style={{ display: 'flex', gap: 7, marginTop: 10 }}>
           <BrainFolderActions/>

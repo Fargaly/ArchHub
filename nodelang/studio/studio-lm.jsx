@@ -4832,6 +4832,17 @@ const SettingsMemory = ({ store, patch }) => {
       note(m.id, 'saved');
     } catch (error) { note(m.id, 'refused'); }
   };
+  // Sharing is the owner's deliberate act on one fact (ADGR-0004): the brain files
+  // it as a published skill; the founder review decides before any member sees it.
+  const share = async m => {
+    note(m.id, 'sharing\u2026');
+    try {
+      const said = await window.ARCHHUB_BRAIN_PUBLISH(m.id);
+      note(m.id, !said || !said.ok ? ((said && said.error) || 'refused')
+        : said.published ? 'shared \u2014 reviewed before other members see it'
+        : 'waiting for your firm: ' + said.waiting);
+    } catch (error) { note(m.id, 'refused'); }
+  };
 
   return (
   <div>
@@ -4882,6 +4893,11 @@ const SettingsMemory = ({ store, patch }) => {
                       </div>
                       <span title="The ontology could not place this, so it defaults to sealed &#x2014; there is no release path at all."
                         style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.err, letterSpacing:'0.08em' }}>&#x2298; sealed</span>
+                      {window.ARCHHUB_BRAIN_PUBLISH && (
+                        <button title="Share this with the ArchHub community. It is reviewed before other members see it; a fact that names the client folder or a project code is refused."
+                          onClick={() => share(f)}
+                          style={{ ...smallBtn(), padding:'3px 8px' }}>share</button>
+                      )}
                       <button title={'Forget: ' + f.text}
                         onClick={() => forget(f)}
                         style={{ ...smallBtn(), padding:'3px 8px', color:LM.err, borderColor:LM.lineSoft }}>forget</button>

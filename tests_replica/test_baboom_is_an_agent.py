@@ -98,16 +98,13 @@ def test_the_report_names_agents_brain_and_hosts():
 def test_the_launcher_retries_attach_under_its_own_id(monkeypatch):
     """A retry must never bind a second identity: connect() used to bind before
     start() could time out, and a retry under the same id was refused as already
-    bound, so the founder had no companion. Since 326b657 one host is prepared
-    under one session id and a retry renews that same signed presence. Runs the
-    launcher's real _keep_attaching."""
-    from tests_replica.launcher_functions import run_attach
-
-    prepared, attachment, hosts, _stop = run_attach(monkeypatch, [TimeoutError("busy"), None])
-    assert len(prepared) == 1, "a retry must not prepare (and bind) another host"
-    assert prepared[0]["external_session_id"] == "founder-desktop-baboom"
-    assert attachment.landed == hosts and hosts[0].connects == 2
-    assert not hosts[0].stopped, "the handed-off host keeps running"
+    bound. Since 326b657 one host is prepared under one session id and a retry
+    renews that presence. One source: the lifecycle court runs the launcher's
+    real _keep_attaching."""
+    from tests_replica.test_baboom_startup_lifecycle import (
+        test_first_frame_retry_retains_one_prepared_host_and_identity,
+    )
+    test_first_frame_retry_retains_one_prepared_host_and_identity(monkeypatch)
 
 
 def test_brain_health_answers_from_the_live_brain_not_a_default():

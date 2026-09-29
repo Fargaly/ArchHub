@@ -10,7 +10,6 @@ from __future__ import annotations
 import inspect
 
 import pytest
-import re
 from pathlib import Path
 
 import nodelang.application_server as application_server
@@ -19,81 +18,90 @@ ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
 
 
-def _relay_start_chain():
-    """The statements enclosing the launcher's one relay start (326b657: the relay
-    is started once, at top level, and resolves BABOOM per request)."""
+def _start_actual_relay_block(monkeypatch):
     import ast
-
-    from tests_replica.launcher_functions import ancestors
-
-    def is_start(node):
-        return (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
-                and isinstance(node.value.func, ast.Name) and node.value.func.id == "_start_relay")
-
-    chain = ancestors(is_start)
-    assert chain, "the launcher must start the cloud relay"
-    return chain
-
-
-def _cockpit(monkeypatch, **overrides):
-    import threading
+    import os
     from types import SimpleNamespace
+    import threading
+    from nodelang import cloud_relay
+    from tests_replica.test_baboom_startup_lifecycle import launcher_names
 
-    import nodelang.universal_application as ua
-    from tests_replica.launcher_functions import Stop, load
+    starts = []
+    monkeypatch.setenv("APPDATA", "unused-court-appdata")
 
-    asked = []
+    def start(**kwargs):
+        relay = SimpleNamespace(**kwargs)
+        starts.append(relay)
+        return relay
 
-    def responder(store, registry, *, utterance, authentication_context):
-        asked.append((store, utterance, authentication_context))
-        return {"kind": "answer", "summary": "read only"}
+    monkeypatch.setattr(cloud_relay, "start_cloud_relay", start)
+    # Every launcher callback the relay start wires (b026613 added the offer pair).
+    ns = launcher_names(
+        "_cockpit_respond", "_cockpit_execute", "_cockpit_offer", "_cockpit_offer_command",
+        _baboom_stop=threading.Event(),
+        baboom_host=None, Path=Path, os=os, state_dir=Path("unused"),
+        server=SimpleNamespace(),
+        _baboom_off_reason=None,
+    )
+    blocks = [node for node in ast.parse(LAUNCHER).body if isinstance(node, ast.Try)
+              and any(isinstance(child, ast.ImportFrom) and child.module == "nodelang.cloud_relay"
+                      and any(alias.name == "start_cloud_relay" for alias in child.names)
+                      for child in ast.walk(node))]
+    assert len(blocks) == 1, "one relay starts independently of attachment"
+    exec(compile(ast.Module(body=blocks, type_ignores=[]), "launcher relay", "exec"), ns)
+    assert len(starts) == 1
+    return ns, starts[0]
 
-    monkeypatch.setattr(ua, "respond_universal_baboom_utterance", responder)
-    registry = SimpleNamespace(authorization=SimpleNamespace(
-        session=SimpleNamespace(context=lambda: "unsigned-read")))
-    server = SimpleNamespace(mutation_lock=threading.Lock(), universal_store="the-graph",
-                             universal_registry=registry)
-    namespace = dict(_baboom_stop=Stop(), baboom_host=None, _baboom_off_reason=None, server=server)
-    namespace.update(overrides)
-    return load("_cockpit_respond", "_cockpit_execute", **namespace), asked
 
 
-def test_a_companion_that_cannot_attach_does_not_take_the_cockpit_with_it():
-    import ast
 
-    chain = _relay_start_chain()
-    assert [type(node) for node in chain] == [ast.Module, ast.Try], (
-        "the relay must start at top level, not behind the companion")
-    handler = chain[-1].handlers[0]
-    assert "relay unavailable" in ast.unparse(handler), "a relay failure is named, not raised"
-    assert "relay on (actions wait for signed BABOOM attachment)" in LAUNCHER
-    assert "respond=_cockpit_respond" in ast.unparse(chain[-1])
-    assert "execute=_cockpit_execute" in ast.unparse(chain[-1])
+
+def test_a_companion_that_cannot_attach_does_not_take_the_cockpit_with_it(monkeypatch):
+    ns, relay = _start_actual_relay_block(monkeypatch)
+    assert ns["cloud_relay"] is relay
+    assert relay.respond is ns["_cockpit_respond"]
+    assert relay.execute is ns["_cockpit_execute"]
+    assert relay.offer is ns["_cockpit_offer"]
+    assert relay.offer_command is ns["_cockpit_offer_command"]
 
 
 def test_the_relay_without_a_companion_answers_but_refuses_to_act(monkeypatch):
     """Reads are safe unsigned; an act needs the companion's signed session."""
-    ns, asked = _cockpit(monkeypatch)
-    assert ns["_cockpit_respond"]("status") == {"kind": "answer", "summary": "read only"}
-    assert asked == [("the-graph", "status", "unsigned-read")]
+    import threading
+    from types import SimpleNamespace
+
+    import nodelang.universal_application as ua
+
+    ns, relay = _start_actual_relay_block(monkeypatch)
     with pytest.raises(RuntimeError, match="no action was performed"):
-        ns["_cockpit_execute"]("run the publish node")
-    ns, _ = _cockpit(monkeypatch, _baboom_off_reason="BABOOM is turned off in Settings; no action was performed.")
+        relay.execute("run task")
+    calls = []
+    ns["baboom_host"] = SimpleNamespace(execute_input=lambda text: calls.append(text) or {"signed": True})
+    assert relay.execute("run task") == {"signed": True}
+    assert calls == ["run task"]
+    # Without a companion a read is answered unsigned, from the graph, under the lock.
+    asked = []
+    monkeypatch.setattr(ua, "respond_universal_baboom_utterance",
+                        lambda store, registry, *, utterance, authentication_context:
+                        asked.append((store, utterance, authentication_context)) or {"kind": "answer"})
+    ns["baboom_host"] = None
+    ns["server"] = SimpleNamespace(
+        mutation_lock=threading.Lock(), universal_store="the-graph",
+        universal_registry=SimpleNamespace(authorization=SimpleNamespace(
+            session=SimpleNamespace(context=lambda: "unsigned-read"))))
+    assert relay.respond("status") == {"kind": "answer"}
+    assert asked == [("the-graph", "status", "unsigned-read")]
+    # Turned off in Settings: the refusal says so, and nothing acts.
+    ns["_baboom_off_reason"] = "BABOOM is turned off in Settings; no action was performed."
     with pytest.raises(RuntimeError, match="turned off in Settings"):
-        ns["_cockpit_execute"]("run the publish node")
+        relay.execute("run task")
 
 
-def test_the_relay_start_is_not_nested_inside_the_baboom_success_path():
+def test_the_relay_start_is_not_nested_inside_the_baboom_success_path(monkeypatch):
     """It was, and that is exactly how one failure became two."""
-    import ast
-
-    chain = _relay_start_chain()
-    assert not any(isinstance(node, (ast.FunctionDef, ast.ClassDef, ast.If)) for node in chain)
-    assert LAUNCHER.count("_start_relay(") == 1, "one relay, started once"
-    for body in ("def _keep_attaching()", "class _BaboomAttachment("):
-        block = LAUNCHER[LAUNCHER.index(body):]
-        block = block[:block.index("\ndef ", 1) if "\ndef " in block[1:] else len(block)]
-        assert "start_cloud_relay" not in block and "_start_relay(" not in block, body
+    ns, relay = _start_actual_relay_block(monkeypatch)
+    assert ns["baboom_host"] is None
+    assert ns["cloud_relay"] is relay
 
 
 def test_the_device_proof_refusal_names_which_cause_fired():
@@ -204,22 +212,27 @@ def test_a_busy_boot_does_not_cost_the_founder_his_companion(monkeypatch):
     """Six tries over fifteen seconds was the whole budget: on 2026-09-07 the
     app was busy for all of it and the founder had no companion for the
     session. The launcher keeps asking in the background (40 tries, 15 s
-    apart) and hands the host to the Qt thread. Runs the real _keep_attaching."""
-    from nodelang.application_machine_transport import MachineTransportError
-    from tests_replica.launcher_functions import run_attach
+    apart), keeps one identity, stops the host it could not hand over, and a
+    late companion still projects. One source: the lifecycle helpers run the
+    launcher's real _keep_attaching."""
+    from tests_replica.test_baboom_startup_lifecycle import (
+        Host,
+        TransportFailure,
+        test_first_frame_retry_retains_one_prepared_host_and_identity,
+        test_policy_refusal_is_not_retried_under_new_identity,
+        worker_namespace,
+    )
+    test_first_frame_retry_retains_one_prepared_host_and_identity(monkeypatch)
+    test_policy_refusal_is_not_retried_under_new_identity(monkeypatch)
 
-    busy = [MachineTransportError("machine request timed out")] * 5 + [TimeoutError("busy"), None]
-    prepared, attachment, hosts, stop = run_attach(monkeypatch, busy)
-    assert len(prepared) == 1 and attachment.landed == hosts and hosts[0].connects == 7
-    assert stop.waits == [0.0] + [15.0] * 6, "the first try is immediate, each retry waits 15 s"
-    prepared, attachment, hosts, stop = run_attach(monkeypatch, [TimeoutError("busy")] * 40)
-    assert attachment.landed == [] and hosts[0].connects == 40 and hosts[0].stopped
-    assert stop.waits == [0.0] + [15.0] * 39
-    prepared, attachment, hosts, stop = run_attach(monkeypatch, [ValueError("device proof refused")])
-    assert attachment.landed == [] and hosts[0].connects == 1 and hosts[0].stopped
-    launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
-    starter = launcher[launcher.index("def _start_baboom_attachment()"):]
-    starter = starter[:starter.index("_BaboomTimer.singleShot(0, _start_baboom_attachment)")]
-    assert "target=_keep_attaching" in starter and "daemon=True" in starter
-    land = launcher[launcher.index("    def land(self, host):"):launcher.index("_baboom_attachment = _BaboomAttachment(app)")]
+    def busy(host):
+        raise TransportFailure("universal runtime did not respond")
+
+    host = Host(busy)
+    ns, stop, prepared, delivered, _ = worker_namespace(monkeypatch, host)
+    ns["_keep_attaching"]()
+    assert len(prepared) == 1 and host.connect_calls == 40
+    assert stop.waits == [0.0] + [15.0] * 39, "each retry waits 15 s"
+    assert not delivered and host.stop_calls >= 1, "an undelivered host is stopped"
+    land = LAUNCHER[LAUNCHER.index("    def land(self, host):"):LAUNCHER.index("_baboom_attachment = _BaboomAttachment(app)")]
     assert "companion.start_projection()" in land, "a late companion still projects"

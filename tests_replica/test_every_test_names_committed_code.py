@@ -105,6 +105,12 @@ def _bound_names_in(body):
             for target in targets:
                 names |= {n.id for n in ast.walk(target) if isinstance(n, ast.Name)}
         elif isinstance(node, (ast.If, ast.Try, ast.With, ast.For, ast.While)):
+            if isinstance(node, ast.For):
+                names |= {n.id for n in ast.walk(node.target) if isinstance(n, ast.Name)}
+            if isinstance(node, ast.With):
+                for item in node.items:
+                    if item.optional_vars is not None:
+                        names |= {n.id for n in ast.walk(item.optional_vars) if isinstance(n, ast.Name)}
             for field in ("body", "orelse", "finalbody", "handlers"):
                 for child in getattr(node, field, ()) or ():
                     stack.extend(child.body if isinstance(child, ast.ExceptHandler) else [child])
@@ -121,8 +127,9 @@ def _bound_names(path):
 
 
 class _Refs(ast.NodeVisitor):
-    def __init__(self, tree, test_is_cloud):
+    def __init__(self, tree, test_is_cloud, roots=_ROOTS):
         self.tree = tree
+        self.roots = tuple(roots)
         self.cloud = test_is_cloud
         self.aliases = {}
         self.classes = {}
@@ -131,7 +138,7 @@ class _Refs(ast.NodeVisitor):
         self.guarded = set()
 
     def _tracked(self, module):
-        return module.split(".")[0] in _ROOTS or (self.cloud and self.tree.is_cloud_module(module))
+        return module.split(".")[0] in self.roots or (self.cloud and self.tree.is_cloud_module(module))
 
     def visit_FunctionDef(self, node):
         names = {a.arg for a in ast.walk(node.args) if isinstance(a, ast.arg)}
@@ -211,7 +218,7 @@ def _has(tree, module, name, cls):
     return hasattr(holder, name)
 
 
-def missing_references(root=ROOT, suites=None):
+def missing_references(root=ROOT, suites=None, roots=_ROOTS):
     """(test file, line, what is missing) for every reference to absent code."""
     tree = _Tree(root)
     suite_dirs = [tree.root / s for s in _SUITE_DIRS] if suites is None else [Path(s) for s in suites]
@@ -224,7 +231,7 @@ def missing_references(root=ROOT, suites=None):
             except SyntaxError as broken:
                 found.append((rel, broken.lineno or 0, "does not parse"))
                 continue
-            refs = _Refs(tree, test_is_cloud=suite == tree.cloud / "tests")
+            refs = _Refs(tree, test_is_cloud=suite == tree.cloud / "tests", roots=roots)
             refs.visit(source)
             for lineno, module, name, cls in refs.needs:
                 if not tree.module_path(module):
@@ -278,29 +285,34 @@ def test_the_known_list_only_shrinks():
 
 
 def test_the_court_sees_a_test_that_names_missing_code(tmp_path):
-    """A tree of its own: a module that raises on import is still read from its
-    source, so an absent name in it is reported, not skipped; a module whose
-    source cannot say (star import) and does not import is reported too."""
-    pkg = tmp_path / "nodelang"
+    """A tree of its own, under a package name no other import shares
+    (ghostpkg), so nothing already imported can answer for it: a module that
+    raises on import is still read from its source, so an absent name in it is
+    reported, not skipped; a module whose source cannot say (star import) and
+    does not import is reported too."""
+    pkg = tmp_path / "ghostpkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("", encoding="utf-8")
     (pkg / "raises.py").write_text(
-        "raise RuntimeError('needs a service')\ndef present():\n    return 1\n", encoding="utf-8")
+        "raise RuntimeError('needs a service')\nfor looped in ():\n    pass\n"
+        "def present():\n    return 1\n", encoding="utf-8")
     (pkg / "opaque.py").write_text("from somewhere_missing import *\n", encoding="utf-8")
     suite = tmp_path / "tests_replica"
     suite.mkdir()
     (suite / "test_ghost.py").write_text(
-        "from nodelang import raises, opaque\n"
+        "from ghostpkg import raises, opaque\n"
         "import tests_replica.helper_nobody_committed\n"
         "def test_x():\n"
         "    raises.a_function_nobody_committed()\n"
         "    raises.present()\n"
-        "    opaque.anything()\n", encoding="utf-8")
-    rows = [(line, what) for _f, line, what in missing_references(root=tmp_path, suites=(suite,))]
+        "    opaque.anything()\n"
+        "    raises.looped\n", encoding="utf-8")
+    rows = [(line, what) for _f, line, what in missing_references(
+        root=tmp_path, suites=(suite,), roots=("ghostpkg", "tests_replica"))]
     assert (2, "module tests_replica.helper_nobody_committed is not in this tree") in rows
-    assert (4, "nodelang.raises.a_function_nobody_committed does not exist") in rows
-    assert not any(line == 5 for line, _w in rows), "a defined name was reported"
-    assert (6, "cannot verify nodelang.opaque.anything: its module neither shows nor imports it") in rows
+    assert (4, "ghostpkg.raises.a_function_nobody_committed does not exist") in rows
+    assert not any(line in (5, 7) for line, _w in rows), "a defined name was reported"
+    assert (6, "cannot verify ghostpkg.opaque.anything: its module neither shows nor imports it") in rows
 
 
 def test_the_scan_leaves_the_import_path_as_it_found_it():

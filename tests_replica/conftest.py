@@ -249,3 +249,20 @@ def _fresh_last_pipeline_run():
     universal_pipeline._LAST_RUN.clear()
     yield
     universal_pipeline._LAST_RUN.clear()
+
+
+def _no_live_coordination_service():
+    raise AssertionError(
+        "a court reached for the live coordination service (:8474); pin "
+        "workspace_roots_catalogue.graph_context to a court host instead")
+
+
+def pytest_configure(config):
+    """Before collection and before ANY fixture: no court can reach the live
+    graph owner or ensure a key in the live caller ring through the workspace-
+    roots current-state check. A court that proves the seam pins its own
+    context (test_workspace_roots_graph_current.py)."""
+    from nodelang import workspace_roots_catalogue
+
+    workspace_roots_catalogue.graph_context = _no_live_coordination_service
+

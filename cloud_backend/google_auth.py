@@ -169,6 +169,7 @@ def _b64url_decode(data: str) -> bytes:
 
 def encode_state(*, code_challenge: str, redirect: str,
                  app_state: str = "",
+                 mcp_grant: str = "",
                  now: Optional[int] = None) -> str:
     """Pack the PKCE challenge + desktop return target into a signed,
     opaque, URL-safe state string.
@@ -190,6 +191,9 @@ def encode_state(*, code_challenge: str, redirect: str,
         "rd": redirect or "",
         "as": app_state or "",
         "n": secrets.token_urlsafe(16),
+        # An MCP OAuth authorization in progress (oauth_mcp): its pending id,
+        # signed with the rest, so only this server can route a callback there.
+        **({"mcp": mcp_grant} if mcp_grant else {}),
         "exp": now + _STATE_TTL_SECONDS,
     }
     payload_bytes = json.dumps(payload, separators=(",", ":"),
@@ -244,7 +248,8 @@ def decode_state(state: str, *, now: Optional[int] = None) -> dict:
 # ---------------------------------------------------------------------------
 def build_authorization_url(*, code_challenge: str = "",
                             redirect: str = "",
-                            app_state: str = "") -> str:
+                            app_state: str = "",
+                            mcp_grant: str = "") -> str:
     """Build the Google consent URL the desktop opens (step 1).
 
     Carries the standard OAuth params (client_id, our fixed
@@ -262,7 +267,7 @@ def build_authorization_url(*, code_challenge: str = "",
     # `app_state` (so it is tamper-proof and echoed back to the loopback
     # unchanged) -- it is NOT a second cleartext param.
     state = encode_state(code_challenge=code_challenge, redirect=redirect,
-                         app_state=app_state)
+                         app_state=app_state, mcp_grant=mcp_grant)
     params = {
         "client_id": config.GOOGLE_OAUTH_CLIENT_ID,
         "redirect_uri": config.GOOGLE_OAUTH_REDIRECT,
@@ -663,6 +668,14 @@ def exchange_callback(*, code: str, state: str) -> str:
     # 3. Verify the id_token (iss/aud/exp/email_verified + signature).
     claims = verify_id_token(tokens["id_token"])
     email = (claims.get("email") or "").strip().lower()
+    if payload.get("mcp"):
+        # An MCP client's authorization: only the verified identity is used.
+        # No desktop code and no account token are minted on this path.
+        import oauth_mcp
+        try:
+            return oauth_mcp.google_verified(str(payload["mcp"]), email)
+        except ValueError as unknown:
+            raise GoogleAuthError(str(unknown), status=400, code="invalid_mcp_grant")
     # 4. Land on the account keyed by email (created on first sign-in,
     #    reused after, so an account made before Google keeps its data),
     #    then mint a one-time code bound to the PKCE challenge so the

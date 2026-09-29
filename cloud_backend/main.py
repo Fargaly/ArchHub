@@ -123,6 +123,8 @@ except Exception as _cockpit_exc:  # pragma: no cover
     print(f"[main] private graph cockpit not mounted: {_cockpit_exc}")
 
 app.include_router(founder_cockpit.router)
+import oauth_mcp  # noqa: E402  (the public MCP door's OAuth; module-local import style)
+app.include_router(oauth_mcp.router)
 
 
 # Feed the cockpit's in-process error ring from unhandled server errors.
@@ -2141,13 +2143,22 @@ async def brain_over_mcp(req: Request,
     status, body, media = await run_in_threadpool(
         brain_mcp.answer,
         message,
-        resolve_user=lambda: _require_user(authorization),
+        resolve_user=lambda: _mcp_user(authorization),
         open_replica=_brain_read_replica,
         is_founder=_is_founder_account,
         host_read=_desktop_host_read,
         pushed_hosts=founder_cockpit.pushed_hosts,
     )
-    return Response(status_code=status, content=body, media_type=media)
+    # An unauthenticated call learns where to authorize (MCP authorization).
+    headers = {"WWW-Authenticate": oauth_mcp.challenge_header()} if status == 401 else None
+    return Response(status_code=status, content=body, media_type=media, headers=headers)
+
+
+def _mcp_user(authorization: str | None) -> dict:
+    """/mcp accepts the account token, or an MCP OAuth access token for this resource only."""
+    token = _bearer(authorization)
+    user = oauth_mcp.user_for_access_token(token)
+    return user if user is not None else _require_user(authorization)
 
 
 def _is_founder_account(user: dict) -> bool:

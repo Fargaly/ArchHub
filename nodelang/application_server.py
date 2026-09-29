@@ -15625,6 +15625,8 @@ class ApplicationServer:
                     authorization_evidence=admission.claim_binding_root,
                 )
                 return {
+                    **({"root_registration": dict(admission.root_registration)}
+                       if admission.root_registration is not None else {}),
                     "permit": permit.root_id,
                     "agent_session": permit.agent_session_root,
                     "work": permit.work_root,

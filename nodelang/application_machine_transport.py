@@ -3184,6 +3184,23 @@ class UniversalRuntimeClient:
             "operation", "path", "content_digest", "request_id",
             "authority_revision", "expires_at", "revision",
         }
+        if path.replace("\\", "/").startswith("workspace-roots/"):
+            # A root-bound permit names the registration it was admitted
+            # under; the planning hook compares it before the write runs.
+            expected = expected | {"root_registration"}
+            registration = result.get("root_registration") if isinstance(result, dict) else None
+            if (
+                not isinstance(registration, dict)
+                or set(registration) != {"id", "path", "identity", "digest"}
+                or any(type(registration[name]) is not str or not registration[name]
+                       for name in ("id", "path", "digest"))
+                or type(registration["identity"]) is not list
+                or len(registration["identity"]) != 2
+                or any(type(value) is not int for value in registration["identity"])
+            ):
+                raise MachineTransportError(
+                    "CDE write permit response names no valid root registration"
+                )
         if (
             not isinstance(result, dict)
             or set(result) != expected

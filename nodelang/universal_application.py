@@ -1240,6 +1240,9 @@ class UniversalCdeWriteAdmission:
     # A workspace-root write: the writers of the ONE registration this admission
     # read (and bound into container_digest); never re-read by the route.
     root_writers: tuple = ()
+    # The same registration, returned to the hook that planned the write so it
+    # can refuse a permit admitted for a different folder under the same id.
+    root_registration: object = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -41351,6 +41354,7 @@ def authorize_universal_cde_write(
                                      content_service=content_service)
     registration_digest = None
     root_writers = ()
+    root_registration = None
     if str(path).replace("\\", "/").startswith("workspace-roots/"):
         # A registered workspace root outside 00.ARCHUB. The owner's signed,
         # pinned registry must hold the root, and then the claimed Work's own
@@ -41363,6 +41367,12 @@ def authorize_universal_cde_write(
         except InvalidCell as exc:
             raise AuthorizationDenied(str(exc)) from exc
         root_writers = tuple(registration.get("writers") or ())
+        root_registration = {
+            "id": registration.get("id"),
+            "path": registration.get("path"),
+            "identity": list(registration.get("identity") or ()),
+            "digest": registration_digest,
+        }
     assembly = _instance_projection(snapshot, registry, str(work_root))
     if assembly is None:
         raise InvalidCell("claimed Work is not a projectable assembly")
@@ -41408,6 +41418,7 @@ def authorize_universal_cde_write(
         path.replace("\\", "/"),
         authority_revision,
         root_writers=root_writers,
+        root_registration=root_registration,
     )
 
 

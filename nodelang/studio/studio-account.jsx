@@ -200,8 +200,17 @@ const acDetected = () => ((window.ARCHHUB_LIVE && window.ARCHHUB_LIVE.connectors
   .filter(c => c && c.name)
   .map(c => ({ name: String(c.name), found: c.state === 'connected' || c.state === 'listening', state: String(c.state || 'unknown') }));
 
+// The facts sign-up seeds into the brain: one per answer the person gave, in their words.
+// They are never classified here, so none of them has a path off this machine.
+const acSeedFacts = (rec, hosts) => [
+  rec.name && rec.name.trim() ? `My name is ${rec.name.trim()}.` : '',
+  rec.firm && rec.firm.trim() ? `My practice is ${rec.firm.trim()}.` : '',
+  rec.discipline ? `My discipline is ${rec.discipline}.` : '',
+  hosts && hosts.length ? `The design tools on this machine are ${hosts.join(', ')}.` : '',
+].filter(Boolean);
+
 // The desktop signs in through the cloud: the app opens the browser on the
-// cloud's own Google sign-in (the only way to sign in) and holds a
+// cloud's own sign-in (Google, or a link mailed to the address) and holds a
 // loopback for the one-time code. This dialog only starts it and polls; the
 // email it shows is the one the cloud named, never one typed here.
 function CloudSignIn({ email, onSignedIn }) {
@@ -292,6 +301,10 @@ function SignUp({ onDone, onCancel, plan }) {
           }));
         }
       }).catch(() => {});
+    }
+    // The practice step seeds the brain it promises to seed.
+    if (window.ARCHHUB_REMEMBER) {
+      acSeedFacts(rec, hosts).forEach(text => window.ARCHHUB_REMEMBER(text).catch(() => {}));
     }
     onDone && onDone(rec);
   };
@@ -386,11 +399,7 @@ function SignUp({ onDone, onCancel, plan }) {
               <div style={{ padding: '13px 14px', borderRadius: AC.rad.md, border: `1px solid ${AC.line}`, background: AC.bg }}>
                 <div style={{ fontFamily: AC.mono, fontSize: 9, color: AC.accent, letterSpacing: '0.14em' }}>SEEDED FROM THIS SIGN-UP</div>
                 <div style={{ marginTop: 8 }}>
-                  {[
-                    a.name && `You are ${a.name}.`,
-                    a.firm && `Works at ${a.firm}${a.discipline ? ' · ' + a.discipline.toLowerCase() : ''}.`,
-                    hosts.length && `Reachable hosts: ${hosts.join(' · ')}.`,
-                  ].filter(Boolean).map((f, i) => (
+                  {acSeedFacts(a, hosts).map((f, i) => (
                     <div key={i} style={{ display: 'flex', gap: 8, padding: '4px 0', fontSize: 12.5, color: AC.inkSoft, lineHeight: 1.5 }}>
                       <span style={{ color: AC.accent }}>▸</span><span>{f}</span>
                     </div>

@@ -22,7 +22,8 @@ from nodelang.cell_secret_keys import MemorySigningKeyProvider
 from nodelang.cell_signing_authority import LocalEd25519KmsProvider
 from nodelang.universal_application import create_universal_governed_work
 from tests_replica.test_application_machine_transport import _green_runtime_compliance
-from tests_replica.test_workspace_root_write_admission import _Store, _entry, _registry
+from tests_replica.test_workspace_root_write_admission import (
+    _GRAPH, _Store, _entry, _no_live_graph, _registry, graph_state)
 from tests_replica.test_workspace_roots_catalogue import _Key
 from tests_replica.workshop_gate_support import open_execution_gate
 
@@ -61,6 +62,8 @@ def runtime(tmp_path, monkeypatch, request):
     monkeypatch.setattr(roots, "default_pin_path", lambda: files["pin_path"])
     monkeypatch.setattr(roots, "default_last_good_path", lambda: files["last_good_path"], raising=False)
     monkeypatch.setattr(signing, "CngVerifier", lambda name: _Store(key))
+    monkeypatch.setattr(roots, "verified_graph_state", graph_state, raising=False)
+    monkeypatch.setattr(roots, "graph_context", _no_live_graph, raising=False)
     descriptor_path = tmp_path / "workspace-root-permit.json"
     provider = MemorySigningKeyProvider("archhub.local.universal-runtime-pipe", b"w" * 32)
     server = ApplicationServer(enable_machine_transport=True, machine_descriptor_path=descriptor_path,
@@ -104,7 +107,8 @@ def _issue(world, operation="write_file", suffix=""):
 def _last_good(world, revision):
     kept = world["tmp"] / "kept"
     kept.mkdir(exist_ok=True)
-    written = _registry(kept, world["key"], [_entry(world["folder"], writers=("codex",))], revision=revision)
+    written = _registry(kept, world["key"], [_entry(world["folder"], writers=("codex",))], revision=revision,
+                        current=False)
     world["files"]["last_good_path"].write_bytes(written["snapshot_path"].read_bytes())
 
 
@@ -173,3 +177,16 @@ def test_a_permit_is_void_when_the_same_root_id_is_registered_to_another_folder(
             content_digest=hashlib.sha256(b"client drawing").hexdigest(), request_id="court-root-request")
     fresh = _issue(runtime, suffix="-b")  # a new permit under the new registration is admitted
     assert fresh["container_digest"] != issued["container_digest"]
+
+
+@pytest.mark.parametrize("runtime", [(ROOT_GRANT, ("codex",), True)], indirect=True)
+def test_a_root_the_graph_revoked_is_refused_at_issue_and_at_receipt(runtime):
+    """The files stay signed, pinned and newest; only the graph moved on."""
+    issued = _issue(runtime)
+    _GRAPH["digest"] = "cd" * 32
+    with pytest.raises(MachineTransportError, match="current projection"):
+        runtime["agent"].consume_cde_write_permit(
+            permit=issued["permit"], operation="write_file", path=PATH,
+            content_digest=hashlib.sha256(b"client drawing").hexdigest(), request_id="court-root-request")
+    with pytest.raises(MachineTransportError, match="current projection"):
+        _issue(runtime, suffix="-3")

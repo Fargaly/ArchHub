@@ -71,6 +71,7 @@ _METHODS = frozenset({
     "run_workshop_task",
     "publish_workshop_result",
     "wait_agent",
+    "workspace_roots_state",
 })
 
 
@@ -447,6 +448,20 @@ class CleanCoordinationHost:
 
     def _dispatch_admitted(self, request: SignedCoordinationRequest) -> dict[str, object]:
         self.verify_request(request)
+        from .workspace_roots_catalogue import (
+            ISSUER_IDENTITY,
+            current_registry_statement,
+        )
+        issuer = CoordinationIdentity(*ISSUER_IDENTITY).normalized().key_id
+        if (request.method == "workspace_roots_state") != (request.key_id == issuer):
+            # The permit issuer's key reads the workspace-roots state and nothing
+            # else; no other key reads it. No Work, write or session binding.
+            raise InvalidCell("coordination method is not admitted for this key")
+        if request.method == "workspace_roots_state":
+            with self._changed:
+                return {"ok": True, **current_registry_statement(
+                    self.authority, caller=self._founder,
+                    request_id=request.request_id, parameters=request.parameters)}
         if request.method in {"execute_workshop_task", "run_workshop_task"}:
             from .clean_host_execution import HostOperationFailed, HostOperationUncertain
             message_root = _bounded_text(request.parameters.get("message_root"),

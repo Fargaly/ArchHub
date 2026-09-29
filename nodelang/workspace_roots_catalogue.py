@@ -657,12 +657,143 @@ def read_registered_roots(verifier=None, *, snapshot_path=None, pin_path=None,
                                         document["signature"])):
         raise InvalidCell("the workspace-roots registry does not verify")
     _refuse_rollback(signed, blob, verifier, last_good_path)
+    _require_graph_current(signed)
     roots = {}
     for entry in signed["roots"]:
         if type(entry) is not dict or type(entry.get("id")) is not str or entry["id"] in roots:
             raise InvalidCell("the workspace-roots registry is malformed")
         roots[entry["id"]] = entry
     return roots, pin["fingerprint"]
+
+
+REGISTRY_DIGEST_SCHEMA = "archhub.workspace-roots.registry-digest/v1"
+STATE_PURPOSE = "archhub.workspace-roots-state/v1"
+ISSUER_IDENTITY = ("archhub", "cde-permit-issuer")
+COORDINATION_ENDPOINT = "http://127.0.0.1:8474/coordination"
+_NONCE = re.compile(r"^[0-9a-f]{32}$")
+_STATEMENT_FIELDS = {"purpose", "graph_id", "request_id", "nonce", "revision", "registry_digest"}
+
+
+def registry_digest(body) -> str:
+    """ONE digest schema, used by the graph's owner and by the permit issuer."""
+    return hashlib.sha256(canonical({"schema": REGISTRY_DIGEST_SCHEMA, "body": body})).hexdigest()
+
+
+def current_registry_statement(authority, *, caller, request_id, parameters) -> dict:
+    """The graph owner's answer: revision and registry digest from ONE contained-scope
+    read, bound to the request's id and nonce and signed with the instance's own
+    authority key. Reads only; commits nothing."""
+    if type(parameters) is not dict or set(parameters) != {"nonce"} or not _NONCE.match(
+            str(parameters.get("nonce"))):
+        raise InvalidCell("workspace-roots state takes exactly one fresh nonce")
+    catalogue = find_workspace_root_catalogue(authority, caller=caller)
+    if catalogue is None:
+        revision, roots, pin = authority.store.snapshot().revision, (), None
+    else:
+        revision, roots, pin = read_state(authority, catalogue, caller=caller)
+    statement = {
+        "purpose": STATE_PURPOSE,
+        "graph_id": authority.manifest.graph_id,
+        "request_id": request_id,
+        "nonce": parameters["nonce"],
+        "revision": revision,
+        "registry_digest": registry_digest(snapshot_body(roots, pin)),
+    }
+    signature = authority.key_provider.sign(authority.manifest.key_id,
+                                            authority.manifest.key_version, canonical(statement))
+    return {"statement": statement, "signature": signature}
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalInstance:
+    graph_id: str
+    key_id: str
+    key_version: int
+    key_fingerprint: str
+
+
+def canonical_instance(root=None) -> CanonicalInstance:
+    """The selected generation's public bootstrap facts (no secret, no graph open)."""
+    base = Path(root) if root is not None else (
+        Path(os.environ.get("LOCALAPPDATA") or str(Path.home())) / "ArchHub" / "unified-authority")
+    generation = (base / "CURRENT").read_text(encoding="ascii").strip()
+    manifest = json.loads((base / "generations" / generation / "bootstrap.json").read_text(
+        encoding="utf-8"))
+    if manifest.get("graph_id") != generation:
+        raise InvalidCell("the selected authority generation is inconsistent")
+    return CanonicalInstance(manifest["graph_id"], manifest["key_id"], int(manifest["key_version"]),
+                             manifest["key_fingerprint"])
+
+
+def _default_graph_context():
+    import urllib.request
+
+    from .cell_secret_keys import WindowsDpapiSigningKeyProvider
+    from .runtime_caller_capability import WindowsDpapiCallerKeyStore
+
+    endpoint = os.environ.get("ARCHHUB_COORDINATION_ENDPOINT", "").strip() or COORDINATION_ENDPOINT
+
+    def transport(payload):
+        http = urllib.request.Request(endpoint, data=json.dumps(payload).encode("utf-8"),
+                                      headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(http, timeout=5.0) as response:
+            return json.loads(response.read(65536).decode("utf-8"))
+    return {
+        "transport": transport,
+        "key_store": WindowsDpapiCallerKeyStore(WindowsDpapiCallerKeyStore.default_path()),
+        "provider": WindowsDpapiSigningKeyProvider(WindowsDpapiSigningKeyProvider.default_path()),
+        "instance": canonical_instance(),
+    }
+
+
+# The one seam: where this process reaches the graph's owner. No fallback.
+graph_context = _default_graph_context
+
+
+def verified_graph_state() -> dict:
+    """Ask the canonical instance, with a fresh nonce, for its current registry
+    digest; accept only a statement it signed for exactly this request."""
+    import secrets
+
+    from .clean_coordination_host import CoordinationIdentity, sign_coordination_request
+
+    context = graph_context()
+    instance = context["instance"]
+    nonce = secrets.token_hex(16)
+    request = sign_coordination_request(context["key_store"], CoordinationIdentity(*ISSUER_IDENTITY),
+                                        "workspace_roots_state", {"nonce": nonce})
+    answer = context["transport"](request.to_payload())
+    if type(answer) is not dict or answer.get("ok") is not True:
+        raise InvalidCell("the graph's owner refused the workspace-roots state")
+    statement, signature = answer.get("statement"), answer.get("signature")
+    if (type(statement) is not dict or set(statement) != _STATEMENT_FIELDS
+            or type(signature) is not str
+            or statement["purpose"] != STATE_PURPOSE
+            or statement["graph_id"] != instance.graph_id
+            or statement["request_id"] != request.request_id
+            or statement["nonce"] != nonce
+            or type(statement["revision"]) is not int
+            or type(statement["registry_digest"]) is not str):
+        raise InvalidCell("the workspace-roots state is not this instance's answer to this request")
+    provider = context["provider"]
+    if (provider.key_fingerprint(instance.key_id, instance.key_version) != instance.key_fingerprint
+            or not provider.verify(instance.key_id, instance.key_version, canonical(statement),
+                                   signature)):
+        raise InvalidCell("the workspace-roots state is not signed by the canonical instance")
+    return statement
+
+
+def _require_graph_current(signed):
+    """The signed files must be the graph's CURRENT projection: a root the graph
+    revoked is refused even while stale files still verify. Unavailable = refused."""
+    try:
+        statement = verified_graph_state()
+    except InvalidCell as exc:
+        raise InvalidCell("the graph's current workspace-roots state is unavailable: %s" % exc) from exc
+    except Exception as exc:  # noqa: BLE001 - doubt is a refusal
+        raise InvalidCell("the graph's current workspace-roots state is unavailable") from exc
+    if statement["registry_digest"] != registry_digest(signed):
+        raise InvalidCell("the workspace-roots registry is not the graph's current projection")
 
 
 def default_last_good_path() -> Path:
@@ -700,6 +831,15 @@ def _refuse_rollback(signed, blob, verifier, last_good_path=None):
 
 def root_bound_admission(path, *, runtime=None, verifier=None, snapshot_path=None,
                          pin_path=None, last_good_path=None):
+    """(container id, registration digest); see root_bound_registration."""
+    container_id, digest, _entry = root_bound_registration(
+        path, runtime=runtime, verifier=verifier, snapshot_path=snapshot_path,
+        pin_path=pin_path, last_good_path=last_good_path)
+    return container_id, digest
+
+
+def root_bound_registration(path, *, runtime=None, verifier=None, snapshot_path=None,
+                            pin_path=None, last_good_path=None):
     """("workspace-root:<id>", digest) for a write path inside a registered root.
 
     path is "workspace-roots/<id>/<path inside the root>". The root must be in the
@@ -722,7 +862,7 @@ def root_bound_admission(path, *, runtime=None, verifier=None, snapshot_path=Non
     if runtime is not None and runtime not in (entry.get("writers") or ()):
         raise InvalidCell("%s is not a writer of workspace root %s" % (runtime, parts[1]))
     digest = hashlib.sha256(canonical({"root": entry, "key": pin})).hexdigest()
-    return "workspace-root:" + parts[1], digest
+    return "workspace-root:" + parts[1], digest, dict(entry)
 
 
 def roots_view(revision, roots, pin, status) -> dict:
@@ -750,7 +890,11 @@ __all__ = [
     "install_workspace_root_catalogue",
     "owner_change",
     "pin_signing_key",
+    "current_registry_statement",
     "read_registered_roots",
+    "registry_digest",
+    "root_bound_registration",
+    "verified_graph_state",
     "read_state",
     "register_root",
     "root_bound_admission",

@@ -33,7 +33,41 @@ class _Store:
         return False
 
 
-def _registry(tmp_path, key, entries, *, pin=None, signer=None, revision=3, target=None):
+# The graph's current projection in these courts: the newest registry a court
+# published (current=True). test_workspace_roots_graph_current.py proves the
+# real seam against a clean coordination host.
+_GRAPH = {"digest": None}
+
+
+# The registry digest schema, stated here independently of the module so the
+# court fails if the issuer's and the owner's schemas ever drift apart.
+DIGEST_SCHEMA = "archhub.workspace-roots.registry-digest/v1"
+
+
+def graph_digest(body):
+    return hashlib.sha256(roots.canonical({"schema": DIGEST_SCHEMA, "body": body})).hexdigest()
+
+
+def graph_state():
+    """The verified statement a canonical instance would return (seam stand-in)."""
+    if _GRAPH["digest"] is None:
+        raise OSError("no graph answered")
+    return {"purpose": "archhub.workspace-roots-state/v1", "graph_id": "court", "request_id": "r",
+            "nonce": "0" * 32, "revision": 1, "registry_digest": _GRAPH["digest"]}
+
+
+def _no_live_graph():
+    raise AssertionError("a court reached for the live coordination service")
+
+
+@pytest.fixture(autouse=True)
+def _graph_is_the_newest_registry(monkeypatch):
+    monkeypatch.setattr(roots, "verified_graph_state", graph_state, raising=False)
+    monkeypatch.setattr(roots, "graph_context", _no_live_graph, raising=False)
+
+
+def _registry(tmp_path, key, entries, *, pin=None, signer=None, revision=3, target=None,
+              current=True):
     body = {"format": roots.SNAPSHOT_FORMAT, "format_version": roots.SNAPSHOT_VERSION,
             "key_id": roots.KEY_ID, "key_version": 1,
             "key_fingerprint": pin or key.fingerprint(), "graph_revision": revision, "roots": entries}
@@ -42,6 +76,8 @@ def _registry(tmp_path, key, entries, *, pin=None, signer=None, revision=3, targ
              "last_good_path": tmp_path / "last-good.json"}
     files["snapshot_path"].write_bytes(roots.canonical(
         {**body, "signature": (signer or key).sign(roots.canonical(body))}))
+    if current:
+        _GRAPH["digest"] = graph_digest(body)
     files["pin_path"].write_bytes(roots.canonical(
         {"format": roots.PIN_FORMAT, "key_id": roots.KEY_ID, "fingerprint": pin or key.fingerprint()}))
     return files
@@ -156,7 +192,7 @@ def _last_good(world, revision, entries=None, signer=None):
     scratch = world["tmp"] / ("kept-%d" % revision)
     scratch.mkdir(exist_ok=True)
     written = _registry(scratch, world["key"], entries if entries is not None else [_entry(world["folder"])],
-                        revision=revision, signer=signer)
+                        revision=revision, signer=signer, current=False)
     world["files"]["last_good_path"].write_bytes(written["snapshot_path"].read_bytes())
 
 
@@ -177,5 +213,21 @@ def test_a_snapshot_at_or_after_the_last_good_copy_is_admitted(world):
 def test_a_forged_last_good_copy_admits_nothing(world):
     _last_good(world, 1, signer=_Key())
     with pytest.raises(InvalidCell, match="last-good copy does not verify"):
+        roots.root_bound_admission("workspace-roots/client-a/a.md", runtime="claude",
+                                   verifier=_Store(world["key"]), **world["files"])
+
+
+def test_a_registry_that_is_not_the_graphs_current_projection_admits_nothing(world):
+    _GRAPH["digest"] = "ab" * 32  # the graph moved on (e.g. revoked the root); files stale
+    with pytest.raises(InvalidCell, match="not the graph's current projection"):
+        roots.root_bound_admission("workspace-roots/client-a/a.md", runtime="claude",
+                                   verifier=_Store(world["key"]), **world["files"])
+
+
+def test_an_unavailable_graph_admits_nothing(world, monkeypatch):
+    def unavailable():
+        raise OSError("connection refused")
+    monkeypatch.setattr(roots, "verified_graph_state", unavailable)
+    with pytest.raises(InvalidCell, match="unavailable"):
         roots.root_bound_admission("workspace-roots/client-a/a.md", runtime="claude",
                                    verifier=_Store(world["key"]), **world["files"])

@@ -703,7 +703,10 @@ def test_an_expired_request_cannot_be_continued(client, monkeypatch, clock):
     path = _continue_path(_callback(client, pending))
     clock["offset"] = oauth_mcp.PENDING_TTL + 1
     r = client.get(path)
-    assert r.status_code == 400 and "location" not in r.headers
+    # No code; the person is sent back to the app with the request's own state.
+    assert r.status_code == 302 and "code=" not in r.headers["location"], (r.status_code, r.headers.get("location"))
+    query = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(r.headers["location"]).query))
+    assert r.headers["location"].startswith(REDIRECT) and query["error"] == "access_denied" and query["state"] == "st-1"
 
 
 def test_an_expired_code_is_refused(client, monkeypatch, clock):
@@ -1330,3 +1333,22 @@ def test_the_lane_key_differs_from_any_other_labelled_use_of_the_secret(monkeypa
     forged = _browser()
     forged.cookies.set("__Host-archhub_mcp_founder", body + "." + hm.new(other, body.encode(), hl.sha256).hexdigest())
     assert not _in_lane(forged, founders)
+
+
+# -- v3.7 -------------------------------------------------------------------------------------
+def test_a_legacy_lane_cookie_without_an_epoch_counts_until_a_revoke(monkeypatch):
+    """Cookies minted before v3.6 carry no 'n'; they are epoch 0: honoured until the
+    first revoke_founder_lanes, refused after."""
+    import base64 as b64
+    import hashlib as hl
+    import hmac as hm
+    import oauth_mcp
+    client, founders = _lane_browser(monkeypatch)
+    body = b64.urlsafe_b64encode(json.dumps({"e": FOUNDER, "x": int(time.time()) + 3600},
+                                            separators=(",", ":")).encode()).decode().rstrip("=")
+    legacy = _browser()
+    legacy.cookies.set("__Host-archhub_mcp_founder",
+                       body + "." + hm.new(oauth_mcp._lane_key(), body.encode(), hl.sha256).hexdigest())
+    assert _in_lane(legacy, founders), "a legacy cookie is epoch 0"
+    oauth_mcp.revoke_founder_lanes(FOUNDER)
+    assert not _in_lane(legacy, founders), "the first revoke ends it"

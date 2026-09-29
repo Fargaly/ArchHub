@@ -502,7 +502,7 @@ def founder_lane(request: Request) -> str:
     if expires < int(time.time()) or email not in config.founder_emails():
         return ''
     if epoch != _lane_epoch(email):
-        return ''                      # revoke_founder_lanes ended every earlier cookie''
+        return ''                      # revoke_founder_lanes ended every earlier cookie
     user = db.get_user_by_email(email)
     if user is None or user.get('suspended_at'):
         return ''
@@ -672,6 +672,10 @@ def finish_authorization(continue_secret: str, request: Request) -> tuple:
                           (_hash(continue_secret or ''),)).fetchone() if continue_secret else None
         if row is None:
             raise ValueError('unknown or already used sign-in')
+        if int(row['expires_at']) < int(time.time()):
+            # It expired between Google and now: leave the same tombstone an expiry
+            # sweep would, so the person is sent back to their app, not left hanging.
+            _tombstone(con, row)
         # One presentation only: whoever presents it, the request is spent.
         taken = con.execute('DELETE FROM oauth_pending WHERE id = ?', (row['id'],)).rowcount
     browser = _this_browser(request, row['id'])

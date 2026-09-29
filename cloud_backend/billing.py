@@ -295,6 +295,50 @@ def _tier_from_subscription(obj: dict) -> Optional[str]:
     return None
 
 
+_STRIPE_VIEW: dict = {}
+_PER_MONTH = {"day": 365 / 12, "week": 52 / 12, "month": 1.0, "year": 1 / 12}
+
+
+def _monthly_minor(item) -> int:
+    """One subscription item's recurring amount per month, in minor units."""
+    price = item["price"]
+    recurring = price.get("recurring") or {}
+    per = _PER_MONTH.get(recurring.get("interval"), 0.0) / max(1, int(recurring.get("interval_count") or 1))
+    return round(int(price.get("unit_amount") or 0) * int(item.get("quantity") or 1) * per)
+
+
+def founder_stripe_view() -> dict:
+    """Live Stripe for the founder cockpit: active subscriptions, MRR from their
+    real prices, recent invoices. Cached 60 s; the key never leaves here."""
+    if not _ensure_stripe():
+        return {"available": False, "reason": "Stripe is not configured on this server"}
+    cached = _STRIPE_VIEW.get("view")
+    if cached and time.time() - cached[0] < 60:
+        return cached[1]
+    try:
+        subscriptions = stripe.Subscription.list(status="active", limit=100,
+                                                 expand=["data.items.data.price"])
+        invoices = stripe.Invoice.list(limit=20)
+    except Exception as exc:
+        return {"available": False, "reason": "Stripe did not answer: %s" % type(exc).__name__}
+    mrr: dict = {}
+    for sub in subscriptions["data"]:
+        currency = str(sub.get("currency") or "usd")
+        for item in sub["items"]["data"]:
+            mrr[currency] = mrr.get(currency, 0) + _monthly_minor(item)
+    view = {
+        "available": True,
+        "active_subscriptions": len(subscriptions["data"]),
+        "more_than_listed": bool(subscriptions.get("has_more")),
+        "mrr_minor": mrr,
+        "invoices": [{key: inv.get(key) for key in
+                      ("id", "customer_email", "amount_paid", "amount_due", "currency",
+                       "status", "created")} for inv in invoices["data"]],
+    }
+    _STRIPE_VIEW["view"] = (time.time(), view)
+    return view
+
+
 def handle_webhook(*, payload: bytes, signature: str) -> dict:
     """Verify + dispatch a Stripe webhook. Returns a small status dict."""
     if not _ensure_stripe():
@@ -469,9 +513,24 @@ def handle_webhook(*, payload: bytes, signature: str) -> dict:
         return {"ok": True, "handled": etype, "user_id": uid}
 
     if etype == "invoice.payment_failed":
-        # Don't downgrade immediately — Stripe retries. Just log.
+        # Don't downgrade immediately — Stripe retries. Record it: the founder
+        # cockpit shows every failure (it used to be one log line).
         uid = _user_id_from_event(event)
         print(f"[billing] payment_failed for user {uid}", flush=True)
+        db.record_payment_event(
+            kind="payment_failed", user_id=uid, stripe_object=obj.get("id"),
+            amount=obj.get("amount_due"), currency=obj.get("currency"),
+            detail="attempt %s" % obj.get("attempt_count"))
+        return {"ok": True, "handled": etype, "user_id": uid}
+
+    if etype == "charge.refunded":
+        # A refund (from the cockpit or the Stripe dashboard) is recorded so
+        # the cockpit can show it.
+        uid = _user_id_from_event(event)
+        db.record_payment_event(
+            kind="refund", user_id=uid, stripe_object=obj.get("id"),
+            amount=obj.get("amount_refunded"), currency=obj.get("currency"),
+            detail=str(obj.get("payment_intent") or ""))
         return {"ok": True, "handled": etype, "user_id": uid}
 
     return {"ok": True, "ignored": etype}

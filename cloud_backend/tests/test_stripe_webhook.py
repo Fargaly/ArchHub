@@ -138,9 +138,11 @@ class TestSignatureVerification:
 class TestUnknownEventType:
     def test_unknown_event_returns_ignored(self):
         import billing
-        evt = _event("charge.refunded")
+        # charge.refunded is handled since cockpit P4a (recorded for the founder);
+        # an event type the billing code does not handle is still ignored.
+        evt = _event("customer.created")
         with patch.object(billing, "_ensure_stripe", return_value=True), \
              patch("billing.stripe.Webhook.construct_event", return_value=evt):
             r = billing.handle_webhook(payload=b"{}", signature="sig")
         assert r["ok"] is True
-        assert r["ignored"] == "charge.refunded"
+        assert r["ignored"] == "customer.created"

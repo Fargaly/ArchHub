@@ -598,6 +598,19 @@ CREATE TABLE IF NOT EXISTS devices (
     PRIMARY KEY (user_id, device_id)
 );
 
+-- Stripe events the founder must see (cockpit P4): failed payments and
+-- refunds, as the webhook reported them. Amounts in the currency's minor unit.
+CREATE TABLE IF NOT EXISTS payment_events (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts            INTEGER NOT NULL,
+    kind          TEXT NOT NULL,          -- payment_failed | refund
+    user_id       TEXT,
+    stripe_object TEXT,
+    amount        INTEGER,
+    currency      TEXT,
+    detail        TEXT NOT NULL DEFAULT ''
+);
+
 -- Founder cockpit errors, kept across restarts (the in-memory ring was lost
 -- on every deploy). Bounded like the ring: the newest 100 rows are kept.
 CREATE TABLE IF NOT EXISTS cockpit_error_log (
@@ -3078,6 +3091,24 @@ def log_founder_action(*, actor: str, command: str, action: str,
              (target or None), result[:2000], 1 if ok else 0),
         )
         return int(cur.lastrowid)
+
+
+def record_payment_event(*, kind: str, user_id: Optional[str], stripe_object: Optional[str],
+                         amount: Optional[int], currency: Optional[str], detail: str = "") -> None:
+    with connect() as con:
+        con.execute("INSERT INTO payment_events (ts, kind, user_id, stripe_object, amount, "
+                    "currency, detail) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (int(time.time()), kind, user_id, stripe_object,
+                     int(amount) if amount is not None else None, currency, detail[:500]))
+
+
+def recent_payment_events(kind: str, limit: int = 50) -> list[dict]:
+    with connect() as con:
+        rows = con.execute(
+            "SELECT e.ts, e.kind, u.email, e.stripe_object, e.amount, e.currency, e.detail "
+            "FROM payment_events e LEFT JOIN users u ON u.id = e.user_id WHERE e.kind = ? "
+            "ORDER BY e.id DESC LIMIT ?", (kind, int(limit))).fetchall()
+    return [dict(row) for row in rows]
 
 
 def log_cockpit_error(*, at: str, kind: str, message: str, status: Optional[int]) -> None:

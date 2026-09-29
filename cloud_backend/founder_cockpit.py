@@ -1052,6 +1052,16 @@ def api_device_disconnect(user_key: str, device_id: str,
     return JSONResponse({"ok": True, **done})
 
 
+@router.get("/api/stripe")
+def api_stripe(_founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Payments: live Stripe (subscriptions, MRR from real prices, invoices) and
+    the failed payments and refunds the webhook recorded."""
+    import billing
+    return JSONResponse({"live": billing.founder_stripe_view(),
+                         "failed_payments": db.recent_payment_events("payment_failed"),
+                         "refunds": db.recent_payment_events("refund")})
+
+
 @router.get("/api/relay")
 def api_relay(_founder: dict = Depends(require_founder)) -> JSONResponse:
     """The cloud relay: its queue in each status, the oldest wait, whether the

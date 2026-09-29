@@ -201,7 +201,7 @@ const acDetected = () => ((window.ARCHHUB_LIVE && window.ARCHHUB_LIVE.connectors
   .map(c => ({ name: String(c.name), found: c.state === 'connected' || c.state === 'listening', state: String(c.state || 'unknown') }));
 
 // The desktop signs in through the cloud: the app opens the browser on the
-// cloud's own sign-in (Google, or a link mailed to the address) and holds a
+// cloud's own Google sign-in (the only way to sign in) and holds a
 // loopback for the one-time code. This dialog only starts it and polls; the
 // email it shows is the one the cloud named, never one typed here.
 function CloudSignIn({ email, onSignedIn }) {

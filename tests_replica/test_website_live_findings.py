@@ -59,14 +59,14 @@ from nodelang.universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell  
 REPO = Path(__file__).resolve().parents[1]
 ORIGIN = "https://archhub.io"
 OFFER = dict(BETA_OFFER)
-# The GitHub release build-20260916-2105-b914892 as its release notes and the
+# The GitHub release build-20260929-1313-940863f as its release notes and the
 # asset digest publish it, pinned here, not borrowed from the code under court.
-REVISION = "build-20260916-2105-b914892"
+REVISION = "build-20260929-1313-940863f"
 DOWNLOAD = (
     "https://github.com/Fargaly/ArchHub/releases/download/"
-    "build-20260916-2105-b914892/ArchHub-Setup-0.exe"
+    "build-20260929-1313-940863f/ArchHub-Setup-0.exe"
 )
-DOWNLOAD_SHA256 = "756863d5e6ba3eed302fbda20daea12fdb4ab3d48380ac1a277d86d2714e2daa"
+DOWNLOAD_SHA256 = "eba85911eb56c82fc8cbfb51bc74e622cda31407e4a6fa95f2f3162896130d39"
 ARTIFACT = META_ROOT + ":artifact:" + REVISION
 REPOSITORY = "https://github.com/Fargaly/ArchHub"
 # The old Astro site (12.PRODUCTION/web/src/pages and its docs collection),
@@ -743,7 +743,7 @@ SUBPAGE_COPY = {
         "No public network yet",
     )),
     "/website/signin": ("Sign in from the desktop app", (
-        "Email link or Google", "An account, not a device",
+        "Continue with Google", "An account, not a device",
         "No password on this site",
     )),
 }

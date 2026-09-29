@@ -5206,6 +5206,7 @@ class ApplicationServer:
                  pipeline_effect_engines=None,
                  enable_machine_transport=False,
                  enable_universal_cloud_gateway=False,
+                 enable_brain_cloud_sync=False,
                  cloud_resource_origin=None,
                  cloud_tls_certificate_file=None,
                  cloud_tls_private_key_file=None,
@@ -5729,6 +5730,12 @@ class ApplicationServer:
             # The application's own Brain answers from this graph (app_brain).
             from . import app_brain
             app_brain.bind(universal_store, universal_registry)
+            # Signed in, the application's Brain keeps in step with the cloud:
+            # its personal lake and the Community Brain (brain_cloud_runner).
+            # Only the application itself turns this on, never a court's server.
+            if enable_brain_cloud_sync:
+                from . import brain_cloud_runner
+                brain_cloud_runner.start()
         # Engine out/in sockets placed before 2026-09-24 carry a read-only
         # role that refuses every new wire. Every boot releases them; once
         # none is left this reads the application root and commits nothing.
@@ -18248,6 +18255,8 @@ class ApplicationServer:
         physical copy and owner-prefix verification within the recovery budget.
         """
         from . import app_brain
+        from . import brain_cloud_runner
+        brain_cloud_runner.stop()
         app_brain.unbind(getattr(self, 'universal_store', None))
         if recovery_directory is not None:
             from .application_recovery_close import preflight_recovery_close

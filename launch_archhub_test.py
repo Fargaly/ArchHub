@@ -456,6 +456,7 @@ def _boot_unsampled():
         universal_state_path=state_path,
         pipeline_effect_engines=PIPELINE_ENGINES,
         enable_machine_transport=True,
+        enable_brain_cloud_sync=True,
         machine_descriptor_path=descriptor_path,
         machine_key_provider=machine_key_provider,
         project_work_execution_broker=ProjectWorkExecutionBroker(artifact_root),

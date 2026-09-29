@@ -10,6 +10,7 @@ the record instead of being argued a second time.
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 
 from .cell_brain_secrets import assert_not_a_secret
@@ -93,7 +94,10 @@ def subscriptions(snapshot):
 
 
 def _incoming_root(peer_root, claim):
-    return "%s:incoming:%s:%d" % (COMMUNITY_ROOT, peer_root, abs(hash(claim)) % 10**12)
+    # A digest, not hash(): str hashes are salted per process, so the same claim
+    # arriving after a restart would not be recognised and would land twice.
+    return "%s:incoming:%s:%s" % (COMMUNITY_ROOT, peer_root,
+                                  hashlib.sha256(claim.encode("utf-8")).hexdigest()[:24])
 
 
 def receive(store, *, peer_root, claim):

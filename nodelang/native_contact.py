@@ -137,9 +137,16 @@ def bind_native_contact(owner,browser,body,*,browser_guard):
         if owner.universal_store.revision!=body['revision']:raise AuthorizationDenied('Contact selection revision changed')
         if node is None:
             from .universal_application import instantiate_universal_primitive
-            node,_=instantiate_universal_primitive(owner.universal_store,registry,x=240,y=200,
+            from .universal_pipeline import free_scope_slot
+            # A routing record is Workshop content, never a card on the user's
+            # canvas (SPEC 6 Use layer: no raw Cells or JSON). It is placed in
+            # the Workshop's own scope, in the first free slot there.
+            home=registry.workshop_workbench_root
+            x,y=free_scope_slot(owner.universal_store.snapshot(),registry,home)
+            node,_=instantiate_universal_primitive(owner.universal_store,registry,x=x,y=y,
                 title='Contact: '+str(target.get('title') or target['app'])[:150],atom=encoded,
-                mutation_route='/api/universal/native-contact',authentication_context=browser.context)
+                mutation_route='/api/universal/native-contact',authentication_context=browser.context,
+                placement_scope_root=home)
         else:
             prior=_property(owner,node,browser.context)
             if prior is None:

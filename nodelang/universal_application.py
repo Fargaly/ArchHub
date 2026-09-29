@@ -9939,8 +9939,8 @@ def execute_universal_baboom_utterance(
         description="Founder-assigned through BABOOM.\\n\\n" + task,
         priority=50,
         external_key=external_key,
-        x=0.0,
-        y=0.0,
+        # No coordinate: Work takes the first free slot in its Workbench
+        # home. A constant (0, 0) is how 29 Work cards came to share a point.
         compact_references=True,
         select_created=False,
         authentication_context=authentication_context,
@@ -30711,6 +30711,13 @@ def begin_universal_runtime_agent_session(
         resolver_state=authority_snapshot,
     )
 
+    # A session is not work on the user's canvas: it lives in Models &
+    # Agents and in the agent registry the Workshop sidebar reads, placed
+    # in the first free slot there instead of on one fixed point.
+    from .universal_pipeline import free_scope_slot
+    session_x, session_y = free_scope_slot(
+        snapshot, registry, registry.map.domains["models"]
+    )
     property_refs = []
     property_cells = []
     for key, value, read_only in (
@@ -30720,8 +30727,8 @@ def begin_universal_runtime_agent_session(
         ("agent body catalog entry", entry.root_id, True),
         ("credential mode", entry.credential_mode, True),
         ("session fingerprint", external_session_fingerprint, True),
-        ("position_x", 1080.0, False),
-        ("position_y", 180.0, False),
+        ("position_x", session_x, False),
+        ("position_y", session_y, False),
         (
             "color",
             _text(
@@ -30755,27 +30762,17 @@ def begin_universal_runtime_agent_session(
         evidence_roots=(registry.standard_library.lifecycle_protocol.states["wip"],
                         identity.subject_root, session_root),
     )
-    projection_grant = prepare_authority_relationship_grant(
-        snapshot, authority.identity_protocol, relationship_broker,
-        relationship_broker.mint_from_trusted_administrator(administrator_root),
-        relationship_id=_projection_grant_root(identity.subject_root, session_root),
-        source_root=authority.resource_reader_principal_root,
-        target_root=identity.subject_root, kind="delegation",
-        tenant_root=authority.tenant_root, scope_root=session_root,
-        action_roots=(read_root,), administrator_root=administrator_root,
-        reason="subject receives this resource through the authorized view",
-        evidence_roots=(view_session.visibility_root,),
-    )
-    grants = (audience_grant, projection_grant)
+    # No projection grant: the session is not on the view's top canvas, and
+    # a grant naming the visibility index without a visible row is drift.
+    grants = (audience_grant,)
     requested = (
         (
+            # Property rows only, the shape of a card placed inside a scope:
+            # the canvas indexes every property, never this session.
             registry.canvas_root,
-            (
-                (registry.roles["member"], session_root),
-                *(
-                    (registry.roles["property"], reference.relation_root)
-                    for reference in property_refs
-                ),
+            tuple(
+                (registry.roles["property"], reference.relation_root)
+                for reference in property_refs
             ),
         ),
         (
@@ -30784,10 +30781,6 @@ def begin_universal_runtime_agent_session(
                 (registry.roles["scope"], reference.relation_root)
                 for reference in property_refs
             ),
-        ),
-        (
-            view_session.visibility_root,
-            ((registry.roles["visible"], session_root),),
         ),
         (
             registry.application_root,
@@ -30806,7 +30799,6 @@ def begin_universal_runtime_agent_session(
         (authority.identity_protocol.root_id, tuple(
             (authority.identity_protocol.role("relationship-member"), grant.root_id)
             for grant in grants)),
-        (view_session.root_id, ((registry.roles["relation"], projection_grant.root_id),)),
     )
     patches = tuple(
         prepare_append_relation_members(
@@ -30844,8 +30836,8 @@ def create_universal_governed_work(
     registry: UniversalApplicationRegistry,
     *,
     title: str,
-    x: float,
-    y: float,
+    x: float | None = None,
+    y: float | None = None,
     description: str = "",
     priority: int = 0,
     external_key: str = "unset",
@@ -30894,6 +30886,17 @@ def create_universal_governed_work(
     definition_root = registry.standard_library.governed_domains.definitions[
         "governed-work"
     ].definition_root
+    if x is None or y is None:
+        # Work is drawn in its home, the Workshop Workbench, beside every
+        # other Work; it takes the first free slot clear of both instead of
+        # piling up at (0, 0).
+        from .universal_pipeline import free_scope_slot, scope_card_bounds
+        x, y = free_scope_slot(
+            snapshot, registry, registry.workshop_workbench_root,
+            occupied=tuple(scope_card_bounds(
+                snapshot, registry, registry.governed_work_registry_root
+            ).values()),
+        )
     instance_root, _ = instantiate_universal_definition(
         store,
         registry,
@@ -31261,8 +31264,6 @@ def sync_universal_grand_map_work(
                     "status": item["status"],
                 },
             },
-            x=1040.0 + ((offset % 3) * 420.0),
-            y=520.0 + ((offset // 3) * 280.0),
             compact_references=True,
             select_created=False,
             authentication_context=authentication_context,

@@ -7484,8 +7484,8 @@ class ApplicationServer:
                                     structured_references=body.get(
                                         'structured_references'
                                     ),
-                                    x=float(body.get('x', 0.0)),
-                                    y=float(body.get('y', 0.0)),
+                                    x=float(body['x']) if body.get('x') is not None else None,
+                                    y=float(body['y']) if body.get('y') is not None else None,
                                     authentication_context=binding.context,
                                 )
                             )
@@ -15606,8 +15606,8 @@ class ApplicationServer:
                         structured_references=body.get(
                             "structured_references"
                         ),
-                        x=float(body.get("x", 0.0)),
-                        y=float(body.get("y", 0.0)),
+                        x=(float(body["x"]) if body.get("x") is not None else None),
+                        y=(float(body["y"]) if body.get("y") is not None else None),
                         compact_references=bool(
                             body.get("compact_references", False)
                         ),

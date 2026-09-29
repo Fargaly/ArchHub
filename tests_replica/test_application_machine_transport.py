@@ -385,6 +385,39 @@ def test_governed_runtime_handoff_requires_exact_completed_work_and_generation(
         server.close(preserve_browser_session=True)
 
 
+def test_long_lived_owner_can_handoff_without_expiring_its_history(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta
+    import nodelang.cell_attestations as attestations
+    elapsed = [0]
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.now(tz) + timedelta(seconds=elapsed[0])
+    monkeypatch.setattr(attestations, "datetime", Clock)
+    descriptor = tmp_path / "aged-owner.json"
+    provider = MemorySigningKeyProvider("archhub.local.universal-runtime-pipe", b"a" * 32)
+    server = ApplicationServer(enable_machine_transport=True,
+        machine_descriptor_path=descriptor, machine_key_provider=provider,
+        universal_state_path=tmp_path / "aged-owner.sqlite3",
+        universal_workspace_root=tmp_path,
+        runtime_compliance_runner=_green_runtime_compliance).start()
+    client = UniversalRuntimeClient(descriptor, provider)
+    try:
+        backend = client.runtime_backend_generation()
+        elapsed[0] = 1800
+        assert client.runtime_backend_generation() == backend
+        assert server._prove_runtime_backend_state("active") == backend
+        work, _session = _complete_runtime_handoff_work(server, client, tmp_path, backend)
+        assert client.prepare_runtime_handoff(work, backend)["phase"] == "draining"
+        elapsed[0] += 1800
+        assert server._prove_runtime_backend_state("draining") == backend
+        assert client.finalize_runtime_handoff(work, backend)["phase"] == "released"
+        with pytest.raises(Exception, match="not active|does not match"):
+            server.prove_runtime_backend_generation()
+    finally:
+        server.close(preserve_browser_session=True)
+
+
 def test_governed_runtime_handoff_court(tmp_path):
     """One exact selector for the pre-multi-selector live court authority."""
     test_governed_runtime_handoff_signals_only_after_response_delivery()
@@ -1226,54 +1259,7 @@ def test_concurrent_machine_enrollment_mints_one_graph_session():
         server.close()
 
 
-class _RecordedModelBroker:
-    """A physical-boundary double; it never launches a provider process."""
-
-    def __init__(self) -> None:
-        self.calls: list[dict[str, str]] = []
-
-    def execute(self, *, provider, location, model, data_class, task):
-        self.calls.append({
-            "provider": provider,
-            "location": location,
-            "model": model,
-            "data_class": data_class,
-            "task": task,
-        })
-        output = (
-            b'{"summary":"Review the bounded Workshop evidence.",'
-            b'"next_actions":["Request review before an effect."],'
-            b'"risks":["Unapproved action is denied."],"uncertainty":0.2}'
-        )
-        return ModelExecutionResult(
-            "succeeded",
-            hashlib.sha256(output).hexdigest(),
-            len(output),
-            "",
-            {
-                "summary": "Review the bounded Workshop evidence.",
-                "next_actions": ["Request review before an effect."],
-                "risks": ["Unapproved action is denied."],
-                "uncertainty": 0.2,
-            },
-        )
-
-    def model_provider_readiness(self):
-        return {
-            provider: {
-                "location": location,
-                "state": "test-ready",
-                "evidence": "test host observation",
-                "execution_authority": "requires graph request, approval, and one-use grant",
-            }
-            for provider, location in (
-                ("gpt", "local-cli:codex"),
-                ("claude", "local-cli:claude"),
-                ("gemini", "local-cli:gemini"),
-                ("openrouter", "network:openrouter"),
-                ("local", "local-http:ollama"),
-            )
-        }
+from tests_replica.recorded_model_broker import _RecordedModelBroker
 
 
 def test_machine_work_claim_fails_closed_on_red_runtime_compliance(tmp_path):
@@ -2614,7 +2600,77 @@ def test_universal_http_route_authorization_is_cached_per_revision(
         server.close()
 
 
-def test_baboom_context_does_not_wait_for_mutation_lock(tmp_path):
+def test_route_cache_publication_does_not_hold_cache_while_waiting_for_graph(monkeypatch):
+    """Reproduce the real GET/store versus POST/cache inversion without a hang."""
+    server = ApplicationServer()
+    authorized, proceed, reading_revision = (threading.Event() for _ in range(3))
+    outcomes, errors = [], []
+    store = server.universal_store
+    original_authorize = application_server_module.require_authorization
+    original_revision = type(store).revision
+    worker = None
+
+    def admitted(*args, **kwargs):
+        result = original_authorize(*args, **kwargs)
+        if threading.current_thread() is worker:
+            authorized.set()
+            if not proceed.wait(3):
+                raise AssertionError("graph-holder did not release route admission")
+        return result
+
+    def revision(instance):
+        if instance is store and threading.current_thread() is worker:
+            reading_revision.set()
+        return original_revision.fget(instance)
+
+    context = server.universal_registry.authorization.session.context()
+    route = "/api/universal/browser-handoff"
+
+    def publish_route():
+        try:
+            outcomes.append(server.require_universal_http_route(
+                "GET", route, authentication_context=context, revalidate=True))
+        except BaseException as exc:
+            errors.append(exc)
+
+    monkeypatch.setattr(application_server_module, "require_authorization", admitted)
+    monkeypatch.setattr(type(store), "revision", property(revision))
+    worker = threading.Thread(target=publish_route, daemon=True)
+    try:
+        worker.start()
+        assert authorized.wait(3), "route did not reach actual authorization"
+        with store.stable_snapshot() as snapshot:
+            reading_revision.clear()
+            proceed.set()
+            assert reading_revision.wait(3), "publisher did not attempt graph revision read"
+            # The publisher is now blocked on our real graph mutex. An ordinary
+            # reader must still be able to acquire the real route-cache mutex.
+            acquired = server._route_authorization_cache_lock.acquire(timeout=1)
+            try:
+                assert acquired, "route publisher holds cache while waiting for graph"
+                assert store.revision == snapshot.revision
+            finally:
+                if acquired:
+                    server._route_authorization_cache_lock.release()
+        worker.join(3)
+        assert not worker.is_alive() and not errors
+        assert len(outcomes) == 1
+        key = (store.revision, "GET", route, id(context))
+        assert server._route_authorization_cache[key] == outcomes[0]
+    finally:
+        proceed.set()
+        worker.join(3)
+        # Restore injected seams before the actual owner shutdown.
+        monkeypatch.setattr(type(store), "revision", original_revision)
+        monkeypatch.setattr(application_server_module, "require_authorization", original_authorize)
+        server.close()
+
+
+def test_baboom_context_does_not_wait_for_mutation_lock(tmp_path, monkeypatch):
+    # External machine probes are not part of this isolated route contract.
+    monkeypatch.setattr(ApplicationServer, "_brain_state", lambda self: {"ok": True, "facts": 0})
+    monkeypatch.setattr(ApplicationServer, "_host_rows", lambda self: [])
+    monkeypatch.setattr(ApplicationServer, "_staged_update", lambda self: {})
     descriptor_path = tmp_path / "baboom-context-runtime.json"
     provider = MemorySigningKeyProvider(
         "archhub.local.universal-runtime-pipe", b"b" * 32
@@ -2731,7 +2787,9 @@ def test_runtime_handoff_readiness_is_revision_bound_and_content_free(tmp_path):
         server.close()
 
 
-def test_baboom_presence_route_is_a_graph_directive_without_work_content(tmp_path):
+def test_baboom_presence_route_is_a_graph_directive_without_work_content(tmp_path, monkeypatch):
+    monkeypatch.setattr(ApplicationServer, "_host_rows", lambda self: [])
+    monkeypatch.setattr(ApplicationServer, "_staged_update", lambda self: {})
     descriptor_path = tmp_path / "baboom-presence-runtime.json"
     provider = MemorySigningKeyProvider(
         "archhub.local.universal-runtime-pipe", b"p" * 32
@@ -2791,7 +2849,9 @@ def test_baboom_presence_route_is_a_graph_directive_without_work_content(tmp_pat
         server.close()
 
 
-def test_baboom_native_frame_keeps_host_context_and_directive_on_one_revision(tmp_path):
+def test_baboom_native_frame_keeps_host_context_and_directive_on_one_revision(tmp_path, monkeypatch):
+    monkeypatch.setattr(ApplicationServer, "_host_rows", lambda self: [])
+    monkeypatch.setattr(ApplicationServer, "_staged_update", lambda self: {})
     descriptor_path = tmp_path / "baboom-native-frame-runtime.json"
     provider = MemorySigningKeyProvider(
         "archhub.local.universal-runtime-pipe", b"f" * 32
@@ -4516,6 +4576,15 @@ def test_baboom_execution_can_draft_one_non_executing_plan_for_its_exact_claim(t
             device_credential_provider=provider_for,
         )
         assert enrolled["agent_body"] == "app:agent-body:baboom"
+        server.dispatch_universal_machine_route({
+            "method": "POST",
+            "path": "/api/universal/workshop-assignment",
+            "body": {
+                "assignment_id": "app:workshop-assignment:claimed-plan-court",
+                "work": created["created_root"],
+                "agent_session": enrolled["agent_session"],
+            },
+        })
         claim = execution.claim_next_work()
         assert claim["work"]["root"] == created["created_root"]
 
@@ -6385,23 +6454,23 @@ def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path
         assert handoff_status["supported"] is True
         assert handoff_status["one_use_route"] \
             == "POST /api/universal/browser-handoff"
-        browser_handoff = client.browser_handoff()
-        assert browser_handoff["application"] \
-            == server.universal_registry.application_root
-        assert browser_handoff["server_url"] == server.url
-        assert browser_handoff["document_url"].startswith(
-            server.url + "/?bootstrap="
-        )
-        assert browser_handoff["one_use"] is True
-        assert browser_handoff["session_root"] == server.browser_session_root
+        before_handoff = server.universal_store.revision
+        before_tokens = dict(server._browser_handoff_tokens)
+        with pytest.raises(MachineTransportError, match="observed Desktop"):
+            client.browser_handoff()
+        assert server.universal_store.revision == before_handoff
+        assert server._browser_handoff_tokens == before_tokens
+        # The founder-owned fixture already holds its legitimate startup URL.
+        # An ordinary machine caller must never obtain that browser authority.
+        founder_document_url = server.bootstrap_url
         with urllib.request.urlopen(
-            browser_handoff["document_url"], timeout=30
+            founder_document_url, timeout=30
         ) as response:
             page = response.read().decode("utf-8")
         assert response.headers["Cache-Control"] == "no-store"
         assert "class=\"archhub-app\"" in page
         with pytest.raises(urllib.error.HTTPError) as replay:
-            urllib.request.urlopen(browser_handoff["document_url"], timeout=30)
+            urllib.request.urlopen(founder_document_url, timeout=30)
         assert replay.value.code == 403
         gate = client.request("POST", "/api/universal/workshop-gate", {
             "ref": server.universal_registry.application_root,

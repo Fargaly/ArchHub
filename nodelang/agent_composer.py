@@ -410,7 +410,8 @@ def _apply_draft_actions(
         if op == "work":
             root, membership_wire, _revision = create_universal_governed_work(
                 store, registry, title=action["title"], description=action["description"],
-                x=float(action.get("x", 600)), y=float(action.get("y", 300)),
+                x=(float(action["x"]) if action.get("x") is not None else None),
+                y=(float(action["y"]) if action.get("y") is not None else None),
                 structured_references={"requirements": {
                     "acceptance_criteria": action["criteria"],
                 }},

@@ -62,7 +62,8 @@ def create_browser_workshop_work(owner, binding, body, *, browser_guard):
             title=body.get('title', ''), description=body.get('description', ''),
             priority=body.get('priority', 0), external_key=body.get('external_key', 'unset'),
             references={**references, 'scope':root}, structured_references=structured,
-            x=float(body.get('x', 0.0)), y=float(body.get('y', 0.0)),
+            x=float(body['x']) if body.get('x') is not None else None,
+            y=float(body['y']) if body.get('y') is not None else None,
             compact_references=True, select_created=False, authentication_context=binding.context)
         current, current_content = admitted()
         if (current_content != content or current.revision != revision or

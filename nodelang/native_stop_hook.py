@@ -399,6 +399,119 @@ def _peer_key(value):
     return found.group(0).casefold() if found else _NAME_REF.sub('', address)
 
 
+# Codex rollouts (vendor codex): {timestamp, type, payload}. Sends are collaboration
+# send_message/followup_task {target, message}, send_message_to_thread {threadId,
+# prompt}, or an exec running session-link.ps1 send <connection> --file <text>.
+# Replies from Claude carry the bridge header (session_link/bridge.mjs) naming the
+# Claude session and the link. /root/... targets are the task's own subagents.
+_CODEX_ENTRY_TYPES = ('response_item', 'event_msg', 'compacted')
+_CODEX_LINK_SEND = re.compile(r'session-link\.ps1\W{0,6}\s+send\s+\W?([0-9a-f]{16})\W?\s+--file\s+\W?([A-Za-z]:[^\x27"\r\n]+?)\W?(?:\s|$)')
+_CODEX_REPLY = re.compile(r'\[From Claude Code: [^;\]]*; session ([0-9a-f-]{36}); link ([0-9a-f]{16}); message')
+
+
+def _message_roots():
+    import tempfile
+    return (Path(tempfile.gettempdir()).resolve(), (Path.home() / '00.ARCHUB' / '70.HANDOFFS').resolve())
+
+
+def _message_file(path, sent_at=None):
+    """The text a Session Link send carried: only a message file under the temp or
+    handoff roots, where agents write them. Any other path is never opened."""
+    try:
+        target = Path(path).resolve()
+        if (target.is_absolute() and any(target.is_relative_to(root) for root in _message_roots())
+                and target.is_file() and target.stat().st_size <= 65536
+                # Changed after the send: its text is no longer what was sent; skip it.
+                and (sent_at is None or target.stat().st_mtime <= sent_at + 2)):
+            return target.read_text(encoding='utf-8', errors='replace')
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _codex_output_ok(payload):
+    """A send counts only when it did not fail, as on the Claude path: an exec of
+    session-link carries no failure marker; a collaboration send answers empty."""
+    output = payload.get('output')
+    if isinstance(output, list):
+        return bool(output) and 'error' not in json.dumps(output).lower()
+    if not isinstance(output, str):
+        return False
+    if payload.get('type') == 'custom_tool_call_output':
+        text = output[:65536]
+        exit_code = re.search(r'Exit code:\s*(-?\d+)', text)
+        return not ('Script failed' in text or '"ok": false' in text or (exit_code and exit_code.group(1) != '0'))
+    return output == ''
+
+
+def _codex_events(payload, moment=None):
+    """Normalised sends, send results and replies from one Codex rollout payload."""
+    kind, call = payload.get('type'), payload.get('call_id')
+    if kind == 'function_call':
+        try:
+            args = json.loads(payload.get('arguments') or '{}')
+        except ValueError:
+            args = {}
+        to = text = None
+        if type(args) is dict and payload.get('name') in ('send_message', 'followup_task'):
+            to, text = args.get('target'), args.get('message')
+        elif type(args) is dict and payload.get('name') == 'send_message_to_thread':
+            to, text = args.get('threadId'), args.get('prompt')
+        if type(to) is str and type(text) is str and not to.startswith('/'):
+            yield 'send', call, to, text
+        return
+    if kind == 'custom_tool_call':
+        found = _CODEX_LINK_SEND.search(str(payload.get('input') or '')[:65536])
+        text = _message_file(found.group(2).strip(), moment) if found else None
+        if text is not None:
+            yield 'send', call, found.group(1), text
+        return
+    if kind in ('function_call_output', 'custom_tool_call_output'):
+        yield 'result', call, _codex_output_ok(payload)
+        return
+    # Only an inbound bridge delivery answers a request: never the task's own
+    # messages, reasoning, commands or edits that merely quote the header.
+    item = payload.get('item') if kind == 'item_completed' and isinstance(payload.get('item'), dict) else None
+    if item is not None and item.get('type') in ('FunctionCallOutput', 'UserMessage'):
+        for session, link in _CODEX_REPLY.findall(json.dumps(item)[:262144]):
+            yield 'reply', (link, session, 'local_' + session)
+
+
+def _peer_registry(directory):
+    """Name, pipe and local_ id of each live Claude-side peer (~/.claude/sessions/*.json).
+
+    A Session Link bridge registers there under its peer name; its replies arrive
+    from its pipe alone, so this is what ties the two together. Read-only, bounded.
+    """
+    try:
+        import psutil
+        records = sorted(Path(directory).glob('*.json'))[:256]
+    except (ImportError, OSError):
+        return []
+    newest = {}
+    for record in records:
+        try:
+            if record.stat().st_size > 65536:
+                continue
+            value = json.loads(record.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            continue
+        if (type(value) is not dict or type(value.get('name')) is not str
+                or type(value.get('messagingSocketPath')) is not str or type(value.get('pid')) is not int):
+            continue
+        # A stale file of an exited session must never vouch for a live one.
+        if not psutil.pid_exists(value['pid']):
+            continue
+        started = value.get('startedAt') if type(value.get('startedAt')) is int else 0
+        name = _address(value['name'])
+        if name and (name not in newest or started > newest[name][0]):
+            session = value.get('sessionId')
+            newest[name] = (started, (value['name'], value['messagingSocketPath'],
+                                      'local_' + session if type(session) is str else None))
+    # One record per name: two different pipes are never tied together through a name.
+    return [forms for _, forms in newest.values()]
+
+
 def _queued_replies(entry):
     """The sender forms of peer replies that arrived mid-turn and were queued."""
     attachment = entry.get('attachment') if type(entry.get('attachment')) is dict else {}
@@ -421,7 +534,7 @@ def _tag_forms(text):
     return forms
 
 
-def followup_items(entries, now):
+def followup_items(entries, now, *, registry=()):
     """Overdue requests this session sent, and whether the founder is waiting on this turn."""
     pending, sent, replies, last_prompt, alias = {}, [], [], None, {}
 
@@ -435,10 +548,24 @@ def followup_items(entries, now):
         for key in keys:
             alias[key] = min(keys)  # the smallest key names the session, so it stays stable
 
+    for forms in registry:
+        link(*forms)
     for entry in entries:
         moment = _timestamp(entry.get('timestamp'))
         content = (entry.get('message') or {}).get('content')
         if moment is None:
+            continue
+        if entry.get('type') in _CODEX_ENTRY_TYPES and type(entry.get('payload')) is dict:
+            for event in _codex_events(entry['payload'], moment):
+                if event[0] == 'send' and _asks_reply(event[2], event[3]):
+                    pending[event[1]] = (event[2], moment)
+                elif event[0] == 'result' and event[1] in pending:
+                    to, sent_at = pending.pop(event[1])
+                    if event[2]:
+                        sent.append((to, sent_at, ''))
+                elif event[0] == 'reply':
+                    link(*event[1])
+                    replies.append((event[1], moment))
             continue
         if entry.get('type') == 'assistant' and isinstance(content, list):
             for block in content:
@@ -520,13 +647,14 @@ def _save_guard(path, value):
         temporary.unlink(missing_ok=True)
 
 
-def followup_decision(payload, *, now=None, guard_directory=None):
+def followup_decision(payload, *, now=None, guard_directory=None, registry_directory=None):
     """At most one block per overdue item per window, never twice in a row, never on a founder turn."""
     path, session = payload.get('transcript_path'), payload.get('session_id')
     if type(path) is not str or type(session) is not str or not Path(path).is_file():
         return None
     now = time.time() if now is None else now
-    items, founder_turn = followup_items(_transcript_tail(path), now)
+    items, founder_turn = followup_items(_transcript_tail(path), now,
+                                         registry=_peer_registry(registry_directory) if registry_directory else ())
     guard_path = _followup_state_path(session, guard_directory)
     guard = _load_guard(guard_path)
     marks = {key: dict(value) for key, value in guard.items()
@@ -646,7 +774,7 @@ def main():
             pass
     if type(payload) is dict:
         try:
-            result=_merge_followup(result,followup_decision(payload))
+            result=_merge_followup(result,followup_decision(payload,registry_directory=Path.home()/'.claude'/'sessions'))
         except Exception:
             pass
     sys.stdout.write(json.dumps(result))

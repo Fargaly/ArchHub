@@ -718,39 +718,31 @@ def memory_facts_delete(fact_id: int,
     return {"id": fact_id, "stage": "deleted"}
 
 
+_SHARE_PATH_RETIRED = {
+    "error": "retired",
+    "use": "Share a fact from the ArchHub app (Settings > Brain > share, POST "
+           "/api/universal/brain-publish); the founder reviews it before members see it.",
+}
+
+
 @app.post("/v1/memory/facts/{fact_id}/promote")
 async def memory_facts_promote(fact_id: int, req: Request,
                                  authorization: str | None = Header(None)) -> dict:
-    """Private → collective. Redacts via transform policy first."""
-    user = _require_user(authorization)
-    body = await req.json() if await _has_body(req) else {}
-    try:
-        cid = memory_writer.promote_to_shared(
-            fact_id=fact_id, user_id=user["id"],
-            access_policy=body.get("access_policy", "public"),
-            domain=body.get("domain", "aec.general"),
-        )
-    except ValueError as ex:
-        raise HTTPException(status_code=400,
-                             detail={"error": str(ex)})
-    return {"collective_id": cid, "stage": "promoted"}
+    """Retired (2026-09-29): this copied a fact into the collective table, which
+    every signed-in user could read with no review. Sharing is the owner's
+    publish in the app, and the founder reviews it (ADGR-0004)."""
+    _require_user(authorization)
+    raise HTTPException(status_code=410, detail=_SHARE_PATH_RETIRED)
 
 
 @app.get("/v1/memory/collective")
 def memory_collective_list(domain: str | None = None,
                              limit: int = 50,
                              authorization: str | None = Header(None)) -> dict:
-    """Browse community-shared facts. Reads are audited for any user
-    other than the contributor."""
-    user = _require_user(authorization)
-    rows = db.list_collective_memory(domain=domain,
-                                       limit=max(1, min(int(limit), 200)))
-    for r in rows:
-        db.log_memory_access(
-            reader_user_id=user["id"], collective_id=int(r["id"]),
-            purpose="browse",
-        )
-    return {"results": rows}
+    """Retired with /promote: community facts reach members only through the
+    reviewed Community Brain (/v1/brain/sync, community_review)."""
+    _require_user(authorization)
+    raise HTTPException(status_code=410, detail=_SHARE_PATH_RETIRED)
 
 
 @app.post("/v1/memory/extract")

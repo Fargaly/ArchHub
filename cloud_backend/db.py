@@ -1932,7 +1932,7 @@ def search_memory_facts(*, user_id: str, query: str,
                          include_shared: bool = True,
                          limit: int = 10) -> list[dict]:
     """FTS5 search over the unified fragment text. When include_shared=True
-    the user also sees shared facts (visibility shared_company/shared_public).
+    the user also sees facts shared with their own company (shared_company).
     Results are reconstructed from the canonical fragments."""
     query = (query or "").strip()
     if not query:
@@ -1981,14 +1981,13 @@ def search_memory_facts(*, user_id: str, query: str,
         # "shared_company" means shared WITH MY COMPANY, so it has to be
         # matched against the reader's company. Admitting it on the
         # visibility word alone handed one firm's private notes to every
-        # signed-up stranger. "shared_public" is the value that means
-        # everyone, and it still does.
+        # signed-up stranger. "shared_public" no longer reaches anyone else
+        # (2026-09-29): sharing beyond the firm is the reviewed Community
+        # Brain only (ADGR-0004), never a visibility word on a fact.
         if owner == user_id:
             pass
         elif not include_shared:
             continue
-        elif vis == "shared_public":
-            pass
         elif vis == "shared_company":
             if reader_company is None:
                 continue

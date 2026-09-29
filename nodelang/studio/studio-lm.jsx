@@ -6471,8 +6471,7 @@ POST /v1/sessions/:id/run      → { node?: id, dry_run?: bool }
 GET  /v1/sessions/:id/events   → SSE: node status, wire traffic, heals
 GET  /v1/skills                → installed skills + versions
 POST /v1/skills                → install from JSON body or path
-GET  /v1/brain?layer=project   → facts with sources
-POST /v1/brain/promote         → { id, to: "practice" }`}</DCode>
+GET  /v1/brain?layer=project   → facts with sources`}</DCode>
     <DP>The server binds to localhost only and requires the token printed by <code style={{ fontFamily:LM.mono, fontSize:12 }}>archhub up</code> in an <code style={{ fontFamily:LM.mono, fontSize:12 }}>Authorization: Bearer</code> header. There is no remote mode; if you need one, tunnel it yourself and own that decision.</DP>
     <DSub>EXIT CODES</DSub>
     <DRows rows={[

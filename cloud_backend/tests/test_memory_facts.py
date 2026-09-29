@@ -368,11 +368,11 @@ class TestEndpoints:
         assert r.status_code == 200
         assert db.get_memory_fact(fid)["valid_until"] is not None
 
-    def test_promote_requires_existing_fact(self, client):
+    def test_promote_is_retired(self, client):
         _, h = _signed_in_user("ep7")
         r = client.post("/v1/memory/facts/999999/promote",
                          headers=h, json={})
-        assert r.status_code == 400
+        assert r.status_code == 410
 
     def test_extract_endpoint_applies_ops(self, client):
         _, h = _signed_in_user("ep8")
@@ -411,25 +411,23 @@ class TestEndpoints:
 
 # ── Audit log invariants ────────────────────────────────────────────
 class TestAuditLog:
-    def test_search_of_shared_logs_access(self, client):
-        """Searching shared facts must record a row in memory_access_log."""
+    def test_the_retired_collective_reads_nothing(self, client):
+        """The collective browse is retired (410); it reads and logs nothing."""
         import db, memory_writer
         u1, h1 = _signed_in_user("audit1")
         u2, h2 = _signed_in_user("audit2")
-        # u1 creates + promotes a fact
         fid = db.insert_memory_fact(user_id=u1["id"],
                                       text="Standard dimension policy")
         memory_writer.promote_to_shared(
             fact_id=fid, user_id=u1["id"],
             access_policy="public", domain="aec.dims")
-        # u2 browses collective
         r = client.get("/v1/memory/collective?domain=aec.dims", headers=h2)
-        assert r.status_code == 200
-        # Audit row should exist for u2
+        assert r.status_code == 410
+        assert "Standard dimension policy" not in r.text
         with db.connect() as con:
             rows = con.execute(
                 "SELECT COUNT(*) AS n FROM memory_access_log"
                 " WHERE reader_user_id = ?",
                 (u2["id"],),
             ).fetchone()
-        assert rows["n"] >= 1
+        assert rows["n"] == 0

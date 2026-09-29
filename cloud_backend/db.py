@@ -649,6 +649,10 @@ def init_schema() -> None:
             "ALTER TABLE users ADD COLUMN country TEXT",
             "ALTER TABLE users ADD COLUMN signup_source TEXT",
             "ALTER TABLE users ADD COLUMN landing_variant TEXT",
+            # Founder cockpit suspend/restore: a suspended account holds no
+            # working session anywhere (user_for_token refuses it).
+            "ALTER TABLE users ADD COLUMN suspended_at INTEGER",
+            "ALTER TABLE users ADD COLUMN suspended_reason TEXT",
             # v1.3.3: per-company quota tracking. Studio plan seeds 2000,
             # Firm plan seeds 1_000_000 (fair-use, throttled by per-min
             # rate limit). Webhook + create_company set the right value.
@@ -1365,7 +1369,10 @@ def user_for_token(token: str) -> Optional[dict]:
         r = con.execute(
             "SELECT u.* FROM tokens t JOIN users u ON t.user_id = u.id"
             " WHERE t.token = ?"
-            "   AND t.expires_at IS NOT NULL AND t.expires_at > ?",
+            "   AND t.expires_at IS NOT NULL AND t.expires_at > ?"
+            # A suspended account authenticates nowhere; its tokens are kept,
+            # so restoring it restores the same sessions.
+            "   AND u.suspended_at IS NULL",
             (digest, now),
         ).fetchone()
         if r is None:
@@ -1376,6 +1383,21 @@ def user_for_token(token: str) -> Optional[dict]:
             (now, digest),
         )
         return dict(r)
+
+
+def set_user_suspended(user_id: str, reason: Optional[str]) -> Optional[dict]:
+    """Suspend an account (reason given) or restore it (reason None).
+
+    Only the founder cockpit calls this. Returns the updated row, or None
+    for an unknown account."""
+    with connect() as con:
+        if reason is None:
+            con.execute("UPDATE users SET suspended_at = NULL, suspended_reason = NULL "
+                        "WHERE id = ?", (user_id,))
+        else:
+            con.execute("UPDATE users SET suspended_at = ?, suspended_reason = ? WHERE id = ?",
+                        (int(time.time()), str(reason)[:500], user_id))
+    return get_user(user_id)
 
 
 def delete_token(token: str) -> bool:

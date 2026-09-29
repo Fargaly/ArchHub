@@ -697,9 +697,46 @@ def api_user_detail(key: str, _founder: dict = Depends(require_founder)) -> JSON
     user["profile"] = {field: row.get(field) for field in _PROFILE_FIELDS}
     user["stripe_customer"] = bool(row.get("stripe_id"))
     user["period_end"] = row.get("period_end")
+    user["suspended_at"] = row.get("suspended_at")
+    user["suspended_reason"] = row.get("suspended_reason")
     user.update(db.user_activity(user["id"]))
     return JSONResponse({"ok": True, "user": user})
 
+
+def _account(key: str) -> Optional[dict]:
+    return db.get_user_by_email(key.strip().lower()) if "@" in key else db.get_user(key)
+
+
+@router.post("/api/users/{key}/suspend")
+def api_user_suspend(key: str, payload: dict = Body(default={}),
+                     founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Suspend an account: every session it holds stops working, everywhere."""
+    account = _account(key)
+    if account is None:
+        return JSONResponse({"ok": False, "error": "no such user"}, status_code=404)
+    if (account.get("email") or "").strip().lower() in config.founder_emails():
+        # Suspending a founder would lock the cockpit itself.
+        return JSONResponse({"ok": False, "error": "a founder account cannot be suspended"},
+                            status_code=409)
+    reason = str(payload.get("reason") or "").strip() or "suspended by the founder"
+    row = db.set_user_suspended(account["id"], reason)
+    _audit(founder, "POST /founder/api/users/{key}/suspend", "user.suspend",
+           target=account["email"], result={"reason": reason})
+    return JSONResponse({"ok": True, "user": {"email": row["email"],
+                                              "suspended_at": row.get("suspended_at"),
+                                              "suspended_reason": row.get("suspended_reason")}})
+
+
+@router.post("/api/users/{key}/restore")
+def api_user_restore(key: str, founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Restore a suspended account; its unexpired sessions work again."""
+    account = _account(key)
+    if account is None:
+        return JSONResponse({"ok": False, "error": "no such user"}, status_code=404)
+    row = db.set_user_suspended(account["id"], None)
+    _audit(founder, "POST /founder/api/users/{key}/restore", "user.restore",
+           target=account["email"])
+    return JSONResponse({"ok": True, "user": {"email": row["email"], "suspended_at": None}})
 @router.get("/api/subscriptions")
 def api_subscriptions(_founder: dict = Depends(require_founder)) -> JSONResponse:
     return JSONResponse(_subscriptions_panel())

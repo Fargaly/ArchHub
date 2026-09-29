@@ -62,7 +62,9 @@ test('one drag sends one request and reads the canvas no times', async () => {
   const held = api.getSnapshot().topology.canvas;
   assert.equal(held.revision, 41);
   assert.equal(held.interaction_projection.revision, 41);
-  same(held.nodes.find(node => node.id === 'one'), {id: 'one', x: 11, y: 21});
+  // A hand move pins the card (4f981f0): Arrange never moves it again, and the
+  // held canvas says so exactly as the next projection will (placed = user).
+  same(held.nodes.find(node => node.id === 'one'), {id: 'one', x: 11, y: 21, pinned: true});
   same(held.nodes.find(node => node.id === 'two'), {id: 'two', x: 30, y: 40});
 });
 

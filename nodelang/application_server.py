@@ -8471,6 +8471,17 @@ class ApplicationServer:
                                 from .universal_pipeline import (
                                     seed_wall_pipeline,
                                 )
+                                @contextlib.contextmanager
+                                def settle_guard():
+                                    # The canvas-content migration inside
+                                    # the seed commits like every admitted
+                                    # write: mutation lock, then live context.
+                                    with owner.mutation_lock, (
+                                        owner.universal_registry.authorization
+                                        .broker.live_context(binding.context)
+                                    ):
+                                        yield
+
                                 seed_result = seed_wall_pipeline(
                                     owner.universal_store,
                                     owner.universal_registry,
@@ -8479,6 +8490,7 @@ class ApplicationServer:
                                         or None
                                     ),
                                     authentication_context=binding.context,
+                                    settle_guard=settle_guard,
                                 )
                                 self._json(200, seed_result)
                                 return

@@ -97,7 +97,14 @@ def test_seeding_in_two_scopes_leaves_one_set(graph):
     ]
     assert first["counts"]["placed"] == 12
     assert second["counts"]["placed"] == 0
-    assert len(markers) == len(set(markers)) == 12
+    # The canvas holds the five pipeline cards; the seven status cards are
+    # in their lenses, and no marker is held twice anywhere.
+    assert len(markers) == len(set(markers)) == 5
+    everywhere = [
+        rows[_SEED_MARKER][1].strip() for rows in owned.values()
+        if _SEED_MARKER in rows and rows[_SEED_MARKER][1].strip()
+    ]
+    assert len(everywhere) == len(set(everywhere)) == 12
 
 
 def test_sketch_lines_seeds_its_max_gap(graph):

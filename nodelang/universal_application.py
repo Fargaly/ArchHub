@@ -19589,10 +19589,19 @@ def prepare_universal_retraction(
     view_session: ApplicationViewSession,
     root: str,
     scope_root: str | None = None,
+    *,
+    lens_move: bool = False,
+    prove: bool = True,
 ) -> tuple[
     tuple[Cell, ...], tuple[Cell, ...], tuple[object, ...], tuple[object, ...]
 ]:
     """The cells that take one card off a view's canvas, and nothing broken.
+
+    ``lens_move`` is the admitted canvas-content migration moving an
+    application card (an agent session) to its lens: the card is not
+    deleted, it leaves this view's canvas because another scope holds it.
+    ``prove=False`` is for that migration only: it moves many cards in one
+    commit and runs the whole boot reader once over the combined result.
 
     A card is more than its ``visible`` incidence: the view's materialized
     projection also indexes the interfaces the card owns, the wires that end
@@ -19603,7 +19612,9 @@ def prepare_universal_retraction(
     the boot uses BEFORE anything is committed. The graph is append-only:
     nothing is erased, the view only stops carrying it.
     """
-    if not _user_canvas_root(snapshot, registry, root, level_root=scope_root):
+    if not lens_move and not _user_canvas_root(
+        snapshot, registry, root, level_root=scope_root
+    ):
         # What the application placed (map domains, core values, registries,
         # agent sessions) is re-derived and relied on at boot: taking it off
         # the view left a graph whose next boot refused (2026-09-24, the
@@ -19799,6 +19810,8 @@ def prepare_universal_retraction(
     # new grant generations are recorded only after the commit, so they are
     # not re-verified here. A card the graph cannot release refuses instead
     # of leaving a graph that cannot open.
+    if not prove:
+        return create, replace, tuple(revocations), grants
     try:
         overlay = overlay_read_snapshot(
             snapshot, create=create, replace=replace
@@ -26325,6 +26338,360 @@ def _canvas_position_delta(store, registry, key, cells, authentication_context):
     return filled_at, valid_until, json.dumps(answer), sources, new_tails
 
 
+# A membership move (the canvas-content migration) as an accelerator note.
+# Same law as _CANVAS_ACCELERATOR above: process memory only, never written,
+# never read as meaning. A note is used only when the store's OWN change
+# list for that revision equals the Cells the note names; any mismatch, a
+# missing note or a corrupted one makes the next read rebuild, nothing else.
+_CANVAS_MEMBERSHIP_NOTES: "weakref.WeakKeyDictionary[CellStore, dict]" = (
+    weakref.WeakKeyDictionary()
+)
+_CANVAS_MEMBERSHIP_NOTE_LIMIT = 32
+
+
+def note_canvas_membership_change(
+    store: CellStore,
+    *,
+    base_revision: int,
+    revision: int,
+    cells: Iterable[str],
+    removed: Iterable[str] = (),
+    positions: Mapping[str, tuple[float, float]] | None = None,
+    scopes: Iterable[str] = (),
+    revoked: Iterable[str] = (),
+    granted: Iterable[str] = (),
+) -> None:
+    """Remember what one committed membership move changed (accelerator)."""
+    note = {
+        "base": int(base_revision),
+        "cells": frozenset(cells),
+        "removed": frozenset(removed),
+        "positions": {
+            str(root): (float(point[0]), float(point[1]))
+            for root, point in dict(positions or {}).items()
+        },
+        "scopes": frozenset(scopes),
+        "revoked": frozenset(revoked),
+        "granted": frozenset(granted),
+    }
+    with _CANVAS_ACCELERATOR_LOCK:
+        notes = _CANVAS_MEMBERSHIP_NOTES.setdefault(store, {})
+        notes[int(revision)] = note
+        for old in sorted(notes)[:-_CANVAS_MEMBERSHIP_NOTE_LIMIT]:
+            notes.pop(old, None)
+
+
+def clear_canvas_membership_notes(store: CellStore | None = None) -> None:
+    """Forget every membership note; the next read rebuilds, meaning unchanged."""
+    with _CANVAS_ACCELERATOR_LOCK:
+        if store is None:
+            _CANVAS_MEMBERSHIP_NOTES.clear()
+        else:
+            _CANVAS_MEMBERSHIP_NOTES.pop(store, None)
+
+
+def _canvas_membership_delta(store, registry, key, cells, authentication_context):
+    """Answer a membership move from the previous head's answer, or None.
+
+    Taken only when a note exists for exactly this revision, its base is the
+    revision just before, a remembered answer exists for that base under
+    the same view and identity (its active relationships differ from this
+    head's by exactly the note's revoked and granted grants), and the
+    store's own change list for this revision equals the note's Cells. The
+    answer then loses the cards that left, and the wires ending on them;
+    kept cards take the note's positions; each lens scope drawn on the
+    canvas re-reads its member count. Anything else rebuilds.
+    """
+    with _CANVAS_ACCELERATOR_LOCK:
+        notes = dict(_CANVAS_MEMBERSHIP_NOTES.get(store) or {})
+        entries = list(_CANVAS_ACCELERATOR.get(store, {}).items())
+    # A continuous chain of notes back from this head: the Studio need not
+    # have read between two batches.
+    chain = []
+    revision = key[0]
+    while revision in notes:
+        note = notes[revision]
+        try:
+            if note["base"] != revision - 1 or not note["cells"]:
+                return None
+        except (KeyError, TypeError):
+            return None
+        chain.append((revision, note))
+        revision -= 1
+    if not chain:
+        return None
+    base = None
+    for (entry_registry, entry_key), value in entries:
+        if (
+            entry_registry != id(registry)
+            or entry_key[1:7] != key[1:7]
+            or entry_key[8:] != key[8:]
+        ):
+            continue
+        span = [note for revision, note in chain if revision > value[4]]
+        if not span or value[4] != span[-1]["base"]:
+            continue
+        revoked_span = frozenset().union(*(note["revoked"] for note in span))
+        granted_span = frozenset().union(*(note["granted"] for note in span))
+        if set(key[7]) != (set(entry_key[7]) - revoked_span) | granted_span:
+            continue
+        if base is None or value[4] > base[4]:
+            base, used = value, span
+    if base is None:
+        return None
+    try:
+        for note in used:
+            revision = note["base"] + 1
+            if set(store.revision_changes(revision)) != note["cells"]:
+                return None
+        removed = frozenset().union(*(note["removed"] for note in used))
+        changed = frozenset().union(*(note["cells"] for note in used))
+        scopes = frozenset().union(*(note["scopes"] for note in used))
+        revoked = frozenset().union(*(note["revoked"] for note in used))
+        granted = frozenset().union(*(note["granted"] for note in used))
+        positions = {}
+        for note in reversed(used):  # oldest first; the newest point wins
+            positions.update(note["positions"])
+    except (KeyError, TypeError, InvalidCell):
+        return None
+    _old_cells, filled_at, valid_until, encoded, _revision, sources, _tails = base
+    answer = json.loads(encoded)
+    scope = answer.get("scope")
+    if not isinstance(scope, dict) or scope.get("current") != registry.canvas_root:
+        # Inside a lens the arrivals are drawn too; only the top canvas,
+        # where cards only leave, is carried. Everything else rebuilds.
+        return None
+    nodes = answer.get("nodes")
+    if not isinstance(nodes, list) or any(
+        not isinstance(node, dict) or node.get("placed") is False for node in nodes
+    ):
+        return None
+    selected_roots = {
+        root for root in (answer.get("selected"), *(answer.get("selection") or ()))
+        if isinstance(root, str)
+    }
+    if selected_roots & removed:
+        return None
+    snapshot = store.dense_snapshot()
+    view_session, _context = _view_session_for_context(
+        registry, authentication_context
+    )
+    # The note is a hint, never a fact. What left the canvas is read from the
+    # view's visibility index; every noted point from the committed value
+    # Cells the remembered answer drew it from. Any difference rebuilds.
+    shown = {
+        member.participant_id
+        for member in read_relation(snapshot, view_session.visibility_root, budget=300_000)
+        if member.role_id == registry.roles["visible"]
+    }
+    drawn = {node.get("id") for node in nodes}
+    if shown - drawn or frozenset(drawn - shown) != removed:
+        return None
+    held_sources = dict(sources or {})
+    try:
+        for root, (x, y) in positions.items():
+            pair = held_sources.get(root)
+            if not pair or (
+                float(_text(snapshot, pair[0])), float(_text(snapshot, pair[1]))
+            ) != (x, y):
+                return None
+    except (TypeError, ValueError, KeyError, InvalidCell):
+        return None
+    if any(root not in removed and root not in positions and set(pair) & changed
+           for root, pair in held_sources.items()):
+        return None
+    kept = [node for node in nodes if node.get("id") not in removed]
+    by_id = {node.get("id"): node for node in kept}
+    for root, (x, y) in positions.items():
+        node = by_id.get(root)
+        if node is None:
+            return None
+        node["x"], node["y"] = x, y
+    for scope in scopes:
+        node = by_id.get(scope)
+        if node is None:
+            continue
+        if node.get("composition") or node.get("assembly"):
+            return None
+        members = _relation_members_or_none(snapshot, scope)
+        node["member_count"] = len(members or ())
+        node["openable"] = bool(members)
+    if granted:
+        # A new grant adds a relationship row in registration order; that is
+        # not reproduced here, so such a move rebuilds.
+        return None
+    answer["nodes"] = kept
+    wires = answer.get("wires")
+    if isinstance(wires, list):
+        answer["wires"] = [
+            wire for wire in wires
+            if not isinstance(wire, dict)
+            or (wire.get("source") not in removed and wire.get("target") not in removed)
+        ]
+    wires = [wire for wire in answer.get("wires") or () if isinstance(wire, dict)]
+    gone_wires = {
+        wire.get("id") for wire in json.loads(encoded).get("wires") or ()
+        if isinstance(wire, dict) and wire.get("id") not in {w.get("id") for w in wires}
+    }
+    if answer.get("selected_relation") and (
+        (answer.get("selected_relation") or {}).get("id") in gone_wires
+    ):
+        return None
+
+    def without_removed(value, key=None):
+        # Every candidate list the canvas offers ("choices", "*_choices")
+        # names drawn cards; a card that left is no longer a candidate.
+        if isinstance(value, dict):
+            return {name: without_removed(item, name) for name, item in value.items()}
+        if isinstance(value, list):
+            items = [without_removed(item) for item in value]
+            if isinstance(key, str) and (key == "choices" or key.endswith("_choices")):
+                items = [
+                    item for item in items
+                    if not (isinstance(item, dict) and item.get("id") in removed)
+                ]
+            return items
+        return value
+
+    answer = without_removed(answer)
+    kept = answer["nodes"]
+    by_id = {node.get("id"): node for node in kept}
+    # Counts drawn on each card, and the card descriptor rendered from them.
+    changed_cards = set(positions) | set(scopes)
+    for node in kept:
+        count = sum(
+            wire.get("source") == node.get("id") or wire.get("target") == node.get("id")
+            for wire in wires
+        )
+        if node.get("connection_count") != count:
+            node["connection_count"] = count
+            changed_cards.add(node.get("id"))
+    for root in changed_cards:
+        node = by_id.get(root)
+        if node is None or "card_descriptor" not in node:
+            continue
+        rendered = dict(node)
+        rendered.pop("card_descriptor", None)
+        node["card_descriptor"] = json.loads(json.dumps(render_view_template(
+            snapshot,
+            registry.view_template_protocol,
+            CANVAS_CARD_TEMPLATE_ROOT,
+            rendered,
+        )))
+    # The interface contracts offered are those of the ports still drawn.
+    authoring = answer.get("authoring")
+    if isinstance(authoring, dict) and "interface_contracts" in authoring:
+        contract_roots = {registry.assembly_protocol.root_id}
+        contract_roots.update(
+            str(port["contract_root"])
+            for node in kept for port in node.get("ports") or ()
+            if isinstance(port, dict) and port.get("contract_root") in snapshot.cells
+        )
+        authoring["interface_contracts"] = [
+            {
+                "id": contract_root,
+                "label": (
+                    "Universal Cell"
+                    if contract_root == registry.assembly_protocol.root_id
+                    else _text(snapshot, contract_root)
+                    or _humanize_root_id(contract_root)
+                ),
+            }
+            for contract_root in sorted(contract_roots)
+        ]
+    # The revoked projection grants read as revoked, as the reader shows them.
+    authorization_rows = (answer.get("authorization") or {}).get("relationships")
+    if revoked:
+        if not isinstance(authorization_rows, list):
+            return None
+        authority = registry.authorization
+        rows_by_root = {
+            row.get("root"): row for row in authorization_rows if isinstance(row, dict)
+        }
+        for relationship_root in revoked:
+            row = rows_by_root.get(relationship_root)
+            if row is None:
+                continue
+            relationship = read_authority_relationship(
+                snapshot, authority.identity_protocol, relationship_root
+            )
+            verified, authority_reason = True, "verified"
+            try:
+                verify_authority_relationship(
+                    snapshot,
+                    authority.identity_protocol,
+                    authority.relationship_broker,
+                    relationship.root_id,
+                    require_active=False,
+                )
+            except RelationshipAuthorityDenied as exc:
+                verified, authority_reason = False, str(exc)
+            row.update({
+                "state": _text(snapshot, relationship.state_root),
+                "changed_by": relationship.changed_by_root,
+                "changed_at": _text(snapshot, relationship.changed_at_root),
+                "reason": _text(snapshot, relationship.reason_root),
+                "verified": verified,
+                "authority_reason": authority_reason,
+            })
+    authorization = answer.get("authorization")
+    if isinstance(authorization, dict) and "assigned_canvas_roots" in authorization:
+        authorization["assigned_canvas_roots"] = sum(
+            member.role_id == registry.roles["visible"]
+            for member in read_relation(
+                snapshot, view_session.visibility_root, budget=300_000
+            )
+        )
+    action_history = json.loads(json.dumps(_project_session_action_history(
+        snapshot, registry, view_session, store=store
+    )))
+    answer["action_history"] = action_history
+    answer["revision"] = snapshot.revision
+    selected_relation = answer.get("selected_relation")
+    if isinstance(selected_relation, dict) and "observed_revision" in selected_relation:
+        selected_relation["observed_revision"] = snapshot.revision
+    answer["canvas_signature"] = _canvas_signature(answer)
+    sources = {
+        root: value for root, value in dict(sources or {}).items()
+        if root not in removed
+    }
+    try:
+        tails = _canvas_index_tails(store, registry, authentication_context)
+    except (InvalidCell, KeyError, AuthorizationDenied):
+        tails = None
+    return filled_at, valid_until, json.dumps(answer), sources, tails
+
+
+def advance_canvas_accelerator(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    *,
+    authentication_context: object | None = None,
+) -> bool:
+    """Carry the remembered canvas answer across a noted membership move.
+
+    Never rebuilds: when the delta does not apply it returns False and the
+    next canvas read rebuilds as it always did.
+    """
+    if not canvas_accelerator_enabled():
+        return False
+    started = time.time()
+    cells, key = _canvas_accelerator_key(
+        store, registry, authentication_context, started
+    )
+    delta = _canvas_membership_delta(
+        store, registry, key, cells, authentication_context
+    )
+    if delta is None or not filled_at_ok(delta, started):
+        return False
+    filled_at, valid_until, encoded, sources, tails = delta
+    _remember_canvas_answer(
+        store, (id(registry), key), cells, filled_at, valid_until, encoded,
+        sources, tails,
+    )
+    return True
+
+
 def _canvas_accelerator_key(
     store: CellStore,
     registry: UniversalApplicationRegistry,
@@ -26391,7 +26758,44 @@ def project_universal_canvas(
     *,
     authentication_context: object | None = None,
 ) -> dict[str, object]:
-    """Exhaustively interpret the current canonical canvas."""
+    """Exhaustively interpret the current canonical canvas.
+
+    Every answer carries ``layout``: which drawn cards overlap, derived from
+    the positions in THIS answer (so a cached or position-delta answer is
+    never judged on stale bounds). Studio contract: on open it runs its
+    existing Arrange over ``layout.arrange_on_open`` (unpinned cards that
+    meet another card) and draws an overlap badge on each id in
+    ``layout.overlap_badge`` (pinned cards Arrange never moves). Each node
+    carries ``overlap``: null, "arrange" or "pinned". At the top level
+    only the user's cards are judged; the application's (System view) are
+    drawn in their own frames.
+    """
+    from .canvas_placement import arrange_on_open
+
+    projection = _project_universal_canvas_answer(
+        store, registry, authentication_context=authentication_context
+    )
+    nodes = projection.get("nodes")
+    if isinstance(nodes, list):
+        judged = [
+            node for node in nodes
+            if isinstance(node, dict) and not node.get("application")
+        ]
+        verdict = arrange_on_open(judged)
+        projection["layout"] = {
+            "arrange_on_open": verdict["arrange"],
+            "overlap_badge": verdict["badge"],
+        }
+    return projection
+
+
+def _project_universal_canvas_answer(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    *,
+    authentication_context: object | None = None,
+) -> dict[str, object]:
+    """The canvas answer itself: interpreter, accelerator or position delta."""
     if not canvas_accelerator_enabled():
         return _project_universal_canvas_interpreter(
             store,
@@ -26413,6 +26817,10 @@ def project_universal_canvas(
         delta = _canvas_position_delta(
             store, registry, key, cells, authentication_context
         )
+        if delta is None:
+            delta = _canvas_membership_delta(
+                store, registry, key, cells, authentication_context
+            )
         if delta is not None and filled_at_ok(delta, started):
             filled_at, valid_until, encoded, sources, tails = delta
             _remember_canvas_answer(
@@ -29113,13 +29521,31 @@ def _commit_atomic_visible_wip_resource(
     viewport: Mapping[str, float] | None = None,
     activate_view: bool = True,
     leased_scope_root: str | None = None,
+    placement_scope_root: str | None = None,
 ) -> int:
-    """Commit one governed WIP resource, view, focus, and grants together."""
+    """Commit one governed WIP resource, view, focus, and grants together.
+
+    ``placement_scope_root`` places the resource inside one openable scope
+    (a lens: the Brain domain, the Cockpit, the Workshop) whatever level the
+    view stands on, in exactly the shape a card placed inside that scope
+    has: a member of the scope, never a member of ``app:canvas``, never on
+    the view's top canvas, and not selected.
+    """
     if type(activate_view) is not bool:
         raise InvalidCell("atomic WIP view activation flag must be boolean")
     if viewport is not None and not activate_view:
         raise InvalidCell("atomic viewport edits require view activation")
-    if leased_scope_root is None:
+    if placement_scope_root is not None:
+        if (
+            type(placement_scope_root) is not str
+            or placement_scope_root == registry.canvas_root
+            or leased_scope_root is not None
+            or viewport is not None
+        ):
+            raise InvalidCell("explicit placement scope is invalid")
+        active_scope_root = placement_scope_root
+        activate_view = False
+    elif leased_scope_root is None:
         active_scope_root = _read_view_scope_trail(
             snapshot,
             registry,
@@ -29134,7 +29560,8 @@ def _commit_atomic_visible_wip_resource(
         if structural_trail[-1] != leased_scope_root:
             raise InvalidCell("leased placement scope drifted")
         active_scope_root = leased_scope_root
-    direct_view_assignment = (
+    placed_in_scope = placement_scope_root is not None
+    direct_view_assignment = not placed_in_scope and (
         not activate_view or active_scope_root == registry.canvas_root
     )
     resource_candidate = _candidate_snapshot_for_atomic_commit(
@@ -29151,7 +29578,7 @@ def _commit_atomic_visible_wip_resource(
         for member in (resource_members or ())
         if member.role_id == interface_role
     )
-    if activate_view:
+    if activate_view or placed_in_scope:
         exposure_create, exposure_replace, exposure_grants = (
             _prepare_active_top_scope_exposure_extension(
                 snapshot,
@@ -29164,7 +29591,9 @@ def _commit_atomic_visible_wip_resource(
     else:
         exposure_create, exposure_replace, exposure_grants = (), (), ()
     scope_patch = None
-    if activate_view and active_scope_root != registry.canvas_root:
+    if (
+        activate_view or placed_in_scope
+    ) and active_scope_root != registry.canvas_root:
         if _relation_members_or_none(snapshot, active_scope_root) is None:
             raise InvalidCell(
                 "active placement scope is not an openable relation"
@@ -29383,7 +29812,8 @@ def _commit_atomic_visible_wip_resource(
         authorization_scope_root=authorization_scope_root,
         additional_authorization_scope_roots=(
             (active_scope_root,)
-            if activate_view and active_scope_root != registry.canvas_root
+            if (activate_view or placed_in_scope)
+            and active_scope_root != registry.canvas_root
             else ()
         ),
         create=(
@@ -29411,6 +29841,7 @@ def instantiate_universal_primitive(
     mutation_route: str = "/api/universal/instantiate",
     authentication_context: object | None = None,
     leased_scope_root: str | None = None,
+    placement_scope_root: str | None = None,
 ) -> tuple[str, int]:
     """Create one editable WIP terminal Cell through explicit graph wiring."""
     if not math.isfinite(x) or not math.isfinite(y):
@@ -29485,6 +29916,7 @@ def instantiate_universal_primitive(
         property_cells=tuple(property_cells),
         viewport=viewport,
         leased_scope_root=leased_scope_root,
+        placement_scope_root=placement_scope_root,
     )
     return root_id, revision
 
@@ -29505,6 +29937,7 @@ def instantiate_universal_definition(
     leased_scope_root: str | None = None,
     instance_token: str | None = None,
     initial_properties: Mapping[str, str] | None = None,
+    placement_scope_root: str | None = None,
 ) -> tuple[str, int]:
     """Instantiate, place, expose, and select one catalogue assembly."""
     if not math.isfinite(x) or not math.isfinite(y):
@@ -29696,6 +30129,7 @@ def instantiate_universal_definition(
         viewport=viewport,
         activate_view=activate_view,
         leased_scope_root=leased_scope_root,
+        placement_scope_root=placement_scope_root,
     )
     return instance.root_id, revision
 

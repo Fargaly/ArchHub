@@ -6,6 +6,7 @@ select ARCHHUB_TEST_STATE_DIR and keep the machine's active runtime unchanged.
 Closing the window leaves ArchHub in its tray; Quit closes the application.
 """
 import faulthandler
+import contextlib
 import os, sys, time, traceback
 from pathlib import Path
 
@@ -668,6 +669,12 @@ else:
         print("  runtime    : could not announce (%s)" % _refusal, flush=True)
 
 
+@contextlib.contextmanager
+def _held_guard(owner, authority, context):
+    with owner.mutation_lock, authority.broker.live_context(context):
+        yield
+
+
 def _initialize_startup_pipeline(owner, *, first_boot):
     """Seed a new graph only; opening an application never invokes its effects."""
     if not first_boot:
@@ -690,13 +697,57 @@ def _initialize_startup_pipeline(owner, *, first_boot):
                         reason="install the first-run pipeline seed of a new graph",
                     ):
                 return seed_wall_pipeline(owner.universal_store, owner.universal_registry,
-                    authentication_context=context)
+                    authentication_context=context,
+                    # Held already, and both locks re-enter: the migration
+                    # inside the seed commits under the same guard.
+                    settle_guard=lambda: _held_guard(owner, authority, context))
         except Exception as clash:
             # Only idempotent graph seeding may retry a revision conflict.
             # An engine invocation cannot safely be repeated on that evidence.
             if "expected revision" not in str(clash) or attempt == 9:
                 raise
             time.sleep(0.25 * (attempt + 1))
+
+
+def _settle_canvas_content(owner):
+    """Admitted migration: canvas content moves to its lens, in the background.
+
+    Smoothness is a gate: the window opens and answers while this runs. It
+    is prepared off the lock in small batches; the owner's mutation lock
+    and then the live authentication context (the order every admitted
+    write takes) are held only for each batch's commit, and launcher.log
+    prints each hold. A graph that already holds the migration record
+    commits nothing (nodelang/universal_pipeline.py settle_canvas_content).
+    """
+    import contextlib
+    import threading
+
+    def run():
+        from nodelang import commit_intent
+        from nodelang.universal_pipeline import settle_canvas_content
+        try:
+            authority = owner.universal_registry.authorization
+            context = authority.session.context(minimum_validity_seconds=5)
+
+            @contextlib.contextmanager
+            def commit_guard():
+                with owner.mutation_lock, authority.broker.live_context(context):
+                    yield
+
+            with commit_intent.declare(
+                commit_intent.MIGRATION,
+                actor=owner.universal_registry.application_root,
+                reason="move canvas content to its lenses; tombstone the duplicate seed set",
+            ):
+                settle_canvas_content(owner.universal_store, owner.universal_registry,
+                    authentication_context=context, guard=commit_guard,
+                    # Few commits: each one invalidates the cached canvas and
+                    # the next read re-projects it; the pause yields to reads.
+                    batch_size=48, pause=1.0)
+        except Exception as refusal:
+            print("  canvas     : content not moved -- %s" % refusal, flush=True)
+
+    threading.Thread(target=run, name="canvas-content-migration", daemon=True).start()
 
 
 # first_boot comes from the validated saved-graph check, not a UI marker.
@@ -708,6 +759,8 @@ try:
     _initialize_startup_pipeline(server, first_boot=first_boot)
     print("  pipeline   : %s; execution awaits an admitted Run" % (
         "initial seed checked" if first_boot else "saved graph retained"), flush=True)
+    if not first_boot:
+        _settle_canvas_content(server)
 except Exception as refusal:
     # A refusal nobody can locate is a refusal nobody can fix: name the
     # exact call that raised, not only its message.

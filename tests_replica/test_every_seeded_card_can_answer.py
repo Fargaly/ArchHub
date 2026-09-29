@@ -32,6 +32,7 @@ from nodelang.universal_application import (
     project_universal_canvas,
 )
 from nodelang.universal_pipeline import (
+    _ALL_SEED,
     _SEED,
     _SEED_MARKER,
     _graph_engines,
@@ -72,7 +73,9 @@ def historical(graph):
     """
     store, registry = graph
     before = {}
-    for title, x, y, properties in _SEED:
+    for index, (title, properties) in enumerate(_ALL_SEED):
+        # The pre-2026-09-28 seed put all twelve on the canvas.
+        x, y = 240.0 + (index % 4) * 320.0, 200.0 + (index // 4) * 180.0
         engine = properties["engine"]
         if engine not in PIPELINE_ENGINES or title == "Connector Status":
             # The two BABOOM cards named engines the library never held,
@@ -102,7 +105,7 @@ def test_every_seeded_card_names_an_engine_the_launcher_knows(graph):
     store, registry = graph
     known = launcher_engines(store, registry)
     declared = {
-        str(properties["engine"]) for _title, _x, _y, properties in _SEED
+        str(properties["engine"]) for _title, properties in _ALL_SEED
     }
     assert declared, "the seed declares no cards at all"
     assert declared <= known, (
@@ -140,7 +143,7 @@ def test_reseeding_adopts_the_existing_cards_and_completes_them(
     # adopted card was missing must have been written onto it.
     assert seeded["counts"]["completed"] > 0
     owned = _owner_properties(store.snapshot(), registry)
-    for title, _x, _y, properties in _SEED:
+    for title, properties in _ALL_SEED:
         root = seeded["placed"][title]
         rows = owned.get(root) or {}
         for label, value in properties.items():
@@ -176,8 +179,10 @@ def test_a_stranger_of_the_same_title_is_never_adopted(graph, seeded):
             for node in projection.get("nodes", ())
         ) if marker
     ]
+    # The canvas carries the pipeline only; the status cards live in their
+    # lenses (test_canvas_holds_only_the_work.py).
     assert len(stamped) == len(set(stamped)) == len(_SEED), (
-        "the canvas carries %d marked cards for %d declared"
+        "the canvas carries %d marked cards for %d pipeline cards"
         % (len(stamped), len(_SEED))
     )
 
@@ -187,7 +192,7 @@ def test_the_seed_reports_what_it_placed_adopted_and_skipped(seeded):
     assert set(counts) == {
         "declared", "placed", "adopted", "completed", "skipped",
     }
-    assert counts["declared"] == len(_SEED)
+    assert counts["declared"] == len(_ALL_SEED)
     assert (
         counts["placed"] + counts["adopted"] + counts["skipped"]
         == counts["declared"]

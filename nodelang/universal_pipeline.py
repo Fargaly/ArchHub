@@ -740,14 +740,15 @@ def _ensure_wire_parameters(store, registry, wire_root: str):
             return
 
 
-# The founder's first canvas. Every entry carries a "seed" marker: that,
-# not the title, is what a re-seed matches on, and the shipped sample
-# inputs are what make the flagship chain answer on first open.
+# The founder's first canvas: the one piece of real work, and nothing else.
+# Every entry carries a "seed" marker: that, not the title, is what a
+# re-seed matches on, and the shipped sample inputs are what make the
+# flagship chain answer on first open.
 # Placement is a grid of 320 x 260 cells (a card is 210 wide and at most ~200
 # tall with its rows), so no two cards overlap and the wired chain reads left
-# to right on one row. The points apply only to cards a seed CREATES: an
-# adopted card keeps the place it already has, so an existing graph is never
-# moved by this table.
+# to right on one row. The points apply only to cards a seed CREATES; an
+# adopted card that overlaps another is re-placed once by the canvas-content
+# migration (settle_canvas_content), a card the user pinned never.
 _SEED = (
     ("Sketch Lines", 240.0, 200.0, {
         "seed": "sketch-lines",
@@ -772,35 +773,108 @@ _SEED = (
     ("Revit Sessions", 880.0, 460.0, {
         "seed": "revit-sessions", "engine": "revit.sessions",
     }),
-    ("Brain Recall", 240.0, 720.0, {
+)
+
+# Status readers have no inputs and no outputs: they are not work on the
+# user's canvas, they are what a lens shows (SPEC 6). Each one is seeded
+# into the lens that owns what it reads. Positions are chosen by
+# canvas_placement.free_slot inside that lens, never by a constant.
+_LENS_SEED = (
+    ("Brain Recall", "brain", {
         "seed": "brain-recall",
         "engine": "brain.recall", "prompt": "ArchHub product state",
     }),
-    ("Brain Facts", 560.0, 720.0, {
+    ("Brain Facts", "brain", {
         "seed": "brain-facts", "engine": "brain.facts",
     }),
-    ("BABOOM Status", 880.0, 720.0, {
+    ("BABOOM Status", "cockpit", {
         "seed": "baboom-status", "engine": "baboom.status",
     }),
-    ("BABOOM Presence", 1200.0, 720.0, {
+    ("BABOOM Presence", "cockpit", {
         "seed": "baboom-presence", "engine": "baboom.presence",
-    }),
-    ("Skills Library", 240.0, 980.0, {
-        "seed": "skills-library",
-        "engine": "skills.catalogue", "match": "",
-    }),
-    ("Thinking Chain", 560.0, 980.0, {
-        "seed": "thinking-chain",
-        "engine": "skills.thinking_chain", "topic": "",
     }),
     # Named for what it does, not for the domain it reads: the grand map
     # already publishes a domain titled "Connectors", and a title match
     # against it is exactly how this card lost its engine.
-    ("Connector Status", 880.0, 980.0, {
+    ("Connector Status", "cockpit", {
         "seed": "connector-status",
         "engine": "connector.status", "connector": "",
     }),
+    ("Skills Library", "workshop", {
+        "seed": "skills-library",
+        "engine": "skills.catalogue", "match": "",
+    }),
+    ("Thinking Chain", "workshop", {
+        "seed": "thinking-chain",
+        "engine": "skills.thinking_chain", "topic": "",
+    }),
 )
+
+# Every card the seed declares, wherever it lives.
+_ALL_SEED = (
+    *((title, properties) for title, _x, _y, properties in _SEED),
+    *((title, properties) for title, _lens, properties in _LENS_SEED),
+)
+_LENS_OF_MARKER = {
+    properties[_SEED_MARKER]: lens for _title, lens, properties in _LENS_SEED
+}
+
+
+def lens_scope_root(registry, lens: str) -> str:
+    """The graph scope that IS one lens: Brain, Cockpit or the Workshop.
+
+    Brain and Cockpit are grand-map domains; the Workshop is the Workbench
+    scope inside Brain that Workshop navigation opens.
+    """
+    if lens == "workshop":
+        return registry.workshop_workbench_root
+    return registry.map.domains[lens]
+
+
+def scope_card_bounds(snapshot, registry, scope_root: str) -> dict:
+    """root -> (x, y, w, h) for every positioned member of one scope."""
+    from .canvas_placement import card_size, drawn_rows
+    from .universal_application import _property_index, _rows_by_label
+
+    members = read_relation(snapshot, scope_root, budget=200_000)
+    roots = [m.participant_id for m in members
+             if m.role_id == registry.roles["member"]]
+    property_roots = tuple(
+        m.participant_id for m in members
+        if m.role_id == registry.roles["property"]
+    )
+    if roots and not property_roots and scope_root != registry.canvas_root:
+        # A scope that indexes members only (Models & Agents): the canvas
+        # indexes every property, so the positions are read from there.
+        property_roots = _canvas_roots(snapshot, registry)[2]
+    index = _property_index(snapshot, registry, property_roots)
+    bounds = {}
+    for root in roots:
+        rows = _rows_by_label(snapshot, index.get(root, ()))
+        if "position_x" not in rows or "position_y" not in rows:
+            continue
+        try:
+            x = float(_text(snapshot, rows["position_x"].value_root))
+            y = float(_text(snapshot, rows["position_y"].value_root))
+        except (TypeError, ValueError):
+            continue
+        engine = (
+            _text(snapshot, rows["engine"].value_root) if "engine" in rows else ""
+        )
+        bounds[root] = (x, y, *card_size(engine, drawn_rows(rows)))
+    return bounds
+
+
+def free_scope_slot(snapshot, registry, scope_root: str, size=None,
+                    *, origin=None, occupied=()):
+    """The first free position inside one scope for a card of ``size``."""
+    from .canvas_placement import ORIGIN, card_size, free_slot
+
+    held = list(scope_card_bounds(snapshot, registry, scope_root).values())
+    return free_slot(
+        (*held, *occupied), size or card_size(),
+        origin=origin or ORIGIN,
+    )
 
 
 def _persist(write, attempts: int = 5, store=None):
@@ -941,6 +1015,7 @@ def seed_wall_pipeline(
     definition_root: str | None = None,
     image_path: str | None = None,
     authentication_context: object | None = None,
+    settle_guard=None,
 ) -> dict[str, object]:
     """Place the founder's first wired pipeline: sketch -> watch -> walls.
 
@@ -971,8 +1046,19 @@ def seed_wall_pipeline(
     # and place a second set of twelve cards. A card on screen is preferred
     # only when a marker is already held twice.
     members = _canvas_roots(snapshot, registry)[0]
+    # A status card lives in its lens; the marker is matched there first,
+    # so a lens card is never placed twice because the canvas lacks it.
+    lens_members = []
+    for lens in dict.fromkeys(_LENS_OF_MARKER.values()):
+        lens_root = lens_scope_root(registry, lens)
+        if lens_root in snapshot.cells:
+            lens_members.extend(
+                member.participant_id
+                for member in read_relation(snapshot, lens_root, budget=200_000)
+                if member.role_id == registry.roles["member"]
+            )
     by_marker: dict[str, str] = {}
-    for root in (*visible, *members):
+    for root in (*visible, *lens_members, *members):
         marker = (owned.get(root) or {}).get(_SEED_MARKER)
         if marker is not None and marker[1].strip():
             by_marker.setdefault(marker[1].strip(), root)
@@ -990,7 +1076,25 @@ def seed_wall_pipeline(
     adopted: list[str] = []
     completed: list[str] = []
     skipped: list[dict[str, str]] = []
-    for title, x, y, properties in _SEED:
+    lens_slots: dict[str, list] = {}
+
+    def lens_position(lens):
+        """A free slot in the lens, clear of the cards this run placed."""
+        from .canvas_placement import card_size
+        lens_root = lens_scope_root(registry, lens)
+        taken = lens_slots.setdefault(lens, [])
+        x, y = free_scope_slot(
+            store.snapshot(), registry, lens_root, occupied=taken
+        )
+        taken.append((x, y, *card_size()))
+        return lens_root, x, y
+
+    entries = (
+        *((title, None, x, y, properties) for title, x, y, properties in _SEED),
+        *((title, lens, None, None, properties)
+          for title, lens, properties in _LENS_SEED),
+    )
+    for title, lens, x, y, properties in entries:
         marker = str(properties[_SEED_MARKER])
         root = by_marker.get(marker)
         if root is None:
@@ -1005,7 +1109,28 @@ def seed_wall_pipeline(
             ):
                 root = candidate
         try:
-            if root is None:
+            if root is None and lens is not None:
+                # Placed inside its lens with every row in the same commit:
+                # a row written afterwards would name an owner outside the
+                # open canvas, and the graph refuses that.
+                import uuid as _uuid
+                lens_root, x, y = lens_position(lens)
+                initial = {label: str(value) for label, value in properties.items()}
+                root, _revision = _persist(
+                    lambda: instantiate_universal_definition(
+                        store, registry, definition_root, x=x, y=y,
+                        title_override=title,
+                        authentication_context=authentication_context,
+                        activate_view=False,
+                        placement_scope_root=lens_root,
+                        instance_token=_uuid.uuid4().hex,
+                        initial_properties=initial,
+                    ),
+                    store=store,
+                )
+                held = {label: ("", value) for label, value in initial.items()}
+                created.append(title)
+            elif root is None:
                 root, _revision = _persist(
                     lambda: instantiate_universal_definition(
                         store, registry, definition_root, x=x, y=y,
@@ -1115,8 +1240,24 @@ def seed_wall_pipeline(
                 store, registry, held[0], image_path,
                 authentication_context=authentication_context,
             )
+    # A lens card an earlier seed put on the canvas, a duplicate chain, a
+    # contact or a session left on the canvas: one admitted move puts each
+    # where it belongs. On a new graph there is nothing to move.
+    # The same admitted migration the launcher runs in the background, under
+    # the same intent; settle_canvas_content lets one run per graph at a time.
+    from . import commit_intent
+    with commit_intent.declare(
+        commit_intent.MIGRATION, actor=registry.application_root,
+        reason="move canvas content to its lenses; tombstone the duplicate seed set",
+    ):
+        # ``settle_guard`` is the caller's commit guard (its owner's mutation
+        # lock, then the live context), the one the background run takes.
+        settled = settle_canvas_content(
+            store, registry, authentication_context=authentication_context,
+            guard=settle_guard,
+        )
     counts = {
-        "declared": len(_SEED),
+        "declared": len(_ALL_SEED),
         "placed": len(created),
         "adopted": len(adopted),
         "completed": len(completed),
@@ -1143,6 +1284,7 @@ def seed_wall_pipeline(
         "skipped": skipped,
         "counts": counts,
         "wired": wired,
+        "settled": settled,
         "revision": store.revision,
     }
 
@@ -1505,6 +1647,958 @@ def retract_universal_node(
             broker, revocation, store.revision
         )
     return {"retracted": root, "revision": store.revision}
+
+
+# ------------------------------------------- canvas content, where it belongs --
+# The founder's canvas held twelve seeded cards (seven of them status
+# readers with no inputs or outputs), Workshop contact routing records as
+# raw JSON cells and every runtime agent session; the Workbench held a
+# second seeded set. SPEC 6: the Use layer shows no raw Cells, protocol
+# internals or JSON, and every status reader belongs to a lens. This
+# admitted migration MOVES membership; it never deletes a root or rewrites
+# history. Its record is a relation, so a graph holding it commits nothing.
+CANVAS_CONTENT_MIGRATION_ROOT = "app:canvas-content-migration:v1"
+_NATIVE_CONTACT_KIND = "native-contact"
+# Rows that say where a card stands or what it last answered, not what the
+# user put in it: "status" is the run's last answer (see _STRUCTURAL), and
+# the next run rewrites it. Two copies differing only here hold the same.
+_NOT_HELD = frozenset({"position_x", "position_y", "placed", "status"})
+_MIGRATION_BATCH_PREFIX = CANVAS_CONTENT_MIGRATION_ROOT + ":batch:"
+_MIGRATION_SKIP_PREFIX = CANVAS_CONTENT_MIGRATION_ROOT + ":skip:"
+
+
+def _migration_digest(value) -> str:
+    """A short, stable name for the state a skip was recorded against."""
+    import hashlib
+    import json as _json
+
+    return hashlib.sha256(_json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    ).encode("ascii")).hexdigest()[:32]
+
+
+def _migration_batch_relations(snapshot) -> list:
+    """Every batch relation any run of the migration committed.
+
+    Read from the journal's own key order (``ids_with_prefix``), never a
+    scan: an interrupted run's batches are found by the run that finishes.
+    """
+    from .universal_cell import ids_with_prefix
+
+    return sorted(
+        root for root in ids_with_prefix(snapshot.cells, _MIGRATION_BATCH_PREFIX)
+        if len(root) == len(_MIGRATION_BATCH_PREFIX) + 32
+        and all(ch in "0123456789abcdef" for ch in root[len(_MIGRATION_BATCH_PREFIX):])
+    )
+
+
+def _grouped_roots(snapshot, registry, roots) -> set:
+    """Every root inside a group the USER made, at any depth.
+
+    A grouped card still holds its ``app:canvas`` row; taking it off the
+    canvas would break the group, so the plan counts it as touched. A scope
+    the application built the same way (the Workshop Workbench holds every
+    session Work was assigned to) is not a group the user made.
+    """
+    from .universal_application import _user_composition_root
+
+    member = registry.roles["member"]
+    grouped: set = set()
+    seen: set = set()
+    pending = list(dict.fromkeys(roots))
+    while pending:
+        root = pending.pop()
+        if root in seen:
+            continue
+        seen.add(root)
+        if not _user_composition_root(snapshot, registry, root):
+            continue
+        for part in read_relation(snapshot, root, budget=300_000):
+            if part.role_id == member:
+                grouped.add(part.participant_id)
+                pending.append(part.participant_id)
+    return grouped
+
+
+def _wired_holders(snapshot, registry, scopes, candidates) -> set:
+    """Which of ``candidates`` a wire ends on: one pass over each scope's wires."""
+    from .universal_application import _canvas_interface_owner_in
+
+    wired: set = set()
+    if not candidates:
+        return wired
+    ends = (registry.roles["source"], registry.roles["target"])
+    for scope in dict.fromkeys(scopes):
+        if scope not in snapshot.cells:
+            continue
+        for member in read_relation(snapshot, scope, budget=300_000):
+            if (member.role_id != registry.roles["relation"]
+                    or member.participant_id not in snapshot.cells):
+                continue
+            for part in read_relation(snapshot, member.participant_id, budget=64):
+                if part.role_id not in ends:
+                    continue
+                for root in candidates:
+                    if root not in wired and (
+                        part.participant_id == root
+                        or _canvas_interface_owner_in(
+                            snapshot, registry, part.participant_id, frozenset((root,)))
+                    ):
+                        wired.add(root)
+    return wired
+
+
+def _native_contact_cell(snapshot, root: str) -> bool:
+    """A Workshop contact routing record: a terminal Cell holding its JSON."""
+    import json as _json
+
+    cell = snapshot.cells.get(root)
+    if cell is None or cell.link0 != NULL_CELL_ID or cell.link1 != NULL_CELL_ID:
+        return False
+    try:
+        held = _json.loads(bytes(cell.atom).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return False
+    return isinstance(held, dict) and held.get("kind") == _NATIVE_CONTACT_KIND
+
+
+def plan_canvas_content(snapshot, registry, owned=None) -> dict:
+    """What leaves the canvas and where it goes. Reads; writes nothing.
+
+    Cards are matched by their seed MARKER, never by title, on the canvas
+    and in every lens. Per marker exactly one card is kept: a pipeline card
+    on the canvas, a status card preferably where it already lives in its
+    lens (else it moves there). A copy is tombstoned only when the kept
+    card already holds everything it does: each of its row values (where
+    it stands and what it last answered aside) and no wire of its own. A
+    copy the user touched -- wired, placed by hand or put in a group -- is
+    the one kept; when copies differ, or more than one was touched, none is
+    tombstoned and the marker is reported as a skip. A card in a group the
+    user made never leaves the canvas: that too is a reported skip.
+    Returns moves (root, from scope, to scope, why), tombstones
+    (root, from scope, kept root) and skips; ``None`` as a from scope is
+    the top canvas, and as a to scope means the root only leaves it.
+    """
+    from .universal_application import _USER_PLACEMENT
+
+    owned = _owner_properties(snapshot, registry) if owned is None else owned
+    member_role = registry.roles["member"]
+    canvas = _canvas_roots(snapshot, registry)[0]
+    lens_roots = {lens: lens_scope_root(registry, lens)
+                  for lens in dict.fromkeys(_LENS_OF_MARKER.values())}
+    holders: dict[str, list[tuple[str, str | None]]] = {}
+
+    def marker_of(root):
+        return ((owned.get(root) or {}).get(_SEED_MARKER) or ("", ""))[1].strip()
+
+    for root in canvas:
+        if marker_of(root):
+            holders.setdefault(marker_of(root), []).append((root, None))
+    lens_members: list[str] = []
+    for lens_root in dict.fromkeys(lens_roots.values()):
+        if lens_root not in snapshot.cells:
+            continue
+        for member in read_relation(snapshot, lens_root, budget=300_000):
+            if member.role_id != member_role:
+                continue
+            lens_members.append(member.participant_id)
+            if marker_of(member.participant_id):
+                holders.setdefault(marker_of(member.participant_id), []).append(
+                    (member.participant_id, lens_root))
+    grouped = _grouped_roots(snapshot, registry, (*canvas, *lens_members))
+    moves: list[tuple[str, str | None, str, str]] = []
+    tombstones: list[tuple[str, str | None, str]] = []
+    kept_on_canvas: list[str] = []
+    skips: list[dict] = []
+    contested = {root for held in holders.values()
+                 if len({root for root, _scope in held}) > 1 for root, _scope in held}
+    wired = _wired_holders(
+        snapshot, registry, (registry.canvas_root, *lens_roots.values()), contested)
+
+    def rows_of(root):
+        return {label: value for label, (_relation, value) in (owned.get(root) or {}).items()
+                if label not in _NOT_HELD}
+
+    def by_hand(root):
+        return ((owned.get(root) or {}).get("placed") or ("", ""))[1] == _USER_PLACEMENT
+
+    def covers(keeper, other):
+        mine = rows_of(keeper)
+        return all(mine.get(label) == value for label, value in rows_of(other).items())
+
+    def left_alone(root, why):
+        skips.append({
+            "key": "root:" + root, "roots": [root], "why": why,
+            "digest": _migration_digest(["root", root, why, sorted(rows_of(root).items())]),
+        })
+
+    for marker, held in sorted(holders.items()):
+        lens = _LENS_OF_MARKER.get(marker)
+        if lens is None:
+            ranked = sorted(held, key=lambda item: item[1] is not None)
+        else:
+            home = lens_roots[lens]
+            ranked = sorted(held, key=lambda item: (item[1] != home, item[1] is not None))
+        roots = list(dict.fromkeys(root for root, _scope in ranked))
+        if len(roots) > 1:
+            touched = [root for root in roots
+                       if root in wired or by_hand(root) or root in grouped]
+            if len(touched) > 1:
+                keeper, why = None, "more than one copy is wired, placed by hand or grouped"
+            else:
+                choices = touched or roots
+                keeper = next((root for root in choices
+                               if all(covers(root, other) for other in roots)), None)
+                why = "its copies hold different values"
+            if keeper is None:
+                skips.append({
+                    "key": "marker:" + marker, "roots": sorted(roots), "why": why,
+                    "digest": _migration_digest(["marker", marker, sorted(
+                        [root, scope, sorted(rows_of(root).items()),
+                         root in wired, by_hand(root)]
+                        for root, scope in held)]),
+                })
+                continue
+            ranked = ([item for item in ranked if item[0] == keeper]
+                      + [item for item in ranked if item[0] != keeper])
+        keep = ranked[0]
+        if lens is None and keep[1] is None:
+            kept_on_canvas.append(keep[0])
+        if lens is not None and keep[1] != lens_roots[lens]:
+            if keep[1] is None and keep[0] in grouped:
+                left_alone(keep[0], "it is in a group the user made")
+            else:
+                moves.append((keep[0], keep[1], lens_roots[lens], "lens:" + lens))
+        for root, scope in ranked[1:]:
+            if root != keep[0]:
+                tombstones.append((root, scope, keep[0]))
+    workbench = registry.workshop_workbench_root
+    for root in canvas:
+        if root in grouped and (
+            _native_contact_cell(snapshot, root)
+            or root.startswith("app:agent-session:runtime:")
+        ):
+            left_alone(root, "it is in a group the user made")
+        elif _native_contact_cell(snapshot, root):
+            moves.append((root, None, workbench, "contact"))
+        elif root.startswith("app:agent-session:runtime:"):
+            # A session only leaves the canvas. It stays whole where it
+            # already lives: the agent registry the Workshop sidebar reads,
+            # Models & Agents, and the Workbench when Work was assigned to
+            # it (Workshop deliberation references it there).
+            moves.append((root, None, None, "session"))
+    return {"moves": moves, "tombstones": tombstones, "kept": kept_on_canvas,
+            "skips": skips}
+
+
+# Every point a seed table ever gave a pipeline card (git log -p of this
+# file: 454e78a and dddccf6 wrote the first table, 8cc3463 the current one).
+# A card standing EXACTLY on one was never moved by hand. "placed" exists
+# only since 4f981f0 (2026-09-25); a card moved by hand before that stands
+# anywhere else, and is never re-placed.
+_SEED_POINTS_EVER = {
+    "sketch-lines": frozenset({(240.0, 200.0)}),
+    "cad-lines": frozenset({(240.0, 380.0), (240.0, 460.0)}),
+    "line-watcher": frozenset({(560.0, 290.0), (560.0, 200.0)}),
+    "revit-walls": frozenset({(880.0, 290.0), (880.0, 200.0)}),
+    "revit-sessions": frozenset({(880.0, 470.0), (880.0, 460.0)}),
+}
+
+
+def plan_canvas_spacing(snapshot, registry, owned, seed_roots, drawn=None) -> dict:
+    """New points for seeded canvas cards that overlap another card.
+
+    Judged on the user's canvas only: ``drawn`` is what the view's top
+    canvas shows (its visibility index); the application's cards are drawn
+    in the System view. Only a card still standing exactly on a point a
+    seed table gave it may move; a card the user placed by hand -- marked
+    ``placed = user``, or simply standing anywhere else -- never moves. An overlapping seed card goes back to its own seed-table
+    point when that is free, else to the first free slot. Reads only.
+    """
+    from .canvas_placement import card_size, drawn_rows, free_slot, intersects
+    from .universal_application import _USER_PLACEMENT, _user_canvas_root
+
+    table = {properties[_SEED_MARKER]: (x, y) for _t, x, y, properties in _SEED}
+
+    def rect(root):
+        rows = owned.get(root) or {}
+        try:
+            x = float(rows["position_x"][1]); y = float(rows["position_y"][1])
+        except (KeyError, TypeError, ValueError):
+            return None
+        return (x, y, *card_size(rows.get("engine", ("", ""))[1], drawn_rows(rows)))
+
+    rects = {}
+    candidates = _canvas_roots(snapshot, registry)[0] if drawn is None else drawn
+    for root in candidates:
+        if root in seed_roots or _user_canvas_root(snapshot, registry, root):
+            found = rect(root)
+            if found is not None:
+                rects[root] = found
+    order = sorted(
+        (root for root in seed_roots if root in rects),
+        key=lambda root: list(table).index(
+            ((owned.get(root) or {}).get(_SEED_MARKER) or ("", ""))[1]
+        ) if ((owned.get(root) or {}).get(_SEED_MARKER) or ("", ""))[1] in table else 99,
+    )
+    def on_a_seed_point(root):
+        marker = ((owned.get(root) or {}).get(_SEED_MARKER) or ("", ""))[1]
+        points = set(_SEED_POINTS_EVER.get(marker, ()))
+        if marker in table:
+            points.add(table[marker])
+        return (rects[root][0], rects[root][1]) in points
+
+    movable = [
+        root for root in order
+        if ((owned.get(root) or {}).get("placed") or ("", ""))[1] != _USER_PLACEMENT
+        and on_a_seed_point(root)
+    ]
+
+    def clashes(root, rect_):
+        return any(intersects(rect_, value) for key, value in rects.items() if key != root)
+
+    moves = {}
+    # First each overlapping card tries its own seed-table point (a grid in
+    # which no two cards meet), so the chain keeps its left-to-right reading.
+    for root in movable:
+        mine = rects[root]
+        home = table.get(((owned.get(root) or {}).get(_SEED_MARKER) or ("", ""))[1])
+        if home is None or not clashes(root, mine) or (mine[0], mine[1]) == home:
+            continue
+        trial = (home[0], home[1], mine[2], mine[3])
+        if not clashes(root, trial):
+            rects[root] = trial
+            moves[root] = home
+    # Whatever still overlaps takes the first free slot.
+    for root in movable:
+        mine = rects[root]
+        if clashes(root, mine):
+            others = [value for key, value in rects.items() if key != root]
+            point = free_slot(others, (mine[2], mine[3]))
+            rects[root] = (point[0], point[1], mine[2], mine[3])
+            moves[root] = point
+    return moves
+
+
+def migration_tombstones(snapshot, registry) -> set:
+    """Every root the canvas-content migration tombstoned (graph facts only)."""
+    member_role = registry.roles["member"]
+    found = set()
+    # Every batch any run committed, finished or not: the final record names
+    # them only once the whole move is done.
+    for batch in _migration_batch_relations(snapshot):
+        found.update(
+            part.participant_id
+            for part in read_relation(snapshot, batch, budget=4096)
+            if part.role_id == member_role
+        )
+    return found
+
+
+_SETTLING_GUARD = __import__("threading").Lock()
+_SETTLING: "dict" = __import__("weakref").WeakKeyDictionary()
+
+
+def settle_canvas_content(store, registry, *, authentication_context=None,
+                          dry_run: bool = False, batch_size: int = 12,
+                          lock=None, guard=None, pause: float = 0.05,
+                          after_batch=None) -> dict:
+    """One migration run per graph at a time; see _settle_canvas_content.
+
+    The launcher's background thread and seed_wall_pipeline both call this.
+    A second caller while a run is in flight returns at once and writes
+    nothing (``in_flight``); two runs planned from different heads would
+    tombstone the same copy in two batches and race for the final record.
+    """
+    with _SETTLING_GUARD:
+        turn = _SETTLING.get(store)
+        if turn is None:
+            turn = _SETTLING[store] = __import__("threading").Lock()
+    if not turn.acquire(blocking=False):
+        return {"moved": 0, "tombstoned": 0, "skipped": [], "committed": False,
+                "batches": [], "in_flight": True}
+    try:
+        return _settle_canvas_content(
+            store, registry, authentication_context=authentication_context,
+            dry_run=dry_run, batch_size=batch_size, lock=lock, guard=guard,
+            pause=pause, after_batch=after_batch)
+    finally:
+        turn.release()
+
+
+def _settle_canvas_content(store, registry, *, authentication_context=None,
+                           dry_run: bool = False, batch_size: int = 12,
+                           lock=None, guard=None, pause: float = 0.05,
+                           after_batch=None) -> dict:
+    """Admitted migration: move canvas content into its lens, in small batches.
+
+    Smoothness is a gate: the application opens and answers while this
+    runs. Each batch is PLANNED AGAIN from its own base snapshot -- the
+    owner properties, the duplicate sets, what is wired, pinned or grouped
+    -- then prepared and proved WITHOUT the mutation lock; ``lock`` (the
+    owner's mutation lock) is held only for the revision check and the one
+    commit of that batch, and the time it is held is measured and returned.
+    ``guard`` (a callable returning a context manager) replaces ``lock`` when
+    the commit needs more than one lock: the launcher passes the owner's
+    mutation lock THEN the broker's live context, the order every admitted
+    write takes. A batch whose base moved underneath it is planned again.
+    So a card the user edits, wires, pins, groups or moves while this runs
+    is judged by what it is at the commit that would touch it: it drops out
+    of the plan (reported as changed) instead of being tombstoned or moved
+    on an old reading. Between batches the thread yields (``pause``).
+
+    For every planned root: it leaves the level it stands on through the
+    same retraction the delete gesture uses (the view's top canvas, or the
+    scope relation it was placed in); on the top canvas its ``member``
+    incidence also leaves ``app:canvas`` (its property incidences stay,
+    exactly the shape of a card placed inside a scope); and it becomes a
+    member of its lens with its properties. A duplicate is given no new
+    home: a batch relation names it, beside the reason. A skip is recorded
+    (a relation) so the next open does not retry it unchanged. The final
+    record (``CANVAS_CONTENT_MIGRATION_ROOT``, also the done marker) names
+    every batch any run committed, and is written only when nothing is left
+    behind. Every root and all history remain. The caller declares the
+    migration intent (in the thread that runs this).
+    """
+    import contextlib
+    import time as _time
+    import uuid as _uuid
+
+    from .cell_authorization import AuthorizationDenied
+    from .cell_identity import record_authority_relationship_revocation
+    from .universal_application import (
+        _apply_view_scope_exposure,
+        _prepare_active_top_scope_exposure_extension,
+        _session_canvas_roots,
+        _view_session_for_context,
+        _visibility_scope_projection,
+        advance_canvas_accelerator,
+        note_canvas_membership_change,
+        overlay_read_snapshot,
+        prepare_universal_retraction,
+    )
+    from .universal_cell import Snapshot
+
+    if guard is None:
+        held_lock = contextlib.nullcontext() if lock is None else lock
+        guard = lambda: held_lock
+    first = store.snapshot()
+    if CANVAS_CONTENT_MIGRATION_ROOT in first.cells:
+        return {"moved": 0, "tombstoned": 0, "skipped": [], "committed": False,
+                "batches": [], "done": True}
+    view_session, _context = _view_session_for_context(
+        registry, authentication_context
+    )
+    member_role = registry.roles["member"]
+    visible_role = registry.roles["visible"]
+    base = {"snapshot": first}
+    # The owner properties of the plan the current batch was made from.
+    ctx = {"owned": {}}
+    state = {"create": {}, "replace": {}, "revocations": [], "grants": []}
+
+    def drawn_now(graph):
+        return tuple(
+            member.participant_id
+            for member in read_relation(graph, view_session.visibility_root, budget=300_000)
+            if member.role_id == visible_role
+        )
+
+    def current():
+        # The staged graph at the batch's BASE revision: the batch commits
+        # once against it, so every grant and revocation prepared on it
+        # expects exactly that commit.
+        snapshot = base["snapshot"]
+        overlay = overlay_read_snapshot(
+            snapshot, create=tuple(state["create"].values()),
+            replace=tuple(state["replace"].values()),
+        )
+        return Snapshot(snapshot.revision, overlay.cells)
+
+    def absorb(new_create=(), new_replace=()):
+        for cell in new_create:
+            state["create"][cell.id] = cell
+        for cell in new_replace:
+            if cell.id in state["create"]:
+                state["create"][cell.id] = cell
+            else:
+                state["replace"][cell.id] = cell
+
+    def leave(root, scope):
+        """Take ``root`` off the level it stands on."""
+        staged = current()
+        relation = view_session.visibility_root if scope is None else scope
+        placed_role = visible_role if scope is None else member_role
+        if any(
+            member.participant_id == root and member.role_id == placed_role
+            for member in read_relation(staged, relation, budget=300_000)
+        ):
+            made, changed, revoked, granted = prepare_universal_retraction(
+                staged, registry, view_session, root, scope, lens_move=True,
+                # A top-canvas retraction is proved once per batch, below. A
+                # nested one still proves its level, which is how an
+                # unopenable scope is told apart.
+                prove=scope is not None,
+            )
+            absorb(made, changed)
+            state["revocations"].extend(revoked)
+            state["grants"].extend(granted)
+        if scope is None:
+            staged = current()
+            leaving = tuple(
+                member.incidence_id
+                for member in read_relation(staged, registry.canvas_root, budget=300_000)
+                if member.role_id == member_role and member.participant_id == root
+            )
+            if leaving:
+                patch = prepare_remove_relation_members(
+                    staged, registry.canvas_root, leaving, budget=300_000
+                )
+                absorb((), patch.replace)
+
+    def leave_scope(root, scope):
+        """Take ``root`` out of a scope relation the canvas cannot open.
+
+        A scope over its bounded projection (the Workbench holds every
+        agent session) cannot be read by the nested reader the retraction
+        proves against, so the card's own incidences are removed directly:
+        its member row, its property rows, and the wires ending on the
+        interfaces it owns. The top-canvas proof still runs before commit.
+        """
+        from .universal_application import _canvas_interface_owner_in
+
+        staged = current()
+        owners = frozenset((root,))
+        properties = {relation for relation, _value in (ctx["owned"].get(root) or {}).values()}
+        doomed = []
+        for member in read_relation(staged, scope, budget=300_000):
+            participant = member.participant_id
+            if member.role_id == member_role and participant == root:
+                doomed.append(member.incidence_id)
+            elif member.role_id == registry.roles["property"] and participant in properties:
+                doomed.append(member.incidence_id)
+            elif member.role_id == registry.roles["relation"]:
+                ends = [
+                    part.participant_id
+                    for part in read_relation(staged, participant, budget=64)
+                    if part.role_id in (registry.roles["source"], registry.roles["target"])
+                ] if participant in staged.cells else []
+                if any(
+                    end == root or _canvas_interface_owner_in(staged, registry, end, owners)
+                    for end in ends
+                ):
+                    doomed.append(member.incidence_id)
+        if doomed:
+            patch = prepare_remove_relation_members(
+                staged, scope, tuple(doomed), budget=300_000
+            )
+            absorb((), patch.replace)
+
+    def arrive(root, scope):
+        """Make ``root`` a member of ``scope`` with its properties."""
+        staged = current()
+        held = {
+            (member.role_id, member.participant_id)
+            for member in read_relation(staged, scope, budget=300_000)
+        }
+        wanted = tuple(pair for pair in (
+            (member_role, root),
+            *((registry.roles["property"], relation)
+              for relation, _value in (ctx["owned"].get(root) or {}).values()),
+        ) if pair not in held)
+        if not wanted:
+            return
+        if (member_role, root) not in held:
+            made, changed, granted = _prepare_active_top_scope_exposure_extension(
+                staged, registry, view_session, root, scope
+            )
+            absorb(made, changed)
+            state["grants"].extend(granted)
+            staged = current()
+        patch = prepare_append_relation_members(staged, scope, wanted, budget=300_000)
+        absorb(patch.create, patch.replace)
+
+    def place(root, x, y):
+        """Write a card's two position values: the gesture a hand move makes."""
+        staged = current()
+        for label, value in (("position_x", x), ("position_y", y)):
+            relation = (ctx["owned"].get(root) or {}).get(label)
+            if relation is None:
+                continue
+            value_root = _one_for_role(
+                read_relation(staged, relation[0], budget=64), registry.roles["value"]
+            )
+            if value_root is None or value_root not in staged.cells:
+                continue
+            held = staged.cells[value_root]
+            absorb((), (Cell(held.id, held.link0, held.link1,
+                             str(float(value)).encode("utf-8")),))
+
+    def settle_in(root, scope):
+        """A card arriving in a lens lands in free space there, never on a card."""
+        from .canvas_placement import card_size, drawn_rows, free_slot, intersects
+        rows = ctx["owned"].get(root) or {}
+        try:
+            x = float(rows["position_x"][1]); y = float(rows["position_y"][1])
+        except (KeyError, TypeError, ValueError):
+            return
+        size = card_size(rows.get("engine", ("", ""))[1], drawn_rows(rows))
+        staged = current()
+        others = [rect for key, rect in scope_card_bounds(staged, registry, scope).items()
+                  if key != root]
+        if any(intersects((x, y, *size), rect) for rect in others):
+            place(root, *free_slot(others, size))
+
+    def one(action, root, origin, target, why, moved, tombstoned):
+        if origin is None:
+            leave(root, origin)
+        else:
+            try:
+                leave(root, origin)
+            except InvalidCell as refusal:
+                if "openable" not in str(refusal) and "bounded" not in str(refusal):
+                    raise
+                leave_scope(root, origin)
+        if action == "move" and target is None:
+            moved.append({"root": root, "scope": None, "why": why})
+        elif target is not None:
+            arrive(root, target)
+            settle_in(root, target)
+            moved.append({"root": root, "scope": target, "why": why})
+        else:
+            tombstoned.append({
+                "root": root, "from": origin or registry.canvas_root, "why": why,
+            })
+
+    def work_digest(action, root, origin, target, owned):
+        return _migration_digest(["work", action, root, origin, target, sorted(
+            (label, value) for label, (_relation, value) in (owned.get(root) or {}).items())])
+
+    def planned(snapshot):
+        """The whole plan at ``snapshot``: the work left, and what is skipped.
+
+        A skip recorded against this exact state is not tried again; it is
+        re-planned only once its holders change (a new digest)."""
+        owned = _owner_properties(snapshot, registry)
+        plan = plan_canvas_content(snapshot, registry, owned)
+        work = [
+            *(("move", root, origin, target, why)
+              for root, origin, target, why in plan["moves"]),
+            *(("tombstone", root, origin, None, "duplicate of " + kept)
+              for root, origin, kept in plan["tombstones"]),
+        ]
+        recorded = lambda digest: _MIGRATION_SKIP_PREFIX + digest in snapshot.cells
+        new_skips = [skip for skip in plan["skips"] if not recorded(skip["digest"])]
+        parked = [item for item in work
+                  if recorded(work_digest(*item[:4], owned))]
+        work = [item for item in work if item not in parked]
+        outstanding = len(plan["skips"]) - len(new_skips) + len(parked)
+        return owned, plan, work, new_skips, outstanding
+
+    size = max(1, int(batch_size))
+    refused: dict = {}        # (action, root) -> this run's refusal record
+    executed: set = set()     # (action, root) this run committed
+    first_work: set | None = None
+    moved_all: list[dict[str, str]] = []
+    tombstoned_all: list[dict[str, str]] = []
+    spaced: dict = {}
+    batches: list[dict[str, object]] = []
+    latest_skips: list = []
+    outstanding = 0
+    carried = False
+    number = 0
+    while True:
+        finished = False
+        for attempt in range(5):
+            started = _time.perf_counter()
+            base["snapshot"] = store.snapshot()
+            owned, plan, work, latest_skips, outstanding = planned(base["snapshot"])
+            ctx["owned"] = owned
+            plan_seconds = _time.perf_counter() - started
+            if first_work is None:
+                first_work = {(item[0], item[1]) for item in work}
+            if not dry_run:
+                # Already committed by this run and planned again: the move
+                # did not take effect. Say so once instead of looping.
+                for action, root, origin, target, _why in work:
+                    if (action, root) in executed and (action, root) not in refused:
+                        refused[(action, root)] = {
+                            "root": root, "action": action,
+                            "why": "the move did not take effect",
+                            "digest": work_digest(action, root, origin, target, owned),
+                        }
+            work = [item for item in work
+                    if (item[0], item[1]) not in refused
+                    and not (dry_run and (item[0], item[1]) in executed)]
+            chunk = work[:size]
+            last = len(work) <= size
+            off_canvas = {root for _a, root, origin, _t, _w in chunk if origin is None}
+            if not chunk and not plan_canvas_spacing(
+                base["snapshot"], registry, owned, set(plan.get("kept", ())),
+                drawn_now(base["snapshot"]),
+            ):
+                finished = True
+                break
+            state.update(create={}, replace={}, revocations=[], grants=[])
+            moved: list[dict[str, str]] = []
+            tombstoned: list[dict[str, str]] = []
+            failed: list[dict[str, str]] = []
+            for action, root, origin, target, why in chunk:
+                saved = {
+                    "create": dict(state["create"]), "replace": dict(state["replace"]),
+                    "revocations": list(state["revocations"]),
+                    "grants": list(state["grants"]),
+                }
+                try:
+                    one(action, root, origin, target, why, moved, tombstoned)
+                except (InvalidCell, AuthorizationDenied) as refusal:
+                    # The graph refused this one move: it is skipped and
+                    # recorded. Anything else is a defect and stops the run.
+                    state.update(saved)
+                    failed.append({"root": root, "action": action,
+                                   "why": str(refusal)[:300],
+                                   "digest": work_digest(action, root, origin, target, owned)})
+            relation_root = None
+            if tombstoned:
+                relation_root = "%s:batch:%s" % (
+                    CANVAS_CONTENT_MIGRATION_ROOT, _uuid.uuid4().hex)
+                reason_root = relation_root + ":why"
+                absorb((
+                    Cell(reason_root, NULL_CELL_ID, NULL_CELL_ID, (
+                        "duplicate seed cards tombstoned: %s" % "; ".join(
+                            "%s is a %s" % (item["root"], item["why"])
+                            for item in tombstoned)
+                    ).encode("utf-8")),
+                    *compose_relation_cells((
+                        (registry.roles["why"], reason_root),
+                        (registry.roles["scope"], registry.canvas_root),
+                        *((member_role, item["root"]) for item in tombstoned),
+                    ), relation_id=relation_root).cells,
+                ))
+            chunk_spaced = {}
+            if last:
+                # The seed cards kept on the canvas stop overlapping (the
+                # gesture a hand move makes); nothing the user moved moves.
+                chunk_spaced = plan_canvas_spacing(
+                    base["snapshot"], registry, owned, set(plan.get("kept", ())),
+                    drawn_now(current()),
+                )
+                for root, (x, y) in chunk_spaced.items():
+                    place(root, x, y)
+            # Proved by the reader the next boot runs, before anything is
+            # written, and outside the lock. A batch beside a user group signs
+            # the group's grants through the new exposure entry, and a grant
+            # counts only once it is recorded after its commit (as group,
+            # ungroup and retraction record theirs). Such a batch is proved
+            # before the commit the way a card taken off beside a group is --
+            # the projection and the exposure partition -- and by the whole
+            # reader right after the commit, over the committed graph.
+            staged = current()
+            if state["grants"]:
+                visible, relations, properties, _interfaces = (
+                    _visibility_scope_projection(staged, registry, view_session)
+                )
+                _apply_view_scope_exposure(
+                    staged, registry, view_session, registry.canvas_root,
+                    (visible, relations, properties),
+                )
+            else:
+                _session_canvas_roots(staged, registry, view_session)
+            prepared = _time.perf_counter() - started
+            if dry_run:
+                held = 0.0
+                committed = False
+            else:
+                with guard():
+                    locked = _time.perf_counter()
+                    stale = store.revision != base["snapshot"].revision
+                    if not stale:
+                        store.commit(
+                            base["snapshot"].revision,
+                            create=tuple(state["create"].values()),
+                            replace=tuple(state["replace"].values()),
+                        )
+                    held = _time.perf_counter() - locked
+                if stale:
+                    continue
+                committed = True
+                committed_revision = store.revision
+                broker = registry.authorization.relationship_broker
+                for grant in state["grants"]:
+                    broker.record_generation(grant.root_id, grant.generation)
+                for revocation in state["revocations"]:
+                    record_authority_relationship_revocation(
+                        broker, revocation, committed_revision)
+                if state["grants"]:
+                    _session_canvas_roots(store.snapshot(), registry, view_session)
+                # Accelerator only: the remembered canvas answer is carried
+                # across this batch instead of rebuilt by the next read. The
+                # note is checked against the graph by the reader.
+                note_canvas_membership_change(
+                    store,
+                    base_revision=base["snapshot"].revision,
+                    revision=committed_revision,
+                    # The store commits only Cells whose content differs;
+                    # the note names exactly those, or it would never match.
+                    cells=(
+                        cell_id
+                        for cell_id, cell in (
+                            *state["create"].items(), *state["replace"].items()
+                        )
+                        if base["snapshot"].cells.get(cell_id) != cell
+                    ),
+                    removed=(
+                        *(item["root"] for item in moved if item["root"] in off_canvas),
+                        *(item["root"] for item in tombstoned
+                          if item["from"] == registry.canvas_root),
+                    ),
+                    positions={
+                        root: point for root, point in chunk_spaced.items()
+                    },
+                    scopes={
+                        scope for _a, _r, origin, target, _w in chunk
+                        for scope in (origin, target) if scope is not None
+                    },
+                    revoked=(
+                        revocation.relationship_root
+                        for revocation in state["revocations"]
+                    ),
+                    granted=(grant.root_id for grant in state["grants"]),
+                )
+                try:
+                    carried = advance_canvas_accelerator(
+                        store, registry,
+                        authentication_context=authentication_context,
+                    )
+                except Exception:
+                    carried = False
+            break
+        else:
+            raise InvalidCell("canvas-content batch %d kept going stale" % number)
+        if finished:
+            break
+        for item in failed:
+            refused[(item["action"], item["root"])] = item
+        refused_now = {(item["action"], item["root"]) for item in failed}
+        executed.update((action, root) for action, root, *_ in chunk
+                        if (action, root) not in refused_now)
+        moved_all.extend(moved)
+        tombstoned_all.extend(tombstoned)
+        spaced.update(chunk_spaced)
+        batches.append({
+            "batch": number, "roots": len(chunk), "attempts": attempt + 1,
+            "plan_seconds": round(plan_seconds, 3),
+            "prepare_seconds": round(prepared, 3), "lock_seconds": round(held, 4),
+            "canvas_carried": bool(committed and carried),
+            "cells": [len(state["create"]), len(state["replace"])],
+            "committed": committed,
+        })
+        if after_batch is not None:
+            after_batch(batches[-1])
+        if not dry_run:
+            print("  canvas     : batch %d committed, %d root(s), plan %.1f s, lock held "
+                  "%.1f ms, prepared %.1f s, canvas answer %s" % (
+                      number + 1, len(chunk), plan_seconds, held * 1000, prepared,
+                      "carried" if carried else "left to rebuild"),
+                  flush=True)
+            _time.sleep(max(0.0, float(pause)))
+        number += 1
+        if last:
+            break
+    # Planned at the start but neither done nor refused: its card changed
+    # while this ran (edited, wired, pinned, grouped, moved), so the plan
+    # made at its batch no longer held it.
+    changed = sorted(
+        (action, root) for action, root in (first_work or set())
+        if (action, root) not in executed and (action, root) not in refused
+    )
+    new_skips = [
+        *({"root": ", ".join(skip["roots"]), "roots": list(skip["roots"]),
+           "action": "keep", "why": skip["why"], "digest": skip["digest"]}
+          for skip in latest_skips),
+        *({**item, "roots": [item["root"]]} for item in refused.values()),
+    ]
+    # Done only when nothing is left behind: no new skip and none recorded
+    # earlier that still stands. That includes a first look that finds
+    # nothing to do at all, so the next open does not plan again.
+    done = not new_skips and not outstanding
+    recorded_now = 0
+    record_written = False
+    if not dry_run and (new_skips or done):
+        for attempt in range(5):
+            head = store.snapshot()
+            cells = []
+            for skip in new_skips:
+                skip_root = _MIGRATION_SKIP_PREFIX + skip["digest"]
+                if skip_root in head.cells:
+                    continue
+                reason_root = skip_root + ":why"
+                cells.append(Cell(reason_root, NULL_CELL_ID, NULL_CELL_ID, (
+                    "canvas content left in place: %s (%s)"
+                    % (", ".join(skip["roots"]), skip["why"])).encode("utf-8")))
+                cells.extend(compose_relation_cells((
+                    (registry.roles["why"], reason_root),
+                    (registry.roles["scope"], registry.canvas_root),
+                    *((member_role, root) for root in skip["roots"] if root in head.cells),
+                ), relation_id=skip_root).cells)
+            if done and CANVAS_CONTENT_MIGRATION_ROOT not in head.cells:
+                every_batch = _migration_batch_relations(head)
+                reason_root = CANVAS_CONTENT_MIGRATION_ROOT + ":why"
+                cells.append(Cell(reason_root, NULL_CELL_ID, NULL_CELL_ID, (
+                    "canvas content settled in its lenses; %d batch relation(s) "
+                    "name the tombstoned duplicate seed cards" % len(every_batch)
+                ).encode("utf-8")))
+                cells.extend(compose_relation_cells((
+                    (registry.roles["why"], reason_root),
+                    (registry.roles["scope"], registry.canvas_root),
+                    *((member_role, batch) for batch in every_batch),
+                ), relation_id=CANVAS_CONTENT_MIGRATION_ROOT).cells)
+            if not cells:
+                break
+            with guard():
+                stale = store.revision != head.revision
+                if not stale:
+                    store.commit(head.revision, create=tuple(cells))
+            if stale:
+                continue
+            record_written = True
+            recorded_now = len(new_skips)
+            note_canvas_membership_change(
+                store, base_revision=head.revision, revision=store.revision,
+                cells=(cell.id for cell in cells),
+            )
+            try:
+                advance_canvas_accelerator(
+                    store, registry, authentication_context=authentication_context)
+            except Exception:
+                pass
+            break
+        else:
+            raise InvalidCell("canvas-content record kept going stale")
+    by_reason: dict[str, int] = {}
+    for item in moved_all:
+        key = item["why"].split(":", 1)[0]
+        by_reason[key] = by_reason.get(key, 0) + 1
+    if not dry_run and batches:
+        print(
+            "  canvas     : %d card(s) moved to their lens %s, %d duplicate(s) "
+            "tombstoned, %d overlapping card(s) re-placed, %d skipped, %d changed "
+            "while it ran, %d batch(es), longest lock %.1f ms" % (
+                len(moved_all), by_reason, len(tombstoned_all), len(spaced),
+                len(new_skips), len(changed), len(batches),
+                max(batch["lock_seconds"] for batch in batches) * 1000),
+            flush=True,
+        )
+    return {
+        "moved": len(moved_all), "tombstoned": len(tombstoned_all),
+        "skipped": new_skips, "recorded_skips": outstanding + recorded_now,
+        "changed": [{"action": action, "root": root} for action, root in changed],
+        "done": bool(done and not dry_run),
+        "committed": bool(not dry_run and (batches or record_written)),
+        "revision": store.revision, "by_reason": by_reason,
+        "moves": moved_all, "tombstones": tombstoned_all,
+        "spaced": {root: list(point) for root, point in spaced.items()},
+        "batches": batches,
+    }
 
 
 # ------------------------------------------------ the graph-held node library --

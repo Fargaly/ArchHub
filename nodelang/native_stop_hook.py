@@ -534,9 +534,27 @@ def _tag_forms(text):
     return forms
 
 
+_CLOSED_WORD = re.compile(r'(?<![A-Za-z])CLOSED(?![A-Za-z])')
+_REASSIGNED = re.compile(r'reassign', re.IGNORECASE)
+
+
+def _closed(key, sent_at, message_id, closes, unreachable, root):
+    """A later message to the same peer closed this request, or the peer is gone."""
+    for to, said_at, message in closes:
+        if said_at <= sent_at or root(_peer_key(to)) != key:
+            continue
+        if _REASSIGNED.search(message) and not _asks_reply(to, message):
+            # A reassignment notice (itself not a new question) hands the work on.
+            return True
+        if message_id and message_id in message and (_CLOSED_WORD.search(message) or _NO_REPLY.search(message)):
+            return True
+    return any(said_at > sent_at and root(_peer_key(to)) == key for to, said_at in unreachable)
+
+
 def followup_items(entries, now, *, registry=()):
     """Overdue requests this session sent, and whether the founder is waiting on this turn."""
     pending, sent, replies, last_prompt, alias = {}, [], [], None, {}
+    notes, closes, unreachable = {}, [], []
 
     def root(key):
         while alias.get(key, key) != key:
@@ -572,6 +590,8 @@ def followup_items(entries, now, *, registry=()):
                 if type(block) is dict and block.get('type') == 'tool_use' and block.get('name') == 'SendMessage':
                     request = block.get('input') or {}
                     to, message = request.get('to'), request.get('message')
+                    if type(to) is str and type(message) is str:
+                        notes[block.get('id')] = (to, message, moment)
                     if type(to) is str and type(message) is str and _asks_reply(to, message):
                         pending[block.get('id')] = (to, moment)
         elif entry.get('type') in ('attachment', 'queue-operation'):
@@ -580,6 +600,16 @@ def followup_items(entries, now, *, registry=()):
                 replies.append((forms, moment))
         elif entry.get('type') == 'user':
             for block in content if isinstance(content, list) else ():
+                if type(block) is dict and block.get('type') == 'tool_result' and block.get('tool_use_id') in notes:
+                    # Every send is also read for closure: a message naming a request
+                    # as CLOSED (or no reply needed), a reassignment notice, or a send
+                    # the transport reports as unreachable.
+                    to, message, said_at = notes.pop(block['tool_use_id'])
+                    result = _tool_result(block.get('content'))
+                    if result.get('success') is True:
+                        closes.append((to, said_at, message))
+                    elif 'reachable' in json.dumps(result).casefold():
+                        unreachable.append((to, said_at))
                 if type(block) is dict and block.get('type') == 'tool_result' and block.get('tool_use_id') in pending:
                     to, sent_at = pending.pop(block['tool_use_id'])
                     result = _tool_result(block.get('content'))
@@ -606,6 +636,8 @@ def followup_items(entries, now, *, registry=()):
     open_requests = {}
     for to, sent_at, message_id in sent:
         key = root(_peer_key(to))
+        if _closed(key, sent_at, message_id, closes, unreachable, root):
+            continue
         if heard.get(key, 0) < sent_at:
             open_requests.setdefault(key, []).append((sent_at, message_id, to))
     items = []
@@ -687,7 +719,9 @@ def followup_decision(payload, *, now=None, guard_directory=None, registry_direc
                              'silence use another live channel; on the 3rd escalate to the coordinator.' % (
                                  item['to'], item['count'], item['minutes'], item['message_id'],
                                  item['count'], item['message_id']))
-            lines.append('Send numbered follow-ups only; never resend an effect. This block fires once per item.')
+            lines.append('Send numbered follow-ups only; never resend an effect. This repeats every %d minutes '
+                         'while an item stays open; to close one, message that peer naming its msg id with '
+                         'CLOSED or "no reply needed".' % (FOLLOWUP_DUE_SECONDS // 60))
             decision = {'decision': 'block', 'reason': '\n'.join(lines)}
     if marks != guard:
         _save_guard(guard_path, marks)

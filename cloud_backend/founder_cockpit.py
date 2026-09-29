@@ -162,18 +162,33 @@ def record_error(*, where: str, kind: str, message: str,
         })
     except Exception:
         pass
+    try:
+        # Kept across restarts; the ring above only answers when the db cannot.
+        db.log_cockpit_error(at=str(where)[:200], kind=str(kind)[:120],
+                             message=str(message)[:500],
+                             status=int(status) if status is not None else None)
+    except Exception:
+        pass
 
 
 def recent_errors(limit: int = 50) -> list[dict]:
-    """Most-recent errors, newest first."""
+    """Most-recent errors, newest first: the durable log, else the ring."""
+    try:
+        return db.recent_cockpit_errors(limit)
+    except Exception:
+        pass
     items = list(_ERROR_RING)[-int(limit):]
     items.reverse()
     return items
 
 
 def clear_errors() -> None:
-    """Reset the ring (used by tests for isolation)."""
+    """Reset the ring and the durable log (used by tests for isolation)."""
     _ERROR_RING.clear()
+    try:
+        db.clear_cockpit_errors()
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +332,75 @@ def _replica_count() -> Optional[int]:
         return None
 
 
+def _health_probe() -> dict:
+    """Measured health: the database answers, the replica store can be
+    written, and the data volume has room. Each check says why it failed."""
+    import shutil
+    checks: dict = {}
+    try:
+        checks["database"] = db.database_health()
+    except Exception as exc:
+        checks["database"] = {"ok": False, "reason": type(exc).__name__}
+    try:
+        import brain_replica
+        root = Path(str(getattr(brain_replica, "DEFAULT_REPLICAS_ROOT", "") or config.DATA_DIR))
+        target = root if root.exists() else root.parent
+        checks["replicas_root"] = {"ok": os.access(target, os.W_OK), "exists": root.exists()}
+    except Exception as exc:
+        checks["replicas_root"] = {"ok": False, "reason": type(exc).__name__}
+    try:
+        usage = shutil.disk_usage(str(config.DATA_DIR))
+        checks["data_volume"] = {"ok": usage.free > 256 * 1024 * 1024,
+                                 "free_bytes": usage.free, "total_bytes": usage.total}
+    except Exception as exc:
+        checks["data_volume"] = {"ok": False, "reason": type(exc).__name__}
+    return {"ok": all(check.get("ok") for check in checks.values()),
+            "ts": int(time.time()), "checks": checks}
+
+
+_FLY_CACHE: dict = {}
+
+
+def _fetch_fly_machines(app: str, token: str) -> list:
+    import urllib.request
+    auth = token if token.startswith("FlyV1 ") else "Bearer " + token
+    request = urllib.request.Request(
+        "https://api.machines.dev/v1/apps/%s/machines" % _urlquote(app, safe=""),
+        headers={"Authorization": auth})
+    with urllib.request.urlopen(request, timeout=4) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _fly_machines(fetch=None) -> dict:
+    """This app's Fly machines, read with a read-only token (cached 30 s).
+
+    The token is a secret reference and never leaves this function."""
+    app = (os.environ.get("FLY_APP_NAME") or "").strip()
+    if not app:
+        return {"available": False, "reason": "not running on Fly"}
+    raw = (config.FLY_MACHINES_READ_TOKEN or "").strip()
+    token = (config._resolve_op_ref(raw) or "").strip() if raw else ""
+    if not token:
+        return {"available": False,
+                "reason": "no read-only Fly token (secret FLY_MACHINES_READ_TOKEN)"}
+    cached = _FLY_CACHE.get(app)
+    if cached and time.time() - cached[0] < 30:
+        return cached[1]
+    try:
+        rows = (fetch or _fetch_fly_machines)(app, token)
+    except Exception as exc:
+        record_error(where="founder.fly_machines", kind=type(exc).__name__,
+                     message="the Fly Machines API did not answer")
+        return {"available": False, "reason": "Fly Machines API: %s" % type(exc).__name__}
+    answer = {"available": True, "machines": [
+        {"id": m.get("id"), "name": m.get("name"), "state": m.get("state"),
+         "region": m.get("region"), "updated_at": m.get("updated_at"),
+         "image": ((m.get("config") or {}).get("image"))}
+        for m in rows if isinstance(m, dict)]}
+    _FLY_CACHE[app] = (time.time(), answer)
+    return answer
+
+
 def _system_panel() -> dict:
     """Brain replica status, health, version/build, deploy info."""
     # The image is built from cloud_backend/ alone, so the repo-root VERSION
@@ -336,7 +420,7 @@ def _system_panel() -> dict:
         version = "%s (%s)" % (version, image)
 
     return {
-        "healthz":          {"ok": True, "ts": int(time.time())},
+        "healthz":          _health_probe(),
         "version":          version,
         "env":              os.environ.get("ENV", "").strip().lower() or "dev",
         "billing_provider": config.BILLING_PROVIDER,
@@ -345,6 +429,7 @@ def _system_panel() -> dict:
             "app":     os.environ.get("FLY_APP_NAME") or None,
             "region":  os.environ.get("FLY_REGION") or None,
             "machine": os.environ.get("FLY_MACHINE_ID") or None,
+            "machines": _fly_machines(),
         },
         "brain_replicas": {
             "count": _replica_count(),

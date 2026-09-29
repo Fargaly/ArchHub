@@ -141,6 +141,10 @@ NVIDIA_MODEL      = _req("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct").strip()
 # rotates across OPENROUTER_FREE_MODELS on a rate-limit / 4xx so one model
 # being throttled doesn't break free serving.
 OPENROUTER_API_KEY  = _req("OPENROUTER_API_KEY", "")
+# Founder cockpit health: a READ-ONLY Fly token (`fly tokens create readonly`),
+# raw or op:// reference, so the cockpit can list this app's machines. Unset:
+# the cockpit says the machine list is unavailable and why.
+FLY_MACHINES_READ_TOKEN = _req("FLY_MACHINES_READ_TOKEN", "")
 OPENROUTER_BASE_URL = _req(
     "OPENROUTER_BASE_URL",
     "https://openrouter.ai/api/v1").strip().rstrip("/")

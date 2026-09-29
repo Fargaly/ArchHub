@@ -584,6 +584,17 @@ CREATE TABLE IF NOT EXISTS founder_config (
 -- executes through the cockpit. Every real action (purge, set-plan, toggle,
 -- agent-direction) writes one row BEFORE/AFTER it runs, so the cockpit's
 -- authority is accountable + reviewable. Never deleted from app code.
+-- Founder cockpit errors, kept across restarts (the in-memory ring was lost
+-- on every deploy). Bounded like the ring: the newest 100 rows are kept.
+CREATE TABLE IF NOT EXISTS cockpit_error_log (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts       INTEGER NOT NULL,
+    at       TEXT NOT NULL,
+    kind     TEXT NOT NULL,
+    message  TEXT NOT NULL,
+    status   INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS founder_action_log (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     ts          INTEGER NOT NULL,
@@ -3022,6 +3033,43 @@ def log_founder_action(*, actor: str, command: str, action: str,
              (target or None), result[:2000], 1 if ok else 0),
         )
         return int(cur.lastrowid)
+
+
+def log_cockpit_error(*, at: str, kind: str, message: str, status: Optional[int]) -> None:
+    with connect() as con:
+        con.execute("INSERT INTO cockpit_error_log (ts, at, kind, message, status) "
+                    "VALUES (?, ?, ?, ?, ?)", (int(time.time()), at, kind, message, status))
+        con.execute("DELETE FROM cockpit_error_log WHERE id <= "
+                    "(SELECT MAX(id) - 100 FROM cockpit_error_log)")
+
+
+def recent_cockpit_errors(limit: int = 50) -> list[dict]:
+    with connect() as con:
+        rows = con.execute("SELECT ts, at, kind, message, status FROM cockpit_error_log "
+                           "ORDER BY id DESC LIMIT ?", (int(limit),)).fetchall()
+    return [{"ts": r["ts"], "where": r["at"], "kind": r["kind"], "message": r["message"],
+             "status": r["status"]} for r in rows]
+
+
+def clear_cockpit_errors() -> None:
+    with connect() as con:
+        con.execute("DELETE FROM cockpit_error_log")
+
+
+def database_health() -> dict:
+    """The cloud database, measured: a round trip and its size on disk."""
+    started = time.perf_counter()
+    with connect() as con:
+        con.execute("SELECT 1").fetchone()
+        pages = con.execute("PRAGMA page_count").fetchone()[0]
+        page_size = con.execute("PRAGMA page_size").fetchone()[0]
+    path = config.DATABASE_URL
+    return {
+        "ok": True,
+        "round_trip_ms": round((time.perf_counter() - started) * 1000, 2),
+        "bytes": int(pages) * int(page_size),
+        "file_bytes": os.path.getsize(path) if os.path.isfile(path) else None,
+    }
 
 
 def recent_founder_actions(limit: int = 30) -> list[dict]:

@@ -744,6 +744,18 @@ def api_command(payload: dict = Body(default={}),
         return JSONResponse(result)
 
 
+def _audit(founder: dict, route: str, action: str, *, target: Optional[str] = None,
+           result: Optional[dict] = None, ok: bool = True) -> None:
+    """One founder_action_log row for a route that acts outside /api/command.
+
+    Every cockpit route that changes something records who, what and the real
+    effect, like the command path does. Nothing secret goes in: a minted
+    sign-in code is never written, only that one was minted."""
+    db.log_founder_action(
+        actor=(founder.get("email") or "").strip().lower(), command=route,
+        action=action, target=target, result=json.dumps(result or {})[:2000], ok=ok)
+
+
 @router.get("/api/actions")
 def api_actions(_founder: dict = Depends(require_founder)) -> JSONResponse:
     """The founder action audit log (most recent first)."""
@@ -765,6 +777,8 @@ def api_browser_code(founder: dict = Depends(require_founder)) -> JSONResponse:
     so the value that travels in the opened URL is worth nothing afterwards.
     """
     code = db.issue_code(founder["id"], "")
+    _audit(founder, "POST /founder/api/browser-code", "browser_code",
+           target=founder.get("email"), result={"expires_in_s": 300})
     return JSONResponse({
         "claim_url": "%s/founder/claim?code=%s" % (
             config.PUBLIC_URL.rstrip("/"), _urlquote(code, safe=""),
@@ -795,7 +809,7 @@ class AgentTaskResultReq(BaseModel):
 
 @router.post("/api/agent-tasks/claim")
 def api_agent_task_claim(body: Optional[AgentTaskClaimReq] = None,
-                         _founder: dict = Depends(require_founder)) -> JSONResponse:
+                         founder: dict = Depends(require_founder)) -> JSONResponse:
     """The founder's running application claims the oldest instruction
     addressed to it (kind app / app-execute). {task: null} when idle."""
     import app_relay
@@ -806,14 +820,22 @@ def api_agent_task_claim(body: Optional[AgentTaskClaimReq] = None,
     task = db.claim_next_agent_task(
         claimed_by=str(body.claimed_by or "archhub-app")[:120], kinds=kinds,
         creators=config.founder_emails())
+    if task is not None:
+        # An idle poll ({task: null}) changes nothing and is not an action.
+        _audit(founder, "POST /founder/api/agent-tasks/claim", "agent_task.claim",
+               target=str(task.get("id")), result={"claimed_by": task.get("claimed_by"),
+                                                   "kind": task.get("kind")})
     return JSONResponse({"ok": True, "task": task})
 
 
 @router.post("/api/agent-tasks/{task_id}/result")
 def api_agent_task_result(task_id: str, body: AgentTaskResultReq,
-                          _founder: dict = Depends(require_founder)) -> JSONResponse:
+                          founder: dict = Depends(require_founder)) -> JSONResponse:
     """The application posts BABOOM's answer for a task it claimed."""
     row = db.finish_agent_task(task_id, ok=bool(body.ok), result=body.result)
+    _audit(founder, "POST /founder/api/agent-tasks/{id}/result", "agent_task.result",
+           target=task_id, result={"task_ok": bool(body.ok), "chars": len(body.result or ""),
+                                   "finished": row is not None}, ok=row is not None)
     if row is None:
         return JSONResponse({"ok": False, "error": "task is not claimed"},
                             status_code=409)
@@ -840,12 +862,12 @@ class PurgeTestUsersReq(BaseModel):
 @router.post("/api/purge-test-users")
 def api_purge_test_users(
     body: PurgeTestUsersReq = Body(default_factory=PurgeTestUsersReq),
-    _founder: dict = Depends(require_founder),
+    founder: dict = Depends(require_founder),
 ) -> JSONResponse:
     """DELETE every synthetic test/seed account (rows matching
     db.is_test_account_email) — the one-click cleanup for the polluted
-    production users table. Also reachable as the 'purge test users' command
-    (which additionally writes the founder_action_log audit row).
+    production users table. Also reachable as the 'purge test users' command;
+    both paths write the founder_action_log audit row.
 
     Two locks, both required:
       1. FOUNDER GATE — `require_founder` (same as every cockpit route): only
@@ -866,6 +888,10 @@ def api_purge_test_users(
     if not body.confirm:
         preview = db.list_test_users()
         n = len(preview)
+        # A preview deletes nothing; its row records the intent, as the
+        # command path does (purge_test_users.preview).
+        _audit(founder, "POST /founder/api/purge-test-users", "purge_test_users.preview",
+               result={"would_delete": n})
         return JSONResponse({
             "dry_run":       True,
             "needs_confirm": True,
@@ -878,6 +904,8 @@ def api_purge_test_users(
     victims = db.list_test_users()
     emails = [v["email"] for v in victims]
     purged = db.delete_test_users()
+    _audit(founder, "POST /founder/api/purge-test-users", "purge_test_users",
+           result={"deleted": purged, "emails": emails[:50]})
     return JSONResponse({
         "dry_run":        False,
         "purged":         purged,

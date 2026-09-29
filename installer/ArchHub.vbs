@@ -61,11 +61,11 @@ Function PythonUsable(candidate)
     Dim status
     PythonUsable = False
     If Not fso.FileExists(candidate) Then Exit Function
-    ' Match the installer's minimum version check. Folder iteration can put
+    ' Match the installer's version pin: the bundled wheelhouse is cp314 only. Folder iteration can put
     ' Python39 after Python311; an old or broken candidate must not block setup.
     On Error Resume Next
     status = sh.Run(QuoteArgument(candidate) & " -E -s -c " _
-        & QuoteArgument("import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)"), 0, True)
+        & QuoteArgument("import sys; raise SystemExit(0 if sys.version_info[:2] == (3,14) else 1)"), 0, True)
     If Err.Number = 0 Then PythonUsable = (status = 0)
     Err.Clear
     On Error GoTo 0

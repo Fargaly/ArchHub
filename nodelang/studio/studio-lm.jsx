@@ -286,6 +286,9 @@ const StudioLM = () => {
   const [model, setModel] = React.useState(noModelPicked);
   const [homeNative, setHomeNative] = React.useState(null);
   const [pickerOpen, setPickerOpen] = React.useState(false);
+  // The server's answer to "can a Send reach a model": ready, no_model or no_key
+  // (model_router.composer_readiness). Chat and the boot Brain line show it.
+  const [readiness, setReadiness] = React.useState(null);
   React.useEffect(() => {
     const controller = new AbortController();
     const session = window.__archhubSession || {};
@@ -298,6 +301,10 @@ const StudioLM = () => {
         // default_model); with none the Studio keeps asking him to choose one.
         const fallback = !saved && typeof result.default_route === 'string' ? result.default_route.trim() : '';
         const route = saved || fallback;
+        if (!controller.signal.aborted && result.readiness && typeof result.readiness === 'object') {
+          window.ARCHHUB_MODEL_READINESS = result.readiness;
+          setReadiness(result.readiness);
+        }
         if (!route || controller.signal.aborted) return;
         const selected = (result.groups || []).flatMap(group => group.items || [])
           .find(item => (item.routed || item.route) === route);
@@ -312,6 +319,33 @@ const StudioLM = () => {
   const [account, setAccount] = React.useState(() => acLoad());
   const [booting, setBooting] = React.useState(true);
   const [signUpOpen, setSignUpOpen] = React.useState(false);
+  // Readiness is read again whenever what it depends on may have changed: a new
+  // pick, or a sign-in (the account dialogs closing, or the Chat state's own
+  // sign-in). A stale NO KEY never stays up (verifier, 2026-09-28).
+  const readReadiness = React.useCallback(() => {
+    const held = window.__archhubSession || {};
+    return fetch('/api/universal/models', {headers:{'X-ArchHub-Session':held.token || '', 'X-ArchHub-CSRF':held.csrf || ''}})
+      .then(response => response.ok ? response.json() : null)
+      .then(result => {
+        if (result && result.readiness && typeof result.readiness === 'object') {
+          window.ARCHHUB_MODEL_READINESS = result.readiness;
+          setReadiness(result.readiness);
+        }
+      }).catch(() => {});
+  }, []);
+  const pickedRoute = modelRoute(model);
+  React.useEffect(() => {
+    // A route the held answer already describes is not read twice.
+    if (readiness && readiness.route === pickedRoute) return;
+    if (!readiness && !pickedRoute) return;
+    readReadiness();
+  }, [pickedRoute]);
+  const accountDialogOpen = settingsOpen || signUpOpen;
+  const accountDialogWasOpen = React.useRef(accountDialogOpen);
+  React.useEffect(() => {
+    if (accountDialogWasOpen.current && !accountDialogOpen) readReadiness();
+    accountDialogWasOpen.current = accountDialogOpen;
+  }, [accountDialogOpen, readReadiness]);
   React.useEffect(() => { if (settingsOpen) setAccount(acLoad()); }, [settingsOpen]);
   React.useEffect(() => {
     const onStore = (e) => { if (!e.key || e.key === 'archhub.account.v1') setAccount(acLoad()); };
@@ -549,7 +583,7 @@ const StudioLM = () => {
         onWorkshopTarget={target => updateWorkspaceView({target})}/>
       {session
         ? <Workspace
-            session={session} model={displayedModel}
+            session={session} model={displayedModel} readiness={readiness} onReadinessStale={readReadiness}
             openTabs={openTabs} setOpenId={openSession} closeTab={closeTab}
             setPickerOpen={setPickerOpen}
             setSettingsOpen={openSettings}
@@ -1259,7 +1293,7 @@ const SessionCard = ({ s, onOpen }) => {
 };
 
 // ──────────────────────── WORKSPACE ────────────────────────
-const Workspace = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpen, setSettingsOpen, setLibraryOpen, focusId, setFocusId, userNodes, addNodeFromLibrary, onHome, view, updateView, wsSel, setWsSel }) => {
+const Workspace = ({ session, model, readiness = null, onReadinessStale, openTabs, setOpenId, closeTab, setPickerOpen, setSettingsOpen, setLibraryOpen, focusId, setFocusId, userNodes, addNodeFromLibrary, onHome, view, updateView, wsSel, setWsSel }) => {
   const authorityState = useStudioProjection();
   const graph = authorityState?.graph || LM_GRAPH;
   const allNodes = [...graph.nodes, ...(userNodes || [])];
@@ -1298,6 +1332,7 @@ const Workspace = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpe
           onLeave={() => updateView({conversationRoot:'', mode:'chat', target:''})}
           sel={wsSel} setSel={setWsSel} externalRail/> : <>
           <ChatView session={session} model={model} setMode={setMode} onPickModel={() => setPickerOpen(true)}
+            readiness={readiness} onReadinessStale={onReadinessStale}
             workshopRoom={workshopModeRoom(workshops, '')} workshopUnavailable={workshopState?.canvas?.unavailable || ''}
             openWorkshop={root => updateView({conversationRoot:root, mode:'chat', target:''})}/>
           <InferenceInspector model={model} setPickerOpen={setPickerOpen}/>
@@ -1382,12 +1417,45 @@ const chatConnectors = () => (window.ARCHHUB_LIVE?.connectors || []).map(c => ({
 }));
 
 // ─── Calm chat view (default) — restores original Studio's generous rhythm ───
-const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, onPickModel, workshopUnavailable = '' }) => {
+const NO_MODEL_STATE = {state:'no_model', route:'', actions:['sign_in', 'choose_model'],
+  message:'No model yet. Sign in to ArchHub, or choose a model.'};
+// The route shown is judged here: the composer pick or the selected node's own model
+// (review 2026-09-28). The provider states and the copy are the server's
+// (model_router.composer_readiness families/messages); only the route's family is read here.
+const ROUTE_FAMILIES = [['cloud/', 'cloud'], ['openrouter/', 'openrouter'], ['lmstudio/', 'lmstudio'], ['ollama/', 'ollama']];
+// A bare vendor/model:free is OpenRouter's legacy form; a family-prefixed route (lmstudio/x:free)
+// stays in its own family, as model_router._legacy_free_route rules.
+const routeFamily = route => {
+  const prefixed = ROUTE_FAMILIES.some(([prefix]) => route.startsWith(prefix));
+  if (route === 'openrouter/free' || (!prefixed && /^[^\s/]+\/[^\s/]+:free$/.test(route))) return 'openrouter';
+  const hit = ROUTE_FAMILIES.find(([prefix]) => route.startsWith(prefix) && route.slice(prefix.length).replace(/\//g, '').trim());
+  return hit ? hit[1] : '';
+};
+const READINESS_LABELS = {no_model:'NO MODEL', no_key:'NO KEY', invalid:'UNSUPPORTED MODEL', unavailable:'NOT RUNNING'};
+const routeReadiness = (route, held) => {
+  const text = String(route || '').trim();
+  const messages = (held && held.messages) || {};
+  if (!text) return {...NO_MODEL_STATE, message:messages.no_model || NO_MODEL_STATE.message};
+  if (!held) return null;
+  if (!held.families) return held.state && held.state !== 'ready' && held.route === text ? held : null;
+  const family = routeFamily(text);
+  if (!family) return {state:'invalid', route:text, actions:['choose_model'],
+    message:messages.invalid || 'ArchHub cannot reach this model. Choose another model.'};
+  const answer = held.families[family];
+  return answer && answer.state !== 'ready' ? {...answer, route:text} : null;
+};
+const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, onPickModel, workshopUnavailable = '', readiness = null, onReadinessStale }) => {
   // The Workshop is opened from here (it is not a header segment). Without a room the click answers
   // with the owner's reason as visible text, never a silent no-op (founder report 2026-09-23).
   const [workshopRefusal, setWorkshopRefusal] = React.useState('');
   const {me, answerer} = chatPeople(model);
   const routed = !!modelRoute(model);
+  // Never silent (fresh machine, 2026-09-28): the route shown, whatever its state, is said
+  // with the ways out that apply to it.
+  const blocked = routeReadiness(modelRoute(model), readiness);
+  const offers = new Set((blocked && blocked.actions) || []);
+  const [signingIn, setSigningIn] = React.useState(false);
+  const SignInFlow = window.CloudSignIn;
   const conv = LM_GRAPH.nodes.find(n => n.cat === 'ai')
     || LM_GRAPH.nodes.find(n => n.id === 'ai_intent');
   const [messages, setMessages] = React.useState((conv && conv.messages) || []);
@@ -1480,6 +1548,29 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
       {/* Composer — calm, centered */}
       <div style={{ padding:'12px 0 18px', borderTop:`1px solid ${LM.lineSoft}` }}>
         <div style={{ maxWidth:720, margin:'0 auto', padding:'0 36px' }}>
+            {/* Stands above the composer, where Send would be; the conversation column keeps the design. */}
+            {blocked && (
+              <div data-chat-no-model="" role="status" style={{
+                background:LM.bgPanel, border:`1px solid ${LM.line}`, borderLeft:`3px solid ${LM.warn}`,
+                borderRadius:LM.rad.lg, padding:'12px 16px', marginBottom:10,
+              }}>
+                <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.warn, letterSpacing:'0.14em', marginBottom:6 }}>
+                  {READINESS_LABELS[blocked.state] || 'NO MODEL'}</div>
+                <div style={{ fontSize:14, lineHeight:1.55, color:LM.ink, marginBottom:10 }}>{blocked.message}</div>
+                {signingIn && typeof SignInFlow === 'function'
+                  ? <SignInFlow email="" onSignedIn={() => { setSigningIn(false); if (typeof onReadinessStale === 'function') onReadinessStale(); }}/>
+                  : <div style={{ display:'flex', gap:8 }}>
+                      {offers.has('sign_in') && <button type="button" onClick={() => setSigningIn(true)} style={{
+                        padding:'7px 14px', background:LM.accent, color:(window.AH && window.AH.onFill) || '#180f08', border:0,
+                        borderRadius:LM.rad.sm, fontSize:12.5, fontWeight:500, cursor:'pointer',
+                      }}>Sign in</button>}
+                      <button type="button" onClick={() => typeof onPickModel === 'function' && onPickModel()} style={{
+                        padding:'6px 13px', background:'transparent', color:LM.ink, border:`1px solid ${LM.line}`,
+                        borderRadius:LM.rad.sm, fontSize:12.5, fontWeight:500, cursor:'pointer',
+                      }}>Choose a model</button>
+                    </div>}
+              </div>
+            )}
           <div style={{ background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, padding:'12px 14px' }}>
             <input className="lm-chat-draft" aria-label="Reply" value={draft} onChange={e => setDraft(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') send(); }}

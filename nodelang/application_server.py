@@ -12092,6 +12092,17 @@ class ApplicationServer:
         selected_route = self._read_agent_model() if models else ''
         default_route, default_source = (self._default_agent_model()
             if models and not selected_route else ('', ''))
+        # Whether a Send can reach a model at all, so Chat and the Brain line
+        # say "no model: sign in or choose" instead of looking silent on a
+        # fresh machine (audit 2026-09-28). Never picks a model.
+        readiness = None
+        if models:
+            try:
+                from .model_router import composer_readiness
+                readiness = composer_readiness(selected_route or default_route,
+                                               local_states=self._local_runtime_states())
+            except Exception:
+                readiness = None
         try:
             from .cloud_relay import load_cloud_session
             appdata = os.environ.get('APPDATA', '')
@@ -12112,6 +12123,7 @@ class ApplicationServer:
             result['selected_route'] = selected_route
             result['default_route'] = default_route
             result['default_source'] = default_source
+            result['readiness'] = readiness
             # Source exceptions can contain authenticated URLs. Keep availability
             # visible without forwarding exception text or cloud credentials.
             # result['source_notes'] is the catalogue's own fixed vocabulary,
@@ -12126,6 +12138,7 @@ class ApplicationServer:
                 return {'ok': False, 'live': False, 'groups': [], 'count': 0,
                         'selected_route': selected_route,
                         'default_route': default_route, 'default_source': default_source,
+                        'readiness': readiness,
                         'error': 'Model catalogue unavailable'}
             return {'ok': False, 'providers': [], 'error': 'Provider discovery unavailable'}
 
@@ -12633,7 +12646,9 @@ class ApplicationServer:
             result = self._project_model_discovery(path)
             read_guard()
             if path == "/api/universal/models" and not direct:
-                result = {**result, "selected_route": ""}
+                # readiness names the owner's route and which key this machine
+                # lacks: owner-only, like the selection itself.
+                result = {**result, "selected_route": "", "readiness": None}
             return result
         if method == "GET" and path == "/api/universal/canvas":
             if body:

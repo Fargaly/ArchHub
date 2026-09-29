@@ -236,7 +236,7 @@ function PythonRuns(Py: String): Boolean;
 var
   Code: Integer;
 begin
-  Result := Exec(Py, '-c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)"',
+  Result := Exec(Py, '-c "import sys; raise SystemExit(0 if sys.version_info[:2] == (3,14) else 1)"',
                  '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0);
 end;
 
@@ -247,7 +247,7 @@ var
   Candidate: String;
 begin
   { Every matching folder is a candidate; the highest version that really
-    answers 3.11+ wins. The old code kept whichever folder FindNext listed
+    answers 3.14 wins (the wheelhouse is cp314 only). The old code kept whichever folder FindNext listed
     last, so a fresh Python314 lost to an older sibling (audit 2026-09-06). }
   Result := ''; Best := -1;
   if FindFirst(Base + '\' + Pattern, Rec) then
@@ -286,7 +286,7 @@ end;
 
 function PythonPresent(): Boolean;
 begin
-  { FindPython only returns a python.exe that already answered 3.11+. }
+  { FindPython only returns a python.exe that already answered 3.14. }
   Result := FindPython() <> '';
 end;
 
@@ -373,11 +373,11 @@ begin
     except
       if PythonPage.AbortedByUser then
         SuppressibleMsgBox('You stopped the Python download, so ArchHub was not installed.' + #13#10 +
-          'Run this setup again when you are ready, or install Python 3.11 or newer from python.org first.',
+          'Run this setup again when you are ready, or install Python 3.14 from python.org first.',
           mbInformation, MB_OK, IDOK)
       else
         SuppressibleMsgBox('Python could not be fetched from python.org: ' + GetExceptionMessage + #13#10 +
-          'Install Python 3.11 or newer from python.org, then run this setup again.',
+          'Install Python 3.14 from python.org, then run this setup again.',
           mbCriticalError, MB_OK, IDOK);
       exit;
     end;
@@ -416,7 +416,7 @@ begin
   end;
   Result := PythonPresent();
   if not Result then
-    SuppressibleMsgBox('Python was installed but could not be found afterwards. Install Python 3.11 or newer from python.org, then run this setup again.',
+    SuppressibleMsgBox('Python was installed but could not be found afterwards. Install Python 3.14 from python.org, then run this setup again.',
       mbCriticalError, MB_OK, IDOK);
 end;
 
@@ -426,21 +426,27 @@ begin
   RestoreRetiredHostFiles();
 end;
 
-function NextButtonClick(CurPageID: Integer): Boolean;
+function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
-  Result := True;
-  if (CurPageID = wpReady) and PythonWanted then
-    Result := InstallPython();
+  { Before any file is copied, a machine without Python 3.14 (e.g. 3.12 only)
+    gets the pinned 3.14.7. If it still has none, the reason is returned: Inno
+    then stops Setup showing it, with a dedicated exit code, so the quiet
+    updater can tell a missing Python from any other failure. }
+  Result := '';
+  if PythonWanted and (not PythonPresent()) then
+    if not InstallPython() then
+      Result := 'ArchHub needs Python 3.14 and it could not be installed on this machine. ' +
+                'Install Python 3.14 from python.org, then run this setup again.';
 end;
 
 function InitializeSetup(): Boolean;
 begin
-  { No usable Python: the wizard fetches one before it copies ArchHub.
-    A silent install proceeds and the launcher reports it on first run. }
+  { No Python 3.14: PrepareToInstall fetches the pinned one before any file is
+    copied. }
   Result := True;
   PythonWanted := not PythonPresent();
   if PythonWanted and (not WizardSilent()) then
-    MsgBox('This machine has no Python 3.11 or newer.' + #13#10 +
+    MsgBox('This machine has no Python 3.14.' + #13#10 +
            'Setup will fetch Python 3.14.7 from python.org (about 33 MB) and install it for you only, before it installs ArchHub.',
            mbInformation, MB_OK);
 end;

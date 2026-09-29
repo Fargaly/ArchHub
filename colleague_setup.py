@@ -22,6 +22,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import shutil
 import stat
 import site
 from pathlib import Path
@@ -99,7 +100,7 @@ def _write_ready(root: Path, identity: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def install_requirements(root: Path, pinned: Path):
+def install_requirements(root: Path, pinned: Path, python=None):
     """Install the desktop requirements, from the bundled wheelhouse first.
 
     The installer carries every wheel the desktop needs (wheelhouse/), so a
@@ -107,7 +108,7 @@ def install_requirements(root: Path, pinned: Path):
     --no-index. Only when that fails (an incomplete wheelhouse, or a build
     without one) does pip reach the package index.
     """
-    base = [sys.executable, "-E", "-s", "-m", "pip", "--isolated", "install",
+    base = [str(python or sys.executable), "-E", "-s", "-m", "pip", "--isolated", "install",
             "--disable-pip-version-check"]
     wheelhouse = root / "wheelhouse"
     if wheelhouse.is_dir() and any(wheelhouse.glob("*.whl")):
@@ -156,13 +157,122 @@ def owned_interpreter(root: Path) -> bool:
             and site.ENABLE_USER_SITE is False)
 
 
+def environment_version(owned: Path):
+    """(major, minor) of the Python that built this environment, or None."""
+    try:
+        text = (owned / "pyvenv.cfg").read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    match = re.search(r"(?im)^version(?:_info)?\s*=\s*(\d+)\.(\d+)", text)
+    return (int(match.group(1)), int(match.group(2))) if match else None
+
+
+def _discard(path: Path) -> None:
+    """Best effort: a leftover that cannot be removed now is removed next time."""
+    shutil.rmtree(path, ignore_errors=True)
+
+
+def recover_environment_swap(root: Path) -> int:
+    """Finish an interrupted swap: .venv is always the old or the new one, never neither.
+
+    replace_environment moves .venv to .venv.old and then .venv.new to .venv. A kill
+    between those two renames leaves no .venv; the old environment is moved back
+    before anything else runs, so the next setup never discards it as a leftover
+    (review 2026-09-28). Returns 0 when .venv is in place or never existed.
+    """
+    owned = root / ".venv"
+    retired = root / ".venv.old"
+    if owned.exists() or not retired.exists():
+        return 0
+    try:
+        os.replace(retired, owned)
+    except OSError:
+        print("  REFUSED: the previous environment is at .venv.old and could not be restored; close ArchHub and retry.")
+        return 10
+    print("  restored   : the environment an interrupted rebuild moved aside")
+    return 0
+
+
+def replace_environment(root: Path, owned: Path) -> int:
+    """Build this Python's environment beside the old one, prove it, then swap.
+
+    An upgrade from 3.11-3.13 to the 3.14 pin needs a new environment. It is
+    built in .venv.new, its packages installed from the wheelhouse and its boot
+    imports proven there; only then is the old one moved aside and the new one
+    moved in. Until that swap holds, the old environment and its ready marker
+    are untouched, so a failed build, a locked file or a full disk leaves the
+    working installation as it was (review 2026-09-28). Returns 0 on success.
+    """
+    fresh = root / ".venv.new"
+    retired = root / ".venv.old"
+    for leftover in (fresh, retired):
+        if leftover.exists():
+            _discard(leftover)
+            if leftover.exists():
+                print("  REFUSED: a previous environment rebuild is still in use; close ArchHub and retry.")
+                return 8
+    result = subprocess.run([sys.executable, "-E", "-s", "-m", "venv", str(fresh)],
+                            env=clean_environment())
+    status = result.returncode
+    fresh_python = fresh / "Scripts" / "python.exe"
+    if not status and not fresh_python.is_file():
+        status = 8
+    if not status:
+        print("  rebuilding : the private environment for Python %d.%d" % sys.version_info[:2])
+        status = install_requirements(root, root / "requirements.txt", python=fresh_python).returncode
+    if not status:
+        probes = [probe for _name, probe in PACKAGES if probe not in ("ezdxf", "numpy")]
+        status = subprocess.run([str(fresh_python), "-E", "-s", "-c",
+                                 "import " + ", ".join(probes) if probes else "pass"],
+                                env=clean_environment()).returncode
+    if status:
+        print("  REFUSED: the new environment could not be prepared; the current one is kept.")
+        _discard(fresh)
+        return status
+    try:
+        os.replace(owned, retired)
+    except OSError:
+        print("  REFUSED: ArchHub's environment is in use (close ArchHub and retry); it is kept as it was.")
+        _discard(fresh)
+        return 9
+    try:
+        os.replace(fresh, owned)
+    except OSError:
+        try:
+            os.replace(retired, owned)
+        except OSError:
+            print("  REFUSED: the environment swap failed; the previous one is at .venv.old and is restored on the next setup.")
+            return 10
+        print("  REFUSED: the environment swap failed; the current one is kept.")
+        _discard(fresh)
+        return 10
+    # The swap holds: the old build's readiness no longer describes .venv.
+    (root / ".archhub-ready").unlink(missing_ok=True)
+    _discard(retired)
+    return 0
+
+
 def prepare_environment(root: Path, check_only=False):
     """Return None only inside the validated environment; otherwise child status."""
     owned = environment_path(root)
     if owned_interpreter(root):
         return None
+    if not check_only:
+        status = recover_environment_swap(root)
+        if status:
+            return status
     if Path(sys.prefix).resolve() == owned.resolve():
         raise ValueError("invalid ArchHub environment interpreter")
+    # An environment another Python built (an upgrade from 3.11-3.13 to the
+    # 3.14 pin) is rebuilt; reused, its interpreter would refuse itself forever.
+    # A damaged environment (no recorded version) still takes the refusal below.
+    built_by = environment_version(owned) if owned.exists() else None
+    if built_by is not None and built_by != tuple(sys.version_info[:2]):
+        if check_only:
+            return 1
+        status = replace_environment(root, owned)
+        if status:
+            return status
     if not owned.exists():
         if check_only:
             return 1
@@ -703,9 +813,12 @@ def verify_imports(root: Path) -> list[str]:
 def main():
     print("ArchHub setup")
     print("  python     :", sys.version.split()[0])
-    if sys.version_info < (3, 11):
-        print("  REFUSED: ArchHub needs Python 3.11 or newer.")
-        print("  Install it from python.org, then run this again.")
+    # The bundled wheelhouse is built for 3.14 only (build_release.ps1); any
+    # other interpreter misses it and falls to the package index, which a firm
+    # proxy blocks.
+    if sys.version_info[:2] != (3, 14):
+        print("  REFUSED: ArchHub needs Python 3.14 (its bundled packages are built for it).")
+        print("  Install Python 3.14 from python.org, then run this again.")
         return 2
     root = Path(__file__).resolve().parent
     try:

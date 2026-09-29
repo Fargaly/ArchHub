@@ -57,6 +57,13 @@ const _bootDetail = (key) => {
     return colours.length + ' colours · ' + (keys.length - colours.length) + ' other';
   }
   if (key === 'brain') {
+    // The Brain runs in the app, but with no model it cannot answer: say so, and
+    // the way out, instead of "connecting" (fresh machine, 2026-09-28).
+    const readiness = window.ARCHHUB_MODEL_READINESS;
+    if (readiness && readiness.state && readiness.state !== 'ready') {
+      return {no_key:'no key · sign in or choose a model', invalid:'unsupported model · choose another',
+        unavailable:'model not running · start it or choose another'}[readiness.state] || 'no model · sign in or choose one';
+    }
     // ARCHHUB_BRAIN_FACTS is assigned nowhere, so this line always read
     // 'connecting' (2026-09-07). The facts the app already loaded are right
     // here, and his two-part phrasing is true of them.
@@ -684,4 +691,4 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
   );
 }
 
-Object.assign(window, { AppBoot, SignUp, SettingsAccount, acLoad, acSave, AC_SEED });
+Object.assign(window, { AppBoot, SignUp, SettingsAccount, CloudSignIn, acLoad, acSave, AC_SEED, acBootDetail: _bootDetail });

@@ -394,7 +394,10 @@ def test_a_machine_without_python_is_given_python_not_a_lecture():
     # outer Inno restart controls do not reach it (installer/ArchHub.iss).
     assert "/quiet /norestart InstallAllUsers=0 PrependPath=0 Include_launcher=0" in iss
     assert "PythonWanted := not PythonPresent()" in iss
-    assert "Result := InstallPython()" in iss
+    # The fetch runs from PrepareToInstall, which a silent update reaches too
+    # (test_python_pin_matches_wheelhouse); NextButtonClick never ran there.
+    prepare = iss[iss.index("function PrepareToInstall("):]
+    assert "InstallPython()" in prepare[:prepare.index("\nend;")]
     assert "tick \"Add python.exe to PATH\"" not in iss, "no lecture as the only path"
     assert "then run this setup again" in iss, "the fetch failing is still said plainly"
 

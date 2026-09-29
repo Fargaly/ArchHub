@@ -574,6 +574,83 @@ def default_composer_route(*, settings_loader=None) -> tuple:
     return configured, "settings default_model"
 
 
+# What a person reads when no answer can come. Plain words and the next step;
+# never an environment variable or a storage detail (review 2026-09-28).
+READINESS_COPY = {
+    "no_model": "No model yet. Sign in to ArchHub, or choose a model.",
+    "invalid": "ArchHub cannot reach this model. Choose another model.",
+    "no_key:openrouter": (
+        "This model needs an OpenRouter key. Sign in to ArchHub, or add your own "
+        "AI key in Settings \u2192 Providers."
+    ),
+    "no_key:cloud": "This model runs on the ArchHub cloud. Sign in to use it.",
+    "unavailable:lmstudio": (
+        "LM Studio is not running on this machine. Start it, or choose another model."
+    ),
+    "unavailable:ollama": (
+        "Ollama is not running on this machine. Start it, or choose another model."
+    ),
+}
+_READINESS_ACTIONS = {
+    "no_model": ["sign_in", "choose_model"],
+    "invalid": ["choose_model"],
+    "no_key:openrouter": ["choose_model", "sign_in"],
+    "no_key:cloud": ["sign_in", "choose_model"],
+    "unavailable:lmstudio": ["choose_model"],
+    "unavailable:ollama": ["choose_model"],
+}
+_LOCAL_PORTS = {"lmstudio": 1234, "ollama": 11434}
+
+
+def _family_readiness(family, *, environ, secrets_loader, session, local_states):
+    state = "ready"
+    if family in _KEY_PLAN:
+        try:
+            discover_key(family, environ=environ, secrets_loader=secrets_loader,
+                         cloud_session=session)
+        except ModelRouteRefused:
+            state = "no_key"
+    elif isinstance(local_states, Mapping) and local_states.get(_LOCAL_PORTS[family]) is False:
+        state = "unavailable"
+    key = state + ":" + family
+    return {"state": state, "message": READINESS_COPY.get(key, ""),
+            "actions": list(_READINESS_ACTIONS.get(key, []))}
+
+
+def composer_readiness(route: object, *, environ=None, secrets_loader=None,
+                       cloud_session=_DISCOVER, local_states=None) -> dict:
+    """Whether a Send on this route can reach a model, said so a person can act.
+
+    A fresh machine had no pick, no OpenRouter key and no cloud session, and
+    Chat and the Brain simply looked silent (audit 2026-09-28). Never chooses a
+    model. The route answers one state: ``ready``; ``no_model`` (nothing
+    picked); ``invalid`` (a route no provider here serves); ``no_key`` (its key
+    is nowhere on this machine); ``unavailable`` (its local runtime answered as
+    not running; an unprobed runtime is never guessed down). ``families`` holds
+    the same answer per provider, so the Studio can judge the route it actually
+    shows, a node's own pick included, without a second request.
+    """
+    session = default_cloud_session() if cloud_session is _DISCOVER else cloud_session
+    families = {family: _family_readiness(
+        family, environ=environ, secrets_loader=secrets_loader, session=session,
+        local_states=local_states) for family in ("openrouter", "cloud", "lmstudio", "ollama")}
+    messages = {"no_model": READINESS_COPY["no_model"], "invalid": READINESS_COPY["invalid"]}
+
+    def answer(state, text, message, actions):
+        return {"state": state, "route": text, "message": message, "actions": list(actions),
+                "families": families, "messages": messages}
+
+    text = str(route or "").strip()
+    if not text:
+        return answer("no_model", "", READINESS_COPY["no_model"], _READINESS_ACTIONS["no_model"])
+    try:
+        destination = resolve_model_route(text)
+    except (ModelRouteRefused, InvalidCell):
+        return answer("invalid", text, READINESS_COPY["invalid"], _READINESS_ACTIONS["invalid"])
+    held = families[destination.family]
+    return answer(held["state"], text, held["message"], held["actions"])
+
+
 def default_cloud_session() -> Optional[dict]:
     """The founder's recorded cloud session, or nothing on a machine without one."""
     appdata = os.environ.get("APPDATA", "")
@@ -961,6 +1038,7 @@ __all__ = [
     "OLLAMA_CHAT",
     "OPENROUTER_CHAT",
     "default_cloud_session",
+    "composer_readiness",
     "default_composer_route",
     "discover_key",
     "founder_secrets_key",

@@ -184,8 +184,10 @@ def test_open_models_withholds_selection_but_owner_keeps_it(served, monkeypatch,
         "method": "GET", "path": "/api/universal/models", "body": {}})
     answer = client.request("GET", "/api/universal/models", {}, response_timeout_seconds=60)
     assert owner["selected_route"] == "private-owner-model-marker"
+    # The owner's readiness names the owner's route; a non-owner gets none of it.
+    assert owner["readiness"]["route"] == "private-owner-model-marker"
     assert "private-owner-model-marker" not in json.dumps(answer), answer
-    assert answer == {**owner, "selected_route": ""}
+    assert answer == {**owner, "selected_route": "", "readiness": None}
     assert server.universal_store.revision == revision
 
 
@@ -195,3 +197,4 @@ def test_bound_non_owner_models_also_withholds_selection(enrolled, monkeypatch):
     answer = client.request("GET", "/api/universal/models", {}, response_timeout_seconds=60)
     assert "private-owner-model-marker" not in json.dumps(answer), answer
     assert answer["selected_route"] == ""
+    assert answer["readiness"] is None

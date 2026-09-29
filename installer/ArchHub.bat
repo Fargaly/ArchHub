@@ -11,7 +11,7 @@ cd /d "%~dp0"
 set "ARCHHUB_PY=%~1"
 if "%ARCHHUB_PY%"=="" (
   echo.
-  echo ArchHub needs Python 3.11 or newer and found none on this machine.
+  echo ArchHub needs Python 3.14 and found none on this machine.
   echo Install it from python.org, then run ArchHub again.
   pause
   exit /b 9009

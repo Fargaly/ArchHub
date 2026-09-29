@@ -8298,6 +8298,17 @@ class ApplicationServer:
                                 self._json(200, self._brain_route_call(
                                     owner, binding, 'brain.edit_fact', {'fragment_id': fact_id, 'text': said}))
                                 return
+                            elif self.path == '/api/universal/brain-publish':
+                                if not self._brain_owner_admitted(owner, binding):
+                                    return
+                                fact_id = str(body.get('id') or '').strip()
+                                if not fact_id:
+                                    self._json(200, {'ok': False, 'error': 'missing fragment_id'})
+                                    return
+                                # The owner's deliberate act on one fact (ADGR-0004).
+                                self._json(200, self._brain_route_call(
+                                    owner, binding, 'brain.publish', {'fragment_id': fact_id}))
+                                return
                             elif self.path in ('/api/universal/graph-create', '/api/universal/graph-open'):
                                 from .universal_graphs import create_graph, open_graph
                                 if self.path == '/api/universal/graph-create':

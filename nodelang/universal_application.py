@@ -3439,6 +3439,7 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/brain-remember", "execute"),  # owner-only: the founder's memory
     ("POST", "/api/universal/brain-forget", "execute"),  # owner-only: the founder's memory
     ("POST", "/api/universal/brain-edit", "execute"),  # owner-only: the founder's memory
+    ("POST", "/api/universal/brain-publish", "execute"),  # owner-only: one fact to the community
     ("POST", "/api/universal/node-create", "edit"),
     ("POST", "/api/universal/graph-create", "edit"),
     ("POST", "/api/universal/graph-open", "inspect"),

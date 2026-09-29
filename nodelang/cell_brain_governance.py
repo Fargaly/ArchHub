@@ -16,6 +16,11 @@ decides where the fact may go.
 * Gates have deciders, and the decider is enforced from the graph: personal to
   firm is the owner's own call, inside a firm the owner belongs to; firm to
   community needs the firm's owner AND an appointed founder reviewer.
+* A solo account -- a member of no firm -- is its own firm (ADGR-0004): it
+  decides p2f and f2c itself, and the founder review happens in the cloud's
+  Community Brain before any member can pull the fact. The solo firm is a
+  derived root, never a registered firm, and its decisions stand only while
+  the owner belongs to no firm: joining one closes them without a write.
 * The consent record is append-only Cells. A decision names the text and the
   classification it was made about, so an edit or a reclassification closes the
   gate until someone decides again. Same-clock decisions resolve to revoke.
@@ -107,6 +112,9 @@ GATES = MappingProxyType({g.id: g for g in (
 )})
 _PATH_FROM_PERSONAL = MappingProxyType({
     PERSONAL: (), FIRM: ("p2f",), COMMUNITY: ("p2f", "f2c", "f2c-review")})
+# A solo account's path to the community: the review is the cloud's (ADGR-0004).
+_SOLO_PATH_TO_COMMUNITY = ("p2f", "f2c")
+_SOLO_PREFIX = "app:brain:solo-firm:"
 
 GRANT, REVOKE = "grant", "revoke"
 DECISIONS = (GRANT, REVOKE)
@@ -284,8 +292,38 @@ def reviewers(snapshot):
         snapshot, REVIEWERS_ROOT, budget=10_000))
 
 
+def solo_firm_root(owner_root):
+    """The firm a solo account is. Derived from the owner; never registered."""
+    return _SOLO_PREFIX + hashlib.sha256(str(owner_root).encode("utf-8")).hexdigest()[:24]
+
+
+def firms_of(snapshot, owner_root):
+    """The registered firms this owner is a member of."""
+    if firms.FIRMS_ROOT not in snapshot.cells:
+        return ()
+    found = []
+    for member in read_relation(snapshot, firms.FIRMS_ROOT, budget=100_000):
+        if member.role_id != firms.FIRM_ROLE:
+            continue
+        try:
+            firm = firms.read_firm(snapshot, member.participant_id)
+        except InvalidCell:
+            continue
+        if owner_root in firm.member_roots:
+            found.append(firm)
+    return tuple(found)
+
+
+def _is_solo(snapshot, owner_root, firm_root):
+    """True only for the owner's own solo root, while the owner is in no firm."""
+    return firm_root == solo_firm_root(owner_root) and not firms_of(snapshot, owner_root)
+
+
 def _decider_is_legitimate(snapshot, gate, *, owner_root, decider_root, firm_root):
     """Whether this decider may decide this gate for this owner inside this firm."""
+    if isinstance(firm_root, str) and firm_root.startswith(_SOLO_PREFIX):
+        return (_is_solo(snapshot, owner_root, firm_root)
+                and gate in _SOLO_PATH_TO_COMMUNITY and decider_root == owner_root)
     if firm_root not in snapshot.cells:
         return False
     try:
@@ -525,7 +563,10 @@ def may_release(snapshot, *, session_root, fragment_id, to_lake, firm_root=None)
         return Release(False, "%s: no release path exists" % why)
     if _RANK[found.ceiling] < _RANK[to_lake]:
         return Release(False, "ceiling %s is below the %s lake" % (found.ceiling, to_lake))
-    for gate in _PATH_FROM_PERSONAL[to_lake]:
+    path = _PATH_FROM_PERSONAL[to_lake]
+    if to_lake == COMMUNITY and _is_solo(snapshot, owner_root, firm_root):
+        path = _SOLO_PATH_TO_COMMUNITY
+    for gate in path:
         decision = _standing(snapshot, owner_root, fragment_id, gate, firm_root)
         if decision != GRANT:
             return Release(False, "gate %s is %s" % (

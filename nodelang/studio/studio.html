@@ -239,6 +239,8 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       jpost('/api/universal/brain-forget', {id});
     window.ARCHHUB_BRAIN_EDIT = (id, text) =>
       jpost('/api/universal/brain-edit', {id, text});
+    window.ARCHHUB_BRAIN_PUBLISH = id =>
+      jpost('/api/universal/brain-publish', {id});
     window.ARCHHUB_NODE_CREATE = spec =>
       jpost('/api/universal/node-create', spec);
     window.ARCHHUB_RETRACT = root =>

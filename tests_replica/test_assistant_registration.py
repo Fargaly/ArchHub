@@ -83,6 +83,152 @@ def test_a_different_entry_or_a_legacy_entry_is_reported_and_left_alone(machine)
     assert config.read_text(encoding="utf-8") == legacy
 
 
+# The layout a real Codex config carries around ArchHub's development-era entry:
+# other servers before and after it, a retired installer's region markers, a
+# comment that belongs to the next table.
+_DEV_ERA = """model = "gpt"
+notify = ["C:\\\\notifier.exe", "turn-ended"]
+
+[mcp_servers.node_repl]
+args = []
+command = 'C:\\node_repl.exe'
+env_vars = ["CODEX_WINDOWS_REGISTERED_CORE"]
+
+[shell_environment_policy.set]
+KEY = "value"
+
+# personal-brain-mcp (managed by `personal-brain-mcp installer`)
+[mcp_servers.%(name)s]
+command = 'C:\\Users\\someone\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe'
+args = ["-m", "nodelang.clean_coordination_mcp"]
+
+[mcp_servers.%(name)s.env]
+PYTHONPATH = 'C:\\Users\\someone\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE'
+ARCHHUB_COORDINATION_VENDOR = "codex"
+
+# the next table's own note
+[mcp_servers.higsfield]
+enabled = true
+url = "https://mcp.example.test/mcp"
+# /personal-brain-mcp
+
+[hooks.state.'C:\\Users\\someone\\.codex\\hooks.json:stop:0:0']
+trusted_hash = "sha256:fixture"
+""" % {"name": SERVER_NAME}
+
+
+def _dev_config(machine, text=_DEV_ERA):
+    config = machine.profile / ".codex" / "config.toml"
+    config.parent.mkdir(exist_ok=True)
+    config.write_bytes(text.encode("utf-8"))
+    return config
+
+
+def test_only_the_exact_development_era_entry_is_offered_for_replacement(machine):
+    _dev_config(machine)
+    assert _codex(machine)["state"] == "migration_available"
+    variants = {
+        "a person's own env_vars": ('args = ["-m", "nodelang.clean_coordination_mcp"]\n',
+                                    'args = ["-m", "nodelang.clean_coordination_mcp"]\nenv_vars = ["X"]\n'),
+        "another module": ("nodelang.clean_coordination_mcp", "nodelang.native_agent_mcp"),
+        "another vendor": ('ARCHHUB_COORDINATION_VENDOR = "codex"', 'ARCHHUB_COORDINATION_VENDOR = "claude"'),
+        "a relative path": ("PYTHONPATH = 'C:\\Users\\someone\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE'",
+                            "PYTHONPATH = 'src'"),
+        "an extra variable": ('ARCHHUB_COORDINATION_VENDOR = "codex"\n',
+                              'ARCHHUB_COORDINATION_VENDOR = "codex"\nOTHER = "1"\n'),
+        "another launcher": ("pythoncore-3.14-64\\python.exe", "pythoncore-3.14-64\\custom.exe"),
+    }
+    for name, (old, new) in variants.items():
+        assert old in _DEV_ERA, name
+        config = _dev_config(machine, _DEV_ERA.replace(old, new, 1))
+        before = config.read_bytes()
+        assert _codex(machine)["state"] == "conflict", name
+        assert registration.register("codex", consent=True, environment=machine.env)["state"] == "conflict", name
+        assert config.read_bytes() == before, name
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DPAPI backup")
+def test_replacement_on_consent_changes_only_that_entry_and_keeps_an_encrypted_copy(machine):
+    config = _dev_config(machine)
+    original = config.read_bytes()
+    with pytest.raises(ValueError):
+        registration.register("codex", consent=False, environment=machine.env)
+    assert registration.migrate_codex(machine.install, machine.state, consent=False,
+                                      environment=machine.env)["state"] == "migration_available"
+    assert config.read_bytes() == original
+    result = registration.register("codex", consent=True, environment=machine.env)
+    assert result["state"] == "registered"
+    after = config.read_bytes().decode("utf-8")
+    # The effective entry, read back, is this install's; nothing else changed meaning.
+    data, old = tomllib.loads(after), tomllib.loads(original.decode("utf-8"))
+    assert data["mcp_servers"][SERVER_NAME] == registration.codex_entry(machine.install, machine.state)
+    assert data["mcp_servers"][SERVER_NAME]["env_vars"] == ["CODEX_THREAD_ID"]
+    assert "PYTHONPATH" not in data["mcp_servers"][SERVER_NAME]["env"]
+    assert {k: v for k, v in data.items() if k != "mcp_servers"} == {k: v for k, v in old.items() if k != "mcp_servers"}
+    assert {k: v for k, v in data["mcp_servers"].items() if k != SERVER_NAME} == \
+           {k: v for k, v in old["mcp_servers"].items() if k != SERVER_NAME}
+    # Every line outside the replaced table is kept, in order, comments included.
+    kept = [line for line in original.decode("utf-8").splitlines()
+            if "clean_coordination_mcp" not in line and "PYTHONPATH" not in line
+            and "pythoncore" not in line and "ARCHHUB_COORDINATION_VENDOR" not in line
+            and not line.startswith("[mcp_servers.%s" % SERVER_NAME) and line.strip()]
+    remaining = [line for line in after.splitlines() if line in kept]
+    assert remaining == kept
+    assert after.index("# personal-brain-mcp") < after.index("[mcp_servers.%s]" % SERVER_NAME) \
+        < after.index("# the next table's own note") < after.index("[mcp_servers.higsfield]")
+    # The whole prior file is kept, DPAPI-protected, and decrypts to the exact old bytes.
+    from nodelang.cell_secret_keys import unprotect_current_user_data
+    backup = Path(result["backup"])
+    assert backup.parent == machine.state / "private-client-backups" and backup.suffix == ".dpapi"
+    assert b"clean_coordination_mcp" not in backup.read_bytes()
+    assert unprotect_current_user_data(backup.read_bytes(),
+                                       purpose="archhub.client-hook-backup/v1") == original
+    # A second consent changes nothing.
+    assert registration.register("codex", consent=True, environment=machine.env)["state"] == "registered"
+    assert config.read_bytes().decode("utf-8") == after
+
+
+@pytest.mark.parametrize("near_miss", [
+    ('args = ["-m", "nodelang.clean_coordination_mcp"]\n',
+     'args = ["-m", "nodelang.clean_coordination_mcp"]\nenv_vars = ["CODEX_THREAD_ID"]\n'),
+    ('ARCHHUB_COORDINATION_VENDOR = "codex"\n', 'ARCHHUB_COORDINATION_VENDOR = "codex"\nMY_SETTING = "kept"\n'),
+])
+def test_an_entry_changed_after_the_check_is_never_overwritten(machine, monkeypatch, near_miss):
+    """Readiness sees the legacy shape; the bytes read next carry another writer's entry."""
+    config = _dev_config(machine)
+    changed = _DEV_ERA.replace(*near_miss, 1).encode("utf-8")
+    checked = registration.codex_readiness
+    raced = []
+
+    def racing(*args, **kwargs):
+        result = checked(*args, **kwargs)
+        if not raced:
+            raced.append(True)
+            config.write_bytes(changed)          # another writer, between check and read
+        return result
+
+    monkeypatch.setattr(registration, "codex_readiness", racing)
+    # migrate_codex's own readiness check is the one the other writer races.
+    result = registration.migrate_codex(machine.install, machine.state, consent=True,
+                                        environment=machine.env)
+    assert raced and result["state"] == "conflict"
+    assert config.read_bytes() == changed
+    backups = machine.state / "private-client-backups"
+    assert not backups.exists() or not any(backups.iterdir())
+
+
+def test_a_split_table_is_refused_and_left_exactly_as_it_was(machine):
+    split = _DEV_ERA.replace("[mcp_servers.%s.env]" % SERVER_NAME, "[unrelated]\nx = 1\n\n[mcp_servers.%s.env]" % SERVER_NAME)
+    config = _dev_config(machine, split)
+    before = config.read_bytes()
+    assert _codex(machine)["state"] == "migration_available"
+    result = registration.register("codex", consent=True, environment=machine.env)
+    assert result["state"] == "migration_unconfirmed"
+    assert config.read_bytes() == before
+    assert not (machine.state / "private-client-backups").exists() or \
+        not any((machine.state / "private-client-backups").iterdir())
+
+
 def test_opencode_gets_no_mcp_entry_and_is_not_written_when_absent(machine):
     # OpenCode connects through the Session Link plugin (test_opencode_is_recognised_and_connected).
     opencode = next(c for c in registration.readiness(machine.env)["clients"] if c["client"] == "opencode")

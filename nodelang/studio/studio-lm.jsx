@@ -5756,6 +5756,8 @@ const ASSISTANT_SAID = {
   legacy_migration_required:'an old ArchHub entry is there; left unchanged', unsupported:'connection setup is unavailable',
   not_installed:'not installed', install_incomplete:'this install is incomplete', config_unreadable:'its settings file is unreadable',
   config_location_unverified:'its settings location is unverified', registration_unconfirmed:'the entry was not confirmed',
+  migration_available:"ArchHub's old development start is there and cannot start; Replace moves it to this install",
+  migration_unconfirmed:'the replacement was not confirmed; your settings are unchanged or backed up',
 };
 const SettingsAssistants = () => {
   const [held, setHeld] = React.useState({ clients:null, error:'' });
@@ -5832,6 +5834,11 @@ const SettingsAssistants = () => {
             <button onClick={() => connect(c.client)} disabled={!!busy}
               title={'Adds one ArchHub entry to ' + (ASSISTANT_NAMES[c.client] || 'Assistant') + "'s connection settings"}
               style={{ ...smallBtn(), padding:'3px 10px', fontStyle:'normal' }}>{busy === c.client ? 'Connecting…' : 'Connect'}</button>
+          )}
+          {c.state === 'migration_available' && (
+            <button onClick={() => connect(c.client)} disabled={!!busy}
+              title={"Replaces only ArchHub's old entry in " + (ASSISTANT_NAMES[c.client] || 'Assistant') + "'s settings and keeps an encrypted copy of the file"}
+              style={{ ...smallBtn(), padding:'3px 10px', fontStyle:'normal' }}>{busy === c.client ? 'Replacing…' : 'Replace'}</button>
           )}
         </div>
       ))}

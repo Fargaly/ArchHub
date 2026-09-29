@@ -107,6 +107,59 @@ def _codex_block(entry: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ArchHub's own development-era launch of this same server name: the source-tree
+# start (python -m nodelang.clean_coordination_mcp, PYTHONPATH) with no env_vars.
+# Codex then hands the server no CODEX_THREAD_ID, so it exits before the MCP
+# handshake. Only this exact shape is replaced, and only on consent; any other
+# same-name entry stays a conflict and is never touched.
+_DEV_ERA_ARGS = ["-m", "nodelang.clean_coordination_mcp"]
+_DEV_ERA_ENV = {"PYTHONPATH", "ARCHHUB_COORDINATION_VENDOR"}
+
+
+def _dev_era_codex_entry(entry) -> bool:
+    import ntpath
+    if type(entry) is not dict or set(entry) != {"command", "args", "env"}:
+        return False
+    command, env = entry["command"], entry["env"]
+    return (entry["args"] == _DEV_ERA_ARGS
+            and type(command) is str and ntpath.basename(command).casefold() == "python.exe"
+            and type(env) is dict and set(env) == _DEV_ERA_ENV
+            and env["ARCHHUB_COORDINATION_VENDOR"] == "codex"
+            and type(env["PYTHONPATH"]) is str and ntpath.isabs(env["PYTHONPATH"]))
+
+
+def _replace_codex_table(text: str, block: str) -> str:
+    """Swap the one [mcp_servers.SERVER_NAME] table (with its sub-tables) in place.
+
+    Every line outside that table is kept, including comments around it; a
+    comment directly above the next table belongs to that table and stays.
+    """
+    lines = text.splitlines(keepends=True)
+    head, sub = "[mcp_servers.%s]" % SERVER_NAME, "[mcp_servers.%s." % SERVER_NAME
+    starts = [i for i, line in enumerate(lines) if line.strip() == head]
+    if len(starts) != 1:
+        raise ValueError("the server table is not in one recognisable place")
+    start, end = starts[0], starts[0] + 1
+    while end < len(lines):
+        stripped = lines[end].strip()
+        if stripped.startswith("[") and not stripped.startswith(sub):
+            break
+        end += 1
+    while end > start + 1 and lines[end - 1].strip().startswith("#"):
+        end -= 1
+    if any(line.strip().startswith(sub) for line in lines[:start] + lines[end:]):
+        raise ValueError("the server table is split across the file")
+    replacement = block.lstrip("\n")
+    if end < len(lines):
+        replacement += "\n"
+    return "".join(lines[:start]) + replacement + "".join(lines[end:])
+
+
+def _others(data: dict) -> dict:
+    servers = data.get("mcp_servers", {})
+    return {**data, "mcp_servers": {k: v for k, v in servers.items() if k != SERVER_NAME}}
+
+
 def codex_readiness(install_root, state_root, environment=None) -> dict:
     env = os.environ if environment is None else environment
     report = {"client": "codex", "server_name": SERVER_NAME, "legacy_migration_needed": []}
@@ -136,16 +189,81 @@ def codex_readiness(install_root, state_root, environment=None) -> dict:
         return dict(report, state="config_unreadable")
     report["legacy_migration_needed"] = [name for name in LEGACY_NAMES if name in servers]
     if SERVER_NAME in servers:
-        return dict(report, state="registered" if servers[SERVER_NAME] == entry else "conflict")
+        if servers[SERVER_NAME] == entry:
+            return dict(report, state="registered")
+        if _dev_era_codex_entry(servers[SERVER_NAME]):
+            return dict(report, state="migration_available",
+                        reason="ArchHub's development-era start of this server gives it no "
+                               "CODEX_THREAD_ID, so Codex cannot start it; Replace writes this install's entry")
+        return dict(report, state="conflict")
     if report["legacy_migration_needed"]:
         return dict(report, state="legacy_migration_required")
     return dict(report, state="ready_to_register", config_exists=True)
 
 
-def register_codex(install_root, state_root, *, consent, environment=None) -> dict:
-    """Append our table only on consent and only where no same-name entry exists; re-read."""
+def migrate_codex(install_root, state_root, *, consent, environment=None) -> dict:
+    """Replace only ArchHub's development-era table, on consent; every other setting keeps its meaning.
+
+    The whole prior file is kept, DPAPI-protected, in the private backup folder.
+    The rewrite must parse to this install's entry with every other setting
+    unchanged before it is written, and is read back after; otherwise nothing
+    is claimed.
+    """
+    import hashlib
+    import tomllib
+    from .session_link_config import SessionLinkConfigRefused, write_with_backup
     env = os.environ if environment is None else environment
     before = codex_readiness(install_root, state_root, env)
+    if consent is not True or before["state"] != "migration_available":
+        return before
+    path = Path(before["config"])
+    raw = path.read_bytes()
+    # Eligibility is decided again on these exact bytes, the ones that are hashed
+    # and rewritten: another writer may have changed the entry since readiness.
+    try:
+        old = tomllib.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeError):
+        return dict(before, state="config_unreadable")
+    current = old.get("mcp_servers", {}).get(SERVER_NAME) if type(old.get("mcp_servers")) is dict else None
+    if not _dev_era_codex_entry(current):
+        return dict(before, state="registered" if current == before["entry"] else "conflict",
+                    reason="the entry changed after it was checked; nothing was written")
+    try:
+        text = _replace_codex_table(raw.decode("utf-8"), _codex_block(before["entry"]))
+        new = tomllib.loads(text)
+    except (ValueError, UnicodeError) as exc:
+        return dict(before, state="migration_unconfirmed", reason=str(exc))
+    if _others(old) != _others(new) or new.get("mcp_servers", {}).get(SERVER_NAME) != before["entry"]:
+        return dict(before, state="migration_unconfirmed",
+                    reason="the rewrite would change more than this server's entry")
+    backup_dir = Path(state_root) / "private-client-backups"
+    from .client_mcp_installation import _require_plain
+    _require_plain(backup_dir, "directory", may_be_absent=True)
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    from .cell_secret_keys import protect_current_user_data
+    try:
+        result = write_with_backup(
+            path, text, backup_dir, expected_digest=hashlib.sha256(raw).hexdigest(),
+            protect_backup=lambda data: protect_current_user_data(
+                data, purpose="archhub.client-hook-backup/v1"))
+    except SessionLinkConfigRefused as exc:
+        return dict(before, state="migration_unconfirmed", reason=str(exc))
+    after = codex_readiness(install_root, state_root, env)
+    if after["state"] != "registered":
+        return dict(after, state="migration_unconfirmed", reason="entry_not_found_after_write")
+    return dict(after, backup=result.get("backup"))
+
+
+def register_codex(install_root, state_root, *, consent, environment=None) -> dict:
+    """Append our table only on consent and only where no same-name entry exists; re-read.
+
+    ArchHub's own development-era entry of the same name is replaced instead
+    (migrate_codex), on the same consent; any other same-name entry is left.
+    """
+    env = os.environ if environment is None else environment
+    before = codex_readiness(install_root, state_root, env)
+    if consent is True and before["state"] == "migration_available":
+        return migrate_codex(install_root, state_root, consent=True, environment=env)
     if consent is not True or before["state"] != "ready_to_register":
         return before
     path = Path(before["config"])
@@ -339,8 +457,8 @@ def register(client: str, *, consent, environment=None) -> dict:
 
 
 __all__ = ["CLIENTS", "codex_entry", "codex_readiness", "install_roots", "mcp_server_spec",
-           "opencode_readiness", "readiness", "register", "register_codex", "register_opencode",
-           "render_opencode_plugin"]
+           "migrate_codex", "opencode_readiness", "readiness", "register", "register_codex",
+           "register_opencode", "render_opencode_plugin"]
 
 
 

@@ -71,6 +71,8 @@ def test_an_account_made_before_google_keeps_its_data(client, monkeypatch):
 # Every route whose path looks like authentication, and what it is.
 HUMAN_SIGN_IN = "human sign-in (Google)"
 NOT_SIGN_IN = "not a sign-in: spends or ends a session Google already made"
+MCP_CLIENT = "not a sign-in: an MCP client's OAuth step around the Google sign-in"
+DEVICE = "not a sign-in: a device of a session Google already made"
 AUTH_ROUTES = {
     "/v1/auth/google/start": HUMAN_SIGN_IN,
     "/v1/auth/google/callback": HUMAN_SIGN_IN,
@@ -82,6 +84,20 @@ AUTH_ROUTES = {
     "/founder/api/browser-code": NOT_SIGN_IN,  # founder's existing session -> one-time link
     "/founder/claim": NOT_SIGN_IN,             # spends that link for the cookie
     "/founder/logout": NOT_SIGN_IN,
+    # The public MCP door's OAuth (oauth_mcp). None signs a person in: the one
+    # human step inside it is the Google sign-in above.
+    "/.well-known/oauth-protected-resource": MCP_CLIENT,        # discovery metadata
+    "/.well-known/oauth-protected-resource/mcp": MCP_CLIENT,    # discovery metadata
+    "/.well-known/oauth-authorization-server": MCP_CLIENT,      # discovery metadata
+    "/oauth/register": MCP_CLIENT,    # registers a client application, not a person
+    "/oauth/authorize": MCP_CLIENT,   # shows the consent page naming the client
+    "/oauth/consent": MCP_CLIENT,     # Approve sends the person to Google sign-in
+    "/oauth/continue": NOT_SIGN_IN,   # spends the Google-verified sign-in once
+    "/oauth/token": MCP_CLIENT,       # exchanges a code minted after Google (PKCE)
+    # Devices: a signed-in desktop reports itself; the founder sees and ends them.
+    "/v1/devices/heartbeat": DEVICE,                                  # needs a Google-made session
+    "/founder/api/devices": DEVICE,                                   # founder session only
+    "/founder/api/devices/{user_key}/{device_id}/disconnect": DEVICE,  # ends a device session
 }
 _AUTH_SHAPED = ("auth", "login", "logout", "signin", "sign-in", "sign_in",
                 "register", "magic", "claim", "browser-code", "password",

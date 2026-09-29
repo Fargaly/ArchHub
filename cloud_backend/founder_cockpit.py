@@ -668,6 +668,38 @@ def api_users(_founder: dict = Depends(require_founder)) -> JSONResponse:
     return JSONResponse(_users_panel())
 
 
+# The profile a user gave at sign-up or on the dashboard (cloud columns only).
+_PROFILE_FIELDS = ("full_name", "firm_name", "aec_role", "aec_discipline", "firm_size",
+                   "country", "signup_source")
+
+
+@router.get("/api/users/find")
+def api_users_find(q: str = "", limit: int = 50,
+                   _founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Search accounts by email substring or exact id, newest first (read-only).
+
+    The same search the cockpit agent's users_find tool runs."""
+    import cockpit_agent
+    return JSONResponse(cockpit_agent._t_users_find({"query": q, "limit": max(1, min(limit, 200))}))
+
+
+@router.get("/api/users/{key}")
+def api_user_detail(key: str, _founder: dict = Depends(require_founder)) -> JSONResponse:
+    """One account: plan and quota, profile, sessions and usage (read-only).
+
+    Cloud-side data only; a user's local graph never reaches the cloud."""
+    import cockpit_agent
+    found = cockpit_agent._t_users_get({"email" if "@" in key else "user_id": key})
+    if "user" not in found:
+        return JSONResponse({"ok": False, "error": "no such user"}, status_code=404)
+    user = found["user"]
+    row = db.get_user_with_profile(user["id"]) or {}
+    user["profile"] = {field: row.get(field) for field in _PROFILE_FIELDS}
+    user["stripe_customer"] = bool(row.get("stripe_id"))
+    user["period_end"] = row.get("period_end")
+    user.update(db.user_activity(user["id"]))
+    return JSONResponse({"ok": True, "user": user})
+
 @router.get("/api/subscriptions")
 def api_subscriptions(_founder: dict = Depends(require_founder)) -> JSONResponse:
     return JSONResponse(_subscriptions_panel())

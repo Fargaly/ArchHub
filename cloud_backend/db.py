@@ -2966,6 +2966,34 @@ def count_agent_tasks(status: Optional[str] = None) -> int:
     return int(r["n"]) if r else 0
 
 
+def user_activity(user_id: str, *, now: Optional[int] = None) -> dict:
+    """What one account did, in numbers, for the founder cockpit's user view.
+
+    Pure SELECT over cloud tables only: sign-in sessions (never their token
+    digests) and metered usage. Nothing from a user's local graph reaches the
+    cloud, so nothing of it can appear here."""
+    now = int(time.time()) if now is None else int(now)
+    with connect() as con:
+        sessions = con.execute(
+            "SELECT COUNT(*) AS n, MAX(last_used_at) AS last_seen FROM tokens "
+            "WHERE user_id = ? AND (expires_at IS NULL OR expires_at > ?)",
+            (user_id, now)).fetchone()
+        usage = con.execute(
+            "SELECT COUNT(*) AS calls, COALESCE(SUM(input_toks), 0) AS input_toks, "
+            "COALESCE(SUM(output_toks), 0) AS output_toks, "
+            "COALESCE(SUM(cost_micros), 0) AS cost_micros, MAX(ts) AS last_call "
+            "FROM usage_log WHERE user_id = ?", (user_id,)).fetchone()
+        recent = con.execute(
+            "SELECT COUNT(*) FROM usage_log WHERE user_id = ? AND ts >= ?",
+            (user_id, now - 30 * 86400)).fetchone()[0]
+    return {
+        "sessions_active": int(sessions["n"] or 0),
+        "last_seen": sessions["last_seen"],
+        "usage": {**{key: usage[key] for key in
+                     ("calls", "input_toks", "output_toks", "cost_micros", "last_call")},
+                  "calls_last_30d": int(recent or 0)},
+    }
+
 def find_users(query: str, *, limit: int = 20,
                exclude_test: bool = False) -> list[dict]:
     """Read-only user search by email substring OR exact id, newest first.

@@ -55,7 +55,8 @@ STOP_HOOK = "native_stop_hook.py"
 # Per vendor: config file (under the user's home), the key holding its hook
 # events, the pre/post tool events, the vendor flag the gate must carry, the
 # file-writing tools the gate must see, the shell tools (partial when unseen),
-# and the stop event where native_stop_hook supports the vendor (claude). No vendor has
+# and the stop event where native_stop_hook supports the vendor (claude, codex: the
+# owner's Stop host follows its binding, native_stop_hook.StopHostSupervisor). No vendor has
 # a config start event: native_start_hook.py requires --session, --state-dir, --node,
 # --workspace and --connection of one launched session and answers {} for any other
 # session, so a global SessionStart entry can never carry it.
@@ -67,7 +68,7 @@ VENDORS: dict[str, dict[str, Any]] = {
     "codex": {"config": ".codex/hooks.json", "root": "hooks", "pre": ("PreToolUse",),
               "post": ("PostToolUse",), "flag": "--vendor codex",
               "write_tools": ("apply_patch",), "shell_tools": ("shell", "exec_command"),
-              "start": None, "stop": None, "trust": ".codex/config.toml"},
+              "start": None, "stop": ("Stop",), "trust": ".codex/config.toml"},
     "gemini-cli": {"config": ".gemini/settings.json", "root": "hooks", "pre": ("BeforeTool",),
                    "post": ("AfterTool",), "flag": "--vendor gemini",
                    "write_tools": ("write_file", "replace"), "shell_tools": ("run_shell_command",),

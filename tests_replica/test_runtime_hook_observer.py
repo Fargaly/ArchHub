@@ -79,14 +79,22 @@ def test_the_brain_mcp_and_brainwrap_are_not_compliance(monkeypatch, tmp_path):
     assert "brainwrap" not in json.dumps(result.details.get("note:brain-connected", ""))
 
 
-def test_codex_needs_its_gates_and_has_no_native_stop(monkeypatch, tmp_path):
+CODEX_STOP = PY + " C:/Users/someone/AppData/Local/ArchHub/nodelang/native_stop_hook.py --vendor codex"
+
+
+def test_codex_needs_its_gates_and_its_native_stop(monkeypatch, tmp_path):
     path = tmp_path / ".codex" / "hooks.json"
     path.parent.mkdir(parents=True)
-    path.write_text(json.dumps({"hooks": {
-        "PreToolUse": _cmd(GATE % "codex"), "PostToolUse": _cmd(GATE % "codex")}}), encoding="utf-8")
+    gates = {"PreToolUse": _cmd(GATE % "codex"), "PostToolUse": _cmd(GATE % "codex")}
+    path.write_text(json.dumps({"hooks": gates}), encoding="utf-8")
+    result = _court(monkeypatch, tmp_path, "codex-desktop")
+    assert result.passed is False
+    assert result.checks["workshop-authority"] is False
+    assert "does not run native_stop_hook.py" in result.details["note:workshop-authority"]
+    path.write_text(json.dumps({"hooks": dict(gates, Stop=_cmd(CODEX_STOP))}), encoding="utf-8")
     result = _court(monkeypatch, tmp_path, "codex-desktop")
     assert result.passed is True, result.details
-    assert "no supported native completion hook" in result.details["note:workshop-authority"]
+    assert result.checks["workshop-authority"] is True
 
 
 def test_a_vendor_with_no_hook_mechanism_is_not_enforceable(monkeypatch, tmp_path):
@@ -149,7 +157,8 @@ def test_no_client_config_binds_the_launch_bound_start_hook(tmp_path):
     assert claude["status"] == "green" and claude["checks"]["brain-connected"] is True
     assert "bound per session at launch" in claude["notes"]["brain-connected"]
     _write(tmp_path / ".codex" / "hooks.json", {"hooks": {"PreToolUse": _cmd(GATE % "codex"),
-                                                          "PostToolUse": _cmd(GATE % "codex")}})
+                                                          "PostToolUse": _cmd(GATE % "codex"),
+                                                          "Stop": _cmd(CODEX_STOP)}})
     codex = observe_runtime_compliance("codex", home=tmp_path)
     assert codex["checks"]["brain-connected"] is True and codex["status"] == "green"
 

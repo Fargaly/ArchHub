@@ -4713,6 +4713,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut }) => {
     ['team',        'Team',        null],
     ['profile',     'Profile',     'Architect'],
     ['permissions', 'Permissions', null],
+    ['workspaces',  'Workspaces',  null],
     ['hosts',       'Hosts',       `${LM_HOSTS.filter(h => hostState(h) !== 'off').length} live`],
     ['providers',   'Providers',   providers.rows ? `${keyed} key${keyed === 1 ? '' : 's'}` : null],
     ['models',      'Models',      pickedModel() ? pickedModel().name : null],
@@ -4761,6 +4762,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut }) => {
           {tab === 'team'        && <SettingsTeam/>}
           {tab === 'profile'     && <SettingsProfile/>}
           {tab === 'permissions' && <SettingsPermissions/>}
+          {tab === 'workspaces'  && <SettingsWorkspaces/>}
           {tab === 'hosts'       && <SettingsHosts/>}
           {tab === 'providers'   && <SettingsProviders providers={providers} onTab={setTab}/>}
           {tab === 'models'      && <SettingsModels/>}
@@ -5871,6 +5873,147 @@ const SettingsOperations = () => {
         </div>
       ))}
     </details>
+  );
+};
+// -- Workspaces: the folders ArchHub governs besides 00.ARCHUB. Held in the graph (Governance),
+// changed only here, and every change is approved by the owner's own Windows key prompt before it
+// is written. The hooks read the signed projection. Nothing here ever deletes a file.
+const WORKSPACE_CHECK_MS = 1500;
+const WORKSPACE_CHECK_READS = 40;
+const WORKSPACE_PROMISE = 'Removing a workspace only stops ArchHub from governing it. Your files are never deleted.';
+const workspaceSlug = path => String(path || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop()
+  .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63);
+async function workspaceRoots(body) {
+  const s = window.__archhubSession || {};
+  const response = await fetch('/api/universal/workspace-roots', {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json', 'X-ArchHub-Session':s.token || '', 'X-ArchHub-CSRF':s.csrf || '' },
+    body:JSON.stringify(body),
+  });
+  let data = null;
+  try { data = await response.json(); } catch (e) {}
+  if (!response.ok || !data || data.ok === false) throw new Error((data && data.error) || 'The workspace registry did not answer.');
+  return data;
+}
+const SettingsWorkspaces = () => {
+  const [view, setView] = React.useState(null);
+  const [error, setError] = React.useState('');
+  const [busy, setBusy] = React.useState('');
+  const [path, setPath] = React.useState('');
+  const [rootId, setRootId] = React.useState('');
+  const [privacy, setPrivacy] = React.useState('private');
+  const [confirming, setConfirming] = React.useState(null);
+  const run = async (label, body) => {
+    setBusy(label); setError('');
+    try { const next = await workspaceRoots(body); setView(next); return next; }
+    catch (e) { setError(e.message); return null; }
+    finally { setBusy(''); }
+  };
+  const [reads, setReads] = React.useState(0);
+  const read = () => run('Reading', { action:'list' });
+  React.useEffect(() => { read(); }, []);
+  const registered = (view?.roots || []).filter(r => r.state === 'registered');
+  const history = (view?.roots || []).filter(r => r.state !== 'registered');
+  const boot = view?.boot;
+  const checking = boot === 'checking';
+  // Changes are offered only when the start-up check and this read agree the hooks'
+  // registry is the graph's projection (or nothing is registered yet).
+  const ready = !!view && (boot === 'match' || boot === 'missing') && view.projection === boot;
+  const mismatch = !!view && !checking && !ready;
+  // The start-up check runs beside the app: read again until it answers (bounded).
+  React.useEffect(() => {
+    if (!checking || reads >= WORKSPACE_CHECK_READS) return undefined;
+    const timer = setTimeout(() => { setReads(n => n + 1); read(); }, WORKSPACE_CHECK_MS);
+    return () => clearTimeout(timer);
+  }, [checking, reads, view]);
+  const add = async () => {
+    if (!ready || busy) return;
+    const id = rootId || workspaceSlug(path);
+    const done = await run('Waiting for your approval in the Windows prompt', {
+      action:'register', id, path:path.trim(), privacy, profile:'client', writers:['claude'] });
+    if (done) { setPath(''); setRootId(''); setPrivacy('private'); }
+  };
+  const row = { padding:'10px 14px', display:'flex', alignItems:'center', gap:LM.sp.md };
+  const mono = { fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em', marginTop:2 };
+  const chip = col => ({ fontFamily:LM.mono, fontSize:9, padding:'2px 7px', borderRadius:LM.rad.xs,
+    background:col + '14', color:col, letterSpacing:'0.1em', textTransform:'uppercase' });
+  const field = { background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, color:LM.ink,
+    padding:'6px 9px', fontFamily:LM.sans, fontSize:13 };
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+      <SHead title="Workspaces" sub="Folders ArchHub governs besides its own. Agents write inside a workspace only through ArchHub's permits; a private workspace is never read by a public session."/>
+      {checking && (
+        <div role="status" style={{ fontSize:12, color:LM.inkSoft }}>
+          Checking the registry the governance hooks read against the graph{'\u2026'} Changes wait for the check.
+        </div>
+      )}
+      {mismatch && (
+        <div role="alert" style={{ padding:'10px 14px', border:`1px solid ${LM.warn}`, borderRadius:LM.rad.lg,
+          background:LM.warn + '12', display:'flex', alignItems:'center', gap:LM.sp.md, fontSize:13 }}>
+          <span style={{ flex:1 }}>The registry the governance hooks read does not match the graph (start-up check: {boot}; now: {view.projection}). Changes are paused until it is republished.</span>
+          {view.key_pinned && (
+            <button disabled={!!busy} onClick={() => { if (!busy && mismatch && view.key_pinned) run('Waiting for your approval in the Windows prompt', { action:'republish' }); }}
+              style={{ ...smallBtn(true), padding:'4px 10px' }}>Republish</button>
+          )}
+        </div>
+      )}
+      <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
+        <div style={row}>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:13, fontWeight:500 }}>00.ARCHUB</div>
+            <div style={mono}>{view?.built_in?.path || 'C:\\Users\\fargaly\\00.ARCHUB'}</div>
+          </div>
+          <span style={chip(LM.inkMuted)}>built in</span>
+        </div>
+        {registered.map(r => (
+          <div key={r.root_id} style={{ ...row, borderTop:`1px solid ${LM.lineSoft}` }}>
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ fontSize:13, fontWeight:500 }}>{r.root_id}</div>
+              <div style={mono}>{r.path} · {r.profile} · {(r.writers || []).join(', ')}</div>
+            </div>
+            <span style={chip(r.privacy === 'private' ? LM.ok : LM.warn)}>{r.privacy}</span>
+            <button disabled={!!busy || !ready} onClick={() => { if (ready && !busy) setConfirming(r); }}
+              style={{ ...smallBtn(), padding:'3px 9px' }}>Remove</button>
+          </div>
+        ))}
+        {view && !registered.length && <SettingsEmpty>No workspace is registered yet.</SettingsEmpty>}
+        {!view && !error && <SettingsEmpty>Reading the workspace registry{'\u2026'}</SettingsEmpty>}
+        {!view && error && <SettingsEmpty role="alert" action={<button disabled={!!busy} onClick={read} style={{ ...smallBtn(), padding:'3px 9px' }}>Read again</button>}>The workspace registry was not read: {error}</SettingsEmpty>}
+      </div>
+      {confirming && (
+        <div role="dialog" style={{ padding:'12px 14px', border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, background:LM.bgSoft, fontSize:13, display:'flex', flexDirection:'column', gap:8 }}>
+          <div>Stop governing <b>{confirming.root_id}</b> ({confirming.path})?</div>
+          <div style={{ color:LM.inkSoft }}>{WORKSPACE_PROMISE}</div>
+          <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
+            <button onClick={() => setConfirming(null)} style={{ ...smallBtn(), padding:'4px 10px' }}>Keep it</button>
+            <button disabled={!!busy || !ready} onClick={async () => { if (!ready || busy) return; const r = confirming; setConfirming(null);
+              await run('Waiting for your approval in the Windows prompt', { action:'unregister', id:r.root_id }); }}
+              style={{ ...smallBtn(true), padding:'4px 10px' }}>Stop governing</button>
+          </div>
+        </div>
+      )}
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 150px 110px auto', gap:8, alignItems:'center' }}>
+        <input value={path} onChange={e => setPath(e.target.value)} placeholder="Folder, e.g. D:\Clients\Project"
+          aria-label="Workspace folder" style={field}/>
+        <input value={rootId} onChange={e => setRootId(e.target.value)} placeholder={workspaceSlug(path) || 'name'}
+          aria-label="Workspace name" style={field}/>
+        <select value={privacy} onChange={e => setPrivacy(e.target.value)} aria-label="Privacy" style={field}>
+          <option value="private">Private</option>
+          <option value="public">Public</option>
+        </select>
+        <button disabled={!!busy || !ready || !path.trim()} onClick={add} style={{ ...smallBtn(true), padding:'6px 12px' }}>Add</button>
+      </div>
+      <div style={{ fontFamily:LM.sans, fontSize:12, color:LM.inkMuted, lineHeight:1.5 }}>
+        Profile: client. Adding or removing asks Windows to confirm with your ArchHub key; nothing changes if you decline. {WORKSPACE_PROMISE}
+      </div>
+      {busy && <div role="status" style={{ fontSize:12, color:LM.inkSoft }}>{busy}{'\u2026'}</div>}
+      {view && error && <div role="alert" style={{ fontSize:12, color:LM.err || LM.warn }}>{error}</div>}
+      {history.length > 0 && (
+        <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em' }}>
+          NO LONGER GOVERNED: {history.map(r => r.root_id).join(', ')}
+        </div>
+      )}
+    </div>
   );
 };
 const SettingsHosts = () => {

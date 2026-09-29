@@ -1654,6 +1654,30 @@ _PAGE_HTML = """<!doctype html>
   .typing{color:var(--ink-faint);font-style:italic;font-size:12.5px;
     align-self:flex-start}
   @media(max-width:740px){.span2{grid-column:auto}h1{font-size:34px}}
+  .control{margin-top:40px}
+  .control-head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap}
+  .control-title{font-family:'Instrument Serif',Georgia,serif;font-weight:400;font-size:32px;margin:0}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap}
+  .tab{background:transparent;color:var(--ink-dim);border:1px solid var(--line);border-radius:999px;
+    padding:5px 14px;font:inherit;font-size:12.5px;cursor:pointer}
+  .tab:hover{color:var(--ink)}
+  .tab.active{color:var(--terracotta);border-color:rgba(217,119,87,.5);background:var(--terracotta-soft)}
+  .ctl{margin-top:14px}
+  .ctl h3{font-family:'Instrument Serif',Georgia,serif;font-weight:400;font-size:19px;margin:22px 0 8px}
+  .ctl h4{font-weight:500;font-size:13px;margin:14px 0 6px;color:var(--ink)}
+  .ctl td{vertical-align:top;word-break:break-word}
+  .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}
+  .in{background:var(--panel-2);color:var(--ink);border:1px solid var(--line);border-radius:8px;
+    padding:7px 10px;font:inherit;font-size:13px;min-width:240px;flex:1}
+  .in.narrow{min-width:120px;flex:0 0 auto}
+  .in.sql{width:100%;min-height:110px;font-family:ui-monospace,Consolas,monospace;resize:vertical}
+  .btn.danger{background:rgba(217,103,87,.12);color:var(--bad);border-color:rgba(217,103,87,.45)}
+  .pill.ok{background:rgba(95,167,119,.14);color:var(--good);border-color:rgba(95,167,119,.35)}
+  .pill.no{background:rgba(217,103,87,.12);color:var(--bad);border-color:rgba(217,103,87,.4)}
+  .pill.warn{background:rgba(217,166,87,.12);color:var(--warn);border-color:rgba(217,166,87,.4)}
+  .say{padding:10px 12px;border:1px solid var(--line);border-radius:8px;color:var(--ink-dim);margin:8px 0}
+  .say.bad{color:var(--bad);border-color:rgba(217,103,87,.4)}
+  .ctl .pill{white-space:nowrap}
 </style>
 </head>
 <body>
@@ -1717,6 +1741,67 @@ _PAGE_HTML = """<!doctype html>
       <div id="errors"></div>
     </div>
   </div>
+
+  <section class="control" id="control">
+    <div class="control-head">
+      <h2 class="control-title">Control</h2>
+      <div class="tabs" id="ctlTabs">
+        <button class="tab active" data-tab="users">Users</button>
+        <button class="tab" data-tab="payments">Payments</button>
+        <button class="tab" data-tab="community">Community</button>
+        <button class="tab" data-tab="relay">Relay</button>
+        <button class="tab" data-tab="devices">Devices</button>
+        <button class="tab" data-tab="health">Health</button>
+        <button class="tab" data-tab="query">Database</button>
+      </div>
+    </div>
+    <div class="card ctl" data-panel="users">
+      <div class="bar"><input id="uq" class="in" placeholder="Search accounts by email or id" />
+        <button class="btn" data-act="users-search">Search</button></div>
+      <div id="uList"></div>
+      <div id="uDetail"></div>
+    </div>
+    <div class="card ctl" data-panel="payments" hidden>
+      <div id="payLive"></div>
+      <h3>Failed payments</h3><div id="payFailed"></div>
+      <h3>Refunds</h3><div id="payRefunds"></div>
+      <h3>Refund a payment</h3>
+      <div class="bar"><input id="rfPi" class="in" placeholder="Payment intent (pi_...)" />
+        <input id="rfAmount" class="in narrow" placeholder="Amount in cents (blank = all)" />
+        <button class="btn" data-act="refund-preview">Preview refund</button></div>
+      <div id="rfOut"></div>
+    </div>
+    <div class="card ctl" data-panel="community" hidden>
+      <h3>Waiting for your review</h3><div id="cmPending"></div>
+      <h3>Admitted facts</h3><div id="cmFacts"></div>
+      <h3>Members</h3><div id="cmMembers"></div>
+    </div>
+    <div class="card ctl" data-panel="relay" hidden>
+      <div id="rlStatus"></div>
+      <h3>Failed tasks</h3><div id="rlFailed"></div>
+      <h3>Drain the queue</h3>
+      <div class="bar"><input id="rlReason" class="in" placeholder="Why drain the queue?" />
+        <button class="btn danger" data-act="relay-drain">Drain queued tasks</button></div>
+      <div id="rlOut"></div>
+    </div>
+    <div class="card ctl" data-panel="devices" hidden>
+      <div class="bar"><input id="dvUser" class="in" placeholder="Account email or id (blank = every device)" />
+        <button class="btn" data-act="devices-load">Show devices</button></div>
+      <div id="dvList"></div>
+    </div>
+    <div class="card ctl" data-panel="health" hidden>
+      <div id="hlChecks"></div>
+      <h3>Fly machines</h3><div id="hlFly"></div>
+      <h3>Errors</h3><div id="hlErrors"></div>
+    </div>
+    <div class="card ctl" data-panel="query" hidden>
+      <textarea id="dbSql" class="in sql" spellcheck="false"
+        placeholder="SELECT email, plan, created_at FROM users ORDER BY created_at DESC LIMIT 20"></textarea>
+      <div class="bar"><button class="btn" data-act="db-run">Run read-only query</button>
+        <span class="note">One SELECT at a time. Credentials and private user content are refused. Every query is audited.</span></div>
+      <div id="dbOut"></div>
+    </div>
+  </section>
 </div>
 
 <script>
@@ -1976,10 +2061,274 @@ async function load(){
 }
 load(); loadActions();
 setInterval(()=>{ load(); loadActions(); }, 30000);
+
+/* ---- Control: every button calls one audited /founder/api route; no logic here ---- */
+const PLANS = /*PLANS*/[];
+const enc = encodeURIComponent;
+async function api(path, opts){
+  const r = await fetch('/founder/api/' + path, Object.assign(
+    {headers:{'Accept':'application/json','Content-Type':'application/json'}}, opts || {}));
+  let body = null;
+  try { body = await r.json(); } catch (e) { body = null; }
+  return {ok: r.ok, status: r.status, body: body || {}};
+}
+const post = (path, body) => api(path, {method:'POST', body: JSON.stringify(body || {})});
+function why(res){
+  const b = res.body || {}, d = b.detail;
+  const text = b.error || (d && (d.error || d)) || ('HTTP ' + res.status);
+  return esc(typeof text === 'string' ? text : JSON.stringify(text));
+}
+function say(id, html, bad){ $(id).innerHTML = '<div class="say' + (bad ? ' bad' : '') + '">' + html + '</div>'; }
+function grid(cols, rows, cells){
+  if (!rows || !rows.length) return '<div class="empty">Nothing here.</div>';
+  return '<table><tr>' + cols.map(c => '<th>' + esc(c) + '</th>').join('') + '</tr>' +
+    rows.map(r => '<tr>' + cells(r).map(v => '<td>' + v + '</td>').join('') + '</tr>').join('') + '</table>';
+}
+const pillFor = (good, yes, no) => '<span class="pill ' + (good ? 'ok' : 'no') + '">' + esc(good ? yes : no) + '</span>';
+const when = (ts) => ts ? esc(new Date(ts * 1000).toISOString().slice(0, 16).replace('T', ' ')) : '-';
+const minor = (n, cur) => n == null ? '-' : esc((Number(n) / 100).toLocaleString('en-US',
+  {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ' + String(cur || '').toUpperCase());
+const ink = (s) => '<span class="ink">' + esc(s) + '</span>';
+function btn(label, act, data, danger){
+  return '<button class="btn' + (danger ? ' danger' : '') + '" data-act="' + act + '"' +
+    Object.keys(data || {}).map(k => ' data-' + k + '="' + esc(data[k]) + '"').join('') + '>' + esc(label) + '</button>';
+}
+
+// Users
+async function usersSearch(){
+  const res = await api('users/find?q=' + enc($('uq').value.trim()) + '&limit=50');
+  if (!res.ok) return say('uList', why(res), true);
+  $('uList').innerHTML = grid(['Account', 'Plan', 'Messages', 'Joined', ''], res.body.users || [], u => [
+    ink(u.email), esc(u.plan), fmt(u.msg_used) + ' / ' + fmt(u.msg_limit), when(u.created_at),
+    btn('Open', 'user-open', {user: u.email})]);
+}
+function devicesTable(rows){
+  return grid(['Account', 'Device', 'Name', 'Last heartbeat', 'State', ''], rows, d => [
+    esc(d.email), ink(d.device_id), esc(d.name || '-'), d.last_heartbeat ? ago(d.last_heartbeat) : '-',
+    d.disconnected_at ? '<span class="pill no">disconnected</span>' : pillFor(d.online, 'online', 'offline'),
+    d.disconnected_at ? '' : btn('Disconnect', 'device-disconnect', {user: d.email, device: d.device_id}, true)]);
+}
+async function userOpen(key){
+  const res = await api('users/' + enc(key));
+  if (!res.ok) return say('uDetail', why(res), true);
+  const u = res.body.user, p = u.profile || {}, us = u.usage || {};
+  const rows = [
+    ['Plan', esc(u.plan) + ' (' + fmt(u.msg_used) + ' of ' + fmt(u.msg_limit) + ' messages)'],
+    ['Status', u.suspended_at ? '<span class="pill no">suspended ' + when(u.suspended_at) + '</span> ' + esc(u.suspended_reason || '')
+                              : pillFor(true, 'active', '')],
+    ['Name', esc(p.full_name || '-')], ['Firm', esc(p.firm_name || '-')],
+    ['Role', esc([p.aec_role, p.aec_discipline].filter(Boolean).join(', ') || '-')],
+    ['Firm size', esc(p.firm_size || '-')], ['Country', esc(p.country || '-')],
+    ['Signed up via', esc(p.signup_source || '-')], ['Stripe customer', u.stripe_customer ? 'yes' : 'no'],
+    ['Sessions', fmt(u.sessions_active) + ' active, last seen ' + (u.last_seen ? ago(u.last_seen) : '-')],
+    ['Usage', fmt(us.calls) + ' calls (' + fmt(us.calls_last_30d) + ' in the last 30 days), cost ' +
+              minor(us.cost_micros == null ? null : us.cost_micros / 10000, 'usd')]];
+  $('uDetail').innerHTML = '<h3>' + esc(u.email) + '</h3>' +
+    rows.map(r => '<div class="row"><span class="k">' + esc(r[0]) + '</span><span class="v">' + r[1] + '</span></div>').join('') +
+    '<div class="bar"><select id="uPlan" class="in narrow">' +
+      PLANS.map(x => '<option' + (x === u.plan ? ' selected' : '') + '>' + esc(x) + '</option>').join('') + '</select>' +
+      btn('Change plan', 'user-plan', {user: u.email}) +
+      (u.suspended_at ? btn('Restore account', 'user-restore', {user: u.email})
+        : '<input id="uReason" class="in" placeholder="Reason for suspending" />' +
+          btn('Suspend account', 'user-suspend', {user: u.email}, true)) + '</div>' +
+    '<div id="uOut"></div><h3>Devices</h3>' + devicesTable(u.devices || []);
+}
+async function userAct(kind, key){
+  let res;
+  if (kind === 'plan') res = await post('users/' + enc(key) + '/plan', {plan: $('uPlan').value});
+  if (kind === 'suspend'){
+    if (!confirm('Suspend ' + key + '? Every session this account holds stops working.')) return;
+    res = await post('users/' + enc(key) + '/suspend', {reason: ($('uReason').value || '').trim()});
+  }
+  if (kind === 'restore') res = await post('users/' + enc(key) + '/restore', {});
+  if (!res.ok) return say('uOut', why(res), true);
+  await userOpen(key);
+  say('uOut', 'Done. The change is in the audit log.');
+}
+
+// Payments
+async function payLoad(){
+  const res = await api('stripe');
+  if (!res.ok) return say('payLive', why(res), true);
+  const live = res.body.live || {};
+  const preview = document.querySelector('button[data-act="refund-preview"]');
+  preview.disabled = !live.available;
+  if (!live.available) say('rfOut', 'Refunds need live Stripe: ' + esc(live.reason));
+  if (!live.available) say('payLive', 'Live Stripe: ' + esc(live.reason));
+  else {
+    const mrr = Object.keys(live.mrr_minor || {}).map(c => minor(live.mrr_minor[c], c)).join(' + ') || '-';
+    $('payLive').innerHTML = '<div class="grid kpis">' + kpi('MRR (live)', mrr, true) +
+      kpi('Active subscriptions', fmt(live.active_subscriptions) + (live.more_than_listed ? '+' : '')) + '</div>' +
+      '<h3>Recent invoices</h3>' + grid(['Invoice', 'Customer', 'Paid', 'Due', 'Status', 'Date'], live.invoices || [], i => [
+        ink(i.id), esc(i.customer_email || '-'), minor(i.amount_paid, i.currency), minor(i.amount_due, i.currency),
+        esc(i.status), when(i.created)]);
+  }
+  const events = (rows) => grid(['When', 'Account', 'Stripe object', 'Amount', 'Detail'], rows, e => [
+    when(e.ts), esc(e.email || '-'), ink(e.stripe_object || '-'), minor(e.amount, e.currency), esc(e.detail || '')]);
+  $('payFailed').innerHTML = events(res.body.failed_payments || []);
+  $('payRefunds').innerHTML = events(res.body.refunds || []);
+}
+async function refundPreview(){
+  const body = {payment_intent: $('rfPi').value.trim()};
+  const amount = $('rfAmount').value.trim();
+  if (amount) body.amount = Number(amount);
+  const res = await post('stripe/refund', body);
+  if (!res.ok) return say('rfOut', why(res), true);
+  const b = res.body;
+  $('rfOut').innerHTML = '<div class="say">Refund ' + minor(b.amount, b.currency) + ' of ' + esc(b.payment_intent) +
+    '? This confirmation is good for ' + fmt(Math.round(b.expires_in_s / 60)) + ' minutes and works once.</div>' +
+    btn('Confirm refund', 'refund-confirm', {token: b.confirm_token}, true);
+}
+async function refundConfirm(token){
+  if (!confirm('Send this refund to Stripe now? The money leaves your account.')) return;
+  const res = await post('stripe/refund', {confirm_token: token});
+  if (!res.ok) return say('rfOut', why(res), true);
+  const f = res.body.refund || {};
+  say('rfOut', 'Refunded ' + minor(f.amount, f.currency) + ' (' + esc(f.id) + ', ' + esc(f.status) + ').');
+  payLoad();
+}
+
+// Community
+async function communityLoad(){
+  const got = await Promise.all([api('community/pending'), api('community/facts'), api('community/members')]);
+  const pending = got[0], facts = got[1], members = got[2];
+  $('cmPending').innerHTML = !pending.ok ? '<div class="say bad">' + why(pending) + '</div>' :
+    grid(['Community', 'Fact', 'Text', 'Sent', ''], pending.body.pending || [], p => [
+      esc(p.community_id), ink(p.fragment_id), esc(p.text), when(p.submitted_at),
+      btn('Admit', 'judge', {cid: p.community_id, fid: p.fragment_id, hlc: p.hlc, admit: 'yes'}) + ' ' +
+      btn('Reject', 'judge', {cid: p.community_id, fid: p.fragment_id, hlc: p.hlc, admit: 'no'}, true)]);
+  $('cmFacts').innerHTML = !facts.ok ? '<div class="say bad">' + why(facts) + '</div>' :
+    grid(['Community', 'Fact', 'Admitted text', 'Contributor', 'Admitted', 'State'], facts.body.facts || [], f => [
+      esc(f.community_id), ink(f.fragment_id), esc(f.text), esc(f.contributor || '-'), when(f.decided_at),
+      '<span class="pill ' + (f.state === 'current' ? 'ok' : f.state === 'withdrawn' ? 'no' : 'warn') + '">' + esc(f.state) + '</span>']);
+  const list = members.ok ? (members.body.communities || []) : [];
+  $('cmMembers').innerHTML = !members.ok ? '<div class="say bad">' + why(members) + '</div>' :
+    (list.length ? list.map(c => '<h4>' + esc(c.community_id) + ' <span class="note">' + fmt((c.members || []).length) +
+      ' members, ' + fmt(c.left) + ' left</span></h4>' +
+      grid(['Member', 'Role', 'Joined'], c.members || [], m => [esc(m.email), esc(m.role), when(m.joined_at)])).join('')
+      : '<div class="empty">No communities yet.</div>');
+}
+async function judge(d){
+  const res = await post('community/judge', {community_id: d.cid, id: d.fid, hlc: d.hlc, admit: d.admit === 'yes'});
+  if (!res.ok) alert('Not judged: ' + (res.body && res.body.detail ? String(res.body.detail) : 'HTTP ' + res.status));
+  communityLoad();
+}
+
+// Relay
+async function relayLoad(){
+  const res = await api('relay');
+  if (!res.ok) return say('rlStatus', why(res), true);
+  const b = res.body, c = b.counts || {}, app = b.application || {};
+  const keys = Array.from(new Set(['queued', 'claimed', 'failed'].concat(Object.keys(c))));
+  $('rlStatus').innerHTML = '<div class="grid kpis">' + keys.map(k => kpi(k, fmt(c[k] || 0), k === 'failed' && c[k] > 0)).join('') +
+    kpi('Oldest waiting', b.oldest_queued_age_s == null ? '-' : fmt(Math.round(b.oldest_queued_age_s / 60)) + ' min') + '</div>' +
+    '<div class="row"><span class="k">Your ArchHub app</span><span class="v">' + pillFor(app.live, 'publishing', 'not publishing') +
+    (app.pushed_at ? ' last push ' + esc(app.pushed_at) : '') + '</span></div>';
+  $('rlFailed').innerHTML = grid(['Task', 'Kind', 'From', 'Asked', 'Why it failed', ''], b.failed || [], t => [
+    ink(t.id), esc(t.kind), esc(t.created_by), esc(t.directive), esc(t.result), btn('Retry', 'relay-retry', {task: t.id})]);
+}
+async function relayRetry(id){
+  const res = await post('relay/tasks/' + enc(id) + '/retry', {});
+  if (!res.ok) say('rlOut', why(res), true); else say('rlOut', 'Task ' + esc(id) + ' is queued again.');
+  relayLoad();
+}
+async function relayDrain(){
+  if (!confirm('Close every queued relay task? None of them will run later.')) return;
+  const res = await post('relay/drain', {reason: $('rlReason').value.trim()});
+  if (!res.ok) return say('rlOut', why(res), true);
+  say('rlOut', 'Drained ' + fmt(res.body.drained) + ' queued task(s).');
+  relayLoad();
+}
+
+// Devices
+async function devicesLoad(){
+  const u = $('dvUser').value.trim();
+  const res = await api('devices' + (u ? '?user=' + enc(u) : ''));
+  if (!res.ok) return say('dvList', why(res), true);
+  $('dvList').innerHTML = devicesTable(res.body.devices || []);
+}
+async function deviceDisconnect(d){
+  if (!confirm('Disconnect ' + d.device + ' of ' + d.user + '? The session it uses stops working.')) return;
+  const res = await post('devices/' + enc(d.user) + '/' + enc(d.device) + '/disconnect', {});
+  if (!res.ok) alert('Not disconnected: ' + (res.body && res.body.error ? res.body.error : 'HTTP ' + res.status));
+  if (activeTab === 'users') userOpen(d.user); else devicesLoad();
+}
+
+// Health
+const size = (n) => n >= 1073741824 ? (n / 1073741824).toFixed(1) + ' GB' : (n / 1048576).toFixed(1) + ' MB';
+function checkBits(c){
+  return Object.keys(c).filter(k => k !== 'ok').map(k => {
+    const v = c[k], words = k.split('_').filter(w => w !== 'bytes' && w !== 'ms').join(' ');
+    const shown = v == null ? '-' : k.indexOf('bytes') >= 0 ? size(v) : k.slice(-3) === '_ms' ? v + ' ms' : v;
+    return esc(words) + ' ' + esc(shown);
+  }).join(', ');
+}
+async function healthLoad(){
+  const got = await Promise.all([api('system'), api('errors')]);
+  const sys = got[0], errs = got[1];
+  if (!sys.ok) return say('hlChecks', why(sys), true);
+  const h = sys.body.healthz || {}, checks = h.checks || {};
+  $('hlChecks').innerHTML = '<div class="row"><span class="k">Overall</span><span class="v">' +
+    pillFor(h.ok, 'healthy', 'needs attention') + '</span></div>' +
+    Object.keys(checks).map(k => '<div class="row"><span class="k">' + esc(k.split('_').join(' ')) + '</span><span class="v">' +
+      pillFor(checks[k].ok, 'ok', 'failing') + ' ' + checkBits(checks[k]) + '</span></div>').join('');
+  const fly = (sys.body.fly || {}).machines || {};
+  $('hlFly').innerHTML = fly.available ? grid(['Machine', 'Name', 'State', 'Region', 'Updated', 'Image'], fly.machines || [], m => [
+      ink(m.id), esc(m.name), pillFor(m.state === 'started', m.state, m.state), esc(m.region), esc(m.updated_at), esc(m.image)])
+    : '<div class="say">' + esc(fly.reason || 'unavailable') + '</div>';
+  $('hlErrors').innerHTML = !errs.ok ? '<div class="say bad">' + why(errs) + '</div>' :
+    grid(['When', 'Where', 'Kind', 'Message'], errs.body.errors || [], e => [when(e.ts), esc(e.where), esc(e.kind), esc(e.message)]);
+}
+
+// Database
+async function dbRun(){
+  const res = await post('db/query', {sql: $('dbSql').value});
+  if (!res.ok) return say('dbOut', 'Refused: ' + why(res), true);
+  const b = res.body;
+  $('dbOut').innerHTML = '<div class="note">' + fmt((b.rows || []).length) + ' row(s)' +
+    (b.truncated ? ', more exist (the first 200 are shown)' : '') + ', ' + esc(b.elapsed_ms) + ' ms</div>' +
+    grid(b.columns || [], b.rows || [], r => r.map(v => esc(v == null ? 'NULL' : v)));
+}
+
+// Tabs and clicks
+const LOADERS = {users: usersSearch, payments: payLoad, community: communityLoad, relay: relayLoad,
+                 devices: devicesLoad, health: healthLoad, query: () => {}};
+let activeTab = 'users';
+function showTab(name){
+  if (!LOADERS[name]) name = 'users';
+  activeTab = name;
+  document.querySelectorAll('#ctlTabs .tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('.ctl[data-panel]').forEach(p => { p.hidden = p.dataset.panel !== name; });
+  LOADERS[name]();
+}
+$('ctlTabs').addEventListener('click', (e) => { const b = e.target.closest('.tab'); if (b) showTab(b.dataset.tab); });
+$('control').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-act]');
+  if (!b) return;
+  const d = b.dataset;
+  if (d.act === 'users-search') usersSearch();
+  else if (d.act === 'user-open') userOpen(d.user);
+  else if (d.act === 'user-plan') userAct('plan', d.user);
+  else if (d.act === 'user-suspend') userAct('suspend', d.user);
+  else if (d.act === 'user-restore') userAct('restore', d.user);
+  else if (d.act === 'refund-preview') refundPreview();
+  else if (d.act === 'refund-confirm') refundConfirm(d.token);
+  else if (d.act === 'judge') judge(d);
+  else if (d.act === 'relay-retry') relayRetry(d.task);
+  else if (d.act === 'relay-drain') relayDrain();
+  else if (d.act === 'devices-load') devicesLoad();
+  else if (d.act === 'device-disconnect') deviceDisconnect(d);
+  else if (d.act === 'db-run') dbRun();
+});
+$('uq').addEventListener('keydown', (e) => { if (e.key === 'Enter') usersSearch(); });
+showTab(location.hash.indexOf('#control-') === 0 ? location.hash.slice(9) : 'users');
 </script>
 </body>
 </html>
 """
+# The Control tab offers exactly the plans set_plan accepts (config.PLAN_QUOTAS).
+_PAGE_HTML = _PAGE_HTML.replace("/*PLANS*/[]", json.dumps(list(config.PLAN_QUOTAS)))
+
 
 
 # ---------------------------------------------------------------------------

@@ -1115,6 +1115,23 @@ def api_stripe_refund(payload: dict = Body(default={}),
     return JSONResponse({"ok": True, "refund": refund})
 
 
+@router.post("/api/db/query")
+def api_db_query(payload: dict = Body(default={}),
+                 founder: dict = Depends(require_founder)) -> JSONResponse:
+    """One read-only SELECT over the cloud database (cockpit_query enforces it)."""
+    import cockpit_query
+    sql = str(payload.get("sql") or "")
+    try:
+        answer = cockpit_query.run(sql)
+    except cockpit_query.QueryRefused as refused:
+        _audit(founder, "POST /founder/api/db/query", "db.query", result={
+            "sql": sql[:1000], "refused": str(refused)[:300]}, ok=False)
+        return JSONResponse({"ok": False, "error": str(refused)[:300]}, status_code=400)
+    _audit(founder, "POST /founder/api/db/query", "db.query", result={
+        "sql": sql[:1000], "rows": len(answer["rows"]), "truncated": answer["truncated"]})
+    return JSONResponse({"ok": True, **answer})
+
+
 @router.get("/api/relay")
 def api_relay(_founder: dict = Depends(require_founder)) -> JSONResponse:
     """The cloud relay: its queue in each status, the oldest wait, whether the

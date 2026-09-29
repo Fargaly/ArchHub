@@ -115,6 +115,8 @@ def read_pending_effects(snapshot, protocol, actor, *, start=None, remaining=Non
             continue
         if permit.state_root != protocol.states["active"]:
             raise AuthorizationDenied("native release permit state is unknown")
+        if _is_settled(protocol, permit.root_id):
+            continue
         selected.append({"permit": permit.root_id, "agent_session": actor,
             "work_root": permit.work_root, "container_root": permit.container_root,
             "container_id": permit.container_id, "operation": permit.operation,
@@ -127,6 +129,12 @@ def read_pending_effects(snapshot, protocol, actor, *, start=None, remaining=Non
         "truncated": next_chain != NULL_CELL_ID, "_next_chain":next_chain,
         "_next_remaining":next_remaining,
         "settlement_performed": False}
+
+
+def _is_settled(protocol, permit_root):
+    """An evidence settlement record resolves the uncertainty; age never does."""
+    storage = getattr(protocol, "operational_storage", None)
+    return storage is not None and storage.get_settlement(permit_root) is not None
 
 
 def _has_pending_permit(snapshot, protocol, actor):
@@ -162,6 +170,8 @@ def _has_pending_permit(snapshot, protocol, actor):
         # Expiry ends permission to start a write, not uncertainty about whether
         # an admitted write happened. Keep custody until an actual receipt or
         # explicit reconciliation settles it; never infer no-write from time.
+        if _is_settled(protocol, permit_root):
+            continue
         return True
     return False
 

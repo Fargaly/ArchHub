@@ -51,6 +51,8 @@ class InstalledWorkshopCoordinationClient:
     The transport pin checks descriptor identity again at the actual send boundary.
     """
 
+    _ACCESS = "full"
+
     def __init__(self, client: UniversalRuntimeClient):
         if not isinstance(client, UniversalRuntimeClient):
             raise TypeError("a pre-bound UniversalRuntimeClient is required")
@@ -71,7 +73,7 @@ class InstalledWorkshopCoordinationClient:
         client = self._client
         if (client.agent_session_root != self._session
                 or type(client._agent_session_token) is not str or not client._agent_session_token
-                or client.agent_session_access != "full"
+                or client.agent_session_access != self._ACCESS
                 or Path(client.descriptor_path) != self._descriptor_path
                 or client._pinned_runtime_descriptor != self._descriptor):
             raise MachineTransportError("installed Workshop client binding changed")
@@ -219,4 +221,21 @@ class InstalledWorkshopCoordinationClient:
                     "claim_status": "claimed" if new_claim else "already-held"}
 
 
-__all__ = ["InstalledWorkshopCoordinationClient"]
+class InstalledWorkshopInboxReader(InstalledWorkshopCoordinationClient):
+    """Read the deliberation spaces a recovered original actor is authorized for; no writes."""
+
+    _ACCESS = "recovery-read"
+    READS = frozenset({"read_messages", "read_message"})
+
+    def call(self, method: str, parameters: Mapping[str, object] | None = None,
+             *, timeout_seconds: float = 35.0) -> dict[str, object]:
+        if method not in self.READS:
+            raise MachineTransportError(self.NOTICE)
+        result = super().call(method, parameters, timeout_seconds=timeout_seconds)
+        return {**result, "access": "read-only", "notice": self.NOTICE}
+
+    NOTICE = ("Reading messages works. Replies and file changes are paused until "
+              "this agent reconnects to the app.")
+
+
+__all__ = ["InstalledWorkshopCoordinationClient", "InstalledWorkshopInboxReader"]

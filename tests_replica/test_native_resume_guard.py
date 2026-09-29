@@ -85,7 +85,9 @@ def test_recovery_server_keeps_tools_discoverable_without_connect(monkeypatch):
     assert activate()['status']=='recovery_required'
     assert calls==[]
     names={tool.name for tool in server._tool_manager.list_tools()}
-    assert names=={'native.owner_status','native.resume_recover','native.owner_recover','native.connection_recover','native.owner_inspect_effects'}
+    # Inbox reads and evidence settlement stay available while writes are blocked.
+    assert names=={'native.owner_status','native.resume_recover','native.owner_recover','native.connection_recover','native.owner_inspect_effects',
+        'native.owner_settle_effect','coordination.read_messages','coordination.read_message'}
 
 
 def test_dormant_recovery_inspection_uses_same_owner_and_never_activates():

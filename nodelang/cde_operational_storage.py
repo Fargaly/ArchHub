@@ -42,6 +42,7 @@ class CdeOperationalStorage:
         self._memory_receipts_by_permit: dict[str, dict[str, Any]] = {}
         self._memory_nonces: dict[str, str] = {}
         self._memory_requests: dict[str, str] = {}
+        self._memory_settlements: dict[str, dict[str, Any]] = {}
 
         if self._database_path is not None:
             self._connection = sqlite3.connect(
@@ -112,6 +113,20 @@ class CdeOperationalStorage:
             self._connection.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_cde_receipts_permit "
                 "ON cde_write_receipts(permit_root)"
+            )
+            # One evidence settlement per unreceipted permit (SPEC 3.3 record,
+            # never a graph revision). Additive; existing rows are untouched.
+            self._connection.execute(
+                "CREATE TABLE IF NOT EXISTS cde_write_settlements ("
+                "permit_root TEXT PRIMARY KEY, "
+                "agent_session_root TEXT NOT NULL, "
+                "outcome TEXT NOT NULL, "
+                "record TEXT NOT NULL"
+                ")"
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cde_settlements_session "
+                "ON cde_write_settlements(agent_session_root)"
             )
             self._connection.execute("COMMIT")
         except Exception:
@@ -523,6 +538,60 @@ class CdeOperationalStorage:
             else:
                 r = self._memory_receipts_by_permit.get(permit_root)
                 return dict(r) if r is not None else None
+
+    def record_settlement(self, record: dict[str, Any]) -> dict[str, Any]:
+        """Insert one evidence settlement for an unreceipted permit, never twice."""
+        permit_root = record["permit_root"]
+        if record.get("outcome") != "reconciled-no-replay":
+            raise CdeOperationalDenied("CDE permit settlement outcome is invalid")
+        text = json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        with self._lock:
+            if self._closed:
+                raise InvalidCell("CdeOperationalStorage is closed")
+            if self._connection is None:
+                if permit_root in self._memory_settlements:
+                    raise CdeOperationalDenied("CDE permit was already settled")
+                self._memory_settlements[permit_root] = json.loads(text)
+                return json.loads(text)
+            try:
+                self._connection.execute(
+                    "INSERT INTO cde_write_settlements (permit_root, agent_session_root, outcome, record) "
+                    "VALUES (?, ?, ?, ?)",
+                    (permit_root, record["agent_session_root"], record["outcome"], text),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise CdeOperationalDenied("CDE permit was already settled") from exc
+            return json.loads(text)
+
+    def reconciled_operation(self, agent_session_root: str, work_root: str,
+                             request_id: str) -> dict[str, Any] | None:
+        """The reconciliation that closed this exact operation for this actor, if any."""
+        with self._lock:
+            if self._closed:
+                raise InvalidCell("CdeOperationalStorage is closed")
+            if self._connection is None:
+                rows = [row for row in self._memory_settlements.values()
+                        if row.get("agent_session_root") == agent_session_root]
+            else:
+                rows = [json.loads(text) for (text,) in self._connection.execute(
+                    "SELECT record FROM cde_write_settlements WHERE agent_session_root = ?",
+                    (agent_session_root,))]
+            for row in rows:
+                if row.get("work_root") == work_root and row.get("request_id") == request_id:
+                    return copy.deepcopy(row)
+            return None
+
+    def get_settlement(self, permit_root: str) -> dict[str, Any] | None:
+        with self._lock:
+            if self._closed:
+                raise InvalidCell("CdeOperationalStorage is closed")
+            if self._connection is None:
+                held = self._memory_settlements.get(permit_root)
+                return copy.deepcopy(held) if held is not None else None
+            row = self._connection.execute(
+                "SELECT record FROM cde_write_settlements WHERE permit_root = ?", (permit_root,)
+            ).fetchone()
+            return json.loads(row[0]) if row is not None else None
 
     @staticmethod
     def _row_to_permit_dict(row: tuple[Any, ...]) -> dict[str, Any]:

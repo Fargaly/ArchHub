@@ -145,6 +145,8 @@ class NativeAgentSession:
         self._rebind_candidate = None
         self._hook_rebind_guard = None
         self._retired_release = None
+        self._inbox_reader = None
+        self._lease_keeper = None
 
     def register_hook_rebind_guard(self, guard):
         """Private composition registers retained OS custody, never an MCP argument."""
@@ -195,6 +197,7 @@ class NativeAgentSession:
                 "agent_session": self._session_root, "pinned": project(self._descriptor),
                 "current": project(current), "current_error": current_error,
                 "rebind_pending": self._rebind_candidate is not None,
+                "failed_attempt": self._failed_attempt_status(current),
                 "retired_release": None if self._retired_release is None else {
                     "release_id": self._retired_release["release_id"],
                     "owner_fingerprint": self._owner_fingerprint(self._retired_release["descriptor"]),
@@ -203,6 +206,143 @@ class NativeAgentSession:
                 "recovery_required": bool(self._session_root and (
                     self._state != "bound" or current != self._descriptor
                     or current_error is not None or expired is not False))}
+
+    def _failed_attempt_status(self, current):
+        """Expose the retained attempt owner so recovery never guesses it."""
+        candidate = self._rebind_candidate
+        failed = getattr(candidate, "_descriptor", None)
+        if self._state != "uncertain" or failed is None:
+            return None
+        return {"owner_fingerprint": self._owner_fingerprint(failed),
+                "superseded": current is not None and failed != current}
+
+    def start_lease_keeper(self):
+        """Keep this bound owner in-memory lease alive while the process lives.
+
+        Renewal rotates only the application process-local capability; it is
+        never a graph revision and never enrolls. An idle agent therefore does
+        not lose its session after the lease lifetime.
+        """
+        with self._lock:
+            if self._lease_keeper is not None and not self._lease_keeper.is_set():
+                return self._lease_keeper
+            stop = threading.Event()
+
+            def run():
+                while True:
+                    expires = getattr(self._client, "_agent_session_expires_at", 0.0) or 0.0
+                    wait = max(1.0, min(300.0, (expires - time.time()) / 3.0))
+                    if stop.wait(wait) or not self._renew_idle_lease():
+                        return
+
+            self._lease_keeper = stop
+            threading.Thread(target=run, name="native-owner-lease", daemon=True).start()
+            return stop
+
+    def _renew_idle_lease(self):
+        """One renewal of the same actor on the same owner; False ends the keeper."""
+        with self._lock:
+            if self._state == "released":
+                return False
+            if self._state != "bound" or self._active_calls or self._lease_expired() is not False:
+                return True  # nothing safe to renew now; recovery stays explicit
+            try:
+                with self.bound_client() as client:
+                    client.renew_agent_session()
+            except (OSError, ValueError, MachineTransportError):
+                pass  # the next tool call reports the real binding state
+            return True
+
+    def needs_inbox_recovery(self):
+        """True when the full binding cannot serve a read right now."""
+        with self._lock:
+            if self._state != "bound":
+                return True
+            try:
+                current = self._read_owner()
+            except (OSError, ValueError, MachineTransportError):
+                return True
+            return current != self._descriptor or self._lease_expired() is True
+
+    def inbox_reader(self):
+        """Read-only reader of the spaces this exact actor is authorized for, on this instance."""
+        from .installed_workshop_coordination import InstalledWorkshopInboxReader
+        with self._lock:
+            self._check_identity()
+            actor = self._session_root or self._expected_agent_session
+            if actor is None:
+                raise MachineTransportError("Native inbox recovery requires the original actor")
+            current = self._read_owner()
+            if (self._descriptor is not None
+                    and self._instance_identity(current) != self._instance_identity(self._descriptor)):
+                raise MachineTransportError("Native inbox recovery cannot cross to another application instance")
+            held = getattr(self, "_inbox_reader", None)
+            if (held is not None and held._descriptor == current
+                    and held._client.agent_session_root == actor
+                    and held._client._agent_session_expires_at - 30 > time.time()):
+                return held
+            client = self._factory(self._descriptor_path, self._key_provider)
+            if (not isinstance(client, UniversalRuntimeClient) or client.agent_session_root
+                    or client._agent_session_token or client.key_provider is not self._key_provider):
+                raise MachineTransportError("Native inbox recovery requires its own unbound client")
+            client.pin_runtime_descriptor(current)
+            client.open_native_inbox_read(runtime=self._identity.runtime,
+                external_session_id=self._identity.external_session_id, expected_agent_session=actor)
+            if self._read_owner() != current:
+                raise MachineTransportError("Native owner changed during inbox recovery")
+            self._check_identity()
+            self._inbox_reader = InstalledWorkshopInboxReader(client)
+            return self._inbox_reader
+
+    def settle_effect(self, *, expected_owner, permit, settlement):
+        """Ask the current owner to settle one stale permit of this actor from evidence."""
+        with self._lock:
+            self._check_identity()
+            actor = self._session_root or self._expected_agent_session
+            current = self._read_owner()
+            if (actor is None or self._owner_fingerprint(current) != expected_owner
+                    or (self._descriptor is not None and
+                        self._instance_identity(current) != self._instance_identity(self._descriptor))):
+                raise MachineTransportError("Native settlement owner, actor or instance changed")
+            client = self._factory(self._descriptor_path, self._key_provider)
+            if (not isinstance(client, UniversalRuntimeClient) or client.agent_session_root
+                    or client._agent_session_token or client.key_provider is not self._key_provider):
+                raise MachineTransportError("Native settlement requires its own unbound client")
+            client.pin_runtime_descriptor(current)
+            result = client.settle_native_effect(runtime=self._identity.runtime,
+                external_session_id=self._identity.external_session_id, expected_agent_session=actor,
+                permit=permit, settlement=settlement)
+            if self._read_owner() != current:
+                raise MachineTransportError("Native owner changed during settlement")
+            return result
+
+    def _retire_superseded_attempt(self, candidate, current, expected_failed_owner, expected_current_owner):
+        """Settle an attempt made against an owner that has since been replaced.
+
+        Continuing an existing actor creates no graph identity (at most it
+        re-ensures existing Workshop participation); its product is a capability
+        in the memory of the owner it was sent to. Once that owner process is
+        gone no capability from the attempt can exist, so nothing is replayed
+        and the original binding may be rebound to the current owner explicitly.
+        """
+        failed = candidate._descriptor
+        if (self._owner_fingerprint(failed) != expected_failed_owner
+                or self._owner_fingerprint(current) != expected_current_owner
+                or failed.runtime_id == current.runtime_id
+                or self._instance_identity(failed) != self._instance_identity(current)
+                or self._instance_identity(current) != self._instance_identity(self._descriptor)
+                or candidate._identity != self._identity
+                or candidate._expected_agent_session != self._session_root):
+            raise MachineTransportError("Native continuation recovery custody changed")
+        self._require_retired_owner_process(failed)
+        if self._read_owner() != current:
+            raise MachineTransportError("Current owner changed during attempt retirement")
+        self._check_identity()
+        if self._hook_rebind_guard is not None:
+            self._hook_rebind_guard()
+        self._rebind_candidate = None
+        self._state = "bound"
+        return {**self.owner_status(), "continuation_outcome": "owner-retired"}
 
     def _lease_expired(self):
         """Local lease deadline only; unknown remote custody is not expiry proof."""
@@ -360,6 +500,13 @@ class NativeAgentSession:
                 self._hook_rebind_guard()
             candidate = self._rebind_candidate
             current = self._read_owner()
+            if (self._state == "uncertain" and not self._active_calls and candidate is not None
+                    and self._retired_release is None
+                    and getattr(candidate, "_descriptor", None) is not None
+                    and candidate._descriptor != current):
+                # The owner changed again after the failed attempt.
+                return self._retire_superseded_attempt(
+                    candidate, current, expected_failed_owner, expected_current_owner)
             if (self._state != "uncertain" or self._active_calls or candidate is None
                     or candidate._descriptor != current
                     or self._owner_fingerprint(current) != expected_current_owner
@@ -588,6 +735,8 @@ class NativeAgentSession:
                 raise MachineTransportError("native release reply or runtime drifted")
             self._release_result = dict(result)
             self._state = "released"
+            if self._lease_keeper is not None:
+                self._lease_keeper.set()  # only a confirmed terminal release ends renewal
             return dict(result)
 
     def connect(self, *, expected_owner=None) -> UniversalRuntimeClient:

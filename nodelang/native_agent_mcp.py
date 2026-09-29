@@ -12,7 +12,9 @@ from mcp.server.fastmcp import Context
 
 from .application_machine_transport import MachineTransportError
 from .clean_coordination_mcp import build_server as build_coordination_server
-from .installed_workshop_coordination import InstalledWorkshopCoordinationClient
+from .installed_workshop_coordination import (
+    InstalledWorkshopCoordinationClient, InstalledWorkshopInboxReader,
+)
 from .native_agent_session import NativeAgentSession
 from .native_agent_hooks import user_prompt_submit_context, stop_context
 
@@ -48,8 +50,34 @@ class _OwnedWorkshopClient(InstalledWorkshopCoordinationClient):
             yield current
 
     def call(self, method, parameters=None, **kwargs):
+        if method in InstalledWorkshopInboxReader.READS and _needs_inbox_recovery(self._native_owner):
+            # Same actor, same instance, read-only; writes stay behind the full binding.
+            return self._native_owner.inbox_reader().call(method, parameters, **kwargs)
         with self.bound_client():
             return super().call(method, parameters, **kwargs)
+
+
+def _needs_inbox_recovery(owner):
+    check = getattr(owner, "needs_inbox_recovery", None)
+    return callable(check) and check() is True
+
+
+def _inbox_call(owner, method, values):
+    """Read messages through the full binding, or read-only while it is blocked."""
+    if _needs_inbox_recovery(owner):
+        return owner.inbox_reader().call(method, values)
+    with owner.bound_client() as client:
+        return InstalledWorkshopCoordinationClient(client).call(method, values)
+
+
+_SETTLE_DOC = """Close one stale file-write permit of this agent after checking the file.
+
+Use the permit and owner fingerprint shown by native.owner_inspect_effects and
+native.owner_status, with settlement "reconciled". The application records the
+file as it is now and says what that cannot prove: it never claims the write
+happened or did not. The same change is never repeated automatically. Writing
+resumes once no unresolved permit remains.
+"""
 
 
 def _text(value):
@@ -121,6 +149,9 @@ def build_server(*, session=None, workshop_task: str | None = None):
         validate_selected_work(workshop_task)
     owner = session if session is not None else NativeAgentSession()
     client = owner.connect()
+    keeper = getattr(owner, "start_lease_keeper", None)
+    if callable(keeper):
+        keeper()  # an idle agent keeps its session; renewal is never a graph write
     if workshop_task is not None:
         return attach_workshop_tools(owner, workshop_task)
     control = _OwnedWorkshopClient(owner, client)
@@ -160,6 +191,10 @@ def build_server(*, session=None, workshop_task: str | None = None):
         """Read this original actor's pending permit evidence; no settlement or grant."""
         return owner.inspect_enrollment(expected_owner=expected_owner, projection="effects",
                                        **({"cursor":cursor} if cursor is not None else {}))
+
+    @server.tool(name="native.owner_settle_effect", description=_SETTLE_DOC)
+    def owner_settle_effect(expected_owner: str, permit: str, settlement: str) -> dict[str, object]:
+        return owner.settle_effect(expected_owner=expected_owner, permit=permit, settlement=settlement)
 
     def host_runtime():
         # Deployment configuration, never a path supplied by a tool caller.
@@ -256,6 +291,13 @@ def build_server(*, session=None, workshop_task: str | None = None):
     return server
 
 
+_RECOVERY_TOOLS = frozenset({
+    'native.owner_status', 'native.owner_recover', 'native.connection_recover',
+    'native.owner_inspect_effects', 'native.owner_settle_effect',
+    'coordination.read_messages', 'coordination.read_message',
+})
+
+
 def build_recovery_server(owner, *, workshop_task=None):
     """Keep recovery tools available until the same owner is ready for tools."""
     from mcp.server.fastmcp import FastMCP
@@ -274,7 +316,7 @@ def build_recovery_server(owner, *, workshop_task=None):
                 return restored
             tools=build_server(session=owner,workshop_task=workshop_task)
             for tool in tools._tool_manager.list_tools():
-                if tool.name not in {'native.owner_status','native.owner_recover','native.connection_recover','native.owner_inspect_effects'}:
+                if tool.name not in _RECOVERY_TOOLS:
                     server.add_tool(tool.fn,name=tool.name,description=tool.description,
                                     annotations=tool.annotations)
             activated=True
@@ -292,6 +334,20 @@ def build_recovery_server(owner, *, workshop_task=None):
         """Inspect exact original-actor evidence before activation; never enroll or replay."""
         return owner.inspect_enrollment(expected_owner=expected_owner,projection='effects',
             **({'cursor':cursor} if cursor is not None else {}))
+
+    @server.tool(name='native.owner_settle_effect', description=_SETTLE_DOC)
+    def recovery_settle_effect(expected_owner: str, permit: str, settlement: str):
+        return owner.settle_effect(expected_owner=expected_owner, permit=permit, settlement=settlement)
+
+    @server.tool(name='coordination.read_messages')
+    def recovery_read_messages(limit: int = 50, before: int | None = None):
+        """Read the messages this agent is authorized to see. Works while writing is blocked."""
+        return _inbox_call(owner, 'read_messages', {'limit': limit, 'before': before})
+
+    @server.tool(name='coordination.read_message')
+    def recovery_read_message(message_id: str, sequence: int):
+        """Read one message this agent is authorized to see. Works while writing is blocked."""
+        return _inbox_call(owner, 'read_message', {'message_id': message_id, 'sequence': sequence})
 
     @server.tool(name='native.resume_recover')
     async def recovery_retry(ctx: Context):

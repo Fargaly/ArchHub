@@ -1908,6 +1908,54 @@ class UniversalRuntimeClient:
         self._agent_session_access = "recovery-read"
         return result
 
+    def open_native_inbox_read(self, *, runtime, external_session_id, expected_agent_session):
+        """Hold a read-only capability for the spaces the exact original actor may read.
+
+        Not an enrollment: writes stay with the full capability, which may still
+        be refused while an effect of this actor is unresolved.
+        """
+        with self._request_lock:
+            if self.agent_session_root or self._agent_session_token or self._continuation_request is not None:
+                raise MachineTransportError("native inbox recovery requires an unbound client")
+            result = self.request("POST", "/api/universal/agent-session-resume", {
+                "runtime": runtime, "external_session_id": external_session_id,
+                "expected_agent_session": expected_agent_session})
+            token, capability, expires_at = (result.get("session_token"), result.get("capability"),
+                                             result.get("expires_at"))
+            if (result.get("agent_session") != expected_agent_session
+                    or result.get("access") != "recovery-read" or result.get("scope") != "native-inbox"
+                    or type(token) is not str or len(token) < 32
+                    or type(capability) is not str or not capability.startswith("machine-recovery:")
+                    or type(result.get("writes_blocked")) is not bool
+                    or type(expires_at) not in (int, float) or float(expires_at) <= time.time()):
+                raise MachineTransportError("native inbox recovery response is invalid")
+            self.agent_session_root = expected_agent_session
+            self._agent_session_token = token
+            self._agent_session_expires_at = float(expires_at)
+            self._agent_session_capability_id = capability
+            self._agent_session_access = "recovery-read"
+            return {key: value for key, value in result.items() if key != "session_token"}
+
+    def settle_native_effect(self, *, runtime, external_session_id, expected_agent_session,
+                             permit, settlement):
+        """Ask the application to settle one stale permit from its own evidence."""
+        with self._request_lock:
+            if self.agent_session_root or self._agent_session_token or self._continuation_request is not None:
+                raise MachineTransportError("stale permit settlement requires an unbound client")
+            if settlement != "reconciled":
+                raise MachineTransportError("stale permit settlement outcome is invalid")
+            result = self.request("POST", "/api/universal/agent-session-resume", {
+                "runtime": runtime, "external_session_id": external_session_id,
+                "expected_agent_session": expected_agent_session,
+                "permit": permit, "settlement": settlement})
+            if (result.get("permit_root") != permit or result.get("outcome") != "reconciled-no-replay"
+                    or result.get("execution_history") != "unknown"
+                    or result.get("agent_session_root") != expected_agent_session
+                    or result.get("replayed") is not False
+                    or type(result.get("already_settled")) is not bool):
+                raise MachineTransportError("stale permit settlement response is invalid")
+            return result
+
     def renew_agent_session(self) -> dict[str, object]:
         """Rotate the process capability without changing graph identity."""
         with self._request_lock:

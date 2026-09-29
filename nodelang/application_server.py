@@ -10760,7 +10760,18 @@ class ApplicationServer:
         ).hexdigest()
         if not hmac.compare_digest(proof, expected):
             raise AuthorizationDenied("runtime Agent Session proof is invalid")
-        if (
+        if binding.get("access") == "recovery-read" and binding.get("scope") == "native-inbox":
+            # Same original actor, same OS peer, message reads only; never a write.
+            from .native_inbox_recovery import native_inbox_read_admitted
+            peer_context = _VERIFIED_MACHINE_PEER_CONTEXT.get()
+            peer = (peer_context[2] if peer_context is not None and peer_context[0] is self
+                    and peer_context[1] is request else None)
+            if (not native_inbox_read_admitted(request) or type(peer) is not MachinePipePeer
+                    or binding.get("enrollment_peer") != {"pid": peer.pid, "created_at": peer.created_at}):
+                raise AuthorizationDenied(
+                    "recovered runtime Agent Session is read-only"
+                )
+        elif (
             binding.get("access") == "recovery-read"
             and not self._machine_agent_recovery_access_is_admitted(request)
         ):
@@ -11821,7 +11832,9 @@ class ApplicationServer:
                 and self._workshop_cache_revision == snapshot.revision
             ):
                 cached = self._workshop_cache
-        if cached is not None:
+        from .native_inbox_recovery import refuse_legacy_space_for_recovery
+        if cached is not None:  # only legacy reads populate this cache
+            refuse_legacy_space_for_recovery(self, request)
             return self._filter_universal_machine_workshop(
                 cached,
                 request_agent_session=request_agent_session,
@@ -11829,6 +11842,8 @@ class ApplicationServer:
             )
         registry = self.universal_registry
         space = read_deliberation_space(snapshot, registry.deliberation_protocol, registry.workshop_root)
+        if space.content_store_root is None:
+            refuse_legacy_space_for_recovery(self, request)
         if space.content_store_root is not None:
             service = self.conversation_content
             if service is None or not service.belongs_to(self.universal_store, registry):
@@ -13497,6 +13512,8 @@ class ApplicationServer:
                         expected_revision=snapshot.revision, project=project_ordinary)
                 if "before" in body:
                     raise InvalidCell("legacy deliberation does not support ordinary page positions")
+                from .native_inbox_recovery import refuse_legacy_space_for_recovery
+                refuse_legacy_space_for_recovery(self, request)
                 entries = read_authorized_deliberation_entries(
                     snapshot,
                     self.universal_registry.deliberation_protocol,
@@ -13974,6 +13991,22 @@ class ApplicationServer:
                     raise AuthorizationDenied(
                         "Agent Session recovery must be unbound"
                     )
+                from .native_inbox_recovery import (
+                    is_native_identity_body, is_native_settlement_body,
+                    open_inbox_read, settle_from_request,
+                )
+                if is_native_identity_body(body) or is_native_settlement_body(body, direct=direct):
+                    # Native actors recover read access or settle a stale
+                    # permit here; neither restores write capability.
+                    peer_context = _VERIFIED_MACHINE_PEER_CONTEXT.get()
+                    peer = (peer_context[2] if peer_context is not None and peer_context[0] is self
+                            and peer_context[1] is request else None)
+                    if is_native_identity_body(body):
+                        if direct:
+                            raise AuthorizationDenied(
+                                "native inbox recovery requires authenticated local transport")
+                        return open_inbox_read(self, request, peer)
+                    return settle_from_request(self, request, peer, direct=direct)
                 return self._resume_universal_machine_agent_session(
                     body,
                     runtime_id=str(request.get("runtime_id") or ""),
@@ -15406,6 +15439,8 @@ class ApplicationServer:
                 runtime = _agent_body_catalog_entry_for_session(
                     snapshot, self.universal_registry, session
                 ).runtime
+                from .native_inbox_recovery import refuse_reconciled_replay
+                refuse_reconciled_replay(self, agent_session_root, admission.work_root, body["request_id"])
                 now = time.time()
                 self._record_machine_cde_activity(agent_session_root)
                 permit, revision = issue_cde_write_permit(

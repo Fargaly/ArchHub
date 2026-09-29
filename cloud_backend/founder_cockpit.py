@@ -864,6 +864,49 @@ def api_errors(_founder: dict = Depends(require_founder)) -> JSONResponse:
 # The founder review of what members share with the Community Brain. Members
 # never pull a version until it is admitted here (community_review.py). This is
 # the one review surface; the Cockpit calls it.
+@router.get("/api/community/members")
+def api_community_members(_founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Who belongs to each community, and how many left (read-only)."""
+    return JSONResponse({"communities": db.community_membership_view()})
+
+
+def _admitted_state(community_id: str, fragment_id: str, hlc: str, opened: dict) -> str:
+    """What became of an admitted version, read from the shared replica
+    without printing its text: current, superseded (a newer version exists)
+    or withdrawn. The replica is never created here."""
+    import brain_replica
+    import community_review
+    path = (Path(brain_replica.DEFAULT_REPLICAS_ROOT) / brain_replica._COMMUNITY_SUBDIR
+            / brain_replica._safe_key(community_id) / "brain.db")
+    if not path.is_file():
+        return "unknown"
+    if community_id not in opened:
+        opened[community_id] = brain_replica.BrainReplica.open_shared("community", community_id)
+    row = opened[community_id].get_fragment(fragment_id)
+    if row is None:
+        return "unknown"
+    text = str(row.get("text") or "").strip()
+    if row.get("hlc") == hlc and text:
+        return "current"
+    if not text and community_review._expired(row.get("valid_until")):
+        return "withdrawn"
+    return "superseded"
+
+
+@router.get("/api/community/facts")
+def api_community_facts(community: str = "", limit: int = 200,
+                        _founder: dict = Depends(require_founder)) -> JSONResponse:
+    """What members shared and the founder admitted: the admitted text of each
+    version, labelled current / superseded / withdrawn. Nothing pending and
+    nothing from a private replica is shown."""
+    opened: dict = {}
+    facts = db.admitted_community_facts(community.strip() or None, limit=limit)
+    for fact in facts:
+        fact["state"] = _admitted_state(fact["community_id"], fact["fragment_id"],
+                                        fact["hlc"], opened)
+    return JSONResponse({"facts": facts})
+
+
 @router.get("/api/community/pending")
 def api_community_pending(_founder: dict = Depends(require_founder)) -> JSONResponse:
     import db

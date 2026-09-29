@@ -2497,6 +2497,37 @@ def admitted_community_versions(community_id: str) -> set:
     return {(str(r[0]), str(r[1])) for r in rows}
 
 
+def community_membership_view() -> list[dict]:
+    """Every community: its live members (email, role, joined) and how many left."""
+    with connect() as con:
+        members = con.execute(
+            "SELECT m.community_id, u.email, m.role, m.joined_at FROM community_members m "
+            "JOIN users u ON u.id = m.user_id ORDER BY m.community_id, m.joined_at").fetchall()
+        left = {row[0]: int(row[1]) for row in con.execute(
+            "SELECT community_id, COUNT(*) FROM community_optouts GROUP BY community_id")}
+    view: dict = {}
+    for row in members:
+        view.setdefault(row["community_id"], []).append(
+            {"email": row["email"], "role": row["role"], "joined_at": row["joined_at"]})
+    return [{"community_id": cid, "members": view.get(cid, []), "left": left.get(cid, 0)}
+            for cid in sorted(set(view) | set(left))]
+
+
+def admitted_community_facts(community_id: Optional[str] = None, *,
+                             limit: int = 200) -> list[dict]:
+    """The exact versions the founder admitted: the reviewed text, never the
+    replica's current row (which may be a newer, still-pending edit)."""
+    where, args = ("AND r.community_id = ?", (community_id,)) if community_id else ("", ())
+    with connect() as con:
+        rows = con.execute(
+            "SELECT r.community_id, r.fragment_id, r.hlc, c.email AS contributor, r.text, "
+            "r.decided_at, d.email AS decided_by FROM community_reviews r "
+            "LEFT JOIN users c ON c.id = r.contributor LEFT JOIN users d ON d.id = r.decided_by "
+            "WHERE r.status = 'admitted' %s ORDER BY r.decided_at DESC LIMIT ?" % where,
+            (*args, int(max(1, min(limit, 500))))).fetchall()
+    return [dict(row) for row in rows]
+
+
 def pending_community_versions(limit: int = 200) -> list[dict]:
     with connect() as con:
         rows = con.execute(

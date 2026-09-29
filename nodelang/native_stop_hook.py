@@ -250,23 +250,188 @@ class NativeStopHost:
                     connection.close()
 
     def close(self):
+        """Stop listener and thread even when the vault fails; True only when all are gone.
+
+        Repeatable: a close that returned False may be called again.
+        """
         self.closed.set()
-        if self.record is not None:
-            current=self.vault.get_password(SERVICE,self.fingerprint)
-            if current and json.loads(current).get('endpoint')==self.record['endpoint']:
-                self.vault.delete_password(SERVICE,self.fingerprint)
-        if self.listener is not None:
-            self.listener.close()
-        if self.thread is not None:
-            self.thread.join(timeout=1.0)
-        return self.thread is None or not self.thread.is_alive()
+        clean=True
+        try:
+            if self.record is not None:
+                current=self.vault.get_password(SERVICE,self.fingerprint)
+                if current and json.loads(current).get('endpoint')==self.record['endpoint']:
+                    self.vault.delete_password(SERVICE,self.fingerprint)
+        except Exception:
+            clean=False
+        finally:
+            if self.listener is not None:
+                try:
+                    self.listener.close()
+                except Exception:
+                    clean=False
+            if self.thread is not None:
+                self.thread.join(timeout=1.0)
+        return clean and (self.thread is None or not self.thread.is_alive())
+
+
+class StopHostSupervisor:
+    """Keep one Stop host in step with the owner's binding, for the process lifetime.
+
+    The host starts when the owner is bound (at launch, after recovery, after a
+    rebind) and closes when the binding ends or moves, so no launch flag or
+    config entry carries it and each native identity has at most one host. A
+    host that could not start reports why; nothing that failed reads as ready.
+    """
+    def __init__(self, owner, *, vault=None, host_factory=None, interval=2.0, retry_after=5.0):
+        self.owner=owner
+        self._vault=vault
+        # Looked up at call time, so the module's NativeStopHost is the one used.
+        self._factory=host_factory or (lambda held, vault: NativeStopHost(held, vault=vault))
+        self.interval=interval
+        self.retry_after=retry_after
+        self._lock=threading.Lock()
+        self._host=None
+        self._key=None
+        self._state,self._reason='absent','owner_unbound'
+        self._failed=None
+        self._closed=threading.Event()
+        self._thread=None
+
+    @staticmethod
+    def _desired(status):
+        pinned=status.get('pinned') or {}
+        if (status.get('state')!='bound' or not status.get('agent_session')
+                or not pinned.get('instance_digest') or status.get('rebind_pending')
+                or status.get('recovery_required')):
+            return None
+        return (status['agent_session'],pinned['instance_digest'])
+
+    def _snapshot(self):
+        lock=getattr(self.owner,'_lock',None)
+        if lock is not None and not lock.acquire(timeout=0.1):
+            return 'busy'
+        try:
+            return self.owner.owner_status()
+        except Exception:
+            return 'unreadable'
+        finally:
+            if lock is not None:
+                lock.release()
+
+    def _host_alive(self):
+        host=self._host
+        thread=getattr(host,'thread',None)
+        return (host is not None and not host.closed.is_set()
+                and thread is not None and thread.is_alive())
+
+    def _close_host(self):
+        """Stop the held host; it stays held until listener, thread and record are gone.
+
+        While a cleanup has failed no replacement starts and nothing reads as
+        ready or closed; the next reconcile retries the same cleanup.
+        """
+        host=self._host
+        if host is None:
+            return True
+        try:
+            stopped=host.close() is True
+        except Exception:
+            stopped=False
+        if not stopped:
+            self._state,self._reason='failed','cleanup_failed'
+            return False
+        self._host,self._key=None,None
+        return True
+
+    def reconcile(self):
+        with self._lock:
+            if self._closed.is_set():
+                return self.status()
+            status=self._snapshot()
+            if status=='busy':
+                return self.status()  # a busy owner is not a change of binding
+            desired=None if status=='unreadable' else self._desired(status)
+            if self._host is not None and (desired!=self._key or not self._host_alive()):
+                if not self._close_host():
+                    return self.status()
+            if desired is None:
+                self._state='absent'
+                self._reason='owner_unreadable' if status=='unreadable' else 'owner_unbound'
+                self._failed=None
+                return self.status()
+            if self._host is not None:
+                return self.status()  # same binding: start is idempotent
+            if (self._failed is not None and self._failed[0]==desired
+                    and time.monotonic()-self._failed[1]<self.retry_after):
+                return self.status()
+            try:
+                host=self._factory(self.owner,self._vault)
+                host.start()
+            except Exception as exc:
+                self._state='failed'
+                self._reason=('owned_elsewhere' if 'existing native Stop host' in str(exc)
+                              else 'start_failed')
+                self._failed=(desired,time.monotonic())
+                return self.status()
+            record=getattr(host,'record',None) or {}
+            if (record.get('actor'),record.get('instance'))!=desired:
+                # The binding moved between the check and the start.
+                self._host,self._key=host,None
+                if self._close_host():
+                    self._state,self._reason='failed','owner_changed_during_start'
+                self._failed=(desired,time.monotonic())
+                return self.status()
+            self._host,self._key=host,desired
+            self._state,self._reason,self._failed='ready',None,None
+            return self.status()
+
+    def status(self):
+        """Non-secret state for owner_status; takes no lock, so any thread may read it."""
+        state,reason=self._state,self._reason
+        if state=='ready' and not self._host_alive():
+            return {'state':'failed','reason':'host_stopped'}
+        return {'state':state,'reason':reason}
+
+    def start(self):
+        with self._lock:
+            if self._thread is not None:
+                return self
+            self._thread=threading.Thread(target=self._run,daemon=True,name='native-stop-supervisor')
+        self.reconcile()
+        self._thread.start()
+        return self
+
+    def _run(self):
+        while not self._closed.wait(self.interval):
+            try:
+                self.reconcile()
+            except Exception:
+                pass
+
+    def close(self):
+        """True only when the host is fully stopped; a failed cleanup stays visible."""
+        self._closed.set()
+        with self._lock:
+            stopped=self._close_host()
+            if stopped:
+                self._state,self._reason='absent','closed'
+        thread=self._thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=1.0)
+        return stopped
+
+
+# The session variables each runtime itself sets; another runtime's variable in
+# the same environment is an inherited parent's, never this payload's identity.
+_STOP_IDENTITY_ENV={'claude':('CLAUDE_CODE_SESSION_ID','CLAUDE_SESSION_ID'),'codex':('CODEX_THREAD_ID',)}
 
 
 def query_stop(payload, *, vendor='claude-code', vault=None, environment=None):
     """One bounded observation; no enrollment, retry, or authority fallback."""
-    fingerprint=_fingerprint(canonical_runtime(vendor),payload.get('session_id'))
+    runtime=canonical_runtime(vendor)
+    fingerprint=_fingerprint(runtime,payload.get('session_id'))
     environment=os.environ if environment is None else environment
-    for name in ('CLAUDE_CODE_SESSION_ID','CLAUDE_SESSION_ID','ARCHHUB_EXTERNAL_SESSION_ID'):
+    for name in _STOP_IDENTITY_ENV.get(runtime,())+('ARCHHUB_EXTERNAL_SESSION_ID',):
         if environment.get(name) and environment[name]!=payload.get('session_id'):
             raise ValueError('Stop payload and native environment identities disagree')
     repeated=payload.get('stop_hook_active') is True

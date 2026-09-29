@@ -57,6 +57,48 @@ class _OwnedWorkshopClient(InstalledWorkshopCoordinationClient):
             return super().call(method, parameters, **kwargs)
 
 
+def _with_stop_host(owner, status):
+    """Add the Stop host's own state, so a host that failed is visible, never assumed."""
+    supervisor = getattr(owner, "_stop_supervisor", None)
+    if supervisor is None or type(status) is not dict:
+        return status
+    return {**status, "stop_host": supervisor.status()}
+
+
+def serve(owner, server):
+    """Run the stdio server with this owner's Stop host kept in step with its binding.
+
+    The host follows the binding (launch, recovery, rebind), never a launch flag;
+    it is optional, so its failure is reported and the MCP server stays up.
+    """
+    import sys
+    supervisor = None
+    try:
+        from .native_stop_hook import StopHostSupervisor
+        supervisor = StopHostSupervisor(owner)
+        try:
+            owner._stop_supervisor = supervisor  # read by native.owner_status
+        except AttributeError:
+            pass
+        state = supervisor.start().status()
+        if state["state"] != "ready":
+            print("Native Stop observation is not ready (%s); native MCP remains active."
+                  % state["reason"], file=sys.stderr)
+    except Exception:
+        print("Optional Native Stop observation unavailable; native MCP remains active.", file=sys.stderr)
+    try:
+        server.run(transport="stdio")
+    finally:
+        if supervisor is not None:
+            try:
+                stopped = supervisor.close()
+            except Exception:
+                stopped = False
+            if not stopped:
+                # Its vault record names this ending process, which Stop treats as unavailable.
+                print("Native Stop host cleanup did not complete.", file=sys.stderr)
+
+
 def _needs_inbox_recovery(owner):
     check = getattr(owner, "needs_inbox_recovery", None)
     return callable(check) and check() is True
@@ -165,7 +207,7 @@ def build_server(*, session=None, workshop_task: str | None = None):
     @server.tool(name="native.owner_status")
     def owner_status() -> dict[str, object]:
         """Inspect verified owner fingerprints while stale; no enrollment or retry."""
-        return owner.owner_status()
+        return _with_stop_host(owner, owner.owner_status())
 
     @server.tool(name="native.owner_rebind")
     def owner_rebind(expected_old_owner: str, expected_new_owner: str) -> dict[str, object]:
@@ -327,7 +369,8 @@ def build_recovery_server(owner, *, workshop_task=None):
 
     @server.tool(name='native.owner_status')
     def recovery_status():
-        return {'owner':owner.owner_status(),'tools_available':activated,'work_admission_required':True}
+        return _with_stop_host(owner, {'owner':owner.owner_status(),'tools_available':activated,
+                                       'work_admission_required':True})
 
     @server.tool(name='native.owner_inspect_effects')
     def recovery_inspect_effects(expected_owner: str, cursor: str | None = None):
@@ -373,8 +416,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--workshop-task', metavar='WORK_ROOT',
         help='Restrict this MCP server to one configured Work and ordinary Workshop tools')
-    parser.add_argument('--stop-hook-ipc',action='store_true',
-        help='Host read-only Stop IPC inside this same native owner process')
+    # Retired: the read-only Stop host now follows the owner's binding (serve).
+    # Accepted so an existing launch line keeps working; it changes nothing.
+    parser.add_argument('--stop-hook-ipc',action='store_true',help=argparse.SUPPRESS)
     parser.add_argument('--expected-actor',help='Original graph actor from the admitted existing task binding')
     args = parser.parse_args()
     if args.expected_actor:
@@ -386,22 +430,7 @@ def main():
         # has no original actor or Session Link binding yet.
         owner=NativeAgentSession()
         server=build_server(session=owner,workshop_task=args.workshop_task)
-    hook=None
-    try:
-        if args.stop_hook_ipc:
-            try:
-                from .native_stop_hook import NativeStopHost
-                hook=NativeStopHost(owner).start()
-            except Exception:
-                import sys
-                print('Optional Native Stop observation unavailable; native MCP remains active.', file=sys.stderr)
-        server.run(transport="stdio")
-    finally:
-        if hook is not None:
-            try:
-                hook.close()
-            except Exception:
-                pass
+    serve(owner, server)
 
 
 if __name__ == "__main__":

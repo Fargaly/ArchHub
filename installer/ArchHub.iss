@@ -88,7 +88,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a Desktop shortcut"; GroupDescription: "Shortcuts:"
 ; Ticked by default; choosing it is the person's consent (colleague_setup.py reads
 ; the marker once). Unticked writes no marker, so no assistant setting is touched.
-Name: "connectassistants"; Description: "Connect my AI assistants to ArchHub (adds ArchHub's end-of-turn check to Claude Code, Codex and Gemini CLI; your other settings are kept)"; GroupDescription: "Assistants:"
+Name: "connectassistants"; Description: "Connect my AI assistants to ArchHub (adds ArchHub's end-of-turn check to Claude Code, Codex and Gemini CLI and the Session Link plugin to OpenCode; your other settings are kept)"; GroupDescription: "Assistants:"
 
 [Files]
 Source: "{#NodeRuntimePath}"; DestDir: "{app}\runtime"; DestName: "node.exe"; Flags: ignoreversion; Check: NodeRuntimeNeedsInstall

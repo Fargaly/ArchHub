@@ -11,9 +11,12 @@ installer writes and removes for a client.
 * Codex: one ``[mcp_servers.SERVER_NAME]`` table appended to
   %USERPROFILE%\\.codex\\config.toml (or $CODEX_HOME), bytes before it kept.
   Codex hands CODEX_THREAD_ID to the server through ``env_vars``.
-* OpenCode: reported, never written. OpenCode gives MCP servers no session
-  identity, and the native owner requires the real ``ses_...`` hook identity;
-  OpenCode attaches through the Session Link plugin instead.
+* OpenCode: no MCP entry. OpenCode gives MCP servers no session identity, and
+  the native owner requires the real ``ses_...`` hook identity; OpenCode
+  attaches through the Session Link plugin instead. On consent one portable
+  plugin file is written to the OpenCode config folder: it imports this
+  install's opencode-plugin.mjs pinned by its sha256 and names this install's
+  Session Link state folder, and no session.
 
 A differing entry of the same name, an unreadable config or a legacy entry
 (client_mcp_installation.LEGACY_NAMES) is reported and left untouched. Nothing
@@ -171,11 +174,125 @@ def register_codex(install_root, state_root, *, consent, environment=None) -> di
     return after
 
 
+OPENCODE_PLUGIN_NAME = "session-link.js"
+OPENCODE_GOVERNANCE_BLOCKER = (
+    "OpenCode's tool governance loader is not written: its write gate "
+    "(opencode_native_gate.py with pretooluse_validate and governed_write_broker) lives only "
+    "in the ArchHub workspace's 00.GOVERNANCE/hooks, and the installed app ships no gate")
+
+
+def _opencode_config_dir(env) -> Path | None:
+    """OpenCode's global config folder: $XDG_CONFIG_HOME/opencode, else ~/.config/opencode."""
+    base = env.get("XDG_CONFIG_HOME") or (
+        str(Path(env["USERPROFILE"]) / ".config") if env.get("USERPROFILE") else None)
+    return Path(base) / "opencode" if base else None
+
+
+def _opencode_installed(env) -> bool:
+    from .model_router import find_assistant
+    folder = _opencode_config_dir(env)
+    return bool((folder is not None and folder.is_dir()) or find_assistant("opencode", env))
+
+
+def render_opencode_plugin(install_root, state_root) -> str:
+    """The portable Session Link plugin for OpenCode; the same for every user of one install."""
+    import hashlib
+    module = Path(install_root) / "nodelang" / "session_link" / "opencode-plugin.mjs"
+    if not module.is_file():
+        raise RegistrationRefused("installed Session Link module missing")
+    revision = hashlib.sha256(module.read_bytes()).hexdigest()
+    state = str(Path(state_root) / "session-link").replace("\\", "/")
+    literal = lambda value: json.dumps(value, ensure_ascii=True)
+    return ("// ArchHub Session Link for OpenCode, written by ArchHub on your consent.\n"
+            "import {createSessionLinkPlugin} from %s;\n"
+            "export const SessionLink = createSessionLinkPlugin({stateDirectory:%s});\n"
+            % (literal(module.as_uri() + "?revision=" + revision), literal(state)))
+
+
+def _archhub_session_link_loader(raw: bytes) -> bool:
+    text = raw.decode("utf-8", "replace")
+    return ("createSessionLinkPlugin" in text
+            and "/nodelang/session_link/opencode-plugin.mjs" in text and len(raw) < 4096)
+
+
 def opencode_readiness(install_root, state_root, environment=None) -> dict:
-    return {"client": "opencode", "server_name": SERVER_NAME, "state": "unsupported",
-            "reason": ("OpenCode passes no session identity to MCP servers and the ArchHub owner "
-                       "requires its real ses_ hook identity; OpenCode connects through the "
-                       "Session Link plugin (nodelang/session_link/opencode-plugin.mjs)")}
+    env = os.environ if environment is None else environment
+    report = {"client": "opencode", "server_name": SERVER_NAME,
+              "governance": "blocked", "governance_reason": OPENCODE_GOVERNANCE_BLOCKER}
+    if not _opencode_installed(env):
+        return dict(report, state="not_installed")
+    folder = _opencode_config_dir(env)
+    if folder is None:
+        return dict(report, state="config_location_unverified")
+    target = folder / "plugins" / OPENCODE_PLUGIN_NAME
+    report["config"] = str(target)
+    if not (Path(install_root) / "BUILD_METADATA.json").is_file():
+        # session_link_config.installed_stop_hook: assistant hooks come only from the installed ArchHub.
+        return dict(report, state="install_required",
+                    reason="assistant plugins are installed only from the installed ArchHub")
+    try:
+        report["plugin"] = render_opencode_plugin(install_root, state_root)
+    except RegistrationRefused as exc:
+        return dict(report, state="install_incomplete", reason=str(exc))
+    try:
+        raw = target.read_bytes()
+    except FileNotFoundError:
+        return dict(report, state="ready_to_register", config_exists=False)
+    except OSError:
+        return dict(report, state="config_unreadable")
+    if raw.replace(b"\r\n", b"\n") == report["plugin"].encode("utf-8"):
+        return dict(report, state="registered")
+    if _archhub_session_link_loader(raw):
+        return dict(report, state="ready_to_register", config_exists=True,
+                    reason="an older ArchHub Session Link plugin is replaced")
+    return dict(report, state="conflict",
+                reason="another %s is in the OpenCode plugins folder; left unchanged" % OPENCODE_PLUGIN_NAME)
+
+
+def register_opencode(install_root, state_root, *, consent, environment=None) -> dict:
+    """Write the portable plugin only on consent, keep a backup of what it replaces, re-read."""
+    from .session_link_config import write_with_backup, SessionLinkConfigRefused
+    env = os.environ if environment is None else environment
+    before = opencode_readiness(install_root, state_root, env)
+    if consent is not True or before["state"] != "ready_to_register":
+        return before
+    target = Path(before["config"])
+    target.parent.mkdir(parents=True, exist_ok=True)
+    backup_dir = Path(state_root) / "private-client-backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    import hashlib
+    expected = (hashlib.sha256(target.read_bytes()).hexdigest()
+                if before["config_exists"] else "absent")
+    try:
+        result = write_with_backup(target, before["plugin"], backup_dir, expected_digest=expected)
+    except SessionLinkConfigRefused as exc:
+        return dict(before, state="registration_unconfirmed", reason=str(exc))
+    if result.get("sha256"):
+        receipts = _read_hook_receipts(state_root)
+        receipts["opencode"] = {"target": str(target), "after": result["sha256"],
+                                "backup": result.get("backup")}
+        _write_hook_receipts(state_root, receipts)
+    after = opencode_readiness(install_root, state_root, env)
+    if after["state"] != "registered":
+        after.update(state="registration_unconfirmed", reason="plugin_not_found_after_write")
+    return after
+
+
+def _remove_opencode_plugin(receipt) -> dict:
+    """Uninstall: delete the plugin only while it still holds exactly the bytes ArchHub wrote."""
+    import hashlib
+    row = {"vendor": "opencode", "changed": False, "method": "absent"}
+    if not receipt or not receipt.get("target") or not receipt.get("after"):
+        return row
+    target = Path(receipt["target"])
+    try:
+        raw = target.read_bytes()
+    except FileNotFoundError:
+        return row
+    if hashlib.sha256(raw).hexdigest() != receipt["after"]:
+        return dict(row, method="kept_changed")
+    target.unlink()
+    return dict(row, changed=True, method="removed")
 
 
 def _claude(install_root, state_root, env) -> dict:
@@ -218,11 +335,12 @@ def register(client: str, *, consent, environment=None) -> dict:
         return dict(report, client=client, state=state_name)
     if client == "codex":
         return register_codex(root, state, consent=True, environment=env)
-    return opencode_readiness(root, state, env)
+    return register_opencode(root, state, consent=True, environment=env)
 
 
 __all__ = ["CLIENTS", "codex_entry", "codex_readiness", "install_roots", "mcp_server_spec",
-           "readiness", "register", "register_codex"]
+           "opencode_readiness", "readiness", "register", "register_codex", "register_opencode",
+           "render_opencode_plugin"]
 
 
 
@@ -355,6 +473,16 @@ def connect_hooks_on_setup(*, consent, environment=None) -> list:
                 results.append({"client": client, "state": "configured", "changed": done["changed"]})
             except (SessionLinkConfigRefused, RegistrationRefused, OSError, ValueError):
                 results.append({"client": client, "state": "not_connected"})
+        # OpenCode has no end-of-turn hook here; it connects through the Session Link plugin.
+        root, state = install_roots(env)
+        try:
+            done = register_opencode(root, state, consent=True, environment=env)
+            said = done["state"] if done["state"] in ("registered", "not_installed", "conflict") \
+                else "not_connected"
+            results.append({"client": "opencode", "state": said,
+                            **({"reason": done["reason"]} if said == "conflict" else {})})
+        except (SessionLinkConfigRefused, RegistrationRefused, OSError, ValueError):
+            results.append({"client": "opencode", "state": "not_connected"})
     return results
 
 
@@ -412,6 +540,11 @@ def disconnect_hooks_on_uninstall(environment=None) -> list:
                 receipts.pop(client, None)
             except (SessionLinkConfigRefused, RegistrationRefused, OSError, ValueError):
                 results.append({"vendor": client, "changed": False, "method": "refused"})
+        try:
+            results.append(_remove_opencode_plugin(receipts.get("opencode")))
+            receipts.pop("opencode", None)
+        except OSError:
+            results.append({"vendor": "opencode", "changed": False, "method": "refused"})
         _write_hook_receipts(state, receipts)
     return results
 

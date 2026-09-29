@@ -83,10 +83,11 @@ def test_a_different_entry_or_a_legacy_entry_is_reported_and_left_alone(machine)
     assert config.read_text(encoding="utf-8") == legacy
 
 
-def test_opencode_is_reported_unsupported_and_never_written(machine):
+def test_opencode_gets_no_mcp_entry_and_is_not_written_when_absent(machine):
+    # OpenCode connects through the Session Link plugin (test_opencode_is_recognised_and_connected).
     opencode = next(c for c in registration.readiness(machine.env)["clients"] if c["client"] == "opencode")
-    assert opencode["state"] == "unsupported" and "ses_" in opencode["reason"]
-    assert registration.register("opencode", consent=True, environment=machine.env)["state"] == "unsupported"
+    assert opencode["state"] == "not_installed" and opencode["governance"] == "blocked"
+    assert registration.register("opencode", consent=True, environment=machine.env)["state"] == "not_installed"
     assert not (machine.profile / ".config").exists()
 
 

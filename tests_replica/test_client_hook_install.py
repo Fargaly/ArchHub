@@ -485,7 +485,8 @@ def test_setup_leaves_the_workspace_gate_byte_identical_and_adds_only_the_stop_h
     env = {"USERPROFILE": str(home)}
     results = registration.connect_hooks_on_setup(consent=True, environment=env)
     assert {r["client"]: r["state"] for r in results} == {
-        "claude-code": "configured", "codex": "configured", "gemini-cli": "configured"}
+        "claude-code": "configured", "codex": "configured", "gemini-cli": "configured",
+        "opencode": "not_installed"}
     after = json.loads(target.read_text(encoding="utf-8"))
     assert after["hooks"]["PreToolUse"] == gate_hooks["PreToolUse"]
     assert after["hooks"]["PostToolUse"] == gate_hooks["PostToolUse"]

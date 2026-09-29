@@ -116,7 +116,28 @@ SUBSCRIPTION_CLIS = (
     ("gemini-cli", "Gemini CLI", "gemini"),
     ("opencode", "OpenCode", "opencode"),
 )
+# Where an assistant installs outside PATH, relative to (environment variable, ...).
+# The OpenCode desktop app runs its own server and puts no CLI on PATH; the
+# OpenCode install script puts its CLI in %USERPROFILE%\.opencode\bin.
+ASSISTANT_INSTALL_PATHS = {
+    "opencode": (("LOCALAPPDATA", "Programs", "@opencode-aidesktop", "OpenCode.exe"),
+                 ("USERPROFILE", ".opencode", "bin", "opencode.exe")),
+}
 _DISCOVER = object()
+
+
+def find_assistant(executable: str, environ=None) -> Optional[str]:
+    """The assistant's program on PATH, else at its known install place; None when absent."""
+    import shutil
+    env = os.environ if environ is None else environ
+    found = shutil.which(executable, path=env.get("PATH")) if "PATH" in env else shutil.which(executable)
+    if found:
+        return found
+    for variable, *parts in ASSISTANT_INSTALL_PATHS.get(executable, ()):
+        base = env.get(variable)
+        if base and Path(base, *parts).is_file():
+            return str(Path(base, *parts))
+    return None
 
 
 class ModelRouteRefused(InvalidCell):
@@ -603,14 +624,15 @@ def provider_rows(*, environ=None, secrets_loader=None, cloud_session=None,
                      "state": "checking" if answered is None else ("running" if answered else "not running"),
                      "source": "127.0.0.1:%d" % port, "sets": ""})
     if cli_probe is None:
-        import shutil
-        cli_probe = shutil.which
+        def cli_probe(executable):
+            return find_assistant(executable, environ)
     for row_id, name, executable in SUBSCRIPTION_CLIS:
         found = cli_probe(executable)
         rows.append({"id": row_id, "name": name,
                      "state": "installed, not routed" if found else "not installed",
                      "source": ("installed on this machine; chat is not sent through "
-                                "subscription CLIs in this build") if found else "not found on PATH",
+                                "subscription CLIs in this build") if found else
+                               "not found on PATH or in its install folder",
                      "sets": ""})
     return rows
 

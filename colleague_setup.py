@@ -768,6 +768,7 @@ def _assistant_hooks(root: Path) -> list:
     from nodelang.assistant_registration import connect_hooks_on_setup
     results = connect_hooks_on_setup(consent=True)
     said = {"configured": "end-of-turn check set", "not_installed": "not installed",
+            "registered": "Session Link plugin set",
             "not_connected": "not connected; use Settings > Assistants > Repair",
             "conflict": "another ArchHub copy's check is set; left unchanged (review in Settings > Assistants)",
             "stale": "an old check points at a missing file; left unchanged (review in Settings > Assistants)"}

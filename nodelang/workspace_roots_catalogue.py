@@ -31,6 +31,7 @@ Limits (stated, not hidden):
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path, PureWindowsPath
@@ -613,6 +614,117 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
                       verify_projection(body, verifier, **paths))
 
 
+ROOT_PATH_PREFIX = "workspace-roots/"
+
+
+def read_registered_roots(verifier=None, *, snapshot_path=None, pin_path=None,
+                          last_good_path=None):
+    """(roots by id, pin) from the hooks' projection, or InvalidCell.
+
+    The same trust as the hooks: the pin file names the key, the key store's
+    public blob is read ONCE and must hash to the pin, and the snapshot must
+    name that fingerprint and verify under exactly that blob."""
+    from .workspace_roots_signing import CngVerifier
+
+    verifier = verifier or CngVerifier(KEY_NAME)
+    try:
+        pin = json.loads(Path(pin_path or default_pin_path()).read_text(encoding="utf-8"))
+        document = json.loads(Path(snapshot_path or default_snapshot_path()).read_text(
+            encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise InvalidCell("the workspace-roots registry is unavailable") from exc
+    if (type(pin) is not dict or set(pin) != {"format", "key_id", "fingerprint"}
+            or pin["format"] != PIN_FORMAT or pin["key_id"] != KEY_ID
+            or type(pin["fingerprint"]) is not str
+            or not _FINGERPRINT.match(pin["fingerprint"])):
+        raise InvalidCell("the workspace-roots signing key is not pinned")
+    try:
+        blob = verifier.public_blob()
+    except Exception as exc:  # noqa: BLE001 - doubt is a refusal
+        raise InvalidCell("the workspace-roots signing key is unavailable") from exc
+    if not blob or hashlib.sha256(bytes(blob)).hexdigest() != pin["fingerprint"]:
+        raise InvalidCell("the workspace-roots signing key is not the pinned key")
+    if type(document) is not dict or type(document.get("signature")) is not str:
+        raise InvalidCell("the workspace-roots registry is unsigned")
+    signed = {key: value for key, value in document.items() if key != "signature"}
+    if (signed.get("format") != SNAPSHOT_FORMAT
+            or signed.get("format_version") != SNAPSHOT_VERSION
+            or signed.get("key_id") != KEY_ID
+            or signed.get("key_fingerprint") != pin["fingerprint"]
+            or type(signed.get("roots")) is not list
+            or len(signed["roots"]) > MAX_ROOTS
+            or not verifier.verify_blob(bytes(blob), KEY_ID, 1, canonical(signed),
+                                        document["signature"])):
+        raise InvalidCell("the workspace-roots registry does not verify")
+    _refuse_rollback(signed, blob, verifier, last_good_path)
+    roots = {}
+    for entry in signed["roots"]:
+        if type(entry) is not dict or type(entry.get("id")) is not str or entry["id"] in roots:
+            raise InvalidCell("the workspace-roots registry is malformed")
+        roots[entry["id"]] = entry
+    return roots, pin["fingerprint"]
+
+
+def default_last_good_path() -> Path:
+    """The hooks' last-good copy: the newest snapshot they verified."""
+    base = os.environ.get("LOCALAPPDATA") or str(Path.home())
+    return Path(base) / "ArchHub" / "governance" / "workspace-roots.last-good.json"
+
+
+def _refuse_rollback(signed, blob, verifier, last_good_path=None):
+    """A snapshot older than the hooks' last-good copy is a replay: refused. The
+    last-good copy must itself verify under the same captured blob, or nothing is
+    admitted; an absent copy compares with nothing (first registration)."""
+    target = Path(last_good_path or default_last_good_path())
+    try:
+        raw = target.read_bytes()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise InvalidCell("the workspace-roots last-good copy is unreadable") from exc
+    try:
+        kept = json.loads(raw.decode("utf-8"))
+        kept_signed = {key: value for key, value in kept.items() if key != "signature"}
+        verified = (type(kept.get("signature")) is str
+                    and kept_signed.get("key_fingerprint") == signed["key_fingerprint"]
+                    and type(kept_signed.get("graph_revision")) is int
+                    and verifier.verify_blob(blob, KEY_ID, 1, canonical(kept_signed),
+                                             kept["signature"]))
+    except Exception:  # noqa: BLE001 - doubt is a refusal
+        verified = False
+    if not verified:
+        raise InvalidCell("the workspace-roots last-good copy does not verify")
+    if type(signed.get("graph_revision")) is not int or signed["graph_revision"] < kept_signed["graph_revision"]:
+        raise InvalidCell("the workspace-roots registry is older than its last-good copy (replay)")
+
+
+def root_bound_admission(path, *, runtime=None, verifier=None, snapshot_path=None,
+                         pin_path=None, last_good_path=None):
+    """("workspace-root:<id>", digest) for a write path inside a registered root.
+
+    path is "workspace-roots/<id>/<path inside the root>". The root must be in the
+    verified registry, its folder must still be the registered folder (identity),
+    and a given runtime must be one of its writers. The digest binds the permit to
+    this exact registration and key, so a changed root voids a pending permit."""
+    parts = str(path).split("/")
+    if (len(parts) < 3 or parts[0] + "/" != ROOT_PATH_PREFIX or not _ID.match(parts[1])
+            or any(part in ("", ".", "..") for part in parts[2:])):
+        raise InvalidCell("workspace-root write path is invalid")
+    roots, pin = read_registered_roots(verifier, snapshot_path=snapshot_path,
+                                       pin_path=pin_path, last_good_path=last_good_path)
+    entry = roots.get(parts[1])
+    if entry is None:
+        raise InvalidCell("%s is not a registered workspace root" % parts[1])
+    identity = folder_identity(entry.get("path"))
+    if identity is None or list(identity) != entry.get("identity"):
+        raise InvalidCell("registered workspace root %s is unavailable (moved, swapped "
+                          "or missing)" % parts[1])
+    if runtime is not None and runtime not in (entry.get("writers") or ()):
+        raise InvalidCell("%s is not a writer of workspace root %s" % (runtime, parts[1]))
+    digest = hashlib.sha256(canonical({"root": entry, "key": pin})).hexdigest()
+    return "workspace-root:" + parts[1], digest
+
+
 def roots_view(revision, roots, pin, status) -> dict:
     return {
         "revision": revision,
@@ -638,8 +750,10 @@ __all__ = [
     "install_workspace_root_catalogue",
     "owner_change",
     "pin_signing_key",
+    "read_registered_roots",
     "read_state",
     "register_root",
+    "root_bound_admission",
     "roots_view",
     "sequence",
     "snapshot_body",

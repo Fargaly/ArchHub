@@ -41346,6 +41346,18 @@ def authorize_universal_cde_write(
     _require_workshop_execution_gate(snapshot, registry, work_root=str(work_root),
                                      agent_session_root=agent_session_root,
                                      content_service=content_service)
+    registration_digest = None
+    if str(path).replace("\\", "/").startswith("workspace-roots/"):
+        # A registered workspace root outside 00.ARCHUB. The owner's signed,
+        # pinned registry must hold the root, and then the claimed Work's own
+        # CDE container must grant this exact path and operation below, as for
+        # any write. The route also requires the runtime to be a root writer.
+        from .workspace_roots_catalogue import root_bound_admission
+        try:
+            _root_container, registration_digest = root_bound_admission(
+                str(path).replace("\\", "/"))
+        except InvalidCell as exc:
+            raise AuthorizationDenied(str(exc)) from exc
     assembly = _instance_projection(snapshot, registry, str(work_root))
     if assembly is None:
         raise InvalidCell("claimed Work is not a projectable assembly")
@@ -41372,6 +41384,14 @@ def authorize_universal_cde_write(
         operation=operation,
         path=path,
     )
+    if registration_digest is not None:
+        # The signed permit binds BOTH this Work's exact grant and the exact
+        # root registration and key: re-derived at the receipt, so a changed
+        # same-id registration (folder, identity, writers, key) voids it.
+        container_digest = hashlib.sha256(
+            ("workspace-root-permit/v1:%s:%s" % (container_digest, registration_digest))
+            .encode("ascii")
+        ).hexdigest()
     return UniversalCdeWriteAdmission(
         agent_session_root,
         str(work_root),

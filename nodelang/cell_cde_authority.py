@@ -109,6 +109,9 @@ _SAFE_PATH_ROOTS = (
     "60.PERSONAL/",
     "70.HANDOFFS/",
     "90.ARCHIVE/",
+    # A registered workspace root outside 00.ARCHUB, by root id
+    # (workspace_roots_catalogue.root_bound_admission): never a 00.ARCHUB path.
+    "workspace-roots/",
 )
 
 

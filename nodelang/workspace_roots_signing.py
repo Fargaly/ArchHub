@@ -237,10 +237,21 @@ class CngVerifier:
         return hashlib.sha256(blob).hexdigest() if blob else None
 
     def verify(self, key_id: str, version: int, payload: bytes, signature: str) -> bool:
+        """Verify with the key the store holds now. A caller that checked a pin uses
+        verify_blob with the exact blob it checked instead."""
+        try:
+            blob = self.public_blob()
+        except Exception:  # noqa: BLE001 - any doubt is a refused signature
+            return False
+        return self.verify_blob(blob, key_id, version, payload, signature)
+
+    def verify_blob(self, blob, key_id: str, version: int, payload: bytes,
+                    signature: str) -> bool:
+        """Verify with exactly `blob` (an ECCPUBLICBLOB); the key store is not opened."""
         try:
             if key_id != "cng:" + self.key_name or version != 1:
                 return False
-            blob = self.public_blob()
+            blob = bytes(blob) if blob else None
             raw = bytes.fromhex(signature)
             if not blob or len(raw) != 64:
                 return False

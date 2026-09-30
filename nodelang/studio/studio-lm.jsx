@@ -5998,13 +5998,19 @@ const WORKSPACE_CHECK_READS = 40;
 const WORKSPACE_PROMISE = 'Removing a workspace only stops ArchHub from governing it. Your files are never deleted.';
 const workspaceSlug = path => String(path || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop()
   .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63);
-async function workspaceRoots(body) {
+async function workspaceRoots(body, renewed) {
   const s = window.__archhubSession || {};
   const response = await fetch('/api/universal/workspace-roots', {
     method:'POST',
     headers:{ 'Content-Type':'application/json', 'X-ArchHub-Session':s.token || '', 'X-ArchHub-CSRF':s.csrf || '' },
     body:JSON.stringify(body),
   });
+  // A refused session (403: expired, revoked or a CSRF that no longer matches) is
+  // replaced once by a fresh sign-in; a second refusal is shown as it is.
+  if (response.status === 403 && !renewed && typeof window.__archhubRenewSession === 'function') {
+    await window.__archhubRenewSession();
+    return workspaceRoots(body, true);
+  }
   let data = null;
   try { data = await response.json(); } catch (e) {}
   if (!response.ok || !data || data.ok === false) throw new Error((data && data.error) || 'The workspace registry did not answer.');
@@ -6047,6 +6053,15 @@ const SettingsWorkspaces = () => {
     const done = await run('Waiting for your approval in the Windows prompt', {
       action:'register', id, path:path.trim(), privacy, profile:'client', writers:['claude'] });
     if (done) { setPath(''); setRootId(''); setPrivacy('private'); }
+  };
+  // Browse: Windows' own folder dialog picks the folder; only the path comes back,
+  // and Add still asks for the owner's key.
+  const browse = async () => {
+    if (busy) return;
+    setBusy('Choose the folder in the Windows dialog'); setError('');
+    try { const picked = await workspaceRoots({ action:'browse' }); if (picked.path) setPath(picked.path); }
+    catch (e) { setError(e.message); }
+    finally { setBusy(''); }
   };
   const row = { padding:'10px 14px', display:'flex', alignItems:'center', gap:LM.sp.md };
   const mono = { fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em', marginTop:2 };
@@ -6107,9 +6122,11 @@ const SettingsWorkspaces = () => {
           </div>
         </div>
       )}
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 150px 110px auto', gap:8, alignItems:'center' }}>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr auto 150px 110px auto', gap:8, alignItems:'center' }}>
         <input value={path} onChange={e => setPath(e.target.value)} placeholder="Folder, e.g. D:\Clients\Project"
           aria-label="Workspace folder" style={field}/>
+        <button disabled={!!busy} onClick={browse} aria-label="Browse for a folder"
+          style={{ ...smallBtn(false), padding:'6px 12px' }}>Browse…</button>
         <input value={rootId} onChange={e => setRootId(e.target.value)} placeholder={workspaceSlug(path) || 'name'}
           aria-label="Workspace name" style={field}/>
         <select value={privacy} onChange={e => setPrivacy(e.target.value)} aria-label="Privacy" style={field}>

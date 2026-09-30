@@ -33,18 +33,24 @@ def test_settings_offers_a_workspaces_tab_that_renders_the_panel():
 
 
 def test_the_panel_speaks_only_to_the_owner_route_with_the_session():
-    panel = _source()[_source().index("async function workspaceRoots(body)"):]
+    panel = _source()[_source().index("async function workspaceRoots(body, renewed)"):]
     panel = panel[:panel.index("const SettingsWorkspaces")]
     assert "fetch('/api/universal/workspace-roots'" in panel
     assert "method:'POST'" in panel
     assert "'X-ArchHub-Session':s.token" in panel and "'X-ArchHub-CSRF':s.csrf" in panel
     assert len(re.findall(r"fetch\(", panel)) == 1
+    # A refused session is renewed once through the Studio's own sign-in, then retried once.
+    assert "response.status === 403 && !renewed" in panel
+    assert "return workspaceRoots(body, true);" in panel
 
 
 def test_the_panel_asks_for_exactly_the_actions_the_route_admits():
     panel = _panel()
     actions = set(re.findall(r"action:'([a-z]+)'", panel))
-    assert actions == {"list", "register", "unregister", "republish"}
+    assert actions == {"list", "register", "unregister", "republish", "browse"}
+    # Browse only fills the path in: the dialog answer goes to setPath, never to register.
+    assert "const picked = await workspaceRoots({ action:'browse' }); if (picked.path) setPath(picked.path);" in panel
+    assert "aria-label=\"Browse for a folder\"" in panel
     assert "profile:'client'" in panel and "writers:['claude']" in panel
     assert '<option value="private">' in panel and '<option value="public">' in panel
 

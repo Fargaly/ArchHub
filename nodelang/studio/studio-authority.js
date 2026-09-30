@@ -408,18 +408,24 @@
     try { session = JSON.parse(global.sessionStorage.getItem('archhub.studio.session') || 'null'); } catch (_) {}
     const headers = () => ({'Content-Type': 'application/json',
       'X-ArchHub-Session': session?.token || '', 'X-ArchHub-CSRF': session?.csrf || ''});
+    // The probe below proves the held token only (a read needs no CSRF), so a held
+    // pair without its CSRF is never kept, and a CSRF refusal later signs in again.
+    if (session && !(session.token && session.csrf)) session = null;
     if (session) {
       const probe = await global.fetch('/api/universal/canvas', {headers: headers()});
       if (!probe.ok) session = null;
     }
-    if (!session) {
+    async function signIn() {
       const response = await global.fetch('/api/universal/session', {method: 'POST',
         headers: {'Content-Type': 'application/json', 'X-ArchHub-Sign-In': '1',
           'X-ArchHub-Canvas-Key': descriptor.canvas_key}, body: '{}'});
       if (!response.ok) fail('Studio sign-in was refused. Reopen the application from its launcher.');
       session = await response.json();
       try { global.sessionStorage.setItem('archhub.studio.session', JSON.stringify(session)); } catch (_) {}
+      global.__archhubSession = session;
+      return session;
     }
+    if (!session) await signIn();
     async function request(url, body) {
       const response = await global.fetch(url, {method: body === undefined ? 'GET' : 'POST',
         headers: headers(), ...(body === undefined ? {} : {body: JSON.stringify(body)})});
@@ -441,6 +447,11 @@
     await api.load();
     global.ARCHHUB_STUDIO_AUTHORITY = api;
     global.__archhubSession = session;
+    // A held session the server refuses (403) is replaced once by a fresh sign-in.
+    global.__archhubRenewSession = () => {
+      try { global.sessionStorage.removeItem('archhub.studio.session'); } catch (_) {}
+      return signIn();
+    };
     global.ARCHHUB_GET_CANVAS = () => api.load();
     global.ARCHHUB_NODE_CREATE = spec => api.create(spec);
     global.ARCHHUB_SET_NODE_PROP = (root, label, value) => api.setProperty(root, label, value);

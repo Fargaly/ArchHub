@@ -1329,6 +1329,7 @@ class _CleanAuthorityHttpServer:
             find_workspace_root_catalogue,
             install_workspace_root_catalogue,
             owner_change,
+            pick_workspace_folder,
             roots_view,
         )
         if type(body) is not dict:
@@ -1341,6 +1342,12 @@ class _CleanAuthorityHttpServer:
                 "this ArchHub workspace root was not resolved at start; restart ArchHub")
         request = {key: value for key, value in body.items() if key != "command_id"}
         action = request.get("action")
+        if action == "browse":
+            # Browse: the owner picks the folder in Windows' own folder dialog.
+            # It only fills the path in; registering it still takes his key.
+            if set(request) != {"action"}:
+                raise WorkspaceRootRefused("workspace-roots request is invalid")
+            return {"path": pick_workspace_folder()}
         boot = self.workspace_roots_boot
         if action in ("register", "unregister") and boot not in ("match", "missing"):
             raise WorkspaceRootRefused(

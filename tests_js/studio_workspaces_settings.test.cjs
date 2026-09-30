@@ -38,9 +38,17 @@ async function mount(answers) {
     const answer = answers.shift();
     if (!answer) return new Promise(() => {});
     if (answer === 'fail') return Promise.resolve({ok:false, json:async () => ({ok:false, error:'registry unreachable'})});
-    return Promise.resolve({ok:true, json:async () => answer});
+    if (answer.refused) return Promise.resolve({ok:false, status:403, json:async () => ({ok:false, error:answer.refused})});
+    return Promise.resolve({ok:true, status:200, json:async () => answer});
   };
   win.ARCHHUB_THEME = {...seed};
+  const renewals = [];
+  win.__archhubSession = {token:'held-token', csrf:'held-csrf'};
+  win.__archhubRenewSession = async () => {
+    renewals.push(1);
+    win.__archhubSession = {token:'fresh-token', csrf:'fresh-csrf'};
+    return win.__archhubSession;
+  };
   win.matchMedia = () => ({matches:false, addEventListener() {}, removeEventListener() {}});
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
@@ -62,7 +70,7 @@ async function mount(answers) {
     setter.call(input, value);
     win.eval('(el => ReactDOM.flushSync(() => el.dispatchEvent(new Event("input", {bubbles:true}))))')(input);
   };
-  return {win, doc, requests, click, settle, button, typePath,
+  return {win, doc, requests, renewals, click, settle, button, typePath,
     close: () => { win.eval('window.__studioRoot.unmount()'); win.close(); }};
 }
 
@@ -146,5 +154,42 @@ test('removing asks first, states the promise, and sends only the unregister of 
     ui.click(ui.button('Stop governing'));
     await ui.settle();
     assert.deepEqual(ui.requests[1], {action:'unregister', id:'alpha'});
+  } finally { ui.close(); }
+});
+
+
+test('a refused session (CSRF drift) signs in again once and the read succeeds', async () => {
+  const ui = await mount([{refused:'browser CSRF digest drifted'}, view('missing', 'missing')]);
+  try {
+    await ui.settle(80);
+    assert.equal(ui.renewals.length, 1, 'one fresh sign-in');
+    assert.deepEqual(ui.requests.map(item => item.action), ['list', 'list']);
+    assert.ok(!ui.doc.body.textContent.includes('CSRF digest drifted'), 'the drift is not shown after renewal');
+    ui.typePath('E:\\01.PERSONAL');
+    await ui.settle();
+    assert.equal(ui.button('Add').disabled, false, 'Add is offered once the read succeeds');
+  } finally { ui.close(); }
+});
+
+test('a second refusal after renewal is shown, never retried forever', async () => {
+  const ui = await mount([{refused:'browser CSRF digest drifted'}, {refused:'browser CSRF digest drifted'}]);
+  try {
+    await ui.settle(80);
+    assert.equal(ui.renewals.length, 1);
+    assert.equal(ui.requests.length, 2);
+    assert.ok(ui.doc.body.textContent.includes('browser CSRF digest drifted'));
+  } finally { ui.close(); }
+});
+
+test('Browse fills the folder from the Windows dialog and registers nothing', async () => {
+  const ui = await mount([view('missing', 'missing'), {ok:true, path:'E:\\01.PERSONAL'}]);
+  try {
+    await ui.settle();
+    const browse = ui.doc.querySelector('[aria-label="Browse for a folder"]');
+    assert.ok(browse, 'a Browse button sits beside the folder field');
+    ui.click(browse);
+    await ui.settle();
+    assert.equal(ui.doc.querySelector('[aria-label="Workspace folder"]').value, 'E:\\01.PERSONAL');
+    assert.deepEqual(ui.requests.map(item => item.action), ['list', 'browse'], 'Browse sends no register');
   } finally { ui.close(); }
 });

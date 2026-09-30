@@ -815,6 +815,40 @@ def _require_graph_current(signed):
         raise InvalidCell("the workspace-roots registry is not the graph's current projection")
 
 
+_PICK_FOLDER = """
+import sys, tkinter
+from tkinter import filedialog
+root = tkinter.Tk()
+root.withdraw()
+root.attributes('-topmost', True)
+chosen = filedialog.askdirectory(parent=root, mustexist=True,
+                                 title='Choose a folder for ArchHub to govern')
+sys.stdout.buffer.write((chosen or '').encode('utf-8'))
+"""
+
+
+def pick_workspace_folder(*, timeout=600.0) -> str:
+    """The owner's folder choice from Windows' own folder dialog, or "" when he
+    cancels. The dialog runs in its own short-lived process, so the application's
+    server threads never own a window. Only the path comes back: registering it
+    is still owner_change, approved by the owner's key."""
+    import subprocess
+    import sys
+    try:
+        done = subprocess.run([sys.executable, "-c", _PICK_FOLDER], capture_output=True,
+                              timeout=timeout, check=False,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except subprocess.TimeoutExpired:
+        return ""
+    chosen = done.stdout.decode("utf-8", "replace").strip()
+    if done.returncode != 0 or not chosen:
+        return ""
+    chosen = str(PureWindowsPath(chosen))
+    if not _local_folder_path(chosen):
+        raise WorkspaceRootRefused("the chosen folder is not a local folder path")
+    return chosen
+
+
 def default_last_good_path() -> Path:
     """The hooks' last-good copy: the newest snapshot they verified."""
     base = os.environ.get("LOCALAPPDATA") or str(Path.home())

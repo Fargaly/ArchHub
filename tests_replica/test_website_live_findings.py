@@ -19,12 +19,16 @@ These courts never import application_server.
 from __future__ import annotations
 
 import hashlib
+import http.server
 import json
-import re
-import struct
-import sys
-from collections import Counter
 from pathlib import Path
+import re
+import shutil
+import struct
+import subprocess
+import sys
+import threading
+from collections import Counter
 from types import MappingProxyType
 
 import pytest
@@ -57,6 +61,7 @@ from nodelang.universal_application import (  # noqa: E402
 from nodelang.universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
+CHROME = Path("C:/Program Files/Google/Chrome/Application/chrome.exe")
 ORIGIN = "https://archhub.io"
 OFFER = dict(BETA_OFFER)
 # The GitHub release build-20260929-1451-fe33148 as its release notes and the
@@ -816,3 +821,130 @@ def test_finding_2_the_changelog_page_lists_the_released_build(documents):
     page = documents["/website/changelog"]
     assert REVISION in page
     assert cell_website.PUBLIC_RELEASE["summary"] in page
+
+
+class _StaticServer(http.server.ThreadingHTTPServer):
+    allow_reuse_address = True
+
+
+def test_finding_9_headless_render_navigation_and_trust_strip_at_breakpoints(
+    application, tmp_path,
+):
+    if not shutil.which("node") or not CHROME.exists():
+        pytest.skip("local headless Chrome court runtime is unavailable")
+    store, registry = application
+    site_dir = tmp_path / "site"
+    site_export.write_public_site(
+        store, registry, site_dir,
+        offer=OFFER, offer_sha256=_digest(OFFER), origin=ORIGIN,
+    )
+    dist_dir = site_dir / "dist"
+
+    class _Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(dist_dir), **kwargs)
+
+        def log_message(self, *args):
+            pass
+
+    server = _StaticServer(("127.0.0.1", 0), _Handler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    port = server.server_address[1]
+
+    probe_js = (
+        "const { chromium } = require('playwright');\n"
+        "const [portStr, widthsStr, chromePath] = process.argv.slice(1);\n"
+        "const port = parseInt(portStr, 10);\n"
+        "const widths = widthsStr.split(',').map(s => parseInt(s, 10));\n"
+        "(async () => {\n"
+        "    const browser = await chromium.launch({\n"
+        "        executablePath: chromePath,\n"
+        "        headless: true,\n"
+        "    });\n"
+        "    const results = {};\n"
+        "    try {\n"
+        "        for (const w of widths) {\n"
+        "            const page = await browser.newPage({ viewport: { width: w, height: 900 } });\n"
+        "            await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'networkidle' });\n"
+        "            await page.evaluate(() => document.fonts.ready);\n"
+        "            const evaluation = await page.evaluate(() => {\n"
+        "                const nav = document.querySelector('.site-nav');\n"
+        "                const navBox = nav.getBoundingClientRect();\n"
+        "                const overflowingNavChildren = [];\n"
+        "                for (const child of nav.children) {\n"
+        "                    const b = child.getBoundingClientRect();\n"
+        "                    if (b.left < navBox.left - 1 || b.right > navBox.right + 1 ||\n"
+        "                        b.top < navBox.top - 1 || b.bottom > navBox.bottom + 1) {\n"
+        "                        overflowingNavChildren.push({\n"
+        "                            tag: child.tagName,\n"
+        "                            className: child.className,\n"
+        "                            childRight: Math.round(b.right * 10) / 10,\n"
+        "                            navRight: Math.round(navBox.right * 10) / 10,\n"
+        "                        });\n"
+        "                    }\n"
+        "                }\n"
+        "                const fig = document.querySelector('.site-trust-fig');\n"
+        "                const note = document.querySelector('.site-trust-note');\n"
+        "                let trustOverlap = false;\n"
+        "                let boxes = null;\n"
+        "                if (fig && note) {\n"
+        "                    const fb = fig.getBoundingClientRect();\n"
+        "                    const nb = note.getBoundingClientRect();\n"
+        "                    boxes = {\n"
+        "                        fig: { left: Math.round(fb.left), right: Math.round(fb.right), top: Math.round(fb.top), bottom: Math.round(fb.bottom) },\n"
+        "                        note: { left: Math.round(nb.left), right: Math.round(nb.right), top: Math.round(nb.top), bottom: Math.round(nb.bottom) },\n"
+        "                    };\n"
+        "                    const disjoint = (\n"
+        "                        fb.right <= nb.left + 0.5 ||\n"
+        "                        fb.left >= nb.right - 0.5 ||\n"
+        "                        fb.bottom <= nb.top + 0.5 ||\n"
+        "                        fb.top >= nb.bottom - 0.5\n"
+        "                    );\n"
+        "                    trustOverlap = !disjoint;\n"
+        "                }\n"
+        "                return {\n"
+        "                    overflowingNavChildren,\n"
+        "                    trustOverlap,\n"
+        "                    boxes,\n"
+        "                };\n"
+        "            });\n"
+        "            results[w] = evaluation;\n"
+        "            await page.close();\n"
+        "        }\n"
+        "        console.log(JSON.stringify({ ok: true, results }));\n"
+        "    } catch (err) {\n"
+        "        console.log(JSON.stringify({ ok: false, error: String(err) }));\n"
+        "    } finally {\n"
+        "        await browser.close();\n"
+        "    }\n"
+        "})();\n"
+    )
+    try:
+        proc = subprocess.run(
+            [
+                "node", "-e", probe_js,
+                str(port), "900,1100", str(CHROME),
+            ],
+            cwd=str(REPO),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=120,
+            check=False,
+        )
+        assert proc.returncode == 0, proc.stderr
+        data = json.loads(proc.stdout)
+        assert data.get("ok"), data.get("error")
+        results = data["results"]
+        for width in (900, 1100):
+            res = results[str(width)]
+            assert res["overflowingNavChildren"] == [], (
+                f"Nav children overflow at {width}px: {res['overflowingNavChildren']}"
+            )
+            assert not res["trustOverlap"], (
+                f"Trust figure and trust note intersect at {width}px: {res['boxes']}"
+            )
+    finally:
+        server.shutdown()
+        server.server_close()

@@ -520,39 +520,150 @@ def _release_own_fence(refusal) -> None:
         except OSError:
             pass
 
-boot_refusal = None
-try:
-    server = _boot()
-except Exception as refusal:
-    boot_refusal = refusal
-    # A lock held by a dying predecessor clears on its own; retrying once
-    # costs a second and saves the founder's whole graph from being set
-    # aside for a transient.
-    import gc
+# The window stands before the graph opens and shows the boot's own progress
+# page ("phase k of n"); the graph opens off the Qt thread so the window keeps
+# painting. A launch used to show nothing at all until the boot had finished.
+_boot_surface = None
+if not os.environ.get("ARCHHUB_TEST_NO_OPEN"):
+    from PyQt6.QtCore import QUrl
+    from PyQt6.QtWidgets import QApplication, QMainWindow
+    from PyQt6.QtWebEngineCore import QWebEngineProfile
+    from PyQt6.QtWebEngineWidgets import QWebEngineView
 
-    gc.collect()
-    # A failed first attempt can leave OUR OWN owner fence behind; the
-    # conflict then names this very process. Releasing our own lock is
-    # honest -- it is nobody else's.
-    _release_own_fence(refusal)
-    # A transient (a predecessor still closing its WAL, a lock not yet
-    # released, an I/O hiccup) is retried for a while; it is never a
-    # reason to set the founder's graph aside -- a fresh graph on the
-    # same disk would fail the same way, and the founder would open
-    # an empty canvas over 300 MB of his own work.
-    for _open_attempt in range(6):
-        time.sleep(1.5)
+    app = QApplication(sys.argv)
+    app.setApplicationName("ArchHub")
+    app.setOrganizationName("ArchHub")
+
+    profile_root = state_dir / "web-profile"
+    profile_root.mkdir(parents=True, exist_ok=True)
+    profile = QWebEngineProfile.defaultProfile()
+    profile.setPersistentStoragePath(str(profile_root))
+    profile.setCachePath(str(profile_root / "cache"))
+
+    class _ArchHubWindow(QMainWindow):
+        """Closing the window hides it: ArchHub keeps running in the background
+        (the brain, BABOOM, the agents) exactly like Chrome or Claude Desktop, and
+        the tray icon brings it back or quits it for real."""
+        quitting = False
+
+        def closeEvent(self, event):
+            if self.quitting or getattr(self, "_tray", None) is None:
+                return super().closeEvent(event)
+            event.ignore()
+            self.hide()
+            try:
+                self._tray.showMessage("ArchHub keeps running", "Open it again from the tray icon; Quit is there too.")
+            except Exception:
+                pass
+
+
+    window = _ArchHubWindow()
+    window.setWindowTitle("ArchHub")
+    # The brand icon, and a distinct AppUserModelID so the taskbar shows
+    # ArchHub rather than grouping under python's default.
+    import ctypes
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ArchHub.Test")
+    from PyQt6.QtGui import QIcon
+    # Source and installer use the same owned asset beside this launcher.
+    _icon_path = Path(__file__).resolve().parent / "archhub.ico"
+    if _icon_path.is_file():
+        app.setWindowIcon(QIcon(str(_icon_path)))
+        window.setWindowIcon(QIcon(str(_icon_path)))
+    window.resize(1480, 920)
+    window.setMinimumSize(960, 640)
+    view = QWebEngineView(window)
+    window.setCentralWidget(view)
+    from nodelang.studio_window import forget_pages_behind_studio, lock_studio_navigation
+    # One page lives in this window: no native Back/Reload menu, and nothing behind the Studio.
+    lock_studio_navigation(view)
+    from PyQt6.QtGui import QColor
+    from nodelang.application import THEME as _BOOT_THEME
+    from nodelang.clean_boot_surface import BOOT_PHASES, BootSurface
+    # The dark page colour before the first paint: never a white or blank window.
+    view.page().setBackgroundColor(QColor(_BOOT_THEME["bg"]))
+    _boot_probe = _socket.socket()
+    _boot_probe.bind(("127.0.0.1", 0))
+    _boot_port = _boot_probe.getsockname()[1]
+    _boot_probe.close()
+    _boot_surface = BootSurface("127.0.0.1", _boot_port).start()
+    view.load(QUrl("http://127.0.0.1:%d/" % _boot_port))
+    window.show()
+
+
+def _off_the_qt_thread(work):
+    """Run ``work`` on a worker thread while the window keeps painting."""
+    if _boot_surface is None:
+        return work()
+    import threading as _boot_threading
+    from PyQt6.QtCore import QEventLoop, QTimer
+    outcome, done = {}, _boot_threading.Event()
+
+    def run():
         try:
-            server = _boot()
-            print("  recovered  : the saved graph opened on attempt %d"
-                  % (_open_attempt + 2), flush=True)
-            boot_refusal = None
-            break
-        except Exception as again:
-            boot_refusal = again
-            # Each failed attempt can leave OUR OWN fence behind; without
-            # clearing it every later attempt fails on ourselves.
-            _release_own_fence(again)
+            outcome["value"] = work()
+        except BaseException as failure:
+            outcome["error"] = failure
+        finally:
+            done.set()
+
+    _boot_threading.Thread(target=run, name="archhub-open-graph", daemon=True).start()
+    loop, poll = QEventLoop(), QTimer()
+    poll.setInterval(50)
+    poll.timeout.connect(lambda: loop.quit() if done.is_set() else None)
+    poll.start()
+    loop.exec()
+    poll.stop()
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["value"]
+
+
+def _boot_phase(index, finished=False):
+    if _boot_surface is not None:
+        label = BOOT_PHASES[index]
+        (_boot_surface.progress.finish if finished else _boot_surface.progress.begin)(label)
+
+
+def _open_saved_graph():
+    server, boot_refusal = None, None
+    try:
+        server = _boot()
+    except Exception as refusal:
+        boot_refusal = refusal
+        # A lock held by a dying predecessor clears on its own; retrying once
+        # costs a second and saves the founder's whole graph from being set
+        # aside for a transient.
+        import gc
+
+        gc.collect()
+        # A failed first attempt can leave OUR OWN owner fence behind; the
+        # conflict then names this very process. Releasing our own lock is
+        # honest -- it is nobody else's.
+        _release_own_fence(refusal)
+        # A transient (a predecessor still closing its WAL, a lock not yet
+        # released, an I/O hiccup) is retried for a while; it is never a
+        # reason to set the founder's graph aside -- a fresh graph on the
+        # same disk would fail the same way, and the founder would open
+        # an empty canvas over 300 MB of his own work.
+        for _open_attempt in range(6):
+            time.sleep(1.5)
+            try:
+                server = _boot()
+                print("  recovered  : the saved graph opened on attempt %d"
+                      % (_open_attempt + 2), flush=True)
+                boot_refusal = None
+                break
+            except Exception as again:
+                boot_refusal = again
+                # Each failed attempt can leave OUR OWN fence behind; without
+                # clearing it every later attempt fails on ourselves.
+                _release_own_fence(again)
+    return server, boot_refusal
+
+
+_boot_phase(0)
+server, boot_refusal = _off_the_qt_thread(_open_saved_graph)
+_boot_phase(0, finished=True)
 # A startup failure never selects a replacement graph. Recovery of damaged
 # state is a separate operation; its files and original refusal stay visible.
 if boot_refusal is not None:
@@ -760,19 +871,26 @@ def _settle_canvas_content(owner):
 # seeding and execution remain available through their admitted application routes.
 # The Studio reads the same check (ARCHHUB_BOOT.first_run) to mount its onboarding.
 server.studio_first_run = first_boot is True
-try:
-    _initialize_startup_pipeline(server, first_boot=first_boot)
-    print("  pipeline   : %s; execution awaits an admitted Run" % (
-        "initial seed checked" if first_boot else "saved graph retained"), flush=True)
-    if not first_boot:
-        _settle_canvas_content(server)
-except Exception as refusal:
-    # A refusal nobody can locate is a refusal nobody can fix: name the
-    # exact call that raised, not only its message.
-    where = traceback.format_exc().strip().splitlines()
-    spot = [line.strip() for line in where if "line " in line][-1:] or [""]
-    print("  pipeline   : not seeded -- %s (%s)" % (refusal, spot[0]),
-          flush=True)
+_boot_phase(1)
+
+
+def _prepare_pipeline():
+    try:
+        _initialize_startup_pipeline(server, first_boot=first_boot)
+        print("  pipeline   : %s; execution awaits an admitted Run" % (
+            "initial seed checked" if first_boot else "saved graph retained"), flush=True)
+        if not first_boot:
+            _settle_canvas_content(server)
+    except Exception as refusal:
+        # A refusal nobody can locate is a refusal nobody can fix: name the
+        # exact call that raised, not only its message.
+        where = traceback.format_exc().strip().splitlines()
+        spot = [line.strip() for line in where if "line " in line][-1:] or [""]
+        print("  pipeline   : not seeded -- %s (%s)" % (refusal, spot[0]),
+              flush=True)
+
+
+_off_the_qt_thread(_prepare_pipeline)
 
 if os.environ.get("ARCHHUB_TEST_NO_OPEN"):
     try:
@@ -784,57 +902,6 @@ if os.environ.get("ARCHHUB_TEST_NO_OPEN"):
         server.close()
     raise SystemExit(0)
 
-from PyQt6.QtCore import QUrl
-from PyQt6.QtWidgets import QApplication, QMainWindow
-from PyQt6.QtWebEngineCore import QWebEngineProfile
-from PyQt6.QtWebEngineWidgets import QWebEngineView
-
-app = QApplication(sys.argv)
-app.setApplicationName("ArchHub")
-app.setOrganizationName("ArchHub")
-
-profile_root = state_dir / "web-profile"
-profile_root.mkdir(parents=True, exist_ok=True)
-profile = QWebEngineProfile.defaultProfile()
-profile.setPersistentStoragePath(str(profile_root))
-profile.setCachePath(str(profile_root / "cache"))
-
-class _ArchHubWindow(QMainWindow):
-    """Closing the window hides it: ArchHub keeps running in the background
-    (the brain, BABOOM, the agents) exactly like Chrome or Claude Desktop, and
-    the tray icon brings it back or quits it for real."""
-    quitting = False
-
-    def closeEvent(self, event):
-        if self.quitting or getattr(self, "_tray", None) is None:
-            return super().closeEvent(event)
-        event.ignore()
-        self.hide()
-        try:
-            self._tray.showMessage("ArchHub keeps running", "Open it again from the tray icon; Quit is there too.")
-        except Exception:
-            pass
-
-
-window = _ArchHubWindow()
-window.setWindowTitle("ArchHub")
-# The brand icon, and a distinct AppUserModelID so the taskbar shows
-# ArchHub rather than grouping under python's default.
-import ctypes
-ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ArchHub.Test")
-from PyQt6.QtGui import QIcon
-# Source and installer use the same owned asset beside this launcher.
-_icon_path = Path(__file__).resolve().parent / "archhub.ico"
-if _icon_path.is_file():
-    app.setWindowIcon(QIcon(str(_icon_path)))
-    window.setWindowIcon(QIcon(str(_icon_path)))
-window.resize(1480, 920)
-window.setMinimumSize(960, 640)
-view = QWebEngineView(window)
-window.setCentralWidget(view)
-from nodelang.studio_window import forget_pages_behind_studio, lock_studio_navigation
-# One page lives in this window: no native Back/Reload menu, and nothing behind the Studio.
-lock_studio_navigation(view)
 from nodelang.studio_downloads import install_studio_downloads
 
 
@@ -923,6 +990,17 @@ def _revive(_status, _code):
     QTimer.singleShot(300, lambda: view.load(
         QUrl(server.public_url + "/studio")))
 view.page().renderProcessTerminated.connect(_revive)
+def _release_boot_surface(ok):
+    """The window has left the boot page: its port is released (off the Qt thread)."""
+    global _boot_surface
+    held = _boot_surface
+    if held is None or view.url().port() == _boot_port:
+        return
+    _boot_surface = None
+    import threading as _release_threading
+    _release_threading.Thread(target=held.hand_over, name="archhub-boot-release", daemon=True).start()
+if _boot_surface is not None:
+    view.loadFinished.connect(_release_boot_surface)
 view.load(QUrl(server.bootstrap_url))
 window.show()
 

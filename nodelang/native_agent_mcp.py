@@ -351,6 +351,64 @@ def build_server(*, session=None, workshop_task: str | None = None):
     # approval, then execute once. The tools take only a Work root.
     from .social_connectors import register_social_tools
     register_social_tools(server, control)
+
+    # One Work's task surface on this same bound owner (live 717, 2026-09-30): the
+    # tools a --workshop-task launch has, for one exact Work at a time, with no second
+    # MCP, no re-enrollment and no raw route. The held Work keeps its uncertain
+    # effects for work_reconcile, and detaches only when none is unresolved.
+    attached = {}
+
+    @server.tool(name='native.work_task_attach')
+    async def work_task_attach(work_root: str, ctx: Context) -> dict[str, object]:
+        """Attach one Work's task tools (claim, submit, court, reconcile) to this session.
+
+        One exact assembly-instance root at a time; another is refused until
+        native.work_task_detach. It grants nothing: the application still decides
+        every claim, submission and court. Nothing is enrolled or replayed.
+        """
+        from .native_workshop_tools import (
+            build_workshop_task_server, forbid_extra_arguments, validate_selected_work,
+        )
+        validate_selected_work(work_root)
+        if attached:
+            raise MachineTransportError('Work %s is already attached; detach it first' % attached['held'].root)
+        with owner.bound_client() as client:
+            actor = client.agent_session_root
+        task = build_workshop_task_server(control, work_root)
+        target = ctx.fastmcp
+        present = {tool.name for tool in target._tool_manager.list_tools()}
+        added = []
+        for tool in task._tool_manager.list_tools():
+            if tool.name in present:
+                continue  # the general tool this server already has stays as it is
+            target.add_tool(tool.fn, name=tool.name, description=tool.description,
+                            annotations=tool.annotations)
+            forbid_extra_arguments(target._tool_manager.get_tool(tool.name))
+            added.append(tool.name)
+        attached.update(held=task.selected_work, names=added, server=target)
+        await ctx.session.send_tool_list_changed()
+        return {'work_root': work_root, 'agent_session': actor, 'tools_added': sorted(added)}
+
+    @server.tool(name='native.work_task_detach')
+    async def work_task_detach(ctx: Context) -> dict[str, object]:
+        """Detach the attached Work's task tools, only when none of its responses is unresolved.
+
+        After an uncertain claim, submission or court, run native.work_reconcile
+        first; the Work stays attached until it reconciles. Nothing is replayed.
+        """
+        if not attached:
+            raise MachineTransportError('No Work task surface is attached')
+        held = attached['held']
+        with held._effect_lock:
+            if held.pending is not None:
+                raise MachineTransportError(
+                    'The attached Work has an unresolved %s response; run native.work_reconcile '
+                    'first. Nothing was detached.' % held.pending[0])
+            for name in attached['names']:
+                attached['server'].remove_tool(name)
+            attached.clear()
+        await ctx.session.send_tool_list_changed()
+        return {'work_root': held.root, 'detached': True}
     return server
 
 

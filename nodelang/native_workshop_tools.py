@@ -476,8 +476,15 @@ def build_workshop_task_server(control, selected_work):
     if {tool.name for tool in tools} != set(WORKSHOP_TASK_TOOL_NAMES):
         _refuse('Selected Work MCP inventory changed')
     for tool in tools:
-        model = tool.fn_metadata.arg_model
-        model.model_config.update(extra='forbid',strict=True)
-        model.model_rebuild(force=True)
-        tool.parameters = model.model_json_schema(by_alias=True)
+        forbid_extra_arguments(tool)
+    # native.work_task_attach reads the held Work's unresolved-effect latch.
+    server.selected_work = held
     return server
+
+
+def forbid_extra_arguments(tool):
+    """Refuse undeclared tool fields rather than drop a caller-supplied alternate Work."""
+    model = tool.fn_metadata.arg_model
+    model.model_config.update(extra='forbid',strict=True)
+    model.model_rebuild(force=True)
+    tool.parameters = model.model_json_schema(by_alias=True)

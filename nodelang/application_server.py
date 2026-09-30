@@ -7510,6 +7510,12 @@ class ApplicationServer:
                         host = getattr(owner, '_existing_workshop_native_host', None)
                         if host is None:
                             raise InvalidCell('Native Workshop owner is unavailable')
+                        if type(body) is dict and body.get('action') == 'bind_work_proposals':
+                            # The founder binds agent proposals; each is read through his
+                            # own Workshop reader, never taken from this request body.
+                            from .work_proposals import founder_bind_route
+                            self._json(200, founder_bind_route(owner, binding, body, _session_token))
+                            return
                         self._json(200, host.perform(binding, body))
                         return
                     if self.path == '/api/universal/workshop-model-approval':

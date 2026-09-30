@@ -364,6 +364,54 @@ def build_server(*, session=None, workshop_task: str | None = None):
     from .social_connectors import register_social_tools
     register_social_tools(server, control)
 
+    @server.tool(name='native.work_propose')
+    def work_propose(title: str, description: str, priority: int, purpose: str, inputs: dict,
+                     requirements: dict, container: dict, write_grants: list[dict]) -> dict[str, object]:
+        """Propose one governed Work to the founder. Nothing is created, granted or admitted.
+
+        The proposal is a Workshop message from this session: the Work, its inputs,
+        its requirements (artifact_reviewers must be OTHER agent sessions), its CDE
+        container, and write grants [{path, scope: exact|descendants, operations}],
+        one per governed root. The founder binds it, with any others he checks, in
+        one action; only then does the Work exist and its grants apply.
+        """
+        from .work_proposals import parse, render
+        text = render({'title': title, 'description': description, 'priority': priority,
+                       'purpose': purpose, 'inputs': inputs, 'requirements': requirements,
+                       'container': container, 'write_grants': write_grants})
+        _payload, digest = parse(text)
+        with control.bound_client() as client:
+            if client.agent_session_root in (requirements.get('artifact_reviewers') or ()):
+                raise MachineTransportError('The proposing agent cannot review its own proposed Work')
+            # An ordinary Workshop note to the room, which the founder reads whole.
+            sent = client.request('POST', '/api/universal/workshop', {
+                'category': 'note', 'text': text, 'refs': [], 'evidence': [], 'recipients': [],
+                'reply_to': None, 'idempotency_key': 'work-proposal:' + digest[:40], 'created_at': None})
+        if type(sent) is not dict or type(sent.get('message_id')) is not str:
+            raise MachineTransportError('The Workshop did not confirm the proposal; read it before proposing again')
+        return {'message_id': sent['message_id'], 'sequence': sent.get('sequence'), 'digest': digest,
+                'state': 'proposed', 'work_created': False, 'grants_admitted': False}
+
+    @server.tool(name='native.work_proposals')
+    def work_proposals() -> dict[str, object]:
+        """Read which of this session's recent proposals the founder has bound, and to what Work."""
+        from .work_proposals import KEY_PREFIX, MARKER
+        with control.bound_client() as client:
+            me = client.agent_session_root
+            index = client.request('GET', '/api/universal/work', {'projection': 'index'})
+        bound = {}
+        for row in index.get('items') or ():
+            key = ((row.get('interfaces') or {}).get('external-key') or {}).get('value')
+            if type(key) is str and key.startswith(KEY_PREFIX):
+                bound[key[len(KEY_PREFIX):]] = row.get('root')
+        page = control.call('read_messages', {'limit': 50, 'before': None})
+        rows = [{'message_id': entry['message_id'], 'sequence': entry['sequence'],
+                 'work_root': bound.get(entry['message_id']),
+                 'state': 'bound' if entry['message_id'] in bound else 'proposed'}
+                for entry in page.get('entries') or ()
+                if entry.get('actor') == me and str(entry.get('summary') or '').startswith(MARKER)]
+        return {'agent_session': me, 'proposals': rows}
+
     # One Work's task surface on this same bound owner (live 717, 2026-09-30): the
     # tools a --workshop-task launch has, for one exact Work at a time, with no second
     # MCP, no re-enrollment and no raw route. The held Work keeps its uncertain

@@ -2518,6 +2518,10 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   const MAX_LAYOUT_NODES = 256;
   const [selectedIds, setSelectedIds] = React.useState([]);
   const selected = new Set(selectedIds.filter(id => allNodes.some(node => node.id === id)));
+  // Box selection (the retired '/' canvas's marquee): Shift-drag on empty canvas adds,
+  // Alt-drag removes; left-to-right takes whole cards, right-to-left takes touched ones.
+  const [marquee, setMarquee] = React.useState(null);
+  const marqueeHits = React.useRef(null);
   const [layoutBusy, setLayoutBusy] = React.useState(false);
   const [layoutError, setLayoutError] = React.useState('');
   const [layoutNeedsRefresh, setLayoutNeedsRefresh] = React.useState(false);
@@ -2743,8 +2747,28 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     if (e.target.closest('.lm-node')) return;
     suppressNodeClick.current = false;
     if (ctxMenu) { e.preventDefault(); closeContextMenu(); }
-    if (!e.shiftKey) { setSelectedIds([]); setPickedId(null); }
+    if (e.shiftKey || e.altKey) {
+      e.preventDefault();
+      const rect = wrapRef.current.getBoundingClientRect();
+      const at = toCanvasCoords(e.clientX, e.clientY);
+      dragRef.current = {mode:'marquee', remove:e.altKey, base:[...selected], rect, pan:{...pan}, zoom, x0:at.x, y0:at.y};
+      setMarquee({x0:at.x, y0:at.y, x1:at.x, y1:at.y});
+      return;
+    }
+    setSelectedIds([]); setPickedId(null);
     dragRef.current = { mode:'pan', sx:e.clientX, sy:e.clientY, px:pan.x, py:pan.y };
+  };
+  // Which cards a box takes, read from the drawn cards (their real size) at their current places.
+  marqueeHits.current = (box, crossing) => {
+    const left = Math.min(box.x0, box.x1), right = Math.max(box.x0, box.x1);
+    const top = Math.min(box.y0, box.y1), bottom = Math.max(box.y0, box.y1);
+    return [...(wrapRef.current?.querySelectorAll('.lm-node[data-node-id]') || [])].filter(card => {
+      const id = card.getAttribute('data-node-id'), at = positions[id];
+      if (!at) return false;
+      const x0 = at.x, y0 = at.y, x1 = at.x + card.offsetWidth, y1 = at.y + card.offsetHeight;
+      return crossing ? x0 < right && x1 > left && y0 < bottom && y1 > top
+        : x0 >= left && x1 <= right && y0 >= top && y1 <= bottom;
+    }).map(card => card.getAttribute('data-node-id'));
   };
 
   const openContextMenu = (e, nodeId = null, wireId = null) => {
@@ -2856,6 +2880,10 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       const dy = e.clientY - d.sy;
       if (d.mode === 'pan') {
         setPan({ x: d.px + dx, y: d.py + dy });
+      } else if (d.mode === 'marquee') {
+        d.x1 = (e.clientX - d.rect.left - d.pan.x) / d.zoom;
+        d.y1 = (e.clientY - d.rect.top - d.pan.y) / d.zoom;
+        setMarquee({x0:d.x0, y0:d.y0, x1:d.x1, y1:d.y1});
       } else if (d.scope === mountedScope.current) {
         const mx = Math.round(dx / d.zoom), my = Math.round(dy / d.zoom);
         const place = value => snapRef.current ? Math.round(value / CANVAS_GRID) * CANVAS_GRID : value;
@@ -2878,6 +2906,13 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     const onUp = () => {
       const drag = dragRef.current;
       dragRef.current = null;
+      if (drag?.mode === 'marquee') {
+        setMarquee(null);
+        if (drag.x1 === undefined) return;
+        const hits = marqueeHits.current({x0:drag.x0, y0:drag.y0, x1:drag.x1, y1:drag.y1}, drag.x1 < drag.x0);
+        setSelectedIds(drag.remove ? drag.base.filter(id => !hits.includes(id)) : [...new Set([...drag.base, ...hits])]);
+        return;
+      }
       if (drag?.mode === 'nodes' && drag.last) {
         armLayoutRef.current({next:drag.last, before:drag.before, revision:drag.revision});
       }
@@ -3341,6 +3376,11 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         position:'absolute', left:0, top:0, willChange:'transform',
         transform:`translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`, transformOrigin:'0 0',
       }}>
+        {marquee && <div data-marquee={marquee.x1 < marquee.x0 ? 'crossing' : 'window'} aria-hidden="true" style={{
+          position:'absolute', pointerEvents:'none', zIndex:4,
+          left:Math.min(marquee.x0, marquee.x1), top:Math.min(marquee.y0, marquee.y1),
+          width:Math.abs(marquee.x1 - marquee.x0), height:Math.abs(marquee.y1 - marquee.y0),
+          border:`1px ${marquee.x1 < marquee.x0 ? 'dashed' : 'solid'} ${LM.accent}`, background:LM.accent + '14'}}/>}
         {canvasFrames.map(frame => (
           <div key={frame.key} data-canvas-frame={frame.key} aria-hidden="true" style={{
             position:'absolute', left:frame.left - 18, top:frame.top - 34,

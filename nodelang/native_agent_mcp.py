@@ -327,8 +327,11 @@ def build_server(*, session=None, workshop_task: str | None = None):
         Returns graph interfaces and claim metadata for one pending assignment.
         No assignment is not proof of completion. This read grants no execution
         permission and does not change state or select another agent's Work.
+        With a Work attached (native.work_task_attach), it reads that Work.
         """
         with control.bound_client() as client:
+            if attached:
+                return attached['held'].assignment(client)
             return client.current_work_assignment()
 
     @server.tool(name="native.work_index")
@@ -423,8 +426,9 @@ def build_server(*, session=None, workshop_task: str | None = None):
         """Attach one Work's task tools (claim, submit, court, reconcile) to this session.
 
         One exact assembly-instance root at a time; another is refused until
-        native.work_task_detach. It grants nothing: the application still decides
-        every claim, submission and court. Nothing is enrolled or replayed.
+        native.work_task_detach. Another session's claimed Work is refused. It
+        grants nothing: the application still decides every claim, submission
+        and court. Nothing is enrolled or replayed.
         """
         from .native_workshop_tools import (
             build_workshop_task_server, forbid_extra_arguments, validate_selected_work,
@@ -434,6 +438,13 @@ def build_server(*, session=None, workshop_task: str | None = None):
             raise MachineTransportError('Work %s is already attached; detach it first' % attached['held'].root)
         with owner.bound_client() as client:
             actor = client.agent_session_root
+            index = _validate_index(client.request('GET', '/api/universal/work', {'projection': 'index'}), client)
+        rows = [row for row in index['items'] if row['root'] == work_root]
+        if len(rows) != 1:
+            raise MachineTransportError('Work %s is not a registered Work' % work_root)
+        if rows[0]['claimant_session'] not in (None, actor):
+            raise MachineTransportError('Work %s is claimed by another session; only its claimant '
+                                        'attaches its task tools' % work_root)
         task = build_workshop_task_server(control, work_root)
         target = ctx.fastmcp
         present = {tool.name for tool in target._tool_manager.list_tools()}

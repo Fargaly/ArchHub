@@ -197,6 +197,7 @@ from .universal_application import (
     request_universal_baboom_model_execution,
     read_universal_current_claimed_work,
     read_universal_current_work_assignment,
+    read_universal_selected_work_assignment,
     read_universal_baboom_work_plan,
     record_universal_device_handoff_receipt,
     initiate_universal_baboom_work_claim_transfer,
@@ -13134,7 +13135,10 @@ class ApplicationServer:
         if method == "GET" and path == "/api/universal/work-current":
             release_recovery = (set(body) == {"projection", "work_root", "claim_binding", "after_revision"}
                                 and body.get("projection") == "release-recovery")
-            if direct or (not release_recovery and body not in ({}, {"projection": "detail"}, {"projection": "assignment"}, {"projection": "configuration"})):
+            # One exact attached Work, whatever else this session has pending.
+            selected = (set(body) == {"projection", "work_root"}
+                        and body.get("projection") == "selected-assignment")
+            if direct or (not release_recovery and not selected and body not in ({}, {"projection": "detail"}, {"projection": "assignment"}, {"projection": "configuration"})):
                 raise AuthorizationDenied(
                     "current Work requires its bound compact, detail or assignment runtime request"
                 )
@@ -13163,6 +13167,10 @@ class ApplicationServer:
                     return result
             reader = (read_universal_current_work_assignment if body.get("projection") == "assignment"
                       else read_universal_current_claimed_work)
+            if selected:
+                def reader(store, registry, **kwargs):
+                    return read_universal_selected_work_assignment(
+                        store, registry, work_root=body["work_root"], **kwargs)
             work, revision = reader(
                 self.universal_store,
                 self.universal_registry,

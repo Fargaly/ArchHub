@@ -41285,6 +41285,32 @@ def read_universal_current_work_assignment(
     )
 
 
+def read_universal_selected_work_assignment(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    *,
+    agent_session_root: str,
+    work_root: str,
+    authentication_context: object | None = None,
+) -> tuple[Mapping[str, object] | None, int]:
+    """Read this session's pending claim on one exact Work (claimed, review or blocked).
+
+    The attached Work's own tools act on that Work alone (live 717, 2026-09-30):
+    a session holding several submitted Works still reaches each one's court.
+    Null means this session holds no pending claim on that Work; it is never
+    another session's claim and never completion proof. Claiming new Work keeps
+    its single-claim rule.
+    """
+    if type(work_root) is not str or not work_root.startswith("assembly-instance:"):
+        raise InvalidCell("selected Work root is invalid")
+    return _read_universal_current_bound_work(
+        store, registry, agent_session_root=agent_session_root,
+        authentication_context=authentication_context,
+        states=frozenset({"claimed", "review", "blocked"}),
+        include_requirements=True, work_root=work_root,
+    )
+
+
 def _read_universal_current_bound_work(
     store: CellStore,
     registry: UniversalApplicationRegistry,
@@ -41293,6 +41319,7 @@ def _read_universal_current_bound_work(
     authentication_context: object | None,
     states: frozenset[str],
     include_requirements: bool = False,
+    work_root: str | None = None,
 ) -> tuple[Mapping[str, object] | None, int]:
     snapshot = store.snapshot()
     session = _runtime_agent_session(snapshot, registry, agent_session_root)
@@ -41319,9 +41346,11 @@ def _read_universal_current_bound_work(
         )
         if binding["session"] != session.root_id:
             continue
-        work_root = binding["work"]
+        if work_root is not None and binding["work"] != work_root:
+            continue
+        bound_root = binding["work"]
         claimant = _governed_work_claimant_binding(
-            snapshot, registry, work_root
+            snapshot, registry, bound_root
         )
         if claimant is None or claimant[2] != binding_root:
             continue
@@ -41329,16 +41358,16 @@ def _read_universal_current_bound_work(
             snapshot,
             registry.assembly_protocol,
             registry.standard_library.state_machine_protocol,
-            work_root,
+            bound_root,
         )
         if _text(snapshot, machine.current_state_root).casefold() not in states:
             continue
-        work = _instance_projection(snapshot, registry, work_root)
+        work = _instance_projection(snapshot, registry, bound_root)
         if work is None:
             raise InvalidCell("claimed Work is not a projectable assembly")
         owned.append({
             **work,
-            "root": work_root,
+            "root": bound_root,
             "claimant_session": claimant[0],
             "claimant_agent_body": claimant[1],
             "claim_binding": claimant[2],

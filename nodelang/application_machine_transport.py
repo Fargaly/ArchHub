@@ -3096,10 +3096,24 @@ class UniversalRuntimeClient:
         """
         return self._current_work_projection("assignment", frozenset({"claimed", "review", "blocked"}))
 
-    def _current_work_projection(self, projection: str, states: frozenset[str]) -> dict[str, object]:
+    def selected_work_assignment(self, work_root: str) -> dict[str, object]:
+        """Read this session's pending claim on one exact Work, never another Work's.
+
+        A session may hold several submitted Works; the attached Work's tools
+        read only theirs. Null means no pending claim on that Work by this session.
+        """
+        result = self._current_work_projection(
+            "selected-assignment", frozenset({"claimed", "review", "blocked"}),
+            {"projection": "selected-assignment", "work_root": work_root})
+        if result["work"] is not None and result["work"]["root"] != work_root:
+            raise MachineTransportError("current Work selected-assignment is another Work")
+        return result
+
+    def _current_work_projection(self, projection: str, states: frozenset[str],
+                                 body: dict[str, object] | None = None) -> dict[str, object]:
         if not self.agent_session_root:
             raise MachineTransportError("current Work " + projection + " requires a bound runtime Agent Session")
-        result = self.request("GET", "/api/universal/work-current", {"projection": projection},
+        result = self.request("GET", "/api/universal/work-current", body or {"projection": projection},
                               response_timeout_seconds=10.0)
         if (type(result) is not dict
                 or set(result) != {"agent_session", "revision", "projection", "work"}
@@ -3131,7 +3145,7 @@ class UniversalRuntimeClient:
                 raise MachineTransportError("current Work " + projection + " interface is invalid")
             roots.add(interface["id"])
             names.add(interface["name"])
-        if projection == "assignment":
+        if projection in ("assignment", "selected-assignment"):
             requirements = work.get("requirements")
             interfaces = [item for item in work["interfaces"] if item["name"] == "requirements"]
             if (type(requirements) is not dict

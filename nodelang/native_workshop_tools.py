@@ -58,10 +58,19 @@ class _SelectedWork:
         self._effect_lock = threading.RLock()
 
     def assignment(self, client, *, states=None, allow_none=True):
-        result = client.current_work_assignment()
+        # This Work's own claim, whatever else the session has pending (live 717,
+        # 2026-09-30): a session with several submitted Works reaches each court.
+        # An application from before the exact read answers the session-wide one.
+        try:
+            result = client.selected_work_assignment(self.root)
+        except MachineResponseError as exc:
+            if 'current Work requires its bound compact, detail or assignment runtime request' not in str(exc):
+                raise
+            result = client.current_work_assignment()
         if (type(result) is not dict or set(result) != {'agent_session','revision','projection','work'}
                 or result['agent_session'] != client.agent_session_root
-                or result['projection'] != 'assignment' or not _revision(result['revision'])):
+                or result['projection'] not in ('selected-assignment', 'assignment')
+                or not _revision(result['revision'])):
             _refuse('Selected Work assignment identity is invalid')
         work = result['work']
         if work is None:
@@ -95,6 +104,13 @@ class _SelectedWork:
                 before = self.assignment(client,states=states,allow_none=operation=='claim')
                 if operation == 'claim' and before['work'] is not None:
                     _refuse('This session already has the selected assignment; read it instead of claiming again')
+                if operation == 'claim':
+                    # New Work keeps the single-claim rule: submitted Works never
+                    # block a claim, another claimed Work does.
+                    other = client.current_claimed_work_detail()['work']
+                    if other is not None:
+                        _refuse('This session already holds claimed Work %s; submit or release it '
+                                'before claiming another' % other['root'])
                 # Keep the latch through the owner's post-return integrity check.
                 self.pending = (operation, before['revision'],
                     before['work']['claim_binding'] if before['work'] else None)

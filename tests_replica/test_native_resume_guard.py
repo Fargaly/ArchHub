@@ -53,14 +53,16 @@ def test_selected_effect_recovers_before_existing_claim_admission():
     from contextlib import contextmanager
     from nodelang.native_workshop_tools import _SelectedWork
     calls=[]
-    client=NS(agent_session_root='actor',current_work_assignment=lambda: calls.append('assignment') or
-        {'agent_session':'actor','projection':'assignment','revision':3,'work':None})
+    client=NS(agent_session_root='actor',selected_work_assignment=lambda root: calls.append('assignment') or
+        {'agent_session':'actor','projection':'selected-assignment','revision':3,'work':None},
+        current_claimed_work_detail=lambda: calls.append('claimed') or
+        {'agent_session':'actor','projection':'detail','revision':3,'work':None})
     @contextmanager
     def bound():yield client
     control=NS(bound_client=bound,resume_guard=NS(recover=lambda:calls.append('restore') or {'status':'owner_restored'}))
     selected=_SelectedWork(control,'assembly-instance:original')
     with selected.effect('claim',None):calls.append('effect')
-    assert calls==['restore','assignment','effect']
+    assert calls==['restore','assignment','claimed','effect']
 
 
 def test_pending_selected_receipt_prevents_recovery_or_effect():

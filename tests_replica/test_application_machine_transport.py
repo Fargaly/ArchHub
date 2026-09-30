@@ -2124,6 +2124,7 @@ def test_machine_descriptor_points_to_cell_authority_not_a_transport_model(tmp_p
             "process_id", "started_at", "stopped_at", "application_root",
             "agent_session_root", "workshop_root", "work_registry_root",
             "database", "key_id", "key_version", "signature",
+            "owner_generation", "process_created_at",
         }
         assert not {
             "kind", "type", "params", "ports", "routes", "permissions",

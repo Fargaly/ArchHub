@@ -108,20 +108,26 @@ class DesktopRuntime:
                     "or legacy host; complete a controlled authority handoff "
                     "before starting a second node-native owner"
                 )
+            universal_database = (
+                restart_database
+                if restart_database is not None
+                else default_state_path().with_name(
+                    default_state_path().name + ".universal.sqlite3"
+                )
+            )
             self._server_kwargs = dict(
                 host='127.0.0.1',
                 port=0,
                 state_path=None,
-                universal_state_path=(
-                    restart_database
-                    if restart_database is not None
-                    else default_state_path().with_name(
-                        default_state_path().name + ".universal.sqlite3"
-                    )
-                ),
+                universal_state_path=universal_database,
                 live_watch=True,
                 enable_machine_transport=True,
-                machine_descriptor_path=default_runtime_descriptor_path(),
+                # The owner record lives beside its graph; the machine path
+                # holds only a signed pointer to it (never a copy).
+                machine_descriptor_path=Path(universal_database).with_name(
+                    Path(universal_database).name + ".runtime-descriptor.json"
+                ),
+                machine_pointer_path=default_runtime_descriptor_path(),
                 browser_session_credentials=credentials,
                 runtime_compliance_runner=run_physical_runtime_compliance_court,
             )

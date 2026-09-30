@@ -5373,6 +5373,7 @@ class ApplicationServer:
                  cloud_nonce_key_provider: SigningKeyProvider | None = None,
                  cloud_nonce_key_id='archhub.local.universal-cloud-dpop-nonce',
                  machine_descriptor_path=None,
+                 machine_pointer_path=None,
                  machine_key_provider=None,
                  machine_session_lifetime_seconds=900.0,
                  enable_machine_projection_prewarm=False,
@@ -5992,6 +5993,7 @@ class ApplicationServer:
         ] = {}
         self._runtime_holder_root = "app:runtime-holder:" + uuid.uuid4().hex
         self._runtime_ownership_root = None
+        self._runtime_ownership_generation = 0
         self._runtime_fence_release = None
         self._runtime_handoff_exit = threading.Event()
         self.cde_write_signing_provider = None
@@ -9110,6 +9112,8 @@ class ApplicationServer:
                     if self.universal_state_path is not None else ""
                 ),
                 descriptor_path=machine_descriptor_path,
+                pointer_path=machine_pointer_path,
+                owner_generation=lambda: self._runtime_ownership_generation,
                 key_provider=transport_key_provider,
                 after_response=self._after_universal_machine_response,
             )
@@ -9399,6 +9403,7 @@ class ApplicationServer:
                 now=time.time(),
             )
         self._runtime_ownership_root = ownership.root_id
+        self._runtime_ownership_generation = ownership.generation
 
     def _transition_runtime_ownership_record(
         self, storage, *, source: str, event: str, phase: str
@@ -9595,6 +9600,7 @@ class ApplicationServer:
             evidence_root=evidence_root,
         )
         self._runtime_ownership_root = ownership.root_id
+        self._runtime_ownership_generation = ownership.generation
 
     def _begin_runtime_drain(self) -> None:
         if self._runtime_ownership_root is None:

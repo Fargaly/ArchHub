@@ -11,7 +11,7 @@ from pathlib import Path
 import time
 
 from .application_machine_transport import (
-    MachineTransportError, UniversalRuntimeClient, _read_descriptor,
+    MachineTransportError, RuntimeResolutionError, UniversalRuntimeClient, resolve_active_runtime,
 )
 
 
@@ -61,8 +61,12 @@ class InstalledWorkshopCoordinationClient:
         with client._request_lock:
             self._session = _text(client.agent_session_root, "bound Agent Session")
             _text(client._agent_session_token, "bound Agent Session capability", 4096)
-            self._descriptor = _read_descriptor(client.descriptor_path, client.key_provider)
-            if self._descriptor.status != "active" or not self._descriptor.database:
+            try:
+                self._descriptor = resolve_active_runtime(client.descriptor_path, client.key_provider)
+            except RuntimeResolutionError as refusal:
+                raise MachineTransportError(
+                    "an active persistent Workshop owner is required (%s)" % refusal.kind) from refusal
+            if not self._descriptor.database:
                 raise MachineTransportError("an active persistent Workshop owner is required")
             if self._session == self._descriptor.agent_session_root:
                 raise MachineTransportError("a bound external Agent Session is required")
@@ -77,9 +81,13 @@ class InstalledWorkshopCoordinationClient:
                 or Path(client.descriptor_path) != self._descriptor_path
                 or client._pinned_runtime_descriptor != self._descriptor):
             raise MachineTransportError("installed Workshop client binding changed")
-        descriptor = _read_descriptor(client.descriptor_path, client.key_provider)
-        if (descriptor.status != "active"
-                or any(getattr(descriptor, key) != getattr(self._descriptor, key) for key in _OWNER_FIELDS)):
+        try:
+            descriptor = resolve_active_runtime(client.descriptor_path, client.key_provider)
+        except RuntimeResolutionError as refusal:
+            raise MachineTransportError(
+                "installed Workshop owner changed; explicit reattachment is required (%s)" % refusal.kind
+            ) from refusal
+        if (any(getattr(descriptor, key) != getattr(self._descriptor, key) for key in _OWNER_FIELDS)):
             raise MachineTransportError("installed Workshop owner changed; explicit reattachment is required")
 
     def _request(self, method, path, body, deadline):

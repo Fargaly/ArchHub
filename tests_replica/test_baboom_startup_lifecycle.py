@@ -4,6 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 import sys
+import json
 import threading
 from types import SimpleNamespace
 
@@ -219,67 +220,51 @@ def test_incomplete_shutdown_retains_descriptor_and_never_closes_live_journal(ca
         _baboom_attachment=SimpleNamespace(shutdown=blocked),
         server=SimpleNamespace(close=lambda: actions.append("close")),
         _active_runtime=SimpleNamespace(unlink=lambda **kw: actions.append("unlink")),
-        _announced_active=None,
+        _machine_pointer=None,
     )
     assert ns["_finish_application_shutdown"]() is False
     assert actions == []
     assert "INCOMPLETE" in capsys.readouterr().out
 
 
-def _announced(tmp_path, announced_id, current_id, owner_id="this"):
-    """An announcement file naming ``current_id``; this runtime's owner record, now stopped."""
-    from nodelang.runtime_announcement import Announcement
-    owner = tmp_path / "runtime-descriptor.json"
-    owner.write_text('{"runtime_id": "%s", "status": "stopped"}' % owner_id)
+def _shutdown(tmp_path, actions, named, *, pointer=True):
     machine = tmp_path / "active-universal-runtime.json"
-    machine.write_text('{"runtime_id": "%s", "status": "active"}' % current_id)
-    announcement = None if announced_id is None else Announcement(machine, owner, announced_id)
-    return machine, owner, announcement
-
-
-def test_successful_shutdown_quiesces_before_releasing_announcement_and_closing(tmp_path):
-    actions = []
-    machine, owner, announcement = _announced(tmp_path, "this", "this")
-    ns = launcher_names(
-        "_finish_application_shutdown", _baboom_stop=threading.Event(),
-        _baboom_attachment=SimpleNamespace(shutdown=lambda: actions.append("quiesce")),
-        server=SimpleNamespace(close=lambda: actions.append("close")),
-        _active_runtime=machine, _announced_active=announcement,
-    )
-    assert ns["_finish_application_shutdown"]() is True
-    assert actions == ["quiesce", "close"]
-    # The announcement now carries this runtime's own final ("stopped") record;
-    # nothing older is restored.
-    assert machine.read_bytes() == owner.read_bytes()
-
-
-@pytest.mark.parametrize("announced,current", [(None, "founder runtime"), ("this", "new selection")])
-def test_shutdown_preserves_an_unowned_machine_runtime_binding(tmp_path, announced, current):
-    actions = []
-    machine, _owner, announcement = _announced(tmp_path, announced, current)
+    machine.write_text('{"format": "archhub.universal-runtime-pointer", "runtime_id": "%s"}' % named)
     before = machine.read_bytes()
     ns = launcher_names(
-        "_finish_application_shutdown", _baboom_stop=threading.Event(),
-        _baboom_attachment=SimpleNamespace(shutdown=lambda: None),
-        server=SimpleNamespace(close=lambda: actions.append("close")),
-        _active_runtime=machine, _announced_active=announcement,
+        "_finish_application_shutdown", "_announcement_at_exit", _baboom_stop=threading.Event(),
+        _baboom_attachment=SimpleNamespace(shutdown=lambda: actions.append("quiesce")),
+        server=SimpleNamespace(close=lambda: actions.append("close"),
+                               machine_transport=SimpleNamespace(runtime_id="this")),
+        _machine_pointer=machine if pointer else None,
     )
-    assert ns["_finish_application_shutdown"]() is True
-    assert actions == ["close"] and machine.read_bytes() == before
+    return ns, machine, before
 
 
-def test_announcement_release_failure_is_not_reported_as_clean_shutdown(tmp_path, capsys):
+def test_successful_shutdown_quiesces_then_closes_and_restores_nothing(tmp_path, capsys):
     actions = []
-    machine, owner, announcement = _announced(tmp_path, "this", "this")
-    owner.unlink()  # this runtime's final record cannot be read
-    ns = launcher_names(
-        "_finish_application_shutdown", _baboom_stop=threading.Event(),
-        _baboom_attachment=SimpleNamespace(shutdown=lambda: None),
-        server=SimpleNamespace(close=lambda: actions.append("close")),
-        _active_runtime=machine, _announced_active=announcement,
-    )
-    assert ns["_finish_application_shutdown"]() is False
-    assert actions == ["close"] and "announcement release" in capsys.readouterr().out
+    ns, machine, before = _shutdown(tmp_path, actions, "this")
+    assert ns["_finish_application_shutdown"]() is True
+    assert actions == ["quiesce", "close"]
+    # The pointer is not rewritten at exit: it names this runtime's own record,
+    # which close() left "stopped". No older record is put back.
+    assert machine.read_bytes() == before
+    assert "announcement names this runtime, now stopped" in capsys.readouterr().out
+
+
+def test_shutdown_leaves_another_runtimes_announcement_untouched(tmp_path, capsys):
+    actions = []
+    ns, machine, before = _shutdown(tmp_path, actions, "newer")
+    assert ns["_finish_application_shutdown"]() is True
+    assert actions == ["quiesce", "close"] and machine.read_bytes() == before
+    assert "announcement names another runtime (left)" in capsys.readouterr().out
+
+
+def test_a_verification_run_never_touches_or_reports_the_machine_announcement(tmp_path, capsys):
+    actions = []
+    ns, machine, before = _shutdown(tmp_path, actions, "founder", pointer=False)
+    assert ns["_finish_application_shutdown"]() is True
+    assert machine.read_bytes() == before and "announcement" not in capsys.readouterr().out
 
 
 # Persistent startup setting: Studio Settings -> graph -> next launch.

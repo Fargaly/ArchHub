@@ -355,6 +355,13 @@ machine_key_provider = WindowsDpapiSigningKeyProvider(
     WindowsDpapiSigningKeyProvider.default_path()
 )
 descriptor_path = state_dir / "runtime-descriptor.json"
+# The machine announcement: a signed POINTER to this runtime's own record,
+# written when the transport starts. A verification run opens its own graph
+# and never moves the founder's wiring onto it.
+_machine_pointer = (
+    None if os.environ.get("ARCHHUB_TEST_STATE_DIR")
+    else Path(os.environ["LOCALAPPDATA"]) / "ArchHub" / "active-universal-runtime.json"
+)
 
 # Apply only a verified release armed by the preceding owner's final recovery.
 # No synchronous network download belongs on the application startup path.
@@ -458,6 +465,7 @@ def _boot_unsampled():
         enable_machine_transport=True,
         enable_brain_cloud_sync=True,
         machine_descriptor_path=descriptor_path,
+        machine_pointer_path=_machine_pointer,
         machine_key_provider=machine_key_provider,
         project_work_execution_broker=ProjectWorkExecutionBroker(artifact_root),
         model_execution_broker=ModelExecutionBroker(
@@ -764,30 +772,12 @@ _cloud_publish_thread = _threading.Thread(
 )
 _cloud_publish_thread.start()
 
-# Announce THIS runtime as the machine's active universal runtime, so
-# the brain, BABOOM and any governed agent reach the founder's live
-# graph instead of a dead descriptor from a previous life.
-_active_runtime = (
-    Path(os.environ["LOCALAPPDATA"]) / "ArchHub" / "active-universal-runtime.json"
-)
-_announced_active = None
+# The machine announcement (a signed pointer) was written by the transport at
+# start. It names this runtime's record, which says "stopped" after close();
+# nothing is copied, kept, or restored here.
 if os.environ.get("ARCHHUB_TEST_STATE_DIR"):
-    # A verification run opens its OWN graph in its own state directory.
-    # Announcing it would point the brain, BABOOM and every governed
-    # agent on this machine at a throwaway database -- checking the
-    # application must never move the founder's wiring onto it.
     print("  runtime    : not announced (verification run keeps the "
           "machine binding)", flush=True)
-else:
-    # Whatever an earlier launch left here is NOT kept to be put back at exit:
-    # restoring it resurrected an older "active" owner with a dead process.
-    from nodelang import runtime_announcement
-    try:
-        _announced_active = runtime_announcement.announce(_active_runtime, descriptor_path)
-        print("  runtime    : announced as the machine's active universal "
-              "runtime", flush=True)
-    except (OSError, ValueError) as _refusal:
-        print("  runtime    : could not announce (%s)" % _refusal, flush=True)
 
 
 @contextlib.contextmanager
@@ -1679,20 +1669,24 @@ def _finish_application_shutdown():
         print("  shutdown   : INCOMPLETE (server close: %s); active descriptor retained"
               % type(refusal).__name__, flush=True)
         return False
-    # An isolated launch never owned the machine binding. Another runtime may
-    # also have been selected since this launch; leave its selection untouched.
-    if _announced_active is None:
-        return True
-    # The announcement follows this runtime's own final record ("stopped" after
-    # server.close()) if it still names this runtime; nothing older returns.
-    try:
-        from nodelang import runtime_announcement
-        runtime_announcement.release(_announced_active)
-    except OSError as refusal:
-        print("  shutdown   : INCOMPLETE (announcement release: %s)"
-              % type(refusal).__name__, flush=True)
-        return False
+    # The machine pointer names this runtime's record, now "stopped"; a later
+    # runtime's pointer replaces it. Nothing is restored or rewritten here.
+    if _machine_pointer is not None:
+        print("  runtime    : announcement %s" % _announcement_at_exit(_machine_pointer, server),
+              flush=True)
     return True
+
+
+def _announcement_at_exit(pointer, owner):
+    """What the machine announcement names after this runtime closed (log only)."""
+    import json
+    try:
+        named = json.loads(pointer.read_text(encoding="utf-8")).get("runtime_id")
+    except (OSError, ValueError, AttributeError):
+        return "absent or unreadable (left)"
+    mine = getattr(getattr(owner, "machine_transport", None), "runtime_id", None)
+    return ("names this runtime, now stopped" if named is not None and named == mine
+            else "names another runtime (left)")
 
 
 def _complete_desktop_exit(code):

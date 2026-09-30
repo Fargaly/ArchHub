@@ -51,7 +51,13 @@ from .windows_cng_signing_provider import WindowsCngSigningAuthorityProvider
 
 
 _FORMAT = "archhub.universal-runtime"
-_FORMAT_VERSION = 1
+# v2 adds owner_generation (the graph's runtime-ownership generation this owner
+# holds) and process_created_at (the owner process's creation time), so a
+# reader can tell a live owner from a reused process id or a superseded owner.
+_FORMAT_VERSION = 2
+_POINTER_FORMAT = "archhub.universal-runtime-pointer"
+_POINTER_FORMAT_VERSION = 1
+_GENERATION_READ_BUDGET = 0.2  # seconds; coordinator bound (<=200ms)
 _MAX_MESSAGE_BYTES = 256 * 1024
 _MAX_CHECKPOINT_AUTHORITY_REVISIONS = 10_000
 _MAX_CHECKPOINT_AUTHORITY_CELLS = 500_000
@@ -718,11 +724,19 @@ class RuntimeDescriptor:
     key_id: str
     key_version: int
     signature: str
+    format_version: int = _FORMAT_VERSION
+    owner_generation: int = 0
+    process_created_at: int = 0
 
     def unsigned(self) -> dict[str, object]:
+        extra = {} if self.format_version < 2 else {
+            "owner_generation": self.owner_generation,
+            "process_created_at": self.process_created_at,
+        }
         return {
+            **extra,
             "format": _FORMAT,
-            "format_version": _FORMAT_VERSION,
+            "format_version": self.format_version,
             "runtime_id": self.runtime_id,
             "status": self.status,
             "pipe": self.pipe,
@@ -745,20 +759,61 @@ class RuntimeDescriptor:
 def _read_descriptor(
     path: Path, key_provider: ExportableSigningKeyProvider
 ) -> RuntimeDescriptor:
+    """One signed descriptor; a signed pointer is followed to the one it names."""
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise MachineTransportError("runtime descriptor is unreadable") from exc
+    if type(payload) is dict and payload.get("format") == _POINTER_FORMAT:
+        pointer = _verified_pointer(payload, key_provider)
+        target = _read_descriptor_document(Path(pointer["descriptor_path"]), key_provider)
+        if (target.runtime_id != pointer["runtime_id"]
+                or target.database != pointer["database"]
+                or target.owner_generation != pointer["owner_generation"]):
+            raise MachineTransportError("runtime pointer does not match the descriptor it names")
+        return target
+    return _descriptor_from_payload(payload, key_provider)
+
+
+def _owner_record_path(path: Path, key_provider: ExportableSigningKeyProvider) -> Path:
+    """The owner record itself: what a verified pointer names, else ``path``."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise MachineTransportError("runtime descriptor is unreadable") from exc
+    if type(payload) is dict and payload.get("format") == _POINTER_FORMAT:
+        return Path(_verified_pointer(payload, key_provider)["descriptor_path"])
+    return path
+
+
+def _read_descriptor_document(
+    path: Path, key_provider: ExportableSigningKeyProvider
+) -> RuntimeDescriptor:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise MachineTransportError("runtime descriptor is unreadable") from exc
+    return _descriptor_from_payload(payload, key_provider)
+
+
+def _descriptor_from_payload(
+    payload: object, key_provider: ExportableSigningKeyProvider
+) -> RuntimeDescriptor:
     expected = {
         "format", "format_version", "runtime_id", "status", "pipe",
         "process_id", "started_at", "stopped_at", "application_root",
         "agent_session_root", "workshop_root", "work_registry_root",
         "database", "key_id", "key_version", "signature",
     }
-    if type(payload) is not dict or set(payload) != expected:
-        raise MachineTransportError("runtime descriptor has an invalid shape")
-    if payload["format"] != _FORMAT or payload["format_version"] != _FORMAT_VERSION:
+    if type(payload) is not dict or payload.get("format") != _FORMAT:
         raise MachineTransportError("runtime descriptor format is unsupported")
+    version = payload.get("format_version")
+    if version == 2:
+        expected = expected | {"owner_generation", "process_created_at"}
+    elif version != 1:
+        raise MachineTransportError("runtime descriptor format is unsupported")
+    if set(payload) != expected:
+        raise MachineTransportError("runtime descriptor has an invalid shape")
     try:
         descriptor = RuntimeDescriptor(
             runtime_id=str(payload["runtime_id"]),
@@ -775,6 +830,9 @@ def _read_descriptor(
             key_id=str(payload["key_id"]),
             key_version=int(payload["key_version"]),
             signature=str(payload["signature"]),
+            format_version=int(version),
+            owner_generation=int(payload.get("owner_generation", 0)),
+            process_created_at=int(payload.get("process_created_at", 0)),
         )
     except (TypeError, ValueError) as exc:
         raise MachineTransportError("runtime descriptor values are invalid") from exc
@@ -800,6 +858,196 @@ def _read_descriptor(
     return descriptor
 
 
+class RuntimeResolutionError(MachineTransportError):
+    """No verified live owner; ``kind`` says why. There is never a fallback."""
+
+    def __init__(self, kind: str, message: str) -> None:
+        super().__init__("%s: %s" % (kind, message))
+        self.kind = kind
+
+
+_POINTER_FIELDS = {
+    "format", "format_version", "runtime_id", "descriptor_path", "database",
+    "owner_generation", "key_id", "key_version", "signature",
+}
+
+
+def _pointer_unsigned(payload: Mapping[str, object]) -> dict[str, object]:
+    return {key: payload[key] for key in sorted(_POINTER_FIELDS - {"signature"})}
+
+
+def write_runtime_pointer(
+    pointer_path: str | os.PathLike[str],
+    descriptor_path: str | os.PathLike[str],
+    descriptor: "RuntimeDescriptor",
+    key_provider: ExportableSigningKeyProvider,
+) -> None:
+    """Announce one owner: a signed pointer naming its descriptor, never a copy."""
+    unsigned = {
+        "format": _POINTER_FORMAT,
+        "format_version": _POINTER_FORMAT_VERSION,
+        "runtime_id": descriptor.runtime_id,
+        "descriptor_path": str(Path(descriptor_path).expanduser().resolve()),
+        "database": descriptor.database,
+        "owner_generation": descriptor.owner_generation,
+        "key_id": descriptor.key_id,
+        "key_version": descriptor.key_version,
+    }
+    signature = key_provider.sign(
+        descriptor.key_id, descriptor.key_version, _canonical(_pointer_unsigned(unsigned))
+    )
+    target = Path(pointer_path).expanduser().resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_json(target, {**unsigned, "signature": signature})
+
+
+def _verified_pointer(
+    payload: Mapping[str, object], key_provider: ExportableSigningKeyProvider
+) -> dict[str, object]:
+    if set(payload) != _POINTER_FIELDS or payload.get("format_version") != _POINTER_FORMAT_VERSION:
+        raise MachineTransportError("runtime pointer has an invalid shape")
+    if (not isinstance(payload["runtime_id"], str) or not _RUNTIME_ID.fullmatch(payload["runtime_id"])
+            or not isinstance(payload["descriptor_path"], str) or not payload["descriptor_path"]
+            or not isinstance(payload["database"], str)
+            or type(payload["owner_generation"]) is not int
+            or not isinstance(payload["key_id"], str) or type(payload["key_version"]) is not int):
+        raise MachineTransportError("runtime pointer values are invalid")
+    if not key_provider.verify(
+        str(payload["key_id"]), int(payload["key_version"]),
+        _canonical(_pointer_unsigned(payload)), str(payload["signature"]),
+    ):
+        raise MachineTransportError("runtime pointer signature is invalid")
+    return dict(payload)
+
+
+def _process_created_at(process_id: int) -> int | None:
+    """The process's creation time (FILETIME, 100 ns ticks); None if not running."""
+    if os.name != "nt" or process_id <= 0:
+        return None
+    kernel32 = ctypes.WinDLL("Kernel32.dll", use_last_error=True)
+    kernel32.OpenProcess.argtypes = (ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32)
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.GetProcessTimes.argtypes = (ctypes.c_void_p,) + (ctypes.POINTER(ctypes.c_uint64),) * 4
+    kernel32.GetProcessTimes.restype = ctypes.c_int
+    kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+    handle = kernel32.OpenProcess(0x1000, 0, process_id)
+    if not handle:
+        return None
+    try:
+        created, exited, kernel, user = (ctypes.c_uint64() for _ in range(4))
+        if not kernel32.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited),
+                                        ctypes.byref(kernel), ctypes.byref(user)):
+            return None
+        return int(created.value)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _owner_process_alive(descriptor: "RuntimeDescriptor") -> bool:
+    """The recorded owner process is running -- the SAME process, not a reuse of its id.
+
+    A v1 record carries no creation time; only its process id can be checked.
+    """
+    if not _windows_process_is_active(descriptor.process_id):
+        return False
+    if descriptor.format_version < 2 or descriptor.process_created_at <= 0:
+        return True
+    return _process_created_at(descriptor.process_id) == descriptor.process_created_at
+
+
+def read_runtime_owner_generation(database: str, application_root: str) -> tuple[int, str] | None:
+    """The graph's latest runtime-ownership generation and its state, read-only.
+
+    Local SQLite graphs keep runtime ownership in the primary database's
+    operational_records (runtime_ownership_records, SPEC 3.3); one indexed read.
+    """
+    if not database or not Path(database).is_file():
+        return None
+    deadline = time.monotonic() + _GENERATION_READ_BUDGET
+    try:
+        from urllib.request import pathname2url
+        # Read-only URI + query_only: this read can never take the store's
+        # write lock. Busy waits and the query itself share one bounded budget;
+        # past it the answer is "unreadable" (fail closed), never a guess.
+        connection = sqlite3.connect(
+            "file:%s?mode=ro" % pathname2url(str(Path(database).resolve())),
+            uri=True, timeout=_GENERATION_READ_BUDGET,
+        )
+    except sqlite3.Error:
+        return None
+    try:
+        connection.execute("PRAGMA query_only = ON")
+        connection.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 1000)
+        rows = connection.execute(
+            "SELECT state, payload FROM operational_records "
+            "WHERE kind = 'runtime-ownership' AND owner_root = ?",
+            (application_root,),
+        ).fetchall()
+    except sqlite3.Error:
+        return None
+    finally:
+        connection.close()
+    latest = None
+    for state, payload in rows:
+        try:
+            generation = int(json.loads(payload)["generation"])
+        except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+            continue
+        if latest is None or generation > latest[0]:
+            latest = (generation, str(state))
+    return latest
+
+
+def verify_active_runtime(
+    descriptor: "RuntimeDescriptor",
+    *,
+    check_generation: bool = True,
+    generation_reader: Callable[[str, str], tuple[int, str] | None] | None = None,
+) -> "RuntimeDescriptor":
+    """A descriptor is the live owner only if every check holds; else a named refusal."""
+    if descriptor.status != "active":
+        raise RuntimeResolutionError(descriptor.status or "stopped", "runtime owner is not active")
+    if descriptor.format_version < 2 or descriptor.process_created_at <= 0:
+        raise RuntimeResolutionError("legacy", "runtime owner record carries no process identity")
+    if not _windows_process_is_active(descriptor.process_id):
+        raise RuntimeResolutionError("dead", "runtime owner process is not running")
+    if _process_created_at(descriptor.process_id) != descriptor.process_created_at:
+        raise RuntimeResolutionError("pid-reused", "runtime owner process id now belongs to another process")
+    # A runtime over a durable graph must hold that graph's current ownership
+    # generation. A graph-less runtime (no database: in-memory) owns nothing
+    # another runtime could take over; its process identity is the whole check.
+    if check_generation and descriptor.database:
+        if descriptor.owner_generation <= 0:
+            raise RuntimeResolutionError("generation-unverifiable", "runtime owner record carries no graph generation")
+        latest = (generation_reader or read_runtime_owner_generation)(
+            descriptor.database, descriptor.application_root
+        )
+        if latest is None:
+            raise RuntimeResolutionError("generation-unverifiable", "graph ownership generation is unreadable")
+        if latest[0] != descriptor.owner_generation:
+            raise RuntimeResolutionError("superseded", "a newer runtime owns this graph")
+        if latest[1] not in ("active", "draining"):
+            raise RuntimeResolutionError("released", "this runtime's ownership has ended")
+    return descriptor
+
+
+def resolve_active_runtime(
+    path: str | os.PathLike[str] | None,
+    key_provider: ExportableSigningKeyProvider,
+) -> "RuntimeDescriptor":
+    """The machine's one verified live runtime, from its pointer (or a descriptor)."""
+    target = Path(path).expanduser().resolve() if path is not None else default_runtime_descriptor_path()
+    if not target.exists():
+        raise RuntimeResolutionError("missing", "no runtime is announced")
+    try:
+        descriptor = _read_descriptor(target, key_provider)
+    except RuntimeResolutionError:
+        raise
+    except MachineTransportError as exc:
+        raise RuntimeResolutionError("unreadable", str(exc)) from exc
+    return verify_active_runtime(descriptor)
+
+
 def inspect_runtime_descriptor(
     path: str | os.PathLike[str],
     key_provider: ExportableSigningKeyProvider,
@@ -818,9 +1066,7 @@ def inspect_runtime_descriptor(
     return {
         "verified": True,
         "active": active,
-        "owner_alive": (
-            _windows_process_is_active(descriptor.process_id) if active else False
-        ),
+        "owner_alive": _owner_process_alive(descriptor) if active else False,
         "application": descriptor.application_root,
     }
 
@@ -829,12 +1075,17 @@ def recover_stale_runtime_descriptor(
     path: str | os.PathLike[str],
     key_provider: ExportableSigningKeyProvider,
 ) -> RuntimeDescriptor:
-    """Release one signed active descriptor whose physical owner is gone."""
-    descriptor_path = Path(path).expanduser().resolve()
-    descriptor = _read_descriptor(descriptor_path, key_provider)
+    """Release one signed active descriptor whose physical owner is gone.
+
+    Through a pointer, the record it names is released; the pointer stays and
+    now resolves to "stopped".
+    """
+    announced_path = Path(path).expanduser().resolve()
+    descriptor = _read_descriptor(announced_path, key_provider)
+    descriptor_path = _owner_record_path(announced_path, key_provider)
     if descriptor.status != "active":
         raise MachineTransportError("runtime descriptor is not an active owner")
-    if _windows_process_is_active(descriptor.process_id):
+    if _owner_process_alive(descriptor):
         raise MachineTransportError("runtime descriptor owner is still active")
     try:
         inspect_read_only_cell_journal(descriptor.database)
@@ -857,6 +1108,9 @@ def recover_stale_runtime_descriptor(
         descriptor.key_id,
         descriptor.key_version,
         "",
+        descriptor.format_version,
+        descriptor.owner_generation,
+        descriptor.process_created_at,
     )
     signature = key_provider.sign(
         unsigned.key_id,
@@ -878,6 +1132,9 @@ def recover_stale_runtime_descriptor(
         unsigned.key_id,
         unsigned.key_version,
         signature,
+        unsigned.format_version,
+        unsigned.owner_generation,
+        unsigned.process_created_at,
     )
     _atomic_json(descriptor_path, recovered.document())
     verified = _read_descriptor(descriptor_path, key_provider)
@@ -1403,6 +1660,8 @@ class UniversalRuntimeTransport:
         descriptor_path: str | os.PathLike[str] | None = None,
         key_provider: ExportableSigningKeyProvider,
         key_id: str = "archhub.local.universal-runtime-pipe",
+        owner_generation: Callable[[], int] | int | None = None,
+        pointer_path: str | os.PathLike[str] | None = None,
         after_response: Callable[
             [Mapping[str, object], Mapping[str, object]], None
         ] | None = None,
@@ -1418,6 +1677,13 @@ class UniversalRuntimeTransport:
         self.descriptor_path = Path(
             descriptor_path or default_runtime_descriptor_path()
         ).expanduser().resolve()
+        # The machine announcement: a signed pointer to descriptor_path, written
+        # once at start. It is never restored or copied; at stop the descriptor
+        # it names says "stopped" and a reader resolves it as such.
+        self.pointer_path = (
+            None if pointer_path is None else Path(pointer_path).expanduser().resolve()
+        )
+        self._owner_generation = owner_generation
         self.key_provider = key_provider
         self.key_material = key_provider.current(key_id)
         self.after_response = after_response
@@ -1433,7 +1699,13 @@ class UniversalRuntimeTransport:
         self.pipe_security_sddl = ""
         self._last_accept_error = ""
 
+    def _generation(self) -> int:
+        held = self._owner_generation
+        value = held() if callable(held) else held
+        return int(value) if type(value) is int and value > 0 else 0
+
     def _descriptor(self, status: str, *, stopped_at: str = "") -> RuntimeDescriptor:
+        generation, created = self._generation(), _process_created_at(os.getpid()) or 0
         unsigned = RuntimeDescriptor(
             self.runtime_id,
             status,
@@ -1449,6 +1721,9 @@ class UniversalRuntimeTransport:
             self.key_material.key_id,
             self.key_material.version,
             "",
+            _FORMAT_VERSION,
+            generation,
+            created,
         )
         signature = self.key_provider.sign(
             self.key_material.key_id,
@@ -1470,6 +1745,9 @@ class UniversalRuntimeTransport:
             unsigned.key_id,
             unsigned.key_version,
             signature,
+            unsigned.format_version,
+            unsigned.owner_generation,
+            unsigned.process_created_at,
         )
 
     def _remember(self, request_id: str) -> None:
@@ -1621,10 +1899,7 @@ class UniversalRuntimeTransport:
             existing = _read_descriptor(
                 self.descriptor_path, self.key_provider
             )
-            if (
-                existing.status == "active"
-                and _windows_process_is_active(existing.process_id)
-            ):
+            if existing.status == "active" and _owner_process_alive(existing):
                 raise MachineTransportError(
                     "another universal graph owner is already active"
                 )
@@ -1638,7 +1913,10 @@ class UniversalRuntimeTransport:
             daemon=True,
         )
         self._thread.start()
-        _atomic_json(self.descriptor_path, self._descriptor("active").document())
+        active = self._descriptor("active")
+        _atomic_json(self.descriptor_path, active.document())
+        if self.pointer_path is not None:
+            write_runtime_pointer(self.pointer_path, self.descriptor_path, active, self.key_provider)
         return self
 
     @property
@@ -1717,6 +1995,20 @@ class UniversalRuntimeClient:
         self._request_lock = threading.RLock()
         self._cancellation_event = cancellation_event
         self._pinned_runtime_descriptor: RuntimeDescriptor | None = None
+
+    def _verified_owner(self) -> RuntimeDescriptor:
+        """The live owner, verified on every request; the graph generation is
+        read once per runtime this client meets (it only changes with the owner)."""
+        descriptor = _read_descriptor(self.descriptor_path, self.key_provider)
+        try:
+            verify_active_runtime(
+                descriptor,
+                check_generation=descriptor.runtime_id != getattr(self, "_generation_verified_for", None),
+            )
+        except RuntimeResolutionError as refusal:
+            raise MachineTransportError("universal runtime is not active (%s)" % refusal.kind) from refusal
+        self._generation_verified_for = descriptor.runtime_id
+        return descriptor
 
     def pin_runtime_descriptor(self, descriptor: RuntimeDescriptor) -> None:
         """Keep this client on one owner; replacement requires a new binding.
@@ -3573,9 +3865,7 @@ class UniversalRuntimeClient:
         response_timeout_seconds: float | None = None,
     ) -> dict[str, object]:
         self._check_cancelled()
-        descriptor = _read_descriptor(self.descriptor_path, self.key_provider)
-        if descriptor.status != "active":
-            raise MachineTransportError("universal runtime is not active")
+        descriptor = self._verified_owner()
         if self._pinned_runtime_descriptor is not None and descriptor != self._pinned_runtime_descriptor:
             raise MachineTransportError("universal runtime owner changed; reconnect through admitted enrollment")
         material = self.key_provider.resolve(
@@ -3685,6 +3975,11 @@ __all__ = [
     "UniversalRuntimeClient",
     "UniversalRuntimeTransport",
     "default_runtime_descriptor_path",
+    "RuntimeResolutionError",
+    "read_runtime_owner_generation",
+    "resolve_active_runtime",
+    "verify_active_runtime",
+    "write_runtime_pointer",
     "inspect_runtime_descriptor",
     "recover_stale_runtime_descriptor",
     "inspect_stopped_runtime_durable_journal",

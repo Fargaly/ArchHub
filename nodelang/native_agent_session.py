@@ -18,7 +18,7 @@ import threading
 import time
 
 from .application_machine_transport import (
-    MachineTransportError, UniversalRuntimeClient, _read_descriptor,
+    MachineTransportError, RuntimeResolutionError, UniversalRuntimeClient, resolve_active_runtime,
 )
 from .cell_secret_keys import WindowsDpapiSigningKeyProvider
 
@@ -814,8 +814,12 @@ class NativeAgentSession:
         if (not self._descriptor_path.is_file()
                 or self._descriptor_path.stat().st_size > 65536):
             raise MachineTransportError("existing runtime descriptor is unavailable")
-        descriptor = _read_descriptor(self._descriptor_path, self._existing_key_provider())
-        if descriptor.status != "active" or not descriptor.database or not Path(descriptor.database).is_file():
+        try:
+            descriptor = resolve_active_runtime(self._descriptor_path, self._existing_key_provider())
+        except RuntimeResolutionError as refusal:
+            raise MachineTransportError(
+                "an active persistent installed owner is required (%s)" % refusal.kind) from refusal
+        if not descriptor.database or not Path(descriptor.database).is_file():
             raise MachineTransportError("an active persistent installed owner is required")
         return descriptor
 

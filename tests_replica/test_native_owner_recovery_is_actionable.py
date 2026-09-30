@@ -282,7 +282,7 @@ def test_an_attempt_that_never_left_the_process_is_named_and_settled(world, monk
     actor = owner.owner_status()["agent_session"]
     world.restart()
     pinned, current = _fingerprints(owner)
-    original, reads = native._read_descriptor, {"n": 0}
+    original, reads = native.resolve_active_runtime, {"n": 0}
 
     def read(path, keys):  # the application is mid-restart for the attempt's own read
         reads["n"] += 1
@@ -290,7 +290,7 @@ def test_an_attempt_that_never_left_the_process_is_named_and_settled(world, monk
             raise MachineTransportError("existing runtime descriptor is unavailable")
         return original(path, keys)
 
-    monkeypatch.setattr(native, "_read_descriptor", read)
+    monkeypatch.setattr(native, "resolve_active_runtime", read)
     with pytest.raises(MachineTransportError, match="unavailable"):
         owner.rebind_owner(expected_old_owner=pinned, expected_new_owner=current)
     status = owner.owner_status()

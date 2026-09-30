@@ -26,6 +26,21 @@ OVERLAYS: Mapping[str, str] = MappingProxyType({
 })
 DEFAULT_OVERLAY = "standard"
 
+# An overlay is offered only when it changes something (frontend brief task
+# 9). high-contrast has no values in any design source, so it stays installed
+# -- the name is part of the deterministic design system, and removing it would
+# make every existing graph read as drifted -- but it is neither offered nor
+# selectable until the design supplies them. Zoom is unaffected: its steps are
+# real, and applying the step is the runtime's (see ui_runtime).
+OVERLAY_VALUES: Mapping[str, Mapping[str, str]] = MappingProxyType({})
+
+
+def offered_overlays() -> tuple[str, ...]:
+    return tuple(
+        name for name in OVERLAYS
+        if name == DEFAULT_OVERLAY or OVERLAY_VALUES.get(name)
+    )
+
 # The zoom the founder's overlay offered. A percentage the graph holds, not a
 # free number: an unadmitted zoom is refused rather than silently clamped.
 ZOOM_STEPS: tuple[int, ...] = (100, 125, 150, 200)
@@ -69,6 +84,8 @@ def ensure_active_overlay(store: CellStore, modifier_root: str) -> str:
 def set_active_overlay(store: CellStore, modifier_root: str, name: str) -> str:
     if name not in OVERLAYS:
         raise InvalidCell("overlay is not an admitted context: %s" % name)
+    if name not in offered_overlays():
+        raise InvalidCell("overlay has no values to paint yet: %s" % name)
     snapshot = store.snapshot()
     if overlay_context_root(modifier_root, name) not in snapshot.cells:
         raise InvalidCell("overlay context is not installed: %s" % name)
@@ -146,8 +163,15 @@ def project_accessibility_modifier(
 ) -> dict[str, object]:
     """The DTCG `a11y` modifier, projected out of the graph."""
     overlay = read_accessibility_overlay(snapshot, modifier_root, context_role)
+    offered = offered_overlays()
+    contexts = {
+        name: ([dict(OVERLAY_VALUES[name])] if OVERLAY_VALUES.get(name) else [])
+        for name in overlay.contexts if name in offered
+    }
     return {
-        "contexts": {name: [] for name in overlay.contexts},
-        "default": overlay.active,
+        "contexts": contexts,
+        # A graph that chose an overlay without values rendered the standard
+        # one all along; say so instead of naming a switch that did nothing.
+        "default": overlay.active if overlay.active in contexts else DEFAULT_OVERLAY,
         "zoom": overlay.zoom,
     }

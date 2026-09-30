@@ -15,7 +15,7 @@ from nodelang.cell_design_tokens import (
     resolve_design_tokens,
 )
 from nodelang.cell_protocols import read_relation
-from nodelang.cell_theme_sets import DEFAULT_THEME, THEMES
+from nodelang.cell_theme_sets import DEFAULT_THEME, offered_themes
 from nodelang.universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell
 
 
@@ -84,7 +84,7 @@ def test_resolver_projects_the_released_theme_contexts_and_order():
     store, built = _system()
     resolver = project_dtcg_resolver(store.snapshot(), built)
     assert resolver["version"] == DTCG_VERSION
-    assert set(resolver["modifiers"]["theme"]["contexts"]) == set(THEMES)
+    assert set(resolver["modifiers"]["theme"]["contexts"]) == set(offered_themes())
     assert resolver["modifiers"]["theme"]["default"] == DEFAULT_THEME
     assert resolver["resolutionOrder"] == [
         {"$ref": "#/sets/foundation"},

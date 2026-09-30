@@ -1116,6 +1116,12 @@ def _clean_failure_payload(exc):
     return payload
 
 
+def _site_fonts():
+    """The website's woff2 face names and the @font-face block naming them."""
+    from .site_export import FONT_FACES, FONTS_CSS
+    return frozenset(face[0] for face in FONT_FACES), FONTS_CSS
+
+
 class _CleanAuthorityHttpServer:
     """Bounded clean-graph browser consumer without a second store."""
 
@@ -2836,6 +2842,14 @@ class _CleanAuthorityHttpServer:
             raise FileNotFoundError("Studio asset not found")
         return (Path(__file__).resolve().parent / "studio" / name).read_bytes()
 
+    def _clean_font_asset(self, name):
+        """One woff2 face the canvas page names, and nothing else."""
+        faces, _css = _site_fonts()
+        from .site_export import BRAND_DIR, FONT_DIR
+        if name not in faces:
+            raise FileNotFoundError("font not found")
+        return (BRAND_DIR / FONT_DIR / name).read_bytes(), "font/woff2"
+
     def _clean_studio_page(self):
         """Use the chosen Studio presentation with this same graph authority."""
         page = self._clean_studio_asset("studio.html").decode("utf-8")
@@ -2925,11 +2939,10 @@ class _CleanAuthorityHttpServer:
             "content=\"width=device-width,initial-scale=1\">"
             "<meta name=\"archhub-csrf\" content=\"\">"
             "<title>ArchHub</title>"
-            "<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">"
-            "<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>"
-            "<link href=\"https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700"
-            "&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1"
-            "&family=Architects+Daughter&display=swap\" rel=\"stylesheet\">"
+            # The same faces the website export writes, served by this
+            # server: an offline desktop draws in its own fonts, and opening
+            # the canvas asks no third party for anything.
+            "<style>%s</style>"
             # The skeleton is not a design. It is exactly the structure the
             # graph-held stylesheet declares -- .archhub-app's two columns,
             # the sidebar's rail and library, the workspace's header, canvas
@@ -2968,6 +2981,7 @@ class _CleanAuthorityHttpServer:
             "<script>window.__archhubCanvasKey=%s;</script>"
             "<script>%s</script></body></html>"
         ) % (
+            _site_fonts()[1],
             UNIVERSAL_CANVAS_SCRIPT,
             json.dumps(getattr(self, "clean_canvas_key", "")),
             bootstrap,
@@ -3837,6 +3851,22 @@ class _CleanAuthorityHttpServer:
                     self.wfile.write(body)
                     return
                 request_path = self.path.split("?", 1)[0]
+                if request_path.startswith("/assets/fonts/"):
+                    # Public OFL faces the canvas page names; no key, no session.
+                    try:
+                        body, kind = owner._clean_font_asset(
+                            request_path[len("/assets/fonts/"):])
+                    except FileNotFoundError:
+                        self._json(404, {"ok": False, "error": "font not found"})
+                        return
+                    self.send_response(200)
+                    self.send_header("Content-Type", kind)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Cache-Control", "max-age=86400")
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
                 if request_path in ("/", "/index.html", "/studio", "/studio/", "/studio/studio.html"):
                     # Pure. A safe method must not write: any local page
                     # could force a signed graph command with an <img> tag,

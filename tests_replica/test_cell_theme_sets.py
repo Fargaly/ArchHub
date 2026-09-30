@@ -11,6 +11,7 @@ from nodelang.cell_theme_sets import (
     ACTIVE_THEME_ROOT,
     DEFAULT_THEME,
     THEMES,
+    offered_themes,
     read_active_theme,
     read_theme_modifier,
     set_active_theme,
@@ -50,31 +51,34 @@ def _protocol_context_role(store, modifier):
     return PROTOCOL_PREFIX + ":role:context"
 
 
-def test_resolver_names_every_theme_and_the_active_one():
+def test_resolver_names_every_offered_theme_and_the_active_one():
+    # Only themes that paint something are offered (test_theme_switches_do_something).
     store, build, _modifier = _system()
     resolver = project_dtcg_resolver(store.snapshot(), build)
     contexts = resolver["modifiers"]["theme"]["contexts"]
-    assert set(contexts) == set(THEMES)
+    assert set(contexts) == set(offered_themes())
     assert resolver["modifiers"]["theme"]["default"] == DEFAULT_THEME
 
 
-def test_switching_the_active_theme_changes_the_projection():
+def test_choosing_a_theme_never_moves_the_installed_set():
     store, build, modifier = _system()
-    before = project_dtcg_resolver(store.snapshot(), build)
-    assert before["modifiers"]["theme"]["default"] == DEFAULT_THEME
-    set_active_theme(store, modifier, "vellum")
-    after = project_dtcg_resolver(store.snapshot(), build)
-    assert after["modifiers"]["theme"]["default"] == "vellum"
-    # The set of themes is authority and does not move when one is chosen.
-    assert set(after["modifiers"]["theme"]["contexts"]) == set(
-        before["modifiers"]["theme"]["contexts"]
-    )
+    before = read_theme_modifier(store.snapshot(), modifier,
+                                 _protocol_context_role(store, modifier))
+    for name in offered_themes():
+        set_active_theme(store, modifier, name)
+        after = read_theme_modifier(store.snapshot(), modifier,
+                                    _protocol_context_role(store, modifier))
+        assert after.active == name
+        # The set of themes is authority and does not move when one is chosen.
+        assert after.contexts == before.contexts
 
 
 def test_the_active_theme_survives_a_reopen():
     store, build, modifier = _system()
-    set_active_theme(store, modifier, "blueprint")
-    assert read_active_theme(store.snapshot(), modifier) == "blueprint"
+    store.commit(store.snapshot().revision, replace=(
+        Cell(ACTIVE_THEME_ROOT, NULL_CELL_ID, NULL_CELL_ID, b"vellum"),
+    ))
+    assert read_active_theme(store.snapshot(), modifier) == "vellum"
 
 
 def test_an_unadmitted_theme_is_refused_and_changes_nothing():

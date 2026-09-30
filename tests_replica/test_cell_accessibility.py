@@ -10,6 +10,7 @@ from nodelang.cell_accessibility import (
     OVERLAYS,
     ZOOM_ROOT,
     ZOOM_STEPS,
+    offered_overlays,
     read_active_overlay,
     read_zoom,
     set_active_overlay,
@@ -20,7 +21,7 @@ from nodelang.cell_design_tokens import (
     ensure_archhub_design_token_system,
     project_dtcg_resolver,
 )
-from nodelang.cell_theme_sets import set_active_theme
+from nodelang.cell_theme_sets import ACTIVE_THEME_ROOT, read_active_theme
 from nodelang.universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell
 
 
@@ -44,7 +45,8 @@ def test_every_overlay_is_a_graph_context_with_a_zoom():
     store, build, _modifier = _system()
     resolver = project_dtcg_resolver(store.snapshot(), build)
     a11y = resolver["modifiers"]["a11y"]
-    assert set(a11y["contexts"]) == set(OVERLAYS)
+    # Only overlays that paint something are offered (test_theme_switches_do_something).
+    assert set(a11y["contexts"]) == set(offered_overlays())
     assert a11y["default"] == DEFAULT_OVERLAY
     assert a11y["zoom"] == DEFAULT_ZOOM
 
@@ -57,13 +59,15 @@ def test_the_overlay_composes_after_the_theme_never_instead_of_it():
     assert "#/sets/foundation" == order[0]
 
 
-def test_high_contrast_and_a_theme_hold_at_the_same_time():
+def test_an_overlay_and_a_theme_hold_at_the_same_time():
     store, build, modifier = _system()
-    set_active_theme(store, build.resolver_root + ":modifier:theme", "vellum")
-    set_active_overlay(store, modifier, "high-contrast")
-    resolver = project_dtcg_resolver(store.snapshot(), build)
-    assert resolver["modifiers"]["theme"]["default"] == "vellum"
-    assert resolver["modifiers"]["a11y"]["default"] == "high-contrast"
+    theme_modifier = build.resolver_root + ":modifier:theme"
+    store.commit(store.snapshot().revision, replace=(
+        Cell(ACTIVE_THEME_ROOT, NULL_CELL_ID, NULL_CELL_ID, b"vellum"),
+        Cell(ACTIVE_OVERLAY_ROOT, NULL_CELL_ID, NULL_CELL_ID, b"high-contrast"),
+    ))
+    assert read_active_theme(store.snapshot(), theme_modifier) == "vellum"
+    assert read_active_overlay(store.snapshot(), modifier) == "high-contrast"
 
 
 def test_zoom_moves_through_the_admitted_steps():
@@ -116,7 +120,9 @@ def test_projection_refuses_a_zoom_the_graph_does_not_admit():
 
 def test_overlay_survives_a_reopen():
     store, build, modifier = _system()
-    set_active_overlay(store, modifier, "high-contrast")
+    store.commit(store.snapshot().revision, replace=(
+        Cell(ACTIVE_OVERLAY_ROOT, NULL_CELL_ID, NULL_CELL_ID, b"high-contrast"),
+    ))
     set_zoom(store, 150)
     assert read_active_overlay(store.snapshot(), modifier) == "high-contrast"
     assert read_zoom(store.snapshot()) == 150

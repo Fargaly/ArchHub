@@ -15,6 +15,16 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from .application import THEME
+
+# The phases clean_coordination_service begins, in order. A court reads that
+# file's _begin(...) calls and holds this list equal to them, so the page's
+# "phase k of n" cannot drift from what the boot actually runs.
+BOOT_PHASES: tuple[str, ...] = (
+    "open authority and bind coordination",
+    "stand the canvas surface",
+)
+
 
 class BootProgress:
     """Phases the boot has entered, and how long each took."""
@@ -53,33 +63,48 @@ class BootProgress:
                 "done": self._done,
                 "elapsed": round(time.monotonic() - self._started, 1),
                 "phases": [dict(phase) for phase in self._phases],
+                "total": len(BOOT_PHASES),
             }
 
 
+# Colours are THEME's, the wordmark is the website's "ArchHub". The bar is
+# determinate from the first phase the boot reports; it slides only while no
+# phase is known yet.
 PAGE = """<!doctype html>
 <meta charset="utf-8"><title>ArchHub is opening</title>
 <style>
 :root{color-scheme:dark}
-body{margin:0;height:100vh;background:#111312;color:#e8e6e3;
+body{margin:0;height:100vh;background:%(bg)s;color:%(ink)s;
 font-family:Inter,system-ui,sans-serif;display:grid;
 grid-template-rows:1fr auto;overflow:hidden}
 .mark{display:flex;align-items:center;justify-content:center;font-size:46px;
 font-weight:650;letter-spacing:-.02em}
-.mark b{color:#d97757;font-weight:650}
 .foot{padding:0 26px 26px}
-.bar{height:2px;background:#22261f;border-radius:1px;overflow:hidden}
-.fill{height:100%;width:30%;background:#d97757;
+.bar{height:2px;background:%(line)s;border-radius:1px;overflow:hidden}
+.fill{height:100%%;width:0;background:%(accent)s;transition:width .3s ease-out}
+.bar[data-determinate="false"] .fill{width:30%%;
 animation:slide 1.4s ease-in-out infinite}
-@keyframes slide{0%{transform:translateX(-110%)}100%{transform:translateX(440%)}}
+@keyframes slide{0%%{transform:translateX(-110%%)}100%%{transform:translateX(440%%)}}
 .line{display:flex;justify-content:space-between;margin-top:10px;
-font-size:11px;color:#8b8f8c;font-variant-numeric:tabular-nums}
+font-size:11px;color:%(ink_muted)s;font-variant-numeric:tabular-nums}
 </style>
-<div class="mark">ARCH<b>HUB</b></div>
+<div class="mark">ArchHub</div>
 <div class="foot">
-  <div class="bar"><div class="fill"></div></div>
+  <div class="bar" data-determinate="false"><div class="fill"></div></div>
   <div class="line"><span id="phase">opening the graph</span><span id="elapsed"></span></div>
 </div>
 <script>
+function progressView(state){
+  const phases=state.phases||[];
+  const total=Math.max(Number(state.total)||0,phases.length);
+  if(!phases.length||!total){return {determinate:false,fraction:0,text:'opening the graph'};}
+  const finished=phases.filter(p=>p.seconds!==null).length;
+  const live=phases.filter(p=>p.seconds===null).at(-1)||phases.at(-1);
+  const k=phases.indexOf(live)+1;
+  return {determinate:true,fraction:finished/total,
+    text:'phase '+k+' of '+total+' \\u00b7 '+live.label};
+}
+
 // The port changes hands when the canvas stands: this page stops being
 // served and /api/universal/boot stops answering. Treating that only as
 // "try again" left the founder looking at the boot screen forever after
@@ -92,8 +117,11 @@ async function tick(){
     const state=await answer.json();
     missed=0;
     if(state.done){setTimeout(()=>location.reload(),250);return;}
-    const live=state.phases.filter(p=>p.seconds===null).at(-1);
-    document.getElementById('phase').textContent=live?live.label:'opening the graph';
+    const view=progressView(state);
+    const bar=document.querySelector('.bar');
+    bar.dataset.determinate=String(view.determinate);
+    bar.querySelector('.fill').style.width=view.determinate?(view.fraction*100)+'%%':'';
+    document.getElementById('phase').textContent=view.text;
     document.getElementById('elapsed').textContent=state.elapsed+'s';
   }catch(error){
     missed+=1;
@@ -103,7 +131,7 @@ async function tick(){
 }
 tick();
 </script>
-"""
+""" % THEME
 
 
 class _BootHandler(BaseHTTPRequestHandler):

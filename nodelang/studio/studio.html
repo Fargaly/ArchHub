@@ -118,6 +118,9 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       if (!minted.ok) throw new Error('sign-in refused');
       session = await minted.json();
     }
+    // Studio panels (Settings -> Workspaces, Hosts, models) send this page's own
+    // session and CSRF; without it they fell back to the cookie and were refused.
+    window.__archhubSession = session;
     const H = () => ({
       'Content-Type':'application/json',
       'X-ArchHub-CSRF':session.csrf,

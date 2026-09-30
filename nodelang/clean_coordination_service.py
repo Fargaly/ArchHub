@@ -515,6 +515,10 @@ def main() -> int:
             )
             service.coordination_host.bind_host_invoker(
                 canvas.clean_authority, canvas.clean_host_invoker)
+            # The desktop's Settings -> Workspaces asks this owner through the
+            # coordination service; it is answered by the canvas's own route.
+            service.coordination_host.bind_workspace_settings(
+                canvas.clean_authority, canvas._clean_workspace_roots)
             canvas.activity = service.coordination_host.activity
             canvas.bind_workshop_owner(service.coordination_host)
             canvas.start()

@@ -7222,6 +7222,25 @@ class ApplicationServer:
                             drain_denied_body=True,
                         ):
                             return
+                    if self.path == '/api/universal/workspace-roots':
+                        # The desktop's Studio is served here, but the workspace
+                        # roots live in the graph the clean owner holds: the
+                        # request is its to answer (owner-only, like Hosts).
+                        from .workspace_roots_catalogue import (
+                            forward_workspace_settings, normalized_picked_folder)
+                        body = self._body(max_bytes=8192)
+                        if binding.subject_root != owner.universal_registry.authorization.subject_root:
+                            raise AuthorizationDenied('only this instance owner changes its workspaces')
+                        picker = getattr(owner, 'native_folder_picker', None)
+                        if body == {'action': 'browse'} and picker is not None:
+                            # Browse opens THIS window's own folder dialog (the
+                            # desktop's Qt thread), like pick-file; it only
+                            # fills the path in, and Add still takes his key.
+                            chosen = picker('Choose a folder for ArchHub to govern')
+                            self._json(200, {'ok': True, 'path': normalized_picked_folder(chosen)})
+                            return
+                        self._json(200, {'ok': True, **forward_workspace_settings(body)})
+                        return
                     if self.path == '/api/universal/assistant-registration':
                         body = self._body(max_bytes=4096)
                         if type(body) is not dict:

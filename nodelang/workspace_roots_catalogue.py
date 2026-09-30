@@ -688,6 +688,11 @@ def read_registered_roots(verifier=None, *, snapshot_path=None, pin_path=None,
 REGISTRY_DIGEST_SCHEMA = "archhub.workspace-roots.registry-digest/v1"
 STATE_PURPOSE = "archhub.workspace-roots-state/v1"
 ISSUER_IDENTITY = ("archhub", "cde-permit-issuer")
+# The desktop's Settings -> Workspaces reaches the graph's owner under its own key,
+# which is admitted for exactly one method (workspace_roots_settings).
+SETTINGS_IDENTITY = ("archhub", "workspace-roots-settings")
+# Browse waits for the owner's folder dialog and Add for his key prompt.
+SETTINGS_TIMEOUT_SECONDS = 660.0
 COORDINATION_ENDPOINT = "http://127.0.0.1:8474/coordination"
 _NONCE = re.compile(r"^[0-9a-f]{32}$")
 _STATEMENT_FIELDS = {"purpose", "graph_id", "request_id", "nonce", "revision", "registry_digest"}
@@ -752,13 +757,14 @@ def _default_graph_context():
 
     endpoint = os.environ.get("ARCHHUB_COORDINATION_ENDPOINT", "").strip() or COORDINATION_ENDPOINT
 
-    def transport(payload):
+    def transport(payload, timeout=5.0):
         http = urllib.request.Request(endpoint, data=json.dumps(payload).encode("utf-8"),
                                       headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(http, timeout=5.0) as response:
-            return json.loads(response.read(65536).decode("utf-8"))
+        with urllib.request.urlopen(http, timeout=timeout) as response:
+            return json.loads(response.read(1 << 20).decode("utf-8"))
     return {
         "transport": transport,
+        "settings_transport": lambda payload: transport(payload, SETTINGS_TIMEOUT_SECONDS),
         "key_store": WindowsDpapiCallerKeyStore(WindowsDpapiCallerKeyStore.default_path()),
         "provider": WindowsDpapiSigningKeyProvider(WindowsDpapiSigningKeyProvider.default_path()),
         "instance": canonical_instance(),
@@ -767,6 +773,32 @@ def _default_graph_context():
 
 # The one seam: where this process reaches the graph's owner. No fallback.
 graph_context = _default_graph_context
+
+
+def forward_workspace_settings(body) -> dict:
+    """Settings -> Workspaces from a process that does not own the graph (the
+    desktop's application server): the request goes to the graph's owner, signed
+    with the settings key, and the owner answers it with the same function its
+    own canvas route uses. Nothing is decided here."""
+    from .clean_coordination_host import CoordinationIdentity, sign_coordination_request
+    if type(body) is not dict:
+        raise WorkspaceRootRefused("workspace-roots request is invalid")
+    try:
+        context = graph_context()
+        request = sign_coordination_request(
+            context["key_store"], CoordinationIdentity(*SETTINGS_IDENTITY),
+            "workspace_roots_settings", {"body": body})
+        answer = (context.get("settings_transport") or context["transport"])(request.to_payload())
+    except InvalidCell:
+        raise
+    except Exception as exc:  # noqa: BLE001 - the owner is not reachable
+        raise WorkspaceRootRefused(
+            "the ArchHub graph owner is not answering (%s); start ArchHub's graph service"
+            % type(exc).__name__) from exc
+    if type(answer) is not dict or answer.get("ok") is not True:
+        error = answer.get("error") if type(answer) is dict else None
+        raise WorkspaceRootRefused(str(error or "the graph owner refused the workspace-roots request"))
+    return {key: value for key, value in answer.items() if key != "ok"}
 
 
 def verified_graph_state() -> dict:
@@ -840,8 +872,15 @@ def pick_workspace_folder(*, timeout=600.0) -> str:
                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except subprocess.TimeoutExpired:
         return ""
-    chosen = done.stdout.decode("utf-8", "replace").strip()
-    if done.returncode != 0 or not chosen:
+    if done.returncode != 0:
+        return ""
+    return normalized_picked_folder(done.stdout.decode("utf-8", "replace"))
+
+
+def normalized_picked_folder(chosen) -> str:
+    """A dialog's answer as a Windows folder path; "" when he cancelled."""
+    chosen = str(chosen or "").strip()
+    if not chosen:
         return ""
     chosen = str(PureWindowsPath(chosen))
     if not _local_folder_path(chosen):

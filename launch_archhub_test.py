@@ -901,8 +901,21 @@ def _pick_file(title, name_filter):
     QTimer.singleShot(0, ask)
     done.wait(120)
     return result.get("path", "")
+# Settings -> Workspaces "Browse": the same window-owned dialog, for a folder.
+def _pick_folder(title):
+    from PyQt6.QtWidgets import QFileDialog
+    result = {}
+    done = threading.Event()
+    def ask():
+        result["path"] = QFileDialog.getExistingDirectory(window, title, "")
+        done.set()
+    from PyQt6.QtCore import QTimer
+    QTimer.singleShot(0, ask)
+    done.wait(600)
+    return result.get("path", "")
 import threading
 server.native_file_picker = _pick_file
+server.native_folder_picker = _pick_folder
 # A dead render process reloads instead of leaving a dead window.
 def _revive(_status, _code):
     print("  render process died -- reloading", flush=True)

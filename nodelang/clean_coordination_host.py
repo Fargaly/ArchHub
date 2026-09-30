@@ -72,6 +72,7 @@ _METHODS = frozenset({
     "publish_workshop_result",
     "wait_agent",
     "workspace_roots_state",
+    "workspace_roots_settings",
 })
 
 
@@ -300,6 +301,7 @@ class CleanCoordinationHost:
         self.authority = authority
         self.key_store = key_store
         self._host_invoker = host_invoker
+        self._workspace_settings = None
         from .runtime_activity import RuntimeActivity
         self.activity = RuntimeActivity()
         self._lock = threading.RLock()
@@ -426,6 +428,12 @@ class CleanCoordinationHost:
         self._bindings[normalized.key_id] = bound
         return bound
 
+    def bind_workspace_settings(self, authority, handler):
+        """Owner-only in-process wiring: the canvas's own workspace-roots route."""
+        if authority is not self.authority or not callable(handler):
+            raise InvalidCell("workspace settings must belong to this authority owner")
+        self._workspace_settings = handler
+
     def bind_host_invoker(self, authority, invoker):
         """Owner-only in-process wiring; not exposed as a coordination method."""
         if authority is not self.authority or not callable(invoker):
@@ -450,6 +458,7 @@ class CleanCoordinationHost:
         self.verify_request(request)
         from .workspace_roots_catalogue import (
             ISSUER_IDENTITY,
+            SETTINGS_IDENTITY,
             current_registry_statement,
         )
         issuer = CoordinationIdentity(*ISSUER_IDENTITY).normalized().key_id
@@ -457,6 +466,18 @@ class CleanCoordinationHost:
             # The permit issuer's key reads the workspace-roots state and nothing
             # else; no other key reads it. No Work, write or session binding.
             raise InvalidCell("coordination method is not admitted for this key")
+        settings = CoordinationIdentity(*SETTINGS_IDENTITY).normalized().key_id
+        if (request.method == "workspace_roots_settings") != (request.key_id == settings):
+            # Settings -> Workspaces from the desktop: that key asks this owner's
+            # own workspace-roots route and nothing else.
+            raise InvalidCell("coordination method is not admitted for this key")
+        if request.method == "workspace_roots_settings":
+            handler = self._workspace_settings
+            if handler is None:
+                raise InvalidCell("this graph owner serves no workspace settings")
+            # Not under the coordinator lock: Add waits for the owner's key prompt
+            # and Browse for his folder dialog; the route takes its own locks.
+            return {"ok": True, **handler(request.parameters.get("body"))}
         if request.method == "workspace_roots_state":
             with self._changed:
                 return {"ok": True, **current_registry_statement(

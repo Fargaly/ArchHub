@@ -2581,31 +2581,6 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     });
     setSelectedIds(ids => ids.filter(id => allNodes.some(node => node.id === id)));
   }, [allNodes, layoutBusy]);
-  // No two cards may overlap. Seeded layouts space cards by their declared height, but a card is as tall as
-  // it draws (content + port band). Once every card has reported its real height, any card that intersects
-  // one above it moves down just below it (24px gap); columns are kept. Only the view moves: the graph gets
-  // a position when the person drags that card.
-  React.useEffect(() => {
-    if (dragRef.current || saving.current || !allNodes.length) return;
-    if (!allNodes.every(node => Number.isFinite(cardHeights[node.id]))) return;
-    setPositions(held => {
-      const boxes = allNodes.map(node => ({id:node.id, x:(held[node.id] || node).x, y:(held[node.id] || node).y,
-        w:node.w || 220, h:cardHeights[node.id]}))
-        .sort((a, b) => a.y - b.y || a.x - b.x);
-      const placed = [], moved = {};
-      for (const box of boxes) {
-        for (let guard = 0; guard < boxes.length; guard += 1) {
-          const hit = placed.find(p => box.x < p.x + p.w + 16 && p.x < box.x + box.w + 16 && box.y < p.y + p.h + 16 && p.y < box.y + box.h + 16);
-          if (!hit) break;
-          box.y = hit.y + hit.h + 24;
-        }
-        placed.push(box);
-        const at = held[box.id];
-        if (!at || at.y !== box.y) moved[box.id] = {x:box.x, y:box.y};
-      }
-      return Object.keys(moved).length ? {...held, ...moved} : held;
-    });
-  }, [cardHeights, allNodes]);
   React.useEffect(() => {
     alive.current = true;
     return () => { flushRef.current(true); alive.current = false; pendingArrange.current = null; dragRef.current = null; };

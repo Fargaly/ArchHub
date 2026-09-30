@@ -1,8 +1,8 @@
 {
   "authority": "evidence-only",
-  "byte_count": 19684203,
+  "byte_count": 19529112,
   "custody": "T0_PUBLIC",
-  "file_count": 721,
+  "file_count": 692,
   "files": [
     {
       "path": ".claude/launch.json",
@@ -100,11 +100,6 @@
       "size": 22238
     },
     {
-      "path": "app_theme.config.json",
-      "sha256": "1e22df067b24254629274c4436f42b8e966db0375c3797b77d18068c3f623353",
-      "size": 133
-    },
-    {
       "path": "desktop/README.md",
       "sha256": "e28131fc3418a425520705c3a4fad319a3ded41ba7b44e08fe63f3828e421c3f",
       "size": 662
@@ -143,11 +138,6 @@
       "path": "evidence/README.md",
       "sha256": "6af4c015eafb01c05f9f0868a4d9b148037ea35239c3673142c454a421edefca",
       "size": 668
-    },
-    {
-      "path": "evidence/_demo_server.py",
-      "sha256": "273d256b06def8202b09e06a020a87135a1ac6d4f447becea69fe0a3b7c29341",
-      "size": 357
     },
     {
       "path": "evidence/build_court_docket.py",
@@ -670,11 +660,6 @@
       "size": 183270
     },
     {
-      "path": "index.html",
-      "sha256": "3bf3801c2a8a54a3310641f483dd033b675cf6cbb5fbf949b602bea5bbe5d147",
-      "size": 8387
-    },
-    {
       "path": "infrastructure/aws/build_cloud_authority_template.py",
       "sha256": "cb61e1fed013972750c39f0636c85f5b05df744f583e7687df81fda1d339505e",
       "size": 14998
@@ -710,11 +695,6 @@
       "size": 400
     },
     {
-      "path": "legacy_engine/demo_run.py",
-      "sha256": "12466ac453a0a31c099003a59c97d2690f83f11aa2b8f967bc45cb51deb997da",
-      "size": 3390
-    },
-    {
       "path": "legacy_engine/grand_replica.py",
       "sha256": "412d3e43ea49687cc0d97e37616aac7e9d050ed05a902df0b9ecc824e26cf33f",
       "size": 4201
@@ -725,81 +705,6 @@
       "size": 13260
     },
     {
-      "path": "legacy_engine/leaf_ai_proposal_node.py",
-      "sha256": "134a3fcd338a6a42d5833f881c14217430fa3ea3c48ca7282d6ad893644396d1",
-      "size": 7726
-    },
-    {
-      "path": "legacy_engine/leaf_court_gate_refutes_on_real_artifact.py",
-      "sha256": "5675bf028bd8cc08214946db58ce0bdeed1883e28ad2d844a96136edc89b36e8",
-      "size": 5972
-    },
-    {
-      "path": "legacy_engine/leaf_derived_artifact_regen.py",
-      "sha256": "668e44070e28c56dd8a364520e485d015d7408fab7dd0eb4a171993c46088efb",
-      "size": 6820
-    },
-    {
-      "path": "legacy_engine/leaf_domains_as_sessions_grand_session_roundtrip.py",
-      "sha256": "6642ae7378c10df5bd8b230c1621d1bdbecacbcd3f036c66ea84be0106426e57",
-      "size": 6739
-    },
-    {
-      "path": "legacy_engine/leaf_effectful_frozen.py",
-      "sha256": "2286937b93688acd1f96318b60abb5ed5047ed2d7c30d1addfe70cf82dcaca1b",
-      "size": 6340
-    },
-    {
-      "path": "legacy_engine/leaf_fake_live_detect.py",
-      "sha256": "18854484debf94790bd1692eac47b503e6c7fe6bcfb5648e3cb564a692b6ae97",
-      "size": 7212
-    },
-    {
-      "path": "legacy_engine/leaf_floor_aggregate.py",
-      "sha256": "cfda3315aafa39cf136077036902523914d6b73c8cdf40e40b23bd6c8b71a387",
-      "size": 4726
-    },
-    {
-      "path": "legacy_engine/leaf_floor_iterate.py",
-      "sha256": "73cd90a066371b15dc8d60d9c9a7e86bf5d8ac25bf09f899925854b915753735",
-      "size": 4279
-    },
-    {
-      "path": "legacy_engine/leaf_floor_reference.py",
-      "sha256": "fe63aaacd417207cf389405012295f39af3d34a4328a6d4fad87505da31bf074",
-      "size": 5491
-    },
-    {
-      "path": "legacy_engine/leaf_group_runs_as_node_on_real_map.py",
-      "sha256": "7a8466a1e440f10404f873b4c15d48635702a91fbeceec22b515e63cd4aa8d0f",
-      "size": 4241
-    },
-    {
-      "path": "legacy_engine/leaf_history_append_only.py",
-      "sha256": "e79a2c930e563ed998706c236413fd089c62bf5f2b52040fefbdd9d62de8589d",
-      "size": 5263
-    },
-    {
-      "path": "legacy_engine/leaf_history_revert_over_live_api.py",
-      "sha256": "b3a7be8d551d8b943ae6b9074390bf5ea4668dc30a8204d7db0c6586033083bc",
-      "size": 7300
-    },
-    {
-      "path": "legacy_engine/leaf_secret_ref.py",
-      "sha256": "d6feb1e6d2fc2fbabc1bf2c21dfd2d8efeef6038d87bde2d171351e8cf593b36",
-      "size": 4675
-    },
-    {
-      "path": "legacy_engine/leaf_watcher_edits_served_ui.py",
-      "sha256": "bfb04fdadc80d619e9c9cba6e83445cd7515e131b120c66fd9eaef210da5e53e",
-      "size": 7099
-    },
-    {
-      "path": "legacy_engine/leaf_watcher_real_param.py",
-      "sha256": "bfb77d9839a40b0c7ce866423ccb29157170693184dba97ee657c1cedbbae3f6",
-      "size": 8006
-    },
-    {
       "path": "legacy_engine/node_lang.py",
       "sha256": "01867404b54a2069150863d0bce34e31b0d1d7612f98d3d6bac90590646c8823",
       "size": 16099
@@ -808,11 +713,6 @@
       "path": "legacy_engine/server.py",
       "sha256": "ebfe2b346f0869becb7057025afb6a1e7596541b06849023e880022c6d666c57",
       "size": 2801
-    },
-    {
-      "path": "legacy_engine/watcher_demo.py",
-      "sha256": "64e2a0c734fc35adda9bf7c8bbb36f2acfbc79d5d81282edd50f7ec45562c57d",
-      "size": 3099
     },
     {
       "path": "nodelang/__init__.py",
@@ -1670,11 +1570,6 @@
       "size": 33142
     },
     {
-      "path": "nodelang/clean_browser_scope_state.py",
-      "sha256": "77d659bb376be1601b56dd6ad7e74344b2226d8d06b1ba4725fe538a14964134",
-      "size": 3877
-    },
-    {
       "path": "nodelang/clean_coordination_host.py",
       "sha256": "c99dffab85c5b10039ea35480240b495ca41bc90f52469fd64ef7f06be75d1b1",
       "size": 23446
@@ -1733,11 +1628,6 @@
       "path": "nodelang/clean_scope_interactions.py",
       "sha256": "cb49be13235ad4322f30e40b620844e317e6ea19c32f7ce0ebc5f037c86bfddc",
       "size": 48668
-    },
-    {
-      "path": "nodelang/clean_scope_layout.py",
-      "sha256": "a91b88c4ea814f55592ac602d2643ad22515578cc6628f77a12ce43340df7a3b",
-      "size": 6013
     },
     {
       "path": "nodelang/clean_subsystem_revision.py",
@@ -1998,11 +1888,6 @@
       "path": "nodelang/serve_canvas.py",
       "sha256": "fdc50ff5affb1f0d396ef8ad1e3190c47557fd2501c76022d58f2c01fca11548",
       "size": 8265
-    },
-    {
-      "path": "nodelang/serve_reality.py",
-      "sha256": "c3d21531e27e36e0fd0adcce65b0d997aba3bd4d58b09f74b7cb618582e7e1bd",
-      "size": 712
     },
     {
       "path": "nodelang/site_export.py",
@@ -3565,31 +3450,6 @@
       "size": 14143
     },
     {
-      "path": "tools/app_from_nodes.py",
-      "sha256": "62282cc80b1b6b4738939073cd409a1749b38a9862ccf5f301cc97c4945916a3",
-      "size": 8170
-    },
-    {
-      "path": "tools/build_self_hosting_map.py",
-      "sha256": "dc65207b7706b5eba3106e8fc2a1abdccf9655f45d05b3843f6502c45f9674d1",
-      "size": 13250
-    },
-    {
-      "path": "tools/demo_watcher_live.py",
-      "sha256": "a329f92aa3c435bc40453a9aa3bfa7242d8adae118f474b05c60839681a6b35a",
-      "size": 1841
-    },
-    {
-      "path": "tools/grand_sweep.py",
-      "sha256": "fb9bf73bdd8577af5faee2d88673cb004343ac93fdf4c1292f1c3666e7fb7ff9",
-      "size": 8598
-    },
-    {
-      "path": "tools/leaf_both_drive_one_graph_over_http.py",
-      "sha256": "b0a124eb61d5c97d9a6cfa38142a5ee3137ead3ae844ac95d920ef972e1ccb1f",
-      "size": 4399
-    },
-    {
       "path": "tools/reality_grade.py",
       "sha256": "6dd1eceff77dac0c0484b14575c9adec7b7393b2f92f65f2a56b913f86b70fd1",
       "size": 3247
@@ -3603,13 +3463,8 @@
       "path": "tools/serve_grandmap.py",
       "sha256": "f7716cebdf1456e6f33cbfc95cbfee0430f560c13ec4be1e0676d841a6d7edc3",
       "size": 2339
-    },
-    {
-      "path": "watcher_ui.html",
-      "sha256": "b3fe64c133d26c79c34ceb6ab1cbd06718f65da41b2d92132c316f6d843fcf3c",
-      "size": 976
     }
   ],
   "schema": "archhub.source-custody-manifest.v1",
-  "tree_sha256": "34b410fc4dca8edb920780b061d19cf922e8a327843b4f9bb0cc0efdc95e464a"
+  "tree_sha256": "c41bd879869f9776a628cd783dff87419380d8cce070a653d0d2b3fdd49871be"
 }

@@ -5,7 +5,9 @@ One identity source: the verified Google sign-in (google_auth). This module reus
 only that verified identity; it never mints a desktop code or an ah_live_ token.
 
 Every grant is bound to client_id, the exact redirect_uri, an S256 challenge, the
-resource (this cloud's /mcp) and the scope mcp:read, and to the user Google verified.
+resource (this cloud's /mcp) and its scopes, and to the user Google verified: mcp:read
+always, and mcp:workshop when the client asks for it (the client then takes part in the
+founder's Workshop as its own agent; the consent page says so before Approve).
 Codes, access tokens and refresh tokens are stored as sha256 only. A code or a
 refresh token is consumed by one conditional UPDATE, so two concurrent redemptions
 cannot both succeed; a replay of either revokes the whole token family. Access
@@ -41,6 +43,10 @@ import db
 router = APIRouter()
 
 SCOPE = 'mcp:read'
+# The founder's Workshop, as this client's own agent (brain_mcp WORKSHOP_TOOLS):
+# read and post Workshop messages and claim Work there. Asked for, never implied.
+WORKSHOP_SCOPE = 'mcp:workshop'
+SCOPES = (SCOPE, WORKSHOP_SCOPE)
 ACCESS_TTL = 3600
 REFRESH_TTL = 30 * 24 * 3600
 CODE_TTL = 300
@@ -173,7 +179,7 @@ def resource_metadata_url() -> str:
 
 def challenge_header() -> str:
     """WWW-Authenticate for an unauthenticated /mcp call: where to find the server."""
-    return 'Bearer resource_metadata="%s", scope="%s"' % (resource_metadata_url(), SCOPE)
+    return 'Bearer resource_metadata="%s", scope="%s"' % (resource_metadata_url(), ' '.join(SCOPES))
 
 
 def _error(error: str, description: str, status: int = 400) -> JSONResponse:
@@ -186,7 +192,7 @@ def _error(error: str, description: str, status: int = 400) -> JSONResponse:
 @router.get('/.well-known/oauth-protected-resource/mcp')
 def protected_resource() -> dict:
     return {'resource': mcp_resource(), 'authorization_servers': [issuer()],
-            'scopes_supported': [SCOPE], 'bearer_methods_supported': ['header']}
+            'scopes_supported': list(SCOPES), 'bearer_methods_supported': ['header']}
 
 
 @router.get('/.well-known/oauth-authorization-server')
@@ -200,7 +206,7 @@ def authorization_server() -> dict:
         'grant_types_supported': ['authorization_code', 'refresh_token'],
         'code_challenge_methods_supported': ['S256'],
         'token_endpoint_auth_methods_supported': ['none'],
-        'scopes_supported': [SCOPE],
+        'scopes_supported': list(SCOPES),
         'authorization_response_iss_parameter_supported': True,
     }
 
@@ -308,8 +314,11 @@ def authorize(request: Request, response_type: str = '', client_id: str = '', re
         return fail('invalid_request', 'PKCE with S256 is required')
     if resource and resource != mcp_resource():
         return fail('invalid_target', 'unknown resource')
-    if set((scope or SCOPE).split()) - {SCOPE}:
-        return fail('invalid_scope', 'only mcp:read is offered')
+    asked = set((scope or SCOPE).split())
+    if asked - set(SCOPES):
+        return fail('invalid_scope', 'only mcp:read and mcp:workshop are offered')
+    # mcp:read always; mcp:workshop only when asked, and the page names it.
+    granted = ' '.join(name for name in SCOPES if name == SCOPE or name in asked)
     # Consent first (MCP "confused deputy"): nothing goes to Google, and no code can
     # ever reach this client's redirect, until the person in THIS browser approves
     # this client by name on ArchHub's own page.
@@ -332,9 +341,9 @@ def authorize(request: Request, response_type: str = '', client_id: str = '', re
             con.execute('INSERT INTO oauth_pending (id, client_id, redirect_uri, code_challenge, state, scope, '
                         'resource, expires_at, csrf_hash, browser_hash, address, network, lane) '
                         'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                        (pending, client_id, redirect_uri, code_challenge, state, SCOPE, mcp_resource(),
+                        (pending, client_id, redirect_uri, code_challenge, state, granted, mcp_resource(),
                          int(time.time()) + PENDING_TTL, _hash(csrf), _hash(browser), address, network, lane))
-            page = _consent_page(client, redirect_uri, pending, csrf)
+            page = _consent_page(client, redirect_uri, pending, csrf, granted)
             page.set_cookie(CONSENT_COOKIE, pending + '.' + browser, max_age=PENDING_TTL, path='/',
                             secure=True, httponly=True, samesite='lax')
             return page
@@ -368,9 +377,9 @@ def authorize(request: Request, response_type: str = '', client_id: str = '', re
                     return _error('temporarily_unavailable', 'too many unfinished authorizations; retry shortly', 503)
         con.execute('INSERT INTO oauth_pending (id, client_id, redirect_uri, code_challenge, state, scope, resource, '
                     'expires_at, csrf_hash, browser_hash, address, network) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                    (pending, client_id, redirect_uri, code_challenge, state, SCOPE, mcp_resource(),
+                    (pending, client_id, redirect_uri, code_challenge, state, granted, mcp_resource(),
                      int(time.time()) + PENDING_TTL, _hash(csrf), _hash(browser), address, network))
-    page = _consent_page(client, redirect_uri, pending, csrf)
+    page = _consent_page(client, redirect_uri, pending, csrf, granted)
     page.set_cookie(CONSENT_COOKIE, pending + '.' + browser, max_age=PENDING_TTL, path='/',
                     secure=True, httponly=True, samesite='lax')
     return page
@@ -564,9 +573,13 @@ def _page_policy(redirect_uri: str) -> str:
             "form-action 'self' %s %s://%s" % (GOOGLE_ORIGIN, parts.scheme, parts.netloc))
 
 
-def _consent_page(client: dict, redirect_uri: str, pending: str, csrf: str) -> HTMLResponse:
+def _consent_page(client: dict, redirect_uri: str, pending: str, csrf: str,
+                  scope: str = SCOPE) -> HTMLResponse:
     name = html.escape(client.get('client_name') or 'An unnamed application')
     host = html.escape(urllib.parse.urlsplit(redirect_uri).hostname or '')
+    workshop = ('<p><b>Workshop:</b> for the founder, it will also join the Workshop as its own '
+                'agent: read its messages, post messages and claim Work there. It cannot run '
+                'anything on the desktop.</p>') if WORKSHOP_SCOPE in scope.split() else ''
     body = (
         '<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width">'
         '<title>Allow access to ArchHub?</title>'
@@ -574,11 +587,11 @@ def _consent_page(client: dict, redirect_uri: str, pending: str, csrf: str) -> H
         '<h1 style="font-size:1.3rem">Allow <b>%s</b> to read your ArchHub?</h1>'
         '<p>It will send you back to <b>%s</b> and may read your ArchHub brain and, for the founder, '
         'your desktop hosts (read only). Approve only if you just started this from that application.</p>'
-        '<form method=post action="/oauth/consent">'
+        '%s<form method=post action="/oauth/consent">'
         '<input type=hidden name=pending value="%s"><input type=hidden name=csrf value="%s">'
         '<button name=decision value=approve>Approve</button> '
         '<button name=decision value=deny>Deny</button></form></body>'
-    ) % (name, host, html.escape(pending), html.escape(csrf))
+    ) % (name, host, workshop, html.escape(pending), html.escape(csrf))
     return HTMLResponse(body, headers={**_PAGE_HEADERS, 'Content-Security-Policy': _page_policy(redirect_uri)})
 
 
@@ -826,4 +839,12 @@ def user_for_access_token(value: str) -> Optional[dict]:
             return None
         # A suspended account authenticates nowhere, as in db.user_for_token.
         user = con.execute('SELECT * FROM users WHERE id = ? AND suspended_at IS NULL', (held['user_id'],)).fetchone()
-    return dict(user) if user else None
+        client = con.execute('SELECT client_name FROM oauth_clients WHERE client_id = ?',
+                             (held['client_id'],)).fetchone()
+    if not user:
+        return None
+    # Which client holds this token, and what it was granted: the Workshop tools
+    # act as THIS client's own agent, and only with mcp:workshop.
+    return {**dict(user), 'mcp_client': {
+        'client_id': held['client_id'], 'client_name': (client['client_name'] if client else '') or '',
+        'scopes': [name for name in SCOPES if name in held['scope'].split()]}}

@@ -139,7 +139,9 @@ def test_discovery_names_the_resource_the_server_and_s256(client):
     assert r.status_code == 401
     challenge = r.headers["www-authenticate"]
     assert 'resource_metadata="https://api.archhub.io/.well-known/oauth-protected-resource"' in challenge
-    assert 'scope="mcp:read"' in challenge
+    # mcp:workshop is offered next to mcp:read (test_mcp_workshop.py); the grant
+    # still carries it only when the client asks and the consent page names it.
+    assert 'scope="mcp:read mcp:workshop"' in challenge
 
 
 def test_registration_takes_only_exact_https_or_loopback_redirects(client):

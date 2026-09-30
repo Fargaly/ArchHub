@@ -1199,7 +1199,10 @@ def api_agent_task_claim(body: Optional[AgentTaskClaimReq] = None,
     addressed to it (kind app / app-execute). {task: null} when idle."""
     import app_relay
     body = body or AgentTaskClaimReq()
-    kinds = tuple(k for k in body.kinds if k in app_relay.APP_KINDS) or app_relay.APP_KINDS
+    # A Workshop step is claimed only by an app that names it: an app that
+    # predates it would read its JSON as a BABOOM instruction.
+    kinds = (tuple(k for k in body.kinds if k in app_relay.APP_KINDS)
+             or tuple(k for k in app_relay.APP_KINDS if k != app_relay.WORKSHOP_CALL))
     # Only what the founder's own accounts queued reaches his desktop: the
     # claim used to take the oldest task of ANY account (review 2026-09-28).
     task = db.claim_next_agent_task(

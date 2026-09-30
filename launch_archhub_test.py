@@ -1348,8 +1348,16 @@ def _cockpit_offer_command(utterance, execute):
 
 cloud_relay = None
 try:
-    from nodelang.cloud_relay import start_cloud_relay as _start_relay
+    from nodelang.cloud_relay import McpWorkshopAgents as _McpAgents, start_cloud_relay as _start_relay
     from nodelang.universal_pipeline import project_atlas_map as _atlas
+    # Spark, Notion and any other MCP client the founder connected with Workshop
+    # access: each is its own agent in this app's Workshop. If that cannot be
+    # set up, the relay still starts; only Workshop steps are refused.
+    try:
+        _mcp_workshop_caller = _McpAgents(descriptor_path, machine_key_provider).call
+    except Exception as refusal:
+        _mcp_workshop_caller = None
+        print("  workshop   : MCP agents unavailable (%s)" % type(refusal).__name__, flush=True)
     cloud_relay = _start_relay(
         appdata=Path(os.environ["APPDATA"]), state_dir=state_dir,
         respond=_cockpit_respond, execute=_cockpit_execute,
@@ -1357,6 +1365,7 @@ try:
         hosts=lambda: server._host_rows(),
         offer=_cockpit_offer,
         offer_command=_cockpit_offer_command,
+        workshop_caller=_mcp_workshop_caller,
     )
     print("  cockpit    :", "relay on (actions wait for signed BABOOM attachment)"
           if cloud_relay else "relay off (no cloud session or consent)", flush=True)

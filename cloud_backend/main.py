@@ -2154,6 +2154,7 @@ async def brain_over_mcp(req: Request,
         is_founder=_is_founder_account,
         host_read=_desktop_host_read,
         pushed_hosts=founder_cockpit.pushed_hosts,
+        workshop_call=_desktop_workshop_call,
     )
     # An unauthenticated call learns where to authorize (MCP authorization).
     headers = {"WWW-Authenticate": oauth_mcp.challenge_header()} if status == 401 else None
@@ -2169,6 +2170,13 @@ def _mcp_user(authorization: str | None) -> dict:
 
 def _is_founder_account(user: dict) -> bool:
     return (user.get("email") or "").strip().lower() in config.founder_emails()
+
+
+def _desktop_workshop_call(user: dict, client: dict, method: str, params: dict) -> object:
+    """Queue one Workshop step of this MCP client's agent for the founder's app."""
+    import app_relay
+    return app_relay.workshop_call(client, method, params,
+                                   actor=(user.get("email") or "").strip().lower())
 
 
 def _desktop_host_read(user: dict, tool: str, arguments: dict) -> object:

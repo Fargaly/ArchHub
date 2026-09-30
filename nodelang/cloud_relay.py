@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 import time
 import urllib.error
@@ -32,6 +33,9 @@ DEFAULT_BASE = "https://api.archhub.io"
 # one address is used. Every cloud reader goes through pinned_cloud_base().
 PINNED_BASES = ("https://api.archhub.io", "https://archhub-cloud.fly.dev")
 HOST_READ = "host-read"
+# One Workshop step of an MCP client (Spark, Notion) as its own agent; see
+# McpWorkshopAgents. Claimed only when this app can answer it.
+WORKSHOP_CALL = "workshop-call"
 APP_KINDS = ("app", "app-execute", HOST_READ)
 # What a remote host read may run: the SAME local read functions the host
 # tools use, and nothing that executes, captures or sends. Anything else is
@@ -230,6 +234,126 @@ def host_read(tool: object, arguments: object) -> object:
     return answer
 
 
+# What an MCP client's agent may do in the Workshop: the installed Workshop
+# coordination methods Claude and Codex use (installed_workshop_coordination),
+# nothing that executes, attaches another agent or runs a task.
+WORKSHOP_METHODS = frozenset({
+    "workshop_lens", "list_agents", "read_messages", "read_message",
+    "send_message", "acknowledge_message", "claim_work",
+})
+MAX_MCP_AGENTS = 8
+_RENEW_MARGIN_SECONDS = 120.0
+_PRESENCE_EVERY_SECONDS = 60.0
+
+
+def mcp_runtime(client_name: object) -> str:
+    """The runtime an MCP client's agent is enrolled under: always mcp-<name>.
+
+    The prefix keeps a client that names itself "Claude" or "Codex" out of those
+    runtimes' Agent Bodies; the rest is the client's registered name.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", str(client_name or "").lower()).strip("-")[:40].strip("-")
+    return "mcp-" + (slug or "client")
+
+
+def _compact(value: object, depth: int = 0) -> object:
+    """A Workshop answer small enough for one task row: long texts cut, long lists cut."""
+    if isinstance(value, str):
+        return value if len(value) <= 600 else value[:600] + "..."
+    if isinstance(value, Mapping):
+        return {str(key): _compact(item, depth + 1) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_compact(item, depth + 1) for item in list(value)[:20]]
+    return value
+
+
+class McpWorkshopAgents:
+    """Each MCP client (by OAuth client_id) is one Workshop agent of its own.
+
+    It is enrolled like any runtime agent (UniversalRuntimeClient.bind_agent_session,
+    runtime mcp-<name>, external session mcp:<client_id>) and every step goes
+    through InstalledWorkshopCoordinationClient: the same allowlisted methods,
+    identity checks and idempotency Claude and Codex use. One process-local
+    capability per client, renewed before it expires; nothing else is kept.
+    """
+
+    def __init__(self, descriptor_path: Path, key_provider: object, *,
+                 client_factory: Optional[Callable[[], object]] = None):
+        self.descriptor_path = Path(descriptor_path)
+        self.key_provider = key_provider
+        self._factory = client_factory
+        self._agents: dict[str, tuple[object, object, str]] = {}
+        self._presence_at: dict[str, float] = {}
+        self._presence: dict[str, str] = {}
+        self._lock = threading.Lock()
+
+    def _new_client(self) -> object:
+        if self._factory is not None:
+            return self._factory()
+        from .application_machine_transport import UniversalRuntimeClient
+        return UniversalRuntimeClient(self.descriptor_path, self.key_provider)
+
+    def _bound(self, client_id: str, client_name: str):
+        held = self._agents.get(client_id)
+        runtime = mcp_runtime(client_name)
+        if held is not None and held[2] == runtime:
+            return held
+        if held is None and len(self._agents) >= MAX_MCP_AGENTS:
+            raise PermissionError("too many MCP agents on this app; restart ArchHub to reset them")
+        from .installed_workshop_coordination import InstalledWorkshopCoordinationClient
+        client = self._new_client()
+        client.bind_agent_session(runtime=runtime, external_session_id="mcp:" + client_id)
+        held = (client, InstalledWorkshopCoordinationClient(client), runtime)
+        self._agents[client_id] = held
+        self._presence_at.pop(client_id, None)
+        return held
+
+    def _keep_alive(self, client_id: str, client: object) -> None:
+        if float(getattr(client, "_agent_session_expires_at", 0.0)) - time.time() < _RENEW_MARGIN_SECONDS:
+            client.renew_agent_session()
+        now = time.monotonic()
+        if now - self._presence_at.get(client_id, -1e9) >= _PRESENCE_EVERY_SECONDS:
+            # Presence is what the Workshop rail and Assign read as "verified".
+            # A refusal is reported with the answer; messages still flow.
+            try:
+                client.renew_runtime_presence()
+                self._presence[client_id] = "live"
+            except Exception as refusal:
+                self._presence[client_id] = "not renewed: %s" % (refusal,)
+            self._presence_at[client_id] = now
+
+    def call(self, agent: object, method: object, params: object) -> dict:
+        if not isinstance(agent, Mapping):
+            raise ValueError("a Workshop step names its agent")
+        client_id = agent.get("client_id")
+        if (type(client_id) is not str or not re.fullmatch(r"[A-Za-z0-9._~-]{1,200}", client_id)):
+            raise ValueError("a Workshop step needs the MCP client's id")
+        if method not in WORKSHOP_METHODS:
+            raise PermissionError("not a Workshop step: %r" % (method,))
+        if params is not None and not isinstance(params, Mapping):
+            raise ValueError("Workshop parameters must be a mapping")
+        client_name = str(agent.get("client_name") or "")[:200]
+        with self._lock:
+            for attempt in (0, 1):
+                client, workshop, runtime = self._bound(client_id, client_name)
+                try:
+                    self._keep_alive(client_id, client)
+                    result = workshop.call(str(method), dict(params or {}))
+                    break
+                except Exception as refusal:
+                    # A capability the owner no longer honours (app restarted its
+                    # runtime, session expired) is replaced once by a new binding.
+                    text = str(refusal)
+                    if attempt or not any(word in text for word in (
+                            "binding changed", "owner changed", "Agent Session", "expired")):
+                        raise
+                    self._agents.pop(client_id, None)
+        answer = _compact(result)
+        extra = {"ok": True, "agent_runtime": runtime,
+                 "agent_presence": self._presence.get(client_id, "unknown")}
+        return {**answer, **extra} if isinstance(answer, dict) else {**extra, "answer": answer}
+
+
 def bounded_json(value: object, limit: int = RESULT_LIMIT) -> str:
     """The answer as JSON that fits one task row, or a labelled head of it."""
     text = json.dumps(value, ensure_ascii=False, default=str, separators=(",", ":"))
@@ -258,6 +382,7 @@ class CloudRelay:
         offer_command: Optional[Callable[[str, bool], object]] = None,
         models: Optional[Callable[[], object]] = None,
         session_loader: Optional[Callable[[], Optional[Mapping[str, str]]]] = None,
+        workshop_caller: Optional[Callable[[object, object, object], object]] = None,
         session_path: Optional[Path] = None,
         consent: Optional[Callable[[], bool]] = None,
         host_reader: Optional[Callable[[object, object], object]] = None,
@@ -277,6 +402,7 @@ class CloudRelay:
         self.offer_command = offer_command
         self.models = models
         self.session_loader = session_loader
+        self.workshop_caller = workshop_caller
         self.session_path = session_path
         # Settings > Account withdraws cloud publish consent by deleting its
         # record; the relay reads it before every claim and stops for good.
@@ -343,12 +469,15 @@ class CloudRelay:
             self._stop.set()
             self.last_error = "cloud publish consent withdrawn; relay stopped"
             return None
-        claimed = self._call(CLAIM_PATH, {"claimed_by": self.claimed_by, "kinds": list(APP_KINDS)})
+        kinds = list(APP_KINDS) + ([WORKSHOP_CALL] if callable(self.workshop_caller) else [])
+        claimed = self._call(CLAIM_PATH, {"claimed_by": self.claimed_by, "kinds": kinds})
         task = claimed.get("task")
         if not isinstance(task, Mapping) or not task.get("id"):
             return None
         if task.get("kind") == HOST_READ:
             return self._answer_host_read(task)
+        if task.get("kind") == WORKSHOP_CALL:
+            return self._answer_workshop_call(task)
         utterance = str(task.get("directive") or "").strip()
         execute = task.get("kind") == "app-execute"
         handled = None
@@ -383,6 +512,22 @@ class CloudRelay:
             if not isinstance(request, Mapping):
                 raise ValueError("a host read is {tool, args}")
             ok, text = True, bounded_json(self.host_reader(request.get("tool"), request.get("args")))
+        except Exception as exc:  # the refusal IS the answer; never a silent drop
+            ok, text = False, "%s: %s" % (type(exc).__name__, exc)
+        self._call(RESULT_PATH % str(task["id"]), {"ok": ok, "result": text[:8000]})
+        self.answered += 1
+        return {"task": str(task["id"]), "ok": ok, "result": text}
+
+    def _answer_workshop_call(self, task: Mapping[str, object]) -> dict:
+        """One Workshop step of an MCP client's own agent; never BABOOM, never a host."""
+        try:
+            if not callable(self.workshop_caller):
+                raise PermissionError("this app does not answer Workshop steps")
+            request = json.loads(str(task.get("directive") or ""))
+            if not isinstance(request, Mapping):
+                raise ValueError("a Workshop step is {agent, method, params}")
+            ok, text = True, bounded_json(self.workshop_caller(
+                request.get("agent"), request.get("method"), request.get("params")))
         except Exception as exc:  # the refusal IS the answer; never a silent drop
             ok, text = False, "%s: %s" % (type(exc).__name__, exc)
         self._call(RESULT_PATH % str(task["id"]), {"ok": ok, "result": text[:8000]})
@@ -560,6 +705,7 @@ def start_cloud_relay(
     offer: Optional[Callable[[], object]] = None,
     offer_command: Optional[Callable[[str, bool], object]] = None,
     models: Optional[Callable[[], object]] = None,
+    workshop_caller: Optional[Callable[[object, object, object], object]] = None,
 ) -> Optional[CloudRelay]:
     """Start the relay thread when the founder's session and consent exist.
 
@@ -589,6 +735,7 @@ def start_cloud_relay(
         session_loader=lambda: load_cloud_session(appdata),
         session_path=session_path,
         consent=consented,
+        workshop_caller=workshop_caller,
     )
     return relay.start()
 
@@ -597,6 +744,7 @@ __all__ = [
     "CloudRelay", "PINNED_BASES", "load_cloud_session", "pinned_cloud_base",
     "published_models_form", "published_offer_form",
     "render_answer", "host_read", "bounded_json", "HOST_READ_TOOLS",
+    "McpWorkshopAgents", "WORKSHOP_CALL", "WORKSHOP_METHODS", "mcp_runtime",
     "start_cloud_relay",
     "CLAIM_PATH", "RESULT_PATH", "MAP_PATH",
 ]

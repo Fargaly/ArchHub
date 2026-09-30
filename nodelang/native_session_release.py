@@ -81,7 +81,7 @@ def _registered_permits(snapshot, protocol):
             yield incidence.link1
 
 
-def read_pending_effects(snapshot, protocol, actor, *, start=None, remaining=None):
+def read_pending_effects(snapshot, protocol, actor, *, start=None, remaining=None, disclose_receipts=True):
     """Bounded persisted evidence for one actor; never settle or infer an effect.
 
     Another actor's permit is skipped on its owner cell alone, the same check the
@@ -105,6 +105,8 @@ def read_pending_effects(snapshot, protocol, actor, *, start=None, remaining=Non
             next_remaining = remaining - index
             break
         if entry.link0 == protocol.role("receipt-member"):
+            if not disclose_receipts:
+                continue  # not shown to this caller, so never counted toward a page
             fields = read_relation(snapshot, entry.link1, budget=32)
             roots = [field.participant_id for field in fields if field.role_id == protocol.role("receipt-permit")]
             if len(roots) != 1:

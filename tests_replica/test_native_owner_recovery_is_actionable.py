@@ -357,3 +357,33 @@ def test_a_restarted_process_keeps_the_exact_actor_without_session_link(world):
     _, foreign_activate = mcp.build_recovery_server(foreign)
     assert foreign_activate()["status"] == "recovery_required"
     assert foreign_calls == [] and _live_capabilities(world, actor) == 1
+
+
+def _receipt(world, permit_root):
+    """A finished write: the permit's own consumed receipt, as the application records it."""
+    from nodelang import cell_cde_authority as cde
+    from nodelang import commit_intent
+    store = world.server.universal_store
+    protocol = world.server.universal_registry.cde_write_authority_protocol
+    snap = store.snapshot()
+    patch = cde._prepare_receipt(snap, protocol, cde.read_cde_write_permit(snap, protocol, permit_root),
+                                 kind="consumed", evidence="court receipt " + permit_root, recorded_at=time.time())
+    with commit_intent.declare(commit_intent.MIGRATION, actor="court", reason="receipt fixture"):
+        store.commit(snap.revision, create=patch.create, replace=patch.replace)
+
+
+def test_a_minimal_disclosure_page_never_stops_on_receipts_it_hides(world):
+    """Live 717 on 7560b83: with binding_matches_caller null, a page that held only
+    receipts it then hid came back [] with truncated true, one page per call."""
+    owner, control = world.owner(EXTERNAL)
+    actor = owner.owner_status()["agent_session"]
+    issued = time.time() - 120.0
+    for n in range(17):  # finished writes: more receipts than one page holds
+        _receipt(world, world.legacy_permit(actor, "done-%02d" % n, issued_at=issued))
+    mine = _stale(world, actor, name="717-hidden")
+    world.restart()  # a new application holds no binding: minimal disclosure
+    current = owner.owner_status()["current"]["fingerprint"]
+    read = owner.inspect_enrollment(expected_owner=current, projection="effects")
+    assert read["binding_matches_caller"] is None and read["effects"]["disclosure"] == "minimal"
+    assert [row["permit"] for row in read["effects"]["pending_permits"]] == [mine]
+    assert read["effects"]["truncated"] is False and read["effects"]["receipt_references"] == []

@@ -144,8 +144,11 @@ def reconcile_enrollment(owner, request, peer):
                     raise AuthorizationDenied("Native effects cursor custody or revision changed")
                 start = held["chain"]
                 remaining = held["remaining"]
+            # Receipts are disclosed only to the bound peer; a page never stops on
+            # evidence the caller would not see (it then looked empty, live 717).
             page = read_pending_effects(owner.universal_store.snapshot(),
-                owner.universal_registry.cde_write_authority_protocol, actor.root_id, start=start, remaining=remaining)
+                owner.universal_registry.cde_write_authority_protocol, actor.root_id, start=start, remaining=remaining,
+                disclose_receipts=same_peer is True)
             following = page.pop("_next_chain")
             next_remaining = page.pop("_next_remaining")
             if same_peer is not True:

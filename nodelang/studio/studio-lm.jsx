@@ -5898,6 +5898,11 @@ const ASSISTANT_SAID = {
   migration_available:"ArchHub's old development start is there and cannot start; Replace moves it to this install",
   migration_unconfirmed:'the replacement was not confirmed; your settings are unchanged or backed up',
 };
+// Claude Code's Replace goes through its own command: nothing is copied, the retired entries are named.
+const CLAUDE_CODE_SAID = {
+  migration_available:"ArchHub's old development entry runs the source checkout; Replace moves Claude Code to this install and keeps your host tools",
+  migration_unconfirmed:"ArchHub's old entry was not retired; this install's entry stays. Replace tries again",
+};
 const SettingsAssistants = () => {
   const [held, setHeld] = React.useState({ clients:null, error:'' });
   const [busy, setBusy] = React.useState('');
@@ -5954,7 +5959,7 @@ const SettingsAssistants = () => {
         <div key={c.client} style={{ padding:'10px 14px', display:'flex', alignItems:'center', gap:LM.sp.md, borderTop:`1px solid ${LM.lineSoft}` }}>
           <div style={{ flex:1, minWidth:0, lineHeight:1.3 }}>
             <div style={{ fontSize:13, fontWeight:500, color:LM.ink }}>{ASSISTANT_NAMES[c.client] || 'Assistant'}</div>
-            <div style={{ fontSize:11.5, color:LM.inkMuted }}>{ASSISTANT_SAID[c.state] || 'Connection status unavailable'}</div>
+            <div style={{ fontSize:11.5, color:LM.inkMuted }}>{((c.client === 'claude-code' && CLAUDE_CODE_SAID[c.state]) || ASSISTANT_SAID[c.state]) || 'Connection status unavailable'}</div>
             {c.hooks && (c.hooks.events || []).map(e => (
               <div key={e.event} style={{fontSize:11.5, color:LM.inkMuted}}>{e.said || 'Status unavailable'}</div>
             ))}
@@ -5976,7 +5981,7 @@ const SettingsAssistants = () => {
           )}
           {c.state === 'migration_available' && (
             <button onClick={() => connect(c.client)} disabled={!!busy}
-              title={"Replaces only ArchHub's old entry in " + (ASSISTANT_NAMES[c.client] || 'Assistant') + "'s settings and keeps an encrypted copy of the file"}
+              title={c.client === 'claude-code' ? "Registers this install in Claude Code and retires only ArchHub's old development coordination entry through Claude Code's own command" : "Replaces only ArchHub's old entry in " + (ASSISTANT_NAMES[c.client] || 'Assistant') + "'s settings and keeps an encrypted copy of the file"}
               style={{ ...smallBtn(), padding:'3px 10px', fontStyle:'normal' }}>{busy === c.client ? 'Replacing…' : 'Replace'}</button>
           )}
         </div>

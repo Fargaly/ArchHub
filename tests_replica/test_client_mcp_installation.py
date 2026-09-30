@@ -223,7 +223,9 @@ def test_claude_desktop_is_detected_but_never_configured(tmp_path):
     desktop.write_text('{"mcpServers": {}}', encoding="utf-8")
     before = desktop.read_bytes()
     report = installation.readiness(root, state, environment=environment)
-    assert report["claude_desktop"].startswith("detected: not supported")
+    # Its Code tab is Claude Code and reads the user entry; its chat is never configured.
+    assert report["claude_desktop"].startswith("detected: its Code tab uses the Claude Code user entry")
+    assert "its chat is not supported" in report["claude_desktop"]
     assert desktop.read_bytes() == before
 
 
@@ -284,3 +286,148 @@ def test_registered_is_claimed_only_when_the_configuration_shows_the_entry(tmp_p
                                                environment=environment, run=cli)
     assert report["claude_code"] == "registered"
     assert json.loads((home / ".claude.json").read_text(encoding="utf-8"))["numStartups"] == 3
+
+
+# The founder's machine on 2026-09-30 (read by 717): the first claude on PATH is
+# ArchHub's governed shim, and the user scope holds the development-era
+# coordination launch and the retired 12.PRODUCTION host server beside his own.
+_SHIM = ('@echo off\r\nsetlocal\r\nset ARCHHUB_GOVERNED_SHIM_ACTIVE=1\r\n'
+         '"C:\\Users\\someone\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe" '
+         '"C:\\Users\\someone\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\tools\\brainwrap.py" launch '
+         '--governed-strict --cwd "C:\\Users\\someone\\00.ARCHUB" -- "%s" %%*\r\n')
+_COORDINATION = {"command": "C:/Users/someone/AppData/Local/Python/pythoncore-3.14-64/python.exe",
+                 "args": ["-m", "nodelang.clean_coordination_mcp"],
+                 "env": {"ARCHHUB_COORDINATION_VENDOR": "claude",
+                         "PYTHONPATH": "C:/Users/someone/00.ARCHUB/10.PRODUCT/13.NODE-LANGUAGE"}}
+_HOSTS = {"type": "stdio", "command": "C:/Users/someone/AppData/Local/Python/pythoncore-3.14-64/pythonw.exe",
+          "args": ["C:/Users/someone/00.ARCHUB/10.PRODUCT/12.PRODUCTION/payload/bridge/server.py"], "env": {}}
+_OWN = {"gmail-secondary": {"command": "npx", "args": ["-y", "gmail-mcp"]},
+        "magnific": {"type": "http", "url": "https://example.invalid/mcp"}}
+
+
+def _founder_machine(tmp_path, shim=_SHIM, servers=None):
+    legacy = {"archhub-agent-coordination": _COORDINATION, "archhub-hosts": _HOSTS}
+    root, state, home, environment = _rig(tmp_path, servers={**(legacy if servers is None else servers), **_OWN})
+    governed = tmp_path / "local" / "ArchHub" / "governed-bin"
+    governed.mkdir(parents=True)
+    target = home / ".local" / "bin" / "claude.exe"
+    (governed / "claude.cmd").write_bytes((shim % target).encode("ascii"))
+    return root, state, home, dict(environment, PATH=str(governed)), governed / "claude.cmd"
+
+
+def _claude_cli(home, calls):
+    """Claude Code's own add-json / remove, as they change ~/.claude.json."""
+    def run(argv, **kwargs):
+        assert kwargs["shell"] is False and "PYTHONPATH" not in kwargs["env"]
+        assert kwargs["stdout"] is subprocess.DEVNULL and kwargs["stderr"] is subprocess.DEVNULL
+        calls.append(list(argv))
+        config = json.loads((home / ".claude.json").read_text(encoding="utf-8"))
+        if argv[1:3] == ["mcp", "add-json"]:
+            config["mcpServers"][argv[3]] = json.loads(argv[4])
+        else:
+            assert argv[1:3] == ["mcp", "remove"] and argv[4:] == ["--scope", "user"]
+            config["mcpServers"].pop(argv[3])
+        (home / ".claude.json").write_text(json.dumps(config), encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0)
+    return run
+
+
+def test_the_founders_machine_is_reported_truthfully_before_anything_runs(tmp_path):
+    root, state, home, environment, shim = _founder_machine(tmp_path)
+    report = installation.readiness(root, state, environment=environment)
+    # The governed shim is followed to the claude.exe it runs; the shim itself never runs.
+    assert report["executable"] == str(home / ".local" / "bin" / "claude.exe")
+    assert report["launcher"]["via"] == str(shim)
+    assert report["legacy_migration_needed"] == ["archhub-agent-coordination", "archhub-hosts"]
+    # Only the coordination launch is offered; the host server's live tools stay.
+    assert sorted(report["legacy_retire"]) == ["archhub-agent-coordination"]
+    assert report["claude_code"] == "migration_available"
+    before = (home / ".claude.json").read_bytes()
+    assert installation.register_claude_code(root, state, consent=False, environment=environment,
+                                             run=_no_process)["claude_code"] == "migration_available"
+    assert (home / ".claude.json").read_bytes() == before
+
+
+def test_one_yes_registers_this_install_and_retires_only_the_development_coordination_entry(tmp_path):
+    root, state, home, environment, _shim = _founder_machine(tmp_path)
+    calls = []
+    report = installation.register_claude_code(root, state, consent=True, environment=environment,
+                                               run=_claude_cli(home, calls))
+    exe = str(home / ".local" / "bin" / "claude.exe")
+    assert [call[:4] for call in calls] == [[exe, "mcp", "add-json", SERVER_NAME],
+                                           [exe, "mcp", "remove", "archhub-agent-coordination"]]
+    servers = json.loads((home / ".claude.json").read_text(encoding="utf-8"))["mcpServers"]
+    assert servers == {SERVER_NAME: installation.managed_entry(root, state), "archhub-hosts": _HOSTS, **_OWN}
+    assert report["claude_code"] == "registered"
+    # What was retired is returned whole, so it can be restored exactly.
+    assert report["retired"] == {"archhub-agent-coordination": _COORDINATION}
+
+
+def test_a_founder_already_moved_by_hand_is_registered_and_the_host_server_is_never_offered(tmp_path):
+    # 717 registered this install and retired the coordination entry by hand; the host server remains
+    # because his live Revit, AutoCAD and Max sessions use its direct tools.
+    root, state, home, environment, _shim = _founder_machine(tmp_path, servers={"archhub-hosts": _HOSTS})
+    config = json.loads((home / ".claude.json").read_text(encoding="utf-8"))
+    config["mcpServers"][SERVER_NAME] = installation.managed_entry(root, state)
+    (home / ".claude.json").write_text(json.dumps(config), encoding="utf-8")
+    before = (home / ".claude.json").read_bytes()
+    report = installation.register_claude_code(root, state, consent=True, environment=environment,
+                                               run=_no_process)
+    assert (report["claude_code"], report["legacy_retire"]) == ("registered", {})
+    assert (home / ".claude.json").read_bytes() == before
+
+
+def test_a_legacy_name_in_any_other_shape_blocks_and_nothing_runs(tmp_path):
+    changed = dict(_COORDINATION, args=["-m", "nodelang.native_agent_mcp"])
+    root, state, home, environment, _shim = _founder_machine(
+        tmp_path, servers={"archhub-agent-coordination": changed, "archhub-hosts": _HOSTS})
+    before = (home / ".claude.json").read_bytes()
+    report = installation.register_claude_code(root, state, consent=True, environment=environment,
+                                               run=_no_process)
+    assert report["claude_code"] == "legacy_migration_required"
+    assert report["legacy_retire"] == {}
+    assert (home / ".claude.json").read_bytes() == before
+
+
+def test_a_legacy_entry_changed_after_the_check_is_never_removed(tmp_path):
+    root, state, home, environment, _shim = _founder_machine(tmp_path)
+    calls = []
+    cli = _claude_cli(home, calls)
+
+    def racing(argv, **kwargs):
+        result = cli(argv, **kwargs)
+        if argv[1:3] == ["mcp", "add-json"]:
+            # Another writer changes the coordination entry between the add and its removal.
+            config = json.loads((home / ".claude.json").read_text(encoding="utf-8"))
+            config["mcpServers"]["archhub-agent-coordination"]["args"] = ["-m", "someone.else"]
+            (home / ".claude.json").write_text(json.dumps(config), encoding="utf-8")
+        return result
+
+    report = installation.register_claude_code(root, state, consent=True, environment=environment, run=racing)
+    assert [call[1:3] for call in calls] == [["mcp", "add-json"]]
+    assert (report["claude_code"], report["reason"]) == (
+        "migration_unconfirmed", "legacy_entry_changed_before_removal")
+    servers = json.loads((home / ".claude.json").read_text(encoding="utf-8"))["mcpServers"]
+    assert servers["archhub-agent-coordination"]["args"] == ["-m", "someone.else"]
+
+
+@pytest.mark.parametrize("shim", [
+    _SHIM.replace("setlocal\r\n", "setlocal\r\nset CLAUDE_CONFIG_DIR=C:\\elsewhere\r\n"),   # another config
+    _SHIM.replace('-- "%s"', '-- "%s" --mcp-config x.json'),                                # extra arguments
+    _SHIM.replace('-- "%s"', '-- "%s.bak"'),                                                # not claude.exe
+], ids=["config-dir", "extra-args", "other-program"])
+def test_any_other_wrapper_stays_unsupported(tmp_path, shim):
+    root, state, _home, environment, wrapper = _founder_machine(tmp_path, shim=shim)
+    report = installation.register_claude_code(root, state, consent=True, environment=environment,
+                                               run=_no_process)
+    assert (report["claude_code"], report["executable"]) == ("unsupported_launcher", str(wrapper))
+    # The legacy entries are still reported, so the person sees why nothing changed.
+    assert report["legacy_migration_needed"] == ["archhub-agent-coordination", "archhub-hosts"]
+
+
+def test_the_shim_target_is_checked_like_any_claude_exe_mocked_reparse(tmp_path, monkeypatch):
+    root, state, home, environment, _shim = _founder_machine(tmp_path)
+    _pretend_redirected(monkeypatch, home / ".local" / "bin" / "claude.exe")
+    report = installation.register_claude_code(root, state, consent=True, environment=environment,
+                                               run=_no_process)
+    assert report["claude_code"] == "launcher_untrusted"

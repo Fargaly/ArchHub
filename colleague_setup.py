@@ -681,16 +681,23 @@ def _assistant_integration(root: Path, identity: str) -> None:
     requested = [argument.split("=", 1)[1] for argument in sys.argv[1:]
                  if argument.startswith("--assistant=")]
     choice = "not_asked"
-    if report["claude_code"] == "ready_to_register":
+    if report["claude_code"] in ("ready_to_register", "migration_available"):
+        question = ("  Connect ArchHub tools to Claude Code for this Windows user?"
+                    " It adds one entry to your Claude Code MCP list and"
+                    " changes nothing else. [y/N] ")
+        if report["claude_code"] == "migration_available":
+            # ArchHub's own development-era entries run the source checkout, never
+            # this install: the same yes adds this install's entry and retires them.
+            question = ("  Move Claude Code to this ArchHub install? It adds this install's entry"
+                        " and removes ArchHub's old development entry (%s); nothing else"
+                        " changes. [y/N] " % ", ".join(report["legacy_retire"]))
         if requested:
             choice = "accepted" if requested[-1] == "claude-code" else "declined"
         elif type(previous) is dict and previous.get("choice") == "declined":
             choice = "declined"
         elif sys.stdin is not None and sys.stdin.isatty():
             try:
-                answer = input("  Connect ArchHub tools to Claude Code for this Windows user?"
-                               " It adds one entry to your Claude Code MCP list and"
-                               " changes nothing else. [y/N] ")
+                answer = input(question)
             except (EOFError, KeyboardInterrupt):
                 # No answer is not a no: the choice stays not_asked and the
                 # next run asks again. KeyboardInterrupt is not an Exception,
@@ -709,8 +716,14 @@ def _assistant_integration(root: Path, identity: str) -> None:
         print("  override   : %d Claude Code project(s) define their own %s; the user entry"
               " does not apply in those projects, and nothing was changed there."
               % (report["project_overrides"], report["server_name"]))
-    if report.get("legacy_migration_needed"):
-        print("  legacy     : %s: migration needed; not an ArchHub connection; left unchanged"
+    if report.get("retired"):
+        print("  retired    : %s (ArchHub development-era entry)" % ", ".join(report["retired"]))
+    unverified = [name for name in report.get("legacy_migration_needed") or ()
+                  if name not in (report.get("legacy_retire") or {})]
+    if unverified:
+        print("  legacy     : %s: kept unchanged" % ", ".join(unverified))
+    elif report.get("legacy_migration_needed"):
+        print("  legacy     : %s: ArchHub development-era entry; accepting the offer retires it"
               % ", ".join(report["legacy_migration_needed"]))
     print("  claude app :", report["claude_desktop"])
     if report["claude_code"] == "registered":
@@ -720,7 +733,7 @@ def _assistant_integration(root: Path, identity: str) -> None:
     elif report["claude_code"] == "registered_with_project_overrides":
         print("  note       : entry registered, but not in effect in the projects above."
               " Setup does not verify host actions.")
-    elif report["claude_code"] == "ready_to_register":
+    elif report["claude_code"] in ("ready_to_register", "migration_available"):
         print("  later      : \"%s\" -E -s \"%s\" --assistant=claude-code"
               % (sys.executable, root / "colleague_setup.py"))
     entry = report.get("entry")
@@ -731,6 +744,8 @@ def _assistant_integration(root: Path, identity: str) -> None:
                                         .encode("utf-8")).hexdigest() if entry else None),
         "exit_code": report.get("exit_code"), "project_overrides": report.get("project_overrides", 0),
         "legacy_migration_needed": list(report.get("legacy_migration_needed") or ()),
+        # Each retired development-era entry exactly as it was, so it can be restored.
+        "retired": dict(report.get("retired") or {}),
         "host_execution": "not_verified",
     }
     state.mkdir(parents=True, exist_ok=True)

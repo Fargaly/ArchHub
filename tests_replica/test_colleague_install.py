@@ -451,6 +451,64 @@ def test_interrupted_consent_prompt_leaves_the_offer_open(
     assert receipt["choice"] == "not_asked" and receipt["result"] == "ready_to_register"
 
 
+def test_setup_moves_claude_code_off_archhubs_development_entries_on_a_yes(
+        tmp_path, monkeypatch, capsys, isolated_user_state):
+    """The founder's machine (2026-09-30): Claude Code ran ArchHub's development-era
+    coordination launch from the source checkout, so installs never reached it.
+    Setup now offers the move; the yes registers this install and retires only the
+    verified development-era entries, and the receipt keeps each one to restore."""
+    import json
+    import subprocess
+    from nodelang import client_mcp_installation as installation
+    _private_environment(tmp_path, monkeypatch)
+    (tmp_path / "launch_archhub_test.py").write_text("")
+    for relative in ("nodelang/native_agent_mcp.py", "runtime/node.exe"):
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("")
+    home = tmp_path / "home"
+    (home / ".local" / "bin").mkdir(parents=True)
+    (home / ".local" / "bin" / "claude.exe").write_text("")
+    coordination = {"command": "C:/Python/python.exe", "args": ["-m", "nodelang.clean_coordination_mcp"],
+                    "env": {"ARCHHUB_COORDINATION_VENDOR": "claude", "PYTHONPATH": "C:/src/13.NODE-LANGUAGE"}}
+    own = {"magnific": {"type": "http", "url": "https://example.invalid/mcp"}}
+    (home / ".claude.json").write_text(json.dumps(
+        {"mcpServers": {"archhub-agent-coordination": coordination, **own}}), encoding="utf-8")
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setenv("APPDATA", str(tmp_path / "roaming"))
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.setattr(colleague_setup, "__file__", str(tmp_path / "colleague_setup.py"))
+    colleague_setup._write_ready(tmp_path, colleague_setup.readiness_identity(tmp_path))
+    monkeypatch.setattr(colleague_setup, "_has", lambda module: True)
+    monkeypatch.setattr(colleague_setup, "verify_imports", lambda root: [])
+    monkeypatch.setattr(sys, "argv", ["colleague_setup.py", "--assistant=claude-code"])
+    calls = []
+
+    def claude(argv, **_kwargs):
+        calls.append(argv[1:4])
+        config = json.loads((home / ".claude.json").read_text(encoding="utf-8"))
+        if argv[1:3] == ["mcp", "add-json"]:
+            config["mcpServers"][argv[3]] = json.loads(argv[4])
+        else:
+            config["mcpServers"].pop(argv[3])
+        (home / ".claude.json").write_text(json.dumps(config), encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0)
+
+    real = installation.register_claude_code
+    monkeypatch.setattr(installation, "register_claude_code",
+                        lambda *args, **kwargs: real(*args, **dict(kwargs, run=claude)))
+    assert colleague_setup.main() == 0
+    assert calls == [["mcp", "add-json", "archhub_agent_coordination"],
+                     ["mcp", "remove", "archhub-agent-coordination"]]
+    servers = json.loads((home / ".claude.json").read_text(encoding="utf-8"))["mcpServers"]
+    assert sorted(servers) == ["archhub_agent_coordination", "magnific"] and servers["magnific"] == own["magnific"]
+    receipt = json.loads((isolated_user_state / "assistant-integration.json").read_text(encoding="utf-8"))
+    assert (receipt["choice"], receipt["result"]) == ("accepted", "registered")
+    assert receipt["retired"] == {"archhub-agent-coordination": coordination}
+    assert "retired    : archhub-agent-coordination" in capsys.readouterr().out
+
+
 def _court_venv(root):
     """A real owned interpreter: verify_imports must start it, not this process."""
     import subprocess

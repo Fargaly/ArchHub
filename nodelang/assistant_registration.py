@@ -19,7 +19,8 @@ installer writes and removes for a client.
   Session Link state folder, and no session.
 
 A differing entry of the same name, an unreadable config or a legacy entry
-(client_mcp_installation.LEGACY_NAMES) is reported and left untouched. Nothing
+(client_mcp_installation.LEGACY_NAMES) is reported and left untouched, except
+ArchHub's verified development-era coordination entry, which Replace retires. Nothing
 here starts the server, so nothing here proves a connection or a host action.
 """
 from __future__ import annotations

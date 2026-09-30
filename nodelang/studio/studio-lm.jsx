@@ -2269,7 +2269,12 @@ const SOCKET_TOP = 42;
 const SOCKET_STEP = 19;
 const SOCKET_R = 5;
 
-const socketY = (i) => SOCKET_TOP + i * SOCKET_STEP;
+// Ports sit in a band BELOW the card's content (never over its title, summary or
+// parameters): one row per port pair. Each card reports where its band starts, and a
+// wire ends at the centre of its port's row in that band.
+const PORT_BAND_PAD = 4;
+const portRowCentre = (i) => PORT_BAND_PAD + i * SOCKET_STEP + SOCKET_STEP / 2;
+const portY = (bandTop, i) => (Number.isFinite(bandTop) ? bandTop : SOCKET_TOP) + portRowCentre(i);
 // Snap to grid (design CanvasMenu) uses the dot grid's own 20-unit pitch.
 const CANVAS_GRID = 20;
 // What an Undo or Redo changed, in plain words, read from the canvas before and after it.
@@ -2495,6 +2500,9 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     } catch (error) { setWireError(error.message || 'The connection was refused.'); }
   };
   const allNodes = React.useMemo(() => [...graph.nodes, ...userNodes], [graph.nodes, userNodes]);
+  // Where each card's port band starts (card-local px), reported by the card itself.
+  const [portBands, setPortBands] = React.useState({});
+  const setPortBand = (id, top) => setPortBands(held => held[id] === top ? held : {...held, [id]:top});
   const scopeKey = studioCanvasScope(authorityState?.canvas);
   const mountedScope = React.useRef(scopeKey);
   const alive = React.useRef(true);
@@ -2941,8 +2949,8 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       return null;
     }
     const sourceWidth = fromNode.cat === 'ai' && expanded[fromNode.id] ? Math.max(520, fromNode.w) : fromNode.w;
-    const x1 = fromNode.x + sourceWidth, y1 = fromNode.y + socketY(fromIdx);
-    const x2 = toNode.x,                y2 = toNode.y + socketY(toIdx);
+    const x1 = fromNode.x + sourceWidth, y1 = fromNode.y + portY(portBands[fromNode.id], fromIdx);
+    const x2 = toNode.x,                y2 = toNode.y + portY(portBands[toNode.id], toIdx);
     const touches = w.from[0] === focusId || w.to[0] === focusId || i === focusWireIdx;
     return {
       i, x1, y1, x2, y2, selected: i === focusWireIdx,
@@ -2956,7 +2964,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   // One set of handlers per card for the canvas's life. Each calls the CURRENT closure through a ref,
   // so a memoized card that did not re-render still acts on today's selection and positions.
   const latest = React.useRef(null);
-  latest.current = {toggleExpanded, onNodeDragStart, onNodeFocus, onNodeContextMenu, onNodeKeyDown, useSocket,
+  latest.current = {toggleExpanded, onNodeDragStart, onNodeFocus, onNodeContextMenu, onNodeKeyDown, useSocket, setPortBand,
     open:id => authority && authority.open(id).catch(() => {})};
   const handlerCache = React.useRef(new Map());
   const cardHandlers = id => {
@@ -2965,6 +2973,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       held = {toggle:() => latest.current.toggleExpanded(id), drag:e => latest.current.onNodeDragStart(id)(e),
         focus:e => latest.current.onNodeFocus(id)(e), menu:e => latest.current.onNodeContextMenu(id)(e),
         key:e => latest.current.onNodeKeyDown(id)(e), socket:(port, side) => latest.current.useSocket(id, port, side),
+        band:top => latest.current.setPortBand(id, top),
         open:() => latest.current.open(id)};
       handlerCache.current.set(id, held);
     }
@@ -3350,7 +3359,9 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             const d = `M${w.x1},${w.y1} C${w.x1+dx},${w.y1} ${w.x2-dx},${w.y2} ${w.x2},${w.y2}`;
             const color = WIRE[w.t] || LM.inkSoft;
             const strokeW = w.selected ? 3.2 : w.focused ? 2.4 : 1.4;
-            const op = w.focused ? 1 : 0.5;
+            // Resting .72 (3:1 on the canvas); wires touching the selection are 1. The graph
+            // always holds a selection, so wires outside it keep the resting .72, never fade.
+            const op = w.focused ? 1 : 0.72;
             return (
               <g key={w.i}>
                 <path d={d} stroke="transparent" strokeWidth={14} fill="none"
@@ -3380,7 +3391,9 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             <MemoNodeRenderer
               key={n.id}
               n={n} x={pos.x} y={pos.y}
-              focused={selected.has(n.id) || n.id === focusId}
+              selected={selected.has(n.id)}
+              focused={n.id === focusId}
+              onPortBand={on.band}
               dimmed={dimmedIds.has(n.id) && !n._user}
               expanded={!!expanded[n.id]}
               onToggleExpand={on.toggle}
@@ -3568,25 +3581,40 @@ const CanvasMenu = ({ x, y, maxHeight, opener, items, label, onClose }) => {
 };
 
 // ─── nodes dispatcher ───
-const NodeRenderer = ({ n: held, x = held.x, y = held.y, focused, dimmed, expanded, onToggleExpand, onDragStart, onFocus, onSocket, onOpen, onContextMenu, onKeyDown }) => {
+const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimmed, expanded, onToggleExpand, onDragStart, onFocus, onSocket, onOpen, onContextMenu, onKeyDown, onPortBand }) => {
   const n = held.x === x && held.y === y ? held : {...held, x, y};
   if (typeof window !== 'undefined' && window.__archhubCardRenders) window.__archhubCardRenders[held.id] = (window.__archhubCardRenders[held.id] || 0) + 1;
   const cat = studioCategory(n.cat);
   // AI nodes can expand horizontally for full conversation + search
   const w = (n.cat === 'ai' && expanded) ? Math.max(520, n.w) : n.w;
   const isAi = n.cat === 'ai';
+  const lit = selected || focused;
+  const cardRef = React.useRef(null), bandRef = React.useRef(null);
+  const rows = Math.max(n.ins?.length || 0, n.outs?.length || 0);
+  // The band follows the content: report its card-local top whenever the card resizes.
+  React.useLayoutEffect(() => {
+    const card = cardRef.current, band = bandRef.current;
+    if (!card || !band || !onPortBand) return undefined;
+    const report = () => onPortBand(card.clientTop + band.offsetTop);
+    report();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const watch = new ResizeObserver(report); watch.observe(card);
+    return () => watch.disconnect();
+  }, [rows, onPortBand]);
   return (
-    <div className="lm-node" data-node-id={n.id} onClick={onFocus} onDoubleClick={onOpen} onContextMenu={onContextMenu}
+    <div ref={cardRef} className="lm-node" data-node-id={n.id} data-selected={selected ? 'true' : undefined}
+      data-focused={focused ? 'true' : undefined} onClick={onFocus} onDoubleClick={onOpen} onContextMenu={onContextMenu}
       tabIndex={0} role="group" aria-label={(n.title || n.id) + ' node'} aria-haspopup="menu" aria-keyshortcuts="Shift+F10" onKeyDown={onKeyDown}
       style={{
         position:'absolute', left:n.x, top:n.y, width:w, minHeight:n.h,
         background:LM.bgPanel,
         borderStyle:'solid',
         borderWidth:'2px 1px 1px 1px',
-        borderColor: `${cat.col} ${focused ? LM.accent+'cc' : LM.line} ${focused ? LM.accent+'cc' : LM.line} ${focused ? LM.accent+'cc' : LM.line}`,
+        // Selected and focused cards use the one accent; focus adds a 2px ring. No hover motion.
+        borderColor: `${cat.col} ${lit ? LM.accent : LM.line} ${lit ? LM.accent : LM.line} ${lit ? LM.accent : LM.line}`,
         borderRadius:9, color:LM.ink, fontFamily:LM.sans,
         boxShadow: focused
-          ? `0 0 0 3px ${LM.accentDim}, 0 8px 24px rgba(0,0,0,.4)`
+          ? `0 0 0 2px ${LM.accent}, 0 8px 24px rgba(0,0,0,.4)`
           : '0 2px 8px rgba(0,0,0,.35)',
         cursor: 'default', outline:'none',
         opacity: dimmed ? 0.42 : 1,
@@ -3597,7 +3625,7 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, focused, dimmed, expand
         style={{
           padding:'7px 11px', display:'flex', alignItems:'center', gap:LM.sp.sm,
           borderBottom:`1px solid ${LM.lineSoft}`,
-          background: focused ? LM.bgSoft : 'transparent',
+          background: lit ? LM.bgSoft : 'transparent',
           cursor:'move',
           borderTopLeftRadius:7, borderTopRightRadius:7,
         }}>
@@ -3626,9 +3654,12 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, focused, dimmed, expand
         <NodeBody n={n} expanded={expanded} onToggleExpand={onToggleExpand}/>
       </div>
 
-      {/* Sockets */}
-      {n.ins?.map((s, i) => <Socket key={'in-'+s.id} side="in" i={i} t={s.t} label={s.label} onUse={s.connectable && onSocket ? () => onSocket(s, 'in') : undefined}/>)}
-      {n.outs?.map((s, i) => <Socket key={'out-'+s.id} side="out" i={i} t={s.t} label={s.label} onUse={s.connectable && onSocket ? () => onSocket(s, 'out') : undefined}/>)}
+      {/* Sockets: their own band below the content, one row per port pair */}
+      {rows > 0 && <div ref={bandRef} data-port-band="" style={{ position:'relative',
+        height:PORT_BAND_PAD * 2 + rows * SOCKET_STEP, borderTop:`1px solid ${LM.lineSoft}` }}>
+        {n.ins?.map((s, i) => <Socket key={'in-'+s.id} side="in" i={i} t={s.t} label={s.label} onUse={s.connectable && onSocket ? () => onSocket(s, 'in') : undefined}/>)}
+        {n.outs?.map((s, i) => <Socket key={'out-'+s.id} side="out" i={i} t={s.t} label={s.label} onUse={s.connectable && onSocket ? () => onSocket(s, 'out') : undefined}/>)}
+      </div>}
     </div>
   );
 };
@@ -3636,7 +3667,7 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, focused, dimmed, expand
 // A card re-renders only when what it draws changed: its node record, its place, or its focus, dim and
 // expansion. Its handlers are stable (NodeCanvas cardHandlers), so a drag re-renders the moving card only.
 const MemoNodeRenderer = React.memo(NodeRenderer, (a, b) => a.n === b.n && a.x === b.x && a.y === b.y &&
-  a.focused === b.focused && a.dimmed === b.dimmed && a.expanded === b.expanded && !!a.onOpen === !!b.onOpen);
+  a.focused === b.focused && a.selected === b.selected && a.dimmed === b.dimmed && a.expanded === b.expanded && !!a.onOpen === !!b.onOpen);
 const NodeStateDot = ({ s }) => {
   const col = s === 'running' ? LM.accent : s === 'queued' ? LM.inkMuted : LM.ok;
   return (
@@ -3656,8 +3687,8 @@ const Socket = ({ side, i, t, label, onUse }) => {
   // The dot is a button, so a connectable port starts or finishes a wire; a port that cannot be connected stays inert.
   return (
     <div style={{
-      position:'absolute', top: socketY(i) - SOCKET_R,
-      [side === 'in' ? 'left' : 'right']: -SOCKET_R,
+      position:'absolute', top: portRowCentre(i) - SOCKET_R - 1,
+      [side === 'in' ? 'left' : 'right']: -SOCKET_R - 1,
       display:'flex', alignItems:'center', gap:6,
       flexDirection: side === 'in' ? 'row' : 'row-reverse',
       pointerEvents: onUse ? 'auto' : 'none',

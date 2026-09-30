@@ -390,6 +390,7 @@ from .cell_control_bindings import (
     CAPABILITY_TRANSITION,
     CAPABILITY_VIEW_SECTION,
 )
+from .social_linkedin_signin import LinkedInNotReady
 from .universal_cell import (
     NULL_CELL_ID,
     Cell,
@@ -6373,6 +6374,27 @@ class ApplicationServer:
                     from .cloud_signin import current_status
                     self._json(200, {'ok': True, **current_status()})
                     return
+                if parsed.path == '/api/universal/social-linkedin-signin':
+                    # What Settings polls while LinkedIn's consent page is open. No token.
+                    try:
+                        binding, _session_token = self._browser_session_binding()
+                        owner.require_universal_http_route('GET', parsed.path, authentication_context=binding.context)
+                    except AuthorizationDenied as denied:
+                        self._json(403, {'ok': False, 'error': str(denied)})
+                        return
+                    from .social_linkedin_signin import current_status as linkedin_status
+                    self._json(200, {'ok': True, **linkedin_status()})
+                    return
+                if parsed.path == '/api/universal/social-approvals':
+                    # Social posts waiting for the founder, each with its exact request.
+                    try:
+                        binding, _session_token = self._browser_session_binding()
+                        owner.require_universal_http_route('GET', parsed.path, authentication_context=binding.context)
+                        from .social_approval import pending
+                        self._json(200, {'ok': True, 'items': pending(owner, binding)})
+                    except AuthorizationDenied as denied:
+                        self._json(403, {'ok': False, 'error': str(denied)})
+                    return
                 if parsed.path == '/api/universal/node-library':
                     # The one node library (library_engines): every card,
                     # its engine, defaults and sockets. Studio holds no copy.
@@ -7172,7 +7194,9 @@ class ApplicationServer:
                         except (InvalidCell, ValueError, TimeoutError) as refusal:
                             self._json(409, {'ok': False, 'error': str(refusal)})
                         return
-                    if self.path in ('/api/universal/provider-key', '/api/universal/social-credential', '/api/universal/social-credential-remove'):
+                    if self.path in ('/api/universal/provider-key', '/api/universal/social-credential', '/api/universal/social-credential-remove',
+                                     '/api/universal/social-linkedin-app', '/api/universal/social-linkedin-signin',
+                                     '/api/universal/social-linkedin-finish'):
                         from .model_router import ProviderCredentialError, save_provider_key
                         social_enrollment = self.path == '/api/universal/social-credential'
                         social_removal = self.path == '/api/universal/social-credential-remove'
@@ -7198,7 +7222,33 @@ class ApplicationServer:
                                     raise AuthorizationDenied('Credential changes require this application owner')
                             with owner.mutation_lock, owner.universal_registry.authorization.broker.live_context(credential_context):
                                 require_credential_admission()
-                                if social_removal:
+                                if self.path == '/api/universal/social-linkedin-app':
+                                    from .model_router import save_linkedin_app
+                                    with owner.universal_store.stable_snapshot():
+                                        payload = save_linkedin_app(body, before_replace=require_credential_admission)
+                                elif self.path == '/api/universal/social-linkedin-signin' and body == {'cancel': True}:
+                                    # Settings' Cancel: the waiting loopback closes.
+                                    from .social_linkedin_signin import cancel_current
+                                    payload = {'ok': True, **cancel_current()}
+                                elif self.path == '/api/universal/social-linkedin-signin':
+                                    # Opens LinkedIn's consent page; the loopback waits for its code.
+                                    from .model_router import linkedin_app
+                                    from .social_linkedin_signin import begin
+                                    if body != {}:
+                                        raise InvalidCell('LinkedIn sign-in takes no fields, or only cancel')
+                                    client_id, client_secret = linkedin_app()
+                                    payload = {'ok': True, **begin(client_id, client_secret)}
+                                elif self.path == '/api/universal/social-linkedin-finish':
+                                    # Enrolls the account LinkedIn itself confirmed; nothing is typed.
+                                    from .social_linkedin_signin import take_verified
+                                    from .social_custody import enroll_social_account
+                                    account_id, token = take_verified()
+                                    payload = enroll_social_account(owner, {
+                                        'provider': 'linkedin', 'account_id': account_id,
+                                        'vault_entry': 'social-linkedin-' + account_id.rsplit(':', 1)[1],
+                                        'token': token}, require_admission=require_credential_admission, verified=True)
+                                    token = None
+                                elif social_removal:
                                     from .social_custody import remove_local_social_account
                                     payload = remove_local_social_account(owner, body, require_admission=require_credential_admission)
                                 elif social_enrollment:
@@ -7219,12 +7269,26 @@ class ApplicationServer:
                         except InvalidCell:
                             self._json(400, {'ok': False, 'error_code': 'credential_reference_invalid',
                                 'error': 'The credential reference does not match this application custody.'})
+                        except LinkedInNotReady as waiting:
+                            self._json(409, {'ok': False, 'error_code': 'linkedin_not_ready', 'error': str(waiting)})
                         except Exception:
                             self._json(503, {'ok': False, 'error_code': 'credential_change_unconfirmed',
                                 'error': 'The credential change could not be confirmed. Check the saved account before retrying.'})
                         finally:
                             if type(body) is dict:
                                 body.clear()
+                        return
+                    if self.path == '/api/universal/social-approve':
+                        # The founder's own Approve or Deny of one displayed social post.
+                        try:
+                            body = self._body(max_bytes=4096)
+                            owner.require_universal_http_route('POST', self.path, authentication_context=binding.context)
+                            from .social_approval import decide
+                            self._json(200, {'ok': True, **decide(owner, binding, body)})
+                        except AuthorizationDenied as denied:
+                            self._json(403, {'ok': False, 'error': str(denied)})
+                        except (InvalidCell, ValueError) as refusal:
+                            self._json(409, {'ok': False, 'error': str(refusal)})
                         return
                     body = self._body()
                     if self.path == '/api/universal/agent':

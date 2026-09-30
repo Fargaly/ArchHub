@@ -1037,6 +1037,62 @@
         providerSave = operation;
         try { return await operation; } finally { providerSave = null; }
       },
+      // Sign in with LinkedIn: the founder's own LinkedIn app, then LinkedIn's consent page.
+      // The account is the one LinkedIn names; the token never reaches this page.
+      async saveLinkedInApp({client_id, client_secret}) {
+        if (providerSave) fail('Wait for the current credential change to finish.');
+        if (typeof client_id !== 'string' || !/^[A-Za-z0-9]{6,64}$/.test(client_id) ||
+            typeof client_secret !== 'string' || client_secret.length < 8 || client_secret.length > 256) {
+          fail('Enter the Client ID and Client Secret from your LinkedIn app.');
+        }
+        const operation = Promise.resolve().then(async () => {
+          try {
+            const result = await post('/api/universal/social-linkedin-app', {client_id, client_secret});
+            if (result?.ok !== true || result.state !== 'saved' || result.client_id !== client_id) fail('not confirmed');
+            return {ok:true, client_id};
+          } catch (_) {
+            throw new Error('The LinkedIn app could not be saved. Check the Client ID and Client Secret.');
+          }
+        });
+        providerSave = operation;
+        try { return await operation; } finally { providerSave = null; client_secret = ''; }
+      },
+      async startLinkedInSignIn() {
+        const result = await post('/api/universal/social-linkedin-signin', {});
+        if (result?.ok !== true || typeof result.phase !== 'string') fail('LinkedIn sign-in could not start.');
+        return result;
+      },
+      async cancelLinkedInSignIn() {
+        const result = await post('/api/universal/social-linkedin-signin', {cancel:true});
+        if (result?.ok !== true || typeof result.phase !== 'string') fail('LinkedIn sign-in could not be cancelled.');
+        return result;
+      },
+      async linkedInSignInStatus() {
+        const result = await get('/api/universal/social-linkedin-signin');
+        if (result?.ok !== true || typeof result.phase !== 'string') fail('LinkedIn sign-in status is unavailable.');
+        return result;
+      },
+      async finishLinkedInSignIn() {
+        const result = await post('/api/universal/social-linkedin-finish', {});
+        if (result?.ok !== true || result.state !== 'enrolled' || result.provider !== 'linkedin' ||
+            result.account_binding !== 'provider-verified' || !/^urn:li:person:/.test(result.account_id || '')) {
+          fail('The LinkedIn account could not be saved. Sign in again.');
+        }
+        return {ok:true, account_id:result.account_id, vault_entry:result.vault_entry, account_binding:'provider-verified'};
+      },
+      // Social posts waiting for the founder: the exact request, then his Approve or Deny.
+      async listSocialApprovals() {
+        const result = await get('/api/universal/social-approvals');
+        if (result?.ok !== true || !Array.isArray(result.items)) fail('Pending social posts are unavailable.');
+        return result.items;
+      },
+      async decideSocialApproval({delegation, input_digest, decision}) {
+        if (!['approve', 'deny'].includes(decision) || !text(delegation) || !text(input_digest)) fail('Choose Approve or Deny for one shown post.');
+        const result = await post('/api/universal/social-approve', {delegation, input_digest, decision});
+        if (result?.ok !== true || result.delegation !== delegation || result.input_digest !== input_digest ||
+            result.decision !== (decision === 'approve' ? 'approved' : 'denied')) fail('The decision could not be confirmed.');
+        return result;
+      },
       setTopologyCanvas: acceptTopology,
       selectTopology(root) {
         return runTopology(JSON.stringify(['select', root]), async (identity, command) => {

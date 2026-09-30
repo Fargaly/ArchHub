@@ -330,6 +330,10 @@ def build_server(*, session=None, workshop_task: str | None = None):
     register_artifact_tools(server, control)
     from .native_host_tools import register_host_tools
     register_host_tools(server, control)
+    # Social Works (LinkedIn, Facebook Pages, Instagram): prepare for the founder's
+    # approval, then execute once. The tools take only a Work root.
+    from .social_connectors import register_social_tools
+    register_social_tools(server, control)
     return server
 
 

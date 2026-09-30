@@ -1387,34 +1387,105 @@ def protected_credential_entry(name: str) -> str:
     return value
 
 
-_SOCIAL_CREDENTIAL_FORMAT = "archhub-social-credential-1"
-_SOCIAL_ENTRY_PREFIX = "social-"
+_LINKEDIN_APP_ENTRY = "linkedin-app"
+_LINKEDIN_APP_FORMAT = "archhub-linkedin-app-1"
 
 
-def _social_record(value):
-    """The social account record held in one protected value, or None if it is not one."""
+def save_linkedin_app(body, *, before_replace=None):
+    """The founder's LinkedIn developer app (client id and secret), typed in Settings.
+
+    Same protected protocol as save_provider_key. The secret is never returned.
+    """
+    if before_replace is not None and not callable(before_replace):
+        raise TypeError("before_replace must be callable")
+    if type(body) is not dict or set(body) != {"client_id", "client_secret"}:
+        raise ProviderCredentialError("invalid_credential")
+    client_id, secret = body["client_id"], body["client_secret"]
+    if (type(client_id) is not str or not 6 <= len(client_id) <= 64
+            or not (client_id.isascii() and client_id.isalnum())
+            or type(secret) is not str or not 8 <= len(secret) <= 256
+            or any(not 33 <= ord(char) <= 126 for char in secret)):
+        raise ProviderCredentialError("invalid_credential")
+    value = json.dumps({"format": _LINKEDIN_APP_FORMAT, "client_id": client_id, "client_secret": secret},
+                       separators=(",", ":"), sort_keys=True, ensure_ascii=True)
+
+    def put(entries):
+        held = entries.get(_LINKEDIN_APP_ENTRY)
+        if held is not None and _linkedin_app_record(held) is None:
+            raise ProviderCredentialError("social_entry_collision")
+        entries[_LINKEDIN_APP_ENTRY] = value
+        return True
+
+    _mutate_protected_entries(put, before_replace=before_replace)
+    return {"ok": True, "state": "saved", "client_id": client_id, "source": "secrets store"}
+
+
+def _linkedin_app_record(value):
     try:
         record = json.loads(value, object_pairs_hook=_credential_pairs)
     except Exception:
         return None
-    if (type(record) is not dict or set(record) != {"format", "provider", "account_id", "token"}
-            or record["format"] != _SOCIAL_CREDENTIAL_FORMAT
-            or any(type(item) is not str for item in record.values())):
+    if (type(record) is not dict or set(record) != {"format", "client_id", "client_secret"}
+            or record["format"] != _LINKEDIN_APP_FORMAT or any(type(item) is not str for item in record.values())):
         return None
     return record
 
 
-def save_social_credential(body, *, before_replace=None):
-    """Enroll one operator-declared social account record in the protected store.
+def linkedin_app():
+    """(client_id, client_secret) of the saved LinkedIn app, or ProviderCredentialError."""
+    try:
+        record = _linkedin_app_record(protected_credential_entry(_LINKEDIN_APP_ENTRY))
+    except ProviderCredentialError:
+        record = None
+    if record is None:
+        raise ProviderCredentialError("linkedin_app_missing")
+    return record["client_id"], record["client_secret"]
+
+
+_SOCIAL_CREDENTIAL_FORMAT = "archhub-social-credential-1"          # operator-declared account
+_SOCIAL_VERIFIED_FORMAT = "archhub-social-credential-2"            # carries its account_binding
+_SOCIAL_BINDINGS = ("provider-verified", "operator-declared")
+_SOCIAL_ENTRY_PREFIX = "social-"
+
+
+def _social_record(value):
+    """The social account record held in one protected value, or None if it is not one.
+
+    Format 1 (provider, account_id, token) is an operator-declared account. Format 2
+    adds account_binding, written when the provider itself named the account, so the
+    binding travels with the token it describes. The result always has account_binding.
+    """
+    try:
+        record = json.loads(value, object_pairs_hook=_credential_pairs)
+    except Exception:
+        return None
+    if type(record) is not dict or any(type(item) is not str for item in record.values()):
+        return None
+    if record.get("format") == _SOCIAL_CREDENTIAL_FORMAT and set(record) == {"format", "provider", "account_id", "token"}:
+        return {**record, "account_binding": "operator-declared"}
+    if (record.get("format") == _SOCIAL_VERIFIED_FORMAT
+            and set(record) == {"format", "provider", "account_id", "token", "account_binding"}
+            and record["account_binding"] in _SOCIAL_BINDINGS):
+        return record
+    return None
+
+
+def save_social_credential(body, *, before_replace=None, verified=False):
+    """Enroll one social account record in the protected store.
 
     The physical protocol is save_provider_key's: the existing DPAPI primitive on
     this runtime's secrets.dat, _CREDENTIAL_LOCK, refusal of an observed outside
     change, the trusted owner's before_replace recheck immediately before
-    replacement, and confirmation afterwards. The account id is declared by the
-    enrolling operator; nothing here asks the provider, so the record is never
-    provider-verified identity. A name already holding a non-social credential
-    is refused, and an existing record is replaced only for the same provider
-    account (token rotation). No graph, settings index, alias or worker changes.
+    replacement, and confirmation afterwards. Nothing here asks the provider. With
+    verified=False the account id is the operator's declaration and the record is
+    format 1 (operator-declared). verified=True is passed only by the LinkedIn
+    sign-in, whose account id LinkedIn itself returned (/v2/userinfo sub); that
+    record is format 2 and stores account_binding "provider-verified" beside the
+    token, so custody (social_custody.social_account_binding) and every later read
+    report the same binding. A name already holding a non-social credential is
+    refused, and an existing record is replaced only for the same provider account
+    (token rotation); a declared rotation of a verified account is recorded as
+    declared. No graph, settings index, alias or worker changes.
     """
     from .social_connectors import _GRAPH_ID, _LINKEDIN_PERSON, _VAULT_ENTRY
 
@@ -1431,9 +1502,11 @@ def save_social_credential(body, *, before_replace=None):
             or any(not 33 <= ord(char) <= 126 for char in token)
             or "://" in token or token.lower().startswith("inline:")):
         raise ProviderCredentialError("invalid_social_credential")
-    value = json.dumps({"format": _SOCIAL_CREDENTIAL_FORMAT, "provider": provider,
-                        "account_id": account_id, "token": token},
-                       separators=(",", ":"), sort_keys=True, ensure_ascii=True)
+    binding = "provider-verified" if verified is True else "operator-declared"
+    record = {"format": _SOCIAL_CREDENTIAL_FORMAT, "provider": provider, "account_id": account_id, "token": token}
+    if verified is True:
+        record = {**record, "format": _SOCIAL_VERIFIED_FORMAT, "account_binding": binding}
+    value = json.dumps(record, separators=(",", ":"), sort_keys=True, ensure_ascii=True)
     def put(entries):
         if name in entries:
             existing = _social_record(entries[name])
@@ -1446,7 +1519,10 @@ def save_social_credential(body, *, before_replace=None):
 
     _mutate_protected_entries(put, before_replace=before_replace)
     return {"ok": True, "vault_entry": name, "provider": provider, "account_id": account_id,
-            "account_binding": "operator-declared", "state": "enrolled", "source": "secrets store"}
+            # provider-verified only when the provider itself named this account
+            # (social_linkedin_signin: /v2/userinfo sub); it is the stored record's binding.
+            "account_binding": binding,
+            "state": "enrolled", "source": "secrets store"}
 
 
 def revoke_social_credential(body, *, before_replace=None):

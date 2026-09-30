@@ -646,7 +646,7 @@ def normalize_work_answer(prepared: PreparedRequest, status, headers, body) -> d
 
 # --------------------------------------------------- native owner tool adapter --
 
-SOCIAL_PREPARE_ROUTE = "/api/universal/social-work-prepare"  # root-owned; not registered yet
+SOCIAL_PREPARE_ROUTE = "/api/universal/social-work-prepare"
 SOCIAL_EXECUTE_ROUTE = "/api/universal/social-work-execute"  # root-owned; not registered yet
 GRANT_ROUTE = "/api/universal/connector-delegation-grant"
 SOCIAL_TOOL_NAMES = ("social.work_prepare", "social.work_execute")
@@ -818,7 +818,8 @@ def register_social_tools(server, control) -> None:
     graph-held inputs (social_work_material); no caller supplies an effect
     argument and the argument schema forbids extra fields. The founder
     approves through the existing consent gesture between the two calls.
-    The social prepare and execute routes are root-owned and not registered.
+    The prepare and execute routes are the application's own
+    (/api/universal/social-work-prepare, /api/universal/social-work-execute).
     """
     adapter = _SocialWorkAdapter(control)
 

@@ -5138,6 +5138,113 @@ const BRAND = { openrouter: '#3a6acc', cloud: '#cc785c', ollama: '#1a8a4a', lmst
 // Providers whose key is pasted here (model_router.KEYED_IN_SETTINGS).
 const KEY_LABEL = { openrouter: 'OpenRouter', openai: 'OpenAI', google: 'Google', anthropic: 'Anthropic' };
 
+// Posts waiting for the founder (social_approval): the exact request an agent prepared,
+// then his own Approve or Deny. Nothing is posted until he approves.
+const SettingsSocialApprovals = ({transport}) => {
+  const alive = React.useRef(true), timer = React.useRef(null);
+  const [items, setItems] = React.useState([]), [busy, setBusy] = React.useState(''), [message, setMessage] = React.useState('');
+  const load = React.useCallback(async () => {
+    if (!transport?.listSocialApprovals) return;
+    try { const next = await transport.listSocialApprovals(); if (alive.current) setItems(next); }
+    catch (error) { if (alive.current) setMessage(error.message); }
+    if (alive.current) timer.current = setTimeout(load, 5000);
+  }, [transport]);
+  React.useEffect(() => { alive.current = true; load(); return () => { alive.current = false; clearTimeout(timer.current); }; }, [load]);
+  const decide = async (item, decision) => {
+    setBusy(item.delegation); setMessage('');
+    try {
+      await transport.decideSocialApproval({delegation:item.delegation, input_digest:item.input_digest, decision});
+      if (alive.current) { setMessage(decision === 'approve' ? 'Approved. The agent can post it once.' : 'Denied. It will not be posted.');
+        setItems(items.filter(other => other.delegation !== item.delegation)); }
+    } catch (error) { if (alive.current) setMessage(error.message); }
+    finally { if (alive.current) setBusy(''); }
+  };
+  if (!transport?.listSocialApprovals || (!items.length && !message)) return null;
+  return <div style={{padding:'12px 14px', background:LM.bg, border:`1px solid ${LM.accent || LM.line}`, borderRadius:LM.rad.lg, marginBottom:10}}>
+    <div style={{fontSize:13, fontWeight:500}}>Posts waiting for your approval</div>
+    {items.map(item => <div key={item.delegation} style={{marginTop:10}}>
+      <div style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>{item.operation} · {item.account_id} · {
+        item.account_binding === 'provider-verified' ? 'account confirmed by LinkedIn'
+          : item.account_binding === 'operator-declared' ? 'account typed in, not confirmed' : 'account not checked'}</div>
+      <pre style={{whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontFamily:LM.mono, fontSize:11, maxHeight:220, overflow:'auto',
+        padding:8, margin:'6px 0', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm}}>{item.review_text}</pre>
+      <div style={{display:'flex', gap:7}}>
+        <button type="button" disabled={!!busy} onClick={() => decide(item, 'approve')} style={smallBtn(true)}>Approve this post</button>
+        <button type="button" disabled={!!busy} onClick={() => decide(item, 'deny')} style={{...smallBtn(), color:LM.err}}>Deny</button>
+      </div>
+    </div>)}
+    {message && <p role="status" style={{fontSize:12, overflowWrap:'anywhere'}}>{message}</p>}
+  </div>;
+};
+
+// Sign in with LinkedIn (social_linkedin_signin). Step one saves the founder's own LinkedIn
+// app; step two opens LinkedIn's consent page and saves the account LinkedIn names.
+const SettingsLinkedInSignIn = ({transport}) => {
+  const form = React.useRef(null), alive = React.useRef(true), timer = React.useRef(null);
+  const [busy, setBusy] = React.useState(false), [message, setMessage] = React.useState(''), [failed, setFailed] = React.useState(false);
+  const [redirect, setRedirect] = React.useState('http://127.0.0.1:48720/linkedin/callback');
+  React.useEffect(() => () => { alive.current = false; clearTimeout(timer.current);
+    if (form.current) form.current.elements.client_secret.value = ''; }, []);
+  const say = (text, bad = false) => { if (alive.current) { setMessage(text); setFailed(bad); } };
+  const saveApp = async event => {
+    event.preventDefault();
+    const fields = form.current.elements;
+    const request = {client_id:fields.client_id.value.trim(), client_secret:fields.client_secret.value};
+    fields.client_secret.value = '';
+    setBusy(true);
+    try { await transport.saveLinkedInApp(request); say('LinkedIn app saved on this machine. Now sign in with LinkedIn.'); }
+    catch (error) { say(error.message, true); }
+    finally { request.client_secret = ''; if (alive.current) setBusy(false); }
+  };
+  const poll = async () => {
+    try {
+      const status = await transport.linkedInSignInStatus();
+      if (status.redirect_uri) setRedirect(status.redirect_uri);
+      if (status.phase === 'ready') {
+        const saved = await transport.finishLinkedInSignIn();
+        say('Connected ' + (status.name || 'your LinkedIn account') + ' (' + saved.account_id + '). LinkedIn confirmed this account. Reference: ' + saved.vault_entry + '.');
+        setBusy(false); return;
+      }
+      if (status.phase === 'failed') { say(status.error || 'LinkedIn sign-in failed.', true); setBusy(false); return; }
+      if (alive.current) timer.current = setTimeout(poll, 1500);
+    } catch (error) { say(error.message, true); setBusy(false); }
+  };
+  const signIn = async () => {
+    setBusy(true); say('Finish in the LinkedIn page that opened, then return here.');
+    try { const started = await transport.startLinkedInSignIn(); if (started.redirect_uri) setRedirect(started.redirect_uri); poll(); }
+    catch (error) { say(error.message, true); setBusy(false); }
+  };
+  const cancel = async () => {
+    clearTimeout(timer.current);
+    try { await transport.cancelLinkedInSignIn(); say('LinkedIn sign-in cancelled.'); }
+    catch (error) { say(error.message, true); }
+    finally { if (alive.current) setBusy(false); }
+  };
+  const available = !!(transport?.saveLinkedInApp && transport?.startLinkedInSignIn);
+  const inputStyle = {display:'block', width:'100%', margin:'6px 0 12px', padding:'7px 10px',
+    background:LM.bg, color:LM.ink, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, fontFamily:LM.mono, fontSize:11.5};
+  const labelStyle = {display:'block', fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.1em'};
+  return <div style={{padding:'12px 14px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, marginBottom:10}}>
+    <div style={{fontSize:13, fontWeight:500}}>Sign in with LinkedIn</div>
+    <div style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, marginBottom:12, letterSpacing:'0.04em'}}>Posts go to your personal LinkedIn profile, and only after you approve each one.</div>
+    <form ref={form} onSubmit={saveApp}>
+      <fieldset disabled={busy || !available} style={{border:0, padding:0, margin:0, minWidth:0}}>
+        <div style={{fontSize:12, color:LM.inkSoft, lineHeight:1.55, marginBottom:10}}>In your LinkedIn app, add this exact redirect URL: <code style={{fontFamily:LM.mono}}>{redirect}</code></div>
+        <label style={labelStyle}>CLIENT ID<input name="client_id" required maxLength={64} pattern="[A-Za-z0-9]{6,64}" style={inputStyle}/></label>
+        <label style={labelStyle}>CLIENT SECRET<input name="client_secret" type="password" required maxLength={256} autoComplete="new-password"
+          autoCapitalize="none" spellCheck={false} style={inputStyle}/></label>
+        <div style={{display:'flex', gap:7, flexWrap:'wrap'}}>
+          <button type="submit" style={smallBtn()}>Save LinkedIn app</button>
+          <button type="button" onClick={signIn} style={smallBtn(true)}>{busy ? 'Waiting for LinkedIn…' : 'Sign in with LinkedIn'}</button>
+        </div>
+      </fieldset>
+      {busy && transport?.cancelLinkedInSignIn && <button type="button" onClick={cancel} style={{...smallBtn(), marginTop:7}}>Cancel sign-in</button>}
+      {!available && <p role="status" style={{fontSize:12, color:LM.inkSoft}}>LinkedIn sign-in is unavailable in this connection.</p>}
+      {message && <p role={failed ? 'alert' : 'status'} style={{fontSize:12, overflowWrap:'anywhere', color:failed ? LM.err : LM.ok}}>{message}</p>}
+    </form>
+  </div>;
+};
+
 const SettingsSocialEnrollment = ({transport}) => {
   const form = React.useRef(null), busy = React.useRef(false), alive = React.useRef(true);
   const [saving, setSaving] = React.useState(false), [message, setMessage] = React.useState('');
@@ -5339,7 +5446,7 @@ const SettingsProviders = ({ providers, onTab }) => {
     }}>
       <span>{social ? '\u2212' : '+'}</span> Social account credentials…
     </button>
-    {social && <div style={{ marginTop:10 }}><SettingsSocialEnrollment transport={transport}/></div>}
+    {social && <div style={{ marginTop:10 }}><SettingsSocialApprovals transport={transport}/><SettingsLinkedInSignIn transport={transport}/><SettingsSocialEnrollment transport={transport}/></div>}
   </div>
   );
 };

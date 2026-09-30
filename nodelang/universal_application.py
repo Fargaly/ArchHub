@@ -3518,6 +3518,12 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/terminal", "execute"),
     ("POST", "/api/universal/cloud-publish-consent", "manage-policy"),
     ("POST", "/api/universal/social-credential", "manage-policy"),
+    ("POST", "/api/universal/social-linkedin-app", "manage-policy"),
+    ("GET", "/api/universal/social-linkedin-signin", "read"),
+    ("POST", "/api/universal/social-linkedin-signin", "manage-policy"),
+    ("POST", "/api/universal/social-linkedin-finish", "manage-policy"),
+    ("GET", "/api/universal/social-approvals", "read"),
+    ("POST", "/api/universal/social-approve", "execute"),
     ("POST", "/api/universal/social-credential-remove", "manage-policy"),
     ("POST", "/api/universal/connector-delegation-receipt", "execute"),
     ("POST", "/api/universal/connector-delegation-recover", "execute"),
@@ -38021,6 +38027,12 @@ def approve_universal_baboom_connector_execution(
         registry.adapter_protocol,
         delegation_root,
     )
+    # A social post is approved only by the founder's own gesture in his browser
+    # (social_approval.decide: the displayed request and its exact input digest),
+    # never by an agent session over the machine route.
+    if any(root == delegation.provider_root and type(name) is str and name.startswith("social-")
+           for name, root in registry.baboom_connector_provider_roots.items()):
+        raise AuthorizationDenied("a social post is approved only in the founder's browser")
     permission = read_permission(
         snapshot, registry.adapter_protocol, delegation.permission_root
     )

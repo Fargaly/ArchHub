@@ -3,7 +3,10 @@
 The only custody is this runtime's DPAPI-protected secrets.dat, read through
 model_router.protected_credential_entry. A social entry's value is one JSON
 record {"format", "provider", "account_id", "token"} to be written by explicit
-enrollment. Operator-declared identity is not provider-verified identity.
+enrollment (format 1, operator-declared), or the same plus "account_binding"
+(format 2) when the provider itself named the account at sign-in.
+Operator-declared identity is not provider-verified identity, and
+social_account_binding reports which one a record is, from the record itself.
 The resolver checks provider and account_id against the same record
 whose token it returns, so replacement between the verifier and the resolver can
 never dispatch another account's credential. No environment variable, keyring,
@@ -18,7 +21,10 @@ from .social_connectors import _VAULT_ENTRY
 from .universal_cell import InvalidCell
 
 SOCIAL_CREDENTIAL_FORMAT = "archhub-social-credential-1"
+SOCIAL_VERIFIED_FORMAT = "archhub-social-credential-2"
 _RECORD_FIELDS = frozenset({"format", "provider", "account_id", "token"})
+_VERIFIED_FIELDS = _RECORD_FIELDS | {"account_binding"}
+_BINDINGS = frozenset({"provider-verified", "operator-declared"})
 _PROVIDERS = frozenset({"linkedin", "meta"})
 
 
@@ -47,6 +53,11 @@ def _unique(pairs):
 
 def _bound_token(provider, account_id, vault_entry):
     """One protected read: the binding check and the token come from the same record."""
+    return _bound_record(provider, account_id, vault_entry)[0]
+
+
+def _bound_record(provider, account_id, vault_entry):
+    """(token, account_binding) of the record bound to this provider account."""
     from .model_router import protected_credential_entry
 
     if (type(vault_entry) is not str or not vault_entry.startswith("social-")
@@ -64,8 +75,11 @@ def _bound_token(provider, account_id, vault_entry):
     except Exception:
         raise InvalidCell("social credential record is unreadable") from None
     token = record.get("token") if type(record) is dict else None
-    if (type(record) is not dict or set(record) != _RECORD_FIELDS
-            or record["format"] != SOCIAL_CREDENTIAL_FORMAT
+    fields = set(record) if type(record) is dict else set()
+    if (type(record) is not dict
+            or not ((fields == _RECORD_FIELDS and record["format"] == SOCIAL_CREDENTIAL_FORMAT)
+                    or (fields == _VERIFIED_FIELDS and record["format"] == SOCIAL_VERIFIED_FORMAT
+                        and record["account_binding"] in _BINDINGS))
             or type(record["provider"]) is not str or type(record["account_id"]) is not str
             or type(token) is not str or not 1 <= len(token) <= 16384
             or any(ord(char) < 33 or ord(char) > 126 for char in token)):
@@ -73,12 +87,17 @@ def _bound_token(provider, account_id, vault_entry):
     if not (hmac.compare_digest(record["provider"].encode("utf-8"), provider.encode("utf-8"))
             and hmac.compare_digest(record["account_id"].encode("utf-8"), account_id.encode("utf-8"))):
         raise InvalidCell("social credential is bound to another provider account")
-    return token
+    return token, record.get("account_binding", "operator-declared")
 
 
 def social_credential(*, provider, account_id, vault_entry):
     """SocialHttpHost credential_resolver: binding check and token from one record read."""
     return _bound_token(provider, account_id, vault_entry)
+
+
+def social_account_binding(*, provider, account_id, vault_entry):
+    """"provider-verified" or "operator-declared", read from the bound record; never the token."""
+    return _bound_record(provider, account_id, vault_entry)[1]
 
 
 def social_account_binding_verifier(*, provider, account_id, vault_entry):
@@ -90,7 +109,7 @@ def social_account_binding_verifier(*, provider, account_id, vault_entry):
     return True
 
 
-def enroll_social_account(owner, body, *, require_admission):
+def enroll_social_account(owner, body, *, require_admission, verified=False):
     """Caller holds owner and live authorization locks; no secret enters graph.
 
     Custody replacement and graph commit are different durable boundaries.
@@ -107,7 +126,7 @@ def enroll_social_account(owner, body, *, require_admission):
     if type(name) is str and "app:brain:secret-vault:entry:" + name in snapshot.cells:
         require_social_vault_reference(snapshot, name)
     with store.stable_snapshot():
-        saved = save_social_credential(body, before_replace=require_admission)
+        saved = save_social_credential(body, before_replace=require_admission, verified=verified)
     try:
         require_admission()
         if "app:brain:secret-vault:entry:" + name not in store.snapshot().cells:
@@ -118,7 +137,7 @@ def enroll_social_account(owner, body, *, require_admission):
         return {"ok": False, "state": "credential_saved_reference_unconfirmed",
                 "error_code": "social_reference_unconfirmed",
                 "error": "Credential saved locally, but its graph reference could not be confirmed. Review before retrying.",
-                "vault_entry": saved["vault_entry"], "account_binding": "operator-declared"}
+                "vault_entry": saved["vault_entry"], "account_binding": saved["account_binding"]}
     return {**saved, "vault_reference": "dpapi://ArchHub/" + name,
             "revision": store.revision}
 

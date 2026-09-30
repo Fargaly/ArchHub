@@ -408,18 +408,24 @@
             if (!previous || (!content && result.revision !== previous.revision) || content !== ordinary ||
                 (content && (result.content_cursor !== previous.content_cursor ||
                   result.page_before !== previous.page_before))) fail('Workshop history needs a full refresh.');
+            // An assignment adds no message: an unchanged page still carries the graph's
+            // current assignments, and the panel must see them.
+            if (result.assignments !== undefined && !Array.isArray(result.assignments)) fail('Workshop assignments are invalid.');
+            const assignments = result.assignments !== undefined ? {assignments:result.assignments} : {};
+            const assignmentsChanged = result.assignments !== undefined &&
+              JSON.stringify(previous.assignments ?? null) !== JSON.stringify(result.assignments);
             if (result.participants !== undefined) {
               if (!Array.isArray(result.participants) || result.participants.some(row =>
                   !row || !text(row.root) || typeof row.label !== 'string' || typeof row.attached !== 'boolean')) {
                 fail('Workshop participant status is invalid.');
               }
               if (JSON.stringify(previous.participants) === JSON.stringify(result.participants) &&
-                  result.revision === previous.revision && !modelChanged) return previous;
+                  result.revision === previous.revision && !modelChanged && !assignmentsChanged) return previous;
               workshop = {...previous, revision:result.revision, participants:result.participants,
-                model_agent:modelAgent}; publish(); return workshop;
+                model_agent:modelAgent, ...assignments}; publish(); return workshop;
             }
-            if (result.revision !== previous.revision || modelChanged) {
-              workshop = {...previous, revision:result.revision, model_agent:modelAgent}; publish(); return workshop;
+            if (result.revision !== previous.revision || modelChanged || assignmentsChanged) {
+              workshop = {...previous, revision:result.revision, model_agent:modelAgent, ...assignments}; publish(); return workshop;
             }
             return previous;
           }

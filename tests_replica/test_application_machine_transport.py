@@ -263,7 +263,18 @@ def test_governed_runtime_handoff_routes_are_graph_declared_machine_only():
 
 def _complete_runtime_handoff_work(server, client, tmp_path, backend):
     (tmp_path / "green.flag").write_text("green", encoding="utf-8")
-    work_root, _wire, _revision = create_universal_governed_work(
+    # A persistent graph admits a commit only under a declared intent; the
+    # application declares one per request, a court calling the library
+    # directly declares the owner's own action.
+    from nodelang import commit_intent
+    with commit_intent.declare(commit_intent.USER_ACTION, actor="court",
+                               reason="create the runtime-handoff Work"):
+        work_root, _wire, _revision = _create_runtime_handoff_work(server, backend)
+    return _finish_runtime_handoff_work(server, client, tmp_path, work_root)
+
+
+def _create_runtime_handoff_work(server, backend):
+    return create_universal_governed_work(
         server.universal_store,
         server.universal_registry,
         title="Release one accepted runtime generation",
@@ -291,6 +302,9 @@ def _complete_runtime_handoff_work(server, client, tmp_path, backend):
         x=320,
         y=240,
     )
+
+
+def _finish_runtime_handoff_work(server, client, tmp_path, work_root):
     session_root = client.bind_agent_session(
         runtime="codex",
         external_session_id="court-runtime-handoff-owner",
@@ -6395,7 +6409,8 @@ def test_machine_workshop_admission_rejects_protected_content_without_commit(tmp
 
 
 def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path, monkeypatch):
-    _as_observed_desktop_launch(monkeypatch)
+    # No Desktop stand-in: since 76f988f4 this court proves an ordinary
+    # machine caller is REFUSED the browser handoff ("observed Desktop").
     descriptor_path = tmp_path / "active-universal-runtime.json"
     provider = MemorySigningKeyProvider(
         "archhub.local.universal-runtime-pipe", b"p" * 32
@@ -6931,8 +6946,11 @@ def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path
         assert created["created_root"] not in visible
         assert requirements_root not in visible
         assert capabilities_root not in visible
-        assert session_a in visible
-        assert session_b in visible
+        # 76f988f4 (2026-09-29): an agent session keeps its memberships but is
+        # no longer drawn on the top canvas
+        # (test_new_content_lands_in_its_home.py).
+        assert session_a not in visible
+        assert session_b not in visible
 
         binding_claim = agent_a.claim_next_work()
         binding_root = binding_claim["work"]["claim_binding"]

@@ -124,6 +124,14 @@ def test_bound_agents_message_through_one_workshop_and_restart(tmp_path):
     recipient_bundle, recipient_caller = _session(
         authority, sessions, founder, "Reviewer", recipient_private, "reviewer"
     )
+    # Messages are exchanged only between sessions attached to the Workshop
+    # (coordination_workshop.create_coordination_message, 326b6579).
+    from nodelang.unified_authority import attach_composition_from_scope, composition_root
+    source_scope = composition_root(authority, "Agent Sessions", caller=founder)
+    workshop_scope = composition_root(authority, "Workshop", caller=founder)
+    for bundle in (sender_bundle, recipient_bundle):
+        attach_composition_from_scope(authority, source_scope, workshop_scope,
+            bundle.session_root, caller=founder, command_id=str(uuid.uuid4()))
     sender = GraphAgentCoordinator(
         authority,
         sessions,

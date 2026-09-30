@@ -208,6 +208,13 @@ def test_workshop_is_one_graph_native_plan_assignment_review_and_report(tmp_path
     }
     for name, target in plan_targets.items():
         _connect(authority, plan.root_id, name, target)
+    for missing in ("visible-plan", "progress-report"):
+        revision = authority.store.revision
+        with pytest.raises(InvalidCell, match="missing a required connection"):
+            transition_workshop_instance(authority, plan.root_id, "state", "accepted",
+                caller=caller, command_id=_command("missing-" + missing))
+        assert authority.store.revision == revision
+        _connect(authority, plan.root_id, missing, governance)
     transition_workshop_instance(
         authority,
         plan.root_id,
@@ -241,6 +248,12 @@ def test_workshop_is_one_graph_native_plan_assignment_review_and_report(tmp_path
         caller=caller,
         command_id=_command("assign-work"),
     )
+    revision = authority.store.revision
+    with pytest.raises(InvalidCell, match="missing a required connection"):
+        transition_workshop_instance(authority, assignment.root_id, "state", "working",
+            caller=builder_caller, command_id=_command("start-without-progress"))
+    assert authority.store.revision == revision
+    _connect(authority, assignment.root_id, "progress-report", governance)
     transition_workshop_instance(
         authority,
         assignment.root_id,
@@ -359,9 +372,12 @@ def test_workshop_is_one_graph_native_plan_assignment_review_and_report(tmp_path
     assert replay.replayed is True
     assert reopened_store.revision == revision
     retention = reopened_store.retention_stats()
-    assert retention["current_cell_count"] <= 37_720
-    assert retention["version_cell_count"] <= 37_920
-    assert retention["revision_count"] <= 66
+    # Three added connections, their receipts, and catalogue metadata add work.
+    # Preserve the baseline plus a bounded allowance (not a measured per-link cost).
+    workflow_reference_budget = 3 * 320
+    assert retention["current_cell_count"] <= 37_720 + workflow_reference_budget
+    assert retention["version_cell_count"] <= 37_920 + workflow_reference_budget
+    assert retention["revision_count"] <= 66 + 3
     reopened_store.close()
 
 
@@ -392,6 +408,8 @@ def test_workshop_rejects_builder_as_its_own_verifier():
         "steward": same_session,
         "red-court": authority.manifest.policy_root,
         "task-graph": authority.manifest.application_root,
+        "visible-plan": authority.manifest.application_root,
+        "progress-report": authority.manifest.application_root,
     }
     for name, target in targets.items():
         _connect(authority, plan.root_id, name, target)
@@ -408,3 +426,34 @@ def test_workshop_rejects_builder_as_its_own_verifier():
         )
     assert authority.store.revision == revision
     assert len(authority.store.snapshot().cells) == count
+
+
+@pytest.mark.parametrize("missing", ["visible-plan", "progress-report"])
+def test_plan_requires_each_workflow_reference(missing):
+    authority = _authority()
+    caller = _Caller(authority)
+    catalogue = install_workshop_catalogue(authority,
+        operation_id=_command("reference-catalogue"), caller=caller)
+    plan = create_workshop_instance(authority, catalogue.plan_definition,
+        {"title": "Plan references"}, caller=caller,
+        command_id=_command("reference-plan"))
+    targets = {name: authority.manifest.application_root for name in (
+        "objective", "authority", "research", "architect", "critique", "steward",
+        "red-court", "task-graph", "visible-plan", "progress-report")}
+    targets.update(builder=authority.manifest.principal_root,
+                   verifier=authority.manifest.policy_root)
+    for name, target in targets.items():
+        if name != missing:
+            _connect(authority, plan.root_id, name, target)
+    revision = authority.store.revision
+    with pytest.raises(InvalidCell, match="missing a required connection"):
+        transition_workshop_instance(authority, plan.root_id, "state", "accepted",
+            caller=caller, command_id=_command("reject-missing-reference"))
+    assert authority.store.revision == revision
+    _connect(authority, plan.root_id, missing, targets[missing])
+    transition_workshop_instance(authority, plan.root_id, "state", "accepted",
+        caller=caller, command_id=_command("accept-present-references"))
+    revision = authority.store.revision
+    assert install_workshop_catalogue(authority,
+        operation_id=_command("existing-reference-catalogue"), caller=caller) == catalogue
+    assert authority.store.revision == revision

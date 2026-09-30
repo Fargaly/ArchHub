@@ -1122,6 +1122,22 @@ def _site_fonts():
     return frozenset(face[0] for face in FONT_FACES), FONTS_CSS
 
 
+def _site_font_asset(name):
+    """``fonts.css`` or one woff2 face it names, and nothing else.
+
+    ``name`` is the path under ``/assets/``. Both servers answer from here, so
+    the Studio and the canvas page read the same faces the website exports.
+    """
+    faces, css = _site_fonts()
+    if name == "fonts.css":
+        return css.encode("utf-8"), "text/css; charset=utf-8"
+    face = name[len("fonts/"):] if name.startswith("fonts/") else None
+    if face not in faces:
+        raise FileNotFoundError("font not found")
+    from .site_export import BRAND_DIR, FONT_DIR
+    return (BRAND_DIR / FONT_DIR / face).read_bytes(), "font/woff2"
+
+
 class _CleanAuthorityHttpServer:
     """Bounded clean-graph browser consumer without a second store."""
 
@@ -2844,11 +2860,9 @@ class _CleanAuthorityHttpServer:
 
     def _clean_font_asset(self, name):
         """One woff2 face the canvas page names, and nothing else."""
-        faces, _css = _site_fonts()
-        from .site_export import BRAND_DIR, FONT_DIR
-        if name not in faces:
+        if name == "fonts.css":
             raise FileNotFoundError("font not found")
-        return (BRAND_DIR / FONT_DIR / name).read_bytes(), "font/woff2"
+        return _site_font_asset("fonts/" + name)
 
     def _clean_studio_page(self):
         """Use the chosen Studio presentation with this same graph authority."""
@@ -3851,11 +3865,12 @@ class _CleanAuthorityHttpServer:
                     self.wfile.write(body)
                     return
                 request_path = self.path.split("?", 1)[0]
-                if request_path.startswith("/assets/fonts/"):
-                    # Public OFL faces the canvas page names; no key, no session.
+                if request_path.startswith("/assets/fonts/") or request_path == "/assets/fonts.css":
+                    # Public OFL faces the canvas page and the Studio name; no key, no session.
                     try:
-                        body, kind = owner._clean_font_asset(
-                            request_path[len("/assets/fonts/"):])
+                        body, kind = (_site_font_asset("fonts.css")
+                            if request_path == "/assets/fonts.css" else owner._clean_font_asset(
+                                request_path[len("/assets/fonts/"):]))
                     except FileNotFoundError:
                         self._json(404, {"ok": False, "error": "font not found"})
                         return
@@ -6282,6 +6297,24 @@ class ApplicationServer:
                     self.end_headers()
                     return
                 if (
+                    parsed.path == '/assets/fonts.css'
+                    or parsed.path.startswith('/assets/fonts/')
+                ):
+                    # The public OFL faces the Studio names; no session.
+                    try:
+                        raw, kind = _site_font_asset(parsed.path[len('/assets/'):])
+                    except FileNotFoundError:
+                        self._json(404, {'ok': False, 'error': 'font not found'})
+                        return
+                    self.send_response(200)
+                    self.send_header('Content-Type', kind)
+                    self.send_header('Content-Length', str(len(raw)))
+                    self.send_header('Cache-Control', 'max-age=86400')
+                    self.send_header('X-Content-Type-Options', 'nosniff')
+                    self.end_headers()
+                    self.wfile.write(raw)
+                    return
+                if (
                     parsed.path == '/'
                     or parsed.path == '/api/state'
                     or parsed.path.startswith('/api/universal')
@@ -6657,9 +6690,8 @@ class ApplicationServer:
                             'Content-Security-Policy',
                             "default-src 'none'; connect-src 'self'; "
                             "img-src 'self' data:; "
-                            "style-src 'unsafe-inline' "
-                            "https://fonts.googleapis.com; "
-                            "font-src https://fonts.gstatic.com; "
+                            "style-src 'self' 'unsafe-inline'; "
+                            "font-src 'self'; "
                             "script-src 'self' 'unsafe-inline' "
                             "'unsafe-eval'; frame-ancestors 'none'"
                         )

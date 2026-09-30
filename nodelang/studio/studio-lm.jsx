@@ -3158,6 +3158,18 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     pendingArrange.current = null;
     arrangeRunning.current = false;
   }, [scopeKey]);
+  // Cards that intersect by their DRAWN size (content + port band). Nothing moves on its own: the canvas says so
+  // and offers Arrange, the one user-initiated write that lays them out by the same measured sizes.
+  const overlapCount = (() => {
+    if (!allNodes.length || !allNodes.every(node => Number.isFinite(cardHeights[node.id]))) return 0;
+    const boxes = allNodes.map(node => ({id:node.id, ...(positions[node.id] || node), w:node.w || 220, h:cardHeights[node.id]}));
+    const hit = new Set();
+    for (let a = 0; a < boxes.length; a += 1) for (let b = a + 1; b < boxes.length; b += 1) {
+      const p = boxes[a], q = boxes[b];
+      if (p.x < q.x + q.w && q.x < p.x + p.w && p.y < q.y + q.h && q.y < p.y + p.h) { hit.add(p.id); hit.add(q.id); }
+    }
+    return hit.size;
+  })();
   const arrangeIds = async ids => {
     if (!alive.current || !scopeStillCurrent() || !ids.length) return;
     if (!canSaveLayout) { setLayoutError('This connection cannot save node positions.'); return; }
@@ -3504,6 +3516,12 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       </p>}
       {/* Below the minimap (MiniMap: right 14, top 14, 96 tall), never over it. The design canvas draws no status chip:
           only a save in flight, a refusal or a half-made wire draws one. Refresh is also in a node's own menu. */}
+      {overlapCount > 1 && canSaveLayout && !layoutBusy && <div data-no-pan data-overlap-chip={overlapCount} role="group" aria-label={overlapCount + ' cards overlap'} style={{
+        position:'absolute', left:14, bottom:14, zIndex:6, display:'flex', gap:8, alignItems:'center',
+        background:LM.bgPanel, border:`1px solid ${LM.line}`, padding:'5px 8px 5px 10px', borderRadius:6, fontSize:12, color:LM.inkSoft}}>
+        {overlapCount} cards overlap
+        <button type="button" onClick={() => arrangeIds(allNodes.map(node => node.id))} style={{...smallBtn()}}>Arrange</button>
+      </div>}
       {(layoutError || authorityState?.error || wireError || layoutBusy || burstPending || authorityState?.pending || wireStart || unwrittenLayout || menuBusy || menuNotice) &&
       <div data-no-pan style={{position:'absolute', top:118, right:14, zIndex:5,
         display:'flex', gap:8, alignItems:'center', maxWidth:'55%', background:LM.bgPanel, padding:'6px 10px', borderRadius:6}}>
@@ -3735,8 +3753,8 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
       {/* Sockets: their own band below the content, one row per port pair */}
       {rows > 0 && <div ref={bandRef} data-port-band="" style={{ position:'relative',
         height:PORT_BAND_PAD * 2 + rows * SOCKET_STEP, borderTop:`1px solid ${LM.lineSoft}` }}>
-        {n.ins?.map((s, i) => <Socket key={'in-'+s.id} side="in" i={i} t={s.t} label={s.label} onUse={s.connectable && onSocket ? () => onSocket(s, 'in') : undefined}/>)}
-        {n.outs?.map((s, i) => <Socket key={'out-'+s.id} side="out" i={i} t={s.t} label={s.label} onUse={s.connectable && onSocket ? () => onSocket(s, 'out') : undefined}/>)}
+        {n.ins?.map((s, i) => <Socket key={'in-'+s.id} side="in" i={i} t={s.t} label={s.label} half={w / 2} onUse={s.connectable && onSocket ? () => onSocket(s, 'in') : undefined}/>)}
+        {n.outs?.map((s, i) => <Socket key={'out-'+s.id} side="out" i={i} t={s.t} label={s.label} half={w / 2} onUse={s.connectable && onSocket ? () => onSocket(s, 'out') : undefined}/>)}
       </div>}
     </div>
   );
@@ -3760,7 +3778,7 @@ const NodeStateDot = ({ s }) => {
   );
 };
 
-const Socket = ({ side, i, t, label, onUse }) => {
+const Socket = ({ side, i, t, label, onUse, half = 110 }) => {
   const col = WIRE[t] || LM.inkSoft;
   // The dot is a button, so a connectable port starts or finishes a wire; a port that cannot be connected stays inert.
   return (
@@ -3779,9 +3797,11 @@ const Socket = ({ side, i, t, label, onUse }) => {
         background: side === 'out' ? col : LM.bgPanel,
         border:`1.5px solid ${col}`, boxShadow:`0 0 0 2px ${LM.bgCanvas}`,
       }}/>
-      <span style={{
+      {/* An input's and an output's label share one row: each gets half the card, never the other's half. */}
+      <span title={label || undefined} style={{
         fontFamily:LM.mono, fontSize:8.5, color:LM.inkMuted, letterSpacing:'0.04em',
         whiteSpace:'nowrap', padding:'0 4px', pointerEvents:'none',
+        maxWidth:Math.max(24, half - SOCKET_R * 2 - 10), overflow:'hidden', textOverflow:'ellipsis',
         opacity: label ? 0.85 : 0,
       }}>{label}</span>
     </div>

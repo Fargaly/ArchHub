@@ -19391,7 +19391,8 @@ def _user_composition_root(
 
 
 _USER_PLACEMENT = "user"
-_CANVAS_CARD_PITCH = (260.0, 200.0)
+# Row pitch = the tallest drawn card (canvas_placement.card_size: header + 6 rows + port band = 230) + a gap.
+_CANVAS_CARD_PITCH = (260.0, 280.0)
 _CANVAS_PLACEMENT_COLUMNS = 6
 
 

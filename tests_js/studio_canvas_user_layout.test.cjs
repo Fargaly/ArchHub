@@ -259,6 +259,27 @@ test('T3: Arrange over hand-placed cards only writes nothing and says why', asyn
   } finally { await view.close(); }
 });
 
+test('overlapping cards: the canvas says so and offers Arrange; nothing is written until it is clicked, then once', async () => {
+  const view = await mount();
+  try {
+    await view.settle(30);
+    const chip = view.doc.querySelector('[data-overlap-chip]');
+    assert.ok(chip, 'stacked cards are reported');
+    assert.match(chip.textContent, /cards overlap/);
+    assert.equal(view.saves.length, 0, 'no automatic write');
+    const arrange = [...chip.querySelectorAll('button')].find(b => b.textContent.trim() === 'Arrange');
+    await view.click(arrange);
+    await view.settle(30);
+    assert.equal(view.saves.length, 1, 'one Arrange is one write');
+    assert.equal(view.saves[0].placement, 'arrange');
+    const moved = view.saves[0].positions, boxes = Object.entries(moved).map(([id, at]) => ({id, ...at, w:SIZE.w, h:SIZE.h}));
+    for (let a = 0; a < boxes.length; a += 1) for (let b = a + 1; b < boxes.length; b += 1) {
+      const p = boxes[a], q = boxes[b];
+      assert.ok(!(p.x < q.x + q.w && q.x < p.x + p.w && p.y < q.y + q.h && q.y < p.y + p.h), p.id + ' and ' + q.id + ' still overlap');
+    }
+  } finally { await view.close(); }
+});
+
 test('frames are drawn per group around their cards', async () => {
   const view = await mount();
   try {

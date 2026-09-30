@@ -177,7 +177,11 @@ test('socket labels keep the design type; a connectable port wires through the t
     assert.equal(label.style.fontSize, '8.5px');
     assert.equal(label.style.whiteSpace, 'nowrap');
     assert.equal(label.style.padding, '0px 4px');
-    assert.equal(label.style.maxWidth, '', 'a label is not capped: the design draws it whole');
+    // An input's and an output's label share one row: each is held to half the card, ellipsized, whole in its tooltip.
+    assert.ok(parseFloat(label.style.maxWidth) > 0 && parseFloat(label.style.maxWidth) <= 105, 'a label keeps to its half of the card');
+    assert.equal(label.style.overflow, 'hidden');
+    assert.equal(label.style.textOverflow, 'ellipsis');
+    assert.equal(label.getAttribute('title'), 'required-capabilities', 'the whole name stays reachable');
     assert.equal(label.style.opacity, '0.85');
     const policy = socket(doc, 'policy', 'Connect input applicable-policy');
     assert.equal(policy.disabled, true, 'a port the server marks not connectable cannot be used');

@@ -20,6 +20,11 @@ AI_CARD_WIDTH = 520.0
 CARD_HEADER = 76.0
 CARD_ROW = 18.0
 CARD_ROWS_DRAWN = 6
+# The port band under a card's content (studio-lm.jsx PORT_BAND_PAD and SOCKET_STEP): the Studio draws the
+# ports below the title, summary and parameters, so a card is that much taller than its content.
+PORT_BAND_PAD = 4.0
+PORT_ROW = 19.0
+PORT_ROWS_DEFAULT = 2
 # The gap Arrange leaves between cards (studio-lm.jsx canvasArrangePositions).
 GAP = 48.0
 ORIGIN = (240.0, 200.0)
@@ -43,11 +48,12 @@ def drawn_rows(labels: Iterable[str]) -> int:
     return sum(1 for label in labels if label not in UNDRAWN_ROWS)
 
 
-def card_size(engine: str = "", parameters: int = 0) -> tuple[float, float]:
-    """The drawn size of one card: width by kind, height by its rows."""
+def card_size(engine: str = "", parameters: int = 0, ports: int = PORT_ROWS_DEFAULT) -> tuple[float, float]:
+    """The drawn size of one card: width by kind, height by its rows and its port band."""
     wide = str(engine or "").startswith(_AI_ENGINE_PREFIXES)
     rows = max(0, min(int(parameters), CARD_ROWS_DRAWN))
-    return (AI_CARD_WIDTH if wide else CARD_WIDTH, CARD_HEADER + rows * CARD_ROW)
+    band = PORT_BAND_PAD * 2 + max(0, int(ports)) * PORT_ROW if ports else 0.0
+    return (AI_CARD_WIDTH if wide else CARD_WIDTH, CARD_HEADER + rows * CARD_ROW + band)
 
 
 def intersects(a: Rect, b: Rect, gap: float = 0.0) -> bool:

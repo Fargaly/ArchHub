@@ -1233,6 +1233,7 @@ class _BaboomAttachment(_BaboomObject):
         super().__init__(parent)
         self.worker = None
         self.pending_host = None
+        self.prepared_atlas = None
         self.ready.connect(self.land, _BaboomQt.ConnectionType.QueuedConnection)
 
     def shutdown(self):
@@ -1260,7 +1261,8 @@ class _BaboomAttachment(_BaboomObject):
         try:
             from nodelang.baboom_native_runtime import create_baboom_native_projection
             companion = create_baboom_native_projection(
-                host, position_path=state_dir / "baboom-position.json", on_stop=_stop_baboom_for_user
+                host, atlas=self.prepared_atlas,
+                position_path=state_dir / "baboom-position.json", on_stop=_stop_baboom_for_user
             )
             controller = getattr(companion, "controller", None)
             try:
@@ -1365,6 +1367,14 @@ def _keep_attaching():
                 return
             if _baboom_stop.is_set():
                 return
+            # The sprite atlas is decoded here, never on the GUI thread: it
+            # froze the window for seconds while the Studio loaded. A failed
+            # inspection leaves None and land() refuses exactly as before.
+            try:
+                from nodelang.baboom_native_runtime import prepare_baboom_native_atlas
+                _baboom_attachment.prepared_atlas = prepare_baboom_native_atlas()
+            except Exception:
+                _baboom_attachment.prepared_atlas = None
             # This receiver was created on the GUI thread. No Qt object is
             # constructed by this worker; an undelivered host has no heartbeat.
             try:

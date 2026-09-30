@@ -61,10 +61,21 @@ def create_baboom_native_host(
     )
 
 
+def prepare_baboom_native_atlas(atlas_path: Path | None = None) -> BaboomSpriteAtlas:
+    """Inspect the sprite atlas; pure, so any thread may do it.
+
+    The inspection decodes the whole 1536x2288 RGBA sheet in Python. On the Qt
+    GUI thread that froze the window for seconds at every start, so the attach
+    worker prepares it and hands the result to create_baboom_native_projection.
+    """
+    return inspect_baboom_sprite_atlas_v2(atlas_path or default_baboom_sprite_atlas_path())
+
+
 def create_baboom_native_projection(
     host: BaboomNativeHost,
     *,
     atlas_path: Path | None = None,
+    atlas: BaboomSpriteAtlas | None = None,
     position_path: Path | None = None,
     on_stop: Callable[[], None] | None = None,
 ) -> Any:
@@ -75,8 +86,11 @@ def create_baboom_native_projection(
     app = QApplication.instance()
     if app is None or QThread.currentThread() != app.thread():
         raise RuntimeError("BABOOM projection requires the application GUI thread")
-    selected_path = atlas_path or default_baboom_sprite_atlas_path()
-    atlas: BaboomSpriteAtlas = inspect_baboom_sprite_atlas_v2(selected_path)
+    if atlas is None:
+        selected_path = atlas_path or default_baboom_sprite_atlas_path()
+        atlas = inspect_baboom_sprite_atlas_v2(selected_path)
+    elif not isinstance(atlas, BaboomSpriteAtlas):
+        raise TypeError("BABOOM projection atlas must be an inspected BaboomSpriteAtlas")
     controller = BaboomNativeCompanionController(host, atlas)
     return create_baboom_native_companion_window(
         controller, position_path=position_path, on_stop=on_stop
@@ -88,4 +102,5 @@ __all__ = [
     "create_baboom_native_host",
     "create_baboom_native_projection",
     "default_baboom_sprite_atlas_path",
+    "prepare_baboom_native_atlas",
 ]

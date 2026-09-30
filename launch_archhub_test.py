@@ -913,8 +913,9 @@ _studio_downloads = install_studio_downloads(
     view.page().profile(), view.page(), server.public_url,
     parent=window, on_status=_download_status)
 app.aboutToQuit.connect(_studio_downloads.close)
-# The bootstrap lands on / to mint the session cookie, then the window
-# lives on the studio face.
+# The window goes from the boot page straight to the Studio: /studio consumes
+# the one-time bootstrap and mints the session cookie itself, so the founder
+# never sees the "/" universal document on the way in.
 _booted = {"done": False}
 _update_boot = {"pending": _staged.get("status") == "awaiting_boot", "checks": 0}
 
@@ -943,12 +944,19 @@ def _acknowledge_update_surface():
         "document.getElementById('root')?.children.length)", observed)
 
 
+def _studio_entry_url():
+    token = server.browser_bootstrap_token
+    return server.public_url + "/studio" + ("?bootstrap=" + token if token else "")
+
+
 def _to_studio(ok):
     if ok and not _booted["done"]:
         _booted["done"] = True
-        view.load(QUrl(server.public_url + "/studio"))
-    elif ok and view.url().path().startswith("/studio"):
-        # The bootstrap document at / (and any earlier Studio load) is forgotten:
+        if not view.url().path().startswith("/studio"):
+            view.load(QUrl(server.public_url + "/studio"))
+            return
+    if ok and view.url().path().startswith("/studio"):
+        # Every page before the Studio (the boot page) is forgotten:
         # Back, Alt+Left and the mouse's Back button cannot leave the Studio.
         forget_pages_behind_studio(view)
         _acknowledge_update_surface()
@@ -1001,7 +1009,7 @@ def _release_boot_surface(ok):
     _release_threading.Thread(target=held.hand_over, name="archhub-boot-release", daemon=True).start()
 if _boot_surface is not None:
     view.loadFinished.connect(_release_boot_surface)
-view.load(QUrl(server.bootstrap_url))
+view.load(QUrl(_studio_entry_url()))
 window.show()
 
 # The tray icon: the visible sign that ArchHub is running in the background.

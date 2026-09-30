@@ -278,6 +278,14 @@ const LM_LIBRARY = window.AH_LIBRARY || [];
 // Alt+Left / Alt+Right and the keyboard's Back / Forward keys ask the page to navigate away.
 const studioLeavesPage = e => e.key === 'BrowserBack' || e.key === 'BrowserForward' ||
   (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight'));
+// An ordinary canvas edit (place, copy, delete) re-reads the canvas in place. Reloading the whole
+// Studio page re-ran its boot, which on a large graph looked like the app breaking after every edit.
+const studioRefreshCanvasInPlace = () => {
+  const workshop = window.ARCHHUB_EXISTING_WORKSHOP;
+  if (typeof workshop?.refreshTopologyCanvas === 'function') return workshop.refreshTopologyCanvas();
+  window.location.reload();
+  return Promise.resolve();
+};
 const StudioLM = () => {
   React.useSyncExternalStore(window.ArchHubTheme.subscribe, window.ArchHubTheme.getEpoch);
   useCatalogueVersion();
@@ -535,7 +543,7 @@ const StudioLM = () => {
     // write the seed uses, then the canvas reloads from the graph. The item id
     // names the card, so a shared engine gets that card's own defaults.
     window.ARCHHUB_NODE_CREATE({ item: libItem.id, title: libItem.title, engine: libItem.engine, x, y, params: libItem.params || {} })
-      .then(r => { if (r && r.ok !== false) window.location.reload(); else window.alert('not created: ' + ((r && r.error) || '')); })
+      .then(r => { if (r && r.ok !== false) return studioRefreshCanvasInPlace(); window.alert('not created: ' + ((r && r.error) || '')); })
       .catch(e => window.alert('not created: ' + (e && e.message || e)));
   };
 
@@ -3293,7 +3301,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     const created = await window.ARCHHUB_NODE_CREATE({title:(node.title || node.engine) + ' copy', engine:node.engine,
       x:at.x + 40, y:at.y + 40, params});
     if (created && created.ok === false) throw new Error(created.error || 'The copy was refused.');
-    window.location.reload();
+    await studioRefreshCanvasInPlace();
     return 'Copy placed.';
   });
   const menuOpenInside = node => menuTask(async () => {
@@ -3315,7 +3323,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         throw new Error((removed ? removed + ' of ' + held.ids.length + ' nodes were removed, then: ' : '') +
           (error?.message || 'Removal was refused.'));
       }
-      window.location.reload();
+      await studioRefreshCanvasInPlace();
       return removed === 1 ? 'The node was deleted.' : removed + ' nodes were deleted.';
     });
   };

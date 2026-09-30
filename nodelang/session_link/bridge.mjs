@@ -134,7 +134,7 @@ export async function catalog({apps,onProgress}={}){
   if(process.env.CODEX_APP_TOOLS_PIPE_PATH&&process.env.CODEX_THREAD_ID){let r;
     try{r=decode(await nativeCall('list_threads',{limit:50}));}
     catch(e){const extra=await discoverExtra({apps});return {...extra,claude:claudes(),codex:[],adapterStatus:{...extra.adapterStatus,codex:{status:'unavailable',reason:'Codex app tools could not list tasks: '+publicReason(e)}}};}
-    return {...await discoverExtra({apps}),claude:claudes(),codex:[...(r.pinnedThreads||[]),...(r.threads||[])].filter(t=>t.kind==='codex').map(t=>({id:t.id,title:t.title,cwd:t.cwd,app:'codex'}))};}
+    return {...await discoverExtra({apps}),claude:claudes(),codex:[...(r.pinnedThreads||[]),...(r.threads||[])].filter(t=>t.kind==='codex').map(t=>({id:t.id,title:t.title,cwd:t.cwd,app:'codex',...targetHost(t)}))};}
   // Outside a Codex task only a live bridge holds the app pipe. An empty Codex
   // list must say why, so callers never read "no bridge" as "no live task".
   let reason='No live Session Link bridge holds Codex app context; run connect or resume --current once from a Codex Desktop task';
@@ -150,7 +150,7 @@ async function resumeCatalog(bindings){
  if(process.env.CODEX_APP_TOOLS_PIPE_PATH&&process.env.CODEX_THREAD_ID){
   const r=decode(await nativeCall('list_threads',{limit:50}));
   codex=[...(r.pinnedThreads||[]),...(r.threads||[])].filter(t=>t.kind==='codex')
-   .map(t=>({id:t.id,cwd:t.cwd,app:'codex'}));
+   .map(t=>({id:t.id,cwd:t.cwd,app:'codex',...targetHost(t)}));
  }else{
   // Only the exact saved bridges may provide their app context. Older live
   // bridges lack this read-only operation; do not fall back to broad discovery.
@@ -167,6 +167,29 @@ async function resumeCatalog(bindings){
  const extra=apps.some(app=>app!=='claude')?await discoverExtra({apps:apps.filter(app=>app!=='claude')}):{};
  return {...extra,codex,...(apps.includes('claude')?{claude:listClaudeSessions().map(s=>({id:s.sessionId,cwd:s.cwd,app:'claude'}))}:{})};
 }
+// A target's host comes from its live list_threads row; only a real value is kept.
+const targetHost=row=>typeof row?.hostId==='string'&&row.hostId?{hostId:row.hostId}:{};
+// What a link saves: the caller task (thread and, when the app supplied it, its
+// host) is durable; the target's host is NOT saved -- it is read live per send.
+export function bindingRecord({id,claude,codex,permissionMode}){
+  const {hostId:_liveTargetHost,...target}=codex;
+  const callerHost=process.env.CODEX_APP_TOOLS_CALLER_HOST_ID;
+  return {id,claude,codex:target,executor:process.env.CODEX_THREAD_ID,
+    ...(typeof callerHost==='string'&&callerHost?{executorHostId:callerHost}:{}),permissionMode};
+}
+// One send into the bound Codex task: target thread + its LIVE host in the
+// arguments (send_message_to_thread takes hostId), caller thread + saved caller
+// host in the call, and the Session Link message id as the request identity.
+// The logical request's identity as its origin named it (an ask id, a shell
+// reply id); a caller that named none gets one here, and the receipt returns it.
+// Receipting it is not permission to replay: an uncertain send stays uncertain.
+export function requestIdentity(r){
+  return typeof r?.messageId==='string'&&/^[A-Za-z0-9._:-]{1,120}$/.test(r.messageId)?r.messageId:crypto.randomUUID();
+}
+export function boundSendCall(b,row,prompt,requestId){
+  return ['send_message_to_thread',{threadId:b.codex.id,prompt,...targetHost(row)},b.executor,
+    {hostId:b.executorHostId,...(typeof requestId==='string'&&requestId?{requestId}:{})}];
+}
 export async function connect(request,{onSpawn=()=>{},observedCatalog}={}){
   if(request.permissionMode&&!['prompting','bypass'].includes(request.permissionMode))throw new Error('Permission mode must be prompting or bypass');
   const all=observedCatalog||await catalog(),app=request.app||'claude',c=exact(all[app]||[],request.claude,app),x=exact(all.codex,request.codex,'Codex');
@@ -177,7 +200,7 @@ export async function connect(request,{onSpawn=()=>{},observedCatalog}={}){
     for(const config of configs().filter(c=>alive(c.pid))){return await rpc(config,{operation:'connect',claude:c.selector||c.id,codex:x.id,app},{onDispatch:()=>onSpawn(null)});}
     throw new Error('Connect from a Codex task once to establish the local app transport');
   }
-  fs.writeFileSync(binding,JSON.stringify({id,claude:c,codex:x,executor:process.env.CODEX_THREAD_ID,permissionMode:request.permissionMode||'prompting'}));
+  fs.writeFileSync(binding,JSON.stringify(bindingRecord({id,claude:c,codex:x,permissionMode:request.permissionMode||'prompting'})));
   const stderr=fs.openSync(path.join(dir,id+'.stderr.log'),'a');
   const child=spawn(process.execPath,[fileURLToPath(import.meta.url),'serve',binding],{detached:true,windowsHide:true,stdio:['ignore','ignore',stderr],env:process.env});
   if(child.pid)onSpawn(child.pid);
@@ -249,7 +272,8 @@ async function serve(binding){
   peer.onMessage(record=>{chain=chain.then(async()=>{try{
     if(record.fromSocket!==target().socket)throw new Error('Rejected unbound sender');
     if(!record.msgId||seen.has(record.msgId))return;if(record.text.length>32000)throw new Error('Message exceeds 32000 characters');rate();seen.add(record.msgId);if(seen.size>2000)seen.delete(seen.values().next().value);
-    await nativeCall('send_message_to_thread',{threadId:b.codex.id,prompt:`[From Claude Code: ${b.claude.title}; session ${b.claude.id}; link ${b.id}; message ${record.msgId}]\n${record.text}`},b.executor);
+    const row=exact((await catalog()).codex,b.codex.id,'Codex');
+    await nativeCall(...boundSendCall(b,row,`[From Claude Code: ${b.claude.title}; session ${b.claude.id}; link ${b.id}; message ${record.msgId}]\n${record.text}`,record.msgId));
     forwarded++;lastError=null;log('delivered',{messageId:record.msgId,direction:'claude-to-codex'});
   }catch(e){lastError=e.message;log('error',{error:lastError});}});});
   const state=()=>({id:b.id,pid:process.pid,remoteApp:b.claude.app||'claude',remoteId:b.claude.id,remoteTitle:b.claude.title,claude:b.claude.id,claudeTitle:b.claude.title,codex:b.codex.id,codexTitle:b.codex.title,peer:peer.name,permissionMode:peer.permissionMode,sent,forwarded,lastError,claudeOnline:b.claude.app==='claude'?claudes().some(s=>s.id===b.claude.id):undefined});
@@ -266,8 +290,10 @@ async function serve(binding){
           let result={recipient:current,connection_id:b.id,instance_id:r.instance_id,permission_mode:'prompting'};
           if(r.operation==='attachment-post'){
             if(typeof r.text!=='string'||!r.text.trim()||r.text.length>34000)throw new Error('Invalid text');
-            rate();await nativeCall('send_message_to_thread',{threadId:b.codex.id,prompt:r.text},b.executor);
-            result={submitted:true};
+            const messageId=requestIdentity(r);
+            rate();await nativeCall(...boundSendCall(b,current,r.text,messageId));
+            log('delivered',{messageId,direction:'attachment-to-codex'});
+            result={submitted:true,messageId};
           }
           socket.end(JSON.stringify({ok:true,result})+'\n');return;
         }
@@ -284,7 +310,7 @@ async function serve(binding){
           if(current.cwd!==b.codex.cwd)throw new Error('Bound Codex workspace changed');
           result={...attachments.issue(r.instance_id,r.ttl_seconds),control,pid:process.pid};
         }
-        else if(r.operation==='post-codex'){if(typeof r.text!=='string'||!r.text.trim()||r.text.length>34000)throw new Error('Invalid text');const all=await catalog();exact(all.codex,r.threadId,'Codex');rate();await nativeCall('send_message_to_thread',{threadId:r.threadId,prompt:r.text},b.executor);result={submitted:true};}
+        else if(r.operation==='post-codex'){if(typeof r.text!=='string'||!r.text.trim()||r.text.length>34000)throw new Error('Invalid text');const all=await catalog();const row=exact(all.codex,r.threadId,'Codex');rate();const messageId=requestIdentity(r);await nativeCall(...boundSendCall({...b,codex:{...b.codex,id:r.threadId}},row,r.text,messageId));log('delivered',{messageId,direction:'terminal-to-codex'});result={submitted:true,messageId};}
         else if(r.operation==='resume-catalog'){
           if(!process.env.CODEX_APP_TOOLS_PIPE_PATH||!process.env.CODEX_THREAD_ID)
             throw new Error('required_endpoint_discovery_unavailable');
@@ -295,7 +321,7 @@ async function serve(binding){
         }
         else if(r.operation==='list')result=await catalog();
         else if(r.operation==='connect')result=await connect(r);
-        else if(r.operation==='reply'){if(typeof r.text!=='string'||!r.text.trim()||r.text.length>32000)throw new Error('Invalid text');rate();await nativeCall('send_message_to_thread',{threadId:b.codex.id,prompt:`[Local shell relay for ${b.claude.app}: ${b.claude.title}; link ${b.id}; caller agent identity not independently verified]\n${r.text}`},b.executor);forwarded++;result={delivered:true};}
+        else if(r.operation==='reply'){if(typeof r.text!=='string'||!r.text.trim()||r.text.length>32000)throw new Error('Invalid text');const messageId=requestIdentity(r);rate();const row=exact((await catalog()).codex,b.codex.id,'Codex');await nativeCall(...boundSendCall(b,row,`[Local shell relay for ${b.claude.app}: ${b.claude.title}; link ${b.id}; caller agent identity not independently verified]\n${r.text}`,messageId));forwarded++;log('delivered',{messageId,direction:'shell-reply-to-codex'});result={delivered:true,messageId};}
         else if(r.operation==='send'||r.operation==='send-model'){if(typeof r.text!=='string'||!r.text.trim()||r.text.length>32000)throw new Error('Invalid text');rate();
           const model=r.operation==='send-model'?validateModel(r.model):undefined;
           if(r.operation==='send-model'&&(!model||b.claude.app!=='opencode'))throw new Error('Explicit model selection requires OpenCode and exact selection; not sent');
@@ -303,7 +329,7 @@ async function serve(binding){
           if(!['prompting','bypass'].includes(senderMode))throw new Error('Invalid explicit sender permission mode');
           if(b.claude.app!=='claude'){
             const messageId=crypto.randomUUID();log('queued',{messageId});
-            chain=chain.then(async()=>{try{sent++;const answer=await sendExtra(b.claude,r.text,{model});if(!answer.text)throw new Error('No response text returned');const receipt=formatModelReceipt(answer);await nativeCall('send_message_to_thread',{threadId:b.codex.id,prompt:`[From ${b.claude.app}: ${b.claude.title}; link ${b.id}; reply ${answer.id}]${receipt}\n${answer.text}`},b.executor);forwarded++;lastError=answer.status==='model_selection_failed'?'Explicit model selection failed; inspect receipt; do not resend':null;log('delivered',{messageId,direction:'app-to-codex',...(answer.model_receipt?{status:answer.status,model_receipt:answer.model_receipt}:{})});}catch(e){lastError=e.message;log('error',{error:lastError});}});
+            chain=chain.then(async()=>{try{sent++;const answer=await sendExtra(b.claude,r.text,{model});if(!answer.text)throw new Error('No response text returned');const receipt=formatModelReceipt(answer);const row=exact((await catalog()).codex,b.codex.id,'Codex');await nativeCall(...boundSendCall(b,row,`[From ${b.claude.app}: ${b.claude.title}; link ${b.id}; reply ${answer.id}]${receipt}\n${answer.text}`,messageId));forwarded++;lastError=answer.status==='model_selection_failed'?'Explicit model selection failed; inspect receipt; do not resend':null;log('delivered',{messageId,direction:'app-to-codex',...(answer.model_receipt?{status:answer.status,model_receipt:answer.model_receipt}:{})});}catch(e){lastError=e.message;log('error',{error:lastError});}});
             result={messageId,status:'queued locally; check status and native chat for delivery'};
           }else{
             const recipient=target();
@@ -386,7 +412,7 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
    const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Exact connection ID required');
    result=await rpc(matches[0],{operation:'settle',messageId:argv[2],as:option('as')});
  }
- else if(cmd==='send'||cmd==='reply'||cmd==='disconnect'){const model=modelFromArgs(argv);if(model&&cmd!=='send')throw new Error('Only send can select a model');const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Use exact connection ID from status');result=await rpc(matches[0],{operation:model?'send-model':cmd,...(model?{model}:{}),text:cmd==='send'||cmd==='reply'?await readMessage(argv):undefined,...(cmd==='send'&&option('permission-mode')?{permissionMode:option('permission-mode')}:{} ),...(cmd==='send'&&option('kind')?{kind:option('kind')}:{}),...(cmd==='send'&&option('followup-of')?{followupOf:option('followup-of')}:{})});}
+ else if(cmd==='send'||cmd==='reply'||cmd==='disconnect'){const model=modelFromArgs(argv);if(model&&cmd!=='send')throw new Error('Only send can select a model');const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Use exact connection ID from status');result=await rpc(matches[0],{...(cmd==='reply'?{messageId:crypto.randomUUID()}:{}),operation:model?'send-model':cmd,...(model?{model}:{}),text:cmd==='send'||cmd==='reply'?await readMessage(argv):undefined,...(cmd==='send'&&option('permission-mode')?{permissionMode:option('permission-mode')}:{} ),...(cmd==='send'&&option('kind')?{kind:option('kind')}:{}),...(cmd==='send'&&option('followup-of')?{followupOf:option('followup-of')}:{})});}
  else result={commands:['list','connect --claude|--opencode|--antigravity|--antigravity-ide "title or ID" --codex "title or ID"','ask --app APP --session "title or ID" --file UTF8_FILE|--stdin','answer REQUEST_ID --file UTF8_FILE|--stdin','status','send CONNECTION_ID --file UTF8_FILE|--stdin','reply CONNECTION_ID --file UTF8_FILE|--stdin','disconnect CONNECTION_ID','forget CONNECTION_ID (offline only)','reconnect --claude ID --codex ID'],apps:['claude','codex','opencode','antigravity','antigravity-ide'],note:'Use session-link.ps1 for ask/answer. Any shell-capable agent can initiate ask and receive its reply. This does not wake arbitrary idle terminals. Check adapterStatus and verify a real reply. Recipient permissions remain active.'};
  if(result!==undefined)console.log(JSON.stringify(result,null,2));
 }catch(e){console.error(e.message);process.exitCode=1;}

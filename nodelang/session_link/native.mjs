@@ -20,9 +20,26 @@ export async function attachmentCall(operation,extra={}){
  });
 }
 export function hasAttachment(){return admittedAttachment!==null;}
-export async function postCodex(threadId,prompt){
- if(admittedAttachment){if(threadId!==admittedAttachment.destination)throw new Error('Attachment destination mismatch');return await attachmentCall('attachment-post',{text:prompt});}
- if(process.env.CODEX_APP_TOOLS_PIPE_PATH&&process.env.CODEX_THREAD_ID)return await nativeCall('send_message_to_thread',{threadId,prompt});
+// The target's live list_threads row: its host goes into the send arguments.
+async function liveCodexRow(threadId){
+ const listed=await nativeCall('list_threads',{limit:50});
+ const text=(listed.contentItems||[]).filter(x=>x.type==='inputText').map(x=>x.text).join('\n');
+ const all=JSON.parse(text),rows=[...(all.pinnedThreads||[]),...(all.threads||[])].filter(t=>t.kind==='codex'&&t.id===threadId);
+ if(rows.length!==1)throw new Error('Target is not exactly one live Codex task; not sent');
+ return rows[0];
+}
+// requestId is the logical request's identity at its origin (an ask id, a
+// Session Link message id); every route below carries it to the wire.
+export async function postCodex(threadId,prompt,{requestId}={}){
+ const identity=typeof requestId==='string'&&requestId?{messageId:requestId}:{};
+ if(admittedAttachment){if(threadId!==admittedAttachment.destination)throw new Error('Attachment destination mismatch');return await attachmentCall('attachment-post',{text:prompt,...identity});}
+ if(process.env.CODEX_APP_TOOLS_PIPE_PATH&&process.env.CODEX_THREAD_ID){
+  // Direct from a Codex task: the caller is this task (its own thread and host);
+  // the target's host is read from its live row, never assumed.
+  const row=await liveCodexRow(threadId);
+  return await nativeCall('send_message_to_thread',{threadId,prompt,...(typeof row.hostId==='string'&&row.hostId?{hostId:row.hostId}:{})},
+   process.env.CODEX_THREAD_ID,identity.messageId?{requestId:identity.messageId}:{});
+ }
  if(process.env.SESSION_LINK_PRODUCT_WORKER==='1')throw new Error('Admitted native Codex app context unavailable; another caller context will not be borrowed');
  const dir=path.join(stateDir(),'connections');
  for(const name of fs.readdirSync(dir).filter(n=>n.endsWith('.runtime.json'))){
@@ -31,11 +48,34 @@ export async function postCodex(threadId,prompt){
   // Probe capabilities before attempting a mutation. Never retry a submitted post.
   const call=request=>new Promise((resolve,reject)=>{const s=net.connect(config.control);let data='';s.setEncoding('utf8');s.setTimeout(25000,()=>{s.destroy();reject(new Error('Bridge request timeout; delivery uncertain'));});s.on('error',reject);s.on('connect',()=>s.write(JSON.stringify({...request,token})+'\n'));s.on('data',c=>{data+=c;if(data.length>2000000){s.destroy();reject(new Error('Oversized response'));return;}if(data.includes('\n')){s.destroy();try{const r=JSON.parse(data);r.ok?resolve(r.result):reject(new Error(r.error));}catch(e){reject(e);}}});});
   let capabilities;try{capabilities=await call({operation:'capabilities'});}catch{continue;}
-  if(capabilities.postCodex)return await call({operation:'post-codex',threadId,text:prompt});
+  if(capabilities.postCodex)return await call({operation:'post-codex',threadId,text:prompt,...identity});
  }
  throw new Error('No active bridge supports terminal-to-Codex delivery; connect from a current Codex Desktop task');
 }
-export function nativeCall(tool,args,threadId=process.env.CODEX_THREAD_ID){
+// The caller's host is where the calling Codex task runs. The app hands it to
+// its own tools server as CODEX_APP_TOOLS_CALLER_HOST_ID; a saved link carries
+// the value captured when it was made. Absent means omitted -- never invented,
+// the app then applies its own default. The TARGET's host belongs in the tool's
+// arguments (send_message_to_thread takes hostId from list_threads), not here.
+export function callerHostFor(threadId,context={}){
+  if(Object.prototype.hasOwnProperty.call(context,'hostId'))
+    return typeof context.hostId==='string'&&context.hostId?context.hostId:undefined;
+  const own=process.env.CODEX_APP_TOOLS_CALLER_HOST_ID;
+  return threadId===process.env.CODEX_THREAD_ID&&typeof own==='string'&&own?own:undefined;
+}
+// One logical request keeps one identity from where it starts (a Session Link
+// message, an ask, a shell reply) to the wire: callId/turnId derive from it.
+// A stable identity is NOT permission to replay: a send whose outcome is
+// uncertain stays uncertain and is never resent automatically because it
+// would carry the same id -- the app's handling of a repeated callId is not a
+// documented deduplication guarantee.
+export function nativeCallParams(tool,args,threadId,context={}){
+  const request=typeof context.requestId==='string'&&context.requestId?context.requestId:crypto.randomUUID();
+  const hostId=callerHostFor(threadId,context);
+  return {arguments:args,callerSource:'codex',callId:'session-link-'+request,...(hostId?{hostId}:{}),
+    namespace:'codex_app',threadId,tool,turnId:'session-link-turn-'+request};
+}
+export function nativeCall(tool,args,threadId=process.env.CODEX_THREAD_ID,context={}){
   return new Promise((resolve,reject)=>{
     const socket=net.connect(process.env.CODEX_APP_TOOLS_PIPE_PATH);
     let buffer=Buffer.alloc(0),settled=false;
@@ -46,7 +86,7 @@ export function nativeCall(tool,args,threadId=process.env.CODEX_THREAD_ID){
       // Codex 26.924 validates tools/call params strictly and requires callerSource
       // ('codex'|'chatgpt'); the bundled codex-app-tools server sends 'codex' for a
       // Codex task. Without it the app answers -32602 "Invalid app tool request".
-      const body=Buffer.from(JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{arguments:args,callerSource:'codex',callId:'claude-link-'+crypto.randomUUID(),namespace:'codex_app',threadId,tool,turnId:'claude-link-'+crypto.randomUUID()}}));
+      const body=Buffer.from(JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:nativeCallParams(tool,args,threadId,context)}));
       const header=Buffer.alloc(4);header.writeUInt32LE(body.length);socket.write(Buffer.concat([header,body]));
     });
     socket.on('data',chunk=>{

@@ -83,7 +83,7 @@ export async function ask(app,session,text,permissionMode='prompting',{expected,
    if(!outcome.reply)throw new Error('No reply confirmed in 180 seconds; delivery remains uncertain; do not resend'+(durable?.peer?`; a late reply still reaches this task through peer ${durable.peer}`:''));
    return {id:outcome.reply.msgId,text:outcome.reply.text,...route};
   }else{
-   onDispatch();await postCodex(target.id,`[Session Link request ${id}. An existing terminal agent is waiting. After preparing your response, write it to a UTF-8 file inside your permitted workspace, then run PowerShell: & ${psQuote(path.join(root,'session-link.ps1'))} answer ${id} --state-dir ${psQuote(stateDir())} --file 'ABSOLUTE_RESPONSE_FILE'. This returns your response to the caller. Respect your current permissions.]\n${text}`);
+   onDispatch();await postCodex(target.id,`[Session Link request ${id}. An existing terminal agent is waiting. After preparing your response, write it to a UTF-8 file inside your permitted workspace, then run PowerShell: & ${psQuote(path.join(root,'session-link.ps1'))} answer ${id} --state-dir ${psQuote(stateDir())} --file 'ABSOLUTE_RESPONSE_FILE'. This returns your response to the caller. Respect your current permissions.]\n${text}`,{requestId:id});
   }
   return await reply;
  }finally{clearTimeout(timer);server?.close();peer.stop();if(fs.existsSync(file))fs.rmSync(file);}

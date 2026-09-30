@@ -22367,11 +22367,11 @@ def _reusable_static_design_system(
         not isinstance(design_system, Mapping)
         or set(design_system) != {
             "root", "token_set", "resolver", "lifecycle", "tokens",
-            "components", "icon_catalog", "control_catalog",
+            "components", "icon_catalog", "control_catalog", "revision",
         }
         or any(
             type(design_system.get(key)) is not str
-            for key in ("root", "token_set", "resolver", "lifecycle")
+            for key in ("root", "token_set", "resolver", "lifecycle", "revision")
         )
         or not isinstance(design_system.get("tokens"), Mapping)
         or not isinstance(design_system.get("components"), Mapping)

@@ -14239,10 +14239,15 @@ class ApplicationServer:
                         self.universal_checkpoint_guard.require_healthy()
                     binding = self._refresh_desktop_browser_handoff(request, context)
             bootstrap_url = self._issue_browser_handoff(binding)
+            # The same one-use credential entered straight into the Studio, as
+            # the desktop window enters it: a browser the founder hands off to
+            # is the hosted Studio, on this application's own admission.
+            token = bootstrap_url.split("?bootstrap=", 1)[1]
             return {
                 "application": self.universal_registry.application_root,
                 "server_url": self.public_url,
                 "document_url": bootstrap_url,
+                "studio_url": self.public_url + "/studio?bootstrap=" + token,
                 "schema_version": UNIVERSAL_APPLICATION_SCHEMA_VERSION,
                 "one_use": True,
                 "session_root": self.browser_session_root,

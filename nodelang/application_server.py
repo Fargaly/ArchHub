@@ -40,6 +40,7 @@ from .application_machine_transport import (
     MachineTransportError,
     MachinePipePeer,
     desktop_pipe_peer_is_current,
+    peer_matches_process,
     _verified_machine_pipe_peer,
     UniversalRuntimeTransport,
     runtime_device_proof_payload,
@@ -10974,22 +10975,70 @@ class ApplicationServer:
         """Keep a second process from taking over the same live capability."""
         now = time.time()
         with self._machine_agent_session_lock:
+            gone = frozenset(
+                root for root, binding in self._machine_agent_sessions.items()
+                if self._machine_agent_holder_is_gone(root, binding)
+            )
             stale = tuple(
                 root for root, binding in self._machine_agent_sessions.items()
-                if now >= float(binding["expires_at"])
+                if now >= float(binding["expires_at"]) or root in gone
             )
             if prune_expired:
                 for root in stale:
                     self._machine_agent_sessions.pop(root, None)
+            # A binding whose exact holder process is gone holds nothing on
+            # either path, including conditional continuation (prune off).
             return any(
-                float(binding["expires_at"]) > now
+                root not in gone
+                and float(binding["expires_at"]) > now
                 and binding.get("runtime") == runtime
                 and binding.get("catalog_entry") == catalog_entry_root
                 and binding.get("device_custody") == custody_root
                 and binding.get("external_session_fingerprint")
                 == external_session_fingerprint
-                for binding in self._machine_agent_sessions.values()
+                for root, binding in self._machine_agent_sessions.items()
             )
+
+    def _machine_agent_holder_is_gone(self, session_root, binding) -> bool:
+        """A binding whose enrolling process no longer exists holds nothing.
+
+        Only the exact recorded OS process (pid + creation time) counts as the
+        holder. When that process has exited (or its pid now names another
+        process), a replacement connector for the same actor may bind again
+        instead of waiting out the lease. Unknown holders, live holders, a
+        session with a request in flight or an unsettled permit stay bound.
+        """
+        peer = binding.get("enrollment_peer")
+        # Only a complete, well-formed record can prove the holder is gone;
+        # anything malformed or unsupported stays bound.
+        if (type(peer) is not dict or set(peer) != {"pid", "created_at"}
+                or type(peer["pid"]) is not int or not 0 < peer["pid"] <= 0xffffffff
+                or type(peer["created_at"]) not in (int, float)
+                or not math.isfinite(peer["created_at"])
+                or not 0 < peer["created_at"] < 2 ** 32):
+            return False
+        try:
+            import psutil
+        except ImportError:
+            return False
+        try:
+            created = psutil.Process(peer["pid"]).create_time()
+        except psutil.NoSuchProcess:
+            created = None
+        except (psutil.Error, OSError, ValueError):
+            return False
+        if created is not None and peer_matches_process(peer, peer["pid"], created):
+            return False
+        if self._machine_agent_active_requests.get(session_root, 0):
+            return False
+        try:
+            from .native_session_release import _has_pending_permit
+            if _has_pending_permit(self.universal_store.snapshot(),
+                    self.universal_registry.cde_write_authority_protocol, session_root):
+                return False
+        except Exception:
+            return False
+        return True
 
     def _machine_agent_session_has_live_capability(
         self,

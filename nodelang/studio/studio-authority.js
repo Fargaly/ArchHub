@@ -171,10 +171,23 @@
           const content = result.storage === 'conversation-content';
           if (content && (!text(result.content_cursor) || result.page_before !== before)) fail('Workshop history returned an invalid page.');
           if (result.unchanged) {
-            if (!previous || result.revision !== previous.revision || content !== ordinary ||
+            if (!previous || (!content && result.revision !== previous.revision) || content !== ordinary ||
                 (content && (result.content_cursor !== previous.content_cursor ||
                   result.page_before !== previous.page_before))) fail('Workshop history needs a full refresh.');
-            return previous;
+            // A graph write that adds no message (an assignment) moves the revision
+            // while the page holds: republish the revision and what the page carries,
+            // as the desktop transport does (3a6bf6ba), instead of refusing it.
+            if (result.assignments !== undefined && !Array.isArray(result.assignments)) fail('Workshop assignments are invalid.');
+            if (result.participants !== undefined && (!Array.isArray(result.participants) ||
+                result.participants.some(row => !row || !text(row.root) || typeof row.label !== 'string' ||
+                  typeof row.attached !== 'boolean'))) fail('Workshop participant status is invalid.');
+            const carried = {
+              ...(result.assignments !== undefined ? {assignments:result.assignments} : {}),
+              ...(result.participants !== undefined ? {participants:result.participants} : {}),
+            };
+            if (result.revision === previous.revision && Object.keys(carried).every(name =>
+                JSON.stringify(previous[name] ?? null) === JSON.stringify(carried[name]))) return previous;
+            workshop = {...previous, revision:result.revision, ...carried}; project(); return workshop;
           }
           if (!Array.isArray(result.messages) || !Array.isArray(result.participants) ||
               result.messages.length > 100 || (!content && before !== null)) fail('Workshop history is invalid.');

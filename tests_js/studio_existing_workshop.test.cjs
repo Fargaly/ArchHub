@@ -989,15 +989,21 @@ const ordinary = (change={}) => ({...transcript(), storage:'conversation-content
 const unchanged = page => ({graph_id:page.graph_id,root:page.root,scope_root:page.scope_root,
   revision:page.revision,storage:page.storage,content_cursor:page.content_cursor,
   page_before:page.page_before,unchanged:true});
-test('existing: an unchanged page at a newer graph revision keeps its messages and takes the revision', async()=>{
+for(const kind of ['existing','authority']) test(`${kind}: an unchanged page at a newer graph revision keeps its messages and carries the graph's assignments`, async()=>{
   // A graph write that adds no message (an assignment, 3a6bf6ba) moves the graph
-  // revision while the content cursor holds: the page stays and is not refused.
+  // revision while the content cursor holds: the page stays, takes the revision
+  // and the assignments and participants it carries, and is not refused. Both
+  // transports: the hosted Workshop (studio-authority.js) as well as the desktop.
   let calls=0; const latest=ordinary();
-  const {api}=setup({get:()=>++calls===1?latest:{...unchanged(latest),revision:5,assignments:[]}});
+  const assignments=[{work:'work-a',agent:'worker-a'}];
+  const participants=latest.participants.map(row=>({...row,connection_status:'stale'}));
+  const {api}=await readers(kind,()=>++calls===1?latest:{...unchanged(latest),revision:5,assignments,participants});
   await api.refreshWorkshop('workshop-a');
   const messages=api.getSnapshot().workshop.messages;
   const next=await api.refreshWorkshop('workshop-a');
   assert.equal(next.revision,5); assert.equal(api.getSnapshot().workshop.messages,messages);
+  assert.deepEqual(api.getSnapshot().workshop.assignments,assignments);
+  assert.deepEqual(api.getSnapshot().workshop.participants,participants);
   assert.equal(api.getSnapshot().workshop.error,'');
 });
 test('existing: participant activity changes refresh without replacing message history',async()=>{

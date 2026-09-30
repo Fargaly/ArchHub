@@ -361,7 +361,13 @@ test('onboarding: mounted on the first run the launcher measured, from live rows
   const launcher = read('launch_archhub_test.py');
   assert.match(launcher, /^first_boot = not _saved_graph_exists\(/m, 'the launcher still computes first_boot');
   assert.match(launcher, /^server\.studio_first_run = first_boot is True$/m, 'the launcher hands first_boot to the server');
-  assert.ok(launcher.indexOf('server.studio_first_run = first_boot') < launcher.indexOf('view.load(QUrl(server.bootstrap_url))'),
+  // The window opens the Studio directly (4dd830ee): /studio?bootstrap=, never the '/' document.
+  assert.match(launcher, /return server\.public_url \+ "\/studio" \+ \("\?bootstrap=" \+ token if token else ""\)/,
+    'the Studio entry carries the bootstrap token to /studio');
+  assert.ok(!launcher.includes('view.load(QUrl(server.bootstrap_url))'), 'the window never loads the / bootstrap document');
+  const entry = launcher.indexOf('view.load(QUrl(_studio_entry_url()))');
+  assert.ok(entry > 0, 'the window loads the Studio entry');
+  assert.ok(launcher.indexOf('server.studio_first_run = first_boot') < entry,
     'before the window loads the Studio');
   const server = read('nodelang/application_server.py');
   const at = server.indexOf("b'/*__ARCHHUB_BOOT__*/ null'");

@@ -41,7 +41,7 @@
           ins: ports.filter(port => port.side === 'target'),
           outs: ports.filter(port => port.side === 'source'),
           params: parameters.filter(row => row.k !== 'status'),
-          openable: node.openable === true,
+          openable: node.openable === true, composition: node.composition === true, memberCount: Number.isSafeInteger(node.member_count) ? node.member_count : null,
           group: typeof node.group === 'string' ? node.group : '', pinned: node.pinned === true,
           ...(typeof node.application === 'boolean' ? {application: node.application} : {}),
         };
@@ -379,6 +379,33 @@
           // A receipted failure is a known completed attempt. A transport or
           // uncertain failure retains its identity for a later reconciliation.
           if (reason?.outcome === 'failed' && reason?.receipt) unresolvedRuns.delete(runKey);
+          throw reason;
+        });
+      },
+      // Group or ungroup through the graph's own composition control (the toolbar's "Group selection"):
+      // the roots become the graph selection, then the one applicable control of that operation runs.
+      composition(operation, roots) {
+        if (operation !== 'group' && operation !== 'ungroup') fail('Only group and ungroup are composition operations.');
+        const held = [...new Set((roots || []).filter(root => typeof root === 'string' && root))];
+        if (operation === 'group' && held.length < 2) fail('A group needs at least two nodes.');
+        if (operation === 'ungroup' && held.length !== 1) fail('Expand one group at a time.');
+        const intent = ++focusIntent;
+        wantedFocus = held[0];
+        project();
+        return enqueue(() => {
+          held.forEach(root => node(root));
+          return post('/api/universal/focus', {expected_scope: canvas.root, scope_root: canvas.root,
+            selected_roots: held, primary_root: held[0], revision: canvas.revision, command_id: uuid()});
+        }).then(() => enqueue(() => {
+          const controls = canvas.configuration?.design_system?.control_catalog?.controls || [];
+          const matches = controls.filter(control => control.applicable && control.activation?.arguments?.operation === operation);
+          if (matches.length !== 1) fail(operation === 'group' ? 'Group is not available for these nodes.' : 'Expand is not available for this group.');
+          return post('/api/universal/interaction', binding(matches[0].owner));
+        })).then(result => {
+          if (intent === focusIntent) { wantedFocus = result.selected; project(); }
+          return result;
+        }).catch(reason => {
+          if (intent === focusIntent) { wantedFocus = canvas.selected; project(); }
           throw reason;
         });
       },

@@ -1221,6 +1221,34 @@
           return result;
         });
       },
+      // Group the roots into one composition node, or ungroup one composition, through the graph's own
+      // toolbar control: the roots become the selection, then the one applicable control runs.
+      composeTopology(operation, roots) {
+        const held = [...new Set((roots || []).filter(text))];
+        return runTopology(JSON.stringify(['compose', operation, held]), async (identity, command) => {
+          if (operation !== 'group' && operation !== 'ungroup') fail('Only group and ungroup are composition operations.');
+          if (operation === 'group' ? held.length < 2 : held.length !== 1) fail(operation === 'group' ? 'A group needs at least two nodes.' : 'Expand one group at a time.');
+          const value = await readTopology(identity);
+          if (held.some(root => !value.nodes.some(node => node.id === root))) fail('A grouped node is no longer on this canvas.');
+          const selected = acceptTopology(await command('/api/universal/gesture', {roots:held, focus:held[0], expected_scope:value.scope.current}));
+          if (topologyIdentity(selected) !== identity) fail('The canvas scope changed. Choose the nodes again.');
+          const controls = (selected.configuration?.design_system?.control_catalog?.controls || [])
+            .filter(control => control.applicable === true && control.activation?.arguments?.operation === operation);
+          if (controls.length !== 1) fail(operation === 'group' ? 'Group is not available for these nodes.' : 'Expand is not available for this group.');
+          const bindings = (selected.interaction_projection?.bindings || []).filter(row => row.control === controls[0].owner);
+          if (bindings.length !== 1 || !text(bindings[0].interaction) || !text(bindings[0].event) || bindings[0].acknowledgement_mode !== 'receipt-v1') {
+            fail('Refresh the canvas to obtain the group control.');
+          }
+          const result = await command('/api/universal/interaction', {interaction:bindings[0].interaction, control:controls[0].owner,
+            event:bindings[0].event, revision:selected.revision, projection_mode:bindings[0].acknowledgement_mode});
+          if (!result || result.ok === false || !revision(result.committed_revision) || result.committed_revision <= selected.revision) {
+            fail('The group change needs reconciliation.');
+          }
+          const latest = await readTopology(identity);
+          if (latest.revision < result.committed_revision) fail('The group change is not visible in the refreshed graph.');
+          return result;
+        });
+      },
       disconnectTopology(root) {
         return runTopology(JSON.stringify(['disconnect', root]), async (identity, command) => {
           if (!text(root) || !topologyCanvas.wires.some(wire => wire.id === root && wire.nary === false)) {

@@ -3033,7 +3033,15 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   // One set of handlers per card for the canvas's life. Each calls the CURRENT closure through a ref,
   // so a memoized card that did not re-render still acts on today's selection and positions.
   const latest = React.useRef(null);
-  latest.current = {toggleExpanded, onNodeDragStart, onNodeFocus, onNodeContextMenu, onNodeKeyDown, useSocket, setPortBand,
+  // A frame collapses into ONE graph group node (the composition owner's own Group); a group expands back.
+  const composer = typeof authority?.composition === 'function' ? (op, roots) => authority.composition(op, roots)
+    : typeof normal?.composeTopology === 'function' ? (op, roots) => normal.composeTopology(op, roots) : null;
+  const composeGroup = (operation, roots, what) => {
+    if (!composer) { setLayoutError('Grouping needs the live graph.'); return; }
+    setLayoutError(''); closeContextMenu();
+    composer(operation, roots).then(() => setMenuNotice(what)).catch(error => setLayoutError(error?.message || String(error)));
+  };
+  latest.current = {toggleExpanded, onNodeDragStart, onNodeFocus, onNodeContextMenu, onNodeKeyDown, useSocket, setPortBand, composeGroup,
     open:id => authority && authority.open(id).catch(() => {})};
   const handlerCache = React.useRef(new Map());
   const cardHandlers = id => {
@@ -3043,6 +3051,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         focus:e => latest.current.onNodeFocus(id)(e), menu:e => latest.current.onNodeContextMenu(id)(e),
         key:e => latest.current.onNodeKeyDown(id)(e), socket:(port, side) => latest.current.useSocket(id, port, side),
         band:(top, height) => latest.current.setPortBand(id, top, height),
+        expand:() => latest.current.composeGroup('ungroup', [id], 'Expanded the group.'),
         open:() => latest.current.open(id)};
       handlerCache.current.set(id, held);
     }
@@ -3242,8 +3251,8 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     for (const node of allNodes) {
       if (!node.group) continue;
       const at = positions[node.id] || node, w = node.w || 220, h = cardHeights[node.id] || node.h || 110;
-      const box = held.get(node.group) || {key:node.group, count:0, left:Infinity, top:Infinity, right:-Infinity, bottom:-Infinity};
-      box.count += 1; box.left = Math.min(box.left, at.x); box.top = Math.min(box.top, at.y);
+      const box = held.get(node.group) || {key:node.group, count:0, members:[], left:Infinity, top:Infinity, right:-Infinity, bottom:-Infinity};
+      box.count += 1; box.members.push(node.id); box.left = Math.min(box.left, at.x); box.top = Math.min(box.top, at.y);
       box.right = Math.max(box.right, at.x + w); box.bottom = Math.max(box.bottom, at.y + h);
       held.set(node.group, box);
     }
@@ -3416,7 +3425,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
           width:Math.abs(marquee.x1 - marquee.x0), height:Math.abs(marquee.y1 - marquee.y0),
           border:`1px ${marquee.x1 < marquee.x0 ? 'dashed' : 'solid'} ${LM.accent}`, background:LM.accent + '14'}}/>}
         {canvasFrames.map(frame => (
-          <div key={frame.key} data-canvas-frame={frame.key} aria-hidden="true" style={{
+          <div key={frame.key} data-canvas-frame={frame.key} role="group" aria-label={String(frame.key) + ' frame'} style={{
             position:'absolute', left:frame.left - 18, top:frame.top - 34,
             width:frame.right - frame.left + 36, height:frame.bottom - frame.top + 52,
             border:`1px dashed ${LM.line}`, borderRadius:LM.rad.md, background:LM.bgSoft + '55',
@@ -3425,6 +3434,13 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
               letterSpacing:'0.08em', color:LM.inkMuted, whiteSpace:'nowrap'}}>
               {String(frame.key).toUpperCase()} · {frame.count}
             </span>
+            {frame.count >= 2 && composer && <button type="button" data-no-pan
+              aria-label={'Collapse ' + frame.key + ' into one node'} title="Collapse into one group node"
+              onMouseDown={e => e.stopPropagation()}
+              onClick={e => { e.stopPropagation(); composeGroup('group', frame.members, 'Collapsed ' + frame.key + ' into one node.'); }}
+              style={{position:'absolute', right:8, top:4, pointerEvents:'auto', cursor:'pointer', padding:'1px 7px',
+                border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, background:LM.bgPanel, color:LM.inkSoft,
+                fontFamily:LM.mono, fontSize:10, letterSpacing:'0.04em'}}>⊟ collapse</button>}
           </div>
         ))}
         <svg width="2400" height="1400" style={{ position:'absolute', left:0, top:0, pointerEvents:'none', overflow:'visible' }} className="lm-wires">
@@ -3468,6 +3484,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
               selected={selected.has(n.id)}
               focused={n.id === focusId}
               onPortBand={on.band}
+              onExpand={n.composition && composer ? on.expand : undefined}
               dimmed={dimmedIds.has(n.id) && !n._user}
               expanded={!!expanded[n.id]}
               onToggleExpand={on.toggle}
@@ -3655,7 +3672,7 @@ const CanvasMenu = ({ x, y, maxHeight, opener, items, label, onClose }) => {
 };
 
 // ─── nodes dispatcher ───
-const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimmed, expanded, onToggleExpand, onDragStart, onFocus, onSocket, onOpen, onContextMenu, onKeyDown, onPortBand }) => {
+const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimmed, expanded, onToggleExpand, onDragStart, onFocus, onSocket, onOpen, onContextMenu, onKeyDown, onPortBand, onExpand }) => {
   const n = held.x === x && held.y === y ? held : {...held, x, y};
   if (typeof window !== 'undefined' && window.__archhubCardRenders) window.__archhubCardRenders[held.id] = (window.__archhubCardRenders[held.id] || 0) + 1;
   const cat = studioCategory(n.cat);
@@ -3706,6 +3723,12 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
         <span style={{ width:14, height:14, display:'grid', placeItems:'center', color:cat.col, fontFamily:LM.mono, fontSize:11 }}>{cat.icon}</span>
         <span style={{ fontFamily:LM.mono, fontSize:8.5, color:cat.col, letterSpacing:'0.18em' }}>{cat.label}</span>
         <div style={{ flex:1 }}/>
+        {n.composition && Number.isSafeInteger(n.memberCount) && <span data-member-count={n.memberCount} style={{
+          fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, whiteSpace:'nowrap'}}>{n.memberCount} {n.memberCount === 1 ? 'node' : 'nodes'}</span>}
+        {onExpand && <button type="button" aria-label={'Expand ' + (n.title || 'group')} title="Expand the group back into its nodes"
+          onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onExpand(); }} style={{
+          padding:'0 6px', border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, background:'transparent',
+          color:LM.inkSoft, fontFamily:LM.mono, fontSize:9.5, cursor:'pointer'}}>⊞ expand</button>}
         {n.state && <NodeStateDot s={n.state}/>}
         {n.ms && !n.state && <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>{n.ms}</span>}
         {isAi && (
@@ -3741,7 +3764,7 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
 // A card re-renders only when what it draws changed: its node record, its place, or its focus, dim and
 // expansion. Its handlers are stable (NodeCanvas cardHandlers), so a drag re-renders the moving card only.
 const MemoNodeRenderer = React.memo(NodeRenderer, (a, b) => a.n === b.n && a.x === b.x && a.y === b.y &&
-  a.focused === b.focused && a.selected === b.selected && a.dimmed === b.dimmed && a.expanded === b.expanded && !!a.onOpen === !!b.onOpen);
+  a.focused === b.focused && a.selected === b.selected && a.dimmed === b.dimmed && a.expanded === b.expanded && !!a.onOpen === !!b.onOpen && !!a.onExpand === !!b.onExpand);
 const NodeStateDot = ({ s }) => {
   const col = s === 'running' ? LM.accent : s === 'queued' ? LM.inkMuted : LM.ok;
   return (

@@ -44413,6 +44413,20 @@ def _compose_universal_selection(
     )
     if not empty and len(selected) < 2:
         raise InvalidCell("group requires at least two selected roots")
+    if title == "Composition" and selected:
+        # Collapsing one canvas frame: the group takes the frame's name
+        # (every selected card drawn in the same frame) instead of the
+        # generic default. The group control admits no title argument.
+        chosen = set(selected)
+        frames = {
+            str(node.get("group") or _canvas_node_group(node))
+            for node in projected_nodes
+            if str(node["id"]) in chosen
+        }
+        if len(frames) == 1:
+            frame = next(iter(frames)).strip()
+            if frame and frame not in {"Cells", "Groups"} and len(frame.encode("utf-8")) <= 256:
+                title = frame
     scope = projection.get("scope")
     level_root = scope.get("current") if isinstance(scope, Mapping) else None
     held = [

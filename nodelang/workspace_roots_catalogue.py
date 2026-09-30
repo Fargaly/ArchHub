@@ -60,7 +60,25 @@ COMPOSITION = "Governance"
 PRIVACY = ("private", "public")
 PROFILES = ("client",)
 RUNTIMES = ("claude", "codex", "opencode", "gemini", "antigravity", "cursor")
-BUILT_IN_PATH = str(PureWindowsPath("C:/Users/fargaly/00.ARCHUB"))
+
+
+def built_in_path() -> str:
+    """The built-in governed tree: the same folder the application resolves as
+    its workspace root (workspace_root.workspace_root_for_map over the selected
+    map). A running application passes its own resolved root as built_in, so
+    admission and the view always use that instance's tree; this is only the
+    fallback for callers without one. Never a hardcoded machine path."""
+    from .map_import import resolve_map_path
+    from .workspace_root import workspace_root_for_map
+    return str(PureWindowsPath(workspace_root_for_map(resolve_map_path())))
+
+
+def __getattr__(name):
+    if name == "BUILT_IN_PATH":
+        return built_in_path()
+    raise AttributeError(name)
+
+
 SNAPSHOT_FORMAT = "archhub.workspace-roots"
 SNAPSHOT_VERSION = 2
 PIN_FORMAT = "archhub.workspace-roots-pin"
@@ -298,7 +316,7 @@ def _nests(first: str, second: str) -> bool:
     return a in _ancestor_identities(second) or b in _ancestor_identities(first)
 
 
-def admit_folder(path, root_id, privacy, profile, writers, roots):
+def admit_folder(path, root_id, privacy, profile, writers, roots, *, built_in=None):
     """The registration values, or WorkspaceRootRefused for anything the hooks refuse."""
     if type(root_id) is not str or not _ID.match(root_id) or root_id == "archhub":
         raise WorkspaceRootRefused("workspace root id is invalid")
@@ -322,7 +340,7 @@ def admit_folder(path, root_id, privacy, profile, writers, roots):
         raise WorkspaceRootRefused("at most %d workspace roots can be registered" % MAX_ROOTS)
     if any(root.get("root_id") == root_id for root in roots):
         raise WorkspaceRootRefused("that workspace root id is already used")
-    if _nests(path, BUILT_IN_PATH) or any(_nests(path, root["path"]) for root in active):
+    if _nests(path, built_in or built_in_path()) or any(_nests(path, root["path"]) for root in active):
         raise WorkspaceRootRefused("workspace roots cannot be inside or around another root")
     return {
         "root_id": root_id,
@@ -542,7 +560,7 @@ _FIELDS = {
 
 def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
                  signer_factory=None, fingerprint_of=None, verifier=None,
-                 snapshot_path=None, pin_path=None) -> dict:
+                 snapshot_path=None, pin_path=None, built_in=None) -> dict:
     """List, register, unregister or republish, with the owner's key as the approval.
 
     The snapshot a change will produce is signed BEFORE anything commits: the
@@ -571,12 +589,13 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
         revision, roots, pin = read_state(authority, catalogue, caller=caller)
         if action == "list":
             status = verify_projection(snapshot_body(roots, pin), verifier, **paths)
-            return roots_view(revision, roots, pin, status)
+            return roots_view(revision, roots, pin, status, built_in=built_in)
         values = None
         if action == "register":
             values = admit_folder(request.get("path"), request.get("id"),
                                   request.get("privacy"), request.get("profile", "client"),
-                                  request.get("writers") or ["claude"], roots)
+                                  request.get("writers") or ["claude"], roots,
+                                  built_in=built_in)
         predicted = _predict(roots, action, values, request.get("id"))
     try:
         new_pin = pin
@@ -611,7 +630,7 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
                               "projection; the hooks' files were left unchanged")
         write_projection(body, signature, **paths)
     return roots_view(revision, after, after_pin,
-                      verify_projection(body, verifier, **paths))
+                      verify_projection(body, verifier, **paths), built_in=built_in)
 
 
 ROOT_PATH_PREFIX = "workspace-roots/"
@@ -865,10 +884,10 @@ def root_bound_registration(path, *, runtime=None, verifier=None, snapshot_path=
     return "workspace-root:" + parts[1], digest, dict(entry)
 
 
-def roots_view(revision, roots, pin, status) -> dict:
+def roots_view(revision, roots, pin, status, *, built_in=None) -> dict:
     return {
         "revision": revision,
-        "built_in": {"id": "archhub", "path": BUILT_IN_PATH, "removable": False},
+        "built_in": {"id": "archhub", "path": built_in or built_in_path(), "removable": False},
         "roots": [
             {key: root[key] for key in ("root_id", "path", "privacy", "profile",
                                         "writers", "state", "registered_at")}

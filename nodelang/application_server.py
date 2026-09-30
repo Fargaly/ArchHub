@@ -1261,6 +1261,14 @@ class _CleanAuthorityHttpServer:
         # Workspace roots: re-derive the hooks' signed projection from the
         # graph at every start, off the start path. Anything but a match
         # refuses owner changes (republish only) and is shown as a banner.
+        # This server's own governed tree, resolved once at start with the one
+        # shared resolver, so admission and the view keep using this instance's
+        # root even if the selected map changes on disk later.
+        from .workspace_roots_catalogue import built_in_path
+        try:
+            self.clean_workspace_root = built_in_path()
+        except Exception:  # noqa: BLE001 - unresolvable root: refused per request
+            self.clean_workspace_root = None
         self.workspace_roots_boot = "checking"
         threading.Thread(
             target=self._check_workspace_roots,
@@ -1303,6 +1311,12 @@ class _CleanAuthorityHttpServer:
         )
         if type(body) is not dict:
             raise WorkspaceRootRefused("workspace-roots request is invalid")
+        if self.clean_workspace_root is None:
+            # This server's own root could not be resolved at start: refuse every
+            # workspace-roots request before any read or change; never adopt a
+            # root resolved later from a changed map or environment.
+            raise WorkspaceRootRefused(
+                "this ArchHub workspace root was not resolved at start; restart ArchHub")
         request = {key: value for key, value in body.items() if key != "command_id"}
         action = request.get("action")
         boot = self.workspace_roots_boot
@@ -1324,7 +1338,8 @@ class _CleanAuthorityHttpServer:
         if catalogue is None:
             if action != "list" or set(request) != {"action"}:
                 raise WorkspaceRootRefused("workspace-roots request is invalid")
-            view = roots_view(self.clean_authority.store.revision, (), None, boot)
+            view = roots_view(self.clean_authority.store.revision, (), None, boot,
+                              built_in=self.clean_workspace_root)
         else:
             view = owner_change(
                 self.clean_authority,
@@ -1333,6 +1348,7 @@ class _CleanAuthorityHttpServer:
                 caller=self.clean_caller,
                 operation_id=body.get("command_id") or str(_uuid.uuid4()),
                 lock=self._mutation_lock,
+                built_in=self.clean_workspace_root,
             )
             if action != "list":
                 self.workspace_roots_boot = view["projection"]

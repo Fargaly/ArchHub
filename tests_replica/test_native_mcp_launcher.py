@@ -29,6 +29,11 @@ ACTOR = "app:agent-session:runtime:" + "a" * 32
 WORKER = r'''
 import json, os, sys, threading
 state_path, log_path, release_path = os.environ["FAKE_STATE"], os.environ["FAKE_LOG"], os.environ["FAKE_RELEASE"]
+if os.path.exists(os.environ["FAKE_REFUSE"]):
+    # A refused first connection, as the real owner reports it, then the process ends.
+    sys.stderr.write("nodelang.application_machine_transport.MachineResponseError: runtime Agent Session identity is already bound; renew it instead\n")
+    sys.stderr.flush()
+    sys.exit(1)
 pid, args = os.getpid(), sys.argv[1:]
 lock = threading.Lock()
 def log(message):
@@ -79,11 +84,14 @@ def _owner(**changes):
 class Client:
     """The MCP client's side of real OS pipes, with the launcher serving the other side."""
 
-    def __init__(self, tmp_path, owner):
+    def __init__(self, tmp_path, owner, refuse=False):
         self.install = tmp_path / "install"
         self.install.mkdir()
         (self.install / "BUILD_ID").write_text("build-1", encoding="utf-8")
         self.state, self.log, self.release = tmp_path / "owner.json", tmp_path / "worker.log", tmp_path / "release"
+        self.refuse = tmp_path / "refuse"
+        if refuse:
+            self.refuse.write_text("refuse", encoding="utf-8")
         self.set_owner(owner)
         script = tmp_path / "worker.py"
         script.write_text(WORKER, encoding="utf-8")
@@ -91,7 +99,8 @@ class Client:
         from_launcher_r, from_launcher_w = os.pipe()
         self._send = os.fdopen(to_launcher_w, "wb")
         self._recv = os.fdopen(from_launcher_r, "rb")
-        env = dict(os.environ, FAKE_STATE=str(self.state), FAKE_LOG=str(self.log), FAKE_RELEASE=str(self.release))
+        env = dict(os.environ, FAKE_STATE=str(self.state), FAKE_LOG=str(self.log), FAKE_RELEASE=str(self.release),
+                   FAKE_REFUSE=str(self.refuse))
         self.launcher = Launcher(self.install, client_in=os.fdopen(to_launcher_r, "rb"),
                                  client_out=os.fdopen(from_launcher_w, "wb"),
                                  worker_argv=lambda extra: [sys.executable, str(script), *extra],
@@ -242,6 +251,47 @@ def test_after_an_application_restart_no_release_is_needed(client):
     assert client.tool("echo")["pid"] != first
     old = [row["message"] for row in client.worker_messages() if row["pid"] == first]
     assert not any((message.get("params") or {}).get("name") == HANDOFF_TOOL for message in old)
+
+
+def test_a_refused_start_never_ends_the_connection_and_the_next_call_connects(tmp_path):
+    """Live 1cefae13: the owner's first connection was refused ("already bound"), the
+    owner exited, and the whole connector died with it while the client still showed
+    it connected. The host now stays, says why, and the next call connects."""
+    client = Client(tmp_path, _owner(), refuse=True)
+    try:
+        answer = client.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                                               "clientInfo": {"name": "court", "version": "1"}})
+        assert answer["result"]["capabilities"]["tools"]["listChanged"] is True
+        client.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        listed = [tool["name"] for tool in client.request("tools/list")["result"]["tools"]]
+        assert listed == ["native.owner_status"]
+        refused = client.request("tools/call", {"name": "echo", "arguments": {}})["result"]
+        why = json.loads(refused["content"][0]["text"])
+        assert refused["isError"] is True and why["connected"] is False
+        assert "already bound" in why["reason"] and "next call" in why["next"]
+        assert client.thread.is_alive()                            # the connection never ended
+        client.refuse.unlink()
+        after = client.tool("echo")                                # the next call starts a new owner
+        client.notification("notifications/tools/list_changed")
+        assert client.thread.is_alive() and client.launcher._down is None
+        new = [row["message"] for row in client.worker_messages() if row["pid"] == after["pid"]]
+        assert new[0]["method"] == "initialize" and str(new[0]["id"]).startswith("archhub-launcher:")
+    finally:
+        client.close()
+
+
+def test_an_owner_that_dies_mid_session_is_replaced_on_the_next_call(client):
+    import signal
+    client.start()
+    first = client.tool("echo")["pid"]
+    os.kill(first, signal.SIGTERM)
+    deadline = time.monotonic() + 20
+    while client.launcher._worker.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+    time.sleep(0.5)                                                # its output has closed
+    after = client.tool("echo")
+    client.notification("notifications/tools/list_changed")
+    assert after["pid"] != first and client.thread.is_alive()
 
 
 def test_the_native_entry_points_become_the_launcher_unless_they_are_its_worker(monkeypatch):

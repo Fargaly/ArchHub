@@ -17,9 +17,23 @@ Nothing is replayed. A call in flight, an owner that is not plainly bound, an
 unresolved attempt or permit, or another application instance defers the swap;
 native.owner_status then carries self_update with the reason, and it is retried.
 
+The connection outlives its worker (founder: "the connector problem must end and
+never repeat", live 1cefae13). A worker that ends, whether its first connection
+was refused, it crashed or it was killed, used to take this whole host with it
+while the client still showed it connected. Now:
+- each request it held is answered here: initialize by the host, any other call
+  as not replayed;
+- a new worker is started with backoff, the client's initialize is replayed to
+  it privately, and the client is told the tools changed;
+- a call made while none runs says why and starts one.
+A worker still slow to answer initialize (the application is still opening) no
+longer times the client out: the host answers it after _init_timeout and tells
+the client the tools changed once that same worker is ready.
+
 Stdlib only by design: this process outlives every update, so it imports no
 nodelang module that an install could change underneath it.
 """
+from collections import deque
 import json
 import os
 from pathlib import Path
@@ -113,16 +127,35 @@ class Launcher:
         self.status = {"state": "current", "reason": None, "build": installed_build(self.root),
                        "swaps": 0}
         self._worker = None
+        self._down = None            # why no worker runs now; None while one does
+        self._early = None           # the client's initialize the host answered for a slow worker
+        self._init_timeout = 20.0    # the client's own connect timeout is about 30 s
+        self._revive_delays = (1.0, 2.0, 5.0, 10.0, 30.0, 60.0)   # the last one repeats
+        self._revive_lock = threading.Lock()
+        self._reviver = None
         self._start_worker(self._extra)
 
     # -- worker ----------------------------------------------------------------
     def _start_worker(self, extra):
         env = dict(self._environment, **{LAUNCHER_ENV: "1"})
         worker = subprocess.Popen(self._argv(list(extra)), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                  env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                                  stderr=subprocess.PIPE, env=env,
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        worker.tail = deque(maxlen=40)
         self._worker = worker
+        threading.Thread(target=self._pump_errors, args=(worker,), name="mcp-worker-err", daemon=True).start()
         threading.Thread(target=self._pump_worker, args=(worker,), name="mcp-worker-out", daemon=True).start()
         return worker
+
+    def _pump_errors(self, worker):
+        """Pass the worker's diagnostics on unchanged, keeping its last lines to explain an end."""
+        for raw in iter(worker.stderr.readline, b""):
+            worker.tail.append(raw.decode("utf-8", "replace").rstrip())
+            try:
+                sys.stderr.buffer.write(raw)
+                sys.stderr.buffer.flush()
+            except (AttributeError, OSError, ValueError):
+                pass
 
     def _pump_worker(self, worker):
         for raw in iter(worker.stdout.readline, b""):
@@ -140,11 +173,124 @@ class Launcher:
                 continue
             if worker is not self._worker:
                 continue  # a retired worker no longer speaks to the client
+            with self._lock:
+                early = ident is not None and "method" not in message and ident == self._early
+                if early:
+                    self._early = None
+            if early:
+                # The host already answered this initialize: the worker is ready now.
+                self._send_client({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
+                continue
             if ident is not None and "method" not in message:
                 with self._lock:
                     method, tool = self._inflight.pop(ident, (None, None))
                 message = self._shape_response(message, method, tool)
             self._send_client(message)
+        self._worker_ended(worker)
+
+    def _host_initialize(self, ident):
+        params = (self._initialize or {}).get("params") or {}
+        self._send_client({"jsonrpc": "2.0", "id": ident, "result": {
+            "protocolVersion": params.get("protocolVersion") or "2025-06-18",
+            "capabilities": {"tools": {"listChanged": True}},
+            "serverInfo": {"name": "ArchHub native", "version": "launcher"}}})
+
+    def _initialize_deadline(self, ident, worker):
+        """Answer the client's initialize here when the worker has not within _init_timeout."""
+        time.sleep(self._init_timeout)
+        with self._lock:
+            if worker is not self._worker or self._inflight.get(ident, (None,))[0] != "initialize":
+                return
+            self._inflight.pop(ident, None)
+            self._early = ident
+        self._host_initialize(ident)
+
+    def _worker_ended(self, worker):
+        """A worker's output closed: settle what it was asked, replay nothing, start another."""
+        try:
+            worker.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            worker.kill()
+        with self._lock:
+            waiters = [waiter for waiter in self._private.values() if waiter[2] is worker]
+        for waiter in waiters:
+            waiter[0].set()           # a private call to it gets no answer
+        if worker is not self._worker or self._closed.is_set():
+            return                    # a retired worker, or the client is gone
+        lines = [line for line in worker.tail if line.strip()]
+        reason = "the native owner ended (code %s)%s" % (
+            worker.returncode, (": " + lines[-1][:600]) if lines else "")
+        with self._lock:
+            self._down = reason
+            pending, self._inflight = self._inflight, {}
+            early, self._early = self._early, None
+        for ident, (method, _tool) in pending.items():
+            if method == "initialize":
+                self._host_initialize(ident)
+            else:
+                self._send_client({"jsonrpc": "2.0", "id": ident, "error": {"code": -32603, "message":
+                    "The native owner ended before answering; this call was not replayed (%s)" % reason}})
+        self._schedule_revive()
+
+    def _schedule_revive(self):
+        with self._lock:
+            if self._reviver is not None or self._closed.is_set():
+                return
+            self._reviver = threading.Thread(target=self._revive_loop, name="mcp-revive", daemon=True)
+            self._reviver.start()
+
+    def _revive_loop(self):
+        """Start a new worker with backoff until one answers; the last delay repeats."""
+        attempt = 0
+        try:
+            while not self._closed.is_set():
+                delays = self._revive_delays or (60.0,)
+                if self._closed.wait(delays[min(attempt, len(delays) - 1)]):
+                    return
+                attempt += 1
+                if self._down is None or self._revive():
+                    return
+        finally:
+            with self._lock:
+                self._reviver = None
+
+    def _revive(self):
+        """Start a new worker for this same session; True once it answers initialize."""
+        with self._revive_lock:
+            if self._down is None:
+                return True           # another path revived it meanwhile
+            with self._lock:
+                worker = self._start_worker(self._extra)
+            if self._initialize is not None:
+                answered = self._call("initialize", self._initialize.get("params") or {}, timeout=300.0)
+                if worker is not self._worker or type(answered) is not dict or "result" not in answered:
+                    return False      # it ended too; _worker_ended recorded why
+                if self._initialized is not None:
+                    self._to_worker(self._initialized)
+            with self._lock:
+                self._down = None
+            if self._initialize is not None:
+                self._send_client({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
+            return True
+
+    def _answer_down(self, ident, method):
+        """Answer one client request while no worker runs."""
+        if method == "tools/list":
+            result = {"tools": [{"name": STATUS_TOOL, "description": "Why ArchHub is not connected now. "
+                                 "A new connection for this same session is being started.",
+                                 "inputSchema": {"type": "object", "properties": {}}}]}
+        elif method == "tools/call":
+            text = json.dumps({"connected": False, "reason": self._down,
+                               "next": "the next call starts a new connection for this same session",
+                               "self_update": self.status})
+            result = {"content": [{"type": "text", "text": text}], "isError": True}
+        elif method == "ping":
+            result = {}
+        else:
+            self._send_client({"jsonrpc": "2.0", "id": ident,
+                               "error": {"code": -32603, "message": self._down or "not connected"}})
+            return
+        self._send_client({"jsonrpc": "2.0", "id": ident, "result": result})
 
     def _shape_response(self, message, method, tool):
         result = message.get("result")
@@ -175,9 +321,12 @@ class Launcher:
         with self._lock:
             self._counter += 1
             ident = _PRIVATE + str(self._counter)
-            waiter = self._private[ident] = [threading.Event(), None]
+            waiter = self._private[ident] = [threading.Event(), None, self._worker]
         try:
-            self._to_worker({"jsonrpc": "2.0", "id": ident, "method": method, "params": params})
+            try:
+                self._to_worker({"jsonrpc": "2.0", "id": ident, "method": method, "params": params})
+            except (OSError, ValueError):
+                return None           # the worker is gone; _worker_ended settles its end
             if not waiter[0].wait(timeout):
                 raise TimeoutError("the native owner did not answer %s" % method)
             return waiter[1]
@@ -210,7 +359,7 @@ class Launcher:
             worker = self._worker
             try:
                 worker.stdin.close()
-            except OSError:
+            except (OSError, ValueError):
                 pass
             try:
                 worker.wait(timeout=15)
@@ -229,6 +378,18 @@ class Launcher:
             self._send_client({"jsonrpc": "2.0", "id": ident,
                                "error": {"code": -32601, "message": "Unknown tool"}})
             return
+        if self._down is not None:
+            if method == "initialize":
+                # Answer at once: the client gives a server about 30 s. The new worker
+                # gets this initialize privately and the client is told when tools return.
+                self._host_initialize(ident)
+                self._schedule_revive()
+                return
+            if ident is None:
+                return                # a notification: the next worker gets its own replay
+            if not self._revive():    # a call starts a new connection for this same session
+                self._answer_down(ident, method)
+                return
         with self._lock:
             if method is not None and ident is not None:
                 tool = (message.get("params") or {}).get("name") if method == "tools/call" else None
@@ -236,7 +397,14 @@ class Launcher:
             if self._swapping:
                 self._held.append(message)
                 return
-        self._to_worker(message)
+            worker = self._worker
+        try:
+            self._to_worker(message)
+        except (OSError, ValueError):
+            return                    # the worker just ended: _worker_ended answers this request
+        if method == "initialize":
+            threading.Thread(target=self._initialize_deadline, args=(ident, worker),
+                             name="mcp-initialize-deadline", daemon=True).start()
 
     # -- self-update ------------------------------------------------------------
     def _changed_source(self):
@@ -251,8 +419,8 @@ class Launcher:
     def _check_loop(self):
         last_source_check = 0.0
         while not self._closed.wait(self._check_seconds):
-            if self._initialized is None:
-                continue
+            if self._initialized is None or self._down is not None:
+                continue              # nothing to update while no worker runs
             try:
                 marker = None
                 build = installed_build(self.root)

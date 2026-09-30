@@ -682,6 +682,8 @@ def ensure_archhub_design_token_system(
     verify_design_token_system(store.snapshot(), build)
     ensure_active_theme(store, build.resolver_root + ":modifier:theme")
     ensure_active_overlay(store, build.resolver_root + ":modifier:a11y")
+    # v1 is verified untouched above; shipped revisions add cells only.
+    ensure_design_token_revisions(store, build)
     return build
 
 
@@ -907,10 +909,14 @@ def project_design_system_runtime(
     theme_overrides: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     """Resolve semantic tokens and component bindings for a browser lens."""
+    active = read_active_design_token_revision(snapshot, build)
     overrides = {
-        build.base_token_roots["color.%s" % name]: str(value)
-        for name, value in (theme_overrides or {}).items()
-        if "color.%s" % name in build.base_token_roots
+        **active.overrides,
+        **{
+            build.base_token_roots["color.%s" % name]: str(value)
+            for name, value in (theme_overrides or {}).items()
+            if "color.%s" % name in build.base_token_roots
+        },
     }
     resolved = resolve_design_tokens(
         snapshot,
@@ -918,8 +924,24 @@ def project_design_system_runtime(
         build.token_set_root,
         value_overrides=overrides,
     )
+    # Tokens a revision added resolve over the (overridden) v1 values.
+    resolved = dict(resolved)
+    pending = {path: read_token(snapshot, build.protocol, root) for path, root in active.token_roots.items()}
+    while pending:  # aliases may name tokens of the same revision, in any order
+        progressed = False
+        for path, token in tuple(pending.items()):
+            if token.value_root is not None:
+                resolved[token.root_id] = str(active.overrides.get(token.root_id, _text(snapshot, token.value_root)))
+            elif str(token.alias_root) in resolved:
+                resolved[token.root_id] = resolved[str(token.alias_root)]
+            else:
+                continue
+            del pending[path]
+            progressed = True
+        if not progressed:
+            raise InvalidCell("revision alias target is unresolved: %s" % ", ".join(sorted(pending)))
     alias_path_by_root = {
-        root: path for path, root in build.alias_token_roots.items()
+        root: path for path, root in (*build.alias_token_roots.items(), *active.token_roots.items())
     }
     tokens = {
         path: {
@@ -927,10 +949,10 @@ def project_design_system_runtime(
             "type": read_token(snapshot, build.protocol, root).type_name,
             "value": resolved[root],
         }
-        for path, root in build.alias_token_roots.items()
+        for path, root in (*build.alias_token_roots.items(), *active.token_roots.items())
     }
     components: dict[str, dict[str, object]] = {}
-    for component_name, component_root in build.component_roots.items():
+    for component_name, component_root in (*build.component_roots.items(), *active.component_roots.items()):
         members = read_relation(snapshot, component_root, budget=128)
         projected_bindings: dict[str, object] = {}
         for member in members:
@@ -962,6 +984,7 @@ def project_design_system_runtime(
         "lifecycle": PUBLISHED_ROOT,
         "tokens": tokens,
         "components": components,
+        "revision": active.name,
     }
 
 
@@ -1324,6 +1347,296 @@ def verify_design_token_system(
                 raise InvalidCell("component bypasses semantic token authority")
 
 
+# -- governed design-token revisions -------------------------------------------
+# The v1 cells above are genesis: STATIC_TOKENS, SEMANTIC_ALIASES and
+# COMPONENT_BINDINGS never change again, because ensure/open refuse any cell
+# that differs ("persisted design-token authority drifted") and the founder's
+# graph holds them. A change to the design system is a REVISION: new cells
+# only (value overrides for existing tokens, added tokens, added components),
+# frozen once shipped, applied over v1 by the resolver. Which revision is active
+# is state in one pointer cell, exactly as the active theme is: ensure applies
+# the newest shipped revision once, and reverting moves the pointer to the
+# revision's parent without touching any other cell.
+
+REVISION_PREFIX = "app:design-token-revision"
+REVISION_PROTOCOL_PREFIX = "app:design-token-revision-protocol"
+ACTIVE_REVISION_ROOT = REVISION_PREFIX + ":active"
+REVISION_ROLE_NAMES = ("parent", "override", "target", "value", "entry", "path", "token", "component")
+
+
+@dataclass(frozen=True, slots=True)
+class DesignTokenRevision:
+    """One shipped revision. Frozen: a later change is a new revision."""
+    name: str
+    parent: str | None
+    description: str
+    overrides: Mapping[str, str]            # existing token path -> new value
+    values: Mapping[str, tuple[str, str]]   # new base token path -> (type, value)
+    aliases: Mapping[str, str]              # new semantic token path -> target path
+    components: Mapping[str, Mapping[str, str]]  # component -> property -> token path
+
+
+REVISIONS: tuple[DesignTokenRevision, ...] = (
+    DesignTokenRevision(
+        name="type-scale-and-categories-1",
+        parent=None,
+        description=("Readable type floor (caption 11px, label 12px) and one unique "
+                     "colour per card category, bound as the card-category component"),
+        overrides=MappingProxyType({
+            "font.caption-size": "11px",
+            "font.label-size": "12px",
+        }),
+        values=MappingProxyType({
+            # The three categories that shared a colour or had none, mixed from
+            # the palette: Shape = ok/warn, AI = err/purple (55/45), Host = cyan/blue.
+            "category.shape-hue": ("color", "#b2ba74"),
+            "category.ai-hue": ("color", "#cb7d95"),
+            "category.host-hue": ("color", "#6ca6c5"),
+        }),
+        aliases=MappingProxyType({
+            "card-category.input": "color.blue",
+            "card-category.output": "color.ok",
+            "card-category.watch": "color.cyan",
+            "card-category.trigger": "color.warn",
+            "card-category.logic": "color.purple",
+            "card-category.shape": "category.shape-hue",
+            "card-category.ai": "category.ai-hue",
+            "card-category.host": "category.host-hue",
+            "card-category.note": "color.ink_soft",
+            "card-category.skill": "color.accent",
+        }),
+        components=MappingProxyType({
+            "card-category": MappingProxyType({
+                name: "card-category.%s" % name for name in (
+                    "input", "output", "watch", "trigger", "logic",
+                    "shape", "ai", "host", "note", "skill")
+            }),
+        }),
+    ),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveDesignTokenRevision:
+    name: str                                   # "" = v1 only
+    overrides: Mapping[str, str]                # token root -> value
+    token_roots: Mapping[str, str]              # added token path -> root
+    component_roots: Mapping[str, str]          # added component -> root
+
+
+def _revision_roles() -> dict[str, str]:
+    return {name: "%s:role:%s" % (REVISION_PROTOCOL_PREFIX, name) for name in REVISION_ROLE_NAMES}
+
+
+def _revision_root(name: str) -> str:
+    return "%s:%s" % (REVISION_PREFIX, name)
+
+
+def _revision_token_root(revision: str, path: str) -> str:
+    return "%s:token:%s" % (_revision_root(revision), path)
+
+
+def _revision_component_root(revision: str, name: str) -> str:
+    return "%s:component:%s" % (_revision_root(revision), name)
+
+
+def _revision_expected(
+    build: DesignTokenSystemBuild,
+) -> tuple[dict[str, Cell], dict[str, tuple[dict[str, str], dict[str, str], dict[str, str]]]]:
+    """Every revision cell, deterministically, plus each revision's own maps."""
+    roles = build.protocol.roles
+    types = build.protocol.types
+    rev_roles = _revision_roles()
+    expected: dict[str, Cell] = {}
+    for name, root_id in rev_roles.items():
+        _add_text(expected, root_id, name)
+    shipped: dict[str, tuple[dict[str, str], dict[str, str], dict[str, str]]] = {}
+    paths: dict[str, str] = {**build.base_token_roots, **build.alias_token_roots}
+    type_by_root: dict[str, str] = {}
+    for revision in REVISIONS:
+        if revision.parent is not None and revision.parent not in shipped:
+            raise InvalidCell("design-token revision names an unshipped parent")
+        root = _revision_root(revision.name)
+        provenance = root + ":provenance"
+        _add_text(expected, provenance, revision.description)
+        members: list[tuple[str, str]] = [(roles["name"], _add_text(expected, root + ":name", revision.name)),
+                                          (roles["provenance"], provenance),
+                                          (roles["lifecycle"], PUBLISHED_ROOT)]
+        if revision.parent is not None:
+            members.append((rev_roles["parent"], _revision_root(revision.parent)))
+        overrides: dict[str, str] = {}
+        for path, value in revision.overrides.items():
+            target = paths.get(path)
+            if target is None:
+                raise InvalidCell("design-token revision overrides an unknown token")
+            override_root = "%s:override:%s" % (root, path)
+            value_root = _add_text(expected, override_root + ":value", value)
+            _add_relation(expected, override_root, ((rev_roles["target"], target), (rev_roles["value"], value_root)))
+            members.append((rev_roles["override"], override_root))
+            overrides[target] = value
+        tokens: dict[str, str] = {}
+
+        def add_token(path: str, type_name: str, value_member: tuple[str, str]) -> None:
+            if path in paths:
+                raise InvalidCell("design-token revision re-declares a token")
+            token_root = _revision_token_root(revision.name, path)
+            leaf = path.rsplit(".", 1)[-1]
+            _add_relation(expected, token_root, (
+                (roles["name"], _add_text(expected, token_root + ":name", leaf)),
+                (roles["type"], types[type_name]),
+                value_member,
+                (roles["description"], _add_text(expected, token_root + ":description",
+                                                 "Revision %s token %s" % (revision.name, path))),
+                (roles["provenance"], provenance),
+                (roles["lifecycle"], PUBLISHED_ROOT),
+            ))
+            entry_root = "%s:entry:%s" % (root, path)
+            _add_relation(expected, entry_root, (
+                (rev_roles["path"], _add_text(expected, entry_root + ":path", path)),
+                (rev_roles["token"], token_root),
+            ))
+            members.append((rev_roles["entry"], entry_root))
+            paths[path] = token_root
+            type_by_root[token_root] = type_name
+            tokens[path] = token_root
+
+        for path, (type_name, value) in revision.values.items():
+            add_token(path, type_name, (roles["value"], _add_text(
+                expected, _revision_token_root(revision.name, path) + ":value", value)))
+        for path, target_path in revision.aliases.items():
+            target = paths.get(target_path)
+            if target is None:
+                raise InvalidCell("design-token revision alias has no target")
+            target_type = type_by_root.get(target) or _type_of_path(target_path)
+            add_token(path, target_type, (roles["alias"], target))
+        components: dict[str, str] = {}
+        for component, bindings in revision.components.items():
+            if component in build.component_roots:
+                raise InvalidCell("design-token revision re-declares a component")
+            component_root = _revision_component_root(revision.name, component)
+            component_members = [(roles["name"], _add_text(expected, component_root + ":name", component)),
+                                 (roles["lifecycle"], PUBLISHED_ROOT)]
+            for property_name, token_path in bindings.items():
+                token_root = tokens.get(token_path) or build.alias_token_roots.get(token_path)
+                if token_root is None:
+                    raise InvalidCell("revision component binds an unknown semantic token")
+                binding_root = "%s:binding:%s" % (component_root, property_name)
+                _add_relation(expected, binding_root, (
+                    (roles["component"], component_root),
+                    (roles["property"], _add_text(expected, binding_root + ":property", property_name)),
+                    (roles["token"], token_root),
+                ))
+                component_members.append((roles["binding"], binding_root))
+            _add_relation(expected, component_root, component_members)
+            members.append((rev_roles["component"], component_root))
+            components[component] = component_root
+        _add_relation(expected, root, members)
+        shipped[revision.name] = (overrides, tokens, components)
+    return expected, shipped
+
+
+def _type_of_path(path: str) -> str:
+    group, _, name = path.partition(".")
+    if group == "color":
+        return "color"
+    if group in STATIC_TOKENS and name in STATIC_TOKENS[group]:
+        return STATIC_TOKENS[group][name][0]
+    for alias_group, aliases in SEMANTIC_ALIASES.items():
+        if alias_group == group and name in aliases:
+            return _type_of_path(aliases[name])
+    raise InvalidCell("design-token revision alias target has no known type")
+
+
+def ensure_design_token_revisions(store: CellStore, build: DesignTokenSystemBuild) -> str:
+    """Install every shipped revision's cells (new cells only, never an edit) and,
+    the first time, make the newest one active. Returns the active revision name."""
+    expected, _ = _revision_expected(build)
+    snapshot = store.snapshot()
+    missing: list[Cell] = []
+    for cell in expected.values():
+        existing = snapshot.cells.get(cell.id)
+        if existing is None:
+            missing.append(cell)
+        elif existing != cell:
+            raise InvalidCell("persisted design-token revision drifted at %s" % cell.id)
+    if ACTIVE_REVISION_ROOT not in snapshot.cells and REVISIONS:
+        missing.append(Cell(ACTIVE_REVISION_ROOT, NULL_CELL_ID, NULL_CELL_ID,
+                            REVISIONS[-1].name.encode("utf-8")))
+    if missing:
+        store.commit(snapshot.revision, create=tuple(missing))
+    return read_active_design_token_revision(store.snapshot(), build).name
+
+
+def set_active_design_token_revision(store: CellStore, build: DesignTokenSystemBuild, name: str) -> str:
+    """Make `name` the active revision ("" = v1 only). No other cell moves."""
+    if name and name not in {revision.name for revision in REVISIONS}:
+        raise InvalidCell("design-token revision is not shipped: %s" % name)
+    snapshot = store.snapshot()
+    if name and _revision_root(name) not in snapshot.cells:
+        raise InvalidCell("design-token revision is not installed: %s" % name)
+    pointer = Cell(ACTIVE_REVISION_ROOT, NULL_CELL_ID, NULL_CELL_ID, name.encode("utf-8"))
+    current = snapshot.cells.get(ACTIVE_REVISION_ROOT)
+    if current is None:
+        store.commit(snapshot.revision, create=(pointer,))
+    elif current != pointer:
+        store.commit(snapshot.revision, replace=(pointer,))
+    return name
+
+
+def revert_design_token_revision(store: CellStore, build: DesignTokenSystemBuild) -> str:
+    """Undo the active revision: the pointer moves to its parent (or v1)."""
+    active = read_active_design_token_revision(store.snapshot(), build).name
+    if not active:
+        return ""
+    parent = next(revision.parent for revision in REVISIONS if revision.name == active)
+    return set_active_design_token_revision(store, build, parent or "")
+
+
+def read_active_design_token_revision(snapshot: Snapshot, build: DesignTokenSystemBuild) -> ActiveDesignTokenRevision:
+    """The active revision chain, folded parent-first. A graph without the pointer
+    (not yet ensured) resolves as v1."""
+    if ACTIVE_REVISION_ROOT not in snapshot.cells:
+        return ActiveDesignTokenRevision("", MappingProxyType({}), MappingProxyType({}), MappingProxyType({}))
+    name = _text(snapshot, ACTIVE_REVISION_ROOT)
+    if not name:
+        return ActiveDesignTokenRevision("", MappingProxyType({}), MappingProxyType({}), MappingProxyType({}))
+    by_name = {revision.name: revision for revision in REVISIONS}
+    if name not in by_name or _revision_root(name) not in snapshot.cells:
+        raise InvalidCell("active design-token revision is not installed: %s" % name)
+    chain: list[str] = []
+    cursor: str | None = name
+    while cursor is not None:
+        chain.append(cursor)
+        cursor = by_name[cursor].parent
+    _, shipped = _revision_expected(build)
+    overrides: dict[str, str] = {}
+    tokens: dict[str, str] = {}
+    components: dict[str, str] = {}
+    rev_roles = _revision_roles()
+    for revision_name in reversed(chain):
+        root = _revision_root(revision_name)
+        # Read the revision from the GRAPH, not the constant: overrides and
+        # entries are what the persisted cells say.
+        for member in read_relation(snapshot, root, budget=256):
+            if member.role_id == rev_roles["override"]:
+                pair = read_relation(snapshot, member.participant_id, budget=8)
+                target = _one(pair, rev_roles["target"], "revision override target")
+                value = _one(pair, rev_roles["value"], "revision override value")
+                overrides[str(target)] = _text(snapshot, str(value))
+            elif member.role_id == rev_roles["entry"]:
+                pair = read_relation(snapshot, member.participant_id, budget=8)
+                path = _text(snapshot, str(_one(pair, rev_roles["path"], "revision entry path")))
+                tokens[path] = str(_one(pair, rev_roles["token"], "revision entry token"))
+            elif member.role_id == rev_roles["component"]:
+                name_members = read_relation(snapshot, member.participant_id, budget=128)
+                components[_text(snapshot, str(_one(name_members, build.protocol.role("name"), "component name")))] = \
+                    member.participant_id
+        if set(shipped[revision_name][0]) - set(overrides):
+            raise InvalidCell("design-token revision cells are incomplete: %s" % revision_name)
+    return ActiveDesignTokenRevision(name, MappingProxyType(overrides), MappingProxyType(tokens),
+                                     MappingProxyType(components))
+
+
 __all__ = [
     "COMPONENT_BINDINGS",
     "COMPONENT_SYSTEM_ROOT",
@@ -1349,4 +1662,12 @@ __all__ = [
     "read_token",
     "resolve_design_tokens",
     "verify_design_token_system",
+    "ACTIVE_REVISION_ROOT",
+    "REVISIONS",
+    "ActiveDesignTokenRevision",
+    "DesignTokenRevision",
+    "ensure_design_token_revisions",
+    "read_active_design_token_revision",
+    "revert_design_token_revision",
+    "set_active_design_token_revision",
 ]

@@ -1699,13 +1699,16 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     const wireMembers=scoped
       ? [...segments].flatMap(segment => index.wires.get(segment) || [])
       : [...index.layer.children];
+    // Read every position first, then write every wire: one layout per
+    // redraw, not one per wire (a resize used to cost hundreds of layouts).
+    const writes=[];
     wireMembers.forEach(element => {
       if (element.dataset.universalRelation) {
         const source=sockets.get(element.dataset.sourceInterface)
           || cards.get(element.dataset.sourceNode);
         const target=sockets.get(element.dataset.targetInterface)
           || cards.get(element.dataset.targetNode);
-        if (source && target) element.setAttribute('d',cablePath(source,target));
+        if (source && target) writes.push([element,'d',cablePath(source,target)]);
         return;
       }
       if (!element.dataset.universalRewireIncidence) return;
@@ -1714,9 +1717,9 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
         || cards.get(element.dataset.universalRewireNode);
       if (!socket) return;
       const point=socketPoint(socket,side);
-      element.setAttribute('cx',String(point.x));
-      element.setAttribute('cy',String(point.y));
+      writes.push([element,'cx',String(point.x)],[element,'cy',String(point.y)]);
     });
+    writes.forEach(([element,name,value]) => element.setAttribute(name,value));
   }
   function markWireTargets(candidateInterfaces=null) {
     wireTargetReadyElements.forEach(
@@ -2174,6 +2177,40 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     canvas.style.setProperty('--inv-zoom',String(1.02/(viewport.zoom||1)));
     canvas.style.setProperty('--grid-x',viewport.pan_x+'px');
     canvas.style.setProperty('--grid-y',viewport.pan_y+'px');
+    const socketScale=socketScaleFor(viewport.zoom);
+    canvas.style.setProperty('--socket-scale',String(socketScale));
+    if (socketScale !== canvasSocketScale) {
+      canvasSocketScale=socketScale;
+      placeCardBands(canvas);
+    }
+  }
+  // The band gap follows the socket scale: re-place every card's height and
+  // ports (writes only), then one redraw of the wires (reads, then writes).
+  function placeCardBands(canvas) {
+    const projection=lastProjection;
+    if (!projection?.nodes?.length) return;
+    const byId=new Map(projection.nodes.map(node => [node.id,node]));
+    canvas.querySelectorAll('.canvas-stage [data-graph-node]').forEach(card => {
+      const item=byId.get(card.dataset.graphNode);
+      if (!item) return;
+      const height=projectedNodeHeight(item,projection);
+      card.style.height=height+'px';
+      card.style.minHeight=height+'px';
+      const ports=card.querySelector(
+        ':scope > [data-ui-key="canvas:node:'+item.id+':ports"]');
+      if (!ports) return;
+      const ordered=[
+        ...item.ports.filter(port => port.side === 'target'),
+        ...item.ports.filter(port => port.side === 'source'),
+      ];
+      const band=portBandTop(item);
+      [...ports.children].forEach((button,index) => {
+        if (ordered[index]) {
+          positionCanvasPort(ordered[index],button,item.ports,height,projection,band);
+        }
+      });
+    });
+    redraw();
   }
   function renderRelationComposer(list,definition) {
     if (definition.composer?.descriptor?.length !== 1) {
@@ -2838,6 +2875,45 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       || port.mode === 'relation-role' && port.editable
     );
   }
+  // The card's content rows have fixed heights in the graph-held stylesheet;
+  // the port band starts below the last of them, so a socket or its label
+  // never covers the head, title, summary, params or value. The numbers are
+  // read from that stylesheet when this script is built (card_content_rows),
+  // never written twice.
+  const CARD_ROWS={__CARD_ROWS__,band:4};
+  // Sockets scale by the inverse zoom so they stay touch-sized on screen, but
+  // only down to this zoom: below it the scale is capped, so the band gap (and
+  // the card) stops growing and cards never grow into their neighbours.
+  const SOCKET_SCALE_FLOOR_ZOOM=0.5;
+  let canvasSocketScale=1;
+  function socketScaleFor(zoom) {
+    return 1.02/Math.max(Number(zoom) || 1,SOCKET_SCALE_FLOOR_ZOOM);
+  }
+  // How far a scaled socket reaches past its own box, above and below.
+  // Whole pixels, rounded up: the band keeps its clearance and every port top
+  // stays an integer, so 24px steps between ports are exactly 24.
+  function socketGrowth() {
+    return Math.max(0,Math.ceil(CARD_ROWS.socketHalf*(canvasSocketScale - 1)));
+  }
+  const cardContentCache=new WeakMap();
+  function cardContentHeight(node) {
+    const descriptor=node && node.card_descriptor;
+    if (!Array.isArray(descriptor) || descriptor.length !== 1) {
+      return CARD_ROWS.head+CARD_ROWS.title+CARD_ROWS.value;
+    }
+    if (cardContentCache.has(descriptor)) return cardContentCache.get(descriptor);
+    const card=renderDescriptor(descriptor[0]);
+    const summary=card.querySelector(':scope > .node-summary') ? CARD_ROWS.summary : 0;
+    const params=card.querySelectorAll(':scope > .node-params > .node-param').length;
+    const value=card.querySelector(':scope > .node-value') ? CARD_ROWS.value : 0;
+    const height=CARD_ROWS.head+CARD_ROWS.title+summary
+      +(params ? CARD_ROWS.paramsPad+params*CARD_ROWS.param : 0)+value;
+    cardContentCache.set(descriptor,height);
+    return height;
+  }
+  function portBandTop(node) {
+    return cardContentHeight(node)+CARD_ROWS.band+socketGrowth();
+  }
   function projectedNodeHeight(node,projection=lastProjection) {
     // A card is as tall as what it carries. This counted only the ports
     // the BUILD lens expands, so an ordinary card stayed 112px however
@@ -2860,7 +2936,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     // 16px a row it handed each one 14px and the court measured every
     // socket under the 24px target. A card carrying many sockets grows
     // instead -- the sockets stay hittable and stop fighting the floor.
-    return Math.max(112,82+Math.max(expandedRows*24,socketRows*26));
+    // The content, then the port band below it: rows of 24px (a named port)
+    // or 26px (a socket), plus a margin, never overlapping the content.
+    return Math.max(112,
+      portBandTop(node)+Math.max(expandedRows*24,socketRows*26)+8+socketGrowth());
   }
   // A grid laid out in reading order is why the wires looked unrelated to
   // the cards: two cards that feed each other could sit at opposite ends
@@ -2941,20 +3020,26 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     return positions;
   }
   function positionCanvasPort(
-    port,button,ports,cardHeight,projection=lastProjection
+    port,button,ports,cardHeight,projection=lastProjection,bandTop=CARD_ROWS.head+CARD_ROWS.title+CARD_ROWS.value+CARD_ROWS.band
   ) {
+    // Every port is placed inside the band BELOW the card's content: from
+    // bandTop to the card's bottom margin. Before, the band began at 34px,
+    // inside the title row, so ports and their labels covered the title.
     const sameSide=ports.filter(item => item.side === port.side);
     if (expandedCanvasPort(port,projection)) {
       const expanded=sameSide.filter(item =>
         expandedCanvasPort(item,projection));
-      button.style.top=(66+expanded.indexOf(port)*24)+'px';
+      button.style.top=(bandTop+expanded.indexOf(port)*24)+'px';
       return;
     }
     const compact=sameSide.filter(item =>
       !expandedCanvasPort(item,projection));
-    const usable=Math.max(24,cardHeight-48);
-    const center=34+(compact.indexOf(port)+1)*usable/(compact.length+1);
-    button.style.top=(center-12)+'px';
+    // Rounded to 1/1000 px: the socket growth is fractional at most zooms, and
+    // adding it to the card and the band then subtracting it again left gaps
+    // of 23.999999999999943 px where 24 was meant.
+    const usable=Math.max(24,Math.round((cardHeight-bandTop-8)*1000)/1000);
+    const center=bandTop+(compact.indexOf(port)+1)*usable/(compact.length+1);
+    button.style.top=(Math.round((center-12)*1000)/1000)+'px';
     // A socket is 25px tall in the graph's stylesheet and its neighbour
     // sits 16px below it, so 295 of 355 sockets overlapped the one above
     // -- the edge of a busy card read as one smear and no single socket
@@ -3298,7 +3383,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
         control.classList.add('node-port-exact');
       }
       positionCanvasPort(
-        port,control,item.ports,cardHeight,projection);
+        port,control,item.ports,cardHeight,projection,portBandTop(item));
       ports.append(control);
     });
     return card;
@@ -3497,7 +3582,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
         if (wasExpanded !== expanded) movedInterfaces.add(port.id);
         if (wasExpanded !== expanded || priorHeight !== cardHeight) {
           positionCanvasPort(
-            port,button,node.ports,cardHeight,projection);
+            port,button,node.ports,cardHeight,projection,portBandTop(node));
         }
       }
     }
@@ -5784,6 +5869,52 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   }, true);
 })();
 """
+
+
+def card_content_rows(stylesheet: str | None = None) -> dict[str, int]:
+    """The canvas card's content-row heights, read from the stylesheet the canvas
+    renders (universal_presentation_seed.STYLESHEET, graph-held): the one source
+    for the port band's start (UNIVERSAL_CANVAS_SCRIPT CARD_ROWS)."""
+    import re
+    if stylesheet is None:
+        from .universal_presentation_seed import STYLESHEET as stylesheet
+
+    def declarations(selector: str) -> str:
+        found = re.findall(r"(?:^|[}'\n])" + re.escape(selector) + r"\{([^{}]*)\}", stylesheet)
+        if not found:
+            raise ValueError("stylesheet has no rule for %s" % selector)
+        return found[-1]
+
+    def pixels(selector: str, name: str) -> int:
+        match = re.search(r"(?:^|;)" + name + r":(\d+)px", declarations(selector))
+        if match is None:
+            raise ValueError("%s has no fixed %s" % (selector, name))
+        return int(match.group(1))
+
+    return {
+        "head": pixels(".graph-node>.node-head", "height"),
+        "title": pixels(".graph-node>.node-title", "height"),
+        "summary": pixels(".graph-node>.node-summary", "height"),
+        "paramsPad": pixels(".graph-node>.node-params", "padding-top")
+                     + pixels(".graph-node>.node-params", "padding-bottom"),
+        "param": pixels(".graph-node>.node-params>.node-param", "height")
+                 + pixels(".graph-node>.node-params", "gap"),
+        "value": pixels(".graph-node>.node-value", "height"),
+    }
+
+
+def _socket_half() -> int:
+    """Half the socket target, from the design tokens (layout.target-min)."""
+    from .cell_design_tokens import STATIC_TOKENS
+    value = STATIC_TOKENS["size"]["target-min"][1]
+    if not value.endswith("px"):
+        raise ValueError("socket target size is not in px")
+    return int(float(value[:-2])) // 2
+
+
+UNIVERSAL_CANVAS_SCRIPT = UNIVERSAL_CANVAS_SCRIPT.replace(
+    "__CARD_ROWS__", ",".join("%s:%d" % item for item in
+                              {**card_content_rows(), "socketHalf": _socket_half()}.items()), 1)
 
 
 def project_document(store, app_id, ui_root):

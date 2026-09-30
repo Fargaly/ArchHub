@@ -13135,10 +13135,15 @@ class ApplicationServer:
         if method == "GET" and path == "/api/universal/work-current":
             release_recovery = (set(body) == {"projection", "work_root", "claim_binding", "after_revision"}
                                 and body.get("projection") == "release-recovery")
+            court_recovery = (set(body) == {"projection", "work_root", "claim_binding", "submit_event",
+                                            "after_revision"}
+                              and body.get("projection") == "court-recovery")
+            court_submission = (set(body) == {"projection", "work_root", "claim_binding"}
+                                and body.get("projection") == "court-submission")
             # One exact attached Work, whatever else this session has pending.
             selected = (set(body) == {"projection", "work_root"}
                         and body.get("projection") == "selected-assignment")
-            if direct or (not release_recovery and not selected and body not in ({}, {"projection": "detail"}, {"projection": "assignment"}, {"projection": "configuration"})):
+            if direct or (not release_recovery and not court_recovery and not court_submission and not selected and body not in ({}, {"projection": "detail"}, {"projection": "assignment"}, {"projection": "configuration"})):
                 raise AuthorizationDenied(
                     "current Work requires its bound compact, detail or assignment runtime request"
                 )
@@ -13150,15 +13155,22 @@ class ApplicationServer:
             agent_session_root = self._resolve_universal_machine_agent_session(
                 request
             )
-            if release_recovery:
-                from .native_work_release_recovery import read_release_recovery
+            if release_recovery or court_recovery or court_submission:
+                from .native_work_release_recovery import (
+                    read_court_recovery, read_court_submission, read_release_recovery)
 
                 with self.mutation_lock:
                     snapshot = self.universal_store.snapshot()
-                    result = read_release_recovery(snapshot, self.universal_registry,
-                        authentication_context=context, agent_session_root=agent_session_root,
-                        work_root=body["work_root"], claim_binding=body["claim_binding"],
-                        after_revision=body["after_revision"])
+                    identity = dict(authentication_context=context, agent_session_root=agent_session_root,
+                                    work_root=body["work_root"], claim_binding=body["claim_binding"])
+                    if court_submission:
+                        result = read_court_submission(snapshot, self.universal_registry, **identity)
+                    elif court_recovery:
+                        result = read_court_recovery(snapshot, self.universal_registry, **identity,
+                            submit_event=body["submit_event"], after_revision=body["after_revision"])
+                    else:
+                        result = read_release_recovery(snapshot, self.universal_registry, **identity,
+                            after_revision=body["after_revision"])
                     self.require_universal_http_route(method, path, authentication_context=context)
                     if self._resolve_universal_machine_agent_session(request) != agent_session_root:
                         raise AuthorizationDenied("Work recovery caller identity changed")
@@ -16163,7 +16175,7 @@ class ApplicationServer:
                     )
                 compact_projection = False
                 if "projection" in body:
-                    if body["projection"] != "index":
+                    if body["projection"] not in ("index", "receipt"):
                         raise InvalidCell("work court projection is invalid")
                     compact_projection = True
                 agent_session_root = (
@@ -16175,7 +16187,7 @@ class ApplicationServer:
                     or body["expected_revision"] != self.universal_store.revision
                 ):
                     raise InvalidCell("work court expected revision changed or is invalid")
-                return adjudicate_universal_governed_work(
+                result = adjudicate_universal_governed_work(
                     self.universal_store,
                     self.universal_registry,
                     body["root"],
@@ -16185,6 +16197,24 @@ class ApplicationServer:
                     authentication_context=context,
                     artifact_review_verifier=self._verify_work_artifact_review,
                 )
+                if body.get("projection") != "receipt":
+                    return result
+                # A bounded receipt: this Work's row and the court's own verdict,
+                # never the whole registry (live 717: a large registry answer
+                # exceeded the machine response limit and the verdict was lost).
+                from .native_work_release_recovery import court_verdict
+                rows = [row for row in result["status"]["items"] if row["root"] == body["root"]]
+                if len(rows) != 1:
+                    raise InvalidCell("work court receipt row is missing or ambiguous")
+                return {
+                    **{key: result[key] for key in (
+                        "passed", "event", "attestation_root", "decision_evidence_root",
+                        "history_root", "revision")},
+                    "projection": "receipt",
+                    "work": rows[0],
+                    "verdict": court_verdict(self.universal_store.snapshot(), self.universal_registry,
+                                             result["attestation_root"]),
+                }
             if path == "/api/universal/work-court-recover":
                 court_shape = {"root", "evidence"}
                 if direct or set(body) not in (

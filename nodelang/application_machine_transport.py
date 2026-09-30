@@ -3006,6 +3006,61 @@ class UniversalRuntimeClient:
         """
         return self._current_work_projection("detail", frozenset({"claimed"}))
 
+    def work_court_submission(self, work_root: str, claim_binding: str) -> dict[str, object]:
+        """Read the exact submission a court request now would judge, to pin it first."""
+        if not self.agent_session_root:
+            raise MachineTransportError("Work court submission requires a bound runtime Agent Session")
+        result = self.request("GET", "/api/universal/work-current", {
+            "projection": "court-submission", "work_root": work_root, "claim_binding": claim_binding,
+        }, response_timeout_seconds=10.0)
+        if (type(result) is not dict or set(result) != {"projection", "work_root", "agent_session",
+                "claim_binding", "revision", "submit_event"}
+                or result["projection"] != "court-submission" or result["work_root"] != work_root
+                or result["agent_session"] != self.agent_session_root or result["claim_binding"] != claim_binding
+                or type(result["revision"]) is not int or result["revision"] < 0
+                or type(result["submit_event"]) is not str or not result["submit_event"]):
+            raise MachineTransportError("Work court submission projection is invalid")
+        return result
+
+    def work_court_recovery(self, work_root: str, claim_binding: str, submit_event: str,
+                            after_revision: int) -> dict[str, object]:
+        """Read the exact verdict committed on one pinned submission; never a replay.
+
+        decided=False means no verdict is committed on it yet, not that none will be.
+        """
+        if not self.agent_session_root:
+            raise MachineTransportError("Work court recovery requires a bound runtime Agent Session")
+        result = self.request("GET", "/api/universal/work-current", {
+            "projection": "court-recovery", "work_root": work_root, "claim_binding": claim_binding,
+            "submit_event": submit_event, "after_revision": after_revision,
+        }, response_timeout_seconds=10.0)
+        fields = {"projection", "work_root", "agent_session", "claim_binding", "submit_event", "revision",
+                  "after_revision", "decided", "event", "passed", "history_root", "decision_evidence_root",
+                  "verdict", "receipt_reconstructed"}
+        if (type(result) is not dict or set(result) != fields
+                or result["projection"] != "court-recovery" or result["work_root"] != work_root
+                or result["agent_session"] != self.agent_session_root or result["claim_binding"] != claim_binding
+                or result["submit_event"] != submit_event
+                or result["after_revision"] != after_revision or type(result["revision"]) is not int
+                or type(after_revision) is not int or result["revision"] < after_revision
+                or type(result["decided"]) is not bool or result["receipt_reconstructed"] is not False):
+            raise MachineTransportError("Work court recovery projection is invalid")
+        verdict = result["verdict"]
+        if result["decided"]:
+            if (result["event"] not in ("accept", "return") or result["passed"] is not (result["event"] == "accept")
+                    or any(type(result[key]) is not str or not result[key]
+                           for key in ("history_root", "decision_evidence_root"))
+                    or type(verdict) is not dict
+                    or verdict.get("result") != ("pass" if result["passed"] else "fail")
+                    or type(verdict.get("attestation_root")) is not str or not verdict["attestation_root"]
+                    or type(verdict.get("checks")) is not dict or type(verdict.get("details")) is not dict
+                    or verdict.get("submit_event") != submit_event):
+                raise MachineTransportError("Work court recovery verdict is invalid")
+        elif any(result[key] is not None for key in
+                 ("event", "passed", "history_root", "decision_evidence_root", "verdict")):
+            raise MachineTransportError("Work court recovery projection is invalid")
+        return result
+
     def work_release_recovery(self, work_root: str, claim_binding: str, after_revision: int) -> dict[str, object]:
         """Inspect exact original-claim history; false remains unresolved."""
         if not self.agent_session_root:
@@ -3433,15 +3488,15 @@ class UniversalRuntimeClient:
             raise MachineTransportError(
                 "work court requires a bound runtime Agent Session"
             )
-        if projection not in {"status", "index"}:
+        if projection not in {"status", "index", "receipt"}:
             raise MachineTransportError("work court projection is invalid")
         body: dict[str, object] = {"root": work_root}
         if expected_revision is not None:
             if type(expected_revision) is not int or expected_revision < 0:
                 raise MachineTransportError("work court expected revision is invalid")
             body["expected_revision"] = expected_revision
-        if projection == "index":
-            body["projection"] = "index"
+        if projection in {"index", "receipt"}:
+            body["projection"] = projection
         return self.request(
             "POST", "/api/universal/work-court", body
         )
@@ -3607,7 +3662,10 @@ class UniversalRuntimeClient:
             raise MachineTransportError("universal runtime response binding failed")
         if response["ok"] is False:
             if response.get("effect_outcome") == "unknown":
-                raise MachineTransportError(str(response.get("error") or "request outcome unknown"))
+                error = MachineTransportError(str(response.get("error") or "request outcome unknown"))
+                # The application answered: the request has terminated, its effect is unknown.
+                error.response_received = True
+                raise error
             raise MachineResponseError(str(response.get("error") or "request denied"))
         if response["ok"] is not True:
             raise MachineTransportError("universal runtime response status is invalid")

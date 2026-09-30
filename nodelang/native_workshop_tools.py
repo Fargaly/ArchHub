@@ -53,6 +53,7 @@ class _SelectedWork:
         self.control, self.root = control, validate_selected_work(root)
         self.pending = None
         self.release_response_received = False
+        self.court_response_received = False
         # Serializes only this profile's local uncertain-response bookkeeping.
         # Graph admission remains with the existing owner and application.
         self._effect_lock = threading.RLock()
@@ -154,17 +155,29 @@ class _SelectedWork:
 
     def court(self, result, client, before):
         if (type(result) is not dict or type(result.get('passed')) is not bool
-                or result.get('projection') != 'status'
+                or result.get('projection') not in ('receipt', 'index', 'status')
                 or result.get('event') != ('accept' if result['passed'] else 'return')
                 or not _revision(result.get('revision')) or result['revision'] <= before
                 or any(not _text(result.get(key)) for key in ('attestation_root','decision_evidence_root','history_root'))):
             _refuse('Independent court receipt is unconfirmed; do not replay')
-        status = result.get('status')
-        if (type(status) is not dict or status.get('registry') != client._pinned_runtime_descriptor.work_registry_root
-                or not _revision(status.get('revision')) or status['revision'] < result['revision']
-                or type(status.get('items')) not in (tuple,list) or len(status['items']) > 4096):
-            _refuse('Independent court status identity is invalid')
-        rows = [row for row in status['items'] if type(row) is dict and row.get('root') == self.root]
+        verdict = None
+        if result['projection'] == 'receipt':
+            # The bounded receipt: this Work's row and the court's own verdict.
+            verdict = result.get('verdict')
+            if (set(result) != {'passed','event','attestation_root','decision_evidence_root','history_root',
+                                'revision','projection','work','verdict'}
+                    or type(verdict) is not dict or verdict.get('attestation_root') != result['attestation_root']
+                    or verdict.get('result') != ('pass' if result['passed'] else 'fail')
+                    or type(verdict.get('checks')) is not dict or type(verdict.get('details')) is not dict):
+                _refuse('Independent court verdict is unconfirmed; do not replay')
+            rows = [row for row in (result['work'],) if type(row) is dict and row.get('root') == self.root]
+        else:
+            status = result.get('status')
+            if (type(status) is not dict or status.get('registry') != client._pinned_runtime_descriptor.work_registry_root
+                    or not _revision(status.get('revision')) or status['revision'] < result['revision']
+                    or type(status.get('items')) not in (tuple,list) or len(status['items']) > 4096):
+                _refuse('Independent court status identity is invalid')
+            rows = [row for row in status['items'] if type(row) is dict and row.get('root') == self.root]
         if (len(rows) != 1 or type(rows[0].get('operational')) is not dict
                 or type(rows[0]['operational'].get('current_state_label')) is not str
                 or rows[0]['operational']['current_state_label'].casefold() != ('complete' if result['passed'] else 'claimed')
@@ -174,7 +187,8 @@ class _SelectedWork:
         # other Work or use global counts as proof of this Work's completion.
         return {key:result[key] for key in ('passed','event','attestation_root','decision_evidence_root',
             'history_root','revision')} | {'work_root':self.root, 'agent_session':client.agent_session_root,
-            'state':'complete' if result['passed'] else 'claimed', 'judged_by':'application-court'}
+            'state':'complete' if result['passed'] else 'claimed', 'judged_by':'application-court'} | (
+            {'verdict':verdict} if verdict is not None else {})
 
 
 def register_artifact_tools(server, control, *, selected_work=None):
@@ -387,7 +401,33 @@ def build_workshop_task_server(control, selected_work):
     def work_request_court() -> dict[str, object]:
         """Ask the independent application court to verify this submitted Work; never self-judge."""
         with held.effect('court',{'review'}) as (client,before):
-            result = client.adjudicate_work(held.root,expected_revision=before['revision'])
+            # Pin the exact submission this court judges before it runs, so a lost
+            # reply is settled against it and no other (Ping, 2026-09-30).
+            binding = before['work']['claim_binding']
+            try:
+                submission = client.work_court_submission(held.root, binding)
+                if submission['revision'] != before['revision']:
+                    _refuse('The selected Work changed before its court; read it again')
+            except Exception:
+                held.pending = None     # no court was requested
+                raise
+            held.pending = ('court', before['revision'], binding, submission['submit_event'])
+            held.court_response_received = False
+            # A bounded receipt carries the verdict, never the whole registry
+            # (live 717: that exceeded the machine response limit). An application
+            # from before the receipt refuses the projection before any court runs.
+            try:
+                try:
+                    result = client.adjudicate_work(held.root,projection='receipt',expected_revision=before['revision'])
+                except MachineResponseError as exc:
+                    if 'work court projection is invalid' not in str(exc):
+                        raise
+                    result = client.adjudicate_work(held.root,projection='index',expected_revision=before['revision'])
+            except MachineTransportError as error:
+                # Answered (a refusal, or an outcome the application could not
+                # state) means the request has terminated; silence proves nothing.
+                held.court_response_received = getattr(error, 'response_received', False) is True
+                raise
             selected = held.court(result,client,before['revision'])
         return selected
 
@@ -432,19 +472,29 @@ def build_workshop_task_server(control, selected_work):
                             and work['claim_binding'] == pending[2]
                             and current['revision'] == recovery['revision']):
                         resolved = True
-                if (pending and pending[0] != 'release' and current['revision'] >= pending[1]
+                if pending and pending[0] == 'court':
+                    # Settled only by the exact verdict committed on the pinned
+                    # submission, or by a terminated request that committed none
+                    # (same revision, still in review). A CLAIMED row alone, or a
+                    # verdict not committed yet, never settles a court.
+                    recovery = client.work_court_recovery(held.root, pending[2], pending[3], pending[1])
+                    resolved = recovery['decided'] or (
+                        held.court_response_received and state == 'review'
+                        and work['claim_binding'] == pending[2]
+                        and current['revision'] == recovery['revision'])
+                if (pending and pending[0] not in ('release', 'court') and current['revision'] >= pending[1]
                         and (pending[2] is None or work and work['claim_binding'] == pending[2])):
                     operation = pending[0]
                     resolved = ((operation == 'claim' and state == 'claimed')
-                        or (operation == 'submit' and state == 'review')
-                        or (operation == 'court' and state == 'claimed'))
+                        or (operation == 'submit' and state == 'review'))
                     if operation == 'plan' and state == 'claimed':
                         resolved = held.plan(client,current['revision'])['plan_root'] is not None
             if resolved:
                 held.pending = None
+            key = 'court_recovery' if pending and pending[0] == 'court' else 'release_recovery'
             return {'selected_work':held.root,'assignment':current,'reconciled':resolved,
                 'pending_operation':None if held.pending is None else held.pending[0], 'receipt_reconstructed':False,
-                **({'release_recovery':recovery} if recovery is not None else {})}
+                **({key:recovery} if recovery is not None else {})}
 
     @server.tool(name='native.hook_stop')
     def hook_stop() -> dict[str, object]:

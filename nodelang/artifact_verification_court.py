@@ -293,7 +293,8 @@ class ArtifactVerificationCourt:
                     passed, detail = self._execute(gate, scope_roots)
                     checks["gate-execution"] = passed
             except (OSError, re.error, ValueError) as exc:
-                detail = type(exc).__name__
+                # The class and its bounded message, so a refused gate says why.
+                detail = ("%s: %s" % (type(exc).__name__, exc))[:300]
         return CourtResult(
             all(checks.values()),
             MappingProxyType(checks),

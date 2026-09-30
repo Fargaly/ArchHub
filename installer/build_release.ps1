@@ -630,6 +630,11 @@ if ($wheels.Count -eq 0) { throw 'The desktop wheelhouse is empty.' }
 if (@($wheels | Where-Object { $_.Name -match '^(?i:psycopg|boto3|botocore|fastapi|opencv)' }).Count -ne 0) {
     throw 'A server-only package reached the desktop wheelhouse.'
 }
+# The Work completion court runs pytest gates with the installed interpreter,
+# so a release without the pytest wheel would ship a court that cannot pass.
+if (@($wheels | Where-Object { $_.Name -match '^(?i:pytest)-' }).Count -ne 1) {
+    throw 'The desktop wheelhouse must carry exactly one pytest wheel for the Work court.'
+}
 $wheelLines = @($wheels | Sort-Object Name | ForEach-Object {
     "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)" })
 [IO.File]::WriteAllText((Join-Path $output 'wheelhouse.sha256'), ($wheelLines -join "`n") + "`n", $utf8)

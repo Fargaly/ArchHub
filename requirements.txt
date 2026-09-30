@@ -40,3 +40,14 @@ psutil==7.2.2
 # Read existing Windows Credential Locker entries through the same backend used
 # by the application credential store; setup must not silently omit this reader.
 keyring==25.7.0
+# The Work completion court is part of the product: it runs a Work's pytest
+# gate with this environment's own interpreter (artifact_verification_court.py
+# runs sys.executable -m pytest). Without pytest here every pytest gate failed
+# on the installed app with "No module named pytest". Pinned with its
+# dependencies so the offline wheelhouse is exact.
+pytest==9.0.3
+iniconfig==2.3.0
+pluggy==1.6.0
+packaging==26.2
+Pygments==2.20.0
+colorama==0.4.6; sys_platform == "win32"

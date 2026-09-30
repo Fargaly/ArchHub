@@ -47,6 +47,8 @@ PACKAGES = (
     ("psutil", "psutil"),
     ("keyring", "keyring"),
     ("mcp", "mcp"),
+    # The Work completion court runs pytest gates with this interpreter.
+    ("pytest", "pytest"),
 ) + ((("pywin32", "pythoncom"), ("pywin32", "win32com.client"))
      if sys.platform == "win32" else ())
 

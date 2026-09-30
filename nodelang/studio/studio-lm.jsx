@@ -5609,25 +5609,25 @@ const SettingsTheme = () => {
   const alert = error || state?.error || window.ARCHHUB_THEME_ERROR;
   const toggle = () => setEditAccent(!editAccent);
   return <div>
-    <SHead title="Theme" sub="Honest dark for honest drafting. Light when you need to share a screen."/>
-    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10 }}>
-      {[
-        ['System',  'follows OS', LM.bg, LM.l_bg],
-        ['Dark',    'studio default', LM.bg, null],
-        ['Light',   'high contrast',  null, LM.l_bg],
-      ].map(([name, sub, dark, light]) => (
-        <button key={name} disabled title={name === STUDIO_THEME_MODE ? 'The mode the Studio draws' : notLinked} style={{
-          padding:'12px 14px', background:LM.bg, border:`1px solid ${name===STUDIO_THEME_MODE?LM.accent:LM.line}`,
+    <SHead title="Theme" sub="The themes this graph offers. A theme is listed only when it repaints every colour."/>
+    {/* One card per theme the graph offers (configuration.design_system.themes); nothing
+        the graph cannot paint is shown. Switching is not linked yet, so no card is pressable. */}
+    <div data-theme-cards style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10 }}>
+      {(config?.design_system?.themes?.offered || []).map(({name, label}) => {
+        const active = name === config.design_system.themes.active;
+        return <button key={name} data-theme={name} disabled aria-pressed={active}
+          title={active ? 'The theme the Studio draws' : 'Switching themes is not linked yet'} style={{
+          padding:'12px 14px', background:LM.bg, border:`1px solid ${active?LM.accent:LM.line}`,
           borderRadius:7, textAlign:'left', cursor:'default', color:LM.ink, fontFamily:LM.sans,
         }}>
           <div style={{ display:'flex', gap:LM.sp.xs, marginBottom:LM.sp.sm }}>
-            {dark && <div style={{ flex:1, height:36, background:dark, borderRadius:4, border:`1px solid ${LM.lineSoft}` }}/>}
-            {light && <div style={{ flex:1, height:36, background:light, borderRadius:4, border:`1px solid ${LM.lineSoft}` }}/>}
+            <div style={{ flex:1, height:36, background:active ? LM.bg : LM.bgSoft, borderRadius:4, border:`1px solid ${LM.lineSoft}` }}/>
           </div>
-          <div style={{ fontSize:13, fontWeight:500 }}>{name}</div>
-          <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2 }}>{sub}</div>
-        </button>
-      ))}
+          <div style={{ fontSize:13, fontWeight:500, textTransform:'capitalize' }}>{name}</div>
+          <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2 }}>{label}{active ? ' · active' : ''}</div>
+        </button>;
+      })}
+      {!config?.design_system?.themes && <div style={{ gridColumn:'1 / -1', fontSize:11.5, color:LM.inkMuted }}>Personal Settings not read</div>}
     </div>
     <div style={{ marginTop:LM.sp.lg, display:'flex', flexDirection:'column', gap:10 }}>
       <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, overflow:'hidden' }}>

@@ -22355,6 +22355,33 @@ def _refresh_relation_contract_choices(
     }
 
 
+def _project_offered_themes(snapshot, design_token_system) -> dict[str, object]:
+    """The themes Settings may show: offered ones the graph holds, and the active one.
+
+    A theme is offered only when it repaints every foundation colour
+    (cell_theme_sets.offered_themes); the graph's theme modifier says which of
+    those it holds and which is active. A graph without a readable modifier
+    shows the default alone rather than failing the canvas.
+    """
+    from .cell_theme_sets import (
+        DEFAULT_THEME, THEMES, offered_themes, project_theme_modifier,
+    )
+    try:
+        modifier = project_theme_modifier(
+            snapshot,
+            design_token_system.resolver_root + ":modifier:theme",
+            design_token_system.protocol.roles["context"],
+        )
+        held, active = tuple(modifier["contexts"]), modifier["default"]
+    except (InvalidCell, KeyError):
+        held, active = (DEFAULT_THEME,), DEFAULT_THEME
+    offered = [name for name in offered_themes() if name in held] or [DEFAULT_THEME]
+    return {
+        "offered": [{"name": name, "label": THEMES[name]} for name in offered],
+        "active": active if active in offered else DEFAULT_THEME,
+    }
+
+
 def _reusable_static_design_system(
     previous_projection: Mapping[str, object],
 ) -> dict[str, object]:
@@ -22368,6 +22395,7 @@ def _reusable_static_design_system(
         or set(design_system) != {
             "root", "token_set", "resolver", "lifecycle", "tokens",
             "components", "icon_catalog", "control_catalog", "revision",
+            "themes",
         }
         or any(
             type(design_system.get(key)) is not str
@@ -24925,6 +24953,9 @@ def _project_universal_canvas_interpreter(
                 for name, icon in icon_catalog_projection.icons.items()
             },
         }
+        design_system_runtime["themes"] = _project_offered_themes(
+            snapshot, design_token_system
+        )
     else:
         design_system_runtime = _reusable_static_design_system(
             previous_projection

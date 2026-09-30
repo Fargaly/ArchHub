@@ -274,6 +274,58 @@ class NativeStopHost:
         return clean and (self.thread is None or not self.thread.is_alive())
 
 
+def recover_same_actor(owner):
+    """One same-actor recovery step, the one an agent used to be told to run by hand.
+
+    The Stop hook kept ending every turn with "run native_owner_status, then
+    native_owner_rebind" while the tool it named could itself be unreachable
+    (founder, 2026-09-30). The native owner process now does exactly that step:
+    a retained failed attempt is settled first (native.owner_recover), then the
+    same actor continues on the current owner (native.owner_rebind) with the
+    exact owners owner_status reports. Never a new enrollment, never a replay.
+
+    Returns (state, reason): "bound" (nothing left to do), "waiting" (the
+    application is not answering yet; try again later) or "impossible" (a step
+    only a person or the agent can take, named in reason).
+    """
+    from .application_machine_transport import MachineTransportError
+    status=owner.owner_status()
+    if not status.get('agent_session'):
+        return 'bound', None                   # no actor yet: a first connection is not recovery
+    if status.get('state')=='bound' and not status.get('recovery_required'):
+        return 'bound', None
+    current=(status.get('current') or {}).get('fingerprint')
+    if not current or status.get('current_error'):
+        return 'waiting', 'the application is not answering yet'
+    try:
+        failed=status.get('failed_attempt')
+        if status.get('state')=='uncertain' and failed and failed.get('kind')=='rebind':
+            settled=owner.recover_rebind_owner(expected_failed_owner=failed.get('owner_fingerprint'),
+                                               expected_current_owner=current)
+            if settled.get('next')=='native.owner_settle_effect':
+                return 'impossible', ('an unresolved file-write permit must be settled first '
+                                      '(native.owner_inspect_effects, then native.owner_settle_effect)')
+            status=owner.owner_status()
+            current=(status.get('current') or {}).get('fingerprint')
+        if status.get('state')=='bound' and status.get('recovery_required'):
+            owner.rebind_owner(expected_old_owner=(status.get('pinned') or {}).get('fingerprint'),
+                               expected_new_owner=current)
+            return 'bound', None
+        if status.get('state')=='bound':
+            return 'bound', None
+        return 'impossible', 'the native owner is %s; native.owner_status names the one step' % status.get('state')
+    except (MachineTransportError, ValueError) as exc:
+        return 'impossible', str(exc)[:600]
+
+
+def _recovery_path(fingerprint, directory=None):
+    return _verdict_path(fingerprint, directory).with_suffix('.recovery.json')
+
+
+def _told_path(fingerprint, directory=None):
+    return _verdict_path(fingerprint, directory).with_suffix('.told.json')
+
+
 class StopHostSupervisor:
     """Keep one Stop host in step with the owner's binding, for the process lifetime.
 
@@ -281,14 +333,22 @@ class StopHostSupervisor:
     rebind) and closes when the binding ends or moves, so no launch flag or
     config entry carries it and each native identity has at most one host. A
     host that could not start reports why; nothing that failed reads as ready.
+
+    While the retained actor needs recovery (an application restart, an expired
+    lease, a settled or retained attempt) the supervisor runs recover_same_actor
+    itself, at most once per owner per recover_after, and records the outcome for
+    the Stop hook, which says it once instead of sending the agent to a tool.
     """
-    def __init__(self, owner, *, vault=None, host_factory=None, interval=2.0, retry_after=5.0):
+    def __init__(self, owner, *, vault=None, host_factory=None, interval=2.0, retry_after=5.0,
+                 recover_after=30.0, recovery_directory=None):
         self.owner=owner
         self._vault=vault
         # Looked up at call time, so the module's NativeStopHost is the one used.
         self._factory=host_factory or (lambda held, vault: NativeStopHost(held, vault=vault))
         self.interval=interval
         self.retry_after=retry_after
+        self.recover_after=recover_after
+        self._recovery_directory=recovery_directory
         self._lock=threading.Lock()
         self._host=None
         self._key=None
@@ -296,6 +356,37 @@ class StopHostSupervisor:
         self._failed=None
         self._closed=threading.Event()
         self._thread=None
+        self._recovery=None          # {'state','reason','owner','at'} of the last attempt
+        self._recover_lock=threading.Lock()
+
+    def recover(self, *, now=None):
+        """One bounded same-actor recovery attempt; outside the supervisor lock."""
+        now=time.time() if now is None else now
+        if not self._recover_lock.acquire(blocking=False):
+            return self._recovery
+        try:
+            status=self._snapshot()
+            if status in ('busy','unreadable') or not status.get('agent_session'):
+                return self._recovery
+            if status.get('state')=='bound' and not status.get('recovery_required'):
+                return self._recovery
+            owner_key=(status.get('current') or {}).get('fingerprint')
+            held=self._recovery
+            if (held is not None and held.get('owner')==owner_key
+                    and now-held.get('at',0)<self.recover_after):
+                return held                   # at most once per owner per recover_after
+            state,reason=recover_same_actor(self.owner)
+            self._recovery={'state':state,'reason':reason,'owner':owner_key,'at':now}
+            try:
+                identity=self.owner._identity
+                fingerprint=_fingerprint(canonical_runtime(identity.runtime),identity.external_session_id)
+                _save_guard(_recovery_path(fingerprint,self._recovery_directory),
+                            {'at':now,'state':state,'reason':reason})
+            except Exception:
+                pass
+            return self._recovery
+        finally:
+            self._recover_lock.release()
 
     @staticmethod
     def _desired(status):
@@ -405,6 +496,9 @@ class StopHostSupervisor:
         while not self._closed.wait(self.interval):
             try:
                 self.reconcile()
+                if self._state!='ready':
+                    self.recover()
+                    self.reconcile()          # a recovered owner gets its host at once
             except Exception:
                 pass
 
@@ -914,9 +1008,13 @@ def _merge_followup(result, followup):
 # records every verdict it really observed; with the authority unreachable, a
 # recorded open-Work block holds the turn end once, with the way back.
 NO_IDLE_WINDOW_SECONDS = 24 * 3600
-NO_IDLE_REASON = (' The Work authority cannot be reached now (lease expired or app restarted): '
-                  'run native_owner_status, then native_owner_rebind with the exact owners it reports, '
-                  'and continue this Work. Do not end the turn idle with Work open.')
+# The native owner process reconnects the same actor itself (recover_same_actor);
+# the agent is never sent to a tool that may be unreachable, and this is said once.
+NO_IDLE_REASON = (' The Work authority cannot be reached now (the application restarted or the lease '
+                  'expired). ArchHub reconnects this session to its same actor automatically; there is '
+                  'nothing to run. Continue this Work once it answers. This is said once.')
+IMPOSSIBLE_REASON = (' ArchHub could not reconnect this session to its actor automatically: %s. '
+                     'This is said once.')
 
 
 def _verdict_path(fingerprint, directory=None):
@@ -939,17 +1037,35 @@ def _remember_verdict(fingerprint, value, *, now=None, directory=None):
 
 
 def no_idle_decision(payload, vendor, *, now=None, directory=None):
-    """Hold one turn end on recorded open Work while the authority is unreachable."""
+    """While the authority is unreachable, say what is known once per episode.
+
+    Recorded open Work holds the first turn end, with what the native owner
+    process is doing about it: reconnecting the same actor, or the one step it
+    could not take. Every later turn end of the same episode is quiet ({}); a
+    new verdict or a new recovery outcome is a new episode. None when there is
+    nothing to say (no open Work, an old record, or the turn's second Stop).
+    """
     if payload.get('stop_hook_active') is True:
         return None
     fingerprint = _fingerprint(canonical_runtime(vendor), payload.get('session_id'))
     record = _load_guard(_verdict_path(fingerprint, directory))
     verdict, at = record.get('verdict'), record.get('at')
     now = time.time() if now is None else now
-    if (type(verdict) is not dict or verdict.get('decision') != 'block' or type(verdict.get('reason')) is not str
-            or type(at) not in (int, float) or not 0 <= now - at <= NO_IDLE_WINDOW_SECONDS):
-        return None
-    return {'decision': 'block', 'reason': verdict['reason'][:4000] + NO_IDLE_REASON}
+    open_work = (type(verdict) is dict and verdict.get('decision') == 'block' and type(verdict.get('reason')) is str
+                 and type(at) in (int, float) and 0 <= now - at <= NO_IDLE_WINDOW_SECONDS)
+    recovery = _load_guard(_recovery_path(fingerprint, directory))
+    impossible = recovery.get('state') == 'impossible' and type(recovery.get('reason')) is str
+    episode = [at if open_work else None, recovery.get('state'), recovery.get('reason')]
+    told_path = _told_path(fingerprint, directory)
+    if _load_guard(told_path).get('episode') == episode:
+        return {}                              # said once already: this turn may end quietly
+    _save_guard(told_path, {'episode': episode, 'at': now})
+    if not open_work:
+        if impossible:
+            return {'systemMessage': (IMPOSSIBLE_REASON % recovery['reason'][:600]).strip()}
+        return None                            # the plain "unavailable" notice, this once
+    suffix = IMPOSSIBLE_REASON % recovery['reason'][:600] if impossible else NO_IDLE_REASON
+    return {'decision': 'block', 'reason': verdict['reason'][:4000] + suffix}
 
 
 def main():
@@ -968,7 +1084,9 @@ def main():
         result=_ending_turn(UNAVAILABLE)
     if type(payload) is dict and result==_ending_turn(UNAVAILABLE):
         try:
-            result=no_idle_decision(payload,args.vendor) or result
+            decision=no_idle_decision(payload,args.vendor)
+            if decision is not None:
+                result=decision
         except Exception:
             pass
     if type(payload) is dict:

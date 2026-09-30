@@ -55,7 +55,10 @@ def test_open_work_holds_the_turn_when_the_authority_is_unreachable(tmp_path, mo
     hook._remember_verdict(_fingerprint(), OPEN)
     result = _main(tmp_path, monkeypatch, _payload(), hook._ending_turn(hook.UNAVAILABLE))
     assert result['decision'] == 'block'
-    assert 'Work W-12 is open' in result['reason'] and 'native_owner_rebind' in result['reason']
+    assert 'Work W-12 is open' in result['reason'] and 'reconnects this session' in result['reason']
+    # Founder, 2026-09-30: said once, never "run native_owner_rebind" on every turn.
+    assert 'native_owner_rebind' not in result['reason']
+    assert _main(tmp_path, monkeypatch, _payload(), hook._ending_turn(hook.UNAVAILABLE)) == {}
 
 
 def test_the_second_stop_of_a_turn_is_never_held(tmp_path, monkeypatch):
@@ -70,7 +73,8 @@ def test_no_open_work_or_an_old_record_lets_the_turn_end(tmp_path, monkeypatch):
     hook._remember_verdict(_fingerprint(), {})
     assert _main(tmp_path, monkeypatch, _payload(), hook._ending_turn(hook.UNAVAILABLE)).get('decision') != 'block'
     hook._remember_verdict(_fingerprint(), OPEN, now=T0)
-    assert hook.no_idle_decision(_payload(), 'claude-code', now=T0 + hook.NO_IDLE_WINDOW_SECONDS + 1) is None
+    old = hook.no_idle_decision(_payload(), 'claude-code', now=T0 + hook.NO_IDLE_WINDOW_SECONDS + 1)
+    assert (old or {}).get('decision') != 'block'   # an old record never holds the turn
 
 
 def test_a_reachable_authority_answers_for_itself(tmp_path, monkeypatch):

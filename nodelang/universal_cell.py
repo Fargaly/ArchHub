@@ -30,6 +30,12 @@ from . import commit_intent
 
 
 NULL_CELL_ID = "00000000-0000-0000-0000-000000000000"
+
+# The journal connection's SQLite page cache, in KiB. The default (~2 MB)
+# against a multi-GB journal re-read the same pages throughout a reopen: a
+# 256 MB cache cut a fixture reopen's reads by a third (19,567 -> 12,993 ops),
+# with every read identical. It is a cache: bounded, disposable, no meaning.
+JOURNAL_PAGE_CACHE_KIB = 262144
 _JOURNAL_REVISIONS_COLUMNS = frozenset(("revision", "committed_at"))
 _JOURNAL_CELL_VERSION_COLUMNS = frozenset(
     ("revision", "cell_id", "link0", "link1", "atom")
@@ -1224,6 +1230,8 @@ class _SqliteJournal:
             self._connection.execute("PRAGMA journal_mode=WAL")
             self._connection.execute("PRAGMA synchronous=FULL")
             self._connection.execute("PRAGMA foreign_keys=ON")
+            if JOURNAL_PAGE_CACHE_KIB > 0:
+                self._connection.execute("PRAGMA cache_size=-%d" % int(JOURNAL_PAGE_CACHE_KIB))
             self._connection.execute(
                 "CREATE TABLE IF NOT EXISTS revisions ("
                 "revision INTEGER PRIMARY KEY, committed_at REAL NOT NULL)"

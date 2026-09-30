@@ -94,12 +94,12 @@ test('P3: Ctrl+K opens the node library; Esc closes it', async () => {
   } finally { studio.close(); }
 });
 
-test('P4: the Studio opens on Chat, with Chat and Canvas only', async () => {
+test('P4: the Studio opens on Chat; the header is Chat · Workshop · Canvas', async () => {
   const studio = await mountStudio({workshops:[{root:'general-a', label:'Workshop', is_general:true}]});
   try {
     const segments = [...studio.doc.querySelectorAll('button[aria-pressed]')].map(button =>
       button.textContent.trim() + (button.getAttribute('aria-pressed') === 'true' ? '*' : ''));
-    assert.deepEqual(segments, ['Chat*', 'Canvas']);
+    assert.deepEqual(segments, ['Chat*', 'Workshop', 'Canvas']);
     assert.ok(studio.doc.querySelector('button[aria-label="Open the Workshop"]'), 'plain Chat, with the Workshop one click away');
   } finally { studio.close(); }
 });

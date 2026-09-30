@@ -2054,11 +2054,15 @@ const workshopModeRoom = (workshops, conversationRoot) => conversationRoot ||
 const workshopUnavailableText = reason => (typeof reason === 'string' && reason.trim()) ||
   'No Workshop conversation in this scope';
 // Workshop is never disabled into silence: without a room the click answers with that reason.
+// Chat · Workshop · Canvas. The Workshop segment is the founder's way in (restored after 8cc3463d took it
+// out): Chat with the held room, else the general room, else the first; no room keeps it visible and
+// answers with the owner's reason (workshop_scope.unavailable).
 const workshopModeSegments = ({mode, conversationRoot = '', workshops = [], unavailable = ''}) => {
-  const active = mode === 'chat' ? 'chat' : mode;
-  return [['chat', 'Chat'], ['canvas', 'Canvas']].map(([key, label]) => ({
-    key, label, active:active === key, disabled:false, unavailable:false,
-    title:key === 'chat' && conversationRoot ? 'Back to the chat' : undefined,
+  const room = workshopModeRoom(workshops, conversationRoot);
+  const active = mode === 'chat' ? (conversationRoot ? 'workshop' : 'chat') : mode;
+  return [['chat', 'Chat'], ['workshop', 'Workshop'], ['canvas', 'Canvas']].map(([key, label]) => ({
+    key, label, active:active === key, disabled:false, unavailable:key === 'workshop' && !room,
+    title:key === 'workshop' && !room ? workshopUnavailableText(unavailable) : undefined,
   }));
 };
 const chooseWorkshopMode = (key, {mode, conversationRoot = '', workshops = [], setMode, setConversationRoot,

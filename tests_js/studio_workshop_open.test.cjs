@@ -85,7 +85,8 @@ test('Workshop with no room answers the click with the owner reason as visible t
     assert.equal(open.inWorkshop(), false, 'the Studio opens on plain Chat');
     open.flush(() => open.segment('Workshop').click());
     assert.equal(open.inWorkshop(), true, 'the room opens as the Workshop conversation');
-    assert.equal(open.segment('Chat').getAttribute('aria-pressed'), 'true', 'a Workshop room is a Chat conversation');
+    const header = [...open.doc.querySelectorAll('button[aria-pressed]')].find(button => button.textContent.trim() === 'Workshop');
+    assert.equal(header && header.getAttribute('aria-pressed'), 'true', 'the open room shows as the header Workshop segment');
     assert.equal(open.spoken().includes('No Workshop conversation'), false, 'no refusal is drawn beside an open room');
   } finally { open.close(); }
 });

@@ -37,7 +37,7 @@ test('the rail button opens the Workshop from the explicit Chat state, through t
   assert.equal(context.room(workshops, ''), 'general-a');
   open();
   assert.deepEqual({...view}, {mode:'chat', conversationRoot:'general-a', target:''});
-  assert.equal(context.segments({...view, workshops}).find(segment => segment.active).key, 'chat', 'a Workshop room is Chat');
+  assert.equal(context.segments({...view, workshops}).find(segment => segment.active).key, 'workshop');
   // A held child room stays the room the button opens.
   view = {mode:'canvas', conversationRoot:'child-a'};
   open();

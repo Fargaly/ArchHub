@@ -2506,7 +2506,12 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   const allNodes = React.useMemo(() => [...graph.nodes, ...userNodes], [graph.nodes, userNodes]);
   // Where each card's port band starts (card-local px), reported by the card itself.
   const [portBands, setPortBands] = React.useState({});
-  const setPortBand = (id, top) => setPortBands(held => held[id] === top ? held : {...held, [id]:top});
+  // Each card's drawn height (content + port band): frames and the no-overlap pass use it, never n.h.
+  const [cardHeights, setCardHeights] = React.useState({});
+  const setPortBand = (id, top, height) => {
+    if (Number.isFinite(top)) setPortBands(held => held[id] === top ? held : {...held, [id]:top});
+    if (Number.isFinite(height) && height > 0) setCardHeights(held => held[id] === height ? held : {...held, [id]:height});
+  };
   const scopeKey = studioCanvasScope(authorityState?.canvas);
   const mountedScope = React.useRef(scopeKey);
   const alive = React.useRef(true);
@@ -2568,6 +2573,31 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     });
     setSelectedIds(ids => ids.filter(id => allNodes.some(node => node.id === id)));
   }, [allNodes, layoutBusy]);
+  // No two cards may overlap. Seeded layouts space cards by their declared height, but a card is as tall as
+  // it draws (content + port band). Once every card has reported its real height, any card that intersects
+  // one above it moves down just below it (24px gap); columns are kept. Only the view moves: the graph gets
+  // a position when the person drags that card.
+  React.useEffect(() => {
+    if (dragRef.current || saving.current || !allNodes.length) return;
+    if (!allNodes.every(node => Number.isFinite(cardHeights[node.id]))) return;
+    setPositions(held => {
+      const boxes = allNodes.map(node => ({id:node.id, x:(held[node.id] || node).x, y:(held[node.id] || node).y,
+        w:node.w || 220, h:cardHeights[node.id]}))
+        .sort((a, b) => a.y - b.y || a.x - b.x);
+      const placed = [], moved = {};
+      for (const box of boxes) {
+        for (let guard = 0; guard < boxes.length; guard += 1) {
+          const hit = placed.find(p => box.x < p.x + p.w + 16 && p.x < box.x + box.w + 16 && box.y < p.y + p.h + 16 && p.y < box.y + box.h + 16);
+          if (!hit) break;
+          box.y = hit.y + hit.h + 24;
+        }
+        placed.push(box);
+        const at = held[box.id];
+        if (!at || at.y !== box.y) moved[box.id] = {x:box.x, y:box.y};
+      }
+      return Object.keys(moved).length ? {...held, ...moved} : held;
+    });
+  }, [cardHeights, allNodes]);
   React.useEffect(() => {
     alive.current = true;
     return () => { flushRef.current(true); alive.current = false; pendingArrange.current = null; dragRef.current = null; };
@@ -3012,7 +3042,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       held = {toggle:() => latest.current.toggleExpanded(id), drag:e => latest.current.onNodeDragStart(id)(e),
         focus:e => latest.current.onNodeFocus(id)(e), menu:e => latest.current.onNodeContextMenu(id)(e),
         key:e => latest.current.onNodeKeyDown(id)(e), socket:(port, side) => latest.current.useSocket(id, port, side),
-        band:top => latest.current.setPortBand(id, top),
+        band:(top, height) => latest.current.setPortBand(id, top, height),
         open:() => latest.current.open(id)};
       handlerCache.current.set(id, held);
     }
@@ -3211,7 +3241,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     const held = new Map();
     for (const node of allNodes) {
       if (!node.group) continue;
-      const at = positions[node.id] || node, w = node.w || 220, h = node.h || 110;
+      const at = positions[node.id] || node, w = node.w || 220, h = cardHeights[node.id] || node.h || 110;
       const box = held.get(node.group) || {key:node.group, count:0, left:Infinity, top:Infinity, right:-Infinity, bottom:-Infinity};
       box.count += 1; box.left = Math.min(box.left, at.x); box.top = Math.min(box.top, at.y);
       box.right = Math.max(box.right, at.x + w); box.bottom = Math.max(box.bottom, at.y + h);
@@ -3638,8 +3668,8 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
   // The band follows the content: report its card-local top whenever the card resizes.
   React.useLayoutEffect(() => {
     const card = cardRef.current, band = bandRef.current;
-    if (!card || !band || !onPortBand) return undefined;
-    const report = () => onPortBand(card.clientTop + band.offsetTop);
+    if (!card || !onPortBand) return undefined;
+    const report = () => onPortBand(band ? card.clientTop + band.offsetTop : NaN, card.offsetHeight);
     report();
     if (typeof ResizeObserver === 'undefined') return undefined;
     const watch = new ResizeObserver(report); watch.observe(card);

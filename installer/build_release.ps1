@@ -306,6 +306,45 @@ function Assert-CandidateSources($Manifest) {
     }
 }
 
+function Get-GitBlobId([string]$Path) {
+    # Git's object id of these exact bytes, computed without any clean filter.
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    $header = [Text.Encoding]::ASCII.GetBytes("blob $($bytes.Length)`0")
+    $sha1 = [Security.Cryptography.SHA1]::Create()
+    try {
+        [void]$sha1.TransformBlock($header, 0, $header.Length, $header, 0)
+        [void]$sha1.TransformFinalBlock($bytes, 0, $bytes.Length)
+        return ([BitConverter]::ToString($sha1.Hash)).Replace('-', '').ToLowerInvariant()
+    } finally { $sha1.Dispose() }
+}
+
+function Assert-CommittedBlobBytes([string]$Checkout, [string[]]$Scope, $Rows, [switch]$WorkingCandidate) {
+    # A tracked file whose content is unchanged must ship exactly the bytes Git
+    # holds. Under text=auto eol=lf a CRLF working copy still reads as clean,
+    # so without this check the package carries bytes whose sha256 matches no
+    # committed blob. Content-changed candidate files are reviewed as working
+    # bytes and are not held to HEAD.
+    $committed = @{}
+    $listing = (& git -C $Checkout ls-tree -r -z HEAD -- @Scope) -join "`n"
+    if ($LASTEXITCODE -ne 0) { throw 'Committed blob enumeration failed.' }
+    foreach ($entry in $listing.Split([char]0)) {
+        if ($entry -cmatch '^[0-7]{6} blob ([0-9a-f]{40})\t(.+)$') { $committed[$Matches[2]] = $Matches[1] }
+    }
+    $changed = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    if ($WorkingCandidate) {
+        $names = (& git -C $Checkout diff --name-only -z HEAD -- @Scope) -join "`n"
+        if ($LASTEXITCODE -ne 0) { throw 'Candidate change enumeration failed.' }
+        foreach ($name in $names.Split([char]0)) { if ($name) { [void]$changed.Add($name) } }
+    }
+    foreach ($row in $Rows) {
+        if (-not $committed.ContainsKey($row.Path) -or $changed.Contains($row.Path)) { continue }
+        if ((Get-GitBlobId $row.SourcePath) -cne $committed[$row.Path]) {
+            throw ("Release source bytes are not the committed blob (line endings?): $($row.Path). " +
+                   'Restore the checkout copy from Git before building.')
+        }
+    }
+}
+
 function Read-ReleaseSnapshotManifest([switch]$WorkingCandidate) {
     # Public builds retain the original clean/committed checks. Enumerate only
     # those exact tracked scopes; the build compiler never receives a checkout.
@@ -349,6 +388,7 @@ function Read-ReleaseSnapshotManifest([switch]$WorkingCandidate) {
             $rows.Add($row)
         }
     }
+    Assert-CommittedBlobBytes $selectedRoot $selectedInputs $rows -WorkingCandidate:$WorkingCandidate
     $marker = if ($WorkingCandidate) { 'ARCHHUB_LOCAL_CANDIDATE_MANIFEST_V2' } else { 'ARCHHUB_RELEASE_SOURCE_MANIFEST_V2' }
     $revisionKey = if ($WorkingCandidate) { 'selected_base_revision' } else { 'selected_revision' }
     $lines = @(

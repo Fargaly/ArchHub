@@ -151,6 +151,10 @@ Type: files; Name: "{app}\nodelang\studio\studio-language.jsx"
 Type: files; Name: "{app}\nodelang\__pycache__\clean_browser_scope_state.*.pyc"
 Type: files; Name: "{app}\nodelang\__pycache__\clean_scope_layout.*.pyc"
 Type: files; Name: "{app}\nodelang\__pycache__\serve_reality.*.pyc"
+; Retired from source in cca61051 (2026-10-01): the machine announcement is a
+; signed pointer written by the transport; nothing imports this module now.
+Type: files; Name: "{app}\nodelang\runtime_announcement.py"
+Type: files; Name: "{app}\nodelang\__pycache__\runtime_announcement.*.pyc"
 ; The wheelhouse is this build's alone; an older build's wheels never mix in.
 Type: files; Name: "{app}\wheelhouse\*.whl"
 

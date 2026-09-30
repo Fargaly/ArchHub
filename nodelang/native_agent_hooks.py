@@ -28,13 +28,49 @@ _INTRO = (
 
 
 def stop_verdict(status, client):
-    """Validate the full session index before deriving advisory Stop context."""
+    """Validate the full session index before deriving advisory Stop context.
+
+    A "stop-gate" read also names the step for each Work this session submitted,
+    read through the court's own admission (work_review_wait); it must cover
+    exactly those Works, or the read is refused.
+    """
     from .native_work_completion import completion_verdict
     from .native_agent_mcp import _validate_index
+    from .work_review_wait import WAITS
+    waits = None
+    if type(status) is dict and 'review_waits' in status:
+        waits = status['review_waits']
+        status = {key: value for key, value in status.items() if key != 'review_waits'}
     status = _validate_index(status, client)
+    if waits is not None:
+        submitted = {item['root'] for item in status['items']
+                     if item['claimant_session'] == status['agent_session']
+                     and str(item['operational']['current_state_label']).casefold() == 'review'}
+        if (type(waits) is not dict or set(waits) != submitted
+                or any(type(wait) is not dict or set(wait) != {'wait', 'reason'} or wait['wait'] not in WAITS
+                       or type(wait['reason']) is not str or len(wait['reason']) > 512
+                       for wait in waits.values())):
+            raise MachineTransportError("native Stop review classification is invalid")
+        status = dict(status, review_waits=waits)
     blocked, reason = completion_verdict(runtime='bound-native',
         session_id=client.agent_session_root, transport=lambda _name,_body:status)
     return {'decision':'block','reason':reason} if blocked else {}
+
+
+def stop_gate_read(client, *, once=False):
+    """The Stop gate's read: the "stop-gate" projection, else the plain index.
+
+    An application from before the projection refuses it; its plain index is
+    read then, and a submitted Work is named with the court step.
+    """
+    from .application_machine_transport import MachineResponseError
+    request = client._request_once if once else client.request
+    try:
+        return request('GET', '/api/universal/work', {'projection': 'stop-gate'}, response_timeout_seconds=2.0)
+    except MachineResponseError as exc:
+        if 'work projection request shape is invalid' not in str(exc):
+            raise
+    return request('GET', '/api/universal/work', {'projection': 'index'}, response_timeout_seconds=2.0)
 
 
 def idle_verdict(control):
@@ -46,8 +82,7 @@ def idle_verdict(control):
     """
     try:
         with control.bound_client() as client:
-            return stop_verdict(client.request('GET', '/api/universal/work',
-                {'projection': 'index'}, response_timeout_seconds=2.0), client)
+            return stop_verdict(stop_gate_read(client), client)
     except Exception:
         return {}
 
@@ -56,8 +91,7 @@ def stop_context(control):
     """Observe the existing bound actor's completion gate; never enroll or submit."""
     try:
         with control.bound_client() as client:
-            return stop_verdict(client.request('GET','/api/universal/work',
-                {'projection':'index'},response_timeout_seconds=2.0),client)
+            return stop_verdict(stop_gate_read(client), client)
     except Exception:
         blocked, reason = True, 'Native Work authority is unavailable; use the existing native session to reconcile. No enrollment was attempted by this Stop hook.'
     return {'decision':'block','reason':reason} if blocked else {}

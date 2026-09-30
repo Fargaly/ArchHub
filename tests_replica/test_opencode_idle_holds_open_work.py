@@ -117,7 +117,8 @@ def test_idle_verdict_reads_the_bound_work_index_and_never_invents_a_block(monke
 
     monkeypatch.setattr(hooks, "stop_verdict", lambda status, client: {"decision": "block", "reason": "open"})
     assert hooks.idle_verdict(Control()) == {"decision": "block", "reason": "open"}
-    assert seen == [("GET", "/api/universal/work", {"projection": "index"})]
+    # The bound Work index with each submitted Work's court step (stop-gate).
+    assert seen == [("GET", "/api/universal/work", {"projection": "stop-gate"})]
     assert hooks.idle_verdict(Gone()) == {}
 
 

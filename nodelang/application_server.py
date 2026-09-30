@@ -13044,18 +13044,26 @@ class ApplicationServer:
                 else self._resolve_universal_machine_agent_session(request)
             )
             if body:
-                if set(body) != {"projection"} or body["projection"] != "index":
+                if set(body) != {"projection"} or body["projection"] not in ("index", "stop-gate"):
                     raise InvalidCell(
                         "work projection request shape is invalid"
                     )
                 index = self._project_universal_machine_work_index(
                     authentication_context=context,
                 )
-                return {
+                result = {
                     "agent_session": request_agent_session,
                     "workshop": self.universal_registry.workshop_root,
                     **index,
                 }
+                if body["projection"] == "stop-gate":
+                    # Each Work this session submitted, with its step read
+                    # through the court's own admission (work_review_wait).
+                    from .work_review_wait import review_waits
+                    result["review_waits"] = review_waits(
+                        self, agent_session_root=request_agent_session,
+                        items=index["items"], context=context)
+                return result
             status = project_universal_governed_work_status(
                 self.universal_store,
                 self.universal_registry,

@@ -39362,6 +39362,84 @@ def verify_universal_runtime_handoff_work(
     })
 
 
+def _governed_work_court_admission(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    work_root: str,
+    machine,
+    claimant: str,
+    targets: Mapping[str, object],
+    *,
+    context: object,
+    artifact_review_verifier=None,
+):
+    """Admit the submission under review exactly as its court does; attest nothing.
+
+    Refusal raises InvalidCell. The court runs this before it attests, and the
+    Stop gate runs the same admission to name the submitter's step
+    (work_review_wait), so the two never disagree about a submission.
+    """
+    operational = registry.standard_library.state_machine_protocol
+    structured = {}
+    for name in ("requirements", "cde-container"):
+        target = targets.get(name)
+        if type(target) is not str:
+            raise InvalidCell("work court input is not wired")
+        structured[name] = read_value_graph(
+            snapshot, registry.value_graph_protocol, target
+        )
+    if type(structured["requirements"]) is not dict:
+        raise InvalidCell("work requirements are not an object")
+    if type(structured["cde-container"]) is not dict:
+        raise InvalidCell("work CDE container is not an object")
+
+    history = machine_history(snapshot, operational, machine.root_id)
+    if not history:
+        raise InvalidCell("work review has no submission history")
+    submission = history[-1]
+    if (
+        _text(snapshot, submission.event_root).casefold() != "submit"
+        or submission.actor_root != claimant
+        or claimant not in submission.context_roots
+        or len(submission.evidence_roots) != 1
+    ):
+        raise InvalidCell("work submission provenance is invalid")
+    artifact = read_evidence(
+        snapshot, operational, submission.evidence_roots[0]
+    )
+    if artifact.issuer_root != claimant:
+        raise InvalidCell("artifact proof was not issued by the claimant")
+    review_arguments = None
+    independent_review = None
+    if "artifact_reviewers" in structured["requirements"]:
+        reviewers = structured["requirements"]["artifact_reviewers"]
+        if (type(reviewers) is not list or not reviewers
+                or any(type(root) is not str or not root for root in reviewers)
+                or not callable(artifact_review_verifier)):
+            raise InvalidCell("Work requires an available independent artifact review verifier")
+        try:
+            submitted = json.loads(artifact.payload)
+            review_refs = submitted["artifact_review"]
+        except (ValueError, TypeError, KeyError) as exc:
+            raise InvalidCell("Work submission must identify its artifact publication and review") from exc
+        if (type(review_refs) is not dict or set(review_refs) != {"publication", "review"}
+                or any(type(value) is not str or not value for value in review_refs.values())):
+            raise InvalidCell("Work artifact review references are invalid")
+        review_arguments = dict(context=context, work_root=work_root,
+            publication_root=review_refs["publication"], review_root=review_refs["review"])
+        independent_review = artifact_review_verifier(**review_arguments)
+        if (type(independent_review) is not dict
+                or set(independent_review) != {"publication", "review", "artifact_digest",
+                                               "publisher", "reviewer", "material_digest"}
+                or independent_review["publisher"] != claimant
+                or independent_review["reviewer"] == claimant
+                or independent_review["reviewer"] not in reviewers
+                or independent_review["publication"] != review_refs["publication"]
+                or independent_review["review"] != review_refs["review"]):
+            raise InvalidCell("Independent artifact review binding is invalid")
+    return structured, submission, artifact, review_arguments, independent_review
+
+
 def adjudicate_universal_governed_work(
     store: CellStore,
     registry: UniversalApplicationRegistry,
@@ -39420,63 +39498,15 @@ def adjudicate_universal_governed_work(
     if len(matches) != 1:
         raise InvalidCell("work court projection is missing or ambiguous")
     interfaces = matches[0]["interfaces"]
-    structured = {}
-    for name in ("requirements", "cde-container"):
-        target = (interfaces.get(name) or {}).get("target")
-        if type(target) is not str:
-            raise InvalidCell("work court input is not wired")
-        structured[name] = read_value_graph(
-            snapshot, registry.value_graph_protocol, target
+    structured, submission, artifact, review_arguments, independent_review = (
+        _governed_work_court_admission(
+            snapshot, registry, work_root, machine, claimant,
+            {name: (interfaces.get(name) or {}).get("target")
+             for name in ("requirements", "cde-container")},
+            context=context, artifact_review_verifier=artifact_review_verifier,
         )
-    if type(structured["requirements"]) is not dict:
-        raise InvalidCell("work requirements are not an object")
-    if type(structured["cde-container"]) is not dict:
-        raise InvalidCell("work CDE container is not an object")
-
-    history = machine_history(snapshot, operational, machine.root_id)
-    if not history:
-        raise InvalidCell("work review has no submission history")
-    submission = history[-1]
-    if (
-        _text(snapshot, submission.event_root).casefold() != "submit"
-        or submission.actor_root != claimant
-        or claimant not in submission.context_roots
-        or len(submission.evidence_roots) != 1
-    ):
-        raise InvalidCell("work submission provenance is invalid")
-    artifact = read_evidence(
-        snapshot, operational, submission.evidence_roots[0]
     )
-    if artifact.issuer_root != claimant:
-        raise InvalidCell("artifact proof was not issued by the claimant")
     artifact_digest = hashlib.sha256(artifact.payload).hexdigest()
-    independent_review = None
-    if "artifact_reviewers" in structured["requirements"]:
-        reviewers = structured["requirements"]["artifact_reviewers"]
-        if (type(reviewers) is not list or not reviewers
-                or any(type(root) is not str or not root for root in reviewers)
-                or not callable(artifact_review_verifier)):
-            raise InvalidCell("Work requires an available independent artifact review verifier")
-        try:
-            submitted = json.loads(artifact.payload)
-            review_refs = submitted["artifact_review"]
-        except (ValueError, TypeError, KeyError) as exc:
-            raise InvalidCell("Work submission must identify its artifact publication and review") from exc
-        if (type(review_refs) is not dict or set(review_refs) != {"publication", "review"}
-                or any(type(value) is not str or not value for value in review_refs.values())):
-            raise InvalidCell("Work artifact review references are invalid")
-        review_arguments = dict(context=context, work_root=work_root,
-            publication_root=review_refs["publication"], review_root=review_refs["review"])
-        independent_review = artifact_review_verifier(**review_arguments)
-        if (type(independent_review) is not dict
-                or set(independent_review) != {"publication", "review", "artifact_digest",
-                                               "publisher", "reviewer", "material_digest"}
-                or independent_review["publisher"] != claimant
-                or independent_review["reviewer"] == claimant
-                or independent_review["reviewer"] not in reviewers
-                or independent_review["publication"] != review_refs["publication"]
-                or independent_review["review"] != review_refs["review"]):
-            raise InvalidCell("Independent artifact review binding is invalid")
     resolved_workspace = Path(workspace_root).expanduser().resolve()
     workspace_digest = hashlib.sha256(
         str(resolved_workspace).casefold().encode("utf-8")

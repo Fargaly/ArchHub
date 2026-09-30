@@ -213,8 +213,8 @@ class NativeStopHost:
         try:
             # Existing active-call guard prevents owner replacement. The owner
             # lock is free throughout this bounded read; no new client is made.
-            value=stop_verdict(client._request_once('GET','/api/universal/work',
-                {'projection':'index'},response_timeout_seconds=2.0),client)
+            from .native_agent_hooks import stop_gate_read
+            value=stop_verdict(stop_gate_read(client, once=True),client)
         except Exception:
             value=dict(UNAVAILABLE)
         finally:

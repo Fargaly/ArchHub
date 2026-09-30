@@ -2,8 +2,26 @@
 
 The completion court owns acceptance. A Stop hook only observes that state; it
 does not run a second test evaluator or invent submission/artifact evidence.
+
+Every block names each unfinished Work of this session and its one step (live
+717 and Ping, 2026-09-30). A submitted Work has no accepted verdict until its
+submitter runs native.work_request_court; the "stop-gate" read says whether the
+court admits the submission as it stands (work_review_wait).
 """
 from __future__ import annotations
+
+
+def _step(root, state, wait):
+    if state != 'review':
+        return '%s is %s' % (root, state)
+    court = ('%s has no accepted verdict; run native.work_request_court (attach it first: '
+             'native.work_task_attach %s)' % (root, root))
+    if wait['wait'] == 'reconcile':
+        return court + ('. Its court refuses this submission as it stands (%s), so reconcile it with '
+                        "the Work's owner" % wait['reason'])
+    if wait['wait'] == 'unknown':
+        return court + '. This gate could not check the submission (%s)' % wait['reason']
+    return court
 
 
 def completion_verdict(cwd=None, *, runtime='', session_id='', transport=None):
@@ -18,6 +36,8 @@ def completion_verdict(cwd=None, *, runtime='', session_id='', transport=None):
             or type(status.get('agent_session')) is not str or not status['agent_session']
             or type(status.get('items')) not in (list, tuple)):
         return True, 'Native Work status identity or items are invalid.'
+    # An application without the "stop-gate" read names a submitted Work with the court step.
+    waits = status.get('review_waits') if type(status.get('review_waits')) is dict else {}
     owned = []
     for item in status['items']:
         if (type(item) is not dict or type(item.get('root')) is not str or not item['root']
@@ -29,14 +49,19 @@ def completion_verdict(cwd=None, *, runtime='', session_id='', transport=None):
             return True, 'Native Work state is unknown.'
         if item.get('claimant_session') == status['agent_session']:
             if state == 'open':
-                return True, 'Open Work retains a claimant; reconcile its graph state.'
+                return True, 'Open Work %s retains a claimant; reconcile its graph state.' % item['root']
             if state in {'claimed', 'review', 'blocked'}:
-                owned.append((item['root'], state))
+                owned.append((item['root'], state, waits.get(item['root'], {'wait': 'court', 'reason': ''})))
     if len(owned) > 1:
-        return True, 'The Agent Session owns multiple unfinished Works; reconcile ownership.'
+        return True, ('This session has %d unfinished Works, each its own step: %s.'
+                      % (len(owned), '; '.join(_step(*row) for row in owned[:20]))
+                      + (' And %d more.' % (len(owned) - 20) if len(owned) > 20 else '')
+                      + ' This Stop hook does not rerun execution, submit evidence or grant completion.')
     if owned:
-        return True, ('Current Work remains ' + owned[0][1] +
-            '. Publish and independently review its real result, then submit through the Work court. '
-            'This Stop hook does not rerun execution, submit evidence or grant completion.')
+        root, state, wait = owned[0]
+        text = (_step(root, state, wait) + '.' if state == 'review' else
+                'Current Work %s remains %s. Publish and independently review its real result, then submit '
+                'through the Work court.' % (root, state))
+        return True, text + ' This Stop hook does not rerun execution, submit evidence or grant completion.'
     # Ending this turn is not a declaration that the product or every Work is done.
     return False, ''

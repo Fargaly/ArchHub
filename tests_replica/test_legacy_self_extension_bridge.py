@@ -20,7 +20,7 @@ from nodelang.cell_adapters import (  # noqa: E402
     grant_permission,
     verify_adapter_catalog,
 )
-from nodelang.cell_baboom_connector_execution import (  # noqa: E402
+from nodelang.cell_connector_execution import (  # noqa: E402
     bootstrap_baboom_connector_execution_protocol,
     create_connector_delegation,
     create_connector_execution_grant,

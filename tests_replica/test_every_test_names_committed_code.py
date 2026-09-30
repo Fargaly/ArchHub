@@ -247,28 +247,10 @@ def missing_references(root=ROOT, suites=None, roots=_ROOTS):
                     found.append((rel, lineno, "%s does not exist" % label))
     return sorted(set(found))
 
-# Found on a clean archive of HEAD (2026-09-29), each waiting on its owner:
-# commit 326b6579 removed these names and this module but left the tests that
-# call them; test_workshop_project_revision.py exists only untracked in one
-# worktree. A fixed entry must be deleted here; nothing may be added.
-KNOWN = frozenset({
-    ("tests_replica/test_legacy_core_node_bridge.py",
-     "module nodelang.cell_baboom_connector_execution is not in this tree"),
-    ("tests_replica/test_legacy_self_extension_bridge.py",
-     "module nodelang.cell_baboom_connector_execution is not in this tree"),
-    ("tests_replica/test_native_contact.py",
-     "module tests_replica.test_workshop_project_revision is not in this tree"),
-    ("tests_replica/test_the_chat_answers_after_a_restart.py",
-     "nodelang.model_router.first_reachable_route does not exist"),
-    ("tests_replica/test_the_chat_answers_after_a_restart.py",
-     "nodelang.agent_composer.first_reachable_route does not exist"),
-    ("tests_replica/test_the_workshop_is_where_the_agents_meet.py",
-     "nodelang.universal_application._agent_session_runtime_label does not exist"),
-    ("tests_replica/test_the_workshop_is_where_the_agents_meet.py",
-     "nodelang.universal_application._work_title_for_workshop does not exist"),
-    ("tests_replica/test_the_workshop_is_where_the_agents_meet.py",
-     "nodelang.cell_deliberation._IDEMPOTENCY_TAIL_ENTRIES does not exist"),
-})
+# The eight stale references found on 2026-09-29 were re-pointed to the code
+# that replaced them (2026-09-30). This stays empty: a test that names code no
+# commit holds is fixed, never listed.
+KNOWN = frozenset()
 
 
 def test_no_test_names_code_that_is_not_committed():

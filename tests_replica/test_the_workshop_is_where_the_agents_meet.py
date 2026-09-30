@@ -38,53 +38,68 @@ def test_every_work_event_is_said_in_the_workshop():
     )
 
 
-def test_the_line_names_the_runtime_that_did_it(monkeypatch):
-    """A line saying only "an agent" tells the founder nothing."""
+def _committed_claim(monkeypatch, append):
+    """One committed claim receipt, seen through the recorder's own reads."""
+    from nodelang import cell_state_machine, conversation_content
+    receipt = types.SimpleNamespace(
+        actor_root="session:1", context_roots=("work:1",), event_root="event:claim",
+        from_state_root="state:open", to_state_root="state:claimed", timestamp_root="at",
+    )
+    monkeypatch.setattr(cell_state_machine, "_read_transition_event",
+                        lambda snapshot, protocol, root: receipt if root == "history:1" else None)
+    monkeypatch.setattr(app_module, "_require_workshop_message_source", lambda *a: None)
+    monkeypatch.setattr(app_module, "_require_application_authorization", lambda *a, **k: None)
+    monkeypatch.setattr(app_module, "read_instance_state_machine",
+                        lambda *a: types.SimpleNamespace(transition_roots=("transition:1",)))
+    monkeypatch.setattr(app_module, "read_transition", lambda *a: types.SimpleNamespace(
+        event_root="event:claim", from_state_root="state:open", to_state_root="state:claimed"))
+    monkeypatch.setattr(app_module, "_text",
+                        lambda snapshot, root: {"event:claim": "claim", "at": "0"}[root])
+    monkeypatch.setattr(app_module, "append_universal_workshop_entry", append)
+    monkeypatch.setattr(conversation_content, "workshop_message_identity",
+                        lambda entry: {"root": entry.root_id})
+    revoked = []
+    registry = types.SimpleNamespace(
+        standard_library=types.SimpleNamespace(state_machine_protocol=object()),
+        assembly_protocol=object(),
+        workshop_category_roots={"note": "category:note"},
+        authorization=types.SimpleNamespace(broker=types.SimpleNamespace(
+            resolve=lambda context: types.SimpleNamespace(tenant_root="t", assurance_root="a"),
+            mint_authenticated_context=lambda *a, **k: "context:actor",
+            revoke=revoked.append,
+        )),
+    )
+    said = app_module.record_workshop_work_event(
+        types.SimpleNamespace(snapshot=lambda: types.SimpleNamespace(revision=7)), registry,
+        agent_session_root="session:1", work_root="work:1", history_root="history:1",
+        authentication_context="context:caller",
+    )
+    return said, revoked
+
+
+def test_the_line_names_the_work_by_reference_not_a_mutable_title(monkeypatch):
+    """A retry must write the same line, so the line holds references only.
+
+    Each authorized view resolves the actor and Work labels itself; a title
+    that changes between a claim and its retry would split one event in two.
+    """
     written = {}
 
     def append(store, registry, **kw):
         written.update(kw)
         return types.SimpleNamespace(root_id="entry:1")
 
-    monkeypatch.setattr(app_module, "append_universal_workshop_entry", append)
-    monkeypatch.setattr(
-        app_module, "_agent_session_runtime_label", lambda *a: "codex"
-    )
-    monkeypatch.setattr(
-        app_module, "_work_title_for_workshop", lambda *a, **k: "Ship the map"
-    )
-    registry = types.SimpleNamespace(
-        workshop_category_roots={"note": "cat:note"},
-        authorization=types.SimpleNamespace(subject_root="subject:founder"),
-    )
-    app_module.record_workshop_work_event(
-        object(), registry,
-        agent_session_root="app:agent-session:runtime:x",
-        work_root="work:1", event="claimed",
-    )
-    # The ACTOR is the authenticated subject -- an entry whose actor is not
-    # the subject that signed the request is refused, which is why every
-    # agent write to the Workshop failed silently (2026-09-07). Who did it is
-    # not lost: the runtime is named in the line.
-    assert written["actor_root"] == "subject:founder"
-    assert written["content"] == "codex claimed Ship the map"
-    assert written["reference_roots"] == ("work:1",)
-    assert "work:1" in written["idempotency_key"]
-
-
-def test_an_unreadable_session_is_never_given_a_name(monkeypatch):
-    monkeypatch.setattr(
-        app_module, "read_agent_session",
-        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("gone")),
-    )
-    registry = types.SimpleNamespace(
-        agent_body=types.SimpleNamespace(protocol=object()),
-        authorization=types.SimpleNamespace(protocol=object()),
-    )
-    store = types.SimpleNamespace(snapshot=lambda: object())
-    assert app_module._agent_session_runtime_label(
-        store, registry, "app:agent-session:runtime:x"
-    ) == "an agent"
+    said, revoked = _committed_claim(monkeypatch, append)
+    assert said == "entry:1"
+    assert written["content"] == "Claimed Work work:1."
+    assert written["actor_root"] == "session:1"
+    assert written["reference_roots"] == ("work:1", "history:1")
+    assert written["idempotency_key"] == "work-event:history:1"
+    assert written["created_at"] == "1970-01-01T00:00:00Z"
+    assert written["authentication_context"] == "context:actor"
+    assert written["source_authentication_context"] == "context:caller"
+    assert written["expected_revision"] == 7
+    assert revoked == ["context:actor"], "the minted actor context never outlives the line"
 
 
 def test_the_record_is_an_account_not_the_authority(monkeypatch):
@@ -92,21 +107,9 @@ def test_the_record_is_an_account_not_the_authority(monkeypatch):
     def explode(*a, **k):
         raise RuntimeError("the Workshop is unreachable")
 
-    monkeypatch.setattr(app_module, "append_universal_workshop_entry", explode)
-    monkeypatch.setattr(
-        app_module, "_agent_session_runtime_label", lambda *a: "claude"
-    )
-    monkeypatch.setattr(
-        app_module, "_work_title_for_workshop", lambda *a, **k: "W"
-    )
-    registry = types.SimpleNamespace(
-        workshop_category_roots={"note": "cat:note"},
-        authorization=types.SimpleNamespace(subject_root="subject:founder"),
-    )
-    assert app_module.record_workshop_work_event(
-        object(), registry, agent_session_root="s", work_root="w",
-        event="claimed",
-    ) is None
+    said, revoked = _committed_claim(monkeypatch, explode)
+    assert said is None
+    assert revoked == ["context:actor"]
 
 
 def test_appending_no_longer_reads_the_whole_workshop():
@@ -133,11 +136,27 @@ def test_an_idempotency_key_names_its_own_entry():
 
 
 def test_a_legacy_entry_is_still_matched_by_its_key():
-    """Entries written before this carry a random root; a retry still finds them."""
-    body = inspect.getsource(deliberation.prepare_deliberation_entry)
-    assert "list_recent_deliberation_entries(" in body
-    assert "_IDEMPOTENCY_TAIL_ENTRIES" in body
-    assert deliberation._IDEMPOTENCY_TAIL_ENTRIES >= 128
+    """Entries written before this carry a random root; a retry still finds them.
+
+    The lookup reads each entry's own key, not its root, and reads every
+    entry, not a tail -- with and without the per-store index.
+    """
+    from tests_replica.test_cell_deliberation import _append, _system
+    store, protocol, authorization, identities, context, _space = _system()
+    first = _append(store, protocol, authorization, identities, context,
+                    idempotency_key="old:first")
+    for index in range(3):
+        _append(store, protocol, authorization, identities, context,
+                idempotency_key="later:%d" % index)
+    snapshot = store.snapshot()
+    space = deliberation.read_deliberation_space(snapshot, protocol, "test:workshop")
+    for lookup_store in (None, store, store):
+        assert deliberation._lookup_deliberation_key(
+            snapshot, protocol, space, "old:first", lookup_store) == first.root_id
+        assert deliberation._lookup_deliberation_key(
+            snapshot, protocol, space, "never:written", lookup_store) is None
+    # The one fact no behaviour shows: prepare asks this lookup.
+    assert "_lookup_deliberation_key(" in inspect.getsource(deliberation.prepare_deliberation_entry)
 
 
 def test_a_claim_and_a_release_are_not_the_two_events_he_cannot_see():

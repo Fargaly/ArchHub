@@ -5,10 +5,11 @@ model pick lived only on an in-memory attribute, so every restart left
 BABOOM, the relay and the cockpit ask bar with an empty model and the
 composer raised "No model chosen" -- a refusal he never saw (2026-09-07).
 
-Two mechanisms, and the limit that keeps them honest: the pick is recorded
-on this machine and read back, and with no pick ever made the ROUTER says
-what this machine can actually reach. A machine that can reach nothing
-still refuses; nothing is invented and no key is guessed.
+The pick is now the graph's composer_model (test_composer_model_is_graph_held)
+and an older build's file beside the graph is still read back while the graph
+holds none. With no pick and no configured default nothing is chosen for him:
+the router fallback that picked a reachable provider was removed on his rule
+of 2026-09-23 (test_chat_uses_only_the_configured_model, test_first_run_no_route).
 """
 from __future__ import annotations
 
@@ -20,68 +21,34 @@ from nodelang import agent_composer
 from nodelang import model_router
 
 
-def _rows(**state):
-    return [
-        {"id": family, "state": value, "name": family, "source": ""}
-        for family, value in state.items()
-    ]
-
-
-def test_the_router_prefers_a_keyed_cloud_provider():
-    route = model_router.first_reachable_route(
-        local_probe=lambda host, port: False,
-        cloud_session=None,
-        secrets_loader=lambda name: "k" if name == "openrouter" else "",
-        environ={},
-    )
-    assert route == "openrouter/anthropic/claude-sonnet-4.5"
-
-
-def test_the_router_uses_a_local_runtime_when_that_is_all_there_is(monkeypatch):
-    monkeypatch.setattr(
-        model_router, "provider_rows",
-        lambda **kw: _rows(openrouter="no key", cloud="no key",
-                           lmstudio="running", ollama="not running"),
-    )
-    assert model_router.first_reachable_route() == "lmstudio/local-model"
-
-
-def test_the_router_refuses_rather_than_invent_a_provider(monkeypatch):
-    monkeypatch.setattr(
-        model_router, "provider_rows",
-        lambda **kw: _rows(openrouter="no key", cloud="no key",
-                           lmstudio="not running", ollama="not running"),
-    )
-    assert model_router.first_reachable_route() is None
-
-
-def _chosen(monkeypatch, *, picked, reachable):
+def _chosen(monkeypatch, *, picked):
     monkeypatch.setattr(agent_composer, "_DEFAULT_MODEL", "")
-    monkeypatch.setattr(
-        agent_composer, "first_reachable_route", lambda: reachable
-    )
-    return agent_composer.chosen_model_route(picked)
+    # A provider this machine can reach must never be picked on his behalf:
+    # choosing may not even ask what is reachable.
+    asked = []
+
+    def reachable_rows(**kw):
+        asked.append(kw)
+        raise AssertionError("the choice asked which provider is reachable")
+
+    monkeypatch.setattr(model_router, "provider_rows", reachable_rows)
+    try:
+        return agent_composer.chosen_model_route(picked)
+    finally:
+        assert asked == [], "a model was looked for on his behalf"
 
 
-def test_a_machine_that_reaches_nothing_still_says_no_model_chosen(monkeypatch):
-    with pytest.raises(agent_composer.InvalidCell) as refusal:
-        _chosen(monkeypatch, picked="", reachable=None)
-    assert agent_composer.NO_MODEL_CHOSEN in str(refusal.value)
-
-
-def test_his_own_pick_always_wins_over_the_router(monkeypatch):
-    """The router is the fallback, never an override."""
+def test_his_own_pick_always_wins(monkeypatch):
     assert _chosen(
         monkeypatch, picked="lmstudio/his-pick",
-        reachable="openrouter/should-not-be-used",
     ) == "lmstudio/his-pick"
 
 
-def test_with_no_pick_the_router_answers_instead_of_silence(monkeypatch):
-    assert _chosen(
-        monkeypatch, picked="",
-        reachable="openrouter/anthropic/claude-sonnet-4.5",
-    ) == "openrouter/anthropic/claude-sonnet-4.5"
+def test_with_no_pick_a_reachable_provider_is_never_chosen_for_him(monkeypatch):
+    """The router fallback answered instead of refusing; his rule removed it."""
+    with pytest.raises(agent_composer.InvalidCell) as refusal:
+        _chosen(monkeypatch, picked="")
+    assert agent_composer.NO_MODEL_CHOSEN in str(refusal.value)
 
 
 def test_the_composer_asks_that_one_function(monkeypatch):
@@ -91,59 +58,28 @@ def test_the_composer_asks_that_one_function(monkeypatch):
     assert "chosen_model_route(model)" in body
 
 
-def _store():
-    return types.SimpleNamespace(
-        snapshot=lambda: types.SimpleNamespace(revision=1, cells={})
-    )
-
-
-def _registry():
-    return types.SimpleNamespace()
-
-
-def test_the_server_records_the_pick_and_reads_it_back(tmp_path):
-    """A restart must not wipe what he chose."""
+def _reader(state_path):
+    """A process with no graph pick: only an older build's file can answer."""
     from nodelang import application_server
 
-    fake = types.SimpleNamespace(
-        universal_state_path=str(tmp_path / "graph.sqlite3"),
-        _last_agent_model="",
-    )
-    for name in (
-        "_agent_model_path", "_write_agent_model",
-        "_read_agent_model", "_remember_agent_model",
-    ):
+    fake = types.SimpleNamespace(universal_state_path=str(state_path))
+    for name in ("_agent_model_path", "_read_agent_model"):
         setattr(fake, name, types.MethodType(
             getattr(application_server.ApplicationServer, name), fake
         ))
-
-    assert fake._read_agent_model() == ""
-    fake._remember_agent_model("openrouter/anthropic/claude-sonnet-4.5")
-    assert fake._read_agent_model() == "openrouter/anthropic/claude-sonnet-4.5"
-
-    # A fresh process: only the file survives.
-    reborn = types.SimpleNamespace(
-        universal_state_path=fake.universal_state_path, _last_agent_model="",
-    )
-    reborn._agent_model_path = types.MethodType(
-        application_server.ApplicationServer._agent_model_path, reborn
-    )
-    reborn._read_agent_model = types.MethodType(
-        application_server.ApplicationServer._read_agent_model, reborn
-    )
-    assert reborn._read_agent_model() == "openrouter/anthropic/claude-sonnet-4.5"
+    return fake
 
 
-def test_an_unwritable_machine_forgets_rather_than_crashes(tmp_path):
-    from nodelang import application_server
+def test_an_older_builds_pick_is_read_back_after_a_restart(tmp_path):
+    """A restart must not wipe what he chose before the pick moved into the graph."""
+    reader = _reader(tmp_path / "graph.sqlite3")
+    assert reader._read_agent_model() == ""
+    reader._agent_model_path().write_text(
+        "openrouter/anthropic/claude-sonnet-4.5\n", encoding="utf-8")
+    assert _reader(tmp_path / "graph.sqlite3")._read_agent_model() == (
+        "openrouter/anthropic/claude-sonnet-4.5")
 
-    fake = types.SimpleNamespace(
-        universal_state_path=str(tmp_path / "nope" / "\0bad" / "g.sqlite3"),
-        _last_agent_model="",
-    )
-    for name in ("_agent_model_path", "_write_agent_model", "_read_agent_model"):
-        setattr(fake, name, types.MethodType(
-            getattr(application_server.ApplicationServer, name), fake
-        ))
-    fake._write_agent_model("openrouter/x")
-    assert fake._read_agent_model() == ""
+
+def test_an_unreadable_record_is_no_pick_rather_than_a_crash(tmp_path):
+    reader = _reader(tmp_path / "nope" / "\0bad" / "g.sqlite3")
+    assert reader._read_agent_model() == ""

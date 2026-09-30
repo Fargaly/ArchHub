@@ -3,7 +3,24 @@ import time
 from types import SimpleNamespace as NS
 from nodelang import native_contact as contact
 from nodelang import universal_application as app
-from tests_replica.test_workshop_project_revision import owner
+import pytest
+from nodelang import application_server as server_module
+from tests_replica.test_universal_workshop_assignments import _green_runtime_compliance
+
+
+@pytest.fixture
+def owner(tmp_path, monkeypatch):
+    original = server_module.QuietThreadingHTTPServer
+    monkeypatch.setattr(server_module, "QuietThreadingHTTPServer",
+        lambda address, handler: original(address, handler, bind_and_activate=False))
+    server = server_module.ApplicationServer(universal_workspace_root=tmp_path,
+        runtime_compliance_runner=_green_runtime_compliance,
+        enable_machine_transport=False, enable_machine_projection_prewarm=False)
+    try:
+        assert server.thread is None and server.machine_transport is None
+        yield server
+    finally:
+        server.close()
 
 class Transport:
     endpoint={'app':'claude','id':'existing-external','title':'Existing Claude','cwd':'fixture','pid':123}

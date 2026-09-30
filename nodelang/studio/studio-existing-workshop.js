@@ -6,6 +6,8 @@
   const revision = value => Number.isSafeInteger(value) && value >= 0;
   const storageName = 'archhub.existing-workshop.pending.v1';
   const releaseStorageName = 'archhub.existing-workshop.releases.v1';
+  // nodelang/work_proposals.py MARKER: an agent's Work proposal is this line, then its document.
+  const proposalMarker = 'ArchHub work proposal v1\n';
 
   // What an assignment reply proves. Only a refusal that names THIS exact assignment
   // id AND reconciles it as absent is a refusal (the server read the id absent under
@@ -1825,6 +1827,78 @@
             applied.revision_id !== details.revision_id || !/^[a-f0-9]{64}$/.test(applied.input_digest) ||
             typeof applied.reused !== 'boolean') {
           fail('The Work configuration response needs reconciliation; reopen it before retrying.');
+        }
+        return result;
+      },
+      // Agent Work proposals in the loaded conversation, each with its grants per
+      // governed root and its reviewers, and whether the founder already bound it.
+      async readWorkProposals(root) {
+        const stamp = stampFor(root), held = nativeWork, page = workshop;
+        if (!held || held.root !== root || held.scope !== stamp.scope) fail('Read this Workshop operation status first.');
+        if (!page || page.root !== root || !Array.isArray(page.messages)) fail('Open this Workshop conversation first.');
+        const rows = [];
+        for (const message of page.messages) {
+          if (typeof message?.body !== 'string' || !message.body.startsWith(proposalMarker)) continue;
+          const document = message.body.slice(proposalMarker.length);
+          const row = {message_id:message.message_id || message.root, sequence:message.sequence,
+            proposer:message.sender_root || '', digest:await hash(document), work_root:null};
+          let payload = null;
+          try { payload = JSON.parse(document); } catch (_) {}
+          const grants = payload?.write_grants, reviewers = payload?.requirements?.artifact_reviewers ?? [];
+          if (!payload || typeof payload !== 'object' || !text(payload.title) || typeof payload.description !== 'string' ||
+              !['general', 'artifact-publication'].includes(payload.purpose) || !Number.isSafeInteger(payload.priority) ||
+              !payload.container || !text(payload.container.container_id) || !Array.isArray(grants) || !grants.length ||
+              grants.some(grant => !grant || !text(grant.path) || !text(grant.scope) || !Array.isArray(grant.operations) ||
+                !grant.operations.length || grant.operations.some(operation => !text(operation))) ||
+              !Array.isArray(reviewers) || reviewers.some(reviewer => !text(reviewer))) {
+            rows.push({...row, title:'Unreadable proposal', problem:'This proposal cannot be read; it cannot be bound.'});
+            continue;
+          }
+          const byRoot = {};
+          for (const grant of grants) (byRoot[grant.path.split('/')[0]] ||= []).push(
+            {path:grant.path, scope:grant.scope, operations:[...grant.operations]});
+          rows.push({...row, title:payload.title, description:payload.description, purpose:payload.purpose,
+            priority:payload.priority, reviewers:[...reviewers], grants:byRoot,
+            container:payload.container.container_id, tier:String(payload.container.tier || '')});
+        }
+        if (!rows.length) return {rows};
+        const requestId = 'proposals-read-' + uuid().replaceAll('-', '');
+        const ids = rows.map(row => row.message_id);
+        const result = await post('/api/universal/workshop-native', {action:'read_work_proposals', root,
+          scope:stamp.scope, request_id:requestId, data_class:'public-text', message_ids:ids});
+        const bound = result?.bound;
+        if (!result || result.ok !== true || result.root !== root || result.scope !== stamp.scope ||
+            result.request_id !== requestId || result.owner !== held.owner || !revision(result.revision) ||
+            !bound || typeof bound !== 'object' || Array.isArray(bound) ||
+            Object.keys(bound).sort().join('\n') !== [...ids].sort().join('\n') ||
+            Object.values(bound).some(work => work !== null && !text(work))) {
+          fail('Which proposals are already bound could not be verified.');
+        }
+        if (!current(stamp, root) || nativeWork !== held) fail('Workshop changed while reading the proposals.');
+        return {rows:rows.map(row => ({...row, work_root:bound[row.message_id]})), revision:result.revision};
+      },
+      // The founder's one action: bind exactly the checked proposals, as shown.
+      async bindWorkProposals(root, chosen) {
+        const stamp = stampFor(root), held = nativeWork;
+        if (!held || held.root !== root || held.scope !== stamp.scope) fail('Read this Workshop operation status first.');
+        if (!Array.isArray(chosen) || !chosen.length || chosen.length > 16 ||
+            new Set(chosen.map(row => row?.message_id)).size !== chosen.length ||
+            chosen.some(row => !row || !text(row.message_id) || !Number.isSafeInteger(row.sequence) ||
+              row.sequence < 1 || !/^[a-f0-9]{64}$/.test(row.digest) || row.work_root || row.problem)) {
+          fail('Check 1 to 16 unbound proposals to bind.');
+        }
+        const proposals = chosen.map(row => ({message_id:row.message_id, sequence:row.sequence, digest:row.digest}));
+        const requestId = 'proposals-bind-' + uuid().replaceAll('-', '');
+        const result = await post('/api/universal/workshop-native', {action:'bind_work_proposals', root,
+          scope:stamp.scope, request_id:requestId, data_class:'public-text', proposals});
+        const bound = result?.bound;
+        if (!result || result.ok !== true || result.root !== root || result.scope !== stamp.scope ||
+            result.request_id !== requestId || result.owner !== held.owner || !revision(result.revision) ||
+            !Array.isArray(bound) || bound.length !== proposals.length ||
+            bound.some((row, index) => !row || row.message_id !== proposals[index].message_id ||
+              row.digest !== proposals[index].digest || !text(row.work_root) || !text(row.proposer) ||
+              row.external_key !== 'proposal:' + row.message_id || !text(row.authorization))) {
+          fail('The bind was not confirmed. Read the proposals again to see which are bound.');
         }
         return result;
       },

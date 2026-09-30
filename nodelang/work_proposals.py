@@ -109,12 +109,12 @@ def parse(text):
     return validate(payload), hashlib.sha256(document.encode("utf-8")).hexdigest()
 
 
-def _bound_keys(snapshot, registry):
-    """External keys of every registered Work: a proposal binds once."""
+def _bound_works(snapshot, registry):
+    """{external key: Work root} for every registered Work bound from a proposal."""
     from . import universal_application as app
     from .cell_protocols import read_relation
 
-    keys = set()
+    works = {}
     for member in read_relation(snapshot, registry.governed_work_registry_root, budget=100_000):
         if member.role_id != registry.roles["member"]:
             continue
@@ -123,12 +123,17 @@ def _bound_keys(snapshot, registry):
         except (InvalidCell, KeyError, TypeError):
             continue
         if type(key) is str and key.startswith(KEY_PREFIX):
-            keys.add(key)
-    return keys
+            works[key] = member.participant_id
+    return works
+
+
+def _bound_keys(snapshot, registry):
+    """External keys of every registered Work: a proposal binds once."""
+    return set(_bound_works(snapshot, registry))
 
 
 def founder_bind_route(owner, binding, body, session_token):
-    """The route's entry: the founder's own Workshop reader and browser guard, then the bind."""
+    """The route's entry: the founder's own Workshop reader and browser guard, then the action."""
     registry = owner.universal_registry
 
     def guard():
@@ -142,7 +147,41 @@ def founder_bind_route(owner, binding, body, session_token):
             space_root=registry.workshop_root, limit=1, before=sequence + 1)
 
     guard()
+    if type(body) is dict and body.get("action") == "read_work_proposals":
+        return read_work_proposals(owner, binding, body)
     return bind_work_proposals(owner, binding, body, read_message=read, browser_guard=guard)
+
+
+def read_work_proposals(owner, binding, body):
+    """Which of the proposals the founder is shown are already bound, and to which Work.
+
+    The founder's list reads its proposals from his own Workshop page; this read
+    answers only the bound state, so a bound proposal is never offered again.
+    """
+    fields = {"action", "root", "scope", "request_id", "data_class", "message_ids"}
+    if (type(body) is not dict or set(body) != fields or body["action"] != "read_work_proposals"
+            or body["data_class"] != "public-text"
+            or any(type(body[key]) is not str or not body[key] or len(body[key]) > 4096
+                   for key in ("root", "scope", "request_id"))):
+        _refuse("Reading Work proposals requires its exact request")
+    ids = body["message_ids"]
+    if (type(ids) is not list or not 0 < len(ids) <= 100
+            or any(type(item) is not str or not _MESSAGE_ID.fullmatch(item) for item in ids)
+            or len(set(ids)) != len(ids)):
+        _refuse("Name 1 to 100 distinct proposal messages")
+    store, registry = owner.universal_store, owner.universal_registry
+    if binding.subject_root != registry.authorization.subject_root:
+        raise AuthorizationDenied("Only the founder reads Work proposals for binding")
+    host = getattr(owner, "_existing_workshop_native_host", None)
+    if host is None:
+        _refuse("Native Workshop owner is unavailable")
+    with owner.mutation_lock:
+        host._admit(binding, body["root"], body["scope"])
+        snapshot = store.snapshot()
+        works = _bound_works(snapshot, registry)
+    return {"ok": True, "root": body["root"], "scope": body["scope"], "request_id": body["request_id"],
+            "owner": binding.subject_root, "revision": snapshot.revision,
+            "bound": {item: works.get(KEY_PREFIX + item) for item in ids}}
 
 
 def bind_work_proposals(owner, binding, body, *, read_message, browser_guard):

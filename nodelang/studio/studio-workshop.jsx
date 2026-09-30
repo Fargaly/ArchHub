@@ -747,6 +747,96 @@ const AssignSection = ({ task, room, agents, assign, assignments = [] }) => {
 };
 
 // ── context panel ──
+// Founder decision 2026-09-30: agents propose Work; the founder binds the checked
+// proposals in one action. Each shows its grants per governed root and its reviewers.
+const WorkProposals = ({ authority, root, disabled, isCurrent, onBound }) => {
+  const [proposals, setProposals] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const busyRef = React.useRef(false), mounted = React.useRef(true);
+  React.useEffect(() => () => { mounted.current = false; }, []);
+  const live = () => mounted.current && isCurrent();
+  const run = async work => {
+    if (busyRef.current) return;
+    busyRef.current = true; setBusy(true); setError('');
+    try { await work(); } finally { busyRef.current = false; if (mounted.current) setBusy(false); }
+  };
+  const read = () => run(async () => {
+    try {
+      const current = await authority.readWorkProposals(root);
+      if (live()) setProposals(value => ({rows:current.rows, checked:[], result:value?.result || null}));
+    } catch (failure) { if (live()) setError(failure.message || 'The Work proposals could not be read.'); }
+  });
+  const toggle = messageId => setProposals(value => value && ({...value, result:null,
+    checked:value.checked.includes(messageId) ? value.checked.filter(id => id !== messageId) : [...value.checked, messageId]}));
+  const bind = event => {
+    event.preventDefault();
+    const held = proposals;
+    if (!held?.checked.length) return;
+    return run(async () => {
+      let result;
+      try {
+        result = await authority.bindWorkProposals(root, held.rows.filter(row => held.checked.includes(row.message_id)));
+      } catch (failure) {
+        // Binding is keyed by each message: a repeat is refused as already bound, never doubled.
+        if (live()) setError(failure.message || 'The bind was not confirmed. Read the proposals again to see which are bound.');
+        return;
+      }
+      if (!live()) return;
+      const works = Object.fromEntries(result.bound.map(row => [row.message_id, row.work_root]));
+      setProposals(value => value && ({...value, checked:[], result:result.bound,
+        rows:value.rows.map(row => works[row.message_id] ? {...row, work_root:works[row.message_id]} : row)}));
+      try { await onBound(); } catch (_) {
+        if (live()) setError('The proposals are bound. Refresh the canvas to display the new Work.');
+      }
+    });
+  };
+  const off = disabled || busy;
+  return <details style={{margin:'10px 0'}}>
+    <summary>Agent Work proposals</summary>
+    <p style={{fontSize:12, color:W.inkSoft, lineHeight:1.5}}>
+      Agents propose Work in this conversation. Nothing exists or is granted until you bind it.
+      Check the proposals to bind; one confirmation creates each checked Work with the grants and reviewers shown.
+    </p>
+    <button type="button" disabled={off} onClick={read}>Read proposals in the loaded messages</button>
+    {error && <p role="alert" style={{fontSize:12, color:W.err}}>{error}</p>}
+    {proposals && <form aria-label="Bind agent Work proposals" onSubmit={bind}>
+      {!proposals.rows.length && <p role="status">No Work proposals in the loaded messages.</p>}
+      {proposals.rows.map(row => <fieldset key={row.message_id} aria-label={'Work proposal ' + row.title}
+          disabled={off} style={{border:`1px solid ${W.line}`, borderRadius:8, margin:'8px 0', padding:'8px 10px', minWidth:0}}>
+        <label style={{display:'flex', gap:6, alignItems:'baseline', fontWeight:600}}>
+          <input type="checkbox" aria-label={'Bind ' + row.title} disabled={!!row.work_root || !!row.problem}
+            checked={proposals.checked.includes(row.message_id)} onChange={() => toggle(row.message_id)}/>
+          {row.title}
+        </label>
+        {row.problem ? <p role="status" style={{fontSize:12, color:W.err}}>{row.problem}</p> : <>
+          <div style={{fontSize:11.5, color:W.inkSoft, overflowWrap:'anywhere'}}>
+            {row.work_root ? 'Bound · ' + row.work_root : 'Proposed by ' + row.proposer} · {row.purpose} · priority {row.priority}
+          </div>
+          {row.description && <div style={{fontSize:11.5, margin:'4px 0', overflowWrap:'anywhere'}}>{row.description}</div>}
+          {Object.entries(row.grants).map(([governedRoot, grants]) => <div key={governedRoot} aria-label={'Grants in ' + governedRoot} style={{marginTop:4}}>
+            <Lbl>{governedRoot}</Lbl>
+            {grants.map(grant => <div key={grant.path} style={{fontSize:11, fontFamily:W.mono, overflowWrap:'anywhere'}}>
+              {grant.path} · {grant.scope} · {grant.operations.join(', ')}
+            </div>)}
+          </div>)}
+          <div style={{fontSize:11.5, marginTop:4, overflowWrap:'anywhere'}}>
+            Reviewers: {row.reviewers.length ? row.reviewers.join(', ') : 'none'} · CDE {row.container}{row.tier ? ' · ' + row.tier : ''}
+          </div>
+        </>}
+      </fieldset>)}
+      {proposals.rows.some(row => !row.work_root && !row.problem) &&
+        <button type="submit" disabled={off || !proposals.checked.length}>
+          {proposals.checked.length ? 'Bind ' + proposals.checked.length + ' checked proposal' +
+            (proposals.checked.length === 1 ? '' : 's') : 'Check proposals to bind'}
+        </button>}
+      {proposals.result && <p role="status" style={{fontSize:12}}>
+        Bound {proposals.result.length} Work: {proposals.result.map(row => row.work_root).join(', ')}.
+      </p>}
+    </form>}
+  </details>;
+};
+
 const ContextPanel = ({ selAgent, selTask, tasks, agent, descriptor, activity, activityNote, counts, listening, controls, controlsOpen, onControls, agents = [], assign = null, assignments = [] }) => {
   const t = tasks.find(x => x.work === selTask);
   const a = selAgent;
@@ -1618,6 +1708,8 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
         {native?.review_recovered && <p style={{fontSize:12, color:W.inkSoft}}>
           Reviewing a saved result. No new model run has occurred.
         </p>}
+        {native && <WorkProposals authority={authority} root={descriptor.root} disabled={busy} isCurrent={scopeCurrent}
+          onBound={() => authority.refreshTopologyCanvas()}/>}
         {(!native || native.state === 'idle' || revisionBase) && <>
           <details open={!!revisionBase} style={{marginBottom:16}}>
             <summary>{revisionBase ? 'Revise this Work' : 'Create a repair Work node'}</summary>

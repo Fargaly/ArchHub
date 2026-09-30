@@ -171,3 +171,29 @@ def test_an_agent_still_cannot_create_work_and_an_unbound_proposal_grants_nothin
              "sequence": proposal["sequence"], "digest": proposal["digest"]}]},
             read_message=lambda sequence: {}, browser_guard=lambda: None)
     assert _proposal_works(server) == set()
+
+def test_the_founders_list_reads_which_proposals_are_already_bound(world):
+    """The founder's list asks only the bound state; a bound proposal is never offered again."""
+    server, descriptor, provider, browser = world
+    proposer, _me = _tools(descriptor, provider, "court-proposer-3")
+    first, second = _propose(proposer, "Listed A"), _propose(proposer, "Listed B")
+    registry = server.universal_registry
+    request = {"action": "read_work_proposals", "root": registry.workshop_root,
+               "scope": registry.workshop_workbench_root, "request_id": "court-read", "data_class": "public-text",
+               "message_ids": [first["message_id"], second["message_id"]]}
+
+    def listed(body=request):
+        with _as_browser(browser):
+            return work_proposals.founder_bind_route(server, browser, body, server.browser_session_token)
+
+    before = server.universal_store.revision
+    assert listed()["bound"] == {first["message_id"]: None, second["message_id"]: None}
+    assert server.universal_store.revision == before              # reading writes nothing
+    work = _bind(server, browser, first)["bound"][0]["work_root"]
+    assert listed()["bound"] == {first["message_id"]: work, second["message_id"]: None}
+    with pytest.raises(InvalidCell, match="exact request"):
+        listed({**request, "proposals": []})
+    with pytest.raises(InvalidCell, match="distinct proposal messages"):
+        listed({**request, "message_ids": [first["message_id"], first["message_id"]]})
+    with pytest.raises(Exception, match="Only the founder"):
+        work_proposals.read_work_proposals(server, type("Agent", (), {"subject_root": "not-the-founder"})(), request)

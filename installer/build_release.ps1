@@ -574,12 +574,17 @@ $zeroIdleCourt = Join-Path $snapshot.SelectedCheckout 'tests/test_zero_idle_grow
 if (-not (Test-Path -LiteralPath $zeroIdleCourt -PathType Leaf)) { throw 'The zero-idle-growth release court is missing.' }
 $priorCourtSource = $env:ARCHHUB_COURT_SOURCE
 $env:ARCHHUB_COURT_SOURCE = $selectedRoot
+# The court's own run time is not copy/verification time: pause the snapshot
+# budget around it, as the Studio compile below does. The snapshot is
+# re-verified after the court by Assert-BuildSnapshot while the clock runs.
+$candidateClock.Stop()
 try {
     $LASTEXITCODE = 0
     & $PythonPath -m pytest -q -p no:cacheprovider $zeroIdleCourt
     if ($LASTEXITCODE -ne 0) { throw 'Release refused: the zero-idle-growth court is red.' }
 } finally {
     $env:ARCHHUB_COURT_SOURCE = $priorCourtSource
+    $candidateClock.Start()
 }
 
 Assert-BuildSnapshot $snapshot

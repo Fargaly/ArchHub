@@ -85,7 +85,7 @@ const NODES = [
 
 const TRACE_KEY = 'archhub.canvas.unwritten-layout';
 
-async function mount({refuse = null, hold = null, seedTrace = null} = {}) {
+async function mount({refuse = null, hold = null, seedTrace = null, nodes = NODES} = {}) {
   const {JSDOM} = await import('jsdom');
   const React = require('react');
   const {createRoot} = require('react-dom/client');
@@ -97,7 +97,7 @@ async function mount({refuse = null, hold = null, seedTrace = null} = {}) {
   global.window = dom.window; global.document = dom.window.document;
   global.IS_REACT_ACT_ENVIRONMENT = true;
   const saves = [];
-  let snapshot = {graph:{nodes:NODES, wires:[]}, canvas:{revision:3, scope:{current:'scope'}}};
+  let snapshot = {graph:{nodes, wires:[]}, canvas:{revision:3, scope:{current:'scope'}}};
   let refreshes = 0;
   dom.window.ARCHHUB_EXISTING_WORKSHOP = {
     getSnapshot:() => ({topology:{canvas:{revision:snapshot.canvas.revision, scope:snapshot.canvas.scope,
@@ -137,6 +137,11 @@ async function mount({refuse = null, hold = null, seedTrace = null} = {}) {
     new dom.window.MouseEvent(type, {bubbles:true, cancelable:true, ...init}));
   return {
     saves, point, card, draw,
+    selectAll: async () => {
+      const region = dom.window.document.querySelector('[role="region"][aria-label="Workflow canvas"]');
+      await React.act(async () => region.dispatchEvent(new dom.window.KeyboardEvent('keydown',
+        {key:'a', ctrlKey:true, bubbles:true, cancelable:true})));
+    },
     refreshCount: () => refreshes,
     chip: () => {
       const status = dom.window.document.querySelector('[role="status"],[role="alert"]');
@@ -168,6 +173,15 @@ async function mount({refuse = null, hold = null, seedTrace = null} = {}) {
       dom.window.dispatchEvent(new dom.window.Event(type)); }); },
     trace: () => { try { return JSON.parse(dom.window.sessionStorage.getItem(TRACE_KEY) || 'null'); }
       catch (error) { return null; } },
+    arrange: async () => {
+      for (const id of ['one', 'two']) {
+        Object.defineProperty(card(id), 'offsetWidth', {configurable:true, value:200});
+        Object.defineProperty(card(id), 'offsetHeight', {configurable:true, value:90});
+      }
+      const region = dom.window.document.querySelector('[role="region"][aria-label="Workflow canvas"]');
+      await React.act(async () => region.dispatchEvent(new dom.window.KeyboardEvent('keydown',
+        {key:'L', ctrlKey:true, shiftKey:true, bubbles:true, cancelable:true})));
+    },
     reset: async () => {
       const region = dom.window.document.querySelector('[role="region"][aria-label="Workflow canvas"]');
       assert.ok(region, 'the canvas region is drawn');
@@ -183,6 +197,72 @@ async function mount({refuse = null, hold = null, seedTrace = null} = {}) {
     },
   };
 }
+
+test('snapped group drag preserves spacing and snaps the grabbed member', async () => {
+  const nodes = [{...NODES[0], x:43, y:-17}, {...NODES[1], x:407, y:63}];
+  const view = await mount({nodes});
+  try {
+    await view.selectAll();
+    await view.drag('two', 80, 40);
+    assert.deepEqual(view.point('two'), {x:520, y:120});
+    assert.deepEqual(view.point('one'), {x:156, y:40});
+    await view.settle(coalesceWindow() + 50);
+    assert.equal(view.saves.length, 1);
+    assert.equal(view.saves[0].positions.two.x - view.saves[0].positions.one.x, 364);
+    assert.equal(view.saves[0].positions.two.y - view.saves[0].positions.one.y, 80);
+  } finally { await view.close(); }
+});
+
+test('zero-distance pointer movement never snaps an off-grid selection', async () => {
+  const nodes = [{...NODES[0], x:43, y:-17}, {...NODES[1], x:407, y:63}];
+  const view = await mount({nodes});
+  try {
+    await view.selectAll();
+    await view.drag('two', 0, 0);
+    assert.deepEqual(view.point('one'), {x:43, y:-17});
+    assert.deepEqual(view.point('two'), {x:407, y:63});
+    await view.settle(coalesceWindow() + 50);
+    assert.equal(view.saves.length, 0);
+  } finally { await view.close(); }
+});
+
+test('Arrange waits for our held save and runs once at the reconciled revision', async () => {
+  const hold = {}; hold.promise = new Promise(resolve => { hold.release = resolve; });
+  const view = await mount({hold});
+  try {
+    await view.drag('one', 80, 40);
+    await view.settle(coalesceWindow() + 50);
+    assert.equal(view.saves.length, 1);
+    await view.arrange();
+    await view.arrange();
+    assert.equal(view.saves.length, 1);
+    hold.release();
+    await view.settle(30);
+    await view.draw();
+    await view.settle(30);
+    assert.equal(view.saves.length, 2);
+    assert.equal(view.saves[1].expectedRevision, 4);
+    await view.draw();
+    await view.settle(30);
+    assert.equal(view.saves.length, 2);
+  } finally { hold.release(); await view.close(); }
+});
+
+test('Arrange queued behind a refused save is discarded', async () => {
+  const hold = {}; hold.promise = new Promise(resolve => { hold.release = resolve; });
+  const view = await mount({hold, refuse:'layout refused'});
+  try {
+    await view.drag('one', 80, 40);
+    await view.settle(coalesceWindow() + 50);
+    await view.arrange();
+    hold.release();
+    await view.settle(30);
+    await view.draw();
+    await view.settle(30);
+    assert.equal(view.saves.length, 1);
+    assert.ok(view.refreshCount() >= 1);
+  } finally { hold.release(); await view.close(); }
+});
 
 test('ten drags inside one window are ONE write, against the pre-burst points', async () => {
   const wait = coalesceWindow();

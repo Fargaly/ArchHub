@@ -33,6 +33,52 @@ class Transport:
     def close(self):pass
 
 
+
+def test_everyone_uses_two_real_graph_contacts_and_one_history_without_replay(owner,tmp_path):
+    from nodelang.conversation_content import prepare_empty_content_binding
+    from nodelang.conversation_history import ConversationHistoryStore
+    from nodelang.existing_workshop_conversation import send_browser_workshop
+    endpoints=[{'app':'claude','id':'broadcast-claude','title':'Claude'},
+        {'app':'opencode','id':'broadcast-opencode','title':'OpenCode'}]
+    class TwoTransports(Transport):
+        def discover(self, **kwargs):return {'status':'ok','recipients':endpoints}
+    transport=TwoTransports();owner.native_recipient_relay._transport=transport
+    browser=owner._resolve_browser_session(owner.browser_session_token)
+    registry,store=owner.universal_registry,owner.universal_store
+    owner.conversation_content._path=tmp_path/'broadcast-real-history.sqlite3'
+    adopted=prepare_empty_content_binding(store.snapshot(),registry.deliberation_protocol,
+        application_root=registry.application_root,space_root=registry.workshop_root)
+    with ConversationHistoryStore(owner.conversation_content._path,instance_id=adopted.binding.instance_id) as history:
+        history.ensure_conversation(registry.workshop_root);history.initialize_retention()
+    store.commit(adopted.expected_revision,create=adopted.create,replace=adopted.replace)
+    contacts=[]
+    for endpoint in endpoints:
+        bound=contact.bind_native_contact(owner,browser,{'root':registry.workshop_root,
+            'scope':registry.workshop_workbench_root,'node':None,'app':endpoint['app'],
+            'session_id':endpoint['id'],'revision':store.revision},browser_guard=lambda:None)
+        contacts.append(bound['contact'])
+    app.set_universal_scope(store,registry,registry.map.domains['brain'],authentication_context=browser.context)
+    app.set_universal_scope(store,registry,registry.workshop_workbench_root,authentication_context=browser.context)
+    body={'root':registry.workshop_root,'scope':registry.workshop_workbench_root,'category':'note',
+        'text':'Review this together','refs':[],'evidence':[],'recipients':[],
+        'reply_to':None,'idempotency_key':'everyone-two-contacts','created_at':None}
+    revision=store.revision
+    sent=send_browser_workshop(owner,browser,body,browser_guard=lambda:None)
+    assert {row['recipient'] for row in sent['native_delivery']}==set(contacts)
+    assert all(row['state']=='started' for row in sent['native_delivery'])
+    deadline=time.monotonic()+5
+    while owner.native_recipient_relay._pending_jobs and time.monotonic()<deadline:time.sleep(.01)
+    assert owner.native_recipient_relay.last_error is None
+    assert {row[0]['id'] for row in transport.calls}=={row['id'] for row in endpoints}
+    assert len(transport.calls)==2 and store.revision==revision
+    assert send_browser_workshop(owner,browser,body,browser_guard=lambda:None)==sent
+    assert len(transport.calls)==2
+    page=owner.conversation_content.page_for_workshop_browser(owner.browser_session_token,
+        binding=browser,space_root=registry.workshop_root)
+    assert 'Fixture reply' in str(page) and 'Review this together' in str(page)
+
+
+
 def test_contact_creates_atomic_user_node_and_relays_once_in_same_content(owner,tmp_path):
     transport=Transport();owner.native_recipient_relay._transport=transport
     browser=owner._resolve_browser_session(owner.browser_session_token)

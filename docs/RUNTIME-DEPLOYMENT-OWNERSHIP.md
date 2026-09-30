@@ -90,6 +90,72 @@ cannot authorise the handoff: the worker first verifies the Agent Session, Work,
 generation, ownership, and graph policy. A missing, stale, foreign, malformed, or
 unacknowledged pipe record fails closed before the graph drain commit.
 
+## CDE operational records
+
+Source repair under review, not installed backend acceptance. New CDE write
+permits and receipts use indexed tables in the same primary instance database.
+Permission policy, agent identity, Work and container scope remain graph authority.
+A permit or receipt does not create a layout node or graph revision per tool call.
+SQLite writes compare the admitted graph revision inside their write transaction;
+a stale admission fails before effects. A retried consumption returns the original
+receipt, including its original digest and time, rather than inventing a new result.
+
+Legacy graph-held evidence remains readable. No live history has been deleted,
+no automatic database shrink is promised, and historical permit scans still need
+a bounded migration/indexing path. Installed acceptance must cover same-instance
+issue/consume/reopen, replay/expiry/revocation refusal, graph growth, and resource
+cleanup. Source tests alone do not establish that live application behavior.
+
+## Runtime presence storage
+
+Runtime presence uses the same primary instance SQLite database. Stable session,
+device and runtime bindings remain graph Cells. Frequently renewed `refreshed_at`
+and `expires_at` values belong to indexed `runtime_presence_leases` records,
+with migration and revocation metadata. Renewing an existing lease advances its
+generation without adding graph revisions or Cells.
+
+Renewal requires an authenticated device-proof session. A supplied
+`expected_generation` must be a positive integer, never a boolean, and match the
+current generation. When omitted, renewal uses the admitted binding's retained
+generation. Deleted leases must remain revoked through migration and reopening.
+The instance owner passes lease storage explicitly during restore; no global
+snapshot registry or runtime replacement of `CellStore` methods is required.
+
+Existing historical graph versions are preserved. This change does not compact
+the database or automatically reduce its file size. Graph-root identity and
+user-instance boundaries remain intact. Presence freshness does not grant gateway
+ownership or authority to execute Work.
+
+These are source behaviors, not proof of installed acceptance. Deployment must
+separately verify migration, authenticated renewal without graph growth, refusal
+of stale generations, and reopening against the installed instance while
+preserving its state. Do not report the heartbeat repair as deployed from source
+tests alone.
+
+Legacy replay checks still scan graph-held historical permits until a verified
+index migration exists. Each issue reads the registry once and decodes each
+admitted permit from the same snapshot; it no longer re-reads the whole registry
+for every permit. The normal permit reader still requires registration. This
+reduces the legacy scan from quadratic to linear; it does not claim indexed
+legacy lookup or installed save latency acceptance.
+
+### CDE recovery lifecycle
+
+Owned presence storage remains available until transport and workers drain, then
+closes before recovery reservation. Both operational stores retain their handle
+and propagate a close failure. Owned CDE storage closes on constructor failure
+and normal shutdown. Final
+recovery closes the quiesced auxiliary connection before reserving the primary
+SQLite graph exclusively; leaving that second connection open blocked recovery
+in a real fresh-instance check. Primary graph/content handles and fences remain
+retained on preservation failure. A failed CDE close propagates and retains its
+handle for explicit retry; it does not report success or detach the handle.
+
+The fresh-instance start/final-recovery/verified-manifest/closed-handle check
+passes in source. This does not establish installed acceptance or legacy-history
+migration. The older recovery fixture currently fails while attempting to create
+legacy graph conversation content and is not counted as passing coverage.
+
 ## Primary Windows References
 
 - Microsoft TaskSettings:

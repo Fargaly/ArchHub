@@ -770,7 +770,6 @@ _cloud_publish_thread.start()
 _active_runtime = (
     Path(os.environ["LOCALAPPDATA"]) / "ArchHub" / "active-universal-runtime.json"
 )
-_previous_active = None
 _announced_active = None
 if os.environ.get("ARCHHUB_TEST_STATE_DIR"):
     # A verification run opens its OWN graph in its own state directory.
@@ -780,18 +779,14 @@ if os.environ.get("ARCHHUB_TEST_STATE_DIR"):
     print("  runtime    : not announced (verification run keeps the "
           "machine binding)", flush=True)
 else:
+    # Whatever an earlier launch left here is NOT kept to be put back at exit:
+    # restoring it resurrected an older "active" owner with a dead process.
+    from nodelang import runtime_announcement
     try:
-        _active_runtime.parent.mkdir(parents=True, exist_ok=True)
-        _previous_active = (
-            _active_runtime.read_bytes() if _active_runtime.is_file() else None
-        )
-        _announcement = descriptor_path.read_bytes()
-        _active_runtime.write_bytes(_announcement)
-        _announced_active = _announcement
+        _announced_active = runtime_announcement.announce(_active_runtime, descriptor_path)
         print("  runtime    : announced as the machine's active universal "
               "runtime", flush=True)
-    except OSError as _refusal:
-        _previous_active = None
+    except (OSError, ValueError) as _refusal:
         print("  runtime    : could not announce (%s)" % _refusal, flush=True)
 
 
@@ -1688,23 +1683,13 @@ def _finish_application_shutdown():
     # also have been selected since this launch; leave its selection untouched.
     if _announced_active is None:
         return True
+    # The announcement follows this runtime's own final record ("stopped" after
+    # server.close()) if it still names this runtime; nothing older returns.
     try:
-        selected = _active_runtime.read_bytes()
-    except FileNotFoundError:
-        return True
+        from nodelang import runtime_announcement
+        runtime_announcement.release(_announced_active)
     except OSError as refusal:
-        print("  shutdown   : INCOMPLETE (descriptor read: %s)"
-              % type(refusal).__name__, flush=True)
-        return False
-    if selected != _announced_active:
-        return True
-    try:
-        if _previous_active is None:
-            _active_runtime.unlink(missing_ok=True)
-        else:
-            _active_runtime.write_bytes(_previous_active)
-    except OSError as refusal:
-        print("  shutdown   : INCOMPLETE (descriptor restore: %s)"
+        print("  shutdown   : INCOMPLETE (announcement release: %s)"
               % type(refusal).__name__, flush=True)
         return False
     return True

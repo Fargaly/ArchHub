@@ -219,58 +219,67 @@ def test_incomplete_shutdown_retains_descriptor_and_never_closes_live_journal(ca
         _baboom_attachment=SimpleNamespace(shutdown=blocked),
         server=SimpleNamespace(close=lambda: actions.append("close")),
         _active_runtime=SimpleNamespace(unlink=lambda **kw: actions.append("unlink")),
-        _previous_active=None,
+        _announced_active=None,
     )
     assert ns["_finish_application_shutdown"]() is False
     assert actions == []
     assert "INCOMPLETE" in capsys.readouterr().out
 
 
-def test_successful_shutdown_quiesces_before_restoring_descriptor_and_closing():
+def _announced(tmp_path, announced_id, current_id, owner_id="this"):
+    """An announcement file naming ``current_id``; this runtime's owner record, now stopped."""
+    from nodelang.runtime_announcement import Announcement
+    owner = tmp_path / "runtime-descriptor.json"
+    owner.write_text('{"runtime_id": "%s", "status": "stopped"}' % owner_id)
+    machine = tmp_path / "active-universal-runtime.json"
+    machine.write_text('{"runtime_id": "%s", "status": "active"}' % current_id)
+    announcement = None if announced_id is None else Announcement(machine, owner, announced_id)
+    return machine, owner, announcement
+
+
+def test_successful_shutdown_quiesces_before_releasing_announcement_and_closing(tmp_path):
     actions = []
+    machine, owner, announcement = _announced(tmp_path, "this", "this")
     ns = launcher_names(
         "_finish_application_shutdown", _baboom_stop=threading.Event(),
         _baboom_attachment=SimpleNamespace(shutdown=lambda: actions.append("quiesce")),
         server=SimpleNamespace(close=lambda: actions.append("close")),
-        _active_runtime=SimpleNamespace(read_bytes=lambda: b"this runtime", write_bytes=lambda data: actions.append(data)),
-        _announced_active=b"this runtime",
-        _previous_active=b"prior descriptor",
+        _active_runtime=machine, _announced_active=announcement,
     )
     assert ns["_finish_application_shutdown"]() is True
-    assert actions == ["quiesce", "close", b"prior descriptor"]
+    assert actions == ["quiesce", "close"]
+    # The announcement now carries this runtime's own final ("stopped") record;
+    # nothing older is restored.
+    assert machine.read_bytes() == owner.read_bytes()
 
 
-@pytest.mark.parametrize("announced,current", [(None, b"founder runtime"), (b"this runtime", b"new selection")])
-def test_shutdown_preserves_an_unowned_machine_runtime_binding(announced, current):
+@pytest.mark.parametrize("announced,current", [(None, "founder runtime"), ("this", "new selection")])
+def test_shutdown_preserves_an_unowned_machine_runtime_binding(tmp_path, announced, current):
     actions = []
+    machine, _owner, announcement = _announced(tmp_path, announced, current)
+    before = machine.read_bytes()
     ns = launcher_names(
         "_finish_application_shutdown", _baboom_stop=threading.Event(),
         _baboom_attachment=SimpleNamespace(shutdown=lambda: None),
         server=SimpleNamespace(close=lambda: actions.append("close")),
-        _active_runtime=SimpleNamespace(read_bytes=lambda: current,
-                                       unlink=lambda **kw: pytest.fail("unowned descriptor removed"),
-                                       write_bytes=lambda raw: pytest.fail("unowned descriptor overwritten")),
-        _previous_active=None, _announced_active=announced,
+        _active_runtime=machine, _announced_active=announcement,
     )
     assert ns["_finish_application_shutdown"]() is True
-    assert actions == ["close"]
+    assert actions == ["close"] and machine.read_bytes() == before
 
 
-def test_descriptor_restore_failure_is_not_reported_as_clean_shutdown(capsys):
+def test_announcement_release_failure_is_not_reported_as_clean_shutdown(tmp_path, capsys):
     actions = []
-
-    def cannot_restore(raw):
-        raise PermissionError("descriptor locked")
-
+    machine, owner, announcement = _announced(tmp_path, "this", "this")
+    owner.unlink()  # this runtime's final record cannot be read
     ns = launcher_names(
         "_finish_application_shutdown", _baboom_stop=threading.Event(),
         _baboom_attachment=SimpleNamespace(shutdown=lambda: None),
         server=SimpleNamespace(close=lambda: actions.append("close")),
-        _active_runtime=SimpleNamespace(read_bytes=lambda: b"this runtime", write_bytes=cannot_restore),
-        _previous_active=b"prior runtime", _announced_active=b"this runtime",
+        _active_runtime=machine, _announced_active=announcement,
     )
     assert ns["_finish_application_shutdown"]() is False
-    assert actions == ["close"] and "descriptor restore" in capsys.readouterr().out
+    assert actions == ["close"] and "announcement release" in capsys.readouterr().out
 
 
 # Persistent startup setting: Studio Settings -> graph -> next launch.

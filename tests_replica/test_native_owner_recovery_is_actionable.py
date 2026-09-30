@@ -387,3 +387,45 @@ def test_a_minimal_disclosure_page_never_stops_on_receipts_it_hides(world):
     assert read["binding_matches_caller"] is None and read["effects"]["disclosure"] == "minimal"
     assert [row["permit"] for row in read["effects"]["pending_permits"]] == [mine]
     assert read["effects"]["truncated"] is False and read["effects"]["receipt_references"] == []
+
+def test_an_application_restart_needs_no_manual_step_for_the_same_actor(world):
+    """Live 717, 2026-09-30: after every ArchHub restart or update every agent
+    stopped until someone called native.owner_rebind by hand. The next tool call
+    now continues the same actor itself, once per new owner, and then runs."""
+    owner, control = world.owner(EXTERNAL)
+    actor = owner.owner_status()["agent_session"]
+    start = owner.owner_status()["generation"]
+    for n in range(2):
+        world.restart()
+        # No owner_rebind, no recover: the next ordinary tool call just works.
+        sent = control.call("send_message", {"target": actor, "message": "after restart %d" % n,
+                                             "idempotency_key": "court-auto-%d" % n})
+        assert sent["ok"] is True
+        status = owner.owner_status()
+        assert (status["state"], status["agent_session"], status["recovery_required"]) == (
+            "bound", actor, False)
+        assert status["generation"] == start + n + 1
+    # Exactly one conditional continuation per restart, never a new enrollment.
+    assert world.bind_calls == [(EXTERNAL, None), (EXTERNAL, actor), (EXTERNAL, actor)]
+    assert _live_capabilities(world, actor) == 1
+    read = _messages(control.call("read_messages", {"limit": 20}))
+    assert read.count("after restart 0") == 1 and read.count("after restart 1") == 1
+
+
+def test_an_automatic_continuation_is_refused_by_a_pending_permit_and_not_retried(world):
+    """Uncertain effects still gate: the refusal names the settle step, the
+    attempt is retained as a manual rebind would retain it, and the next call
+    does not try again against the same owner."""
+    owner, control = world.owner(EXTERNAL)
+    actor = owner.owner_status()["agent_session"]
+    _stale(world, actor, name="717-auto-blocked")
+    world.restart()
+    # A write goes through the bound owner (a read may use the read-only inbox path).
+    with pytest.raises(MachineTransportError, match="effect reconciliation"):
+        control.call("send_message", {"target": actor, "message": "blocked", "idempotency_key": "court-blk-1"})
+    sent = list(world.bind_calls)
+    status = owner.owner_status()
+    assert status["state"] == "uncertain" and status["rebind_pending"] is True
+    with pytest.raises(MachineTransportError):
+        control.call("send_message", {"target": actor, "message": "blocked", "idempotency_key": "court-blk-2"})
+    assert world.bind_calls == sent  # no second automatic attempt on the same owner

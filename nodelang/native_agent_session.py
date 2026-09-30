@@ -213,6 +213,7 @@ class NativeAgentSession:
         self._generation = 0
         self._active_calls = 0
         self._continued = False
+        self._auto_continued_for = None  # owner fingerprint already continued into automatically
         self._rebind_candidate = None
         self._aimed_owner = None
         self._hook_rebind_guard = None
@@ -833,6 +834,45 @@ class NativeAgentSession:
             raise MachineTransportError("native agent client or owner binding changed")
         return client
 
+    def _continue_after_owner_change(self):
+        """Continue the same actor on a restarted owner before a tool call runs.
+
+        An application restart replaces the owner process, so the capability
+        this session held is gone although the actor is durable in the graph.
+        Before, every agent stopped until someone called native.owner_rebind by
+        hand (live 717, 2026-09-30). Here the owner runs that exact conditional
+        continuation itself, once per new owner: same actor, same instance,
+        never a new enrollment. The tool call runs afterwards; nothing is
+        replayed. Anything uncertain (a retained attempt, an active call, an
+        unexpired lease on the same owner, a different instance) is left to the
+        explicit recovery tools, and a refusal leaves the attempt retained
+        exactly as a manual rebind would.
+
+        The idle lease keeper enters through bound_client too, so after a
+        restart the continuation may happen on the keeper thread with no tool
+        call; a refusal there leaves the owner "uncertain" and the next call
+        reports it. The latch is per owner fingerprint: one failed attempt,
+        even a transient one, leaves only the manual rebind for that owner.
+        """
+        if (self._state != "bound" or self._rebind_candidate is not None
+                or self._active_calls or self._descriptor is None):
+            return
+        try:
+            current = self._read_owner()
+        except (OSError, ValueError, MachineTransportError):
+            return  # no active owner yet: the call reports it
+        old = self._descriptor
+        if current == old and self._lease_expired() is not True:
+            return
+        if self._instance_identity(current) != self._instance_identity(old):
+            return  # another application or database is never continued into
+        target = self._owner_fingerprint(current)
+        if self._auto_continued_for == target:
+            return  # at most one automatic continuation per owner
+        self._auto_continued_for = target
+        self.rebind_owner(expected_old_owner=self._owner_fingerprint(old),
+                          expected_new_owner=target)
+
     def require_client(self) -> UniversalRuntimeClient:
         """Return the same guarded client without performing enrollment."""
         with self.bound_client() as client:
@@ -848,6 +888,7 @@ class NativeAgentSession:
         with self._lock:
             if self._client is None:
                 raise MachineTransportError("native agent attachment has no bound client")
+            self._continue_after_owner_change()
             with self._client._request_lock:
                 client = self._require_bound()
                 self._active_calls += 1

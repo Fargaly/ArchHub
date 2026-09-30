@@ -5,6 +5,14 @@
   const fail = message => { throw new Error(message); };
   const text = value => typeof value === 'string' && value.length > 0;
   const revision = value => Number.isSafeInteger(value) && value >= 0;
+  // The clean canvas sends a wire's properties as an object ({connection, reason,
+  // relation_kind}); labelled rows are still read as before. Both render.
+  const wireParameters = properties => Array.isArray(properties)
+    ? properties.map(row => ({k: row.label, v: row.value, rel: row.relation}))
+    : properties && typeof properties === 'object'
+      ? Object.entries(properties).map(([label, value]) =>
+        ({k: label, v: typeof value === 'string' ? value : JSON.stringify(value)}))
+      : [];
 
   function create({get, post, uuid = () => global.crypto.randomUUID(), pendingStorage,
       hash = async value => Array.from(new Uint8Array(await global.crypto.subtle.digest('SHA-256',
@@ -51,7 +59,7 @@
         nodeIds.has(wire.source) && nodeIds.has(wire.target)).map(wire => ({
           id: wire.id, from: [wire.source, wire.source_interface],
           to: [wire.target, wire.target_interface],
-          params: (wire.properties || []).map(row => ({k: row.label, v: row.value, rel: row.relation})),
+          params: wireParameters(wire.properties),
         }));
       const groups = new Map();
       for (const entry of canvas.catalog || []) {
@@ -91,7 +99,13 @@
         pageEpoch += 1; pageTarget = null; workshop = null;
       }
       if (canvas && canvas.root !== result.root) scopeEpoch += 1;
-      canvas = result;
+      // The clean canvas names the caller's own browser session in browser_sessions
+      // (clean_visual_projection.py); the Studio reads authorization.session, the
+      // desktop projection's name, and waited on "Loading your workspace" forever.
+      const sessions = result.authorization?.browser_sessions;
+      canvas = result.authorization && !text(result.authorization.session) && Array.isArray(sessions) &&
+        sessions.length === 1 && text(sessions[0]?.root)
+        ? {...result, authorization: {...result.authorization, session: sessions[0].root}} : result;
       project();
       return result;
     }
@@ -514,7 +528,9 @@
     const state = api.getSnapshot();
     global.ARCHHUB_LIVE = {graph: state.graph, library: state.library, hosts: [], connectors: [], memory: [], skills: [],
       sessions: [{id: state.canvas.root, title: state.canvas.scope?.current_label || 'Workspace',
-        file: 'Revision ' + state.canvas.revision, last: state.graph.nodes.length + ' nodes', state: 'ready'}]};
+        // A state the Chats panel knows (LM_STATE_META): 'ready' is not one, and
+        // opening Chats blanked the hosted Studio. A held workspace reads as saved.
+        file: 'Revision ' + state.canvas.revision, last: state.graph.nodes.length + ' nodes', state: 'idle'}]};
     return api;
   }
   global.ArchHubStudioAuthority = {create, boot};

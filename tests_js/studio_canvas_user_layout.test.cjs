@@ -102,7 +102,7 @@ const INTERNALS = [
 ];
 const MARKED = () => [...NODES().map(node => ({...node, application:false})), ...INTERNALS];
 
-async function mount({hold = null, systemView = false, nodes = NODES(), wires = []} = {}) {
+async function mount({hold = null, systemView = false, system = false, nodes = NODES(), wires = []} = {}) {
   const {JSDOM} = await import('jsdom');
   const React = require('react');
   const {createRoot} = require('react-dom/client');
@@ -140,7 +140,7 @@ async function mount({hold = null, systemView = false, nodes = NODES(), wires = 
     {loader:'jsx', format:'cjs'}).code, context);
   const reactRoot = createRoot(dom.window.document.getElementById('root'));
   const props = {focusId:null, setFocusId:() => {}, setLibraryOpen:() => {}, userNodes:[],
-    addNodeFromLibrary:() => {}, model:null};
+    addNodeFromLibrary:() => {}, model:null, system};
   const draw = async () => { await React.act(async () => reactRoot.render(React.createElement(context.NodeCanvas, props))); };
   await draw();
   const doc = dom.window.document;
@@ -269,32 +269,33 @@ test('frames are drawn per group around their cards', async () => {
   } finally { await view.close(); }
 });
 
-test('the canvas draws the user\'s cards; the application\'s are the founder\'s System view, by domain', async () => {
+test('the canvas draws the user\'s cards; the application\'s open only as the founder\'s System tab, by domain', async () => {
   const wires = [{id:'w1', from:['gm:domain:ui', 'o'], to:['app:agent-session:a', 'i']}];
+  const buttons = doc => [...doc.querySelectorAll('button')].map(b => b.textContent.trim());
+  const cards = view => [...view.doc.querySelectorAll('.lm-node[data-node-id]')].map(c => c.getAttribute('data-node-id')).sort();
   const member = await mount({systemView:false, nodes:MARKED(), wires});
   try {
-    const drawn = [...member.doc.querySelectorAll('.lm-node[data-node-id]')].map(c => c.getAttribute('data-node-id'));
-    assert.deepEqual(drawn.sort(), ['mine', 'one', 'three', 'two']);
-    assert.equal([...member.doc.querySelectorAll('button')].some(b => b.textContent === 'System view'), false,
-      'nobody but the founder is offered the System view');
+    assert.deepEqual(cards(member), ['mine', 'one', 'three', 'two']);
     assert.equal(member.doc.querySelector('details[data-no-pan] summary'), null,
       'a wire between hidden cards is not reported as undrawable');
   } finally { await member.close(); }
   const founder = await mount({systemView:true, nodes:MARKED(), wires});
   try {
-    const cards = () => [...founder.doc.querySelectorAll('.lm-node[data-node-id]')].map(c => c.getAttribute('data-node-id')).sort();
-    assert.deepEqual(cards(), ['mine', 'one', 'three', 'two'], 'the founder\'s canvas opens on his own cards');
-    const button = [...founder.doc.querySelectorAll('button')].find(b => b.textContent === 'System view');
-    assert.ok(button, 'the founder is offered the System view');
-    await founder.click(button);
-    assert.deepEqual(cards(), ['app:agent-session:a', 'gm:domain:ui']);
-    assert.deepEqual([...founder.doc.querySelectorAll('[data-canvas-frame]')].map(f => f.getAttribute('data-canvas-frame')).sort(),
-      ['Models & Agents', 'UI & Design System'], 'framed by domain');
-    assert.equal(founder.doc.querySelectorAll('.lm-wires path[stroke="transparent"]').length, 1, 'their wire is drawn with them');
-    const back = [...founder.doc.querySelectorAll('button')].find(b => b.textContent === 'My canvas');
-    await founder.click(back);
-    assert.deepEqual(cards(), ['mine', 'one', 'three', 'two']);
+    assert.deepEqual(cards(founder), ['mine', 'one', 'three', 'two'], 'the founder\'s session canvas holds his own cards');
+    assert.equal(buttons(founder.doc).some(t => /^(System view|System|My canvas)$/.test(t)), false,
+      'the system canvas is never entered from inside a session canvas');
   } finally { await founder.close(); }
+  const systemTab = await mount({systemView:true, system:true, nodes:MARKED(), wires});
+  try {
+    assert.deepEqual(cards(systemTab), ['app:agent-session:a', 'gm:domain:ui'], 'the System tab draws the application\'s parts');
+    assert.deepEqual([...systemTab.doc.querySelectorAll('[data-canvas-frame]')].map(f => f.getAttribute('data-canvas-frame')).sort(),
+      ['Models & Agents', 'UI & Design System'], 'framed by domain');
+    assert.equal(systemTab.doc.querySelectorAll('.lm-wires path[stroke="transparent"]').length, 1, 'their wire is drawn with them');
+  } finally { await systemTab.close(); }
+  const notFounder = await mount({systemView:false, system:true, nodes:MARKED(), wires});
+  try {
+    assert.deepEqual(cards(notFounder), ['mine', 'one', 'three', 'two'], 'without system_view the System view is never drawn');
+  } finally { await notFounder.close(); }
 });
 
 test('an empty canvas says it holds only what the user places', async () => {
@@ -302,6 +303,6 @@ test('an empty canvas says it holds only what the user places', async () => {
   try {
     const note = view.doc.querySelector('[role="note"]');
     assert.match(note.textContent, /This canvas holds only what you place on it\./);
-    assert.match(note.textContent, /System view/);
+    assert.match(note.textContent, /System tab/);
   } finally { await view.close(); }
 });

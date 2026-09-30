@@ -1332,7 +1332,9 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, openTab
         workshopUnavailable={workshopState?.canvas?.unavailable || ''}
         workshopModel={workshopState?.nativeWork?.model}
         setConversationRoot={root => updateView({conversationRoot:root, mode:'chat', target:''})}
-        setPickerOpen={setPickerOpen} setSettingsOpen={setSettingsOpen} onHome={onHome}/>
+        setPickerOpen={setPickerOpen} setSettingsOpen={setSettingsOpen} onHome={onHome}
+        systemAllowed={authorityState?.canvas?.authorization?.system_view === true &&
+          graph.nodes.some(node => node.application === true)}/>
       {mode === 'chat' ? (
         workshop && window.WorkshopView ? <window.WorkshopView key={JSON.stringify([session.id, workshopState.canvas.graph_id,
           workshopState.canvas.root, workshop.root])} state={workshopState} descriptor={workshop} target={target}
@@ -1347,7 +1349,7 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, openTab
         </>
       ) : (
         <>
-          <NodeCanvas key={JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas)])} focusId={focusId} setFocusId={setFocusId} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model}/>
+          <NodeCanvas key={JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas), mode === 'system'])} system={mode === 'system'} focusId={focusId} setFocusId={setFocusId} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model}/>
           <NodeRail node={focusNode} hiddenWork={!focusNode && authorityState?.canvas?.selection_hidden === true}
             workshopRoom={workshopModeRoom(workshops, workshop?.root || '')}
             onOpenWorkshop={() => chooseWorkshopMode('workshop', {mode, conversationRoot:workshop?.root || '', workshops, setMode,
@@ -2065,16 +2067,18 @@ const workshopUnavailableText = reason => (typeof reason === 'string' && reason.
 // Chat · Workshop · Canvas. The Workshop segment is the founder's way in (restored after 8cc3463d took it
 // out): Chat with the held room, else the general room, else the first; no room keeps it visible and
 // answers with the owner's reason (workshop_scope.unavailable).
-const workshopModeSegments = ({mode, conversationRoot = '', workshops = [], unavailable = ''}) => {
+// Founder only: "System" opens the application's own parts as their own view, never from inside a session canvas.
+const workshopModeSegments = ({mode, conversationRoot = '', workshops = [], unavailable = '', systemAllowed = false}) => {
   const room = workshopModeRoom(workshops, conversationRoot);
   const active = mode === 'chat' ? (conversationRoot ? 'workshop' : 'chat') : mode;
-  return [['chat', 'Chat'], ['workshop', 'Workshop'], ['canvas', 'Canvas']].map(([key, label]) => ({
+  return [['chat', 'Chat'], ['workshop', 'Workshop'], ['canvas', 'Canvas'], ...(systemAllowed ? [['system', 'System']] : [])].map(([key, label]) => ({
     key, label, active:active === key, disabled:false, unavailable:key === 'workshop' && !room,
     title:key === 'workshop' && !room ? workshopUnavailableText(unavailable) : undefined,
   }));
 };
 const chooseWorkshopMode = (key, {mode, conversationRoot = '', workshops = [], setMode, setConversationRoot,
   unavailable = '', onUnavailable}) => {
+  if (key === 'system') return setMode('system');
   if (key === 'canvas' || typeof setConversationRoot !== 'function') return setMode(key === 'canvas' ? 'canvas' : 'chat');
   const room = key === 'workshop' ? workshopModeRoom(workshops, conversationRoot) : '';
   if (key === 'workshop' && !room) {
@@ -2087,7 +2091,7 @@ const chooseWorkshopMode = (key, {mode, conversationRoot = '', workshops = [], s
 };
 
 // Workspace header uses workspace tabs and one compact conversation menu.
-const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode, setPickerOpen, setSettingsOpen, onHome,
+const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode, setPickerOpen, setSettingsOpen, onHome, systemAllowed = false,
   workshops = [], conversationRoot = '', setConversationRoot, workshopModel, conversationNotice = '',
   workshopUnavailable = '' }) => {
   const [workshopRefusal, setWorkshopRefusal] = React.useState('');
@@ -2141,7 +2145,7 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode
       display:'flex', alignItems:'center', gap:1, padding:2, background:LM.bg,
       border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, flexShrink:0,
     }}>
-      {workshopModeSegments({mode, conversationRoot, workshops, unavailable:workshopUnavailable}).map(segment => (
+      {workshopModeSegments({mode, conversationRoot, workshops, unavailable:workshopUnavailable, systemAllowed}).map(segment => (
         <button key={segment.key} type="button" disabled={segment.disabled} title={segment.title} aria-pressed={segment.active}
           aria-disabled={segment.unavailable ? 'true' : undefined}
           onClick={() => chooseWorkshopMode(segment.key, {mode, conversationRoot, workshops, setMode, setConversationRoot,
@@ -2467,7 +2471,7 @@ const writeCanvasLayoutTrace = (scope, burst) => {
   } catch (error) { /* a session with no storage still draws and still saves the canvas */ }
 };
 
-const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNodeFromLibrary, model }) => {
+const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNodeFromLibrary, model, system = false }) => {
   const authorityState = useStudioProjection();
   const projectedGraph = authorityState?.graph || LM_GRAPH;
   // The owner marks every top-level card with who placed it (graph shape, not a list of names).
@@ -2475,9 +2479,8 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   // registries, agent sessions -- are the founder's System view, framed by domain. Only the
   // founder's view holds them, and only the founder is offered the switch.
   const systemViewAllowed = authorityState?.canvas?.authorization?.system_view === true;
-  const [systemMode, setSystemMode] = React.useState(false);
   const hasApplicationNodes = projectedGraph.nodes.some(node => node.application === true);
-  const showingSystem = systemMode && systemViewAllowed && hasApplicationNodes;
+  const showingSystem = system && systemViewAllowed && hasApplicationNodes;
   const graph = React.useMemo(() => {
     const nodes = projectedGraph.nodes.filter(node =>
       typeof node.application !== 'boolean' || node.application === showingSystem);
@@ -3497,13 +3500,8 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         transform:'translate(-50%, -50%)', margin:0, maxWidth:360, textAlign:'center', fontSize:12.5,
         lineHeight:1.5, color:LM.inkSoft}}>
         This canvas holds only what you place on it. Add a node from the library (⌘L).
-        {systemViewAllowed && hasApplicationNodes ? " The application's own parts are in the System view." : ''}
+        {systemViewAllowed && hasApplicationNodes ? " The application's own parts are under the System tab." : ''}
       </p>}
-      {systemViewAllowed && hasApplicationNodes && <button data-no-pan aria-pressed={showingSystem}
-        onClick={() => { setSelectedIds([]); setSystemMode(value => !value); }}
-        title={showingSystem ? 'Back to the cards you placed' : 'The application\u2019s own parts, framed by domain (founder only)'}
-        style={{...smallBtn(), position:'absolute', left:14, bottom:14, zIndex:6}}>
-        {showingSystem ? 'My canvas' : 'System view'}</button>}
       {/* Below the minimap (MiniMap: right 14, top 14, 96 tall), never over it. The design canvas draws no status chip:
           only a save in flight, a refusal or a half-made wire draws one. Refresh is also in a node's own menu. */}
       {(layoutError || authorityState?.error || wireError || layoutBusy || burstPending || authorityState?.pending || wireStart || unwrittenLayout || menuBusy || menuNotice) &&

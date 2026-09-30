@@ -48,6 +48,18 @@ test('Workshop is Chat with the held room, else the general room, else the first
   assert.deepEqual(calls, [['root', 'general-a'], ['root', 'child-a'], ['root', ''], ['mode', 'canvas'], ['root', 'only-a']]);
 });
 
+test('the founder\'s header adds a System tab that opens the system view; nobody else sees it', () => {
+  const {segments, choose} = modeHarness();
+  const labels = view => segments(view).map(row => `${row.label}${row.active ? '*' : ''}`).join(' ');
+  assert.equal(labels({mode:'chat', conversationRoot:'', workshops:rooms}), 'Chat* Workshop Canvas');
+  assert.equal(labels({mode:'chat', conversationRoot:'', workshops:rooms, systemAllowed:true}), 'Chat* Workshop Canvas System');
+  assert.equal(labels({mode:'system', conversationRoot:'', workshops:rooms, systemAllowed:true}), 'Chat Workshop Canvas System*');
+  const calls = [];
+  choose('system', {mode:'canvas', conversationRoot:'', workshops:rooms,
+    setMode:value => calls.push(['mode', value]), setConversationRoot:value => calls.push(['root', value])});
+  assert.deepEqual(calls, [['mode', 'system']]);
+});
+
 test('studio-workshop.jsx ships as its own Studio source, loaded after brain-model.jsx and before studio-lm.jsx everywhere', () => {
   assert.ok(fs.existsSync(workshopPath), 'nodelang/studio/studio-workshop.jsx is shipped');
   const names = read('packaging/compile_studio.cjs').match(/const names = \[([\s\S]*?)\];/)[1];

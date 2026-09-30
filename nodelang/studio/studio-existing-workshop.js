@@ -274,13 +274,16 @@
       return {interaction:binding.interaction, control, event:binding.event, revision:value.revision,
         projection_mode:binding.acknowledgement_mode, ...(facts.length ? {event_facts:facts} : {})};
     };
+    // A refused start is a rejected promise like any other refusal, never a synchronous throw: callers
+    // chain .catch() on the result, and a throw escaped them as an uncaught page error.
+    const refuse = text => Promise.reject(new Error(text));
     const runTopology = (key, task) => {
-      if (conversationWrite) fail('Wait for conversation creation to finish before editing the canvas.');
+      if (conversationWrite) return refuse('Wait for conversation creation to finish before editing the canvas.');
       if (topologyWrite) {
         if (topologyWrite.key === key) return topologyWrite.promise;
-        fail('Wait for the current connection operation to finish.');
+        return refuse('Wait for the current connection operation to finish.');
       }
-      if (!topologyCanvas || topologyRequiresRefresh) fail('Read the canvas before editing connections.');
+      if (!topologyCanvas || topologyRequiresRefresh) return refuse('Read the canvas before editing connections.');
       const identity = topologyIdentity(topologyCanvas);
       let submitted = false;
       topologyPending = true; topologyError = ''; publish();

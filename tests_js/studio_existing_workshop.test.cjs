@@ -1740,3 +1740,12 @@ test('local social removal checks exact identity and never claims provider revoc
     await assert.rejects(bad.removeLocalSocialAccount(body),/could not be confirmed/);
   }
 });
+
+test('a refused canvas connection edit is a rejected promise, never a synchronous throw that escapes .catch()', async () => {
+  const {api} = setup();
+  let result;
+  assert.doesNotThrow(() => { result = api.disconnectTopology('wire-a'); }, 'the refusal does not escape the caller');
+  await assert.rejects(result, /Read the canvas before editing connections/);
+  assert.doesNotThrow(() => { result = api.connectTopology('a', 'out', 'b', 'in'); });
+  await assert.rejects(result, /Read the canvas before editing connections/);
+});

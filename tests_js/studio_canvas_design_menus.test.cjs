@@ -91,6 +91,7 @@ async function mount({focusId = null, history = null, nodes = NODES(), wires = W
       return {ok:true};
     },
     disconnectTopology:async rootId => { calls.push(['unwire', rootId]); return {ok:true}; },
+    composeTopology:async (operation, roots) => { calls.push(['compose', operation, [...roots]]); return {ok:true}; },
     refreshTopologyCanvas:async () => {
       if (history?.pending) {
         const graph = history.after(history.pending, snapshot.graph);
@@ -210,6 +211,43 @@ test('M3: Disconnect all and a wire right-click cut through the existing unwire 
     await view.click(view.row('Cut this wire'));
     await view.settle(5);
     assert.deepEqual(view.calls, [['unwire', 'w-bc']]);
+  } finally { await view.close(); }
+});
+
+test('M3b: a picked wire is cut with Delete or Backspace through the same unwire route', async () => {
+  for (const key of ['Delete', 'Backspace']) {
+    const view = await mount({focusId:'w-bc'});
+    try {
+      const wire = view.doc.querySelector('path[data-wire-id="w-bc"]');
+      await view.click(wire);
+      const pressed = await view.key(view.region(), {key});
+      assert.equal(pressed.defaultPrevented, true, key + ' is taken by the canvas');
+      await view.settle(5);
+      assert.deepEqual(view.calls.filter(call => call[0] === 'unwire'), [['unwire', 'w-bc']], key + ' cuts the picked wire');
+    } finally { await view.close(); }
+  }
+  const idle = await mount();
+  try {
+    await idle.key(idle.region(), {key:'Delete'});
+    await idle.settle(5);
+    assert.deepEqual(idle.calls.filter(call => call[0] === 'unwire'), [], 'with no wire picked, Delete cuts nothing');
+  } finally { await idle.close(); }
+});
+
+test('M3c: with two or more cards selected the node menu leads with the design Group selection, which runs the graph Group', async () => {
+  const view = await mount();
+  try {
+    await view.rightClick(view.card('b'));
+    assert.equal(view.row('Group selection → grand node'), undefined, 'one selected card offers no grouping');
+    await view.act(() => { view.win.document.body.click(); });
+    await view.click(view.card('a'));
+    await view.mouse(view.card('b'), 'click', {shiftKey:true});
+    await view.rightClick(view.card('b'));
+    assert.equal(view.rows()[0].getAttribute('aria-label'), 'Group selection → grand node', 'the design puts grouping first');
+    await view.click(view.row('Group selection → grand node'));
+    await view.settle(5);
+    assert.deepEqual(view.calls.filter(call => call[0] === 'compose'), [['compose', 'group', ['a', 'b']]]);
+    assert.match(view.toast(), /Grouped 2 nodes into one node/);
   } finally { await view.close(); }
 });
 

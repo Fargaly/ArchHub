@@ -194,3 +194,18 @@ test('socket labels keep the design type; a connectable port wires through the t
     assert.deepEqual(view.connected, [['work', 'out-result', 'sink', 'in-a']], 'output then input asks the transport to connect them');
   } finally { await view.close(); }
 });
+
+test('a wire can start at either end: input then output connects the same way, an incompatible output says so', async () => {
+  const view = await mount();
+  try {
+    const doc = await view.draw();
+    await view.click(socket(doc, 'sink', 'Connect input a'));
+    assert.match(doc.querySelector('[role="status"]').textContent, /Choose an output for a/);
+    await view.click(socket(doc, 'work', 'Connect output result'));
+    assert.deepEqual(view.connected, [['work', 'out-result', 'sink', 'in-a']], 'input then output asks the transport for the same wire');
+    await view.click(socket(doc, 'sink', 'Connect input b'));
+    await view.click(socket(doc, 'work', 'Connect output result'));
+    assert.equal(view.connected.length, 1, 'an input the output does not offer is never sent');
+    assert.match(doc.querySelector('[role="alert"]').textContent, /This output cannot feed b/);
+  } finally { await view.close(); }
+});

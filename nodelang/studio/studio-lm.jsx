@@ -2505,12 +2505,21 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       if (normal && (!port.connect_control || !port.connect_choices?.length)) {
         setWireError('This output has no current compatible connection choices.'); return;
       }
-      setWireStart({root, port}); return;
+      if (!wireStart?.reverse) { setWireStart({root, port}); return; }
+      // An input chosen first: this output completes the wire when that input is one of its choices.
+      if (normal && !port.connect_choices.some(choice => choice.id === wireStart.port.id && (choice.owner ?? wireStart.root) === wireStart.root)) {
+        setWireError('This output cannot feed ' + wireStart.port.label + '.'); return;
+      }
+      return joinWire(root, port, wireStart.root, wireStart.port);
     }
-    if (!wireStart) { setWireError('Choose an output first, then a compatible input.'); return; }
+    // Either end may be chosen first: an input with no output waiting waits for its output.
+    if (!wireStart || wireStart.reverse) { setWireStart({root, port, reverse:true}); return; }
+    return joinWire(wireStart.root, wireStart.port, root, port);
+  };
+  const joinWire = async (source, output, target, input) => {
     try {
-      if (authority) await authority.connect(wireStart.root, wireStart.port.id, root, port.id);
-      else await normal.connectTopology(wireStart.root, wireStart.port.id, root, port.id);
+      if (authority) await authority.connect(source, output.id, target, input.id);
+      else await normal.connectTopology(source, output.id, target, input.id);
       setWireStart(null);
     } catch (error) { setWireError(error.message || 'The connection was refused.'); }
   };
@@ -2840,6 +2849,12 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       if (ARROWS[e.key]) {
         const step = e.shiftKey ? 1 : CANVAS_GRID;
         if (nudgeSelection(ARROWS[e.key][0] * step, ARROWS[e.key][1] * step)) e.preventDefault();
+        return;
+      }
+      // Delete or Backspace on a picked wire cuts it, the same route as the wire's "Cut this wire".
+      if ((e.key === 'Delete' || e.key === 'Backspace') && focusWireIdx >= 0 && graph.wires[focusWireIdx]?.id && cutWire) {
+        e.preventDefault();
+        if (!menuBusy && !layoutNeedsRefresh) menuDisconnect([graph.wires[focusWireIdx].id]);
         return;
       }
       if (!e.shiftKey && String(e.key).toLowerCase() === 'f') {
@@ -3353,7 +3368,13 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   const canOpenInside = !!menuNode?.openable && (authority ? true :
     typeof window.ARCHHUB_SCOPE_OPEN === 'function' && Array.isArray(openScope?.trail) && openScope.trail.length > 0);
   const canDuplicate = !authority && !!menuNode?.engine && typeof window.ARCHHUB_NODE_CREATE === 'function';
+  // Design ContextMenu: with two or more cards selected, the node menu leads with grouping them into one
+  // grand node, the same graph Group a frame's collapse runs; wires crossing the selection's edge then end
+  // on the group's boundary ports.
   const nodeMenuItems = [
+    ...(selected.size >= 2 ? [{i:'⊞', t:'Group selection → grand node', accent:true,
+      action:() => composeGroup('group', [...selected], 'Grouped ' + selected.size + ' nodes into one node.'),
+      disabled:!composer || blocked || menuBusy, why:!composer ? 'Grouping needs the live graph' : menuWhyBusy}, {sep:true}] : []),
     {i:'▶', t:'Run graph', action:() => menuRun(), disabled:typeof window.ARCHHUB_RUN !== 'function' || menuBusy,
       why:menuBusy ? menuWhyBusy : 'Running is not available in this connection'},
     {i:'◉', t:'Add watcher', disabled:true, why:'Watchers are not available in this build'},
@@ -3531,7 +3552,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             authorityState?.pending ? 'Saving…' : unwrittenLayout ?
               'Positions moved in the last session were never confirmed (' +
               Object.keys(unwrittenLayout.next).length + '). Move them again to save them.' :
-            'Choose an input for ' + wireStart.port.label)}
+            (wireStart.reverse ? 'Choose an output for ' : 'Choose an input for ') + wireStart.port.label)}
         </span>
         {wireStart && <button disabled={blocked} onClick={() => setWireStart(null)} title="Cancel wire" aria-label="Cancel wire" style={toolBtn()}>✕</button>}
         <button disabled={layoutBusy || !!authorityState?.pending || (!authority && !normal)} onClick={refreshCanvas}

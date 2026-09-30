@@ -245,6 +245,18 @@ def build_server(*, session=None, workshop_task: str | None = None):
         return owner.recover_rebind_owner(expected_failed_owner=expected_failed_owner,
                                          expected_current_owner=expected_current_owner)
 
+    if os.environ.get("ARCHHUB_NATIVE_MCP_LAUNCHER") == "1":
+        @server.tool(name="native.handoff_release")
+        def handoff_release() -> dict[str, object]:
+            """The stable launcher's own handoff; the agent never sees it (native_mcp_launcher).
+
+            Releases this worker's capability, confirmed by the application, so the worker
+            running newly installed code can continue the same actor. Refused, like any
+            release, during a call, a rebind or an uncertain attempt.
+            """
+            result = owner.close()
+            return {**result, "agent_session": result.get("agent_session")}
+
     @server.tool(name="native.owner_inspect_effects")
     def owner_inspect_effects(expected_owner: str, cursor: str | None = None) -> dict[str, object]:
         """Read this original actor's pending permit evidence; no settlement or grant."""
@@ -513,4 +525,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    from .native_mcp_launcher import run_entry
+    # The launched process stays the stable host and runs main() as its worker,
+    # so newly installed code takes over the same actor without a reconnect.
+    run_entry("nodelang.native_agent_mcp", main)

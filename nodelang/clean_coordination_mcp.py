@@ -478,7 +478,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    from .native_mcp_launcher import run_entry
+    # Stay the stable host; run this same entry's main() as the launcher's worker.
+    run_entry("nodelang.clean_coordination_mcp", main)
 
 
 __all__ = [

@@ -65,8 +65,12 @@ _RESTORE_RELATION_PREFETCH: ContextVar[bool] = ContextVar(
 # (boot-profile.log 2026-09-14: restore 80.2%, read_relation 79.7% of samples).
 # Its reuse is retained under a hard ceiling. Eviction only forgets reuse: a
 # miss re-walks and re-validates the chain exactly as it would with no scope.
-RESTORE_RELATION_PROJECTION_MAX_BYTES = 32 * 1024 * 1024
-RESTORE_RELATION_PROJECTION_MAX_ENTRIES = 8192
+# The ceiling must hold one whole restore: at 8,192 entries / 32 MiB a fixture
+# reopen (~13.3k relations) evicted and re-walked 64% of its walks (37,228 for
+# 13,343 keys); at 32,768 / 128 MiB it walks 18,428, peaks at 83.8 MiB, and
+# the scope -- restore only -- lets all of it go when restore returns.
+RESTORE_RELATION_PROJECTION_MAX_BYTES = 128 * 1024 * 1024
+RESTORE_RELATION_PROJECTION_MAX_ENTRIES = 32768
 _BOUNDED_PROJECTION_MAX_SEALS = 256
 
 

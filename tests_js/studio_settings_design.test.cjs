@@ -13,8 +13,9 @@ const root = path.resolve(__dirname, '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const seedText = read('nodelang/universal_presentation_seed.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
 const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)].map(match => [match[1], match[2]]));
-const DESIGN_TABS = ['Account', 'Brain', 'Team', 'Profile', 'Permissions', 'Hosts', 'Providers', 'Models', 'Theme',
-  'Shortcuts', 'Storage', 'About'];
+// Workspaces (274e4f2a) registers the folders the graph governs; it sits after Permissions.
+const DESIGN_TABS = ['Account', 'Brain', 'Team', 'Profile', 'Permissions', 'Workspaces', 'Hosts', 'Providers', 'Models',
+  'Theme', 'Shortcuts', 'Storage', 'About'];
 // Shaped as model_router.provider_rows() emits them. No row carries a key.
 const PROVIDERS = [
   {id:'openrouter', name:'OpenRouter', state:'keyed', source:'secrets store', sets:'OPENROUTER_API_KEY'},
@@ -43,7 +44,10 @@ async function openSettings({account = null} = {}) {
   win.ARCHHUB_BRAIN_FORGET = async () => ({ok:true});
   const listeners = new Set();
   const snapshot = {canvas:null, workshops:[], applicationUpdate:{state:'idle', current_build:'20260916-2130-e733a13'},
-    theme:{configuration:{theme:{...seed}, binding_mode:'personal-wip', state:'WIP', history:[], personal_wip_heads:['head-a'],
+    theme:{configuration:{theme:{...seed},
+      // As the canvas projection sends it (universal_application._project_offered_themes).
+      design_system:{themes:{offered:[{name:'forge', label:'Default dark warm surface'}], active:'forge'}},
+      binding_mode:'personal-wip', state:'WIP', history:[], personal_wip_heads:['head-a'],
       baboom_startup:{value:'on', source:'default', revision:null, available:true, control:'c', event_fact_input:'i'}}, pending:false, error:''}};
   win.ARCHHUB_EXISTING_WORKSHOP = {
     getSnapshot:() => snapshot,
@@ -118,18 +122,24 @@ test('Providers draws the registry in the design rows: masked key, state pill, m
   } finally { s.close(); }
 });
 
-test('Theme: the Dark card is selected, and the saved-theme editor lives inside the accent row change', async () => {
+test('Theme: only the offered themes are cards, the active one is marked, and the saved-theme editor lives inside the accent row change', async () => {
+  // 8623a579: Settings > Theme draws one card per theme the graph offers
+  // (configuration.design_system.themes), not three fixed System/Dark/Light cards.
   const s = await openSettings();
   try {
     const panel = await s.tab('Theme');
-    const card = name => [...panel.querySelectorAll('button')].find(button => button.textContent.startsWith(name + ' ') || button.textContent.startsWith(name));
-    const [system, dark, light] = ['System', 'Dark', 'Light'].map(card);
-    assert.ok(system && dark && light, 'the three design theme cards are drawn');
-    assert.notEqual(dark.style.borderColor, light.style.borderColor, 'the Dark card carries the selected border');
-    assert.equal(system.style.borderColor, light.style.borderColor, 'only one card is selected');
-    assert.equal(!!panel.querySelector('[aria-label="Refresh Personal Settings"]'), false, 'no status strip above the design cards');
+    const cards = [...panel.querySelectorAll('[data-theme-cards] button[data-theme]')];
+    assert.deepEqual(cards.map(card => card.dataset.theme), ['forge'], 'one card per offered theme');
+    assert.equal(cards[0].getAttribute('aria-pressed'), 'true', 'the active theme is marked');
+    assert.equal(cards[0].disabled, true, 'no switch route exists yet, so no card is pressable');
+    assert.ok(cards[0].textContent.includes('Default dark warm surface · active'));
+    for (const name of ['System', 'Light']) {
+      assert.equal([...panel.querySelectorAll('button')].some(button => button.textContent.startsWith(name)), false,
+        name + ' is not drawn: the graph cannot paint it');
+    }
+    assert.equal(!!panel.querySelector('[aria-label="Refresh Personal Settings"]'), false, 'no status strip above the theme cards');
     assert.equal(panel.textContent.includes('VERSIONS'), false);
-    assert.ok(panel.textContent.includes(seed.accent + ' \u00b7 saved in Personal Settings'), 'the accent row states the saved accent');
+    assert.ok(panel.textContent.includes(seed.accent + ' · saved in Personal Settings'), 'the accent row states the saved accent');
     s.flush(() => s.buttons(panel, 'change')[0].click());
     assert.ok(panel.querySelector('[aria-label="Refresh Personal Settings"]'), 'change opens the saved-theme editor');
     assert.ok(s.buttons(panel, 'Save accent').length === 1 && panel.querySelector('input[aria-label="Accent hex colour"]'));

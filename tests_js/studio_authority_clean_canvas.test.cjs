@@ -90,3 +90,14 @@ test('the hosted workspace is ready: its own browser session is the Studio sessi
   vm.runInContext(jsx.slice(begin, end) + '\nglobalThis.ready = workspaceReady;', context);
   assert.equal(context.ready, true);
 });
+
+test('the hosted session is filled only from exactly one listed session, and never over one already present', async () => {
+  const own = captured.authorization.browser_sessions[0].root;
+  const two = await load({...captured, authorization: {...captured.authorization,
+    browser_sessions: [{root: own}, {root: 'another-browser-session'}]}});
+  assert.equal(two.canvas.authorization.session, undefined, 'two listed sessions name no Studio session');
+  const none = await load({...captured, authorization: {...captured.authorization, browser_sessions: []}});
+  assert.equal(none.canvas.authorization.session, undefined, 'no listed session names none');
+  const held = await load({...captured, authorization: {...captured.authorization, session: 'desktop-session'}});
+  assert.equal(held.canvas.authorization.session, 'desktop-session', 'a session the canvas already names is kept');
+});

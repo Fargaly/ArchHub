@@ -112,6 +112,27 @@ def publish_verified_model_result(store, registry, *, agent_session_root, receip
             output_bytes=receipt.output_bytes)
         if normalized != payload:
             raise InvalidCell("Workshop proposal review is not normalized")
+        # A review answers the task it was delegated, not the Work as it reads
+        # now: once the Work's task changes, its old review is not published.
+        request = app.read_cognition_request(store, registry.assembly_protocol,
+            registry.standard_library.catalog_root, registry.agent_body.cognition_protocol,
+            registry.agent_body.cognition_definitions, registry.adapter_protocol,
+            registry.baboom_cognition_adapter_catalog_root, registry.agent_body.protocol,
+            registry.authorization.protocol, delegation.cognition_request_root,
+            model_binding_verifier=app._baboom_cognition_model_binding_verifier(registry))
+        _task, current_digest = app._baboom_model_task_material(work)
+        delegated = []
+        for context_root in request.context_roots:
+            capsule = snapshot.cells.get(context_root)
+            try:
+                value = json.loads(capsule.atom.decode("utf-8")) if capsule is not None else None
+            except (UnicodeDecodeError, ValueError):
+                value = None
+            if isinstance(value, dict) and value.get("kind") == "baboom-cognition-work-capsule/v1":
+                delegated.append(value)
+        if (len(delegated) != 1 or delegated[0].get("work") != delegation.work_root
+                or delegated[0].get("input_digest") != current_digest):
+            raise AuthorizationDenied("Workshop Work changed after this model result; it is not published")
         content = "Model review evidence. Independent review is still required.\n" + json.dumps(
             review, ensure_ascii=False, indent=2)
         evidence.append(proposal_root)

@@ -435,7 +435,7 @@ def _boot():
     # says where the seconds went (the founder's boot reached 694s and nobody
     # could name what it was doing).
     from nodelang.boot_profile import profile_boot
-    return profile_boot(_boot_unsampled, state_dir=state_dir)
+    return profile_boot(_boot_unsampled, state_dir=state_dir, on_sample=_boot_step_seen)
 
 def _boot_unsampled():
     from nodelang.desktop import create_workshop_transport, create_social_execution_arguments
@@ -578,14 +578,18 @@ if not os.environ.get("ARCHHUB_TEST_NO_OPEN"):
     lock_studio_navigation(view)
     from PyQt6.QtGui import QColor
     from nodelang.application import THEME as _BOOT_THEME
-    from nodelang.clean_boot_surface import BOOT_PHASES, BootSurface
+    from nodelang.clean_boot_surface import (
+        BOOT_PHASES, BootSurface, boot_step_label, load_expected_phases, save_phase_durations,
+    )
     # The dark page colour before the first paint: never a white or blank window.
     view.page().setBackgroundColor(QColor(_BOOT_THEME["bg"]))
     _boot_probe = _socket.socket()
     _boot_probe.bind(("127.0.0.1", 0))
     _boot_port = _boot_probe.getsockname()[1]
     _boot_probe.close()
-    _boot_surface = BootSurface("127.0.0.1", _boot_port).start()
+    # The last start's phase seconds let the bar move within a long phase.
+    _boot_surface = BootSurface(
+        "127.0.0.1", _boot_port, expected=load_expected_phases(state_dir)).start()
     view.load(QUrl("http://127.0.0.1:%d/" % _boot_port))
     window.show()
 
@@ -616,6 +620,12 @@ def _off_the_qt_thread(work):
     if "error" in outcome:
         raise outcome["error"]
     return outcome["value"]
+
+
+def _boot_step_seen(stack):
+    """The boot sampler's stack, as the boot page's live step (sampler thread)."""
+    if _boot_surface is not None:
+        _boot_surface.progress.detail(boot_step_label(stack))
 
 
 def _boot_phase(index, finished=False):
@@ -998,6 +1008,12 @@ def _revive(_status, _code):
     QTimer.singleShot(300, lambda: view.load(
         QUrl(server.public_url + "/studio")))
 view.page().renderProcessTerminated.connect(_revive)
+def _boot_phase_finish_all(held):
+    for label in BOOT_PHASES:
+        held.progress.finish(label)
+    save_phase_durations(held.progress, state_dir)
+
+
 def _release_boot_surface(ok):
     """The window has left the boot page: its port is released (off the Qt thread)."""
     global _boot_surface
@@ -1005,6 +1021,8 @@ def _release_boot_surface(ok):
     if held is None or view.url().port() == _boot_port:
         return
     _boot_surface = None
+    # This start's phase seconds become the next start's expectation.
+    _boot_phase_finish_all(held)
     import threading as _release_threading
     _release_threading.Thread(target=held.hand_over, name="archhub-boot-release", daemon=True).start()
 if _boot_surface is not None:

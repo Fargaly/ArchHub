@@ -70,7 +70,8 @@ def test_the_bar_is_determinate_once_a_phase_is_known():
                       {"label": second, "seconds": None}], "total": 2}
     views = _view([empty, one, two])
     assert views[0]["determinate"] is False
-    assert views[1] == {"determinate": True, "fraction": 0.0,
+    shown = [{key: view[key] for key in ("determinate", "fraction", "text")} for view in views[1:]]
+    assert shown[0] == {"determinate": True, "fraction": 0.0,
                         "text": "phase 1 of 2 · " + first}
-    assert views[2] == {"determinate": True, "fraction": 0.5,
+    assert shown[1] == {"determinate": True, "fraction": 0.5,
                         "text": "phase 2 of 2 · " + second}

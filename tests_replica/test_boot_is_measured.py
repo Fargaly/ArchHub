@@ -27,5 +27,5 @@ def test_the_sampler_names_the_function_that_ate_the_time(tmp_path):
 
 def test_the_launcher_boots_through_the_sampler():
     src = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
-    assert "profile_boot(_boot_unsampled, state_dir=state_dir)" in src
+    assert "profile_boot(_boot_unsampled, state_dir=state_dir" in src
     assert src.index("def _boot():") < src.index("def _boot_unsampled():")

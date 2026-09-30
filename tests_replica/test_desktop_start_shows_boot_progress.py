@@ -29,7 +29,7 @@ def _line_of(source: str, needle: str) -> int:
 def test_the_window_and_boot_page_stand_before_the_graph_opens():
     source = LAUNCHER.read_text(encoding="utf-8")
     window = _line_of(source, "app = QApplication(sys.argv)")
-    surface = _line_of(source, "BootSurface(\"127.0.0.1\", _boot_port).start()")
+    surface = _line_of(source, "_boot_surface = BootSurface(")
     shown = _line_of(source, "    window.show()")
     opened = _line_of(source, "server, boot_refusal = _off_the_qt_thread(_open_saved_graph)")
     assert window < surface < shown < opened

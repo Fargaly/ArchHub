@@ -18,9 +18,12 @@ from pathlib import Path
 
 
 class BootSampler:
-    def __init__(self, thread_id: int, *, interval: float = 0.25) -> None:
+    def __init__(self, thread_id: int, *, interval: float = 0.25, on_sample=None) -> None:
         self.thread_id = int(thread_id)
         self.interval = float(interval)
+        # Called with the sampled stack (function names, outermost first); the
+        # boot page shows what the boot is doing from it. It must not raise.
+        self.on_sample = on_sample
         self.inclusive: collections.Counter[str] = collections.Counter()
         self.leaf: collections.Counter[str] = collections.Counter()
         self.samples = 0
@@ -38,8 +41,10 @@ class BootSampler:
                 self.samples += 1
                 seen = set()
                 top = True
+                names = []
                 while frame is not None:
                     code = frame.f_code
+                    names.append(code.co_name)
                     key = "%s:%s" % (Path(code.co_filename).name, code.co_name)
                     if top:
                         self.leaf[key] += 1
@@ -48,6 +53,11 @@ class BootSampler:
                         seen.add(key)
                         self.inclusive[key] += 1
                     frame = frame.f_back
+                if self.on_sample is not None:
+                    try:
+                        self.on_sample(names[::-1])
+                    except Exception:
+                        self.on_sample = None
             self._stop.wait(self.interval)
 
     def stop(self) -> None:
@@ -66,9 +76,9 @@ class BootSampler:
         return "\n".join(lines) + "\n"
 
 
-def profile_boot(boot, *, state_dir: Path, interval: float = 0.25):
+def profile_boot(boot, *, state_dir: Path, interval: float = 0.25, on_sample=None):
     """Run ``boot()`` on this thread, sampling it, and write the profile."""
-    sampler = BootSampler(threading.get_ident(), interval=interval).start()
+    sampler = BootSampler(threading.get_ident(), interval=interval, on_sample=on_sample).start()
     started = time.perf_counter()
     try:
         return boot()

@@ -98,6 +98,17 @@ def _request(key_store, identity, method, parameters=None, label="request"):
     )
 
 
+def _attach(host, key_store, identity, *session_roots):
+    """Workshop messages need both sessions attached (326b6579): the signed
+    attach_agent path, the same one an installed agent uses."""
+    for session_root in session_roots:
+        host.dispatch(_request(key_store, identity, "attach_agent", {
+            "target": session_root,
+            "idempotency_key": str(uuid.uuid5(
+                uuid.UUID("5a0c4f2e-2b0e-4f7e-9d0a-6f1c2b3d4e5f"), session_root)),
+        }, "attach:" + session_root))
+
+
 def test_signed_sessions_coordinate_in_one_graph_and_replay_zero(tmp_path):
     opened, keys, host = _host(tmp_path)
     codex = CoordinationIdentity("codex", "thread-codex", "gpt")
@@ -118,6 +129,7 @@ def test_signed_sessions_coordinate_in_one_graph_and_replay_zero(tmp_path):
             item["session_root"] for item in agents["agents"]
             if item["runtime"] == "reviewer"
         )[0]
+        _attach(host, keys, codex, first["self"]["session_root"], target)
         operation = str(uuid.uuid4())
         sent = host.dispatch(_request(
             keys,
@@ -283,6 +295,7 @@ def test_signed_workshop_lens_reads_the_same_graph_and_real_relations(tmp_path):
         recipient_session = host.dispatch(
             _request(keys, recipient, "register_session", label="recipient")
         )["self"]["session_root"]
+        _attach(host, keys, sender, sender_session, recipient_session)
         sent = host.dispatch(_request(
             keys,
             sender,
@@ -480,6 +493,13 @@ def test_stdio_identity_has_no_random_fallback_and_schema_has_no_sender():
         "coordination.interrupt_agent",
         "coordination.wait_agent",
         "coordination.mark_message_read",
+        # Workshop task tools (326b6579): still no caller-chosen identity.
+        "coordination.claim_workshop_message",
+        "coordination.attach_agent",
+        "coordination.detach_agent",
+        "coordination.execute_workshop_task",
+        "coordination.run_workshop_task",
+        "coordination.publish_workshop_result",
     }
     for schema in schemas.values():
         properties = schema["properties"]

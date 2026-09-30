@@ -89,6 +89,18 @@ class MachineContinuationNotEnrolled(MachineTransportError):
     """Exact owner-held refusal receipt proves this continuation issued no capability."""
 
 
+class MachineContinuationOutcomeUnknown(MachineTransportError):
+    """The owner answered for this exact continuation but holds no settled outcome.
+
+    outcome is its word: unknown (no receipt, or it expired), unresolved or
+    unavailable. Nothing was retried; this proves nothing about what happened.
+    """
+
+    def __init__(self, outcome):
+        super().__init__("native continuation outcome remains unavailable; no enrollment retry")
+        self.outcome = outcome
+
+
 class MachineEffectOutcomeUnknown(MachineTransportError):
     """A route failed after durable changes; its response is not a refusal proof."""
 
@@ -1849,6 +1861,11 @@ class UniversalRuntimeClient:
                     and response['agent_session'] == held['expected_agent_session']
                     and response['outcome'] == 'not-enrolled'):
                 raise MachineContinuationNotEnrolled('Exact native continuation was refused before enrollment')
+            if (type(response) is dict and set(response) == {'continuation_id', 'agent_session', 'outcome'}
+                    and response['continuation_id'] == held['continuation_id']
+                    and response['agent_session'] == held['expected_agent_session']
+                    and response['outcome'] in ('unknown', 'unresolved', 'unavailable')):
+                raise MachineContinuationOutcomeUnknown(response['outcome'])
             if (response.get("continuation_id") != held["continuation_id"]
                     or response.get("agent_session") != held["expected_agent_session"]
                     or response.get("outcome") != "confirmed" or type(response.get("result")) is not dict):

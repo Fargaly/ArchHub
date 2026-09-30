@@ -37,6 +37,77 @@ _RUNTIME_NAMES.update({"claude-code" + suffix: "claude"
                        for suffix in ("", ".exe", ".cmd")})
 _SESSION_ROOT = re.compile(r"app:agent-session:runtime:[0-9a-f]{32}\Z")
 
+# Which code a long-lived MCP process runs (live 717: 09-26 code on 09-30). This is
+# a DISK SNAPSHOT of the owner's four source files taken when this module was
+# imported, not proof of what each module loaded: another may import later or from
+# elsewhere. owner_status compares it with the files on disk now, hashing them
+# every time (size and mtime are not trusted to show a change).
+_CODE_FILES = ("native_agent_session.py", "native_agent_mcp.py",
+               "native_enrollment_reconciliation.py", "application_machine_transport.py")
+
+
+def _code_digest(origin):
+    digest = hashlib.sha256()
+    for name in _CODE_FILES:
+        try:
+            data = hashlib.sha256((origin / name).read_bytes()).digest()
+        except OSError:
+            data = b"missing"
+        digest.update(name.encode("ascii") + b"\0" + data)
+    return digest.hexdigest()
+
+
+def _code_revision(origin):
+    """The checkout commit at import, read from .git without a subprocess; None if absent."""
+    try:
+        git = origin.parent / ".git"
+        if git.is_file():
+            pointer = git.read_text("utf-8").strip()
+            if not pointer.startswith("gitdir:"):
+                return None
+            git = (origin.parent / pointer[len("gitdir:"):].strip()).resolve()
+        head = (git / "HEAD").read_text("utf-8").strip()
+        if not head.startswith("ref: "):
+            return head if re.fullmatch(r"[0-9a-f]{40}", head) else None
+        ref, common = head[len("ref: "):], git
+        if (git / "commondir").is_file():
+            common = (git / (git / "commondir").read_text("utf-8").strip()).resolve()
+        for folder in (git, common):
+            if (folder / ref).is_file():
+                value = (folder / ref).read_text("utf-8").strip()
+                return value if re.fullmatch(r"[0-9a-f]{40}", value) else None
+        for line in (common / "packed-refs").read_text("utf-8").splitlines():
+            if line.endswith(" " + ref) and re.fullmatch(r"[0-9a-f]{40}", line[:40]):
+                return line[:40]
+    except (OSError, UnicodeError):
+        return None
+    return None
+
+
+# An unknown continuation outcome that cannot be settled yet: the attempt stays
+# retained and nothing is retried. Each says what has to happen first.
+_UNSETTLED = {
+    "mine": "Native continuation outcome is unknown and this process still holds a live capability "
+            "for the actor; nothing was retried. Recover again after its lease expires.",
+    "other": "Native continuation outcome is unknown and another process holds a live capability "
+             "for this actor; nothing was retried or taken over.",
+    "active": "Native continuation outcome is unknown and operations of this actor are still in "
+              "flight; nothing was retried. Recover again after they finish.",
+}
+
+_ORIGIN = Path(__file__).resolve().parent
+_IMPORT_SNAPSHOT = {"origin": str(_ORIGIN), "digest": _code_digest(_ORIGIN),
+                    "revision": _code_revision(_ORIGIN)}
+
+
+def _process_provenance():
+    """Which process answers and the disk snapshot its import saw; no token or payload."""
+    snapshot = _IMPORT_SNAPSHOT
+    now = _code_digest(Path(snapshot["origin"]))
+    return {"pid": os.getpid(), "module_origin": snapshot["origin"],
+            "revision_at_import": snapshot["revision"], "disk_digest_at_import": snapshot["digest"],
+            "disk_digest_now": now, "disk_changed_since_import": now != snapshot["digest"]}
+
 
 @dataclass(frozen=True)
 class NativeAgentIdentity:
@@ -143,6 +214,7 @@ class NativeAgentSession:
         self._active_calls = 0
         self._continued = False
         self._rebind_candidate = None
+        self._aimed_owner = None
         self._hook_rebind_guard = None
         self._retired_release = None
         self._inbox_reader = None
@@ -194,6 +266,7 @@ class NativeAgentSession:
                 current, current_error = None, "verified_active_owner_unavailable"
             expired = self._lease_expired()
             return {"state": self._state, "generation": self._generation,
+                "process": _process_provenance(),
                 "agent_session": self._session_root, "pinned": project(self._descriptor),
                 "current": project(current), "current_error": current_error,
                 "rebind_pending": self._rebind_candidate is not None,
@@ -208,13 +281,57 @@ class NativeAgentSession:
                     or current_error is not None or expired is not False))}
 
     def _failed_attempt_status(self, current):
-        """Expose the retained attempt owner so recovery never guesses it."""
-        candidate = self._rebind_candidate
-        failed = getattr(candidate, "_descriptor", None)
-        if self._state != "uncertain" or failed is None:
+        """Expose the retained attempt exactly, so recovery never guesses it.
+
+        An attempt that failed before reading its owner still names the owner it
+        was aimed at. request_sent is False only when its client never held the
+        request, which is set before anything is sent.
+        """
+        attempt, kind = self._rebind_candidate, "rebind"
+        if attempt is None and self._session_root is None and self._expected_agent_session is not None:
+            attempt, kind = self, "connection"
+        if self._state != "uncertain" or attempt is None:
             return None
-        return {"owner_fingerprint": self._owner_fingerprint(failed),
-                "superseded": current is not None and failed != current}
+        failed = getattr(attempt, "_descriptor", None)
+        held = self._sent_request(attempt)
+        return {"kind": kind, "owner_fingerprint": self._attempt_owner(attempt),
+                "superseded": failed is not None and current is not None and failed != current,
+                "request_sent": held is not None,
+                "request_id": None if held is None else held.get("continuation_id")}
+
+    @staticmethod
+    def _sent_request(attempt):
+        client = getattr(attempt, "_client", None)
+        held = getattr(client, "_continuation_request", None)
+        return held if type(held) is dict else None
+
+    def _attempt_owner(self, attempt):
+        failed = getattr(attempt, "_descriptor", None)
+        return self._owner_fingerprint(failed) if failed is not None else getattr(attempt, "_aimed_owner", None)
+
+    def _classify_unknown_outcome(self, current):
+        """Classify an attempt whose outcome the application no longer holds.
+
+        Only the existing reconciliation route is read (same OS peer, unbound
+        client). Settling is safe only when this actor holds no live capability
+        on the current owner and nothing is in flight: whatever the attempt did,
+        none of it can be used or repeated. Its history stays unknown. Otherwise
+        the refusal names what must happen first; the attempt stays retained.
+        """
+        inspection = self.inspect_enrollment(expected_owner=self._owner_fingerprint(current),
+                                             projection="effects")
+        effects = inspection.get("effects") or {}
+        status, active = inspection.get("binding_status"), inspection.get("active_operations")
+        facts = {"continuation_outcome": "unknown", "historical_attempt_outcome": "unknown",
+                 "binding_status": status, "binding_matches_caller": inspection.get("binding_matches_caller"),
+                 "active_operations": active,
+                 "unresolved_effects": bool(effects.get("pending_permits")) or effects.get("truncated") is True}
+        if status == "retained":
+            mine = inspection.get("binding_matches_caller") is True
+            raise MachineTransportError(_UNSETTLED["mine" if mine else "other"])
+        if status not in ("absent", "expired") or type(active) is not int or active:
+            raise MachineTransportError(_UNSETTLED["active"])
+        return facts
 
     def start_lease_keeper(self):
         """Keep this bound owner in-memory lease alive while the process lives.
@@ -491,7 +608,14 @@ class NativeAgentSession:
             return self._state
 
     def recover_rebind_owner(self, *, expected_failed_owner, expected_current_owner):
-        """Recover the exact retained continuation response; no new connect."""
+        """Recover the exact retained continuation attempt; recovery never enrolls.
+
+        The application's confirmed reply is adopted. Its own not-enrolled
+        receipt, an attempt that was never sent, a superseded owner proven gone,
+        or an unknown outcome with no live capability settle back to the
+        retained binding for one explicit owner_rebind. Anything else answers
+        what to wait for and stays uncertain.
+        """
         with self._lock:
             self._check_identity()
             if self._environment.get("ARCHHUB_NATIVE_WORKSHOP_OWNER"):
@@ -500,6 +624,16 @@ class NativeAgentSession:
                 self._hook_rebind_guard()
             candidate = self._rebind_candidate
             current = self._read_owner()
+            if (self._state == "uncertain" and not self._active_calls and candidate is not None
+                    and self._retired_release is None and self._sent_request(candidate) is None):
+                # Its client never held the request, so nothing reached any owner.
+                if (self._attempt_owner(candidate) != expected_failed_owner
+                        or self._owner_fingerprint(current) != expected_current_owner
+                        or self._instance_identity(current) != self._instance_identity(self._descriptor)
+                        or candidate._identity != self._identity
+                        or candidate._expected_agent_session != self._session_root):
+                    raise MachineTransportError("Native continuation recovery custody changed")
+                return self._settle_rebind_attempt({"continuation_outcome": "not-sent"})
             if (self._state == "uncertain" and not self._active_calls and candidate is not None
                     and self._retired_release is None
                     and getattr(candidate, "_descriptor", None) is not None
@@ -523,7 +657,7 @@ class NativeAgentSession:
                     or client.key_provider is not self._key_provider
                     or Path(client.descriptor_path).resolve() != self._descriptor_path):
                 raise MachineTransportError("No exact retained native continuation attempt is available")
-            from .application_machine_transport import MachineContinuationNotEnrolled
+            from .application_machine_transport import MachineContinuationNotEnrolled, MachineContinuationOutcomeUnknown
             try:
                 result = client.recover_agent_session_continuation()
             except MachineContinuationNotEnrolled:
@@ -531,12 +665,13 @@ class NativeAgentSession:
                 # client, owner, generation, and every prior effect uncertainty.
                 if self._retired_release is not None or self._read_owner() != current:
                     raise MachineTransportError('Retired release or changed owner requires separate recovery')
-                self._check_identity()
-                if self._hook_rebind_guard is not None:
-                    self._hook_rebind_guard()
-                self._rebind_candidate = None
-                self._state = 'bound'
-                return {**self.owner_status(), 'continuation_outcome':'not-enrolled'}
+                return self._settle_rebind_attempt({'continuation_outcome': 'not-enrolled'})
+            except MachineContinuationOutcomeUnknown:
+                # The owner holds no settled outcome for this exact attempt (its
+                # receipt expired or never settled): classify from current custody.
+                if self._retired_release is not None or self._read_owner() != current:
+                    raise
+                return self._settle_rebind_attempt(self._classify_unknown_outcome(current))
             if (result.get("agent_session") != self._session_root or result.get("continued") is not True
                     or result.get("runtime") != self._identity.runtime
                     or result.get("agent_body") != "app:agent-body:"+self._identity.runtime
@@ -554,6 +689,16 @@ class NativeAgentSession:
             if self._retired_release is not None:
                 self._release_id = None
             return self.owner_status()
+
+    def _settle_rebind_attempt(self, facts):
+        """Drop only the settled attempt; the retained binding, generation and effects stay."""
+        self._check_identity()
+        if self._hook_rebind_guard is not None:
+            self._hook_rebind_guard()
+        self._rebind_candidate = None
+        self._state = "bound"
+        following = "native.owner_settle_effect" if facts.get("unresolved_effects") else "native.owner_rebind"
+        return {**self.owner_status(), **facts, "next": following}
 
     def inspect_enrollment(self, *, expected_owner, projection=None, cursor=None):
         """Read exact current custody with an unbound client; retain all state."""
@@ -581,26 +726,47 @@ class NativeAgentSession:
             return {**result,"owner_fingerprint":expected_owner}
 
     def recover_connection(self, *, expected_owner):
-        """Recover a conditional initial connection using only its outcome ID."""
+        """Recover a conditional initial connection using only its outcome ID.
+
+        A confirmed reply is adopted. The application's own not-enrolled
+        receipt, a request never sent, or an unknown outcome with no live
+        capability reopens this process unbound, so one explicit activation can
+        continue the exact actor. Anything else stays uncertain and says why.
+        """
         with self._lock:
             self._check_identity()
             current = self._read_owner()
             client = self._client
-            held = getattr(client,"_continuation_request",None)
+            held = self._sent_request(self)
             if (self._state != "uncertain" or self._active_calls or self._rebind_candidate is not None
-                    or self._expected_agent_session is None or self._descriptor != current
+                    or self._expected_agent_session is None or self._session_root is not None
                     or self._owner_fingerprint(current) != expected_owner
-                    or held is None or held.get("expected_agent_session") != self._expected_agent_session
-                    or held.get("runtime") != self._identity.runtime
-                    or held.get("external_session_id") != self._identity.external_session_id
-                    or client._pinned_runtime_descriptor != current
-                    or client.key_provider is not self._key_provider):
+                    or held is not None and (self._descriptor != current
+                        or held.get("expected_agent_session") != self._expected_agent_session
+                        or held.get("runtime") != self._identity.runtime
+                        or held.get("external_session_id") != self._identity.external_session_id
+                        or client._pinned_runtime_descriptor != current
+                        or client.key_provider is not self._key_provider)):
                 raise MachineTransportError("No exact conditional native connection can be recovered")
             if self._environment.get("ARCHHUB_NATIVE_WORKSHOP_OWNER"):
                 if self._hook_rebind_guard is None:
                     raise MachineTransportError("Private hook recovery requires its admitted custody guard")
                 self._hook_rebind_guard()
-            result = client.recover_agent_session_continuation()
+            if held is None:
+                # The request was never sent, so nothing reached any owner.
+                return self._reopen_connection({"connection_outcome": "not-sent"})
+            from .application_machine_transport import MachineContinuationNotEnrolled, MachineContinuationOutcomeUnknown
+            try:
+                result = client.recover_agent_session_continuation()
+            except MachineContinuationNotEnrolled:
+                if self._read_owner() != current:
+                    raise MachineTransportError("Native owner changed during connection recovery")
+                return self._reopen_connection({"connection_outcome": "not-enrolled"})
+            except MachineContinuationOutcomeUnknown:
+                if self._read_owner() != current:
+                    raise
+                return self._reopen_connection({**self._classify_unknown_outcome(current),
+                                                "connection_outcome": "unknown"})
             if (result.get("runtime") != self._identity.runtime
                     or result.get("agent_body") != "app:agent-body:"+self._identity.runtime
                     or result.get("catalog_entry") != "app:agent-body-catalog:v1:"+self._identity.runtime
@@ -614,6 +780,15 @@ class NativeAgentSession:
             self._generation += 1
             self._state = "bound"
             return self.owner_status()
+
+    def _reopen_connection(self, facts):
+        """Settle the initial attempt: unbound again, still bound to the exact expected actor."""
+        self._check_identity()
+        if self._hook_rebind_guard is not None:
+            self._hook_rebind_guard()
+        self._client, self._descriptor, self._state = None, None, "unbound"
+        following = "native.owner_settle_effect" if facts.get("unresolved_effects") else "native.resume_recover"
+        return {**self.owner_status(), **facts, "next": following}
 
     def _check_identity(self):
         if self._opencode_custody is not None:
@@ -749,6 +924,7 @@ class NativeAgentSession:
                 raise MachineTransportError("native agent attachment is uncertain; no automatic enrollment retry")
             # Reserve the attempt before any effect-capable dependency is called.
             self._state = "attaching"
+            self._aimed_owner = expected_owner
             try:
                 self._check_identity()
                 self._descriptor = self._read_owner()

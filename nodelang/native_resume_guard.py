@@ -19,7 +19,11 @@ class NativeResumeGuard:
         with self.lock:
             self.last={'status':'recovery_required','reason':'transport_resume_required'}
             resumed=self.transport_resume(self.owner._environment)
-            if resumed.get('status')!='observed':
+            # No Session Link configured and none required: there is no transport
+            # to restore. The owner steps below still prove the exact actor.
+            unlinked=(resumed.get('status')=='not_configured'
+                and not self.owner._environment.get('SESSION_LINK_REQUIRED_CONNECTIONS'))
+            if resumed.get('status')!='observed' and not unlinked:
                 self.last['reason']=resumed.get('reason') or resumed.get('status')
                 return dict(self.last)
             status=self.owner.owner_status()

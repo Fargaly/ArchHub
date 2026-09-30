@@ -122,6 +122,24 @@ resumes once no unresolved permit remains.
 """
 
 
+_RECOVER_DOC = """Settle this agent's retained failed rebind attempt; never enroll or replay a tool.
+
+Copy failed_attempt.owner_fingerprint and current.fingerprint from
+native.owner_status. The answer names the outcome (confirmed, not-enrolled,
+not-sent, owner-retired or unknown) and the one next step in "next". An unknown
+outcome settles only when no live capability of this agent remains and nothing
+is in flight; otherwise it refuses, names what must happen first, and keeps the
+attempt for a later call.
+"""
+
+_CONNECTION_RECOVER_DOC = """Settle this process's failed first connection of its exact agent.
+
+Use current.fingerprint from native.owner_status. A settled attempt leaves the
+process unbound for the same agent; "next" names the one step to take
+(native.owner_settle_effect or native.resume_recover). Nothing is replayed.
+"""
+
+
 def _text(value):
     return type(value) is str and bool(value.strip()) and len(value.encode("utf-8")) <= 512
 
@@ -222,9 +240,8 @@ def build_server(*, session=None, workshop_task: str | None = None):
         return owner.rebind_owner(expected_old_owner=expected_old_owner,
                                   expected_new_owner=expected_new_owner)
 
-    @server.tool(name="native.owner_recover")
+    @server.tool(name="native.owner_recover", description=_RECOVER_DOC)
     def owner_recover(expected_failed_owner: str, expected_current_owner: str) -> dict[str, object]:
-        """Recover only the retained conditional attempt; never enroll or replay a tool."""
         return owner.recover_rebind_owner(expected_failed_owner=expected_failed_owner,
                                          expected_current_owner=expected_current_owner)
 
@@ -403,12 +420,12 @@ def build_recovery_server(owner, *, workshop_task=None):
             await ctx.session.send_tool_list_changed()
         return result
 
-    @server.tool(name='native.owner_recover')
+    @server.tool(name='native.owner_recover', description=_RECOVER_DOC)
     def exact_rebind_recovery(expected_failed_owner: str, expected_current_owner: str):
         return owner.recover_rebind_owner(expected_failed_owner=expected_failed_owner,
                                          expected_current_owner=expected_current_owner)
 
-    @server.tool(name='native.connection_recover')
+    @server.tool(name='native.connection_recover', description=_CONNECTION_RECOVER_DOC)
     def exact_connection_recovery(expected_owner: str):
         return owner.recover_connection(expected_owner=expected_owner)
 

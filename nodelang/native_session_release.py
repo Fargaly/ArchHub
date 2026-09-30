@@ -82,7 +82,15 @@ def _registered_permits(snapshot, protocol):
 
 
 def read_pending_effects(snapshot, protocol, actor, *, start=None, remaining=None):
-    """Bounded persisted evidence for one actor; never settle or infer an effect."""
+    """Bounded persisted evidence for one actor; never settle or infer an effect.
+
+    Another actor's permit is skipped on its owner cell alone, the same check the
+    continuation refusal makes, so its full record is never read. A page ends early
+    only once it holds evidence: an empty page is the end of the registry, never a
+    cursor. Before this a page stopped after 256 entries or 0.1 s whatever it had
+    found, and on a large registry an agent refused for "effect reconciliation"
+    paged empty results forever (live 717, 2026-09-30).
+    """
     from .cell_cde_authority import read_cde_write_permit
 
     selected, receipts = [], []
@@ -91,7 +99,8 @@ def read_pending_effects(snapshot, protocol, actor, *, start=None, remaining=Non
     next_remaining = 0
     deadline = time.monotonic() + 0.1
     for index, (entry, cursor, following) in enumerate(_registry_entries(snapshot, protocol, start, remaining)):
-        if index >= 256 or len(selected) + len(receipts) >= 16 or time.monotonic() >= deadline:
+        found = len(selected) + len(receipts)
+        if found >= 16 or found and (index >= 256 or time.monotonic() >= deadline):
             next_chain = cursor
             next_remaining = remaining - index
             break
@@ -100,6 +109,8 @@ def read_pending_effects(snapshot, protocol, actor, *, start=None, remaining=Non
             roots = [field.participant_id for field in fields if field.role_id == protocol.role("receipt-permit")]
             if len(roots) != 1:
                 raise AuthorizationDenied("Native effects receipt reference is ambiguous")
+            if not _permit_owned_by(snapshot, protocol, roots[0], actor):
+                continue
             permit = read_cde_write_permit(snapshot, protocol, roots[0])
             if permit.agent_session_root == actor:
                 # Registry references are evidence pointers, not validated
@@ -107,6 +118,8 @@ def read_pending_effects(snapshot, protocol, actor, *, start=None, remaining=Non
                 receipts.append({"root":entry.link1, "permit":permit.root_id, "verified":False})
             continue
         if entry.link0 != protocol.role("permit-member"):
+            continue
+        if not _permit_owned_by(snapshot, protocol, entry.link1, actor):
             continue
         permit = read_cde_write_permit(snapshot, protocol, entry.link1)
         if permit.agent_session_root != actor:
@@ -137,15 +150,25 @@ def _is_settled(protocol, permit_root):
     return storage is not None and storage.get_settlement(permit_root) is not None
 
 
+def _permit_owner_fields(snapshot, protocol, permit_root):
+    """A permit's relation rows and its owner cell: the cheap owner check."""
+    fields = read_relation(snapshot, permit_root, budget=128, retain_projection=False)
+    actors = [row.participant_id for row in fields if row.role_id == protocol.role("agent-session")]
+    if len(actors) != 1:
+        raise AuthorizationDenied("native release permit owner projection is ambiguous")
+    actor_cell = snapshot.cells.get(actors[0])
+    if actor_cell is None or actor_cell.link0 != NULL_CELL_ID or actor_cell.link1 != NULL_CELL_ID:
+        raise AuthorizationDenied("native release permit owner projection is invalid")
+    return fields, actor_cell
+
+
+def _permit_owned_by(snapshot, protocol, permit_root, actor):
+    return _permit_owner_fields(snapshot, protocol, permit_root)[1].atom == actor.encode("utf-8")
+
+
 def _has_pending_permit(snapshot, protocol, actor):
     for permit_root in _registered_permits(snapshot, protocol):
-        fields = read_relation(snapshot, permit_root, budget=128, retain_projection=False)
-        actors = [row.participant_id for row in fields if row.role_id == protocol.role("agent-session")]
-        if len(actors) != 1:
-            raise AuthorizationDenied("native release permit owner projection is ambiguous")
-        actor_cell = snapshot.cells.get(actors[0])
-        if actor_cell is None or actor_cell.link0 != NULL_CELL_ID or actor_cell.link1 != NULL_CELL_ID:
-            raise AuthorizationDenied("native release permit owner projection is invalid")
+        fields, actor_cell = _permit_owner_fields(snapshot, protocol, permit_root)
         if actor_cell.atom != actor.encode("utf-8"):
             continue
         states = [row.participant_id for row in fields if row.role_id == protocol.role("state")]

@@ -80,11 +80,12 @@ def __getattr__(name):
 
 
 SNAPSHOT_FORMAT = "archhub.workspace-roots"
-SNAPSHOT_VERSION = 2
+SNAPSHOT_VERSION = 3
 PIN_FORMAT = "archhub.workspace-roots-pin"
 KEY_NAME = "ArchHub-workspace-roots-v1"
 KEY_ID = "cng:" + KEY_NAME
 MAX_ROOTS = 64
+MAX_REMOVED = 256
 PROMISE = (
     "Removing a workspace only stops ArchHub from governing it. "
     "Your files are never deleted."
@@ -422,10 +423,37 @@ def sequence(roots, pin) -> int:
         2 if root.get("state") == "unregistered" else 1 for root in roots)
 
 
+def removed_folders(roots):
+    """The signed tombstones: folders that were registered and then removed, and
+    are not registered again (same folder identity or spelling). Agents stay
+    blocked there (workspace_root_removed) until the owner registers the folder
+    again -- or registers a folder that contains it (founder 2026-09-30: the
+    parent E:/01.PERSONAL covers BBC4 inside it). Roots never nest, so a removed
+    child inside an active root was removed before that root was registered.
+    Ordered by id; one entry per folder."""
+    active = _active(roots)
+    live_identities = {tuple(root["identity"]) for root in active}
+    live_paths = {str(PureWindowsPath(root["path"])).casefold() for root in active}
+    covering = tuple(path.rstrip(chr(92)) + chr(92) for path in live_paths)
+    removed, seen = [], set()
+    for root in sorted(roots, key=lambda item: item["root_id"]):
+        if root.get("state") != "unregistered":
+            continue
+        identity = tuple(root["identity"])
+        spelling = str(PureWindowsPath(root["path"])).casefold()
+        if (identity in live_identities or spelling in live_paths or identity in seen
+                or spelling.startswith(covering)):
+            continue
+        seen.add(identity)
+        removed.append({"id": root["root_id"], "path": root["path"],
+                        "identity": list(root["identity"])})
+    return removed
+
+
 def snapshot_body(roots, pin) -> dict:
-    """The hooks' view of the graph: registered roots only, ordered by id. The
-    order is canonical, so the body signed before a commit (from a prediction)
-    equals the body re-derived from the graph after it."""
+    """The hooks' view of the graph: registered roots and removed-folder
+    tombstones, ordered by id. The order is canonical, so the body signed before
+    a commit (from a prediction) equals the body re-derived from the graph after it."""
     entries = [
         {
             "id": root["root_id"],
@@ -445,6 +473,7 @@ def snapshot_body(roots, pin) -> dict:
         "key_fingerprint": pin,
         "graph_revision": sequence(roots, pin),
         "roots": entries,
+        "removed": removed_folders(roots),
     }
 
 
@@ -672,6 +701,8 @@ def read_registered_roots(verifier=None, *, snapshot_path=None, pin_path=None,
             or signed.get("key_fingerprint") != pin["fingerprint"]
             or type(signed.get("roots")) is not list
             or len(signed["roots"]) > MAX_ROOTS
+            or type(signed.get("removed")) is not list
+            or len(signed["removed"]) > MAX_REMOVED
             or not verifier.verify_blob(bytes(blob), KEY_ID, 1, canonical(signed),
                                         document["signature"])):
         raise InvalidCell("the workspace-roots registry does not verify")

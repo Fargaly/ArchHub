@@ -175,7 +175,8 @@ def test_the_first_registration_pins_the_key_and_projects_a_matching_snapshot(gr
     assert [(r["root_id"], r["state"], r["privacy"]) for r in state] == [
         ("client-a", "registered", "private")]
     document = json.loads(graph["files"]["snapshot_path"].read_text(encoding="utf-8"))
-    assert document["format_version"] == 2 and document["graph_revision"] == 2
+    assert document["format_version"] == 3 and document["graph_revision"] == 2
+    assert document["removed"] == []
     assert document["key_fingerprint"] == graph["key"].fingerprint()
     assert [entry["id"] for entry in document["roots"]] == ["client-a"]
     assert json.loads(graph["files"]["pin_path"].read_text(encoding="utf-8")) == {
@@ -432,3 +433,60 @@ def test_the_projection_is_read_by_the_hooks_as_valid_with_the_roots(graph, tmp_
                            last_good=tmp_path / "local" / "last-good.json",
                            pin=graph["files"]["pin_path"])
     assert registry.state == "degraded" and registry.registered == ()
+
+
+def test_a_removed_folder_is_a_signed_tombstone_until_registered_again(graph, tmp_path):
+    """Founder decision 2026-09-30: a folder that was registered and then removed
+    stays blocked for agent writes until it is registered again; the snapshot the
+    hooks verify carries it as a signed tombstone, never a silent list edit."""
+    folder = tmp_path / "client-a"
+    folder.mkdir()
+    _register(graph, "client-a", folder)
+    _change(graph, {"action": "unregister", "id": "client-a"})
+    document = json.loads(graph["files"]["snapshot_path"].read_text(encoding="utf-8"))
+    assert document["roots"] == []
+    assert document["removed"] == [{"id": "client-a", "path": str(folder),
+                                    "identity": list(roots.folder_identity(str(folder)))}]
+    # Registered again (a new id; ids are never reused): the tombstone is gone.
+    view = _register(graph, "client-a-again", folder)
+    assert view["projection"] == "match"
+    document = json.loads(graph["files"]["snapshot_path"].read_text(encoding="utf-8"))
+    assert [entry["id"] for entry in document["roots"]] == ["client-a-again"]
+    assert document["removed"] == []
+    # Removed twice: one tombstone per folder.
+    _change(graph, {"action": "unregister", "id": "client-a-again"})
+    document = json.loads(graph["files"]["snapshot_path"].read_text(encoding="utf-8"))
+    assert [entry["id"] for entry in document["removed"]] == ["client-a"]
+
+
+def test_registering_a_parent_lifts_the_tombstone_of_a_removed_child_inside_it(graph, tmp_path):
+    """Founder decision 2026-09-30: he registers the parent (E:/01.PERSONAL) to cover
+    BBC4 inside it. The child's tombstone goes; an unrelated tombstone stays."""
+    parent = tmp_path / "01.PERSONAL"
+    child = parent / "BBC4"
+    child.mkdir(parents=True)
+    elsewhere = tmp_path / "old-client"
+    elsewhere.mkdir()
+    _register(graph, "bbc4", child)
+    _register(graph, "old-client", elsewhere)
+    _change(graph, {"action": "unregister", "id": "bbc4"})
+    _change(graph, {"action": "unregister", "id": "old-client"})
+    document = json.loads(graph["files"]["snapshot_path"].read_text(encoding="utf-8"))
+    assert [entry["id"] for entry in document["removed"]] == ["bbc4", "old-client"]
+    view = _register(graph, "personal", parent)
+    assert view["projection"] == "match"
+    document = json.loads(graph["files"]["snapshot_path"].read_text(encoding="utf-8"))
+    assert [entry["id"] for entry in document["roots"]] == ["personal"]
+    assert [entry["id"] for entry in document["removed"]] == ["old-client"]
+
+
+def test_a_sibling_sharing_the_parents_name_prefix_keeps_its_tombstone(graph, tmp_path):
+    parent = tmp_path / "Clients"
+    parent.mkdir()
+    sibling = tmp_path / "Clients-2024"
+    sibling.mkdir()
+    _register(graph, "old-2024", sibling)
+    _change(graph, {"action": "unregister", "id": "old-2024"})
+    _register(graph, "clients", parent)
+    document = json.loads(graph["files"]["snapshot_path"].read_text(encoding="utf-8"))
+    assert [entry["id"] for entry in document["removed"]] == ["old-2024"]

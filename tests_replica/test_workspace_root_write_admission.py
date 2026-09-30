@@ -70,7 +70,8 @@ def _registry(tmp_path, key, entries, *, pin=None, signer=None, revision=3, targ
               current=True):
     body = {"format": roots.SNAPSHOT_FORMAT, "format_version": roots.SNAPSHOT_VERSION,
             "key_id": roots.KEY_ID, "key_version": 1,
-            "key_fingerprint": pin or key.fingerprint(), "graph_revision": revision, "roots": entries}
+            "key_fingerprint": pin or key.fingerprint(), "graph_revision": revision, "roots": entries,
+            "removed": []}
     files = {"snapshot_path": target or (tmp_path / "workspace-roots.json"),
              "pin_path": tmp_path / "workspace-roots.pin",
              "last_good_path": tmp_path / "last-good.json"}

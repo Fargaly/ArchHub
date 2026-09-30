@@ -7,6 +7,28 @@
   const storageName = 'archhub.existing-workshop.pending.v1';
   const releaseStorageName = 'archhub.existing-workshop.releases.v1';
 
+  // What an assignment reply proves. Only a refusal that names THIS exact assignment
+  // id AND reconciles it as absent is a refusal (the server read the id absent under
+  // its commit lock and raised before committing); a matching success is
+  // assigned; anything else -- no reply, a null or malformed body, a refusal of some
+  // other id, a mismatch -- is uncertain, and the retry keeps the same id.
+  function classifyAssignmentReply(result, failure, {assignment_id, work, agent_session}) {
+    if (failure) {
+      const body = failure.response;
+      // A refusal settles the id only when the server read that exact id ABSENT
+      // under its commit lock: an earlier attempt may otherwise have landed.
+      if (body && body.refused === true && body.assignment === assignment_id && body.reconciled_absent === true) {
+        return {kind:'refused', message:body.error || 'The assignment was refused. Nothing was assigned.'};
+      }
+      return {kind:'uncertain', message:'The assignment reply was lost. Retry sends the same assignment id, so it cannot assign twice.'};
+    }
+    if (!result || typeof result !== 'object' || result.ok !== true || result.assignment !== assignment_id ||
+        result.work !== work || result.agent_session !== agent_session) {
+      return {kind:'uncertain', message:'The assignment reply did not confirm the request. Retry the same assignment to confirm it.'};
+    }
+    return {kind:'assigned'};
+  }
+
   function create({get, post, pendingStorage, projectCanvas,
       uuid = () => global.crypto.randomUUID(),
       hash = async value => Array.from(new Uint8Array(await global.crypto.subtle.digest(
@@ -1478,7 +1500,12 @@
           fail('Native project work is not yet available in this conversation.');
         }
         const {title, description, criterion, verification, path, content, x, y,
-          model = 'nex-agi/nex-n2.5-pro:free', runtime = 'openrouter', hosts = []} = details || {};
+          model = 'nex-agi/nex-n2.5-pro:free', runtime = 'openrouter', hosts = [], external_key = ''} = details || {};
+        // Founder decision 5: a Work key is <project>:<purpose>:<n>; the same key finds the same Work.
+        if (external_key && (typeof external_key !== 'string' || external_key.length > 160 ||
+            !/^[a-z0-9][a-z0-9.-]*:[a-z0-9][a-z0-9.-]*:[0-9]+$/.test(external_key))) {
+          fail('Use a Work key like project:purpose:1 (lowercase, two colons, a number).');
+        }
         if (!['openrouter', 'claude'].includes(runtime)) fail('Choose an available repair runtime.');
         if (!Array.isArray(hosts) || new Set(hosts).size !== hosts.length ||
             hosts.some(host => !['revit', 'acad', 'max', 'rhino', 'blender'].includes(host))) {
@@ -1506,7 +1533,7 @@
         const sha256 = await hash(content);
         if (!/^[a-f0-9]{64}$/.test(sha256)) fail('The source file hash could not be computed.');
         const key = JSON.stringify([stamp.epoch, stamp.graph, stamp.scope, root, title, description,
-          criterion, verification, path, sha256, x, y, selectedModel, runtime, hosts]);
+          criterion, verification, path, sha256, x, y, selectedModel, runtime, hosts, external_key]);
         if (!current(stamp, root)) fail('The Workshop changed before Work creation.');
         if (creations.has(key)) return creations.get(key);
         const artifactId = uuid();
@@ -1523,6 +1550,7 @@
             dispatched = true;
             result = await post('/api/universal/work', {title:title.trim(), description:description.trim(),
               workshop_root:root, workshop_scope:stamp.scope, revision:projection.revision,
+              ...(external_key ? {external_key} : {}),
               x, y, projection:false, structured_references:{requirements:{acceptance_criteria:[{
                 criterion:criterion.trim(), verification:verification.trim()}], ...(hosts.length ? {hosts} : {})}, inputs:{model:selectedModel,
                 data_class:'public-text', artifact_name:artifactId + '.patch', files:[{path, content, sha256}],
@@ -1530,7 +1558,8 @@
                   max_input_bytes:262144, max_output_bytes:4194304, max_event_bytes:1048576,
                   max_events:512, max_process_bytes:805306368, startup_timeout_seconds:60,
                   turn_timeout_seconds:180, lifetime_seconds:600, stop_timeout_seconds:30}} : {})}}});
-            if (!result || result.ok === false || !text(result.created_root) || !text(result.membership_wire) ||
+            if (!result || result.ok === false || !text(result.created_root) ||
+                (result.existing !== true && !text(result.membership_wire)) ||
                 !revision(result.revision) || result.workshop_root !== root || result.workshop_scope !== stamp.scope) {
               fail(result?.error || 'The creation response or conversation link is incomplete.');
             }
@@ -1554,6 +1583,51 @@
         })();
         creations.set(key, operation);
         try { return await operation; } finally { if (creations.get(key) === operation) creations.delete(key); }
+      },
+      // Assign one Work in this Workshop to an agent already running in it (the founder's own
+      // browser request; the server re-checks the agent's live connection at commit). A retry
+      // must reuse the same assignment_id: the assignment is idempotent on it.
+      async assignWork(root, {work, agent_session, assignment_id} = {}) {
+        // Everything before the POST is preflight: a failure here sent NOTHING, so it
+        // can never settle an earlier, unconfirmed write of the same assignment id.
+        let stamp, projection;
+        try {
+          stamp = stampFor(root);
+          if (!text(work) || !text(agent_session) || !agent_session.startsWith('app:agent-session:runtime:')) {
+            fail('Choose one Work and one running agent.');
+          }
+          if (!text(assignment_id) || !/^app:workshop-assignment:[A-Za-z0-9._-]{8,200}$/.test(assignment_id)) {
+            fail('The assignment identity is invalid.');
+          }
+          projection = await api.refreshWorkshop(root);
+          if (!current(stamp, root) || !projection || projection.error || !revision(projection.revision)) {
+            fail('Refresh the Workshop before assigning.');
+          }
+        } catch (error) {
+          const preflight = new Error((error && error.message) || 'The Workshop could not be read; nothing was sent.');
+          preflight.assignmentPreflight = true;
+          throw preflight;
+        }
+        let result, failure = null;
+        try {
+          result = await post('/api/universal/workshop-work-assign', {workshop_root:root, workshop_scope:stamp.scope,
+            revision:projection.revision, work, agent_session, assignment_id});
+        } catch (error) {
+          failure = error;
+        }
+        const verdict = classifyAssignmentReply(result, failure, {assignment_id, work, agent_session});
+        if (verdict.kind === 'refused') {
+          const refused = new Error(verdict.message);
+          refused.assignmentRefused = true;
+          throw refused;
+        }
+        if (verdict.kind === 'uncertain') {
+          const lost = new Error(verdict.message);
+          lost.assignmentUncertain = true;
+          throw lost;
+        }
+        try { await api.refreshWorkshop(root); } catch (_) { /* the next read shows it */ }
+        return result;
       },
       async refreshNativeWork(root, work = null) {
         if (work !== null && !text(work)) fail('Choose a Work node before reading its saved results.');
@@ -2209,5 +2283,5 @@
     };
     return api;
   }
-  global.ArchHubExistingWorkshop = {create};
+  global.ArchHubExistingWorkshop = {create, classifyAssignmentReply};
 })(typeof window === 'undefined' ? globalThis : window);

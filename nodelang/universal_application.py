@@ -3521,6 +3521,7 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/workshop-model-approval", "execute"),
     ("POST", "/api/universal/workshop-native", "execute"),
     ("POST", "/api/universal/workshop-assignment", "create"),
+    ("POST", "/api/universal/workshop-work-assign", "create"),
     ("POST", "/api/universal/deliberation", "create"),
     ("POST", "/api/universal/assembly", "create"),
     ("POST", "/api/universal/assembly-field", "edit"),

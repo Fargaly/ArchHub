@@ -159,9 +159,11 @@ def read_browser_workshop(owner, binding, *, root, scope, after=None, session_to
     if content_after is not None or before is not None:
         raise InvalidCell("This Workshop does not support ordinary message positions")
     registry, authority = owner.universal_registry, owner.universal_registry.authorization
+    from .workshop_work_creation import workshop_assignment_rows
     header = {"ok":True, "model_agent":None, "graph_id":registry.application_root, "root":root,
         "scope_root":scope, "revision":snapshot.revision,
-        "participants": _workshop_participant_rows(owner, snapshot, space, connections)}
+        "participants": _workshop_participant_rows(owner, snapshot, space, connections),
+        "assignments": workshop_assignment_rows(owner, snapshot, root)}
     if after is not None and str(snapshot.revision) == after:
         return {**header, "unchanged":True}
     request_session = (registry.agent_body.session.root_id
@@ -220,6 +222,11 @@ def _humanized_workshop_participant_label(root, roots):
     # A real full-digest collision must still distinguish exact identities.
     # Sorted distinct roots make the ordinal independent of participant order.
     return base + "-" + digests[root] + "-" + str(colliding_roots.index(root) + 1)
+
+
+def _assignment_rows(owner, snapshot, root):
+    from .workshop_work_creation import workshop_assignment_rows
+    return workshop_assignment_rows(owner, snapshot, root)
 
 
 def _workshop_participant_rows(owner, snapshot, space, connections):
@@ -329,6 +336,7 @@ def _read_ordinary_browser_workshop(owner, binding, *, root, scope, expected_rev
                     "feed": feed,
                     "content_generation": generation,
                     "participants": _workshop_participant_rows(owner, snapshot, space, connections or {}),
+                    "assignments": _assignment_rows(owner, snapshot, root),
                     "page_before": before,
                     "content_cursor": _workshop_position_token("c2" if generation else "c1",
                         (page["visible_head"], before_sequence or 0, generation) if generation

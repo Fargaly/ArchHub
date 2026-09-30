@@ -140,6 +140,7 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       if (!r.ok || d.ok === false) {
         const error = new Error(d.error || 'refused');
         error.status = r.status;
+        error.response = d;   // the reply itself, e.g. which exact id a refusal names
         throw error;
       }
       try {

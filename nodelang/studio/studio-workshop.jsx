@@ -599,8 +599,155 @@ const GraphPane = ({ flow, selTask, tidy, chain, onArrange, onChain, onOpen }) =
   );
 };
 
+// ── assign (design 67caa887: W1 pick · W2 review · W3 assigned · W5 refusals) ──
+// Candidates are the rail's own agents; only a verified one (a live, renewed connection
+// attached to this Workshop) can be picked. There is no free-text field: nothing here
+// starts, enrols or names a session. The server re-checks the connection at commit.
+const wsStatusText = {available:'AVAILABLE', working:'WORKING', waiting:'WAITING FOR INPUT',
+  stale:'NO RECENT ACTIVITY', unverified:'CONNECTION UNVERIFIED', off:'DISCONNECTED'};
+const wsNewAssignmentId = () => 'app:workshop-assignment:' + window.crypto.randomUUID().replaceAll('-', '');
+// An assignment whose reply was lost, kept per room+Work until the projection or a retry
+// settles it: Back, another task or closing the panel never forgets its assignment_id.
+const wsPendingAssignments = new Map();
+const wsPendingKey = (room, work) => String(room) + '\u0000' + String(work);
+const wsLostReplyText = 'The last assignment reply was lost. Retry sends the same assignment id, so it cannot assign twice.';
+const AssignSection = ({ task, room, agents, assign, assignments = [] }) => {
+  const key = wsPendingKey(room, task.work);
+  const held = assignments.find(row => row && row.work === task.work) || null;   // the graph's answer
+  // A fresh mount starts from any unconfirmed request for this Work, exactly as a
+  // Work switch does: the pending record is the one truth for what is shown AND sent.
+  const [pick, setPick] = React.useState(() => wsPendingAssignments.get(key)?.agent || null);
+  const [phase, setPhase] = React.useState(() => wsPendingAssignments.has(key) ? 'review' : 'pick');   // pick · review · sending
+  const [notice, setNotice] = React.useState(() => wsPendingAssignments.has(key)
+    ? {kind:'uncertain', text:wsLostReplyText} : null);      // {kind:'refused'|'uncertain', text}
+  const shown = React.useRef(key);                           // the room+Work this panel shows now
+  const alive = React.useRef(true);
+  React.useEffect(() => () => { alive.current = false; }, []);
+  // Another Work: reset DURING render, so no frame ever shows the previous Work's
+  // review or notice (an effect would run after that stale frame was drawn).
+  const [shownKey, setShownKey] = React.useState(key);
+  if (shownKey !== key) {
+    const pending = wsPendingAssignments.get(key);
+    shown.current = key;
+    setShownKey(key);
+    setPick(pending ? pending.agent : null); setPhase(pending ? 'review' : 'pick');
+    setNotice(pending ? {kind:'uncertain', text:wsLostReplyText} : null);
+  }
+  React.useEffect(() => {
+    // The projection settles an uncertain request: assigned (by its id or otherwise) ends it.
+    const pending = wsPendingAssignments.get(key);
+    if (pending && held) { wsPendingAssignments.delete(key); if (alive.current && shown.current === key) { setNotice(null); setPhase('pick'); } }
+  }, [key, held && held.assignment]);
+  const candidates = agents.filter(a => !a.self);
+  const chosen = candidates.find(a => a.id === pick) || null;
+  const send = async () => {
+    const target = key, work = task.work;
+    let pending = wsPendingAssignments.get(target);
+    // A pending (unconfirmed) request is retried exactly as it was: same agent, same id.
+    if (!assign || (!pending && !chosen)) return;
+    const wasPending = Boolean(pending);
+    if (!pending) pending = {agent:chosen.id, id:wsNewAssignmentId()};
+    wsPendingAssignments.set(target, pending);
+    setPhase('sending'); setNotice(null);
+    const current = () => alive.current && shown.current === target;   // a late reply never touches another Work
+    try {
+      await assign({work, agent_session:pending.agent, assignment_id:pending.id});
+      wsPendingAssignments.delete(target);
+      if (current()) { setPhase('pick'); setPick(null); }
+    } catch (error) {
+      // Only the server's explicit refusal of THIS id settles a pending request (the
+      // projection settles it too, above). A lost reply keeps it; so does any failure
+      // before the POST when an earlier attempt of this id may already have landed.
+      if (error.assignmentUncertain || (wasPending && !error.assignmentRefused)) {
+        if (current()) {
+          setNotice({kind:'uncertain', text:error.assignmentPreflight
+            ? 'Nothing was sent: ' + error.message + ' The earlier assignment is still unconfirmed; retry sends the same assignment id.'
+            : error.message});
+          setPhase('review');
+        }
+      } else {
+        wsPendingAssignments.delete(target);
+        if (current()) { setNotice({kind:'refused', text:error.message}); setPhase('pick'); }
+      }
+    }
+  };
+  if (held) {
+    const owner = agents.find(a => a.id === held.agent_session) || {id:held.agent_session, name:held.agent_session,
+      col:W.bgSoft, ink:W.ink, ini:'?'};
+    return (
+      <div style={{ padding:'12px 16px', borderBottom:`1px solid ${W.lineSoft}` }} aria-label="Assigned agent">
+        <Lbl>ASSIGNED TO</Lbl>
+        <div style={{ display:'flex', gap:8, alignItems:'center', marginTop:8, padding:'7px 8px', border:`1px solid ${W.line}`, borderRadius:8 }}>
+          <Av a={owner} s={22}/>
+          <div style={{ minWidth:0 }}><div style={{ fontSize:12.5, overflowWrap:'anywhere' }}>{owner.name}</div>
+            <div style={{ fontFamily:W.mono, fontSize:9.5, color:W.inkMuted }}>assigned · it claims the Work itself</div></div>
+        </div>
+        <div style={{ fontSize:11.5, lineHeight:1.5, color:W.inkSoft, marginTop:8 }}>One agent at a time: this Work cannot take another assignee while this one holds it.</div>
+      </div>);
+  }
+  // While a request is unconfirmed, its record decides everything on screen: the
+  // review names ITS agent (never a later pick), the pick list is not offered, and
+  // send() retries that same record -- what is shown is what is dispatched.
+  const pendingNow = wsPendingAssignments.get(key);
+  const shownPhase = pendingNow && phase === 'pick' ? 'review' : phase;
+  const shownNotice = notice || (pendingNow && shownPhase !== 'sending' ? {kind:'uncertain', text:wsLostReplyText} : null);
+  const reviewAgent = pendingNow
+    ? (candidates.find(a => a.id === pendingNow.agent) || {id:pendingNow.agent, name:pendingNow.agent})
+    : chosen;
+  return (
+    <div style={{ padding:'12px 16px', borderBottom:`1px solid ${W.lineSoft}` }} aria-label="Assign this Work">
+      <Lbl>{shownPhase === 'pick' ? 'ASSIGNED TO · nobody' : 'ASSIGN · REVIEW'}</Lbl>
+      {shownNotice && <div role="alert" style={{ marginTop:8, padding:'8px 10px', borderRadius:8,
+          border:`1px solid ${shownNotice.kind === 'refused' ? W.err : W.warn}` }}>
+        <Lbl c={shownNotice.kind === 'refused' ? W.err : W.warn}>{shownNotice.kind === 'refused' ? 'NOT ASSIGNED' : 'NOT CONFIRMED'}</Lbl>
+        <div style={{ fontSize:11.5, lineHeight:1.5, color:W.inkSoft, marginTop:4 }}>{shownNotice.text}</div>
+      </div>}
+      {shownPhase === 'pick' ? <>
+        <div style={{ fontSize:11.5, lineHeight:1.5, color:W.inkSoft, marginTop:6 }}>Pick an agent that is running now. It gets this Work as a task to claim; assigning grants it nothing else.</div>
+        <div role="radiogroup" aria-label="Running agents" style={{ marginTop:8, display:'grid', gap:4 }}>
+          {candidates.length ? candidates.map(a => (
+            <button key={a.id} type="button" role="radio" aria-checked={pick === a.id} disabled={!a.verified}
+              onClick={() => setPick(a.id)}
+              style={{ display:'flex', gap:8, alignItems:'center', textAlign:'left', padding:'6px 8px', borderRadius:8,
+                border:`1px solid ${pick === a.id ? W.accent : W.line}`, background:'transparent', color:W.ink,
+                opacity:a.verified ? 1 : 0.55, cursor:a.verified ? 'pointer' : 'not-allowed' }}>
+              <Av a={a} s={20}/>
+              <span style={{ flex:1, minWidth:0 }}><span style={{ display:'block', fontSize:12 }}>{a.name}</span>
+                <span style={{ display:'block', fontFamily:W.mono, fontSize:9.5, color:W.inkMuted }}>
+                  {a.verified ? (a.seen ? 'renewed · ' + a.seen : 'connection verified') :
+                   a.status === 'off' ? 'disconnected from this app' : a.status === 'stale' ? 'connection not renewed' : 'connection unverified'}</span></span>
+              <span style={{ fontFamily:W.mono, fontSize:9, color:W.inkMuted }}>{wsStatusText[a.status] || ''}</span>
+            </button>)) :
+            <div style={{ fontSize:11.5, color:W.inkSoft }}>No agent is attached to this Workshop.</div>}
+        </div>
+        <div style={{ display:'flex', gap:6, marginTop:10 }}>
+          <button type="button" disabled={!chosen || !chosen.verified || !assign}
+            onClick={() => { setNotice(null); setPhase('review'); }}>{chosen ? 'Assign to ' + chosen.name + '…' : 'Assign…'}</button>
+        </div>
+      </> : <div style={{ marginTop:8, padding:'10px 12px', border:`1px solid ${W.line}`, borderRadius:10 }}>
+        <div style={{ fontFamily:W.serif, fontSize:17 }}>Assign this Work</div>
+        <div style={{ display:'flex', gap:8, alignItems:'center', marginTop:8, fontSize:12 }}>
+          <div style={{ flex:1, minWidth:0 }}><Lbl>WORK</Lbl><div style={{ overflowWrap:'anywhere' }}>{task.title}</div></div>
+          <div aria-hidden="true">→</div>
+          <div style={{ flex:1, minWidth:0 }}><Lbl>AGENT</Lbl><div data-assign-agent={reviewAgent ? reviewAgent.id : ''}>{reviewAgent ? reviewAgent.name : ''}</div></div>
+        </div>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:10, fontSize:11, lineHeight:1.5, color:W.inkSoft }}>
+          <div><b style={{ color:W.ok }}>Does</b><br/>records the assignment · adds it to the agent's Work list · raises an attention item</div>
+          <div><b style={{ color:W.err }}>Does not</b><br/>claim the Work · grant any file writes · start or enrol a session</div>
+        </div>
+        <div style={{ fontFamily:W.mono, fontSize:9.5, color:W.inkMuted, marginTop:8 }}>connection re-checked at commit · assignment id reused on retry</div>
+        <div style={{ display:'flex', gap:6, marginTop:10 }}>
+          <button type="button" disabled={shownPhase === 'sending' || !(chosen || pendingNow)} onClick={send}>
+            {pendingNow && shownNotice?.kind === 'uncertain' ? 'Retry the same assignment' : shownPhase === 'sending' ? 'Assigning…' : 'Assign · founder'}</button>
+          {/* Back keeps an unconfirmed request: its assignment id stays until it is settled. */}
+          <button type="button" disabled={shownPhase === 'sending' || !!pendingNow} onClick={() => { setPhase('pick'); setNotice(null); }}>Back</button>
+        </div>
+      </div>}
+    </div>);
+};
+
 // ── context panel ──
-const ContextPanel = ({ selAgent, selTask, tasks, agent, descriptor, activity, activityNote, counts, listening, controls, controlsOpen, onControls }) => {
+const ContextPanel = ({ selAgent, selTask, tasks, agent, descriptor, activity, activityNote, counts, listening, controls, controlsOpen, onControls, agents = [], assign = null, assignments = [] }) => {
   const t = tasks.find(x => x.work === selTask);
   const a = selAgent;
   const showTask = !!t;
@@ -644,6 +791,8 @@ const ContextPanel = ({ selAgent, selTask, tasks, agent, descriptor, activity, a
           </>}
         </div>
       </div>
+      {showTask && assign && t.state !== 'done' && <AssignSection task={t} room={descriptor.root} agents={agents}
+        assign={assign} assignments={assignments}/>}
       <div style={{ padding:'12px 16px', borderBottom:`1px solid ${W.lineSoft}` }}>
         <Lbl>PERMISSIONS</Lbl>
         <div style={{ marginTop:8 }}>
@@ -713,6 +862,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   };
   const [publicReview, setPublicReview] = React.useState(false);
   const [repair, setRepair] = React.useState({title:'', description:'', criterion:'', verification:'', path:'', model:'nex-agi/nex-n2.5-pro:free'});
+  const [existingWork, setExistingWork] = React.useState(null);   // {root, key}: the key already names this Work
   const [sourceFile, setSourceFile] = React.useState(null);
   const [readingFile, setReadingFile] = React.useState(false);
   const [creationUncertain, setCreationUncertain] = React.useState(false);
@@ -1154,7 +1304,13 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
       }
       const node = projectedWorkNodes.find(row => row.id === descriptor.root);
       const result = await authority.createProjectWork(descriptor.root, {...repair, hosts:repair.programs || [], content:sourceFile.content,
+        external_key:(repair.key || '').trim(),
         x:Number.isFinite(node?.x) ? node.x + 280 : 200, y:Number.isFinite(node?.y) ? node.y : 200});
+      if (result.existing) {
+        // Founder decision 3: this key already names a Work. Nothing was created; offer that Work.
+        if (mounted.current) setExistingWork({root:result.created_root, key:(repair.key || '').trim()});
+        return;
+      }
       if (mounted.current) {
         setSourceFile(null); setRepair({title:'', description:'', criterion:'', verification:'', path:'', model:'nex-agi/nex-n2.5-pro:free'});
         setCreationUncertain(true);
@@ -1483,6 +1639,18 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
                   disabled={busy || !!revisionBase} onChange={event => setRepair(value => ({...value, title:event.target.value}))}
                   style={{display:'block', width:'100%', marginTop:4}}/>
               </label>
+              {!revisionBase && <label style={{display:'block', margin:'10px 0'}}>Work key
+                <input aria-label="Work key" maxLength={160} value={repair.key || ''} placeholder="project:purpose:1"
+                  pattern="[a-z0-9][a-z0-9.\-]*:[a-z0-9][a-z0-9.\-]*:[0-9]+" disabled={busy}
+                  onChange={event => { setExistingWork(null); setRepair(value => ({...value, key:event.target.value})); }}
+                  style={{display:'block', width:'100%', marginTop:4, fontFamily:W.mono}}/>
+              </label>}
+              {existingWork && <div role="status" aria-label="Existing Work for this key" style={{margin:'8px 0', padding:'8px 10px',
+                  border:`1px solid ${W.warn}`, borderRadius:8}}>
+                <Lbl c={W.warn}>THIS KEY ALREADY HAS A WORK</Lbl>
+                <div style={{fontSize:11.5, lineHeight:1.5, color:W.inkSoft, marginTop:4}}>{existingWork.key} names a Work that already exists. Nothing new was created; change the key to create another.</div>
+                <button type="button" style={{marginTop:6}} onClick={() => { setS({agent:null, task:existingWork.root}); setControlsOpen(false); }}>Assign that Work…</button>
+              </div>}
               <label style={{display:'block', margin:'10px 0'}}>Requested change
                 <textarea aria-label="Requested source change" required maxLength={12000} value={repair.description}
                   disabled={busy || !!revisionBase} onChange={event => setRepair(value => ({...value, description:event.target.value}))}
@@ -2111,6 +2279,8 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
         ? <GraphPane flow={flow} selTask={selTask} tidy={tidy} chain={chain}
             onArrange={() => setTidy(t => !t)} onChain={() => setChain(c => !c)} onOpen={openAsNodes}/>
         : <ContextPanel selAgent={selTask ? null : selAgent} selTask={selTask} tasks={tasks} agent={agent} descriptor={descriptor}
+            agents={agents} assign={existing && authority?.assignWork ? (request => authority.assignWork(descriptor.root, request)) : null}
+            assignments={Array.isArray(transcript?.assignments) ? transcript.assignments : []}
             activity={activity} activityNote={activityNote} counts={counts} listening={listening}
             controls={controls} controlsOpen={controlsOpen} onControls={() => setControlsOpen(o => !o)}/>}
       <style>{`
@@ -2215,4 +2385,5 @@ const WorkshopReview = ({text}) => {
 
 window.WorkshopView = WorkshopView;
 window.WorkshopAgentsRail = AgentsRail;
+window.WorkshopAssignSection = AssignSection;   // the Work context panel's ASSIGN section (JSDOM court)
 })();

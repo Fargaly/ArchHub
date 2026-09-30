@@ -7692,6 +7692,29 @@ class ApplicationServer:
                             }
                         self._json(200, payload)
                         return
+                    if self.path == '/api/universal/workshop-work-assign':
+                        # The founder assigns one Workshop Work to an agent already running
+                        # in that room: his own browser gesture, never a machine request.
+                        from .workshop_work_creation import (assign_browser_workshop_work,
+                                                             WorkshopAssignmentRefused)
+                        def current_workshop_assignment_binding():
+                            current_binding, _ = self._browser_session_binding(unsafe=True)
+                            if current_binding != binding or current_binding.context is not binding.context:
+                                raise AuthorizationDenied('Workshop browser binding changed during assignment')
+                            owner.require_universal_http_route('POST', self.path,
+                                authentication_context=binding.context, revalidate=True)
+                        try:
+                            payload = assign_browser_workshop_work(owner, binding, body,
+                                browser_guard=current_workshop_assignment_binding)
+                        except WorkshopAssignmentRefused as refusal:
+                            # Refused before the commit: nothing was written, and the
+                            # reply names the exact assignment id it refuses.
+                            self._json(refusal.status, {'ok':False, 'error':str(refusal),
+                                                        'refused':True, 'assignment':refusal.assignment,
+                                                        'reconciled_absent':refusal.reconciled_absent})
+                            return
+                        self._json(200, payload)
+                        return
                     if self.path == '/api/universal/work':
                         if any(field in body for field in ('workshop_root', 'workshop_scope', 'revision')):
                             from .workshop_work_creation import create_browser_workshop_work

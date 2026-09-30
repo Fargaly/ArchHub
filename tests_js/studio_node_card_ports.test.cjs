@@ -1,7 +1,8 @@
 /* Canvas node cards as the founder design bundle draws them (archhub/project/studio-lm.jsx: NodeCanvas wires
-   1403-1427, NodeRenderer 1575-1635, Socket 1651-1674): the title and summary sit in the card body as drawn, the
-   sockets sit on the card's own edge at fixed offsets from its top (42 + 19 per port index, radius 5), and every wire
-   ends at that same offset. The live graph keeps its handles: a connectable port is a button that starts or finishes a
+   1403-1427, NodeRenderer 1575-1635, Socket 1651-1674): the title and summary sit in the card body as drawn. The
+   sockets sit in a port band BELOW that content (d649e84f: fixed offsets drew port labels over the title and
+   summary), one 19px row per port index, on the card's own edges; every wire ends at its row in the band the card
+   reports. The live graph keeps its handles: a connectable port is a button that starts or finishes a
    wire through the application's topology transport; a port the server marks not connectable stays inert. */
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
@@ -22,8 +23,11 @@ const LM = new Proxy(Object.fromEntries([...palette.matchAll(/^ {2}(\w+):/gm)].m
     return held[key];
   }});
 
-// The design's socket geometry (design studio-lm.jsx:1249-1253).
-const TOP = 42, STEP = 19, RADIUS = 5;
+// The socket geometry: one 19px row per port, radius 5, the band padded 4px (studio-lm.jsx PORT_BAND_PAD).
+const STEP = 19, RADIUS = 5, PAD = 4;
+const rowCentre = index => PAD + index * STEP + STEP / 2;
+// jsdom has no layout: the band's offsetTop is what the card reports, so the court sets it.
+let bandTop = 0;
 const connection = {mode:'connection', connect_control:'control-a', connect_choices:[{id:'in-a'}]};
 // The card from the founder window (2026-09-17): a Work title that wraps, eleven input ports and a "Graph node" summary.
 const workPorts = ['dependencies', 'description', 'external-key', 'inputs', 'outputs', 'plan', 'priority',
@@ -54,6 +58,8 @@ async function mount() {
   assert.ok(start > 0 && end > start && socketStart > end && socketEnd > socketStart,
     'the canvas, node card and socket are slices of the shipped studio-lm.jsx');
   const dom = new JSDOM('<div id="root"></div>');
+  Object.defineProperty(dom.window.HTMLElement.prototype, 'offsetTop', {configurable:true,
+    get() { return this.hasAttribute('data-port-band') ? bandTop : 0; }});
   const oldWindow = global.window, oldDocument = global.document;
   global.window = dom.window; global.document = dom.window.document;
   global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -98,23 +104,28 @@ function wireEnd(doc) {
   return {x1:+match[1], y1:+match[2], x2:+match[3], y2:+match[4]};
 }
 
-test('sockets sit on the card edge at the design offsets: 42 from the card top, 19 per port index', async () => {
+test('sockets sit in a port band below the title and summary, one row per port, on the card edges', async () => {
   const view = await mount();
   try {
     const doc = await view.draw();
     for (const node of nodes) {
       const element = card(doc, node.id);
       assert.ok(element, 'the card is drawn: ' + node.id);
+      const band = element.querySelector('[data-port-band]');
+      assert.ok(band && band.parentElement === element, 'the card has its own port band: ' + node.id);
+      assert.equal(band, element.lastElementChild, 'the band comes after the title bar and body');
+      const rows = Math.max(node.ins.length, node.outs.length);
+      assert.equal(band.style.height, (PAD * 2 + rows * STEP) + 'px', 'one row per port pair: ' + node.id);
       const sides = [['in', node.ins, 'left'], ['out', node.outs, 'right']];
       for (const [side, ports, edge] of sides) {
         ports.forEach((port, index) => {
           const button = socket(doc, node.id, (side === 'in' ? 'Connect input ' : 'Connect output ') + port.label);
           assert.ok(button, 'the socket is drawn: ' + node.id + ' ' + port.label);
           const holder = button.parentElement;
-          assert.ok(holder.parentElement === element, 'the socket is pinned to the card itself, not a port band: ' + port.label);
+          assert.ok(holder.parentElement === band, 'the socket lives in the band, never over the content: ' + port.label);
           assert.equal(holder.style.position, 'absolute');
-          assert.equal(holder.style.top, (TOP + index * STEP - RADIUS) + 'px', 'row ' + index + ' of ' + node.id);
-          assert.equal(holder.style[edge], -RADIUS + 'px', 'on the ' + edge + ' edge: ' + port.label);
+          assert.equal(holder.style.top, (rowCentre(index) - RADIUS - 1) + 'px', 'row ' + index + ' of ' + node.id);
+          assert.equal(holder.style[edge], (-RADIUS - 1) + 'px', 'on the ' + edge + ' edge: ' + port.label);
           assert.equal(button.style.width, 2 * RADIUS + 'px');
           assert.equal(button.style.borderRadius, '50%');
         });
@@ -123,15 +134,16 @@ test('sockets sit on the card edge at the design offsets: 42 from the card top, 
   } finally { await view.close(); }
 });
 
-test('each wire ends at its socket offset, and a longer title moves neither end', async () => {
-  const view = await mount();
-  try {
-    let doc = await view.draw();
-    const expected = {x1:40 + 210, y1:60 + TOP, x2:420, y2:300 + TOP + STEP};
-    assert.deepEqual(wireEnd(doc), expected, 'the wire leaves output row 0 of work and enters input row 1 of sink');
-    doc = await view.draw(nodes.map(node => node.id === 'work' ? {...node, title:node.title + ' and its installer notes'} : node));
-    assert.deepEqual(wireEnd(doc), expected, 'the sockets do not follow the title: they sit at fixed offsets as designed');
-  } finally { await view.close(); }
+test('each wire ends at its row in the band the card reports, and follows the band when the content grows', async () => {
+  for (const top of [96, 140]) {
+    bandTop = top;
+    const view = await mount();
+    try {
+      const doc = await view.draw();
+      assert.deepEqual(wireEnd(doc), {x1:40 + 210, y1:60 + top + rowCentre(0), x2:420, y2:300 + top + rowCentre(1)},
+        'output row 0 of work to input row 1 of sink, below a band starting at ' + top + 'px');
+    } finally { await view.close(); bandTop = 0; }
+  }
 });
 
 test('title and summary sit in the card body as drawn, never clamped to one line', async () => {

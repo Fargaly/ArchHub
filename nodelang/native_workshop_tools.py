@@ -456,7 +456,7 @@ def build_workshop_task_server(control, selected_work):
         """Read selected Work and ordinary peer context; no acknowledgement or execution."""
         with control.bound_client() as client:
             held.assignment(client)
-            result = user_prompt_submit_context(control)
+            result = user_prompt_submit_context(control, selected=held)
             context = json.loads(result['hookSpecificOutput']['additionalContext'].split('\n',1)[1])
             current = context['current_work']
             if current is not None and current['root'] != held.root:

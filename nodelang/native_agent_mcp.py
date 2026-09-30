@@ -300,8 +300,9 @@ def build_server(*, session=None, workshop_task: str | None = None):
 
         Read-only context delivery; does not acknowledge, approve, or execute.
         Configure this on UserPromptSubmit, after MCP connection is available.
+        With a Work attached, its context is shown.
         """
-        return user_prompt_submit_context(control)
+        return user_prompt_submit_context(control, selected=attached['held'] if attached else None)
 
     @server.tool(name="native.work_current")
     def work_current() -> dict[str, object]:

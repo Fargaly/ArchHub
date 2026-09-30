@@ -23,8 +23,11 @@ _INTRO = (
     "and sequence; use coordination.read_messages with before for older messages. "
     "Current Work includes blocked and awaiting-review assignments. No pending "
     "assignment is not completion proof. Use native.work_assignment for the exact "
-    "assignment, scope and criteria before acting; this context grants no authority.\n"
+    "assignment, scope and criteria before acting; this context grants no authority. "
+    "With several pending Works and none attached, pending_works lists them by root and "
+    "state; attach one with native.work_task_attach to act on it.\n"
 )
+_PENDING_LIMIT = 20
 
 
 def stop_verdict(status, client):
@@ -114,7 +117,7 @@ def _remaining(deadline):
 
 def _current_work(result, session_root):
     if (type(result) is not dict or set(result) != {"agent_session", "work", "revision", "projection"}
-            or result["projection"] != "assignment"
+            or result["projection"] not in ("assignment", "selected-assignment")
             or result["agent_session"] != session_root or not _revision(result["revision"])):
         raise MachineTransportError("native prompt current Work identity is invalid")
     work = result["work"]
@@ -171,18 +174,46 @@ def _messages(page, client):
     return result
 
 
-def user_prompt_submit_context(control) -> dict[str, object]:
+def _pending_works(client, deadline):
+    """This session's pending Works by root, state and title, bounded; no single current Work."""
+    from .native_agent_mcp import _validate_index
+    index = _validate_index(client.request("GET", "/api/universal/work", {"projection": "index"},
+                                           response_timeout_seconds=_remaining(deadline)), client)
+    rows = [item for item in index["items"]
+            if item["claimant_session"] == client.agent_session_root
+            and item["operational"]["current_state_label"].casefold() in {"claimed", "review", "blocked"}]
+    works = [{"root": item["root"], "state": item["operational"]["current_state_label"].casefold(),
+              "title": item["interfaces"]["title"]["value"][:160]} for item in rows[:_PENDING_LIMIT]]
+    current = {"agent_session": client.agent_session_root, "work": None,
+               "revision": index["revision"], "projection": "assignment"}
+    return current, {"works": works, "total": len(rows), "truncated": len(rows) > _PENDING_LIMIT}
+
+
+def user_prompt_submit_context(control, *, selected=None) -> dict[str, object]:
     """Build Claude UserPromptSubmit stdout JSON using the same owned client.
 
+    With a Work attached (``selected``), its context is shown. A session with
+    several pending Works and none attached is not an error (live 717,
+    2026-09-30): they are listed by root and state instead of one current Work.
     Assignment uses its existing ten-second response wait; messages use at
     most five seconds within the remaining shared ten-second response budget.
     Existing automatic renewal and AF_PIPE connection
     setup can exceed that budget; this is not a hard operation deadline.
     """
+    from .application_machine_transport import MachineResponseError
     deadline = time.monotonic() + 10.0
     with control.bound_client() as client:
         _remaining(deadline)
-        current = client.current_work_assignment()
+        pending = None
+        if selected is not None:
+            current = selected.assignment(client)
+        else:
+            try:
+                current = client.current_work_assignment()
+            except MachineResponseError as exc:
+                if "owns multiple active governed-work assignments" not in str(exc):
+                    raise
+                current, pending = _pending_works(client, deadline)
         work, state = _current_work(current, client.agent_session_root)
         page = control.call("read_messages", {"limit": _PAGE_LIMIT},
                             timeout_seconds=_remaining(deadline))
@@ -191,6 +222,7 @@ def user_prompt_submit_context(control) -> dict[str, object]:
         data = {"agent_session": client.agent_session_root,
                 "work_revision": current["revision"], "current_work": work,
                 "current_work_state": state, "assignment_tool": "native.work_assignment",
+                "pending_works": pending,
                 "workshop_revision": page["revision"], "recent_messages": messages,
                 "complete_inbox": False, "has_older": page["has_older"],
                 "context_page_truncated": False,

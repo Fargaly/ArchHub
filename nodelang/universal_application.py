@@ -3411,6 +3411,7 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("GET", "/api/universal/workshop-model-approval", "read"),
     ("GET", "/api/universal/workshop-native", "read"),
     ("GET", "/api/universal/workshop-assignments", "read"),
+    ("GET", "/api/universal/workshop-transcript", "read"),
     ("GET", "/api/universal/deliberation", "read"),
     ("GET", "/api/universal/attention", "read"),
     ("GET", "/api/universal/devices", "read"),
@@ -17461,6 +17462,15 @@ def _project_presenter_component(
     }
 
 
+def _node_conversation_root(value) -> str | None:
+    """A node's bound Workshop conversation root (its `conversation` property value), or None."""
+    if value is None:
+        return None
+    value = str(value).strip()
+    # An unfilled workflow parameter ("" or "this") binds nothing.
+    return value if value and value != "this" and ":" in value and len(value) <= 512 else None
+
+
 def _rows_by_label(snapshot: Snapshot, rows: tuple[PropertyProjection, ...]):
     return {_text(snapshot, row.label_root): row for row in rows}
 
@@ -24020,6 +24030,17 @@ def _project_universal_canvas_interpreter(
                 str(effective_property_value(labelled["status"]))
                 if "status" in labelled else ""
             ),
+            # Canvas live-node conversation contract: the Workshop conversation
+            # that holds this node's transcript is the node's own `conversation`
+            # property (start_workshop_session, workflow drafts). The canvas rail
+            # reads it read-only via /api/universal/workshop-transcript; null when
+            # none is bound.
+            "conversation_root": _node_conversation_root(
+                effective_property_value(labelled["conversation"])
+                if "conversation" in labelled else None),
+            "has_conversation": _node_conversation_root(
+                effective_property_value(labelled["conversation"])
+                if "conversation" in labelled else None) is not None,
             "ports": [
                 {
                     **interface,

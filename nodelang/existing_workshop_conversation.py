@@ -480,6 +480,54 @@ def _read_ordinary_browser_workshop(owner, binding, *, root, scope, expected_rev
                 return result
 
 
+TRANSCRIPT_KINDS = ("message", "reply", "tool")
+
+
+def read_canvas_node_transcript(owner, binding, *, node, scope, session_token, before=None):
+    """Read-only transcript of a canvas node's Workshop conversation (canvas live-node contract).
+
+    Keyed by the NODE: the node must be on the canvas at the viewer's current scope, and its
+    conversation is the root the canvas projection names for it (conversation_root). The read is
+    the Workshop's own messages-feed read under the same browser and scope admission; nothing is
+    sent, delivered or recorded. Rows are render-ready: who (a display name, never an opaque
+    root), is_me, time (the record's created_at, ISO-8601), text (an agent reply's own text),
+    kind ('message' | 'reply' | 'tool').
+    """
+    from . import universal_application as app
+    if type(node) is not str or not node or len(node) > 1024:
+        raise InvalidCell("Transcript node is invalid")
+    projection = app.project_universal_canvas(owner.universal_store, owner.universal_registry,
+        authentication_context=binding.context)
+    if (projection.get("scope") or {}).get("current") != scope:
+        raise AuthorizationDenied("Canvas scope changed; refresh the canvas")
+    found = [row for row in projection.get("nodes", ()) if row.get("id") == node]
+    if len(found) != 1:
+        raise AuthorizationDenied("That node is not on this canvas")
+    root = found[0].get("conversation_root")
+    head = {"ok": True, "node": node, "conversation_root": root, "revision": projection.get("revision")}
+    if root is None:
+        return {**head, "has_older": False, "next_before": None, "rows": []}
+    page = read_browser_workshop(owner, binding, root=root, scope=scope, session_token=session_token,
+                                 before=before, feed="messages")
+    labels = {row["root"]: (row.get("host") or row.get("label") or "") for row in page.get("participants", ())}
+    me = page.get("self")
+    rows = []
+    for message in page.get("messages", ()):
+        relayed = type(message.get("relayed_from")) is str
+        sender = message.get("sender_root")
+        rows.append({
+            "id": message["message_id"],
+            "who": (message.get("relayed_label") or "agent") if relayed else
+                   ("You" if sender == me else (labels.get(sender) or "participant")),
+            "is_me": (not relayed) and sender == me,
+            "time": message.get("created_at"),
+            "text": message.get("agent_text") if relayed else message.get("body", ""),
+            "kind": "reply" if relayed else ("tool" if message.get("category") == "tool" else "message"),
+        })
+    return {**head, "revision": page.get("revision", head["revision"]), "has_older": page.get("has_older", False),
+            "next_before": page.get("next_before"), "rows": rows}
+
+
 def disconnect_browser_workshop_agent(owner, binding, body, *, browser_guard):
     """Disconnect one admitted agent's Session Link channel for the application owner.
 

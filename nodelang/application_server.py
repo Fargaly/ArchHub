@@ -6977,6 +6977,32 @@ class ApplicationServer:
                     except InvalidCell as exc:
                         self._json(400, {'ok':False, 'error':str(exc)})
                     return
+                if parsed.path == '/api/universal/workshop-transcript':
+                    # Canvas live-node conversation contract: a node's Workshop transcript, read
+                    # only, keyed by the node at the viewer's canvas scope. No send path here; the
+                    # canvas rail continues in the Workshop to write.
+                    if not self._universal_route('GET', parsed.path, binding):
+                        return
+                    query = parse_qs(parsed.query, keep_blank_values=True)
+                    if (not {'node', 'scope'} <= set(query) or set(query) - {'node', 'scope', 'before'}
+                            or any(len(values) != 1 or not values[0] or len(values[0]) > 4096
+                                   for values in query.values())):
+                        self._json(400, {'ok':False, 'error':'Workshop transcript query is invalid'})
+                        return
+                    from .existing_workshop_conversation import read_canvas_node_transcript
+                    try:
+                        with owner.mutation_lock:
+                            payload = read_canvas_node_transcript(owner, binding, node=query['node'][0],
+                                scope=query['scope'][0], session_token=_session_token,
+                                before=query.get('before', [None])[0])
+                    except AuthorizationDenied as exc:
+                        self._json(403, {'ok':False, 'error':str(exc)})
+                        return
+                    except InvalidCell as exc:
+                        self._json(400, {'ok':False, 'error':str(exc)})
+                        return
+                    self._json(200, payload)
+                    return
                 if parsed.path == '/api/universal/workshop':
                     if not self._universal_route('GET', parsed.path, binding):
                         return

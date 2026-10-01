@@ -138,6 +138,19 @@ const WORKSHOP_TASK_STATES = [
 const wsSender = message => typeof message?.relayed_from === 'string' ? message.relayed_from : message?.sender_root;
 const wsText = message => typeof message?.relayed_from === 'string' && typeof message.agent_text === 'string'
   ? message.agent_text : String(message?.body || '');
+// An agent's reply that carries a workflow plan (a fenced JSON block with "actions"): its prose and
+// the plan's steps, so the thread shows the plan as steps, never as a JSON dump (design audit gap 1).
+const wsPlanReply = text => {
+  const found = /```(?:json)?\s*\n([\s\S]*?)\n```/.exec(String(text || ''));
+  if (!found) return null;
+  let plan = null;
+  try { plan = JSON.parse(found[1]); } catch (_) { return null; }
+  if (!plan || typeof plan !== 'object' || !Array.isArray(plan.actions)) return null;
+  const steps = plan.actions.filter(row => row && row.op === 'node')
+    .map(row => ({t:String(row.title || row.engine || 'step'), p:String(row.engine || '')}));
+  const prose = (String(text).slice(0, found.index) + String(text).slice(found.index + found[0].length)).trim();
+  return {prose, steps, title:typeof plan.title === 'string' ? plan.title : '', raw:found[1]};
+};
 const workshopTaskItems = (messages, nodes) => {
   const byId = new Map((Array.isArray(nodes) ? nodes : []).map(node => [node.id, node]));
   const cards = new Map(), items = [];
@@ -2294,6 +2307,12 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
       </div>
     </div>
   );
+  // The proposed workflow answers in place: it is drawn at the agent reply it came from when that reply is on
+  // this page (design: the proposing agent's message IS the card), never at the top out of order.
+  // Only where that reply is actually drawn as a message row: a reply that names a Work is folded into
+  // its task card instead, and then the card keeps its own placement (Ping, batch 1 return).
+  const anchoredWorkflow = !!shownWorkflow && typeof shownWorkflow.source_message === 'string' &&
+    taskItems.some(item => item.kind === 'message' && item.message.root === shownWorkflow.source_message);
   const workflowCard = shownWorkflow ? workflowProposalCard : chainNodes.length > 0 && (
     <div style={{ display:'flex', gap:12 }}>
       <Av a={room} s={28}/>
@@ -2364,10 +2383,10 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
         (row.recipient || 'stored') + ':' + index))}
     </div>;
   };
-  const relayedActions = message => {
+  const relayedActions = (message, drafted = false) => {
     if (!workflowApi) return null;
     const reviewers = nativeContacts.filter(row => row.root !== message.relayed_from).slice(0, 3);
-    const proposal = /"actions"\s*:/.test(message.agent_text);
+    const proposal = !drafted && /"actions"\s*:/.test(message.agent_text);
     if (!proposal && !reviewers.length) return null;
     return <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center', marginTop:8 }}>
       {chip('sha256 ' + String(message.artifact_digest || '').slice(0, 12), W.inkMuted, 'Artifact digest of this reply', 'digest')}
@@ -2384,6 +2403,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
       {proposedWorkflows.map(wf => {
         const approved = wf.approval && wf.approval.current === true;
         const status = approved ? chip('APPROVED · READY TO RUN', W.ok, 'Approval ' + String(wf.approval.digest).slice(0, 12), 's')
+          : wf.approval?.revoked ? chip('REVOKED · NOTHING FURTHER RUNS', W.err, 'You revoked the approval; approve it again before it runs.', 's')
           : wf.approval ? chip('CHANGED SINCE APPROVAL', W.warn, 'Review and approve again before it runs.', 's')
           : chip('AWAITING YOUR APPROVAL', W.err, 'A proposal is not approval.', 's');
         return <div key={wf.root} style={{ background:W.bgPanel, border:`1px solid ${W.line}`, borderRadius:7, padding:'12px 13px' }}>
@@ -2400,11 +2420,18 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
                 <form key={param.relation + ':' + param.value} onSubmit={e => { e.preventDefault(); if (param.editable) saveParam(param.relation, e.currentTarget.elements.value.value); }}
                   style={{ display:'flex', alignItems:'center', gap:6, margin:'3px 0' }}>
                   <span style={{ fontFamily:W.mono, fontSize:9.5, color:W.inkMuted, minWidth:88 }}>{label}</span>
-                  {param.editable
+                  {param.editable && (label === 'agent' || label === 'reviewer')
+                    ? <><select name="value" aria-label={label} defaultValue={param.value} disabled={busy} title={param.value}
+                        style={{ flex:1, minWidth:0, border:`1px solid ${W.line}`, borderRadius:4, background:W.bg, color:W.ink, fontSize:11.5, padding:'3px 6px' }}>
+                        {[...new Set([param.value, ...nativeContacts.map(row => row.root), ...relayLabels.keys()])].filter(Boolean)
+                          .map(root => <option key={root} value={root}>{contactLabel(root)}</option>)}
+                      </select>
+                      <Btn sm disabled={busy} onClick={e => saveParam(param.relation, e.currentTarget.form.elements.value.value)}>Save</Btn></>
+                  : param.editable
                     ? <><input name="value" aria-label={label} defaultValue={param.value} disabled={busy} maxLength={12000}
                         style={{ flex:1, minWidth:0, border:`1px solid ${W.line}`, borderRadius:4, background:W.bg, color:W.ink, fontSize:11.5, padding:'3px 6px' }}/>
                       <Btn sm disabled={busy} onClick={e => saveParam(param.relation, e.currentTarget.form.elements.value.value)}>Save</Btn></>
-                    : <span style={{ fontSize:11.5, color:W.inkSoft, overflowWrap:'anywhere' }}>{label === 'agent' || label === 'reviewer' ? contactLabel(param.value) : param.value}</span>}
+                    : <span title={label === 'agent' || label === 'reviewer' ? param.value : undefined} style={{ fontSize:11.5, color:W.inkSoft, overflowWrap:'anywhere' }}>{label === 'agent' || label === 'reviewer' ? contactLabel(param.value) : param.value}</span>}
                 </form>)}
             </div>)}
           </div>
@@ -2431,6 +2458,17 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
 
   const msgRow = message => {
     const relayed = typeof message.relayed_from === 'string' && typeof message.agent_text === 'string';
+    if (relayed && anchoredWorkflow && message.root === shownWorkflow.source_message) {
+      return <div key={message.root} data-workshop-message={message.root} style={{ display:'flex', flexDirection:'column', gap:6 }}>
+        {workflowProposalCard}
+        <div style={{ marginLeft:40 }}>{relayedActions(message, true)}</div>
+        <details style={{ marginLeft:40, fontSize:11.5, color:W.inkSoft }}>
+          <summary style={{ cursor:'pointer', fontFamily:W.mono, fontSize:10, color:W.inkMuted }}>show the agent's text</summary>
+          <div style={{ whiteSpace:'pre-wrap', overflowWrap:'anywhere', marginTop:6 }}>{message.agent_text}</div>
+        </details>
+      </div>;
+    }
+    const plan = relayed ? wsPlanReply(message.agent_text) : null;
     // A relayed reply is recorded by this application, but it is the agent's own text.
     const isUser = !relayed && message.sender_root === transcript?.self;
     const a = relayed ? {...agent(message.relayed_from), name:contactLabel(message.relayed_from),
@@ -2448,7 +2486,23 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
               style={{ fontFamily:W.mono, fontSize:9.5, color:W.inkMuted, border:`1px solid ${W.line}`, borderRadius:3, padding:'1px 5px', overflowWrap:'anywhere' }}>to {to}</span>
           </div>
           <div style={{ fontSize:messageTextSize, lineHeight:1.6, fontFamily: isUser ? W.sans : W.serif, letterSpacing: isUser ? 0 : '-0.003em', whiteSpace:'pre-wrap', overflowWrap:'anywhere' }}>
-            {relayed ? message.agent_text :
+            {plan ? <>
+                {plan.prose && <div>{plan.prose}</div>}
+                <div data-workshop-plan="" style={{ marginTop:8, background:W.bg, border:`1px solid ${W.lineSoft}`, borderRadius:7, padding:'10px 12px',
+                  display:'flex', flexWrap:'wrap', alignItems:'center', rowGap:8, fontFamily:W.sans, whiteSpace:'normal' }}>
+                  {plan.steps.map((n, i, arr) => <React.Fragment key={i}>
+                    <div style={{ border:`1px solid ${W.line}`, background:W.bgPanel, borderRadius:5, padding:'6px 9px', fontSize:11, lineHeight:1.25 }}>
+                      {n.t}<div style={{ fontFamily:W.mono, fontSize:8.5, color:W.inkMuted, letterSpacing:'0.06em', marginTop:2 }}>{n.p}</div></div>
+                    {i < arr.length - 1 && <span style={{ width:22, height:1, background:W.line, flex:'none' }}/>}
+                  </React.Fragment>)}
+                  <div style={{ flexBasis:'100%', fontFamily:W.mono, fontSize:9, letterSpacing:'0.1em', color:W.inkMuted }}>
+                    {`PROPOSED WORKFLOW${plan.title ? ' · ' + plan.title.toUpperCase() : ''} · ${plan.steps.length} STEP${plan.steps.length === 1 ? '' : 'S'} · NOT A WORKFLOW UNTIL DRAFTED`}</div>
+                </div>
+                <details style={{ marginTop:6, fontFamily:W.sans }}>
+                  <summary style={{ cursor:'pointer', fontFamily:W.mono, fontSize:10, color:W.inkMuted }}>show the plan's JSON</summary>
+                  <pre style={{ fontFamily:W.mono, fontSize:10.5, whiteSpace:'pre-wrap', overflowWrap:'anywhere', margin:'6px 0 0' }}>{plan.raw}</pre>
+                </details>
+              </> : relayed ? message.agent_text :
               String(message.body || '').startsWith('Model review evidence. Independent review is still required.\n') ?
               <WorkshopReview text={message.body.slice(message.body.indexOf('\n') + 1)}/> : message.body}
           </div>
@@ -2466,7 +2520,9 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
           {editorError && <span style={{ marginLeft:8 }}><Btn sm onClick={prepareEditors}>Retry</Btn></span>}
         </div>}
         {actionError && <div role="alert" style={{ fontSize:11.5, color:W.err, marginBottom:8 }}>{actionError}</div>}
-        {state?.workshopNotice && <div role="status" style={{ fontSize:11.5, color:W.inkSoft, marginBottom:8 }}>{state.workshopNotice}</div>}
+        {state?.workshopNotice && !(/^Message saved and delivery started/.test(state.workshopNotice) &&
+          !messages.some(message => Array.isArray(message.delivery) && message.delivery.some(row => row.state === 'started'))) &&
+          <div role="status" style={{ fontSize:11.5, color:W.inkSoft, marginBottom:8 }}>{state.workshopNotice}</div>}
         <div style={{ background:W.bgPanel, border:`1px solid ${W.line}`, borderRadius:9, padding:'11px 13px' }}>
           {!joined && !existing ? <Btn pri disabled={busy || !transcript?.can_join} onClick={() => act('attach')}>{busy ? 'Joining\u2026' : 'Join Workshop'}</Btn> : <>
           <input aria-label="Workshop message" value={draft} maxLength={12000} disabled={busy || !joined}
@@ -2540,7 +2596,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
           {!transcript && <div role="status" style={{ fontFamily:W.serif, fontSize:15, color:W.inkSoft }}>Loading messages…</div>}
           <ConversationArchiveNotice root={descriptor.root}/>
           {!content && transcript?.has_older && <div style={{ fontSize:12.5, color:W.inkSoft }}>Showing the available recent messages.</div>}
-          {openingAsk < 0 && workflowCard}
+          {openingAsk < 0 && !anchoredWorkflow && workflowCard}
           {workflowsPanel}
           {transcript && !transcript.error && !messages.length && <div style={{ fontFamily:W.serif, fontSize:15, color:W.inkSoft }}>{olderPage ? 'No messages on this page.' : 'No messages have been sent in this Workshop yet.'}</div>}
           {taskItems.map((item, index) => {
@@ -2551,7 +2607,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
             }
             const t = tasks.find(x => x.work === item.work);
             return t && <TaskCard key={'task:' + t.work} t={t} sel={selTask===t.work} onSelect={selectTask} onDecide={decide} compact={preset==='graph'} agent={agent} busy={busy}/>;
-          }).flatMap((row, index) => index === openingAsk ? [row, <React.Fragment key="workflow">{workflowCard}</React.Fragment>] : [row])}
+          }).flatMap((row, index) => index === openingAsk && !anchoredWorkflow ? [row, <React.Fragment key="workflow">{workflowCard}</React.Fragment>] : [row])}
         </div>
       </div>
       {composer}
@@ -2566,7 +2622,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
             <div style={{ display:'flex', alignItems:'center', gap:7, paddingBottom:8, borderBottom:`1px solid ${W.lineSoft}` }}>
               <Dot c={CHIP[s].c} pulse={s==='run'}/><h3 style={{ margin:0, fontWeight:400, fontSize:'inherit', lineHeight:'inherit', display:'inline-flex' }}><Lbl c={CHIP[s].c}>{l}</Lbl></h3><div style={{ flex:1 }}/><Lbl>{rows.length}</Lbl>
             </div>
-            {s === 'block' && !tasks.length && <div role="status" style={{ fontSize:11.5, lineHeight:1.5, color:W.inkSoft }}>No message on this page names a Work, so there is nothing to group.</div>}
+            {s === 'block' && !allTasks.length && <div role="status" style={{ fontSize:11.5, lineHeight:1.5, color:W.inkSoft }}>No message on this page names a Work, so there is nothing to group.</div>}
             {rows.map(t => <TaskCard key={t.work} t={t} sel={selTask===t.work} onSelect={selectTask} onDecide={decide} compact agent={agent} busy={busy}/>)}
           </div>
         ); })}

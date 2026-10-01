@@ -280,3 +280,63 @@ test('real receive path: an unavailable process-identity probe does not refuse d
   await until(()=>got.length===1);
  }finally{process.env.SystemRoot=savedRoot;f.close();}
 });
+
+// ---- Foreign peer: a real second process owns the inbox. The sender checks
+// that process's start time against its key on each send. Under load that
+// probe can fail; an identity this sender already verified must still
+// deliver, while a key whose identity no longer matches (a reused pid) is
+// refused whether or not the probe answers.
+import {spawn} from 'node:child_process';
+
+const PROTOCOL_URL=new URL('../nodelang/session_link/vendor/src/peer-protocol.mjs',import.meta.url).href;
+const FOREIGN_PEER=`const {PeerEndpoint}=await import(process.env.SL_PROTOCOL_URL);
+const p=new PeerEndpoint({name:'fixture-foreign',cwd:process.env.HOME,log:()=>{}});
+await p.start();
+p.onMessage(r=>process.stdout.write(JSON.stringify({got:r.text})+'\\n'));
+process.stdout.write(JSON.stringify({socket:p.socketPath,pid:process.pid})+'\\n');
+process.stdin.on('end',()=>{p.stop();process.exit(0);});process.stdin.resume();`;
+
+async function foreign(){
+ const home=fs.mkdtempSync(path.join(os.tmpdir(),'sl-foreign-'));
+ const saved={HOME:process.env.HOME,USERPROFILE:process.env.USERPROFILE,SystemRoot:process.env.SystemRoot};
+ process.env.HOME=home;process.env.USERPROFILE=home;
+ const child=spawn(process.execPath,['--input-type=module','-e',FOREIGN_PEER],{env:{...process.env,SL_PROTOCOL_URL:PROTOCOL_URL},stdio:['pipe','pipe','inherit'],windowsHide:true});
+ const got=[];let info=null;let buf='';
+ child.stdout.on('data',d=>{buf+=d;let i;while((i=buf.indexOf('\n'))>=0){const m=JSON.parse(buf.slice(0,i));buf=buf.slice(i+1);if(m.socket)info=m;else got.push(m.got);}});
+ const sender=new PeerEndpoint({name:'fixture-local',cwd:home,log:()=>{}});
+ const close=async()=>{process.env.SystemRoot=saved.SystemRoot;sender.stop();child.stdin.end();
+  await new Promise(r=>{if(child.exitCode!==null)return r();const t=setTimeout(()=>{child.kill();r();},3000);child.once('exit',()=>{clearTimeout(t);r();});});
+  for(const k of ['HOME','USERPROFILE']){if(saved[k]===undefined)delete process.env[k];else process.env[k]=saved[k];}
+  try{fs.rmSync(home,{recursive:true,force:true});}catch{}};
+ try{await sender.start();await until(()=>info,15000);}catch(e){await close();throw e;}
+ const keyFile=()=>path.join(home,'.claude','sessions',fs.readdirSync(path.join(home,'.claude','sessions')).find(n=>n.startsWith(info.pid+'.')&&n.endsWith('.key')));
+ const breakProbe=()=>{process.env.SystemRoot=path.join(os.tmpdir(),'sl-foreign-no-such-root');};
+ return {sender,socket:()=>info.socket,got,keyFile,breakProbe,close};
+}
+
+test('foreign peer: a failed identity probe under load still delivers to a live peer this sender already verified',{timeout:30000,skip:process.platform!=='win32'},async()=>{
+ const f=await foreign();
+ try{
+  await f.sender.sendAndWait(f.socket(),'verified while the probe answers',{timeoutMs:0,kind:'report'});
+  await until(()=>f.got.length===1,5000);
+  f.breakProbe();
+  await f.sender.sendAndWait(f.socket(),'sent while the probe fails',{timeoutMs:0,kind:'report'});
+  await until(()=>f.got.length===2,5000);
+  assert.ok(f.got[0].endsWith('\nverified while the probe answers'));
+  assert.ok(f.got[1].endsWith('\nsent while the probe fails'));
+ }finally{await f.close();}
+});
+
+test('foreign peer: a key whose process identity no longer matches (reused pid) is refused, probe answering or not',{timeout:30000,skip:process.platform!=='win32'},async()=>{
+ const f=await foreign();
+ try{
+  await f.sender.sendAndWait(f.socket(),'verified',{timeoutMs:0,kind:'report'});
+  await until(()=>f.got.length===1,5000);
+  const key=JSON.parse(fs.readFileSync(f.keyFile(),'utf8'));
+  fs.writeFileSync(f.keyFile(),JSON.stringify({...key,procStartFt:'1'}));
+  await assert.rejects(f.sender.sendAndWait(f.socket(),'to a reused pid',{timeoutMs:0,kind:'report'}),/authentication key is missing or invalid/);
+  f.breakProbe();
+  await assert.rejects(f.sender.sendAndWait(f.socket(),'to a reused pid, probe failing',{timeoutMs:0,kind:'report'}),/authentication key is missing or invalid/);
+  assert.equal(f.got.length,1);
+ }finally{await f.close();}
+});

@@ -95,6 +95,17 @@ export function peerKeyPath(pid, socket) {
   return path.join(sessionsDir(), `${pid}.${crypto.createHash("sha256").update(canonical).digest("hex")}.key`);
 }
 
+/**
+ * pid -> the start time a live probe last confirmed for that peer's key. The
+ * probe spawns PowerShell on Windows and can outrun its timeout under load;
+ * an empty answer means "unknown", not "changed". On Windows the inbox is a
+ * random pipe name a reused pid cannot own, so an identity this process has
+ * already confirmed is accepted while the probe is unavailable. A probe that
+ * answers with a different start time is always refused, and on POSIX, where
+ * the socket path is derived from the pid, an unknown identity stays refused.
+ */
+const verifiedIdentities = new Map();
+
 function readPeerToken(socket) {
   peerKeyPath(process.pid, socket);
   const candidates = listClaudeSessions({ includeBridges: true }).filter((entry) => {
@@ -109,7 +120,19 @@ function readPeerToken(socket) {
     const key = JSON.parse(fs.readFileSync(peerKeyPath(candidates[0].pid, socket), "utf8"));
     if (typeof key.peerToken !== "string" || !/^[0-9a-f]{32}$/i.test(key.peerToken)) throw new Error("Invalid peer key");
     const identity = IS_WINDOWS ? key.procStartFt : key.procStart;
-    if (identity && identity !== readProcessStart(candidates[0].pid)) throw new Error("Peer process identity changed");
+    if (identity) {
+      const pid = candidates[0].pid;
+      const live = readProcessStart(pid);
+      if (live) {
+        if (live !== identity) {
+          verifiedIdentities.delete(pid);
+          throw new Error("Peer process identity changed");
+        }
+        verifiedIdentities.set(pid, identity);
+      } else if (!(IS_WINDOWS && verifiedIdentities.get(pid) === identity)) {
+        throw new Error("Peer process identity could not be confirmed");
+      }
+    }
     return key.peerToken;
   } catch {
     if (IS_WINDOWS) throw new Error("The destination inbox authentication key is missing or invalid; message was not sent");

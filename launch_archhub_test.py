@@ -957,32 +957,19 @@ def _to_studio(ok):
         _acknowledge_update_surface()
 view.loadFinished.connect(_to_studio)
 # The studio's Browse buttons open THIS window's native file dialog; the
-# chosen path goes back over the same origin. Runs on the Qt thread.
+# chosen path goes back over the same origin. The request arrives on an HTTP
+# worker thread; the dialog must run on the Qt thread (see gui_thread).
+from nodelang.gui_thread import GuiThreadAsker
+_ask_on_gui_thread = GuiThreadAsker(app)
 def _pick_file(title, name_filter):
     from PyQt6.QtWidgets import QFileDialog
-    result = {}
-    done = threading.Event()
-    def ask():
-        chosen, _ = QFileDialog.getOpenFileName(
-            window, title, "", name_filter or "All files (*.*)")
-        result["path"] = chosen
-        done.set()
-    from PyQt6.QtCore import QTimer
-    QTimer.singleShot(0, ask)
-    done.wait(120)
-    return result.get("path", "")
+    return _ask_on_gui_thread(lambda: QFileDialog.getOpenFileName(
+        window, title, "", name_filter or "All files (*.*)")[0], 120) or ""
 # Settings -> Workspaces "Browse": the same window-owned dialog, for a folder.
 def _pick_folder(title):
     from PyQt6.QtWidgets import QFileDialog
-    result = {}
-    done = threading.Event()
-    def ask():
-        result["path"] = QFileDialog.getExistingDirectory(window, title, "")
-        done.set()
-    from PyQt6.QtCore import QTimer
-    QTimer.singleShot(0, ask)
-    done.wait(600)
-    return result.get("path", "")
+    return _ask_on_gui_thread(
+        lambda: QFileDialog.getExistingDirectory(window, title, ""), 600) or ""
 import threading
 server.native_file_picker = _pick_file
 server.native_folder_picker = _pick_folder

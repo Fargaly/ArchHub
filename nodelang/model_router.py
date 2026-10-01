@@ -786,29 +786,60 @@ def probe_local_runtimes() -> dict:
     return {port: bool(answers.get(port)) for port in (1234, 11434)}
 
 
-def default_composer_route(*, settings_loader=None) -> tuple:
-    """The model the founder already configured, used only while nothing is picked.
+# A first-run default is offered ONLY as the free route whose free billing the composer
+# ENFORCES at dispatch -- "openrouter/free". It is never inferred from a ready credential,
+# a cloud session, or an installed executable: none of those is a free-billing contract.
+def admissible_default_route(readiness) -> tuple:
+    """The one route the founder can use for free, enforced at DISPATCH, or ("", "").
+
+    Only "openrouter/free". The composer dispatches it with free_only=True
+    (agent_composer.resolve_node_model_route and
+    clean_agent_conversation.run_clean_agent_conversation), so route_chat refuses any
+    non-free model BEFORE touching a credential or a charge: the free contract is
+    enforced at the dispatch seam, never inferred here. It is offered only when
+    readiness("openrouter/free") reports ready -- which means its credential is
+    configured on this machine, NOT that free billing is proven (the dispatch proves
+    that). Otherwise ("", ""), the honest "choose a model".
+
+    NOT cloud: a ready cloud token is credential configuration, not a free-billing
+    contract -- a hosted actor is metered (cloud_backend db.consume_credit_for_actor),
+    and route_chat free_only refuses cloud anyway. NOT a local CLI: the product verifies
+    only that the executable exists, never that the founder is signed in. NEVER a paid
+    model. `readiness` is injected so a court can drive the real seam.
+    """
+    answer = readiness("openrouter/free")
+    if isinstance(answer, Mapping) and answer.get("state") == "ready":
+        return "openrouter/free", "free · OpenRouter"
+    return "", ""
+
+
+def default_composer_route(*, settings_loader=None, readiness=None) -> tuple:
+    """The default route the composer shows while nothing is picked, and its source.
 
     Founder 2026-09-23: Chat could not send with no saved pick. Coordination
-    review: never pick an arbitrary model and never fall back to a paid model
-    on his behalf. Only the settings default_model counts, and only when it
-    names a concrete routable model he chose ("auto" does not). Otherwise
-    ("", ""): the composer refuses and the Studio asks him to choose a model.
+    review: never pick an arbitrary model and NEVER fall back to a paid model on
+    his behalf. The settings default_model wins when it names a concrete routable
+    model he chose ("auto" does not). With none, a first-run default is offered
+    ONLY as the free route the composer enforces free at dispatch
+    (admissible_default_route -> openrouter/free). If it is not ready, ("", ""):
+    the composer refuses and the Studio asks him to choose a model.
     """
     if settings_loader is None:
         def settings_loader(name):
             return _application_secrets_store().load_setting(name)
+    configured = ""
     try:
         configured = str(settings_loader("default_model") or "").strip()
     except Exception:
-        return "", ""
-    if not configured:
-        return "", ""
-    try:
-        resolve_model_route(configured)
-    except ModelRouteRefused:
-        return "", ""
-    return configured, "settings default_model"
+        configured = ""
+    if configured:
+        try:
+            resolve_model_route(configured)
+            return configured, "settings default_model"
+        except ModelRouteRefused:
+            pass
+    check = readiness if readiness is not None else (lambda route: composer_readiness(route))
+    return admissible_default_route(check)
 
 
 # What a person reads when no answer can come. Plain words and the next step;

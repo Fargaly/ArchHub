@@ -320,9 +320,11 @@ const StudioLM = () => {
       .then(response => { if (!response.ok) throw new Error('Model selection unavailable'); return response.json(); })
       .then(result => {
         const saved = typeof result.selected_route === 'string' ? result.selected_route.trim() : '';
-        // No saved pick: the owner names the model he already configured (settings
-        // default_model); with none the Studio keeps asking him to choose one.
+        // No saved pick: the server offers the one free route it enforces free at
+        // dispatch (openrouter/free) and names its source; with none the Studio keeps
+        // asking him to choose one.
         const fallback = !saved && typeof result.default_route === 'string' ? result.default_route.trim() : '';
+        const source = typeof result.default_source === 'string' ? result.default_source.trim() : '';
         const route = saved || fallback;
         if (!controller.signal.aborted && result.readiness && typeof result.readiness === 'object') {
           window.ARCHHUB_MODEL_READINESS = result.readiness;
@@ -332,8 +334,8 @@ const StudioLM = () => {
         const selected = (result.groups || []).flatMap(group => group.items || [])
           .find(item => (item.routed || item.route) === route);
         setModel(current => current.routed || current.route ? current : selected || {
-          name:route, route, routed:route, vendor:fallback ? 'Configured default' : 'Saved selection',
-          tag:fallback ? 'settings default_model' : 'Availability not verified',
+          name:route, route, routed:route, vendor:fallback ? 'Default' : 'Saved selection',
+          tag:fallback ? (source || 'default') : 'Availability not verified',
           ctx:'', col:LM.inkMuted, latency:null});
       }).catch(() => {});
     return () => controller.abort();

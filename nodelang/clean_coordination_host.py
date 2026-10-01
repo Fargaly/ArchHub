@@ -475,9 +475,16 @@ class CleanCoordinationHost:
             handler = self._workspace_settings
             if handler is None:
                 raise InvalidCell("this graph owner serves no workspace settings")
+            # The request already passed verify_request and the settings-key/method
+            # gate above, so request.identity is the proven workspace-roots settings
+            # principal. Pass it to the handler as trusted internal context -- never a
+            # caller-supplied body field -- so the first-enrollment admission is bound
+            # to who actually authenticated, not to anything the body can forge.
+            admission = {"principal": request.identity.normalized().key_id}
             # Not under the coordinator lock: Add waits for the owner's key prompt
             # and Browse for his folder dialog; the route takes its own locks.
-            return {"ok": True, **handler(request.parameters.get("body"))}
+            return {"ok": True, **handler(request.parameters.get("body"),
+                                          admission=admission)}
         if request.method == "workspace_roots_state":
             with self._changed:
                 return {"ok": True, **current_registry_statement(

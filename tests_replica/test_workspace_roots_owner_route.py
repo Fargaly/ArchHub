@@ -53,6 +53,10 @@ class _Signer:
         assert key_name == roots.KEY_NAME and protect is True
         self.pinned = pinned_fingerprint
 
+    def public_blob(self):
+        """The window reads the key's public half (the owner never opens the key)."""
+        return _blob() if _Owner.key_exists else None
+
     def sign(self, payload):
         _Owner.prompts += 1
         if not _Owner.approve:
@@ -73,7 +77,10 @@ class _Verifier:
         return hashlib.sha256(_blob()).hexdigest()
 
     def protected_public_blob(self):
-        return _blob() if _Owner.key_exists else None
+        raise AssertionError("the graph's owner opened the key")
+
+    def public_blob(self):
+        raise AssertionError("the graph's owner opened the key")
 
     def verify_blob(self, blob, key_id, version, payload, signature):
         return blob == _blob() and self.verify(key_id, version, payload, signature)
@@ -209,7 +216,9 @@ def test_a_request_the_owner_declines_changes_nothing(runtime):
     status, body = _register(server, folder)
     assert status == 403 and "did not approve" in body["error"]
     catalogue = roots.find_workspace_root_catalogue(built.location.authority, caller=built.caller)
-    assert roots.read_state(built.location.authority, catalogue, caller=built.caller)[1:] == ((), None)
+    # The key prompt is the window's first step now: a declined one never reaches the owner.
+    assert catalogue is None or roots.read_state(
+        built.location.authority, catalogue, caller=built.caller)[1:] == ((), None)
     assert not (home / "workspace-roots.json").exists() and not (home / "workspace-roots.pin").exists()
     assert built.location.authority.store.revision >= before
 

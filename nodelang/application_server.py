@@ -1321,12 +1321,15 @@ class _CleanAuthorityHttpServer:
         except Exception as exc:  # noqa: BLE001 - a failed check is never a match
             self.workspace_roots_boot = "unverifiable: " + type(exc).__name__
 
-    def _clean_workspace_roots(self, body):
+    def _clean_workspace_roots(self, body, admission=None):
         """The owner's Workspaces settings: list, register, unregister, republish.
 
         The browser session only admits the request. The approval is the
         owner's key: the projection a change produces is signed (Windows asks
-        the owner) before anything commits -- see owner_change.
+        the owner) before anything commits -- see owner_change. `admission` is the
+        verified settings principal the host proved (clean_coordination_host passes
+        it); it is trusted internal context, never read from `body`, and the first
+        enrollment refuses without it.
         """
         import uuid as _uuid
 
@@ -1389,6 +1392,7 @@ class _CleanAuthorityHttpServer:
                 catalogue,
                 request,
                 caller=self.clean_caller,
+                admission=admission,
                 operation_id=body.get("command_id") or str(_uuid.uuid4()),
                 lock=self._mutation_lock,
                 built_in=self.clean_workspace_root,

@@ -4,8 +4,11 @@ The key is ECDSA P-256 in the current user's Windows key store (Microsoft Softwa
 Storage Provider), created with export forbidden and NCRYPT_UI_FORCE_HIGH_PROTECTION,
 so Windows itself asks the owner before it is created and before every signature: no
 process, not even a shell running as the same user, can sign silently (a silent
-attempt fails with NTE_SILENT_CONTEXT). Verification needs only the public key, which
-the key store exports silently, so the governance hooks hold no secret at all.
+attempt fails with NTE_SILENT_CONTEXT). Such a key cannot be OPENED silently either
+(NCryptOpenKey with NCRYPT_SILENT_FLAG answers NTE_SILENT_CONTEXT, 0x80090022): only
+the visible desktop window opens it (CngSigner.public_blob), checks its protection
+and hands its public half on. The graph's owner and the governance hooks never open
+the key: they verify with the public blob carried in the pin (verify_blob, BCrypt only).
 
 An existing key under the name is adopted only when it is non-exportable, carries the
 owner-prompt protection (when protect=True) and, once the graph pins its public-key
@@ -100,15 +103,15 @@ class _Store:
         rc = self.ncrypt.NCryptOpenKey(self.provider, ctypes.byref(key), name, 0, flags)
         return (key if rc == 0 else None), _status(rc)
 
-    def public_blob(self, key):
+    def public_blob(self, key, flags=NCRYPT_SILENT_FLAG):
         size = wintypes.DWORD()
         rc = self.ncrypt.NCryptExportKey(key, 0, "ECCPUBLICBLOB", None, None, 0, ctypes.byref(size),
-                                         NCRYPT_SILENT_FLAG)
+                                         flags)
         if rc:
             raise SigningUnavailable("public key unavailable: %#x" % _status(rc))
         buffer = (ctypes.c_ubyte * size.value)()
         rc = self.ncrypt.NCryptExportKey(key, 0, "ECCPUBLICBLOB", None, buffer, size, ctypes.byref(size),
-                                         NCRYPT_SILENT_FLAG)
+                                         flags)
         if rc:
             raise SigningUnavailable("public key unavailable: %#x" % _status(rc))
         return bytes(buffer[:size.value])
@@ -140,38 +143,41 @@ class CngSigner:
             raise SigningUnavailable("the owner prompt cannot be attached to the ArchHub window: %#x"
                                      % _status(rc))
 
-    def _dword_property(self, store, key, name):
+    def _dword_property(self, store, key, name, flags=NCRYPT_SILENT_FLAG):
         value, size = wintypes.DWORD(), wintypes.DWORD()
         rc = store.ncrypt.NCryptGetProperty(key, name, ctypes.byref(value), 4, ctypes.byref(size),
-                                            NCRYPT_SILENT_FLAG)
+                                            flags)
         if rc:
             raise SigningUnavailable("signing key %s unreadable: %#x" % (name, _status(rc)))
         return value.value
 
-    def _ui_flags(self, store, key):
+    def _ui_flags(self, store, key, flags=NCRYPT_SILENT_FLAG):
         buffer, size = (ctypes.c_ubyte * 1024)(), wintypes.DWORD()
-        rc = store.ncrypt.NCryptGetProperty(key, "UI Policy", buffer, 1024, ctypes.byref(size), NCRYPT_SILENT_FLAG)
+        rc = store.ncrypt.NCryptGetProperty(key, "UI Policy", buffer, 1024, ctypes.byref(size), flags)
         if _status(rc) == NTE_NOT_FOUND:
             return 0
         if rc or size.value < 8:
             raise SigningUnavailable("signing key UI policy unreadable: %#x" % _status(rc))
         return ctypes.cast(buffer, ctypes.POINTER(_UiPolicy)).contents.dwFlags
 
-    def _check_existing(self, store, key):
+    def _check_existing(self, store, key, flags=NCRYPT_SILENT_FLAG):
         """An existing key is adopted only when its protection and identity are exactly ours."""
-        if self._dword_property(store, key, "Export Policy") != 0:
+        if self._dword_property(store, key, "Export Policy", flags) != 0:
             raise SigningUnavailable("the existing signing key is exportable; refused")
-        if self.protect and not self._ui_flags(store, key) & FORCE_HIGH_PROTECTION:
+        if self.protect and not self._ui_flags(store, key, flags) & FORCE_HIGH_PROTECTION:
             raise SigningUnavailable("the existing signing key is not owner-protected; refused")
         if self.pinned_fingerprint is not None:
-            if hashlib.sha256(store.public_blob(key)).hexdigest() != self.pinned_fingerprint:
+            if hashlib.sha256(store.public_blob(key, flags)).hexdigest() != self.pinned_fingerprint:
                 raise SigningUnavailable("the existing signing key is not the pinned key; refused")
 
     def _key(self, store):
         key, rc = store.open(self.key_name, flags=0)
         if key is not None:
             try:
-                self._check_existing(store, key)
+                # This is the window's process: no read here is silent (a protected
+                # key refuses silent reads), and any prompt belongs to the window.
+                self._attach_window(store, key)
+                self._check_existing(store, key, 0)
             except BaseException:
                 store.ncrypt.NCryptFreeObject(key)
                 raise
@@ -228,8 +234,26 @@ class CngSigner:
         finally:
             store.close()
 
-    def public_fingerprint(self) -> str | None:
-        return CngVerifier(self.key_name).public_fingerprint()
+    def public_blob(self) -> bytes | None:
+        """The key's public half, read in the visible window process (never silently:
+        a protected key refuses a silent open), and only of a key whose protection and
+        identity are exactly ours; None when no key exists yet. This blob is what the
+        graph's owner pins and verifies with; the owner itself never opens the key."""
+        store = _Store()
+        try:
+            key, rc = store.open(self.key_name, flags=0)
+            if key is None:
+                if rc == NTE_BAD_KEYSET:
+                    return None
+                raise SigningUnavailable("signing key unavailable: %#x" % rc)
+            try:
+                self._attach_window(store, key)
+                self._check_existing(store, key, 0)
+                return store.public_blob(key, 0)
+            finally:
+                store.ncrypt.NCryptFreeObject(key)
+        finally:
+            store.close()
 
 
 class CngVerifier:
@@ -256,25 +280,6 @@ class CngVerifier:
     def public_fingerprint(self) -> str | None:
         blob = self.public_blob()
         return hashlib.sha256(blob).hexdigest() if blob else None
-
-    def protected_public_blob(self, *, protect: bool = True) -> bytes | None:
-        """The public half, only of a key that is non-exportable and (protect=True)
-        owner-prompted, read silently; None when no key exists. A process that
-        verifies an approval it did not sign accepts only this key's signatures."""
-        store = _Store()
-        try:
-            key, rc = store.open(self.key_name)
-            if key is None:
-                if rc == NTE_BAD_KEYSET:
-                    return None
-                raise SigningUnavailable("signing key unavailable: %#x" % rc)
-            try:
-                CngSigner(self.key_name, protect=protect)._check_existing(store, key)
-                return store.public_blob(key)
-            finally:
-                store.ncrypt.NCryptFreeObject(key)
-        finally:
-            store.close()
 
     def verify(self, key_id: str, version: int, payload: bytes, signature: str) -> bool:
         """Verify with the key the store holds now. A caller that checked a pin uses

@@ -67,7 +67,7 @@ def _graph_is_the_newest_registry(monkeypatch):
 
 
 def _registry(tmp_path, key, entries, *, pin=None, signer=None, revision=3, target=None,
-              current=True):
+              current=True, pin_key=None):
     body = {"format": roots.SNAPSHOT_FORMAT, "format_version": roots.SNAPSHOT_VERSION,
             "key_id": roots.KEY_ID, "key_version": 1,
             "key_fingerprint": pin or key.fingerprint(), "graph_revision": revision, "roots": entries,
@@ -79,8 +79,7 @@ def _registry(tmp_path, key, entries, *, pin=None, signer=None, revision=3, targ
         {**body, "signature": (signer or key).sign(roots.canonical(body))}))
     if current:
         _GRAPH["digest"] = graph_digest(body)
-    files["pin_path"].write_bytes(roots.canonical(
-        {"format": roots.PIN_FORMAT, "key_id": roots.KEY_ID, "fingerprint": pin or key.fingerprint()}))
+    files["pin_path"].write_bytes(roots.canonical(roots.pin_document((pin_key or key).public_blob())))
     return files
 
 
@@ -140,15 +139,20 @@ def test_a_swapped_folder_is_refused(world):
 
 def test_no_pin_no_permit(world):
     world["files"]["pin_path"].unlink()
-    with pytest.raises(InvalidCell, match="unavailable"):
+    with pytest.raises(InvalidCell, match="not pinned"):
         roots.root_bound_admission("workspace-roots/client-a/a.md", runtime="claude",
                                    verifier=_Store(world["key"]), **world["files"])
 
 
-def test_a_key_that_is_not_the_pinned_key_admits_nothing(world):
-    with pytest.raises(InvalidCell, match="not the pinned key"):
+def test_a_key_that_is_not_the_pinned_key_admits_nothing(world, tmp_path):
+    """The pin carries another key's public half: the registry signed by the old key
+    (and naming it) verifies nothing under it."""
+    other_dir = tmp_path / "other-pin"
+    other_dir.mkdir()
+    files = _registry(other_dir, world["key"], [_entry(world["folder"])], pin_key=_Key())
+    with pytest.raises(InvalidCell, match="does not verify"):
         roots.root_bound_admission("workspace-roots/client-a/a.md", runtime="claude",
-                                   verifier=_Store(_Key()), **world["files"])
+                                   verifier=_Store(world["key"]), **files)
 
 
 def test_a_key_swapped_after_the_pin_check_admits_nothing(world, tmp_path):
@@ -163,7 +167,7 @@ def test_a_key_swapped_after_the_pin_check_admits_nothing(world, tmp_path):
     with pytest.raises(InvalidCell, match="does not verify"):
         roots.root_bound_admission("workspace-roots/client-a/a.md", runtime="codex",
                                    verifier=store, **files)
-    assert store.reads == 1, "the key store was read again after the pin check"
+    assert store.reads == 0, "the key store was opened (the pin carries the public half)"
 
 
 def test_an_unsigned_registry_admits_nothing(world):

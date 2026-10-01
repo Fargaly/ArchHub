@@ -86,6 +86,9 @@ class _Key:
         except (InvalidSignature, ValueError):
             return False
 
+    def verify_blob(self, blob, key_id, version, payload, signature) -> bool:
+        return bytes(blob) == self.public_blob() and self.verify(key_id, version, payload, signature)
+
 
 def _authority(database):
     provider = MemorySigningKeyProvider("roots-court", b"r" * 32)
@@ -181,7 +184,7 @@ def test_the_first_registration_pins_the_key_and_projects_a_matching_snapshot(gr
     assert [entry["id"] for entry in document["roots"]] == ["client-a"]
     assert json.loads(graph["files"]["pin_path"].read_text(encoding="utf-8")) == {
         "format": roots.PIN_FORMAT, "key_id": roots.KEY_ID,
-        "fingerprint": graph["key"].fingerprint()}
+        "fingerprint": graph["key"].fingerprint(), "public_blob": graph["key"].public_blob().hex()}
 
 
 def test_later_signatures_are_made_only_by_the_graph_pinned_key(graph, tmp_path):

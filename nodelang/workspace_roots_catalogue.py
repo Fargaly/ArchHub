@@ -32,10 +32,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path, PureWindowsPath
 import re
+import secrets
 import tempfile
 import time
 import uuid
@@ -49,6 +51,8 @@ from .unified_authority import (
     promote_definition,
     published_definition_named,
     read_contained_scope,
+    read_definition,
+    revise_definition,
     revise_instance,
 )
 from .universal_cell import InvalidCell
@@ -84,6 +88,7 @@ SNAPSHOT_VERSION = 3
 PIN_FORMAT = "archhub.workspace-roots-pin"
 KEY_NAME = "ArchHub-workspace-roots-v1"
 KEY_ID = "cng:" + KEY_NAME
+OWNER_OPENED = "owner-opened"
 MAX_ROOTS = 64
 MAX_REMOVED = 256
 PROMISE = (
@@ -203,10 +208,17 @@ def install_workspace_root_catalogue(
     key_definition = _publish(
         authority,
         KEY_DEFINITION,
-        {"key_id": KEY_ID, "fingerprint": ""},
+        # The pin cell IS the enrollment record: beyond the key identity it carries an
+        # explicit enrollment attestation -- the mode (owner-opened), who admitted it, when
+        # -- so a first-use trust is attributable and visible in Settings, never silent.
+        {"key_id": KEY_ID, "fingerprint": "",
+         "mode": "", "enrolled_by": "", "enrolled_at": ""},
         parameters={
             "key_id": {"type": "text"},
             "fingerprint": {"type": "text"},
+            "mode": {"type": "text"},
+            "enrolled_by": {"type": "text"},
+            "enrolled_at": {"type": "text"},
         },
         rules={},
         panels=["Key", "History"],
@@ -228,6 +240,15 @@ def find_workspace_root_catalogue(authority, *, caller):
 
 def _governance(authority, caller):
     return composition_root(authority, COMPOSITION, caller=caller)
+
+
+def _enrolling_actor(caller) -> str:
+    """A bounded, non-secret label for who admitted the first-use trust, best-effort."""
+    for attr in ("actor", "identity", "name", "agent_session", "principal"):
+        value = getattr(caller, attr, None)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:256]
+    return "approving-window"
 
 
 def read_state(authority, catalogue, *, caller):
@@ -355,8 +376,93 @@ def admit_folder(path, root_id, privacy, profile, writers, roots, *, built_in=No
     }
 
 
-def pin_signing_key(authority, catalogue, fingerprint, *, caller, operation_id):
-    """Record the key's fingerprint once. A different fingerprint is refused."""
+_ENROLLMENT_PARAMETERS = {
+    "mode": {"type": "text"},
+    "enrolled_by": {"type": "text"},
+    "enrolled_at": {"type": "text"},
+}
+_ENROLLMENT_DEFAULTS = {"mode": "", "enrolled_by": "", "enrolled_at": ""}
+
+
+def _ensure_enrollment_schema(authority, catalogue, *, caller, operation_id):
+    """Make the published key definition declare the enrollment attestation
+    before the FIRST pin, if an old graph retained a definition that predates it.
+
+    On the founder's live graph _publish kept the old two-field key definition
+    (key_id + fingerprint), so writing the full record would be an
+    undeclared-parameter override. Rather than drop the attestation to "legacy",
+    revise the definition through the product's own revision path so it DECLARES
+    mode/enrolled_by/enrolled_at -- the key identity (key_id, fingerprint) is
+    unchanged -- then the pin records the real owner-opened attestation. A
+    definition that already declares the fields is left untouched.
+    """
+    current = read_definition(authority, catalogue.key_definition, caller=caller)
+    if (set(_ENROLLMENT_PARAMETERS) <= set(current.contracts["parameters"])
+            and current.lifecycle == "published"):
+        return  # already migrated AND published -- nothing to do
+    # Recoverable migration. The three steps carry STABLE, per-definition command
+    # identities, so a retry after an interrupted or refused promotion re-issues the
+    # EXACT same commands: the authority settles each already-done step from its own
+    # receipt (idempotent, returning that receipt) and performs only the step that
+    # never committed, driving the one held revision WIP -> shared -> published
+    # through the same authority. No forked revision, no duplicate, no blind
+    # re-revise -- the command identity makes a repeat the same act, not a new one.
+    # The spec is rebuilt from `current`, which has already converged to the merged
+    # contracts after the first revise, so every repeat hashes identically.
+    seed = str(uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        "archhub.workspace-roots.enrollment-schema:" + catalogue.key_definition))
+    base = current.version
+    for suffix in ("-enrollment-published", "-enrollment-shared", "-enrollment"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
+    revised = revise_definition(
+        authority,
+        catalogue.key_definition,
+        current.name,
+        {**dict(current.contracts["defaults"]), **_ENROLLMENT_DEFAULTS},
+        caller=caller,
+        command_id=_subcommand(seed, "schema:revise"),
+        version=base + "-enrollment",
+        lifecycle="wip",
+        parameters={**dict(current.contracts["parameters"]), **_ENROLLMENT_PARAMETERS},
+        interfaces=dict(current.contracts["interfaces"]),
+        rules=dict(current.contracts["rules"]),
+        presentation=dict(current.contracts["presentation"]),
+        courts=dict(current.contracts["courts"]),
+        provenance=dict(current.contracts["provenance"]),
+    )
+    shared = promote_definition(
+        authority,
+        catalogue.key_definition,
+        target_lifecycle="shared",
+        version=base + "-enrollment-shared",
+        evidence_roots=(revised.receipt_root,),
+        caller=caller,
+        command_id=_subcommand(seed, "schema:share"),
+    )
+    promote_definition(
+        authority,
+        catalogue.key_definition,
+        target_lifecycle="published",
+        version=base + "-enrollment-published",
+        evidence_roots=(shared.receipt_root,),
+        caller=caller,
+        command_id=_subcommand(seed, "schema:publish"),
+    )
+
+
+def pin_signing_key(authority, catalogue, fingerprint, *, caller, operation_id,
+                    mode=OWNER_OPENED, enrolled_by="", enrolled_at=""):
+    """Record the key's fingerprint once, with its enrollment attestation.
+
+    The pin is written exactly once (a different fingerprint is refused), and it
+    carries the explicit record of how the key was enrolled -- the mode (here
+    "owner-opened": the window opened the owner-protected key once, non-silently,
+    so the Windows prompt was the owner's consent), who admitted it and when -- so
+    the enrollment is attributable and surfaced in Settings, never silent.
+    """
     if type(fingerprint) is not str or not _FINGERPRINT.match(fingerprint):
         raise InvalidCell("workspace-roots key fingerprint is invalid")
     _revision, _roots, pin = read_state(authority, catalogue, caller=caller)
@@ -364,15 +470,45 @@ def pin_signing_key(authority, catalogue, fingerprint, *, caller, operation_id):
         if pin != fingerprint:
             raise InvalidCell("a different workspace-roots signing key is already pinned")
         return pin
+    # First pin: on an old graph the retained key definition may not yet declare
+    # the enrollment attestation; make it declare them (key identity unchanged)
+    # so the record below is not an undeclared-parameter override.
+    _ensure_enrollment_schema(authority, catalogue, caller=caller, operation_id=operation_id)
     instantiate_definition(
         authority,
         catalogue.key_definition,
-        {"key_id": KEY_ID, "fingerprint": fingerprint},
+        {"key_id": KEY_ID, "fingerprint": fingerprint,
+         "mode": str(mode or OWNER_OPENED),
+         "enrolled_by": str(enrolled_by or ""),
+         "enrolled_at": str(enrolled_at or "")},
         scope_root=_governance(authority, caller),
         caller=caller,
         command_id=_subcommand(operation_id, "pin"),
     )
     return fingerprint
+
+
+def read_enrollment(authority, catalogue, *, caller):
+    """The pinned key's enrollment record: {fingerprint, mode, enrolled_by, enrolled_at}.
+
+    None when nothing is pinned. A pin written before this record existed reads back
+    with mode 'legacy' and empty actor/time -- still visible, just not attributed.
+    """
+    governance = _governance(authority, caller)
+    projection = read_contained_scope(
+        authority, governance, scope_root=governance, caller=caller)
+    for _instance_root, instance in projection.instances.items():
+        if instance.get("definition") != catalogue.key_definition:
+            continue
+        values = dict(instance.get("values") or {})
+        fingerprint = values.get("fingerprint")
+        if not (type(fingerprint) is str and _FINGERPRINT.match(fingerprint)):
+            continue
+        mode = values.get("mode") or "legacy"
+        return {"fingerprint": fingerprint, "mode": mode,
+                "enrolled_by": values.get("enrolled_by") or "",
+                "enrolled_at": values.get("enrolled_at") or ""}
+    return None
 
 
 def register_root(authority, catalogue, values, *, caller, operation_id):
@@ -504,11 +640,52 @@ def _atomic_write(target: Path, data: bytes) -> None:
             os.unlink(temporary)
 
 
-def write_projection(body: dict, signature: str, *, snapshot_path=None, pin_path=None) -> None:
-    """The pin first (the hooks' trusted identity), then the signed snapshot."""
-    _atomic_write(Path(pin_path or default_pin_path()),
-                  canonical({"format": PIN_FORMAT, "key_id": KEY_ID,
-                             "fingerprint": body["key_fingerprint"]}))
+def public_blob_of(text) -> bytes:
+    """The offered public half: an ECCPUBLICBLOB for ECDSA P-256 (BCRYPT_ECDSA_PUBLIC_P256_MAGIC,
+    32-byte coordinates), as hex. Anything else is refused before it is hashed or pinned."""
+    try:
+        blob = bytes.fromhex(text) if type(text) is str else b""
+    except ValueError:
+        blob = b""
+    if len(blob) != 72 or blob[:8] != b"ECS1" + (32).to_bytes(4, "little"):
+        raise WorkspaceRootRefused("the offered workspace-roots key is not an ECDSA P-256 public key")
+    return blob
+
+
+def pin_document(blob) -> dict:
+    """The hooks' trusted identity: the fingerprint AND the public half it hashes, so no
+    reader ever opens the key store (a protected key cannot be opened silently)."""
+    blob = bytes(blob)
+    return {"format": PIN_FORMAT, "key_id": KEY_ID,
+            "fingerprint": hashlib.sha256(blob).hexdigest(), "public_blob": blob.hex()}
+
+
+def read_pin(pin_path=None):
+    """(fingerprint, blob) from the pin file, or None when it is absent or not exactly
+    a pin whose blob hashes to its fingerprint."""
+    try:
+        pin = json.loads(Path(pin_path or default_pin_path()).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if (type(pin) is not dict or set(pin) != {"format", "key_id", "fingerprint", "public_blob"}
+            or pin["format"] != PIN_FORMAT or pin["key_id"] != KEY_ID
+            or type(pin["fingerprint"]) is not str or not _FINGERPRINT.match(pin["fingerprint"])):
+        return None
+    try:
+        blob = public_blob_of(pin["public_blob"])
+    except WorkspaceRootRefused:
+        return None
+    if hashlib.sha256(blob).hexdigest() != pin["fingerprint"]:
+        return None
+    return pin["fingerprint"], blob
+
+
+def write_projection(body: dict, signature: str, blob, *, snapshot_path=None, pin_path=None) -> None:
+    """The pin first (the hooks' trusted identity, with its public half), then the signed
+    snapshot. The pin's blob must be the key the snapshot names."""
+    if hashlib.sha256(bytes(blob)).hexdigest() != body["key_fingerprint"]:
+        raise InvalidCell("the projected pin is not the key the snapshot names")
+    _atomic_write(Path(pin_path or default_pin_path()), canonical(pin_document(blob)))
     _atomic_write(Path(snapshot_path or default_snapshot_path()),
                   canonical({**body, "signature": signature}))
 
@@ -516,9 +693,10 @@ def write_projection(body: dict, signature: str, *, snapshot_path=None, pin_path
 def verify_projection(body: dict, verifier, *, snapshot_path=None, pin_path=None) -> str:
     """"match", "missing", "unsigned", "unpinned" or "mismatch": do the hooks' files
     project this graph state? Anything but "match" (or "missing" before the first
-    registration) is shown as a banner and refuses owner changes until republished."""
+    registration) is shown as a banner and refuses owner changes until republished.
+    The signature is checked with the pin's own public blob: the key store is never
+    opened (verifier.verify_blob is BCrypt only)."""
     snapshot_path = snapshot_path or default_snapshot_path()
-    pin_path = pin_path or default_pin_path()
     try:
         document = json.loads(Path(snapshot_path).read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -530,16 +708,13 @@ def verify_projection(body: dict, verifier, *, snapshot_path=None, pin_path=None
     if type(document) is not dict:
         return "unsigned"
     signed = {key: value for key, value in document.items() if key != "signature"}
-    if not verifier.verify(KEY_ID, 1, canonical(signed), str(document.get("signature", ""))):
+    pinned = read_pin(pin_path)
+    if (pinned is None or pinned[0] != body["key_fingerprint"]
+            or signed.get("key_fingerprint") != pinned[0]):
+        return "unpinned"
+    if not verifier.verify_blob(pinned[1], KEY_ID, 1, canonical(signed),
+                                str(document.get("signature", ""))):
         return "unsigned"
-    try:
-        pin = json.loads(Path(pin_path).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return "unpinned"
-    if (type(pin) is not dict or pin.get("key_id") != KEY_ID
-            or pin.get("fingerprint") != body["key_fingerprint"]
-            or signed.get("key_fingerprint") != body["key_fingerprint"]):
-        return "unpinned"
     return "match" if signed == body else "mismatch"
 
 
@@ -591,46 +766,76 @@ _CHANGES = ("register", "unregister", "republish")
 KEY_CHECK = b"archhub workspace-roots key check"
 
 
-def _approval_key(verifier, pin):
-    """The public half an approval made elsewhere must verify under: the protected
-    key the store holds, which must be the pinned one once a pin exists. None when
-    no key exists yet (the approving process creates it, with the owner prompt)."""
-    from .workspace_roots_signing import SigningUnavailable
-    try:
-        blob = verifier.protected_public_blob()
-    except SigningUnavailable as exc:
-        raise WorkspaceRootRefused("the workspace-roots signing key is refused: " + str(exc)) from exc
-    if blob is None:
-        if pin is not None:
-            raise WorkspaceRootRefused("the pinned workspace-roots signing key is missing")
-        return None, None
-    fingerprint = hashlib.sha256(bytes(blob)).hexdigest()
-    if pin is not None and fingerprint != pin:
-        raise WorkspaceRootRefused("the workspace-roots signing key is not the pinned key")
-    return bytes(blob), fingerprint
+def _offered_key(request, pin, verifier):
+    """(blob, fingerprint, proven) for the public half the approving window offers.
+
+    The owner never opens the key (a protected key cannot be opened silently): the
+    desktop window opened it, checked it is non-exportable and owner-protected, and
+    sends its public half. With a pin, that half must BE the pinned key. Before the
+    first pin it is accepted only with a KEY_CHECK signature that verifies under it
+    (proven=False when none was sent yet: the window is asked for one)."""
+    blob = public_blob_of(request.get("public_blob"))
+    fingerprint = hashlib.sha256(blob).hexdigest()
+    if pin is not None:
+        if fingerprint != pin:
+            raise WorkspaceRootRefused("the offered workspace-roots signing key is not the pinned key")
+        return blob, fingerprint, True
+    check = request.get("key_check")
+    if check is None:
+        return blob, fingerprint, False
+    if type(check) is not str or len(check) != 128 or not verifier.verify_blob(
+            blob, KEY_ID, 1, KEY_CHECK, check):
+        raise WorkspaceRootRefused(
+            "the key check does not verify under the offered workspace-roots key; nothing was changed")
+    return blob, fingerprint, True
+
+
+_OFFER = {"public_blob", "key_check"}
 
 
 def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
                  signer_factory=None, fingerprint_of=None, verifier=None,
-                 snapshot_path=None, pin_path=None, built_in=None) -> dict:
+                 snapshot_path=None, pin_path=None, built_in=None, admission=None) -> dict:
     """List, register, unregister or republish, with the owner's key as the approval.
 
     The snapshot a change will produce is signed BEFORE anything commits: the
     Windows owner prompt is the approval, so a request the owner did not make
     (any local process can reach a loopback route) changes nothing when it is
-    declined. Signing happens outside `lock`; the graph is re-read under it and
-    the change is refused if it moved meanwhile.
+    declined. This process never opens the key: the approving window offers its
+    public half (public_blob, plus a KEY_CHECK signature before the first pin) and
+    every check here is verify_blob over that blob. Signing happens outside `lock`;
+    the graph is re-read under it and the change is refused if it moved meanwhile.
     """
     from .workspace_roots_signing import CngVerifier, SigningUnavailable
 
     preparing = type(request) is dict and request.get("action") == "prepare"
+    offer = {}
+    ticket_in = None
+    if type(request) is dict:
+        offer = {key: request[key] for key in _OFFER if key in request}
+        ticket_in = request.get("admission_ticket")  # owner-signed, carried back at commit
     if preparing:
         # The change the approving process will sign, never committed here.
-        if set(request) != {"action", "change"} or type(request["change"]) is not dict:
+        if (not {"action", "change"} <= set(request) <= {"action", "change"} | _OFFER
+                or type(request["change"]) is not dict):
             raise WorkspaceRootRefused("unexpected workspace-roots fields")
         request = request["change"]
-        if request.get("action") not in _CHANGES or "signature" in request:
+        if (request.get("action") not in _CHANGES or "signature" in request
+                or set(request) & _OFFER):
             raise WorkspaceRootRefused("only a change can be prepared for approval")
+    elif type(request) is dict:
+        request = {key: value for key, value in request.items()
+                   if key not in _OFFER and key != "admission_ticket"}
+    # The verified SETTINGS principal threaded from the authenticated transport (never
+    # a caller-supplied body field). A change prepared or committed WITHOUT it is a
+    # direct-to-owner call that skipped the window admission: refuse before any effect.
+    principal = admission.get("principal") if isinstance(admission, dict) else None
+    requires_admission = (request.get("action") in _CHANGES
+                          if type(request) is dict else False) and (preparing or request.get("signature") is not None)
+    if requires_admission and (not isinstance(principal, str) or not principal):
+        raise WorkspaceRootRefused(
+            "the authenticated workspace-roots settings admission is required; "
+            "nothing was changed")
     if type(request) is not dict or request.get("action") not in _FIELDS:
         raise WorkspaceRootRefused(
             "workspace-roots action must be list, register, unregister or republish")
@@ -638,7 +843,9 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
     approval = request.get("signature")
     allowed = _FIELDS[action] | ({"signature"} if action in _CHANGES else set())
     if (set(request) - allowed or (action == "unregister" and "id" not in request)
-            or ("signature" in request and (type(approval) is not str or len(approval) != 128))):
+            or ("signature" in request and (type(approval) is not str or len(approval) != 128))
+            or (offer and action not in _CHANGES)
+            or ((preparing or approval is not None) and "public_blob" not in offer)):
         raise WorkspaceRootRefused("unexpected workspace-roots fields")
     if action in _CHANGES and not preparing and approval is None and signer_factory is None:
         # This process (the graph's owner) has no visible window: a key prompt it
@@ -646,13 +853,14 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
         # in the ArchHub window (approve_in_this_window) and arrives signed. Only a
         # court injects signer_factory to sign here.
         raise WorkspaceRootRefused(NO_WINDOW)
-    verifier = verifier or CngVerifier(KEY_NAME)
+    verifier = verifier or CngVerifier(KEY_NAME)  # verify_blob only: never opens the key
     paths = {"snapshot_path": snapshot_path, "pin_path": pin_path}
     with lock:
         revision, roots, pin = read_state(authority, catalogue, caller=caller)
         if action == "list":
             status = verify_projection(snapshot_body(roots, pin), verifier, **paths)
-            return roots_view(revision, roots, pin, status, built_in=built_in)
+            return roots_view(revision, roots, pin, status, built_in=built_in,
+                              enrollment=read_enrollment(authority, catalogue, caller=caller))
         values = None
         if action == "register":
             values = admit_folder(request.get("path"), request.get("id"),
@@ -663,31 +871,57 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
     if pin is None and action == "republish":
         raise WorkspaceRootRefused("nothing is registered yet")
     if preparing or approval is not None:
-        # Approved in the visible desktop process (the owner prompt needs a window
-        # this process does not have). This process only verifies: the signature
-        # must be the protected, pinned key's, over exactly the snapshot derived
-        # here from the graph as it is now; anything else commits nothing.
-        blob, new_pin = _approval_key(verifier, pin)
+        # Approved in the visible desktop process. This process only verifies: the
+        # offered key must be the pinned one (or, before the first pin, prove itself
+        # with a KEY_CHECK signature), and the approval must verify under exactly that
+        # blob over the snapshot derived here from the graph as it is now.
+        blob, new_pin, proven = _offered_key(offer, pin, verifier)
         if preparing:
-            if new_pin is None:
-                return {"prepared": {"needs_key": True}}
-            return {"prepared": {"body": snapshot_body(predicted, new_pin), "pin": new_pin}}
-        if blob is None:
-            raise WorkspaceRootRefused("no workspace-roots signing key exists yet")
+            if not proven:
+                return {"prepared": {"needs_key_check": True}}
+            prepared = {"body": snapshot_body(predicted, new_pin), "pin": new_pin}
+            if pin is None:
+                # First enrollment: issue the owner's single-use admission bound to the
+                # verified principal, this instance, the offered key, the exact change
+                # and revision, with an expiry. The window carries it back at commit.
+                prepared["admission_ticket"] = mint_first_enrollment_admission(
+                    authority, principal=principal, key_fingerprint=new_pin,
+                    change_digest=_change_digest(request), revision=revision)
+            return {"prepared": prepared}
+        if not proven:
+            raise WorkspaceRootRefused("the first workspace registration needs the key check; "
+                                       "nothing was changed")
         body = snapshot_body(predicted, new_pin)
         signature = approval
         if not verifier.verify_blob(blob, KEY_ID, 1, canonical(body), signature):
             raise WorkspaceRootRefused(
                 "the approval does not match this change (the roots may have changed); "
                 "nothing was changed")
+        if pin is None:
+            # First enrollment also requires the owner's own admission ticket, carried
+            # back from prepare, verified here BEFORE any effect: a direct call that did
+            # not go through the owner-issued, authenticated ceremony is refused even
+            # with a valid self-signed key + KEY_CHECK.
+            change_core = {key: value for key, value in request.items() if key != "signature"}
+            if not verify_first_enrollment_admission(
+                    authority, ticket_in, principal=principal, key_fingerprint=new_pin,
+                    change_digest=_change_digest(change_core), revision=revision):
+                raise WorkspaceRootRefused(
+                    "the first workspace enrollment admission is missing, forged, expired or "
+                    "does not match this change; nothing was changed")
     else:
+        # Courts only (signer_factory + a court verifier that is the key itself):
+        # production passes no signer_factory and is refused above (NO_WINDOW).
         try:
             new_pin = pin
             if new_pin is None:
                 signer_factory(None).sign(KEY_CHECK)
-                new_pin = (fingerprint_of or CngVerifier(KEY_NAME).public_fingerprint)()
+                new_pin = fingerprint_of() if fingerprint_of is not None else None
                 if type(new_pin) is not str or not _FINGERPRINT.match(new_pin):
                     raise WorkspaceRootRefused("the signing key fingerprint is unreadable")
+            blob = bytes(verifier.public_blob())
+            if hashlib.sha256(blob).hexdigest() != new_pin:
+                raise WorkspaceRootRefused("the signing key is not the pinned key")
             body = snapshot_body(predicted, new_pin)
             signature = signer_factory(new_pin).sign(canonical(body))
         except SigningUnavailable as exc:
@@ -698,8 +932,16 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
             raise WorkspaceRootRefused(
                 "workspace roots changed while waiting for approval; nothing was changed")
         if pin is None:
+            # First enrollment: the approving window opened this owner-protected key
+            # once, non-silently (the Windows prompt was the owner's consent) and read
+            # its public half; record that attestation explicitly -- mode "owner-opened",
+            # who admitted it, when -- so it is attributable and shown in Settings.
+            # Afterwards _offered_key accepts only this pinned blob, so re-enrollment
+            # requires the existing key's verify_blob.
             pin_signing_key(authority, catalogue, new_pin, caller=caller,
-                            operation_id=operation_id)
+                            operation_id=operation_id,
+                            enrolled_by=principal,
+                            enrolled_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
         if action == "register":
             register_root(authority, catalogue, values, caller=caller,
                           operation_id=operation_id)
@@ -710,9 +952,10 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
         if snapshot_body(after, after_pin) != body:
             raise InvalidCell("the committed workspace roots differ from the approved "
                               "projection; the hooks' files were left unchanged")
-        write_projection(body, signature, **paths)
+        write_projection(body, signature, blob, **paths)
     return roots_view(revision, after, after_pin,
-                      verify_projection(body, verifier, **paths), built_in=built_in)
+                      verify_projection(body, verifier, **paths), built_in=built_in,
+                      enrollment=read_enrollment(authority, catalogue, caller=caller))
 
 
 ROOT_PATH_PREFIX = "workspace-roots/"
@@ -722,29 +965,21 @@ def read_registered_roots(verifier=None, *, snapshot_path=None, pin_path=None,
                           last_good_path=None):
     """(roots by id, pin) from the hooks' projection, or InvalidCell.
 
-    The same trust as the hooks: the pin file names the key, the key store's
-    public blob is read ONCE and must hash to the pin, and the snapshot must
-    name that fingerprint and verify under exactly that blob."""
+    The same trust as the hooks: the pin file names the key and carries its public
+    half (which must hash to the pin), and the snapshot must name that fingerprint
+    and verify under exactly that blob. The key store is never opened."""
     from .workspace_roots_signing import CngVerifier
 
     verifier = verifier or CngVerifier(KEY_NAME)
     try:
-        pin = json.loads(Path(pin_path or default_pin_path()).read_text(encoding="utf-8"))
         document = json.loads(Path(snapshot_path or default_snapshot_path()).read_text(
             encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise InvalidCell("the workspace-roots registry is unavailable") from exc
-    if (type(pin) is not dict or set(pin) != {"format", "key_id", "fingerprint"}
-            or pin["format"] != PIN_FORMAT or pin["key_id"] != KEY_ID
-            or type(pin["fingerprint"]) is not str
-            or not _FINGERPRINT.match(pin["fingerprint"])):
+    pinned = read_pin(pin_path)
+    if pinned is None:
         raise InvalidCell("the workspace-roots signing key is not pinned")
-    try:
-        blob = verifier.public_blob()
-    except Exception as exc:  # noqa: BLE001 - doubt is a refusal
-        raise InvalidCell("the workspace-roots signing key is unavailable") from exc
-    if not blob or hashlib.sha256(bytes(blob)).hexdigest() != pin["fingerprint"]:
-        raise InvalidCell("the workspace-roots signing key is not the pinned key")
+    pin, blob = {"fingerprint": pinned[0]}, pinned[1]
     if type(document) is not dict or type(document.get("signature")) is not str:
         raise InvalidCell("the workspace-roots registry is unsigned")
     signed = {key: value for key, value in document.items() if key != "signature"}
@@ -810,6 +1045,68 @@ def current_registry_statement(authority, *, caller, request_id, parameters) -> 
     signature = authority.key_provider.sign(authority.manifest.key_id,
                                             authority.manifest.key_version, canonical(statement))
     return {"statement": statement, "signature": signature}
+
+
+FIRST_ENROLLMENT_ADMISSION_PURPOSE = "archhub.workspace-roots.first-enrollment-admission/v1"
+# The window ceremony (Add waits for the owner's key prompt) can take a while; the
+# admission ticket must outlive the prompt but not persist indefinitely.
+ADMISSION_TTL_SECONDS = 900
+_ADMISSION_FIELDS = {"purpose", "graph_id", "principal", "key_fingerprint",
+                     "change_digest", "revision", "expiry", "nonce"}
+
+
+def _change_digest(change) -> str:
+    """A stable digest of the exact change the admission is bound to."""
+    return hashlib.sha256(canonical(
+        {"schema": "archhub.workspace-roots.change/v1", "change": change})).hexdigest()
+
+
+def mint_first_enrollment_admission(authority, *, principal, key_fingerprint,
+                                    change_digest, revision, now=None):
+    """The owner's own one-time admission for a FIRST enrollment, bound to the verified
+    settings principal, this instance, the offered key, the exact change and revision,
+    and an expiry. Signed with the owner's authority key -- NO parallel approval key.
+    Issued only at prepare; verified and single-used at commit (see owner_change)."""
+    now = time.time() if now is None else now
+    statement = {
+        "purpose": FIRST_ENROLLMENT_ADMISSION_PURPOSE,
+        "graph_id": authority.manifest.graph_id,
+        "principal": principal,
+        "key_fingerprint": key_fingerprint,
+        "change_digest": change_digest,
+        "revision": revision,
+        "expiry": int(now) + ADMISSION_TTL_SECONDS,
+        "nonce": secrets.token_hex(16),
+    }
+    signature = authority.key_provider.sign(
+        authority.manifest.key_id, authority.manifest.key_version, canonical(statement))
+    return {"statement": statement, "signature": signature}
+
+
+def verify_first_enrollment_admission(authority, ticket, *, principal, key_fingerprint,
+                                      change_digest, revision, now=None):
+    """True only for the owner's own live admission bound to exactly these facts. The
+    owner re-signs the statement with its authority key and compares (deterministic
+    signer), so a forged or foreign ticket is refused; an expired or rebound one too.
+    Single-use is enforced by the caller: a first enrollment pins the key once, so a
+    replayed ticket afterwards finds the pin set and never re-pins."""
+    now = time.time() if now is None else now
+    if type(ticket) is not dict or set(ticket) != {"statement", "signature"}:
+        return False
+    statement = ticket["statement"]
+    if (type(statement) is not dict or set(statement) != _ADMISSION_FIELDS
+            or statement.get("purpose") != FIRST_ENROLLMENT_ADMISSION_PURPOSE
+            or statement.get("graph_id") != authority.manifest.graph_id
+            or statement.get("principal") != principal
+            or statement.get("key_fingerprint") != key_fingerprint
+            or statement.get("change_digest") != change_digest
+            or statement.get("revision") != revision
+            or type(statement.get("expiry")) is not int or statement["expiry"] < now
+            or type(statement.get("nonce")) is not str or not _NONCE.match(statement["nonce"])):
+        return False
+    expected = authority.key_provider.sign(
+        authority.manifest.key_id, authority.manifest.key_version, canonical(statement))
+    return hmac.compare_digest(str(expected), str(ticket.get("signature")))
 
 
 @dataclass(frozen=True, slots=True)
@@ -920,10 +1217,13 @@ def _reflects(request, body) -> bool:
 
 
 def approve_in_this_window(body, *, window_handle, forward=None, signer_factory=None) -> dict:
-    """Settings -> Workspaces Add/Remove/Republish from the desktop: the graph's
-    owner prepares the exact snapshot, THIS process signs it with the owner's
-    protected key (the Windows prompt is shown in front of `window_handle`), and the
-    owner verifies that signature before it commits. No window, no signature."""
+    """Settings -> Workspaces Add/Remove/Republish from the desktop. THIS process (the
+    visible window) opens the owner's protected key -- never silently -- checks it is
+    non-exportable and owner-protected, and offers its public half; the graph's owner
+    prepares the exact snapshot for that key, this process signs it (the Windows
+    prompt is shown in front of `window_handle`), and the owner verifies the
+    signature under the offered blob before it commits. The owner never opens the
+    key. No window, no signature."""
     from .workspace_roots_signing import CngSigner, SigningUnavailable
     forward = forward or forward_workspace_settings
     if type(body) is not dict or body.get("action") not in _CHANGES or "signature" in body:
@@ -936,18 +1236,32 @@ def approve_in_this_window(body, *, window_handle, forward=None, signer_factory=
                              window_handle=window_handle)
     change = {key: value for key, value in body.items() if key != "command_id"}
     try:
-        prepared = forward({"action": "prepare", "change": change}).get("prepared") or {}
-        if prepared.get("needs_key"):
-            signer_factory(None).sign(KEY_CHECK)  # creates the key: the owner prompt
-            prepared = forward({"action": "prepare", "change": change}).get("prepared") or {}
+        signer = signer_factory(None)
+        blob, offer = signer.public_blob(), {}
+        if blob is None:
+            offer["key_check"] = signer.sign(KEY_CHECK)  # creates the key: the owner prompt
+            blob = signer.public_blob()
+            if blob is None:
+                raise WorkspaceRootRefused("the workspace-roots signing key was not created")
+        offer["public_blob"] = bytes(blob).hex()
+        prepared = forward({"action": "prepare", "change": change, **offer}).get("prepared") or {}
+        if prepared.get("needs_key_check") and "key_check" not in offer:
+            # First registration with a key that already exists: prove it once.
+            offer["key_check"] = signer.sign(KEY_CHECK)
+            prepared = forward({"action": "prepare", "change": change, **offer}).get("prepared") or {}
         pin, snapshot = prepared.get("pin"), prepared.get("body")
-        if (type(pin) is not str or not _FINGERPRINT.match(pin) or type(snapshot) is not dict
-                or snapshot.get("key_fingerprint") != pin or not _reflects(change, snapshot)):
+        if (type(pin) is not str or pin != hashlib.sha256(bytes(blob)).hexdigest()
+                or type(snapshot) is not dict or snapshot.get("key_fingerprint") != pin
+                or not _reflects(change, snapshot)):
             raise WorkspaceRootRefused("the graph owner prepared a different change; nothing was signed")
         signature = signer_factory(pin).sign(canonical(snapshot))
     except SigningUnavailable as exc:
         raise WorkspaceRootRefused("the owner did not approve: " + str(exc)) from exc
-    return forward({**body, "signature": signature})
+    commit = {**body, "signature": signature, **offer}
+    if prepared.get("admission_ticket") is not None:
+        # First enrollment: carry the owner's single-use admission back for the commit.
+        commit["admission_ticket"] = prepared["admission_ticket"]
+    return forward(commit)
 
 
 def verified_graph_state() -> dict:
@@ -1076,7 +1390,7 @@ def root_bound_registration(path, *, runtime=None, verifier=None, snapshot_path=
     return "workspace-root:" + parts[1], digest, dict(entry)
 
 
-def roots_view(revision, roots, pin, status, *, built_in=None) -> dict:
+def roots_view(revision, roots, pin, status, *, built_in=None, enrollment=None) -> dict:
     return {
         "revision": revision,
         "built_in": {"id": "archhub", "path": built_in or built_in_path(), "removable": False},
@@ -1086,6 +1400,9 @@ def roots_view(revision, roots, pin, status, *, built_in=None) -> dict:
             for root in roots
         ],
         "key_pinned": pin is not None,
+        # The enrollment attestation for the pinned key (mode/who/when/fp), so
+        # Settings can show how the workspace-roots key came to be trusted. None until pinned.
+        "enrollment": enrollment,
         "projection": status,
         "promise": PROMISE,
     }
@@ -1103,6 +1420,8 @@ __all__ = [
     "pin_signing_key",
     "current_registry_statement",
     "read_registered_roots",
+    "read_enrollment",
+    "OWNER_OPENED",
     "registry_digest",
     "root_bound_registration",
     "verified_graph_state",

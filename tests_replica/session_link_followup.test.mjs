@@ -266,3 +266,17 @@ test('reload: a delivered report and follow-up do not block export/import; expli
   assert.equal(next.readDelivery(a.msgId).status,'reply_received');
  }finally{f.close();}
 });
+// Both fixture endpoints live in this one process. The key check for this
+// process must not spawn a fresh identity probe per send: under load the probe
+// times out, returns '', and a live inbox was refused as "key missing or
+// invalid". Here the probe is made unreachable after start() to force that.
+test('real receive path: an unavailable process-identity probe does not refuse delivery to an inbox owned by this process',{timeout:8000,skip:process.platform!=='win32'},async()=>{
+ const f=await pair();
+ const savedRoot=process.env.SystemRoot;
+ try{
+  process.env.SystemRoot=path.join(os.tmpdir(),'sl-followup-no-such-root');
+  const got=[];f.recipient.onMessage(r=>got.push(r));
+  await f.sender.sendAndWait(f.recipient.socketPath,'fyi under load',{timeoutMs:0,kind:'report'});
+  await until(()=>got.length===1);
+ }finally{process.env.SystemRoot=savedRoot;f.close();}
+});

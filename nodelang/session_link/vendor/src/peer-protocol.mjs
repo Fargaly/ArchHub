@@ -122,8 +122,21 @@ function readPeerToken(socket) {
  * absolute path - a bare lookup throws ENOENT and takes the whole server down
  * before it can answer the client's initialize call. The timestamp only guards
  * against pid reuse, so an empty value is an acceptable fallback.
+ *
+ * This process's own start time cannot change while it runs, so it is read
+ * once and reused. Re-probing it per send spawned PowerShell every time; under
+ * load the probe outran its timeout, came back empty, and an inbox owned by
+ * this very process was refused as an identity change.
  */
+let ownProcessStart = "";
 function readProcessStart(pid) {
+  if (pid === process.pid && ownProcessStart) return ownProcessStart;
+  const start = probeProcessStart(pid);
+  if (pid === process.pid) ownProcessStart = start;
+  return start;
+}
+
+function probeProcessStart(pid) {
   try {
     if (IS_WINDOWS) {
       const shell = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");

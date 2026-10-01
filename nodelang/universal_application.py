@@ -53663,11 +53663,57 @@ def _undo_referrer(
     store: CellStore | None = None,
 ):
     """Referrers undo may leave in place: the reconciler's signed grants,
-    and this view's own selection/focus state -- an incidence of a focus
+    this view's own selection/focus state -- an incidence of a focus
     record the attention registry holds for THIS view, or of its selection
-    (selection is untracked view state that names what the user picked)."""
+    (selection is untracked view state that names what the user picked) --
+    and the Interaction records a canvas read binds to every visible card.
+    Drawing the canvas after a placement writes those records (the card's
+    scope control, its toolbar bindings); they name the card a control
+    could act on, not an edit that depends on the card staying, so they
+    must not pin a placement against its own undo."""
     signed = _signed_grant_incidence(registry, view_session)
     view_state = _view_selection_cell(registry, view_session, store)
+
+    def interaction_binding(
+        snapshot: Snapshot, referrer: str, target_root: str
+    ) -> bool:
+        """An exact control/input incidence of a verified Interaction this
+        view's canvas bound: a record that only reads like one, another
+        view's record, or any other role is still a later dependency."""
+        record_root, separator, _index = referrer.rpartition(":incidence:")
+        if not separator or not record_root.startswith("app:interaction:"):
+            return False
+        try:
+            interaction = read_interaction(
+                snapshot, registry.interaction_protocol, record_root,
+                budget=512,
+            )
+        except (InvalidCell, KeyError, MatchBudgetExceeded):
+            return False
+        if (
+            interaction.subject_root != view_session.subject_root
+            or interaction.authorization_object_root != view_session.root_id
+            or (
+                interaction.control_root != target_root
+                and target_root not in interaction.input_roots
+            )
+        ):
+            return False
+        protocol = registry.interaction_protocol
+        control_role = protocol.role("control")
+        input_role = protocol.role("input")
+        members = _relation_members_or_none(snapshot, record_root)
+        return bool(members) and any(
+            member.incidence_id == referrer
+            and member.participant_id == target_root
+            and (
+                (member.role_id == control_role
+                 and interaction.control_root == target_root)
+                or (member.role_id == input_role
+                    and target_root in interaction.input_roots)
+            )
+            for member in members
+        )
 
     def referrer_ok(
         snapshot: Snapshot,
@@ -53680,6 +53726,12 @@ def _undo_referrer(
             referring is not None
             and referring.link1 == target_root
             and view_state(snapshot, referrer)
+        ):
+            return True
+        if (
+            referring is not None
+            and referring.link1 == target_root
+            and interaction_binding(snapshot, referrer, target_root)
         ):
             return True
         return signed(snapshot, referrer, target_root, created_roots)

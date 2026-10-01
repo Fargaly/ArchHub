@@ -6413,7 +6413,7 @@ const SettingsHosts = () => {
             <div style={{ flex:1, lineHeight:1.2, minWidth:0 }}>
               <div style={{ fontSize:13, fontWeight:500, color: state==='off' ? LM.inkMuted : LM.ink }}>{h.name}</div>
               <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em', marginTop:2 }}>
-                {h.port ? `localhost:${h.port}` : '—'} · {h.file}
+                {h.detail || (h.port ? `localhost:${h.port}` : '—')}
               </div>
             </div>
             <span style={{

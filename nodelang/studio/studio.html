@@ -342,7 +342,12 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       if (scan.probing) throw new Error('the host probe is still running');
       // Per operation: its real court, or the dependency that keeps it unavailable.
       window.ARCHHUB_HOST_OPERATIONS = Array.isArray(scan.operations) ? scan.operations : [];
-      return {hosts:scan.hosts || [], connectors:scan.connectors || []};
+      // The probe answers one list: the connectors it found. They ARE the hosts the
+      // Settings panel shows -- the server sends no separate "hosts" field, so reading
+      // scan.hosts left that panel permanently empty while the footer read connectors.
+      // One source now: the hosts list and the connectors list are the same probe rows.
+      const probed = scan.connectors || [];
+      return {hosts:probed, connectors:probed};
     };
     // Settings > Hosts > Assistants: read every client's state; write one entry
     // only when the person presses Connect for it (consent is that press).

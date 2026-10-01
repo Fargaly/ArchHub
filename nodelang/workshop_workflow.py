@@ -281,12 +281,25 @@ def workflow_state(owner, browser, root, anchor, *, projection=None):
                 approval["revoked_by"] = decided.get("revoked_by")
         except (ValueError, KeyError, TypeError):
             approval = {"digest": None, "current": False, "relation": held[0], "invalid": True}
+    # "Open as nodes" must land the canvas in the scope that DRAWS this workflow's step
+    # nodes. The members were placed on the draft scope (value["scope"]); reuse the
+    # conversation catalog's existing walk to reach it. The path is emitted ONLY when it
+    # ends at the workflow's own scope -- a draft made from another scope gets no path, and
+    # the client refuses rather than opening the wrong scope.
+    from .workshop_conversation_catalog import workshop_workbench_path
+    workflow_scope = value.get("scope")
+    workbench_path = workshop_workbench_path(snapshot, registry)
+    scope_path = (list(workbench_path)
+                  if workbench_path and workflow_scope and workbench_path[-1] == workflow_scope
+                  else None)
     return {"root": anchor, "title": value.get("title") or "Workflow", "conversation": root,
             "members": members, "nodes": nodes, "wires": len(wires),
             # The workflow's own wiring (source, target) so the Workshop graph draws it, not the canvas.
             "edges": [[wire[0], wire[2]] for wire in wires], "digest": digest,
             "reason": reason, "approval": approval, "proposed_by": value.get("proposed_by"),
-            "source_message": value.get("source_message")}
+            "source_message": value.get("source_message"),
+            # The draft scope and the verified walk to it (None when it cannot be reached).
+            "scope": workflow_scope, "scope_path": scope_path}
 
 
 def draft_workflow(owner, browser, body, *, browser_guard):

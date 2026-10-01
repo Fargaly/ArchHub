@@ -1030,6 +1030,52 @@ const ContextPanel = ({ selAgent, selTask, tasks, agent, descriptor, activity, a
   );
 };
 // ── the view ──
+// "Open as nodes" for a workflow card: its step nodes live in the workflow's own scope
+// (governed Work, hidden at the product scope), so walk there FIRST, then focus and switch
+// to the canvas. The walk goes through the existing scope-open path only (the signed
+// authority.open loop, or window.ARCHHUB_SCOPE_OPEN) -- no second navigation path. A
+// workflow whose scope_path does not end at its own scope is refused, with a message, and
+// the mode never switches. A focus with no workflow (e.g. a session's Agent node, already
+// drawn) just focuses and switches, as before.
+async function openWorkflowAsNodes({ focus, workflow, authority, scopeOpen, setFocusId, setMode, setError }) {
+  if (workflow) {
+    const path = Array.isArray(workflow.scope_path) ? workflow.scope_path : null;
+    if (!path || !path.length || path[path.length - 1] !== workflow.scope) {
+      if (setError) setError("This workflow's scope cannot be opened from here. Open it from the Workshop.");
+      return false;
+    }
+    try {
+      if (authority && typeof authority.open === 'function' && typeof authority.load === 'function') {
+        let canvas = await authority.load();
+        const top = canvas && canvas.scope && Array.isArray(canvas.scope.trail) && canvas.scope.trail[0]
+          ? canvas.scope.trail[0].root : null;
+        if (top && canvas.scope.current !== top && canvas.scope.current !== path[path.length - 1]) canvas = await authority.open(top);
+        for (const step of path) { if (!canvas || canvas.scope.current !== step) canvas = await authority.open(step); }
+      } else if (typeof scopeOpen === 'function') {
+        await scopeOpen(path);
+      } else {
+        if (setError) setError('The canvas scope could not be opened in this view.');
+        return false;
+      }
+    } catch (failure) {
+      if (setError) setError((failure && failure.message) || 'The workflow scope could not be opened.');
+      return false;
+    }
+  }
+  if (focus && setFocusId) setFocusId(focus);
+  setMode('canvas');
+  return true;
+}
+
+// The workflow card's "Open as nodes" opens ITS OWN workflow -- never the current task or
+// selection. It focuses one of the workflow's members so a drawn node is selected after the
+// scope walk. (The generic Open buttons keep using openAsNodes, which follows the selection.)
+function openShownWorkflowAsNodes(workflow, deps) {
+  const focus = (workflow && Array.isArray(workflow.members) && workflow.members[0])
+    || (workflow && workflow.root) || '';
+  return openWorkflowAsNodes({ ...deps, focus, workflow: workflow || null });
+}
+
 const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusId, onLeave, sel, setSel, externalRail }) => {
   useStore();
   const authority = window.ARCHHUB_STUDIO_AUTHORITY || window.ARCHHUB_EXISTING_WORKSHOP;
@@ -1737,8 +1783,13 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     (!existing || transcript?.can_send === true);
   const openAsNodes = () => {
     const focus = selTask || nativeTarget || (projectedWorkNodes.some(node => node.id === descriptor.root) ? descriptor.root : '');
-    if (focus && setFocusId) setFocusId(focus);
-    setMode('canvas');
+    // A workflow's step nodes live in its own (hidden) scope; find the workflow this focus
+    // belongs to so its scope is walked before the canvas is shown.
+    const workflows = Array.isArray(transcript?.workflows) ? transcript.workflows : [];
+    const workflow = workflows.find(w => w && (w.root === focus ||
+      (Array.isArray(w.members) && w.members.includes(focus)))) || null;
+    openWorkflowAsNodes({focus, workflow, authority, scopeOpen: window.ARCHHUB_SCOPE_OPEN,
+      setFocusId, setMode, setError: setActionError});
   };
   const selectTask = id => setS({ agent:S.agent, task: id === selTask ? null : id });
   const setSelAgent = id => setS({ agent:id, task:null });
@@ -2327,7 +2378,8 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
             <span data-workshop-workflow-chip="" style={{ fontFamily:W.mono, fontSize:9, letterSpacing:'0.1em', padding:'2px 6px', borderRadius:3,
               background:wfChip.bg, color:wfChip.c, overflowWrap:'anywhere' }}>{wfChip.l}</span>
             <div style={{ flex:1 }}/>
-            <IBtn g="⌗" title="Open as nodes" onClick={openAsNodes}/>
+            <IBtn g="⌗" title="Open as nodes" onClick={() => openShownWorkflowAsNodes(shownWorkflow,
+              {authority, scopeOpen: window.ARCHHUB_SCOPE_OPEN, setFocusId, setMode, setError: setActionError})}/>
             {wfState === 'approved'
               ? <><Btn sm pri disabled={busy} onClick={() => wfAct('workflow-execute', {workflow:shownWorkflow.root})}>Run approved</Btn>
                 <IBtn g="⊘" title="Revoke approval — nothing further runs" disabled={busy} onClick={() => wfAct('workflow-revoke', {workflow:shownWorkflow.root})}/></>

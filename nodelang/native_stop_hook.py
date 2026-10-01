@@ -18,6 +18,41 @@ from multiprocessing.connection import Client
 
 SERVICE = 'ArchHub.NativeStop.v1'
 UNAVAILABLE = {'decision':'block','reason':'Native Stop authority is unavailable. Continue through the existing native session to reconcile; do not create a replacement session.'}
+# The CDE write gate is a separate command-hook process. While this owner holds
+# the session's live binding, the gate's own bind_agent_session is refused
+# ("identity is already bound; renew it instead"; live 717, 2026-10-01), so the
+# gate asks for the exact permit or receipt through this same per-session pipe
+# and the owner's bound client. Exact fields only; session and vendor select
+# the owner and are never forwarded.
+_WRITE_NAMES = {'brain.universal_cde_write_permit': 'cde_write_permit',
+                'brain.universal_cde_write_receipt': 'cde_write_receipt'}
+_WRITE_OPERATIONS = {
+    'cde_write_permit': ('issue_cde_write_permit',
+                         frozenset({'operation', 'path', 'content_digest', 'request_id', 'nonce'})),
+    'cde_write_receipt': ('consume_cde_write_permit',
+                          frozenset({'operation', 'path', 'content_digest', 'request_id', 'permit'})),
+}
+_WRITE_REQUEST_BYTES = 65536
+_WRITE_TIMEOUT_SECONDS = 25.0
+
+
+class OwnerAbsent(RuntimeError):
+    """Pre-dispatch: no live owner pipe took the request; nothing was sent.
+
+    Only this outcome lets a caller use another route.
+    """
+
+
+class OwnerWriteFailed(RuntimeError):
+    """Post-dispatch: the request was sent and no exact result came back.
+
+    A timeout, a closed pipe, a mismatched or malformed reply: the permit or
+    receipt may exist. Fail closed; never enroll, retry or replay.
+    """
+
+
+class OwnerWriteDenied(OwnerWriteFailed):
+    """Post-dispatch: the owner answered with a refusal (the application's, or its own)."""
 
 
 def canonical_runtime(vendor):
@@ -161,7 +196,38 @@ class NativeStopHost:
             raise
         return self
 
+    def _handle_write(self, request):
+        if (set(request)!={'request_id','fingerprint','operation','arguments'}
+                or request['operation'] not in _WRITE_OPERATIONS or request['fingerprint']!=self.fingerprint
+                or type(request['request_id']) is not str or len(request['request_id'])!=32
+                or any(c not in '0123456789abcdef' for c in request['request_id'])):
+            raise ValueError('Invalid native owner write request')
+        method, fields = _WRITE_OPERATIONS[request['operation']]
+        arguments = request['arguments']
+        if (type(arguments) is not dict or set(arguments)!=fields
+                or any(type(value) is not str or not value or len(value)>16384 for value in arguments.values())):
+            raise ValueError('Invalid native owner write arguments')
+        answer = {'request_id':request['request_id'],'fingerprint':self.fingerprint}
+        try:
+            # Local state only: a changed or unbound actor is refused before the
+            # bound client (whose owner continuation could reach the application).
+            status = self.owner.owner_status()
+            if status.get('state')!='bound' or status.get('agent_session')!=self.record['actor']:
+                raise RuntimeError('the native owner no longer holds the actor this pipe was opened for')
+            with self.owner.bound_client() as client:
+                if client.agent_session_root!=self.record['actor']:
+                    raise RuntimeError('the native owner no longer holds the actor this pipe was opened for')
+                result = getattr(client, method)(**arguments, response_timeout_seconds=_WRITE_TIMEOUT_SECONDS)
+            if type(result) is not dict:
+                raise RuntimeError('the application write authority result is not one object')
+            answer['result'] = result
+        except Exception as exc:  # the reason only; never the capability
+            answer['error'] = str(exc)[:600] or type(exc).__name__
+        return answer
+
     def _handle(self, request):
+        if type(request) is dict and request.get('operation') in _WRITE_OPERATIONS:
+            return self._handle_write(request)
         if (type(request) is not dict or set(request)!={'request_id','fingerprint','operation','stop_hook_active'}
                 or request['operation']!='stop' or request['fingerprint']!=self.fingerprint
                 or type(request['request_id']) is not str or len(request['request_id'])!=32
@@ -236,10 +302,10 @@ class NativeStopHost:
                 connection=self.listener.accept(timeout_seconds=0.2, authentication_timeout_seconds=1.0)
                 if not connection.poll(2.0):
                     continue
-                request=json.loads(connection.recv_bytes(4096))
+                request=json.loads(connection.recv_bytes(_WRITE_REQUEST_BYTES))
                 response=self._handle(request)
                 raw=json.dumps(response,allow_nan=False).encode()
-                if len(raw)>8192:
+                if len(raw)>(_WRITE_REQUEST_BYTES if 'arguments' in request else 8192):
                     raise ValueError('Native Stop response exceeds bound')
                 connection.send_bytes(raw)
             except Exception:
@@ -518,6 +584,84 @@ class StopHostSupervisor:
 # The session variables each runtime itself sets; another runtime's variable in
 # the same environment is an inherited parent's, never this payload's identity.
 _STOP_IDENTITY_ENV={'claude':('CLAUDE_CODE_SESSION_ID','CLAUDE_SESSION_ID'),'codex':('CODEX_THREAD_ID',)}
+
+
+def _live_record(vault, fingerprint):
+    raw=vault.get_password(SERVICE,fingerprint)
+    if not raw or len(raw.encode())>16384:
+        return None
+    record=json.loads(raw)
+    if (record.get('version')!=1 or record.get('fingerprint')!=fingerprint
+            or type(record.get('endpoint')) is not str
+            or not record['endpoint'].startswith(r'\\.\pipe\ArchHub.NativeStop.')
+            or type(record.get('key')) is not str or len(record['key'])!=64
+            or not _alive(record.get('pid'),record.get('created_at'))):
+        return None
+    return record
+
+
+def owner_write_request(name, arguments, *, vault=None, timeout=_WRITE_TIMEOUT_SECONDS):
+    """The CDE gate's permit or receipt, through this session's live native owner.
+
+    Same (name, arguments) contract as the gate's write authority. Never binds,
+    renews or retries. OwnerAbsent: nothing was sent (no live owner record, or
+    its pipe did not take the connection). OwnerWriteFailed / OwnerWriteDenied:
+    the request was sent; the caller must fail closed.
+    """
+    operation=_WRITE_NAMES.get(name)
+    if operation is None:
+        raise ValueError('Unsupported native owner write operation')
+    fields=_WRITE_OPERATIONS[operation][1]
+    if (type(arguments) is not dict or set(arguments)!=fields|{'session_id','vendor'}
+            or any(type(value) is not str or not value for value in arguments.values())):
+        raise ValueError('Native owner write request has the wrong shape')
+    if type(timeout) not in (int,float) or not 0<timeout<=180:
+        raise ValueError('Native owner write timeout is invalid')
+    try:
+        fingerprint=_fingerprint(canonical_runtime(arguments['vendor']),arguments['session_id'])
+    except ValueError as exc:
+        raise OwnerAbsent(str(exc)) from exc
+    vault=_vault() if vault is None else vault
+    try:
+        record=_live_record(vault,fingerprint)
+    except Exception as exc:
+        raise OwnerAbsent('the native owner record is unreadable') from exc
+    if record is None:
+        raise OwnerAbsent('no live native owner holds this session')
+    request={'request_id':secrets.token_hex(16),'fingerprint':fingerprint,'operation':operation,
+             'arguments':{key:arguments[key] for key in fields}}
+    # -- pre-dispatch: nothing has left this process ---------------------------
+    try:
+        connection=Client(record['endpoint'],family='AF_PIPE',authkey=bytes.fromhex(record['key']))
+    except Exception as exc:
+        raise OwnerAbsent('the native owner pipe did not accept the connection') from exc
+    try:
+        try:
+            held_by=_server_pid(connection)
+        except Exception as exc:
+            raise OwnerAbsent('the native owner pipe server is unverifiable') from exc
+        if held_by!=record['pid']:
+            raise OwnerAbsent('the native owner pipe is held by another process')
+        # -- post-dispatch: from here the permit or receipt may exist ----------
+        try:
+            connection.send_bytes(json.dumps(request).encode())
+            if not connection.poll(timeout):
+                raise OwnerWriteFailed('the native owner did not answer in time; the result is uncertain')
+            response=json.loads(connection.recv_bytes(_WRITE_REQUEST_BYTES))
+        except OwnerWriteFailed:
+            raise
+        except Exception as exc:
+            raise OwnerWriteFailed('the native owner closed the request unanswered; the result is uncertain') from exc
+    finally:
+        connection.close()
+    if (type(response) is not dict or response.get('request_id')!=request['request_id']
+            or response.get('fingerprint')!=fingerprint):
+        raise OwnerWriteFailed('the native owner answered another request; the result is uncertain')
+    if 'error' in response:
+        raise OwnerWriteDenied(str(response['error'])[:600])
+    if type(response.get('result')) is not dict:
+        raise OwnerWriteFailed('the native owner answer has no result; the result is uncertain')
+    return response['result']
 
 
 def query_stop(payload, *, vendor='claude-code', vault=None, environment=None):

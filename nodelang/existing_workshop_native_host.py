@@ -666,6 +666,10 @@ class ExistingWorkshopNativeHost:
                                         binding.context, publication=True)
                     if _digest(current) != self._prepared['input_digest']:
                         raise RefusedWithoutEffect('Workshop Work changed after this agent result; it is not published')
+                    # reply_to stays None by design. This is the founder host's own note: it carries no
+                    # refs and no evidence, and it is tied to the Work only by this host's retained
+                    # operation and the saved artifact it names. Addressed replies are the model/agent
+                    # reply path (publish_result reply_to_root).
                     publication = send_browser_workshop(self.server, binding, {
                         'root':self._identity[3], 'scope':self._identity[4], 'category':'note', 'text':message,
                         'refs':[], 'evidence':[], 'recipients':[binding.subject_root], 'reply_to':None,
@@ -2150,7 +2154,9 @@ class ExistingWorkshopNativeHost:
         from .application_machine_transport import MachineRefusedWithoutEffect
         try:
             # The receipt is the publication's evidence: the receiving append admits it only
-            # while the Work still holds the material that receipt executed.
+            # while the Work still holds the material that receipt executed. reply_to stays None
+            # by design: the announcement threads to its Work by refs and evidence, not to one
+            # message; addressed replies are the model/agent reply path (publish_result).
             publication = self._client.request("POST", "/api/universal/workshop", {
                 "category":"note", "text":body, "refs":[self._prepared["work"]],
                 "evidence":[result["receipt"]] if result.get("receipt") else [],

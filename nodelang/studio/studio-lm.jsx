@@ -1385,6 +1385,8 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, openTab
         <>
           <NodeCanvas key={JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas), mode === 'system'])} system={mode === 'system'} focusId={focusId} setFocusId={setFocusId} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model}/>
           <NodeRail node={focusNode} hiddenWork={!focusNode && authorityState?.canvas?.selection_hidden === true}
+            scope={authorityState?.canvas?.root || authorityState?.canvas?.scope?.current || ''}
+            openConversation={root => updateView({conversationRoot:root, mode:'chat', target:''})}
             workshopRoom={workshopModeRoom(workshops, workshop?.root || '')}
             onOpenWorkshop={() => chooseWorkshopMode('workshop', {mode, conversationRoot:workshop?.root || '', workshops, setMode,
               setConversationRoot:root => updateView({conversationRoot:root, mode:'chat', target:''})})}/>
@@ -4602,28 +4604,105 @@ const LibCatBtn = ({ id, label, icon, col, active, onSelect }) => (
 );
 
 // ──────────────────────── NODE RAIL ────────────────────────
-const NodeModelConversation = ({node}) => {
+const NodeModelConversation = ({node, scope = '', openConversation}) => {
   const [answer, setAnswer] = React.useState('');
+  // The node's Workshop transcript, read only. null while the first read is in flight.
+  const [transcript, setTranscript] = React.useState(null);
   const cat = studioCategory('ai');
-  const route = nodeModelRoute(node);
+  // Transcript shows for ANY conversation-bound node (a workflow's Workshop room has a
+  // `conversation` and no `model`); the model route + composer are for model-bearing nodes only.
+  const model = nodeModelRow(node);
+  const route = model ? nodeModelRoute(node) : '';
+  const bound = node.has_conversation === true && !!node.conversation_root;
+  React.useEffect(() => {
+    if (!bound || typeof window === 'undefined' || typeof window.ARCHHUB_WORKSHOP_TRANSCRIPT !== 'function') {
+      setTranscript(null); return;
+    }
+    setTranscript(null);                     // clear the previous binding's rows before the new read lands
+    const want = {node: node.id, conv: node.conversation_root, scope};
+    let live = true, inFlight = false;
+    const read = async () => {
+      if (!live || inFlight) return;         // one read at a time: a poll never overlaps an earlier one
+      inFlight = true;
+      try {
+        const result = await window.ARCHHUB_WORKSHOP_TRANSCRIPT(want.node, want.scope);
+        if (!live) return;                   // the binding changed while this read was in flight: drop it
+        if (!result || result.ok === false) {
+          setTranscript({rows:[], error: result?.error || 'This conversation could not be read.', has_older:false}); return;
+        }
+        if (result.node !== want.node || (result.conversation_root && result.conversation_root !== want.conv)) return; // not this binding
+        setTranscript({rows: Array.isArray(result.rows) ? result.rows : [], error:'', has_older: result.has_older === true});
+      } catch (reason) { if (live) setTranscript({rows:[], error: reason?.message || String(reason), has_older:false}); }
+      finally { inFlight = false; }
+    };
+    read();                                 // re-read whenever the rail opens or the bound node/scope changes
+    const timer = setInterval(read, 8000);  // light poll \u2014 messages live in content, so the revision never moves
+    return () => { live = false; clearInterval(timer); };
+  }, [bound, node.id, node.conversation_root, scope]);
+  const rows = transcript ? transcript.rows : [];
+  const hasOlder = !!(transcript && transcript.has_older);
   return <section aria-label={'Conversation with ' + node.title} style={{ display:'flex', flexDirection:'column', gap:10, borderTop:`1px solid ${LM.lineSoft}`, paddingTop:12 }}>
     <div style={{ display:'flex', alignItems:'center', gap:7 }}>
       <span style={{ color:cat.col, fontFamily:LM.mono }}>{cat.icon}</span>
       <span style={{ fontFamily:LM.mono, fontSize:9, color:cat.col, letterSpacing:'0.18em' }}>CONVERSATION</span>
       <div style={{ flex:1 }}/>
-      <p title={route || undefined} style={{ margin:0, maxWidth:170, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.06em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-        {route || 'Choose a model for this node'}</p>
+      {model ? (
+        <p title={route || undefined} style={{ margin:0, maxWidth:170, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.06em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+          {route || 'Choose a model for this node'}</p>
+      ) : null}
     </div>
+    {bound ? (
+      <div className="ah-scroll" style={{ maxHeight:260, overflow:'auto', display:'flex', flexDirection:'column', gap:11 }}>
+        {transcript === null ? (
+          <p style={{ margin:0, fontFamily:LM.mono, fontSize:10, color:LM.inkMuted }}>Reading the conversation…</p>
+        ) : transcript.error ? (
+          <p role="alert" style={{ margin:0, fontSize:12, color:LM.warn || LM.accent }}>{transcript.error}</p>
+        ) : rows.length === 0 ? (
+          <p role="status" style={{ margin:0, fontSize:12, lineHeight:1.5, color:LM.inkSoft }}>No conversation yet · Continue in the Workshop to start one.</p>
+        ) : (<>
+          {hasOlder ? (
+            <p style={{ margin:0, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.04em' }}>Latest messages only · full history in the Workshop</p>
+          ) : null}
+          {rows.map(row => <NodeTranscriptRow key={row.id} row={row}/>)}
+        </>)}
+      </div>
+    ) : null}
+    {bound ? (
+      <div>
+        <HoverBtn onClick={() => { if (openConversation) openConversation(node.conversation_root); }} disabled={!openConversation}>
+          Continue in the Workshop</HoverBtn>
+      </div>
+    ) : null}
+    {model ? (<>
     {answer && <p role="status" style={{ margin:0, whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontFamily:LM.serif, fontSize:14, lineHeight:1.55, color:LM.ink, letterSpacing:'-0.003em' }}>{answer}</p>}
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:7, padding:'8px 11px' }}>
       <div style={{ display:'flex', alignItems:'center', gap:6, minHeight:22, fontSize:13, color:LM.inkSoft }}>
         <InlineAsk scale="reply" node={node} onAnswer={setAnswer} placeholder={'Ask ' + node.title + '\u2026'}/>
       </div>
     </div>
+    </>) : null}
   </section>;
 };
 
-const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop }) => {
+const formatNodeConversationTime = iso => {
+  try { const when = new Date(iso); return isNaN(when.getTime()) ? ''
+    : when.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); } catch (e) { return ''; }
+};
+// One transcript turn, read only. The sender label, an optional kind tag (reply/tool) and the body.
+const NodeTranscriptRow = ({ row }) => (
+  <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
+    <div style={{ display:'flex', alignItems:'baseline', gap:7 }}>
+      <span style={{ fontFamily:LM.mono, fontSize:9, letterSpacing:'0.08em', color: row.is_me ? LM.accent : LM.inkSoft }}>{row.who}</span>
+      {row.kind && row.kind !== 'message' ? (
+        <span style={{ fontFamily:LM.mono, fontSize:8.5, color:LM.inkMuted, letterSpacing:'0.1em', textTransform:'uppercase' }}>{row.kind}</span>
+      ) : null}
+      <div style={{ flex:1 }}/>
+      <time dateTime={row.time} style={{ fontFamily:LM.mono, fontSize:8.5, color:LM.inkMuted }}>{formatNodeConversationTime(row.time)}</time>
+    </div>
+    <div style={{ fontFamily:LM.serif, fontSize:13, lineHeight:1.5, color:LM.ink, whiteSpace:'pre-wrap', overflowWrap:'anywhere', maxHeight:150, overflow:'auto' }}>{row.text}</div>
+  </div>
+);
+const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop, scope = '', openConversation }) => {
   // Work lives in the Workshop. A selection the canvas does not draw points there instead of an empty panel.
   if (!node && hiddenWork) return (
     <aside role="status" style={{ gridColumn:'2', gridRow:'2', background:LM.bgPanel, borderLeft:`1px solid ${LM.line}`,
@@ -4661,7 +4740,7 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop 
           The old block was dead form widgets: native selects, a bare range input and four
           equal-weight buttons, none of which could be typed into or reverted. */}
       <window.NodeInspector key={node.id} node={node}/>
-      {node.live && nodeModelRow(node) && <NodeModelConversation key={node.id + ':conversation'} node={node}/>}
+      {node.live && (node.has_conversation || nodeModelRow(node)) && <NodeModelConversation key={node.id + ':conversation'} node={node} scope={scope} openConversation={openConversation}/>}
     </aside>
   );
 };

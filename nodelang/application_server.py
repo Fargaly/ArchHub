@@ -163,7 +163,11 @@ from .universal_application import (
     project_universal_runtime_handoff_readiness,
     project_universal_baboom_context,
     project_universal_baboom_companion_directive,
+    BaboomActRefused,
+    BaboomConfirmations,
+    baboom_confirmation_nonce,
     execute_universal_baboom_utterance,
+    finish_universal_baboom_response,
     respond_universal_baboom_utterance,
     resolve_universal_baboom_utterance,
     project_universal_founder_baboom_capability_report,
@@ -4645,6 +4649,35 @@ def _ensure_cde_write_signing_authority(
 
 
 
+def brain_remember_ops(said, fragment_id=None):
+    """The one fact a Remember writes: /api/universal/brain-remember and BABOOM.
+
+    Unclassified -- brain.write never classifies -- so the fact stays sealed on
+    this machine until its owner publishes it.
+    """
+    import secrets as _secrets
+
+    from .cloud_session import signed_in_cloud_account
+    # The person signed in on this machine, never a fixed account.
+    rememberer = signed_in_cloud_account() or 'local'
+    return [{
+        'op': 'add',
+        'fragment': {
+            # One id per remember act: remembering the same words again adds
+            # a fact and never overwrites one he has since edited. BABOOM
+            # passes its confirmation's id, which doubles as the receipt.
+            'id': fragment_id or _secrets.token_hex(32),
+            'kind': 'fact', 'text': said,
+            'owner_user': rememberer,
+            'tags': ['user'],
+            'provenance': {
+                'contributing_agent': 'archhub',
+                'contributing_user': rememberer,
+            },
+        },
+    }]
+
+
 def brain_first_prompt(utterance):
     """The founder memory recalled and placed before his words.
 
@@ -7681,20 +7714,19 @@ class ApplicationServer:
                                 raise AuthorizationDenied('browser binding changed during BABOOM read')
 
                         with owner.mutation_lock:
-                            payload = {
-                                'ok': True,
-                                **respond_universal_baboom_utterance(
-                                    owner.universal_store,
-                                    owner.universal_registry,
-                                    utterance=body['utterance'],
-                                    authentication_context=binding.context,
-                                    brain_state=owner._brain_state(),
-                                    hosts=owner._host_rows(),
-                                    staged_update=owner._staged_update(),
-                                    content_service=owner.conversation_content,
-                                    read_guard=current_baboom_binding,
-                                ),
-                            }
+                            answered = respond_universal_baboom_utterance(
+                                owner.universal_store,
+                                owner.universal_registry,
+                                utterance=body['utterance'],
+                                authentication_context=binding.context,
+                                brain_state=owner._brain_state(),
+                                hosts=owner._host_rows(),
+                                staged_update=owner._staged_update(),
+                                content_service=owner.conversation_content,
+                                read_guard=current_baboom_binding,
+                            )
+                        # Slow host reads (repo status) run after the lock.
+                        payload = {'ok': True, **finish_universal_baboom_response(answered)}
                         if payload.get('command', {}).get('intent') == (
                             'open-question'
                         ):
@@ -8636,9 +8668,6 @@ class ApplicationServer:
                             elif self.path == '/api/universal/brain-remember':
                                 if not self._brain_owner_admitted(owner, binding):
                                     return
-                                import hashlib as _h
-
-                                from .cloud_session import signed_in_cloud_account
                                 said = str(body.get('text') or '').strip()
                                 if not said:
                                     self._json(200, {
@@ -8646,24 +8675,9 @@ class ApplicationServer:
                                         'error': 'nothing to remember',
                                     })
                                     return
-                                rememberer = signed_in_cloud_account() or 'local'
-                                remembered = self._brain_route_call(owner, binding, 'brain.write', {'ops': [{
-                                    'op': 'add',
-                                    'fragment': {
-                                        'id': _h.sha256(
-                                            said.encode('utf-8')
-                                        ).hexdigest(),
-                                        'kind': 'fact', 'text': said,
-                                        # The person signed in on this
-                                        # machine, never a fixed account.
-                                        'owner_user': rememberer,
-                                        'tags': ['user'],
-                                        'provenance': {
-                                            'contributing_agent': 'archhub',
-                                            'contributing_user': rememberer,
-                                        },
-                                    },
-                                }]})
+                                remembered = self._brain_route_call(
+                                    owner, binding, 'brain.write',
+                                    {'ops': brain_remember_ops(said)})
                                 self._json(200, remembered)
                                 return
                             elif self.path == '/api/universal/retract':
@@ -11440,6 +11454,47 @@ class ApplicationServer:
         self._staged_update_cache = (_t.time(), staged)
         return staged
 
+    def _baboom_brain_remember(self, context, text: str, fragment_id: str) -> dict:
+        """BABOOM's Remember, after the founder confirmed it on his session.
+
+        The same owner-only brain.write /api/universal/brain-remember makes,
+        attributed to the application owner. The caller has already proved
+        the founder session.
+        """
+        import json as _j
+
+        from .pipeline_engines import BrainSilent, _brain_call
+        authorization = self.universal_registry.authorization
+        try:
+            with authorization.broker.live_context(context):
+                return _j.loads(_brain_call(
+                    'brain.write', {'ops': brain_remember_ops(text, fragment_id)},
+                    actor=authorization.subject_root))
+        except BrainSilent as silent:
+            # BrainSilent is raised before any write (no Brain bound, no such
+            # tool): a proven refusal. Anything else propagates as unknown.
+            return {'ok': False, 'refused': True, 'error': str(silent)[:200]}
+
+    def _baboom_brain_holds(self, fragment_id: str) -> bool:
+        """Whether the founder's Brain holds this fact: a remember's receipt."""
+        from . import app_brain
+        return app_brain.holds(fragment_id)
+
+    def _baboom_confirm_ledger(self) -> BaboomConfirmations:
+        """This process's single-use BABOOM confirmations (memory only)."""
+        ledger = self.__dict__.get("_baboom_confirmations")
+        if ledger is None:
+            ledger = self.__dict__.setdefault("_baboom_confirmations", BaboomConfirmations())
+        return ledger
+
+    def _restart_to_confirmed_update(self, build_id: str) -> None:
+        """Restart into exactly the build the founder confirmed, or refuse."""
+        from .application_update import UpdateRestartRefused
+        request_restart = getattr(self, "_desktop_request_update_restart", None)
+        if not callable(request_restart):
+            raise UpdateRestartRefused("Update restart requires the attached desktop lifecycle")
+        request_restart(build_id)
+
     def _restart_to_update(self) -> None:
         """Ask the attached desktop lifecycle to restart after clean shutdown."""
         request_restart = getattr(self, "_desktop_request_update_restart", None)
@@ -13722,12 +13777,13 @@ class ApplicationServer:
                     hosts=self._host_rows(),
                     staged_update=self._staged_update(),
                     content_service=self.conversation_content, read_guard=read_guard,
+                    confirmations=self._baboom_confirm_ledger(),
                 )
-            _answer = result.get("response") if isinstance(result.get("response"), dict) else result
-            if _answer.get("kind") == "update-ready" and (_answer.get("data") or {}).get("restart"):
-                # The one runtime action BABOOM performs itself: hand over to a
-                # fresh launcher that installs the staged build before booting.
-                self._restart_to_update()
+            # This read never restarts: it only says a build is staged. The
+            # restart is on the execute route, after the founder confirmed
+            # (audit 2026-09-29: a staged build restarted his app unasked).
+            # Slow host reads (repo status) complete after the lock.
+            result = finish_universal_baboom_response(result)
             if (result.get("command") or {}).get("intent") == "open-question":
                 # The shipped companion enters here, not through HTTP.
                 result = answer_open_question(
@@ -13747,12 +13803,53 @@ class ApplicationServer:
             )
             self._require_founder_machine_session(request, direct, path)
             with self.mutation_lock:
-                return execute_universal_baboom_utterance(
+                result = execute_universal_baboom_utterance(
                     self.universal_store,
                     self.universal_registry,
                     utterance=body["utterance"],
                     authentication_context=context,
+                    staged_update=self._staged_update(),
+                    remember=lambda text, fragment_id: self._baboom_brain_remember(
+                        context, text, fragment_id),
+                    remembered=self._baboom_brain_holds,
+                    confirmations=self._baboom_confirm_ledger(),
                 )
+            _answer = result.get("response") if isinstance(result.get("response"), dict) else result
+            if _answer.get("kind") == "update-ready" and (_answer.get("data") or {}).get("restart"):
+                # The one runtime action BABOOM performs itself, only after the
+                # founder confirmed: hand over to a fresh launcher that
+                # installs the staged build before booting. The build he
+                # confirmed goes down to the updater, which re-reads the
+                # staged build on disk and refuses any other.
+                # The confirmation stays running through this callback and is
+                # settled only on its acknowledged outcome.
+                from .application_update import StagedBuildChanged, UpdateRestartRefused
+                confirmed = str(((_answer.get("data") or {}).get("update") or {}).get("build_id") or "")
+                nonce = baboom_confirmation_nonce(body["utterance"])
+                ledger = self._baboom_confirm_ledger()
+                try:
+                    self._restart_to_confirmed_update(confirmed)
+                except StagedBuildChanged as changed:
+                    result = {
+                        **result,
+                        "kind": "update-changed",
+                        "summary": "Not restarted: %s Ask again to install it." % changed,
+                        "data": {"update": {"build_id": changed.staged}, "restart": False},
+                    }
+                    ledger.settle(nonce, result)
+                except UpdateRestartRefused as refused:
+                    # Refused before any restart was requested: re-armed.
+                    ledger.refuse(nonce, str(refused))
+                    raise BaboomActRefused("not restarted: %s" % refused) from None
+                except Exception as unknown:
+                    # The restart may have been scheduled: never replayed.
+                    ledger.uncertain(nonce, str(unknown))
+                    raise InvalidCell(
+                        "the restart outcome is not known (%s); it will not be repeated. "
+                        "If ArchHub does not restart, ask BABOOM again." % str(unknown)[:200]) from unknown
+                else:
+                    ledger.settle(nonce, result)
+            return result
         if method == "GET" and path == "/api/universal/mcp-broker":
             if body:
                 raise InvalidCell("MCP broker projection request must be empty")

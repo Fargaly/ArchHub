@@ -14,7 +14,6 @@ import inspect
 import pytest
 
 from nodelang import universal_application as app_module
-from nodelang import application_server as server_module
 
 
 def _aliases() -> tuple:
@@ -53,14 +52,6 @@ def test_asking_for_it_exactly_still_works(said):
     assert said.casefold().rstrip("?.!") in aliases
 
 
-def test_the_route_that_can_restart_proves_who_asked():
-    body = inspect.getsource(
-        server_module.ApplicationServer.dispatch_universal_machine_route
-    )
-    start = body.index('path == "/api/universal/baboom-command-response"')
-    tail = body[start:start + 2200]
-    assert "_require_founder_machine_session(" in tail
-    assert "self._restart_to_update()" in tail
-    assert tail.index("_require_founder_machine_session(") < tail.index(
-        "self._restart_to_update()"
-    ), "the session is proved before anything can restart his app"
+# The route that can restart proves who asked: a behavioural court now
+# (test_baboom_asks_before_restart_and_answers_its_menu.py) drives the real
+# machine dispatcher with a non-founder session and a spy on the restart.

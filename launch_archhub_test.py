@@ -1314,15 +1314,10 @@ def _baboom_startup_choice():
 
 def _keep_attaching():
     global _baboom_off_reason
-    from nodelang.application_machine_transport import MachineTransportError
+    from nodelang.application_machine_transport import MachineNoResponse, MachineNotSent
     from nodelang.baboom_attach import prepare_baboom_host
 
     host = None
-    transient = {
-        "universal runtime did not respond",
-        "universal runtime pipe is unavailable",
-        "machine request timed out",
-    }
     handed_off = False
     try:
         # Settings decide this launch before any key file, custody commit or
@@ -1359,9 +1354,16 @@ def _keep_attaching():
                 # renews that presence instead of minting another Agent Session.
                 host.connect()
             except Exception as refusal:
-                retryable = isinstance(refusal, (TimeoutError, ConnectionError)) or (
-                    isinstance(refusal, MachineTransportError) and str(refusal) in transient
-                )
+                # Retried inside the 40 x 15 s budget: a request that never
+                # left (the runtime was not reachable yet), and no answer from
+                # a runtime busy at boot (2026-09-07) -- but only while no
+                # enrollment has been sent, so nothing was minted. Once the
+                # enrollment left, a lost answer is final (a retry would be
+                # refused as "already bound"); so is any unanswered presence,
+                # activity or frame request, and anything else.
+                retryable = isinstance(refusal, (MachineNotSent, ConnectionRefusedError)) or (
+                    isinstance(refusal, MachineNoResponse)
+                    and host is not None and not host.enrollment_sent)
                 print("  BABOOM     : %s (attempt %d, %s)" % (
                     "waiting for runtime" if retryable else "attachment refused",
                     attempt + 1, type(refusal).__name__), flush=True)
@@ -1411,14 +1413,28 @@ def _cockpit_respond(utterance):
         raise RuntimeError("ArchHub is closing; the request was not performed")
     host = baboom_host
     if host is not None:
-        return host.respond_input(utterance)
-    from nodelang.universal_application import respond_universal_baboom_utterance
+        # The cockpit never receives a confirmation: a restart or a remember
+        # is confirmed on the desktop companion only (founder decision
+        # 2026-09-30). The offer is still described.
+        answered = dict(host.respond_input(utterance))
+        response = dict(answered.get("response") or {})
+        data = dict(response.get("data") or {})
+        if data.pop("confirm_utterance", None) is not None:
+            data["requires"] = "confirm on the desktop"
+            response["data"] = data
+            answered["response"] = response
+        return answered
+    from nodelang.universal_application import (
+        finish_universal_baboom_response, respond_universal_baboom_utterance,
+    )
     with server.mutation_lock:
-        return respond_universal_baboom_utterance(
+        answered = respond_universal_baboom_utterance(
             server.universal_store, server.universal_registry,
             utterance=utterance,
             authentication_context=server.universal_registry.authorization.session.context(),
         )
+    # Slow host reads (repo status) run after the lock.
+    return finish_universal_baboom_response(answered)
 
 
 def _cockpit_execute(utterance):
@@ -1429,6 +1445,10 @@ def _cockpit_execute(utterance):
         if _baboom_off_reason is not None:
             raise RuntimeError(_baboom_off_reason)
         raise RuntimeError("BABOOM is not attached; no action was performed. Retry when it connects.")
+    from nodelang.universal_application import baboom_confirmation_nonce
+    if baboom_confirmation_nonce(utterance) is not None:
+        # Only the desktop companion confirms a restart or a remember.
+        raise RuntimeError("That act is confirmed on the desktop only; no action was performed.")
     # Exactly the same signed method used by the companion, never a fallback
     # server mutation or a GUI-bound controller call from the relay worker.
     return host.execute_input(utterance)
@@ -1516,8 +1536,16 @@ def _renew_desktop_session():
     except Exception as refusal:
         if _update_stop.is_set():
             return
+        from nodelang.application_machine_transport import (
+            MachineEffectOutcomeUnknown, MachineResponseError, MachineTransportError,
+        )
         status = type(refusal).__name__
-        if status == "MachineTransportError":
+        # A transport failure with a fixed message (the base class or the
+        # never-sent subclass) maps to its code; a server refusal or an
+        # unknown outcome carries server text and keeps only its class name.
+        if isinstance(refusal, MachineTransportError) and not isinstance(
+                refusal, (MachineResponseError, MachineEffectOutcomeUnknown)):
+            status = "MachineTransportError"
             # Only fixed transport messages may become diagnostic codes. Never
             # log a server error, response body, URL or credential-bearing text.
             code = {
@@ -1661,7 +1689,8 @@ def _finish_application_shutdown():
                 recovery_authentication_context=server.universal_registry.authorization.session.context(),
                 recovery_timeout_seconds=300.0)
             arm_update(state_dir, Path(__file__).resolve().parent, state_path,
-                content_path if content_path is not None and content_path.is_file() else None, recovery)
+                content_path if content_path is not None and content_path.is_file() else None, recovery,
+                expected_build=server.application_update.confirmed_build)
             _prune_backups(state_dir / "backups", recovery)
         else:
             server.close()

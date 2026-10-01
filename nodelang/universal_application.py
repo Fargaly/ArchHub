@@ -1696,6 +1696,9 @@ _BABOOM_COMMAND_SPECS = (
     ("agent-message", ("agent-message", "tell an agent")),
     ("agent-interrupt", ("agent-interrupt", "interrupt an agent")),
     ("open-host", ("open-host", "open a host")),
+    # "remember: <fact>" is the payload grammar; the bare word names the
+    # command in the graph-held catalogue like every other act.
+    ("remember", ("remember",)),
 )
 # The intents BABOOM PERFORMS. Their responder states what will happen and asks
 # for one confirmation ("requires": "explicit execute"); the confirm control on
@@ -1704,7 +1707,7 @@ _BABOOM_COMMAND_SPECS = (
 # ended as a report -- the founder: "it is just a reporter".
 _BABOOM_ACT_INTENTS = frozenset({
     "assign-task", "run-engine", "agent-message", "agent-interrupt",
-    "restart-to-update", "open-host",
+    "restart-to-update", "open-host", "remember",
 })
 _RUNTIME_COMPLIANCE_PROTOCOL_PREFIX = "app:compliance-protocol:v1"
 _RUNTIME_COMPLIANCE_COURT_ROOT = "app:court:runtime-compliance"
@@ -9717,6 +9720,9 @@ def resolve_universal_baboom_utterance(
     for entry in registry.baboom_command_catalog.entries.values():
         if normalized in entry.aliases:
             intent = entry.intent
+            if intent in {"remember", "restart-to-update", "agent-message", "agent-interrupt"}:
+                # The bare words name no fact, no build and no agent.
+                payload = ""
             break
     else:
         model_task = re.fullmatch(
@@ -9767,11 +9773,26 @@ def resolve_universal_baboom_utterance(
                 r"(?:interrupt|stop)\s+(?:agent\s+)?([a-z0-9_.\-]+(?::[a-z0-9_.\-]+)*)(?:(?:\s*[:,-])?\s+(.+))?",
                 spoken, re.IGNORECASE | re.DOTALL,
             )
+            # "remember: <fact>" (the companion's Remember... prefill),
+            # "remember <fact>" or "remember that <fact>"; never "remembering".
+            remember = re.fullmatch(
+                r"remember(?:\s+that\b)?(?:\s*[:,-]\s*|\s+)(.+)",
+                spoken, re.IGNORECASE | re.DOTALL,
+            )
+            # The confirm control's own words: the build he was shown.
+            confirmed_update = re.fullmatch(
+                r"restart\s+to\s+update\s+build\s+([A-Za-z0-9._-]{1,64})",
+                spoken, re.IGNORECASE,
+            )
             open_host = re.fullmatch(
                 r"(?:open|launch|start|connect)\s+(excel|word|powerpoint|company\s+email|outlook-imap|new\s+outlook|outlook-new|outlook|rhino|blender|max|3ds\s*max)(?:\s+(?:with|and)\s+.*)?",
                 spoken, re.IGNORECASE,
             )
-            if open_host:
+            if remember:
+                intent, payload = "remember", " ".join(remember.group(1).split())
+            elif confirmed_update:
+                intent, payload = "restart-to-update", confirmed_update.group(1)
+            elif open_host:
                 name = open_host.group(1).casefold().replace(" ", "")
                 intent, payload = "open-host", ("max" if name in ("max", "3dsmax") else "outlook-imap" if name == "companyemail" else "outlook-new" if name == "newoutlook" else name)
             elif task:
@@ -9796,12 +9817,136 @@ def resolve_universal_baboom_utterance(
     }
 
 
+# The acts that change the founder's machine or memory run only on a
+# confirmation BABOOM issued when it offered them.
+_BABOOM_CONFIRMED_INTENTS = frozenset({"restart-to-update", "remember"})
+_BABOOM_CONFIRMATION = re.compile(r"\s*confirm\s+([0-9a-f]{32})\s*")
+
+
+def baboom_confirmation_nonce(utterance: object) -> str | None:
+    """The nonce a confirm utterance ("confirm <nonce>") carries, if any."""
+    found = _BABOOM_CONFIRMATION.fullmatch(utterance) if isinstance(utterance, str) else None
+    return found.group(1) if found else None
+
+
+class BaboomActRefused(InvalidCell):
+    """Proven before any effect: nothing happened, the confirmation is re-armed."""
+
+
+def baboom_remember_fragment_id(nonce: str) -> str:
+    """The Brain fact id one confirmed remember writes: its durable receipt."""
+    return hashlib.sha256(("baboom-remember/v1\x00" + nonce).encode("ascii")).hexdigest()
+
+
+class BaboomConfirmations:
+    """Single-use confirmations for the acts BABOOM offers. Memory only.
+
+    Respond issues one when it offers a restart or a remember: a random nonce
+    bound to the exact words it will perform (the build id, the full fact).
+    Execute takes it once. Its outcome is one of: done (spent; a re-press
+    answers what happened), refused before any effect (re-armed), or
+    uncertain after dispatch (never replayed; only a durable receipt, such
+    as the remembered fact itself, can settle it). A confirmation stays
+    "running" until the caller acknowledges the real outcome, including a
+    lifecycle callback that runs after execute returns. Nothing is persisted:
+    a restart of the application forgets every open confirmation.
+    """
+
+    lifetime_seconds = 120.0
+    _kept_used = 64
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._lock = threading.Condition()
+        self._held: dict[str, dict[str, object]] = {}
+        self._used: dict[str, dict[str, object]] = {}
+
+    def issue(self, *, intent: str, utterance: str) -> str:
+        nonce = uuid.uuid4().hex
+        with self._lock:
+            now = self._clock()
+            for stale in [key for key, held in self._held.items() if held["expires_at"] <= now]:
+                del self._held[stale]
+            self._held[nonce] = {"intent": intent, "utterance": utterance, "nonce": nonce,
+                                 "expires_at": now + self.lifetime_seconds}
+        return nonce
+
+    def take(self, nonce: str):
+        """Claim a confirmation for one act.
+
+        ("fresh", held): perform it. ("used", record): it was done; record
+        holds the real result. ("uncertain", record): dispatched, outcome
+        unknown; reconcile before anything else. ("running", record): the act
+        is still in flight. (None, None): unknown or expired. Never blocks:
+        callers hold the graph mutation lock, so a press during an act in
+        flight is answered at once ("press again for the result"); a press
+        after a refusal acts again.
+        """
+        with self._lock:
+            while True:
+                record = self._used.get(nonce)
+                if record is not None and record["state"] == "running":
+                    return "running", record
+                if record is not None and record["state"] == "done":
+                    return "used", record
+                if record is not None and record["state"] == "uncertain":
+                    return "uncertain", record
+                held = self._held.pop(nonce, None)
+                if held is None or held["expires_at"] <= self._clock():
+                    return None, None
+                self._used[nonce] = {"held": held, "state": "running", "result": None, "error": ""}
+                # Forget only finished outcomes; an act in flight keeps its
+                # record and its waiters.
+                finished = [key for key, kept in self._used.items() if kept["state"] != "running"]
+                while len(self._used) > self._kept_used and finished:
+                    del self._used[finished.pop(0)]
+                return "fresh", held
+
+    def settle(self, nonce: str | None, result: Mapping[str, object]) -> None:
+        """The act happened (or answered truthfully): the confirmation is spent."""
+        with self._lock:
+            if nonce in self._used:
+                self._used[nonce].update(state="done", result=dict(result))
+                self._lock.notify_all()
+
+    def refuse(self, nonce: str | None, error: str) -> None:
+        """Proven before any effect: hand the confirmation back for a re-press."""
+        with self._lock:
+            record = self._used.get(nonce)
+            if record is not None:
+                record.update(state="refused", error=str(error)[:200], result=None)
+                self._held[nonce] = record["held"]
+                self._lock.notify_all()
+
+    def uncertain(self, nonce: str | None, error: str) -> None:
+        """Dispatched, outcome unknown: never replayed until reconciled."""
+        with self._lock:
+            record = self._used.get(nonce)
+            if record is not None:
+                record.update(state="uncertain", error=str(error)[:200], result=None)
+                self._lock.notify_all()
+
+    def reclaim(self, nonce: str):
+        """A durable check proved the uncertain act left no effect: run it again."""
+        with self._lock:
+            record = self._used.get(nonce)
+            if record is None or record["state"] != "uncertain":
+                return None
+            record.update(state="running", error="")
+            return record["held"]
+
+
 def execute_universal_baboom_utterance(
     store: CellStore,
     registry: UniversalApplicationRegistry,
     *,
     utterance: str,
     authentication_context: object | None = None,
+    staged_update: Mapping[str, object] | None = None,
+    remember: Callable[[str, str], Mapping[str, object]] | None = None,
+    remembered: Callable[[str], bool] | None = None,
+    confirmations: BaboomConfirmations | None = None,
+    _confirmed_by: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Materialize one explicit founder task without a local BABOOM queue.
 
@@ -9812,16 +9957,93 @@ def execute_universal_baboom_utterance(
     The resulting Work deliberately stays open and unselected: BABOOM must use
     its own device-proven session and governed claim path before it can work on
     it.
+
+    A restart or a remember runs only as "confirm <nonce>", the single-use
+    confirmation respond issued with the offer (BaboomConfirmations).
     """
+    nonce = baboom_confirmation_nonce(utterance)
+    if nonce is not None and _confirmed_by is None:
+        if confirmations is None:
+            raise InvalidCell("this route cannot take a BABOOM confirmation; nothing was done")
+        state, held = confirmations.take(nonce)
+        if state == "uncertain":
+            record = held
+            if record["held"]["intent"] == "remember" and remembered is not None:
+                # The fact id is this confirmation's durable receipt.
+                if remembered(baboom_remember_fragment_id(nonce)):
+                    result = {
+                        "kind": "remembered",
+                        "summary": "Remembered in your Brain (confirmed on recheck). It stays sealed on this machine.",
+                        "data": {"written": 1, "reconciled": True},
+                        "command": {"catalog": registry.baboom_command_catalog.root_id,
+                                    "intent": "remember", "payload": "", "revision": store.revision},
+                    }
+                    confirmations.settle(nonce, result)
+                    return result
+                held = confirmations.reclaim(nonce)
+                state = "fresh" if held is not None else None
+            else:
+                raise InvalidCell(
+                    "the outcome of that is not known (%s); it will not be repeated. "
+                    "If ArchHub does not restart, ask BABOOM again." % record["error"])
+        if state == "running":
+            raise InvalidCell("that is still running; press confirm again for the result")
+        if state == "used":
+            # A double press or a relay retry: never performed twice.
+            done = held.get("result") or {}
+            return {
+                "kind": "already-done",
+                "summary": ("Already done; nothing was repeated. " + str(done.get("summary") or "")).strip(),
+                "data": {"restart": False},
+                "command": done.get("command") or {
+                    "catalog": registry.baboom_command_catalog.root_id,
+                    "intent": held["held"]["intent"], "payload": "", "revision": store.revision,
+                },
+            }
+        if state is None:
+            raise InvalidCell(
+                "that confirmation expired or was never offered here; ask BABOOM again. Nothing was done.")
+        try:
+            result = execute_universal_baboom_utterance(
+                store, registry, utterance=str(held["utterance"]),
+                authentication_context=authentication_context, staged_update=staged_update,
+                remember=remember, remembered=remembered,
+                confirmations=confirmations, _confirmed_by=held,
+            )
+        except BaboomActRefused as refusal:
+            confirmations.refuse(nonce, str(refusal))
+            raise
+        except Exception as unknown:
+            # After dispatch an exception proves nothing: the effect may have
+            # landed with its answer lost. Never replay; reconcile first.
+            confirmations.uncertain(nonce, str(unknown))
+            raise InvalidCell(
+                "the outcome of that is not known (%s); it will not be repeated without a check"
+                % str(unknown)[:200]) from unknown
+        if result.get("kind") == "update-ready" and (result.get("data") or {}).get("restart"):
+            # The restart itself is the caller's lifecycle callback: this
+            # confirmation stays running until the caller settles, refuses or
+            # marks it uncertain from that callback's real outcome.
+            return result
+        confirmations.settle(nonce, result)
+        return result
     command = resolve_universal_baboom_utterance(
         store,
         registry,
         utterance=utterance,
         authentication_context=authentication_context,
     )
+    if command["intent"] in _BABOOM_CONFIRMED_INTENTS and (
+            _confirmed_by is None or _confirmed_by.get("intent") != command["intent"]):
+        # Typed words, a relay, an old sentence: none is the founder's confirm.
+        raise InvalidCell(
+            "%s runs only on the confirmation BABOOM offers when you ask; nothing was done."
+            % command["intent"])
     if command["intent"] in {"agent-message", "agent-interrupt"}:
         # BABOOM acts on the agents: one signed message through the coordination host.
         from . import baboom_agent_link
+        if not command["payload"]:
+            raise InvalidCell("name the agent and the message, e.g. \"tell codex: check the build\"")
         spec = json.loads(str(command["payload"]))
         target = baboom_agent_link.resolve_target(str(spec.get("target") or ""))
         if target is None:
@@ -9837,6 +10059,62 @@ def execute_universal_baboom_utterance(
             "kind": kind,
             "summary": "%s %s (%s %s)." % (verb, root, target.get("provider"), target.get("runtime")),
             "data": {"target": target, "message": sent.get("message")},
+            "command": command,
+        }
+    if command["intent"] == "restart-to-update":
+        # Confirmed by the founder: say which build installs. The caller that
+        # owns the desktop lifecycle performs the restart on this answer; the
+        # respond route only ever describes the staged build.
+        staged = staged_update if isinstance(staged_update, Mapping) else {}
+        build = str(staged.get("build_id") or "")
+        confirmed = str(command["payload"] or "")
+        if not build:
+            return {
+                "kind": "update-none",
+                "summary": "No update is staged; this build is current.",
+                "data": {"update": {}, "restart": False},
+                "command": command,
+            }
+        if confirmed != build:
+            # The confirm names the build he was shown. Nothing named, or a
+            # different build staged since: no restart, and he is asked again.
+            return {
+                "kind": "update-changed" if confirmed else "update-confirm-required",
+                "summary": (
+                    "Not restarted: build %s is staged now, not %s. Ask again to install %s."
+                    % (build, confirmed, build) if confirmed else
+                    "Not restarted: confirm the build to install (build %s is staged)." % build
+                ),
+                "data": {"update": {"build_id": build, "tag": str(staged.get("tag") or "")},
+                         "restart": False},
+                "command": command,
+            }
+        return {
+            "kind": "update-ready",
+            "summary": "Restarting to install build %s." % build,
+            "data": {"update": {"build_id": build, "tag": str(staged.get("tag") or "")},
+                     "restart": True},
+            "command": command,
+        }
+    if command["intent"] == "remember":
+        # Confirmed by the founder: one fact into his own Brain through the
+        # caller's owner-only write. Unclassified, so it stays sealed.
+        text = str(command["payload"]).strip()
+        if not text:
+            raise InvalidCell("there is nothing to remember")
+        if remember is None or _confirmed_by is None:
+            raise BaboomActRefused("remembering requires the founder's BABOOM session and Brain")
+        written = remember(text, baboom_remember_fragment_id(str(_confirmed_by["nonce"])))
+        if isinstance(written, Mapping) and written.get("refused") is True:
+            # The Brain refused before writing anything (not bound, no tool).
+            raise BaboomActRefused("the Brain did not keep it: %s" % (written.get("error") or "refused"))
+        if not isinstance(written, Mapping) or written.get("ok") is not True:
+            error = written.get("error") if isinstance(written, Mapping) else None
+            raise InvalidCell("the Brain did not confirm it: %s" % (error or "no answer"))
+        return {
+            "kind": "remembered",
+            "summary": "Remembered in your Brain. It stays sealed on this machine.",
+            "data": {"written": int(written.get("written") or 0)},
             "command": command,
         }
     if command["intent"] == "open-host":
@@ -9949,6 +10227,107 @@ def execute_universal_baboom_utterance(
     }
 
 
+def _baboom_source_tree_report() -> dict[str, object]:
+    """"Repo status": git status of the source tree this build runs from.
+
+    Counts and branch only; no file name leaves this machine through the
+    cockpit relay. An installed (frozen) build has no checkout and says so.
+    """
+    import subprocess
+    import sys
+    if getattr(sys, "frozen", False):
+        return {"kind": "repo-status",
+                "summary": "This is an installed build; there is no source checkout to audit.",
+                "data": {"checkout": False}}
+    root = Path(__file__).resolve().parents[1]
+    try:
+        done = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain=v1", "--branch"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=10, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"kind": "repo-status",
+                "summary": "The source tree could not be read (%s)." % type(exc).__name__,
+                "data": {"checkout": None, "error": type(exc).__name__}}
+    if done.returncode != 0:
+        return {"kind": "repo-status",
+                "summary": "This build does not run from a git checkout; there is nothing to audit.",
+                "data": {"checkout": False}}
+    lines = done.stdout.splitlines()
+    branch = lines[0][3:].strip() if lines and lines[0].startswith("## ") else ""
+    changes = [line for line in lines if line and not line.startswith("## ")]
+    untracked = sum(1 for line in changes if line.startswith("??"))
+    changed = len(changes) - untracked
+    return {
+        "kind": "repo-status",
+        "summary": (
+            "Source checkout %s: %d changed and %d untracked file(s)." % (branch or "(no branch)", changed, untracked)
+            if changes else "Source checkout %s is clean." % (branch or "(no branch)")
+        ),
+        "data": {"checkout": True, "branch": branch, "changed": changed, "untracked": untracked},
+    }
+
+
+def finish_universal_baboom_response(result: Mapping[str, object]) -> dict[str, object]:
+    """Complete the parts of a BABOOM answer that must not hold the graph lock.
+
+    Called by every respond caller after it releases the mutation lock. Today
+    that is "repo status", whose git status can take seconds.
+    """
+    finished = dict(result)
+    command = finished.get("command")
+    response = finished.get("response")
+    if (
+        isinstance(command, Mapping) and command.get("intent") == "repo-guard"
+        and isinstance(response, Mapping)
+        and isinstance(response.get("data"), Mapping) and response["data"].get("pending")
+    ):
+        finished["response"] = _baboom_source_tree_report()
+    return finished
+
+
+def _baboom_latest_model_result(
+    snapshot: Snapshot, registry: UniversalApplicationRegistry
+) -> dict[str, object]:
+    """"Show model result": the newest execution receipt the graph holds."""
+    protocol = registry.baboom_model_execution_protocol
+    latest: ModelExecutionReceiptProjection | None = None
+    for member in read_relation(snapshot, protocol.registry("receipt"), budget=100_000):
+        if member.role_id != protocol.role("registry-member"):
+            continue
+        receipt = read_model_execution_receipt(
+            snapshot, protocol, registry.adapter_protocol, member.participant_id
+        )
+        if latest is None or receipt.created_at > latest.created_at:
+            latest = receipt
+    if latest is None:
+        return {"kind": "model-result-none",
+                "summary": "No model result is recorded in this graph yet.",
+                "data": {"available": False}}
+    delegation = read_model_delegation(
+        snapshot, protocol, registry.adapter_protocol, latest.delegation_root
+    )
+    names = {root: name for name, root in registry.baboom_model_provider_roots.items()}
+    provider = names.get(latest.provider_root, "a provider")
+    when = datetime.fromtimestamp(latest.created_at, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    said = "%s (%s) %s at %s" % (provider, latest.model, latest.outcome, when)
+    return {
+        "kind": "model-result",
+        "summary": (
+            "Latest model result: %s, %d bytes out." % (said, latest.output_bytes)
+            if latest.outcome == "succeeded" else
+            "Latest model result: %s (%s)." % (said, latest.error_code or "no error code")
+        ),
+        "data": {
+            "receipt": latest.root_id, "work": delegation.work_root,
+            "provider": provider, "model": latest.model, "outcome": latest.outcome,
+            "output_bytes": latest.output_bytes, "created_at": latest.created_at,
+            "error_code": latest.error_code,
+        },
+    }
+
+
 def respond_universal_baboom_utterance(
     store: CellStore,
     registry: UniversalApplicationRegistry,
@@ -9960,6 +10339,7 @@ def respond_universal_baboom_utterance(
     staged_update: Mapping[str, object] | None = None,
     content_service=None,
     read_guard=None,
+    confirmations: BaboomConfirmations | None = None,
 ) -> dict[str, object]:
     """Resolve one founder utterance to a graph-backed, non-chat response.
 
@@ -10107,6 +10487,14 @@ def respond_universal_baboom_utterance(
                     for row in rows[:24]
                 ]},
             }
+    elif intent in {"agent-message", "agent-interrupt"} and not command["payload"]:
+        # "tell an agent" names nobody: say how, never parse the words as JSON.
+        response = {
+            "kind": intent + "-howto",
+            "summary": ("Say who and what: \"tell codex: check the build\"." if intent == "agent-message"
+                        else "Say who: \"interrupt codex\" (and why, if you like)."),
+            "data": {"available": True},
+        }
     elif intent in {"agent-message", "agent-interrupt"}:
         spec = json.loads(str(command["payload"]))
         verb = "send to" if intent == "agent-message" else "interrupt"
@@ -10165,11 +10553,22 @@ def respond_universal_baboom_utterance(
     elif intent == "restart-to-update":
         lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts, staged_update=staged_update, **context_read_options)
         staged = lens.get("update") or {}
+        # A read describes the staged build and asks; it never restarts. The
+        # restart happens on the execute route, behind the confirm control
+        # (audit 2026-09-29: this read restarted his application unasked).
         response = {
             "kind": "update-ready" if staged.get("build_id") else "update-none",
-            "summary": ("Restarting to install build %s." % staged["build_id"]) if staged.get("build_id") else "No update is staged; this build is current.",
-            "data": {"update": staged, "restart": bool(staged.get("build_id"))},
+            "summary": ("Build %s is staged. Restart ArchHub to install it?" % staged["build_id"]) if staged.get("build_id") else "No update is staged; this build is current.",
+            # The confirm executes these exact words, so it installs only the
+            # build shown here; a different build staged meanwhile is refused.
+            "data": ({"update": staged, "build_id": staged["build_id"],
+                      "requires": "explicit execute"} if staged.get("build_id")
+                     else {"update": staged}),
         }
+        if staged.get("build_id") and confirmations is not None:
+            response["data"]["confirm_utterance"] = "confirm " + confirmations.issue(
+                intent="restart-to-update",
+                utterance="restart to update build %s" % staged["build_id"])
     elif intent == "archhub-map":
         lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts, staged_update=staged_update, **context_read_options)
         response = {
@@ -10177,6 +10576,48 @@ def respond_universal_baboom_utterance(
             "summary": "The cockpit is the live map of this graph; open /founder on the cloud.",
             "data": {"revision": lens.get("revision"), "work": lens.get("work")},
         }
+    elif intent == "remember":
+        said = str(command["payload"]).strip()
+        digest = hashlib.sha256(said.encode("utf-8")).hexdigest()
+        # The confirm is bound to the whole fact: its length and digest are
+        # shown with it, and the nonce holds exactly these words.
+        response = ({
+            "kind": "remember-ready",
+            "summary": "Remember this in your Brain (%d characters, sha256 %s)? It stays sealed on this machine: %s%s" % (
+                len(said), digest[:12], said[:160], "..." if len(said) > 160 else ""),
+            "data": {"text": said, "length": len(said), "sha256": digest, "requires": "explicit execute"},
+        } if said else {
+            "kind": "remember-empty",
+            "summary": "Say what to remember after \"remember:\".",
+            "data": {"available": True},
+        })
+        if said and confirmations is not None:
+            response["data"]["confirm_utterance"] = "confirm " + confirmations.issue(
+                intent="remember", utterance="remember: " + said)
+    elif intent == "repo-guard":
+        # git runs outside the graph lock: every caller holds the lock around
+        # this read and completes it with finish_universal_baboom_response.
+        response = {
+            "kind": "repo-status",
+            "summary": "Reading the source checkout.",
+            "data": {"pending": True},
+        }
+    elif intent == "brain-rollover-preflight":
+        brain = dict(brain_state or {})
+        ok = brain.get("ok")
+        response = {
+            "kind": "brain-maintenance-readiness",
+            "summary": (
+                "Brain maintenance can run: the Brain is answering with %d facts." % int(brain.get("facts") or 0)
+                if ok is True else
+                "Brain maintenance cannot run: the Brain is not answering."
+                if ok is False else
+                "Brain maintenance readiness is not known yet: the Brain has not answered its first health check."
+            ),
+            "data": {"brain": brain, "ready": ok is True},
+        }
+    elif intent == "show-model-result":
+        response = _baboom_latest_model_result(store.snapshot(), registry)
     else:
         # A catalogue command this build cannot perform says so, in one
         # sentence, instead of handing back a menu.

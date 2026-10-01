@@ -116,6 +116,23 @@ class MachineEffectOutcomeUnknown(MachineTransportError):
     """A route failed after durable changes; its response is not a refusal proof."""
 
 
+class MachineNoResponse(MachineTransportError):
+    """The request was sent and no answer came within the wait.
+
+    Final for every caller except BABOOM's first attach frame at boot, which
+    may ask again inside its bounded budget: the runtime refuses a second
+    enrollment of a bound identity, so a retry cannot mint a second session.
+    """
+
+
+class MachineNotSent(MachineTransportError):
+    """The request never left this process: the runtime was not reachable yet.
+
+    The only failure a caller may retry blindly. Anything after the request
+    was sent (no answer, a torn or unbound answer, a refusal) is final.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class MachinePipePeer:
     """Owner-local OS observation; never a request field or graph permission."""
@@ -2001,6 +2018,9 @@ class UniversalRuntimeClient:
         self._runtime_presence_expires_at = 0.0
         self._runtime_presence_generation: int | None = None
         self._continuation_request = None
+        # True once an enrollment request has left this process. Before that,
+        # an unanswered request minted nothing and may be asked again.
+        self.enrollment_sent = False
         self._request_lock = threading.RLock()
         self._cancellation_event = cancellation_event
         self._pinned_runtime_descriptor: RuntimeDescriptor | None = None
@@ -2015,7 +2035,7 @@ class UniversalRuntimeClient:
                 check_generation=descriptor.runtime_id != getattr(self, "_generation_verified_for", None),
             )
         except RuntimeResolutionError as refusal:
-            raise MachineTransportError("universal runtime is not active (%s)" % refusal.kind) from refusal
+            raise MachineNotSent("universal runtime is not active (%s)" % refusal.kind) from refusal
         self._generation_verified_for = descriptor.runtime_id
         return descriptor
 
@@ -2070,6 +2090,7 @@ class UniversalRuntimeClient:
             if type(credential) is not dict:
                 raise MachineTransportError("runtime device credential is invalid")
             body["device_credential"] = credential
+        self.enrollment_sent = True
         result = self.request("POST", "/api/universal/agent-session", body)
         return self._accept_agent_session_result(result, expected_agent_session)
 
@@ -3916,7 +3937,7 @@ class UniversalRuntimeClient:
                 descriptor.pipe, family="AF_PIPE", authkey=material.secret
             )
         except (EOFError, OSError) as exc:
-            raise MachineTransportError("universal runtime pipe is unavailable") from exc
+            raise MachineNotSent("universal runtime pipe is unavailable") from exc
         try:
             self._check_cancelled()
             connection.send_bytes(raw)
@@ -3933,14 +3954,14 @@ class UniversalRuntimeClient:
                 response_timeout = float(response_timeout_seconds)
             if self._cancellation_event is None:
                 if not connection.poll(response_timeout):
-                    raise MachineTransportError("universal runtime did not respond")
+                    raise MachineNoResponse("universal runtime did not respond")
             else:
                 deadline = time.monotonic() + response_timeout
                 while True:
                     self._check_cancelled()
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
-                        raise MachineTransportError("universal runtime did not respond")
+                        raise MachineNoResponse("universal runtime did not respond")
                     if connection.poll(min(0.1, remaining)):
                         self._check_cancelled()
                         break
@@ -3961,7 +3982,7 @@ class UniversalRuntimeClient:
             raise MachineTransportError("universal runtime response binding failed")
         if response["ok"] is False:
             if response.get("effect_outcome") == "unknown":
-                error = MachineTransportError(str(response.get("error") or "request outcome unknown"))
+                error = MachineEffectOutcomeUnknown(str(response.get("error") or "request outcome unknown"))
                 # The application answered: the request has terminated, its effect is unknown.
                 error.response_received = True
                 raise error
@@ -3982,6 +4003,8 @@ __all__ = [
     "BABOOM_NATIVE_REPORT_SUMMARY",
     "MachineTransportError",
     "MachineResponseError",
+    "MachineNoResponse",
+    "MachineNotSent",
     "RuntimeDescriptor",
     "UniversalRuntimeClient",
     "UniversalRuntimeTransport",

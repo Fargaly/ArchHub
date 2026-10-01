@@ -217,7 +217,7 @@ def test_a_busy_boot_does_not_cost_the_founder_his_companion(monkeypatch):
     launcher's real _keep_attaching."""
     from tests_replica.test_baboom_startup_lifecycle import (
         Host,
-        TransportFailure,
+        NoResponse,
         test_first_frame_retry_retains_one_prepared_host_and_identity,
         test_policy_refusal_is_not_retried_under_new_identity,
         worker_namespace,
@@ -226,7 +226,7 @@ def test_a_busy_boot_does_not_cost_the_founder_his_companion(monkeypatch):
     test_policy_refusal_is_not_retried_under_new_identity(monkeypatch)
 
     def busy(host):
-        raise TransportFailure("universal runtime did not respond")
+        raise NoResponse("universal runtime did not respond")
 
     host = Host(busy)
     ns, stop, prepared, delivered, _ = worker_namespace(monkeypatch, host)

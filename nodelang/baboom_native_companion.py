@@ -198,15 +198,17 @@ _BABOOM_ACT_PROMPTS = {
     "agent-interrupt": ("Interrupt that agent?", "Interrupt the agent"),
     "restart-to-update": ("Restart ArchHub to install it?", "Restart and install"),
     "open-host": ("Open it from ArchHub?", "Open the host"),
+    "remember": ("Remember this in your Brain?", "Remember it"),
 }
 _BABOOM_ACT_GLYPHS = {
     "assign-task": "+", "run-engine": "▸", "agent-message": "→",
     "agent-interrupt": "■", "restart-to-update": "↻", "open-host": "△",
+    "remember": "✓",
 }
 _BABOOM_ACT_PROGRESS = {
     "assign-task": "Creating task...", "run-engine": "Running on the graph...",
     "agent-message": "Sending...", "agent-interrupt": "Interrupting...",
-    "restart-to-update": "Restarting...",
+    "restart-to-update": "Restarting...", "remember": "Remembering...",
 }
 
 
@@ -1509,15 +1511,21 @@ def create_baboom_native_companion_window(
                 and data.get("requires") == "explicit execute"
             )
             if offers_act:
-                utterance = self._submitted_utterance
+                # The confirm executes the graph's own words when it hands
+                # them back ("restart to update build b-2"), so pressing it
+                # installs the build he was shown and nothing staged since.
+                confirm = data.get("confirm_utterance")
+                utterance = (confirm if isinstance(confirm, str) and confirm.strip()
+                             else self._submitted_utterance)
                 if utterance:
                     intent = str(command.get("intent") or "")
                     question, label = _BABOOM_ACT_PROMPTS.get(
                         intent, ("Do this in ArchHub?", "Do it"))
                     # An act that writes says WHAT before the founder presses:
-                    # the app names the engine in its summary.
+                    # the app names the engine, the build, the fact.
                     said = response.get("summary") if isinstance(response, Mapping) else None
-                    if intent == "run-engine" and isinstance(said, str) and said.strip():
+                    if (intent in {"run-engine", "restart-to-update", "remember"}
+                            and isinstance(said, str) and said.strip()):
                         question = said.strip()
                     self._pending_task_utterance = utterance
                     self._transient_report = question

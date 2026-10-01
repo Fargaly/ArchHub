@@ -41,6 +41,26 @@ class TransportFailure(RuntimeError):
     pass
 
 
+class Denied(TransportFailure):
+    """Stand-in for MachineResponseError: the runtime answered and said no."""
+
+
+class NotEnrolled(TransportFailure):
+    """Stand-in for MachineContinuationNotEnrolled: an owner-held refusal receipt."""
+
+
+class OutcomeUnknown(TransportFailure):
+    """Stand-in for MachineEffectOutcomeUnknown: effects are not known."""
+
+
+class NotSent(TransportFailure):
+    """Stand-in for MachineNotSent: the request never left."""
+
+
+class NoResponse(TransportFailure):
+    """Stand-in for MachineNoResponse: sent, no answer (retried on the first attach frame only)."""
+
+
 class ImmediateWait:
     """Advance retry waits without sleeping; cancellation is still explicit."""
     def __init__(self):
@@ -59,7 +79,8 @@ class ImmediateWait:
 
 
 class Host:
-    def __init__(self, connect=None):
+    def __init__(self, connect=None, *, enrollment_sent=False):
+        self.enrollment_sent = enrollment_sent
         self.connect_calls = 0
         self.stop_calls = 0
         self.running = False
@@ -75,7 +96,7 @@ class Host:
         self.running = False
 
 
-def worker_namespace(monkeypatch, host, *, stop=None, emit=None, startup=lambda: "on"):
+def worker_namespace(monkeypatch, host, *, stop=None, emit=None, startup=lambda: "on", real_transport=False):
     stop = stop or ImmediateWait()
     prepared, delivered = [], []
 
@@ -84,7 +105,11 @@ def worker_namespace(monkeypatch, host, *, stop=None, emit=None, startup=lambda:
         return host
 
     monkeypatch.setitem(sys.modules, "nodelang.baboom_attach", SimpleNamespace(prepare_baboom_host=prepare))
-    monkeypatch.setitem(sys.modules, "nodelang.application_machine_transport", SimpleNamespace(MachineTransportError=TransportFailure))
+    if not real_transport:
+        monkeypatch.setitem(sys.modules, "nodelang.application_machine_transport", SimpleNamespace(
+            MachineTransportError=TransportFailure, MachineResponseError=Denied,
+            MachineContinuationNotEnrolled=NotEnrolled, MachineEffectOutcomeUnknown=OutcomeUnknown,
+            MachineNotSent=NotSent, MachineNoResponse=NoResponse))
     owner = SimpleNamespace(pending_host=None, ready=SimpleNamespace(emit=emit or delivered.append))
     namespace = launcher_names(
         "_keep_attaching", _baboom_stop=stop, _baboom_attachment=owner,
@@ -99,7 +124,8 @@ def worker_namespace(monkeypatch, host, *, stop=None, emit=None, startup=lambda:
 def test_first_frame_retry_retains_one_prepared_host_and_identity(monkeypatch):
     def busy_first(host):
         if host.connect_calls == 1:
-            raise TransportFailure("universal runtime did not respond")
+            # The runtime was not reachable yet: nothing was sent.
+            raise NotSent("universal runtime pipe is unavailable")
 
     host = Host(busy_first)
     ns, stop, prepared, delivered, owner = worker_namespace(monkeypatch, host)
@@ -113,14 +139,66 @@ def test_first_frame_retry_retains_one_prepared_host_and_identity(monkeypatch):
 
 
 def test_policy_refusal_is_not_retried_under_new_identity(monkeypatch):
+    # The runtime's authenticated refusal arrives as MachineResponseError.
     def denied(host):
-        raise TransportFailure("runtime device proof challenge is invalid")
+        raise Denied("runtime device proof challenge is invalid")
 
     host = Host(denied)
     ns, _, prepared, delivered, _ = worker_namespace(monkeypatch, host)
     ns["_keep_attaching"]()
     assert len(prepared) == host.connect_calls == 1
     assert not delivered and host.stop_calls >= 1
+
+
+@pytest.mark.parametrize("final", [NotEnrolled, OutcomeUnknown, TransportFailure])
+def test_a_refusal_receipt_or_unknown_effect_is_final(monkeypatch, final):
+    def refused(host):
+        raise final("refused")
+
+    host = Host(refused)
+    ns, _, _, delivered, _ = worker_namespace(monkeypatch, host)
+    ns["_keep_attaching"]()
+    assert host.connect_calls == 1 and not delivered and host.stop_calls >= 1
+
+
+def test_a_transport_failure_is_retried_until_the_runtime_attaches(monkeypatch):
+    # The log showed "attachment refused (attempt 1, MachineTransportError)"
+    # launch after launch: one unlisted pipe message ended BABOOM's start.
+    def flaky(host):
+        if host.connect_calls <= 3:
+            raise NotSent("universal runtime pipe is unavailable")
+
+    host = Host(flaky)
+    ns, stop, prepared, delivered, _ = worker_namespace(monkeypatch, host)
+    ns["_keep_attaching"]()
+    assert len(prepared) == 1, "one prepared identity is retried, never a new one"
+    assert host.connect_calls == 4 and delivered == [host]
+    assert stop.waits == [0.0, 15.0, 15.0, 15.0]
+
+
+def test_a_transport_failure_stops_at_the_forty_attempt_budget(monkeypatch):
+    def down(host):
+        raise NotSent("universal runtime is not active")
+
+    host = Host(down)
+    ns, stop, prepared, delivered, _ = worker_namespace(monkeypatch, host)
+    ns["_keep_attaching"]()
+    assert host.connect_calls == 40 and len(prepared) == 1
+    assert stop.waits == [0.0] + [15.0] * 39
+    assert not delivered and host.stop_calls >= 1
+
+
+def test_no_answer_after_the_enrollment_was_sent_is_final(monkeypatch):
+    """The enrollment left and its answer (the session token) was lost: asking
+    again could only be refused "already bound", so BABOOM stops at once."""
+    def lost_token(host):
+        raise NoResponse("universal runtime did not respond")
+
+    host = Host(lost_token, enrollment_sent=True)
+    ns, stop, prepared, delivered, _ = worker_namespace(monkeypatch, host)
+    ns["_keep_attaching"]()
+    assert len(prepared) == 1 and host.connect_calls == 1
+    assert not delivered and host.stop_calls >= 1 and stop.waits == [0.0]
 
 
 def test_cancellation_during_connect_cleans_host_without_handoff(monkeypatch):
@@ -467,3 +545,131 @@ def test_cockpit_execute_names_the_startup_setting_instead_of_retry(reason, name
     stop.set()
     with pytest.raises(RuntimeError, match="closing"):
         ns["_cockpit_execute"]("another task")
+
+
+# -- the REAL client's error mapping, through the real launcher loop ---------
+
+def _real_client_error(monkeypatch, scenario):
+    """What nodelang.application_machine_transport.UniversalRuntimeClient raises."""
+    import json
+    from nodelang import application_machine_transport as amt
+
+    descriptor = SimpleNamespace(status="starting" if scenario == "not-active" else "active",
+                                 runtime_id="a" * 32, pipe="court-pipe", key_id="k", key_version=1)
+
+    class Connection:
+        def send_bytes(self, raw):
+            self.sent = json.loads(raw)
+
+        def poll(self, _seconds):
+            path = self.sent["path"]
+            return not (scenario == "did-not-respond"
+                        or (scenario == "challenge-no-answer" and path.endswith("-challenge"))
+                        or (scenario == "enrollment-no-answer" and path == "/api/universal/agent-session"))
+
+        def recv_bytes(self, _limit):
+            if scenario == "pipe-closed-mid-answer":
+                raise EOFError
+            answer = {"ok": True, "runtime_id": "a" * 32, "request_id": self.sent["request_id"],
+                      "result": {}}
+            if scenario == "unknown-outcome":
+                answer.update(ok=False, effect_outcome="unknown", error="commit outcome unknown")
+            elif scenario == "denied" and self.sent["path"] == "/api/universal/agent-session":
+                # The real server's refusal of a second enrollment
+                # (application_server.py, _machine_agent_identity_is_currently_bound).
+                answer.update(ok=False, error="runtime Agent Session identity is already bound; renew it instead")
+            elif scenario == "binding-failed":
+                answer["request_id"] = "0" * 32
+            elif scenario == "status-invalid":
+                answer["ok"] = "maybe"
+            elif scenario == "result-invalid":
+                answer["result"] = []
+            return json.dumps(answer).encode("utf-8")
+
+        def close(self):
+            pass
+
+    def connect(*_args, **_kwargs):
+        if scenario == "pipe-unavailable":
+            raise OSError("no pipe")
+        return Connection()
+
+    monkeypatch.setattr(amt, "_read_descriptor", lambda *_a: descriptor)
+    monkeypatch.setattr(amt, "Client", connect)
+    # HEAD moved owner verification into verify_active_runtime (full process and
+    # graph-generation identity), after v3.4 was written. This court exercises
+    # response classification, not owner verification (that is
+    # test_runtime_owner_resolution.py), so keep the precondition minimal: an
+    # active descriptor proceeds, a non-active one refuses -- which is exactly the
+    # distinction the bounded-lock correction answers (not-active -> MachineNotSent).
+    def _verify_active(desc, **_kwargs):
+        if desc.status != "active":
+            raise amt.RuntimeResolutionError(desc.status or "stopped", "runtime owner is not active")
+        return desc
+    monkeypatch.setattr(amt, "verify_active_runtime", _verify_active)
+    client = amt.UniversalRuntimeClient(
+        Path("unused"), SimpleNamespace(resolve=lambda *_a: SimpleNamespace(secret=b"k" * 32)))
+    if scenario == "already-bound":
+        client.agent_session_root = "app:agent-session:runtime:" + "b" * 32
+    if scenario == "continuation-retained":
+        client._continuation_request = {"runtime": "baboom"}
+    if scenario == "owner-changed":
+        client._pinned_runtime_descriptor = SimpleNamespace(status="active", runtime_id="e" * 32)
+    if scenario == "owner-released":
+        client._agent_session_access = "released"
+    if scenario == "did-not-respond":
+        client.enrollment_sent = True  # a presence request is only ever sent after enrollment
+    body, wait = {}, None
+    if scenario == "size-limit":
+        body = {"pad": "x" * (amt._MAX_MESSAGE_BYTES + 1)}
+    if scenario == "timeout-invalid":
+        wait = -1
+    if scenario == "did-not-respond":
+        wait = 0.05
+    with pytest.raises(amt.MachineTransportError) as raised:
+        if scenario in {"enrollment-invalid", "already-bound", "continuation-retained"}:
+            client.bind_agent_session(runtime="baboom", external_session_id="founder-desktop-baboom")
+        elif scenario in {"denied", "challenge-no-answer", "enrollment-no-answer"}:
+            client.bind_agent_session(runtime="baboom", external_session_id="founder-desktop-baboom",
+                                      device_credential_provider=lambda challenge: {"proof": "court"})
+        elif scenario == "device-credential-invalid":
+            client.bind_agent_session(runtime="baboom", external_session_id="founder-desktop-baboom",
+                                      device_credential_provider=lambda challenge: "not a credential")
+        else:
+            client.request("POST", "/api/universal/runtime-presence", body,
+                           response_timeout_seconds=wait)
+    return raised.value, client.enrollment_sent
+
+
+@pytest.mark.parametrize("scenario,final", [
+    ("unknown-outcome", True),
+    ("denied", True),
+    ("binding-failed", True),
+    ("status-invalid", True),
+    ("result-invalid", True),
+    ("enrollment-invalid", True),
+    ("already-bound", True),
+    ("continuation-retained", True),
+    ("pipe-closed-mid-answer", True),
+    ("did-not-respond", True),
+    ("challenge-no-answer", False),
+    ("enrollment-no-answer", True),
+    ("owner-changed", True),
+    ("owner-released", True),
+    ("size-limit", True),
+    ("device-credential-invalid", True),
+    ("timeout-invalid", True),
+    ("pipe-unavailable", False),
+    ("not-active", False),
+])
+def test_the_real_client_errors_are_final_or_retried(monkeypatch, scenario, final):
+    error, enrollment_sent = _real_client_error(monkeypatch, scenario)
+
+    def fails(host):
+        raise error
+
+    host = Host(fails, enrollment_sent=enrollment_sent)
+    ns, _, prepared, delivered, _ = worker_namespace(monkeypatch, host, real_transport=True)
+    ns["_keep_attaching"]()
+    assert len(prepared) == 1 and not delivered
+    assert host.connect_calls == (1 if final else 40), (scenario, type(error).__name__, str(error))

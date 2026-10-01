@@ -111,6 +111,12 @@ def context(prompt: str, *, limit: int = 8) -> dict:
                       for _a, _b, m in scored[:max(1, int(limit))]]}
 
 
+def holds(fragment_id: str) -> bool:
+    """Whether the owner's Brain holds this fact id (a write's durable receipt)."""
+    store, owner, _protocol = _bound()
+    return recall_by_owner(store.snapshot(), owner, str(fragment_id)) is not None
+
+
 def list_facts(*, limit: int = 500, offset: int = 0) -> dict:
     store, owner, _protocol = _bound()
     held = _live(store.snapshot(), owner)
@@ -297,4 +303,4 @@ def call(tool: str, arguments: Mapping[str, Any], *, actor=None):
 
 
 __all__ = ["BrainUnavailable", "bind", "call", "context", "delete_fact", "edit_fact",
-           "health", "list_facts", "names_the_client_area", "publish", "unbind", "write"]
+           "health", "holds", "list_facts", "names_the_client_area", "publish", "unbind", "write"]

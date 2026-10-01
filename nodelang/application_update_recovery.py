@@ -216,7 +216,7 @@ def _capture(state_dir, app_dir, graph_path, content_path, recovery_path):
     }
 
 
-def arm_update(state_dir, app_dir, graph_path, content_path, recovery_path) -> Path:
+def arm_update(state_dir, app_dir, graph_path, content_path, recovery_path, *, expected_build=None) -> Path:
     """Record a successful final close; caller retains its existing instance lock.
 
     No installed files, source databases or recovery artifacts are changed. A
@@ -224,6 +224,11 @@ def arm_update(state_dir, app_dir, graph_path, content_path, recovery_path) -> P
     Only the helper-created temporary marker is cleaned on failure.
     """
     evidence = _capture(state_dir, app_dir, graph_path, content_path, recovery_path)
+    if expected_build is not None and evidence["staged"]["build_id"] != str(expected_build):
+        # The founder confirmed one build (BABOOM); the next boot installs
+        # exactly the armed staged build, so a different one is never armed.
+        raise ValueError("staged build %s is not the confirmed build %s; nothing was armed"
+                         % (evidence["staged"]["build_id"], expected_build))
     raw = _json_bytes(evidence, _MARKER_BYTES)
     updates = _plain_path(Path(evidence["state_dir"]) / "updates")
     marker = _plain_path(updates / _MARKER_NAME)

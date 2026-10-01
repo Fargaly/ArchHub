@@ -15,6 +15,18 @@ _NOT_NEWER = "The offered build is not newer than the installed build; no update
 SEEN_BUILD = "last-seen-build"
 
 
+class UpdateRestartRefused(InvalidCell):
+    """Refused before any restart was requested: nothing happened."""
+
+
+class StagedBuildChanged(UpdateRestartRefused):
+    """The build on disk is not the one the founder confirmed; nothing installs."""
+
+    def __init__(self, confirmed, staged):
+        super().__init__("Build %s is staged now, not %s; nothing was installed." % (staged or "none", confirmed))
+        self.confirmed, self.staged = confirmed, staged
+
+
 def update_decision(result, installed_build):
     """Name what one finished check decided: newer, same, older or failed.
 
@@ -81,6 +93,7 @@ class ApplicationUpdate:
         from .quiet_update import installed_build_id
         self.state_dir, self.app_dir = Path(state_dir), Path(app_dir)
         self._request_restart = request_restart
+        self.confirmed_build = None
         self._report, self._on_ready = report, on_ready
         self._lock = threading.RLock()
         self._worker = None
@@ -173,20 +186,33 @@ class ApplicationUpdate:
             except Exception:
                 pass
 
-    def reload(self):
+    def reload(self, expected_build=None):
+        """Restart into the staged build.
+
+        ``expected_build`` is the build the founder confirmed (BABOOM). The
+        staged build is re-read from disk here, uncached, and a different one
+        is refused: the confirm installs exactly what it named.
+        """
         from .quiet_update import staged_update
         with self._lock:
             if self._closed or not callable(self._request_restart):
-                raise InvalidCell("Update and reload requires the desktop application")
+                raise UpdateRestartRefused("Update and reload requires the desktop application")
             if self._state == "restarting":
+                if expected_build is not None and str(self._available) != str(expected_build):
+                    raise StagedBuildChanged(str(expected_build), str(self._available))
                 return self.status()
             if self._worker is not None and self._worker.is_alive():
-                raise InvalidCell("Wait for the update download to finish")
+                raise UpdateRestartRefused("Wait for the update download to finish")
             staged = staged_update(self.state_dir, self.app_dir)
             if not staged.get("staged") or staged.get("status") != "staged":
                 self._state, self._detail = "failed", str(staged.get("reason") or "No verified update is ready.")
-                raise InvalidCell(self._detail)
+                raise UpdateRestartRefused(self._detail)
+            if expected_build is not None and str(staged["build_id"]) != str(expected_build):
+                raise StagedBuildChanged(str(expected_build), str(staged["build_id"]))
             self._available = str(staged["build_id"])
+            # Carried to arm_update at close: the armed marker (which the next
+            # boot verifies before installing) must name this build.
+            self.confirmed_build = None if expected_build is None else str(expected_build)
             try:
                 self._request_restart()
             except Exception as error:

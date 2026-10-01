@@ -157,6 +157,11 @@ class BaboomNativeHost:
         with self._lock:
             return self._last_error
 
+    @property
+    def enrollment_sent(self) -> bool:
+        """Whether an enrollment request left this host; unknown counts as sent."""
+        return bool(getattr(self._transport, "enrollment_sent", True))
+
     def connect(self) -> BaboomNativeSnapshot:
         """Explicitly enroll/renew one approved BABOOM presence capability."""
         with self._lock:

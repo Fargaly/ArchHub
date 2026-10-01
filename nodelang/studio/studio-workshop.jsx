@@ -226,7 +226,7 @@ const wsAgents = (transcript, cards, clock) => {
       col:tone.bg, ink:tone.fg, ini:(name.trim().charAt(0) || '?').toUpperCase(), round:self, status,
       ago:status === 'off' && wsObserved(row) ? wsAgo(row.observed_at) : '',
       doing:status === 'off' ? 'Disconnected from this app.' + (seen ? ' Last seen ' + wsClockText(row.observed_at) + '.' : '') :
-        latest ? wsLine(latest.body, 90) : seen ? 'Last seen ' + wsClockText(row.observed_at) + '.' : 'No message from this agent on this page.',
+        latest ? (isWorkProposal(latest) ? wsLine('Proposed: ' + wsProposalTask(latest).title, 90) : wsLine(latest.body, 90)) : seen ? 'Last seen ' + wsClockText(row.observed_at) + '.' : 'No message from this agent on this page.',
       model:row.runtime || 'runtime not projected', seen, verified,
       tools:[row.runtime, row.connection_basis, row.session_link && row.session_link !== 'none' ? 'session link \u00b7 ' + row.session_link : '']
         .filter(Boolean),
@@ -243,6 +243,66 @@ const wsParam = (node, pattern) => {
   return row && row.v != null && String(row.v).trim() ? String(row.v) : '';
 };
 // Tasks: Work named in the transcript (workshopTaskItems) plus the native Work status.
+// ── agent Work proposals as the design's task cards (design studio-workshop.jsx:221-223,
+// :404-410): the decision sits inline on the card, first choice primary; the lead reads
+// "Approved: …" or "Left for later. It stays proposed, nothing runs." An agent proposes;
+// nothing exists or is granted until the founder approves (nodelang/work_proposals.py).
+const PROPOSAL_MARKER = 'ArchHub work proposal v1\n';
+const isWorkProposal = message => String(message?.body || '').startsWith(PROPOSAL_MARKER);
+const wsProposalTask = (message, held = {}) => {
+  const id = message.message_id || message.root;
+  let payload = null;
+  try { payload = JSON.parse(String(message.body).slice(PROPOSAL_MARKER.length)); } catch (_) { payload = null; }
+  // The same shape the bind admits (studio-existing-workshop.js readWorkProposals): anything
+  // else is shown as unreadable and offers no decision; nothing below reads an unchecked field.
+  const text = value => typeof value === 'string' && value.length > 0;
+  const shapedGrants = payload?.write_grants, shapedReviewers = payload?.requirements?.artifact_reviewers ?? [];
+  const readable = !!payload && typeof payload === 'object' && !Array.isArray(payload) && text(payload.title) &&
+    typeof payload.description === 'string' && ['general', 'artifact-publication'].includes(payload.purpose) &&
+    Number.isSafeInteger(payload.priority) && !!payload.container && typeof payload.container === 'object' &&
+    text(payload.container.container_id) && Array.isArray(shapedGrants) && shapedGrants.length > 0 &&
+    !shapedGrants.some(grant => !grant || !text(grant.path) || !text(grant.scope) || !Array.isArray(grant.operations) ||
+      !grant.operations.length || grant.operations.some(operation => !text(operation))) &&
+    Array.isArray(shapedReviewers) && !shapedReviewers.some(reviewer => !text(reviewer));
+  const grants = readable ? shapedGrants : [];
+  const reviewers = readable ? shapedReviewers : [];
+  const container = readable ?
+    'CDE ' + payload.container.container_id + (text(payload.container.tier) ? ' · ' + payload.container.tier : '') : '';
+  const work = typeof held.work_root === 'string' && held.work_root ? held.work_root : null;
+  const lead = !readable ? 'This proposal cannot be read; it cannot be approved.'
+    : work ? `Approved: ${payload.title}. Work ${work} is created; nothing runs until it is claimed.`
+    : held.later ? 'Left for later. It stays proposed, nothing runs.'
+    : (held.error ? held.error + ' ' : '') +
+      `Proposes this Work${payload.description ? ': ' + String(payload.description).replace(/\.?\s*$/, '.') : '.'} Reviewers: ${reviewers.length ? reviewers.join(', ') : 'none'}. Nothing exists or is granted until you approve.`;
+  return {work:'proposal:' + id, id:'PROPOSAL', proposal:id, title:readable ? payload.title : 'Unreadable proposal',
+    state:work ? 'open' : 'queued', owner:message.sender_root || null, lead, thread:[], latest:message, progress:0, artifact:null,
+    tools:{n:grants.length, t:container,
+      list:grants.length ? grants.map(grant => grant.path + ' · ' + grant.scope + ' · ' + (grant.operations || []).join(', ')).join(' · ') : 'no write grants'},
+    decision:!readable || work || held.later ? null : [
+      {label:'Approve', action:'approve-proposal', message:id, disabled:!!held.pending},
+      {label:'Not now', action:'later-proposal', message:id, disabled:!!held.pending}]};
+};
+// The founder's Approve: read the proposals (the operation status first when it is not
+// held yet), then bind exactly this one through the existing bind.
+const approveWorkProposal = async (authority, root, messageId) => {
+  // A status read the view starts meanwhile replaces the held status; the read then refuses
+  // as "changed while reading" and is simply read again against the new status.
+  const read = async (left = 3) => {
+    try { return await authority.readWorkProposals(root); }
+    catch (failure) {
+      const message = String(failure?.message);
+      if (left > 0 && /operation status first/.test(message)) { await authority.refreshNativeWork(root, null); return read(left - 1); }
+      if (left > 0 && /changed while reading/.test(message)) return read(left - 1);
+      throw failure;
+    }
+  };
+  const row = (await read()).rows.find(item => item.message_id === messageId);
+  if (!row) throw new Error('This proposal is not in the loaded messages; scroll to it and approve again.');
+  if (row.problem) throw new Error(row.problem);
+  if (row.work_root) return {work_root:row.work_root};
+  const result = await authority.bindWorkProposals(root, [row]);
+  return {work_root:result.bound[0].work_root};
+};
 const wsTasks = (items, nodes, wires, native, names) => {
   const cards = items.filter(item => item.kind === 'task');
   if (native?.work && !cards.some(card => card.work === native.work)) {
@@ -921,6 +981,8 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const [tidy, setTidy] = React.useState(false);
   const [chain, setChain] = React.useState(false);
   const [controlsOpen, setControlsOpen] = React.useState(false);
+  // Per proposal message: {pending} | {work_root} | {later} | {error}, from the founder's own decisions and reads.
+  const [proposalHeld, setProposalHeld] = React.useState({});
   const [refreshing, setRefreshing] = React.useState(false);
   const [paging, setPaging] = React.useState(false);
   const pageIntent = React.useRef(0);
@@ -1587,7 +1649,48 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   };
   const selectTask = id => setS({ agent:S.agent, task: id === selTask ? null : id });
   const setSelAgent = id => setS({ agent:id, task:null });
-  const decide = (work, choice) => { if (choice && choice.action) nativeAct(choice.action); };
+  // A proposal's inline decision (design studio-workshop.jsx:221-223, :404-410): Approve
+  // binds exactly this proposal through the existing bind; Not now leaves it proposed.
+  const decideProposal = async choice => {
+    const id = choice.message;
+    if (choice.action === 'later-proposal') { setProposalHeld(held => ({...held, [id]:{later:true}})); return; }
+    if (busyRef.current || !existing || typeof authority?.bindWorkProposals !== 'function') return;
+    busyRef.current = true; setBusy(true); setProposalHeld(held => ({...held, [id]:{pending:true}}));
+    try {
+      const done = await approveWorkProposal(authority, descriptor.root, id);
+      if (mounted.current) setProposalHeld(held => ({...held, [id]:{work_root:done.work_root}}));
+      try { await authority.refreshTopologyCanvas(); } catch (_) { /* the canvas shows the Work on its next read */ }
+    } catch (failure) {
+      if (mounted.current) setProposalHeld(held => ({...held, [id]:{error:failure?.message || 'The approval was not confirmed. Approve again to retry.'}}));
+    } finally { busyRef.current = false; if (mounted.current) setBusy(false); }
+  };
+  const decide = (work, choice) => {
+    if (choice && ['approve-proposal', 'later-proposal'].includes(choice.action)) return decideProposal(choice);
+    if (choice && choice.action) nativeAct(choice.action);
+  };
+  // Which loaded proposals are already bound, so an approved one never offers Approve again.
+  const proposalIds = messages.filter(isWorkProposal).map(message => message.message_id || message.root).join(' ');
+  React.useEffect(() => {
+    if (!proposalIds || !existing || typeof authority?.readWorkProposals !== 'function') return;
+    let gone = false;
+    (async () => {
+      try {
+        let read;
+        try { read = await authority.readWorkProposals(descriptor.root); }
+        catch (failure) {
+          if (!/operation status first/.test(String(failure?.message))) throw failure;
+          await authority.refreshNativeWork(descriptor.root, null);
+          read = await authority.readWorkProposals(descriptor.root);
+        }
+        if (!gone && mounted.current) setProposalHeld(held => {
+          const next = {...held};
+          for (const row of read.rows) if (row.work_root) next[row.message_id] = {work_root:row.work_root};
+          return next;
+        });
+      } catch (_) { /* Approve reads the bound state again before it binds. */ }
+    })();
+    return () => { gone = true; };
+  }, [proposalIds, existing, descriptor.root]);
   // Disconnect only an agent with its own Session Link channel; base-transport participants never offer it.
   const canDisconnect = typeof authority?.disconnectAgent === 'function';
   const disconnectable = row => canDisconnect && row.is_agent === true && row.root !== transcript?.self &&
@@ -2330,7 +2433,11 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
           {workflowsPanel}
           {transcript && !transcript.error && !messages.length && <div style={{ fontFamily:W.serif, fontSize:15, color:W.inkSoft }}>{olderPage ? 'No messages on this page.' : 'No messages have been sent in this Workshop yet.'}</div>}
           {taskItems.map((item, index) => {
-            if (item.kind !== 'task') return msgRow(item.message);
+            if (item.kind !== 'task') {
+              if (!isWorkProposal(item.message)) return msgRow(item.message);
+              const proposal = wsProposalTask(item.message, proposalHeld[item.message.message_id || item.message.root]);
+              return <TaskCard key={proposal.work} t={proposal} sel={false} onSelect={() => {}} onDecide={decide} compact={preset==='graph'} agent={agent} busy={busy}/>;
+            }
             const t = tasks.find(x => x.work === item.work);
             return t && <TaskCard key={'task:' + t.work} t={t} sel={selTask===t.work} onSelect={selectTask} onDecide={decide} compact={preset==='graph'} agent={agent} busy={busy}/>;
           }).flatMap((row, index) => index === openingAsk ? [row, <React.Fragment key="workflow">{workflowCard}</React.Fragment>] : [row])}

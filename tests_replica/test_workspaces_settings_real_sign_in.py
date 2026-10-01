@@ -12,7 +12,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_workspace_roots_owner_route import ROUTE, runtime  # noqa: E402,F401
+from test_workspace_roots_owner_route import ROUTE, _change, runtime  # noqa: E402,F401
 
 
 def _call(server, path, payload, headers):
@@ -44,9 +44,11 @@ def test_a_signed_in_page_reads_and_adds_workspaces(runtime, tmp_path):
     assert status == 200, listed
     folder = tmp_path / "E-01.PERSONAL"
     folder.mkdir()
-    status, added = _roots(server, session, {"action": "register", "id": "personal",
-                                             "path": str(folder), "privacy": "private",
-                                             "profile": "client", "writers": ["claude"]})
+    # Add exactly as the desktop does it: prepared, approved in the window, committed.
+    status, added = _change(server, {"action": "register", "id": "personal",
+                                     "path": str(folder), "privacy": "private",
+                                     "profile": "client", "writers": ["claude"]},
+                            token=session["token"], csrf=session["csrf"])
     assert status == 200, added
     # The same page, after the graph moved: the held session still reads.
     status, listed = _roots(server, session, {"action": "list"})

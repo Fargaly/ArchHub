@@ -45,6 +45,7 @@ def _blob():
 class _Owner:
     approve = True
     prompts = 0
+    key_exists = False  # the desktop window's first approval creates the key
 
 
 class _Signer:
@@ -56,6 +57,8 @@ class _Signer:
         _Owner.prompts += 1
         if not _Owner.approve:
             raise signing.SigningUnavailable("the owner declined (0x800704c7)")
+        if payload == roots.KEY_CHECK:
+            _Owner.key_exists = True
         if self.pinned is not None and self.pinned != hashlib.sha256(_blob()).hexdigest():
             raise signing.SigningUnavailable("the existing signing key is not the pinned key; refused")
         r, s = decode_dss_signature(PRIVATE.sign(payload, ec.ECDSA(hashes.SHA256())))
@@ -68,6 +71,12 @@ class _Verifier:
 
     def public_fingerprint(self):
         return hashlib.sha256(_blob()).hexdigest()
+
+    def protected_public_blob(self):
+        return _blob() if _Owner.key_exists else None
+
+    def verify_blob(self, blob, key_id, version, payload, signature):
+        return blob == _blob() and self.verify(key_id, version, payload, signature)
 
     def verify(self, key_id, version, payload, signature):
         try:
@@ -104,7 +113,7 @@ def runtime(tmp_path, monkeypatch):
     monkeypatch.setattr(roots, "default_pin_path", lambda: home / "workspace-roots.pin")
     monkeypatch.setattr(signing, "CngSigner", _Signer)
     monkeypatch.setattr(signing, "CngVerifier", _Verifier)
-    _Owner.approve, _Owner.prompts = True, 0
+    _Owner.approve, _Owner.prompts, _Owner.key_exists = True, 0, False
     built, provider = _provision_clean_runtime(tmp_path, root_name="workspace-roots-route")
     server = _start_clean_server(built, provider, scope_root=built.grand_map.root_id)
     _issue_clean_session(built, token="roots-token", csrf="roots-csrf")
@@ -117,9 +126,31 @@ def runtime(tmp_path, monkeypatch):
         server.close()
 
 
+class _Refused(Exception):
+    def __init__(self, status, answer):
+        super().__init__(answer.get("error"))
+        self.status, self.answer = status, answer
+
+
+def _change(server, body, **auth):
+    """A change exactly as the desktop makes it: the owner route prepares it, the
+    window's signer approves it, the owner route verifies and commits it."""
+    def forward(payload):
+        status, answer = _post(server, payload, **auth)
+        if status != 200:
+            raise _Refused(status, answer)
+        return {key: value for key, value in answer.items() if key != "ok"}
+    try:
+        return 200, roots.approve_in_this_window(body, window_handle=0x10, forward=forward)
+    except _Refused as refused:
+        return refused.status, refused.answer
+    except roots.WorkspaceRootRefused as exc:
+        return 403, {"ok": False, "error": str(exc)}
+
+
 def _register(server, folder, root_id="client-a", privacy="private"):
-    return _post(server, {"action": "register", "id": root_id, "path": str(folder),
-                          "privacy": privacy, "profile": "client", "writers": ["claude"]})
+    return _change(server, {"action": "register", "id": root_id, "path": str(folder),
+                            "privacy": privacy, "profile": "client", "writers": ["claude"]})
 
 
 def test_the_boot_check_finds_nothing_registered_and_list_commits_nothing(runtime):
@@ -162,7 +193,7 @@ def test_register_and_unregister_through_the_route_project_matching_files(runtim
     assert _Owner.prompts == 2  # key creation check, then the approval signature
     document = json.loads((home / "workspace-roots.json").read_text(encoding="utf-8"))
     assert [entry["id"] for entry in document["roots"]] == ["client-a"]
-    status, view = _post(server, {"action": "unregister", "id": "client-a"})
+    status, view = _change(server, {"action": "unregister", "id": "client-a"})
     assert status == 200 and view["projection"] == "match"
     assert [(r["root_id"], r["state"]) for r in view["roots"]] == [("client-a", "unregistered")]
     assert (folder / "drawing.dwg").read_bytes() == b"client drawing", "a file was touched"
@@ -195,7 +226,7 @@ def test_a_mismatched_registry_refuses_changes_until_republished(runtime):
     assert status == 403 and "republish" in body["error"]
     status, view = _post(server, {"action": "list"})
     assert status == 200 and view["boot"] == "mismatch" and view["projection"] == "mismatch"
-    status, view = _post(server, {"action": "republish"})
+    status, view = _change(server, {"action": "republish"})
     assert status == 200 and view["projection"] == "match" and view["boot"] == "match"
     assert _register(server, tmp_path / "client-b", root_id="client-b")[0] == 200
 
@@ -211,4 +242,28 @@ def test_a_substitute_key_is_refused_before_anything_commits(runtime, monkeypatc
     before = roots.read_state(built.location.authority, catalogue, caller=built.caller)
     status, body = _register(server, tmp_path / "client-b", root_id="client-b")
     assert status == 403 and "not the pinned key" in body["error"]
+    assert roots.read_state(built.location.authority, catalogue, caller=built.caller) == before
+
+
+def test_an_unsigned_change_is_refused_by_the_owner_and_never_prompts(runtime):
+    """The graph's owner has no visible window: it never signs. A change posted to
+    it without the window's approval is refused, in words, and nothing commits."""
+    server, built, home, tmp_path = runtime
+    for name in ("client-a", "client-b"):
+        (tmp_path / name).mkdir()
+    status, body = _post(server, {"action": "register", "id": "client-a",
+                                  "path": str(tmp_path / "client-a"), "privacy": "private",
+                                  "profile": "client", "writers": ["claude"]})
+    assert status == 403 and "Open the ArchHub window to approve" in body["error"], body
+    assert _Owner.prompts == 0 and not home.exists()
+    assert _register(server, tmp_path / "client-a")[0] == 200  # the window's way works
+    prompts = _Owner.prompts
+    catalogue = roots.find_workspace_root_catalogue(built.location.authority, caller=built.caller)
+    before = roots.read_state(built.location.authority, catalogue, caller=built.caller)
+    for unsigned in ({"action": "register", "id": "client-b", "path": str(tmp_path / "client-b"),
+                      "privacy": "private", "profile": "client", "writers": ["claude"]},
+                     {"action": "unregister", "id": "client-a"}, {"action": "republish"}):
+        status, body = _post(server, unsigned)
+        assert status == 403 and "Open the ArchHub window to approve" in body["error"], (unsigned, body)
+    assert _Owner.prompts == prompts
     assert roots.read_state(built.location.authority, catalogue, caller=built.caller) == before

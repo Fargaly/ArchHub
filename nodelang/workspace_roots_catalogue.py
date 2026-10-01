@@ -621,7 +621,7 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
     declined. Signing happens outside `lock`; the graph is re-read under it and
     the change is refused if it moved meanwhile.
     """
-    from .workspace_roots_signing import CngSigner, CngVerifier, SigningUnavailable
+    from .workspace_roots_signing import CngVerifier, SigningUnavailable
 
     preparing = type(request) is dict and request.get("action") == "prepare"
     if preparing:
@@ -640,12 +640,12 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
     if (set(request) - allowed or (action == "unregister" and "id" not in request)
             or ("signature" in request and (type(approval) is not str or len(approval) != 128))):
         raise WorkspaceRootRefused("unexpected workspace-roots fields")
-    if signer_factory is None:
-        def signer_factory(pinned):
-            return CngSigner(KEY_NAME, protect=True, pinned_fingerprint=pinned)
-    if fingerprint_of is None:
-        def fingerprint_of():
-            return CngVerifier(KEY_NAME).public_fingerprint()
+    if action in _CHANGES and not preparing and approval is None and signer_factory is None:
+        # This process (the graph's owner) has no visible window: a key prompt it
+        # raised would never be seen and the change would hang. A change is approved
+        # in the ArchHub window (approve_in_this_window) and arrives signed. Only a
+        # court injects signer_factory to sign here.
+        raise WorkspaceRootRefused(NO_WINDOW)
     verifier = verifier or CngVerifier(KEY_NAME)
     paths = {"snapshot_path": snapshot_path, "pin_path": pin_path}
     with lock:
@@ -685,7 +685,7 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
             new_pin = pin
             if new_pin is None:
                 signer_factory(None).sign(KEY_CHECK)
-                new_pin = fingerprint_of()
+                new_pin = (fingerprint_of or CngVerifier(KEY_NAME).public_fingerprint)()
                 if type(new_pin) is not str or not _FINGERPRINT.match(new_pin):
                     raise WorkspaceRootRefused("the signing key fingerprint is unreadable")
             body = snapshot_body(predicted, new_pin)

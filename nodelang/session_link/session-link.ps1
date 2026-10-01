@@ -35,7 +35,7 @@ $bridgeNode = $env:SESSION_LINK_NODE
 if (-not $bridgeNode) { $bridgeNode = $env:CODEX_MCP_NODE_PATH }
 if (-not $bridgeNode) { $bridgeNode = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'runtime\node.exe' }
 if (-not (Test-Path -LiteralPath $bridgeNode)) { throw 'Declared Session Link Node runtime unavailable' }
-$bridgeEntry = if ($bridgeArgs.Count -gt 0 -and $bridgeArgs[0] -in @('ask','answer')) { 'ask.mjs' } else { 'bridge.mjs' }
+$bridgeEntry = if ($bridgeArgs.Count -gt 0 -and $bridgeArgs[0] -in @('ask','answer','interrupt')) { 'ask.mjs' } else { 'bridge.mjs' }
 # The state folder reaches the child only; the caller's shell keeps its own value.
 $env:SESSION_LINK_STATE_DIR = $bridgeState
 try {

@@ -10,6 +10,7 @@ import {postCodex} from './native.mjs';
 import {catalog,connect,idFor} from './bridge.mjs';
 import {stateDir,readMessage} from './paths.mjs';
 import {modelFromArgs,validateModel} from './opencode-model.mjs';
+import {interrupt} from './interrupt.mjs';
 const root=path.dirname(fileURLToPath(import.meta.url));
 const psQuote=value=>"'"+String(value).replaceAll("'","''")+"'";
 const args=process.argv.slice(2),opt=n=>{const i=args.indexOf('--'+n);return i<0?undefined:args[i+1];};
@@ -96,5 +97,6 @@ async function answer(id,text){
  return await new Promise((resolve,reject)=>{const s=net.connect(r.control);let data='';s.setEncoding('utf8');s.setTimeout(10000,()=>{s.destroy();reject(new Error('Answer timeout; delivery uncertain'));});s.on('error',reject);s.on('connect',()=>s.write(JSON.stringify({token,session:process.env.CODEX_THREAD_ID,text})+'\n'));s.on('data',c=>{data+=c;if(data.includes('\n')){s.destroy();try{const v=JSON.parse(data);v.ok?resolve({delivered:true}):reject(new Error(v.error));}catch(e){reject(e);}}});});
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
- try{const model=modelFromArgs(args);const text=validate(await readMessage(args));if(args[0]==='answer'&&model)throw new Error('Answer cannot select a model');const result=args[0]==='answer'?await answer(args[1],text):await ask(opt('app'),opt('session'),text,opt('permission-mode'),{model});console.log(JSON.stringify(result,null,2));if(result.status==='model_selection_failed')process.exitCode=1;}catch(e){console.error(e.message);process.exitCode=1;}
+ try{if(args[0]==='interrupt'){console.log(JSON.stringify(await interrupt(opt('app'),opt('session'),opt('reason'),{permissionMode:opt('permission-mode')??'prompting'}),null,2));}
+ else{const model=modelFromArgs(args);const text=validate(await readMessage(args));if(args[0]==='answer'&&model)throw new Error('Answer cannot select a model');const result=args[0]==='answer'?await answer(args[1],text):await ask(opt('app'),opt('session'),text,opt('permission-mode'),{model});console.log(JSON.stringify(result,null,2));if(result.status==='model_selection_failed')process.exitCode=1;}}catch(e){console.error(e.message);process.exitCode=1;}
 }

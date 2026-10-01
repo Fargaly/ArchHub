@@ -11,6 +11,7 @@ import {discoverExtra,sendExtra} from './extra-apps.mjs';
 import {ScopedAttachments} from './scoped-attachment.mjs';
 import {resumeSaved,confirmsSavedChild} from './resume.mjs';
 import {modelFromArgs,validateModel,formatModelReceipt} from './opencode-model.mjs';
+import {interruptBound} from './interrupt.mjs';
 const root=stateDir(),dir=path.join(root,'connections');
 fs.mkdirSync(dir,{recursive:true});
 const argv=process.argv.slice(2),cmd=argv[0]||'help';
@@ -346,6 +347,7 @@ async function serve(binding){
             sent++;log('submitted',{messageId,direction:'codex-to-claude'});
             result={messageId,kind,...(kind==='followup'?{followupOf:r.followupOf}:{}),status:peer.readDelivery(messageId)?.status||'sent_unconfirmed',note:'Native delivery status is not an agent reply; query delivery with this exact ID'};
           }}
+        else if(r.operation==='interrupt'){rate();result=await interruptBound(b,target,peer,{reason:r.reason,permissionMode:r.permissionMode});sent++;log('interrupt',{messageId:result.messageId,direction:'codex-to-claude'});}
         else if(r.operation==='settle'){if(typeof r.messageId!=='string'||!r.messageId)throw new Error('Exact message ID required');result=peer.settle(r.messageId,r.as,{targetSocket:target().socket});log('settled',{messageId:r.messageId,as:r.as});}
         else if(r.operation==='disconnect'){attachments.clear();result={disconnected:b.id};setTimeout(()=>{peer.stop();server.close();fs.rmSync(runtime,{force:true});process.exit(0);},100);}
         else throw new Error('Unknown operation');socket.end(JSON.stringify({ok:true,result})+'\n');
@@ -417,8 +419,9 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
    const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Exact connection ID required');
    result=await rpc(matches[0],{operation:'settle',messageId:argv[2],as:option('as')});
  }
+ else if(cmd==='interrupt-link'){const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Exact connection ID required; nothing sent');result=await rpc(matches[0],{operation:'interrupt',reason:option('reason'),...(option('permission-mode')?{permissionMode:option('permission-mode')}:{})});}
  else if(cmd==='send'||cmd==='reply'||cmd==='disconnect'){const model=modelFromArgs(argv);if(model&&cmd!=='send')throw new Error('Only send can select a model');const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Use exact connection ID from status');result=await rpc(matches[0],{...(cmd==='reply'?{messageId:crypto.randomUUID()}:{}),operation:model?'send-model':cmd,...(model?{model}:{}),text:cmd==='send'||cmd==='reply'?await readMessage(argv):undefined,...(cmd==='send'&&option('permission-mode')?{permissionMode:option('permission-mode')}:{} ),...(cmd==='send'&&option('kind')?{kind:option('kind')}:{}),...(cmd==='send'&&option('followup-of')?{followupOf:option('followup-of')}:{})});}
- else result={commands:['list','connect --claude|--opencode|--antigravity|--antigravity-ide "title or ID" --codex "title or ID"','ask --app APP --session "title or ID" --file UTF8_FILE|--stdin','answer REQUEST_ID --file UTF8_FILE|--stdin','status','send CONNECTION_ID --file UTF8_FILE|--stdin','reply CONNECTION_ID --file UTF8_FILE|--stdin','disconnect CONNECTION_ID','forget CONNECTION_ID (offline only)','reconnect --claude ID --codex ID'],apps:['claude','codex','opencode','antigravity','antigravity-ide'],note:'Use session-link.ps1 for ask/answer. Any shell-capable agent can initiate ask and receive its reply. This does not wake arbitrary idle terminals. Check adapterStatus and verify a real reply. Recipient permissions remain active.'};
+ else result={commands:['list','connect --claude|--opencode|--antigravity|--antigravity-ide "title or ID" --codex "title or ID"','ask --app APP --session "title or ID" --file UTF8_FILE|--stdin','answer REQUEST_ID --file UTF8_FILE|--stdin','status','send CONNECTION_ID --file UTF8_FILE|--stdin','reply CONNECTION_ID --file UTF8_FILE|--stdin','interrupt --app claude --session "title or ID" --reason "why" (Claude Code only; aborts its running turn)','interrupt-link CONNECTION_ID --reason "why" (bound Claude Code only)','disconnect CONNECTION_ID','forget CONNECTION_ID (offline only)','reconnect --claude ID --codex ID'],apps:['claude','codex','opencode','antigravity','antigravity-ide'],note:'Use session-link.ps1 for ask/answer. Any shell-capable agent can initiate ask and receive its reply. This does not wake arbitrary idle terminals. Check adapterStatus and verify a real reply. Recipient permissions remain active.'};
  if(result!==undefined)console.log(JSON.stringify(result,null,2));
 }catch(e){console.error(e.message);process.exitCode=1;}
 

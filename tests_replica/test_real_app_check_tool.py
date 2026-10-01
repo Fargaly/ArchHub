@@ -672,3 +672,57 @@ def test_smoke_declares_redo_and_the_proposal_steps_and_never_approves():
         assert asked in declared
     source = (TOOL / "scenarios" / "smoke.mjs").read_text(encoding="utf-8")
     assert "clickText('Approve')" not in source and "'Approve')" not in source.replace("has('Approve')", "")
+
+
+# (v7) Saved conversations: the scenario's declared steps, and a row clicked only once enabled. --------
+
+_SELECT_ROW = r"""
+const [scenario, enabledAfter] = process.argv.slice(1);
+const vm = await import('node:vm');
+const {selectRow} = await import(scenario);
+const TITLE = 'Real-app saved conversation';
+let reads = 0, clicked = 0, label = 'Workshop';
+const row = {textContent: TITLE, get disabled() { return reads < Number(enabledAfter); },
+  querySelector: s => s === 'div' ? {textContent: TITLE} : s === 'small' ? {textContent: '1 participants'} : null};
+const document = {
+  body: {innerText: ''},
+  querySelector: s => s.startsWith('[role=dialog]') ? {} : s === 'button[aria-label="Conversations"]' ? {title: label} : null,
+  querySelectorAll: s => s.includes('Workshop conversations') ? [row] : [],
+};
+const page = vm.createContext({document});
+const ctx = {
+  js: async expression => { if (expression.includes('disabled')) reads += 1; return vm.runInContext(expression, page); },
+  until: async (read, ok, tries = 40) => { let v; for (let i = 0; i < tries; i++) { v = await read(); if (ok(v)) return v; } return v; },
+  rectOf: async expression => vm.runInContext(expression, page) ? {x: 1, y: 1, text: TITLE} : null,
+  mouse: async () => { clicked += 1; if (!row.disabled) label = TITLE; },
+  clickText: async () => true,
+};
+const result = await selectRow(ctx);
+console.log(JSON.stringify({pass: result.pass, why: result.why || '', clicked}));
+"""
+
+
+def test_conversations_declares_its_steps_and_never_presses_a_signing_control():
+    declared = _node("import(%s).then(m => console.log(JSON.stringify(m.steps)))"
+                     % json.dumps((TOOL / "scenarios" / "conversations.mjs").resolve().as_uri()))
+    assert declared == ["the real app opens to the Studio", "open the Workshop tab",
+                        "create a saved conversation from the Conversations menu", "its row is listed in the catalog",
+                        "select it from its row: the room opens", "reload the Studio page",
+                        "reopen it from its row after the reload"]
+    source = (TOOL / "scenarios" / "conversations.mjs").read_text(encoding="utf-8")
+    assert not any("clickText('%s')" % control in source for control in ("Add", "Remove", "Republish", "Stop governing"))
+
+
+@pytest.mark.parametrize("enabled_after, expected", [(3, {"pass": True, "clicked": 1}), (10**6, {"pass": False, "clicked": 0})])
+def test_a_conversation_row_is_clicked_only_once_it_is_enabled(enabled_after, expected):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node runs the scenario's own code")
+    done = subprocess.run([node, "--input-type=module", "-e", _SELECT_ROW,
+                           (TOOL / "scenarios" / "conversations.mjs").resolve().as_uri(), str(enabled_after)],
+                          capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr[-800:]
+    got = json.loads(done.stdout.strip().splitlines()[-1])
+    assert {key: got[key] for key in expected} == expected, got
+    if not expected["pass"]:
+        assert "never became enabled" in got["why"]

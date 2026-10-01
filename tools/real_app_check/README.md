@@ -134,6 +134,17 @@ A scenario module exports `default async function (ctx)` and calls `ctx.step(ask
 10. The Workshop shows it as a card with Approve / Not now (NEEDS YOU).
 11. Not now leaves it proposed ("Left for later"). Approve is not pressed: it binds a Work.
 
+`scenarios/conversations.mjs` covers saved conversations, end to end:
+
+1. Open the Studio, then the Workshop.
+2. Create a saved conversation from the Conversations menu.
+3. Its row is listed in the catalog ("on Workshop canvas" while the view is at the root canvas).
+4. Select it from its row: the catalog's scope walk opens the room.
+5. Reload the Studio page.
+6. Reopen it from its row after the reload.
+
+A row is clicked only once it is enabled: rows are disabled while the menu reads the catalog.
+
 ## The run's own graph owner
 
 Settings > Workspaces reads its registry from ArchHub's graph owner, the clean coordination service.

@@ -212,6 +212,58 @@ test('an 8s poll does not overlap an in-flight read', async () => {
   }
 });
 
+// ── FOLLOW-UP 1: a same-node conversation_root rebind drops the old read that resolves after the new ──
+test('a conversation_root rebind drops the old read that resolves after the new one', async () => {
+  await mountEnv(async ({React, win, root, context}) => {
+    const pending = [];
+    win.ARCHHUB_WORKSHOP_TRANSCRIPT = () => new Promise(res => pending.push(res));
+    const base = {id:'node-a', title:'Agent', live:true, cat:'ai', has_conversation:true, params:[{k:'model', v:'m'}]};
+    // open on conversation_root conv-a (read A starts, unresolved)
+    await React.act(async () => root.render(React.createElement(context.Conv, {node:{...base, conversation_root:'conv-a'}, scope:'scope-a', openConversation:()=>{}})));
+    await tick(React);
+    // rebind the SAME node to conv-b (read B starts); A is still unresolved
+    await React.act(async () => root.render(React.createElement(context.Conv, {node:{...base, conversation_root:'conv-b'}, scope:'scope-a', openConversation:()=>{}})));
+    await tick(React);
+    assert.equal(pending.length, 2, 'both the old and the new read are in flight');
+    // the NEW read (B) resolves first, then the OLD read (A) resolves late
+    await React.act(async () => { pending[1]({ok:true, node:'node-a', conversation_root:'conv-b', revision:4, has_older:false, next_before:null, rows:[{id:'b', who:'You', is_me:true, time:'2026-10-01T18:51:32Z', text:'rows-conv-b', kind:'message'}]}); await new Promise(r => setTimeout(r, 0)); });
+    await React.act(async () => { pending[0]({ok:true, node:'node-a', conversation_root:'conv-a', revision:4, has_older:false, next_before:null, rows:[{id:'a', who:'You', is_me:true, time:'2026-10-01T18:51:30Z', text:'rows-conv-a', kind:'message'}]}); await new Promise(r => setTimeout(r, 0)); });
+    const text = win.document.getElementById('root').textContent;
+    assert.match(text, /rows-conv-b/, 'the rebound conversation shows');
+    assert.ok(!/rows-conv-a/.test(text), 'the old conversation_root read must never render after a rebind');
+  });
+});
+
+// ── FOLLOW-UP 2a: a null/missing conversation_root response is refused while the node is bound ──
+test('a response with null conversation_root is refused for a bound node', async () => {
+  await mountEnv(async ({React, win, root, context}) => {
+    win.ARCHHUB_WORKSHOP_TRANSCRIPT = async (node) => ({ok:true, node, conversation_root:null,
+      revision:4, has_older:false, next_before:null,
+      rows:[{id:'x', who:'You', is_me:true, time:'2026-10-01T18:51:32Z', text:'NULL-ROOT-ROWS', kind:'message'}]});
+    const node = {id:'node-a', title:'Agent', live:true, cat:'ai', has_conversation:true, conversation_root:'conv-a', params:[{k:'model', v:'m'}]};
+    await React.act(async () => root.render(React.createElement(context.Conv, {node, scope:'scope-a', openConversation:()=>{}})));
+    await tick(React);
+    assert.ok(!/NULL-ROOT-ROWS/.test(win.document.getElementById('root').textContent),
+      'a bound node must refuse a response whose conversation_root is null/missing');
+  });
+});
+
+// ── FOLLOW-UP 2b: an unbound node is explicitly empty — no read, no loading, no error ──
+test('an unbound node renders empty, never loading or stale rows', async () => {
+  await mountEnv(async ({React, win, root, context}) => {
+    let calls = 0; win.ARCHHUB_WORKSHOP_TRANSCRIPT = async (node) => { calls += 1; return {ok:true, node, conversation_root:'conv-a', rows:[], has_older:false}; };
+    // a model node that is NOT conversation-bound: composer only, no transcript
+    const node = {id:'node-a', title:'Agent', live:true, cat:'ai', has_conversation:false, conversation_root:null, params:[{k:'model', v:'m'}]};
+    await React.act(async () => root.render(React.createElement(context.Conv, {node, scope:'scope-a', openConversation:()=>{}})));
+    await tick(React);
+    const text = win.document.getElementById('root').textContent;
+    assert.equal(calls, 0, 'an unbound node issues no transcript read');
+    assert.ok(!/Reading the conversation/.test(text), 'an unbound node never shows the loading state');
+    assert.ok(!/could not be read/.test(text), 'an unbound node shows no error');
+    assert.ok(win.document.querySelector('#root textarea'), 'the model composer is still shown');
+  });
+});
+
 // ── FINDING 2: unmount mid-flight does not set state after teardown ──
 test('a read that resolves after unmount throws nothing and sets no state', async () => {
   const {JSDOM} = await import('jsdom');

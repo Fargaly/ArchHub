@@ -4630,7 +4630,9 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
         if (!result || result.ok === false) {
           setTranscript({rows:[], error: result?.error || 'This conversation could not be read.', has_older:false}); return;
         }
-        if (result.node !== want.node || (result.conversation_root && result.conversation_root !== want.conv)) return; // not this binding
+        // Exact bound-root match: a response for another node, or one whose conversation_root is
+        // null/missing/different while this node is bound, is refused — never rendered.
+        if (result.node !== want.node || result.conversation_root !== want.conv) return;
         setTranscript({rows: Array.isArray(result.rows) ? result.rows : [], error:'', has_older: result.has_older === true});
       } catch (reason) { if (live) setTranscript({rows:[], error: reason?.message || String(reason), has_older:false}); }
       finally { inFlight = false; }

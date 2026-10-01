@@ -229,6 +229,16 @@ def _assignment_rows(owner, snapshot, root):
     return workshop_assignment_rows(owner, snapshot, root)
 
 
+def workshop_runtime_host(runtime):
+    """The host product a runtime Agent Session runs in, as the runtime catalog names it.
+
+    The Workshop rail names an agent by its host (design: "name · role · host"); the
+    session root alone is an opaque id. None when the runtime is not catalogued.
+    """
+    from .universal_application import _HARNESS_AGENT_RUNTIMES
+    return {**dict(_HARNESS_AGENT_RUNTIMES), "baboom": "BABOOM"}.get(runtime)
+
+
 def _workshop_participant_rows(owner, snapshot, space, connections):
     from .cell_agent_body import read_agent_session
     registry = owner.universal_registry
@@ -242,6 +252,7 @@ def _workshop_participant_rows(owner, snapshot, space, connections):
             session = read_agent_session(snapshot, registry.agent_body.protocol,
                                          registry.authorization.protocol, root)
             row.update(connections[root])
+            row["host"] = workshop_runtime_host(row.get("runtime"))
             if session.state_root != registry.agent_body.protocol.state("active"):
                 row["connection_status"] = "disconnected"
         rows.append(row)

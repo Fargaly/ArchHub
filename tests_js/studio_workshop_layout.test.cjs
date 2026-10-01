@@ -124,9 +124,9 @@ function fixture() {
     {root:'owner-a', label:'Owner', attached:true, is_agent:false, connection_status:'unknown'},
     {root:gone, label:'Gone agent', attached:true, is_agent:true, connection_status:'disconnected', observed_at:now - 360, runtime:'antigravity-ide'},
     {root:codex, label:'Codex', attached:true, is_agent:true, connection_status:'connected', connection_basis:'authenticated-request',
-      observed_at:now - 30, expires_at:now + 3600, runtime:'codex · local', session_link:'attached'},
+      observed_at:now - 30, expires_at:now + 3600, runtime:'codex', host:'Codex', session_link:'attached'},
     {root:claude, label:'Claude Code', attached:true, is_agent:true, connection_status:'connected', connection_basis:'authenticated-request',
-      observed_at:now - 10, expires_at:now + 3600, runtime:'claude · local', session_link:'none'},
+      observed_at:now - 10, expires_at:now + 3600, runtime:'claude', host:'Claude', session_link:'none'},
   ];
   let n = 0;
   const msg = (sender, body, category = 'note') => ({root:'m' + (++n), sequence:n, sender_root:sender, recipient_roots:[], body, category, state:'recorded', created_at:now - 600 + n * 30});
@@ -209,7 +209,7 @@ test('the Workshop view draws the design surfaces from the live projections and 
     // Bar: WORKSHOP chip, the Workshop's label, live counts, LAYOUT strip and leave.
     const main = doc.querySelector('main');
     assert.equal(main.style.gridTemplateColumns, 'minmax(0,1fr) 320px');
-    assert.match(text(main.firstElementChild), /^WORKSHOP L03 wall take-off 1 needs you · 1 running · 1 submitted · 0 delivered LAYOUT/);
+    assert.match(text(main.firstElementChild), /^WORKSHOP L03 wall take-off · Layer selection · hosts not read yet 1 needs you · 1 running · 1 submitted · 0 delivered LAYOUT/);
     const strip = [...doc.querySelectorAll('[role="group"][aria-label="Workshop layout"] button')];
     assert.deepEqual(strip.map(b => b.getAttribute('aria-label')), ['Conversation', 'Task board', 'Chat + live graph']);
     assert.deepEqual(strip.map(b => b.getAttribute('aria-pressed')), ['true', 'false', 'false']);
@@ -278,15 +278,15 @@ test('the agents rail is the transcript participants with verified connection fa
     let rows = [...rail.querySelectorAll('[data-workshop-agent]')];
     assert.deepEqual(rows.map(r => r.getAttribute('data-workshop-agent')), [ids.codex, ids.claude], 'verified agents first; the owner is not an agent row; disconnected hidden');
     assert.deepEqual(rows.map(r => r.getAttribute('aria-pressed')), ['true', 'false']);
-    assert.match(text(rows[0]), /^C Codex AGENT codex · local WAITING FOR INPUT/);
-    assert.match(text(rows[1]), /^C Claude Code AGENT claude · local WORKING/);
+    assert.match(text(rows[0]), /^C Codex AGENT local · Codex session WAITING FOR INPUT/);
+    assert.match(text(rows[1]), /^C Claude AGENT local · Claude session WORKING/);
     const toggle = rail.querySelector('button[data-workshop-disconnected-toggle]');
     assert.equal(text(toggle), 'Show disconnected (1)');
     assert.equal(toggle.getAttribute('aria-pressed'), 'false');
     await ui.click(toggle);
     rows = [...rail.querySelectorAll('[data-workshop-agent]')];
     assert.deepEqual(rows.map(r => r.getAttribute('data-workshop-agent')), [ids.codex, ids.claude, ids.gone]);
-    assert.match(text(rows[2]), /^G Gone agent AGENT antigravity-ide DISCONNECTED · 6m Disconnected from this app\./);
+    assert.match(text(rows[2]), /^G Gone agent AGENT local · antigravity-ide session DISCONNECTED · 6m Disconnected from this app\./);
     assert.equal(text(rail.querySelector('button[data-workshop-disconnected-toggle]')), 'Hide disconnected');
     assert.match(text(rail), /SCOPE Write access: not projected for these agents\. Recent activity is not a running task\.$/);
     await ui.click(rows[1]);

@@ -92,7 +92,7 @@ test('a proposal message becomes a queued task card with [Approve, Not now] and 
   assert.equal(isWorkProposal(MESSAGES[0]), false);
   const open = plain(wsProposalTask(MESSAGES[2]));
   assert.equal(open.title, 'Proposal B');
-  assert.equal(open.state, 'queued', 'a proposal is proposed, not open Work');
+  assert.equal(open.state, 'block', 'a proposal waiting on the founder reads NEEDS YOU (design T-01)');
   assert.equal(open.owner, PROPOSER, 'the proposing agent owns the card');
   assert.deepEqual(open.decision.map(d => [d.label, d.action, d.message]),
     [['Approve', 'approve-proposal', 'm-3'], ['Not now', 'later-proposal', 'm-3']]);
@@ -275,7 +275,7 @@ test('rendered: the proposal is the design TaskCard; Approve is primary and deci
       agent:() => ({name:'Runtime-proposer', ini:'R', col:'#336699'})})));
     const card = dom.window.document.querySelector('[data-workshop-task="proposal:m-3"]');
     assert.ok(card, 'the proposal renders as a task card');
-    assert.ok(card.textContent.includes('Proposal B') && card.textContent.includes('QUEUED'));
+    assert.ok(card.textContent.includes('Proposal B') && card.textContent.includes('NEEDS YOU'));
     assert.ok(card.textContent.includes('Runtime-proposer · Proposes this Work'));
     assert.ok(!card.textContent.includes('{"container"'), 'the raw proposal document is not shown');
     const buttons = [...card.querySelectorAll('button')].map(button => button.textContent);

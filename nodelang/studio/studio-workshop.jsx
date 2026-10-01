@@ -212,8 +212,13 @@ const wsLinkStatus = row => {
 const wsAgents = (transcript, cards, clock) => {
   const rows = (Array.isArray(transcript?.participants) ? transcript.participants : []).filter(row => row.is_agent !== false);
   const messages = Array.isArray(transcript?.messages) ? transcript.messages : [];
-  const agents = rows.map(row => {
-    const self = row.root === transcript?.self, name = String(row.label || row.root);
+  // Name = the host the runtime catalog names (design rail "name · role · host"); the session id
+  // is added only when two sessions share a host. A participant without a host keeps its label.
+  const hosts = rows.map(row => typeof row.host === 'string' && row.host ? row.host : '');
+  const agents = rows.map((row, index) => {
+    const host = hosts[index], shared = host && hosts.filter(value => value === host).length > 1;
+    const self = row.root === transcript?.self;
+    const name = host ? (shared ? `${host} · ${String(row.root).split(':').pop().slice(0, 6)}` : host) : String(row.label || row.root);
     const tone = workshopAgentTone(row.root, self), verified = wsVerified(row, clock);
     const owned = cards.filter(card => card.owner === row.root);
     const latest = [...messages].reverse().find(message => message.sender_root === row.root);
@@ -222,12 +227,14 @@ const wsAgents = (transcript, cards, clock) => {
       row.connection_status === 'stale' || (row.connection_status === 'connected' && wsObserved(row)) ? 'stale' : 'unverified';
     const seen = wsObserved(row) ? new Date(row.observed_at * 1000).toLocaleString() : '';
     return {id:row.root, row, self, name, role:self ? 'YOU' : 'AGENT',
-      prov:row.runtime || (row.attached === false ? 'history participant \u00b7 detached' : 'agent session'),
+      prov:row.attached === false ? 'history participant \u00b7 detached' :
+        row.runtime ? `local \u00b7 ${host || row.runtime} session` : 'agent session',
       col:tone.bg, ink:tone.fg, ini:(name.trim().charAt(0) || '?').toUpperCase(), round:self, status,
       ago:status === 'off' && wsObserved(row) ? wsAgo(row.observed_at) : '',
       doing:status === 'off' ? 'Disconnected from this app.' + (seen ? ' Last seen ' + wsClockText(row.observed_at) + '.' : '') :
         latest ? (isWorkProposal(latest) ? wsLine('Proposed: ' + wsProposalTask(latest).title, 90) : wsLine(latest.body, 90)) : seen ? 'Last seen ' + wsClockText(row.observed_at) + '.' : 'No message from this agent on this page.',
-      model:row.runtime || 'runtime not projected', seen, verified,
+      // The session does not report its model at enrolment; say so rather than guess one.
+      model:row.runtime ? 'model not reported' : 'runtime not projected', seen, verified,
       tools:[row.runtime, row.connection_basis, row.session_link && row.session_link !== 'none' ? 'session link \u00b7 ' + row.session_link : '']
         .filter(Boolean),
       card:owned[owned.length - 1] || null};
@@ -274,8 +281,14 @@ const wsProposalTask = (message, held = {}) => {
     : held.later ? 'Left for later. It stays proposed, nothing runs.'
     : (held.error ? held.error + ' ' : '') +
       `Proposes this Work${payload.description ? ': ' + String(payload.description).replace(/\.?\s*$/, '.') : '.'} Reviewers: ${reviewers.length ? reviewers.join(', ') : 'none'}. Nothing exists or is granted until you approve.`;
+  const gate = readable && text(payload.container.gate_kind) ?
+    payload.container.gate_kind + (text(payload.container.gate_spec?.path) ? ' · ' + payload.container.gate_spec.path : '') : '';
+  // Waiting on the founder reads NEEDS YOU (design T-01 "block"); left for later it is only queued.
   return {work:'proposal:' + id, id:'PROPOSAL', proposal:id, title:readable ? payload.title : 'Unreadable proposal',
-    state:work ? 'open' : 'queued', owner:message.sender_root || null, lead, thread:[], latest:message, progress:0, artifact:null,
+    state:work ? 'open' : held.later || !readable ? 'queued' : 'block', owner:message.sender_root || null, lead, thread:[], latest:message, progress:0, artifact:null,
+    intent:readable ? (payload.description || payload.title) : '—', criteria:gate || '—', blocks:'—',
+    permissions:{write:grants.length ? grants.map(grant => grant.path + ' (' + (grant.operations || []).join(', ') + ')').join(' · ') : 'none requested',
+      gate:work ? 'approved by you' : 'your approval before any Work exists'},
     tools:{n:grants.length, t:container,
       list:grants.length ? grants.map(grant => grant.path + ' · ' + grant.scope + ' · ' + (grant.operations || []).join(', ')).join(' · ') : 'no write grants'},
     decision:!readable || work || held.later ? null : [
@@ -904,7 +917,10 @@ const ContextPanel = ({ selAgent, selTask, tasks, agent, descriptor, activity, a
   const o = showTask ? (t.owner ? agent(t.owner) : null) : a;
   const facts = o && o.row ? o.row : null;
   const tools = o ? o.tools || [] : [];
-  const current = showTask ? t : a ? a.card : null;
+  // An agent's current task is the Work it is assigned in this room; failing that, the last card it spoke on.
+  const assigned = a ? assignments.filter(row => row.agent_session === a.id).map(row => tasks.find(x => x.work === row.work)).find(Boolean) : null;
+  const current = showTask ? t : a ? (assigned || a.card) : null;
+  const asks = showTask && t.permissions ? t.permissions : null;
   const label = showTask ? `SELECTED · TASK ${t.id}` : a ? 'SELECTED · AGENT' : 'SELECTED · WORKSHOP';
   const who = o || {name:descriptor.label, col:W.accent, ink:W.onFill, ini:(String(descriptor.label || 'W').trim().charAt(0) || 'W').toUpperCase()};
   return (
@@ -941,12 +957,16 @@ const ContextPanel = ({ selAgent, selTask, tasks, agent, descriptor, activity, a
           </>}
         </div>
       </div>
-      {showTask && assign && t.state !== 'done' && <AssignSection task={t} room={descriptor.root} agents={agents}
+      {showTask && assign && t.state !== 'done' && !t.proposal && <AssignSection task={t} room={descriptor.root} agents={agents}
         assign={assign} assignments={assignments}/>}
       <div style={{ padding:'12px 16px', borderBottom:`1px solid ${W.lineSoft}` }}>
         <Lbl>PERMISSIONS</Lbl>
         <div style={{ marginTop:8 }}>
-          {facts ? <>
+          {asks ? <>
+            <PRow k="read" v="this Workshop"/>
+            <PRow k="write" v={asks.write}/>
+            <PRow k="gate" v={asks.gate} last/>
+          </> : facts ? <>
             <PRow k="read" v={facts.attached === false ? 'history only · detached' : 'this Workshop'}/>
             <PRow k="write" v="not projected" c={W.inkMuted}/>
             <PRow k="gate" v={wsLinkStatus(facts) || 'no Session Link channel'} last/>
@@ -983,6 +1003,17 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const [controlsOpen, setControlsOpen] = React.useState(false);
   // Per proposal message: {pending} | {work_root} | {later} | {error}, from the founder's own decisions and reads.
   const [proposalHeld, setProposalHeld] = React.useState({});
+  // The header's file line (design: Work title · model file): the hosts the
+  // app's own probe sees connected, read once from its cached rows; null until it answers.
+  const [liveHosts, setLiveHosts] = React.useState(null);
+  React.useEffect(() => {
+    const load = window.ARCHHUB_LOAD_HOSTS;
+    if (typeof load !== 'function') return;
+    let gone = false;
+    load().then(read => { if (!gone) setLiveHosts(Array.isArray(read?.hosts) ? read.hosts : []); })
+      .catch(() => { if (!gone) setLiveHosts(null); });
+    return () => { gone = true; };
+  }, []);
   const [refreshing, setRefreshing] = React.useState(false);
   const [paging, setPaging] = React.useState(false);
   const pageIntent = React.useRef(0);
@@ -1630,8 +1661,13 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const flow = wsFlow(projectedWorkNodes, workshopProjectedWires(state), tasks);
   const selAgentId = agents.some(a => a.id === S.agent) ? S.agent : agents[0]?.id || null;
   const selAgent = agents.find(a => a.id === selAgentId) || null;
-  const selTask = tasks.some(t => t.work === S.task) ? S.task : null;
-  const counts = {block:tasks.filter(t => t.state==='block').length, run:tasks.filter(t => t.state==='run' || t.state==='open').length,
+  // Agent Work proposals are task cards too: selectable, and one waiting on you counts as "needs you".
+  // Approved or left for later they no longer count; the bound Work is its own card once named.
+  const proposalTasks = messages.filter(isWorkProposal).map(message =>
+    wsProposalTask(message, proposalHeld[message.message_id || message.root]));
+  const allTasks = [...tasks, ...proposalTasks];
+  const selTask = allTasks.some(t => t.work === S.task) ? S.task : null;
+  const counts = {block:allTasks.filter(t => t.state==='block').length, run:tasks.filter(t => t.state==='run' || t.state==='open').length,
     review:tasks.filter(t => t.state==='review').length, paused:tasks.filter(t => t.state==='paused').length, done:tasks.filter(t => t.state==='done').length};
   const toolRecords = messages.filter(message => message.category === 'tool' &&
     (!selTask || String(message.body || '').includes(selTask))).slice(-5).reverse();
@@ -2190,7 +2226,58 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   // As in the design, the proposed workflow answers the owner's opening message when the page starts with one.
   const openingAsk = taskItems[0]?.kind === 'message' && taskItems[0].message.sender_root === transcript?.self ? 0 : -1;
   const room = {name:descriptor.label, col:W.accent, ink:W.onFill, ini:(String(descriptor.label || 'W').trim().charAt(0) || 'W').toUpperCase()};
-  const workflowCard = chainNodes.length > 0 && (
+  // The design's workflow card (studio-workshop.jsx:440-466) from the latest agent-proposed workflow
+  // (workshop_workflow.py): its real steps, its approval chip, ⊘ Revoke and Re-approve. With no
+  // proposed workflow the card reads the canvas chain and the native Work gate, as before.
+  const shownWorkflow = (Array.isArray(transcript?.workflows) ? transcript.workflows : []).slice(-1)[0] || null;
+  const wfApproval = shownWorkflow?.approval || null;
+  const wfState = !shownWorkflow ? null : wfApproval?.revoked ? 'revoked' : wfApproval?.current === true ? 'approved' :
+    wfApproval && !wfApproval.invalid ? 'changed' : 'awaiting';
+  const wfSteps = shownWorkflow ? (shownWorkflow.nodes || []).map(node => ({id:node.root, t:node.title || node.engine, p:node.engine || ''})) : [];
+  const wfChip = {
+    approved:{bg:W.cyan + '1c', c:W.cyan, l:`APPROVED · REV ${wfApproval?.revision ?? '?'} · SCOPE: ${wfSteps.length} STEP${wfSteps.length === 1 ? '' : 'S'} ON THIS CANVAS`},
+    revoked:{bg:W.err + '1f', c:W.err, l:'REVOKED · NOTHING FURTHER RUNS'},
+    changed:{bg:W.warn + '1f', c:W.warn, l:'CHANGED SINCE APPROVAL · REVIEW AND APPROVE AGAIN'},
+    awaiting:{bg:W.err + '1f', c:W.err, l:'AWAITING YOUR APPROVAL'},
+  }[wfState];
+  const proposer = shownWorkflow ? agent(shownWorkflow.proposed_by) : null;
+  const workflowProposalCard = shownWorkflow && (
+    <div data-workshop-workflow={shownWorkflow.root} style={{ display:'flex', gap:12 }}>
+      <Av a={proposer} s={28}/>
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ display:'flex', alignItems:'baseline', gap:8, marginBottom:4 }}>
+          <span style={{ fontSize:12.5, fontWeight:500 }}>{proposer.name}</span>
+          <span style={{ fontFamily:W.mono, fontSize:9, color:W.inkMuted, border:`1px solid ${W.line}`, borderRadius:3, padding:'1px 5px' }}>proposed</span>
+        </div>
+        <div style={{ fontFamily:W.serif, fontSize:15, lineHeight:1.6, marginBottom:11 }}>
+          {`Here is the workflow ${proposer.name} proposes: ${shownWorkflow.title}. ${wfSteps.length} step${wfSteps.length === 1 ? '' : 's'}; ` +
+            (wfState === 'approved' ? 'you approved exactly these.' : 'nothing runs until you approve.')}
+        </div>
+        <div style={{ background:W.bg, border:`1px solid ${W.lineSoft}`, borderRadius:7, padding:'12px 13px', display:'flex', flexWrap:'wrap', alignItems:'center', columnGap:0, rowGap:10 }}>
+          {wfSteps.map((n, i, arr) => (
+            <React.Fragment key={n.id}>
+              <div style={{ border:`1px solid ${wfState === 'awaiting' ? W.accent : W.line}`, background:W.bgPanel, borderRadius:5, padding:'6px 9px', fontSize:11, lineHeight:1.25, maxWidth:220, overflowWrap:'anywhere' }}>
+                {n.t}<div style={{ fontFamily:W.mono, fontSize:8.5, color:W.inkMuted, letterSpacing:'0.06em', marginTop:2 }}>{n.p}</div>
+              </div>
+              {i < arr.length - 1 && <span style={{ width:22, height:1, background:W.line, flex:'none' }}/>}
+            </React.Fragment>
+          ))}
+          <div style={{ flexBasis:'100%', height:11 }}/>
+          <div style={{ display:'flex', alignItems:'center', gap:7, width:'100%' }}>
+            <span data-workshop-workflow-chip="" style={{ fontFamily:W.mono, fontSize:9, letterSpacing:'0.1em', padding:'2px 6px', borderRadius:3,
+              background:wfChip.bg, color:wfChip.c, overflowWrap:'anywhere' }}>{wfChip.l}</span>
+            <div style={{ flex:1 }}/>
+            <IBtn g="⌗" title="Open as nodes" onClick={openAsNodes}/>
+            {wfState === 'approved'
+              ? <IBtn g="⊘" title="Revoke approval — nothing further runs" disabled={busy} onClick={() => wfAct('workflow-revoke', {workflow:shownWorkflow.root})}/>
+              : <Btn sm pri disabled={busy || !shownWorkflow.digest} onClick={() => wfAct('workflow-approve', {workflow:shownWorkflow.root, digest:shownWorkflow.digest})}>
+                  {wfState === 'awaiting' ? 'Approve' : 'Re-approve'}</Btn>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+  const workflowCard = shownWorkflow ? workflowProposalCard : chainNodes.length > 0 && (
     <div style={{ display:'flex', gap:12 }}>
       <Av a={room} s={28}/>
       <div style={{ flex:1, minWidth:0 }}>
@@ -2401,6 +2488,11 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     </div>
   );
 
+  const connectedHosts = (liveHosts || []).filter(row => row && row.state === 'connected' && typeof row.name === 'string');
+  const hostLine = liveHosts === null ? 'hosts not read yet' : connectedHosts.length === 1
+    ? connectedHosts[0].name + (typeof connectedHosts[0].file === 'string' && connectedHosts[0].file ? ' · ' + connectedHosts[0].file : '')
+    : connectedHosts.length ? `${connectedHosts.length} hosts connected` : 'no host connected';
+  const headTitle = [descriptor.label, native?.work ? approvalWork : ''].filter(Boolean).join(' · ');
   const bar = (
     <div style={{ gridColumn:'1 / -1', display:'flex', alignItems:'center', gap:10, padding:'0 14px', height:34, minWidth:0,
       borderBottom:`1px solid ${W.line}`, background:W.bgPanel }}>
@@ -2408,7 +2500,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
         background:W.accentDim, borderRadius:5, fontFamily:W.mono, fontSize:9.5, letterSpacing:'0.14em', color:W.accent }}>
         <Dot c={W.accent} pulse/>WORKSHOP
       </span>
-      <span title={descriptor.root} style={{ fontFamily:W.mono, fontSize:10.5, color:W.inkSoft, letterSpacing:'0.04em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', minWidth:0 }}>{descriptor.label}</span>
+      <span title={descriptor.root} style={{ fontFamily:W.mono, fontSize:10.5, color:W.inkSoft, letterSpacing:'0.04em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', minWidth:0 }} data-workshop-head="">{headTitle} · {hostLine}</span>
       <span style={{ width:1, height:16, background:W.line, flex:'none' }}/>
       <span style={{ fontFamily:W.mono, fontSize:10, color:W.inkMuted, whiteSpace:'nowrap' }}>
         {counts.block} needs you · {counts.run} running{counts.paused ? ` · ${counts.paused} paused` : ''}{counts.review ? ` · ${counts.review} submitted` : ''} · {counts.done} delivered
@@ -2436,7 +2528,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
             if (item.kind !== 'task') {
               if (!isWorkProposal(item.message)) return msgRow(item.message);
               const proposal = wsProposalTask(item.message, proposalHeld[item.message.message_id || item.message.root]);
-              return <TaskCard key={proposal.work} t={proposal} sel={false} onSelect={() => {}} onDecide={decide} compact={preset==='graph'} agent={agent} busy={busy}/>;
+              return <TaskCard key={proposal.work} t={proposal} sel={selTask===proposal.work} onSelect={selectTask} onDecide={decide} compact={preset==='graph'} agent={agent} busy={busy}/>;
             }
             const t = tasks.find(x => x.work === item.work);
             return t && <TaskCard key={'task:' + t.work} t={t} sel={selTask===t.work} onSelect={selectTask} onDecide={decide} compact={preset==='graph'} agent={agent} busy={busy}/>;
@@ -2450,7 +2542,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const board = (
     <section aria-label="Workshop task board" style={{ display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
       <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:14, display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(252px,1fr))', gap:12, alignContent:'start' }}>
-        {[['block','NEEDS YOU'],['run','RUNNING'],['done','DELIVERED']].map(([s, l]) => { const rows = tasks.filter(t => t.state===s || (s==='run' && ['paused', 'review', 'open', 'queued'].includes(t.state))); return (
+        {[['block','NEEDS YOU'],['run','RUNNING'],['done','DELIVERED']].map(([s, l]) => { const rows = s === 'block' ? allTasks.filter(t => t.state==='block') : tasks.filter(t => t.state===s || (s==='run' && ['paused', 'review', 'open', 'queued'].includes(t.state))); return (
           <div key={s} style={{ display:'flex', flexDirection:'column', gap:10, minWidth:0 }}>
             <div style={{ display:'flex', alignItems:'center', gap:7, paddingBottom:8, borderBottom:`1px solid ${W.lineSoft}` }}>
               <Dot c={CHIP[s].c} pulse={s==='run'}/><h3 style={{ margin:0, fontWeight:400, fontSize:'inherit', lineHeight:'inherit', display:'inline-flex' }}><Lbl c={CHIP[s].c}>{l}</Lbl></h3><div style={{ flex:1 }}/><Lbl>{rows.length}</Lbl>
@@ -2477,7 +2569,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
       {preset==='graph'
         ? <GraphPane flow={flow} selTask={selTask} tidy={tidy} chain={chain}
             onArrange={() => setTidy(t => !t)} onChain={() => setChain(c => !c)} onOpen={openAsNodes}/>
-        : <ContextPanel selAgent={selTask ? null : selAgent} selTask={selTask} tasks={tasks} agent={agent} descriptor={descriptor}
+        : <ContextPanel selAgent={selTask ? null : selAgent} selTask={selTask} tasks={allTasks} agent={agent} descriptor={descriptor}
             agents={agents} assign={existing && authority?.assignWork ? (request => authority.assignWork(descriptor.root, request)) : null}
             assignments={Array.isArray(transcript?.assignments) ? transcript.assignments : []}
             activity={activity} activityNote={activityNote} counts={counts} listening={listening}

@@ -790,7 +790,7 @@
         if (!held || held.root !== root || held.error || held.can_send !== true) {
           fail('Refresh this conversation before acting on its workflow.');
         }
-        if (!['workflow-draft', 'workflow-approve', 'workflow-execute', 'artifact-review'].includes(action) ||
+        if (!['workflow-draft', 'workflow-approve', 'workflow-revoke', 'workflow-execute', 'artifact-review'].includes(action) ||
             !fields || typeof fields !== 'object') fail('That workflow action is not available.');
         const body = {action, root, scope:stamp.scope, ...fields};
         if (action === 'workflow-draft') {
@@ -802,6 +802,9 @@
           body.idempotency_key = 'review-' + (await hash(fields.artifact + '\u001f' + fields.reviewer)).slice(0, 60);
         } else if (action === 'workflow-approve') {
           if (!text(fields.workflow) || !/^[a-f0-9]{64}$/.test(fields.digest || '')) fail('Review the workflow before approving it.');
+          body.revision = held.revision;
+        } else if (action === 'workflow-revoke') {
+          if (!text(fields.workflow)) fail('Choose the approved workflow to revoke.');
           body.revision = held.revision;
         } else {
           if (!text(fields.workflow)) fail('Choose the approved workflow to run.');

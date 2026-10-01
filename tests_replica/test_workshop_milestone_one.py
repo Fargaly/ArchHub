@@ -412,6 +412,23 @@ def test_agent_proposed_workflow_is_edited_approved_executed_and_independently_r
     assert 'changed since approval' in refused['error'] and len(transport.calls) == calls
     _approve(h, convo, workflow, stale['digest'])
 
+    # Revoke (design workflow card ⊘): the approval stays recorded as revoked, nothing
+    # runs, and Re-approve is the ordinary approve of the same reviewed behavior.
+    revoked = h.request('/api/universal/workshop', {'action': 'workflow-revoke', 'root': convo['root'],
+        'scope': convo['scope'], 'workflow': workflow,
+        'revision': h.page(convo['root'], convo['scope'])['revision']})
+    assert revoked['approval']['revoked'] is True and revoked['approval']['current'] is False
+    held = _workflow(h, convo, workflow)
+    assert held['approval']['revoked'] is True and held['approval']['revoked_by']
+    refused = _execute(h, convo, workflow, 'run-revoked', expected=400)
+    assert 'revoked' in refused['error'] and len(transport.calls) == calls
+    again = h.request('/api/universal/workshop', {'action': 'workflow-revoke', 'root': convo['root'],
+        'scope': convo['scope'], 'workflow': workflow,
+        'revision': h.page(convo['root'], convo['scope'])['revision']}, expected=400)
+    assert 'no approval to revoke' in again['error']
+    _approve(h, convo, workflow, held['digest'])
+    assert _workflow(h, convo, workflow)['approval'] == {**_workflow(h, convo, workflow)['approval'], 'revoked': False, 'current': True}
+
     ran = _execute(h, convo, workflow, 'run-one')
     assert ran['display'][builder].startswith('started') and judge in ran['pending']
     h.settle()

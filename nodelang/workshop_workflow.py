@@ -56,7 +56,7 @@ WORKSHOP_CATALOGUE = {
     },
 }
 WORKSHOP_ENGINES = frozenset(row["engine"] for row in WORKSHOP_CATALOGUE.values())
-ACTIONS = frozenset({"workflow-draft", "workflow-approve", "workflow-execute", "artifact-review"})
+ACTIONS = frozenset({"workflow-draft", "workflow-approve", "workflow-revoke", "workflow-execute", "artifact-review"})
 
 _ANCHOR = "workshop-workflow"
 _DRAFT_KEY = "workflow-draft:"
@@ -273,9 +273,12 @@ def workflow_state(owner, browser, root, anchor, *, projection=None):
             decided = json.loads(held[1])
             if decided.get("kind") != "workshop-workflow-approval" or decided.get("version") != 1:
                 raise ValueError("not a workflow approval")
+            revoked = decided.get("revoked") is True
             approval = {"digest": decided["digest"], "approved_by": decided["approved_by"],
-                        "revision": decided["revision"], "relation": held[0],
-                        "current": digest is not None and decided["digest"] == digest}
+                        "revision": decided["revision"], "relation": held[0], "revoked": revoked,
+                        "current": not revoked and digest is not None and decided["digest"] == digest}
+            if revoked:
+                approval["revoked_by"] = decided.get("revoked_by")
         except (ValueError, KeyError, TypeError):
             approval = {"digest": None, "current": False, "relation": held[0], "invalid": True}
     return {"root": anchor, "title": value.get("title") or "Workflow", "conversation": root,
@@ -381,6 +384,40 @@ def approve_workflow(owner, browser, body, *, browser_guard):
                 "revision": store.revision}
 
 
+def revoke_workflow(owner, browser, body, *, browser_guard):
+    """Withdraw the user's approval; nothing further runs until they approve again.
+
+    The approval property keeps its digest and approver and gains the revocation, so
+    Re-approve is the ordinary approve of the reviewed behavior. Runs already started
+    are not undone; this only refuses the next run.
+    """
+    fields = {"action", "root", "scope", "workflow", "revision"}
+    if type(body) is not dict or set(body) != fields or type(body["revision"]) is not int:
+        raise InvalidCell("Workflow revocation fields are invalid")
+    root, scope = _text(body["root"], "Workshop"), _text(body["scope"], "canvas scope")
+    anchor = _text(body["workflow"], "workflow")
+    from . import universal_application as app
+    registry, store = owner.universal_registry, owner.universal_store
+    with owner.mutation_lock:
+        browser_guard()
+        _content(owner, browser, root, scope)
+        if store.revision != body["revision"]:
+            raise AuthorizationDenied("The Workshop changed; review the workflow again before revoking")
+        state = workflow_state(owner, browser, root, anchor)
+        held = state["approval"]
+        if held is None or held.get("invalid") or held.get("revoked"):
+            raise InvalidCell("This workflow has no approval to revoke")
+        decision = json.dumps({"kind": "workshop-workflow-approval", "version": 1, "digest": held["digest"],
+            "approved_by": held["approved_by"], "revision": store.revision,
+            "revoked": True, "revoked_by": browser.subject_root},
+            sort_keys=True, separators=(",", ":"))
+        app.edit_universal_property(store, registry, held["relation"], decision,
+            mutation_route="/api/universal/workshop", authentication_context=browser.context)
+        revoked = workflow_state(owner, browser, root, anchor)
+        return {"ok": True, "workflow": anchor, "digest": revoked["digest"], "approval": revoked["approval"],
+                "revision": store.revision}
+
+
 def execute_workflow(owner, browser, body, *, browser_guard):
     fields = {"action", "root", "scope", "workflow", "idempotency_key"}
     if type(body) is not dict or set(body) != fields:
@@ -398,6 +435,8 @@ def execute_workflow(owner, browser, body, *, browser_guard):
             raise InvalidCell(state["reason"])
         if state["approval"] is None:
             raise InvalidCell("Approve this workflow before it runs; an agent's proposal is not your approval")
+        if state["approval"].get("revoked"):
+            raise InvalidCell("You revoked this workflow's approval; approve it again before it runs")
         if not state["approval"]["current"]:
             raise InvalidCell("The workflow changed since approval; review and approve it again before it runs")
         if state["approval"].get("approved_by") not in space.participant_roots:
@@ -595,7 +634,7 @@ def review_artifact(owner, browser, body, *, browser_guard):
 def perform_workshop_action(owner, browser, body, *, browser_guard):
     action = body.get("action") if type(body) is dict else None
     function = {"workflow-draft": draft_workflow, "workflow-approve": approve_workflow,
-                "workflow-execute": execute_workflow, "artifact-review": review_artifact}.get(action)
+                "workflow-revoke": revoke_workflow, "workflow-execute": execute_workflow, "artifact-review": review_artifact}.get(action)
     if function is None or not callable(browser_guard):
         raise InvalidCell("Unknown Workshop workflow action")
     return function(owner, browser, body, browser_guard=browser_guard)

@@ -188,9 +188,11 @@ const wsAgo = value => {
   const s = Math.max(0, Date.now() / 1000 - wsSeconds(value));
   return s < 60 ? Math.round(s) + 's' : s < 3600 ? Math.round(s / 60) + 'm' : s < 86400 ? Math.round(s / 3600) + 'h' : Math.round(s / 86400) + 'd';
 };
+// Counted and cut in code points: a cut never splits a supplementary character (an emoji) into a lone surrogate.
 const wsLine = (text, limit = 140) => {
   const line = String(text || '').split('\n').find(row => row.trim()) || '';
-  return line.length > limit ? line.slice(0, limit - 1) + '\u2026' : line;
+  const points = Array.from(line);
+  return points.length > limit ? points.slice(0, limit - 1).join('') + '\u2026' : line;
 };
 const wsTranscript = (state, descriptor) => {
   const held = state?.workshop;

@@ -145,3 +145,24 @@ test('gap 10: the tool feed pages its own records; a stray activity field is not
     assert.ok(!shown.includes('Not from this feed.'), shown);
   } finally { await view.ui.close(); }
 });
+
+// The server bounds a tool record in code points; the panel line is cut in code points too, so a cut inside a
+// run of emoji keeps whole characters (never a lone surrogate, which renders as a broken glyph).
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+test('gap 10: an emoji-bearing tool record is cut on whole characters in the ACTIVITY line', async () => {
+  const face = String.fromCodePoint(0x1f600);
+  const body = 'Session Link started relaying this message to ' + face.repeat(40) + ' acceptance-claude.';
+  const view = await mountView(fx => { fx.state.workshop.activity = [tool(1, body)]; });
+  try {
+    await view.render();
+    const lines = [...view.ui.doc.querySelectorAll('[aria-label="Workshop context"] *')]
+      .map(el => [...el.childNodes].filter(node => node.nodeType === 3).map(node => node.nodeValue).join(''))
+      .filter(value => value.includes('Session Link started relaying'));
+    assert.equal(lines.length, 1, JSON.stringify(lines));
+    const line = lines[0].slice(lines[0].indexOf('Session Link'));
+    assert.ok(!LONE_SURROGATE.test(line), 'a cut split an emoji');
+    assert.ok(line.endsWith('…'));
+    assert.equal(Array.from(line).length, 60, 'the line is 60 characters, counted as a reader counts them');
+    assert.ok(line.includes(face.repeat(13)), line);
+  } finally { await view.ui.close(); }
+});

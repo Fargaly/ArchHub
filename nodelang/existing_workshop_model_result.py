@@ -8,7 +8,7 @@ import hashlib
 import json
 from typing import Mapping
 
-from .cell_authorization import AuthorizationDenied
+from .cell_authorization import AuthorizationDenied, RefusedWithoutEffect
 from .cell_deliberation import read_deliberation_space
 from .cell_model_execution import read_model_delegation, read_model_execution_receipt
 from .universal_cell import InvalidCell, NULL_CELL_ID
@@ -18,6 +18,12 @@ def _identity(value):
     if type(value) is not str or not value or len(value) > 4096:
         raise InvalidCell("Workshop model-result identity is invalid")
     return value
+
+
+def model_result_idempotency_key(receipt_root, recipient_root, reply_to_root):
+    """The announcement key of one model result for one recipient and reply."""
+    return "model-result:" + hashlib.sha256(json.dumps([receipt_root, recipient_root, reply_to_root],
+        separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
 def publish_verified_model_result(store, registry, *, agent_session_root, receipt_root,
@@ -132,7 +138,7 @@ def publish_verified_model_result(store, registry, *, agent_session_root, receip
                 delegated.append(value)
         if (len(delegated) != 1 or delegated[0].get("work") != delegation.work_root
                 or delegated[0].get("input_digest") != current_digest):
-            raise AuthorizationDenied("Workshop Work changed after this model result; it is not published")
+            raise RefusedWithoutEffect("Workshop Work changed after this model result; it is not published")
         content = "Model review evidence. Independent review is still required.\n" + json.dumps(
             review, ensure_ascii=False, indent=2)
         evidence.append(proposal_root)
@@ -146,7 +152,7 @@ def publish_verified_model_result(store, registry, *, agent_session_root, receip
     if len(content.encode("utf-8")) > 12000:
         raise InvalidCell("Workshop model review exceeds its bounded message size")
     if store.revision != snapshot.revision:
-        raise AuthorizationDenied("Workshop result source changed; refresh before publishing")
+        raise RefusedWithoutEffect("Workshop result source changed; refresh before publishing")
     identity = registry.authorization.broker.resolve(authentication_context)
     if identity.subject_root != session.subject_root:
         raise AuthorizationDenied("Workshop result caller changed")
@@ -158,12 +164,11 @@ def publish_verified_model_result(store, registry, *, agent_session_root, receip
     actor_context = registry.authorization.broker.mint_authenticated_context(agent_session_root,
         principal_roots=(), tenant_root=identity.tenant_root, assurance_root=identity.assurance_root,
         lifetime_seconds=60.0)
-    key = hashlib.sha256(json.dumps([receipt_root, recipient_root, reply_to_root],
-        separators=(",", ":")).encode("utf-8")).hexdigest()
+    key = model_result_idempotency_key(receipt_root, recipient_root, reply_to_root)
     try:
         entry = app.append_universal_workshop_entry(store, registry,
             actor_root=agent_session_root, category_root=registry.workshop_category_roots["note"],
-            content=content, idempotency_key="model-result:" + key,
+            content=content, idempotency_key=key,
             created_at=None, recipient_roots=(recipient_root,),
             reference_roots=(delegation.work_root,), reply_to_root=reply_to_root,
             evidence_roots=tuple(evidence), authentication_context=actor_context,

@@ -170,27 +170,70 @@ def _revise_task(server, work, text):
 
 # ------------------------------------------------------------------ GAP 1 --
 
-def test_an_executor_detached_after_its_grant_is_refused_before_any_model_call(tmp_path):
+DETACHES = ("claim-released", "session-released")
+DETACHED = {"claim-released": "requires the caller's claimed Work",
+            "session-released": "runtime Agent Session is unknown"}
+UNDELETABLE = ("this card belongs to the application and stays in the System view; "
+               "only cards you placed can be deleted")
+
+
+def detach(rig, how, real, grant_path):
+    """Wrap the executor's client: after its grant, detach it from its Work in one named way.
+
+    claim-released: the executor lets go of its Work. session-released: the executor's Agent
+    Session ends through the native release, and its client then ignores that and sends the call
+    with the released identity. Two other detaches do not exist mid-turn: deleting the Work node
+    (registered Work is never a user-placed card: test_a_registered_work_node_cannot_be_deleted_mid_turn)
+    and blocking the Work (an execution body's block is reserved for receipt settlement).
+    """
+    import time
+    import uuid
+    answered = {}
+
+    def after_grant(method, path, *args, **kwargs):
+        result = real(method, path, *args, **kwargs)
+        if path == grant_path and not answered:
+            if how == "claim-released":
+                answered["detach"] = real("POST", "/api/universal/work-transition", {
+                    "root": rig.work, "event": "release",
+                    "evidence": "The executor detached before its physical call."})
+            else:
+                client = rig.host._client
+                answered["detach"] = client.release_agent_session(
+                    "%08x" % int(time.time()) + uuid.uuid4().hex[:24])
+                # A stale client that disregards its own release, as an adversary would.
+                client._agent_session_access = "full"
+        return result
+    return after_grant, answered
+
+
+@pytest.mark.parametrize("how", DETACHES)
+def test_an_executor_detached_after_its_grant_is_refused_before_any_model_call(tmp_path, how):
     broker = _Broker()
     rig = _approved(tmp_path, broker)
     try:
-        real = rig.host._client.request
-
-        def detach_after_grant(method, path, *args, **kwargs):
-            result = real(method, path, *args, **kwargs)
-            if path == GRANT:
-                # The executor lets go of its Work between its grant and its call.
-                real("POST", "/api/universal/work-transition", {"root": rig.work, "event": "release",
-                     "evidence": "The executor detached before the model call."})
-            return result
-        rig.host._client.request = detach_after_grant
+        wrapped, answered = detach(rig, how, rig.host._client.request, GRANT)
+        rig.host._client.request = wrapped
         before = _receipts(rig.server)
         status, refused = _request(rig.server, ENDPOINT, {**rig.body, "action": "execute"})
-        assert status != 200, refused
-        assert "requires the caller's claimed Work" in refused["error"], refused
+        assert answered["detach"]["history_root" if how == "claim-released" else "released"], answered
+        assert status != 200 and DETACHED[how] in refused["error"], refused
         assert broker.calls == []
         assert _receipts(rig.server) == before
         assert _published_results(rig.server, rig) == []
+    finally:
+        rig.server.close()
+
+
+def test_a_registered_work_node_cannot_be_deleted_mid_turn(tmp_path):
+    """The Studio's Delete refuses a registered Work card, so no turn is detached that way."""
+    broker = _Broker()
+    rig = _approved(tmp_path, broker)
+    try:
+        revision = rig.server.universal_store.revision
+        status, refused = _request(rig.server, "/api/universal/retract", {"root": rig.work})
+        assert (status, refused) == (400, {"ok": False, "error": UNDELETABLE})
+        assert rig.server.universal_store.revision == revision and broker.calls == []
     finally:
         rig.server.close()
 
@@ -297,6 +340,8 @@ def test_a_result_whose_task_changed_before_publication_is_never_published_even_
         first = _outcome(_request(rig.server, ENDPOINT, {**rig.body, "action": "publish"}))
         assert first["state"] != "published" and first["publication"] is None, first
         assert first["error"] == STALE, first
+        held = rig.host._status
+        assert (held["state"], held.get("publication"), held["error"]) == ("settled", None, STALE), held
         assert _published_results(rig.server, rig) == []
         # Refresh: the page re-reads the Workshop at its new revision, then asks again.
         _transcript(rig.server, rig)
@@ -343,6 +388,142 @@ def test_an_unchanged_approved_task_publishes_its_review_exactly_once(tmp_path):
         assert direct["root"] == publication["root"]
         assert len(_transcript(rig.server, rig)["messages"]) == len(rows)
         assert rig.server.universal_store.revision == revision
+        assert len(broker.calls) == 1
+    finally:
+        rig.server.close()
+
+
+def test_a_review_published_as_a_reply_names_the_message_it_answers_exactly_once(tmp_path):
+    """Non-null reply: the review answers a real founder message and names it."""
+    broker = _Broker()
+    rig = _approved(tmp_path, broker)
+    try:
+        status, settled = _request(rig.server, ENDPOINT, {**rig.body, "action": "execute"})
+        assert status == 200 and settled["state"] == "settled" and settled["reconciled"], settled
+        status, asked = _request(rig.server, "/api/universal/workshop", {
+            "root": rig.body["root"], "scope": rig.body["scope"], "category": "note",
+            "text": "Please review the public input.", "refs": [], "evidence": [],
+            "recipients": [rig.worker], "reply_to": None, "idempotency_key": "founder-asks-for-review",
+            "created_at": None})
+        assert status == 200, asked
+        founder = rig.server.universal_registry.authorization.subject_root
+        rows = _transcript(rig.server, rig)["messages"]
+        published = rig.host._worker.publish_result(rig.host._settled, recipient_root=founder,
+                                                    reply_to_root=asked["root"])
+        after = _transcript(rig.server, rig)["messages"]
+        assert len(after) == len(rows) + 1
+        reply = next(row for row in after if row["root"] == published["root"])
+        assert reply["reply_to_root"] == asked["root"]
+        assert reply["sender_root"] == rig.worker and reply["recipient_roots"] == [founder]
+        assert reply["evidence_roots"] == [settled["receipt"], settled["proposal"]]
+        assert reply["body"].startswith("Model review evidence.")
+        revision = rig.server.universal_store.revision
+        again = rig.host._worker.publish_result(rig.host._settled, recipient_root=founder,
+                                                reply_to_root=asked["root"])
+        assert again["root"] == published["root"]
+        assert len(_transcript(rig.server, rig)["messages"]) == len(after)
+        assert rig.server.universal_store.revision == revision and len(broker.calls) == 1
+    finally:
+        rig.server.close()
+
+
+# ------------------------------------------------------------ GAP 3 race --
+
+def test_a_task_changed_at_the_publication_boundary_is_refused_atomically(tmp_path, monkeypatch):
+    """Race: the Work changes after every pre-publication check, at the append itself.
+
+    The change is injected in the publishing thread immediately before the Workshop append,
+    after the task digest was verified, so only an append bound to the verified revision
+    (a compare-and-set) can refuse it.
+    """
+    broker = _Broker()
+    rig = _approved(tmp_path, broker)
+    try:
+        status, settled = _request(rig.server, ENDPOINT, {**rig.body, "action": "execute"})
+        assert status == 200 and settled["state"] == "settled" and settled["reconciled"], settled
+        real = app.append_universal_workshop_entry
+        fired = []
+
+        def change_then_append(store, registry, **kwargs):
+            if not fired and str(kwargs.get("content", "")).startswith("Model review evidence"):
+                fired.append(True)
+                _revise_task(rig.server, rig.work, "A different task, written at the publication boundary")
+            return real(store, registry, **kwargs)
+        monkeypatch.setattr(app, "append_universal_workshop_entry", change_then_append)
+        attempt = _outcome(_request(rig.server, ENDPOINT, {**rig.body, "action": "publish"}))
+        assert fired == [True]
+        assert attempt["state"] != "published" and attempt["publication"] is None, attempt
+        assert attempt["error"] == "Workshop admission changed; refresh to continue", attempt
+        assert _published_results(rig.server, rig) == [] and len(broker.calls) == 1
+        # A refusal before the append is definite: the host keeps its settled receipt.
+        held = rig.host._status
+        assert (held["state"], held.get("publication"), held["error"]) == (
+            "settled", None, "Workshop admission changed; refresh to continue"), held
+        assert held["receipt"] == settled["receipt"]
+    finally:
+        rig.server.close()
+
+
+def test_a_model_publication_failing_after_its_append_stays_a_reconciliation_case(tmp_path):
+    """Only a refusal before the append is definite; a failure after it is not."""
+    from nodelang.application_machine_transport import MachineResponseError
+    broker = _Broker()
+    rig = _approved(tmp_path, broker)
+    try:
+        status, settled = _request(rig.server, ENDPOINT, {**rig.body, "action": "execute"})
+        assert status == 200 and settled["reconciled"], settled
+        real = rig.host._worker.publish_result
+
+        def lost_after_append(*args, **kwargs):
+            real(*args, **kwargs)
+            raise MachineResponseError("publication response lost after its append")
+        rig.host._worker.publish_result = lost_after_append
+        _request(rig.server, ENDPOINT, {**rig.body, "action": "publish"})
+        assert rig.host._status["state"] == "publication_uncertain", rig.host._status
+        assert len(_published_results(rig.server, rig)) == 1 and len(broker.calls) == 1
+    finally:
+        rig.server.close()
+
+
+# ------------------------------------------------- two publication attempts --
+
+TWO_ATTEMPTS = ("committed-then-changed", "lost-then-changed", "committed-unchanged")
+
+
+@pytest.mark.parametrize("case", TWO_ATTEMPTS)
+def test_a_retry_never_erases_an_unknown_model_publication(tmp_path, case):
+    """A first attempt with an unknown outcome stays unknown until its own record settles it."""
+    from nodelang.application_machine_transport import MachineResponseError, MachineTransportError
+    broker = _Broker()
+    rig = _approved(tmp_path, broker)
+    try:
+        status, settled = _request(rig.server, ENDPOINT, {**rig.body, "action": "execute"})
+        assert status == 200 and settled["reconciled"], settled
+        real, committed = rig.host._worker.publish_result, []
+
+        def first_attempt(*args, **kwargs):
+            if case.startswith("committed"):
+                committed.append(real(*args, **kwargs))
+                raise MachineResponseError("publication response lost after its append")
+            raise MachineTransportError("universal runtime did not respond")
+        rig.host._worker.publish_result = first_attempt
+        _request(rig.server, ENDPOINT, {**rig.body, "action": "publish"})
+        assert rig.host._status["state"] == "publication_uncertain", rig.host._status
+        rig.host._worker.publish_result = real
+        if case.endswith("changed"):
+            _revise_task(rig.server, rig.work, "A different task, written between the two attempts")
+        retry = _outcome(_request(rig.server, ENDPOINT, {**rig.body, "action": "publish"}))
+        held = rig.host._status
+        if case == "lost-then-changed":
+            # Refused before any effect, but the first attempt is still unresolved.
+            assert retry["error"] == STALE, retry
+            assert held["state"] == "publication_uncertain" and "still unresolved" in held["error"], held
+            assert _published_results(rig.server, rig) == []
+        else:
+            # The first attempt's own record settles it: published, with its original identity.
+            assert held["state"] == "published", held
+            assert held["publication"]["root"] == committed[0]["root"] and held["publication"]["reconciled"]
+            assert [row["root"] for row in _published_results(rig.server, rig)] == [committed[0]["root"]]
         assert len(broker.calls) == 1
     finally:
         rig.server.close()

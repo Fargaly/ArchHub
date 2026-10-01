@@ -643,20 +643,39 @@ class ExistingWorkshopNativeHost:
         artifact = self._status.get('artifact')
         if not artifact or self._status['state'] not in ('settled', 'publication_uncertain', 'published'):
             raise InvalidCell('A saved native artifact is required before publication')
+        prior, key = self._status['state'], self._identity[6] + ':native-result'
+        if self._reconciled_announcement(binding, key):
+            return
         checked = self._read_saved_native_artifact(binding, self._identity[3], self._identity[4],
             self._identity[5], self._identity[6], artifact['result'], artifact['receipt'])
         if checked is None:
             raise InvalidCell('The native artifact receipt is unavailable')
         message = ('Workshop saved a draft artifact: ' + artifact['name'] + '\n\n'
                    + artifact['summary'] + '\n\nReview the patch before applying it. Acceptance is tracked on the Work node.')
+        from .cell_authorization import RefusedWithoutEffect
+        from .native_workshop_execution import _admitted, _digest, _material
         try:
             with self.server.mutation_lock:
                 self._admit(binding, self._identity[3], self._identity[4], self._identity[5])
-                publication = send_browser_workshop(self.server, binding, {
-                    'root':self._identity[3], 'scope':self._identity[4], 'category':'note', 'text':message,
-                    'refs':[], 'evidence':[], 'recipients':[binding.subject_root], 'reply_to':None,
-                    'idempotency_key':self._identity[6] + ':native-result', 'created_at':None})
+                with _admitted(self.server, binding.context):
+                    # An agent's artifact answers the material it was approved for. That material
+                    # and the announcement are admitted at one revision: the send below commits
+                    # only at the revision checked here, so no Work change can fall in between.
+                    revision = self.server.universal_store.revision
+                    current = _material(self.server, self._identity[5], self._prepared['worker'],
+                                        binding.context, publication=True)
+                    if _digest(current) != self._prepared['input_digest']:
+                        raise RefusedWithoutEffect('Workshop Work changed after this agent result; it is not published')
+                    publication = send_browser_workshop(self.server, binding, {
+                        'root':self._identity[3], 'scope':self._identity[4], 'category':'note', 'text':message,
+                        'refs':[], 'evidence':[], 'recipients':[binding.subject_root], 'reply_to':None,
+                        'idempotency_key':key, 'created_at':None},
+                        expected_revision=revision)
             self._set('published', publication=publication)
+        except RefusedWithoutEffect as refusal:
+            # Refused before the append: this attempt announced nothing.
+            self._refused_announcement(prior, refusal)
+            raise
         except Exception:
             self._set('publication_uncertain', error='The saved artifact announcement needs reconciliation; the agent will not rerun.')
             raise
@@ -781,6 +800,35 @@ class ExistingWorkshopNativeHost:
 
     def _set(self, state, **fields):
         self._status = {**self._status, **fields, "state": state}
+
+    def _announcement_record(self, binding, key):
+        """The authoritative Workshop record of one announcement, read by its unique key, or None."""
+        server = self.server
+        registry, store, service = server.universal_registry, server.universal_store, server.conversation_content
+        root = self._identity[3]
+        with server.mutation_lock:
+            content = service._authorize_content_read(store.snapshot(), registry, space_root=root,
+                authentication_context=binding.context, principal=binding.subject_root, machine=False)
+            return service._history_for(content).get_by_idempotency(root, key, principal=binding.subject_root)
+
+    def _reconciled_announcement(self, binding, key):
+        """After an unknown outcome, a found record settles it as published, with its own identity."""
+        if self._status["state"] != "publication_uncertain":
+            return False
+        record = self._announcement_record(binding, key)
+        if record is None:
+            return False
+        self._set("published", error=None, publication={"root":record["id"], "message_id":record["id"],
+            "storage":"conversation-content", "idempotency_key":key, "reconciled":True})
+        return True
+
+    def _refused_announcement(self, prior, refusal):
+        """This request had no effect; that never erases an earlier attempt's unknown outcome."""
+        if prior == "publication_uncertain":
+            self._set("publication_uncertain", error=("An earlier announcement attempt is still unresolved; "
+                "this retry was refused before any effect (" + str(refusal) + ")."))
+        else:
+            self._set("settled", publication=None, error=str(refusal))
 
     def invalidate_work_approval(self, work):
         """Clear this host's held approval after the same Work's draft changes.
@@ -1516,10 +1564,20 @@ class ExistingWorkshopNativeHost:
                 if self._settled is None or self._status["state"] not in ("settled", "publication_uncertain", "published"):
                     raise InvalidCell("Workshop has no settled result to publish")
                 if self._status["state"] != "published":
+                    from .application_machine_transport import MachineRefusedWithoutEffect
+                    from .existing_workshop_model_result import model_result_idempotency_key
+                    prior = self._status["state"]
+                    key = model_result_idempotency_key(self._settled.receipt_root, binding.subject_root, None)
+                    if self._reconciled_announcement(binding, key):
+                        return self.status(binding, root=root, scope=scope)
                     try:
                         result = self._worker.publish_result(self._settled,
                             recipient_root=binding.subject_root)
                         self._set("published", publication=result)
+                    except MachineRefusedWithoutEffect as refusal:
+                        # Refused before the append: this attempt published nothing.
+                        self._refused_announcement(prior, refusal)
+                        raise
                     except Exception:
                         self._set("publication_uncertain", error="Result publication needs reconciliation; retrying publication will not rerun the model.")
                         raise
@@ -2082,16 +2140,27 @@ class ExistingWorkshopNativeHost:
             raise InvalidCell("There is no settled project result to publish")
         if self._status["state"] == "published":
             return
+        prior, key = self._status["state"], self._identity[6] + ":project-result"
+        if self._reconciled_announcement(binding, key):
+            return
         result = self._settled
         body = ("Repair artifact created: " + str(result["artifact_name"]) + "\n" + str(result["summary"])
             + "\nSHA-256: " + str(result["output_digest"]) + "\nSource files have not been changed."
             if result["outcome"] == "succeeded" else "Project repair failed: " + str(result["error_code"]))
+        from .application_machine_transport import MachineRefusedWithoutEffect
         try:
+            # The receipt is the publication's evidence: the receiving append admits it only
+            # while the Work still holds the material that receipt executed.
             publication = self._client.request("POST", "/api/universal/workshop", {
-                "category":"note", "text":body, "refs":[self._prepared["work"]], "evidence":[],
+                "category":"note", "text":body, "refs":[self._prepared["work"]],
+                "evidence":[result["receipt"]] if result.get("receipt") else [],
                 "recipients":[binding.subject_root], "reply_to":None,
-                "idempotency_key":self._identity[6] + ":project-result", "created_at":None})
+                "idempotency_key":key, "created_at":None})
             self._set("published", publication=publication)
+        except MachineRefusedWithoutEffect as refusal:
+            # The application refused before any commit: this attempt published nothing.
+            self._refused_announcement(prior, refusal)
+            raise
         except Exception:
             self._set("publication_uncertain", error="Artifact result publication needs reconciliation; retrying does not rerun the model.")
             raise

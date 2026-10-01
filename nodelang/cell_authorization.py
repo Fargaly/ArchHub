@@ -182,6 +182,14 @@ class AuthorizationDenied(PermissionError):
     pass
 
 
+class RefusedWithoutEffect(AuthorizationDenied):
+    """Refused by an admission check that runs before any commit, relay or physical effect.
+
+    Raise it only where nothing has happened yet: the caller may then report the
+    request as definitely not performed instead of as needing reconciliation.
+    """
+
+
 _AUTHENTICATION_KEY = object()
 _POLICY_RELEASE_KEY = object()
 

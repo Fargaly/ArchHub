@@ -531,7 +531,9 @@ class ApplicationConversationContent:
             with authority.broker.live_context(authentication_context):
                 with store.stable_snapshot() as snapshot:
                     if snapshot.revision != expected_revision:
-                        raise AuthorizationDenied("conversation authority changed; refresh")
+                        # Checked before the append: nothing was written.
+                        from .cell_authorization import RefusedWithoutEffect
+                        raise RefusedWithoutEffect("conversation authority changed; refresh")
                     binding = read_content_binding(snapshot, registry.deliberation_protocol,
                         application_root=registry.application_root, space_root=space_root)
                     space = read_content_space(snapshot, registry.deliberation_protocol, space_root)

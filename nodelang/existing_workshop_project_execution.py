@@ -85,6 +85,42 @@ def project_saved_artifacts(snapshot, registry, work_root, *, receipt_root=None)
     return artifacts
 
 
+STALE_PROJECT_RESULT = "Workshop Work changed after this project result; it is not published"
+
+
+def require_current_project_evidence(store, registry, snapshot, evidence_roots):
+    """Admit a Workshop entry citing a successful project receipt only while its Work holds that material.
+
+    Called by the receiving Workshop append against the append's own snapshot. The append then
+    commits only at that same revision (its compare-and-set), so no change to the Work can land
+    between this check and the publication, wherever the sender checked before.
+    """
+    from . import universal_application as app
+
+    protocol = registry.baboom_connector_execution_protocol
+    provider = registry.baboom_connector_provider_roots.get(PROVIDER)
+    for root in evidence_roots:
+        if type(root) is not str or not root.endswith(":project-receipt") or root not in snapshot.cells:
+            continue
+        receipt = read_connector_execution_receipt(snapshot, protocol, registry.adapter_protocol, root)
+        if receipt.provider_root != provider or receipt.operation != OPERATION or receipt.outcome != "succeeded":
+            continue
+        delegation = read_connector_delegation(snapshot, protocol, registry.adapter_protocol,
+                                               receipt.delegation_root)
+        # The owner's own read of the Work as it stands, independent of the sender's view.
+        instance = app._instance_projection(snapshot, registry, delegation.work_root)
+        raw = None
+        if instance is not None:
+            work = {"interfaces": {row["name"]: row for row in instance.get("interfaces", ())}}
+            try:
+                _, raw = _material(store, registry, delegation.work_root, work)
+            except InvalidCell:
+                raw = None
+        if raw is None or not hmac.compare_digest(hashlib.sha256(raw).hexdigest(), receipt.input_digest):
+            from .cell_authorization import RefusedWithoutEffect
+            raise RefusedWithoutEffect(STALE_PROJECT_RESULT)
+
+
 @contextmanager
 def _stable_admission(server, context):
     registry, store = server.universal_registry, server.universal_store

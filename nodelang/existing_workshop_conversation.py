@@ -679,7 +679,7 @@ def _send_browser_workshop_everyone(owner, binding, body, browser_guard):
         'revision':store.revision, 'native_delivery':deliveries}
 
 
-def send_browser_workshop(owner, binding, body, *, browser_guard=None):
+def send_browser_workshop(owner, binding, body, *, browser_guard=None, expected_revision=None):
     from .universal_application import append_universal_workshop_entry, validate_universal_workshop_entry_content
     from .conversation_content import workshop_message_identity
     expected = {"root", "scope", "category", "text", "refs", "evidence", "recipients",
@@ -693,8 +693,15 @@ def send_browser_workshop(owner, binding, body, *, browser_guard=None):
             type(body["idempotency_key"]) is not str or not 1 <= len(body["idempotency_key"]) <= 128):
         raise InvalidCell("Workshop message values are invalid")
     if not body['recipients']:
+        if expected_revision is not None:
+            raise InvalidCell("A revision-bound Workshop send names its recipient")
         return _send_browser_workshop_everyone(owner, binding, body, browser_guard)
     _snapshot, _space = _admit(owner, binding, body["root"], body["scope"], allow_child=True)
+    if expected_revision is not None and _snapshot.revision != expected_revision:
+        # The caller admitted its own condition at expected_revision; the append below is
+        # bound to this snapshot's revision, so it commits only if nothing changed since.
+        from .cell_authorization import RefusedWithoutEffect
+        raise RefusedWithoutEffect("Workshop changed during publication admission; refresh")
     registry = owner.universal_registry
     if body["root"] != registry.workshop_root:
         service = getattr(owner, "conversation_content", None)

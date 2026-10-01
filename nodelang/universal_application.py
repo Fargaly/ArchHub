@@ -34523,7 +34523,14 @@ def append_universal_workshop_entry(
     """
     snapshot = store.snapshot()
     if expected_revision is not None and snapshot.revision != expected_revision:
-        raise AuthorizationDenied("Workshop admission changed; refresh to continue")
+        from .cell_authorization import RefusedWithoutEffect
+        raise RefusedWithoutEffect("Workshop admission changed; refresh to continue")
+    evidence_roots = tuple(evidence_roots)
+    if any(type(root) is str and root.endswith(":project-receipt") for root in evidence_roots):
+        # A project result is published only while its Work holds the material it ran on,
+        # checked at this append's own snapshot (the commit below is bound to its revision).
+        from .existing_workshop_project_execution import require_current_project_evidence
+        require_current_project_evidence(store, registry, snapshot, evidence_roots)
     space = read_deliberation_space(snapshot, registry.deliberation_protocol, registry.workshop_root)
     if space.content_store_root is not None:
         from .conversation_content import ConversationMessageProjection

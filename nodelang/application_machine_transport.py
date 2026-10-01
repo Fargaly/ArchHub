@@ -91,6 +91,11 @@ class MachineResponseError(MachineTransportError):
     response_received = True
 
 
+class MachineRefusedWithoutEffect(MachineResponseError):
+    """An authenticated refusal from an admission check that precedes every effect."""
+    effect_outcome = "none"
+
+
 class MachineContinuationNotEnrolled(MachineTransportError):
     """Exact owner-held refusal receipt proves this continuation issued no capability."""
 
@@ -1820,6 +1825,10 @@ class UniversalRuntimeTransport:
             }
             if isinstance(exc, MachineEffectOutcomeUnknown):
                 response['effect_outcome'] = 'unknown'
+            else:
+                from .cell_authorization import RefusedWithoutEffect
+                if isinstance(exc, RefusedWithoutEffect):
+                    response['effect_outcome'] = 'none'
         try:
             raw = _canonical(response)
         except (TypeError, ValueError, UnicodeError):
@@ -3956,6 +3965,8 @@ class UniversalRuntimeClient:
                 # The application answered: the request has terminated, its effect is unknown.
                 error.response_received = True
                 raise error
+            if response.get("effect_outcome") == "none":
+                raise MachineRefusedWithoutEffect(str(response.get("error") or "request refused"))
             raise MachineResponseError(str(response.get("error") or "request denied"))
         if response["ok"] is not True:
             raise MachineTransportError("universal runtime response status is invalid")

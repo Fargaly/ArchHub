@@ -48,6 +48,10 @@ function tailTitle(s){
 }
 const claudes=()=>listClaudeSessions().map(s=>({id:s.sessionId,title:tailTitle(s),cwd:s.cwd,pid:s.pid,socket:s.socket,app:'claude'}));
 function exact(rows,needle,app){const hits=rows.filter(s=>s.id===needle||s.selector===needle||s.title===needle);if(hits.length!==1)throw new Error(`${app}: expected exactly one session for ${JSON.stringify(needle)}, found ${hits.length}; use list and exact ID or process-qualified selector`);return hits[0];}
+// Selection from a catalog whose discovery for this app failed is refused, never
+// reported as "found 0": an unavailable listing is not an empty one. Nothing is
+// registered, bound or spawned before this check.
+function select(all,app,needle,label){const st=all.adapterStatus?.[app];if(st?.status==='unavailable'){const e=new Error(`${label} discovery unavailable for this host: ${publicReason(st.reason||'listing failed')}; nothing registered, bound or spawned`);e.code='SESSION_LINK_DISCOVERY_UNAVAILABLE';throw e;}return exact(all[app]||[],needle,label);}
 // A reused or fresh durable link must be exactly the one requested: the same
 // connection, remote session, destination task and workspaces, and the sender
 // mode that both the saved binding and the running bridge report. Anything
@@ -192,7 +196,7 @@ export function boundSendCall(b,row,prompt,requestId){
 }
 export async function connect(request,{onSpawn=()=>{},observedCatalog}={}){
   if(request.permissionMode&&!['prompting','bypass'].includes(request.permissionMode))throw new Error('Permission mode must be prompting or bypass');
-  const all=observedCatalog||await catalog(),app=request.app||'claude',c=exact(all[app]||[],request.claude,app),x=exact(all.codex,request.codex,'Codex');
+  const all=observedCatalog||await catalog(),app=request.app||'claude',c=select(all,app,request.claude,app),x=select(all,'codex',request.codex,'Codex');
   const id=idFor(c.id,x.id),runtime=path.join(dir,id+'.runtime.json'),binding=path.join(dir,id+'.binding.json');
   if(fs.existsSync(runtime)){const old=read(runtime);if(request.permissionMode&&fs.existsSync(binding)&&read(binding).permissionMode!==request.permissionMode){const e=new Error('Existing connection has a different sender permission mode; connect does not change it. Reconcile pending delivery before explicit reconnect; nothing sent.');e.code='SESSION_LINK_MISMATCH';throw e;}let status;try{status=await rpc(old,{operation:'status'});}catch{if(alive(old.pid))throw new Error('Existing bridge process is unreachable; stop it before reconnecting');}
     if(status)return verifyLink({id,app,c,x,status,saved:fs.existsSync(binding)?read(binding):null,requestedMode:request.permissionMode});}
@@ -391,7 +395,7 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
    const request={app,claude:option(app)||claudes().find(c=>c.socket===process.env.CLAUDE_CODE_MESSAGING_SOCKET)?.id,codex:option('codex')||process.env.CODEX_THREAD_ID,permissionMode:option('permission-mode')};
    if(cmd==='reconnect'){
      if(!process.env.CODEX_APP_TOOLS_PIPE_PATH||!process.env.CODEX_THREAD_ID)throw new Error('Reconnect from a current Codex Desktop task to refresh the native app connection');
-     const all=await catalog(),c=exact(all[app]||[],request.claude,app),x=exact(all.codex,request.codex,'Codex');
+     const all=await catalog(),c=select(all,app,request.claude,app),x=select(all,'codex',request.codex,'Codex');
      const previous=configs().find(v=>v.id===idFor(c.id,x.id));
      if(previous&&alive(previous.pid)){await rpc(previous,{operation:'disconnect'});for(let n=0;n<30&&alive(previous.pid);n++)await new Promise(r=>setTimeout(r,100));if(alive(previous.pid))throw new Error('Previous process has not stopped');}
    }

@@ -513,6 +513,22 @@ def pick_folder(desktop: HiddenDesktop, winapp: str, title: str, folder: str, ev
     return result
 
 
+def agent_propose(runner, python: Path, app: Path, run_dir: Path, env: dict, title: str) -> dict:
+    """A run-local agent session proposes one Work through the product's own native.work_propose,
+    as a Job-owned helper under the app's environment and against this run's runtime descriptor."""
+    session_id = str(uuid.uuid4())
+    done = runner([str(python), "-B", str(HERE / "agent_propose.py"), str(app),
+                   str(run_dir / "state" / "runtime-descriptor.json"), session_id, title],
+                  env=env, cwd=str(run_dir), timeout=180)
+    answer = {"kind": "agent-propose", "title": title, "external_session_id": session_id,
+              "exit_code": done.returncode}
+    try:
+        answer.update(json.loads(done.stdout.strip().splitlines()[-1]))
+    except (ValueError, IndexError):
+        answer["error"] = "the agent did not propose: " + (done.stderr or done.stdout)[-600:]
+    return answer
+
+
 def _graph_owner():
     import importlib.util
     spec = importlib.util.spec_from_file_location("graph_owner", HERE / "graph_owner.py")
@@ -615,8 +631,12 @@ def main(argv=None) -> int:
             lines.append(line.rstrip())
             if line.startswith("NATIVE "):
                 request = json.loads(line[len("NATIVE "):])
-                answer = (pick_folder(desktop, args.winapp, request["title"], request["folder"], out)
-                          if request.get("kind") == "pick-folder" else {"error": "unknown native request"})
+                if request.get("kind") == "pick-folder":
+                    answer = pick_folder(desktop, args.winapp, request["title"], request["folder"], out)
+                elif request.get("kind") == "agent-propose":
+                    answer = agent_propose(JobRunner(job), python, app, run_dir, env, str(request["title"])[:200])
+                else:
+                    answer = {"error": "unknown native request"}
                 natives.append(answer)
                 probe.stdin.write(json.dumps(answer) + "\n")
                 probe.stdin.flush()

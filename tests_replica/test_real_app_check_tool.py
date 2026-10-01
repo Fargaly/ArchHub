@@ -628,3 +628,47 @@ def test_the_real_provisioning_reads_back_from_inside_the_run(tmp_path):
     read, error = owner._child_answer(subprocess.run, [sys.executable, "-B", "-c", owner._READBACK,
                                                        str(TOOL.parents[1])], plan["env"], 300)
     assert read is None and error                                     # a foreign pointer does not open
+
+
+# (v6) The run-local agent proposal: Job-owned, the run's own descriptor, an answer or a typed error. --
+
+def test_the_agent_proposal_runs_job_owned_against_the_runs_own_descriptor(tmp_path):
+    rig = _rig()
+    calls = []
+
+    class Runner:
+        job_owned = True
+
+        def __call__(self, command, *, env=None, cwd=None, timeout=None):
+            calls.append((command, env, cwd, timeout))
+            return subprocess.CompletedProcess(command, 0, json.dumps({
+                "ok": True, "message_id": "m1", "state": "proposed", "work_created": False,
+                "grants_admitted": False}) + "\n", "")
+    env = {"LOCALAPPDATA": str(tmp_path / "LOCALAPPDATA")}
+    answer = rig.agent_propose(Runner(), Path("python.exe"), tmp_path / "app", tmp_path, env, "A proposal")
+    (command, given_env, cwd, timeout), = calls
+    assert command[2] == str(TOOL / "agent_propose.py") and command[3] == str(tmp_path / "app")
+    assert command[4] == str(tmp_path / "state" / "runtime-descriptor.json")   # this run's, never the founder's
+    assert command[6] == "A proposal" and given_env is env and cwd == str(tmp_path) and timeout == 180
+    assert answer["ok"] is True and answer["message_id"] == "m1" and answer["state"] == "proposed"
+    assert answer["external_session_id"] == command[5]
+
+
+def test_an_agent_that_did_not_propose_is_an_error_not_an_answer(tmp_path):
+    rig = _rig()
+
+    def refused(command, *, env=None, cwd=None, timeout=None):
+        return subprocess.CompletedProcess(command, 1, "", "existing runtime descriptor is unavailable")
+    answer = rig.agent_propose(refused, Path("python.exe"), tmp_path / "app", tmp_path, {}, "A proposal")
+    assert "ok" not in answer and "existing runtime descriptor is unavailable" in answer["error"]
+
+
+def test_smoke_declares_redo_and_the_proposal_steps_and_never_approves():
+    declared = _node("import(%s).then(m => console.log(JSON.stringify(m.steps)))"
+                     % json.dumps((TOOL / "scenarios" / "smoke.mjs").resolve().as_uri()))
+    for asked in ("redo the placement (Redo button)", "a run-local agent proposes a Work (native.work_propose)",
+                  "the Workshop shows the proposal as a card with Approve / Not now",
+                  "Not now leaves the proposal proposed"):
+        assert asked in declared
+    source = (TOOL / "scenarios" / "smoke.mjs").read_text(encoding="utf-8")
+    assert "clickText('Approve')" not in source and "'Approve')" not in source.replace("has('Approve')", "")

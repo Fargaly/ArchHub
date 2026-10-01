@@ -113,6 +113,11 @@ A scenario module exports `default async function (ctx)` and calls `ctx.step(ask
 - `native({kind: 'pick-folder', title, folder})`: answers a real Windows folder dialog. It types into
   the dialog's single Edit named `Folder:`, chosen by element type because a Text label shares that
   name. It verifies the typed path, then presses Enter until the dialog closes.
+- `native({kind: 'agent-propose', title})`: a run-local agent session proposes one Work through the
+  product's own `native.work_propose` (`agent_propose.py`: `NativeAgentSession` and
+  `native_agent_mcp.build_server`). It runs as a Job-owned helper (`JobRunner`) under the app's
+  environment, against this run's own runtime descriptor (`<run>\state\runtime-descriptor.json`) and
+  keys; it never reads the founder's. Nothing is granted: the proposal is a Workshop message.
 - `input` and `out`.
 
 `scenarios/smoke.mjs` covers these steps:
@@ -121,8 +126,13 @@ A scenario module exports `default async function (ctx)` and calls `ctx.step(ask
 2. Open each tab.
 3. Place a library node.
 4. Undo the placement.
-5. Open Settings > Workspaces.
-6. Browse: prove the chosen folder lands in the field.
+5. Redo the placement.
+6. Open Settings > Workspaces: the registry is read from the run's own graph owner.
+7. Browse: prove the chosen folder lands in the field.
+8. Add: `NOT EXERCISED` (the protected key).
+9. A run-local agent proposes a Work.
+10. The Workshop shows it as a card with Approve / Not now (NEEDS YOU).
+11. Not now leaves it proposed ("Left for later"). Approve is not pressed: it binds a Work.
 
 ## The run's own graph owner
 

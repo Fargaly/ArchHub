@@ -290,19 +290,26 @@ import {spawn} from 'node:child_process';
 
 const PROTOCOL_URL=new URL('../nodelang/session_link/vendor/src/peer-protocol.mjs',import.meta.url).href;
 const FOREIGN_PEER=`const {PeerEndpoint}=await import(process.env.SL_PROTOCOL_URL);
-const p=new PeerEndpoint({name:'fixture-foreign',cwd:process.env.HOME,log:()=>{}});
-await p.start();
-p.onMessage(r=>process.stdout.write(JSON.stringify({got:r.text})+'\\n'));
-process.stdout.write(JSON.stringify({socket:p.socketPath,pid:process.pid})+'\\n');
-process.stdin.on('end',()=>{p.stop();process.exit(0);});process.stdin.resume();`;
+let p;
+async function up(){p=new PeerEndpoint({name:'fixture-foreign',cwd:process.env.HOME,log:()=>{}});await p.start();
+ p.onMessage(r=>process.stdout.write(JSON.stringify({got:r.text})+'\\n'));
+ process.stdout.write(JSON.stringify({socket:p.socketPath,pid:process.pid})+'\\n');}
+await up();
+let buf='';
+process.stdin.on('data',async d=>{buf+=d;let i;while((i=buf.indexOf('\\n'))>=0){const cmd=buf.slice(0,i);buf=buf.slice(i+1);
+ if(cmd==='drop')p.stop();
+ if(cmd==='close')await new Promise(r=>p.server.close(r));
+ if(cmd==='restart')await up();
+ process.stdout.write(JSON.stringify({done:cmd})+'\\n');}});
+process.stdin.on('end',()=>{p.stop();process.exit(0);});`;
 
 async function foreign(){
  const home=fs.mkdtempSync(path.join(os.tmpdir(),'sl-foreign-'));
  const saved={HOME:process.env.HOME,USERPROFILE:process.env.USERPROFILE,SystemRoot:process.env.SystemRoot};
  process.env.HOME=home;process.env.USERPROFILE=home;
  const child=spawn(process.execPath,['--input-type=module','-e',FOREIGN_PEER],{env:{...process.env,SL_PROTOCOL_URL:PROTOCOL_URL},stdio:['pipe','pipe','inherit'],windowsHide:true});
- const got=[];let info=null;let buf='';
- child.stdout.on('data',d=>{buf+=d;let i;while((i=buf.indexOf('\n'))>=0){const m=JSON.parse(buf.slice(0,i));buf=buf.slice(i+1);if(m.socket)info=m;else got.push(m.got);}});
+ const got=[];const done=[];let info=null;let buf='';
+ child.stdout.on('data',d=>{buf+=d;let i;while((i=buf.indexOf('\n'))>=0){const m=JSON.parse(buf.slice(0,i));buf=buf.slice(i+1);if(m.socket)info=m;else if(m.done)done.push(m.done);else got.push(m.got);}});
  const sender=new PeerEndpoint({name:'fixture-local',cwd:home,log:()=>{}});
  const close=async()=>{process.env.SystemRoot=saved.SystemRoot;sender.stop();child.stdin.end();
   await new Promise(r=>{if(child.exitCode!==null)return r();const t=setTimeout(()=>{child.kill();r();},3000);child.once('exit',()=>{clearTimeout(t);r();});});
@@ -311,7 +318,8 @@ async function foreign(){
  try{await sender.start();await until(()=>info,15000);}catch(e){await close();throw e;}
  const keyFile=()=>path.join(home,'.claude','sessions',fs.readdirSync(path.join(home,'.claude','sessions')).find(n=>n.startsWith(info.pid+'.')&&n.endsWith('.key')));
  const breakProbe=()=>{process.env.SystemRoot=path.join(os.tmpdir(),'sl-foreign-no-such-root');};
- return {sender,socket:()=>info.socket,got,keyFile,breakProbe,close};
+ const command=async(cmd)=>{const n=done.length;child.stdin.write(cmd+'\n');await until(()=>done.length>n,5000);};
+ return {sender,socket:()=>info.socket,got,keyFile,breakProbe,command,close};
 }
 
 test('foreign peer: a failed identity probe under load still delivers to a live peer this sender already verified',{timeout:30000,skip:process.platform!=='win32'},async()=>{
@@ -338,5 +346,40 @@ test('foreign peer: a key whose process identity no longer matches (reused pid) 
   f.breakProbe();
   await assert.rejects(f.sender.sendAndWait(f.socket(),'to a reused pid, probe failing',{timeoutMs:0,kind:'report'}),/authentication key is missing or invalid/);
   assert.equal(f.got.length,1);
+ }finally{await f.close();}
+});
+
+// A confirmed identity belongs to one live inbox. Once that inbox is gone the
+// confirmation is dropped, so a later send to the same pid - here a fresh
+// inbox on the same process - needs a live probe again.
+async function goneThenProbeFails(f,goAway){
+ await f.sender.sendAndWait(f.socket(),'verified',{timeoutMs:0,kind:'report'});
+ await until(()=>f.got.length===1,5000);
+ const old=f.socket();
+ await goAway(old);
+ await f.command('restart');
+ assert.notEqual(f.socket(),old);
+ f.breakProbe();
+ await assert.rejects(f.sender.sendAndWait(f.socket(),'probe failing after the peer went away',{timeoutMs:0,kind:'report'}),/authentication key is missing or invalid/);
+ assert.equal(f.got.length,1);
+}
+
+test('foreign peer: once the registry no longer lists a verified peer, a later unknown probe for its pid is refused',{timeout:30000,skip:process.platform!=='win32'},async()=>{
+ const f=await foreign();
+ try{
+  await goneThenProbeFails(f,async(old)=>{
+   await f.command('drop');
+   await assert.rejects(f.sender.sendAndWait(old,'to a dropped inbox',{timeoutMs:0,kind:'report'}),/No unique live session/);
+  });
+ }finally{await f.close();}
+});
+
+test('foreign peer: once a verified peer pipe is gone (ENOENT), a later unknown probe for its pid is refused',{timeout:30000,skip:process.platform!=='win32'},async()=>{
+ const f=await foreign();
+ try{
+  await goneThenProbeFails(f,async(old)=>{
+   await f.command('close');
+   await assert.rejects(f.sender.sendAndWait(old,'to a closed pipe',{timeoutMs:0,kind:'report'}),{code:'ENOENT'});
+  });
  }finally{await f.close();}
 });

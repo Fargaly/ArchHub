@@ -106,9 +106,25 @@ export function peerKeyPath(pid, socket) {
  */
 const verifiedIdentities = new Map();
 
+/**
+ * A confirmation belongs to a live inbox. When the pid is no longer listed, or
+ * its pipe is gone, the confirmation is dropped and the next send to that pid
+ * needs a live probe again.
+ */
+function forgetPeerSocket(socket) {
+  for (const entry of listClaudeSessions({ includeBridges: true, includeDead: true })) {
+    try { if (peerKeyPath(entry.pid, entry.socket) === peerKeyPath(entry.pid, socket)) verifiedIdentities.delete(entry.pid); }
+    catch {}
+  }
+}
+
 function readPeerToken(socket) {
   peerKeyPath(process.pid, socket);
-  const candidates = listClaudeSessions({ includeBridges: true }).filter((entry) => {
+  const sessions = listClaudeSessions({ includeBridges: true });
+  for (const pid of verifiedIdentities.keys()) {
+    if (!sessions.some((entry) => entry.pid === pid)) verifiedIdentities.delete(pid);
+  }
+  const candidates = sessions.filter((entry) => {
     try { return peerKeyPath(entry.pid, entry.socket) === peerKeyPath(entry.pid, socket); }
     catch { return false; }
   });
@@ -712,6 +728,7 @@ export class PeerEndpoint {
         return frame.msg_id;
       } catch (failure) {
         const error = failure?.error ?? failure;
+        if (error?.code === "ENOENT" || error?.code === "EPIPE") forgetPeerSocket(targetSocket);
         if (!failure?.retryable || attempt === PEER_SEND_ATTEMPTS || !RETRYABLE_PEER_ERRORS.has(error?.code)) {
           throw error;
         }

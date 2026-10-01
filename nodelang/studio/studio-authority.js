@@ -46,6 +46,7 @@
           sub: node.summary || node.assembly || '', x: node.x, y: node.y,
           w: 220, h: Math.max(110, 54 + ports.length * 20), live: true,
           color: node.resolved_color || node.color, status: node.status || '',
+          result: node.result || '', mutates: node.mutates === true,
           ins: ports.filter(port => port.side === 'target'),
           outs: ports.filter(port => port.side === 'source'),
           params: parameters.filter(row => row.k !== 'status'),

@@ -3995,6 +3995,18 @@ const LiveBody = ({ n }) => (
     {n.status ? (
       <div style={{ marginTop:2, fontFamily:LM.mono, fontSize:9.5, color:LM.accent, letterSpacing:'0.03em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{n.status}</div>
     ) : null}
+    {n.result ? (
+      <div style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:10, marginTop:2 }}>
+        <span style={{ color:LM.inkMuted, letterSpacing:'0.04em' }}>result</span>
+        <div style={{ flex:1, borderBottom:`1px dashed ${LM.lineSoft}`, marginBottom:2 }}/>
+        <span title={n.result} style={{ color:LM.ink, maxWidth:150, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{n.result}</span>
+      </div>
+    ) : null}
+    {n.mutates ? (
+      <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:4, fontFamily:LM.mono, fontSize:9.5, color:LM.warn || LM.accent }}>
+        <span aria-hidden="true">⚠</span><span>mutates model · requires approval</span>
+      </div>
+    ) : null}
     <LinePreview id={n.id}/>
   </div>
 );

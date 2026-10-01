@@ -403,6 +403,126 @@ def latest_run_rows(
     return "", [], 0
 
 
+def latest_run_by_node(
+    authority: UnifiedAuthority,
+    snapshot,
+    node_roots,
+    *,
+    limit: int = 400,
+) -> dict[str, str]:
+    """The latest run summary per node, read in ONE pass over history.
+
+    latest_run_rows walks history once PER node; a canvas with many nodes
+    would re-walk the same receipts N times and get slower with every run
+    (canvas-perf). This walks newest->oldest once, keeps the first run seen
+    for each wanted node, and stops when every node has one or the bound is
+    reached. The per-receipt cost is the cheap subject read; a receipt's
+    rows are decoded only for a wanted node not seen yet, so the whole walk
+    decodes at most one run per node. The summary is the exact string the
+    Properties panel uses (_run_summary), so the card and the panel agree.
+    """
+    wanted = {root for root in node_roots if isinstance(root, str) and root}
+    found: dict[str, str] = {}
+    if not wanted:
+        return found
+    try:
+        history = relation_members(snapshot, authority.manifest.history_root)
+    except Exception:
+        return found
+    result_role = authority.role("result")
+    presentation_role = authority.role("presentation")
+    property_role = authority.role("property")
+    name_role = authority.role("name")
+    value_role = authority.role("value")
+    for member in reversed(history[-limit:]):
+        if not wanted:
+            break
+        try:
+            receipt = relation_members(snapshot, member.participant_id)
+        except Exception:
+            continue
+        effects = [
+            each.participant_id for each in receipt
+            if each.role_id == result_role
+        ]
+        if not effects:
+            continue
+        try:
+            carried = relation_members(snapshot, effects[0])
+        except Exception:
+            continue
+        presentations = [
+            each.participant_id for each in carried
+            if each.role_id == presentation_role
+        ]
+        if not presentations:
+            continue
+        try:
+            properties = [
+                each.participant_id
+                for each in relation_members(snapshot, presentations[0])
+                if each.role_id == property_role
+            ]
+            fields: dict[str, str] = {}
+            for property_root in properties:
+                parts = relation_members(snapshot, property_root)
+                key = next(
+                    decode_data_value(authority, snapshot, part.participant_id)
+                    for part in parts if part.role_id == name_role
+                )
+                fields[str(key)] = next(
+                    part.participant_id
+                    for part in parts if part.role_id == value_role
+                )
+            subject_root = fields.get("subject")
+            if subject_root is None:
+                continue
+            # Cheap: decode only the subject before committing to the rows.
+            subject = str(decode_data_value(authority, snapshot, subject_root))
+            if subject not in wanted:
+                continue
+            held = {
+                key: decode_data_value(authority, snapshot, value_root)
+                for key, value_root in fields.items()
+            }
+        except Exception:
+            continue
+        outcome = held.get("outcome")
+        rows = outcome.get("result") if isinstance(outcome, Mapping) else None
+        if not isinstance(rows, list):
+            rows = []
+        kept = [row for row in rows if isinstance(row, Mapping)]
+        returned = held.get("rows_returned")
+        summary = _run_summary(
+            str(held.get("operation") or ""),
+            len(kept),
+            returned if isinstance(returned, int) else len(kept),
+        )
+        if summary:
+            found[subject] = summary
+            wanted.discard(subject)
+    return found
+
+
+def destructive_operations(catalogue: Mapping[str, object] | None) -> dict[str, bool]:
+    """op_id -> whether running it mutates the host model (and so needs the
+    owner's approval).
+
+    Read from the graph-held operation catalogue (read_host_operations), the
+    same `destructive` flag clean_host_execution enforces before a run. A node
+    whose operation is destructive is the card's "mutates model, requires
+    approval"; the flag is the graph's, never a Python guess here.
+    """
+    operations = (
+        catalogue.get("operations") if isinstance(catalogue, Mapping) else None
+    )
+    result: dict[str, bool] = {}
+    for entry in operations or ():
+        if isinstance(entry, Mapping) and isinstance(entry.get("op_id"), str):
+            result[entry["op_id"]] = bool(entry.get("destructive"))
+    return result
+
+
 def _panel_input(
     presenter: str,
     authority: UnifiedAuthority,
@@ -828,6 +948,19 @@ def _project_clean_visual_canvas_unscoped(
         }
         for entry in lens.get("effective_definitions", ())
     }
+    # What each node LAST returned, read in one pass over history so the
+    # card can show its real answer without a per-node walk (canvas-perf).
+    run_results = latest_run_by_node(
+        authority,
+        authority.store.snapshot(),
+        [item["root_id"] for item in lens["nodes"]],
+    )
+    # Which operations mutate the host model (and so need the owner's approval),
+    # read once from the graph-held operation catalogue.
+    from .clean_host_operations import read_host_operations
+    destructive_ops = destructive_operations(
+        read_host_operations(authority, caller=caller)
+    )
     # (card, relation, end) -> the socket on that card. Filled while the
     # cards are built, read when the wires are.
     socket_of_wire_end: dict[tuple[str, str, str], str] = {}
@@ -860,6 +993,14 @@ def _project_clean_visual_canvas_unscoped(
             # something has to say so where the canvas can read it, or the
             # Run it offers has nothing to point at.
             "operation": item.get("operation"),
+            # What this node LAST returned, as the Properties panel words it
+            # (_run_summary). Empty string, not null, when it has not run:
+            # the card shows it only when there is a real run to show.
+            "result": run_results.get(item["root_id"], ""),
+            # Whether running this node mutates the host model (and so needs the
+            # owner's approval), read from the graph-held operation catalogue's
+            # `destructive` flag. False when the node declares no destructive op.
+            "mutates": bool(destructive_ops.get(item.get("operation"))),
             "composition": item["structural_role"] == "composition",
             "openable": bool(item["openable"]),
             "member_count": len(item["properties"]),

@@ -520,6 +520,19 @@
     // local: never clone a tab's page identity from sessionStorage.
     const editorHandles = new WeakSet();
     const editorLabels = new Map();
+    // Draft protection needs only a conversation's owner, view and revision. Reading them through the
+    // visible page (refreshWorkshop) moved the shared page target: after a reload, choosing a saved room
+    // closes the editors of the room just left while the new room's editors open, and each read
+    // superseded the other on every attempt, so the composer stayed behind "Refresh this conversation
+    // before changing draft protection." This read has no page target and leaves the visible page alone.
+    async function readDraftProjection(root, stamp) {
+      const result = await get('/api/universal/workshop?root=' + encodeURIComponent(root) +
+        '&scope=' + encodeURIComponent(stamp.scope));
+      if (!result || result.ok === false || result.graph_id !== stamp.graph ||
+          result.root !== root || result.scope_root !== stamp.scope || !revision(result.revision) ||
+          result.revision < canvas.revision) return null;
+      return {revision:result.revision, owner:result.owner, view:result.view};   // request() rechecks the stamp
+    }
     async function openConversationEditor(root, requestKey, kind = 'message') {
       let stamp = stampFor(root);
       if (!['message','work'].includes(kind)) fail('Unknown conversation editor.');
@@ -527,14 +540,7 @@
       let page = null, queue = Promise.resolve(), uncertain = null, staged = false;
       const request = async (fields, requestStamp = stamp) => {
         if (!current(requestStamp, root)) fail('Return to this conversation to reconcile its draft.');
-        // A read that another refresh superseded answers null (readWorkshop's isCurrent): that is not a
-        // refusal. The Workshop's first open races its own canvas refresh, and failing here left the
-        // composer behind a manual Retry. Read again while this conversation is still the one the stamp
-        // names, a bounded number of times; anything else is refused as before.
-        let projection = await api.refreshWorkshop(root);
-        for (let attempt = 0; projection === null && attempt < 3 && current(requestStamp, root); attempt += 1) {
-          projection = await api.refreshWorkshop(root);
-        }
+        const projection = await readDraftProjection(root, requestStamp);
         if (!current(requestStamp, root) || !projection || projection.error || !revision(projection.revision) ||
             !text(projection.owner) || !text(projection.view)) {
           fail('Refresh this conversation before changing draft protection.');

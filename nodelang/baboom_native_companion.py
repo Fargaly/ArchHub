@@ -176,9 +176,14 @@ def render_baboom_native_sprite(
     # follows the orb measured from the art for this exact pose.
     orb = getattr(frame, "orb", None)
     state = getattr(frame, "brain_state", "unknown")
-    if orb is not None and state != "unknown":
+    # The crystal glows only when it has something to signal: cyan when the
+    # brain answers with facts, red when it is down. A brain that answers empty
+    # ("dim") shows no glow at all -- the grey light the founder read as a
+    # fault is gone. The two live colours come from the product THEME.
+    if orb is not None and state in ("lit", "down"):
         from PyQt6.QtGui import QColor, QRadialGradient
-        colour = {"lit": QColor(126, 223, 211), "dim": QColor(150, 150, 150), "down": QColor(200, 68, 59)}[state]
+        from .application import THEME
+        colour = QColor(THEME["cyan"] if state == "lit" else THEME["err"])
         radius = max(6, round(image.width() * 0.09))
         glow = QRadialGradient(orb[0], orb[1], radius)
         core = QColor(colour); core.setAlpha(230); halo = QColor(colour); halo.setAlpha(0)
@@ -189,8 +194,9 @@ def render_baboom_native_sprite(
     return image
 
 
-# What the confirm control says for each act BABOOM performs. One question,
-# one glyph, one progress line -- the founder always knows what he is pressing.
+# What the confirm control says for each act BABOOM performs: one question and
+# one progress line. The button carries the action in words (below), never a
+# glyph -- the founder always reads what he is pressing.
 _BABOOM_ACT_PROMPTS = {
     "assign-task": ("Create this open task in ArchHub?", "Create the confirmed task"),
     "run-engine": ("Run this on the graph?", "Run it on the graph"),
@@ -199,11 +205,6 @@ _BABOOM_ACT_PROMPTS = {
     "restart-to-update": ("Restart ArchHub to install it?", "Restart and install"),
     "open-host": ("Open it from ArchHub?", "Open the host"),
     "remember": ("Remember this in your Brain?", "Remember it"),
-}
-_BABOOM_ACT_GLYPHS = {
-    "assign-task": "+", "run-engine": "▸", "agent-message": "→",
-    "agent-interrupt": "■", "restart-to-update": "↻", "open-host": "△",
-    "remember": "✓",
 }
 _BABOOM_ACT_PROGRESS = {
     "assign-task": "Creating task...", "run-engine": "Running on the graph...",
@@ -578,19 +579,61 @@ def foreground_app_windows() -> tuple[str, str, str] | None:
 # either grows past the sprite or cuts a word; both read as broken.
 FACE_MAX_CHARS = 72
 
-# The companion menu paints itself. Terracotta is the product accent, and
-# white text on it is the only pairing that stays readable on both the
-# founder's dark desktop and a light one.
-_MENU_STYLE = """
-QMenu { background: #1c1b1a; color: #eceae6; border: 1px solid #3a3734;
-        border-radius: 8px; padding: 5px; }
-QMenu::item { padding: 7px 30px 7px 14px; border-radius: 5px;
-              background: transparent; }
-QMenu::item:selected { background: #d97757; color: #ffffff; }
-QMenu::item:disabled { color: #6d6a66; }
-QMenu::separator { height: 1px; background: #3a3734; margin: 5px 8px; }
-QMenu::right-arrow { width: 9px; height: 9px; margin-right: 9px; }
-"""
+# The companion menu paints itself from the product THEME (application.py),
+# never a hand-typed colour. Terracotta stays the hover surface, but its label
+# is THEME['on_fill'] (6.06:1) not white (3.12:1, which the founder could not
+# read), the disabled row is THEME['ink_soft'] (5.54:1) not a faint grey, and a
+# drop shadow lifts the menu instead of a 1px hairline border.
+def _compose_menu_style() -> str:
+    from .application import THEME
+    return (
+        "QMenu {{ background: {bg}; color: {ink}; border: none;"
+        " border-radius: 8px; padding: 5px; }}"
+        "QMenu::item {{ padding: 7px 30px 7px 14px; border-radius: 5px;"
+        " background: transparent; }}"
+        "QMenu::item:selected {{ background: {accent}; color: {on_fill}; }}"
+        "QMenu::item:disabled {{ color: {disabled}; }}"
+        "QMenu::separator {{ height: 1px; background: {line}; margin: 5px 8px; }}"
+        "QMenu::right-arrow {{ width: 9px; height: 9px; margin-right: 9px; }}"
+    ).format(
+        bg=THEME["bg_raised"], ink=THEME["ink"], accent=THEME["accent"],
+        on_fill=THEME["on_fill"], disabled=THEME["ink_soft"], line=THEME["line"],
+    )
+
+
+_MENU_STYLE = _compose_menu_style()
+
+# A cast shadow is black-with-alpha, not a palette hue, so it is an explicit,
+# named exception to "every colour is a THEME token": pure black (0, 0, 0) at 38%
+# opacity (97/255) for the menu's blur-20, 6px-down drop shadow.
+_MENU_SHADOW_RGBA = (0, 0, 0, 97)
+
+
+def _baboom_mic_icon(colour: str, size: int = 18) -> Any:
+    """The lucide 'mic' glyph (lucide 1.25.0, ISC) as a QIcon in one THEME colour.
+
+    The Talk control is an icon, not a word; its accessible name still carries
+    "Talk". The colour is a THEME token passed in, so no colour is written
+    literally in this module.
+    """
+    from PyQt6.QtCore import QByteArray, Qt
+    from PyQt6.QtGui import QIcon, QPainter, QPixmap
+    from PyQt6.QtSvg import QSvgRenderer
+
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"'
+        ' stroke="%s" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+        '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>'
+        '<path d="M19 10v2a7 7 0 0 1-14 0v-2"/>'
+        '<line x1="12" x2="12" y1="19" y2="22"/></svg>'
+    ) % colour
+    renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    renderer.render(painter)
+    painter.end()
+    return QIcon(pixmap)
 
 
 def _silence_said(seconds: float) -> str:
@@ -638,16 +681,10 @@ def baboom_face_line(context: Mapping[str, object], foreground: tuple[str, str, 
     if isinstance(working, (list, tuple)) and working:
         said.append("%s %s working." % (
             plain_count(len(working), True), "agent is" if len(working) == 1 else "agents are"))
-    canvas = context.get("canvas")
-    if isinstance(canvas, Mapping) and isinstance(canvas.get("ran"), int):
-        answered = canvas.get("answered")
-        if isinstance(answered, int):
-            said.append("%s of %s cards answered on the canvas." % (
-                plain_count(answered, True), plain_count(canvas["ran"])))
-        else:
-            said.append("%s cards ran on the canvas." % plain_count(canvas["ran"], True))
-    if brain.get("ok") is True:
-        said.append("The brain is answering.")
+    # No canvas card counter and no "The brain is answering." line: the founder
+    # read both as noise (2026-09-28), and baboom_speech (the one writer) omits
+    # every internal counter and every calm all-clear. The face states only what
+    # needs him -- what he is in front of, what is wrong, who is working.
     line = " ".join(said) if said else "I'm watching the graph."
     while len(line) > FACE_MAX_CHARS and len(said) > 1:
         said.pop()
@@ -730,6 +767,13 @@ def create_baboom_native_companion_window(
             self._voice_input = voice_input or BaboomVoiceInput()
             self._voice_cancel: threading.Event | None = None
             self._companion_font = companion_font()
+            # Every companion colour comes from the product THEME, resolved once
+            # here (lazy, so the renderer never hard-imports the application at
+            # module load). No colour is hand-typed in this file. THEME['bg_raised']
+            # is the one companion surface -- report, reply box and act panel -- so
+            # nothing behind the words is ever the desktop showing through.
+            from .application import THEME as _theme
+            self._theme = _theme
             self._report = QLabel(self)
             self._report.setFont(self._companion_font)
             self._report.setWordWrap(True)
@@ -737,39 +781,64 @@ def create_baboom_native_companion_window(
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
             )
             self._report.setStyleSheet(
-                "background:#181d20;color:#f1f4f5;border:0;padding:3px 6px;"
+                "background:%s;color:%s;border:0;padding:3px 6px;"
                 "border-radius:0;font-size:12px;line-height:15px;"
+                % (_theme["bg_raised"], _theme["ink"])
             )
             self._input = QLineEdit(self)
             self._input.setFont(self._companion_font)
             self._input.setPlaceholderText("Reply or assign a task")
             self._input.setStyleSheet(
-                "background:#181d20;color:#f1f4f5;border:0;padding:3px 6px;"
+                "background:%s;color:%s;border:0;padding:3px 6px;"
                 "border-radius:0;font-size:12px;"
+                % (_theme["bg_raised"], _theme["ink"])
             )
             self._input.returnPressed.connect(self._submit_input)
             self._input.installEventFilter(self)
             self._input.hide()
+            # Talk is the lucide mic, not a word: an icon reads at a glance and
+            # the accessible name carries "Talk" for the screen reader. It turns
+            # red while it is recording so the founder can see it is listening.
+            from PyQt6.QtCore import QSize
+            self._talk_idle_icon = _baboom_mic_icon(_theme["cyan"])
+            self._talk_recording_icon = _baboom_mic_icon(_theme["err"])
             self._talk = QToolButton(self)
-            self._talk.setText("Talk")
+            self._talk.setText("")
+            self._talk.setIcon(self._talk_idle_icon)
+            self._talk.setIconSize(QSize(18, 18))
             self._talk.setToolTip("Speak one BABOOM command")
-            self._talk.setAccessibleName("Speak one BABOOM command")
+            self._talk.setAccessibleName("Talk")
             self._talk.setStyleSheet(
-                "background:transparent;color:#7edfd3;border:0;padding:0 6px;"
-                "font-size:11px;font-weight:600;"
+                "background:transparent;border:0;padding:0 4px;"
             )
             self._talk.clicked.connect(self._toggle_voice_capture)
             self._talk.hide()
+            # The confirm control carries the action in words, not a glyph, and a
+            # labelled Cancel sits beside it so the founder always reads what he is
+            # pressing and always has a way out. Confirm is the primary: the accent
+            # fill with THEME['on_fill'] text (6.06:1), the pairing the design
+            # system added precisely because white on accent measures 3.12:1.
             self._confirm = QToolButton(self)
-            self._confirm.setText("+")
+            self._confirm.setText("Confirm")
             self._confirm.setToolTip("Create the confirmed task")
             self._confirm.setAccessibleName("Create confirmed BABOOM task")
             self._confirm.setStyleSheet(
-                "background:#27231a;color:#f6d781;border:0;border-radius:4px;"
-                "font-size:16px;font-weight:600;"
+                "background:%s;color:%s;border:0;border-radius:4px;padding:0 8px;"
+                "font-size:11px;font-weight:600;"
+                % (_theme["accent"], _theme["on_fill"])
             )
             self._confirm.clicked.connect(self._execute_task)
             self._confirm.hide()
+            self._cancel = QToolButton(self)
+            self._cancel.setText("Cancel")
+            self._cancel.setToolTip("Dismiss without acting")
+            self._cancel.setAccessibleName("Cancel the BABOOM action")
+            self._cancel.setStyleSheet(
+                "background:transparent;color:%s;border:0;padding:0 6px;"
+                "font-size:11px;" % _theme["ink_muted"]
+            )
+            self._cancel.clicked.connect(self._close_interaction)
+            self._cancel.hide()
             self.setWindowFlags(
                 Qt.WindowType.Tool
                 | Qt.WindowType.FramelessWindowHint
@@ -962,6 +1031,7 @@ def create_baboom_native_companion_window(
             if stale:
                 self._pending_task_utterance = None
                 self._confirm.hide()
+                self._cancel.hide()
                 self._face_offer = None
             if report is None and self._interaction_requested:
                 report = "Reply or assign a task"
@@ -991,6 +1061,11 @@ def create_baboom_native_companion_window(
                 left, top, right, bottom = (
                     bounds.x, bounds.y, bounds.right, bounds.bottom
                 )
+            # A pending act shows Confirm and Cancel on their own row beneath the
+            # question, so the buttons never sit on top of the words. Reserve that
+            # row in the window bounds while the buttons are up.
+            if self._confirm.isVisible() and layout.message is not None:
+                bottom = max(bounds.bottom, message.bottom) + 34
             self._origin = QPoint(left, top)
             window_rect = QRect(left, top, right - left, bottom - top)
             # Qt caches what it last SET; Windows holds what the window really
@@ -1066,6 +1141,7 @@ def create_baboom_native_companion_window(
                 self._input.hide()
                 self._talk.hide()
                 self._confirm.hide()
+                self._cancel.hide()
                 self._pending_task_utterance = None
                 self._act_progress = ""
                 self._interaction_requested = False
@@ -1075,10 +1151,19 @@ def create_baboom_native_companion_window(
                 message_rect = QRect(
                     message.x - left, message.y - top, message.width, message.height
                 )
+                # When an act is pending, the report box grows by one button row so
+                # its bg_raised fill covers Confirm and Cancel -- nothing behind the
+                # buttons is ever the transparent desktop.
+                panel_rect = message_rect
+                if self._confirm.isVisible():
+                    panel_rect = QRect(
+                        message_rect.x(), message_rect.y(),
+                        message_rect.width(), message_rect.height() + 34,
+                    )
                 self._message_rect = message_rect
                 if not self._input.isVisible():
                     self._report.setText(report)
-                    self._report.setGeometry(message_rect)
+                    self._report.setGeometry(panel_rect)
                     self._report.show()
                 self._input.setGeometry(message_rect)
                 if self._input.isVisible():
@@ -1089,10 +1174,16 @@ def create_baboom_native_companion_window(
                     self._talk.show()
                     self._talk.raise_()
                 if self._confirm.isVisible():
+                    band_y = panel_rect.bottom() - 28
                     self._confirm.setGeometry(
-                        message_rect.right() - 28, message_rect.top() + 6, 22, 22
+                        panel_rect.right() - 78, band_y, 72, 22
                     )
                     self._confirm.raise_()
+                    if self._cancel.isVisible():
+                        self._cancel.setGeometry(
+                            panel_rect.right() - 78 - 62, band_y, 56, 22
+                        )
+                        self._cancel.raise_()
             if not self.isVisible():
                 self.show()
             self.update()
@@ -1187,6 +1278,7 @@ def create_baboom_native_companion_window(
                 return
             self._pending_task_utterance = None
             self._confirm.hide()
+            self._cancel.hide()
             self._transient_report = None
             self._transient_revision = None
             self._interaction_requested = True
@@ -1217,6 +1309,7 @@ def create_baboom_native_companion_window(
             self._input.hide()
             self._talk.hide()
             self._confirm.hide()
+            self._cancel.hide()
             self._report.hide()
             self.refresh()
 
@@ -1301,6 +1394,16 @@ def create_baboom_native_companion_window(
             # see which row he was on (2026-09-07). The menu states its own
             # surface, so nothing is inherited and nothing is guessed.
             menu.setStyleSheet(_MENU_STYLE)
+            # A soft drop shadow lifts the menu off the desktop in place of the
+            # old 1px hairline border. The colour is the named shadow exception,
+            # not a THEME hue (a cast shadow is black-with-alpha).
+            from PyQt6.QtWidgets import QGraphicsDropShadowEffect
+            from PyQt6.QtGui import QColor as _QColor
+            shadow = QGraphicsDropShadowEffect(menu)
+            shadow.setBlurRadius(20)
+            shadow.setOffset(0, 6)
+            shadow.setColor(_QColor(*_MENU_SHADOW_RGBA))
+            menu.setGraphicsEffect(shadow)
             brain = context.get("brain") or {}
             brain_line = ("Brain: %d facts" % int(brain.get("facts") or 0)) if brain.get("ok") else ("Brain: not answering" if brain.get("ok") is False else "Brain")
             b = menu.addMenu(brain_line)
@@ -1446,7 +1549,9 @@ def create_baboom_native_companion_window(
             self._voice_cancel = cancel
             self._input.setEnabled(False)
             self._input.setPlaceholderText("Listening...")
-            self._talk.setText("Stop")
+            self._talk.setIcon(self._talk_recording_icon)
+            self._talk.setAccessibleName("Stop")
+            self._talk.setToolTip("Stop listening")
 
             def capture() -> None:
                 try:
@@ -1468,7 +1573,9 @@ def create_baboom_native_companion_window(
                 return
             self._voice_cancel = None
             self._talk.setEnabled(True)
-            self._talk.setText("Talk")
+            self._talk.setIcon(self._talk_idle_icon)
+            self._talk.setAccessibleName("Talk")
+            self._talk.setToolTip("Speak one BABOOM command")
             self._input.setEnabled(True)
             self._input.setPlaceholderText("Reply or assign a task")
             text = result.get("text")
@@ -1493,6 +1600,7 @@ def create_baboom_native_companion_window(
             self._act_progress = ""
             self._interaction_requested = False
             self._confirm.hide()
+            self._cancel.hide()
             if isinstance(response, Mapping):
                 self._transient_report = compact_baboom_response_report(response)
                 self._transient_revision = (
@@ -1530,10 +1638,15 @@ def create_baboom_native_companion_window(
                     self._pending_task_utterance = utterance
                     self._transient_report = question
                     self._act_progress = _BABOOM_ACT_PROGRESS.get(intent, "Working...")
-                    self._confirm.setText(_BABOOM_ACT_GLYPHS.get(intent, "+"))
+                    # The button carries a short verb ("Run", "Create", "Send")
+                    # that fits it without clipping; the full phrase is the
+                    # question above it and the button's tooltip.
+                    verb = label if len(label) <= 10 else label.split()[0]
+                    self._confirm.setText(verb)
                     self._confirm.setToolTip(label)
                     self._confirm.setAccessibleName(label)
                     self._confirm.show()
+                    self._cancel.show()
             if self._pending_task_utterance is None:
                 self._submitted_utterance = ""
             self._input.clear()
@@ -1548,6 +1661,7 @@ def create_baboom_native_companion_window(
                 return
             self._pending_task_utterance = None
             self._confirm.hide()
+            self._cancel.hide()
             self._report.setText(self._act_progress or "Working...")
             self._report.show()
 

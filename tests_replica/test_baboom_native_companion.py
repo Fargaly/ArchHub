@@ -319,7 +319,10 @@ def test_native_companion_keeps_reply_available_without_relaying_every_tick(tmp_
         QTest.mouseClick(window._talk, Qt.MouseButton.LeftButton)
         QTest.qWait(50)
         app.processEvents()
-        assert window._talk.text() == "Talk"
+        # Talk is the lucide mic icon; its label lives in the accessible name,
+        # which returns to "Talk" once a capture has finished.
+        assert window._talk.accessibleName() == "Talk"
+        assert not window._talk.icon().isNull()
         assert not window._input.isVisible()
         assert window._transient_report == "Ready."
     finally:
@@ -589,3 +592,235 @@ def test_native_companion_says_it_is_stale_rather_than_lie(tmp_path):
     assert "haven't heard" in crowded, (
         "a busy face dropped the staleness notice: %r" % crowded
     )
+
+
+# --- G2 Task 13 BABOOM first slice (CODEX-FRONTEND-TASKS.md section 13,
+# items 1, 3, 7, 8). Founder rule for BABOOM: colours come from THEME, text is
+# readable (>= 4.5:1 for the menu hover and disabled rows), the menu is lifted by
+# a shadow not a hairline border, buttons carry words not glyphs, the brain
+# crystal is cyan/red/off from THEME, and the face line drops internal chatter.
+# Every check below FAILS on 3a6bf6ba and passes on the slice patch.
+import re as _t13_re
+import nodelang.baboom_native_companion as _t13_companion
+from nodelang.application import THEME as _T13_THEME
+
+_T13_SRC = Path(_t13_companion.__file__).read_text(encoding="utf-8")
+_T13_HEX = _t13_re.compile(r"#[0-9a-fA-F]{6}")
+
+
+def _t13_rgb(value):
+    value = value.lstrip("#")
+    return int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
+
+
+def _t13_luminance(rgb):
+    def channel(raw):
+        c = raw / 255.0
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = rgb
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+
+
+def _t13_contrast(fg, bg):
+    hi, lo = sorted((_t13_luminance(_t13_rgb(fg)), _t13_luminance(_t13_rgb(bg))), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def _t13_decl(style, selector):
+    match = _t13_re.search(_t13_re.escape(selector) + r"\s*\{([^}]*)\}", style)
+    return match.group(1) if match else ""
+
+
+def _t13_prop(decl, name):
+    match = _t13_re.search(r"(?:^|;|\s)" + name + r"\s*:\s*(#[0-9a-fA-F]{6})", decl)
+    return match.group(1) if match else None
+
+
+def _t13_window(tmp_path, name):
+    app = QApplication.instance() or QApplication([])
+    atlas_image = QImage(1536, 2288, QImage.Format.Format_ARGB32_Premultiplied)
+    atlas_image.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(atlas_image)
+    painter.fillRect(240, 50, 96, 120, QColor(28, 187, 171, 255))
+    painter.end()
+    atlas_path = tmp_path / name
+    assert atlas_image.save(str(atlas_path))
+    atlas = BaboomSpriteAtlas(
+        path=atlas_path, width=1536, height=2288, columns=8, rows=11,
+        cell_width=192, cell_height=208,
+    )
+    host = BaboomNativeHost(
+        _Transport(), external_session_id="companion-t13-court",
+        device_credential_provider=lambda challenge: {"proof": "approved"},
+    )
+    host.connect()
+    controller = BaboomNativeCompanionController(host, atlas, occupied_provider=lambda: ())
+    return app, create_baboom_native_companion_window(controller)
+
+
+def test_t13_item1_companion_source_carries_no_raw_hex_colour():
+    """item 1: every colour is a THEME token; no #rrggbb literal in the module."""
+    hits = sorted(set(_T13_HEX.findall(_T13_SRC)))
+    assert hits == [], "raw hex must be THEME tokens, found: %s" % hits
+
+
+def _t13_hex(colour):
+    return "#%02x%02x%02x" % (colour.red(), colour.green(), colour.blue())
+
+
+def _t13_text_pixel(img, rect, bg_hex):
+    """The row's solid text colour: the pixel whose luminance is furthest from bg.
+
+    Works whether the text is lighter than the fill (white on accent, the base)
+    or darker (on_fill on accent, the fix), so the ratio is the real text/bg one.
+    """
+    bg_lum = _t13_luminance(_t13_rgb(bg_hex))
+    best = None
+    best_dist = -1.0
+    for y in range(max(0, rect.top()), min(img.height(), rect.bottom() + 1)):
+        for x in range(max(0, rect.left()), min(img.width(), rect.right() + 1)):
+            c = img.pixelColor(x, y)
+            if c.alpha() == 0:
+                continue
+            dist = abs(_t13_luminance((c.red(), c.green(), c.blue())) - bg_lum)
+            if dist > best_dist:
+                best_dist, best = dist, c
+    return best
+
+
+def test_t13_item1_menu_hover_and_disabled_meet_4_5_contrast():
+    """item 1: measured from the RENDERED menu pixels, not token math.
+
+    Base is white on accent = 3.12:1. The hovered row's real text pixels vs its
+    real fill, and the disabled row's real text vs the real menu surface, must
+    each read >= 4.5:1.
+    """
+    from PyQt6.QtWidgets import QApplication, QMenu
+    app = QApplication.instance() or QApplication([])
+    menu = QMenu()
+    menu.setStyleSheet(_t13_companion._MENU_STYLE)
+    hovered = menu.addAction("Ask the brain")
+    disabled = menu.addAction("Recall on the graph")
+    disabled.setEnabled(False)
+    menu.setActiveAction(hovered)          # force the :selected (hover) paint
+    menu.resize(menu.sizeHint())
+    menu.show()
+    app.processEvents()
+    img = menu.grab().toImage()
+    try:
+        hover_rect = menu.actionGeometry(hovered)
+        dis_rect = menu.actionGeometry(disabled)
+        hover_bg = img.pixelColor(hover_rect.right() - 15, hover_rect.center().y())
+        hover_text = _t13_text_pixel(img, hover_rect, _t13_hex(hover_bg))
+        menu_bg = img.pixelColor(3, 3)
+        dis_text = _t13_text_pixel(img, dis_rect, _t13_hex(menu_bg))
+        hover = _t13_contrast(_t13_hex(hover_text), _t13_hex(hover_bg))
+        disabled_ratio = _t13_contrast(_t13_hex(dis_text), _t13_hex(menu_bg))
+        assert hover >= 4.5, "rendered hover contrast %.2f < 4.5 (bg %s text %s)" % (
+            hover, _t13_hex(hover_bg), _t13_hex(hover_text))
+        assert disabled_ratio >= 4.5, "rendered disabled contrast %.2f < 4.5 (bg %s text %s)" % (
+            disabled_ratio, _t13_hex(menu_bg), _t13_hex(dis_text))
+    finally:
+        menu.close()
+        menu.deleteLater()
+        app.processEvents()
+
+
+def test_t13_item1_menu_surface_is_a_theme_token():
+    """item 1: the menu surface is THEME['bg_raised'], not a hand-typed grey."""
+    menu = _t13_decl(_t13_companion._MENU_STYLE, "QMenu")
+    assert _t13_prop(menu, "background") == _T13_THEME["bg_raised"]
+
+
+def test_t13_item1_menu_dropped_its_border_for_a_shadow():
+    """item 1: no 1px hairline border; a QGraphicsDropShadowEffect lifts the menu."""
+    menu = _t13_decl(_t13_companion._MENU_STYLE, "QMenu")
+    assert "1px solid" not in menu, "menu must drop its hairline border; got %r" % menu
+    assert "QGraphicsDropShadowEffect" in _T13_SRC, "the menu must be lifted by a drop shadow"
+
+
+def test_t13_item3_act_glyphs_are_deleted():
+    """item 3: the glyph table is gone; the confirm control speaks in words."""
+    assert not hasattr(_t13_companion, "_BABOOM_ACT_GLYPHS"), (
+        "delete _BABOOM_ACT_GLYPHS; the confirm button shows the action in words")
+
+
+def test_t13_item3_confirm_and_cancel_carry_words(tmp_path):
+    """item 3: confirm and cancel are labelled buttons, not a bare glyph."""
+    app, window = _t13_window(tmp_path, "t13-buttons.png")
+    try:
+        confirm = window._confirm.text()
+        assert confirm.strip() and any(c.isalpha() for c in confirm), (
+            "the confirm button must carry a word, got %r" % confirm)
+        assert hasattr(window, "_cancel"), "a labelled Cancel must sit beside Confirm"
+        cancel = window._cancel.text()
+        assert cancel.strip() and any(c.isalpha() for c in cancel), (
+            "the cancel button must carry a word, got %r" % cancel)
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def _t13_crystal_frame(state):
+    return BaboomNativeVisualFrame(
+        revision=1, atlas_path="x", source=Rect(0, 0, 8, 8),
+        layout=BaboomCompanionLayout(
+            sprite=Rect(0, 0, 8, 8), message=None, edge="bottom-right", overlap_area=0),
+        motion="idle", persona_form="steward", report=None, action="", action_label="",
+        report_style="flat-no-border", orb=(4, 4), brain_state=state)
+
+
+def test_t13_item7_crystal_colours_come_from_theme():
+    """item 7: the crystal colours are THEME tokens, not hand-typed QColor rgb."""
+    for literal in ("QColor(126, 223, 211)", "QColor(150, 150, 150)", "QColor(200, 68, 59)"):
+        assert literal not in _T13_SRC, "crystal colour %s must come from THEME" % literal
+
+
+def test_t13_item7_dim_crystal_draws_no_glow():
+    """item 7: a lit crystal glows; a dim (answered-empty) one draws nothing."""
+    atlas = QImage(8, 8, QImage.Format.Format_ARGB32_Premultiplied)
+    atlas.fill(QColor(0, 0, 0, 0))
+    lit = render_baboom_native_sprite(atlas, _t13_crystal_frame("lit"))
+    dim = render_baboom_native_sprite(atlas, _t13_crystal_frame("dim"))
+    lit_px = sum(1 for x in range(8) for y in range(8) if lit.pixelColor(x, y).alpha() > 0)
+    dim_px = sum(1 for x in range(8) for y in range(8) if dim.pixelColor(x, y).alpha() > 0)
+    assert lit_px > 0, "the lit crystal must glow"
+    assert dim_px == 0, "the dim crystal must not glow"
+
+
+def test_t13_item8_face_line_drops_brain_and_card_chatter():
+    """item 8: the face line no longer emits brain chatter or a canvas card counter."""
+    from nodelang.baboom_native_companion import baboom_face_line
+    line, _offer = baboom_face_line({"brain": {"ok": True}}, None)
+    assert "The brain is answering." not in line, (
+        "face_line must not narrate a healthy brain")
+    line2, _offer2 = baboom_face_line({"canvas": {"ran": 9, "answered": 4}}, None)
+    assert "on the canvas" not in line2, "the canvas card counter is founder noise; drop it"
+
+
+def test_t13_item1_primary_confirm_uses_accent_fill_and_on_fill_text(tmp_path):
+    """item 1: the primary act button is accent fill + THEME['on_fill'] text (>= 4.5)."""
+    app, window = _t13_window(tmp_path, "t13-primary.png")
+    try:
+        ss = window._confirm.styleSheet()
+        assert _T13_THEME["accent"] in ss, "primary confirm must fill with THEME accent, got %r" % ss
+        assert _T13_THEME["on_fill"] in ss, "primary confirm text must be THEME on_fill, got %r" % ss
+        assert _t13_contrast(_T13_THEME["on_fill"], _T13_THEME["accent"]) >= 4.5
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_t13_item3_talk_is_a_labelled_mic_icon(tmp_path):
+    """item 3: Talk is the lucide mic icon with the accessible name 'Talk', not a word."""
+    app, window = _t13_window(tmp_path, "t13-mic.png")
+    try:
+        assert not window._talk.icon().isNull(), "Talk must carry the lucide mic icon"
+        assert window._talk.accessibleName() == "Talk"
+        assert window._talk.text() == "", "Talk is an icon, not a text button"
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()

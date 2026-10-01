@@ -6177,6 +6177,10 @@ const SettingsOperations = () => {
 // is written. The hooks read the signed projection. Nothing here ever deletes a file.
 const WORKSPACE_CHECK_MS = 1500;
 const WORKSPACE_CHECK_READS = 40;
+const WORKSPACE_APPROVE = 'Approve the Windows prompt to continue';
+// The owner declined (or closed) the Windows prompt: nothing was written.
+const workspaceRefusal = message => /^the owner did not approve/i.test(String(message || ''))
+  ? 'The Windows prompt was declined or closed. Nothing was changed.' : message;
 const WORKSPACE_PROMISE = 'Removing a workspace only stops ArchHub from governing it. Your files are never deleted.';
 const workspaceSlug = path => String(path || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop()
   .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63);
@@ -6209,7 +6213,7 @@ const SettingsWorkspaces = () => {
   const run = async (label, body) => {
     setBusy(label); setError('');
     try { const next = await workspaceRoots(body); setView(next); return next; }
-    catch (e) { setError(e.message); return null; }
+    catch (e) { setError(workspaceRefusal(e.message)); return null; }
     finally { setBusy(''); }
   };
   const [reads, setReads] = React.useState(0);
@@ -6232,7 +6236,7 @@ const SettingsWorkspaces = () => {
   const add = async () => {
     if (!ready || busy) return;
     const id = rootId || workspaceSlug(path);
-    const done = await run('Waiting for your approval in the Windows prompt', {
+    const done = await run(WORKSPACE_APPROVE, {
       action:'register', id, path:path.trim(), privacy, profile:'client', writers:['claude'] });
     if (done) { setPath(''); setRootId(''); setPrivacy('private'); }
   };
@@ -6264,7 +6268,7 @@ const SettingsWorkspaces = () => {
           background:LM.warn + '12', display:'flex', alignItems:'center', gap:LM.sp.md, fontSize:13 }}>
           <span style={{ flex:1 }}>The registry the governance hooks read does not match the graph (start-up check: {boot}; now: {view.projection}). Changes are paused until it is republished.</span>
           {view.key_pinned && (
-            <button disabled={!!busy} onClick={() => { if (!busy && mismatch && view.key_pinned) run('Waiting for your approval in the Windows prompt', { action:'republish' }); }}
+            <button disabled={!!busy} onClick={() => { if (!busy && mismatch && view.key_pinned) run(WORKSPACE_APPROVE, { action:'republish' }); }}
               style={{ ...smallBtn(true), padding:'4px 10px' }}>Republish</button>
           )}
         </div>
@@ -6299,7 +6303,7 @@ const SettingsWorkspaces = () => {
           <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
             <button onClick={() => setConfirming(null)} style={{ ...smallBtn(), padding:'4px 10px' }}>Keep it</button>
             <button disabled={!!busy || !ready} onClick={async () => { if (!ready || busy) return; const r = confirming; setConfirming(null);
-              await run('Waiting for your approval in the Windows prompt', { action:'unregister', id:r.root_id }); }}
+              await run(WORKSPACE_APPROVE, { action:'unregister', id:r.root_id }); }}
               style={{ ...smallBtn(true), padding:'4px 10px' }}>Stop governing</button>
           </div>
         </div>

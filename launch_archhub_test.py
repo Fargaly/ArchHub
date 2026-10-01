@@ -986,6 +986,9 @@ def _pick_folder(title):
 import threading
 server.native_file_picker = _pick_file
 server.native_folder_picker = _pick_folder
+# Settings -> Workspaces Add/Remove: the owner's Windows key prompt is shown in
+# front of THIS window (the graph's owner process has no window of its own).
+server.native_window_handle = int(window.winId())
 # A dead render process reloads instead of leaving a dead window.
 def _revive(_status, _code):
     print("  render process died -- reloading", flush=True)

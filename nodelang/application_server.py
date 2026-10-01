@@ -1334,8 +1334,8 @@ class _CleanAuthorityHttpServer:
             WorkspaceRootRefused,
             find_workspace_root_catalogue,
             install_workspace_root_catalogue,
+            NO_WINDOW,
             owner_change,
-            pick_workspace_folder,
             roots_view,
         )
         if type(body) is not dict:
@@ -1349,12 +1349,20 @@ class _CleanAuthorityHttpServer:
         request = {key: value for key, value in body.items() if key != "command_id"}
         action = request.get("action")
         if action == "browse":
-            # Browse: the owner picks the folder in Windows' own folder dialog.
-            # It only fills the path in; registering it still takes his key.
+            # Browse is the desktop window's own folder dialog. The graph's owner
+            # runs without a visible window: a dialog opened here would never be
+            # seen, so it is refused instead of opened.
             if set(request) != {"action"}:
                 raise WorkspaceRootRefused("workspace-roots request is invalid")
-            return {"path": pick_workspace_folder()}
+            raise WorkspaceRootRefused(NO_WINDOW.replace("approve this change",
+                                                         "choose a folder"))
         boot = self.workspace_roots_boot
+        if action == "prepare":
+            # The change the desktop window will ask the owner to approve.
+            change = request.get("change")
+            action = change.get("action") if type(change) is dict else None
+            if action not in ("register", "unregister", "republish"):
+                raise WorkspaceRootRefused("only a change can be prepared for approval")
         if action in ("register", "unregister") and boot not in ("match", "missing"):
             raise WorkspaceRootRefused(
                 "the workspace-roots registry does not match the graph (%s); "
@@ -1385,6 +1393,8 @@ class _CleanAuthorityHttpServer:
                 lock=self._mutation_lock,
                 built_in=self.clean_workspace_root,
             )
+            if "prepared" in view:
+                return view
             if action != "list":
                 self.workspace_roots_boot = view["projection"]
         return {**view, "boot": self.workspace_roots_boot}
@@ -7264,7 +7274,7 @@ class ApplicationServer:
                         # roots live in the graph the clean owner holds: the
                         # request is its to answer (owner-only, like Hosts).
                         from .workspace_roots_catalogue import (
-                            forward_workspace_settings, normalized_picked_folder)
+                            approve_in_this_window, normalized_picked_folder)
                         body = self._body(max_bytes=8192)
                         if binding.subject_root != owner.universal_registry.authorization.subject_root:
                             raise AuthorizationDenied('only this instance owner changes its workspaces')
@@ -7276,7 +7286,12 @@ class ApplicationServer:
                             chosen = picker('Choose a folder for ArchHub to govern')
                             self._json(200, {'ok': True, 'path': normalized_picked_folder(chosen)})
                             return
-                        self._json(200, {'ok': True, **forward_workspace_settings(body)})
+                        # Add / Remove / Republish are approved by the owner's key in
+                        # THIS window (the prompt needs a visible window; the graph's
+                        # owner runs without one); the owner verifies before commit.
+                        handle = getattr(owner, 'native_window_handle', None)
+                        self._json(200, {'ok': True, **approve_in_this_window(
+                            body, window_handle=handle() if callable(handle) else handle)})
                         return
                     if self.path == '/api/universal/assistant-registration':
                         body = self._body(max_bytes=4096)

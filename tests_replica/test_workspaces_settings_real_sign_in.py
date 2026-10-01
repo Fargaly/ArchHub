@@ -58,22 +58,17 @@ def test_a_signed_in_page_reads_and_adds_workspaces(runtime, tmp_path):
         assert status == 200, (held == again, listed)
 
 
-def test_browse_returns_the_folder_the_owner_picked_and_changes_nothing(runtime, monkeypatch, tmp_path):
-    """Browse answers with the dialog's folder only; nothing is registered and the
-    graph does not move. The dialog itself is replaced here (no window in a court)."""
-    from nodelang import workspace_roots_catalogue as roots
+def test_browse_on_the_graph_owner_is_refused_visibly_and_changes_nothing(runtime, monkeypatch):
+    """The graph's owner has no visible window: a folder dialog it opened would never
+    be seen. Browse is the desktop window's own dialog; here it is refused, in words."""
+    import subprocess
     server, built, _home, _tmp = runtime
     session = _sign_in(server)
-    picked = tmp_path / "Clients" / "BBC4"
-    picked.mkdir(parents=True)
-    monkeypatch.setattr(roots, "pick_workspace_folder", lambda: str(picked))
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("no dialog process may start"))
     revision = built.location.authority.store.revision
     status, answer = _roots(server, session, {"action": "browse"})
-    assert status == 200 and answer["path"] == str(picked), answer
+    assert status != 200 and "Open the ArchHub window to choose a folder" in answer["error"], answer
     assert built.location.authority.store.revision == revision
-    monkeypatch.setattr(roots, "pick_workspace_folder", lambda: "")  # cancelled
-    status, answer = _roots(server, session, {"action": "browse"})
-    assert status == 200 and answer["path"] == "", answer
     status, answer = _roots(server, session, {"action": "browse", "path": "C:/x"})
     assert status != 200, answer
     status, answer = _call(server, ROUTE, {"action": "browse"},
@@ -81,18 +76,11 @@ def test_browse_returns_the_folder_the_owner_picked_and_changes_nothing(runtime,
     assert status == 403, answer
 
 
-def test_the_picker_accepts_only_a_local_folder(monkeypatch):
-    import subprocess
+def test_the_picker_accepts_only_a_local_folder():
     from nodelang import workspace_roots_catalogue as roots
 
-    class Done:
-        def __init__(self, out, code=0):
-            self.stdout, self.returncode = out, code
-
-    for out, expected in ((b"E:/01.PERSONAL", "E:\\01.PERSONAL"),
-                          ("E:/Clients/ملف".encode("utf-8"), "E:\\Clients\\ملف"), (b"", "")):
-        monkeypatch.setattr(subprocess, "run", lambda *a, **k: Done(out))
-        assert roots.pick_workspace_folder() == expected
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: Done(b"\\\\server\\share"))
+    for chosen, expected in (("E:/01.PERSONAL", r"E:\01.PERSONAL"),
+                             ("E:/Clients/ملف", r"E:\Clients\ملف"), ("", "")):
+        assert roots.normalized_picked_folder(chosen) == expected
     with pytest.raises(roots.WorkspaceRootRefused):
-        roots.pick_workspace_folder()
+        roots.normalized_picked_folder(r"\\server\share")

@@ -585,6 +585,29 @@ _FIELDS = {
     "unregister": {"action", "id"},
     "register": {"action", "id", "path", "privacy", "profile", "writers"},
 }
+# A change approved in another (visible) process: "prepare" returns the exact
+# snapshot that change would produce; the change then carries "signature".
+_CHANGES = ("register", "unregister", "republish")
+KEY_CHECK = b"archhub workspace-roots key check"
+
+
+def _approval_key(verifier, pin):
+    """The public half an approval made elsewhere must verify under: the protected
+    key the store holds, which must be the pinned one once a pin exists. None when
+    no key exists yet (the approving process creates it, with the owner prompt)."""
+    from .workspace_roots_signing import SigningUnavailable
+    try:
+        blob = verifier.protected_public_blob()
+    except SigningUnavailable as exc:
+        raise WorkspaceRootRefused("the workspace-roots signing key is refused: " + str(exc)) from exc
+    if blob is None:
+        if pin is not None:
+            raise WorkspaceRootRefused("the pinned workspace-roots signing key is missing")
+        return None, None
+    fingerprint = hashlib.sha256(bytes(blob)).hexdigest()
+    if pin is not None and fingerprint != pin:
+        raise WorkspaceRootRefused("the workspace-roots signing key is not the pinned key")
+    return bytes(blob), fingerprint
 
 
 def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
@@ -600,11 +623,22 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
     """
     from .workspace_roots_signing import CngSigner, CngVerifier, SigningUnavailable
 
+    preparing = type(request) is dict and request.get("action") == "prepare"
+    if preparing:
+        # The change the approving process will sign, never committed here.
+        if set(request) != {"action", "change"} or type(request["change"]) is not dict:
+            raise WorkspaceRootRefused("unexpected workspace-roots fields")
+        request = request["change"]
+        if request.get("action") not in _CHANGES or "signature" in request:
+            raise WorkspaceRootRefused("only a change can be prepared for approval")
     if type(request) is not dict or request.get("action") not in _FIELDS:
         raise WorkspaceRootRefused(
             "workspace-roots action must be list, register, unregister or republish")
     action = request["action"]
-    if set(request) - _FIELDS[action] or (action == "unregister" and "id" not in request):
+    approval = request.get("signature")
+    allowed = _FIELDS[action] | ({"signature"} if action in _CHANGES else set())
+    if (set(request) - allowed or (action == "unregister" and "id" not in request)
+            or ("signature" in request and (type(approval) is not str or len(approval) != 128))):
         raise WorkspaceRootRefused("unexpected workspace-roots fields")
     if signer_factory is None:
         def signer_factory(pinned):
@@ -626,19 +660,38 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
                                   request.get("writers") or ["claude"], roots,
                                   built_in=built_in)
         predicted = _predict(roots, action, values, request.get("id"))
-    try:
-        new_pin = pin
-        if new_pin is None:
-            if action == "republish":
-                raise WorkspaceRootRefused("nothing is registered yet")
-            signer_factory(None).sign(b"archhub workspace-roots key check")
-            new_pin = fingerprint_of()
-            if type(new_pin) is not str or not _FINGERPRINT.match(new_pin):
-                raise WorkspaceRootRefused("the signing key fingerprint is unreadable")
+    if pin is None and action == "republish":
+        raise WorkspaceRootRefused("nothing is registered yet")
+    if preparing or approval is not None:
+        # Approved in the visible desktop process (the owner prompt needs a window
+        # this process does not have). This process only verifies: the signature
+        # must be the protected, pinned key's, over exactly the snapshot derived
+        # here from the graph as it is now; anything else commits nothing.
+        blob, new_pin = _approval_key(verifier, pin)
+        if preparing:
+            if new_pin is None:
+                return {"prepared": {"needs_key": True}}
+            return {"prepared": {"body": snapshot_body(predicted, new_pin), "pin": new_pin}}
+        if blob is None:
+            raise WorkspaceRootRefused("no workspace-roots signing key exists yet")
         body = snapshot_body(predicted, new_pin)
-        signature = signer_factory(new_pin).sign(canonical(body))
-    except SigningUnavailable as exc:
-        raise WorkspaceRootRefused("the owner did not approve: " + str(exc)) from exc
+        signature = approval
+        if not verifier.verify_blob(blob, KEY_ID, 1, canonical(body), signature):
+            raise WorkspaceRootRefused(
+                "the approval does not match this change (the roots may have changed); "
+                "nothing was changed")
+    else:
+        try:
+            new_pin = pin
+            if new_pin is None:
+                signer_factory(None).sign(KEY_CHECK)
+                new_pin = fingerprint_of()
+                if type(new_pin) is not str or not _FINGERPRINT.match(new_pin):
+                    raise WorkspaceRootRefused("the signing key fingerprint is unreadable")
+            body = snapshot_body(predicted, new_pin)
+            signature = signer_factory(new_pin).sign(canonical(body))
+        except SigningUnavailable as exc:
+            raise WorkspaceRootRefused("the owner did not approve: " + str(exc)) from exc
     with lock:
         _now, current, current_pin = read_state(authority, catalogue, caller=caller)
         if _comparable(current) != _comparable(roots) or current_pin != pin:
@@ -832,6 +885,56 @@ def forward_workspace_settings(body) -> dict:
     return {key: value for key, value in answer.items() if key != "ok"}
 
 
+NO_WINDOW = "Open the ArchHub window to approve this change"
+
+
+def _reflects(request, body) -> bool:
+    """The snapshot the owner prepared is this request's outcome (checked before the
+    owner is asked to approve it)."""
+    if type(body) is not dict or type(body.get("roots")) is not list:
+        return False
+    active = {entry.get("id"): entry for entry in body["roots"] if type(entry) is dict}
+    if request["action"] == "register":
+        entry = active.get(request.get("id"))
+        return (entry is not None
+                and str(PureWindowsPath(entry.get("path", ""))).casefold()
+                == str(PureWindowsPath(str(request.get("path", "")))).casefold())
+    if request["action"] == "unregister":
+        return request.get("id") not in active
+    return True
+
+
+def approve_in_this_window(body, *, window_handle, forward=None, signer_factory=None) -> dict:
+    """Settings -> Workspaces Add/Remove/Republish from the desktop: the graph's
+    owner prepares the exact snapshot, THIS process signs it with the owner's
+    protected key (the Windows prompt is shown in front of `window_handle`), and the
+    owner verifies that signature before it commits. No window, no signature."""
+    from .workspace_roots_signing import CngSigner, SigningUnavailable
+    forward = forward or forward_workspace_settings
+    if type(body) is not dict or body.get("action") not in _CHANGES or "signature" in body:
+        return forward(body)
+    if not window_handle:
+        raise WorkspaceRootRefused(NO_WINDOW)
+    if signer_factory is None:
+        def signer_factory(pinned):
+            return CngSigner(KEY_NAME, protect=True, pinned_fingerprint=pinned,
+                             window_handle=window_handle)
+    change = {key: value for key, value in body.items() if key != "command_id"}
+    try:
+        prepared = forward({"action": "prepare", "change": change}).get("prepared") or {}
+        if prepared.get("needs_key"):
+            signer_factory(None).sign(KEY_CHECK)  # creates the key: the owner prompt
+            prepared = forward({"action": "prepare", "change": change}).get("prepared") or {}
+        pin, snapshot = prepared.get("pin"), prepared.get("body")
+        if (type(pin) is not str or not _FINGERPRINT.match(pin) or type(snapshot) is not dict
+                or snapshot.get("key_fingerprint") != pin or not _reflects(change, snapshot)):
+            raise WorkspaceRootRefused("the graph owner prepared a different change; nothing was signed")
+        signature = signer_factory(pin).sign(canonical(snapshot))
+    except SigningUnavailable as exc:
+        raise WorkspaceRootRefused("the owner did not approve: " + str(exc)) from exc
+    return forward({**body, "signature": signature})
+
+
 def verified_graph_state() -> dict:
     """Ask the canonical instance, with a fresh nonce, for its current registry
     digest; accept only a statement it signed for exactly this request."""
@@ -876,36 +979,6 @@ def _require_graph_current(signed):
         raise InvalidCell("the graph's current workspace-roots state is unavailable") from exc
     if statement["registry_digest"] != registry_digest(signed):
         raise InvalidCell("the workspace-roots registry is not the graph's current projection")
-
-
-_PICK_FOLDER = """
-import sys, tkinter
-from tkinter import filedialog
-root = tkinter.Tk()
-root.withdraw()
-root.attributes('-topmost', True)
-chosen = filedialog.askdirectory(parent=root, mustexist=True,
-                                 title='Choose a folder for ArchHub to govern')
-sys.stdout.buffer.write((chosen or '').encode('utf-8'))
-"""
-
-
-def pick_workspace_folder(*, timeout=600.0) -> str:
-    """The owner's folder choice from Windows' own folder dialog, or "" when he
-    cancels. The dialog runs in its own short-lived process, so the application's
-    server threads never own a window. Only the path comes back: registering it
-    is still owner_change, approved by the owner's key."""
-    import subprocess
-    import sys
-    try:
-        done = subprocess.run([sys.executable, "-c", _PICK_FOLDER], capture_output=True,
-                              timeout=timeout, check=False,
-                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except subprocess.TimeoutExpired:
-        return ""
-    if done.returncode != 0:
-        return ""
-    return normalized_picked_folder(done.stdout.decode("utf-8", "replace"))
 
 
 def normalized_picked_folder(chosen) -> str:

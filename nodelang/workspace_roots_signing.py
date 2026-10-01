@@ -29,6 +29,9 @@ NCRYPT_SILENT_FLAG = 0x40
 FORCE_HIGH_PROTECTION = 0x2
 NTE_BAD_KEYSET = 0x80090016
 NTE_NOT_FOUND = 0x80090011
+# NCRYPT_WINDOW_HANDLE_PROPERTY: the window the owner prompt belongs to. Without it a
+# prompt raised by a process with no visible window never reaches the owner.
+WINDOW_HANDLE_PROPERTY = "HWND Handle"
 _HANDLE = ctypes.c_size_t
 
 
@@ -115,13 +118,27 @@ class CngSigner:
     """Signs with the owner's protected key, creating it on first use (Windows prompts)."""
 
     def __init__(self, key_name: str, *, description: str = "ArchHub workspace registrations",
-                 protect: bool = True, pinned_fingerprint: str | None = None):
+                 protect: bool = True, pinned_fingerprint: str | None = None,
+                 window_handle: int | None = None):
         self.key_name = key_name
         self.description = description
         self.protect = protect  # courts only: False creates an unprompted key they delete
         # The public-key fingerprint the graph pinned at the first registration; a key
         # under the same name with any other public half is a substitute and refused.
         self.pinned_fingerprint = pinned_fingerprint
+        # The visible window the owner prompt is shown in front of (the desktop's).
+        self.window_handle = window_handle
+
+    def _attach_window(self, store, handle):
+        """Bind the owner prompt to the window; a prompt that cannot be shown is refused."""
+        if not self.window_handle:
+            return
+        hwnd = ctypes.c_void_p(int(self.window_handle))
+        rc = store.ncrypt.NCryptSetProperty(handle, WINDOW_HANDLE_PROPERTY, ctypes.byref(hwnd),
+                                            ctypes.sizeof(hwnd), 0)
+        if rc:
+            raise SigningUnavailable("the owner prompt cannot be attached to the ArchHub window: %#x"
+                                     % _status(rc))
 
     def _dword_property(self, store, key, name):
         value, size = wintypes.DWORD(), wintypes.DWORD()
@@ -169,6 +186,9 @@ class CngSigner:
         if rc:
             raise SigningUnavailable("signing key not created: %#x" % _status(rc))
         try:
+            # The creation prompt (shown at finalize) belongs to the window too; the
+            # key store refuses the property on its provider handle (NTE_NOT_SUPPORTED).
+            self._attach_window(store, key)
             export = wintypes.DWORD(0)
             ui = _UiPolicy(1, FORCE_HIGH_PROTECTION, None, "ArchHub workspaces", self.description)
             policies = [("Export Policy", ctypes.byref(export), 4)]
@@ -191,6 +211,7 @@ class CngSigner:
         try:
             key = self._key(store)
             try:
+                self._attach_window(store, key)  # the per-signature prompt
                 digest = hashlib.sha256(payload).digest()
                 size = wintypes.DWORD()
                 rc = store.ncrypt.NCryptSignHash(key, None, digest, len(digest), None, 0, ctypes.byref(size), 0)
@@ -235,6 +256,25 @@ class CngVerifier:
     def public_fingerprint(self) -> str | None:
         blob = self.public_blob()
         return hashlib.sha256(blob).hexdigest() if blob else None
+
+    def protected_public_blob(self, *, protect: bool = True) -> bytes | None:
+        """The public half, only of a key that is non-exportable and (protect=True)
+        owner-prompted, read silently; None when no key exists. A process that
+        verifies an approval it did not sign accepts only this key's signatures."""
+        store = _Store()
+        try:
+            key, rc = store.open(self.key_name)
+            if key is None:
+                if rc == NTE_BAD_KEYSET:
+                    return None
+                raise SigningUnavailable("signing key unavailable: %#x" % rc)
+            try:
+                CngSigner(self.key_name, protect=protect)._check_existing(store, key)
+                return store.public_blob(key)
+            finally:
+                store.ncrypt.NCryptFreeObject(key)
+        finally:
+            store.close()
 
     def verify(self, key_id: str, version: int, payload: bytes, signature: str) -> bool:
         """Verify with the key the store holds now. A caller that checked a pin uses

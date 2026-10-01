@@ -133,22 +133,27 @@ const WORKSHOP_TASK_STATES = [
   [/^\s*(submitted)\b/i, 'review'],
   [/^\s*(claimed|started|running|working on|assigned)\b/i, 'run'],
 ];
+// An agent's relayed reply is that agent speaking: its sender is the contact the relay answered for,
+// its text the agent's own text (never the relay's header or the relay author).
+const wsSender = message => typeof message?.relayed_from === 'string' ? message.relayed_from : message?.sender_root;
+const wsText = message => typeof message?.relayed_from === 'string' && typeof message.agent_text === 'string'
+  ? message.agent_text : String(message?.body || '');
 const workshopTaskItems = (messages, nodes) => {
   const byId = new Map((Array.isArray(nodes) ? nodes : []).map(node => [node.id, node]));
   const cards = new Map(), items = [];
   (Array.isArray(messages) ? messages : []).forEach(message => {
-    const match = WORKSHOP_WORK_REF.exec(String(message?.body || ''));
+    const match = WORKSHOP_WORK_REF.exec(wsText(message));
     if (!match) { items.push({kind:'message', message}); return; }
     let card = cards.get(match[1]);
     if (!card) { card = {kind:'task', work:match[1], node:byId.get(match[1]) || null, events:[]}; cards.set(match[1], card); items.push(card); }
     card.events.push(message);
   });
   cards.forEach(card => {
-    const latest = String(card.events[card.events.length - 1].body || '');
+    const latest = wsText(card.events[card.events.length - 1]);
     card.state = (WORKSHOP_TASK_STATES.find(([pattern]) => pattern.test(latest)) || [null, 'open'])[1];
     const [kind, id] = card.work.split(':');
     card.title = card.node?.title || `${kind} · ${id.slice(0, 8)}`;
-    card.owner = card.events[card.events.length - 1].sender_root;
+    card.owner = wsSender(card.events[card.events.length - 1]);
   });
   return items;
 };
@@ -334,15 +339,17 @@ const wsTasks = (items, nodes, wires, native, names) => {
     const blocks = [...new Set(wires.filter(wire => wire.from?.[0] === card.work).map(wire => titles.get(wire.to?.[0])).filter(Boolean))];
     const categories = [...new Set(events.map(event => event.category).filter(Boolean))];
     const [, short] = String(card.work).split(':');
-    return {id:(short || card.work).slice(0, 8), work:card.work, title:card.title, owner:card.owner, state,
+    // The design's task id slot ("T-01"): derived from the Work id, stable across pages; never a counter.
+    return {id:'T-' + (short || card.work).slice(0, 6), work:card.work, title:card.title, owner:card.owner, state,
       node:card.node ? card.node.id : null, latest,
       intent:wsParam(card.node, /^(description|intent|summary)$/i) || card.title,
       criteria:wsParam(card.node, /criteri/i) || '\u2014',
       blocks:blocks.length ? blocks.join(' \u00b7 ') : '\u2014',
-      lead:latest ? String(latest.body || '') : native?.work === card.work ? 'Native Work status: ' + String(native.state || 'unknown').replaceAll('_', ' ') + '.' : '',
-      thread:events.slice(0, -1).map(event => ({root:event.root, from:event.sender_root,
+      lead:latest ? wsText(latest) : native?.work === card.work ? 'Native Work status: ' + String(native.state || 'unknown').replaceAll('_', ' ') + '.' : '',
+      thread:events.slice(0, -1).map(event => ({root:event.root, from:wsSender(event),
+        toRoots:Array.isArray(event.recipient_roots) ? event.recipient_roots : [],
         to:Array.isArray(event.recipient_roots) && event.recipient_roots.length ? event.recipient_roots.map(root => names.get(root) || root).join(', ') : 'Workshop',
-        text:String(event.body || '')})),
+        text:wsText(event)})),
       approving, events,
       tools:{n:events.length, list:categories.length ? categories.join(' \u00b7 ') : '\u2014',
         t:latest ? (wsClockText(latest.created_at) || String(latest.state || '')) : String(native?.state || '')}};
@@ -497,7 +504,7 @@ const TaskCard = ({ t, sel, onSelect, onDecide, compact, agent, busy }) => {
             {thread.map((m, i) => { const f = agent(m.from); return (
               <div key={m.root || i} style={{ display:'flex', gap:9, fontSize:12.5, lineHeight:1.55, color:W.inkSoft, overflowWrap:'anywhere' }}>
                 <Av a={f} s={18}/>
-                <div><b style={{ color:W.ink, fontWeight:500 }}>{f.name} → {m.to}</b> · {m.text}</div>
+                <div><b style={{ color:W.ink, fontWeight:500 }}>{f.name} → {m.toRoots && m.toRoots.length ? m.toRoots.map(root => agent(root).name).join(', ') : m.to}</b> · {m.text}</div>
               </div> ); })}
             {t.thread.length > 2 && (
               <span role="button" tabIndex={0} onClick={e => { e.stopPropagation(); setAll(!all); }} style={{ fontFamily:W.mono, fontSize:10, color:W.accent, cursor:'pointer' }}>
@@ -1646,6 +1653,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   // so an agent is never shown by its contact root on this page.
   const relayLabels = new Map(messages.filter(m => typeof m.relayed_from === 'string' && typeof m.relayed_label === 'string' && m.relayed_label)
     .map(m => [m.relayed_from, m.relayed_label]));
+  relayLabels.forEach((label, root) => { if (!names.has(root)) names.set(root, label); });
   // THE LIVE SCENE: every design surface below reads these, never a seed.
   const taskItems = workshopTaskItems(messages, projectedWorkNodes);
   const tasks = wsTasks(taskItems, projectedWorkNodes, workshopProjectedWires(state), native, names).map(t => {
@@ -2277,7 +2285,8 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
             <div style={{ flex:1 }}/>
             <IBtn g="⌗" title="Open as nodes" onClick={openAsNodes}/>
             {wfState === 'approved'
-              ? <IBtn g="⊘" title="Revoke approval — nothing further runs" disabled={busy} onClick={() => wfAct('workflow-revoke', {workflow:shownWorkflow.root})}/>
+              ? <><Btn sm pri disabled={busy} onClick={() => wfAct('workflow-execute', {workflow:shownWorkflow.root})}>Run approved</Btn>
+                <IBtn g="⊘" title="Revoke approval — nothing further runs" disabled={busy} onClick={() => wfAct('workflow-revoke', {workflow:shownWorkflow.root})}/></>
               : <Btn sm pri disabled={busy || !shownWorkflow.digest} onClick={() => wfAct('workflow-approve', {workflow:shownWorkflow.root, digest:shownWorkflow.digest})}>
                   {wfState === 'awaiting' ? 'Approve' : 'Re-approve'}</Btn>}
           </div>
@@ -2402,8 +2411,10 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
           <div style={{ display:'flex', gap:8, marginTop:10, alignItems:'center' }}>
             <span style={{ fontFamily:W.mono, fontSize:9, color:W.inkMuted }}>{wf.digest ? 'behavior ' + wf.digest.slice(0, 12) : ''}</span>
             <div style={{ flex:1 }}/>
-            <Btn sm disabled={busy || !wf.digest || approved} onClick={() => wfAct('workflow-approve', {workflow:wf.root, digest:wf.digest})}>Approve</Btn>
-            <Btn sm pri disabled={busy || !approved} onClick={() => wfAct('workflow-execute', {workflow:wf.root})}>Run approved</Btn>
+            {wf.root === shownWorkflow?.root
+              ? <span style={{ fontSize:11, color:W.inkSoft }}>Approve, revoke and run it on the workflow card.</span>
+              : <><Btn sm disabled={busy || !wf.digest || approved} onClick={() => wfAct('workflow-approve', {workflow:wf.root, digest:wf.digest})}>Approve</Btn>
+                <Btn sm pri disabled={busy || !approved} onClick={() => wfAct('workflow-execute', {workflow:wf.root})}>Run approved</Btn></>}
           </div>
         </div>;
       })}

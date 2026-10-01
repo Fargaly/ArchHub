@@ -219,7 +219,7 @@ test('the Workshop view draws the design surfaces from the live projections and 
     assert.match(text(stream), /AWAITING YOUR APPROVAL · LAYER SELECTION/);
     assert.deepEqual([...stream.querySelectorAll('[data-workshop-task]')].map(card => card.getAttribute('data-workshop-task')), [ids.W1, ids.W2, ids.W3]);
     const first = stream.querySelector('[data-workshop-task]');
-    assert.match(text(first), /^3f9a1c7e Layer selection C NEEDS YOU C Codex · Gate failed/);
+    assert.match(text(first), /^T-3f9a1c Layer selection C NEEDS YOU C Codex · Gate failed/);
     assert.deepEqual([...first.querySelectorAll('button')].map(text), ['Approve this repair', 'Generate repair artifact']);
     // Context panel: the design's sections for the first agent in the rail order.
     const context = () => doc.querySelector('[aria-label="Workshop context"]');
@@ -237,7 +237,7 @@ test('the Workshop view draws the design surfaces from the live projections and 
     await ui.click(first);
     assert.deepEqual(JSON.parse(JSON.stringify(sel)), {agent:null, task:ids.W1});
     await ui.render('WorkshopView', props());
-    assert.match(text(context()), /^SELECTED · TASK 3f9a1c7e/);
+    assert.match(text(context()), /^SELECTED · TASK T-3f9a1c/);
     assert.match(text(context()), /intent Pick the source wall layers criteria — blocks Wall creation state NEEDS YOU/);
     // Relocated controls sit behind the context panel's ⋯.
     await ui.click(doc.querySelector('button[aria-label^="Workshop controls"]'));

@@ -1,6 +1,7 @@
 /* Milestone 1 in the shipped Workshop view: each message shows its delivery state per agent, a relayed
    reply is drawn as that agent's own message with Draft-as-workflow and Review-with actions, and an
-   agent-proposed workflow shows its approval state, editable parameters, Approve and Run approved.
+   agent-proposed workflow shows its approval state and editable parameters; Approve and Run approved sit on its
+   workflow card only (parity C, 2026-10-01: one approve surface, not two).
    Everything drawn comes from the live-shaped transcript (workshop_workflow.py projections). */
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
@@ -119,11 +120,11 @@ test('a proposal is drafted, reviewed by another agent, and nothing runs until t
     await ui.click(buttons.find(b => text(b) === 'Draft as workflow'));
     await ui.click(buttons.find(b => text(b) === 'Review with Claude fixture'));
     const panel = stream.querySelector('[aria-label="Agent-proposed workflows and reviews"]');
-    assert.match(text(panel), /^Release note proposed by OpenCode fixture AWAITING YOUR APPROVAL OpenCode builds agent\.session agent Save message Save Claude reviews workshop\.review reviewer Save status started · Claude behavior dddddddddddd Approve Run approved/);
+    assert.match(text(panel), /^Release note proposed by OpenCode fixture AWAITING YOUR APPROVAL OpenCode builds agent\.session agent Save message Save Claude reviews workshop\.review reviewer Save status started · Claude behavior dddddddddddd Approve, revoke and run it on the workflow card\./);
     assert.match(text(panel), /Independent review of aaaaaaaaaaaa judged by Claude fixture produced by OpenCode fixture REPLIED VERDICT PASS$/);
-    const run = [...panel.querySelectorAll('button')].find(b => text(b) === 'Run approved');
-    assert.equal(run.disabled, true, 'a proposal is not approval');
-    await ui.click([...panel.querySelectorAll('button')].find(b => text(b) === 'Approve'));
+    const card = stream.querySelector(`[data-workshop-workflow="${WF}"]`);
+    assert.ok(![...card.querySelectorAll('button')].some(b => text(b) === 'Run approved'), 'a proposal is not approval');
+    await ui.click([...card.querySelectorAll('button')].find(b => text(b) === 'Approve'));
     const save = [...panel.querySelectorAll('button')].filter(b => text(b) === 'Save')[1];
     await ui.click(save);
     assert.deepEqual(JSON.parse(JSON.stringify(calls.filter(c => c[0].startsWith('workshopWorkflow')))), [
@@ -139,7 +140,8 @@ test('an approved workflow runs; a changed one says so and cannot run', async ()
   try {
     const panel = approved.stream.querySelector('[aria-label="Agent-proposed workflows and reviews"]');
     assert.match(text(panel), /APPROVED · READY TO RUN/);
-    const run = [...panel.querySelectorAll('button')].find(b => text(b) === 'Run approved');
+    const card = approved.stream.querySelector(`[data-workshop-workflow="${WF}"]`);
+    const run = [...card.querySelectorAll('button')].find(b => text(b) === 'Run approved');
     assert.equal(run.disabled, false);
     await approved.ui.click(run);
     assert.deepEqual(JSON.parse(JSON.stringify(approved.calls.filter(c => c[0] === 'workshopWorkflow'))),
@@ -149,6 +151,8 @@ test('an approved workflow runs; a changed one says so and cannot run', async ()
   try {
     const panel = stale.stream.querySelector('[aria-label="Agent-proposed workflows and reviews"]');
     assert.match(text(panel), /CHANGED SINCE APPROVAL/);
-    assert.equal([...panel.querySelectorAll('button')].find(b => text(b) === 'Run approved').disabled, true);
+    const card = stale.stream.querySelector(`[data-workshop-workflow="${WF}"]`);
+    assert.ok(![...card.querySelectorAll('button')].some(b => text(b) === 'Run approved'), 'a changed workflow cannot run');
+    assert.ok([...card.querySelectorAll('button')].some(b => text(b) === 'Re-approve'));
   } finally { await stale.ui.close(); }
 });

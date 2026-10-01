@@ -742,6 +742,9 @@ function editorSetup(intercept) {
 
 test('editor: message receipt cannot clear a separate repair draft; close preserves it',async()=>{
   const {api,pages,posts}=editorSetup();
+  // A composer sends from the page it is shown on: the visible page is read first, as the Workshop does.
+  // Draft protection reads its own projection and never loads the page (1b6d05fc), so it cannot stand in.
+  await api.refreshWorkshop('workshop-a');
   const message=await api.openConversationEditor('workshop-a','document-message');
   const work=await api.openConversationEditor('workshop-a','document-work');
   await message.dirty();await work.dirty();
@@ -847,6 +850,7 @@ test('editor: protection failure prevents physical message sending and preserves
   const {api,posts,pendingStorage}=editorSetup(body=>{
     if(body.change==='dirty'&&body.resolution_reference&&refuse) throw Error('offline');
   });
+  await api.refreshWorkshop('workshop-a');   // the page the composer sends from (see the receipt test above)
   const editor=await api.openConversationEditor('workshop-a','document');
   await assert.rejects(api.workshopAction('workshop-a','send',null,{target:'worker-a',message:'Task'},editor),/offline/);
   assert.equal(posts.filter(row=>row.body.idempotency_key).length,0);
@@ -857,6 +861,16 @@ test('editor: protection failure prevents physical message sending and preserves
   const staged=posts.filter(row=>row.body.change==='dirty'&&row.body.resolution_reference);
   assert.equal(staged[0].body.resolution_reference,result.idempotency_key);
   assert.equal(staged[0].body.page_revision,staged[1].body.page_revision);
+});
+
+test('editor: an open editor alone never loads the page; a send before the page is read is refused and posts nothing',async()=>{
+  const {api,posts,gets}=editorSetup();
+  const editor=await api.openConversationEditor('workshop-a','document');await editor.dirty();
+  assert.equal(api.getSnapshot().workshop,null,'draft protection read its own projection, not the visible page');
+  const before=posts.length;
+  await assert.rejects(api.workshopAction('workshop-a','send',null,{target:'worker-a',message:'Task'},editor),
+    /Refresh the Workshop before sending/);
+  assert.equal(posts.length,before);assert.ok(gets.length>0);
 });
 
 test('editor: navigation does not close a page through a different scope',async()=>{

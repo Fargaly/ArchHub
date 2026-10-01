@@ -294,6 +294,15 @@ class Launcher:
 
     def _shape_response(self, message, method, tool):
         result = message.get("result")
+        if method == "initialize" and type(result) is dict:
+            # This host tells the client the tools changed after every swap and
+            # revive, and the worker does after native.work_task_attach/detach.
+            # Claude Code listens for notifications/tools/list_changed only when
+            # initialize declares tools.listChanged; FastMCP's worker declares
+            # false, so every such notification was dropped (live 717, 2026-10-01).
+            capabilities = result.get("capabilities")
+            if type(capabilities) is dict and type(capabilities.get("tools")) is dict:
+                capabilities["tools"] = {**capabilities["tools"], "listChanged": True}
         if method == "tools/list" and type(result) is dict and type(result.get("tools")) is list:
             # The handoff is the launcher's own: never listed to the agent.
             result["tools"] = [t for t in result["tools"] if not (type(t) is dict and t.get("name") == HANDOFF_TOOL)]

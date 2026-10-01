@@ -206,6 +206,23 @@ _BABOOM_ACT_PROMPTS = {
     "open-host": ("Open it from ArchHub?", "Open the host"),
     "remember": ("Remember this in your Brain?", "Remember it"),
 }
+_BABOOM_EXECUTION_FAILED = "BABOOM could not create the task."
+
+
+def baboom_execution_error_text(error: BaseException) -> str:
+    """What the founder reads when a confirmed act does not complete.
+
+    The graph's own refusal arrives as an authenticated MachineResponseError
+    and is written for him ("Codex agents can't be interrupted ... Nothing was
+    sent."). Swallowing it into "could not create the task" told him a Codex
+    interrupt had failed to create a task (real-app acceptance 2026-10-01).
+    Any other failure stays generic: its text was not written for him.
+    """
+    from .application_machine_transport import MachineResponseError
+    text = str(error).strip() if isinstance(error, MachineResponseError) else ""
+    return text[:400] if text else _BABOOM_EXECUTION_FAILED
+
+
 _BABOOM_ACT_PROGRESS = {
     "assign-task": "Creating task...", "run-engine": "Running on the graph...",
     "agent-message": "Sending...", "agent-interrupt": "Interrupting...",
@@ -1668,8 +1685,8 @@ def create_baboom_native_companion_window(
             def execute() -> None:
                 try:
                     result: Mapping[str, object] = controller.execute(utterance)
-                except Exception:
-                    result = {"error": "BABOOM could not create the task."}
+                except Exception as error:
+                    result = {"error": baboom_execution_error_text(error)}
                 self.execution_ready.emit(result)
 
             threading.Thread(
@@ -1692,7 +1709,10 @@ def create_baboom_native_companion_window(
             elif created is False:
                 self._transient_report = "That task already exists in ArchHub."
             else:
-                self._transient_report = "BABOOM could not create the task."
+                error = result.get("error")
+                self._transient_report = (
+                    error.strip() if isinstance(error, str) and error.strip()
+                    else _BABOOM_EXECUTION_FAILED)
             self._transient_revision = (
                 self._frame.revision if self._frame is not None else None
             )

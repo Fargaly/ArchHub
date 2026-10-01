@@ -24,8 +24,11 @@ ROUTES = (
 
 
 def _dispatch_source() -> str:
+    # The routes live in the private dispatcher; the public method only wraps
+    # it. Reading the wrapper found no route at all and these checks failed
+    # with "substring not found" while the gate stayed wired (2026-10-01).
     return inspect.getsource(
-        server_module.ApplicationServer.dispatch_universal_machine_route
+        server_module.ApplicationServer._dispatch_universal_machine_route
     )
 
 
@@ -47,6 +50,7 @@ def test_the_check_refuses_a_session_that_is_not_the_founders():
             )
         ),
         _resolve_universal_machine_agent_session=lambda request: "session:someone-else",
+        _machine_agent_binding_for_request=lambda request: ("session:someone-else", {"runtime": "codex"}),
     )
     check = types.MethodType(
         server_module.ApplicationServer._require_founder_machine_session, fake
@@ -63,6 +67,7 @@ def test_the_check_admits_the_founder_session():
             )
         ),
         _resolve_universal_machine_agent_session=lambda request: "session:founder",
+        _machine_agent_binding_for_request=lambda request: ("session:founder", {}),
     )
     check = types.MethodType(
         server_module.ApplicationServer._require_founder_machine_session, fake

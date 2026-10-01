@@ -204,6 +204,7 @@ def entry(graph, env, monkeypatch):
         mutation_lock=threading.RLock(), conversation_content=None,
         require_universal_http_route=lambda *a, **k: None,
         _resolve_universal_machine_agent_session=lambda request: state["caller"],
+        _machine_agent_binding_for_request=lambda request: (state["caller"], {"runtime": "codex"}),
         _brain_state=lambda: {"ok": True, "facts": 7}, _host_rows=lambda: [],
         _staged_update=lambda: {}, _desktop_request_update_restart=lambda build: None,
     )

@@ -5319,6 +5319,37 @@ class NativeRecipientRelay:
         return result
 
 
+def _founder_baboom_delegate(server, binding) -> bool:
+    """Whether this bound session is the founder's own BABOOM companion.
+
+    The companion holds its own auditable runtime session ("baboom"), never the
+    founder body (35393a5), so founder-only BABOOM routes refused every command
+    it sent (real-app acceptance 2026-10-01). It acts for the founder only
+    through the graph-recorded delegation: the full-access device-proof session
+    of the exact "baboom" catalog entry, bound to a device custody the
+    founder's application committed on this machine (already proven active by
+    _machine_agent_binding_for_request). A session that merely names the
+    runtime, a recovery capability, the baboom-execution worker or any other or
+    wildcard entry, or an unlisted custody is not the delegate.
+    """
+    custody = binding.get("device_custody")
+    if (
+        binding.get("runtime") != "baboom"
+        or binding.get("access") is not None
+        or not isinstance(custody, str)
+    ):
+        return False
+    entry = _agent_body_catalog_entry_for_runtime(
+        server.universal_store.snapshot(), server.universal_registry, "baboom"
+    )
+    return (
+        entry.runtime == "baboom"
+        and entry.credential_mode == "device-proof"
+        and binding.get("catalog_entry") == entry.root_id
+        and custody in entry.device_custody_roots
+    )
+
+
 class ApplicationServer:
     @classmethod
     def from_unified_authority(
@@ -12514,15 +12545,15 @@ class ApplicationServer:
         # An empty session is the founder body only for a read; a command is
         # never driven by an unbound caller (35393a5: a runtime must never act
         # with the founder body).
-        holder = (
-            self.universal_registry.agent_body.session.root_id
-            if direct or (request.get("session") == {} and request.get("method") == "GET")
-            else self._resolve_universal_machine_agent_session(request)
+        founder = self.universal_registry.agent_body.session.root_id
+        if direct or (request.get("session") == {} and request.get("method") == "GET"):
+            return
+        holder, binding = self._machine_agent_binding_for_request(request)
+        if holder == founder or _founder_baboom_delegate(self, binding):
+            return
+        raise AuthorizationDenied(
+            "founder-local BABOOM command requires the founder session"
         )
-        if holder != self.universal_registry.agent_body.session.root_id:
-            raise AuthorizationDenied(
-                "founder-local BABOOM command requires the founder session"
-            )
 
     def _project_model_discovery(self, path):
         """Existing picker/provider data; caller owns admission and final recheck."""
@@ -12595,10 +12626,14 @@ class ApplicationServer:
                 root, binding = self._machine_agent_binding_for_request(request)
                 if binding.get("runtime") not in {"baboom", "baboom-execution"}:
                     raise AuthorizationDenied("BABOOM native frame requires the founder or BABOOM body")
+            elif founder:
+                root, binding = self._machine_agent_binding_for_request(request)
+                if root != builtin and not _founder_baboom_delegate(self, binding):
+                    raise AuthorizationDenied("founder-local BABOOM read requires the founder session")
+                # The founder's BABOOM reads for the founder, as the native frame does.
+                root = builtin
             else:
                 root = self._resolve_universal_machine_agent_session(request)
-            if founder and root != builtin:
-                raise AuthorizationDenied("founder-local BABOOM read requires the founder session")
             return root
 
         source_root = resolve_source()

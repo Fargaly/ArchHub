@@ -298,7 +298,9 @@ class ExistingWorkshopNativeHost:
         driver = self._native['process']
         while (time.monotonic() < deadline and not self._cancel.is_set()
                 and not self._native_stop_requested()):
-            event = driver.wait_event(min(0.25, max(0, deadline - time.monotonic())))
+            # wait_event answers a list of at most one event (drain_events(1)).
+            events = driver.wait_event(min(0.25, max(0, deadline - time.monotonic())))
+            event = events[0] if events else None
             if event is not None and event.get('type') == 'control_response':
                 response = event.get('response', {})
                 if response.get('request_id') == request_id:
@@ -512,7 +514,8 @@ class ExistingWorkshopNativeHost:
             deadline = time.monotonic() + payload['limits']['turn_timeout_seconds']
             while (time.monotonic() < deadline and not self._cancel.is_set()
                     and not self._native_stop_requested()):
-                event = driver.wait_event(0.25)
+                events = driver.wait_event(0.25)
+                event = events[0] if events else None
                 if event is not None and event.get('type') == 'result':
                     held['terminal'] = event
                     break

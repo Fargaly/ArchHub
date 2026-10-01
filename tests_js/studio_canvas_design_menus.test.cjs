@@ -234,6 +234,20 @@ test('M3b: a picked wire is cut with Delete or Backspace through the same unwire
   } finally { await idle.close(); }
 });
 
+test('M3d: Delete right after the click cuts the clicked wire, before the graph confirms the selection', async () => {
+  // Founder smoke 2026-10-01: the click sends the selection gesture; the canvas's selection follows only
+  // when the graph answers. A Delete pressed in between was dropped without a word.
+  const view = await mount();
+  try {
+    const wire = view.doc.querySelector('path[data-wire-id="w-bc"]');
+    await view.click(wire);
+    const pressed = await view.key(view.region(), {key:'Delete'});
+    assert.equal(pressed.defaultPrevented, true, 'Delete is taken by the canvas');
+    await view.settle(5);
+    assert.deepEqual(view.calls.filter(call => call[0] === 'unwire'), [['unwire', 'w-bc']], 'the clicked wire is cut');
+  } finally { await view.close(); }
+});
+
 test('M3c: with two or more cards selected the node menu leads with the design Group selection, which runs the graph Group', async () => {
   const view = await mount();
   try {

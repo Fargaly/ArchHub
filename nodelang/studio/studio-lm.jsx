@@ -280,6 +280,21 @@ const studioLeavesPage = e => e.key === 'BrowserBack' || e.key === 'BrowserForwa
   (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight'));
 // An ordinary canvas edit (place, copy, delete) re-reads the canvas in place. Reloading the whole
 // Studio page re-ran its boot, which on a large graph looked like the app breaking after every edit.
+// Where a library card goes when it has no drop point: the first lattice slot, row by row from the
+// canvas's top-left card, that meets no card already drawn (canvas_placement.free_slot's rule).
+const studioFreeSlot = (nodes, size = {w:210, h:230}, gap = 40, columns = 6) => {
+  const rects = (nodes || []).filter(n => Number.isFinite(n.x) && Number.isFinite(n.y))
+    .map(n => ({x:n.x, y:n.y, w:Number.isFinite(n.w) ? n.w : size.w, h:Math.max(Number.isFinite(n.h) ? n.h : 0, size.h)}));
+  const x0 = rects.length ? Math.min(...rects.map(r => r.x)) : 60;
+  const y0 = rects.length ? Math.min(...rects.map(r => r.y)) : 92;
+  const meets = (x, y) => rects.some(r => x < r.x + r.w + gap && r.x < x + size.w + gap && y < r.y + r.h + gap && r.y < y + size.h + gap);
+  for (let i = 0; i < 4096; i += 1) {
+    const x = x0 + (i % columns) * (size.w + gap), y = y0 + Math.floor(i / columns) * (size.h + gap);
+    if (!meets(x, y)) return {x, y};
+  }
+  return {x:x0, y:Math.max(...rects.map(r => r.y + r.h)) + gap};
+};
+
 const studioRefreshCanvasInPlace = () => {
   const workshop = window.ARCHHUB_EXISTING_WORKSHOP;
   if (typeof workshop?.refreshTopologyCanvas === 'function') return workshop.refreshTopologyCanvas();
@@ -518,7 +533,10 @@ const StudioLM = () => {
   };
 
   // Insert a node from the library at canvas coords (x,y). called from drop or dbl-click
-  const addNodeFromLibrary = (libItem, x = 200, y = 200) => {
+  const addNodeFromLibrary = (libItem, dropX, dropY) => {
+    // A drop places the card where it was dropped; a double-click has no point, so it takes a free slot.
+    const dropped = Number.isFinite(dropX) && Number.isFinite(dropY);
+    const {x, y} = dropped ? {x:dropX, y:dropY} : studioFreeSlot(authorityState?.graph?.nodes || []);
     if (window.ARCHHUB_STUDIO_AUTHORITY) {
       // A signed canvas places published definitions only. A card without one
       // is refused by name: its item id is not a definition id.
@@ -2854,10 +2872,16 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         if (nudgeSelection(ARROWS[e.key][0] * step, ARROWS[e.key][1] * step)) e.preventDefault();
         return;
       }
-      // Delete or Backspace on a picked wire cuts it, the same route as the wire's "Cut this wire".
-      if ((e.key === 'Delete' || e.key === 'Backspace') && focusWireIdx >= 0 && graph.wires[focusWireIdx]?.id && cutWire) {
+      // Delete or Backspace on a picked wire cuts it, the same route as the wire's "Cut this wire". The
+      // click picks the wire at once; the graph confirms the selection a moment later, so a Delete pressed
+      // in between still names the wire the person clicked (menuDisconnect waits for that selection write).
+      const pickedWireIdx = pickedId == null ? -1 : authorityState ? graph.wires.findIndex(w => w.id === pickedId)
+        : (String(pickedId).indexOf('wire:') === 0 ? +String(pickedId).slice(5) : -1);
+      const cutIdx = pickedWireIdx >= 0 ? pickedWireIdx : focusWireIdx;
+      if ((e.key === 'Delete' || e.key === 'Backspace') && cutIdx >= 0 && graph.wires[cutIdx]?.id && cutWire) {
         e.preventDefault();
-        if (!menuBusy && !layoutNeedsRefresh) menuDisconnect([graph.wires[focusWireIdx].id]);
+        if (layoutNeedsRefresh) { setWireError('Refresh the canvas before editing connections.'); return; }
+        menuDisconnect([graph.wires[cutIdx].id]);
         return;
       }
       if (!e.shiftKey && String(e.key).toLowerCase() === 'f') {

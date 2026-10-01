@@ -985,25 +985,47 @@ class DesktopAuthenticationSession:
         if (not math.isfinite(minimum) or minimum < 0
                 or minimum >= self.lifetime_seconds):
             raise ValueError("minimum validity must be within the session lifetime")
+        # Lock order: the session's lock guards only the handle and is never
+        # held across a broker call. An admitted operation holds the broker's
+        # lock (broker.live_context) and may ask for this context inside it;
+        # holding the session's lock while resolving through the broker was the
+        # other half of a deadlock (the first-run seed against a machine route).
         with self._lock:
-            if self._context is not None:
-                try:
-                    identity = self.broker.resolve(self._context)
-                    if identity.expires_at - time.time() > minimum:
-                        return self._context
-                except AuthorizationDenied:
-                    self._context = None
-            self._context = self.broker.mint_authenticated_context(
-                self.subject_root,
-                # Principal power is resolved from live signed relationships
-                # for every request.  The session relation may describe its
-                # intended principals, but it must never cache or bypass them.
-                principal_roots=(),
-                tenant_root=self.tenant_root,
-                assurance_root=self.assurance_root,
-                lifetime_seconds=self.lifetime_seconds,
-            )
-            return self._context
+            held = self._context
+        if held is not None:
+            try:
+                identity = self.broker.resolve(held)
+                if identity.expires_at - time.time() > minimum:
+                    return held
+            except AuthorizationDenied:
+                pass
+        renewed = self.broker.mint_authenticated_context(
+            self.subject_root,
+            # Principal power is resolved from live signed relationships
+            # for every request.  The session relation may describe its
+            # intended principals, but it must never cache or bypass them.
+            principal_roots=(),
+            tenant_root=self.tenant_root,
+            assurance_root=self.assurance_root,
+            lifetime_seconds=self.lifetime_seconds,
+        )
+        with self._lock:
+            if self._context is held:
+                self._context = renewed
+                return renewed
+            # Another thread renewed meanwhile: share its handle. Ours is
+            # simply never used; both stay valid for their own lifetimes.
+            current = self._context
+        if current is None:
+            return renewed
+        try:
+            if self.broker.resolve(current).expires_at - time.time() > minimum:
+                return current
+        except AuthorizationDenied:
+            pass
+        with self._lock:
+            self._context = renewed
+        return renewed
 
 
 @dataclass(frozen=True, slots=True)

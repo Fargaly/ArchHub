@@ -913,8 +913,10 @@ class ConversationHistoryStore(ConversationPageProtection):
     def page(self, conversation_id, *, principal, read_all=False, limit=50, before=None,
               high_water=None, max_bytes=262144, include_categories=False,
               include_visible_head=False, if_visible_head=None, category=None,
-              if_content_generation=None):
+              if_content_generation=None, head_any_category=False):
         self._limits(limit, max_bytes, maximum=500)
+        if type(head_any_category) is not bool:
+            raise ValueError("head any category must be a boolean")
         if category is not None:
             _text(category, "category")
         category_sql = "" if category is None else " AND category=?"
@@ -941,7 +943,7 @@ class ConversationHistoryStore(ConversationPageProtection):
             content_generation = self._retention_status(conversation_id)["content_generation"]
             if include_visible_head:
                 visible_head = self._visible_head(conversation_id, principal,
-                    read_all=read_all, head=head, category=category)
+                    read_all=read_all, head=head, category=None if head_any_category else category)
                 if (if_visible_head == visible_head and
                         (if_content_generation == content_generation or
                          if_content_generation is None and content_generation == 0)):

@@ -259,6 +259,10 @@ def _workshop_participant_rows(owner, snapshot, space, connections):
     return rows
 
 
+# The browser client's page contract: studio-existing-workshop.js admits at most 100 rows.
+WORKSHOP_PAGE_ROWS = 100
+
+
 def _workshop_position_token(prefix, positions, identity):
     # A cache/position hint, never a credential. Current graph admission still
     # surrounds every read, including conditional responses with no bodies.
@@ -331,7 +335,10 @@ def _read_ordinary_browser_workshop(owner, binding, *, root, scope, expected_rev
                     **({'category': registry.workshop_category_roots[
                         'note' if feed == 'messages' else 'tool']} if feed != 'all' else {}),
                     **({"if_content_generation": if_content_generation}
-                       if if_content_generation is not None else {}))
+                       if if_content_generation is not None else {}),
+                    # A note's delivery and its agent's reply are newer tool records: on the
+                    # messages feed any new record re-reads the page, never "unchanged".
+                    **({"head_any_category": True} if feed == 'messages' else {}))
                 if page["graph_revision"] != snapshot.revision:
                     raise AuthorizationDenied("Workshop changed during read")
                 generation = page.get("content_generation", 0)
@@ -384,7 +391,18 @@ def _read_ordinary_browser_workshop(owner, binding, *, root, scope, expected_rev
                     note_category=registry.workshop_category_roots["note"],
                     tool_category=registry.workshop_category_roots.get("tool"),
                     relay_author=authority.subject_root)
-                extras = project_workshop_extras(owner, binding, root=root, rows=[*page["messages"], *replies],
+                # The messages feed shows each page message's relayed agent reply as an agent row
+                # (founder 2026-10-01: an agent's answer was invisible on the default feed). What the
+                # founder then does on that reply (a workflow drafted from it, a review of it) replies
+                # to the reply, so those records are read too: one more bounded reply-index read.
+                rows, nested = page["messages"], []
+                if feed == 'messages':
+                    shown = {row["id"] for row in rows}
+                    added = [row for row in replies if row["id"] in relayed and row["id"] not in shown]
+                    rows = sorted([*rows, *added], key=lambda row: row["sequence"])
+                    nested = (history.replies_to(root, [row["id"] for row in added], principal=principal,
+                                                 read_all=founder)["messages"] if added else [])
+                extras = project_workshop_extras(owner, binding, root=root, rows=[*page["messages"], *replies, *nested],
                     history=history, principal=principal, read_all=founder, states=states, relayed=relayed)
 
                 def delivery_fields(row):
@@ -396,7 +414,9 @@ def _read_ordinary_browser_workshop(owner, binding, *, root, scope, expected_rev
                     "owner": binding.subject_root, "view": binding.view_root, "self": binding.subject_root,
                     "can_join": False, "can_send": decision.allowed and binding.subject_root in space.participant_roots,
                     "can_manage_history": binding.subject_root == authority.subject_root and binding.subject_root in space.participant_roots,
-                    "send_category": "note", "execution_nodes": [], "total": page["total"],
+                    # The feed's count includes the agent replies it shows (the client checks
+                    # total >= rows shown).
+                    "send_category": "note", "execution_nodes": [], "total": page["total"] + len(rows) - len(page["messages"]),
                     "has_older": page["has_older"],
                     "next_before": (page_token(page["messages"][0]["sequence"])
                         if page["has_older"] else None),
@@ -409,30 +429,49 @@ def _read_ordinary_browser_workshop(owner, binding, *, root, scope, expected_rev
                         "reply_to_root": row["reply_to"], "reference_roots": row["refs"],
                         "evidence_roots": row["evidence"], "created_at": row["created_at"],
                         **delivery_fields(row)}
-                        for row in page["messages"]]}
+                        for row in rows]}
                 # Match the actual HTTP encoder (including escaped Unicode).
-                # Keep the newest complete messages within the final UI budget.
+                # Keep the newest complete GROUPS within the client's page contract: at most
+                # WORKSHOP_PAGE_ROWS rows (studio-existing-workshop.js refuses more) and the byte
+                # budget. A group is a page note with the agent replies shown under it (one per
+                # contact; contacts are bounded), never split: a dropped note's replies leave with
+                # it and return with it on the older page, whose cursor is the oldest retained note.
                 encoded_size = lambda value: len(json.dumps(value, separators=(",", ":")).encode())
+                notes = {message["root"] for message in result["messages"] if not message.get("relayed_from")}
+                groups = {}
+                for message in result["messages"]:
+                    parent = message["reply_to_root"] if (message.get("relayed_from") and
+                                                          message.get("reply_to_root") in notes) else message["root"]
+                    groups.setdefault(parent, []).append(message)
+                order = [message["root"] for message in result["messages"] if message["root"] in groups]
                 used = encoded_size({**result, "messages": []})
-                retained = []
-                for message in reversed(result["messages"]):
-                    cost = encoded_size(message) + (1 if retained else 0)
-                    if used + cost > 262144:
+                kept, kept_rows = [], 0
+                for parent in reversed(order):
+                    group = groups[parent]
+                    if len(group) > WORKSHOP_PAGE_ROWS:
+                        raise InvalidCell("Workshop message group exceeds the page row limit")
+                    cost = sum(encoded_size(message) + 1 for message in group)
+                    if kept_rows + len(group) > WORKSHOP_PAGE_ROWS or used + cost > 262144:
                         break
-                    retained.append(message)
+                    kept.append(parent)
+                    kept_rows += len(group)
                     used += cost
-                if len(retained) < len(result["messages"]):
+                def keep(parents):
+                    rows_kept = [message for parent in parents for message in groups[parent]]
+                    return sorted(rows_kept, key=lambda message: message["sequence"])
+                if len(kept) < len(order):
                     result["has_older"] = True
-                result["messages"] = list(reversed(retained))
+                result["messages"] = keep(kept)
                 if result["has_older"] and result["messages"]:
-                    result["next_before"] = page_token(result["messages"][0]["sequence"])
+                    result["next_before"] = page_token(min(groups[parent][0]["sequence"] for parent in kept))
                 # The retained cursor can grow by a digit after byte trimming.
-                # Reconcile the final complete envelope, never split a message.
-                while encoded_size(result) > 262144 and len(result["messages"]) > 1:
-                    result["messages"].pop(0)
+                # Reconcile the final complete envelope, never split a group.
+                while encoded_size(result) > 262144 and len(kept) > 1:
+                    kept.pop()
+                    result["messages"] = keep(kept)
                     result["has_older"] = True
-                    result["next_before"] = page_token(result["messages"][0]["sequence"])
-                if (page["messages"] and not retained) or encoded_size(result) > 262144:
+                    result["next_before"] = page_token(min(groups[parent][0]["sequence"] for parent in kept))
+                if (page["messages"] and not kept) or encoded_size(result) > 262144:
                     raise InvalidCell("Workshop response exceeds its byte budget")
                 if owner._resolve_browser_session(session_token) != binding:
                     raise AuthorizationDenied("Workshop browser binding changed during read")

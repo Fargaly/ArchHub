@@ -1642,6 +1642,10 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   // "to: Workshop"): opening a room no longer pre-addresses one model agent.
   const names = new Map(participants.map(row => [row.root, row.label]));
   const messages = transcript?.messages || [];
+  // A connected agent's name as the relay recorded it on its reply ("relayed reply from <name>"),
+  // so an agent is never shown by its contact root on this page.
+  const relayLabels = new Map(messages.filter(m => typeof m.relayed_from === 'string' && typeof m.relayed_label === 'string' && m.relayed_label)
+    .map(m => [m.relayed_from, m.relayed_label]));
   // THE LIVE SCENE: every design surface below reads these, never a seed.
   const taskItems = workshopTaskItems(messages, projectedWorkNodes);
   const tasks = wsTasks(taskItems, projectedWorkNodes, workshopProjectedWires(state), native, names).map(t => {
@@ -1669,7 +1673,8 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const selTask = allTasks.some(t => t.work === S.task) ? S.task : null;
   const counts = {block:allTasks.filter(t => t.state==='block').length, run:tasks.filter(t => t.state==='run' || t.state==='open').length,
     review:tasks.filter(t => t.state==='review').length, paused:tasks.filter(t => t.state==='paused').length, done:tasks.filter(t => t.state==='done').length};
-  const toolRecords = messages.filter(message => message.category === 'tool' &&
+  // An agent's relayed reply is a conversation row, not tool activity.
+  const toolRecords = messages.filter(message => message.category === 'tool' && typeof message.relayed_from !== 'string' &&
     (!selTask || String(message.body || '').includes(selTask))).slice(-5).reverse();
   const activity = toolRecords.map(message => ({root:message.root, at:wsClockText(message.created_at, true),
     dir:message.sender_root === transcript?.self ? '←' : '→', text:wsLine(message.body, 60)}));
@@ -2240,7 +2245,10 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     changed:{bg:W.warn + '1f', c:W.warn, l:'CHANGED SINCE APPROVAL · REVIEW AND APPROVE AGAIN'},
     awaiting:{bg:W.err + '1f', c:W.err, l:'AWAITING YOUR APPROVAL'},
   }[wfState];
-  const proposer = shownWorkflow ? agent(shownWorkflow.proposed_by) : null;
+  const proposerName = shownWorkflow ? ((nativeContacts.find(row => row.root === shownWorkflow.proposed_by) || {}).label ||
+    relayLabels.get(shownWorkflow.proposed_by)) : '';
+  const proposer = shownWorkflow ? (proposerName ? {...agent(shownWorkflow.proposed_by), name:proposerName,
+    ini:(proposerName.trim().charAt(0) || 'A').toUpperCase()} : agent(shownWorkflow.proposed_by)) : null;
   const workflowProposalCard = shownWorkflow && (
     <div data-workshop-workflow={shownWorkflow.root} style={{ display:'flex', gap:12 }}>
       <Av a={proposer} s={28}/>
@@ -2320,7 +2328,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   // (workshop_workflow.py). Every state shown here is read from the Workshop's own
   // receipts; a stored message is only stored until a receipt says otherwise.
   const DELIVERY_TONE = {replied:W.ok, started:W.cyan, unavailable:W.err, uncertain:W.warn, stored:W.inkMuted};
-  const contactLabel = root => (nativeContacts.find(row => row.root === root) || {}).label || names.get(root) || String(root || 'agent');
+  const contactLabel = root => (nativeContacts.find(row => row.root === root) || {}).label || relayLabels.get(root) || names.get(root) || String(root || 'agent');
   const workflowApi = authority && typeof authority.workshopWorkflow === 'function' ? authority : null;
   const wfAct = async (action, fields) => {
     if (busyRef.current || !workflowApi) return;

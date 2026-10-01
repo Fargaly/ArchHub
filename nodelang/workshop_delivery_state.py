@@ -29,6 +29,9 @@ RELAYED_REPLY = "Session Link relayed reply from "
 STATES = ("stored", "started", "replied", "unavailable", "uncertain")
 _ORDER = ("uncertain", "started", "unavailable", "replied")
 _REASON = re.compile(r"\(([^()]{1,200})\)\. ")
+# The relay's own header names the recipient as it was bound (application_server _settle).
+_RELAY_LABEL = re.compile(r"\ASession Link relayed reply from (.{1,200}) \((?:claude|codex|opencode|antigravity|antigravity-ide) "
+                          r"native session\)\. The application relays")
 
 
 # The relay writes these under its reply header when no agent text was stored;
@@ -121,6 +124,9 @@ def project_delivery(messages, replies, *, relay_pending=frozenset(), note_categ
         if text is not None and relay_reply_record(row, tool_category=tool_category, relay_author=relay_author):
             relayed[row["id"]] = {"relayed_from": row["refs"][0], "agent_text": text,
                                   "artifact_digest": artifact_digest(text)}
+            named = _RELAY_LABEL.match(str(row.get("content") or ""))
+            if named:
+                relayed[row["id"]]["relayed_label"] = named.group(1)
     for message in messages:
         if message.get("category") != note_category:
             continue

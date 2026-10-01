@@ -602,8 +602,12 @@ class ApplicationConversationContent:
 
     def page_for_workshop_browser(self, token, *, binding, space_root, limit=100,
                                   max_bytes=262144, before=None, if_visible_head=None,
-                                  if_content_generation=None, category=None):
-        """Internal Workshop reader after its actual browser/canvas admission."""
+                                  if_content_generation=None, category=None, head_any_category=False):
+        """Internal Workshop reader after its actual browser/canvas admission.
+
+        head_any_category: a filtered page whose rows also change with records of other
+        categories (delivery outcomes of its notes) is re-read when any record arrives.
+        """
         from .cell_authorization import AuthorizationDenied
         def admit():
             current = self._owner._resolve_browser_session(token)
@@ -616,7 +620,8 @@ class ApplicationConversationContent:
         return self._page(admit, space_root=space_root, limit=limit, max_bytes=max_bytes, before=before,
             _route_path="/api/universal/workshop", _translate_content_errors=True,
             _include_visible_head=True, _if_visible_head=if_visible_head,
-            _if_content_generation=if_content_generation, _category=category)
+            _if_content_generation=if_content_generation, _category=category,
+            _head_any_category=head_any_category)
 
     def workshop_gate_entries(self, snapshot, registry, *, reference_root, category_roots):
         """Workshop messages of the gate categories that reference one exact root.
@@ -925,7 +930,7 @@ class ApplicationConversationContent:
               _translate_content_errors=False, _route_path="/api/universal/deliberation",
               _project=None, _route=None, _include_categories=False,
              _include_visible_head=False, _if_visible_head=None, _category=None,
-             _if_content_generation=None, _hold_owner_lock=True):
+             _if_content_generation=None, _hold_owner_lock=True, _head_any_category=False):
         from .cell_authorization import AuthorizationDenied
 
         route = ("GET", _route_path) if _route is None else _route
@@ -968,7 +973,8 @@ class ApplicationConversationContent:
                                 include_visible_head=_include_visible_head, if_visible_head=_if_visible_head,
                                 **({"if_content_generation": _if_content_generation}
                                    if _if_content_generation is not None else {}),
-                                **({"category": _category} if _category is not None else {})))
+                                **({"category": _category} if _category is not None else {}),
+                                **({"head_any_category": True} if _head_any_category else {})))
                     except (sqlite3.Error, OSError, ValueError) as exc:
                         if not _translate_content_errors or isinstance(exc, InvalidCell):
                             raise

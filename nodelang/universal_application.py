@@ -50185,6 +50185,11 @@ def edit_universal_property(
         raise InvalidCell("property relation requires one value participant")
     value_root = value_roots[0]
     current = snapshot.cells[value_root]
+    if current.atom == encoded:
+        # Setting a property to the value it already holds (Revert to a
+        # default it already has, re-picking the same option) changes no
+        # Cell; there is nothing to commit or to undo.
+        return value_root
     _commit_universal_user_change(
         store,
         registry,
@@ -50280,6 +50285,8 @@ def edit_universal_property_batch(
         Cell(root, snapshot.cells[root].link0, snapshot.cells[root].link1, encoded)
         for root in value_roots
     )
+    if all(snapshot.cells[cell.id] == cell for cell in replacements):
+        return tuple(value_roots)  # every value already holds it: no change
     _commit_universal_user_change(
         store,
         registry,

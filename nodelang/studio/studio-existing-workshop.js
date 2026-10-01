@@ -274,6 +274,12 @@
       return {interaction:binding.interaction, control, event:binding.event, revision:value.revision,
         projection_mode:binding.acknowledgement_mode, ...(facts.length ? {event_facts:facts} : {})};
     };
+    // A card's port, or a collapsed group's member port (the member owns it, the group lists it).
+    const topologyPort = (value, root, id) => value.nodes.find(node => node.id === root)?.ports?.find(port => port.id === id) ||
+      value.nodes.flatMap(node => node.member_ports || []).find(port => port.owner === root && port.id === id);
+    // Where a root's wires are drawn: its own card, or the collapsed group that lists it.
+    const drawnAt = (value, root) => value.nodes.some(node => node.id === root) ? root :
+      value.nodes.find(node => (node.member_ports || []).some(port => port.owner === root))?.id;
     // A refused start is a rejected promise like any other refusal, never a synchronous throw: callers
     // chain .catch() on the result, and a throw escaped them as an uncaught page error.
     const refuse = text => Promise.reject(new Error(text));
@@ -1199,8 +1205,7 @@
         return runTopology(JSON.stringify(['connect', source, sourcePort, target, targetPort]), async (identity, command) => {
           if (![source, sourcePort, target, targetPort].every(text) || source === target) fail('Choose distinct nodes and their declared ports.');
           const value = await readTopology(identity);
-          const output = value.nodes.find(node => node.id === source)?.ports?.find(port => port.id === sourcePort);
-          const input = value.nodes.find(node => node.id === target)?.ports?.find(port => port.id === targetPort);
+          const output = topologyPort(value, source, sourcePort), input = topologyPort(value, target, targetPort);
           if (!output || !input || output.side !== 'source' || input.side !== 'target' ||
               output.connectable !== true || input.connectable !== true || output.mode !== 'connection' || input.mode !== 'connection') {
             fail('Choose an admitted output and input connection port.');
@@ -1217,8 +1222,11 @@
               result.base_revision !== value.revision || !revision(result.committed_revision) ||
               result.committed_revision <= value.revision || !text(result.created_root)) fail('The created connection needs reconciliation.');
           const latest = await readTopology(identity);
+          // A wire joined to a collapsed group's member is drawn on that group's derived boundary port.
+          const endsAt = (wire, side, root, port) => wire[side] === drawnAt(latest, root) &&
+            (wire[side] === root ? wire[side + '_interface'] === port : text(wire[side + '_interface']));
           if (latest.revision < result.committed_revision || !latest.wires.some(wire => wire.id === result.created_root &&
-              wire.source === source && wire.source_interface === sourcePort && wire.target === target && wire.target_interface === targetPort)) {
+              endsAt(wire, 'source', source, sourcePort) && endsAt(wire, 'target', target, targetPort))) {
             fail('The created connection is not visible in the refreshed graph.');
           }
           return result;

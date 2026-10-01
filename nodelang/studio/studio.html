@@ -409,6 +409,15 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
           outs.push({...p, label:p.name || '', t:p.type || p.value_type || 'any'});
         }
       }
+      // A collapsed group lists its members' own ports: a wire started or dropped on one joins that
+      // member (the port's owner). A member port a wire already draws takes that port's row.
+      for (const p of (n.member_ports || [])) {
+        const rows = p.side === 'target' ? ins : p.side === 'source' ? outs : null;
+        if (!rows) continue;
+        const row = {...p, label:(p.owner_label ? p.owner_label + ' · ' : '') + (p.name || ''), t:p.type || p.value_type || 'any', member:true};
+        const at = rows.findIndex(port => port.id === p.id);
+        if (at >= 0) rows[at] = row; else rows.push(row);
+      }
       nodes.push({
         id:n.id, cat:CATS(engine), title:n.label || n.id, sub:engine || 'Graph node',
         // The engine lets the node menu's Duplicate place the same card; openable lets it open the node.

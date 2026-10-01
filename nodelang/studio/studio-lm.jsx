@@ -2507,7 +2507,8 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       }
       if (!wireStart?.reverse) { setWireStart({root, port}); return; }
       // An input chosen first: this output completes the wire when that input is one of its choices.
-      if (normal && !port.connect_choices.some(choice => choice.id === wireStart.port.id && (choice.owner ?? wireStart.root) === wireStart.root)) {
+      const waiting = wireStart.port.owner || wireStart.root;
+      if (normal && !port.connect_choices.some(choice => choice.id === wireStart.port.id && (choice.owner ?? waiting) === waiting)) {
         setWireError('This output cannot feed ' + wireStart.port.label + '.'); return;
       }
       return joinWire(root, port, wireStart.root, wireStart.port);
@@ -2516,7 +2517,9 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     if (!wireStart || wireStart.reverse) { setWireStart({root, port, reverse:true}); return; }
     return joinWire(wireStart.root, wireStart.port, root, port);
   };
-  const joinWire = async (source, output, target, input) => {
+  // A group's member port wires its member (the port's owner), never the group card itself.
+  const joinWire = async (card, output, other, input) => {
+    const source = output.owner || card, target = input.owner || other;
     try {
       if (authority) await authority.connect(source, output.id, target, input.id);
       else await normal.connectTopology(source, output.id, target, input.id);

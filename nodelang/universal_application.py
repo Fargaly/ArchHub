@@ -20942,6 +20942,59 @@ def _is_universal_composition(
     )
 
 
+def _visible_composition_members(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    visible_roots: tuple[str, ...],
+) -> dict[str, str]:
+    """Map each direct member of a visible composition to that composition.
+
+    One level only: a member that is itself a collapsed composition exposes
+    its own members only when it is visible in its own right. Nothing here
+    reaches another canvas or scope; the caller passes one scope's roots.
+    """
+    visible = set(visible_roots)
+    member_role = registry.roles["member"]
+    home: dict[str, str] = {}
+    for root in visible_roots:
+        if not _is_universal_composition(snapshot, registry, root):
+            continue
+        for member in read_relation(
+            snapshot, root, budget=_SCOPE_MEMBER_LIMIT
+        ):
+            if (
+                member.role_id == member_role
+                and member.participant_id not in visible
+            ):
+                home.setdefault(member.participant_id, root)
+    return home
+
+
+def _member_connection_ports(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    owner_root: str,
+    registered_by_owner: Mapping[str, list[dict[str, object]]],
+) -> list[dict[str, object]]:
+    """Return one card's own open connection ports, as its card draws them."""
+    ports: list[dict[str, object]] = []
+    assembly = _instance_projection(snapshot, registry, owner_root)
+    for interface in (assembly["interfaces"] if assembly else ()):
+        if interface.get("mode") == "connection":
+            ports.append({**interface, "side": "target"})
+    for interface in registered_by_owner.get(owner_root, ()):
+        if (
+            interface.get("mode") != "connection"
+            or interface.get("read_only")
+            or _is_derived_composition_interface(
+                snapshot, registry, str(interface["id"])
+            )
+        ):
+            continue
+        ports.append(dict(interface))
+    return ports
+
+
 def _active_exposure_composition_roots(
     snapshot: Snapshot,
     registry: UniversalApplicationRegistry,
@@ -23841,6 +23894,51 @@ def _project_universal_canvas_interpreter(
             snapshot, registry, interface_root
         )
     )
+    # A collapsed group lists its direct members' own connection ports. A
+    # wire started or dropped on one of them joins that member's interface;
+    # the group's derived boundary ports stay read-only.
+    member_port_index: dict[str, tuple[str, dict[str, object]]] = {}
+    member_labels: dict[str, str] = {}
+    member_groups: dict[str, str] = {}
+    registered_by_owner: dict[str, list[dict[str, object]]] | None = None
+    for node in nodes:
+        node.pop("member_ports", None)
+        if not node.get("composition"):
+            continue
+        if registered_by_owner is None:
+            # Read the registered sockets once, and only when a collapsed
+            # group is on this canvas.
+            registered_by_owner = {}
+            for interface in _registered_canvas_interfaces(snapshot, registry):
+                registered_by_owner.setdefault(
+                    str(interface["owner"]), []
+                ).append(interface)
+        listed = []
+        for member in read_relation(
+            snapshot, str(node["id"]), budget=_SCOPE_MEMBER_LIMIT
+        ):
+            owner_root = member.participant_id
+            if (
+                member.role_id != registry.roles["member"]
+                or owner_root in node_index
+            ):
+                continue
+            member_labels[owner_root] = _scope_label(
+                snapshot, registry, owner_root
+            )
+            member_groups[owner_root] = str(node["id"])
+            for port in _member_connection_ports(
+                snapshot, registry, owner_root, registered_by_owner
+            ):
+                entry = {
+                    **port,
+                    "owner": owner_root,
+                    "owner_label": member_labels[owner_root],
+                    "connectable": True,
+                }
+                member_port_index[str(port["id"])] = (owner_root, entry)
+                listed.append(entry)
+        node["member_ports"] = listed
     target_attachment_roots: dict[str, set[str]] = {}
     connection_roots: dict[tuple[str, str], set[str]] = {}
     for wire in binary_wires:
@@ -23860,12 +23958,18 @@ def _project_universal_canvas_interpreter(
             ).add(relation_root)
 
     def topology_choice(owner_root: str, port: Mapping[str, object]):
+        owner_label = (
+            node_index[owner_root]["label"]
+            if owner_root in node_index
+            else "%s / %s" % (
+                node_index[member_groups[owner_root]]["label"],
+                member_labels[owner_root],
+            )
+        )
         return {
             "id": str(port["id"]),
             "owner": owner_root,
-            "label": "%s / %s" % (
-                node_index[owner_root]["label"], port.get("name") or "Interface"
-            ),
+            "label": "%s / %s" % (owner_label, port.get("name") or "Interface"),
         }
 
     def target_is_available(
@@ -23900,16 +24004,22 @@ def _project_universal_canvas_interpreter(
         fixed_interface: str,
         relation_root: str | None = None,
     ) -> list[dict[str, object]]:
-        fixed = port_index.get(fixed_interface)
+        fixed = port_index.get(fixed_interface) or member_port_index.get(
+            fixed_interface
+        )
         if fixed is None:
             return []
         _fixed_port_owner, fixed_port = fixed
         fixed_contract = fixed_port.get("contract_root")
+        fixed_group = member_groups.get(fixed_owner, fixed_owner)
         choices = []
-        for candidate_owner, candidate in port_index.values():
+        for candidate_owner, candidate in (
+            *port_index.values(), *member_port_index.values()
+        ):
             if (
                 candidate.get("side") != side
                 or candidate_owner == fixed_owner
+                or member_groups.get(candidate_owner) == fixed_group
                 or candidate.get("mode") != "connection"
                 or str(candidate["id"])
                 in derived_composition_interfaces
@@ -23971,6 +24081,22 @@ def _project_universal_canvas_interpreter(
                 "connect_event_fact_input": topology_fact_root,
                 "connect_choices": choices,
             })
+    for owner_root, port in member_port_index.values():
+        if port.get("side") != "source":
+            continue
+        port.update({
+            "connect_control": _topology_control_root(
+                view_session.subject_root,
+                str(port["id"]),
+                connect_operation,
+            ),
+            "connect_event_fact_input": topology_fact_root,
+            "connect_choices": compatible_port_choices(
+                side="target",
+                fixed_owner=owner_root,
+                fixed_interface=str(port["id"]),
+            ),
+        })
 
     for wire in binary_wires:
         if not wire["selected"]:
@@ -42765,11 +42891,32 @@ def _connect_universal_roots(
         authentication_context=context,
         resource_usage={"max-relations": (len(relation_roots), 1)},
     )
-    visible = set(visible_roots)
+    # A collapsed group's direct members stay connectable: the wire joins the
+    # member's own interface, and the group draws it at its edge. The group's
+    # derived boundary interfaces still refuse new connections below.
+    member_home = _visible_composition_members(
+        snapshot, registry, tuple(visible_roots)
+    )
+    visible = set(visible_roots) | set(member_home)
     if source_root not in visible or target_root not in visible:
         raise InvalidCell("connection endpoint is outside the active canvas")
     if source_root == target_root:
         raise InvalidCell("self-connections are not admitted")
+    if (
+        member_home.get(source_root) is not None
+        and member_home.get(source_root) == member_home.get(target_root)
+    ):
+        raise InvalidCell("members of one group are wired inside it")
+
+    def projected_ports(root: str) -> tuple:
+        if root in projected_nodes:
+            return tuple(projected_nodes[root].get("ports", ()))
+        return tuple(
+            port for port in projected_nodes[member_home[root]].get(
+                "member_ports", ()
+            )
+            if isinstance(port, Mapping) and port.get("owner") == root
+        )
     if projected_nodes is None:
         registered = _registered_canvas_interfaces(snapshot, registry)
         source_interfaces = tuple(
@@ -42778,9 +42925,8 @@ def _connect_universal_roots(
             and interface["side"] == "source"
         )
     else:
-        source_node = projected_nodes[source_root]
         source_interfaces = tuple(
-            interface for interface in source_node.get("ports", ())
+            interface for interface in projected_ports(source_root)
             if isinstance(interface, Mapping)
             and interface.get("side") == "source"
             and interface.get("mode") == "connection"
@@ -42821,9 +42967,7 @@ def _connect_universal_roots(
             and interface["side"] == "target"
         )
         if projected_nodes is None else tuple(
-            interface for interface in projected_nodes[target_root].get(
-                "ports", ()
-            )
+            interface for interface in projected_ports(target_root)
             if isinstance(interface, Mapping)
             and interface.get("side") == "target"
             and interface.get("mode") == "connection"
@@ -42928,6 +43072,44 @@ def _connect_universal_roots(
         (registry.roles["scope"], active_scope_root),
     ]
     relation = compose_relation_cells(members, relation_id=relation_root)
+    # A wire joined to a direct member of a visible collapsed group crosses
+    # that group's edge: it gets the same derived, read-only boundary port a
+    # crossing wire gets when the group is made, so the group draws it and
+    # expanding the group gives it back on the member.
+    interface_role = registry.assembly_protocol.role("interface")
+    boundary_cells: list[Cell] = []
+    boundary_patches = []
+    boundary_roots_by_home: dict[str, list[str]] = {}
+    for side, endpoint_root, endpoint_interface, incidence_root in zip(
+        ("source", "target"),
+        (source_root, target_root),
+        (source_interface, target_endpoint),
+        relation.build.incidence_ids[:2],
+        strict=True,
+    ):
+        home = member_home.get(endpoint_root)
+        if home is None:
+            continue
+        token = 0
+        while "%s:boundary:%s" % (home, token) in snapshot.cells:
+            token += 1
+        boundary_root = "%s:boundary:%s" % (home, token)
+        boundary_cells.extend(_derived_boundary_cells(
+            registry,
+            home,
+            boundary_root,
+            side=side,
+            seed_interface_root=str(endpoint_interface),
+            incidence_root=incidence_root,
+            relation_root=relation_root,
+        ))
+        boundary_patches.append(prepare_append_relation_members(
+            snapshot,
+            home,
+            ((interface_role, boundary_root),),
+            budget=100_000,
+        ))
+        boundary_roots_by_home.setdefault(home, []).append(boundary_root)
     public_interface_patches = []
     for interface_root, incidence_root in zip(
         (source_interface, target_endpoint),
@@ -42980,14 +43162,20 @@ def _connect_universal_roots(
         )
         if active_scope_root != registry.canvas_root else None
     )
+    def with_members(roots) -> set[str]:
+        roots = tuple(roots)
+        return set(roots) | set(
+            _visible_composition_members(snapshot, registry, roots)
+        )
+
     eligible_views = tuple(
         view for view in registry.view_sessions.values()
         if (
             view.root_id == view_session.root_id
-            and {source_root, target_root}.issubset(set(visible_roots))
+            and {source_root, target_root}.issubset(visible)
         ) or (
             view.root_id != view_session.root_id
-            and {source_root, target_root}.issubset(set(
+            and {source_root, target_root}.issubset(with_members(
                 _session_canvas_roots(snapshot, registry, view)[0]
             ))
         )
@@ -43007,10 +43195,10 @@ def _connect_universal_roots(
         visibility_members = read_relation(
             snapshot, view.visibility_root, budget=100_000
         )
-        assigned_roots = {
+        assigned_roots = with_members(
             member.participant_id for member in visibility_members
             if member.role_id == registry.roles["visible"]
-        }
+        )
         if not {source_root, target_root}.issubset(assigned_roots):
             continue
         visibility_patches.append(prepare_append_relation_members(
@@ -43020,6 +43208,12 @@ def _connect_universal_roots(
                 (registry.roles["relation"], relation_root),
                 *((registry.roles["property"], ref.relation_root)
                   for ref in property_refs),
+                # The top scope indexes a visible group's boundary ports.
+                *((interface_role, boundary_root)
+                  for home, roots in boundary_roots_by_home.items()
+                  if active_scope_root == registry.canvas_root
+                  and home in assigned_roots
+                  for boundary_root in roots),
             ),
             budget=100_000,
         ))
@@ -43042,6 +43236,7 @@ def _connect_universal_roots(
           for cell in patch.replace),
         *(cell for patch in lens_patches for cell in patch.replace),
         *(cell for patch in visibility_patches for cell in patch.replace),
+        *(cell for patch in boundary_patches for cell in patch.replace),
     ):
         replacements[cell.id] = cell
     if target_binding_incidence is not None:
@@ -43068,6 +43263,8 @@ def _connect_universal_roots(
             *(scope_patch.create if scope_patch else ()),
             *(cell for patch in lens_patches for cell in patch.create),
             *(cell for patch in visibility_patches for cell in patch.create),
+            *boundary_cells,
+            *(cell for patch in boundary_patches for cell in patch.create),
         ),
         replace=tuple(replacements.values()),
     )
@@ -44157,53 +44354,73 @@ def _composition_boundary_cells(
             )
         token = len(boundaries)
         boundary_root = "%s:boundary:%s" % (composition_root, token)
-        name_root = boundary_root + ":name"
-        contract_root = boundary_root + ":contract"
-        presentation_root = boundary_root + ":presentation"
-        cells.extend((
-            Cell(
-                name_root,
-                NULL_CELL_ID,
-                NULL_CELL_ID,
-                ("Provides" if side == "source" else "Requires").encode(
-                    "ascii"
-                ),
-            ),
-            Cell(
-                contract_root,
-                NULL_CELL_ID,
-                NULL_CELL_ID,
-                b"Derived composition boundary; incidence identity preserved",
-            ),
-            Cell(
-                presentation_root,
-                NULL_CELL_ID,
-                NULL_CELL_ID,
-                side.encode("ascii"),
-            ),
+        cells.extend(_derived_boundary_cells(
+            registry,
+            composition_root,
+            boundary_root,
+            side=side,
+            seed_interface_root=str(endpoint_interface["id"]),
+            incidence_root=endpoint.incidence_id,
+            relation_root=relation_root,
         ))
-        boundary = compose_relation_cells((
-            (
-                registry.assembly_protocol.role("interface-target"),
-                composition_root,
-            ),
-            (registry.assembly_protocol.role("name"), name_root),
-            (
-                registry.assembly_protocol.role("interface-contract"),
-                contract_root,
-            ),
-            (
-                registry.assembly_protocol.role("interface-presentation"),
-                presentation_root,
-            ),
-            (registry.roles["seed"], endpoint_interface["id"]),
-            (registry.roles["authority"], endpoint.incidence_id),
-            (registry.roles["relation"], relation_root),
-            (registry.roles["read-only"], registry.roles["read-only"]),
-        ), relation_id=boundary_root)
-        cells.extend(boundary.cells)
         boundaries.append(boundary_root)
     return tuple(internal), tuple(boundaries), tuple(cells)
+
+
+def _derived_boundary_cells(
+    registry: UniversalApplicationRegistry,
+    composition_root: str,
+    boundary_root: str,
+    *,
+    side: str,
+    seed_interface_root: str,
+    incidence_root: str,
+    relation_root: str,
+) -> tuple[Cell, ...]:
+    """Compose one derived, read-only boundary port for one crossing incidence."""
+    name_root = boundary_root + ":name"
+    contract_root = boundary_root + ":contract"
+    presentation_root = boundary_root + ":presentation"
+    boundary = compose_relation_cells((
+        (
+            registry.assembly_protocol.role("interface-target"),
+            composition_root,
+        ),
+        (registry.assembly_protocol.role("name"), name_root),
+        (
+            registry.assembly_protocol.role("interface-contract"),
+            contract_root,
+        ),
+        (
+            registry.assembly_protocol.role("interface-presentation"),
+            presentation_root,
+        ),
+        (registry.roles["seed"], seed_interface_root),
+        (registry.roles["authority"], incidence_root),
+        (registry.roles["relation"], relation_root),
+        (registry.roles["read-only"], registry.roles["read-only"]),
+    ), relation_id=boundary_root)
+    return (
+        Cell(
+            name_root,
+            NULL_CELL_ID,
+            NULL_CELL_ID,
+            ("Provides" if side == "source" else "Requires").encode("ascii"),
+        ),
+        Cell(
+            contract_root,
+            NULL_CELL_ID,
+            NULL_CELL_ID,
+            b"Derived composition boundary; incidence identity preserved",
+        ),
+        Cell(
+            presentation_root,
+            NULL_CELL_ID,
+            NULL_CELL_ID,
+            side.encode("ascii"),
+        ),
+        *boundary.cells,
+    )
 
 
 def _relationship_is_active(
@@ -48645,14 +48862,16 @@ def ensure_universal_topology_interactions(
     for node in nodes:
         if not isinstance(node, Mapping):
             raise InvalidCell("topology node projection is invalid")
-        for port in node.get("ports", ()):
+        member_ports = tuple(node.get("member_ports", ()))
+        for port in (*node.get("ports", ()), *member_ports):
             if not isinstance(port, Mapping) or not port.get("connect_control"):
                 continue
             control_root = str(port["connect_control"])
             operation_root = _TOPOLOGY_OPERATION_ROOTS["connect"]
             inputs = (
                 operation_root,
-                str(node["id"]),
+                str(port["owner"]) if any(port is item for item in member_ports)
+                else str(node["id"]),
                 str(port["id"]),
                 candidate_spec.root_id,
             )
@@ -51732,8 +51951,15 @@ def submit_universal_topology_interaction(
         candidates = tuple(
             port
             for node in projection.get("nodes", ())
-            if isinstance(node, Mapping) and node.get("id") == source_root
-            for port in node.get("ports", ())
+            if isinstance(node, Mapping)
+            for port in (
+                node.get("ports", ()) if node.get("id") == source_root
+                else tuple(
+                    item for item in node.get("member_ports", ())
+                    if isinstance(item, Mapping)
+                    and item.get("owner") == source_root
+                )
+            )
             if isinstance(port, Mapping)
             and port.get("id") == source_interface
             and port.get("connect_control") == control_root

@@ -10,6 +10,7 @@ import pytest
 from nodelang.application_server import ApplicationServer
 from nodelang.cell_secret_keys import MemorySigningKeyProvider
 from nodelang import universal_application as app
+from nodelang import commit_intent
 from nodelang.universal_cell import InvalidCell
 from nodelang.universal_graphs import project_graph_index
 
@@ -87,8 +88,14 @@ def test_fresh_public_http_create_place_open_and_reopen(tmp_path, monkeypatch):
         grant = next(row for row in reopened["canvas"]["authorization"]["relationships"]
             if row["kind"] == "delegation" and row["scope"] == graph
             and row["state"] == "active")
-        app.revoke_universal_authority_relationship(server.universal_store,
-            server.universal_registry, grant["root"], reason="Public fixture access withdrawn")
+        # The owner's deliberate withdrawal is a user action; out of band (no
+        # HTTP request scope admits it), the court declares that intent itself,
+        # exactly as _verify_browser_session admits a browser request's.
+        with commit_intent.declare(commit_intent.USER_ACTION,
+                actor=server.universal_registry.authorization.subject_root,
+                reason="Public fixture access withdrawn"):
+            app.revoke_universal_authority_relationship(server.universal_store,
+                server.universal_registry, grant["root"], reason="Public fixture access withdrawn")
         with pytest.raises(InvalidCell, match="signed.*grants"):
             project_graph_index(server.universal_store, server.universal_registry)
     finally:

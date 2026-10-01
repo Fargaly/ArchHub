@@ -447,6 +447,10 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
         ports:{ins:ins.map(x => ({id:x.id, t:x.t})),
                outs:outs.map(x => ({id:x.id, t:x.t}))},
         status: n.status || params.status || '',
+        // The same live-node fields the signed authority projects (studio-authority.js):
+        // a node's Workshop conversation and its latest run, so NodeRail shows them here too.
+        conversation_root: n.conversation_root || null, has_conversation: n.has_conversation === true,
+        result: n.result || '', mutates: n.mutates === true,
         group: typeof n.group === 'string' ? n.group : '', pinned: n.pinned === true,
         ...(typeof n.application === 'boolean' ? {application: n.application} : {}),
       });

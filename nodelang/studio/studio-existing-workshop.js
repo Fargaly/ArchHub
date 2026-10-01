@@ -527,7 +527,14 @@
       let page = null, queue = Promise.resolve(), uncertain = null, staged = false;
       const request = async (fields, requestStamp = stamp) => {
         if (!current(requestStamp, root)) fail('Return to this conversation to reconcile its draft.');
-        const projection = await api.refreshWorkshop(root);
+        // A read that another refresh superseded answers null (readWorkshop's isCurrent): that is not a
+        // refusal. The Workshop's first open races its own canvas refresh, and failing here left the
+        // composer behind a manual Retry. Read again while this conversation is still the one the stamp
+        // names, a bounded number of times; anything else is refused as before.
+        let projection = await api.refreshWorkshop(root);
+        for (let attempt = 0; projection === null && attempt < 3 && current(requestStamp, root); attempt += 1) {
+          projection = await api.refreshWorkshop(root);
+        }
         if (!current(requestStamp, root) || !projection || projection.error || !revision(projection.revision) ||
             !text(projection.owner) || !text(projection.view)) {
           fail('Refresh this conversation before changing draft protection.');

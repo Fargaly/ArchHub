@@ -262,11 +262,13 @@
         interaction_projection:{...value.interaction_projection, revision:committedRevision}});
     };
     const readTopology = async identity => {
-      // A read that resolves AFTER any navigation (scope change, away-and-back, or an identity
-      // change) must not publish its stale result over the newer view. The owner bumps
-      // navGeneration on every acceptTopology, so a read whose generation moved while its GET was
-      // in flight refuses to publish. Scope/revision comparison is not enough (away-and-back ends
-      // at the same scope). The guard is here at the owner, not in the caller after its own await.
+      // A read that resolves AFTER a view-identity change (application, auth, or scope -- an
+      // away-and-back counts, since it ends at the same scope by a different path) must not
+      // publish its stale result over the newer view. The owner bumps navGeneration on every
+      // identity-changing acceptTopology, so a read whose generation moved while its GET was in
+      // flight refuses to publish. Scope/revision comparison alone is not enough. Same-identity
+      // reads do not move the generation; they are ordered by revision instead (see below). The
+      // guard is here at the owner, not in the caller after its own await.
       const generation = navGeneration;
       const raw = await get('/api/universal/canvas');
       // The view identity (app, auth, or scope) changed while the GET was in flight: refuse to

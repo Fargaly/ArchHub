@@ -87,3 +87,64 @@ def test_workflow_row_scope_path_ends_at_the_workflow_scope(harness):
     # A session draft lives on the Workshop workbench; that is where the step nodes draw.
     registry = h.state["server"].universal_registry
     assert row["scope"] == registry.workshop_workbench_root
+
+
+def test_a_room_scope_draft_is_refused_without_polluting_the_conversation(harness):
+    """Item 3: a workflow drafted while the open scope IS a conversation room. Workflows draw on a
+    canvas; a room is a deliberation space. draft_workflow must refuse UP FRONT, before any node is
+    placed, so the conversation's relation stays byte-identical and nothing is reserved.
+
+    RED on a964379a: the draft reaches _apply_draft_actions, places the member role nodes into the
+    conversation's relation (app:role:property / app:role:relation / gm:role:member), commits a
+    :reserved marker and the workflow anchor, then the next content append fails the deliberation
+    space's declared-role closure -> 400 'deliberation space contains undeclared roles'. So the
+    relation is polluted and a retry reports the interrupted draft. GREEN with the up-front guard.
+    """
+    from nodelang.cell_protocols import read_relation
+
+    refusal = ("Workflows are drafted on a canvas, not inside a conversation. "
+               "Open the Workshop canvas and draft there.")
+
+    h = harness
+    h.start()
+    convo = h.conversation_with_two_agents()
+    reply_id = _proposal_reply(h, convo)
+
+    # Open the conversation room on the canvas. The milestone harness leaves the scope at the
+    # workbench, where the room carries an interaction binding; entering it makes the room current.
+    proj = h.request("/api/universal/canvas")
+    binding = next((b for b in (proj.get("interaction_projection") or {}).get("bindings", [])
+                    if b.get("control") == convo["root"]), None)
+    assert binding, ("no interaction binding for the room",
+        [b.get("control") for b in (proj.get("interaction_projection") or {}).get("bindings", [])])
+    h.request("/api/universal/interaction", {"interaction": binding["interaction"],
+        "control": convo["root"], "event": binding["event"], "revision": proj["revision"],
+        "projection_mode": binding.get("acknowledgement_mode") or "receipt-v1"})
+    room = h.request("/api/universal/canvas")
+    assert room["scope"]["current"] == convo["root"], (room["scope"], convo["root"])
+
+    store = h.state["server"].universal_store
+
+    def members():
+        return [(m.role_id, m.participant_id)
+                for m in read_relation(store.snapshot(), convo["root"], budget=100000)]
+
+    before = members()
+
+    # Draft at the room scope (what the client stamps while the room is open).
+    draft = h.request("/api/universal/workshop", {"action": "workflow-draft", "root": convo["root"],
+        "scope": convo["root"], "message": reply_id, "idempotency_key": "room-draft",
+        "revision": room["revision"]}, expected=400)
+    assert draft.get("error") == refusal, draft  # RED on a964379a: 'deliberation space contains undeclared roles'
+
+    # The conversation's relation is byte-identical: no property/relation/gm:member node was placed.
+    after = members()
+    assert after == before, ("the room draft polluted the conversation relation",
+        [m for m in after if m not in before])  # RED on a964379a: the three member role nodes appear
+
+    # Nothing was reserved: a retry with the same identity gives the SAME plain refusal, not the
+    # 'an earlier draft ... was interrupted' message a committed :reserved marker would produce.
+    retry = h.request("/api/universal/workshop", {"action": "workflow-draft", "root": convo["root"],
+        "scope": convo["root"], "message": reply_id, "idempotency_key": "room-draft",
+        "revision": h.request("/api/universal/canvas")["revision"]}, expected=400)
+    assert retry.get("error") == refusal, retry  # RED on a964379a: '... was interrupted; its nodes may already be ...'

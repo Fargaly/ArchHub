@@ -323,6 +323,17 @@ def draft_workflow(owner, browser, body, *, browser_guard):
     with owner.mutation_lock:
         browser_guard()
         history, principal, read_all, space = _content(owner, browser, root, scope)
+        # Workflows draw on a canvas. If the stamped draft scope is a conversation deliberation
+        # space (the general Workshop space or a child conversation room), _apply_draft_actions
+        # would place the member nodes into that space's relation, and the next content append
+        # would fail the space's declared-role closure ("deliberation space contains undeclared
+        # roles") -- after those nodes had already been committed. Refuse up front, before any
+        # placement, so the conversation is left byte-identical. Canvas scopes (the top canvas,
+        # the Workshop workbench, a domain) are not registered deliberation spaces and pass.
+        from .workshop_conversation_catalog import _registered as _registered_scopes
+        if scope in set(_registered_scopes(store.snapshot(), registry)):
+            raise InvalidCell("Workflows are drafted on a canvas, not inside a conversation. "
+                              "Open the Workshop canvas and draft there.")
         held = history.get_by_idempotency(root, key, principal=principal, read_all=read_all)
         if held is not None:
             value = json.loads(held["content"])

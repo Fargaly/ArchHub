@@ -7,7 +7,7 @@ if(process.env.SESSION_LINK_PRIVATE_HOST_IPC!=='1'||process.stdout.isTTY){
 }
 let buffer='',started=false,finished=false,calls=0,pending=null;
 function emit(value){const text=JSON.stringify(value);if(Buffer.byteLength(text)>65536)throw new Error('frame_limit');process.stdout.write(text+'\n');}
-function finish(result){if(finished)return;finished=true;clearTimeout(lifetime);if(pending){clearTimeout(pending.timer);pending=null;}emit({event:'result',result});process.exit(0);}
+function finish(result){if(finished)return;finished=true;clearTimeout(lifetime);if(pending){clearTimeout(pending.timer);pending=null;}const text=JSON.stringify({event:'result',result});if(Buffer.byteLength(text)>65536){process.stderr.write('frame_limit\n',()=>process.exit(1));return;}process.stdout.write(text+'\n',()=>process.exit(0));}
 const lifetime=setTimeout(()=>finish({status:'uncertain',reason:'host_deadline'}),115000);
 function call(method,args){
  if(finished||pending||++calls>3)return Promise.reject(new Error('client_call_limit'));

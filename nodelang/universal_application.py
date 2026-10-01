@@ -53677,9 +53677,10 @@ def _undo_referrer(
     def interaction_binding(
         snapshot: Snapshot, referrer: str, target_root: str
     ) -> bool:
-        """An exact control/input incidence of a verified Interaction this
-        view's canvas bound: a record that only reads like one, another
-        view's record, or any other role is still a later dependency."""
+        """An exact control/input/target incidence of a verified Interaction
+        this view's canvas bound (scope, topology, relation-members,
+        appearance, ...): a record that only reads like one, another view's
+        record, or any other role is still a later dependency."""
         record_root, separator, _index = referrer.rpartition(":incidence:")
         if not separator or not record_root.startswith("app:interaction:"):
             return False
@@ -53695,6 +53696,7 @@ def _undo_referrer(
             or interaction.authorization_object_root != view_session.root_id
             or (
                 interaction.control_root != target_root
+                and interaction.target_root != target_root
                 and target_root not in interaction.input_roots
             )
         ):
@@ -53702,6 +53704,7 @@ def _undo_referrer(
         protocol = registry.interaction_protocol
         control_role = protocol.role("control")
         input_role = protocol.role("input")
+        target_role = protocol.role("target")
         members = _relation_members_or_none(snapshot, record_root)
         return bool(members) and any(
             member.incidence_id == referrer
@@ -53711,6 +53714,8 @@ def _undo_referrer(
                  and interaction.control_root == target_root)
                 or (member.role_id == input_role
                     and target_root in interaction.input_roots)
+                or (member.role_id == target_role
+                    and interaction.target_root == target_root)
             )
             for member in members
         )

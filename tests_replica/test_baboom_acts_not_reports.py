@@ -45,7 +45,7 @@ def test_the_companion_offers_a_control_for_any_act_not_only_a_task():
     for intent in ("run-engine", "agent-message", "agent-interrupt", "restart-to-update"):
         assert intent in text, intent
     prompts = {}
-    exec(compile(text[text.index("_BABOOM_ACT_PROMPTS"):text.index("_BABOOM_ACT_GLYPHS")], "<prompts>", "exec"), prompts)
+    exec(compile(text[text.index("_BABOOM_ACT_PROMPTS"):text.index("_BABOOM_ACT_PROGRESS")], "<prompts>", "exec"), prompts)
     assert set(prompts["_BABOOM_ACT_PROMPTS"]) == set(ua._BABOOM_ACT_INTENTS)
 
 

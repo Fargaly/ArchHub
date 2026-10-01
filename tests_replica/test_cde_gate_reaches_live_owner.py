@@ -15,8 +15,12 @@ Gate v2 (Ping's required changes):
 - a changed owner actor is refused with zero application calls;
 - a real application issues a same-actor permit and consumes its receipt.
 
-The governance module is outside this repository: ARCHHUB_GOVERNANCE_HOOKS
-names the hooks folder under test (required; the court fails without it).
+The governance module is outside this repository. The court finds it itself:
+ARCHHUB_GOVERNANCE_HOOKS when set, else <workspace>/00.GOVERNANCE/hooks of the
+checkout, else of the workspace the map resolves. It never imports the module
+in place (an import writes __pycache__ beside it): it copies
+app_write_authority.py into the court's temp folder and loads that copy, so
+the governance folder is only read.
 Temp state, memory keys and an in-memory owner vault only: no live
 application, no DPAPI key ring, no :8474.
 """
@@ -67,14 +71,31 @@ def vault(monkeypatch):
     return made
 
 
+def _governance_source():
+    """app_write_authority.py of the governance hooks folder under test, or None."""
+    configured = os.environ.get('ARCHHUB_GOVERNANCE_HOOKS', '').strip()
+    folders = [Path(configured)] if configured else []
+    folders.append(PRODUCT.parents[1] / '00.GOVERNANCE' / 'hooks')
+    from nodelang.map_import import resolve_map_path
+    folders.append(resolve_map_path().parents[3] / '00.GOVERNANCE' / 'hooks')
+    for folder in folders:
+        if (folder / 'app_write_authority.py').is_file():
+            return folder / 'app_write_authority.py'
+    return None
+
+
 class Gate:
     """The governance AppWriteAuthority under test, with its own route counted."""
 
     def __init__(self, tmp_path, monkeypatch):
-        folder = os.environ.get('ARCHHUB_GOVERNANCE_HOOKS', '').strip()
-        source = Path(folder) / 'app_write_authority.py' if folder else None
-        if source is None or not source.is_file():
-            pytest.fail('ARCHHUB_GOVERNANCE_HOOKS must name the governance hooks folder under test')
+        found = _governance_source()
+        if found is None:
+            pytest.fail('no governance hooks folder: set ARCHHUB_GOVERNANCE_HOOKS or run inside the workspace')
+        # Load a temp copy: importing in place would write __pycache__ into the
+        # governance folder, which a court only reads.
+        source = tmp_path / 'governance-hooks' / 'app_write_authority.py'
+        source.parent.mkdir()
+        source.write_bytes(found.read_bytes())
         monkeypatch.setenv('ARCHHUB_PRODUCT_ROOT', str(PRODUCT))
         spec = importlib.util.spec_from_file_location('court_app_write_authority_%s' % uuid.uuid4().hex,
                                                       source)

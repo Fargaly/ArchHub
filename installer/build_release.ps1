@@ -27,6 +27,7 @@ $selectedRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $selectedInputs = @(
     'nodelang', 'nodelang/outlook_graph.ps1', 'launch_archhub_test.py', 'colleague_setup.py',
     'requirements.txt', 'installer', 'packaging/windows/Test-SourcePortability.ps1',
+    'packaging/windows/install_clean_coordination_task.ps1',
     'package.json', 'packaging/compile_studio.cjs',
     'app/secrets_store.py', 'app/credential_lock.py', 'app/__init__.py', 'bridges', 'archhub.ico',
     'packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',
@@ -111,6 +112,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
             'installer/ArchHub.iss', 'installer/ArchHub.bat', 'installer/ArchHub.vbs',
             'installer/legacy_sweep.iss', 'installer/legacy_v1_files.iss', 'installer/host_file_staging.iss',
             'installer/build_release.ps1', 'packaging/windows/Test-SourcePortability.ps1',
+            'packaging/windows/install_clean_coordination_task.ps1',
             'packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',
             'packaging/windows/licenses/ArchHub-components-MIT.txt',
             'app/secrets_store.py', 'app/credential_lock.py', 'app/__init__.py', 'archhub.ico',

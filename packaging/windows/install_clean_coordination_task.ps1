@@ -2,9 +2,11 @@
 param(
     [string]$TaskName = "ArchHub Clean Coordination",
     [string]$AuthorityRoot,
-    [string]$Pythonw = "$env:LOCALAPPDATA\Python\pythoncore-3.14-64\pythonw.exe",
+    [string]$Pythonw,
     [int]$Port = 8474,
-    [switch]$AuditOnly
+    [switch]$AuditOnly,
+    # Setup registers before the first open has created the tree's .venv.
+    [switch]$AllowPendingRuntime
 )
 
 # Installs the clean coordination service as a logon task so it returns after
@@ -28,7 +30,26 @@ if (-not $AuthorityRoot) {
     $AuthorityRoot = (Resolve-Path (Join-Path $scriptDir "..\..")).Path
 }
 
-if (-not (Test-Path -LiteralPath $Pythonw -PathType Leaf)) {
+# The owner runs the code of the tree it is registered for. An installed tree
+# (setup copies this file to {app}\packaging\windows and writes BUILD_ID) runs on
+# its own private environment, exactly as the desktop does (.venv pythonw, -E -s).
+# A source checkout keeps the per-user Python even when it holds a .venv: a
+# developer venv need not carry the owner's dependencies.
+$treeVenv = Join-Path $AuthorityRoot ".venv\Scripts\pythonw.exe"
+$pythonOptions = @()
+if (-not $Pythonw) {
+    $installedTree = Test-Path -LiteralPath (Join-Path $AuthorityRoot "BUILD_ID") -PathType Leaf
+    if ($installedTree) {
+        $Pythonw = $treeVenv
+    } else {
+        $Pythonw = "$env:LOCALAPPDATA\Python\pythoncore-3.14-64\pythonw.exe"
+    }
+}
+if ($Pythonw -ieq $treeVenv) {
+    $pythonOptions = @("-E", "-s")
+}
+
+if (-not $AllowPendingRuntime -and -not (Test-Path -LiteralPath $Pythonw -PathType Leaf)) {
     throw "pythonw executable is unavailable: $Pythonw"
 }
 if (-not (Test-Path -LiteralPath $AuthorityRoot -PathType Container)) {
@@ -38,7 +59,7 @@ if ($Port -lt 1024 -or $Port -gt 65535) {
     throw "clean coordination port is outside its bound: $Port"
 }
 
-$arguments = @(
+$arguments = @($pythonOptions) + @(
     "-m", "nodelang.clean_coordination_service",
     "--host", "127.0.0.1",
     "--port", $Port
@@ -73,12 +94,17 @@ $task = New-ScheduledTask `
     -Description "Clean ArchHub coordination owner on 127.0.0.1:$Port."
 
 if ($AuditOnly) {
+    $registered = Get-ScheduledTask -TaskName $TaskName -EA SilentlyContinue
+    $current = if ($registered) { @($registered.Actions)[0] } else { $null }
     [pscustomobject]@{
-        TaskName  = $TaskName
-        Execute   = $Pythonw
-        Arguments = $arguments
-        Registered = [bool](Get-ScheduledTask -TaskName $TaskName -EA SilentlyContinue)
-    } | Format-List
+        TaskName         = $TaskName
+        Execute          = $Pythonw
+        Arguments        = $arguments
+        WorkingDirectory = $AuthorityRoot
+        Registered       = [bool]$registered
+        RegisteredMatches = [bool]($current -and $current.Execute -ieq $Pythonw -and
+            $current.Arguments -eq $arguments -and $current.WorkingDirectory -ieq $AuthorityRoot)
+    } | ConvertTo-Json
     return
 }
 

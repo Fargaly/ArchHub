@@ -95,6 +95,8 @@ Source: "{#NodeRuntimePath}"; DestDir: "{app}\runtime"; DestName: "node.exe"; Fl
 Source: "{#NodeLicensePath}"; DestDir: "{app}\runtime"; DestName: "Node-LICENSE.txt"; Flags: ignoreversion
 Source: "..\nodelang\*"; DestDir: "{app}\nodelang"; Excludes: "{#PayloadExcludes}"; Flags: recursesubdirs ignoreversion
 Source: "..\launch_archhub_test.py"; DestDir: "{app}"; Flags: ignoreversion
+; The graph owner task is re-registered from the installed copy (RefreshCleanCoordinationTask).
+Source: "..\packaging\windows\install_clean_coordination_task.ps1"; DestDir: "{app}\packaging\windows"; Flags: ignoreversion
 ; Generated once for this exact build; pairs with BUILD_ID after installation.
 Source: "{#BuildMetadataPath}"; DestDir: "{app}"; DestName: "BUILD_METADATA.json"; Flags: ignoreversion
 ; Public credential-store code only. Every user's protected data stays local.
@@ -303,6 +305,40 @@ begin
   Result := FindPython() <> '';
 end;
 
+const
+  CleanCoordinationTask = 'ArchHub Clean Coordination';
+
+{ A machine that runs the clean graph owner as a logon task (it was registered
+  for this user before) gets it pointed at THIS installed tree and its private
+  environment, then restarted on the new code. Setup never creates the task, and
+  a failure here never fails setup: the owner is then left as it was. }
+procedure RefreshCleanCoordinationTask();
+var
+  Code: Integer;
+  Script: String;
+begin
+  if (not Exec(ExpandConstant('{sys}\schtasks.exe'), '/Query /TN "' + CleanCoordinationTask + '"', '',
+                SW_HIDE, ewWaitUntilTerminated, Code)) or (Code <> 0) then
+    exit;
+  { Only onto a runtime that exists: before the first open has made the private
+    environment, the task is neither re-registered nor ended (it keeps running
+    as it was, and the next setup after the first open refreshes it). }
+  if not FileExists(ExpandConstant('{app}\.venv\Scripts\pythonw.exe')) then
+    exit;
+  Script := ExpandConstant('{app}\packaging\windows\install_clean_coordination_task.ps1');
+  if Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+          '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + Script + '" -AllowPendingRuntime',
+          '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0) then
+  begin
+    Exec(ExpandConstant('{sys}\schtasks.exe'), '/End /TN "' + CleanCoordinationTask + '"', '',
+         SW_HIDE, ewWaitUntilTerminated, Code);
+    Exec(ExpandConstant('{sys}\schtasks.exe'), '/Run /TN "' + CleanCoordinationTask + '"', '',
+         SW_HIDE, ewWaitUntilTerminated, Code);
+  end
+  else
+    Log('The clean coordination task was not refreshed (exit ' + IntToStr(Code) + ').');
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ReadyPath: String;
@@ -331,6 +367,8 @@ begin
   begin
     if not SaveStringToFile(ExpandConstant('{app}\BUILD_ID'), '{#BuildId}', False) then
       RaiseException('The ArchHub build identity could not be saved. Run setup again.');
+    { After BUILD_ID: the task script recognises an installed tree by it. }
+    RefreshCleanCoordinationTask();
     { The "Connect my AI assistants" choice; the first open honours it once. }
     if WizardIsTaskSelected('connectassistants') then
     begin

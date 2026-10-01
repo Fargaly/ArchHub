@@ -251,6 +251,22 @@ def _merge_canvas_delta(previous, result):
             "%s:%s" % (wire["id"], wire["segment"]): wire
             for wire in patch["upsert_wires"]
         })
+        # Selection and position travel on the state channel, as the
+        # runtime applies them (ui_runtime topology delta merge).
+        for state in patch.get("state_nodes", ()):
+            nodes[state["id"]] = {
+                **nodes[state["id"]],
+                "selected": state["selected"],
+                "x": state["x"],
+                "y": state["y"],
+            }
+        for state in patch.get("state_wires", ()):
+            key = "%s:%s" % (state["id"], state["segment"])
+            wires[key] = {
+                **wires[key],
+                "selected": state["selected"],
+                "context": state["context"],
+            }
         merged["nodes"] = [nodes[root] for root in patch["node_order"]]
         merged["wires"] = [wires[root] for root in patch["wire_order"]]
     elif result["projection_mode"] == "interaction-delta-v1":
@@ -3598,7 +3614,7 @@ def test_top_scope_visibility_projection_fails_closed_on_hidden_property():
         )
 
 
-def test_restore_admission_rejects_a_partial_visibility_projection():
+def test_restore_admission_heals_a_partial_visibility_projection():
     store, registry = build_universal_application(resolve_map_path())
     snapshot = store.snapshot()
     view = next(iter(registry.view_sessions.values()))
@@ -3616,15 +3632,21 @@ def test_restore_admission_rejects_a_partial_visibility_projection():
     )
     store.commit(snapshot.revision, replace=removal.replace)
 
-    with pytest.raises(
-        InvalidCell, match="persisted visibility relation projection drifted"
-    ):
-        universal_application_module._ensure_view_visibility_scope_projection(
-            store, registry, view
-        )
+    # A marked index grows back what the canonical derivation holds
+    # (universal_application.py "growth is not drift", 2026-09-07); a
+    # removed member is restored, never left partial.
+    universal_application_module._ensure_view_visibility_scope_projection(
+        store, registry, view
+    )
+    healed = read_relation(
+        store.snapshot(), view.visibility_root, budget=100_000
+    )
+    assert (registry.roles["relation"], relation_member.participant_id) in {
+        (member.role_id, member.participant_id) for member in healed
+    }
 
 
-def test_restore_admission_rejects_a_partial_visibility_interface_index():
+def test_restore_admission_heals_a_partial_visibility_interface_index():
     store, registry = build_universal_application(resolve_map_path())
     snapshot = store.snapshot()
     view = next(iter(registry.view_sessions.values()))
@@ -3642,12 +3664,18 @@ def test_restore_admission_rejects_a_partial_visibility_interface_index():
     )
     store.commit(snapshot.revision, replace=removal.replace)
 
-    with pytest.raises(
-        InvalidCell, match="persisted visibility interface projection drifted"
-    ):
-        universal_application_module._ensure_view_visibility_scope_projection(
-            store, registry, view
-        )
+    # A marked index grows back what the canonical derivation holds
+    # (universal_application.py "growth is not drift", 2026-09-07); a
+    # removed member is restored, never left partial.
+    universal_application_module._ensure_view_visibility_scope_projection(
+        store, registry, view
+    )
+    healed = read_relation(
+        store.snapshot(), view.visibility_root, budget=100_000
+    )
+    assert (registry.assembly_protocol.role("interface"), interface_member.participant_id) in {
+        (member.role_id, member.participant_id) for member in healed
+    }
 
 
 def test_top_scope_rejects_an_interface_without_a_visible_graph_owner():

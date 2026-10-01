@@ -1037,7 +1037,8 @@ const ContextPanel = ({ selAgent, selTask, tasks, agent, descriptor, activity, a
 // workflow whose scope_path does not end at its own scope is refused, with a message, and
 // the mode never switches. A focus with no workflow (e.g. a session's Agent node, already
 // drawn) just focuses and switches, as before.
-async function openWorkflowAsNodes({ focus, workflow, authority, scopeOpen, setFocusId, setMode, setError }) {
+async function openWorkflowAsNodes({ focus, workflow, authority, scopeOpen, refreshTopology, currentScope, setFocusId, setMode, setError }) {
+  let canvas = null;
   if (workflow) {
     const path = Array.isArray(workflow.scope_path) ? workflow.scope_path : null;
     if (!path || !path.length || path[path.length - 1] !== workflow.scope) {
@@ -1046,16 +1047,30 @@ async function openWorkflowAsNodes({ focus, workflow, authority, scopeOpen, setF
     }
     try {
       if (authority && typeof authority.open === 'function' && typeof authority.load === 'function') {
-        let canvas = await authority.load();
+        canvas = await authority.load();
         const top = canvas && canvas.scope && Array.isArray(canvas.scope.trail) && canvas.scope.trail[0]
           ? canvas.scope.trail[0].root : null;
         if (top && canvas.scope.current !== top && canvas.scope.current !== path[path.length - 1]) canvas = await authority.open(top);
         for (const step of path) { if (!canvas || canvas.scope.current !== step) canvas = await authority.open(step); }
       } else if (typeof scopeOpen === 'function') {
-        await scopeOpen(path);
+        canvas = await scopeOpen(path);
       } else {
         if (setError) setError('The canvas scope could not be opened in this view.');
         return false;
+      }
+      // Refresh the topology AFTER the walk so the just-drafted member nodes are in the snapshot
+      // the canvas draws (wfAct left it stale). Then verify the member is actually present before
+      // switching; a failed refresh falls back to the walk projection and still verifies.
+      if (typeof refreshTopology === 'function') {
+        try { const fresh = await refreshTopology(); if (fresh) canvas = fresh; } catch (_) { /* use the walk projection */ }
+        // A late refresh must never overwrite a view the person has since changed away from.
+        if (typeof currentScope === 'function' && currentScope() !== workflow.scope) return false;
+        const sameScope = !canvas || !canvas.scope || canvas.scope.current === workflow.scope;
+        const present = canvas && Array.isArray(canvas.nodes) && canvas.nodes.some(node => node.id === focus);
+        if (!sameScope || !present) {
+          if (setError) setError("The workflow's nodes are not on this canvas yet. Open it again in a moment.");
+          return false;
+        }
       }
     } catch (failure) {
       if (setError) setError((failure && failure.message) || 'The workflow scope could not be opened.');
@@ -2379,7 +2394,13 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
               background:wfChip.bg, color:wfChip.c, overflowWrap:'anywhere' }}>{wfChip.l}</span>
             <div style={{ flex:1 }}/>
             <IBtn g="⌗" title="Open as nodes" onClick={() => openShownWorkflowAsNodes(shownWorkflow,
-              {authority, scopeOpen: window.ARCHHUB_SCOPE_OPEN, setFocusId, setMode, setError: setActionError})}/>
+              {authority, scopeOpen: window.ARCHHUB_SCOPE_OPEN,
+               refreshTopology: () => authority.refreshTopologyCanvas(),
+               // The owner's snapshot.canvas is the Workshop DESCRIPTOR; the universal projection
+               // with scope.current lives at snapshot.topology.canvas.
+               currentScope: () => { const s = authority.getSnapshot && authority.getSnapshot();
+                 return s && s.topology && s.topology.canvas && s.topology.canvas.scope ? s.topology.canvas.scope.current : undefined; },
+               setFocusId, setMode, setError: setActionError})}/>
             {wfState === 'approved'
               ? <><Btn sm pri disabled={busy} onClick={() => wfAct('workflow-execute', {workflow:shownWorkflow.root})}>Run approved</Btn>
                 <IBtn g="⊘" title="Revoke approval — nothing further runs" disabled={busy} onClick={() => wfAct('workflow-revoke', {workflow:shownWorkflow.root})}/></>
@@ -2448,7 +2469,13 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const wfAct = async (action, fields) => {
     if (busyRef.current || !workflowApi) return;
     busyRef.current = true; setBusy(true); setActionError('');
-    try { await workflowApi.workshopWorkflow(descriptor.root, action, fields); }
+    try {
+      await workflowApi.workshopWorkflow(descriptor.root, action, fields);
+      // The mutation is accepted; refresh the topology so the drafted/approved member nodes are
+      // in the snapshot the canvas draws (wfAct used not to, so draft/approve left it stale).
+      // A failed refresh is non-fatal and never replays the mutation (decideProposal, ~:1806).
+      try { await authority.refreshTopologyCanvas(); } catch (_) { /* the canvas shows the Work on its next read */ }
+    }
     catch (error) { setActionError(error.message || 'The workflow action could not be confirmed.'); }
     finally { busyRef.current = false; if (mounted.current) setBusy(false); }
   };

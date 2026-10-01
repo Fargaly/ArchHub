@@ -282,16 +282,23 @@ def workflow_state(owner, browser, root, anchor, *, projection=None):
         except (ValueError, KeyError, TypeError):
             approval = {"digest": None, "current": False, "relation": held[0], "invalid": True}
     # "Open as nodes" must land the canvas in the scope that DRAWS this workflow's step
-    # nodes. The members were placed on the draft scope (value["scope"]); reuse the
-    # conversation catalog's existing walk to reach it. The path is emitted ONLY when it
-    # ends at the workflow's own scope -- a draft made from another scope gets no path, and
-    # the client refuses rather than opening the wrong scope.
+    # nodes. The members were placed on the draft scope (value["scope"]). The real Workshop
+    # stamps the CURRENT canvas scope on a draft, so the verified walk to it is the viewer's
+    # own scope trail when it already ends at that scope (e.g. ['app:canvas']); the workbench
+    # catalog walk is the fallback when the scope is the workbench but not the current one.
+    # The path is emitted ONLY when it ends at the workflow's own scope -- any scope that
+    # cannot be verified gets no path, and the client refuses rather than opening the wrong one.
     from .workshop_conversation_catalog import workshop_workbench_path
     workflow_scope = value.get("scope")
-    workbench_path = workshop_workbench_path(snapshot, registry)
-    scope_path = (list(workbench_path)
-                  if workbench_path and workflow_scope and workbench_path[-1] == workflow_scope
-                  else None)
+    trail = [step.get("root") for step in ((projection.get("scope") or {}).get("trail") or ())
+             if isinstance(step, dict) and step.get("root")]
+    workbench_path = list(workshop_workbench_path(snapshot, registry))
+    if trail and workflow_scope and trail[-1] == workflow_scope:
+        scope_path = trail                                       # the draft scope is the viewer's current scope
+    elif workbench_path and workflow_scope and workbench_path[-1] == workflow_scope:
+        scope_path = workbench_path                              # the workbench, reachable by its catalog walk
+    else:
+        scope_path = None
     return {"root": anchor, "title": value.get("title") or "Workflow", "conversation": root,
             "members": members, "nodes": nodes, "wires": len(wires),
             # The workflow's own wiring (source, target) so the Workshop graph draws it, not the canvas.

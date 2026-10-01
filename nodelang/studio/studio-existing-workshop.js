@@ -45,6 +45,10 @@
     let updateRead = null, updateWrite = null, updateEpoch = 0, updateWatchers = 0, updateTimer = null, updateReads = 0;
     let topologyCanvas = null, topologyGraph = null, topologyError = '', topologyPending = false;
     let topologyRead = null, topologyWrite = null, topologyRequiresRefresh = false;
+    // An identity-changing accept (a change of application, auth subject/session, or scope --
+    // including leaving and returning to a scope) bumps this; a new revision of the SAME view does
+    // not. A read that began before a bump must not publish its now-stale result over the new view.
+    let navGeneration = 0;
     let providerRead = null, providerSave = null;
     let themeCanvas = null, themeWrite = null, themeError = '';
     const updateActive = () => ['checking', 'downloading', 'restarting'].includes(applicationUpdate?.state);
@@ -232,7 +236,12 @@
         epoch += 1; workshop = null; nativeWork = null; pageTarget = null; pageEpoch += 1;
         conversationCatalog = null; conversationCatalogPage = null; catalogEpoch += 1; conversationCreation = null;
       }
+      // A navigation is a change of view IDENTITY (application, auth subject/session, or scope);
+      // topologyIdentity carries all four. Leaving and returning to a scope changes it twice. A new
+      // revision of the SAME view is not a navigation, so a fresh same-view read still publishes.
+      const navigated = !topologyCanvas || topologyIdentity(value) !== topologyIdentity(topologyCanvas);
       topologyCanvas = value; topologyGraph = graph;
+      if (navigated) navGeneration += 1;
       if (value.workshop_scope) api.setCanvas(value.workshop_scope);
       publish(); return value;
     };
@@ -253,7 +262,23 @@
         interaction_projection:{...value.interaction_projection, revision:committedRevision}});
     };
     const readTopology = async identity => {
-      const value = acceptTopology(await get('/api/universal/canvas'));
+      // A read that resolves AFTER any navigation (scope change, away-and-back, or an identity
+      // change) must not publish its stale result over the newer view. The owner bumps
+      // navGeneration on every acceptTopology, so a read whose generation moved while its GET was
+      // in flight refuses to publish. Scope/revision comparison is not enough (away-and-back ends
+      // at the same scope). The guard is here at the owner, not in the caller after its own await.
+      const generation = navGeneration;
+      const raw = await get('/api/universal/canvas');
+      // The view identity (app, auth, or scope) changed while the GET was in flight: refuse to
+      // publish the stale result (covers away-and-back and identity changes).
+      if (navGeneration !== generation) return topologyCanvas;
+      // Same view: honor revision ordering, so a fresh higher-revision read (e.g. a new workflow
+      // member) still publishes, but an out-of-order older read is dropped. Revisions are only
+      // comparable within one identity, so a lower-revision read from ANOTHER identity (a
+      // refresh-driven identity transition) is NOT dropped here -- acceptTopology handles it.
+      if (topologyCanvas && raw && revision(raw.revision) &&
+          topologyIdentity(raw) === topologyIdentity(topologyCanvas) && raw.revision < topologyCanvas.revision) return topologyCanvas;
+      const value = acceptTopology(raw);
       if (identity && topologyIdentity(value) !== identity) fail('The canvas scope changed. Choose the connection again.');
       return value;
     };

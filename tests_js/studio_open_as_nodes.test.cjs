@@ -129,11 +129,12 @@ test('the workflow-card handler opens its own workflow with a member focus', asy
   assert.equal(err, null);
 });
 
-// ── caller: the card never follows an unrelated selection; a null workflow refuses, no switch ──
-test('the workflow-card handler ignores selection and refuses when no workflow is shown', async () => {
+// ── caller: the card walks ITS workflow's scope, never a selection; a null workflow just switches ──
+test('the workflow-card handler walks its own workflow scope and ignores selection', async () => {
   const card = loadCard();
   let mode = null, walked = false;
-  // No shown workflow (e.g. nothing proposed): the card must not silently switch to the canvas.
+  // No shown workflow: no card is rendered in this case, and calling with null just switches
+  // (focus '' -> canvas) and walks nothing. (It does not and need not "refuse".)
   const ok = await card(null, { authority:null, scopeOpen:async () => { walked = true; },
     setFocusId:()=>{}, setMode:m => mode = m, setError:()=>{} });
   assert.equal(ok, true); // no workflow -> focus '' -> switches (same as a plain open)
@@ -144,6 +145,260 @@ test('the workflow-card handler ignores selection and refuses when no workflow i
   const steps = [];
   await card(other, { authority:null, scopeOpen:async p => steps.push(...p), setFocusId:()=>{}, setMode:()=>{}, setError:()=>{} });
   assert.deepEqual(steps, other.scope_path, 'the card walks the shown workflow scope, never a selection');
+});
+
+// ── wfAct refreshes the topology after an accepted mutation (stale-snapshot root cause) ──
+test('wfAct refreshes topology after an accepted workflow mutation', () => {
+  const start = source.indexOf('const wfAct = async');
+  const body = source.slice(start, source.indexOf('};', start));
+  assert.ok(start > 0, 'wfAct is in studio-workshop.jsx');
+  assert.match(body, /workshopWorkflow\(descriptor\.root, action, fields\)/, 'it still performs the mutation');
+  assert.match(body, /refreshTopologyCanvas\(\)/, 'it refreshes topology after the accepted mutation');
+});
+
+// ── refresh+verify: after the walk the member must be in the fresh snapshot before switching ──
+test('a refreshed snapshot missing the member is refused without switching', async () => {
+  const open = loadHelper();
+  let mode = null, err = null;
+  const ok = await open({focus:'assembly-instance:wf', workflow:WORKFLOW, authority:null,
+    scopeOpen:async () => ({scope:{current:'app:workshop-workbench'}, nodes:[]}),
+    refreshTopology:async () => ({scope:{current:'app:workshop-workbench'}, nodes:[{id:'someone-else'}]}),
+    currentScope:() => 'app:workshop-workbench',
+    setFocusId:()=>{}, setMode:m => mode = m, setError:e => err = e});
+  assert.equal(ok, false);
+  assert.equal(mode, null, 'no switch when the member is absent after refresh');
+  assert.match(err, /not on this canvas yet/);
+});
+
+// ── epoch: a refresh that resolves after the view moved never overwrites it ──
+test('a stale refresh resolving after a view change is ignored', async () => {
+  const open = loadHelper();
+  let mode = null;
+  const ok = await open({focus:'assembly-instance:wf', workflow:WORKFLOW, authority:null,
+    scopeOpen:async () => ({scope:{current:'app:workshop-workbench'}, nodes:[{id:'assembly-instance:wf'}]}),
+    refreshTopology:async () => ({scope:{current:'app:workshop-workbench'}, nodes:[{id:'assembly-instance:wf'}]}),
+    currentScope:() => 'app:moved-elsewhere',   // the person navigated away during the async refresh
+    setFocusId:()=>{}, setMode:m => mode = m, setError:()=>{}});
+  assert.equal(ok, false);
+  assert.equal(mode, null, 'the stale refresh does not switch a changed view');
+});
+
+// ── MOUNTED regression: a real WorkshopView render; clicking the drawn card ⌗ walks ITS workflow ──
+const WF_SCOPE_PATH = ['gm:domain:brain', 'app:workshop-workbench'];
+const WORKFLOW_STATE = () => {
+  const room = 'app:workshop:conversation:room';
+  const wf = {root:'assembly-instance:wf', scope:'app:workshop-workbench', members:['assembly-instance:m1'],
+    scope_path:WF_SCOPE_PATH, nodes:[{root:'assembly-instance:m1', title:'Step one', engine:'library.think', params:{}}],
+    wires:0, edges:[], digest:'dg', approval:null, proposed_by:'agent-a', source_message:'no-such-message',
+    title:'My Workflow', conversation:room};
+  return {state:{workshop:{root:room, workflows:[wf], messages:[], participants:[], self:'owner', can_send:true,
+      can_manage_history:false, has_older:false, next_before:null, total:0, activity:[]},
+      canvas:{root:'app:workshop-workbench', graph_id:'graph-a'}, nativeWork:null},
+    descriptor:{root:room, label:'Room', native_work_available:false}};
+};
+
+async function mountWorkshop(sel) {
+  const {JSDOM} = await import('jsdom');
+  const React = require('react');
+  const {createRoot} = require('react-dom/client');
+  const {transformSync} = require('esbuild');
+  const dom = new JSDOM('<div id="root"></div>');
+  const oldWindow = global.window, oldDocument = global.document;
+  const win = dom.window;
+  global.window = win; global.document = win.document; global.IS_REACT_ACT_ENVIRONMENT = true;
+  const openCalls = [], modes = [], focuses = [];
+  win.AH = new Proxy({onFill:'#000'}, {get:(t,k)=> k in t ? t[k] : 'token-' + String(k)});
+  win.ArchHubTheme = undefined;
+  // The fresh topology snapshot the card verifies after the scope walk: the workflow member
+  // drawn at the workflow's own scope.
+  const FRESH = {scope:{current:'app:workshop-workbench', trail:[{root:'app:root'}]},
+    nodes:[{id:'assembly-instance:m1'}], authorization:{}};
+  let refreshes = 0;
+  win.ARCHHUB_STUDIO_AUTHORITY = new Proxy({
+    open: async step => { openCalls.push(step); return {scope:{current:step, trail:[{root:'app:root'}]}, nodes:[{id:'assembly-instance:m1'}]}; },
+    load: async () => ({scope:{current:'app:root', trail:[{root:'app:root'}]}, nodes:[]}),
+    refreshTopologyCanvas: async () => { refreshes += 1; return FRESH; },
+    // The REAL owner shape (studio-existing-workshop.js publish): snapshot.canvas is the Workshop
+    // DESCRIPTOR; the universal projection with scope.current is at snapshot.topology.canvas.
+    getSnapshot: () => ({canvas: {root:'app:workshop:conversation:room', graph_id:'graph-a'}, topology: {canvas: FRESH}}),
+  }, {get(t,k){ if (k in t) return t[k]; if (typeof k === 'string') return async () => ({}); return undefined; }});
+  win.ARCHHUB_SCOPE_OPEN = async p => { for (const s of p) openCalls.push(s); };
+  win.ARCHHUB_LOAD_HOSTS = async () => ({hosts:[]});
+  win.ARCHHUB_CONVERSATION_RETENTION = async () => ({});
+  const context = vm.createContext({React, window:win, document:win.document, globalThis:win,
+    setTimeout, clearTimeout, setInterval, clearInterval, console, JSON, Date, Math, Object, Array, String, Number, Boolean});
+  vm.runInContext(transformSync(source, {loader:'jsx'}).code, context);
+  const WorkshopView = win.WorkshopView;
+  assert.equal(typeof WorkshopView, 'function', 'window.WorkshopView is defined by the shipped module');
+  const root = createRoot(win.document.getElementById('root'));
+  const {state, descriptor} = WORKFLOW_STATE();
+  try {
+    await React.act(async () => root.render(React.createElement(WorkshopView, {
+      state, descriptor, target:'', setTarget(){}, setMode:m => modes.push(m),
+      setFocusId:id => focuses.push(id), onLeave(){}, sel, setSel(){}, externalRail:false})));
+    await React.act(async () => { await new Promise(r => setTimeout(r, 0)); });
+    const card = win.document.querySelector('[data-workshop-workflow]');
+    assert.ok(card, 'the workflow card is drawn');
+    const btn = [...card.querySelectorAll('button')].find(b =>
+      /open as nodes/i.test((b.getAttribute('title') || '') + ' ' + (b.getAttribute('aria-label') || '') + ' ' + b.textContent));
+    assert.ok(btn, 'the card has an Open-as-nodes control');
+    await React.act(async () => { btn.click(); await new Promise(r => setTimeout(r, 0)); });
+    return {openCalls, modes, focuses, refreshes};
+  } finally {
+    await React.act(async () => root.unmount());
+    win.close(); global.window = oldWindow; global.document = oldDocument; delete global.IS_REACT_ACT_ENVIRONMENT;
+  }
+}
+
+test('MOUNTED: the drawn card ⌗ walks the shown workflow, refreshes topology, then focuses', async () => {
+  const {openCalls, modes, focuses, refreshes} = await mountWorkshop({agent:null, task:null});
+  assert.deepEqual(openCalls, WF_SCOPE_PATH, 'the card walked the workflow scope path');
+  assert.ok(refreshes >= 1, 'it refreshed the topology before focus (so the member is in the snapshot)');
+  assert.ok(modes.includes('canvas'), 'it switched to the canvas');
+  assert.ok(focuses.includes('assembly-instance:m1'), 'it focused a workflow member');
+});
+
+test('MOUNTED: the drawn card ⌗ walks the shown workflow even with an unrelated Work selected', async () => {
+  const {openCalls, modes, refreshes} = await mountWorkshop({agent:null, task:'assembly-instance:unrelated-work'});
+  assert.deepEqual(openCalls, WF_SCOPE_PATH, 'an unrelated selection never redirects the card');
+  assert.ok(refreshes >= 1);
+  assert.ok(modes.includes('canvas'));
+});
+
+// ── OWNER: a stale topology read must not publish across navigation, incl. away-and-back / identity ──
+function ownerUnderTest(held) {
+  const adapter = fs.readFileSync(path.join(path.dirname(file), 'studio-existing-workshop.js'), 'utf8');
+  const ctx = vm.createContext({URLSearchParams, TextEncoder, JSON, Math, Object, Array, String, Number, Boolean, Promise});
+  vm.runInContext(adapter, ctx);
+  const ref = {release: null};
+  const api = ctx.ArchHubExistingWorkshop.create({
+    uuid:() => 'id', pendingStorage:{getItem:() => null, setItem:() => {}},
+    get:async () => new Promise(res => { ref.release = () => res(held); }),
+    post:async () => ({})});
+  return {api, ref};
+}
+const CANVAS_AT = (scope, rev, subject = 'owner', session = 'view') => ({ok:true, application_root:'app',
+  revision:rev, authorization:{subject, session}, scope:{current:scope, trail:[{root:'app:canvas'}]},
+  nodes:[], wires:[], interaction_projection:{revision:rev, bindings:[]}});
+
+test('OWNER a stale read does not publish across an away-and-back navigation', async () => {
+  // Away-and-back returns to the starting scope, so scope/revision comparison is fooled.
+  const {api, ref} = ownerUnderTest(CANVAS_AT('app:canvas', 3));   // the OLD read, held
+  api.setTopologyCanvas(CANVAS_AT('app:workshop-workbench', 2));   // start at the workbench
+  const reading = api.refreshTopologyCanvas();
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(typeof ref.release, 'function', 'the read reached get()');
+  api.setTopologyCanvas(CANVAS_AT('app:other-scope', 3));          // away ...
+  api.setTopologyCanvas(CANVAS_AT('app:workshop-workbench', 3));   // ... and back, same revision
+  ref.release();                                                   // old app:canvas read resolves now
+  await reading.catch(() => {});
+  assert.equal(api.getSnapshot().topology.canvas.scope.current, 'app:workshop-workbench',
+    'away-and-back: the stale read must not overwrite the view');  // RED (pristine and the scope-guard): 'app:canvas'
+});
+
+test('OWNER a stale read does not publish across a same-scope identity change', async () => {
+  const {api, ref} = ownerUnderTest(CANVAS_AT('app:workshop-workbench', 3, 'owner-a'));
+  api.setTopologyCanvas(CANVAS_AT('app:workshop-workbench', 2, 'owner-a'));
+  const reading = api.refreshTopologyCanvas();
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(typeof ref.release, 'function');
+  api.setTopologyCanvas(CANVAS_AT('app:workshop-workbench', 3, 'owner-b'));  // same scope, new identity
+  ref.release();
+  await reading.catch(() => {});
+  assert.equal(api.getSnapshot().topology.canvas.authorization.subject, 'owner-b',
+    'the read from the old identity must not overwrite the new one');
+});
+
+test('OWNER a fresher same-view read still publishes (liveness: the new member must appear)', async () => {
+  // The refresh after an accepted draft returns a higher revision of the SAME view carrying the new
+  // member node; it must publish, not be dropped as if it were a navigation.
+  const fresh = CANVAS_AT('app:workshop-workbench', 4);
+  fresh.nodes = [{id:'assembly-instance:new-member'}];
+  const {api, ref} = ownerUnderTest(fresh);                        // fresh rev4 with the new node, held
+  api.setTopologyCanvas(CANVAS_AT('app:workshop-workbench', 2));   // start
+  const reading = api.refreshTopologyCanvas();
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(typeof ref.release, 'function');
+  api.setTopologyCanvas(CANVAS_AT('app:workshop-workbench', 3));   // same view, newer revision (NOT a navigation)
+  ref.release();                                                   // the fresh rev4 read resolves
+  await reading.catch(() => {});
+  const snap = api.getSnapshot();
+  assert.equal(snap.topology.canvas.revision, 4, 'the fresher same-view read must publish');
+  assert.ok(snap.topology.canvas.nodes.some(n => n.id === 'assembly-instance:new-member'),
+    'the new member node is present after the refresh');
+});
+
+test('OWNER a same-identity older read is dropped (revision ordering)', async () => {
+  const {api, ref} = ownerUnderTest(CANVAS_AT('app:workshop-workbench', 3));   // older rev3, same identity
+  api.setTopologyCanvas(CANVAS_AT('app:workshop-workbench', 5));               // held rev5
+  const reading = api.refreshTopologyCanvas();
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(typeof ref.release, 'function');
+  ref.release();
+  await reading.catch(() => {});
+  assert.equal(api.getSnapshot().topology.canvas.revision, 5, 'the older same-identity read is dropped');
+});
+
+test('OWNER a different-identity response is accepted even at a lower revision', async () => {
+  // A refresh-driven identity transition: no local navigation, the response is another identity at a
+  // LOWER revision. Revisions across identities are not comparable, so it must still publish.
+  const {api, ref} = ownerUnderTest(CANVAS_AT('app:workshop-workbench', 1, 'owner-b', 'session-b'));
+  api.setTopologyCanvas(CANVAS_AT('app:workshop-workbench', 100, 'owner-a', 'session-a'));   // held, high rev
+  const reading = api.refreshTopologyCanvas();
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(typeof ref.release, 'function');
+  ref.release();   // no setTopologyCanvas between: no local navigation
+  await reading.catch(() => {});
+  assert.equal(api.getSnapshot().topology.canvas.authorization.subject, 'owner-b',
+    'the identity transition published despite a lower revision');   // RED against the unconditional drop
+});
+
+// ── RUNTIME: an accepted workflow action with a failed refresh keeps the receipt, no second POST ──
+async function mountForApprove() {
+  const {JSDOM} = await import('jsdom');
+  const React = require('react');
+  const {createRoot} = require('react-dom/client');
+  const {transformSync} = require('esbuild');
+  const dom = new JSDOM('<div id="root"></div>');
+  const oldWindow = global.window, oldDocument = global.document;
+  const win = dom.window;
+  global.window = win; global.document = win.document; global.IS_REACT_ACT_ENVIRONMENT = true;
+  const posts = []; const errors = [];
+  win.AH = new Proxy({onFill:'#000'}, {get:(t,k)=> k in t ? t[k] : 'token-' + String(k)});
+  win.ArchHubTheme = undefined; win.ARCHHUB_LOAD_HOSTS = async () => ({hosts:[]});
+  win.ARCHHUB_CONVERSATION_RETENTION = async () => ({});
+  win.ARCHHUB_STUDIO_AUTHORITY = new Proxy({
+    workshopWorkflow: async (root, action) => { posts.push(action); return {ok:true}; },  // the one accepted POST
+    refreshTopologyCanvas: async () => { throw new Error('refresh boom'); },              // the refresh fails
+    getSnapshot: () => ({canvas:{root:'r'}, topology:{canvas:{scope:{current:'app:workshop-workbench'}, nodes:[]}}}),
+  }, {get(t,k){ if (k in t) return t[k]; if (typeof k === 'string') return async () => ({}); return undefined; }});
+  const context = vm.createContext({React, window:win, document:win.document, globalThis:win,
+    setTimeout, clearTimeout, setInterval, clearInterval, console, JSON, Date, Math, Object, Array, String, Number, Boolean});
+  vm.runInContext(transformSync(source, {loader:'jsx'}).code, context);
+  const root = createRoot(win.document.getElementById('root'));
+  const {state, descriptor} = WORKFLOW_STATE();
+  try {
+    await React.act(async () => root.render(React.createElement(win.WorkshopView, {
+      state, descriptor, target:'', setTarget(){}, setMode(){}, setFocusId(){}, onLeave(){},
+      sel:{agent:null, task:null}, setSel(){}, externalRail:false})));
+    await React.act(async () => { await new Promise(r => setTimeout(r, 0)); });
+    const btn = [...win.document.querySelectorAll('[data-workshop-workflow] button')]
+      .find(b => /approve/i.test(b.textContent));
+    assert.ok(btn, 'the awaiting workflow card shows an Approve button');
+    await React.act(async () => { btn.click(); await new Promise(r => setTimeout(r, 0)); });
+    const alert = win.document.querySelector('[role="alert"]');
+    if (alert) errors.push(alert.textContent);
+    return {posts, errors};
+  } finally {
+    await React.act(async () => root.unmount());
+    win.close(); global.window = oldWindow; global.document = oldDocument; delete global.IS_REACT_ACT_ENVIRONMENT;
+  }
+}
+
+test('RUNTIME an accepted workflow action with a failed refresh keeps the receipt and never re-POSTs', async () => {
+  const {posts, errors} = await mountForApprove();
+  assert.deepEqual(posts, ['workflow-approve'], 'exactly one accepted mutation POST, no replay after the failed refresh');
+  assert.deepEqual(errors, [], 'the accepted action is not reported as failed when only the refresh threw');
 });
 
 // ── wiring: the workflow card's ⌗ binds openShownWorkflowAsNodes(shownWorkflow), not openAsNodes ──

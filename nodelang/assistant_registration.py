@@ -463,7 +463,8 @@ __all__ = ["CLIENTS", "codex_entry", "codex_readiness", "install_roots", "mcp_se
 
 
 
-_HOOK_FOLDERS = {"claude-code": ".claude", "codex": ".codex", "gemini-cli": ".gemini"}
+_HOOK_FOLDERS = {"claude-code": ".claude", "codex": ".codex", "gemini-cli": ".gemini",
+                 "antigravity": ".gemini/config"}
 
 
 def _client_folder(client, env):
@@ -489,7 +490,16 @@ def _hook_plan(client, env, *, include_gate, migrate):
     in-place spelling repair of an existing workspace gate. The gate is never added.
     migrate (Settings only, reviewed) moves another or stale ArchHub copy's check here."""
     from .session_link_config import (observed_client_hook_binding, plan_client_hook_install,
-                                      SessionLinkConfigRefused)
+                                      plan_antigravity_stop_cutover, SessionLinkConfigRefused)
+    if client == "antigravity":
+        # Antigravity's hooks file is the archhub-governance/flat shape, not the
+        # grouped settings.json shape, so its end-of-turn cutover is the localized
+        # Stop-only replacement -- same consented preview/repair path, different writer.
+        if not env.get("USERPROFILE"):
+            raise SessionLinkConfigRefused("client home directory is unavailable")
+        root, state = install_roots(env)
+        plan = plan_antigravity_stop_cutover(home=Path(env["USERPROFILE"]), install_root=root)
+        return plan, state
     if client not in _HOOK_FOLDERS:
         raise SessionLinkConfigRefused("unsupported hook client")
     root, state = install_roots(env)

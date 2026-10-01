@@ -355,7 +355,130 @@ def settings_target(vendor, *, home, codex_home=None):
     """The client's hook settings file. Codex honours CODEX_HOME (as _codex_config does)."""
     if vendor == "codex" and codex_home is not None:
         return Path(codex_home) / "hooks.json"
+    if vendor == "antigravity":
+        return Path(home) / _ANTIGRAVITY_HOOKS_PATH
     return Path(home) / _HOOK_CLIENTS[vendor][0]
+
+
+# Antigravity's hooks file is a different shape from the settings.json clients: a
+# single root "archhub-governance" holding flat {command, timeout, type} entries per
+# event (not the top-level "hooks" key with grouped {hooks:[...]} entries). So its
+# end-of-turn cutover is a localized, Stop-only replacement -- it swaps exactly the
+# one clean-coordination Stop command for the installed native Stop client and
+# touches nothing else. The grouped-shape clients (claude/codex/gemini) are untouched.
+_ANTIGRAVITY_HOOKS_PATH = ".gemini/config/hooks.json"
+_ANTIGRAVITY_ROOT = "archhub-governance"
+_ANTIGRAVITY_STOP_EVENT = "Stop"
+_ANTIGRAVITY_CLEAN_HOOK = "clean_antigravity_hook.py"
+
+
+# Argv recognition for the exact clean-coordination Stop entry this cutover replaces:
+# "<python interpreter>" "<...clean_antigravity_hook.py>" stop -- and nothing else.
+# Anything compound, commented, extra-argumented, unquoted, or a path/name lookalike
+# is refused; the cutover never guesses which command to swap.
+_ANTIGRAVITY_SHELL_META = ("&", "|", ";", "\n", "\r", "`", ">", "<", "%", "#")
+_PY_INTERPRETERS = {"python.exe", "pythonw.exe", "python", "python3", "python3.exe"}
+
+
+def _hook_basename(path: str) -> str:
+    return path.replace("\\", "/").rsplit("/", 1)[-1]
+
+
+def _antigravity_clean_stop_argv(command):
+    """The argv iff command is exactly a python interpreter, the clean_antigravity_hook.py
+    script, and a single 'stop' argument. None for anything else: compound shells,
+    comments, extra args, an unquoted/lookalike interpreter, or a script-name lookalike
+    (e.g. other_clean_antigravity_hook.py, or 'echo ... stop')."""
+    import shlex
+    if type(command) is not str:
+        return None
+    text = command.strip()
+    if not text or any(ch in text for ch in _ANTIGRAVITY_SHELL_META):
+        return None
+    try:
+        tokens = shlex.split(text, posix=False)
+    except ValueError:
+        return None
+    argv = []
+    for token in tokens:
+        if len(token) >= 2 and token[0] == '"' and token[-1] == '"':
+            token = token[1:-1]
+        if '"' in token:
+            return None  # a stray quote means this was not a clean quoted argv
+        argv.append(token)
+    if len(argv) != 3 or argv[2] != "stop":
+        return None
+    if _hook_basename(argv[0]).casefold() not in _PY_INTERPRETERS:
+        return None
+    if _hook_basename(argv[1]) != _ANTIGRAVITY_CLEAN_HOOK:
+        return None
+    return argv
+
+
+def plan_antigravity_stop_cutover(*, home, install_root):
+    """Replace exactly Antigravity's clean-hook Stop entry with the installed native Stop
+    client, editing only that one JSON string in the RAW file so every other byte (indent,
+    key order, sibling events, BOM, line endings) is preserved. Refuse -- never append or
+    guess -- when the clean Stop entry is absent or not unique. Returns the same plan shape
+    apply_client_hook_install consumes."""
+    from .client_mcp_installation import _require_plain
+    import copy
+    target = settings_target("antigravity", home=home)
+    _require_plain(target, "file")
+    before = target.read_bytes()
+    if len(before) > 4 * 1024 * 1024:
+        raise SessionLinkConfigRefused("Antigravity settings exceed the supported size")
+    try:
+        existing = json.loads(before.decode("utf-8-sig"))
+    except (ValueError, UnicodeError):
+        raise SessionLinkConfigRefused("Antigravity settings are unreadable") from None
+    governance = existing.get(_ANTIGRAVITY_ROOT) if type(existing) is dict else None
+    if type(governance) is not dict:
+        raise SessionLinkConfigRefused("Antigravity config has no archhub-governance root")
+    stop_entries = governance.get(_ANTIGRAVITY_STOP_EVENT)
+    if type(stop_entries) is not list:
+        raise SessionLinkConfigRefused("Antigravity archhub-governance has no Stop event")
+    matches = [i for i, entry in enumerate(stop_entries)
+               if type(entry) is dict and _antigravity_clean_stop_argv(entry.get("command")) is not None]
+    if len(matches) != 1:
+        raise SessionLinkConfigRefused(
+            "expected exactly one Antigravity clean-hook Stop entry to replace, found %d"
+            % len(matches))
+    index = matches[0]
+    old_command = stop_entries[index]["command"]
+    python, script = installed_stop_hook(install_root)
+    native_command = _render_hook_command("antigravity", python, script, "antigravity")
+    # Localized raw-byte edit: swap only the one JSON-encoded command string. It must
+    # occur exactly once in the raw bytes, or the edit is not unambiguous and is refused.
+    old_token = json.dumps(old_command).encode("utf-8")
+    new_token = json.dumps(native_command).encode("utf-8")
+    if before.count(old_token) != 1:
+        raise SessionLinkConfigRefused(
+            "the Antigravity Stop command is not uniquely locatable in the raw config")
+    after = before.replace(old_token, new_token)
+    expected = copy.deepcopy(existing)
+    expected[_ANTIGRAVITY_ROOT][_ANTIGRAVITY_STOP_EVENT][index] = {
+        **existing[_ANTIGRAVITY_ROOT][_ANTIGRAVITY_STOP_EVENT][index], "command": native_command}
+    try:
+        reparsed = json.loads(after.decode("utf-8-sig"))
+    except (ValueError, UnicodeError):
+        raise SessionLinkConfigRefused(
+            "the Antigravity Stop cutover did not produce valid settings") from None
+    if reparsed != expected:
+        raise SessionLinkConfigRefused(
+            "the Antigravity Stop cutover could not be applied as a localized edit")
+    changed = after != before
+    text = after.decode("utf-8")
+    before_digest = hashlib.sha256(before).hexdigest()
+    after_digest = hashlib.sha256(after).hexdigest()
+    plan_digest = hashlib.sha256(json.dumps(
+        ["antigravity", str(target), before_digest, after_digest, native_command],
+        ensure_ascii=True, separators=(",", ":")).encode()).hexdigest()
+    return {"vendor": "antigravity", "target": str(target), "before_digest": before_digest,
+            "after_digest": after_digest, "plan_digest": plan_digest, "changed": changed,
+            "text": text, "managed_events": [_ANTIGRAVITY_STOP_EVENT],
+            "stop_binding": "ours", "stop_roles": ["ours"], "migration": False,
+            "activation": "Settings are saved separately from checking that the assistant is using them."}
 
 
 def _stop_hook_role(hook, vendor, script):

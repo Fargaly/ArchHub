@@ -7012,8 +7012,10 @@ class ApplicationServer:
                                     pass
                                 participants = [{key:row[key] for key in ('root', 'label', 'attached')}
                                     for row in _workshop_participant_rows(owner, current, canonical, {})]
+                                from .workshop_conversation_catalog import workshop_workbench_path
                                 result.update(owner=binding.subject_root, view=binding.view_root,
-                                    self=binding.subject_root, can_create=can_create, participants=participants)
+                                    self=binding.subject_root, can_create=can_create, participants=participants,
+                                    workbench_path=workshop_workbench_path(current, owner.universal_registry))
                                 latest, _ = catalog_guard()
                                 if latest.revision != result['revision']:
                                     raise AuthorizationDenied('Conversation catalog changed during read')

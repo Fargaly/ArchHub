@@ -186,7 +186,10 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
         if (matches.length !== 1) throw new Error('This graph scope is not available to open.');
         const binding = matches[0];
         await jpost('/api/universal/interaction', {interaction:binding.interaction, control:root,
-          event:binding.event, revision:projection.revision});
+          event:binding.event, revision:projection.revision,
+          // Opening a scope changes topology: the route requires the acknowledgement mode the
+          // lease names (as ARCHHUB_HISTORY sends), else it refuses with "topology projection delta".
+          projection_mode:binding.acknowledgement_mode || 'receipt-v1'});
         projection = await jget('/api/universal/canvas');
       };
       if (projection.scope?.current === path[path.length - 1]) return projection;

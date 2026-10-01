@@ -438,7 +438,13 @@
       },
       open(root) {
         const intent = ++focusIntent;
-        return enqueue(() => post('/api/universal/interaction', binding(root)), {navigation: true})
+        return enqueue(() => {
+          const request = binding(root);
+          // A lease that names its acknowledgement mode is answered in that mode; a clean lease names
+          // none and its scope route reads none, so nothing is added or defaulted for it.
+          if (text(request.acknowledgement_mode)) request.projection_mode = request.acknowledgement_mode;
+          return post('/api/universal/interaction', request);
+        }, {navigation: true})
           .then(result => {
             if (intent === focusIntent) { wantedFocus = result.selected; project(); }
             return result;

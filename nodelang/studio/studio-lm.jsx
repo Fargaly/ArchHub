@@ -459,6 +459,20 @@ const StudioLM = () => {
   const updateWorkspaceView = change => setWorkspaceSelection(previous => !workspaceReady ? previous : ({
     ...resolveWorkspaceView(previous), ...change, notice:'', scope:viewScope,
   }));
+  // A Conversations row that first walked to the Workshop canvas (WorkshopConversationMenu) names
+  // its room here: the menu itself unmounts when the scope changes, and a selection made under the
+  // old scope is reset. The room opens on the first render that lists it at the new scope.
+  const [reachingRoom, setReachingRoom] = React.useState('');
+  React.useEffect(() => {
+    const listen = event => setReachingRoom(typeof event.detail === 'string' ? event.detail : '');
+    window.addEventListener('archhub:reach-conversation', listen);
+    return () => window.removeEventListener('archhub:reach-conversation', listen);
+  }, []);
+  React.useEffect(() => {
+    if (!reachingRoom || !workspaceReady || !availableWorkshops.some(row => row.root === reachingRoom)) return;
+    setReachingRoom('');
+    setWorkspaceSelection({mode:'chat', conversationRoot:reachingRoom, target:'', notice:'', pending:false, scope:viewScope});
+  }, [reachingRoom, workspaceReady, availableWorkshops, viewScope]);
   const selectedWorkshop = session && workshopState?.workshops?.find(row => row.root === workspaceView.conversationRoot);
   const workshopContext = selectedWorkshop && workspaceView.mode === 'chat' &&
     workshopState?.canvas?.graph_id && workshopState?.canvas?.root ? {
@@ -1985,6 +1999,29 @@ const WorkshopConversationMenu = ({workshops, conversationRoot, setConversationR
   };
   const toggle = () => { if (open) close(); else { setOpen(true); if (anchor) read(); } };
   const choose = root => { setConversationRoot(root); close(); };
+  // A saved conversation lives on the Workshop canvas. Its row walks there with the canvas's own
+  // open interactions (the catalog names the path from the graph), then hands the room to the
+  // Studio view, which opens it once the new scope lists it (see 'archhub:reach-conversation').
+  const path = Array.isArray(catalog?.workbench_path) ? catalog.workbench_path : [];
+  const reach = async root => {
+    if (busy || !path.length) return;
+    setBusy(true); setError('');
+    try {
+      const signed = window.ARCHHUB_STUDIO_AUTHORITY;
+      if (signed && typeof signed.open === 'function') {
+        let canvas = await signed.load();
+        const top = canvas?.scope?.trail?.[0]?.root;
+        if (top && canvas.scope.current !== top && canvas.scope.current !== path[path.length - 1]) canvas = await signed.open(top);
+        for (const step of path) { if (canvas?.scope?.current !== step) canvas = await signed.open(step); }
+      } else if (typeof window.ARCHHUB_SCOPE_OPEN === 'function') {
+        await window.ARCHHUB_SCOPE_OPEN(path);
+        await studioRefreshCanvasInPlace();
+      } else throw new Error('The Workshop canvas cannot be opened from here.');
+      window.dispatchEvent(new CustomEvent('archhub:reach-conversation', {detail:root}));
+      close();
+    } catch (failure) { setError(failure.message || 'Could not open the Workshop canvas.'); }
+    finally { setBusy(false); }
+  };
   const create = async event => {
     event.preventDefault();
     if (busy || !anchor || !catalog?.can_create) return;
@@ -2022,10 +2059,13 @@ const WorkshopConversationMenu = ({workshops, conversationRoot, setConversationR
         </button>
         {(catalog?.conversations || workshops.map(row => ({root:row.root, title:row.label}))).map(row => {
           const visible = workshops.some(item => item.root === row.root);
-          return <button key={row.root} disabled={!visible || busy} onClick={() => choose(row.root)}
+          const reachable = visible || path.length > 0;
+          return <button key={row.root} disabled={!reachable || busy}
+            onClick={() => visible ? choose(row.root) : reach(row.root)}
             aria-current={conversationRoot === row.root ? 'true' : undefined}
-            title={visible ? row.title : 'Open the Workshop canvas to reach this conversation'}
-            style={{...control, textAlign:'left', overflowWrap:'anywhere', cursor:visible ? 'pointer' : 'default',
+            title={visible ? row.title : reachable ? 'Open the Workshop canvas and this conversation'
+              : 'Open the Workshop canvas to reach this conversation'}
+            style={{...control, textAlign:'left', overflowWrap:'anywhere', cursor:reachable ? 'pointer' : 'default',
               background:conversationRoot === row.root ? LM.accentDim : LM.bg}}>
             <div>{row.title}</div>
             {row.participant_roots && <small style={{color:LM.inkSoft}}>{row.participant_roots.length} participants{!visible ? ' · on Workshop canvas' : ''}</small>}

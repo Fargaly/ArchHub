@@ -187,6 +187,19 @@ def _prepare_child(snapshot, registry, service, *, root, title, participants, co
     return tuple(creates.values()), tuple(replacements.values()), candidate
 
 
+def workshop_workbench_path(snapshot, registry):
+    """The canvas path a person opens to reach saved conversations: the map domain that holds the
+    Workshop Workbench as a member, then the Workbench. Read from the graph, never assumed; empty
+    when no domain holds it. The Studio walks it with the canvas's own open interactions."""
+    workbench = registry.workshop_workbench_root
+    member = registry.roles["member"]
+    for root in registry.map.domains.values():
+        if any(row.role_id == member and row.participant_id == workbench
+               for row in read_relation(snapshot, root, budget=WORKBENCH_BUDGET)):
+            return [root, workbench]
+    return []
+
+
 def list_workshop_conversations(owner, *, authentication_context, expected_revision, limit=50,
                                 after=None, read_guard=None):
     _revision(expected_revision)

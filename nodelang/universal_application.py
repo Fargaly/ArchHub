@@ -10067,9 +10067,19 @@ def execute_universal_baboom_utterance(
         if not command["payload"]:
             raise InvalidCell("name the agent and the message, e.g. \"tell codex: check the build\"")
         spec = json.loads(str(command["payload"]))
+        if command["intent"] == "agent-interrupt":
+            # A named Claude Code session takes an immediate interruption
+            # request through Session Link; Codex Desktop exposes none, so
+            # BABOOM says so and sends nothing.
+            from . import baboom_session_interrupt
+            routed = baboom_session_interrupt.route_interrupt(spec)
+            if routed is not None:
+                return {**routed, "command": command}
         target = baboom_agent_link.resolve_target(str(spec.get("target") or ""))
         if target is None:
             raise InvalidCell("no agent named %r is registered on this machine" % spec.get("target"))
+        if command["intent"] == "agent-interrupt":
+            baboom_session_interrupt.route_interrupt(spec, row=target)
         root = str(target.get("session_root") or "")
         if command["intent"] == "agent-message":
             sent = baboom_agent_link.send_message(root, str(spec.get("message") or ""))
@@ -10514,7 +10524,8 @@ def respond_universal_baboom_utterance(
         response = {
             "kind": intent + "-howto",
             "summary": ("Say who and what: \"tell codex: check the build\"." if intent == "agent-message"
-                        else "Say who: \"interrupt codex\" (and why, if you like)."),
+                        else "Say who: \"interrupt claude:<session id>\" (and why, if you like). "
+                             "Codex agents can't be interrupted."),
             "data": {"available": True},
         }
     elif intent in {"agent-message", "agent-interrupt"}:

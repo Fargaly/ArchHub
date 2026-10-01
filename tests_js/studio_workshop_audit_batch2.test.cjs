@@ -241,6 +241,42 @@ test('gap 11: every displayed workflow decision counts, read by the panel\'s own
   } finally { await view.ui.close(); }
 });
 
+// An emoji-led agent name (a real Session Link title, installed 20261001-2310-2d6dc02) gives each avatar a
+// whole first character: charAt(0) split it into a lone surrogate, drawn as a broken glyph.
+const LONE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+test('avatars: an emoji-led agent name gives a whole first character, never a lone surrogate', async () => {
+  const FACE = String.fromCodePoint(0x1f600), NAME = FACE + FACE + ' acceptance-claude';
+  const named = fx => { withWorkflow(null)(fx); const reply = fx.state.workshop.messages.find(m => m.root === 'reply-1');
+    reply.relayed_label = NAME; reply.body = reply.body.replace('acceptance-claude', NAME); };
+  // An avatar's initial is the first non-empty text node it draws.
+  const initialOf = el => el ? [...el.querySelectorAll('*')].map(n => [...n.childNodes].filter(c => c.nodeType === 3)
+    .map(c => c.nodeValue).join('')).find(t => t.trim()) : undefined;
+  const view = await mountView(named);
+  try {
+    await view.render();
+    const doc = view.ui.doc;
+    const card = doc.querySelector('[data-workshop-workflow]');
+    assert.ok(card, 'the proposal card from the named agent');
+    assert.equal(initialOf(card), FACE, 'the proposer avatar is the whole emoji');
+    const stream = doc.querySelector('[aria-label="Workshop conversation"]');
+    const all = [...stream.querySelectorAll('*')].flatMap(n => [...n.childNodes].filter(c => c.nodeType === 3).map(c => c.nodeValue)).join('|');
+    assert.ok(!LONE.test(all), 'no lone surrogate is drawn in the conversation');
+  } finally { await view.ui.close(); }
+  // The CONNECTED AGENTS rail (its own component, as the Studio mounts it).
+  const fx = fixture(); named(fx);
+  const ui = await mountModule();
+  try {
+    ui.win.ARCHHUB_EXISTING_WORKSHOP = fx.authority;
+    const context = {descriptor:fx.state.workshops[0], graphId:'graph-a', scopeRoot:'scope-a', transcript:fx.state.workshop, state:fx.state};
+    await ui.render('WorkshopAgentsRail', {context, sel:null, onSelect:() => {}});
+    const rail = ui.doc.querySelector('[data-workshop-agent="' + CONTACT + '"]');
+    assert.ok(rail, 'the named agent is in the rail');
+    assert.equal(initialOf(rail), FACE, 'the rail avatar is the whole emoji');
+    const all = [...rail.querySelectorAll('*')].flatMap(n => [...n.childNodes].filter(c => c.nodeType === 3).map(c => c.nodeValue)).join('|');
+    assert.ok(!LONE.test(all), 'no lone surrogate is drawn in the rail');
+  } finally { await ui.close(); }
+});
+
 test('gap 11: review and claimed tasks with nothing blocked claim no motion or completion', async () => {
   const calm = await mountView(fx => { fx.state.workshop.messages = fx.state.workshop.messages.filter(m => !/Gate failed|Claimed Work assembly-instance:3f9a/.test(m.body)); fx.state.nativeWork = null; });
   try {

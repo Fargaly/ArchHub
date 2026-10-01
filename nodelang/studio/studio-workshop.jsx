@@ -188,6 +188,8 @@ const wsAgo = value => {
   const s = Math.max(0, Date.now() / 1000 - wsSeconds(value));
   return s < 60 ? Math.round(s) + 's' : s < 3600 ? Math.round(s / 60) + 'm' : s < 86400 ? Math.round(s / 3600) + 'h' : Math.round(s / 86400) + 'd';
 };
+// An avatar's initial is the name's first whole character: charAt(0) splits an emoji into a lone surrogate.
+const wsInitial = (name, fallback) => (Array.from(String(name || '').trim())[0] || fallback).toUpperCase();
 // Counted and cut in code points: a cut never splits a supplementary character (an emoji) into a lone surrogate.
 const wsLine = (text, limit = 140) => {
   const line = String(text || '').split('\n').find(row => row.trim()) || '';
@@ -249,7 +251,7 @@ const wsAgents = (transcript, cards, clock) => {
     return {id:row.root, row, self, name, role:self ? 'YOU' : 'AGENT',
       prov:row.attached === false ? 'history participant \u00b7 detached' :
         row.runtime ? `local \u00b7 ${host || row.runtime} session` : 'agent session',
-      col:tone.bg, ink:tone.fg, ini:(name.trim().charAt(0) || '?').toUpperCase(), round:self, status,
+      col:tone.bg, ink:tone.fg, ini:wsInitial(name, '?'), round:self, status,
       ago:status === 'off' && wsObserved(row) ? wsAgo(row.observed_at) : '',
       doing:status === 'off' ? 'Disconnected from this app.' + (seen ? ' Last seen ' + wsClockText(row.observed_at) + '.' : '') :
         latest ? (isWorkProposal(latest) ? wsLine('Proposed: ' + wsProposalTask(latest).title, 90) : wsLine(latest.body, 90)) : seen ? 'Last seen ' + wsClockText(row.observed_at) + '.' : 'No message from this agent on this page.',
@@ -272,7 +274,7 @@ const wsAgents = (transcript, cards, clock) => {
     const tone = workshopAgentTone(message.relayed_from, false), last = replies[replies.length - 1];
     contacts.push({id:message.relayed_from, row:{root:message.relayed_from, label:name, attached:true, is_agent:true}, self:false,
       name, role:'AGENT', prov:'Session Link' + (app ? ' · ' + app + ' session' : ''), col:tone.bg, ink:tone.fg,
-      ini:(name.trim().charAt(0) || '?').toUpperCase(), round:false, status:'unverified', ago:'',
+      ini:wsInitial(name, '?'), round:false, status:'unverified', ago:'',
       doing:last ? wsLine(wsPlanReply(last.agent_text) ? 'Proposed a workflow.' : last.agent_text, 90) : '',
       model:'model not reported', seen:'', verified:false, tools:['session link'], card:null, contact:true});
   });
@@ -482,7 +484,7 @@ const agentOf = (agents, names, self, root) => {
   const found = agents.find(a => a.id === root);
   if (found) return found;
   const name = String(names.get(root) || root || 'Workshop'), tone = workshopAgentTone(root, root === self);
-  return {id:root, name, col:tone.bg, ink:tone.fg, ini:(name.trim().charAt(0) || '?').toUpperCase(), round:root === self, status:'available', tools:[]};
+  return {id:root, name, col:tone.bg, ink:tone.fg, ini:wsInitial(name, '?'), round:root === self, status:'available', tools:[]};
 };
 // ── task card: the container for its own thread ──
 const TaskCard = ({ t, sel, onSelect, onDecide, compact, agent, busy }) => {
@@ -961,7 +963,7 @@ const ContextPanel = ({ selAgent, selTask, tasks, agent, descriptor, activity, a
   const current = showTask ? t : a ? (assigned || a.card) : null;
   const asks = showTask && t.permissions ? t.permissions : null;
   const label = showTask ? `SELECTED · TASK ${t.id}` : a ? 'SELECTED · AGENT' : 'SELECTED · WORKSHOP';
-  const who = o || {name:descriptor.label, col:W.accent, ink:W.onFill, ini:(String(descriptor.label || 'W').trim().charAt(0) || 'W').toUpperCase()};
+  const who = o || {name:descriptor.label, col:W.accent, ink:W.onFill, ini:wsInitial(descriptor.label, 'W')};
   return (
     <aside aria-label="Workshop context" className="ah-scroll" style={{ background:W.bgPanel, borderLeft:`1px solid ${W.line}`, overflow:'auto', minHeight:0 }}>
       <div style={{ padding:'11px 16px', borderBottom:`1px solid ${W.lineSoft}`, display:'flex', alignItems:'center', gap:8 }}>
@@ -2280,7 +2282,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const chainNodes = [...flow.flow].sort((a, b) => a.col - b.col || a.y - b.y);
   // As in the design, the proposed workflow answers the owner's opening message when the page starts with one.
   const openingAsk = taskItems[0]?.kind === 'message' && taskItems[0].message.sender_root === transcript?.self ? 0 : -1;
-  const room = {name:descriptor.label, col:W.accent, ink:W.onFill, ini:(String(descriptor.label || 'W').trim().charAt(0) || 'W').toUpperCase()};
+  const room = {name:descriptor.label, col:W.accent, ink:W.onFill, ini:wsInitial(descriptor.label, 'W')};
   // The design's workflow card (studio-workshop.jsx:440-466) from the latest agent-proposed workflow
   // (workshop_workflow.py): its real steps, its approval chip, ⊘ Revoke and Re-approve. With no
   // proposed workflow the card reads the canvas chain and the native Work gate, as before.
@@ -2298,7 +2300,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const proposerName = shownWorkflow ? ((nativeContacts.find(row => row.root === shownWorkflow.proposed_by) || {}).label ||
     relayLabels.get(shownWorkflow.proposed_by)) : '';
   const proposer = shownWorkflow ? (proposerName ? {...agent(shownWorkflow.proposed_by), name:proposerName,
-    ini:(proposerName.trim().charAt(0) || 'A').toUpperCase()} : agent(shownWorkflow.proposed_by)) : null;
+    ini:wsInitial(proposerName, 'A')} : agent(shownWorkflow.proposed_by)) : null;
   const workflowProposalCard = shownWorkflow && (
     <div data-workshop-workflow={shownWorkflow.root} style={{ display:'flex', gap:12 }}>
       <Av a={proposer} s={28}/>
@@ -2502,7 +2504,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
       : 'On this page, nothing is waiting on you.';
   // The companion speaks when it is in the room; otherwise the Workshop itself carries the line.
   const baboomAgent = agents.find(a => a.row && a.row.runtime === 'baboom') ||
-    {name:descriptor.label, ini:(String(descriptor.label || 'W').trim().charAt(0) || 'W').toUpperCase(), col:W.accent, ink:W.onFill, status:'available'};
+    {name:descriptor.label, ini:wsInitial(descriptor.label, 'W'), col:W.accent, ink:W.onFill, status:'available'};
   const baboomSummary = transcript && (
     <div data-workshop-summary="" style={{ display:'flex', gap:12 }}>
       <Av a={baboomAgent} s={28}/>
@@ -2532,7 +2534,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     // A relayed reply is recorded by this application, but it is the agent's own text.
     const isUser = !relayed && message.sender_root === transcript?.self;
     const a = relayed ? {...agent(message.relayed_from), name:contactLabel(message.relayed_from),
-      ini:(contactLabel(message.relayed_from).trim().charAt(0) || 'A').toUpperCase()} : agent(message.sender_root);
+      ini:wsInitial(contactLabel(message.relayed_from), 'A')} : agent(message.sender_root);
     const to = Array.isArray(message.recipient_roots) ?
       (message.recipient_roots.length ? message.recipient_roots.map(root => names.get(root) || root).join(', ') : 'Workshop') :
       (names.get(message.recipient_root) || message.recipient_root || 'Workshop');

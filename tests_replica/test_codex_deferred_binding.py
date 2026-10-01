@@ -542,24 +542,124 @@ def test_work_assignment_resolved_per_thread():
     assert results["B"]["assignment_for"] == "B"
 
 
-# ---- optional genuine-frame capture (default OFF; not acceptance evidence) ----
+# ---- optional capture (default OFF; positive allowlist; bounded) ----
+# A captured frame is a diagnostic aid, NOT acceptance evidence; the ids used in these
+# courts are synthetic, never a genuine Codex client's.
 
-def test_meta_capture_is_off_by_default(monkeypatch):
+def _reset_capture():
+    dcb._CAPTURE_STATE.update({"count": 0, "bytes": 0})
+
+
+def _frames(path):
+    return [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
+
+
+def test_capture_is_off_by_default(monkeypatch):
     monkeypatch.delenv("ARCHHUB_CODEX_META_LOG", raising=False)
+    monkeypatch.delenv("SESSION_LINK_STATE_DIR", raising=False)
     with _thread("A"):
         assert dcb.current_codex_thread_id() == "A"
+    assert dcb._capture_targets() == []
 
 
-def test_meta_capture_records_genuine_frame_when_enabled(tmp_path, monkeypatch):
-    log = tmp_path / "codex-meta.log"
+def test_capture_records_only_allowlisted_correlation_ids(tmp_path, monkeypatch):
+    log = tmp_path / "m.log"
     monkeypatch.setenv("ARCHHUB_CODEX_META_LOG", str(log))
-    dcb._CAPTURE_STATE["count"] = 0
-    token = _set_meta(threadId="real-chat-0199", sessionId="sess-77", itemId="item-5")
-    try:
-        assert dcb.current_codex_thread_id() == "real-chat-0199"
-    finally:
-        request_ctx.reset(token)
-    frames = [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines() if x.strip()]
-    assert frames and frames[0]["request_meta"]["threadId"] == "real-chat-0199"
-    assert frames[0]["request_meta"]["sessionId"] == "sess-77"
-    assert frames[0]["request_meta"]["itemId"] == "item-5"
+    _reset_capture()
+    dcb._maybe_capture({
+        "threadId": "t1", "sessionId": "s1", "itemId": "i1",
+        "progressToken": 7, "authorization": "Bearer x", "neutral": "keep-me-out",
+        "context": {"authorization": "nested-secret"},
+    })
+    frame = _frames(log)[0]["request_meta"]
+    assert set(frame) == {"threadId", "sessionId", "itemId"}   # ONLY the allowlist
+    assert frame == {"threadId": "t1", "sessionId": "s1", "itemId": "i1"}
+
+
+def test_capture_drops_nested_and_neutral_named_values(tmp_path, monkeypatch):
+    log = tmp_path / "m.log"
+    monkeypatch.setenv("ARCHHUB_CODEX_META_LOG", str(log))
+    _reset_capture()
+    dcb._maybe_capture({"threadId": "t", "context": {"authorization": "secret"},
+                        "authorization": "Bearer y", "foo": "bar"})
+    assert set(_frames(log)[0]["request_meta"]) == {"threadId"}
+
+
+def test_capture_drops_oversize_field(tmp_path, monkeypatch):
+    log = tmp_path / "m.log"
+    monkeypatch.setenv("ARCHHUB_CODEX_META_LOG", str(log))
+    _reset_capture()
+    dcb._maybe_capture({"threadId": "x" * (dcb._CAPTURE_FIELD_BYTES + 1), "sessionId": "s"})
+    frame = _frames(log)[0]["request_meta"]
+    assert "threadId" not in frame and frame == {"sessionId": "s"}
+
+
+def test_capture_drops_non_string_and_deep_shapes(tmp_path, monkeypatch):
+    log = tmp_path / "m.log"
+    monkeypatch.setenv("ARCHHUB_CODEX_META_LOG", str(log))
+    _reset_capture()
+    dcb._maybe_capture({"threadId": 123, "sessionId": {"nested": "deep"},
+                        "itemId": ["a", "b"]})
+    assert not log.exists()  # nothing allowlisted -> nothing written
+    _reset_capture()
+    dcb._maybe_capture({"threadId": 123, "sessionId": "ok"})
+    assert _frames(log)[0]["request_meta"] == {"sessionId": "ok"}
+
+
+def test_capture_is_nonfatal_when_target_unwritable(tmp_path, monkeypatch):
+    # env points at a DIRECTORY -> open() for append raises inside the boundary; the
+    # request path must be unaffected and no exception escapes.
+    monkeypatch.setenv("ARCHHUB_CODEX_META_LOG", str(tmp_path))  # a dir, not a file
+    _reset_capture()
+    dcb._maybe_capture({"threadId": "t"})          # must not raise
+    with _thread("A"):
+        assert dcb.current_codex_thread_id() == "A"  # request path still works
+
+
+def test_capture_bounds_frame_count(tmp_path, monkeypatch):
+    log = tmp_path / "m.log"
+    monkeypatch.setenv("ARCHHUB_CODEX_META_LOG", str(log))
+    _reset_capture()
+    for n in range(dcb._CAPTURE_LIMIT + 10):
+        dcb._maybe_capture({"threadId": "t%d" % n})
+    assert len(_frames(log)) == dcb._CAPTURE_LIMIT
+
+
+def test_capture_bounds_total_bytes(tmp_path, monkeypatch):
+    log = tmp_path / "m.log"
+    monkeypatch.setenv("ARCHHUB_CODEX_META_LOG", str(log))
+    monkeypatch.setattr(dcb, "_CAPTURE_TOTAL_BYTES", 120)  # tiny budget
+    _reset_capture()
+    for n in range(50):
+        dcb._maybe_capture({"threadId": "thread-%d" % n})
+    assert dcb._CAPTURE_STATE["bytes"] <= dcb._CAPTURE_TOTAL_BYTES
+    assert 0 < len(_frames(log)) < 50  # stopped once the byte budget was reached
+
+
+# ---- file-sentinel gate (no env, no ~/.codex) ----
+
+def test_sentinel_off_when_absent(tmp_path, monkeypatch):
+    # RED: state dir present, sentinel absent, no env -> nothing written.
+    monkeypatch.delenv("ARCHHUB_CODEX_META_LOG", raising=False)
+    monkeypatch.setenv("SESSION_LINK_STATE_DIR", str(tmp_path))
+    _reset_capture()
+    dcb._maybe_capture({"threadId": "t"})
+    assert not (tmp_path / dcb._CAPTURE_LOG).exists()
+    assert dcb._capture_targets() == []
+
+
+def test_sentinel_writes_one_allowlisted_frame_when_present(tmp_path, monkeypatch):
+    # GREEN: drop the marker file, no env -> one allowlisted frame beside it.
+    monkeypatch.delenv("ARCHHUB_CODEX_META_LOG", raising=False)
+    monkeypatch.setenv("SESSION_LINK_STATE_DIR", str(tmp_path))
+    (tmp_path / dcb._CAPTURE_SENTINEL).write_text("on", encoding="utf-8")
+    _reset_capture()
+    dcb._maybe_capture({"threadId": "real-chat-2", "sessionId": "s2", "progressToken": 1})
+    frame = _frames(tmp_path / dcb._CAPTURE_LOG)[0]["request_meta"]
+    assert frame == {"threadId": "real-chat-2", "sessionId": "s2"}
+
+
+def test_sentinel_ignored_without_state_dir(monkeypatch):
+    monkeypatch.delenv("ARCHHUB_CODEX_META_LOG", raising=False)
+    monkeypatch.delenv("SESSION_LINK_STATE_DIR", raising=False)
+    assert dcb._capture_targets() == []

@@ -39,30 +39,97 @@ from .native_agent_session import NativeAgentSession
 CODEX_THREAD_META_KEY = "threadId"
 
 
-# Optional, default-OFF capture of the raw request _meta each tools/call carries,
-# so a genuine frame from the real Codex client can be recorded without any code
-# change: set ARCHHUB_CODEX_META_LOG to a writable scratch path (e.g. via setx,
-# never by editing ~/.codex) and the first frames are appended there as JSON lines.
-# Unset (production default) it does nothing, changes no behaviour, and never fails
-# a request. Diagnostic only; it records transport metadata, not tool arguments.
+# Optional, default-OFF capture of the request _meta correlation ids each tools/call
+# carries, so a genuine frame from the real Codex client can be recorded. Two gates,
+# both OFF by default and both needing no ~/.codex edit:
+#  - env ARCHHUB_CODEX_META_LOG=<path>: append frames there (e.g. set via setx); and
+#  - a file SENTINEL <SESSION_LINK_STATE_DIR>/codex-meta-capture.on: when that file
+#    exists, frames append to <SESSION_LINK_STATE_DIR>/codex-meta-capture.log. The
+#    sentinel is a read-only existence check against a directory the connector was
+#    already launched with, so capture turns on without any env or config change.
+# A captured frame is a DIAGNOSTIC aid for connecting the real Codex client to this
+# server; it is NEVER acceptance evidence, and the ids in a court are synthetic, never
+# a genuine client's. Every captured frame is a POSITIVE ALLOWLIST of three bounded
+# primitive-string correlation ids (threadId/sessionId/itemId) and nothing else -- no
+# other key, no nested value, no neutral-named value, no tool argument -- so no token
+# or secret can be written by construction, not by name-matching. Field length,
+# serialized-record bytes and frame count are bounded, and this process appends at
+# most _CAPTURE_TOTAL_BYTES of serialized records to EACH enabled target (a frame is
+# copied to every target). It is a per-process, per-target append budget -- NOT an
+# aggregate on-disk cap: it does not count bytes already in a log or written by other
+# processes or earlier runs. ALL of it runs inside one try/except that never affects
+# the request. Default (no env, no sentinel) does nothing and changes no behaviour.
 _CAPTURE_LOCK = threading.Lock()
-_CAPTURE_STATE = {"count": 0}
-_CAPTURE_LIMIT = 50
+_CAPTURE_STATE = {"count": 0, "bytes": 0}
+_CAPTURE_LIMIT = 50                  # at most this many frames per process
+_CAPTURE_FIELD_BYTES = 256           # max utf-8 bytes of one allowlisted id value
+_CAPTURE_RECORD_BYTES = 1024         # max utf-8 bytes of one serialized JSON line
+_CAPTURE_TOTAL_BYTES = 64 * 1024     # per-process append budget written to each target
+_CAPTURE_SENTINEL = "codex-meta-capture.on"
+_CAPTURE_LOG = "codex-meta-capture.log"
+_CAPTURE_ALLOWED_KEYS = ("threadId", "sessionId", "itemId")
+
+
+def _allowlisted_meta(extra):
+    """Only the known correlation ids, each a bounded non-empty primitive string.
+
+    A positive allowlist: every other key -- nested structures, neutral names, and
+    anything else -- is dropped, so a token or secret cannot be captured regardless
+    of its name or where it sits. Non-string or oversized values are dropped too.
+    """
+    safe = {}
+    if not isinstance(extra, dict):
+        return safe
+    for key in _CAPTURE_ALLOWED_KEYS:
+        value = extra.get(key)
+        if (type(value) is str and value and "\x00" not in value
+                and len(value.encode("utf-8")) <= _CAPTURE_FIELD_BYTES):
+            safe[key] = value
+    return safe
+
+
+def _capture_targets():
+    """Writable log paths enabled right now, from the env var and/or the sentinel."""
+    targets = []
+    env_path = os.environ.get("ARCHHUB_CODEX_META_LOG")
+    if env_path:
+        targets.append(env_path)
+    state_dir = os.environ.get("SESSION_LINK_STATE_DIR")
+    if state_dir and os.path.isfile(os.path.join(state_dir, _CAPTURE_SENTINEL)):
+        targets.append(os.path.join(state_dir, _CAPTURE_LOG))
+    return targets
 
 
 def _maybe_capture(extra):
-    path = os.environ.get("ARCHHUB_CODEX_META_LOG")
-    if not path or extra is None:
-        return
+    # EVERY diagnostic step -- target resolution, allowlisting, serialization, byte
+    # accounting and the writes -- is inside this nonfatal boundary, so no capture
+    # step can ever affect the request.
     try:
+        targets = _capture_targets()
+        if not targets:
+            return
+        safe = _allowlisted_meta(extra)
+        if not safe:
+            return
         with _CAPTURE_LOCK:
-            if _CAPTURE_STATE["count"] >= _CAPTURE_LIMIT:
+            if (_CAPTURE_STATE["count"] >= _CAPTURE_LIMIT
+                    or _CAPTURE_STATE["bytes"] >= _CAPTURE_TOTAL_BYTES):
                 return
+            record = json.dumps({"seq": _CAPTURE_STATE["count"] + 1, "request_meta": safe},
+                                ensure_ascii=False)
+            blob = len((record + "\n").encode("utf-8"))
+            if (blob > _CAPTURE_RECORD_BYTES
+                    or _CAPTURE_STATE["bytes"] + blob > _CAPTURE_TOTAL_BYTES):
+                return  # oversized record or over-budget: drop, counters unchanged
             _CAPTURE_STATE["count"] += 1
-            seq = _CAPTURE_STATE["count"]
-        line = json.dumps({"seq": seq, "request_meta": extra}, ensure_ascii=False)
-        with open(path, "a", encoding="utf-8") as stream:
-            stream.write(line + "\n")
+            _CAPTURE_STATE["bytes"] += blob
+            line = record
+        for path in targets:
+            try:
+                with open(path, "a", encoding="utf-8") as stream:
+                    stream.write(line + "\n")
+            except Exception:
+                pass
     except Exception:
         pass  # capture is diagnostic; it must never affect the request
 

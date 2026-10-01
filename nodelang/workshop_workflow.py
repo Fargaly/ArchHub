@@ -311,6 +311,24 @@ def workflow_state(owner, browser, root, anchor, *, projection=None):
             "scope": workflow_scope, "scope_path": scope_path}
 
 
+def _reserved_draft_anchor(owner, browser, root, scope, message, projection):
+    """Find a reserved draft's committed anchor through the canvas projection."""
+    snapshot = owner.universal_store.snapshot()
+    for node in projection.get("nodes", ()):
+        anchor = str(node.get("id") or "")
+        if not anchor:
+            continue
+        try:
+            value = _workflow_value(snapshot, anchor, root)
+        except InvalidCell:
+            continue
+        if (value.get("kind") == _ANCHOR and value.get("conversation") == root
+                and value.get("scope") == scope
+                and value.get("source_message") == message):
+            return anchor, value
+    return None, None
+
+
 def draft_workflow(owner, browser, body, *, browser_guard):
     fields = {"action", "root", "scope", "message", "revision", "idempotency_key"}
     if type(body) is not dict or set(body) != fields or type(body["revision"]) is not int:
@@ -342,9 +360,6 @@ def draft_workflow(owner, browser, body, *, browser_guard):
             if value.get("message") != message:
                 raise InvalidCell("This draft request identity belongs to another proposal")
             return {"ok": True, "reused": True, **_draft_response(owner, browser, root, value)}
-        if history.get_by_idempotency(root, key + ":reserved", principal=principal, read_all=read_all):
-            raise InvalidCell("An earlier draft of this proposal was interrupted; its nodes may already be "
-                              "on the canvas. Review them there instead of drafting again.")
         source = history.get(root, message, principal=principal, read_all=read_all)
         text = relayed_reply_text(source.get("content")) if source else None
         if text is None or not relay_reply_record(source, tool_category=registry.workshop_category_roots.get("tool"),
@@ -356,9 +371,22 @@ def draft_workflow(owner, browser, body, *, browser_guard):
             raise AuthorizationDenied("The Workshop changed; refresh before drafting this proposal")
         actions, issues = _resolve_actions(plan["actions"], _contacts(owner, browser, root, scope), root)
         projection = app.project_universal_canvas(store, registry, authentication_context=browser.context)
+        reserved = history.get_by_idempotency(root, key + ":reserved", principal=principal, read_all=read_all)
+        if reserved:
+            if reserved.get("content") != "Workflow draft started from agent proposal %s." % source["id"]:
+                raise InvalidCell("This draft request identity belongs to another proposal")
+            anchor, anchor_value = _reserved_draft_anchor(owner, browser, root, scope, source["id"], projection)
+            if anchor:
+                value = {"kind": "workshop-workflow-draft", "version": 1, "workflow": anchor,
+                         "message": source["id"], "proposed_by": anchor_value["proposed_by"],
+                         "members": list(anchor_value["members"]), "issues": []}
+                _append(owner, browser, root, space, json.dumps(value, sort_keys=True, separators=(",", ":")), key,
+                        reply_to=source["id"], refs=(proposer, anchor))
+                return {"ok": True, "reused": True, **_draft_response(owner, browser, root, value)}
         _validate_draft_references(actions, projection)
-        _append(owner, browser, root, space, "Workflow draft started from agent proposal %s." % message,
-                key + ":reserved", reply_to=source["id"], require_new=True)
+        if not reserved:
+            _append(owner, browser, root, space, "Workflow draft started from agent proposal %s." % message,
+                    key + ":reserved", reply_to=source["id"], require_new=True)
         before_nodes = {str(node["id"]) for node in projection.get("nodes", ())}
         applied, members, anchor = None, [], None
         try:

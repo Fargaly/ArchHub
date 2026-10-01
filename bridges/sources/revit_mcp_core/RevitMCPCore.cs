@@ -287,6 +287,57 @@ namespace RevitMCPCore
                               .ConfigureAwait(false);
         }
 
+        private static List<string> SelectScriptReferences(
+            IEnumerable<string> explicitReferences, IEnumerable<string> loadedReferences,
+            string revitDirectory, string runtimeDirectory)
+        {
+            // Explicit API/current Core pins win. Then use the host runtime and
+            // Revit's own directory, never a newer unrelated add-in dependency.
+            var explicitPaths = new HashSet<string>(explicitReferences.Select(Path.GetFullPath),
+                StringComparer.OrdinalIgnoreCase);
+            var candidates = explicitPaths.Concat(loadedReferences)
+                .Where(p => !string.IsNullOrEmpty(p) && File.Exists(p))
+                .Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(p => new {
+                    Path = p, Identity = AssemblyName.GetAssemblyName(p),
+                    Priority = explicitPaths.Contains(p) ? 0 :
+                        string.Equals(Path.GetDirectoryName(p), runtimeDirectory,
+                            StringComparison.OrdinalIgnoreCase) ? 1 :
+                        string.Equals(Path.GetDirectoryName(p), revitDirectory,
+                            StringComparison.OrdinalIgnoreCase) ? 2 : 3
+                });
+            var result = new List<string>();
+            foreach (var group in candidates.GroupBy(x => x.Identity.Name,
+                StringComparer.OrdinalIgnoreCase).OrderBy(x => x.Key,
+                    StringComparer.OrdinalIgnoreCase))
+            {
+                int priority = group.Min(x => x.Priority);
+                var winners = group.Where(x => x.Priority == priority)
+                    .OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase).ToList();
+                var first = winners[0];
+                // Same identity alone is insufficient: unsigned assemblies may
+                // carry different bytes. Only identical copies are interchangeable.
+                if (winners.Count > 1)
+                {
+                    using (var sha = System.Security.Cryptography.SHA256.Create())
+                    {
+                        byte[] digest;
+                        using (var stream = File.OpenRead(first.Path)) digest = sha.ComputeHash(stream);
+                        foreach (var other in winners.Skip(1))
+                        {
+                            byte[] otherDigest;
+                            using (var stream = File.OpenRead(other.Path)) otherDigest = sha.ComputeHash(stream);
+                            if (!string.Equals(first.Identity.FullName, other.Identity.FullName,
+                                StringComparison.OrdinalIgnoreCase) || !digest.SequenceEqual(otherDigest))
+                                throw new InvalidOperationException("Ambiguous assembly " + group.Key);
+                        }
+                    }
+                }
+                result.Add(first.Path);
+            }
+            return result;
+        }
+
         private string RunCSharpScript(UIApplication app, string code, string txName)
         {
             var ctx = new ScriptContext
@@ -328,10 +379,16 @@ namespace RevitMCPCore
                                 StringComparison.Ordinal))
                 .Select(a => { try { return a.Location; } catch { return null; } })
                 .Where(p => !string.IsNullOrEmpty(p));
-            var refs = extraRefs.Concat(domainRefs)
-                       .Where(File.Exists)
-                       .Distinct(StringComparer.OrdinalIgnoreCase)
-                       .ToList();
+            List<string> refs;
+            try
+            {
+                refs = SelectScriptReferences(extraRefs, domainRefs, revitDllDir,
+                    Path.GetDirectoryName(typeof(object).Assembly.Location));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return JsonError("Compiler reference conflict: " + ex.Message);
+            }
 
             var usings = new[] {
                 "System", "System.Collections.Generic", "System.Linq",

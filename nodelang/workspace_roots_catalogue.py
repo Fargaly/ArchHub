@@ -834,6 +834,7 @@ def canonical_instance(root=None) -> CanonicalInstance:
 
 
 def _default_graph_context():
+    import urllib.error
     import urllib.request
 
     from .cell_secret_keys import WindowsDpapiSigningKeyProvider
@@ -844,8 +845,22 @@ def _default_graph_context():
     def transport(payload, timeout=5.0):
         http = urllib.request.Request(endpoint, data=json.dumps(payload).encode("utf-8"),
                                       headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(http, timeout=timeout) as response:
-            return json.loads(response.read(1 << 20).decode("utf-8"))
+        try:
+            with urllib.request.urlopen(http, timeout=timeout) as response:
+                return json.loads(response.read(1 << 20).decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            # The owner answers a refusal with an HTTP status and its reason in a
+            # JSON body ({"ok": false, "error": ...}): that is an answer, and the
+            # reason is what the window must show. Only a status without such a
+            # body (another server, a proxy) is an owner that is not answering.
+            with exc:
+                try:
+                    answer = json.loads(exc.read(1 << 20).decode("utf-8"))
+                except (OSError, ValueError):
+                    answer = None
+            if type(answer) is dict and answer.get("ok") is False:
+                return answer
+            raise
     return {
         "transport": transport,
         "settings_transport": lambda payload: transport(payload, SETTINGS_TIMEOUT_SECONDS),

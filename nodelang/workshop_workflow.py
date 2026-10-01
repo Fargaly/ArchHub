@@ -282,7 +282,9 @@ def workflow_state(owner, browser, root, anchor, *, projection=None):
         except (ValueError, KeyError, TypeError):
             approval = {"digest": None, "current": False, "relation": held[0], "invalid": True}
     return {"root": anchor, "title": value.get("title") or "Workflow", "conversation": root,
-            "members": members, "nodes": nodes, "wires": len(wires), "digest": digest,
+            "members": members, "nodes": nodes, "wires": len(wires),
+            # The workflow's own wiring (source, target) so the Workshop graph draws it, not the canvas.
+            "edges": [[wire[0], wire[2]] for wire in wires], "digest": digest,
             "reason": reason, "approval": approval, "proposed_by": value.get("proposed_by"),
             "source_message": value.get("source_message")}
 

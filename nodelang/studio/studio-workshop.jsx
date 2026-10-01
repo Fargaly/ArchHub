@@ -257,7 +257,24 @@ const wsAgents = (transcript, cards, clock) => {
         .filter(Boolean),
       card:owned[owned.length - 1] || null};
   });
-  return [...agents.filter(a => a.verified), ...agents.filter(a => !a.verified)];
+  // Agents that answered through the Session Link relay on this page are in the room too (design audit
+  // gap 4): named as the relay recorded them; no live presence is projected for them, so UNVERIFIED.
+  const known = new Set(agents.map(a => a.id));
+  const contacts = [];
+  messages.forEach(message => {
+    if (typeof message.relayed_from !== 'string' || known.has(message.relayed_from)) return;
+    known.add(message.relayed_from);
+    const replies = messages.filter(row => row.relayed_from === message.relayed_from);
+    const name = String((replies.find(row => typeof row.relayed_label === 'string' && row.relayed_label) || {}).relayed_label || 'agent');
+    const app = (/\(([a-z-]+) native session\)/.exec(String(message.body || '')) || [])[1] || '';
+    const tone = workshopAgentTone(message.relayed_from, false), last = replies[replies.length - 1];
+    contacts.push({id:message.relayed_from, row:{root:message.relayed_from, label:name, attached:true, is_agent:true}, self:false,
+      name, role:'AGENT', prov:'Session Link' + (app ? ' · ' + app + ' session' : ''), col:tone.bg, ink:tone.fg,
+      ini:(name.trim().charAt(0) || '?').toUpperCase(), round:false, status:'unverified', ago:'',
+      doing:last ? wsLine(wsPlanReply(last.agent_text) ? 'Proposed a workflow.' : last.agent_text, 90) : '',
+      model:'model not reported', seen:'', verified:false, tools:['session link'], card:null, contact:true});
+  });
+  return [...agents.filter(a => a.verified), ...agents.filter(a => !a.verified), ...contacts];
 };
 // The rail's default list: agents that are here now (and you). Disconnected sessions stay in the
 // graph and in the transcript; they are listed only when asked for.
@@ -1684,6 +1701,13 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const agents = wsAgents(transcript, tasks, Date.now() / 1000);
   const agent = root => agentOf(agents, names, transcript?.self, root);
   const flow = wsFlow(projectedWorkNodes, workshopProjectedWires(state), tasks);
+  // The live graph shows the proposed workflow's own steps and wiring when there is one (design: the graph
+  // IS the workflow; audit gap 8); otherwise the canvas topology, as before.
+  const graphWorkflow = (Array.isArray(transcript?.workflows) ? transcript.workflows : []).slice(-1)[0] || null;
+  const graphFlow = graphWorkflow && Array.isArray(graphWorkflow.nodes) && graphWorkflow.nodes.length
+    ? wsFlow(graphWorkflow.nodes.map((node, index) => ({id:node.root, title:node.title || node.engine, status:node.engine || '', y:index * 100})),
+        (Array.isArray(graphWorkflow.edges) ? graphWorkflow.edges : []).map(([a, b]) => ({from:[a], to:[b]})), tasks)
+    : flow;
   const selAgentId = agents.some(a => a.id === S.agent) ? S.agent : agents[0]?.id || null;
   const selAgent = agents.find(a => a.id === selAgentId) || null;
   // Agent Work proposals are task cards too: selectable, and one waiting on you counts as "needs you".
@@ -2304,6 +2328,10 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
                   {wfState === 'awaiting' ? 'Approve' : 'Re-approve'}</Btn>}
           </div>
         </div>
+        {/* Design studio-workshop.jsx:402: revoking leaves its trace in the thread (audit gap 9). The design's
+            seeded wall count is not a fact here, so its sentence stops before it. */}
+        {wfState === 'revoked' && <div data-workshop-revoked="" style={{ fontFamily:W.serif, fontSize:14, lineHeight:1.6, marginTop:10, color:W.ink }}>
+          Approval revoked. Runs already started are not undone; approve again before another run.</div>}
       </div>
     </div>
   );
@@ -2397,14 +2425,17 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   };
   const HIDDEN_PARAMS = new Set(['engine', 'definition', 'version']);
   const proposedWorkflows = Array.isArray(transcript?.workflows) ? transcript.workflows : [];
+  // What a displayed workflow waits on you for (null once approved): the panel's chips and the summary read this one rule.
+  const wfWaiting = wf => wf.approval && wf.approval.current === true ? null : wf.approval?.revoked ? 'approval revoked'
+    : wf.approval ? 'changed since approval' : 'awaiting your approval';
   const artifactReviews = Array.isArray(transcript?.reviews) ? transcript.reviews : [];
   const workflowsPanel = (proposedWorkflows.length > 0 || artifactReviews.length > 0) && (
     <div aria-label="Agent-proposed workflows and reviews" style={{ display:'flex', flexDirection:'column', gap:12 }}>
       {proposedWorkflows.map(wf => {
-        const approved = wf.approval && wf.approval.current === true;
+        const waits = wfWaiting(wf), approved = waits === null;
         const status = approved ? chip('APPROVED · READY TO RUN', W.ok, 'Approval ' + String(wf.approval.digest).slice(0, 12), 's')
-          : wf.approval?.revoked ? chip('REVOKED · NOTHING FURTHER RUNS', W.err, 'You revoked the approval; approve it again before it runs.', 's')
-          : wf.approval ? chip('CHANGED SINCE APPROVAL', W.warn, 'Review and approve again before it runs.', 's')
+          : waits === 'approval revoked' ? chip('REVOKED · NOTHING FURTHER RUNS', W.err, 'You revoked the approval; approve it again before it runs.', 's')
+          : waits === 'changed since approval' ? chip('CHANGED SINCE APPROVAL', W.warn, 'Review and approve again before it runs.', 's')
           : chip('AWAITING YOUR APPROVAL', W.err, 'A proposal is not approval.', 's');
         return <div key={wf.root} style={{ background:W.bgPanel, border:`1px solid ${W.line}`, borderRadius:7, padding:'12px 13px' }}>
           <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap', marginBottom:8 }}>
@@ -2456,6 +2487,30 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     </div>
   );
 
+  // The companion's summary line closing the thread (design studio-workshop.jsx:544-547, audit gap 11): what on
+  // THIS PAGE waits on you, said as page-scoped. Every displayed workflow whose decision waits on you counts
+  // (awaiting, changed since approval, revoked). Nothing about running or finished work is inferred from message verbs.
+  const needsYou = [...allTasks.filter(t => t.state === 'block').map(t => t.id + ' ' + t.title),
+    ...proposedWorkflows.filter(wf => wfWaiting(wf) !== null).map(wf => `${wf.title || 'Proposed workflow'} (${wfWaiting(wf)})`)];
+  const summaryText = needsYou.length === 1 ? `On this page, one thing needs you: ${needsYou[0]}.`
+    : needsYou.length > 1 ? `On this page, ${needsYou.length} things need you: ${needsYou.join('; ')}.`
+      : 'On this page, nothing is waiting on you.';
+  // The companion speaks when it is in the room; otherwise the Workshop itself carries the line.
+  const baboomAgent = agents.find(a => a.row && a.row.runtime === 'baboom') ||
+    {name:descriptor.label, ini:(String(descriptor.label || 'W').trim().charAt(0) || 'W').toUpperCase(), col:W.accent, ink:W.onFill, status:'available'};
+  const baboomSummary = transcript && (
+    <div data-workshop-summary="" style={{ display:'flex', gap:12 }}>
+      <Av a={baboomAgent} s={28}/>
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ display:'flex', alignItems:'baseline', gap:8, marginBottom:4 }}>
+          <span style={{ fontSize:12.5, fontWeight:500 }}>{baboomAgent.name}</span>
+          <span title="Read from this page's tasks and workflow; not a message anyone sent" style={{ fontFamily:W.mono, fontSize:9.5, color:W.inkMuted,
+            border:`1px solid ${W.line}`, borderRadius:3, padding:'1px 5px' }}>summary</span>
+        </div>
+        <div style={{ fontSize:messageTextSize, lineHeight:1.6, fontFamily:W.serif, letterSpacing:'-0.003em' }}>{summaryText}</div>
+      </div>
+    </div>
+  );
   const msgRow = message => {
     const relayed = typeof message.relayed_from === 'string' && typeof message.agent_text === 'string';
     if (relayed && anchoredWorkflow && message.root === shownWorkflow.source_message) {
@@ -2608,6 +2663,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
             const t = tasks.find(x => x.work === item.work);
             return t && <TaskCard key={'task:' + t.work} t={t} sel={selTask===t.work} onSelect={selectTask} onDecide={decide} compact={preset==='graph'} agent={agent} busy={busy}/>;
           }).flatMap((row, index) => index === openingAsk && !anchoredWorkflow ? [row, <React.Fragment key="workflow">{workflowCard}</React.Fragment>] : [row])}
+          {baboomSummary}
         </div>
       </div>
       {composer}
@@ -2642,7 +2698,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
         sel={selAgentId} onSelect={setSelAgent} compact={preset!=='conversation'}/>}
       {preset==='board' ? board : stream}
       {preset==='graph'
-        ? <GraphPane flow={flow} selTask={selTask} tidy={tidy} chain={chain}
+        ? <GraphPane flow={graphFlow} selTask={selTask} tidy={tidy} chain={chain}
             onArrange={() => setTidy(t => !t)} onChain={() => setChain(c => !c)} onOpen={openAsNodes}/>
         : <ContextPanel selAgent={selTask ? null : selAgent} selTask={selTask} tasks={allTasks} agent={agent} descriptor={descriptor}
             agents={agents} assign={existing && authority?.assignWork ? (request => authority.assignWork(descriptor.root, request)) : null}

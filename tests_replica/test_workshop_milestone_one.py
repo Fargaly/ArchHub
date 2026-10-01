@@ -380,6 +380,8 @@ def test_agent_proposed_workflow_is_edited_approved_executed_and_independently_r
     assert _param(held, builder, 'agent')['value'] == convo['opencode']
     assert _param(held, judge, 'reviewer')['value'] == convo['claude']
     assert [row['engine'] for row in held['nodes']] == ['workshop.conversation', 'agent.session', 'workshop.review']
+    # The workflow's own wiring travels with it, so the Workshop graph draws the workflow (audit gap 8).
+    assert sorted(held['edges']) == sorted([[room, builder], [builder, judge]])
 
     # Proposal is not approval: nothing runs before the user approves.
     calls = len(transport.calls)

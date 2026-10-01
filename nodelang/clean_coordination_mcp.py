@@ -244,8 +244,8 @@ def build_server(
         # calls this factory with its explicitly bound client, so it cannot fall
         # back to LocalCoordinationClient or start a second graph owner.
         from .native_agent_mcp import build_server as build_installed_server
-        from .native_agent_session import NativeAgentSession
-        return build_installed_server(session=NativeAgentSession(environment=environment))
+        from .deferred_codex_binding import owner_for_environment
+        return build_installed_server(session=owner_for_environment(environment))
     control = client
     mcp = FastMCP("archhub-clean-agent-coordination")
 
@@ -466,13 +466,17 @@ def main() -> None:
     args=parser.parse_args()
     from .native_agent_session import NativeAgentSession
     from .native_agent_mcp import build_recovery_server, build_server as build_installed_server, serve
+    from .deferred_codex_binding import owner_for_environment
     if args.expected_actor:
         # The supplied ID is only a constraint. Existing native identity and
         # signed reconciliation must establish custody before any continuation.
         owner=NativeAgentSession(expected_agent_session=args.expected_actor)
         server,_activate=build_recovery_server(owner)
     else:
-        owner=NativeAgentSession()
+        # A Codex launch passes only ARCHHUB_COORDINATION_VENDOR=codex (no
+        # CODEX_THREAD_ID), so identity defers to each call's _meta.threadId; every
+        # other runtime resolves its session from the environment as before.
+        owner=owner_for_environment()
         server=build_installed_server(session=owner)
     serve(owner, server)
 

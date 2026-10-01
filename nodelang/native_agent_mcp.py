@@ -72,6 +72,21 @@ def serve(owner, server):
     it is optional, so its failure is reported and the MCP server stays up.
     """
     import sys
+    if getattr(owner, "is_deferred_router", False):
+        # A deferred router has no single process-wide binding; each thread's
+        # session (and its Stop) is its own, resolved per request from _meta, so a
+        # process Stop host that reads one owner lock outside a request does not
+        # apply. Serve directly and release every per-thread binding on shutdown.
+        try:
+            server.run(transport="stdio")
+        finally:
+            closer = getattr(owner, "close", None)
+            if callable(closer):
+                try:
+                    closer()
+                except Exception:
+                    print("Deferred coordination cleanup did not complete.", file=sys.stderr)
+        return
     supervisor = None
     try:
         from .native_stop_hook import StopHostSupervisor
@@ -208,13 +223,24 @@ def build_server(*, session=None, workshop_task: str | None = None):
         from .native_workshop_tools import validate_selected_work
         validate_selected_work(workshop_task)
     owner = session if session is not None else NativeAgentSession()
-    client = owner.connect()
-    keeper = getattr(owner, "start_lease_keeper", None)
-    if callable(keeper):
-        keeper()  # an idle agent keeps its session; renewal is never a graph write
-    if workshop_task is not None:
-        return attach_workshop_tools(owner, workshop_task)
-    control = _OwnedWorkshopClient(owner, client)
+    deferred = getattr(owner, "is_deferred_router", False)
+    if deferred:
+        # A deferred Codex router binds no session at startup; it resolves one per
+        # threadId on each call from the request _meta. Skip the eager connect and
+        # route coordination through it. A single Work task surface needs a bound
+        # owner, so it is not available to a deferred runtime.
+        if workshop_task is not None:
+            raise MachineTransportError(
+                "a deferred coordination runtime has no single Work task surface")
+        control = owner.control()
+    else:
+        client = owner.connect()
+        keeper = getattr(owner, "start_lease_keeper", None)
+        if callable(keeper):
+            keeper()  # an idle agent keeps its session; renewal is never a graph write
+        if workshop_task is not None:
+            return attach_workshop_tools(owner, workshop_task)
+        control = _OwnedWorkshopClient(owner, client)
     server = build_coordination_server(client=control)
 
     @server.tool(name='native.hook_stop')
@@ -481,6 +507,29 @@ def build_server(*, session=None, workshop_task: str | None = None):
             attached.clear()
         await ctx.session.send_tool_list_changed()
         return {'work_root': held.root, 'detached': True}
+
+    if deferred:
+        # A multiplexed deferred server serves many threads over one connection and
+        # one shared tool list; it cannot safely mutate that list per thread (two
+        # threads attaching different Works would collide on identical tool names,
+        # and a dynamically added tool would be visible and callable by every
+        # thread). So the dynamic Work-task surface is not offered here: the shared
+        # `attached` state is never populated, so no thread can detach another's
+        # surface or read another's selected Work. A dedicated per-Work surface
+        # stays available through the isolated one-Work --workshop-task launch.
+        for name in ('native.work_task_attach', 'native.work_task_detach'):
+            server.remove_tool(name)
+
+        @server.tool(name='native.owner_resume')
+        def owner_resume() -> dict[str, object]:
+            """Complete this thread's latched binding after a validated same-owner recovery.
+
+            Run the matching recovery first (native.owner_recover / native.owner_rebind /
+            native.connection_recover). This finishes the remaining stages without
+            re-enrolling and clears the latch only on success; a still-unready owner or a
+            failed completion keeps the original stage and outcome.
+            """
+            return owner.resume()
     return server
 
 

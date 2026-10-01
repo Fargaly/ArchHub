@@ -6,7 +6,7 @@ import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {stateDir,readMessage} from './paths.mjs';
 import {PeerEndpoint,listClaudeSessions} from './vendor/src/peer-protocol.mjs';
-import {nativeCall,hasAttachment,attachmentCall} from './native.mjs';
+import {nativeCall,hasAttachment,attachmentCall,assertTargetHostLoaded} from './native.mjs';
 import {discoverExtra,sendExtra} from './extra-apps.mjs';
 import {ScopedAttachments} from './scoped-attachment.mjs';
 import {resumeSaved,confirmsSavedChild} from './resume.mjs';
@@ -191,6 +191,7 @@ export function requestIdentity(r){
   return typeof r?.messageId==='string'&&/^[A-Za-z0-9._:-]{1,120}$/.test(r.messageId)?r.messageId:crypto.randomUUID();
 }
 export function boundSendCall(b,row,prompt,requestId){
+  assertTargetHostLoaded(row,b.executorHostId);
   return ['send_message_to_thread',{threadId:b.codex.id,prompt,...targetHost(row)},b.executor,
     {hostId:b.executorHostId,...(typeof requestId==='string'&&requestId?{requestId}:{})}];
 }

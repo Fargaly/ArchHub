@@ -28,6 +28,19 @@ async function liveCodexRow(threadId){
  if(rows.length!==1)throw new Error('Target is not exactly one live Codex task; not sent');
  return rows[0];
 }
+// A target on another host whose task manager does not hold the conversation
+// is refused before any post. With an explicit target hostId the app skips its
+// cross-host thread lookup and starts the turn from that host's in-memory
+// record; for an unloaded "durable" task the workspace falls back to "/", the
+// app-server rejects the turn and delivery is left uncertain. Same-host and
+// local targets are unchanged.
+const UNLOADED_TARGET_HOSTS=new Set(['durable']);
+export function assertTargetHostLoaded(row,callerHost){
+ const target=typeof row?.hostId==='string'&&row.hostId?row.hostId:undefined;
+ if(target===undefined||target===callerHost||!UNLOADED_TARGET_HOSTS.has(target))return row;
+ const e=new Error(`Target Codex task is on host "${target.replace(/[^A-Za-z0-9._-]/g,'').slice(0,40)}", which the app cannot start a turn on from this caller (its workspace is not loaded there); not sent`);
+ e.code='SESSION_LINK_TARGET_HOST_UNLOADED';throw e;
+}
 // requestId is the logical request's identity at its origin (an ask id, a
 // Session Link message id); every route below carries it to the wire.
 export async function postCodex(threadId,prompt,{requestId}={}){
@@ -36,7 +49,7 @@ export async function postCodex(threadId,prompt,{requestId}={}){
  if(process.env.CODEX_APP_TOOLS_PIPE_PATH&&process.env.CODEX_THREAD_ID){
   // Direct from a Codex task: the caller is this task (its own thread and host);
   // the target's host is read from its live row, never assumed.
-  const row=await liveCodexRow(threadId);
+  const row=assertTargetHostLoaded(await liveCodexRow(threadId),callerHostFor(process.env.CODEX_THREAD_ID));
   return await nativeCall('send_message_to_thread',{threadId,prompt,...(typeof row.hostId==='string'&&row.hostId?{hostId:row.hostId}:{})},
    process.env.CODEX_THREAD_ID,identity.messageId?{requestId:identity.messageId}:{});
  }

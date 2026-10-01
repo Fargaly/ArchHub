@@ -12,16 +12,42 @@ const workshopSource = fs.readFileSync(path.join(__dirname, '../nodelang/studio/
 const start = source.indexOf('  const viewScope =', source.indexOf('const StudioLM ='));
 const end = source.indexOf('  const selectedWorkshop =', start);
 assert.ok(start > 0 && end > start);
+// The hooks the block really uses, as React runs them: one state slot per useState call in call
+// order, and useEffect run after the render when its dependencies changed (cleanup first). The
+// block listens on window for 'archhub:reach-conversation'; the stub window delivers those events.
 function harness() {
-  let held = null;
-  return (projection, sessionId = 'session-a') => {
-    const context = {session:{id:sessionId}, workshopState:projection,
-      React:{useState:() => [held, update => { held = update(held); }]}};
+  const slots = [], effects = [], listeners = new Map();
+  const window = {
+    addEventListener:(name, listen) => { if (!listeners.has(name)) listeners.set(name, new Set()); listeners.get(name).add(listen); },
+    removeEventListener:(name, listen) => { listeners.get(name)?.delete(listen); },
+  };
+  const render = (projection, sessionId = 'session-a') => {
+    let stateIndex = 0, effectIndex = 0;
+    const commit = [];
+    const React = {
+      useState:initial => {
+        const index = stateIndex++;
+        if (!(index in slots)) slots[index] = initial;
+        return [slots[index], update => { slots[index] = typeof update === 'function' ? update(slots[index]) : update; }];
+      },
+      useEffect:(effect, deps) => {
+        const index = effectIndex++, previous = effects[index];
+        if (previous && deps && deps.length === previous.deps.length && deps.every((value, at) => Object.is(value, previous.deps[at]))) return;
+        commit.push(() => {
+          if (typeof previous?.cleanup === 'function') previous.cleanup();
+          effects[index] = {deps:deps || [], cleanup:effect()};
+        });
+      },
+    };
+    const context = {session:{id:sessionId}, workshopState:projection, React, window};
     vm.createContext(context);
     vm.runInContext(source.slice(start, end) +
       '\nglobalThis.result = {view:workspaceView, update:updateWorkspaceView};', context);
+    commit.forEach(run => run());
     return context.result;
   };
+  render.dispatch = (name, detail) => [...(listeners.get(name) || [])].forEach(listen => listen({detail}));
+  return render;
 }
 const projection = (subject = 'owner-a') => ({canvas:{graph_id:'graph-a',root:'scope-a'},
   topology:{canvas:{application_root:'graph-a',scope:{current:'scope-a'},authorization:{subject,session:'view-a'}}},
@@ -244,4 +270,18 @@ test('mixed topology and Workshop scope wait for a coherent projection', () => {
   assert.equal(render(next).view.pending, false);
   next.canvas.graph_id = 'graph-b';
   assert.equal(render(next).view.pending, true);
+});
+test('a Conversations row that walked to the Workshop canvas opens its room once the new scope lists it', () => {
+  const render = harness();
+  render(projection()).update({conversationRoot:'general-a'});      // the room held before the walk
+  render.dispatch('archhub:reach-conversation', 'child-b');        // the walk is still landing
+  assert.equal(render(projection()).view.conversationRoot, 'general-a');   // nothing is replaced yet
+  // The walk lands on the Workshop canvas: a new scope that lists the saved room.
+  const landed = projection(); landed.canvas.root = landed.topology.canvas.scope.current = 'scope-b';
+  landed.workshops.push({root:'child-b', is_general:false});
+  render(landed);                                                    // the render that lists it commits the room
+  const opened = render(landed).view;
+  assert.equal(opened.conversationRoot, 'child-b');
+  assert.equal(opened.mode, 'chat');
+  assert.equal(opened.scope, JSON.stringify(['session-a', 'graph-a', 'scope-b', 'owner-a', 'view-a']));
 });

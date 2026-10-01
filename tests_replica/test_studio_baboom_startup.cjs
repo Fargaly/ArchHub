@@ -11,6 +11,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const {createHash} = require('node:crypto');
 const root = path.resolve(__dirname, '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -202,7 +203,22 @@ test('rendered BABOOM Settings is disabled and says why when the setting cannot 
   }
 });
 
+// The compiled Studio is a build output (packaging/compile_studio.cjs, gitignored): this court mounts
+// what the build produced from the CURRENT sources, or says plainly that it was not built.
+function compiledStudioIsCurrent() {
+  const manifestPath = 'nodelang/studio/compiled/manifest.json';
+  assert.ok(fs.existsSync(path.join(root, manifestPath)),
+    'no compiled Studio in this tree: run npm run build:studio before this court');
+  const manifest = JSON.parse(read(manifestPath));
+  for (const file of manifest.files) {
+    const live = createHash('sha256').update(fs.readFileSync(path.join(root, 'nodelang/studio', file.source))).digest('hex');
+    assert.equal(file.source_sha256, live, 'Studio build is stale for ' + file.source + ': run npm run build:studio');
+  }
+  return manifest;
+}
+
 test('shipped Studio tree carries the BABOOM startup switch as a row of Settings > Hosts, with no BABOOM tab', async () => {
+  const manifest = compiledStudioIsCurrent();
   assert.ok(read('nodelang/studio/compiled/studio-lm.js').includes('Start BABOOM when ArchHub opens'),
     'compiled Studio was regenerated from studio-lm.jsx');
   const {JSDOM} = await import('jsdom');
@@ -213,7 +229,6 @@ test('shipped Studio tree carries the BABOOM startup switch as a row of Settings
   win.fetch = () => new Promise(() => {}); // court sandbox: the mounted Studio talks to a server that never answers
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
-  const manifest = JSON.parse(read('nodelang/studio/compiled/manifest.json'));
   try {
     for (const file of manifest.files) {
       if (file.source !== 'mount.jsx') win.eval(read('nodelang/studio/compiled/'+file.output));

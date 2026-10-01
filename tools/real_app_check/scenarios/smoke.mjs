@@ -52,15 +52,13 @@ export default async function (ctx) {
     ok = ok && await js(`(() => { const b = [...document.querySelectorAll('button')].find(b => /^\\s*Workspaces/.test(b.textContent)); if (!b) return false; b.click(); return true; })()`);
     await sleep(2500);
     const browse = await js(`!!document.querySelector('button[aria-label="Browse for a folder"]')`);
-    const registry = await until(() => js(`(document.body.innerText.match(/The workspace registry[^\\n]*|Reading the workspace registry[^\\n]*/) || [''])[0]`),
-      text => !/^Reading/.test(text), 20);
+    const registry = await until(() => js(`(document.body.innerText.match(/The workspace registry[^\\n]*|Reading the workspace registry[^\\n]*|No workspace is registered yet\\./) || [''])[0]`),
+      text => text && !/^Reading/.test(text), 20);
     if (!(ok && browse)) return { pass: false, why: browse ? 'Settings > Workspaces did not open' : 'no Browse button', got: { registry } };
-    // The registry lives with ArchHub's graph owner. A run without its own graph owner cannot read it:
-    // that is reported as NOT EXERCISED, never as a pass.
-    if (/not answering|was not read/.test(registry)) {
-      return { not_exercised: 'the workspace registry needs a graph owner this run does not start; the panel says: ' + registry, got: { registry } };
-    }
-    return { pass: true, got: { registry } };
+    // The registry lives with ArchHub's graph owner. The run starts its own, freshly provisioned, so the
+    // only pass is the read-success empty state; an alert, a hang or any registered row (not ours) fails.
+    const read = registry === 'No workspace is registered yet.';
+    return { pass: read, why: read ? '' : 'the registry was not read empty from the run\'s own graph owner: ' + (registry || 'no registry line'), got: { registry } };
   });
   await step('Browse: the real Windows folder dialog puts the chosen folder in the field', async () => {
     const folder = fs.mkdtempSync(path.join(ctx.out, 'picked-folder-'));

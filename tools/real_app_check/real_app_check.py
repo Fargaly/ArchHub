@@ -332,6 +332,70 @@ class RunJob:
             self.handle = None
 
 
+class JobRunner:
+    """subprocess.run for the run's helper children. Each starts suspended and, before its first
+    instruction, joins the run's Job and its own Job nested inside it (both verified); it keeps its handle
+    and is waited on with a bound. When it ends (or passes its bound) its own Job is terminated, which
+    ends every descendant it left (a python.exe redirector leaves one), and the runner waits, bounded,
+    until that Job is empty. leftovers() lists every process still alive in the run's Job."""
+
+    job_owned = True
+    SETTLE_SECONDS = 15
+
+    def __init__(self, job: RunJob):
+        self.job, self.children = job, []
+        self.ntdll = ctypes.WinDLL("ntdll")
+        self.ntdll.NtResumeProcess.argtypes = [w.HANDLE]
+        self.ntdll.NtResumeProcess.restype = ctypes.c_long
+
+    def __call__(self, command, *, env=None, cwd=None, capture_output=True, text=True, timeout=120):
+        own = RunJob()
+        process = None
+        try:
+            process = subprocess.Popen([str(part) for part in command], env=env, cwd=cwd,
+                                       stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       text=True, encoding="utf-8", errors="replace",
+                                       creationflags=0x00000004 | 0x08000000)
+            record = {"pid": process.pid, "command": [str(part)[:80] for part in command[:3]]}
+            self.children.append(record)
+            self.job.adopt(int(process._handle))
+            own.adopt(int(process._handle))          # nested in the run's Job
+            if process.pid not in self.job.pids() or process.pid not in own.pids():
+                raise RuntimeError("helper %d did not join the run's Job" % process.pid)
+            if self.ntdll.NtResumeProcess(w.HANDLE(int(process._handle))) != 0:
+                raise RuntimeError("helper %d could not be resumed" % process.pid)
+            try:
+                out, err = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                self._end(own, record)
+                out, err = process.communicate(timeout=10)
+                record.update(timed_out=True, exit_code=process.returncode)
+                return subprocess.CompletedProcess(command, -1, out, (err or "") + "\ntimed out after %ds" % timeout)
+            record["exit_code"] = process.returncode
+            return subprocess.CompletedProcess(command, process.returncode, out, err)
+        finally:
+            if process is not None and self.children and self.children[-1].get("pid") == process.pid:
+                self._end(own, self.children[-1])
+            own.close()
+            if process is not None and process.poll() is None:
+                process.kill()                       # its own handle, never a PID lookup
+                process.communicate(timeout=10)
+
+    def _end(self, own: RunJob, record: dict) -> None:
+        """Terminate the helper's own Job and wait, bounded, until nothing in it is still alive."""
+        own.k32.TerminateJobObject(own.handle, 1)
+        deadline = time.monotonic() + self.SETTLE_SECONDS
+        while own.pids() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        record["left_alive"] = own.pids()
+        if record["left_alive"]:
+            raise RuntimeError("helper %d left %r alive past %ds" % (record["pid"], record["left_alive"],
+                                                                   self.SETTLE_SECONDS))
+
+    def leftovers(self) -> list:
+        return self.job.pids()
+
+
 class HiddenDesktop:
     """A new hidden desktop with a run-unique name; processes started here draw nowhere visible."""
 
@@ -449,6 +513,14 @@ def pick_folder(desktop: HiddenDesktop, winapp: str, title: str, folder: str, ev
     return result
 
 
+def _graph_owner():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("graph_owner", HERE / "graph_owner.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _lines(stream, sink: queue.Queue) -> None:
     for line in stream:
         sink.put(line)
@@ -493,6 +565,13 @@ def main(argv=None) -> int:
         report.update(label=label, build=(app / "BUILD_ID").read_text(encoding="utf-8").strip(), app=str(app),
                       overlay=str(args.overlay) if args.overlay else None, overlay_files=laid,
                       desktop=desktop.name, isolated_root=str(run_dir), launch_cwd=str(run_dir), cdp_port=cdp)
+        # The run's own graph owner, gated at the spawn (plan, provisioning read-back, pinned endpoint),
+        # from the same installed (or labelled candidate) code; the desktop is pointed at it, never :8474.
+        owner_module = _graph_owner()
+        owner_plan = owner_module.plan_graph_owner(run_dir, env)
+        report["graph_owner"] = owner_module.launch_graph_owner(desktop, owner_plan, str(python), app,
+                                                                runner=JobRunner(job))
+        env = owner_plan["env"]
         log = out / "launcher-stdout.log"
         owner = desktop.spawn('cmd.exe /d /c ""%s" -B "%s" > "%s" 2>&1"' % (python, app / "launch_archhub_test.py", log),
                               env=env, cwd=str(run_dir))
@@ -549,6 +628,8 @@ def main(argv=None) -> int:
     except BaseException as exc:  # noqa: BLE001 - the report records it; the run fails
         import traceback
         failures.append("FAIL: the run raised %s: %s" % (type(exc).__name__, str(exc)[:300]))
+        if getattr(exc, "problems", None):
+            report["graph_owner_refused"] = list(exc.problems)
         report["exception"] = traceback.format_exc()[-3000:]
     finally:
         if job is not None:

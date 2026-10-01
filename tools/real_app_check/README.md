@@ -55,9 +55,8 @@ error during the step is one it listed in `expected_http`. Any other return fail
 A step this isolated run cannot honestly exercise returns `{not_exercised: '<why>'}` and is reported
 as `NOT EXERCISED`, never as a pass. Such a run is `INCOMPLETE` (exit code 2).
 
-Today smoke reports two such steps:
+Today smoke reports one such step:
 
-- **The Workspaces registry read.** It needs ArchHub's graph owner, which this run does not start.
 - **Add.** It signs with the Windows user's protected key, which cannot be isolated, so it is never
   pressed.
 
@@ -125,13 +124,32 @@ A scenario module exports `default async function (ctx)` and calls `ctx.step(ask
 5. Open Settings > Workspaces.
 6. Browse: prove the chosen folder lands in the field.
 
-## The run's own graph owner (designed, not yet launched)
+## The run's own graph owner
 
 Settings > Workspaces reads its registry from ArchHub's graph owner, the clean coordination service.
-`graph_owner.py` plans the run's own owner, and courts prove the plan. `real_app_check` does not start
-it until Ping has reviewed the plan.
+Every run starts its own owner through `graph_owner.launch_graph_owner`, from the same code it
+launches (`--app`, or the labelled candidate copy), before the app starts.
 
-The planned owner:
+The launch is refused, and the run fails with the reasons in `report.json` (`graph_owner_refused`),
+unless all three gates pass at the spawn itself, in this order:
+
+1. **Plan.** Every root the owner and the desktop derive under the spawn environment lies in the run,
+   and the environment's endpoint is the run's own. Nothing is provisioned otherwise.
+2. **Provisioning read-back.** After provisioning, `CURRENT` in the run's runtime root selects the
+   provisioned graph, and that generation opens (signature checked) from inside the run.
+3. **Pinned endpoint.** The planned endpoint, the spawn environment and the owner's `--port`,
+   `--canvas-port` and `--root` all name the run's own ports and root, and both ports are still free.
+
+The owner is accepted only when `/health` on the run's port answers with the provisioned graph id.
+
+Every helper child of the launch (the plan resolve, the provisioning, the read-back) runs through
+`JobRunner`: it starts suspended, joins the run's Job before its first instruction, keeps its handle and
+is waited on with a bound. The owner is spawned only when no helper is still alive in the Job.
+
+The owner is provisioned with `owner_grand_map.json`, a small fixture map pinned by this tool. A run
+proves the app against that fixture graph; it is not acceptance of the full Grand Map.
+
+The owner:
 
 - **Provisioning.** The product's own `provision_clean_runtime` (`owner_provision.py`) runs under the
   run's environment. The runtime root, the authority DPAPI provider and the caller key store all

@@ -1718,8 +1718,11 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const selTask = allTasks.some(t => t.work === S.task) ? S.task : null;
   const counts = {block:allTasks.filter(t => t.state==='block').length, run:tasks.filter(t => t.state==='run' || t.state==='open').length,
     review:tasks.filter(t => t.state==='review').length, paused:tasks.filter(t => t.state==='paused').length, done:tasks.filter(t => t.state==='done').length};
-  // An agent's relayed reply is a conversation row, not tool activity.
-  const toolRecords = messages.filter(message => message.category === 'tool' && typeof message.relayed_from !== 'string' &&
+  // An agent's relayed reply is a conversation row, not tool activity. On the messages feed the
+  // server sends the newest tool records as their own bounded read (the page holds notes only).
+  const activitySource = feed === 'messages' && Array.isArray(transcript?.activity) ? transcript.activity : messages;
+  const toolRecords = activitySource.filter(message => (activitySource !== messages || message.category === 'tool') &&
+    typeof message.relayed_from !== 'string' &&
     (!selTask || String(message.body || '').includes(selTask))).slice(-5).reverse();
   const activity = toolRecords.map(message => ({root:message.root, at:wsClockText(message.created_at, true),
     dir:message.sender_root === transcript?.self ? '←' : '→', text:wsLine(message.body, 60)}));

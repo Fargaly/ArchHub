@@ -1037,6 +1037,36 @@ async function readers(kind, get) {
   return readerSetup(kind,get);
 }
 
+// Audit gap 10: the messages feed's bounded ACTIVITY read is carried by both transports, and refused out of bounds.
+const activityRow = (n, change={}) => ({root:'tool-'+n, sequence:200+n, sender_root:'owner-a', body:'Tool record '+n,
+  created_at:'2026-10-01T20:00:0'+(n%10)+'Z', ...change});
+for(const kind of ['existing','authority']) test(`${kind}: a page's bounded activity read is carried; an unbounded one is refused`, async()=>{
+  const activity=[activityRow(1),activityRow(2)];
+  const {api}=await readers(kind,()=>ordinary({activity}));
+  await api.refreshWorkshop('workshop-a');
+  assert.deepEqual(plain(api.getSnapshot().workshop.activity),activity);
+  for(const bad of [Array.from({length:9},(_,n)=>activityRow(n+1)), [activityRow(1,{body:'x'.repeat(241)})],
+      [activityRow(2),activityRow(1)], [activityRow(1,{root:''})], 'not rows']) {
+    const refused=await readers(kind,()=>ordinary({activity:bad}));
+    await assert.rejects(refused.api.refreshWorkshop('workshop-a'),/Workshop activity is invalid/);
+  }
+});
+
+// The server bounds a body at 240 code points (Python str); the clients count code points too, so a body of
+// supplementary characters at the bound (JS length 480) is valid and one more is not.
+for(const kind of ['existing','authority']) test(`${kind}: activity text is bounded in code points, not UTF-16 units`, async()=>{
+  const face=String.fromCodePoint(0x1f600);
+  for(const [body, valid] of [[face.repeat(240), true], [face.repeat(241), false],
+      ['a'.repeat(120)+face.repeat(120), true], ['é'.repeat(100)+face.repeat(100)+'x'.repeat(40), true],
+      ['a'.repeat(120)+face.repeat(121), false], ['a'.repeat(241), false]]) {
+    const {api}=await readers(kind,()=>ordinary({activity:[activityRow(1,{body})]}));
+    if(valid) {
+      await api.refreshWorkshop('workshop-a');
+      assert.equal(api.getSnapshot().workshop.activity[0].body,body);
+    } else await assert.rejects(api.refreshWorkshop('workshop-a'),/Workshop activity is invalid/);
+  }
+});
+
 for(const kind of ['existing','authority']) {
   test(`${kind}: ordinary refresh uses visible cursor at the same graph revision without republishing unchanged`, async()=>{
     let page=ordinary(), calls=0;

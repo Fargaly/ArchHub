@@ -261,6 +261,10 @@ def _workshop_participant_rows(owner, snapshot, space, connections):
 
 # The browser client's page contract: studio-existing-workshop.js admits at most 100 rows.
 WORKSHOP_PAGE_ROWS = 100
+# The messages feed's ACTIVITY panel: the newest tool records, read in storage (never the
+# notes page's tail), at most this many rows of at most this many characters each.
+WORKSHOP_ACTIVITY_ROWS = 8
+WORKSHOP_ACTIVITY_TEXT = 240
 
 
 def _workshop_position_token(prefix, positions, identity):
@@ -402,6 +406,23 @@ def _read_ordinary_browser_workshop(owner, binding, *, root, scope, expected_rev
                     rows = sorted([*rows, *added], key=lambda row: row["sequence"])
                     nested = (history.replies_to(root, [row["id"] for row in added], principal=principal,
                                                  read_all=founder)["messages"] if added else [])
+                # The ACTIVITY panel on the messages feed (design: the last tool actions): one more
+                # bounded read of the newest tool records under the same admission. An agent's relayed
+                # reply is a conversation row above, never activity.
+                activity = None
+                if feed == 'messages':
+                    from .workshop_delivery_state import relay_reply_record, relayed_reply_text
+                    tool_category = registry.workshop_category_roots["tool"]
+                    tools = service.page_for_workshop_browser(session_token, binding=binding, space_root=root,
+                        limit=WORKSHOP_ACTIVITY_ROWS * 4, max_bytes=65536, category=tool_category)
+                    if tools["graph_revision"] != snapshot.revision:
+                        raise AuthorizationDenied("Workshop changed during read")
+                    activity = [{"root": row["id"], "sequence": row["sequence"], "sender_root": row["author"],
+                                 "body": row["content"][:WORKSHOP_ACTIVITY_TEXT], "created_at": row["created_at"]}
+                                for row in tools["messages"]
+                                if not (relayed_reply_text(row.get("content")) is not None and relay_reply_record(
+                                    row, tool_category=tool_category, relay_author=authority.subject_root))
+                                ][-WORKSHOP_ACTIVITY_ROWS:]
                 extras = project_workshop_extras(owner, binding, root=root, rows=[*page["messages"], *replies, *nested],
                     history=history, principal=principal, read_all=founder, states=states, relayed=relayed)
 
@@ -421,6 +442,7 @@ def _read_ordinary_browser_workshop(owner, binding, *, root, scope, expected_rev
                     "next_before": (page_token(page["messages"][0]["sequence"])
                         if page["has_older"] else None),
                     "reviews": extras["reviews"], "workflows": extras["workflows"],
+                    **({"activity": activity} if activity is not None else {}),
                     "messages": [{"root": row["id"], "message_id": row["id"], "sequence": row["sequence"],
                         "sender_root": row["author"],
                         "recipient_root": ", ".join(row["recipients"]) or "Everyone",

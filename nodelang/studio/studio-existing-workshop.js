@@ -450,6 +450,14 @@
               new Set(result.messages.map(row => row.root)).size !== result.messages.length)) {
             fail('Workshop history is invalid.');
           }
+          // The messages feed's ACTIVITY panel: the newest tool records, bounded by the server.
+          if (result.activity !== undefined && (!content || !Array.isArray(result.activity) || result.activity.length > 8 ||
+              result.activity.some((row, index, rows) => !row || !text(row.root) || typeof row.body !== 'string' ||
+                Array.from(row.body).length > 240 || typeof row.sender_root !== 'string' || typeof row.created_at !== 'string' ||
+                !Number.isSafeInteger(row.sequence) || row.sequence < 1 ||
+                (index > 0 && row.sequence <= rows[index - 1].sequence)))) {
+            fail('Workshop activity is invalid.');
+          }
           if (content) pageTarget = {...pageTarget, storage:'conversation-content'};
           workshop = {...result, model_agent:modelAgent, error:''}; publish(); return workshop;
         } catch (error) {

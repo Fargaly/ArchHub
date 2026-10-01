@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 
 from .cell_authorization import AuthorizationDenied
@@ -66,6 +67,7 @@ _LAYOUT = frozenset({"position_x", "position_y", "color"})
 _NOT_BEHAVIOR = _LAYOUT | {"status", "seed"}
 _VERDICT = re.compile(r"^\s*VERDICT:\s*(pass|fail)\b", re.I)
 _ARTIFACT_LIMIT = 5000
+_LOG = logging.getLogger(__name__)
 
 
 def approval_required(params, feeds):
@@ -357,25 +359,49 @@ def draft_workflow(owner, browser, body, *, browser_guard):
         _validate_draft_references(actions, projection)
         _append(owner, browser, root, space, "Workflow draft started from agent proposal %s." % message,
                 key + ":reserved", reply_to=source["id"], require_new=True)
-        applied = _apply_draft_actions(store, registry, projection, {"answer": str(plan.get("answer", ""))},
-            actions, authentication_context=browser.context)
-        members = [row["root"] for row in applied["applied"] if row.get("op") == "node" and row.get("ok")]
-        issues += [str(row.get("why")) for row in applied["applied"] if not row.get("ok")]
-        if not members:
-            raise InvalidCell("The proposal placed no executable node: " + "; ".join(issues)[:500])
-        title = str(plan.get("title") or plan.get("answer") or "Agent proposal")[:80]
-        anchor_value = {"kind": _ANCHOR, "version": 1, "conversation": root, "scope": scope,
-            "members": members, "proposed_by": proposer, "source_message": source["id"],
-            "source_digest": artifact_digest(text), "title": title}
-        anchor, _revision = app.instantiate_universal_primitive(store, registry,
-            x=260.0, y=120.0, title="Workflow: " + title,
-            atom=json.dumps(anchor_value, sort_keys=True, separators=(",", ":")),
-            mutation_route="/api/universal/workshop", authentication_context=browser.context)
-        value = {"kind": "workshop-workflow-draft", "version": 1, "workflow": anchor, "message": source["id"],
-                 "proposed_by": proposer, "members": members, "issues": issues}
+        before_nodes = {str(node["id"]) for node in projection.get("nodes", ())}
+        applied, members, anchor = None, [], None
+        try:
+            applied = _apply_draft_actions(store, registry, projection, {"answer": str(plan.get("answer", ""))},
+                actions, authentication_context=browser.context)
+            members = [row["root"] for row in applied["applied"] if row.get("op") == "node" and row.get("ok")]
+            issues += [str(row.get("why")) for row in applied["applied"] if not row.get("ok")]
+            if not members:
+                raise InvalidCell("The proposal placed no executable node: " + "; ".join(issues)[:500])
+            title = str(plan.get("title") or plan.get("answer") or "Agent proposal")[:80]
+            anchor_value = {"kind": _ANCHOR, "version": 1, "conversation": root, "scope": scope,
+                "members": members, "proposed_by": proposer, "source_message": source["id"],
+                "source_digest": artifact_digest(text), "title": title}
+            anchor, _revision = app.instantiate_universal_primitive(store, registry,
+                x=260.0, y=120.0, title="Workflow: " + title,
+                atom=json.dumps(anchor_value, sort_keys=True, separators=(",", ":")),
+                mutation_route="/api/universal/workshop", authentication_context=browser.context)
+            value = {"kind": "workshop-workflow-draft", "version": 1, "workflow": anchor, "message": source["id"],
+                     "proposed_by": proposer, "members": members, "issues": issues}
+        except Exception:
+            _retract_failed_draft(store, registry, before_nodes, anchor, authentication_context=browser.context)
+            raise
         _append(owner, browser, root, space, json.dumps(value, sort_keys=True, separators=(",", ":")), key,
                 reply_to=source["id"], refs=(proposer, anchor))
         return {"ok": True, "reused": False, **_draft_response(owner, browser, root, value)}
+
+
+def _retract_failed_draft(store, registry, before_nodes, anchor, *, authentication_context):
+    from . import universal_application as app
+    from .universal_pipeline import retract_universal_node
+
+    after = app.project_universal_canvas(store, registry, authentication_context=authentication_context)
+    after_nodes = {str(node["id"]) for node in after.get("nodes", ())}
+    roots = list(after_nodes - set(before_nodes))
+    if anchor:
+        roots.append(anchor)
+    for root in reversed(list(dict.fromkeys(roots))):
+        if not root:
+            continue
+        try:
+            retract_universal_node(store, registry, root, authentication_context=authentication_context)
+        except Exception:
+            _LOG.exception("Failed to retract interrupted workflow draft root %s", root)
 
 
 def _draft_response(owner, browser, root, value):

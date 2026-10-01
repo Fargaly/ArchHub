@@ -7654,6 +7654,23 @@ class ApplicationServer:
                                     browser_guard=session_start_guard)
                             self._json(200, payload)
                             return
+                        if type(body) is dict and body.get('action') == 'import-clean-archive':
+                            # Plan B S4: the founder preserves the clean Workshop's delivered
+                            # messages as one archive conversation (workshop_clean_archive.py).
+                            from .workshop_clean_archive import import_clean_workshop_archive
+                            if set(body) != {'action', 'record'}:
+                                raise InvalidCell('Clean archive import fields are invalid')
+                            with owner.mutation_lock:
+                                current, current_token = self._browser_session_binding(unsafe=True)
+                                if current != binding or current_token != _session_token:
+                                    raise AuthorizationDenied('Clean archive browser changed')
+                                owner.require_universal_http_route('POST', self.path,
+                                    authentication_context=binding.context, revalidate=True)
+                                payload = import_clean_workshop_archive(owner,
+                                    authentication_context=binding.context, record=body['record'],
+                                    expected_revision=owner.universal_store.revision)
+                            self._json(200, payload)
+                            return
                         from .workshop_workflow import ACTIONS as WORKFLOW_ACTIONS, perform_workshop_action
                         if type(body) is dict and body.get('action') in WORKFLOW_ACTIONS:
                             # Draft, approve and run agent-proposed workflows and

@@ -30143,6 +30143,7 @@ def _commit_atomic_visible_wip_resource(
     audience_release_root: str | None = None,
     additional_create: tuple[Cell, ...] = (),
     additional_replace: tuple[Cell, ...] = (),
+    additional_indexed_interfaces: tuple[str, ...] = (),
     viewport: Mapping[str, float] | None = None,
     activate_view: bool = True,
     leased_scope_root: str | None = None,
@@ -30261,7 +30262,13 @@ def _commit_atomic_visible_wip_resource(
                 *((registry.roles["property"], ref.relation_root)
                   for ref in property_refs),
                 *((interface_role, root)
-                  for root in resource_interface_roots),
+                  for root in (
+                      *resource_interface_roots,
+                      # The card's own sockets, written in this same
+                      # transaction: indexed now, or the next canvas read
+                      # indexes them in a write that pins the card.
+                      *additional_indexed_interfaces,
+                  )),
             ),
             budget=100_000,
         )
@@ -30563,8 +30570,16 @@ def instantiate_universal_definition(
     instance_token: str | None = None,
     initial_properties: Mapping[str, str] | None = None,
     placement_scope_root: str | None = None,
+    owned_interface_cells: tuple[Cell, ...] = (),
+    owned_interface_members: tuple[tuple[str, str], ...] = (),
 ) -> tuple[str, int]:
-    """Instantiate, place, expose, and select one catalogue assembly."""
+    """Instantiate, place, expose, and select one catalogue assembly.
+
+    ``owned_interface_cells`` / ``owned_interface_members`` are the new
+    card's own canvas sockets and their application registrations. They
+    land in the same tracked transaction as the instance, so one Undo takes
+    the whole card back and nothing created later points into it.
+    """
     if not math.isfinite(x) or not math.isfinite(y):
         raise InvalidCell("assembly position must be finite")
     if instance_token is not None and (
@@ -30574,6 +30589,8 @@ def instantiate_universal_definition(
     initial_properties = dict(initial_properties or {})
     if initial_properties and instance_token is None:
         raise InvalidCell("atomic initial properties require an explicit instance token")
+    if (owned_interface_cells or owned_interface_members) and instance_token is None:
+        raise InvalidCell("atomic card sockets require an explicit instance token")
     if any(type(label) is not str or not label or label != label.strip()
            or len(label.encode("utf-8")) > 512 or type(value) is not str
            or len(value.encode("utf-8")) > 65_536
@@ -30735,6 +30752,23 @@ def instantiate_universal_definition(
         )
         additional_create = registration.create
         additional_replace = registration.replace
+    if owned_interface_members:
+        interface_role = registry.assembly_protocol.role("interface")
+        if any(role != interface_role for role, _root in owned_interface_members):
+            raise InvalidCell("card sockets register only as interfaces")
+        sockets = prepare_append_relation_members(
+            snapshot,
+            registry.application_root,
+            owned_interface_members,
+            budget=100_000,
+        )
+        replaced = {cell.id for cell in additional_replace}
+        if any(cell.id in replaced for cell in sockets.replace):
+            raise InvalidCell("card socket registration collides with the instance write")
+        additional_create = (
+            *additional_create, *owned_interface_cells, *sockets.create,
+        )
+        additional_replace = (*additional_replace, *sockets.replace)
     revision = _commit_atomic_visible_wip_resource(
         store,
         registry,
@@ -30751,6 +30785,9 @@ def instantiate_universal_definition(
         audience_release_root=release_root,
         additional_create=additional_create,
         additional_replace=additional_replace,
+        additional_indexed_interfaces=tuple(
+            root for _role, root in owned_interface_members
+        ),
         viewport=viewport,
         activate_view=activate_view,
         leased_scope_root=leased_scope_root,

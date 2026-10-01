@@ -993,17 +993,27 @@ def create_engine_node(
                 raise InvalidCell("The reserved Agent node parameters changed; review its binding")
         select_universal_root(store, registry, root, authentication_context=authentication_context)
     else:
-        options = {} if instance_token is None else {
-            "instance_token":instance_token, "initial_properties":values}
-        root, _revision = _persist(lambda: instantiate_universal_definition(
-            store, registry, definition_root, x=float(x), y=float(y),
-            title_override=title, authentication_context=authentication_context, **options,
-        ), store=store)
-        if instance_token is None:
-            for label, value in values.items():
-                _persist(lambda label=label, value=value: create_universal_property(
-                    store, registry, root, label, value, authentication_context=authentication_context,
-                ), store=store)
+        # ONE tracked transaction places the card: the instance, its parameters
+        # and its sockets. Placing them in separate writes left the instance
+        # referenced by writes the history does not take back, so Undo of a
+        # placement was refused ("created Cell gained references after the
+        # recorded transaction"; founder smoke 2026-10-01).
+        import uuid as _uuid
+        token = instance_token or _uuid.uuid4().hex
+
+        def place():
+            snapshot = store.snapshot()
+            sockets, registered, _created = _pipeline_interface_cells(
+                snapshot, registry, "assembly-instance:" + token, engine, set()
+            )
+            return instantiate_universal_definition(
+                store, registry, definition_root, x=float(x), y=float(y),
+                title_override=title, authentication_context=authentication_context,
+                instance_token=token, initial_properties=values,
+                owned_interface_cells=tuple(sockets), owned_interface_members=tuple(registered),
+            )
+
+        root, _revision = _persist(place, store=store)
     _persist(lambda: _ensure_pipeline_node_interfaces(store, registry, root, engine), store=store)
     return {"ok": True, "root": root, "engine": engine, "title": title}
 

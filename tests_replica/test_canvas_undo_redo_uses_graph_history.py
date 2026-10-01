@@ -6,9 +6,8 @@ submit_universal_history_interaction -> undo_universal_change / redo_universal_c
 These courts drive those same functions on a real graph:
 
 - a hand move (POST /api/universal/gesture) is taken back by Undo and put back by Redo;
-- a node added through the library route (POST /api/universal/node-create) is NOT taken back:
-  create_engine_node writes its interfaces and rows after the recorded Instantiate, and the
-  history refuses ("created Cell gained references after the recorded transaction");
+- a node added through the library route (POST /api/universal/node-create) is taken back by one
+  Undo and put back by Redo: the card, its parameters and its sockets are one recorded transaction;
 - a node deleted through POST /api/universal/retract is NOT brought back by Undo: retract commits
   outside the action history, and no recorded node-removal route exists. That court is held
   strict-xfail so it turns red-to-green the day retract is recorded, and cannot pass silently now.
@@ -65,9 +64,6 @@ def test_undo_takes_back_a_move_and_redo_puts_it_back(graph):
     assert _at(store, registry, root) == (moved["x"], moved["y"]), "redo moves it again"
 
 
-@pytest.mark.xfail(strict=True, raises=Exception, reason=(
-    "blocker: create_engine_node (POST /api/universal/node-create) writes interfaces and rows as raw "
-    "commits after the recorded Instantiate; the history refuses: created Cell gained references"))
 def test_undo_takes_back_an_added_node_and_redo_puts_it_back(graph):
     store, registry = graph
     root = create_engine_node(store, registry, title="Undo Probe", engine="lines.watch")["root"]

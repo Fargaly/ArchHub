@@ -67,6 +67,7 @@ def runtime(tmp_path, monkeypatch, request):
     descriptor_path = tmp_path / "workspace-root-permit.json"
     provider = MemorySigningKeyProvider("archhub.local.universal-runtime-pipe", b"w" * 32)
     server = ApplicationServer(enable_machine_transport=True, machine_descriptor_path=descriptor_path,
+                               universal_workspace_root=tmp_path,
                                machine_key_provider=provider,
                                runtime_compliance_runner=_green_runtime_compliance).start()
     agent = UniversalRuntimeClient(descriptor_path, provider)

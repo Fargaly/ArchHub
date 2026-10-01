@@ -1327,6 +1327,7 @@ def test_machine_cde_permit_is_derived_from_claimed_work_not_caller_authority(
         "archhub.local.universal-runtime-pipe", b"c" * 32
     )
     server = ApplicationServer(
+        universal_workspace_root=tmp_path,
         enable_machine_transport=True,
         machine_descriptor_path=descriptor_path,
         machine_key_provider=provider,
@@ -3030,6 +3031,7 @@ def test_mcp_broker_routes_bind_one_tool_to_the_existing_connector_lifecycle(
         "archhub.local.universal-runtime-pipe", b"m" * 32
     )
     server = ApplicationServer(
+        universal_workspace_root=tmp_path,
         enable_machine_transport=True,
         machine_descriptor_path=descriptor_path,
         machine_key_provider=provider,
@@ -4784,6 +4786,7 @@ def test_baboom_model_broker_executes_only_the_graph_grant_and_settles_one_recei
     )
     broker = _RecordedModelBroker()
     server = ApplicationServer(
+        universal_workspace_root=tmp_path,
         enable_machine_transport=True,
         machine_descriptor_path=descriptor_path,
         machine_key_provider=provider,
@@ -4884,6 +4887,7 @@ def test_baboom_execution_body_rejects_generic_submit_and_reports_failed_receipt
         "archhub.local.universal-runtime-pipe", b"e" * 32
     )
     server = ApplicationServer(
+        universal_workspace_root=tmp_path,
         enable_machine_transport=True,
         machine_descriptor_path=descriptor_path,
         machine_key_provider=provider,
@@ -5137,6 +5141,7 @@ def test_baboom_execution_model_delegation_requires_founder_approval_and_one_rec
         "archhub.local.universal-runtime-pipe", b"m" * 32
     )
     server = ApplicationServer(
+        universal_workspace_root=tmp_path,
         enable_machine_transport=True,
         machine_descriptor_path=descriptor_path,
         machine_key_provider=provider,
@@ -5409,6 +5414,7 @@ def test_consented_notion_delegation_requires_same_live_baboom_consent(tmp_path)
         "archhub.local.universal-runtime-pipe", b"s" * 32
     )
     server = ApplicationServer(
+        universal_workspace_root=tmp_path,
         enable_machine_transport=True,
         machine_descriptor_path=descriptor_path,
         machine_key_provider=provider,

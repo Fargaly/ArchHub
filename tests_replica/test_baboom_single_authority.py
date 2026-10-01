@@ -797,6 +797,9 @@ def test_baboom_capability_map_is_a_single_revision_graph_projection():
     assert {
         entry["root"] for entry in report["connectors"]
     } == set(registry.baboom_connector_provider_roots.values())
+    # 326b6579 (2026-09-15) released the Workshop project-repair connector and
+    # one connector provider per admitted social Work operation; the map lists
+    # every released connector.
     assert {
         entry["operation"] for entry in report["connectors"]
     } == {
@@ -804,6 +807,18 @@ def test_baboom_capability_map_is_a_single_revision_graph_projection():
         "notion.append_blocks",
         "teams.list_meetings",
         "teams.open_meeting",
+        "workshop.project.repair",
+        "linkedin.profile",
+        "linkedin.post",
+        "linkedin.comment",
+        "facebook.pages",
+        "facebook.feed",
+        "facebook.comments",
+        "facebook.page_post",
+        "facebook.comment",
+        "instagram.account",
+        "instagram.comments",
+        "instagram.reply",
     }
     assert "GET /api/universal/baboom-capabilities" in report["routes"]
     assert report["routes"] == sorted(set(report["routes"]))

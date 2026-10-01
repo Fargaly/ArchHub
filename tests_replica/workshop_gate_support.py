@@ -7,6 +7,7 @@ founder records both in the Workshop, in process; the research carries one
 file capture (capture_universal_workshop_file_source), so the server reads
 the bytes and mints the source record itself.
 """
+import tempfile
 from pathlib import Path
 
 from nodelang import commit_intent
@@ -14,16 +15,31 @@ import nodelang.universal_application as app
 
 
 def _court_source(workspace_root, key):
-    """A real file under the workspace root: this module's own source when it
-    lies inside, else a small file the court writes into its temp workspace."""
+    """A real file under the workspace root the server captures from.
+
+    This module's own source when it lies inside that root (an in-tree run
+    reads it and writes nothing); otherwise a small file written there -- but
+    only when the root is a temporary court workspace. The server's default
+    root is the governed workspace (resolve_map_path().parents[3]), the
+    founder's own tree, and a court never writes into it: a court whose server
+    keeps that root while running out of tree stops here and says how to give
+    it a temporary one (2026-10-01: six courts tried to write
+    court-gate-source-*.txt into the root of the founder's workspace).
+    """
     root = Path(workspace_root).resolve()
     here = Path(app.__file__).resolve()
     try:
         return here.relative_to(root).as_posix()
     except ValueError:
-        written = root / ("court-gate-source-%s.txt" % key)
-        written.write_text("Source the court's plan cites (%s).\n" % key, encoding="utf-8")
-        return written.name
+        pass
+    if not root.is_relative_to(Path(tempfile.gettempdir()).resolve()):
+        raise AssertionError(
+            "court workspace root %s is not a temporary directory; give the "
+            "ApplicationServer universal_workspace_root=tmp_path so the court "
+            "never writes into a real workspace" % root)
+    written = root / ("court-gate-source-%s.txt" % key)
+    written.write_text("Source the court's plan cites (%s).\n" % key, encoding="utf-8")
+    return written.name
 
 
 def open_execution_gate_in_graph(store, registry, work_root, key, context):

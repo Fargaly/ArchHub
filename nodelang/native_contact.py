@@ -23,6 +23,18 @@ def _endpoint(row):
     return result
 
 
+CONTACT_TITLE_BYTES=512   # instantiate_universal_primitive bounds a title in UTF-8 bytes
+
+
+def _contact_title(endpoint):
+    """The contact node's title: at most 150 characters and CONTACT_TITLE_BYTES UTF-8 bytes,
+    cut on whole characters (a session title of four-byte characters, such as emoji, binds)."""
+    title='Contact: '+str(endpoint.get('title') or endpoint['app'])[:150]
+    while len(title.encode('utf-8'))>CONTACT_TITLE_BYTES:
+        title=title[:-1]
+    return title
+
+
 def _digest(value):
     return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':')).encode()).hexdigest()
 
@@ -144,7 +156,7 @@ def bind_native_contact(owner,browser,body,*,browser_guard):
             home=registry.workshop_workbench_root
             x,y=free_scope_slot(owner.universal_store.snapshot(),registry,home)
             node,_=instantiate_universal_primitive(owner.universal_store,registry,x=x,y=y,
-                title='Contact: '+str(target.get('title') or target['app'])[:150],atom=encoded,
+                title=_contact_title(target),atom=encoded,
                 mutation_route='/api/universal/native-contact',authentication_context=browser.context,
                 placement_scope_root=home)
         else:

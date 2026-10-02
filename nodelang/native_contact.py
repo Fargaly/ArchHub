@@ -189,9 +189,14 @@ def read_contact(owner,browser,contact,binding_digest,root,scope):
         registry=owner.universal_registry
         # A general Workshop contact is bound to the application Workshop home
         # (bind_native_contact requires it); the browser may stand on any canvas.
-        home=getattr(registry,'workshop_workbench_root',None) if root==registry.workshop_root else None
-        if (set(value)!={'kind','version','endpoint','conversation','scope','owner'} or value['kind']!='native-contact' or value['version']!=1
-                or value['owner']!=browser.subject_root or value['conversation']!=root or value['scope']!=(home or scope)
+        home=getattr(registry,'workshop_workbench_root',None)
+        contact_value=type(value) is dict
+        general_workshop_contact=(contact_value and root!=registry.workshop_root
+            and value.get('conversation')==registry.workshop_root and value.get('scope')==home)
+        conversation_ok=(contact_value and value.get('conversation')==root
+            and value.get('scope')==(home if root==registry.workshop_root else scope)) or general_workshop_contact
+        if (not contact_value or set(value)!={'kind','version','endpoint','conversation','scope','owner'} or value['kind']!='native-contact' or value['version']!=1
+                or value['owner']!=browser.subject_root or not conversation_ok
                 or _digest(value)!=binding_digest):raise AuthorizationDenied('Native contact selection changed')
         return _endpoint(value['endpoint'])
 

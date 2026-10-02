@@ -7,6 +7,7 @@ import pytest
 from nodelang import agent_composer as composer
 from nodelang import universal_application as app
 from nodelang.cell_protocols import read_relation, remove_relation_member
+from nodelang.model_router import ModelRouteRefused
 from nodelang.universal_cell import Cell, InvalidCell, NULL_CELL_ID
 from nodelang.universal_pipeline import create_engine_node
 
@@ -139,7 +140,9 @@ def test_real_node_model_persists_and_invisible_wrong_missing_models_refuse(appl
         properties={"model": chosen})["root"]
     projection = app.project_universal_canvas(store, registry)
     first_node = next(node for node in projection["nodes"] if node["id"] == first)
-    assert not any(row["label"] == "model" for row in first_node["params"])
+    model_params = [row for row in first_node["params"] if row["label"] == "model"]
+    assert len(model_params) == 1 and model_params[0]["value"] in ("", chosen)
+    assert model_params[0]["value"] != "anthropic/claude-sonnet-4.5"
     calls = []
     monkeypatch.setattr(composer, "_DEFAULT_MODEL", "must-not-use/global-default")
     monkeypatch.setattr(composer, "_chat", lambda prompt, context, model:
@@ -195,6 +198,6 @@ def test_provider_failure_does_not_expose_provider_details(monkeypatch):
     def fail(*args, **kwargs):
         raise RuntimeError("private-provider-diagnostic")
     monkeypatch.setattr(composer, "route_chat", fail)
-    with pytest.raises(InvalidCell, match="The model provider did not answer") as error:
+    with pytest.raises(ModelRouteRefused, match="The model provider did not answer") as error:
         composer._chat("Hello", "Public context", "openrouter/free")
     assert "private-provider-diagnostic" not in str(error.value)

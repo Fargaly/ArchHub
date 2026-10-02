@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 
 from nodelang.application_server import ApplicationServer
 from nodelang.cell_secret_keys import MemorySigningKeyProvider
-from nodelang import agent_composer, model_router, universal_application as app, universal_pipeline
+from nodelang import agent_composer, commit_intent, model_router, universal_application as app, universal_pipeline
 from nodelang.universal_cell import InvalidCell
 
 
@@ -116,24 +116,28 @@ def test_home_prompt_model_reply_persist_in_one_conversation_without_replay(tmp_
         assert "Draft prepared for your review" in str(latest) and "select: prepared" in str(latest)
         browser = server._resolve_browser_session(server.browser_session_token)
         with server.mutation_lock:
-            app.edit_universal_property(server.universal_store, registry, model["relation"], "ollama/changed-fixture",
-                authentication_context=browser.context)
+            with commit_intent.declare(commit_intent.USER_ACTION, actor="court",
+                                       reason="the user changes the agent's model"):
+                app.edit_universal_property(server.universal_store, registry, model["relation"], "ollama/changed-fixture",
+                    authentication_context=browser.context)
         changed = request("/api/universal/workshop?" + query + "&content_after=" + latest["content_cursor"])
         assert changed["unchanged"] is True and changed["model_agent"]["model"] == "ollama/changed-fixture"
         assert changed["model_agent"]["binding_digest"] != followup["binding_digest"]
         request("/api/universal/workshop", {**followup, "idempotency_key":"stale-model-binding"}, expected=400)
         assert len(calls) == 2
         with server.mutation_lock:
-            app.edit_universal_property(server.universal_store, registry, model["relation"], body["model"],
-                authentication_context=browser.context)
-            app.set_universal_selection(server.universal_store, registry, [],
-                authentication_context=browser.context)
-            prior_revision = server.universal_store.revision
-            with pytest.raises(InvalidCell, match="parameters changed"):
-                universal_pipeline.create_engine_node(server.universal_store, registry, title="Refused replacement",
-                    engine="library.think", properties={"model":"ollama/conflict", "conversation":conversation},
-                    instance_token=node.removeprefix("assembly-instance:"), authentication_context=browser.context)
-            assert server.universal_store.revision == prior_revision
+            with commit_intent.declare(commit_intent.USER_ACTION, actor="court",
+                                       reason="the user restores the agent's model"):
+                app.edit_universal_property(server.universal_store, registry, model["relation"], body["model"],
+                    authentication_context=browser.context)
+                app.set_universal_selection(server.universal_store, registry, [],
+                    authentication_context=browser.context)
+                prior_revision = server.universal_store.revision
+                with pytest.raises(InvalidCell, match="parameters changed"):
+                    universal_pipeline.create_engine_node(server.universal_store, registry, title="Refused replacement",
+                        engine="library.think", properties={"model":"ollama/conflict", "conversation":conversation},
+                        instance_token=node.removeprefix("assembly-instance:"), authentication_context=browser.context)
+                assert server.universal_store.revision == prior_revision
         repeated = request("/api/universal/workshop", body)
         assert repeated["root"] == conversation and repeated["message_id"] == result["message_id"]
         assert len(calls) == 2

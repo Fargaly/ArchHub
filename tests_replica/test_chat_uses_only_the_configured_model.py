@@ -91,15 +91,16 @@ def test_the_configured_concrete_default_model_is_used_when_nothing_is_picked(tm
         server.close()
 
 
-def test_no_model_is_ever_chosen_for_him_even_with_a_stored_key(tmp_path, monkeypatch):
+def test_only_the_free_default_is_chosen_automatically_even_with_a_stored_key(tmp_path, monkeypatch):
     for index, setting in enumerate(("auto", "", "not-a-route")):
         server, calls = _start(tmp_path / str(index), monkeypatch, setting=setting,
                                stored={"openrouter": "fixture-key"})
         try:
             status, models = _request(server, "/api/universal/models")
-            assert status == 200 and not models.get("default_route") and models["selected_route"] == "", models
+            assert status == 200 and models["selected_route"] == "", models
+            assert models.get("default_route") == "openrouter/free", models
             status, answer = _request(server, "/api/universal/agent", {"prompt": "hello", "model": ""})
-            assert answer.get("ok") is False and "No model" in answer.get("error", ""), (setting, answer)
-            assert calls == [], "no provider was asked for setting %r: %r" % (setting, calls)
+            assert status == 200 and answer.get("answer") == "fixture answer", (setting, answer)
+            assert calls == ["openrouter/free"], "only the free route may be automatic for setting %r: %r" % (setting, calls)
         finally:
             server.close()

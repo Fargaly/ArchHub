@@ -410,6 +410,8 @@ const StudioLM = () => {
   const [docsOpen, setDocsOpen] = React.useState(false);
   const [libraryOpen, setLibraryOpen] = React.useState(false);
   const [panel, setPanel] = React.useState('nodes'); // chats | nodes | skills | search
+  const [pendingCanvasReveal, setPendingCanvasReveal] = React.useState(null);
+  const requestCanvasReveal = ids => setPendingCanvasReveal({ids:[...new Set((ids || []).filter(Boolean))], at:Date.now()});
   const authorityState = useStudioProjection();
   const [focusId, setLocalFocusId] = React.useState(() =>
     window.ARCHHUB_STUDIO_AUTHORITY?.getSnapshot()?.selected || LM_GRAPH.nodes[0]?.id || null);
@@ -631,6 +633,8 @@ const StudioLM = () => {
             setSettingsOpen={openSettings}
             setLibraryOpen={setLibraryOpen}
             focusId={focusId} setFocusId={setFocusId}
+            pendingCanvasReveal={pendingCanvasReveal} requestCanvasReveal={requestCanvasReveal}
+            clearPendingCanvasReveal={() => setPendingCanvasReveal(null)}
             userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary}
             view={workspaceView} updateView={updateWorkspaceView} wsSel={wsSel} setWsSel={setWsSel}
             onHome={() => setOpenId(null)}/>
@@ -1335,7 +1339,7 @@ const SessionCard = ({ s, onOpen }) => {
 };
 
 // ──────────────────────── WORKSPACE ────────────────────────
-const Workspace = ({ session, model, readiness = null, onReadinessStale, openTabs, setOpenId, closeTab, setPickerOpen, setSettingsOpen, setLibraryOpen, focusId, setFocusId, userNodes, addNodeFromLibrary, onHome, view, updateView, wsSel, setWsSel }) => {
+const Workspace = ({ session, model, readiness = null, onReadinessStale, openTabs, setOpenId, closeTab, setPickerOpen, setSettingsOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, onHome, view, updateView, wsSel, setWsSel }) => {
   const authorityState = useStudioProjection();
   const graph = authorityState?.graph || LM_GRAPH;
   const allNodes = [...graph.nodes, ...(userNodes || [])];
@@ -1373,6 +1377,7 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, openTab
         workshop && window.WorkshopView ? <window.WorkshopView key={JSON.stringify([session.id, workshopState.canvas.graph_id,
           workshopState.canvas.root, workshop.root])} state={workshopState} descriptor={workshop} target={target}
           setTarget={target => updateView({target})} setMode={setMode} setFocusId={setFocusId}
+          requestCanvasReveal={requestCanvasReveal}
           onLeave={() => updateView({conversationRoot:'', mode:'chat', target:''})}
           sel={wsSel} setSel={setWsSel} externalRail/> : <>
           <ChatView session={session} model={model} setMode={setMode} onPickModel={() => setPickerOpen(true)}
@@ -1383,7 +1388,7 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, openTab
         </>
       ) : (
         <>
-          <NodeCanvas key={JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas), mode === 'system'])} system={mode === 'system'} focusId={focusId} setFocusId={setFocusId} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model}/>
+          <NodeCanvas key={JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas), mode === 'system'])} system={mode === 'system'} focusId={focusId} setFocusId={setFocusId} pendingReveal={pendingCanvasReveal} clearPendingReveal={clearPendingCanvasReveal} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model}/>
           <NodeRail node={focusNode} hiddenWork={!focusNode && authorityState?.canvas?.selection_hidden === true}
             scope={authorityState?.canvas?.root || authorityState?.canvas?.scope?.current || ''}
             openConversation={root => updateView({conversationRoot:root, mode:'chat', target:''})}
@@ -2533,7 +2538,7 @@ const writeCanvasLayoutTrace = (scope, burst) => {
   } catch (error) { /* a session with no storage still draws and still saves the canvas */ }
 };
 
-const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNodeFromLibrary, model, system = false }) => {
+const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingReveal = null, setLibraryOpen, userNodes = [], addNodeFromLibrary, model, system = false }) => {
   const authorityState = useStudioProjection();
   const projectedGraph = authorityState?.graph || LM_GRAPH;
   // The owner marks every top-level card with who placed it (graph shape, not a list of names).
@@ -3129,12 +3134,12 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     }
     return held;
   };
-  const measureCards = () => {
+  const measureCards = (silent = false) => {
     if (document.fonts?.status === 'loading') {
-      setLayoutError('Fonts are loading; try again in a moment.'); return null;
+      if (!silent) setLayoutError('Fonts are loading; try again in a moment.'); return null;
     }
     if (!wrapRef.current || allNodes.length > MAX_LAYOUT_NODES) {
-      setLayoutError('Fit and Arrange support up to 256 visible nodes. Open a smaller canvas scope.'); return null;
+      if (!silent) setLayoutError('Fit and Arrange support up to 256 visible nodes. Open a smaller canvas scope.'); return null;
     }
     const cards = new Map(Array.from(wrapRef.current.querySelectorAll('.lm-node[data-node-id]'))
       .map(element => [element.getAttribute('data-node-id'), element]));
@@ -3142,22 +3147,50 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     for (const node of allNodes) {
       const card = cards.get(node.id), w = card?.offsetWidth, h = card?.offsetHeight;
       if (!w || !h || !Number.isFinite(positions[node.id]?.x) || !Number.isFinite(positions[node.id]?.y)) {
-        setLayoutError('Wait for the node cards to finish rendering, then try again.'); return null;
+        if (!silent) setLayoutError('Wait for the node cards to finish rendering, then try again.'); return null;
       }
       const targetWidth = node.cat === 'ai' && expanded[node.id] ? Math.max(520, node.w) : node.w;
       sizes[node.id] = {w:Math.ceil(Math.max(w, targetWidth)), h:Math.ceil(h)};
     }
     return sizes;
   };
-  const fitIds = ids => {
-    if (!scopeStillCurrent() || !ids.length) return;
-    const sizes = measureCards();
-    if (!sizes) return;
+  const fitIds = (ids, silent = false) => {
+    if (!scopeStillCurrent() || !ids.length) return false;
+    const sizes = measureCards(silent);
+    if (!sizes) return false;
     try {
       const result = canvasFitBounds(ids, positions, sizes, wrapRef.current.getBoundingClientRect());
       setZoom(result.zoom); setPan(result.pan); closeContextMenu();
-    } catch (error) { setLayoutError(error.message); }
+      return true;
+    } catch (error) { if (!silent) setLayoutError(error.message); }
+    return false;
   };
+  React.useEffect(() => {
+    const ids = Array.isArray(pendingReveal?.ids) ? pendingReveal.ids.filter(Boolean) : [];
+    if (!ids.length) return;
+    let frame = 0, cancelled = false, timer = null;
+    const tick = () => {
+      if (cancelled) return;
+      if (fitIds(ids, true)) {
+        if (clearPendingReveal) clearPendingReveal();
+        return;
+      }
+      frame += 1;
+      if (frame >= 10) {
+        if (clearPendingReveal) clearPendingReveal();
+        return;
+      }
+      const raf = window.requestAnimationFrame || (fn => window.setTimeout(fn, 16));
+      timer = raf(tick);
+    };
+    const raf = window.requestAnimationFrame || (fn => window.setTimeout(fn, 16));
+    timer = raf(tick);
+    return () => {
+      cancelled = true;
+      if (timer != null && window.cancelAnimationFrame) window.cancelAnimationFrame(timer);
+      else if (timer != null) window.clearTimeout(timer);
+    };
+  }, [pendingReveal?.at, allNodes, positions]);
   const selectConnected = whole => {
     if (!scopeStillCurrent()) return;
     if (allNodes.length > MAX_LAYOUT_NODES || graph.wires.length > 4096) {

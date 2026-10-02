@@ -119,11 +119,12 @@ function loadCard() {
 // ── caller: the workflow card opens ITS workflow (a member focus), walking that scope ──
 test('the workflow-card handler opens its own workflow with a member focus', async () => {
   const card = loadCard();
-  const opened = []; let focused = null, mode = null, err = null;
+  const opened = [], reveals = []; let focused = null, mode = null, err = null;
   const ok = await card(WORKFLOW, { authority:null, scopeOpen:async p => opened.push(...p),
-    setFocusId:id => focused = id, setMode:m => mode = m, setError:e => err = e });
+    requestCanvasReveal:ids => reveals.push(ids), setFocusId:id => focused = id, setMode:m => mode = m, setError:e => err = e });
   assert.equal(ok, true);
   assert.deepEqual(opened, ['app:map-domain', 'app:workshop-workbench'], 'the workflow scope is walked');
+  assert.deepEqual(reveals, [['assembly-instance:wf']], 'Open as nodes emits exactly one reveal request with workflow members');
   assert.equal(focused, 'assembly-instance:wf', 'a workflow member is focused, not a selection');
   assert.equal(mode, 'canvas');
   assert.equal(err, null);
@@ -206,7 +207,7 @@ async function mountWorkshop(sel) {
   const oldWindow = global.window, oldDocument = global.document;
   const win = dom.window;
   global.window = win; global.document = win.document; global.IS_REACT_ACT_ENVIRONMENT = true;
-  const openCalls = [], modes = [], focuses = [];
+  const openCalls = [], modes = [], focuses = [], reveals = [];
   win.AH = new Proxy({onFill:'#000'}, {get:(t,k)=> k in t ? t[k] : 'token-' + String(k)});
   win.ArchHubTheme = undefined;
   // The fresh topology snapshot the card verifies after the scope walk: the workflow member
@@ -235,7 +236,7 @@ async function mountWorkshop(sel) {
   try {
     await React.act(async () => root.render(React.createElement(WorkshopView, {
       state, descriptor, target:'', setTarget(){}, setMode:m => modes.push(m),
-      setFocusId:id => focuses.push(id), onLeave(){}, sel, setSel(){}, externalRail:false})));
+      setFocusId:id => focuses.push(id), requestCanvasReveal:ids => reveals.push(ids), onLeave(){}, sel, setSel(){}, externalRail:false})));
     await React.act(async () => { await new Promise(r => setTimeout(r, 0)); });
     const card = win.document.querySelector('[data-workshop-workflow]');
     assert.ok(card, 'the workflow card is drawn');
@@ -243,7 +244,7 @@ async function mountWorkshop(sel) {
       /open as nodes/i.test((b.getAttribute('title') || '') + ' ' + (b.getAttribute('aria-label') || '') + ' ' + b.textContent));
     assert.ok(btn, 'the card has an Open-as-nodes control');
     await React.act(async () => { btn.click(); await new Promise(r => setTimeout(r, 0)); });
-    return {openCalls, modes, focuses, refreshes};
+    return {openCalls, modes, focuses, reveals, refreshes};
   } finally {
     await React.act(async () => root.unmount());
     win.close(); global.window = oldWindow; global.document = oldDocument; delete global.IS_REACT_ACT_ENVIRONMENT;
@@ -251,9 +252,10 @@ async function mountWorkshop(sel) {
 }
 
 test('MOUNTED: the drawn card ⌗ walks the shown workflow, refreshes topology, then focuses', async () => {
-  const {openCalls, modes, focuses, refreshes} = await mountWorkshop({agent:null, task:null});
+  const {openCalls, modes, focuses, reveals, refreshes} = await mountWorkshop({agent:null, task:null});
   assert.deepEqual(openCalls, WF_SCOPE_PATH, 'the card walked the workflow scope path');
   assert.ok(refreshes >= 1, 'it refreshed the topology before focus (so the member is in the snapshot)');
+  assert.deepEqual(reveals, [['assembly-instance:m1']], 'the mounted card emits exactly one reveal request carrying member ids');
   assert.ok(modes.includes('canvas'), 'it switched to the canvas');
   assert.ok(focuses.includes('assembly-instance:m1'), 'it focused a workflow member');
 });
@@ -399,6 +401,111 @@ test('RUNTIME an accepted workflow action with a failed refresh keeps the receip
   const {posts, errors} = await mountForApprove();
   assert.deepEqual(posts, ['workflow-approve'], 'exactly one accepted mutation POST, no replay after the failed refresh');
   assert.deepEqual(errors, [], 'the accepted action is not reported as failed when only the refresh threw');
+});
+
+async function mountCanvasReveal(options = {}) {
+  const {JSDOM} = await import('jsdom');
+  const React = require('react');
+  const {createRoot} = require('react-dom/client');
+  const {transformSync} = require('esbuild');
+  const lmSource = fs.readFileSync(path.join(path.dirname(file), 'studio-lm.jsx'), 'utf8');
+  const start = lmSource.indexOf('const SOCKET_TOP =');
+  const end = lmSource.indexOf('const NodeStateDot =', start);
+  assert.ok(start > 0 && end > start, 'NodeCanvas is a slice of shipped studio-lm.jsx');
+  const dom = new JSDOM('<div id="root"></div>', {url:'http://127.0.0.1:53913/'});
+  let measurable = options.measurable !== false;
+  Object.defineProperty(dom.window.HTMLElement.prototype, 'offsetWidth', {configurable:true, get() { return measurable ? 220 : 0; }});
+  Object.defineProperty(dom.window.HTMLElement.prototype, 'offsetHeight', {configurable:true, get() { return measurable ? 110 : 0; }});
+  dom.window.HTMLElement.prototype.getBoundingClientRect = function() {
+    return this.getAttribute('role') === 'region'
+      ? {width:1000, height:760, left:0, top:0, right:1000, bottom:760}
+      : {width:220, height:110, left:0, top:0, right:220, bottom:110};
+  };
+  const pendingFrames = new Set();
+  dom.window.requestAnimationFrame = fn => {
+    const id = dom.window.setTimeout(() => { pendingFrames.delete(id); fn(); }, 0);
+    pendingFrames.add(id);
+    return id;
+  };
+  dom.window.cancelAnimationFrame = id => { pendingFrames.delete(id); dom.window.clearTimeout(id); };
+  const oldWindow = global.window, oldDocument = global.document;
+  global.window = dom.window; global.document = dom.window.document; global.IS_REACT_ACT_ENVIRONMENT = true;
+  const nodes = [
+    {id:'m1', cat:'logic', live:true, x:40, y:60, w:220, h:110, title:'One', sub:'node', params:[], ins:[], outs:[], group:'G'},
+    {id:'m2', cat:'logic', live:true, x:40, y:520, w:220, h:110, title:'Two', sub:'node', params:[], ins:[], outs:[], group:'G'},
+  ];
+  const snapshot = {graph:{nodes, wires:[]}, canvas:{revision:1, scope:{current:options.scope || 'scope'}, authorization:{subject:'owner', session:'s'}}};
+  const LM = new Proxy({}, {get:(_, key) => key === 'rad' ? {xs:3, sm:5, md:6, lg:8} :
+    key === 'sp' ? {xs:4, sm:8, md:12, lg:16} : 'token-' + String(key)});
+  const studioCanvasScopeMock = canvas => canvas?.scope?.current || 'scope';
+  const context = vm.createContext({React, LM, window:dom.window, document:dom.window.document,
+    useStudioProjection:() => snapshot, LM_GRAPH:{nodes:[], wires:[]}, studioCanvasScope:() => 'scope',
+    studioCategory:cat => ({col:'token-cat', icon:'+', label:String(cat).toUpperCase()}), WIRE:{},
+    NodeBody:() => null, CanvasToolbar:() => null, FloatingComposer:() => null, MiniMap:() => null, Socket:() => null,
+    nodeModelRow:() => null, smallBtn:() => ({}), toolBtn:() => ({}), kbd:() => ({}),
+    setTimeout:dom.window.setTimeout.bind(dom.window), clearTimeout:dom.window.clearTimeout.bind(dom.window)});
+  vm.runInContext(transformSync(lmSource.slice(start, end) + '\nglobalThis.NodeCanvas = NodeCanvas;',
+    {loader:'jsx', format:'cjs'}).code, context);
+  const root = createRoot(dom.window.document.getElementById('root'));
+  let props = {focusId:null, setFocusId:() => {}, pendingReveal:null, clearPendingReveal:() => {},
+    setLibraryOpen:() => {}, userNodes:[], addNodeFromLibrary:() => {}, model:null};
+  const render = async change => {
+    props = {...props, ...change};
+    await React.act(async () => root.render(React.createElement(context.NodeCanvas, {...props, key:studioCanvasScopeMock(snapshot.canvas)})));
+  };
+  const setScope = async scope => { snapshot.canvas = {...snapshot.canvas, scope:{current:scope}}; await render(); };
+  const setMeasurable = value => { measurable = value; };
+  const settle = async () => { await React.act(async () => { await new Promise(r => dom.window.setTimeout(r, 5)); }); };
+  await render();
+  return {doc:dom.window.document, render, settle, setScope, setMeasurable, pendingFrames, close:async () => {
+    await React.act(async () => root.unmount());
+    dom.window.close(); global.window = oldWindow; global.document = oldDocument; delete global.IS_REACT_ACT_ENVIRONMENT;
+  }};
+}
+
+test('NodeCanvas consumes a pending reveal once; plain focus does not fit', async () => {
+  const view = await mountCanvasReveal();
+  try {
+    const region = view.doc.querySelector('[role="region"][aria-label="Workflow canvas"]');
+    const layer = () => region.firstElementChild.style.transform;
+    const baseline = layer();
+    await view.render({focusId:'m1'});
+    await view.settle();
+    assert.equal(layer(), baseline, 'plain focus change does not fit or pan');
+    let clears = 0;
+    await view.render({pendingReveal:{ids:['m1', 'm2'], at:1}, clearPendingReveal:() => { clears += 1; }});
+    await view.settle();
+    assert.equal(clears, 1, 'pending reveal clears once after fitting');
+    const fitted = layer();
+    assert.notEqual(fitted, baseline, 'pending reveal uses the fit path');
+    await view.render({focusId:'m2'});
+    await view.settle();
+    assert.equal(clears, 1, 'later focus changes do not consume another reveal');
+    assert.equal(layer(), fitted, 'later focus changes do not move the viewport');
+  } finally {
+    await view.close();
+  }
+});
+
+test('NodeCanvas clears a stale pending reveal across a scope remount without panning', async () => {
+  const view = await mountCanvasReveal({scope:'scope-a', measurable:false});
+  let closed = false;
+  try {
+    const region = view.doc.querySelector('[role="region"][aria-label="Workflow canvas"]');
+    const layer = () => region.firstElementChild.style.transform;
+    let clears = 0;
+    await view.render({pendingReveal:{ids:['m1', 'm2'], at:2}, clearPendingReveal:() => { clears += 1; }});
+    await view.setScope('scope-b');
+    const scopeBaseline = layer();
+    for (let i = 0; i < 12; i += 1) await view.settle();
+    assert.equal(layer(), scopeBaseline, 'scope B does not pan for the stale reveal');
+    assert.equal(clears, 1, 'the stale reveal request is cleared by timeout');
+    await view.close();
+    closed = true;
+    assert.equal(view.pendingFrames.size, 0, 'unmount leaves no reveal animation frame running');
+  } finally {
+    if (!closed) await view.close();
+  }
 });
 
 // ── wiring: the workflow card's ⌗ binds openShownWorkflowAsNodes(shownWorkflow), not openAsNodes ──

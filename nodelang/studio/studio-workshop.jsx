@@ -1037,7 +1037,7 @@ const ContextPanel = ({ selAgent, selTask, tasks, agent, descriptor, activity, a
 // workflow whose scope_path does not end at its own scope is refused, with a message, and
 // the mode never switches. A focus with no workflow (e.g. a session's Agent node, already
 // drawn) just focuses and switches, as before.
-async function openWorkflowAsNodes({ focus, workflow, authority, scopeOpen, refreshTopology, currentScope, setFocusId, setMode, setError }) {
+async function openWorkflowAsNodes({ focus, workflow, authority, scopeOpen, refreshTopology, currentScope, setFocusId, requestCanvasReveal, setMode, setError }) {
   let canvas = null;
   if (workflow) {
     const path = Array.isArray(workflow.scope_path) ? workflow.scope_path : null;
@@ -1077,6 +1077,11 @@ async function openWorkflowAsNodes({ focus, workflow, authority, scopeOpen, refr
       return false;
     }
   }
+  if (workflow && requestCanvasReveal) {
+    const ids = Array.isArray(workflow.members) && workflow.members.length
+      ? workflow.members : focus ? [focus] : [];
+    if (ids.length) requestCanvasReveal(ids);
+  }
   if (focus && setFocusId) setFocusId(focus);
   setMode('canvas');
   return true;
@@ -1091,7 +1096,7 @@ function openShownWorkflowAsNodes(workflow, deps) {
   return openWorkflowAsNodes({ ...deps, focus, workflow: workflow || null });
 }
 
-const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusId, onLeave, sel, setSel, externalRail }) => {
+const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusId, requestCanvasReveal, onLeave, sel, setSel, externalRail }) => {
   useStore();
   const authority = window.ARCHHUB_STUDIO_AUTHORITY || window.ARCHHUB_EXISTING_WORKSHOP;
   const existing = !window.ARCHHUB_STUDIO_AUTHORITY;
@@ -1804,7 +1809,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     const workflow = workflows.find(w => w && (w.root === focus ||
       (Array.isArray(w.members) && w.members.includes(focus)))) || null;
     openWorkflowAsNodes({focus, workflow, authority, scopeOpen: window.ARCHHUB_SCOPE_OPEN,
-      setFocusId, setMode, setError: setActionError});
+      setFocusId, requestCanvasReveal, setMode, setError: setActionError});
   };
   const selectTask = id => setS({ agent:S.agent, task: id === selTask ? null : id });
   const setSelAgent = id => setS({ agent:id, task:null });
@@ -2400,7 +2405,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
                // with scope.current lives at snapshot.topology.canvas.
                currentScope: () => { const s = authority.getSnapshot && authority.getSnapshot();
                  return s && s.topology && s.topology.canvas && s.topology.canvas.scope ? s.topology.canvas.scope.current : undefined; },
-               setFocusId, setMode, setError: setActionError})}/>
+               setFocusId, requestCanvasReveal, setMode, setError: setActionError})}/>
             {wfState === 'approved'
               ? <><Btn sm pri disabled={busy} onClick={() => wfAct('workflow-execute', {workflow:shownWorkflow.root})}>Run approved</Btn>
                 <IBtn g="⊘" title="Revoke approval — nothing further runs" disabled={busy} onClick={() => wfAct('workflow-revoke', {workflow:shownWorkflow.root})}/></>

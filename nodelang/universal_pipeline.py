@@ -915,8 +915,8 @@ def create_engine_node(
     *,
     title: str,
     engine: str,
-    x: float = 240.0,
-    y: float = 200.0,
+    x: float | None = 240.0,
+    y: float | None = 200.0,
     properties=None,
     instance_token: str | None = None,
     authentication_context: object | None = None,
@@ -1007,7 +1007,9 @@ def create_engine_node(
                 snapshot, registry, "assembly-instance:" + token, engine, set()
             )
             return instantiate_universal_definition(
-                store, registry, definition_root, x=float(x), y=float(y),
+                store, registry, definition_root,
+                x=(float(x) if x is not None else None),
+                y=(float(y) if y is not None else None),
                 title_override=title, authentication_context=authentication_context,
                 instance_token=token, initial_properties=values,
                 owned_interface_cells=tuple(sockets), owned_interface_members=tuple(registered),

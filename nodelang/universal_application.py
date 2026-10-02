@@ -30486,8 +30486,8 @@ def instantiate_universal_primitive(
     store: CellStore,
     registry: UniversalApplicationRegistry,
     *,
-    x: float,
-    y: float,
+    x: float | None,
+    y: float | None,
     title: str = "Cell",
     atom: str = "",
     viewport: Mapping[str, float] | None = None,
@@ -30497,7 +30497,10 @@ def instantiate_universal_primitive(
     placement_scope_root: str | None = None,
 ) -> tuple[str, int]:
     """Create one editable WIP terminal Cell through explicit graph wiring."""
-    if not math.isfinite(x) or not math.isfinite(y):
+    unplaced = x is None and y is None
+    if not unplaced and (
+        x is None or y is None or not math.isfinite(x) or not math.isfinite(y)
+    ):
         raise InvalidCell("primitive position must be finite")
     if not isinstance(title, str) or not title.strip():
         raise InvalidCell("primitive title must be non-empty")
@@ -30531,12 +30534,16 @@ def instantiate_universal_primitive(
     root_cell = Cell(root_id, NULL_CELL_ID, NULL_CELL_ID, atom_bytes)
     property_refs: list[PropertyRef] = []
     property_cells: list[Cell] = []
-    for key, value in (
+    presentation_properties = [
         ("title", title.strip()),
-        ("position_x", x),
-        ("position_y", y),
         ("color", _DEFAULT_NODE_PRESENTATION_COLOR),
-    ):
+    ]
+    if not unplaced:
+        presentation_properties[1:1] = [
+            ("position_x", x),
+            ("position_y", y),
+        ]
+    for key, value in presentation_properties:
         reference, cells = _compose_property(
             registry, root_id, key, value
         )
@@ -30579,8 +30586,8 @@ def instantiate_universal_definition(
     registry: UniversalApplicationRegistry,
     definition_root: str,
     *,
-    x: float,
-    y: float,
+    x: float | None,
+    y: float | None,
     viewport: Mapping[str, float] | None = None,
     authentication_context: object | None = None,
     interface_values: Mapping[str, str] | None = None,
@@ -30601,7 +30608,10 @@ def instantiate_universal_definition(
     land in the same tracked transaction as the instance, so one Undo takes
     the whole card back and nothing created later points into it.
     """
-    if not math.isfinite(x) or not math.isfinite(y):
+    unplaced = x is None and y is None
+    if not unplaced and (
+        x is None or y is None or not math.isfinite(x) or not math.isfinite(y)
+    ):
         raise InvalidCell("assembly position must be finite")
     if instance_token is not None and (
         type(instance_token) is not str or re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", instance_token) is None
@@ -30702,7 +30712,7 @@ def instantiate_universal_definition(
             remaining.discard(name)
         if remaining:
             raise InvalidCell("assembly interface override is unknown")
-    property_specs = (
+    property_specs = [
         (
             "title",
             (
@@ -30712,12 +30722,15 @@ def instantiate_universal_definition(
             ),
             False,
         ),
-        ("position_x", x, False),
-        ("position_y", y, False),
         ("color", _DEFAULT_NODE_PRESENTATION_COLOR, False),
         ("definition", definition_root, True),
         ("version", _text(snapshot, definition.version_root), True),
-    )
+    ]
+    if not unplaced:
+        property_specs[1:1] = [
+            ("position_x", x, False),
+            ("position_y", y, False),
+        ]
     property_specs = (*property_specs, *((label, value, False) for label, value in initial_properties.items()))
     property_refs: list[PropertyRef] = []
     property_cells: list[Cell] = []

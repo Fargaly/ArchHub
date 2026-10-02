@@ -366,8 +366,25 @@ def run_agent_composer(
         )
 
 
+def _draft_position(action, unplaced_when_omitted):
+    if unplaced_when_omitted and "x" not in action and "y" not in action:
+        return None, None
+    return (
+        float(action.get("x", 400)),
+        float(action.get("y", 300)),
+    )
+
+
+def _optional_position(action):
+    return (
+        float(action["x"]) if action.get("x") is not None else None,
+        float(action["y"]) if action.get("y") is not None else None,
+    )
+
+
 def _apply_draft_actions(
     store, registry, projection, plan, actions, *, authentication_context,
+    unplaced_when_omitted=False,
 ) -> dict[str, object]:
     from .universal_application import (  # noqa: PLC0415
         apply_universal_canvas_gesture,
@@ -408,10 +425,11 @@ def _apply_draft_actions(
             break
         action = {**action, **resolved}
         if op == "work":
+            x, y = _optional_position(action)
             root, membership_wire, _revision = create_universal_governed_work(
                 store, registry, title=action["title"], description=action["description"],
-                x=(float(action["x"]) if action.get("x") is not None else None),
-                y=(float(action["y"]) if action.get("y") is not None else None),
+                x=x,
+                y=y,
                 structured_references={"requirements": {
                     "acceptance_criteria": action["criteria"],
                 }},
@@ -423,14 +441,17 @@ def _apply_draft_actions(
             applied.append({"op": op, "ok": True, "root": root,
                             "membership_wire": membership_wire})
         elif op == "node":
+            x, y = _draft_position(action, unplaced_when_omitted)
             # An engine-backed node is placed exactly as the node library places
             # one; placing it runs nothing. Execution needs the user's approval.
             from .universal_pipeline import create_engine_node  # noqa: PLC0415
             try:
                 created = create_engine_node(
                     store, registry, title=str(action.get("title") or action["engine"]),
-                    engine=action["engine"], x=float(action.get("x", 400)),
-                    y=float(action.get("y", 300)), properties=action.get("params", {}),
+                    engine=action["engine"],
+                    x=x,
+                    y=y,
+                    properties=action.get("params", {}),
                     authentication_context=authentication_context,
                 )
             except (InvalidCell, ValueError) as refusal:
@@ -442,6 +463,7 @@ def _apply_draft_actions(
                 references[action["ref"]] = root
             applied.append({"op": op, "ok": True, "root": root, "engine": created["engine"]})
         elif op == "place":
+            x, y = _draft_position(action, unplaced_when_omitted)
             definition_root = catalogue.get(str(action.get("definition")))
             if not definition_root:
                 applied.append({"op": op, "ok": False,
@@ -450,8 +472,8 @@ def _apply_draft_actions(
             title = action.get("title")
             root, _revision = instantiate_universal_definition(
                 store, registry, definition_root,
-                x=float(action.get("x", 400)),
-                y=float(action.get("y", 300)),
+                x=x,
+                y=y,
                 title_override=(
                     str(title) if isinstance(title, str) and title.strip()
                     else None

@@ -50,7 +50,8 @@ def test_workflow_proposal_with_no_executable_node_retracts_placed_roots(harness
     reply_id = _message(h.page(convo['root'], convo['scope']), asked['message_id'])['delivery'][0]['reply_message_id']
     before = _canvas_node_ids(h, convo['scope'])
 
-    def apply_non_executable(store, registry, projection, plan, actions, *, authentication_context):
+    def apply_non_executable(store, registry, projection, plan, actions, *, authentication_context,
+            unplaced_when_omitted=False):
         created = create_engine_node(store, registry, title='temporary draft card',
             engine='workshop.conversation', x=260.0, y=240.0,
             properties={'conversation': convo['root']},

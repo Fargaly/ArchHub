@@ -370,6 +370,10 @@ def draft_workflow(owner, browser, body, *, browser_guard):
         if store.revision != body["revision"]:
             raise AuthorizationDenied("The Workshop changed; refresh before drafting this proposal")
         actions, issues = _resolve_actions(plan["actions"], _contacts(owner, browser, root, scope), root)
+        for action in actions:
+            if action.get("op") == "node":
+                action.pop("x", None)
+                action.pop("y", None)
         projection = app.project_universal_canvas(store, registry, authentication_context=browser.context)
         reserved = history.get_by_idempotency(root, key + ":reserved", principal=principal, read_all=read_all)
         if reserved:
@@ -391,7 +395,7 @@ def draft_workflow(owner, browser, body, *, browser_guard):
         applied, members, anchor = None, [], None
         try:
             applied = _apply_draft_actions(store, registry, projection, {"answer": str(plan.get("answer", ""))},
-                actions, authentication_context=browser.context)
+                actions, authentication_context=browser.context, unplaced_when_omitted=True)
             members = [row["root"] for row in applied["applied"] if row.get("op") == "node" and row.get("ok")]
             issues += [str(row.get("why")) for row in applied["applied"] if not row.get("ok")]
             if not members:
@@ -401,7 +405,7 @@ def draft_workflow(owner, browser, body, *, browser_guard):
                 "members": members, "proposed_by": proposer, "source_message": source["id"],
                 "source_digest": artifact_digest(text), "title": title}
             anchor, _revision = app.instantiate_universal_primitive(store, registry,
-                x=260.0, y=120.0, title="Workflow: " + title,
+                x=None, y=None, title="Workflow: " + title,
                 atom=json.dumps(anchor_value, sort_keys=True, separators=(",", ":")),
                 mutation_route="/api/universal/workshop", authentication_context=browser.context)
             value = {"kind": "workshop-workflow-draft", "version": 1, "workflow": anchor, "message": source["id"],

@@ -563,3 +563,27 @@ assert.deepEqual(reconciles,['ses_sh2']);
 await assert.rejects(hooks.dispose(),/unresolved/);
 '''.replace('MODULE', json.dumps(module)).replace('TOOL', json.dumps(tool)).replace('ARGS', json.dumps(args))
     _run_node(code)
+
+
+def test_an_aborted_read_stops_blocking_the_session_once_stale():
+    """Live 717, 2026-10-07: OpenCode aborted a glob, never ran tool.execute.after,
+    and every later edit was refused 'earlier tool admission or receipt unresolved'."""
+    module=(Path(__file__).resolve().parents[1]/"nodelang/session_link/opencode-governance.mjs").as_uri()
+    code='''import assert from 'node:assert/strict';
+import {createOpenCodeGovernance} from MODULE;
+const hooks=await createOpenCodeGovernance({gateRunner:async()=>({allow:true}),readStaleMs:200})({directory:process.cwd()});
+const r={sessionID:'ses_abort',callID:'r',tool:'glob'},w={sessionID:'ses_abort',callID:'w',tool:'write'};
+const args={filePath:'fixture.txt',content:'x'};
+await hooks['tool.execute.before'](r,{args:{pattern:'*'}});
+await assert.rejects(hooks['tool.execute.before'](w,{args}),/unresolved/);   // still running: wait
+await new Promise(done=>setTimeout(done,300));
+await hooks['tool.execute.before'](w,{args});                                 // aborted read ended
+await hooks['tool.execute.after']({...w,args},{});
+const u={sessionID:'ses_abort',callID:'u',tool:'write'};
+await hooks['tool.execute.before'](u,{args});
+await assert.rejects(hooks['tool.execute.before']({...u,callID:'v'},{args}),/unresolved/); // writes never expire
+await hooks['tool.execute.after']({...u,args},{});
+await hooks.dispose();
+'''.replace('MODULE',json.dumps(module))
+    result=subprocess.run([shutil.which('node'),'--input-type=module'],input=code,text=True,capture_output=True,timeout=10)
+    assert result.returncode==0,result.stderr

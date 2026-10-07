@@ -273,7 +273,7 @@ function normalized(tool,args) {
  fail('tool has no verified governance mapping: '+String(tool));
 }
 
-export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expectedSessions,selectedWorks={},workToolFactory,sessionLink,laneFolders={}}) {
+export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expectedSessions,selectedWorks={},workToolFactory,sessionLink,laneFolders={},readStaleMs=60000}) {
  const invoke=gateRunner||createNativeGateRunner(gateCommand,gateArgs,{expectedSessions,selectedWorks,sessionLink,laneFolders});
  // Retained for all workspaces in this loaded plugin; never clear on idle/error.
  const pending=new Map();
@@ -335,6 +335,11 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
    'tool.execute.before':async(input,output)=>{
     const key=identity(input);
     const read=readTools.has(input.tool);
+    // OpenCode never runs tool.execute.after for an aborted or failed call. A read
+    // admitted long ago with no receipt has ended; reads carry no write effect,
+    // so drop it instead of refusing every later tool in the session forever.
+    for(const [held,p] of pending)if(p.session===input.sessionID&&p.read&&p.state==='admitted'&&
+       Date.now()-p.admittedAt>=readStaleMs)pending.delete(held);
     const blocker=()=>pending.get(key)||[...pending.values()].find(p=>p.session===input.sessionID&&
        (!read||!p.read||!['preparing','admitted','settling'].includes(p.state)));
     let blocking=blocker();
@@ -370,7 +375,7 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
     }
     if(!result.allow){pending.delete(key);fail(result.notDelivered?'native owner released before admission; tool not delivered':
      'prewrite admission denied'+(typeof result.reason==='string'?': '+result.reason:''));}
-    record.state='admitted';
+    record.state='admitted';record.admittedAt=Date.now();
     if(nativeTools.has(input.tool)){
      record.stamp=randomUUID();output.args._archhub_call=record.stamp;
     }

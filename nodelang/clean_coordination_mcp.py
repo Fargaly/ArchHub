@@ -421,6 +421,9 @@ def build_server(
             message: str,
             idempotency_key: str,
             reply_to: str | None = None,
+            category: str = "note",
+            refs: list[str] | None = None,
+            evidence: list[str] | None = None,
         ) -> dict[str, object]:
             """Send with one caller-held key; reuse that key after a lost reply."""
             if not idempotency_key.strip():
@@ -428,6 +431,7 @@ def build_server(
             return control.call("send_message", {
                 "target": target, "message": message,
                 "idempotency_key": idempotency_key, "reply_to": reply_to,
+                "category": category, "refs": refs, "evidence": evidence,
             })
 
         @mcp.tool(name="coordination.read_messages")

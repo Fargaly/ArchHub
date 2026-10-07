@@ -8,6 +8,7 @@ replies record a caller's statement; they do not change read state or settle Wor
 from collections.abc import Mapping
 import math
 from pathlib import Path
+import re
 import time
 
 from .application_machine_transport import (
@@ -23,6 +24,7 @@ _METHODS = frozenset({
     "register_session", "list_agents", "workshop_lens", "scope_lens",
     "send_message", "read_messages", "read_message", "acknowledge_message", "claim_work",
 })
+_WORK_REF_RE = re.compile(r"^assembly-instance:[0-9a-f]{32}$")
 
 
 def _text(value, label, maximum=512):
@@ -41,6 +43,27 @@ def _integer(value, label, minimum, maximum):
 def _shape(values, required=(), optional=()):
     if set(values) - set(required) - set(optional) or not set(required) <= set(values):
         raise ValueError("installed Workshop operation has invalid parameters")
+
+
+def _category(value):
+    if value not in {"note", "plan", "research"}:
+        raise ValueError("invalid Workshop entry category")
+    return value
+
+
+def _refs(value):
+    if type(value) is not list or len(value) > 8:
+        raise ValueError("invalid Workshop refs")
+    for item in value:
+        if type(item) is not str or not _WORK_REF_RE.fullmatch(item):
+            raise ValueError("invalid Workshop ref")
+    return list(value)
+
+
+def _evidence(value):
+    if type(value) is not list or len(value) > 8:
+        raise ValueError("invalid Workshop evidence")
+    return [_text(item, "Workshop evidence item", 512) for item in value]
 
 
 class InstalledWorkshopCoordinationClient:
@@ -138,17 +161,22 @@ class InstalledWorkshopCoordinationClient:
                 "agent_session": self._session, "storage": "conversation-content",
                 "revision": page["revision"], "message": entries[0]}
 
-    def _send(self, *, target, message, idempotency_key, reply_to, deadline):
-        target = _text(target, "recipient root")
-        body = {"category": "note", "text": _text(message, "message", 65536),
-                "refs": [], "evidence": [], "recipients": [target],
+    def _send(self, *, target, message, idempotency_key, reply_to, deadline,
+              category="note", refs=None, evidence=None):
+        category = _category(category)
+        refs = _refs([] if refs is None else refs)
+        evidence = _evidence([] if evidence is None else evidence)
+        target = "" if target == "" and category in {"plan", "research"} else _text(target, "recipient root")
+        recipients = [] if target == "" else [target]
+        body = {"category": category, "text": _text(message, "message", 65536),
+                "refs": refs, "evidence": evidence, "recipients": recipients,
                 "reply_to": None if reply_to is None else _text(reply_to, "ordinary reply message ID"),
                 "idempotency_key": _text(idempotency_key, "idempotency key"), "created_at": None}
         result = self._request("POST", "/api/universal/workshop", body, deadline)
         if (result.get("workshop") != self._descriptor.workshop_root
                 or result.get("storage") != "conversation-content"
                 or result.get("actor") != self._session
-                or result.get("recipients") != [target]
+                or result.get("recipients") != recipients
                 or result.get("reply_to") != reply_to
                 or type(result.get("message_id")) is not str or not result["message_id"]
                 or result.get("root") != result["message_id"]):
@@ -213,9 +241,12 @@ class InstalledWorkshopCoordinationClient:
                 return {**result, "acknowledged_message_id": values["message_id"],
                         "acknowledgement": "explicit-reply", "read_state_changed": False}
             if method == "send_message":
-                _shape(values, ("target", "message", "idempotency_key"), ("reply_to",))
+                _shape(values, ("target", "message", "idempotency_key"),
+                       ("reply_to", "category", "refs", "evidence"))
                 return self._send(target=values["target"], message=values["message"],
-                    idempotency_key=values["idempotency_key"], reply_to=values.get("reply_to"), deadline=deadline)
+                    idempotency_key=values["idempotency_key"], reply_to=values.get("reply_to"),
+                    deadline=deadline, category=values.get("category", "note"),
+                    refs=values.get("refs"), evidence=values.get("evidence"))
             _shape(values, ("work_root",))
             work_root = _text(values["work_root"], "graph Work root")
             result = self._request("POST", "/api/universal/work-transition",

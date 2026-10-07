@@ -83,3 +83,30 @@ def test_default_call_still_sends_note_with_empty_refs(client):
     assert runtime.requests[-1][2]["refs"] == []
     assert runtime.requests[-1][2]["evidence"] == []
     assert runtime.requests[-1][2]["recipients"] == [target]
+
+
+def test_research_entry_carries_one_source_capture(client):
+    control, runtime = client
+    control.call("send_message", {"target": "", "message": "prior art: read the hook.",
+        "idempotency_key": "court-capture", "category": "research", "refs": [WORK],
+        "capture": {"path": "00.GOVERNANCE/hooks/workspace_roots.py"}})
+    assert runtime.requests[-1][2]["capture"] == {"path": "00.GOVERNANCE/hooks/workspace_roots.py"}
+
+
+def test_capture_is_refused_outside_one_research_entry_for_one_work(client):
+    control, runtime = client
+    for index, extra in enumerate(({"category": "plan", "refs": [WORK]},
+            {"category": "research", "refs": []},
+            {"category": "research", "refs": [WORK, "assembly-instance:" + "9" * 32]})):
+        with pytest.raises(ValueError):
+            control.call("send_message", {"target": "", "message": "x",
+                "idempotency_key": "court-capture-bad-%d" % index,
+                "capture": {"path": "README.md"}, **extra})
+    assert runtime.requests == []
+
+
+def test_no_capture_key_is_sent_by_default(client):
+    control, runtime = client
+    control.call("send_message", {"target": "", "message": "plan", "idempotency_key": "court-nocap",
+        "category": "plan", "refs": [WORK]})
+    assert "capture" not in runtime.requests[-1][2]

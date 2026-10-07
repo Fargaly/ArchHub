@@ -162,16 +162,25 @@ class InstalledWorkshopCoordinationClient:
                 "revision": page["revision"], "message": entries[0]}
 
     def _send(self, *, target, message, idempotency_key, reply_to, deadline,
-              category="note", refs=None, evidence=None):
+              category="note", refs=None, evidence=None, capture=None):
         category = _category(category)
         refs = _refs([] if refs is None else refs)
         evidence = _evidence([] if evidence is None else evidence)
+        if capture is not None:
+            # The server reads and records the file itself; one research entry, one Work.
+            if (type(capture) is not dict or set(capture) != {"path"}
+                    or type(capture["path"]) is not str or not capture["path"].strip()
+                    or len(capture["path"]) > 1024 or category != "research" or len(refs) != 1):
+                raise ValueError("invalid Workshop source capture")
+            capture = {"path": capture["path"]}
         target = "" if target == "" and category in {"plan", "research"} else _text(target, "recipient root")
         recipients = [] if target == "" else [target]
         body = {"category": category, "text": _text(message, "message", 65536),
                 "refs": refs, "evidence": evidence, "recipients": recipients,
                 "reply_to": None if reply_to is None else _text(reply_to, "ordinary reply message ID"),
                 "idempotency_key": _text(idempotency_key, "idempotency key"), "created_at": None}
+        if capture is not None:
+            body["capture"] = capture
         result = self._request("POST", "/api/universal/workshop", body, deadline)
         if (result.get("workshop") != self._descriptor.workshop_root
                 or result.get("storage") != "conversation-content"
@@ -242,11 +251,12 @@ class InstalledWorkshopCoordinationClient:
                         "acknowledgement": "explicit-reply", "read_state_changed": False}
             if method == "send_message":
                 _shape(values, ("target", "message", "idempotency_key"),
-                       ("reply_to", "category", "refs", "evidence"))
+                       ("reply_to", "category", "refs", "evidence", "capture"))
                 return self._send(target=values["target"], message=values["message"],
                     idempotency_key=values["idempotency_key"], reply_to=values.get("reply_to"),
                     deadline=deadline, category=values.get("category", "note"),
-                    refs=values.get("refs"), evidence=values.get("evidence"))
+                    refs=values.get("refs"), evidence=values.get("evidence"),
+                    capture=values.get("capture"))
             _shape(values, ("work_root",))
             work_root = _text(values["work_root"], "graph Work root")
             result = self._request("POST", "/api/universal/work-transition",

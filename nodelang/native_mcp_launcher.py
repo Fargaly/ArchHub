@@ -443,6 +443,24 @@ class Launcher:
             except Exception as exc:  # the old worker keeps serving; say why
                 self.status = {**self.status, "state": "deferred", "reason": "update failed: %s" % exc}
 
+    def _settled_effects(self, fingerprint, max_pages=256):
+        """The first effects page that shows a pending permit, or the last page.
+
+        Pending permits and settled-receipt pointers share one paged scan, so an
+        agent with a long receipt history always gets a truncated first page.
+        Follow next_cursor until a page names a pending permit or the scan ends;
+        a scan that does not end within max_pages stays truncated (doubt defers)."""
+        arguments = {"expected_owner": fingerprint}
+        effects = self._tool(EFFECTS_TOOL, arguments)
+        for _ in range(max_pages - 1):
+            page = effects.get("effects") if type(effects) is dict else None
+            cursor = page.get("next_cursor") if type(page) is dict else None
+            if (type(page) is not dict or page.get("pending_permits") or not page.get("truncated")
+                    or type(cursor) is not str or not cursor):
+                return effects
+            effects = self._tool(EFFECTS_TOOL, {**arguments, "cursor": cursor})
+        return effects
+
     def try_swap(self, build):
         """Hand the same actor to new code, or defer and say why. Never replays a call."""
         with self._lock:
@@ -457,7 +475,7 @@ class Launcher:
             owner = (status or {}).get("owner", status) if type(status) is dict else None
             effects = None
             if type(owner) is dict and (owner.get("current") or {}).get("fingerprint"):
-                effects = self._tool(EFFECTS_TOOL, {"expected_owner": owner["current"]["fingerprint"]})
+                effects = self._settled_effects(owner["current"]["fingerprint"])
             reason = defer_reason(status, effects)
             if reason is not None:
                 self.status = {**self.status, "state": "deferred", "reason": reason, "pending_build": build}

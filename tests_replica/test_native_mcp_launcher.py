@@ -48,7 +48,7 @@ def text(value):
 def owner():
     with open(state_path, encoding="utf-8") as source:
         return json.load(source)
-def call(ident, name):
+def call(ident, name, arguments=None):
     if name == "slow":
         while not os.path.exists(release_path):
             threading.Event().wait(0.05)
@@ -56,6 +56,13 @@ def call(ident, name):
     if name == "native.owner_status":
         return reply(ident, text(owner()))
     if name == "native.owner_inspect_effects":
+        pages = owner().get("effect_pages")
+        if pages:
+            index = int((arguments or {}).get("cursor") or 0)
+            page = pages[index]
+            more = index + 1 < len(pages)
+            return reply(ident, text({"effects": {"pending_permits": page, "truncated": more,
+                                                  "next_cursor": str(index + 1) if more else None}}))
         return reply(ident, text({"effects": {"pending_permits": owner().get("permits", []), "truncated": False}}))
     if name == "native.handoff_release":
         return reply(ident, text({"released": True, "agent_session": owner()["agent_session"]}))
@@ -70,7 +77,8 @@ for line in sys.stdin:
     elif method == "tools/list":
         reply(ident, {"tools": [{"name": n} for n in ("native.owner_status", "native.handoff_release", "echo", "slow")]})
     elif method == "tools/call":
-        threading.Thread(target=call, args=(ident, message["params"]["name"]), daemon=True).start()
+        threading.Thread(target=call, args=(ident, message["params"]["name"],
+                                            message["params"].get("arguments")), daemon=True).start()
 '''
 
 
@@ -357,3 +365,18 @@ def test_the_worker_hands_its_actor_to_new_code(tmp_path, monkeypatch):
             owner.require_client()                               # the old worker holds nothing now
     finally:
         world.close()
+
+
+def test_a_long_settled_history_does_not_defer_the_update_forever(client):
+    """Live 717, 2026-10-07: an agent with hundreds of settled receipts always got a
+    truncated first effects page, so the update waited forever with no pending permit."""
+    client.start()
+    first = client.tool("echo")["pid"]
+    client.set_owner(_owner(effect_pages=[[], [], [{"permit": "p9"}]]))
+    (client.install / "BUILD_ID").write_text("build-2", encoding="utf-8")
+    time.sleep(1.0)
+    assert "permit is unresolved" in client.launcher.status["reason"]   # found on page 3
+    assert client.tool("echo")["pid"] == first
+    client.set_owner(_owner(effect_pages=[[], [], []]))
+    client.notification("notifications/tools/list_changed")
+    assert client.tool("echo")["pid"] != first                           # every page clean: swapped

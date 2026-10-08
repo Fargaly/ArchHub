@@ -163,6 +163,7 @@ from .universal_application import (
     project_universal_runtime_handoff_readiness,
     project_universal_baboom_context,
     project_universal_baboom_companion_directive,
+    founder_release_stale_governed_work_claim,
     BaboomActRefused,
     BaboomConfirmations,
     baboom_confirmation_nonce,
@@ -6055,6 +6056,13 @@ class ApplicationServer:
         self._work_index_cache_inflight_revision: int | None = None
         self._workshop_cache_revision = -1
         self._workshop_cache: dict[str, object] | None = None
+        self._baboom_pending_approvals_cache_lock = threading.RLock()
+        self._baboom_pending_approvals_cache: dict[str, object] = {
+            "revision": -1,
+            "expires_at": 0.0,
+            "count": None,
+        }
+        self._baboom_pending_approvals_refreshing = False
         self._canvas_cache_revision = -1
         self._canvas_cache: dict[str, object] | None = None
         self._projection_prewarm_stop = threading.Event()
@@ -12697,6 +12705,91 @@ class ApplicationServer:
 
         return (builtin if native else source_root), revalidate
 
+    def _baboom_pending_founder_approvals_count(self, *, context, read_guard, cache_only=False):
+        """Return the cached approval count and refresh it off the frame path."""
+        now = time.monotonic()
+        with self._baboom_pending_approvals_cache_lock:
+            cached = self._baboom_pending_approvals_cache
+            revision = self.universal_store.revision
+            if cached["revision"] == revision and now < cached["expires_at"]:
+                return cached["count"]
+            if not cache_only:
+                self._baboom_pending_approvals_refreshing = True
+            elif not self._baboom_pending_approvals_refreshing:
+                self._baboom_pending_approvals_refreshing = True
+                threading.Thread(
+                    target=self._refresh_baboom_pending_founder_approvals,
+                    args=(context, read_guard, revision),
+                    name="archhub-baboom-pending-approvals",
+                    daemon=True,
+                ).start()
+            else:
+                return None
+        if not cache_only:
+            self._refresh_baboom_pending_founder_approvals(context, read_guard, revision)
+            with self._baboom_pending_approvals_cache_lock:
+                cached = self._baboom_pending_approvals_cache
+                if cached["revision"] == revision and time.monotonic() < cached["expires_at"]:
+                    return cached["count"]
+            return None
+        return None
+
+    def _refresh_baboom_pending_founder_approvals(self, context, read_guard, revision):
+        """Count unbound Work proposals from the founder's bounded Workshop view."""
+        result = None
+        stale = False
+        try:
+            snapshot = self.universal_store.snapshot()
+            if snapshot.revision != revision:
+                stale = True
+                return
+            page = self.conversation_content.project_for_founder_context(
+                authentication_context=context,
+                expected_revision=snapshot.revision,
+                project=lambda value: value,
+                limit=500,
+                read_guard=read_guard,
+                route=("GET", "/api/universal/baboom-context"),
+                hold_owner_lock=False,
+            )
+            page = self.conversation_content.validate_projection_read(
+                page,
+                store=self.universal_store,
+                registry=self.universal_registry,
+                agent_session_root=self.universal_registry.agent_body.session.root_id,
+                authentication_context=context,
+                expected_revision=snapshot.revision,
+            )
+            from . import work_proposals
+            bound = work_proposals._bound_keys(
+                self.universal_store.snapshot(), self.universal_registry
+            )
+            count = 0
+            for message in page.get("messages") or ():
+                message_id = message.get("id")
+                if type(message_id) is not str:
+                    continue
+                try:
+                    work_proposals.parse(message.get("content"))
+                except InvalidCell:
+                    continue
+                if work_proposals.KEY_PREFIX + message_id not in bound:
+                    count += 1
+        except Exception:
+            result = None
+        else:
+            result = min(count, 500)
+        finally:
+            with self._baboom_pending_approvals_cache_lock:
+                if not stale and self.universal_store.revision == revision:
+                    self._baboom_pending_approvals_cache = {
+                        "revision": revision,
+                        "expires_at": time.monotonic() + 3.0,
+                        "count": result,
+                    }
+                self._baboom_pending_approvals_refreshing = False
+        return result
+
     @with_relation_projection_scope
     def _execute_universal_model_request(self, request, body, direct, context):
         """Wait on the provider outside the graph lock; drain through settlement."""
@@ -13121,6 +13214,7 @@ class ApplicationServer:
             ("POST", "/api/universal/mcp-server-negotiate"),
             ("POST", "/api/universal/mcp-tool-delegation"),
             ("POST", "/api/universal/work-transition"),
+            ("POST", "/api/universal/work-stale-claim-release"),
             ("POST", "/api/universal/work-configuration"),
             ("POST", "/api/universal/work-court"),
             ("POST", "/api/universal/work-court-recover"),
@@ -13491,6 +13585,9 @@ class ApplicationServer:
                 method, path, authentication_context=context
             )
             reader_root, read_guard = self._baboom_machine_content_reader(request, direct, context)
+            pending_founder_approvals = self._baboom_pending_founder_approvals_count(
+                context=context, read_guard=read_guard
+            )
             runtime_presence = self._machine_agent_runtime_presence()
             work_index = self._project_universal_machine_work_index(
                 authentication_context=context
@@ -13506,6 +13603,7 @@ class ApplicationServer:
                 staged_update=self._staged_update(),
                 content_service=self.conversation_content,
                 workshop_agent_session_root=reader_root, read_guard=read_guard, read_route=(method, path),
+                pending_founder_approvals=pending_founder_approvals,
             )
         if method == "GET" and path == "/api/universal/runtime-backend":
             if body:
@@ -13584,6 +13682,9 @@ class ApplicationServer:
                 read_options = {"content_service": self.conversation_content,
                     "read_guard": read_guard, "read_route": (method, path),
                     "_workshop_read": _workshop_read}
+                pending_founder_approvals = self._baboom_pending_founder_approvals_count(
+                    context=context, read_guard=read_guard, cache_only=True
+                )
                 runtime_presence = self._machine_agent_runtime_presence()
                 work_index = self._project_universal_machine_work_index(
                     authentication_context=context
@@ -13598,6 +13699,7 @@ class ApplicationServer:
                     brain_state=self._brain_state(),
                     hosts=self._host_rows(),
                     staged_update=self._staged_update(),
+                    pending_founder_approvals=pending_founder_approvals,
                     **read_options,
                 )
                 directive = project_universal_baboom_companion_directive(
@@ -17038,6 +17140,17 @@ class ApplicationServer:
                     },
                     "revision": self.universal_store.revision,
                 }
+            if path == "/api/universal/work-stale-claim-release":
+                if not direct:
+                    raise AuthorizationDenied("stale claim release requires the founder")
+                if set(body) != {"root"} or type(body.get("root")) is not str:
+                    raise InvalidCell("stale claim release request shape is invalid")
+                return founder_release_stale_governed_work_claim(
+                    self.universal_store,
+                    self.universal_registry,
+                    body["root"],
+                    authentication_context=context,
+                )
             allowed_transition_shape = {"root", "event", "evidence"}
             if set(body) not in (
                 allowed_transition_shape,

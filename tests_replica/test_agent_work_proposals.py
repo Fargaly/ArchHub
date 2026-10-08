@@ -10,6 +10,9 @@ evidence recorded). A proposal left unchecked stays unbound and grants nothing.
 Real persistent server, real machine pipe, real native owner and tools, real CDE
 permits behind the real execution gate.
 """
+import threading
+import time
+
 import pytest
 
 from nodelang import commit_intent
@@ -17,6 +20,7 @@ from nodelang import native_agent_mcp as mcp
 from nodelang import universal_application as app
 from nodelang import work_proposals
 from nodelang.application_machine_transport import MachineTransportError
+from nodelang.baboom_native_companion import baboom_face_line
 from nodelang.existing_workshop_native_host import ExistingWorkshopNativeHost
 from nodelang.native_agent_session import NativeAgentSession
 from nodelang.universal_cell import InvalidCell
@@ -197,3 +201,70 @@ def test_the_founders_list_reads_which_proposals_are_already_bound(world):
         listed({**request, "message_ids": [first["message_id"], first["message_id"]]})
     with pytest.raises(Exception, match="Only the founder"):
         work_proposals.read_work_proposals(server, type("Agent", (), {"subject_root": "not-the-founder"})(), request)
+
+
+def test_baboom_context_counts_unbound_work_proposals_waiting_for_founder(world):
+    """BABOOM reports the real founder approval count from the Workshop tail."""
+    from tests_replica.test_application_machine_transport import _FounderLocalClient
+
+    server, descriptor, provider, browser = world
+    proposer, _me = _tools(descriptor, provider, "court-baboom-approvals")
+    note_writer, _note_session = _agent(descriptor, provider, "court-baboom-note")
+    first = _propose(proposer, "BABOOM approval A")
+    second = _propose(proposer, "BABOOM approval B")
+    _post(note_writer, "plan", [], [], "ordinary-note")
+    _bind(server, browser, first)
+
+    client = _FounderLocalClient(server, descriptor, provider)
+    client.request("GET", "/api/universal/baboom-context")
+    deadline = time.time() + 2.0
+    while True:
+        context = client.request("GET", "/api/universal/baboom-context")
+        if context["workshop"].get("pending_founder_approvals") == 1:
+            break
+        if time.time() >= deadline:
+            pytest.fail("BABOOM approval count cache did not refresh")
+        time.sleep(0.02)
+
+    assert context["workshop"]["pending_founder_approvals"] == 1
+    line, offer = baboom_face_line(context, None)
+    assert line.startswith("1 thing needs your approval in Workshop.")
+    assert offer == "open Workshop approvals"
+    assert work_proposals.KEY_PREFIX + second["message_id"] not in _proposal_works(server)
+
+
+def test_baboom_native_frame_reads_cached_pending_approvals_without_frame_count(world, monkeypatch):
+    """The native frame omits a cold count, then reports the cached real count."""
+    from tests_replica.test_application_machine_transport import _FounderLocalClient
+
+    server, descriptor, provider, _browser = world
+    proposer, _me = _tools(descriptor, provider, "court-baboom-native-approvals")
+    _propose(proposer, "BABOOM native approval A")
+    original = server.conversation_content.project_for_founder_context
+    count_reader_threads = []
+
+    def counting_reader(*args, **kwargs):
+        if kwargs.get("limit") == 500:
+            count_reader_threads.append(threading.current_thread().name)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        server.conversation_content,
+        "project_for_founder_context",
+        counting_reader,
+    )
+    client = _FounderLocalClient(server, descriptor, provider)
+
+    cold = client.baboom_native_frame(response_timeout_seconds=60)
+    assert "pending_founder_approvals" not in cold["context"]["workshop"]
+    assert "MainThread" not in count_reader_threads
+
+    deadline = time.time() + 2.0
+    while True:
+        frame = client.baboom_native_frame(response_timeout_seconds=60)
+        if frame["context"]["workshop"].get("pending_founder_approvals") == 1:
+            break
+        if time.time() >= deadline:
+            pytest.fail("BABOOM native frame did not receive cached approval count")
+        time.sleep(0.02)
+    assert all(name == "archhub-baboom-pending-approvals" for name in count_reader_threads)

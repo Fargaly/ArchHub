@@ -28,7 +28,6 @@ def test_the_face_is_built_from_the_snapshot_never_invented():
         "attention": {"blocked_obligations": []},
     }
     line, offer = companion.baboom_face_line(context, None)
-    assert "Nine of 12 cards answered on the canvas." in line
     assert "Two agents are working." in line
     assert "2312" not in line, "a brain-facts counter is noise, not news"
     assert "blocked" not in line and offer is None
@@ -39,7 +38,7 @@ def test_the_face_is_built_from_the_snapshot_never_invented():
 
     short = dict(context, work=None, agents={"working": []})
     line, _ = companion.baboom_face_line(short, None)
-    assert line == "Nine of 12 cards answered on the canvas. The brain is answering."
+    assert line == "I'm watching the graph."
     assert "agents working" not in line, "an idle fleet is not news"
 
 
@@ -51,9 +50,8 @@ def test_a_silent_brain_and_blocked_work_are_said_plainly():
 
 def test_the_app_in_front_becomes_an_offer_the_graph_can_run():
     line, offer = companion.baboom_face_line({}, ("Revit", "revit.read", "read the walls"))
-    assert line.startswith("Revit is open \u2014 want me to read the walls?"), (
-        "the app in front is the most useful thing on the face: %s" % line)
-    assert offer == "run revit.read on the graph"
+    assert line == "I'm watching the graph."
+    assert offer is None
     # every foreground host maps to an engine the app really has
     from nodelang.pipeline_engines import PIPELINE_ENGINES
     from nodelang.universal_pipeline import _graph_engines
@@ -111,9 +109,19 @@ def test_a_long_state_is_trimmed_not_cut_mid_word():
     }
     line, offer = companion.baboom_face_line(context, ("Revit", "revit.read", "read the walls"))
     assert len(line) <= companion.FACE_MAX_CHARS, "%d chars: %s" % (len(line), line)
-    assert line.startswith("Revit is open \u2014 want me to read the walls?")
-    assert offer == "run revit.read on the graph"
+    assert "Revit is open" not in line
+    assert offer is None
     assert chr(183) not in line and line.endswith((".", "?")), line
+
+
+def test_founder_approval_waiting_leads_the_face_and_opens_workshop_approvals():
+    line, offer = companion.baboom_face_line(
+        {"workshop": {"pending_founder_approvals": 2}, "brain": {"ok": False}},
+        ("Revit", "revit.read", "read the walls"),
+    )
+    assert line.startswith("2 things need your approval in Workshop.")
+    assert "Revit is open" not in line
+    assert offer == "open Workshop approvals"
 
 
 def test_a_silent_host_is_said_on_the_face_and_never_hides_the_companion():
@@ -250,7 +258,8 @@ def test_an_act_is_named_before_the_press_and_its_receipt_is_shown_after():
     before the click."""
     src = inspect.getsource(companion)
     response = src[src.index("def _apply_response"):src.index("def _execute_task")]
-    assert 'if intent == "run-engine" and isinstance(said, str) and said.strip():' in response
+    assert 'intent in {"run-engine", "restart-to-update", "remember"}' in response
+    assert "and isinstance(said, str) and said.strip()" in response
     assert "question = said.strip()" in response
     execution = src[src.index("def _apply_execution"):src.index("made = CompanionWindow()")]
     assert 'summary = result.get("summary")' in execution

@@ -2559,7 +2559,7 @@ class UniversalRuntimeClient:
         device = result["device"]
         if (
             not isinstance(work, dict)
-            or set(work) != {"total", "open", "claimed", "blocked", "review"}
+            or set(work) != {"total", "open", "claimed", "blocked", "review", "stale_claims"}
             or any(type(value) is not int or value < 0 for value in work.values())
             or not isinstance(attention, dict)
             or set(attention) != {
@@ -2573,13 +2573,18 @@ class UniversalRuntimeClient:
             or not isinstance(workshop, dict)
             or set(workshop) not in (
                 {"entry_count", "category_counts"},
+                {"entry_count", "category_counts", "pending_founder_approvals"},
                 {"entry_count", "category_counts", "category_counts_complete"},
+                {"entry_count", "category_counts", "category_counts_complete", "pending_founder_approvals"},
             )
             or type(workshop.get("category_counts_complete", True)) is not bool
             or (workshop.get("category_counts_complete") is False
                 and workshop.get("category_counts") != {})
             or type(workshop["entry_count"]) is not int
             or workshop["entry_count"] < 0
+            or ("pending_founder_approvals" in workshop
+                and (type(workshop["pending_founder_approvals"]) is not int
+                     or not 0 <= workshop["pending_founder_approvals"] <= 500))
             or not isinstance(workshop["category_counts"], dict)
             or any(
                 type(name) is not str or type(count) is not int or count < 0

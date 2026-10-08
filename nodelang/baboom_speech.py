@@ -202,6 +202,7 @@ def compose_baboom_speech(
         return sum(1 for item in items if str(item.get("state") or "").casefold() == state)
 
     active = _count(governed.get("active"))
+    stale = _count(governed.get("stale_claims"))
     blocked = work_count("blocked")
     review = work_count("review")
     claimable = work_count("open")
@@ -240,6 +241,8 @@ def compose_baboom_speech(
             severe = "%s your attention \u2014 want to look now?" % _counted(
                 holds, "governance hold needs", "governance holds need")
 
+    stale_status = "%s held by agents that stopped." % _counted(
+        stale, "old claim is", "old claims are") if stale else None
     if not active:
         status = None
     elif severe and blocked:
@@ -283,8 +286,8 @@ def compose_baboom_speech(
             else:
                 follow = agent_line
 
-    said = [s for s in (_greeting(hour), severe, status) if s] if severe else [
-        s for s in (_greeting(hour), status, follow) if s]
+    said = [s for s in (_greeting(hour), severe, status, stale_status) if s] if severe else [
+        s for s in (_greeting(hour), status, stale_status, follow) if s]
     if len(said) == (1 if hour is not None else 0):
         said.append("Nothing needs you right now.")
     return " ".join(said)

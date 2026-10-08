@@ -3559,6 +3559,7 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/cde-write-permit", "execute"),
     ("POST", "/api/universal/cde-write-receipt", "execute"),
     ("POST", "/api/universal/work-transition", "execute"),
+    ("POST", "/api/universal/work-stale-claim-release", "execute"),
     ("POST", "/api/universal/work-configuration", "edit"),
     ("POST", "/api/universal/work-court", "execute"),
     ("POST", "/api/universal/work-court-recover", "execute"),
@@ -3644,6 +3645,7 @@ _BABOOM_CAPABILITY_ROUTE_KEYS = frozenset({
     ("POST", "/api/universal/work-plan"),
     ("POST", "/api/universal/work-plan-read"),
     ("POST", "/api/universal/work-transition"),
+    ("POST", "/api/universal/work-stale-claim-release"),
 })
 _RETIRED_APPLICATION_HTTP_ROUTE_KEYS = frozenset({
     "POST /api/universal/group",
@@ -36100,6 +36102,86 @@ def transition_universal_governed_work(
     return history_root, revision
 
 
+def founder_release_stale_governed_work_claim(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    work_root: str,
+    *,
+    authentication_context: object | None = None,
+) -> dict[str, object]:
+    """Founder-only release for a claim held by a session with no fresh presence."""
+    if type(work_root) is not str or not work_root:
+        raise InvalidCell("stale work release requires one work root")
+    snapshot = store.snapshot()
+    identity = registry.authorization.broker.resolve(authentication_context)
+    if identity.subject_root != registry.authorization.subject_root:
+        raise AuthorizationDenied("stale claim release requires the founder")
+    view_session = registry.view_sessions.get(identity.subject_root)
+    if view_session is None:
+        raise AuthorizationDenied("stale claim release requires the founder view")
+    _require_application_authorization(
+        snapshot,
+        registry,
+        "execute",
+        work_root,
+        authentication_context=authentication_context,
+    )
+    operational = registry.standard_library.state_machine_protocol
+    machine = read_instance_state_machine(
+        snapshot, registry.assembly_protocol, operational, work_root
+    )
+    if _text(snapshot, machine.current_state_root).casefold() != "claimed":
+        raise InvalidCell("stale claim release target is not claimed")
+    claimant = _governed_work_claimant_binding(snapshot, registry, work_root)
+    if claimant is None:
+        raise InvalidCell("stale claim release target has no claimant")
+    stale_session_root, stale_body_root, stale_binding_root = claimant
+    active_sessions = frozenset(
+        lease.agent_session_root for lease in list_active_runtime_presences(
+            snapshot, registry.runtime_presence_protocol, now=time.time(),
+        )
+    )
+    if stale_session_root in active_sessions:
+        raise AuthorizationDenied("stale claim release refuses a live claimant")
+    candidates = []
+    for transition_root in machine.transition_roots:
+        transition = read_transition(snapshot, operational, transition_root)
+        if (
+            transition.from_state_root == machine.current_state_root
+            and _text(snapshot, transition.event_root).casefold() == "release"
+        ):
+            candidates.append(transition)
+    if len(candidates) != 1:
+        raise InvalidCell("stale claim release declaration is missing or ambiguous")
+    transition = candidates[0]
+    history_root, revision = transition_machine(
+        store,
+        operational,
+        machine.root_id,
+        event_root=transition.event_root,
+        expected_state_root=machine.current_state_root,
+        actor_root=identity.subject_root,
+        context_roots=(
+            view_session.root_id,
+            identity.subject_root,
+            work_root,
+            stale_session_root,
+            stale_body_root,
+            stale_binding_root,
+        ),
+    )
+    return {
+        "projection": "stale-claim-release-v1",
+        "history_root": history_root,
+        "revision": revision,
+        "work_root": work_root,
+        "released_by": identity.subject_root,
+        "stale_claimant_session": stale_session_root,
+        "stale_claimant_agent_body": stale_body_root,
+        "stale_claim_binding": stale_binding_root,
+    }
+
+
 def _attach_baboom_model_execution_roots(
     store: CellStore,
     registry: UniversalApplicationRegistry,
@@ -40388,6 +40470,8 @@ def project_universal_governed_work_status(
 
 def _baboom_work_counts_from_index(
     work_index: Mapping[str, object],
+    *,
+    active_claimant_sessions: frozenset[str] | None = None,
 ) -> dict[str, int]:
     if not isinstance(work_index, Mapping):
         raise InvalidCell("BABOOM context work index is invalid")
@@ -40400,6 +40484,7 @@ def _baboom_work_counts_from_index(
     if raw_total != len(raw_items):
         raise InvalidCell("BABOOM context work total is inconsistent")
     counts = {name: 0 for name in ("open", "claimed", "blocked", "review")}
+    stale_claims = 0
     terminal_states = {"complete", "cancelled"}
     for item in raw_items:
         if not isinstance(item, Mapping):
@@ -40413,9 +40498,17 @@ def _baboom_work_counts_from_index(
         state = label.casefold()
         if state in counts:
             counts[state] += 1
+            if (
+                state == "claimed"
+                and active_claimant_sessions is not None
+                and item.get("claimant_session") not in active_claimant_sessions
+            ):
+                stale_claims += 1
         elif state not in terminal_states:
             raise InvalidCell("BABOOM context work state is unknown")
-    return {"total": raw_total, **counts}
+    if active_claimant_sessions is not None:
+        counts["claimed"] -= stale_claims
+    return {"total": raw_total, **counts, "stale_claims": stale_claims}
 
 
 _RUNTIME_HANDOFF_READINESS_VERSION = "app:runtime-handoff-readiness:v1"
@@ -40607,6 +40700,7 @@ def project_universal_baboom_context(
     workshop_agent_session_root: str | None = None,
     read_guard=None,
     read_route=("GET", "/api/universal/baboom-context"),
+    pending_founder_approvals: int | None = 0,
     _workshop_read=None,
 ) -> dict[str, object]:
     """Return the narrow shared-application lens admitted to BABOOM voice.
@@ -40620,9 +40714,16 @@ def project_universal_baboom_context(
         work_index = project_universal_governed_work_index(
             store, registry, authentication_context=authentication_context
         )
-    work = _baboom_work_counts_from_index(work_index)
-
     snapshot = store.snapshot()
+    active_claimant_sessions = frozenset(
+        lease.agent_session_root for lease in list_active_runtime_presences(
+            snapshot, registry.runtime_presence_protocol, now=time.time(),
+        )
+    )
+    work = _baboom_work_counts_from_index(
+        work_index, active_claimant_sessions=active_claimant_sessions
+    )
+
     space = read_deliberation_space(snapshot, registry.deliberation_protocol, registry.workshop_root)
     category_by_root = {
         root: name for name, root in registry.workshop_category_roots.items()
@@ -40879,6 +40980,18 @@ def project_universal_baboom_context(
         registry.authorization.broker.resolve(authentication_context)
         if read_guard is not None:
             read_guard()
+    if pending_founder_approvals is not None and (
+        type(pending_founder_approvals) is not int
+        or not 0 <= pending_founder_approvals <= 500
+    ):
+        raise InvalidCell("BABOOM pending founder approvals count is invalid")
+    workshop = {
+        "entry_count": entry_count,
+        "category_counts": category_counts,
+        "category_counts_complete": category_counts_complete,
+    }
+    if pending_founder_approvals is not None:
+        workshop["pending_founder_approvals"] = pending_founder_approvals
     return {
         "cell_native": True,
         "context_lens": _BABOOM_CONTEXT_LENS_VERSION,
@@ -40897,11 +41010,7 @@ def project_universal_baboom_context(
                    if isinstance(staged_update, Mapping) and staged_update.get("build_id") else {}),
         "revision": snapshot.revision,
         "work": work,
-        "workshop": {
-            "entry_count": entry_count,
-            "category_counts": category_counts,
-            "category_counts_complete": category_counts_complete,
-        },
+        "workshop": workshop,
         "attention": attention,
         "presence": presence,
         "activity": activity,
@@ -41270,8 +41379,15 @@ def project_universal_founder_governed_work_report(
     status = project_universal_governed_work_status(
         store, registry, authentication_context=authentication_context
     )
+    snapshot = store.snapshot()
+    active_claimant_sessions = frozenset(
+        lease.agent_session_root for lease in list_active_runtime_presences(
+            snapshot, registry.runtime_presence_protocol, now=time.time(),
+        )
+    )
     projected: list[dict[str, object]] = []
     active = 0
+    stale_claims = 0
     protected = 0
     for item in status["items"]:
         if not isinstance(item, Mapping):
@@ -41286,7 +41402,9 @@ def project_universal_founder_governed_work_report(
         }:
             raise InvalidCell("governed Work report state is invalid")
         state = state.casefold()
-        if state in {"open", "claimed", "blocked", "review"}:
+        if state == "claimed" and item.get("claimant_session") not in active_claimant_sessions:
+            stale_claims += 1
+        elif state in {"open", "claimed", "blocked", "review"}:
             active += 1
         title_interface = interfaces.get("title")
         raw_title = (
@@ -41330,6 +41448,7 @@ def project_universal_founder_governed_work_report(
         "revision": status["revision"],
         "count": len(projected),
         "active": active,
+        "stale_claims": stale_claims,
         "protected": protected,
         "truncated": len(projected) > len(selected),
         "items": selected,
@@ -54636,6 +54755,7 @@ __all__ = [
     "project_universal_runtime_handoff_readiness",
     "project_universal_baboom_context",
     "project_universal_baboom_companion_directive",
+    "founder_release_stale_governed_work_claim",
     "project_universal_founder_baboom_capability_report",
     "project_universal_mcp_broker",
     "project_universal_founder_baboom_steward_briefing",

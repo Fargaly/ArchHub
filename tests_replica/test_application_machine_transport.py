@@ -3185,10 +3185,122 @@ def test_baboom_context_uses_compact_work_index_not_full_status(
             "claimed": 0,
             "blocked": 0,
             "review": 0,
+            "stale_claims": 0,
         }
+        assert context["workshop"].get("pending_founder_approvals", 0) == 0
         text = json.dumps(context, sort_keys=True)
         assert "Compact index only" not in text
         assert created["created_root"] not in text
+    finally:
+        server.close()
+
+
+def test_baboom_context_transport_accepts_bounded_founder_approval_count_and_rejects_bad_values():
+    class Client(UniversalRuntimeClient):
+        def __init__(self, result):
+            self.result = result
+
+        def request(self, *_args, **_kwargs):
+            return json.loads(json.dumps(self.result))
+
+    base = {
+        "cell_native": True,
+        "context_lens": "app:baboom-context:v3",
+        "revision": 1,
+        "work": {"total": 0, "open": 0, "claimed": 0, "blocked": 0, "review": 0, "stale_claims": 0},
+        "workshop": {"entry_count": 0, "category_counts": {}, "category_counts_complete": True,
+                     "pending_founder_approvals": 2},
+        "attention": {"open_obligations": 0, "blocked_obligations": 0, "active_focus": False},
+        "presence": {"active_runtime_sessions": 0, "baboom_connected": False,
+                     "baboom_action_capability_active": False},
+        "activity": {"active_baboom_devices": 0, "foreground_apps": {}},
+        "meeting_notes": {"active_sessions": 0},
+        "device": {"enrollment_handoff_available": False, "current_runtime_proven": False,
+                   "active_baboom_devices": 0, "native_identity_provider_configured": False,
+                   "issued_cloud_sessions": 0, "remote_gateway_serving": False},
+        "persona_form": "steward",
+        "suggestion": "No governed work needs action.",
+        "agents": {"working": [], "count": 0, "gone": []},
+        "brain": {"ok": True, "facts": 0},
+        "canvas": {},
+        "hosts": {"down": []},
+        "update": {},
+    }
+    assert Client(base).baboom_context()["workshop"]["pending_founder_approvals"] == 2
+    missing = json.loads(json.dumps(base))
+    del missing["workshop"]["pending_founder_approvals"]
+    assert "pending_founder_approvals" not in Client(missing).baboom_context()["workshop"]
+    for bad in (-1, 501):
+        invalid = json.loads(json.dumps(base))
+        invalid["workshop"]["pending_founder_approvals"] = bad
+        with pytest.raises(MachineTransportError, match="BABOOM context response values"):
+            Client(invalid).baboom_context()
+
+
+def test_founder_can_release_only_stale_work_claims(tmp_path, monkeypatch):
+    descriptor_path = tmp_path / "stale-claim-release-runtime.json"
+    provider = MemorySigningKeyProvider(
+        "archhub.local.universal-runtime-pipe", b"r" * 32
+    )
+    server = ApplicationServer(
+        enable_machine_transport=True,
+        machine_descriptor_path=descriptor_path,
+        machine_key_provider=provider,
+    ).start()
+    founder = _FounderLocalClient(server, descriptor_path, provider)
+    agent = _FounderLocalClient(server, descriptor_path, provider)
+    try:
+        agent.bind_agent_session(runtime="codex", external_session_id="stale-release-agent")
+        stale_work = founder.request("POST", "/api/universal/work", {
+            "title": "Release stale claim",
+            "description": "court",
+            "priority": 20,
+            "external_key": "active-work:release-stale-claim",
+            "references": {"scope": server.universal_registry.map.domains["brain"]},
+            "x": 520,
+            "y": 340,
+        })
+        claimed = agent.request("POST", "/api/universal/work-transition", {
+            "root": stale_work["created_root"],
+            "event": "claim",
+            "evidence": "",
+        })
+        assert claimed["status"]["counts"]["claimed"] == 1
+        with pytest.raises(MachineTransportError, match="requires the founder"):
+            agent.request("POST", "/api/universal/work-stale-claim-release", {
+                "root": stale_work["created_root"],
+            })
+        released = founder.request("POST", "/api/universal/work-stale-claim-release", {
+            "root": stale_work["created_root"],
+        })
+        assert released["projection"] == "stale-claim-release-v1"
+        assert released["released_by"] == server.universal_registry.authorization.subject_root
+        assert released["stale_claimant_session"] == agent.agent_session_root
+        assert released["history_root"].startswith("state-event:")
+
+        live_work = founder.request("POST", "/api/universal/work", {
+            "title": "Refuse live claim release",
+            "description": "court",
+            "priority": 20,
+            "external_key": "active-work:refuse-live-stale-release",
+            "references": {"scope": server.universal_registry.map.domains["brain"]},
+            "x": 620,
+            "y": 340,
+        })
+        agent.request("POST", "/api/universal/work-transition", {
+            "root": live_work["created_root"],
+            "event": "claim",
+            "evidence": "",
+        })
+        monkeypatch.setattr(
+            universal_application_module,
+            "list_active_runtime_presences",
+            lambda *_args, **_kwargs: (SimpleNamespace(agent_session_root=agent.agent_session_root),),
+        )
+        with pytest.raises(MachineTransportError, match="refuses a live claimant"):
+            founder.request("POST", "/api/universal/work-stale-claim-release", {
+                "root": live_work["created_root"],
+            })
     finally:
         server.close()
 

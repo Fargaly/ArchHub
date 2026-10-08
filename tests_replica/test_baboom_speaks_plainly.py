@@ -136,6 +136,15 @@ def test_zero_attention_and_hosts_up_says_so_briefly():
     _assert_plain(speech)
 
 
+def test_stale_claims_are_not_called_running():
+    data = _screenshot_briefing()
+    data["context"].update(hosts={"down": []}, agents={"working": [], "count": 0, "gone": []})
+    data["context"]["work"].update(claimed=1, review=0, open=0, stale_claims=36)
+    data["governed_work"] = {"revision": 7, "active": 1, "stale_claims": 36, "items": []}
+    speech = compose_baboom_speech(data, {"message": "", "action": ""})
+    assert speech == "One job is running and nothing is stuck. 36 old claims are held by agents that stopped."
+
+
 def test_several_hosts_down_are_named_in_one_sentence():
     data = _screenshot_briefing()
     data["context"]["hosts"] = {"down": ["dropbox", "revit", "3dsmax"]}

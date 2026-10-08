@@ -676,13 +676,14 @@ def baboom_face_line(context: Mapping[str, object], foreground: tuple[str, str, 
     context = context if isinstance(context, Mapping) else {}
     said: list[str] = []
     offer = None
-    # Priority order: what the founder is in front of, then what is wrong,
-    # then who is working, then the canvas. The box holds two lines; lower
-    # sentences are dropped whole, never cut mid-word.
-    if foreground is not None:
-        label, engine, verb = foreground
-        said.append("%s is open \u2014 want me to %s?" % (label, verb[:1].lower() + verb[1:]))
-        offer = "run %s on the graph" % engine
+    # Priority order: what needs the founder, then what is wrong, then who is
+    # working, then the canvas. Foreground-app offers stay in the menu only.
+    workshop = context.get("workshop")
+    pending = workshop.get("pending_founder_approvals") if isinstance(workshop, Mapping) else None
+    if type(pending) is int and pending > 0:
+        said.append("%s %s your approval in Workshop." % (
+            pending, "thing needs" if pending == 1 else "things need"))
+        offer = "open Workshop approvals"
     brain = context.get("brain")
     brain = brain if isinstance(brain, Mapping) else {}
     if brain.get("ok") is False:

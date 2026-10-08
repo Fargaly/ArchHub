@@ -233,7 +233,7 @@ function Read-CandidateManifest([string]$Path) {
         'selected/nodelang/studio/param-types.jsx', 'selected/nodelang/studio/studio-params.jsx',
         'selected/nodelang/studio/studio-mobile.jsx', 'selected/nodelang/studio/studio-account.jsx',
         'selected/nodelang/studio/node-registry.jsx', 'selected/nodelang/studio/brain-model.jsx',
-        'selected/nodelang/studio/studio-workshop.jsx', 'selected/nodelang/studio/studio-lm.jsx', 'selected/nodelang/studio/mount.jsx',
+        'selected/nodelang/studio/workshop-board.jsx', 'selected/nodelang/studio/studio-workshop.jsx', 'selected/nodelang/studio/studio-lm.jsx', 'selected/nodelang/studio/mount.jsx',
         'selected/nodelang/__init__.py',
         'selected/bridges/rhino/archhub_mcp.py', 'selected/bridges/blender/archhub_mcp/__init__.py',
         'selected/archhub.ico', 'selected/app/secrets_store.py', 'selected/app/credential_lock.py', 'selected/app/__init__.py',
@@ -426,9 +426,9 @@ function Read-StudioBuild {
     Assert-PlainAncestors $generated
     $names = @('tokens.js', 'design-canvas.js', 'shared-data.js', 'studio-suite.js',
         'param-types.js', 'studio-params.js', 'studio-mobile.js', 'studio-account.js',
-        'node-registry.js', 'brain-model.js', 'studio-workshop.js', 'studio-lm.js', 'mount.js')
+        'node-registry.js', 'brain-model.js', 'workshop-board.js', 'studio-workshop.js', 'studio-lm.js', 'mount.js')
     $entries = @(Get-ChildItem -LiteralPath $generated -Force)
-    if ($entries.Count -ne 14) { throw 'Studio compiler did not produce exactly thirteen scripts and one manifest.' }
+    if ($entries.Count -ne 15) { throw 'Studio compiler did not produce exactly fourteen scripts and one manifest.' }
     foreach ($entry in $entries) {
         if ($entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
             ($entry.Name -cne 'manifest.json' -and $entry.Name -cnotin $names)) {
@@ -439,7 +439,7 @@ function Read-StudioBuild {
     if ((Get-Item -LiteralPath $manifestPath).Length -gt 32KB) { throw 'Studio compiler manifest exceeds 32 KiB.' }
     $bytes = [IO.File]::ReadAllBytes($manifestPath)
     $manifest = $utf8.GetString($bytes) | ConvertFrom-Json
-    if ($manifest.format -ne 1 -or $manifest.files.Count -ne 13) { throw 'Unsupported Studio compiler manifest.' }
+    if ($manifest.format -ne 1 -or $manifest.files.Count -ne 14) { throw 'Unsupported Studio compiler manifest.' }
     # --check has reconciled source inputs, options and output bytes. Also bind
     # the exact physical output inventory here before handing it to Inno.
     [long]$total = 0

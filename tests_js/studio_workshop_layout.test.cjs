@@ -63,17 +63,17 @@ test('the founder\'s header adds a System tab that opens the system view; nobody
 test('studio-workshop.jsx ships as its own Studio source, loaded after brain-model.jsx and before studio-lm.jsx everywhere', () => {
   assert.ok(fs.existsSync(workshopPath), 'nodelang/studio/studio-workshop.jsx is shipped');
   const names = read('packaging/compile_studio.cjs').match(/const names = \[([\s\S]*?)\];/)[1];
-  assert.match(names, /'brain-model\.jsx', 'studio-workshop\.jsx', 'studio-lm\.jsx', 'mount\.jsx'/);
-  assert.match(read('nodelang/studio/studio.html'), /'brain-model\.jsx','studio-workshop\.jsx','studio-lm\.jsx','mount\.jsx'\]/);
+  assert.match(names, /'brain-model\.jsx', 'workshop-board\.jsx', 'studio-workshop\.jsx', 'studio-lm\.jsx', 'mount\.jsx'/);
+  assert.match(read('nodelang/studio/studio.html'), /'brain-model\.jsx','workshop-board\.jsx','studio-workshop\.jsx','studio-lm\.jsx','mount\.jsx'\]/);
   const server = read('nodelang/application_server.py');
   const admitted = server.slice(server.indexOf('def _clean_studio_asset'), server.indexOf('if name not in admitted'));
   assert.match(admitted, /"studio-workshop\.jsx"/);
   assert.match(admitted, /"compiled\/studio-workshop\.js"/);
   const installer = read('installer/build_release.ps1');
   assert.match(installer, /'selected\/nodelang\/studio\/studio-workshop\.jsx'/);
-  assert.match(installer, /'brain-model\.js', 'studio-workshop\.js', 'studio-lm\.js', 'mount\.js'\)/);
-  assert.match(installer, /\$entries\.Count -ne 14\) \{ throw 'Studio compiler did not produce exactly thirteen scripts and one manifest\.'/);
-  assert.match(installer, /\$manifest\.files\.Count -ne 13\) \{ throw 'Unsupported Studio compiler manifest\.'/);
+  assert.match(installer, /'brain-model\.js', 'workshop-board\.js', 'studio-workshop\.js', 'studio-lm\.js', 'mount\.js'\)/);
+  assert.match(installer, /\$entries\.Count -ne 15\) \{ throw 'Studio compiler did not produce exactly fourteen scripts and one manifest\.'/);
+  assert.match(installer, /\$manifest\.files\.Count -ne 14\) \{ throw 'Unsupported Studio compiler manifest\.'/);
 });
 
 test('studio-lm.jsx reads the Workshop from the module: the rail takes the sidebar panel, the view takes the workspace', () => {
@@ -175,6 +175,7 @@ async function mountModule() {
   const win = dom.window;
   const context = vm.createContext({React, window:win, document:win.document, setTimeout, clearTimeout, console, URL, Blob, TextEncoder});
   vm.runInContext(read('nodelang/studio/tokens.jsx'), context);
+  vm.runInContext(transformSync(read('nodelang/studio/workshop-board.jsx'), {loader:'jsx'}).code, context);
   vm.runInContext(transformSync(workshop(), {loader:'jsx'}).code, context);
   const container = win.document.getElementById('root');
   const reactRoot = createRoot(container);
@@ -209,10 +210,10 @@ test('the Workshop view draws the design surfaces from the live projections and 
     // Bar: WORKSHOP chip, the Workshop's label, live counts, LAYOUT strip and leave.
     const main = doc.querySelector('main');
     assert.equal(main.style.gridTemplateColumns, 'minmax(0,1fr) 320px');
-    assert.match(text(main.firstElementChild), /^WORKSHOP L03 wall take-off · Layer selection · hosts not read yet 1 needs you · 1 running · 1 submitted · 0 delivered LAYOUT/);
-    const strip = [...doc.querySelectorAll('[role="group"][aria-label="Workshop layout"] button')];
-    assert.deepEqual(strip.map(b => b.getAttribute('aria-label')), ['Conversation', 'Task board', 'Chat + live graph']);
-    assert.deepEqual(strip.map(b => b.getAttribute('aria-pressed')), ['true', 'false', 'false']);
+    assert.match(text(main.firstElementChild), /^WORKSHOP L03 wall take-off · Layer selection · hosts not read yet 1 needs you · 1 running · 1 submitted · 0 delivered VIEW Projects Board Chat Agents Approvals Router Relay Prompts/);
+    const strip = [...doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')];
+    assert.deepEqual(strip.map(b => b.getAttribute('aria-label')), ['Projects', 'Board', 'Chat', 'Agents', 'Approvals', 'Router', 'Relay', 'Prompts']);
+    assert.deepEqual(strip.map(b => b.getAttribute('aria-selected')), ['false', 'false', 'true', 'false', 'false', 'false', 'false', 'false']);
     // Conversation: the owner's ask, the canvas workflow with its approval row, then one card per named Work.
     const stream = doc.querySelector('[aria-label="Workshop conversation"]');
     assert.match(text(stream), /Here is the workflow on this canvas\. 4 nodes, 1 of them yours to confirm\./);
@@ -244,13 +245,14 @@ test('the Workshop view draws the design surfaces from the live projections and 
     assert.ok(doc.querySelector('[aria-label="Native Workshop review"]'), 'Work on a project is behind ⋯');
     await ui.click([...doc.querySelectorAll('[aria-label="Workshop feed"] [role="button"]')].find(b => text(b) === 'Tool activity'));
     assert.deepEqual(calls.filter(c => c[0] === 'showWorkshopFeed').map(c => c[2]), ['activity']);
-    // Task board: the design's three columns.
-    await ui.click(strip[1]);
-    const board = doc.querySelector('[aria-label="Workshop task board"]');
-    assert.deepEqual([...board.querySelectorAll('h3')].map(text), ['NEEDS YOU', 'RUNNING', 'DELIVERED']);
+    // Board: the design's five lanes (design 2026-10-06, section 3).
+    const tabs = () => [...doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')];
+    await ui.click(tabs()[1]);
+    const board = doc.querySelector('[aria-label="Workshop board"]');
+    assert.deepEqual([...board.querySelectorAll('[data-workshop-lane] h3')].map(text), ['Backlog', 'Claimed', 'Running', 'Blocked', 'Done']);
     assert.equal(doc.querySelector('main').style.gridTemplateColumns, 'minmax(0,1fr) 300px');
     // Chat + live graph: projected nodes and the design's arrange / chain controls.
-    await ui.click(doc.querySelector('button[aria-label="Chat + live graph"]'));
+    await ui.click(tabs()[5]);   // Router: keeps the chat + live graph columns until its own panel lands
     const graph = doc.querySelector('[aria-label="Workshop live graph"]');
     assert.deepEqual([...graph.querySelectorAll('[data-node]')].map(n => n.getAttribute('data-node')).sort(), [ids.W1, ids.W2, ids.W3, 'read-dwg'].sort());
     assert.match(text(graph), /Wires carry behaviour\. Removing the wire into Layer selection stops what it receives;/);

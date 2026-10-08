@@ -75,6 +75,7 @@ async function mountModule() {
   const win = dom.window;
   const context = vm.createContext({React, window:win, document:win.document, setTimeout, clearTimeout, console, URL, Blob, TextEncoder});
   vm.runInContext(read('nodelang/studio/tokens.jsx'), context);
+  vm.runInContext(transformSync(fs.readFileSync(path.join(root, 'nodelang/studio/workshop-board.jsx'), 'utf8'), {loader:'jsx'}).code, context);
   vm.runInContext(transformSync(workshop(), {loader:'jsx'}).code, context);
   const container = win.document.getElementById('root');
   const reactRoot = createRoot(container);
@@ -268,9 +269,9 @@ test('gap 7: the board does not say "nothing to group" beside a NEEDS YOU card',
   });
   try {
     await view.render();
-    await view.ui.click(view.ui.doc.querySelector('button[aria-label="Task board"]'));
-    const board = view.ui.doc.querySelector('[aria-label="Workshop task board"]');
-    assert.ok(board.querySelector('[data-workshop-task="proposal:p1"]'), 'the proposal is in NEEDS YOU');
+    await view.ui.click([...view.ui.doc.querySelectorAll('[role="tab"]')].find(t => t.textContent.trim() === 'Board'));
+    const board = view.ui.doc.querySelector('[aria-label="Workshop board"]');
+    assert.ok(board.querySelector('[data-workshop-board-card="proposal:p1"]'), 'the proposal is on the board');
     assert.ok(!text(board).includes('nothing to group'), text(board));
   } finally { await view.ui.close(); }
 });

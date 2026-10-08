@@ -72,6 +72,7 @@ async function mountModule() {
   const win = dom.window;
   const context = vm.createContext({React, window:win, document:win.document, setTimeout, clearTimeout, console, URL, Blob, TextEncoder});
   vm.runInContext(read('nodelang/studio/tokens.jsx'), context);
+  vm.runInContext(transformSync(fs.readFileSync(path.join(root, 'nodelang/studio/workshop-board.jsx'), 'utf8'), {loader:'jsx'}).code, context);
   vm.runInContext(transformSync(workshop(), {loader:'jsx'}).code, context);
   const container = win.document.getElementById('root');
   const reactRoot = createRoot(container);
@@ -135,7 +136,7 @@ test('gap 8: with a proposed workflow the live graph draws its steps and its wir
   const view = await mountView(withWorkflow(null));
   try {
     await view.render();
-    await view.ui.click(view.ui.doc.querySelector('button[aria-label="Chat + live graph"]'));
+    await view.ui.click(view.ui.doc.querySelector('[role="tab"][aria-label="Router"]'));
     const graph = view.ui.doc.querySelector('[aria-label="Workshop live graph"]');
     assert.deepEqual([...graph.querySelectorAll('[data-node]')].map(n => n.getAttribute('data-node')).sort(), ['n1', 'n2']);
     assert.match(text(graph), /This Workshop/);
@@ -145,7 +146,7 @@ test('gap 8: with a proposed workflow the live graph draws its steps and its wir
   const plain = await mountView();
   try {
     await plain.render();
-    await plain.ui.click(plain.ui.doc.querySelector('button[aria-label="Chat + live graph"]'));
+    await plain.ui.click(plain.ui.doc.querySelector('[role="tab"][aria-label="Router"]'));
     const graph = plain.ui.doc.querySelector('[aria-label="Workshop live graph"]');
     assert.ok([...graph.querySelectorAll('[data-node]')].length >= 3, 'no workflow: the canvas topology, as before');
   } finally { await plain.ui.close(); }

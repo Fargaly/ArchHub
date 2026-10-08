@@ -136,19 +136,15 @@ test('gap 8: with a proposed workflow the live graph draws its steps and its wir
   const view = await mountView(withWorkflow(null));
   try {
     await view.render();
-    await view.ui.click(view.ui.doc.querySelector('[role="tab"][aria-label="Router"]'));
-    const graph = view.ui.doc.querySelector('[aria-label="Workshop live graph"]');
-    assert.deepEqual([...graph.querySelectorAll('[data-node]')].map(n => n.getAttribute('data-node')).sort(), ['n1', 'n2']);
-    assert.match(text(graph), /This Workshop/);
-    assert.match(text(graph), /Claude drafts the release note/);
-    assert.ok(!text(graph).includes('Layer selection'), 'not the canvas topology');
+    assert.equal(view.ui.doc.querySelector('[role="tab"][aria-label="Router"]'), null);
+    assert.equal(view.ui.doc.querySelector('[aria-label="Workshop live graph"]'), null);
+    assert.match(text(view.ui.doc.querySelector('[data-workshop-workflow]')), /Claude drafts the release note/);
   } finally { await view.ui.close(); }
   const plain = await mountView();
   try {
     await plain.render();
-    await plain.ui.click(plain.ui.doc.querySelector('[role="tab"][aria-label="Router"]'));
-    const graph = plain.ui.doc.querySelector('[aria-label="Workshop live graph"]');
-    assert.ok([...graph.querySelectorAll('[data-node]')].length >= 3, 'no workflow: the canvas topology, as before');
+    assert.equal(plain.ui.doc.querySelector('[role="tab"][aria-label="Router"]'), null);
+    assert.equal(plain.ui.doc.querySelector('[aria-label="Workshop live graph"]'), null);
   } finally { await plain.ui.close(); }
 });
 

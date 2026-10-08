@@ -13,7 +13,7 @@
 (() => {
 const W = window.AH;
 const derive = build => window.ArchHubTheme ? window.ArchHubTheme.derive(build) : build(W);
-const WORKSHOP_TABS = [['projects', 'Projects'], ['board', 'Board'], ['chat', 'Chat'], ['agents', 'Agents'], ['approvals', 'Approvals'], ['router', 'Router'], ['relay', 'Relay'], ['prompts', 'Prompts']];
+const WORKSHOP_TABS = [['projects', 'Projects'], ['board', 'Board'], ['chat', 'Chat'], ['agents', 'Agents'], ['approvals', 'Approvals']];
 
 // Conversation retention. After 20 idle days a conversation's messages move to
 // a file in the user's data folder; this notice says so on the conversation and
@@ -1103,7 +1103,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const existing = !window.ARCHHUB_STUDIO_AUTHORITY;
   const nativeAvailable = existing && descriptor.native_work_available !== false;
   const transcript = wsTranscript(state, descriptor);
-  const [preset, setPreset] = React.useState('chat');   // projects · board · chat · agents · approvals · router · relay · prompts
+  const [preset, setPreset] = React.useState('chat');   // projects · board · chat · agents · approvals · task
   const [ownSel, setOwnSel] = React.useState({ agent:null, task:null });
   const S = sel || ownSel, setS = setSel || setOwnSel;
   const [tidy, setTidy] = React.useState(false);
@@ -1797,6 +1797,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const selTask = allTasks.some(t => t.work === S.task) ? S.task : null;
   const counts = {block:allTasks.filter(t => t.state==='block').length, run:tasks.filter(t => t.state==='run' || t.state==='open').length,
     review:tasks.filter(t => t.state==='review').length, paused:tasks.filter(t => t.state==='paused').length, done:tasks.filter(t => t.state==='done').length};
+  const approvalCount = allTasks.filter(t => (t.proposal && t.state === 'block') || t.approving).length;
   // An agent's relayed reply is a conversation row, not tool activity. On the messages feed the
   // server sends the newest tool records as their own bounded read (the page holds notes only).
   const activitySource = feed === 'messages' && Array.isArray(transcript?.activity) ? transcript.activity : messages;
@@ -1820,7 +1821,10 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     openWorkflowAsNodes({focus, workflow, authority, scopeOpen: window.ARCHHUB_SCOPE_OPEN,
       setFocusId, requestCanvasReveal, setMode, setError: setActionError});
   };
-  const selectTask = id => setS({ agent:S.agent, task: id === selTask ? null : id });
+  const selectTask = id => {
+    setS({ agent:S.agent, task: id === selTask ? null : id });
+    if (id !== selTask) setPreset('task');
+  };
   const setSelAgent = id => setS({ agent:id, task:null });
   // A proposal's inline decision (design studio-workshop.jsx:221-223, :404-410): Approve
   // binds exactly this proposal through the existing bind; Not now leaves it proposed.
@@ -2725,22 +2729,27 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const headTitle = [descriptor.label, native?.work ? approvalWork : ''].filter(Boolean).join(' · ');
   const setWorkshopTab = tab => setPreset(tab);
   const bar = (
-    <div style={{ gridColumn:'1 / -1', display:'flex', alignItems:'center', gap:10, padding:'0 14px', height:34, minWidth:0,
-      borderBottom:`1px solid ${W.line}`, background:W.bgPanel }}>
-      <span style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'3px 9px', border:`1px solid ${W.accentSoft}`,
-        background:W.accentDim, borderRadius:5, fontFamily:W.mono, fontSize:9.5, letterSpacing:'0.14em', color:W.accent }}>
-        <Dot c={W.accent} pulse/>WORKSHOP
-      </span>
-      <span title={descriptor.root} style={{ fontFamily:W.mono, fontSize:10.5, color:W.inkSoft, letterSpacing:'0.04em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', minWidth:0 }} data-workshop-head="">{headTitle} · {hostLine}</span>
-      <span style={{ width:1, height:16, background:W.line, flex:'none' }}/>
-      <span style={{ fontFamily:W.mono, fontSize:10, color:W.inkMuted, whiteSpace:'nowrap' }}>
-        {counts.block} needs you · {counts.run} running{counts.paused ? ` · ${counts.paused} paused` : ''}{counts.review ? ` · ${counts.review} submitted` : ''} · {counts.done} delivered
-      </span>
-      <div style={{ flex:1 }}/>
-      <Lbl>VIEW</Lbl>
-      <WorkshopTabs tab={preset} setTab={setWorkshopTab}/>
-      <IBtn g="✕" title="Leave Workshop — back to the plain conversation" s={22} onClick={() => (onLeave ? onLeave() : setMode('chat'))}/>
-    </div>
+    <>
+      <div style={{ gridColumn:'1 / -1', gridRow:'1', display:'flex', alignItems:'center', gap:8, padding:'0 20px',
+        minWidth:0, borderBottom:`1px solid ${W.line}`, background:W.bgPanel }}>
+        <strong style={{ fontSize:16, lineHeight:1.25, fontWeight:700, color:W.ink, whiteSpace:'nowrap' }}>Workshop</strong>
+        {headTitle && <span title={descriptor.root} style={{ fontFamily:W.mono, fontSize:13, color:W.inkSoft,
+          overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', minWidth:0 }} data-workshop-head="">{headTitle}{hostLine ? ' · ' + hostLine : ''}</span>}
+        <div style={{ flex:1 }}/>
+        {connectedHosts.length === 1 && <span style={{ fontFamily:W.mono, fontSize:12, color:W.inkSoft, padding:'4px 10px',
+          borderRadius:5, background:W.bgSoft }}>{connectedHosts[0].name}</span>}
+        <span style={{ display:'inline-flex', alignItems:'center', gap:7, padding:'4px 10px', border:`1px solid ${W.line}`,
+          background:W.bgPanel, borderRadius:999, fontFamily:W.mono, fontSize:12, color:W.ink }}>
+          <Dot c={W.ok}/>Hub
+        </span>
+      </div>
+      <div style={{ gridColumn:'1 / -1', gridRow:'2', display:'flex', alignItems:'center', gap:18, padding:'0 20px',
+        minWidth:0, borderBottom:`1px solid ${W.line}`, background:W.bg }}>
+        <WorkshopTabs tab={preset} setTab={setWorkshopTab} approvals={approvalCount}/>
+        <div style={{ flex:1 }}/>
+        <IBtn g="✕" title="Leave Workshop — back to the plain conversation" s={24} onClick={() => (onLeave ? onLeave() : setMode('chat'))}/>
+      </div>
+    </>
   );
 
   const stream = (
@@ -2771,6 +2780,19 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     </section>
   );
 
+  const projects = (
+    <section aria-label="Workshop projects" style={{ display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
+      <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:14 }}>
+        {window.WorkshopProjectsView
+          ? <window.WorkshopProjectsView projects={[{id:descriptor.root, name:descriptor.label || 'Workshop', status:counts.block ? counts.block + ' waiting for you' : counts.run ? 'running' : 'quiet',
+              tasks:allTasks.length, done:counts.done, blocked:counts.block, hosts:hostLine, agents:agents.map(a => a.name).slice(0, 4).join(', '),
+              due:counts.block ? 'today' : '', progress:allTasks.length ? Math.round((counts.done / allTasks.length) * 100) : 0}]}
+              onOpen={() => setPreset('board')}/>
+          : <div role="status" style={{ fontSize:11.5, lineHeight:1.5, color:W.inkSoft }}>Workshop projects are unavailable.</div>}
+      </div>
+    </section>
+  );
+
   const board = (
     <section aria-label="Workshop task board" style={{ display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
       <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:14 }}>
@@ -2778,7 +2800,6 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
           ? <window.WorkshopBoardView tasks={allTasks} agents={agents} selected={selTask} onSelect={selectTask} onDecide={decide}/>
           : <div role="status" style={{ fontSize:11.5, lineHeight:1.5, color:W.inkSoft }}>Workshop board is unavailable.</div>}
       </div>
-      {composer}
     </section>
   );
 
@@ -2789,29 +2810,41 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
           ? <window.WorkshopAgentsView agents={agents}/>
           : <div role="status" style={{ fontSize:11.5, lineHeight:1.5, color:W.inkSoft }}>Workshop agents are unavailable.</div>}
       </div>
+    </section>
+  );
+
+  const approvalsPage = (
+    <section aria-label="Workshop approvals" style={{ display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
+      <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:14 }}>
+        {window.WorkshopApprovalsView
+          ? <window.WorkshopApprovalsView tasks={allTasks.filter(t => (t.proposal && t.state === 'block') || t.approving)} selected={selTask} onSelect={selectTask} onDecide={decide}/>
+          : <div role="status" style={{ fontSize:11.5, lineHeight:1.5, color:W.inkSoft }}>Workshop approvals are unavailable.</div>}
+      </div>
+    </section>
+  );
+
+  const taskPage = (
+    <section aria-label="Workshop task page" style={{ display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
+      <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:14 }}>
+        {window.WorkshopTaskPage
+          ? <window.WorkshopTaskPage task={allTasks.find(t => t.work === selTask) || allTasks[0]} agent={agent} onDecide={decide}/>
+          : <div role="status" style={{ fontSize:11.5, lineHeight:1.5, color:W.inkSoft }}>Workshop task page is unavailable.</div>}
+      </div>
       {composer}
     </section>
   );
 
   const cols = externalRail
-    ? (['router', 'relay', 'prompts'].includes(preset) ? 'minmax(0,1fr) minmax(0,1fr)' : preset==='board' ? 'minmax(0,1fr) 300px' : 'minmax(0,1fr) 320px')
-    : (['router', 'relay', 'prompts'].includes(preset) ? '200px minmax(0,1fr) minmax(0,1fr)' : preset==='board' ? '212px minmax(0,1fr) 300px' : '262px minmax(0,1fr) 320px');
-  const middle = preset === 'board' ? board : preset === 'agents' ? agentsPage : stream;
+    ? (preset==='board' ? 'minmax(0,1fr) 300px' : 'minmax(0,1fr) 320px')
+    : (preset==='board' ? '212px minmax(0,1fr) 300px' : '262px minmax(0,1fr) 320px');
+  const middle = preset === 'projects' ? projects : preset === 'board' ? board : preset === 'agents' ? agentsPage :
+    preset === 'approvals' ? approvalsPage : preset === 'task' ? taskPage : stream;
   return (
     <main style={{ gridColumn:'1 / -1', gridRow:'2', minHeight:0, overflow:'hidden', display:'grid',
-      gridTemplateColumns:cols, gridTemplateRows:'34px minmax(0,1fr)' }}>
+      gridTemplateColumns:'minmax(0,1fr)', gridTemplateRows:'58px 76px minmax(0,1fr)', border:`1px solid ${W.line}`,
+      borderRadius:12, background:W.bg, margin:0 }}>
       {bar}
-      {!externalRail && <AgentsRail context={{descriptor, graphId:state?.canvas?.graph_id, scopeRoot:state?.canvas?.root, transcript, state}}
-        sel={selAgentId} onSelect={setSelAgent} compact={preset!=='chat'}/>}
       {middle}
-      {['router', 'relay', 'prompts'].includes(preset)
-        ? <GraphPane flow={graphFlow} selTask={selTask} tidy={tidy} chain={chain}
-            onArrange={() => setTidy(t => !t)} onChain={() => setChain(c => !c)} onOpen={openAsNodes}/>
-        : <ContextPanel selAgent={selTask ? null : selAgent} selTask={selTask} tasks={allTasks} agent={agent} descriptor={descriptor}
-            agents={agents} assign={existing && authority?.assignWork ? (request => authority.assignWork(descriptor.root, request)) : null}
-            assignments={Array.isArray(transcript?.assignments) ? transcript.assignments : []}
-            activity={activity} activityNote={activityNote} counts={counts} listening={listening}
-            controls={controls} controlsOpen={controlsOpen} onControls={() => setControlsOpen(o => !o)}/>}
       <style>{`
         [aria-label="Native Workshop review"] button,
         [aria-label="Native Workshop review"] select,
@@ -2830,11 +2863,17 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
 };
 
 // ── header tabs: project board, conversation, agents, approvals, plus retained routing views ──
-const WorkshopTabs = ({tab, setTab}) => (
-  <div role="tablist" aria-label="Workshop tabs" style={{ display:'flex', border:`1px solid ${W.line}`, borderRadius:5, overflow:'hidden' }}>
+const WorkshopTabs = ({tab, setTab, approvals = 0}) => (
+  <div role="tablist" aria-label="Workshop tabs" style={{ display:'flex', alignItems:'center', gap:18, minWidth:0 }}>
     {WORKSHOP_TABS.map(([k, l]) => (
-      <button key={k} type="button" role="tab" onClick={() => setTab(k)} title={l} aria-label={l} aria-selected={tab === k} style={{ height:22, border:0, borderRadius:0, margin:0, cursor:'pointer', paddingTop:0, paddingBottom:0, paddingLeft:8, paddingRight:8,
-        background: tab===k ? W.ink : 'transparent', color: tab===k ? W.bg : W.inkSoft, fontFamily:W.mono, fontSize:10 }}>{l}</button>
+      <button key={k} type="button" role="tab" onClick={() => setTab(k)} title={l} aria-label={l} aria-selected={tab === k}
+        style={{ minHeight:36, border:0, borderRadius:W.rad.pill, margin:0, cursor:'pointer', padding:'0 12px',
+          background: tab===k ? W.accentSoft : 'transparent', color:tab===k ? W.ink : W.inkSoft,
+          fontFamily:W.sans, fontSize:16, fontWeight:400, letterSpacing:0, display:'inline-flex', alignItems:'center', gap:7 }}>
+        <span>{l}</span>{k === 'approvals' && approvals > 0 && <span style={{ minWidth:18, height:18, padding:'0 5px',
+          borderRadius:5, background:W.warn + '24', color:W.warn, display:'inline-flex', alignItems:'center',
+          justifyContent:'center', fontFamily:W.sans, fontSize:12, lineHeight:1, fontWeight:600 }}>{approvals}</span>}
+      </button>
     ))}
   </div>
 );

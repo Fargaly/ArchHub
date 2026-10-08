@@ -14,7 +14,7 @@ const read = name => fs.readFileSync(path.join(root, name), "utf8");
 const seedText = read("nodelang/universal_presentation_seed.py").match(/^THEME = \{([\s\S]*?)^\}/m)[1];
 const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)].map(m => [m[1], m[2]]));
 
-async function openSettings({account = null, connectors = [], memory = null, session = undefined} = {}) {
+async function openSettings({account = null, connectors = [], memory = null, session = undefined, models = undefined} = {}) {
   const manifest = JSON.parse(read("nodelang/studio/compiled/manifest.json"));
   for (const source of ["studio-lm.jsx", "studio-account.jsx"]) {
     const held = manifest.files.find(file => file.source === source);
@@ -24,11 +24,17 @@ async function openSettings({account = null, connectors = [], memory = null, ses
   const {JSDOM} = await import("jsdom");
   const dom = new JSDOM("<div id=\"root\"></div>", {url:"http://127.0.0.1:53917/", runScripts:"outside-only", pretendToBeVisual:true});
   const win = dom.window;
-  win.fetch = () => new Promise(() => {});
+  win.fetch = url => {
+    if (models !== undefined && String(url).startsWith("/api/universal/models")) {
+      return Promise.resolve({ok:true, json:async () => JSON.parse(JSON.stringify(models))});
+    }
+    return new Promise(() => {});
+  };
   win.ARCHHUB_THEME = {...seed};
   win.matchMedia = () => ({matches:false, addEventListener() {}, removeEventListener() {}});
   if (account) win.localStorage.setItem("archhub.account.v1", JSON.stringify(account));
-  const calls = {consent:[], reveal:[], memory:0};
+  const calls = {consent:[], reveal:[], memory:0, modelSelect:[]};
+  win.ARCHHUB_AGENT_SELECT = async route => { calls.modelSelect.push(route); return route; };
   if (memory) win.ARCHHUB_LOAD_MEMORY = async () => { calls.memory += 1; return memory(); };
   let consent = {allowed:false, account:""};
   win.ARCHHUB_CLOUD_SESSION = session === "pending" ? () => new Promise(() => {})
@@ -138,6 +144,30 @@ test("Profile, Models, Theme, Brain and Storage carry no inert dropdown or misla
     s.flush(() => storage.querySelectorAll("button")[0].click());
     await s.settle();
     assert.deepEqual(s.calls.reveal, ["graph"], "the row opens the folder it names");
+  } finally { s.close(); }
+});
+
+test("Model routing shows only real routed jobs; the select saves the free reasoning model", async () => {
+  const freeRoute = "qwen/qwen3.8-27b:free";
+  const s = await openSettings({models:{ok:true, groups:[{name:"BYO · OpenRouter", items:[
+    {name:"Qwen free", route:freeRoute, routed:freeRoute, vendor:"qwen", tag:"BYO", cost:"$0 / $0 per M"},
+    {name:"Paid model", route:"openrouter/openai/gpt-paid", routed:"openrouter/openai/gpt-paid", vendor:"openai", tag:"BYO", cost:"$1 / $1 per M"},
+    {name:"Local model", route:"ollama/llama3", routed:"ollama/llama3", vendor:"Ollama", tag:"LOCAL", cost:"free · local"},
+  ]}], selected_route:""}});
+  try {
+    const models = await s.tab("Models");
+    const select = models.querySelector('select[aria-label="Reasoning model"]');
+    assert.ok(select, "Reasoning is a real select");
+    assert.equal(models.textContent.includes("Vision · sketch parsing"), false, "unrouted Vision row is not drawn");
+    assert.equal(models.textContent.includes("Long context"), false, "unrouted Long context row is not drawn");
+    assert.equal(models.textContent.includes("Fast bulk"), false, "unrouted Fast bulk row is not drawn");
+    assert.equal(models.textContent.includes("Embedding"), false, "unrouted Embedding row is not drawn");
+    assert.match(models.textContent, /Other jobs use the reasoning model\./);
+    assert.equal([...select.options].some(option => option.value === "openrouter/openai/gpt-paid"), false, "paid model is not offered");
+    select.value = freeRoute;
+    s.flush(() => select.dispatchEvent(new s.win.Event("change", {bubbles:true})));
+    await s.settle();
+    assert.deepEqual(s.calls.modelSelect, [freeRoute], "select saves through the existing composer-model path");
   } finally { s.close(); }
 });
 

@@ -51,7 +51,14 @@ function createHarness() {
     assert.ok(found, 'button not found: ' + label);
     found.props.onClick && found.props.onClick({stopPropagation:() => events.push('stopped')});
   };
-  return {window, React, render, calls, events, clickButton};
+  const buttons = tree => {
+    const found = [];
+    visit(tree, node => {
+      if (node.type === 'button') found.push({label:flat(render(node)), props:node.props || {}});
+    });
+    return found;
+  };
+  return {window, React, render, calls, events, clickButton, buttons};
 }
 
 function fixture() {
@@ -104,18 +111,52 @@ test('WorkshopBoardView groups governed Work into the five engine lanes with app
 });
 
 test('WorkshopAgentsView renders local and cloud agents with presence and hides engineering detail behind Details', () => {
-  const {window, React, render} = createHarness();
+  const {window, React, render, buttons} = createHarness();
   const fx = fixture();
-  const closed = render(React.createElement(window.WorkshopAgentsView, {agents:fx.agents, details:false}));
-  assert.match(flat(closed), /Codex local verified 30 s ago Run validation read workspace/);
-  assert.match(flat(closed), /Brain MCP cloud verified 12 s ago Nothing active read facts/);
+  const tree = React.createElement(window.WorkshopAgentsView, {agents:fx.agents, details:false});
+  const closed = render(tree);
+  assert.match(flat(closed), /Codex local verified 30 s ago .* Run validation .* may: read workspace/);
+  assert.match(flat(closed), /Brain MCP cloud verified 12 s ago .* Nothing active .* may: read facts/);
   assert.doesNotMatch(closed, /app:agent-session:runtime:codex-a1/);
-  const open = render(React.createElement(window.WorkshopAgentsView, {agents:fx.agents, details:true}));
-  assert.match(open, /app:agent-session:runtime:codex-a1/);
-  assert.match(open, /mcp-server:brain/);
+  assert.match(flat(closed), /BABOOM companion listens: failed runs, stuck tasks, approvals/);
+  assert.match(flat(closed), /Add an agent/);
+  assert.deepEqual(buttons(tree).map(button => button.label), []);
 });
 
-test('Workshop header exposes Projects, Board, Chat, Agents, Approvals while retaining Router, Relay, Prompts', () => {
+test('Workshop views do not expose buttons without click handlers', () => {
+  const {window, React, buttons} = createHarness();
+  const fx = fixture();
+  const views = [
+    React.createElement(window.WorkshopBoardView, {tasks:fx.tasks, agents:fx.agents, selected:'', onSelect:() => {}, onDecide:() => {}}),
+    React.createElement(window.WorkshopAgentsView, {agents:fx.agents}),
+    React.createElement(window.WorkshopProjectsView, {projects:[{id:'p1', name:'Live project'}], onOpen:() => {}}),
+    React.createElement(window.WorkshopApprovalsView, {tasks:fx.tasks.filter(task => task.approving), selected:'', onSelect:() => {}, onDecide:() => {}}),
+    React.createElement(window.WorkshopTaskPage, {task:fx.tasks.find(task => task.approving), agent:() => ({name:'Codex'}), onDecide:() => {}}),
+  ];
+  const dead = views.flatMap(buttons).filter(button => typeof button.props.onClick !== 'function').map(button => button.label);
+  assert.deepEqual(dead, []);
+});
+
+test('WorkshopTaskPage hides decision buttons unless the task is approval-blocked', () => {
+  const {window, React, render} = createHarness();
+  const fx = fixture();
+  const blocked = render(React.createElement(window.WorkshopTaskPage,
+    {task:fx.tasks.find(task => task.approving), agent:() => ({name:'Codex'}), onDecide:() => {}}));
+  assert.match(flat(blocked), /THREAD .* Approve Reject/);
+  const notBlocked = render(React.createElement(window.WorkshopTaskPage,
+    {task:fx.tasks.find(task => task.work === 'work:tool-off'), agent:() => ({name:'Codex'}), onDecide:() => {}}));
+  assert.doesNotMatch(flat(notBlocked), /THREAD .* Approve Reject/);
+});
+
+test('Workshop approvals list predicate matches the badge count predicate', () => {
   const source = read('nodelang/studio/studio-workshop.jsx');
-  assert.match(source, /WORKSHOP_TABS = \[\['projects', 'Projects'\], \['board', 'Board'\], \['chat', 'Chat'\], \['agents', 'Agents'\], \['approvals', 'Approvals'\], \['router', 'Router'\], \['relay', 'Relay'\], \['prompts', 'Prompts'\]\]/);
+  assert.match(source, /const approvalCount = allTasks\.filter\(t => \(t\.proposal && t\.state === 'block'\) \|\| t\.approving\)\.length;/);
+  assert.match(source, /<window\.WorkshopApprovalsView tasks=\{allTasks\.filter\(t => \(t\.proposal && t\.state === 'block'\) \|\| t\.approving\)\}/);
+  assert.doesNotMatch(source, /WorkshopApprovalsView tasks=\{allTasks\.filter\(t => t\.state === 'block' \|\| t\.approving \|\| t\.proposal\)\}/);
+});
+
+test('Workshop header exposes Projects, Board, Chat, Agents, Approvals and removes fake Router, Relay, Prompts tabs', () => {
+  const source = read('nodelang/studio/studio-workshop.jsx');
+  assert.match(source, /WORKSHOP_TABS = \[\['projects', 'Projects'\], \['board', 'Board'\], \['chat', 'Chat'\], \['agents', 'Agents'\], \['approvals', 'Approvals'\]\]/);
+  assert.doesNotMatch(source, /\['router', 'Router'\]|\['relay', 'Relay'\]|\['prompts', 'Prompts'\]/);
 });

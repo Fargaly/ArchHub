@@ -76,12 +76,14 @@ test('studio-workshop.jsx ships as its own Studio source, loaded after brain-mod
   assert.match(installer, /\$manifest\.files\.Count -ne 14\) \{ throw 'Unsupported Studio compiler manifest\.'/);
 });
 
-test('studio-lm.jsx reads the Workshop from the module: the rail takes the sidebar panel, the view takes the workspace', () => {
+test('studio-lm.jsx reads the Workshop from the module: the icon rail remains and the Workshop owns the workspace', () => {
   const sidebar = source.slice(source.indexOf('const Sidebar ='), source.indexOf('const IconRail ='));
-  assert.match(sidebar, /workshopContext && window\.WorkshopAgentsRail\s*\? <window\.WorkshopAgentsRail [^]*?sel=\{wsSel\.agent\} onAddAgent=\{onAddAgent\}/);
+  assert.match(source, /gridTemplateColumns: workshopContext \? '44px 1fr' : '292px 1fr'/);
+  assert.match(sidebar, /workshopContext \? null : <>/);
+  assert.doesNotMatch(sidebar, /WorkshopAgentsRail/);
   const workspace = source.slice(source.indexOf('const Workspace ='), source.indexOf('const modelRoute ='));
-  assert.match(workspace, /workshop && window\.WorkshopView \? <window\.WorkshopView key=[^]*?state=\{workshopState\} descriptor=\{workshop\} target=\{target\}[^]*?onLeave=\{\(\) => updateView\(\{conversationRoot:'', mode:'chat', target:''\}\)\}\s*sel=\{wsSel\} setSel=\{setWsSel\} externalRail\/>/);
-  assert.match(source, /onAddAgent=\{\(\) => setLibraryOpen\(true\)\}/);
+  assert.match(workspace, /workshop && window\.WorkshopView \? <window\.WorkshopView key=[^]*?state=\{workshopState\} descriptor=\{workshop\} target=\{target\}[^]*?onLeave=\{\(\) => updateView\(\{conversationRoot:'', mode:'chat', target:''\}\)\}\s*sel=\{wsSel\} setSel=\{setWsSel\}\/>/);
+  assert.doesNotMatch(workspace, /externalRail\/>/);
   for (const retired of ['const WorkshopConversation =', 'const WorkshopAgentsPanel =', 'const WorkshopTaskCard =',
     'const WorkshopTaskBoard =', 'const WorkshopLayoutPane =', 'const workshopTaskItems =']) {
     assert.equal(source.includes(retired), false, 'studio-lm.jsx no longer defines ' + retired);
@@ -207,13 +209,24 @@ test('the Workshop view draws the design surfaces from the live projections and 
       sel, setSel:value => { sel = value; }, externalRail:true});
     await ui.render('WorkshopView', props());
     const doc = ui.doc;
-    // Bar: WORKSHOP chip, the Workshop's label, live counts, LAYOUT strip and leave.
+    // Header: design title, Workshop label, Hub pill, and five tabs.
     const main = doc.querySelector('main');
-    assert.equal(main.style.gridTemplateColumns, 'minmax(0,1fr) 320px');
-    assert.match(text(main.firstElementChild), /^WORKSHOP L03 wall take-off · Layer selection · hosts not read yet 1 needs you · 1 running · 1 submitted · 0 delivered VIEW Projects Board Chat Agents Approvals Router Relay Prompts/);
+    assert.equal(main.style.gridTemplateColumns, 'minmax(0,1fr)');
+    assert.match(text(main.firstElementChild), /^Workshop L03 wall take-off · Layer selection · hosts not read yet Hub/);
     const strip = [...doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')];
-    assert.deepEqual(strip.map(b => b.getAttribute('aria-label')), ['Projects', 'Board', 'Chat', 'Agents', 'Approvals', 'Router', 'Relay', 'Prompts']);
-    assert.deepEqual(strip.map(b => b.getAttribute('aria-selected')), ['false', 'false', 'true', 'false', 'false', 'false', 'false', 'false']);
+    assert.deepEqual(strip.map(b => b.getAttribute('aria-label')), ['Projects', 'Board', 'Chat', 'Agents', 'Approvals']);
+    assert.deepEqual(strip.map(b => b.getAttribute('aria-selected')), ['false', 'false', 'true', 'false', 'false']);
+    assert.deepEqual(strip.map(b => [b.style.fontFamily, b.style.fontSize, b.style.fontWeight]), [
+      ['"Inter", system-ui, sans-serif', '16px', '400'],
+      ['"Inter", system-ui, sans-serif', '16px', '400'],
+      ['"Inter", system-ui, sans-serif', '16px', '400'],
+      ['"Inter", system-ui, sans-serif', '16px', '400'],
+      ['"Inter", system-ui, sans-serif', '16px', '400'],
+    ]);
+    assert.equal(strip[2].style.borderRadius, '999px');
+    assert.equal(strip[2].style.background, 'rgb(58, 32, 24)');
+    assert.equal(strip[0].style.background, 'transparent');
+    assert.equal(text(strip[4]), 'Approvals 1');
     // Conversation: the owner's ask, the canvas workflow with its approval row, then one card per named Work.
     const stream = doc.querySelector('[aria-label="Workshop conversation"]');
     assert.match(text(stream), /Here is the workflow on this canvas\. 4 nodes, 1 of them yours to confirm\./);
@@ -222,10 +235,6 @@ test('the Workshop view draws the design surfaces from the live projections and 
     const first = stream.querySelector('[data-workshop-task]');
     assert.match(text(first), /^T-3f9a1c Layer selection C NEEDS YOU C Codex · Gate failed/);
     assert.deepEqual([...first.querySelectorAll('button')].map(text), ['Approve this repair', 'Generate repair artifact']);
-    // Context panel: the design's sections for the first agent in the rail order.
-    const context = () => doc.querySelector('[aria-label="Workshop context"]');
-    assert.match(text(context()), /^SELECTED · AGENT/);
-    for (const section of ['CURRENT TASK', 'PERMISSIONS', 'CONNECTED TOOLS', 'ACTIVITY · TOOL RECORDS']) assert.ok(text(context()).includes(section), section);
     // Send, approve: the live actions.
     const input = doc.querySelector('input[aria-label="Workshop message"]');
     await ui.act(() => { Object.getOwnPropertyDescriptor(ui.win.HTMLInputElement.prototype, 'value').set.call(input, 'Check the joins');
@@ -234,32 +243,22 @@ test('the Workshop view draws the design surfaces from the live projections and 
     assert.deepEqual(calls.filter(c => c[0] === 'sendModelConversation').map(c => [c[1], c[2].root, c[3]]), [['room-a', 'model-a', 'Check the joins']]);
     await ui.click([...first.querySelectorAll('button')][0]);
     assert.equal(calls.filter(c => c[0] === 'approveNativeWork').length, 1);
-    // Select a task card: the context panel reads that Work.
+    // Select a task card: selection is retained without opening the retired context shell.
     await ui.click(first);
     assert.deepEqual(JSON.parse(JSON.stringify(sel)), {agent:null, task:ids.W1});
     await ui.render('WorkshopView', props());
-    assert.match(text(context()), /^SELECTED · TASK T-3f9a1c/);
-    assert.match(text(context()), /intent Pick the source wall layers criteria — blocks Wall creation state NEEDS YOU/);
-    // Relocated controls sit behind the context panel's ⋯.
-    await ui.click(doc.querySelector('button[aria-label^="Workshop controls"]'));
-    assert.ok(doc.querySelector('[aria-label="Native Workshop review"]'), 'Work on a project is behind ⋯');
-    await ui.click([...doc.querySelectorAll('[aria-label="Workshop feed"] [role="button"]')].find(b => text(b) === 'Tool activity'));
-    assert.deepEqual(calls.filter(c => c[0] === 'showWorkshopFeed').map(c => c[2]), ['activity']);
+    assert.ok(doc.querySelector('[aria-label="Workshop task page"] input[aria-label="Workshop message"]'));
     // Board: the design's five lanes (design 2026-10-06, section 3).
     const tabs = () => [...doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')];
     await ui.click(tabs()[1]);
     const board = doc.querySelector('[aria-label="Workshop board"]');
     assert.deepEqual([...board.querySelectorAll('[data-workshop-lane] h3')].map(text), ['Backlog', 'Claimed', 'Running', 'Blocked', 'Done']);
-    assert.equal(doc.querySelector('main').style.gridTemplateColumns, 'minmax(0,1fr) 300px');
-    // Chat + live graph: projected nodes and the design's arrange / chain controls.
-    await ui.click(tabs()[5]);   // Router: keeps the chat + live graph columns until its own panel lands
-    const graph = doc.querySelector('[aria-label="Workshop live graph"]');
-    assert.deepEqual([...graph.querySelectorAll('[data-node]')].map(n => n.getAttribute('data-node')).sort(), [ids.W1, ids.W2, ids.W3, 'read-dwg'].sort());
-    assert.match(text(graph), /Wires carry behaviour\. Removing the wire into Layer selection stops what it receives;/);
-    await ui.click(graph.querySelector('button[aria-label^="Select the whole connected chain"]'));
-    assert.equal(graph.querySelectorAll('[data-node][aria-current="true"]').length, 4);
-    await ui.click(graph.querySelector('button[aria-label="Open as nodes"]'));
-    assert.equal(mode, 'canvas');
+    assert.equal(doc.querySelector('main').style.gridTemplateColumns, 'minmax(0,1fr)');
+    assert.equal(doc.querySelector('input[aria-label="Workshop message"]'), null);
+    // Chat remains available in the full-width shell.
+    await ui.click(tabs()[2]);
+    assert.ok(doc.querySelector('[aria-label="Workshop conversation"]'));
+    assert.ok(doc.querySelector('input[aria-label="Workshop message"]'));
     await ui.click(doc.querySelector('button[aria-label^="Leave Workshop"]'));
     assert.equal(left, 1);
   } finally { await ui.close(); }

@@ -614,7 +614,7 @@ const StudioLM = () => {
       width:'100%', height:'100%', background:LM.bg, color:LM.ink,
       fontFamily:LM.sans, fontSize:13, lineHeight:1.5,
       display:'grid',
-      gridTemplateColumns:'292px 1fr',
+      gridTemplateColumns: workshopContext ? '44px 1fr' : '292px 1fr',
       gridTemplateRows:'1fr 22px',
       overflow:'hidden', position:'relative',
     }}>
@@ -711,12 +711,7 @@ const Sidebar = ({ panel, setPanel, openId, onOpen, onHome, onSettings, onDocs, 
     overflow:'hidden', minHeight:0,
   }}>
     <IconRail panel={panel} setPanel={setPanel} onHome={onHome} onSettings={onSettings} onDocs={onDocs}/>
-    {/* Workshop open: the agents take this panel's place, one rail, not two (design studio-lm.jsx:442-445). */}
-    {workshopContext && window.WorkshopAgentsRail
-      ? <window.WorkshopAgentsRail key={JSON.stringify([openId, workshopContext.graphId, workshopContext.scopeRoot,
-          workshopContext.descriptor.root])} context={workshopContext} sel={wsSel.agent} onAddAgent={onAddAgent}
-          onSelect={(id, addressable) => { setWsSel({agent:id, task:null}); if (addressable) onWorkshopTarget(id); }}/>
-      : <>
+    {workshopContext ? null : <>
     {panel === 'chats'  && <ChatsPanel openId={openId} onOpen={onOpen} onNew={onHome} account={account} onAccount={onSettings}/>}
     {panel === 'nodes'  && <NodesPanel addNodeFromLibrary={addNodeFromLibrary} account={account} onAccount={onSettings}/>}
     {panel === 'skills' && <SkillsPanel/>}
@@ -1379,7 +1374,7 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, openTab
           setTarget={target => updateView({target})} setMode={setMode} setFocusId={setFocusId}
           requestCanvasReveal={requestCanvasReveal}
           onLeave={() => updateView({conversationRoot:'', mode:'chat', target:''})}
-          sel={wsSel} setSel={setWsSel} externalRail/> : <>
+          sel={wsSel} setSel={setWsSel}/> : <>
           <ChatView session={session} model={model} setMode={setMode} onPickModel={() => setPickerOpen(true)}
             readiness={readiness} onReadinessStale={onReadinessStale}
             workshopRoom={workshopModeRoom(workshops, '')} workshopUnavailable={workshopState?.canvas?.unavailable || ''}
@@ -4993,6 +4988,16 @@ const pickedModel = () => {
   const m = window.ARCHHUB_PICKED_MODEL;
   return m && (m.routed || m.route) ? m : null;
 };
+const freeModelRoute = item => {
+  const route = modelRoute(item).trim();
+  if (!route) return false;
+  if (route === 'openrouter/free' || route.endsWith(':free')) return true;
+  return route.startsWith('lmstudio/') || route.startsWith('ollama/');
+};
+const modelOptionLabel = item => {
+  const route = modelRoute(item);
+  return [item.name || route, item.vendor, item.tag].filter(Boolean).join(' · ');
+};
 // The release status the update transport reads (current_build, state, updated_to).
 const releaseStatus = snapshot => snapshot?.applicationUpdate || null;
 // The Studio draws the dark tokens only. Personal Settings holds colours, not a mode, so the
@@ -5374,8 +5379,6 @@ const SettingsMemory = ({ store, patch }) => {
 // -- Team: identity, seats, invites (design studio-lm.jsx:2731-2792). No data path projects a firm
 // roster, seats or invite tokens into this view, so the layout stays and every value is empty.
 const SettingsTeam = () => {
-  const none = 'No firm in this connection';
-  const off = { ...smallBtn(), padding:'4px 11px', borderStyle:'dashed', color:LM.inkMuted, cursor:'default' };
   return (
   <div>
     <SHead title="Team" sub="One person owns the workspace and invites teammates by email. Firm brain access follows membership &#x2014; removing someone stops what they can read next, not what they already hold."/>
@@ -5391,12 +5394,6 @@ const SettingsTeam = () => {
       <div role="status" style={{ padding:'12px 14px', fontFamily:LM.serif, fontStyle:'italic', fontSize:13.5, color:LM.inkSoft }}>
         No firm in this connection. Members appear here when the workspace has one.
       </div>
-    </div>
-    <div style={{ display:'flex', gap:7, flexWrap:'wrap' }}>
-      <button disabled title={none} style={off}>invite a teammate</button>
-      <button disabled title={none} style={off}>set seat count</button>
-      <button disabled title={none} style={off}>transfer ownership</button>
-      <button disabled title={none} style={{ ...off, color:LM.err }}>leave firm</button>
     </div>
     <div style={{ marginTop:LM.sp.md, padding:'10px 12px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.md }}>
       <div style={{ fontSize:12, color:LM.inkSoft, lineHeight:1.6 }}>
@@ -5796,39 +5793,82 @@ const SettingsProviders = ({ providers, onTab }) => {
   );
 };
 
-// ── Models: per-task routing (design studio-lm.jsx:2935-2966). One route is live: every ask goes
-// to the model picked in the composer. The other jobs have no route of their own, so their rows
-// say so instead of naming a model and a price.
+// ── Models: route only jobs the app can really route in this build. The router exposes one
+// persisted composer route, so Reasoning is editable and the other jobs are stated once.
 const SettingsModels = () => {
-  const picked = pickedModel();
-  const routeless = 'not routed separately in this build';
+  const [live, setLive] = React.useState(null);
+  const [error, setError] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
+  const [selected, setSelected] = React.useState(() => modelRoute(pickedModel()));
+  const read = React.useCallback(() => {
+    const controller = new AbortController();
+    const s = window.__archhubSession || {};
+    setError('');
+    fetch('/api/universal/models', {signal:controller.signal,
+      headers:{'X-ArchHub-Session':s.token || '', 'X-ArchHub-CSRF':s.csrf || ''}})
+      .then(r => { if (!r.ok) throw new Error('Model catalogue unavailable'); return r.json(); })
+      .then(d => {
+        if (!d || d.ok === false || !Array.isArray(d.groups)) throw new Error('Model catalogue unavailable');
+        setLive(d);
+        const route = (typeof d.selected_route === 'string' && d.selected_route.trim()) ||
+          (typeof d.default_route === 'string' && d.default_route.trim()) || modelRoute(pickedModel());
+        setSelected(route);
+      })
+      .catch(failure => { if (!controller.signal.aborted) setError(failure.message || 'Model catalogue unavailable'); });
+    return () => controller.abort();
+  }, []);
+  React.useEffect(() => read(), [read]);
+  const options = (live?.groups || []).flatMap(group => group.items || [])
+    .filter(freeModelRoute)
+    .filter((item, index, all) => all.findIndex(other => modelRoute(other) === modelRoute(item)) === index);
+  const selectedItem = options.find(item => modelRoute(item) === selected) || pickedModel();
+  const localOptions = options.filter(item => modelRoute(item).startsWith('lmstudio/') || modelRoute(item).startsWith('ollama/'));
+  const save = async event => {
+    const route = event.target.value;
+    const item = options.find(row => modelRoute(row) === route);
+    if (!item || saving) return;
+    setSaving(true); setError('');
+    try {
+      const saved = await rememberComposerModel(item);
+      window.ARCHHUB_PICKED_MODEL = saved;
+      setSelected(modelRoute(saved));
+    } catch (failure) {
+      setError(failure?.message || 'The model selection could not be saved.');
+    } finally { setSaving(false); }
+  };
+  const selectStyle = { width:'100%', padding:'7px 10px', background:LM.bgDeep, color:LM.ink,
+    border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, fontFamily:LM.mono, fontSize:11.5 };
+  const rowStyle = { display:'grid', gridTemplateColumns:'1fr 1.25fr', gap:14, alignItems:'center',
+    padding:'10px 12px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, marginBottom:6 };
   return (
   <div>
-    <SHead title="Model routing" sub="Different jobs deserve different models. We pick by default, you can override."/>
-    {[
-      ['Reasoning · planning',     picked ? picked.name : '\u2014', picked ? ([picked.vendor, picked.tag].filter(Boolean).join(' \u00b7 ') || picked.routed || picked.route) : 'no model picked in the composer yet'],
-      ['Vision · sketch parsing',  '\u2014', routeless],
-      ['Long context (>100k)',     '\u2014', routeless],
-      ['Fast bulk · drafts',       '\u2014', routeless],
-      ['Embedding · skill search', '\u2014', routeless],
-      ['Local fallback (offline)', '\u2014', 'none \u00b7 a refused model is never swapped'],
-    ].map(([task, model, sub], i) => (
-      <div key={i} style={{
-        display:'grid', gridTemplateColumns:'1fr 1fr', gap:14, alignItems:'center',
-        padding:'10px 12px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, marginBottom:6,
-      }}>
+    <SHead title="Model routing" sub="Reasoning uses the model you choose here. Only free or local routes are listed."/>
+    <div style={rowStyle}>
         <div>
-          <div style={{ fontSize:13, fontWeight:500 }}>{task}</div>
-          <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, letterSpacing:'0.04em' }}>{sub}</div>
+          <div style={{ fontSize:13, fontWeight:500 }}>Reasoning · planning</div>
+          <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, letterSpacing:'0.04em' }}>
+            {selectedItem ? ([selectedItem.vendor, selectedItem.tag].filter(Boolean).join(' · ') || modelRoute(selectedItem)) : 'Choose a free model'}
+          </div>
         </div>
-        {/* A value, not a dropdown: the pick is made from the composer model chip and held in the
-            graph (Personal Settings composer_model); the other jobs have no route of their own. */}
-        <div title={i === 0 ? 'Pick the model from the composer model chip' : 'This job has no route of its own'} style={{
-          padding:'7px 11px', fontFamily:LM.mono, fontSize:11.5, textAlign:'left',
-          color: model === '—' ? LM.inkMuted : LM.ink,
-        }}>{model}</div>
+        <select aria-label="Reasoning model" value={options.some(item => modelRoute(item) === selected) ? selected : ''}
+          disabled={saving || options.length === 0} onChange={save} style={selectStyle}>
+          <option value="">{error || (!live ? 'Reading free models…' : 'Choose a free model')}</option>
+          {options.map(item => <option key={modelRoute(item)} value={modelRoute(item)}>{modelOptionLabel(item)}</option>)}
+        </select>
       </div>
-    ))}
+    {localOptions.length > 0 && <div style={rowStyle}>
+      <div>
+        <div style={{ fontSize:13, fontWeight:500 }}>Local fallback (offline)</div>
+        <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, letterSpacing:'0.04em' }}>Available local model routes</div>
+      </div>
+      <div style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkSoft, overflowWrap:'anywhere' }}>
+        {localOptions.map(item => modelRoute(item)).join(' · ')}
+      </div>
+    </div>}
+    <div role="status" style={{ padding:'9px 12px', fontFamily:LM.serif, fontStyle:'italic', fontSize:13, color:LM.inkSoft }}>
+      Other jobs use the reasoning model.
+    </div>
+    {error && <div role="alert" style={{ padding:'7px 12px', fontSize:12, color:LM.err }}>{error}</div>}
   </div>
   );
 };
@@ -5924,22 +5964,21 @@ const SettingsTheme = () => {
   const toggle = () => setEditAccent(!editAccent);
   return <div>
     <SHead title="Theme" sub="The themes this graph offers. A theme is listed only when it repaints every colour."/>
-    {/* One card per theme the graph offers (configuration.design_system.themes); nothing
-        the graph cannot paint is shown. Switching is not linked yet, so no card is pressable. */}
+    {/* One display card per theme the graph offers (configuration.design_system.themes). */}
     <div data-theme-cards style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10 }}>
       {(config?.design_system?.themes?.offered || []).map(({name, label}) => {
         const active = name === config.design_system.themes.active;
-        return <button key={name} data-theme={name} disabled aria-pressed={active}
-          title={active ? 'The theme the Studio draws' : 'Switching themes is not linked yet'} style={{
+        return <div key={name} data-theme={name} aria-current={active ? 'true' : undefined}
+          title={active ? 'The theme the Studio draws' : undefined} style={{
           padding:'12px 14px', background:LM.bg, border:`1px solid ${active?LM.accent:LM.line}`,
-          borderRadius:7, textAlign:'left', cursor:'default', color:LM.ink, fontFamily:LM.sans,
+          borderRadius:7, textAlign:'left', color:LM.ink, fontFamily:LM.sans,
         }}>
           <div style={{ display:'flex', gap:LM.sp.xs, marginBottom:LM.sp.sm }}>
             <div style={{ flex:1, height:36, background:active ? LM.bg : LM.bgSoft, borderRadius:4, border:`1px solid ${LM.lineSoft}` }}/>
           </div>
           <div style={{ fontSize:13, fontWeight:500, textTransform:'capitalize' }}>{name}</div>
           <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2 }}>{label}{active ? ' · active' : ''}</div>
-        </button>;
+        </div>;
       })}
       {!config?.design_system?.themes && <div style={{ gridColumn:'1 / -1', fontSize:11.5, color:LM.inkMuted }}>Personal Settings not read</div>}
     </div>

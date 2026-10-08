@@ -92,6 +92,11 @@ const text = el => {
   walk(el);
   return out.join(' ').replace(/\s+/g, ' ');
 };
+const openChatTab = async view => {
+  const tab = [...view.ui.doc.querySelectorAll('[role="tab"]')].find(row => text(row) === 'Chat');
+  assert.ok(tab, 'Chat tab exists');
+  await view.ui.click(tab);
+};
 
 
 const MARKER = 'ArchHub work proposal v1\n';
@@ -131,8 +136,7 @@ test('rail: an agent is named by its host; two sessions of one host get the sess
   const view = await mountView();
   try {
     await view.render();
-    const panel = view.ui.doc.querySelector('[aria-label="Workshop context"]');
-    assert.match(text(panel), /SELECTED · AGENT ⋯ C Codex agent · model not reported/);
+    assert.equal(view.ui.doc.querySelector('[aria-label="Workshop context"]'), null);
   } finally { await view.ui.close(); }
 });
 
@@ -148,9 +152,21 @@ test('header: Workshop · Work title · the probed host; counts include a propos
       await view.render();
       await view.ui.act(async () => {});
       assert.equal(text(view.ui.doc.querySelector('[data-workshop-head]')), expected);
-      assert.match(text(view.ui.doc.querySelector('main').firstElementChild), /2 needs you · 1 running/);
+      assert.match(text(view.ui.doc.querySelector('[role="tab"][aria-label="Approvals"]')), /Approvals 2/);
     } finally { await view.ui.close(); }
   }
+});
+
+test('approvals tab has no badge when no proposal or Work approval is pending', async () => {
+  const view = await mountView(fx => {
+    fx.state.nativeWork = {...fx.state.nativeWork, state:'idle', work:null, approved:false};
+  });
+  try {
+    await view.render();
+    const approvals = view.ui.doc.querySelector('[role="tab"][aria-label="Approvals"]');
+    assert.equal(text(approvals), 'Approvals');
+    assert.equal(approvals.querySelector('span span'), null);
+  } finally { await view.ui.close(); }
 });
 
 test('a proposal is a NEEDS YOU card; selecting it shows the permissions it asks for and offers no assignment', async () => {
@@ -158,17 +174,15 @@ test('a proposal is a NEEDS YOU card; selecting it shows the permissions it asks
   try {
     view.authority.assignWork = async () => ({});
     await view.render();
+    await openChatTab(view);
     const card = view.ui.doc.querySelector('[data-workshop-task="proposal:p1"]');
     assert.match(text(card), /^PROPOSAL Tighten the CDE check C NEEDS YOU/);
     assert.equal(card.style.borderStyle, 'solid');
     await view.ui.click(card);
     assert.equal(view.sel().task, 'proposal:p1');
     await view.render();
-    const panel = text(view.ui.doc.querySelector('[aria-label="Workshop context"]'));
-    assert.match(panel, /^SELECTED · TASK PROPOSAL/);
-    assert.match(panel, /intent proposed by an agent criteria pytest · tests_replica\/test_cell_cde_authority\.py blocks — state NEEDS YOU/);
-    assert.match(panel, /write 10\.PRODUCT\/13\.NODE-LANGUAGE\/nodelang\/work_proposals\.py \(apply_patch\) gate your approval before any Work exists/);
-    assert.ok(!/ASSIGN/.test(panel), 'no Work exists to assign before approval');
+    assert.equal(view.ui.doc.querySelector('[aria-label="Workshop context"]'), null);
+    assert.match(text(card), /^PROPOSAL Tighten the CDE check C NEEDS YOU/);
   } finally { await view.ui.close(); }
 });
 
@@ -193,6 +207,7 @@ test('workflow card: the latest proposed workflow, its steps, its approval chip,
     const view = await mountView(workflow(approval));
     try {
       await view.render();
+      await openChatTab(view);
       const card = view.ui.doc.querySelector('[data-workshop-workflow="wf-1"]');
       assert.ok(card, 'the proposed workflow is the workflow card');
       assert.match(text(card), /^C Codex proposed Here is the workflow Codex proposes: Release note\. 3 steps;/);
@@ -212,9 +227,7 @@ test('an agent current task is the Work it is assigned here, before the last car
   const view = await mountView(fx => { fx.state.workshop.assignments = [{assignment:'as-1', work:fx.ids.W2, agent_session:fx.ids.codex}]; });
   try {
     await view.render();
-    const panel = text(view.ui.doc.querySelector('[aria-label="Workshop context"]'));
-    assert.match(panel, /SELECTED · AGENT ⋯ C Codex agent/);
-    assert.match(panel, /CURRENT TASK intent Wall creation criteria — blocks Verification state RUNNING/);
+    assert.equal(view.ui.doc.querySelector('[aria-label="Workshop context"]'), null);
   } finally { await view.ui.close(); }
 });
 

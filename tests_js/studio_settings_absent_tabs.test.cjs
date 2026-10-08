@@ -103,8 +103,8 @@ test('the shipped Settings dialog draws the brain strata with real facts and an 
     const teamPanel = sidebar.nextElementSibling;
     assert.ok([...teamPanel.querySelectorAll('[role="status"]')].some(node => node.textContent.trim() === TEAM_STATUS));
     const controls = [...teamPanel.querySelectorAll('button')];
-    assert.deepEqual(controls.map(button => button.textContent), ['invite a teammate', 'set seat count', 'transfer ownership', 'leave firm']);
-    assert.ok(controls.every(button => button.disabled), 'no Team control acts without a firm');
+    // Founder 2026-10-08: no dead controls. Without a firm, Team draws its status and no disabled buttons.
+    assert.deepEqual(controls.map(button => button.textContent), []);
     for (const seeded of SEEDED) assert.equal(win.document.body.textContent.includes(seeded), false, `no ${JSON.stringify(seeded)} on screen`);
   } finally {
     if (win.__studioRoot) win.ReactDOM.flushSync(() => win.__studioRoot.unmount());

@@ -128,10 +128,10 @@ test('Theme: only the offered themes are cards, the active one is marked, and th
   const s = await openSettings();
   try {
     const panel = await s.tab('Theme');
-    const cards = [...panel.querySelectorAll('[data-theme-cards] button[data-theme]')];
+    const cards = [...panel.querySelectorAll('[data-theme-cards] [data-theme]')];
     assert.deepEqual(cards.map(card => card.dataset.theme), ['forge'], 'one card per offered theme');
-    assert.equal(cards[0].getAttribute('aria-pressed'), 'true', 'the active theme is marked');
-    assert.equal(cards[0].disabled, true, 'no switch route exists yet, so no card is pressable');
+    assert.equal(cards[0].getAttribute('aria-current'), 'true', 'the active theme is marked');
+    assert.equal(cards[0].tagName, 'DIV', 'no switch route exists yet, so a card is display-only, never a dead button (founder 2026-10-08)');
     assert.ok(cards[0].textContent.includes('Default dark warm surface · active'));
     for (const name of ['System', 'Light']) {
       assert.equal([...panel.querySelectorAll('button')].some(button => button.textContent.startsWith(name)), false,

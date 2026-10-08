@@ -22,8 +22,9 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
  if(!path.isAbsolute(command)||!Array.isArray(args)||args.some(a=>typeof a!=='string'))fail('trusted native gate command required');
  if(!object(expectedSessions)||Object.keys(expectedSessions).length>128||Object.entries(expectedSessions).some(([session,actor])=>
     !/^ses_[A-Za-z0-9]+$/.test(session)||typeof actor!=='string'||!/^app:agent-session:runtime:[a-f0-9]{32}$/.test(actor)))fail('exact recovery session identities required');
- // Quarantine keeps the exact actor and any release ack; only reconciliation
- // against the owner's actual custody lifts it. Never cleared blindly.
+ // Quarantine keeps the exact actor, delivery state and any release ack. If no
+ // actor was ever recorded and no request reached admission, nothing exists in
+ // the graph to reconcile, so the next call may enroll a fresh owner.
  const workers=new Map(),lineages=new Map(),queues=new Map(),quarantined=new Map(),probes=new Map();
  if(!object(laneFolders)||Object.keys(laneFolders).length>128||Object.entries(laneFolders).some(([session,lane])=>
     !/^ses_[A-Za-z0-9]+$/.test(session)||typeof lane!=='string'||!path.isAbsolute(lane)||lane.length>1024||lane.includes('\0')))fail('trusted lane folders required');
@@ -48,8 +49,11 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
      typeof event.cwd!=='string'||!path.isAbsolute(event.cwd)||typeof event.tool_use_id!=='string'||
      !event.tool_use_id||event.tool_use_id.length>256)notDelivered('native input identity is invalid');
   const held=quarantined.get(event.session_id);
-  if(held&&!held.actor&&!held.ack)notDelivered('native session quarantined; no duplicate enrollment; reconcile no recorded graph actor; coordinator: '+coordinator(event.session_id,null));
-  if(held)return reconcile(event.session_id).then(verdict=>{
+  if(held&&!held.actor&&!held.ack&&!held.delivered){
+   quarantined.delete(event.session_id);
+   probes.delete(event.session_id);
+  }else if(held&&!held.actor&&!held.ack)notDelivered('native session quarantined; no duplicate enrollment; reconcile no recorded graph actor; coordinator: '+coordinator(event.session_id,null));
+  else if(held)return reconcile(event.session_id).then(verdict=>{
    if(verdict.outcome==='unknown')notDelivered('native session quarantined; no duplicate enrollment; reconcile '+verdict.reason+'; coordinator: '+verdict.command);
    return dispatch(event);
   });
@@ -87,7 +91,10 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
      state.closed?.resolve();
     }else{
      abort('native owner closed without confirmed release');
-     quarantined.set(event.session_id,{actor:state.actor||lineages.get(event.session_id)||null,cwd:state.cwd,
+     if(!state.actor&&!lineages.get(event.session_id)&&(state.preAdmissionRefused||state.inputUndelivered)&&!state.pending&&!state.notDelivered&&!state.deliveryUncertain){
+      probes.delete(event.session_id);
+     }else quarantined.set(event.session_id,{actor:state.actor||lineages.get(event.session_id)||null,cwd:state.cwd,
+      delivered:!!(state.actor||state.lastCompleted||state.released||state.deliveryUncertain),
       ack:state.released?.released===true&&!state.notDelivered?state.released:null});
      workers.delete(event.session_id);
      state.closed?.reject(new Error('native release uncertain'));
@@ -127,7 +134,7 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
      // exist, so this is a clean denial with its reason. Every other error keeps
      // custody (abort) below; an invalid or missing decision is a protocol failure.
      const why=[reply.error,reply.reason].filter(v=>typeof v==='string'&&v).join(': ');
-     clearTimeout(held.timer);state.pending=null;state.lastCompleted=held.id;
+     clearTimeout(held.timer);state.pending=null;state.lastCompleted=held.id;state.deliveryUncertain=false;state.preAdmissionRefused=true;
      if(lineages.get(event.session_id)){
       // A continuation that never bound is not retried by this worker. Retire it:
       // its exit is reconciled against the owner's custody before a fresh worker.
@@ -166,7 +173,14 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
    // late reply is absorbed below; every tool call keeps the 30 s abort.
    state.pending={id,call:event.tool_use_id,resolve,reject,stop,timer:setTimeout(()=>{
     if(stop)resolve({allow:true,toolOutput:'{}'});else state.abort('native gate timeout');},stop?10000:30000)};
-   state.child.stdin.write(payload);
+   setTimeout(()=>{
+    if(state.failed||state.pending?.id!==id)return;
+    try{
+     if(!state.child.stdin.writable)throw new Error('native gate input unavailable');
+     state.child.stdin.write(payload);
+     state.deliveryUncertain=true;
+    }catch(_){state.inputUndelivered=true;state.abort('native gate input failed');}
+   },0);
   });
  };
  const coordinator=(session,actor)=>[command,...args,'--reconcile-status',session,actor||'<actor>'].join(' ');

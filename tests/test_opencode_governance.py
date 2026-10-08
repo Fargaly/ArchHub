@@ -226,7 +226,7 @@ def test_persistent_native_gate_child_is_reused_and_never_retried(tmp_path,mode)
         "readline.createInterface({input:process.stdin}).on('line',line=>{"+
         "const r=JSON.parse(line);if(r.command==='release'){console.log(JSON.stringify({kind:'released',released:true,last_request_id:last,agent_session:actor,release_id:'a'.repeat(32),session_id:r.session_id}));process.exit(0);return;}last=r.request_id;"+
         "fs.appendFileSync("+json.dumps(str(log))+",JSON.stringify({pid:process.pid,session:r.event.session_id})+'\\n');"+
-        ("process.exit(3);" if mode=="nonzero" else "console.log('bad-json');process.exit(0);" if mode=="malformed" else
+        ("process.stderr.write('accepted\\n');process.exit(3);" if mode=="nonzero" else "console.log('bad-json');process.exit(0);" if mode=="malformed" else
          "console.log(JSON.stringify({agent_session:actor,continued:true,request_id:r.request_id,session_id:"+("'ses_wrong'" if mode=="foreign" else "r.event.session_id")+",tool_use_id:r.event.tool_use_id,decision:'allow'}));"+("process.exit(0);" if mode=="foreign" else ""))+"});",encoding="utf-8")
     code=("import assert from 'node:assert/strict';import {createNativeGateRunner} from "+json.dumps(module)+";"+
         "const run=createNativeGateRunner(process.execPath,["+json.dumps(str(worker))+"]);"+
@@ -295,20 +295,189 @@ await run.close();
     assert result.returncode==0,result.stderr
 
 
-def test_confirmed_crashes_free_live_slots_but_quarantine_exact_sessions(tmp_path):
+def test_actorless_owner_close_allows_fresh_enrollment(tmp_path):
     module=(Path(__file__).resolve().parents[1]/"nodelang/session_link/opencode-governance.mjs").as_uri()
-    worker=tmp_path/'crash-worker.mjs'
+    worker=tmp_path/'crash-then-allow-worker.mjs'
+    marker=tmp_path/'first-done'
+    worker.write_text('''import fs from 'node:fs';import readline from 'node:readline';
+const actor='app:agent-session:runtime:'+'a'.repeat(32);
+if(!fs.existsSync(MARKER)){
+ fs.writeFileSync(MARKER,'1');
+ process.exit(3);
+}else{
+ let last=null;
+ readline.createInterface({input:process.stdin}).on('line',line=>{
+  const r=JSON.parse(line),e=r.event;
+  if(r.command==='release'){
+   console.log(JSON.stringify({kind:'released',released:true,last_request_id:last,
+    session_id:r.session_id,agent_session:actor,release_id:'a'.repeat(32)}));
+   process.exit(0);return;
+  }
+  last=r.request_id;
+  console.log(JSON.stringify({request_id:r.request_id,session_id:e.session_id,tool_use_id:e.tool_use_id,
+   decision:'allow',agent_session:actor,continued:true}));
+ });
+}'''.replace('MARKER',json.dumps(str(marker))),encoding='utf-8')
+    code='''import assert from 'node:assert/strict';import {createNativeGateRunner} from MODULE;
+const run=createNativeGateRunner(process.execPath,[WORKER]);
+const event={session_id:'ses_crash',cwd:process.cwd(),tool_use_id:'a'};
+await assert.rejects(run(event),/retained outcome requires reconciliation|native release uncertain|prior native request unresolved/);
+await new Promise(resolve=>setTimeout(resolve,30));
+assert.throws(()=>run({...event,tool_use_id:'fresh'}),/quarantined; no duplicate enrollment; reconcile no recorded graph actor.*tool not delivered/);
+await run.close().catch(()=>{});
+'''.replace('MODULE',json.dumps(module)).replace('WORKER',json.dumps(str(worker)))
+    result=subprocess.run([shutil.which('node'),'--input-type=module'],input=code,text=True,capture_output=True,timeout=10)
+    assert result.returncode==0,result.stderr
+
+
+def test_explicit_owner_pre_admission_refusal_clears_for_fresh_enrollment(tmp_path):
+    module=(Path(__file__).resolve().parents[1]/"nodelang/session_link/opencode-governance.mjs").as_uri()
+    worker=tmp_path/'refuse-then-allow-worker.mjs'
+    marker=tmp_path/'refused'
+    worker.write_text('''import fs from 'node:fs';import readline from 'node:readline';
+const actor='app:agent-session:runtime:'+'a'.repeat(32);
+let last=null;
+readline.createInterface({input:process.stdin}).on('line',line=>{
+ const r=JSON.parse(line),e=r.event;
+ if(r.command==='release'){
+  console.log(JSON.stringify({kind:'released',released:true,last_request_id:last,
+   session_id:r.session_id,agent_session:actor,release_id:'a'.repeat(32)}));
+  process.exit(0);return;
+ }
+ if(!fs.existsSync(MARKER)){
+  fs.writeFileSync(MARKER,'1');
+  console.log(JSON.stringify({request_id:r.request_id,session_id:e.session_id,tool_use_id:e.tool_use_id,
+   admitted:false,decision:'deny',error:'active persistent installed owner is required (stopped)'}));
+  setTimeout(()=>process.exit(3),20);return;
+ }
+ last=r.request_id;
+ console.log(JSON.stringify({request_id:r.request_id,session_id:e.session_id,tool_use_id:e.tool_use_id,
+  decision:'allow',agent_session:actor,continued:true}));
+});'''.replace('MARKER',json.dumps(str(marker))),encoding='utf-8')
+    code='''import assert from 'node:assert/strict';import {createNativeGateRunner} from MODULE;
+const run=createNativeGateRunner(process.execPath,[WORKER]);
+const event={session_id:'ses_denied',cwd:process.cwd(),tool_use_id:'a'};
+assert.equal((await run(event)).allow,false);
+await new Promise(resolve=>setTimeout(resolve,80));
+assert.equal((await run({...event,tool_use_id:'fresh'})).allow,true);
+await run.close();
+'''.replace('MODULE',json.dumps(module)).replace('WORKER',json.dumps(str(worker)))
+    result=subprocess.run([shutil.which('node'),'--input-type=module'],input=code,text=True,capture_output=True,timeout=10)
+    assert result.returncode==0,result.stderr
+
+
+def test_expected_actor_pre_admission_refusal_reconciles_not_fresh(tmp_path):
+    module=(Path(__file__).resolve().parents[1]/"nodelang/session_link/opencode-governance.mjs").as_uri()
+    worker=tmp_path/'expected-refusal-worker.mjs'
+    log=tmp_path/'spawns.jsonl'
+    actor='app:agent-session:runtime:'+'a'*32
+    worker.write_text('''import fs from 'node:fs';import readline from 'node:readline';
+fs.appendFileSync(LOG,JSON.stringify({argv:process.argv.slice(2),expected:process.env.ARCHHUB_EXPECTED_AGENT_SESSION||''})+'\\n');
+if(process.argv.includes('--reconcile')){
+ console.log(JSON.stringify({kind:'reconciled',session_id:process.env.OPENCODE_SESSION_ID,
+  agent_session:process.env.ARCHHUB_EXPECTED_AGENT_SESSION,outcome:'unknown',reason:'owner binding still retained'}));
+ process.exit(0);
+}
+readline.createInterface({input:process.stdin}).on('line',line=>{
+ const r=JSON.parse(line),e=r.event;
+ console.log(JSON.stringify({request_id:r.request_id,session_id:e.session_id,tool_use_id:e.tool_use_id,
+  admitted:false,decision:'deny',error:'active persistent installed owner is required (stopped)'}));
+ setTimeout(()=>process.exit(3),20);
+});'''.replace('LOG',json.dumps(str(log))),encoding='utf-8')
+    code='''import assert from 'node:assert/strict';import {createNativeGateRunner} from MODULE;
+const run=createNativeGateRunner(process.execPath,[WORKER],{expectedSessions:{ses_existing:ACTOR}});
+const event={session_id:'ses_existing',cwd:process.cwd(),tool_use_id:'a'};
+assert.equal((await run(event)).allow,false);
+await new Promise(resolve=>setTimeout(resolve,100));
+await assert.rejects(run({...event,tool_use_id:'fresh'}),/native session quarantined; no duplicate enrollment; reconcile owner binding still retained/);
+await run.close().catch(()=>{});
+'''.replace('MODULE',json.dumps(module)).replace('WORKER',json.dumps(str(worker))).replace('ACTOR',json.dumps(actor))
+    result=subprocess.run([shutil.which('node'),'--input-type=module'],input=code,text=True,capture_output=True,timeout=10)
+    assert result.returncode==0,result.stderr
+    spawns=[json.loads(line) for line in log.read_text(encoding='utf-8').splitlines()]
+    assert ['--reconcile' in s['argv'] for s in spawns] == [False, True]
+    assert all(s['expected'] == actor for s in spawns)
+
+
+def test_stdin_error_before_write_clears_for_fresh_enrollment():
+    module=(Path(__file__).resolve().parents[1]/"nodelang/session_link/opencode-governance.mjs").as_uri()
+    code='''import assert from 'node:assert/strict';import fs from 'node:fs';import {EventEmitter} from 'node:events';
+let spawns=0,writes=0;
+globalThis.__fakeSpawn=()=>{
+ spawns++;
+ const child=new EventEmitter();
+ child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.stdin=new EventEmitter();
+ if(spawns===1){
+  child.stdin.writable=false;
+  child.stdin.write=()=>{writes++;throw new Error('closed before write');};
+  setTimeout(()=>child.emit('close',3),20);
+ }else{
+  child.stdin.writable=true;
+  child.stdin.write=payload=>{
+   writes++;
+   const r=JSON.parse(String(payload).trim());
+   const actor='app:agent-session:runtime:'+'a'.repeat(32);
+   if(r.command==='release'){
+    child.stdout.emit('data',Buffer.from(JSON.stringify({kind:'released',released:true,last_request_id:'2',
+     session_id:r.session_id,agent_session:actor,release_id:'a'.repeat(32)})+'\\n'));
+    setTimeout(()=>child.emit('close',0),0);return;
+   }
+   const e=r.event;
+   child.stdout.emit('data',Buffer.from(JSON.stringify({request_id:r.request_id,session_id:e.session_id,
+    tool_use_id:e.tool_use_id,decision:'allow',agent_session:actor,continued:true})+'\\n'));
+  };
+ }
+ return child;
+};
+const source=fs.readFileSync(new URL(MODULE),'utf8').replace("import {spawn} from 'node:child_process';","const spawn=globalThis.__fakeSpawn;");
+const {createNativeGateRunner}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+const run=createNativeGateRunner(process.execPath,[]);
+const event={session_id:'ses_stdin',cwd:process.cwd(),tool_use_id:'a'};
+await assert.rejects(run(event),/native gate input failed|retained outcome requires reconciliation|native release uncertain/);
+await new Promise(resolve=>setTimeout(resolve,80));
+assert.equal((await run({...event,tool_use_id:'fresh'})).allow,true);
+assert.equal(spawns,2);assert.equal(writes,1);
+await run.close().catch(()=>{});
+'''.replace('MODULE',json.dumps(module))
+    result=subprocess.run([shutil.which('node'),'--input-type=module'],input=code,text=True,capture_output=True,timeout=10)
+    assert result.returncode==0,result.stderr
+
+
+def test_silent_consume_then_exit_stays_quarantined(tmp_path):
+    module=(Path(__file__).resolve().parents[1]/"nodelang/session_link/opencode-governance.mjs").as_uri()
+    worker=tmp_path/'silent-consume-worker.mjs'
     worker.write_text("process.stdin.once('data',()=>process.exit(3));",encoding='utf-8')
     code='''import assert from 'node:assert/strict';import {createNativeGateRunner} from MODULE;
 const run=createNativeGateRunner(process.execPath,[WORKER]);
-for(let i=0;i<6;i++){
- const event={session_id:'ses_crash'+i,cwd:process.cwd(),tool_use_id:'a'};
- await assert.rejects(run(event));
- await new Promise(resolve=>setTimeout(resolve,30));
- // No graph actor was ever confirmed: nothing to reconcile, no probe, no re-enrollment.
- assert.throws(()=>run(event),/quarantined; no duplicate enrollment; reconcile no recorded graph actor.*tool not delivered/);
-}
-await run.close();
+const event={session_id:'ses_silent',cwd:process.cwd(),tool_use_id:'a'};
+await assert.rejects(run(event),/retained outcome requires reconciliation|prior native request unresolved/);
+await new Promise(resolve=>setTimeout(resolve,80));
+assert.throws(()=>run({...event,tool_use_id:'fresh'}),/quarantined; no duplicate enrollment; reconcile no recorded graph actor.*tool not delivered/);
+await run.close().catch(()=>{});
+'''.replace('MODULE',json.dumps(module)).replace('WORKER',json.dumps(str(worker)))
+    result=subprocess.run([shutil.which('node'),'--input-type=module'],input=code,text=True,capture_output=True,timeout=10)
+    assert result.returncode==0,result.stderr
+
+
+def test_late_output_after_failure_does_not_clear_quarantine(tmp_path):
+    module=(Path(__file__).resolve().parents[1]/"nodelang/session_link/opencode-governance.mjs").as_uri()
+    worker=tmp_path/'late-output-worker.mjs'
+    worker.write_text('''process.stdin.once('data',()=>{
+ process.stdout.write('bad-json\\n');
+ setTimeout(()=>{
+  process.stdout.write(JSON.stringify({request_id:'1',session_id:'ses_late',tool_use_id:'a',decision:'allow',agent_session:'app:agent-session:runtime:'+'a'.repeat(32),continued:true})+'\\n');
+  process.exit(3);
+ },60);
+});
+''',encoding='utf-8')
+    code='''import assert from 'node:assert/strict';import {createNativeGateRunner} from MODULE;
+const run=createNativeGateRunner(process.execPath,[WORKER]);
+const event={session_id:'ses_late',cwd:process.cwd(),tool_use_id:'a'};
+const first=run(event);
+await assert.rejects(first,/invalid native UTF-8 JSON|retained outcome requires reconciliation|prior native request unresolved/);
+await new Promise(resolve=>setTimeout(resolve,300));
+assert.throws(()=>run({...event,tool_use_id:'fresh'}),/quarantined; no duplicate enrollment; reconcile no recorded graph actor.*tool not delivered/);
+await run.close().catch(()=>{});
 '''.replace('MODULE',json.dumps(module)).replace('WORKER',json.dumps(str(worker)))
     result=subprocess.run([shutil.which('node'),'--input-type=module'],input=code,text=True,capture_output=True,timeout=10)
     assert result.returncode==0,result.stderr

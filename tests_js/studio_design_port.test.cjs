@@ -103,7 +103,7 @@ const openCanvas = studio => {
   assert.ok(studio.doc.querySelector('.lm-node[data-node-id="work-a"]'), 'the canvas draws the projected Work node');
 };
 
-test('header: the design row ends at save as skill; three-segment switch, New session after the tabs, a model chip that draws only what it holds, unbound actions dashed', async () => {
+test('header: the design row has only working controls; three-segment switch, New session after the tabs, and a model chip that draws only what it holds', async () => {
   const studio = await mountStudio();
   try {
     const segmented = segmentedControl(studio);
@@ -116,8 +116,10 @@ test('header: the design row ends at save as skill; three-segment switch, New se
     // Founder, 2026-09-18: the update icons belong in the header, where he sees them.
     assert.ok(header.querySelector('section[aria-label="Application release updates"]'),
       'the release update icons close the header row');
-    assert.equal([...header.querySelectorAll('button')].some(button => button.textContent.trim() === 'save as skill'), true,
-      'save as skill is still drawn, before the update icons');
+    assert.equal([...header.querySelectorAll('button')].some(button => button.textContent.trim() === 'save as skill'), false,
+      'save as skill is not drawn without a binding');
+    assert.equal([...header.querySelectorAll('button')].some(button => button.textContent.trim() === 'fork'), false,
+      'fork is not drawn without a binding');
 
     const tab = [...header.querySelectorAll('span')].find(span => span.textContent === 'ArchHub');
     assert.ok(tab, 'the open graph tab is drawn from the projected session list');
@@ -133,16 +135,6 @@ test('header: the design row ends at save as skill; three-segment switch, New se
     assert.equal(chip.textContent.includes('\u25cf'), false, 'no latency dot without a measured latency: ' + chip.textContent);
     assert.equal(/\u00b7\s*(\u00b7|\u25be|$)/.test(chip.textContent), false, 'no dangling separator: ' + chip.textContent);
     assert.match(chip.textContent, /No (provider|model) selected/, 'the vendor line keeps what the chip does hold');
-
-    for (const label of ['fork', 'save as skill']) {
-      const [button] = studio.buttons(label, header);
-      assert.ok(button, label + ' is drawn with its design label (design studio-lm.jsx:1147-1148)');
-      assert.equal(button.disabled, true, label + ' has no binding in this build, so it is disabled');
-      assert.match(button.title || '', /not available/i, label + ' says why');
-      assert.equal(button.style.borderStyle, 'dashed', label + ' is disabled with a dashed border');
-      assert.equal(button.style.opacity, '', label + ' is disabled without alpha');
-      assert.equal(button.style.backgroundColor, 'transparent', label + ' is not drawn as a filled primary while disabled');
-    }
 
     // The conversation menu is drawn only while a Workshop conversation is open, beside the switch, never inside it.
     const jsx = read('nodelang/studio/studio-lm.jsx');

@@ -24,7 +24,7 @@ const PROVIDERS = [
   {id:'ollama', name:'Ollama', state:'not running', source:'127.0.0.1:11434', sets:''},
 ];
 
-async function openSettings({account = null} = {}) {
+async function openSettings({account = null, socialAccounts = [], socialApprovals = [], linkedInAppSaved = false} = {}) {
   const manifest = JSON.parse(read('nodelang/studio/compiled/manifest.json'));
   for (const source of ['studio-lm.jsx', 'studio-account.jsx']) {
     const held = manifest.files.find(file => file.source === source);
@@ -38,7 +38,8 @@ async function openSettings({account = null} = {}) {
   win.ARCHHUB_THEME = {...seed};
   win.matchMedia = () => ({matches:false, addEventListener() {}, removeEventListener() {}});
   if (account) win.localStorage.setItem('archhub.account.v1', JSON.stringify(account));
-  const calls = {edit:[], providers:0, watch:0};
+  const calls = {edit:[], providers:0, watch:0, socialRemovals:[], linkedInAppSaves:[], linkedInStarts:0};
+  let heldSocialAccounts = socialAccounts.map(row => ({...row}));
   win.prompt = () => 'Rewritten fact.';
   win.ARCHHUB_BRAIN_EDIT = async (id, text) => { calls.edit.push([id, text]); return {ok:true}; };
   win.ARCHHUB_BRAIN_FORGET = async () => ({ok:true});
@@ -54,6 +55,29 @@ async function openSettings({account = null} = {}) {
     subscribe:listener => { listeners.add(listener); return () => listeners.delete(listener); },
     readProviders:async () => { calls.providers += 1; return PROVIDERS.map(row => ({...row})); },
     saveProviderKey:async () => ({ok:true}),
+    listLocalSocialAccounts:async () => heldSocialAccounts.map(row => ({...row})),
+    removeLocalSocialAccount:async body => {
+      calls.socialRemovals.push({...body});
+      heldSocialAccounts = heldSocialAccounts.filter(row =>
+        row.provider !== body.provider || row.account_id !== body.account_id || row.vault_entry !== body.vault_entry);
+      return {ok:true, ...body, state:'removed', provider_token_revoked:false, graph_reference_retained:true};
+    },
+    listSocialApprovals:async () => socialApprovals.map(row => ({...row})),
+    decideSocialApproval:async ({delegation, input_digest, decision}) => ({
+      ok:true, delegation, input_digest, decision:decision === 'approve' ? 'approved' : 'denied'}),
+    linkedInAppStatus:async () => linkedInAppSaved ? {ok:true, state:'saved', client_id:'86abc123xyz'} : {ok:true, state:'missing'},
+    saveLinkedInApp:async body => {
+      calls.linkedInAppSaves.push({...body});
+      linkedInAppSaved = true;
+      return {ok:true, client_id:body.client_id};
+    },
+    startLinkedInSignIn:async () => {
+      calls.linkedInStarts += 1;
+      return {ok:true, phase:'waiting', redirect_uri:'http://127.0.0.1:48720/linkedin/callback'};
+    },
+    cancelLinkedInSignIn:async () => ({ok:true, phase:'cancelled'}),
+    linkedInSignInStatus:async () => ({ok:true, phase:'waiting'}),
+    finishLinkedInSignIn:async () => ({ok:true, account_id:'urn:li:person:founder', vault_entry:'social-linkedin-founder'}),
     watchApplicationUpdate:() => { calls.watch += 1; return () => {}; },
     refreshApplicationUpdate:async () => {}, applicationUpdateAction:async () => {},
     refreshTheme:async () => {}, previewThemeToken:async () => {}, restoreThemeRevision:async () => {}, setBaboomStartup:async () => {},
@@ -109,8 +133,9 @@ test('Providers draws the registry in the design rows: masked key, state pill, m
     assert.equal(!!panel.querySelector('input[aria-label="OpenRouter API key"]'), false, 'no key form sits beside the drawn list');
     assert.equal(!!panel.querySelector('details'), false, 'no disclosure widget outside the design affordances');
     const text = panel.textContent;
-    assert.ok(text.includes('\u2022'.repeat(12) + ' \u00b7 key from the secrets store'), 'a keyed row draws a masked key slot');
-    assert.ok(text.includes('no key \u00b7 set ARCHHUB_CLOUD_TOKEN') && text.includes('127.0.0.1:1234 \u00b7 local runtime'));
+    assert.ok(text.includes('Key saved on this machine'), 'a keyed row states the saved key without exposing it');
+    assert.ok(text.includes('Sign in to use ArchHub cloud') && text.includes('Local runtime is running'));
+    assert.equal(/ARCHHUB_CLOUD_TOKEN|127\.0\.0\.1|:\d{3,5}/.test(text), false, 'provider rows hide env vars and ports');
     assert.deepEqual([...panel.querySelectorAll('button[aria-expanded]')].slice(0, 4).map(button => button.textContent), ['manage', 'connect', 'manage', 'connect']);
     s.flush(() => s.buttons(panel, 'manage')[0].click());
     assert.ok(panel.querySelector('input[aria-label="OpenRouter API key"]'), 'OpenRouter manage opens the key form');
@@ -118,7 +143,90 @@ test('Providers draws the registry in the design rows: masked key, state pill, m
     const social = [...panel.querySelectorAll('button')].find(button => button.textContent.includes('Social account credentials'));
     assert.ok(social, 'social credentials sit behind the design dashed affordance');
     s.flush(() => social.click());
-    assert.ok(panel.querySelector('input[name="vault_entry"]'), 'the social credential form opens from it');
+    assert.ok(panel.querySelector('input[name="client_id"]'), 'LinkedIn shows app setup before OAuth connect');
+    assert.ok(s.buttons(panel, 'Save LinkedIn app').length === 1, 'LinkedIn app setup saves through Settings');
+    assert.ok(s.buttons(panel, 'Connect Facebook / Instagram').length === 1, 'Meta connects through an OAuth button');
+    assert.equal(!!panel.querySelector('input[name="token"]'), false, 'no raw access-token field is shown');
+  } finally { s.close(); }
+});
+
+test('Social account credentials render stored accounts and disconnect by exact saved identity', async () => {
+  const s = await openSettings({socialAccounts:[
+    {provider:'linkedin', account_id:'urn:li:person:founder', vault_entry:'social-linkedin-founder', account_binding:'provider-verified'},
+    {provider:'meta', account_id:'112233445566778', vault_entry:'social-meta-page-112233445566778', account_binding:'provider-verified'},
+    {provider:'meta', account_id:'17841412345678901', vault_entry:'social-meta-ig-17841412345678901', account_binding:'provider-verified'},
+    {provider:'meta', account_id:'meta:user:older', vault_entry:'social-meta-legacy', account_binding:'operator-declared'},
+  ]});
+  try {
+    const panel = await s.tab('Providers');
+    s.flush(() => [...panel.querySelectorAll('button')].find(button => button.textContent.includes('Social account credentials')).click());
+    await s.settle();
+    assert.ok(panel.textContent.includes('Connected accounts'), 'stored credentials have a visible list');
+    for (const label of ['LinkedIn', 'Facebook Page', 'Instagram', 'Meta']) {
+      assert.ok(panel.textContent.includes(label), label + ' account row is shown');
+    }
+    const buttons = [...panel.querySelectorAll('button')].filter(button => button.textContent.trim() === 'Disconnect');
+    assert.equal(buttons.length, 4, 'one Disconnect per stored account');
+    s.flush(() => buttons[2].click());
+    await s.settle();
+    assert.deepEqual(s.calls.socialRemovals, [{
+      provider:'meta',
+      account_id:'17841412345678901',
+      vault_entry:'social-meta-ig-17841412345678901',
+    }]);
+  } finally { s.close(); }
+});
+
+test('Social account credentials show LinkedIn app setup before a LinkedIn app is saved', async () => {
+  const s = await openSettings({linkedInAppSaved:false});
+  try {
+    const panel = await s.tab('Providers');
+    s.flush(() => [...panel.querySelectorAll('button')].find(button => button.textContent.includes('Social account credentials')).click());
+    await s.settle();
+    assert.equal(s.buttons(panel, 'Connect LinkedIn').length, 0, 'LinkedIn connect waits for the saved app');
+    assert.ok(panel.querySelector('input[name="client_id"]'), 'LinkedIn Client ID field is shown');
+    assert.ok(panel.querySelector('input[name="client_secret"]'), 'LinkedIn Client Secret field is shown');
+    const id = panel.querySelector('input[name="client_id"]');
+    const secret = panel.querySelector('input[name="client_secret"]');
+    s.flush(() => { id.value = '86abc123xyz'; secret.value = 'secret-value-1'; });
+    s.flush(() => s.buttons(panel, 'Save LinkedIn app')[0].click());
+    await s.settle();
+    assert.deepEqual(s.calls.linkedInAppSaves, [{client_id:'86abc123xyz', client_secret:'secret-value-1'}]);
+  } finally { s.close(); }
+});
+
+test('Social account credentials connect LinkedIn after a LinkedIn app is saved', async () => {
+  const s = await openSettings({linkedInAppSaved:true});
+  try {
+    const panel = await s.tab('Providers');
+    s.flush(() => [...panel.querySelectorAll('button')].find(button => button.textContent.includes('Social account credentials')).click());
+    await s.settle();
+    assert.equal(!!panel.querySelector('input[name="client_id"]'), false, 'saved LinkedIn app hides setup fields');
+    const connect = s.buttons(panel, 'Connect LinkedIn');
+    assert.equal(connect.length, 1, 'saved LinkedIn app exposes connect');
+    s.flush(() => connect[0].click());
+    await s.settle();
+    assert.equal(s.calls.linkedInStarts, 1);
+  } finally { s.close(); }
+});
+
+test('Social approval account confirmation names the provider being approved', async () => {
+  const approvals = [
+    {delegation:'app:baboom-connector-delegation:li', work:'w1', operation:'linkedin.post', account_id:'urn:li:person:founder',
+      input_digest:'d1', review_text:'LinkedIn post', expires_at:9999999999, account_binding:'provider-verified'},
+    {delegation:'app:baboom-connector-delegation:fb', work:'w2', operation:'facebook.page_post', account_id:'112233445566778',
+      input_digest:'d2', review_text:'Facebook post', expires_at:9999999999, account_binding:'provider-verified'},
+    {delegation:'app:baboom-connector-delegation:ig', work:'w3', operation:'instagram.media_publish', account_id:'17841412345678901',
+      input_digest:'d3', review_text:'Instagram post', expires_at:9999999999, account_binding:'provider-verified'},
+  ];
+  const s = await openSettings({socialApprovals:approvals});
+  try {
+    const panel = await s.tab('Providers');
+    s.flush(() => [...panel.querySelectorAll('button')].find(button => button.textContent.includes('Social account credentials')).click());
+    await s.settle();
+    for (const label of ['account confirmed by LinkedIn', 'account confirmed by Facebook', 'account confirmed by Instagram']) {
+      assert.ok(panel.textContent.includes(label), label);
+    }
   } finally { s.close(); }
 });
 
@@ -142,7 +250,7 @@ test('Theme: only the offered themes are cards, the active one is marked, and th
     assert.ok(panel.textContent.includes(seed.accent + ' · saved in Personal Settings'), 'the accent row states the saved accent');
     s.flush(() => s.buttons(panel, 'change')[0].click());
     assert.ok(panel.querySelector('[aria-label="Refresh Personal Settings"]'), 'change opens the saved-theme editor');
-    assert.ok(s.buttons(panel, 'Save accent').length === 1 && panel.querySelector('input[aria-label="Accent hex colour"]'));
+    assert.ok(s.buttons(panel, 'Apply accent').length === 1 && panel.querySelector('input[aria-label="Accent hex colour"]'));
   } finally { s.close(); }
 });
 

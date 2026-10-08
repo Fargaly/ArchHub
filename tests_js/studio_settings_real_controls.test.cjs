@@ -104,7 +104,8 @@ test("Account: cloud publish consent is a real control; no cap, meter or sync fo
     for (const gone of ["HARD CAP", "runs stop at the cap", "THIS CYCLE", "Choose sync folder", "~/ArchHub/brain"]) {
       assert.equal(panel.textContent.includes(gone), false, "no " + gone);
     }
-    assert.match(panel.textContent, /Model spend is not measured on this machine and no spend cap is enforced\./);
+    assert.equal(panel.textContent.includes("Model spend is not measured"), false, "spend paragraph is not shown");
+    assert.match(panel.textContent, /Brain accessLOCALPrivate on this machine/);
     const consent = panel.querySelector("[role=\"switch\"][aria-label=\"Publish this machine map to the cloud\"]");
     assert.ok(consent, "the consent switch is drawn");
     assert.equal(consent.getAttribute("aria-checked"), "false");

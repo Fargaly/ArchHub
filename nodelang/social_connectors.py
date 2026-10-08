@@ -51,6 +51,7 @@ OPERATIONS = {
 }
 
 _GRAPH_ID = re.compile(r"[0-9]{1,32}(?:_[0-9]{1,32})?")
+_META_USER = re.compile(r"meta:user:[0-9]{1,32}")
 _LINKEDIN_PERSON = re.compile(r"urn:li:person:[A-Za-z0-9_-]{1,64}")
 _LINKEDIN_MEMBER = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _LINKEDIN_POST = re.compile(r"urn:li:(?:share|ugcPost|activity):[0-9]{1,32}")
@@ -395,7 +396,11 @@ def _page_id(binding: object) -> str:
 
 def prepare_facebook_pages(binding: AccountBinding) -> PreparedRequest:
     """Pages the bound Meta user manages. The request never asks for tokens."""
-    user_id = _graph_id(getattr(binding, "account_id", None), "Meta user id")
+    account_id = getattr(binding, "account_id", None)
+    if isinstance(account_id, str) and _META_USER.fullmatch(account_id):
+        user_id = account_id.rsplit(":", 1)[1]
+    else:
+        user_id = _graph_id(account_id, "Meta user id")
     query = urllib.parse.urlencode({"fields": "id,name,category,tasks", "limit": str(MAX_COUNT)})
     return _prepare(binding, "facebook.pages", GRAPH_API + "/%s/accounts?%s" % (user_id, query))
 

@@ -80,9 +80,9 @@ test('a pending start-up check offers no change, is read again, and opens change
     await ui.settle();
     ui.typePath('D:\\Clients\\alpha');
     await ui.settle();
-    assert.equal(ui.button('Add').disabled, true, 'Add stays off while the check is pending');
+    assert.equal(ui.button('Add'), undefined, 'Add is not shown while the check is pending');
     assert.equal(ui.button('Republish'), undefined, 'no Republish while the first check is pending');
-    ui.click(ui.button('Add'));
+    assert.equal(ui.button('Add'), undefined, 'no hidden Add route while the check is pending');
     await ui.settle();
     assert.deepEqual(ui.requests.map(item => item.action), ['list'], 'a pending check sends no change');
     await ui.settle(3400);
@@ -100,8 +100,8 @@ test('a failed first read offers Read again and no change until it succeeds', as
     assert.match(ui.doc.body.textContent, /The workspace registry was not read: registry unreachable/);
     ui.typePath('D:\\Clients\\beta');
     await ui.settle();
-    assert.equal(ui.button('Add').disabled, true, 'no change after a failed read');
-    ui.click(ui.button('Add'));
+    assert.equal(ui.button('Add'), undefined, 'no change after a failed read');
+    assert.equal(ui.button('Add'), undefined, 'no hidden Add route after a failed read');
     await ui.settle();
     assert.deepEqual(ui.requests.map(item => item.action), ['list']);
     ui.click(ui.button('Read again'));
@@ -119,7 +119,7 @@ test('a start-up match with a current mismatch pauses changes and offers Republi
     assert.match(alert, /does not match the graph \(start-up check: match; now: mismatch\)/);
     ui.typePath('D:\\Clients\\beta');
     await ui.settle();
-    assert.equal(ui.button('Add').disabled, true);
+    assert.equal(ui.button('Add'), undefined);
     assert.equal(ui.button('Remove').disabled, true);
     ui.click(ui.button('Remove'));
     await ui.settle();
@@ -137,7 +137,7 @@ test('nothing registered and a mismatch offers no Republish (there is nothing to
     await ui.settle();
     assert.match(ui.doc.body.textContent, /does not match the graph/);
     assert.equal(ui.button('Republish'), undefined);
-    assert.equal(ui.button('Add').disabled, true);
+    assert.equal(ui.button('Add'), undefined);
   } finally { ui.close(); }
 });
 

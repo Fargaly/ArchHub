@@ -746,10 +746,6 @@ const IconRail = ({ panel, setPanel, onHome, onSettings, onDocs }) => {
         </RailIcon>
       ))}
       <div style={{ flex:1 }}/>
-      {/* Share as drawn (design studio-lm.jsx:480-482). This build has no share action, so the icon is disabled and says so. */}
-      <RailIcon disabled title="Share · not available in this build">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>
-      </RailIcon>
       <RailIcon onClick={onDocs} title="Documentation · ⌘/">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 19.5V5a2 2 0 0 1 2-2h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6.5A2.5 2.5 0 0 1 4 18.5v1z"/><path d="M8 7h6M8 11h6"/></svg>
       </RailIcon>
@@ -783,9 +779,6 @@ const ChatsPanel = ({ openId, onOpen, onNew, account, onAccount }) => (
     <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:LM.sp.sm }}>
       <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, letterSpacing:'-0.005em', color:LM.ink }}>Chats</span>
       <div style={{ flex:1 }}/>
-      <button title="More" style={panelIconBtn()}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
-      </button>
       <button title="New chat" onClick={onNew} style={panelIconBtn()}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
       </button>
@@ -1041,9 +1034,6 @@ const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, ()
       <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Skills</span>
       <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>{LM_SAVED_SKILLS.length} SAVED</span>
       <div style={{ flex:1 }}/>
-      <button title="New skill" style={panelIconBtn()}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>
-      </button>
     </div>
     <div style={{ padding:'0 10px 8px' }}>
       <div style={{
@@ -1556,10 +1546,6 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
             <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
               <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.cyan, letterSpacing:'0.14em' }}>SYSTEM PROMPT</span>
               <div style={{ flex:1 }}/>
-              <button type="button" disabled title="Editing the system prompt is not available in this build" style={{
-                padding:0, background:'transparent', border:0, borderBottom:`1px dashed ${LM.line}`,
-                fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, cursor:'default',
-              }}>edit</button>
             </div>
             <div style={{ fontFamily:LM.serif, fontStyle:'italic', fontSize:15, lineHeight:1.55, color:LM.inkSoft, letterSpacing:'-0.005em' }}>
               {CHAT_SYSTEM_PROMPT}
@@ -2227,14 +2213,11 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode
     {conversationNotice && <span role="status" title={conversationNotice} style={{fontSize:11,
       color:LM.inkSoft, maxWidth:220, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
       {conversationNotice}</span>}
-    {/* The model chip, fork and save as skill are drawn in every mode (design studio-lm.jsx:1146-1148).
+    {/* The model chip is drawn in every mode (design studio-lm.jsx:1146-1148).
         In a Workshop conversation the chip names the conversation's own model when it has one. */}
     <ModelStrip model={conversationRoot && workshopModel ? {...model, name:workshopModel, route:workshopModel,
       routed:workshopModel, vendor:'Workshop conversation', tag:'', ctx:'', latency:null} : model}
       setPickerOpen={setPickerOpen} compact/>
-    {/* fork and save as skill have no binding in this build: drawn, disabled, and saying so. */}
-    <HoverBtn disabled title="Fork is not available in this build">fork</HoverBtn>
-    <HoverBtn primary disabled title="Save as skill is not available in this build">save as skill</HoverBtn>
     {/* The update icons stay in the header (founder, 2026-09-18: "just bring the update icons back").
         Settings > About keeps the full controls; the restart still needs the confirming second click. */}
     <ApplicationUpdateControls compact/>
@@ -5376,20 +5359,12 @@ const SettingsMemory = ({ store, patch }) => {
   );
 };
 
-// -- Team: identity, seats, invites (design studio-lm.jsx:2731-2792). No data path projects a firm
-// roster, seats or invite tokens into this view, so the layout stays and every value is empty.
+// -- Team: identity, seats, invites (design studio-lm.jsx:2731-2792). No firm roster is drawn
+// until the connection provides one; placeholder metric cards would only state blanks.
 const SettingsTeam = () => {
   return (
   <div>
     <SHead title="Team" sub="One person owns the workspace and invites teammates by email. Firm brain access follows membership &#x2014; removing someone stops what they can read next, not what they already hold."/>
-    <div style={{ display:'flex', gap:LM.sp.sm, marginBottom:LM.sp.md, flexWrap:'wrap' }}>
-      {[['FIRM','\u2014'],['SEATS','\u2014'],['USED','\u2014'],['YOUR ROLE','\u2014']].map(([k,v]) => (
-        <div key={k} style={{ flex:'1 1 150px', padding:'9px 12px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.md }}>
-          <div style={{ fontFamily:LM.mono, fontSize:9, letterSpacing:'0.14em', color:LM.inkMuted }}>{k}</div>
-          <div style={{ fontSize:13, marginTop:4, color:LM.inkMuted }}>{v}</div>
-        </div>
-      ))}
-    </div>
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden', marginBottom:LM.sp.sm }}>
       <div role="status" style={{ padding:'12px 14px', fontFamily:LM.serif, fontStyle:'italic', fontSize:13.5, color:LM.inkSoft }}>
         No firm in this connection. Members appear here when the workspace has one.
@@ -5479,6 +5454,35 @@ const SettingsPermissions = () => (
 const BRAND = { openrouter: '#3a6acc', cloud: '#cc785c', ollama: '#1a8a4a', lmstudio: '#4285f4', openai: '#10a37f', google: '#4285f4', anthropic: '#cc785c' };
 // Providers whose key is pasted here (model_router.KEYED_IN_SETTINGS).
 const KEY_LABEL = { openrouter: 'OpenRouter', openai: 'OpenAI', google: 'Google', anthropic: 'Anthropic' };
+const cleanDetail = text => String(text || '')
+  .replace(/\b[A-Z][A-Z0-9_]{2,}\b/g, '')
+  .replace(/\b(?:127\.0\.0\.1|localhost):\d+\b/g, '')
+  .replace(/:\d{3,5}\b/g, '')
+  .replace(/\b[\w.-]+\.(?:py|ps1|cjs|mjs|js|json|exe|bat)\b/gi, '')
+  .replace(/\bcourt\b/gi, 'review')
+  .replace(/\s*[·,;:]\s*[·,;:]\s*/g, ' · ')
+  .replace(/\s{2,}/g, ' ')
+  .replace(/^[\s·,;:-]+|[\s·,;:-]+$/g, '')
+  .slice(0, 60);
+const providerDetail = p => {
+  if (p.id === 'cloud') return 'Sign in to use ArchHub cloud';
+  if (p.state === 'keyed') return 'Key saved on this machine';
+  if (p.state === 'key invalid') return 'Key invalid. Paste a real key in Settings';
+  if (p.state === 'running') return 'Local runtime is running';
+  if (p.state === 'not running') return 'Local runtime is not running';
+  if (p.state === 'not installed') return 'Not installed on this machine';
+  return cleanDetail(p.source || p.state || 'Status unavailable') || 'Status unavailable';
+};
+const hostDetail = h => {
+  const id = String(h.id || '').toLowerCase(), name = String(h.name || '').toLowerCase();
+  if (name.includes('3ds max') || id.includes('3ds')) return 'Start 3ds Max from ArchHub when needed';
+  if (name.includes('rhino') || id.includes('rhino')) return 'Start Rhino from ArchHub when needed';
+  if (name.includes('blender') || id.includes('blender')) return 'Start Blender from ArchHub when needed';
+  if (name.includes('speckle') || id.includes('speckle')) return h.state === 'absent' ? 'Manager not found' : 'Ready to publish with stored account';
+  if (h.detail) return cleanDetail(h.detail);
+  if (h.file && h.file !== '\u2014') return cleanDetail(h.file);
+  return h.state === 'connected' ? 'Live on this machine' : 'Not running';
+};
 
 // Posts waiting for the founder (social_approval): the exact request an agent prepared,
 // then his own Approve or Deny. Nothing is posted until he approves.
@@ -5501,12 +5505,19 @@ const SettingsSocialApprovals = ({transport}) => {
     } catch (error) { if (alive.current) setMessage(error.message); }
     finally { if (alive.current) setBusy(''); }
   };
+  const providerName = item => {
+    const operation = String(item.operation || '');
+    if (operation.startsWith('instagram.')) return 'Instagram';
+    if (operation.startsWith('facebook.')) return 'Facebook';
+    if (operation.startsWith('linkedin.')) return 'LinkedIn';
+    return 'provider';
+  };
   if (!transport?.listSocialApprovals || (!items.length && !message)) return null;
   return <div style={{padding:'12px 14px', background:LM.bg, border:`1px solid ${LM.accent || LM.line}`, borderRadius:LM.rad.lg, marginBottom:10}}>
     <div style={{fontSize:13, fontWeight:500}}>Posts waiting for your approval</div>
     {items.map(item => <div key={item.delegation} style={{marginTop:10}}>
       <div style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>{item.operation} · {item.account_id} · {
-        item.account_binding === 'provider-verified' ? 'account confirmed by LinkedIn'
+        item.account_binding === 'provider-verified' ? 'account confirmed by ' + providerName(item)
           : item.account_binding === 'operator-declared' ? 'account typed in, not confirmed' : 'account not checked'}</div>
       <pre style={{whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontFamily:LM.mono, fontSize:11, maxHeight:220, overflow:'auto',
         padding:8, margin:'6px 0', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm}}>{item.review_text}</pre>
@@ -5519,12 +5530,79 @@ const SettingsSocialApprovals = ({transport}) => {
   </div>;
 };
 
+const socialAccountView = account => {
+  const vault = String(account?.vault_entry || '');
+  const provider = String(account?.provider || '').toLowerCase();
+  if (provider === 'linkedin') return {icon:'in', name:'LinkedIn'};
+  if (vault.startsWith('social-meta-page-')) return {icon:'f', name:'Facebook Page'};
+  if (vault.startsWith('social-meta-ig-')) return {icon:'ig', name:'Instagram'};
+  if (provider === 'meta') return {icon:'m', name:'Meta'};
+  return {icon:'•', name:provider ? provider[0].toUpperCase() + provider.slice(1) : 'Social'};
+};
+
+const SettingsConnectedSocialAccounts = ({transport}) => {
+  const alive = React.useRef(true);
+  const [accounts, setAccounts] = React.useState([]), [busy, setBusy] = React.useState(''), [message, setMessage] = React.useState('');
+  const load = React.useCallback(async () => {
+    if (!transport?.listLocalSocialAccounts) return;
+    try { const next = await transport.listLocalSocialAccounts(); if (alive.current) setAccounts(Array.isArray(next) ? next : []); }
+    catch (error) { if (alive.current) setMessage(error.message); }
+  }, [transport]);
+  React.useEffect(() => { alive.current = true; load(); return () => { alive.current = false; }; }, [load]);
+  const disconnect = async account => {
+    const key = [account.provider, account.account_id, account.vault_entry].join('|');
+    setBusy(key); setMessage('');
+    try {
+      await transport.removeLocalSocialAccount({
+        provider:account.provider, account_id:account.account_id, vault_entry:account.vault_entry});
+      if (alive.current) {
+        setAccounts(accounts.filter(row => row.provider !== account.provider || row.account_id !== account.account_id || row.vault_entry !== account.vault_entry));
+        setMessage('Disconnected local credential.');
+      }
+    } catch (error) { if (alive.current) setMessage(error.message); }
+    finally { if (alive.current) setBusy(''); }
+  };
+  if (!transport?.listLocalSocialAccounts || accounts.length === 0) return null;
+  return <div style={{padding:'12px 14px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, marginBottom:10}}>
+    <div style={{fontSize:13, fontWeight:500}}>Connected accounts</div>
+    <div style={{display:'flex', flexDirection:'column', gap:6, marginTop:10}}>
+      {accounts.map(account => {
+        const view = socialAccountView(account);
+        const key = [account.provider, account.account_id, account.vault_entry].join('|');
+        const display = account.display_name || account.name || account.username || account.account_id;
+        return <div key={key} style={{display:'grid', gridTemplateColumns:'auto minmax(0,1fr) auto', gap:10, alignItems:'center',
+          padding:'8px 10px', border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.md}}>
+          <span aria-hidden="true" style={{width:24, height:24, borderRadius:'50%', display:'inline-flex', alignItems:'center', justifyContent:'center',
+            background:LM.lineSoft, color:LM.ink, fontFamily:LM.mono, fontSize:10, textTransform:'uppercase'}}>{view.icon}</span>
+          <span style={{minWidth:0}}>
+            <span style={{display:'block', fontSize:12.5, fontWeight:500}}>{view.name}</span>
+            <span style={{display:'block', fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, overflowWrap:'anywhere'}}>{display || account.vault_entry}</span>
+          </span>
+          <button type="button" disabled={!!busy || !transport?.removeLocalSocialAccount} onClick={() => disconnect(account)} style={smallBtn()}>
+            Disconnect
+          </button>
+        </div>;
+      })}
+    </div>
+    {message && <p role="status" style={{fontSize:12, overflowWrap:'anywhere'}}>{message}</p>}
+  </div>;
+};
+
 // Sign in with LinkedIn (social_linkedin_signin). Step one saves the founder's own LinkedIn
 // app; step two opens LinkedIn's consent page and saves the account LinkedIn names.
-const SettingsLinkedInSignIn = ({transport}) => {
+const SettingsLinkedInSignIn = ({transport, compact = false}) => {
   const form = React.useRef(null), alive = React.useRef(true), timer = React.useRef(null);
   const [busy, setBusy] = React.useState(false), [message, setMessage] = React.useState(''), [failed, setFailed] = React.useState(false);
+  const [appSaved, setAppSaved] = React.useState(false);
   const [redirect, setRedirect] = React.useState('http://127.0.0.1:48720/linkedin/callback');
+  React.useEffect(() => {
+    let active = true;
+    if (!transport?.linkedInAppStatus) return () => { active = false; };
+    transport.linkedInAppStatus()
+      .then(status => { if (active && alive.current) setAppSaved(status?.state === 'saved'); })
+      .catch(error => { if (active && alive.current) say(error.message, true); });
+    return () => { active = false; };
+  }, [transport]);
   React.useEffect(() => () => { alive.current = false; clearTimeout(timer.current);
     if (form.current) form.current.elements.client_secret.value = ''; }, []);
   const say = (text, bad = false) => { if (alive.current) { setMessage(text); setFailed(bad); } };
@@ -5534,7 +5612,7 @@ const SettingsLinkedInSignIn = ({transport}) => {
     const request = {client_id:fields.client_id.value.trim(), client_secret:fields.client_secret.value};
     fields.client_secret.value = '';
     setBusy(true);
-    try { await transport.saveLinkedInApp(request); say('LinkedIn app saved on this machine. Now sign in with LinkedIn.'); }
+    try { await transport.saveLinkedInApp(request); setAppSaved(true); say('LinkedIn app saved on this machine. Now sign in with LinkedIn.'); }
     catch (error) { say(error.message, true); }
     finally { request.client_secret = ''; if (alive.current) setBusy(false); }
   };
@@ -5566,6 +5644,22 @@ const SettingsLinkedInSignIn = ({transport}) => {
   const inputStyle = {display:'block', width:'100%', margin:'6px 0 12px', padding:'7px 10px',
     background:LM.bg, color:LM.ink, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, fontFamily:LM.mono, fontSize:11.5};
   const labelStyle = {display:'block', fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.1em'};
+  const appSetup = compact ? <form ref={form} onSubmit={saveApp} style={{maxWidth:440}}>
+    <fieldset disabled={busy || !transport?.saveLinkedInApp} style={{border:0, padding:0, margin:0, minWidth:0}}>
+      <div style={{fontSize:12, color:LM.inkSoft, lineHeight:1.55, marginBottom:10}}>In your LinkedIn app, add this exact redirect URL: <code style={{fontFamily:LM.mono}}>{redirect}</code></div>
+      <label style={labelStyle}>CLIENT ID<input name="client_id" required maxLength={64} pattern="[A-Za-z0-9]{6,64}" style={inputStyle}/></label>
+      <label style={labelStyle}>CLIENT SECRET<input name="client_secret" type="password" required maxLength={256} autoComplete="new-password"
+        autoCapitalize="none" spellCheck={false} style={inputStyle}/></label>
+      <button type="submit" style={smallBtn()}>Save LinkedIn app</button>
+    </fieldset>
+    {!transport?.saveLinkedInApp && <p role="status" style={{fontSize:12, color:LM.inkSoft}}>LinkedIn app setup is unavailable in this connection.</p>}
+    {message && <p role={failed ? 'alert' : 'status'} style={{fontSize:12, overflowWrap:'anywhere', color:failed ? LM.err : LM.ok}}>{message}</p>}
+  </form> : null;
+  if (compact && appSaved) {
+    return <SocialConnectButton label="Connect LinkedIn" available={available} busy={busy}
+      onClick={signIn} note="needs the ArchHub app registered with LinkedIn" message={message} failed={failed}/>;
+  }
+  if (compact) return <div style={{display:'inline-flex', flexDirection:'column', gap:6, alignItems:'flex-start'}}>{appSetup}</div>;
   return <div style={{padding:'12px 14px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, marginBottom:10}}>
     <div style={{fontSize:13, fontWeight:500}}>Sign in with LinkedIn</div>
     <div style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, marginBottom:12, letterSpacing:'0.04em'}}>Posts go to your personal LinkedIn profile, and only after you approve each one.</div>
@@ -5587,76 +5681,122 @@ const SettingsLinkedInSignIn = ({transport}) => {
   </div>;
 };
 
-const SettingsSocialEnrollment = ({transport}) => {
-  const form = React.useRef(null), busy = React.useRef(false), alive = React.useRef(true);
-  const [saving, setSaving] = React.useState(false), [message, setMessage] = React.useState('');
-  const [failed, setFailed] = React.useState(false);
-  React.useEffect(() => {
-    alive.current = true;
-    return () => { alive.current = false; if (form.current) form.current.elements.token.value = ''; };
-  }, []);
-  const save = async event => {
+const SocialConnectButton = ({label, available, busy, onClick, note, message, failed}) => {
+  const [open, setOpen] = React.useState(false);
+  return <div style={{display:'inline-flex', flexDirection:'column', gap:6, alignItems:'flex-start'}}>
+    <button type="button" onClick={() => available ? onClick() : setOpen(!open)}
+      style={smallBtn(available)}>{busy ? 'Connecting...' : label}</button>
+    {!available && open && <div role="status" style={{fontSize:12, color:LM.inkSoft, maxWidth:420}}>{note}</div>}
+    {message && <div role={failed ? 'alert' : 'status'} style={{fontSize:12, color:failed ? LM.err : LM.ok, maxWidth:420, overflowWrap:'anywhere'}}>{message}</div>}
+  </div>;
+};
+
+const SettingsMetaSignIn = ({transport}) => {
+  const form = React.useRef(null), alive = React.useRef(true), timer = React.useRef(null);
+  const available = !!(transport?.saveMetaApp && transport?.startMetaSignIn);
+  const [message, setMessage] = React.useState(''), [failed, setFailed] = React.useState(false), [busy, setBusy] = React.useState(false);
+  const [open, setOpen] = React.useState(false), [redirect, setRedirect] = React.useState('http://127.0.0.1:48721/meta/callback');
+  const [pages, setPages] = React.useState([]), [connected, setConnected] = React.useState(null);
+  React.useEffect(() => () => { alive.current = false; clearTimeout(timer.current);
+    if (form.current) form.current.elements.app_secret.value = ''; }, []);
+  const say = (text, bad = false) => { if (alive.current) { setMessage(text); setFailed(bad); } };
+  const saveApp = async event => {
     event.preventDefault();
-    if (busy.current || !transport?.enrollSocialAccount) return;
     const fields = form.current.elements;
-    const request = {provider:fields.provider.value, account_id:fields.account_id.value.trim(),
-      vault_entry:fields.vault_entry.value.trim(), token:fields.token.value};
-    fields.token.value = '';
-    busy.current = true; setSaving(true); setMessage(''); setFailed(false);
-    try {
-      const result = await transport.enrollSocialAccount(request);
-      if (alive.current) setMessage('Saved ' + result.vault_entry + ' for ' + result.account_id +
-        '. Use this reference in the connector node. Provider ownership has not been checked.');
-    } catch (error) {
-      if (alive.current) { setFailed(true); setMessage(error.message); }
-    } finally {
-      request.token = ''; busy.current = false;
-      if (alive.current) setSaving(false);
-    }
+    const request = {app_id:fields.app_id.value.trim(), app_secret:fields.app_secret.value};
+    fields.app_secret.value = '';
+    setBusy(true);
+    try { await transport.saveMetaApp(request); say('Meta app saved on this machine. Now connect Facebook / Instagram.'); }
+    catch (error) { say(error.message, true); }
+    finally { request.app_secret = ''; if (alive.current) setBusy(false); }
   };
-  const remove = async () => {
-    if (busy.current || !transport?.removeLocalSocialAccount || !form.current) return;
-    const fields = form.current.elements;
-    if (!fields.account_id.reportValidity() || !fields.vault_entry.reportValidity()) return;
-    const request = {provider:fields.provider.value, account_id:fields.account_id.value.trim(),
-      vault_entry:fields.vault_entry.value.trim()};
-    fields.token.value = '';
-    busy.current = true; setSaving(true); setMessage(''); setFailed(false);
+  const poll = async () => {
     try {
-      const result = await transport.removeLocalSocialAccount(request);
-      if (alive.current) setMessage((result.state === 'absent' ? 'No local credential remains for ' : 'Removed local credential for ') +
-        result.vault_entry + '. Saved workflows remain. This does not revoke the token at the provider or stop a request already sent.');
-    } catch (error) {
-      if (alive.current) { setFailed(true); setMessage(error.message); }
-    } finally { busy.current = false; if (alive.current) setSaving(false); }
+      const status = await transport.metaSignInStatus();
+      if (status.redirect_uri) setRedirect(status.redirect_uri);
+      if (status.phase === 'ready') {
+        setPages(Array.isArray(status.pages) ? status.pages : []);
+        say(status.pages?.length ? 'Choose the Facebook Page to use.' : 'Meta returned no Pages for this account.', !status.pages?.length);
+        setBusy(false); return;
+      }
+      if (status.phase === 'failed') { say(status.error || 'Meta sign-in failed.', true); setBusy(false); return; }
+      if (alive.current) timer.current = setTimeout(poll, 1500);
+    } catch (error) { say(error.message, true); setBusy(false); }
   };
-  const inputStyle = {display:'block', width:'100%', margin:'6px 0 12px', padding:'7px 10px',
+  const signIn = async () => {
+    setBusy(true); say('Finish in the Meta page that opened, then return here.');
+    try { const started = await transport.startMetaSignIn(); if (started.redirect_uri) setRedirect(started.redirect_uri); poll(); }
+    catch (error) { say(error.message, true); setBusy(false); }
+  };
+  const cancel = async () => {
+    clearTimeout(timer.current);
+    try { await transport.cancelMetaSignIn(); say('Meta sign-in cancelled.'); }
+    catch (error) { say(error.message, true); }
+    finally { if (alive.current) setBusy(false); }
+  };
+  const usePage = async page => {
+    setBusy(true);
+    try {
+      const saved = await transport.finishMetaSignIn({page_id:page.id});
+      const next = {page:{id:saved.account_id, name:page.name, vault_entry:saved.vault_entry}, instagram:saved.instagram || page.instagram || null};
+      setConnected(next); setPages([]);
+      say('Connected ' + page.name + (next.instagram?.username ? ' and Instagram @' + next.instagram.username : '') + '.');
+    } catch (error) { say(error.message, true); }
+    finally { if (alive.current) setBusy(false); }
+  };
+  const disconnect = async () => {
+    if (!connected || !transport?.removeLocalSocialAccount) return;
+    setBusy(true);
+    try {
+      if (connected.instagram?.vault_entry && connected.instagram?.account_id) {
+        await transport.removeLocalSocialAccount({provider:'meta', account_id:connected.instagram.account_id, vault_entry:connected.instagram.vault_entry});
+      }
+      await transport.removeLocalSocialAccount({provider:'meta', account_id:connected.page.id, vault_entry:connected.page.vault_entry});
+      setConnected(null); say('Disconnected Meta credentials on this machine.');
+    } catch (error) { say(error.message, true); }
+    finally { if (alive.current) setBusy(false); }
+  };
+  const inputStyle = {display:'block', width:'100%', margin:'6px 0 10px', padding:'7px 10px',
     background:LM.bg, color:LM.ink, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, fontFamily:LM.mono, fontSize:11.5};
   const labelStyle = {display:'block', fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.1em'};
+  return <div style={{display:'inline-flex', flexDirection:'column', gap:6, alignItems:'flex-start'}}>
+    <button type="button" onClick={() => available ? signIn() : setOpen(!open)}
+      style={smallBtn(available)}>{busy ? 'Connecting...' : 'Connect Facebook / Instagram'}</button>
+    <button type="button" onClick={() => setOpen(!open)} style={smallBtn()}>{open ? 'Hide Meta app' : 'Meta app'}</button>
+    {open && <form ref={form} onSubmit={saveApp} style={{maxWidth:440}}>
+      <fieldset disabled={busy || !transport?.saveMetaApp} style={{border:0, padding:0, margin:0, minWidth:0}}>
+        <div style={{fontSize:12, color:LM.inkSoft, lineHeight:1.55, marginBottom:10}}>In your Meta app, add this exact redirect URL: <code style={{fontFamily:LM.mono}}>{redirect}</code></div>
+        <label style={labelStyle}>APP ID<input name="app_id" required maxLength={32} pattern="[0-9]{6,32}" style={inputStyle}/></label>
+        <label style={labelStyle}>APP SECRET<input name="app_secret" type="password" required maxLength={256} autoComplete="new-password"
+          autoCapitalize="none" spellCheck={false} style={inputStyle}/></label>
+        <button type="submit" style={smallBtn()}>Save Meta app</button>
+      </fieldset>
+    </form>}
+    {!!pages.length && <div style={{display:'flex', flexDirection:'column', gap:6, maxWidth:440}}>
+      {pages.map(page => <button key={page.id} type="button" disabled={busy} onClick={() => usePage(page)} style={smallBtn(true)}>
+        Use {page.name || page.id}{page.instagram?.username ? ' + Instagram @' + page.instagram.username : ''}
+      </button>)}
+    </div>}
+    {connected && <div style={{display:'flex', gap:7, flexWrap:'wrap', alignItems:'center', maxWidth:440}}>
+      <span style={{fontSize:12, color:LM.ok}}>Connected {connected.page.name || connected.page.id}{connected.instagram?.username ? ' + Instagram @' + connected.instagram.username : ''}</span>
+      <button type="button" disabled={busy || !transport?.removeLocalSocialAccount} onClick={disconnect} style={smallBtn()}>Disconnect</button>
+    </div>}
+    {busy && transport?.cancelMetaSignIn && <button type="button" onClick={cancel} style={smallBtn()}>Cancel sign-in</button>}
+    {!available && <div role="status" style={{fontSize:12, color:LM.inkSoft, maxWidth:420}}>needs the ArchHub app registered with Meta</div>}
+    {message && <div role={failed ? 'alert' : 'status'} style={{fontSize:12, color:failed ? LM.err : LM.ok, maxWidth:420, overflowWrap:'anywhere'}}>{message}</div>}
+  </div>;
+};
+
+const SettingsSocialEnrollment = ({transport}) => {
+  const [message, setMessage] = React.useState('');
   return <div style={{padding:'12px 14px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg}}>
     <div style={{fontSize:13, fontWeight:500}}>Social accounts</div>
-    <div style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, marginBottom:12, letterSpacing:'0.04em'}}>Save an account credential on this machine and connect its reference to a Work node.</div>
-    <form ref={form} onSubmit={save}>
-      <fieldset disabled={saving || !transport?.enrollSocialAccount} style={{border:0, padding:0, margin:0, minWidth:0}}>
-        <label style={labelStyle}>PROVIDER<select name="provider" style={inputStyle} defaultValue="linkedin">
-          <option value="linkedin">LinkedIn</option><option value="meta">Facebook / Instagram</option>
-        </select></label>
-        <label style={labelStyle}>ACCOUNT ID<input name="account_id" required maxLength={256} style={inputStyle}
-          placeholder="LinkedIn person URN, or Meta user / Page ID"/></label>
-        <label style={labelStyle}>REFERENCE NAME<input name="vault_entry" required maxLength={128} pattern="social-[A-Za-z0-9._-]+"
-          placeholder="social-studio" style={inputStyle}/></label>
-        <label style={labelStyle}>ACCESS TOKEN<input name="token" type="password" required maxLength={16384} autoComplete="new-password"
-          autoCapitalize="none" spellCheck={false} style={inputStyle}/></label>
-        <div style={{fontSize:12, color:LM.inkSoft, lineHeight:1.55, marginBottom:10}}>You declare which account this token belongs to. Saving it does not publish anything or verify the account with the provider.</div>
-        <div style={{display:'flex', gap:7, flexWrap:'wrap'}}>
-          <button type="submit" style={smallBtn(true)}>{saving ? 'Applying change…' : 'Save account'}</button>
-          <button type="button" disabled={!transport?.removeLocalSocialAccount} onClick={remove} style={{...smallBtn(), color:LM.err}}
-            title="Uses the provider, account ID and reference above. No access token is needed. Saved workflows stay in the graph.">Remove local credential</button>
-        </div>
-      </fieldset>
-      {!transport?.enrollSocialAccount && <p role="status" style={{fontSize:12, color:LM.inkSoft}}>Account enrollment is unavailable in this connection.</p>}
-      {message && <p role={failed ? 'alert' : 'status'} style={{fontSize:12, overflowWrap:'anywhere', color:failed ? LM.err : LM.ok}}>{message}</p>}
-    </form>
+    <div style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, marginBottom:12, letterSpacing:'0.04em'}}>Connect through provider sign-in. Users never paste access tokens here.</div>
+    <div style={{display:'flex', gap:8, flexWrap:'wrap'}}>
+      <SettingsLinkedInSignIn transport={transport} compact/>
+      <SettingsMetaSignIn transport={transport}/>
+    </div>
+    {message && <p role="status" style={{fontSize:12, overflowWrap:'anywhere', color:LM.ok}}>{message}</p>}
   </div>;
 };
 
@@ -5718,13 +5858,25 @@ const ProviderManage = ({ p, providers, onTab }) => {
       </form>
     );
   }
+  if (p.id === 'opencode') {
+    return (
+      <div style={box}>
+        <div style={line}>OpenCode is installed but not routed as a tools-enabled chat provider in this build.</div>
+        <div style={{ display:'flex', gap:7, marginTop:9, flexWrap:'wrap' }}>
+          <button type="button" onClick={() => window.open('http://127.0.0.1:4096', '_blank', 'noopener,noreferrer')}
+            style={{ ...smallBtn(), padding:'3px 9px' }}>Open OpenCode</button>
+          {refresh}
+        </div>
+      </div>
+    );
+  }
   return (
     <div style={box}>
       <div style={line}>{p.id === 'cloud'
-        ? 'The ArchHub cloud is keyed by the signed-in account' + (p.sets ? ' or by ' + p.sets : '') + '.'
-        : p.state === 'running' ? p.name + ' is answering on ' + p.source + '. Its models appear in the model picker.'
-        : p.state === 'installed' || p.state === 'not installed' ? p.name + ': ' + p.source + '.'
-        : p.sets ? 'Set ' + p.sets + ' on this machine, then read the status again.'
+        ? 'Sign in to use ArchHub cloud.'
+        : p.state === 'running' ? p.name + ' is running. Its models appear in the model picker.'
+        : p.state === 'installed' || p.state === 'not installed' ? providerDetail(p) + '.'
+        : p.sets ? 'Sign in or paste a key, then read the status again.'
         : 'Start ' + p.name + ' on this machine (' + p.source + '), then read the status again.'}</div>
       <div style={{ display:'flex', gap:7, marginTop:9, flexWrap:'wrap' }}>
         {p.id === 'cloud' && <button type="button" onClick={() => onTab && onTab('account')} style={{ ...smallBtn(), padding:'3px 9px' }}>Open Account</button>}
@@ -5756,11 +5908,8 @@ const SettingsProviders = ({ providers, onTab }) => {
               <div style={{ fontSize:13, fontWeight:500, color: off(p.state) ? LM.inkMuted : LM.ink }}>{p.name}</div>
               <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, letterSpacing:'0.04em' }}>
                 <span title={p.state === 'keyed' ? 'Stored keys are never shown' : undefined} style={{ color:LM.inkSoft }}>
-                  {p.state === 'keyed' ? '\u2022'.repeat(12) : p.sets ? '\u2014' : p.source}
-                </span> · {p.state === 'keyed' ? 'key from the ' + p.source
-                  : p.state === 'no key' ? 'no key \u00b7 set ' + p.sets
-                  : p.state === 'running' ? 'local runtime'
-                  : p.state === 'not running' ? 'not running' : p.source}
+                  {providerDetail(p)}
+                </span>
               </div>
             </div>
             <span style={{
@@ -5788,7 +5937,11 @@ const SettingsProviders = ({ providers, onTab }) => {
     }}>
       <span>{social ? '\u2212' : '+'}</span> Social account credentials…
     </button>
-    {social && <div style={{ marginTop:10 }}><SettingsSocialApprovals transport={transport}/><SettingsLinkedInSignIn transport={transport}/><SettingsSocialEnrollment transport={transport}/></div>}
+    {social && <div style={{ marginTop:10 }}>
+      <SettingsConnectedSocialAccounts transport={transport}/>
+      <SettingsSocialApprovals transport={transport}/>
+      <SettingsSocialEnrollment transport={transport}/>
+    </div>}
   </div>
   );
 };
@@ -5937,6 +6090,10 @@ const SettingsTheme = () => {
   const state = usePersonalTheme(), api = window.ARCHHUB_EXISTING_WORKSHOP;
   const config = state?.configuration;
   const [accent, setAccent] = React.useState(() => LM.accent);
+  const [appearance, setAppearance] = React.useState(() => {
+    try { return JSON.parse(localStorage.getItem('archhub.appearance.v1') || '{}'); }
+    catch (_) { return {}; }
+  });
   const [dirty, setDirty] = React.useState(false);
   const [error, setError] = React.useState('');
   const [editAccent, setEditAccent] = React.useState(false);
@@ -5962,6 +6119,30 @@ const SettingsTheme = () => {
   const saved = config?.theme?.accent || LM.accent;
   const alert = error || state?.error || window.ARCHHUB_THEME_ERROR;
   const toggle = () => setEditAccent(!editAccent);
+  const applyAppearance = next => {
+    const merged = {...appearance, ...next};
+    setAppearance(merged);
+    localStorage.setItem('archhub.appearance.v1', JSON.stringify(merged));
+    document.documentElement.style.setProperty('--archhub-editor-font', merged.editorFont || family(LM.mono));
+    document.documentElement.style.setProperty('--archhub-display-font', merged.displayFont || family(LM.sans));
+    document.documentElement.style.setProperty('--archhub-density', merged.density || 'comfortable');
+  };
+  const fontOptions = [
+    ['JetBrains Mono', family(LM.mono)],
+    ['Inter', family(LM.sans)],
+    ['Instrument Serif', family(LM.serif)],
+    ['Architects Daughter', family(LM.arch)],
+  ];
+  const densityOptions = [['compact', 'Compact'], ['comfortable', 'Comfortable'], ['spacious', 'Spacious']];
+  const pickerRow = (label, value, children) => (
+    <div key={label} style={{ display:'grid', gridTemplateColumns:'minmax(0,1fr) 190px', alignItems:'center', gap:10, padding:'8px 12px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md }}>
+      <div style={{ minWidth:0 }}>
+        <div style={{ fontSize:12.5 }}>{label}</div>
+        <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:1, letterSpacing:'0.04em' }}>{value} · saved in Personal Settings</div>
+      </div>
+      {children}
+    </div>
+  );
   return <div>
     <SHead title="Theme" sub="The themes this graph offers. A theme is listed only when it repaints every colour."/>
     {/* One display card per theme the graph offers (configuration.design_system.themes). */}
@@ -5987,7 +6168,7 @@ const SettingsTheme = () => {
         <div style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px' }}>
           <span title="Current graph accent" style={{ width:16, height:16, borderRadius:4, background:saved, border:`1px solid ${LM.lineSoft}` }}/>
           <div style={{ flex:1 }}>
-            <div style={{ fontSize:12.5 }}>Accent color</div>
+            <div style={{ fontSize:12.5 }}>Accent colour</div>
             <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:1, letterSpacing:'0.04em' }}>{saved} &#xb7; {config ? 'saved in Personal Settings' : 'Personal Settings not read'}</div>
           </div>
           <span role="button" tabIndex={0} aria-expanded={editAccent} onClick={toggle}
@@ -6012,7 +6193,7 @@ const SettingsTheme = () => {
             <input aria-label="Accent hex colour" value={accent} maxLength={7} style={{...fieldStyle, width:100}}
               onChange={event => {setAccent(event.target.value); setDirty(true);}} disabled={!!state?.pending}/>
             <button style={{ ...smallBtn(true), padding:'4px 10px' }} disabled={unavailable || !/^#[0-9a-fA-F]{6}$/.test(accent) || accent.toLowerCase() === config?.theme?.accent?.toLowerCase()}
-              onClick={() => run(() => api.previewThemeToken('accent', accent), true)}>{state?.pending ? 'Saving\u2026' : 'Save accent'}</button>
+              onClick={() => run(() => api.previewThemeToken('accent', accent), true)}>{state?.pending ? 'Applying\u2026' : 'Apply accent'}</button>
           </div>
           {config && !oneDraft && <div style={{fontSize:11.5, color:LM.warn, marginTop:8}}>
             {config.personal_wip_heads.length > 1 ? 'Multiple theme drafts exist; merging is not linked yet.' : 'No personal theme draft is available.'}
@@ -6028,14 +6209,21 @@ const SettingsTheme = () => {
           </div>}
         </div>}
       </div>
-      {[['Editor font', family(LM.mono)], ['Display font', family(LM.serif) + ' \u00b7 ' + family(LM.sans) + ' for UI'], ['Density', 'Comfortable']].map(([k, v]) => (
-        <div key={k} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md }}>
-          <div style={{ flex:1, minWidth:0 }}>
-            <div style={{ fontSize:12.5 }}>{k}</div>
-            <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:1, letterSpacing:'0.04em' }}>{v}</div>
-          </div>
-        </div>
-      ))}
+      {pickerRow('Editor font', appearance.editorFont || family(LM.mono),
+        <select aria-label="Editor font" value={appearance.editorFont || family(LM.mono)}
+          onChange={e => applyAppearance({editorFont:e.target.value})} style={fieldStyle}>
+          {fontOptions.map(([label, value]) => <option key={value} value={value}>{label}</option>)}
+        </select>)}
+      {pickerRow('Display font', appearance.displayFont || family(LM.sans),
+        <select aria-label="Display font" value={appearance.displayFont || family(LM.sans)}
+          onChange={e => applyAppearance({displayFont:e.target.value})} style={fieldStyle}>
+          {fontOptions.map(([label, value]) => <option key={value} value={value}>{label}</option>)}
+        </select>)}
+      {pickerRow('Density', appearance.density || 'comfortable',
+        <select aria-label="Density" value={appearance.density || 'comfortable'}
+          onChange={e => applyAppearance({density:e.target.value})} style={fieldStyle}>
+          {densityOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>)}
     </div>
     {alert && <p role="alert" style={{fontSize:12, color:LM.warn}}>{alert}</p>}
   </div>;
@@ -6361,19 +6549,25 @@ const SettingsOperations = () => {
   const rows = Array.isArray(window.ARCHHUB_HOST_OPERATIONS) ? window.ARCHHUB_HOST_OPERATIONS : [];
   if (!rows.length) return null;
   const proven = rows.filter(r => r.evidence === 'court').length;
+  const statusLabel = r => r.evidence === 'court' ? 'Ready' : ('Needs ' + (r.need || r.missing || 'setup'));
+  const publicDetail = r => {
+    const text = String(r.user_detail || r.label || r.summary || r.detail || '').trim();
+    if (!text || /tests_replica|court/i.test(text)) return r.evidence === 'court' ? 'Verified in this build.' : 'Setup required before this can run.';
+    return text;
+  };
   return (
     <details style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
       <summary style={{ padding:'10px 14px', cursor:'pointer', fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.12em' }}>
-        OPERATIONS · {proven} PROVEN BY A COURT · {rows.length - proven} UNAVAILABLE
+        OPERATIONS · {proven} READY · {rows.length - proven} NEED SETUP
       </summary>
       {rows.map(r => (
         <div key={r.op} style={{ padding:'7px 14px', display:'flex', gap:LM.sp.md, borderTop:`1px solid ${LM.lineSoft}`, alignItems:'baseline' }}>
           <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.ink, width:190, flexShrink:0 }}>{r.op}</span>
           <span style={{ fontFamily:LM.mono, fontSize:9, padding:'1px 6px', borderRadius:LM.rad.xs, flexShrink:0,
             background:(r.evidence === 'court' ? LM.ok : LM.inkMuted) + '1f', color:r.evidence === 'court' ? LM.ok : LM.inkMuted }}>
-            {r.evidence === 'court' ? 'COURT' : 'UNAVAILABLE'}</span>
+            {statusLabel(r)}</span>
           <span style={{ fontSize:11.5, color:LM.inkSoft, minWidth:0, overflowWrap:'anywhere' }}>
-            {r.detail}{r.connector_state ? ' · now ' + r.connector_state : ''}</span>
+            {publicDetail(r)}{r.connector_state ? ' · ' + r.connector_state : ''}</span>
         </div>
       ))}
     </details>
@@ -6515,7 +6709,7 @@ const SettingsWorkspaces = () => {
           </div>
         </div>
       )}
-      <div style={{ display:'grid', gridTemplateColumns:'1fr auto 150px 110px auto', gap:8, alignItems:'center' }}>
+      <div style={{ display:'grid', gridTemplateColumns:ready ? '1fr auto 150px 110px auto' : '1fr auto 150px 110px', gap:8, alignItems:'center' }}>
         <input value={path} onChange={e => setPath(e.target.value)} placeholder="Folder, e.g. D:\Clients\Project"
           aria-label="Workspace folder" style={field}/>
         <button disabled={!!busy} onClick={browse} aria-label="Browse for a folder"
@@ -6526,8 +6720,14 @@ const SettingsWorkspaces = () => {
           <option value="private">Private</option>
           <option value="public">Public</option>
         </select>
-        <button disabled={!!busy || !ready || !path.trim()} onClick={add} style={{ ...smallBtn(true), padding:'6px 12px' }}>Add</button>
+        {ready && <button disabled={!!busy || !path.trim()} title={!path.trim() ? 'Choose a folder first' : undefined}
+          onClick={add} style={{ ...smallBtn(true), padding:'6px 12px' }}>Add</button>}
       </div>
+      {!ready && (
+        <div style={{ fontFamily:LM.sans, fontSize:12, color:LM.inkMuted, lineHeight:1.5 }}>
+          Workspaces are added in Settings > Workspaces after the workspace registry check passes.
+        </div>
+      )}
       <div style={{ fontFamily:LM.sans, fontSize:12, color:LM.inkMuted, lineHeight:1.5 }}>
         Profile: client. Adding or removing asks Windows to confirm with your ArchHub key; nothing changes if you decline. {WORKSPACE_PROMISE}
       </div>
@@ -6543,6 +6743,17 @@ const SettingsWorkspaces = () => {
 };
 const SettingsHosts = () => {
   const catalogue = useLiveCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS);
+  const visibleHosts = LM_HOSTS.filter(h => !/no wire in this build/i.test(String(h.detail || '')));
+  const startHost = async (h, button) => {
+    const name = String(h.name || '').toLowerCase();
+    const phrase = name.includes('rhino') ? 'open Rhino' : name.includes('blender') ? 'open Blender' : name.includes('3ds max') ? 'open 3ds Max' : '';
+    if (!phrase || typeof window.ARCHHUB_AGENT !== 'function') return;
+    const before = button.textContent;
+    button.textContent = 'Starting...';
+    try { await window.ARCHHUB_AGENT(phrase); button.textContent = 'Started'; }
+    catch (_) { button.textContent = 'Refused'; }
+    setTimeout(() => { button.textContent = before; }, 4000);
+  };
   return (
   <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
     <div>
@@ -6552,7 +6763,7 @@ const SettingsHosts = () => {
       </div>
     </div>
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
-      {LM_HOSTS.map((h, i) => {
+      {visibleHosts.map((h, i) => {
         const state = hostState(h);
         const col = state==='connected'?LM.ok : state==='syncing'?LM.warn : LM.inkMuted;
         return (
@@ -6568,17 +6779,21 @@ const SettingsHosts = () => {
             <div style={{ flex:1, lineHeight:1.2, minWidth:0 }}>
               <div style={{ fontSize:13, fontWeight:500, color: state==='off' ? LM.inkMuted : LM.ink }}>{h.name}</div>
               <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em', marginTop:2 }}>
-                {h.detail || (h.port ? `localhost:${h.port}` : '—')}
+                {hostDetail(h)}
               </div>
             </div>
             <span style={{
               fontFamily:LM.mono, fontSize:9, padding:'2px 7px', borderRadius:LM.rad.xs,
               background: col + '14', color: col, letterSpacing:'0.1em', textTransform:'uppercase',
             }}>{state}</span>
+            {/(3ds max|rhino|blender)/i.test(h.name || '') && (
+              <button type="button" onClick={e => startHost(h, e.currentTarget)}
+                style={{ ...smallBtn(), padding:'3px 9px' }}>Start</button>
+            )}
           </div>
         );
       })}
-      {!LM_HOSTS.length && <SettingsEmpty role={catalogue.error ? 'alert' : 'status'}
+      {!visibleHosts.length && <SettingsEmpty role={catalogue.error ? 'alert' : 'status'}
         action={catalogue.error && !catalogue.loading && <button onClick={catalogue.retry} style={{ ...smallBtn(), padding:'3px 9px', fontStyle:'normal' }}>read again</button>}>
         {catalogue.loading ? 'Reading the hosts on this machine\u2026' : catalogue.error ? 'The hosts were not read: ' + catalogue.error : 'No host has answered a probe yet.'}</SettingsEmpty>}
       <BaboomStartupRow first={false}/>

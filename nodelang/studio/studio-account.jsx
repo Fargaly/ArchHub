@@ -568,6 +568,8 @@ function CloudPublishConsent({ signedIn }) {
   };
   const allowed = !!(state && state.allowed);
   const enabled = !!state && !busy && (allowed || signedIn);
+  const canShowControl = !!state && (allowed || signedIn);
+  if (!canShowControl) return null;
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', border: `1px solid ${AC.line}`, borderRadius: AC.rad.md, marginBottom: 16 }}>
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -609,27 +611,30 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
     : session.state === 'expired' ? 'Sign-in expired'
     : session.state === 'unknown' ? 'Sign-in state unavailable' : 'Not signed in';
   const mail = session && session.email ? session.email : '';
+  const signedOut = !!session && session.state === 'signed_out';
   return (
     <div>
       <SHead title="Account" sub="Who is signed in, what the cloud may receive from this machine, and where your brain lives."/>
 
       {/* identity */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', border: `1px solid ${AC.line}`, borderRadius: AC.rad.md, marginBottom: 16 }}>
-        <span style={{
-          width: 38, height: 38, borderRadius: '50%', flexShrink: 0, display: 'grid', placeItems: 'center',
-          background: AC.accentSoft, color: AC.accent, fontFamily: AC.serif, fontSize: 17,
-        }}>{(a.name || 'A').slice(0, 1).toUpperCase()}</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 500 }}>{who}</div>
-          <div style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.inkSoft, marginTop: 2 }}>
-            {mail || '—'}{a.firm ? ' · ' + a.firm : ''}
+      {!signedOut && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', border: `1px solid ${AC.line}`, borderRadius: AC.rad.md, marginBottom: 16 }}>
+          <span style={{
+            width: 38, height: 38, borderRadius: '50%', flexShrink: 0, display: 'grid', placeItems: 'center',
+            background: AC.accentSoft, color: AC.accent, fontFamily: AC.serif, fontSize: 17,
+          }}>{(a.name || 'A').slice(0, 1).toUpperCase()}</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 500 }}>{who}</div>
+            <div style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.inkSoft, marginTop: 2 }}>
+              {mail || '—'}{a.firm ? ' · ' + a.firm : ''}
+            </div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontFamily: AC.mono, fontSize: 9, color: AC.inkMuted, letterSpacing: '0.12em' }}>SINCE</div>
+            <div style={{ fontFamily: AC.mono, fontSize: 11, color: AC.inkSoft }}>{a.created || '—'}</div>
           </div>
         </div>
-        <div style={{ textAlign: 'right' }}>
-          <div style={{ fontFamily: AC.mono, fontSize: 9, color: AC.inkMuted, letterSpacing: '0.12em' }}>SINCE</div>
-          <div style={{ fontFamily: AC.mono, fontSize: 11, color: AC.inkSoft }}>{a.created || '—'}</div>
-        </div>
-      </div>
+      )}
 
       {/* the one sign-in: what cloud.json holds, and the way back in when it lapsed */}
       <CloudSessionCard onSession={session => {
@@ -646,12 +651,6 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
 
       {/* cloud publish consent: the record the relay reads, not a preference in this page */}
       <CloudPublishConsent signedIn={cloudSignedIn}/>
-
-      {/* No spend or operation meter and no spend cap: nothing on this machine measures model
-          spend or enforces a cap, so the panel states that instead of a $0 it never read. */}
-      <div role="status" style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.inkSoft, marginBottom: 18, lineHeight: 1.6 }}>
-        Model spend is not measured on this machine and no spend cap is enforced. Stop a running agent from its Workshop.
-      </div>
 
       {/* plan — the tier the graph answered with (ARCHHUB_LOGIN above and in CloudSignIn). No
           tier, no claim: this panel never names a plan the account was not granted, and
@@ -673,19 +672,15 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
         </div>
       )}
 
-      {/* brain access — the one thing the user was explicit about: NOT on a git remote */}
-      <div style={{ fontFamily: AC.mono, fontSize: 9, color: AC.inkMuted, letterSpacing: '0.16em', margin: '18px 0 9px' }}>BRAIN ACCESS</div>
       <div style={{ padding: '12px 14px', border: `1px solid ${AC.line}`, borderRadius: AC.rad.md }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 13, fontWeight: 500, color: AC.ink, minWidth: 86 }}>Brain access</span>
           <span style={{ padding: '3px 8px', borderRadius: AC.rad.sm, border: `1px solid ${AC.ok}`, color: AC.ok, fontFamily: AC.mono, fontSize: 9, letterSpacing: '0.12em' }}>LOCAL</span>
-          <span style={{ fontFamily: AC.mono, fontSize: 11.5, color: AC.ink, flex: 1, minWidth: 0 }}>the brain folder on this machine</span>
+          <span style={{ fontFamily: AC.mono, fontSize: 11.5, color: AC.ink, flex: 1, minWidth: 0 }}>Private on this machine</span>
           <span style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.inkSoft }}>{facts ? facts + ' facts read' : 'facts not read yet'}</span>
         </div>
         <div style={{ fontSize: 12, color: AC.inkSoft, marginTop: 9, lineHeight: 1.55 }}>
-          Your brain lives on this machine. Nothing is uploaded unless you share it: a fact you
-          share (Settings &#x2192; Brain &#x2192; share) goes to the ArchHub community, and the founder
-          reviews it before other members see it. What others share reaches you held for your
-          acceptance. Sharing is refused when a fact names the client folder or a project code.
+          Sharing needs approval and never includes client folders.
         </div>
         <div style={{ display: 'flex', gap: 7, marginTop: 10 }}>
           <BrainFolderActions/>

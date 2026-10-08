@@ -352,6 +352,8 @@ _CREDENTIAL_ERRORS = {
     "removal_not_admitted": "Credential removal is no longer authorized. Sign in again before retrying.",
     "removal_unconfirmed": "The credential removal could not be confirmed. Check its status before retrying.",
     "secure_store_busy": "Another ArchHub process is changing the credential store. Nothing was changed; retry shortly.",
+    "linkedin_app_missing": "Save the LinkedIn app Client ID and Client Secret before signing in.",
+    "meta_app_missing": "Save the Meta app ID and app secret before signing in.",
 }
 
 
@@ -1390,6 +1392,7 @@ __all__ = [
     "default_composer_route",
     "discover_key",
     "founder_secrets_key",
+    "list_social_credentials",
     "provider_catalogue",
     "provider_rows",
     "resolve_model_route",
@@ -1420,6 +1423,8 @@ def protected_credential_entry(name: str) -> str:
 
 _LINKEDIN_APP_ENTRY = "linkedin-app"
 _LINKEDIN_APP_FORMAT = "archhub-linkedin-app-1"
+_META_APP_ENTRY = "meta-app"
+_META_APP_FORMAT = "archhub-meta-app-1"
 
 
 def save_linkedin_app(body, *, before_replace=None):
@@ -1473,6 +1478,68 @@ def linkedin_app():
     return record["client_id"], record["client_secret"]
 
 
+def linkedin_app_status():
+    """Non-secret saved-app status for Settings."""
+    try:
+        record = _linkedin_app_record(protected_credential_entry(_LINKEDIN_APP_ENTRY))
+    except ProviderCredentialError:
+        record = None
+    if record is None:
+        return {"state": "missing"}
+    return {"state": "saved", "client_id": record["client_id"], "source": "secrets store"}
+
+
+def save_meta_app(body, *, before_replace=None):
+    """The founder's Meta developer app (app id and secret), typed in Settings."""
+    if before_replace is not None and not callable(before_replace):
+        raise TypeError("before_replace must be callable")
+    if type(body) is not dict or set(body) not in ({"client_id", "client_secret"}, {"app_id", "app_secret"}):
+        raise ProviderCredentialError("invalid_credential")
+    app_shape = "app_id" in body
+    app_id = body.get("client_id", body.get("app_id"))
+    secret = body.get("client_secret", body.get("app_secret"))
+    if (type(app_id) is not str or not 6 <= len(app_id) <= 32
+            or not (app_id.isascii() and app_id.isdigit())
+            or type(secret) is not str or not 8 <= len(secret) <= 256
+            or any(not 33 <= ord(char) <= 126 for char in secret)):
+        raise ProviderCredentialError("invalid_credential")
+    value = json.dumps({"format": _META_APP_FORMAT, "app_id": app_id, "app_secret": secret},
+                       separators=(",", ":"), sort_keys=True, ensure_ascii=True)
+
+    def put(entries):
+        held = entries.get(_META_APP_ENTRY)
+        if held is not None and _meta_app_record(held) is None:
+            raise ProviderCredentialError("social_entry_collision")
+        entries[_META_APP_ENTRY] = value
+        return True
+
+    _mutate_protected_entries(put, before_replace=before_replace)
+    public_id = "app_id" if app_shape else "client_id"
+    return {"ok": True, "state": "saved", public_id: app_id, "source": "secrets store"}
+
+
+def _meta_app_record(value):
+    try:
+        record = json.loads(value, object_pairs_hook=_credential_pairs)
+    except Exception:
+        return None
+    if (type(record) is not dict or set(record) != {"format", "app_id", "app_secret"}
+            or record["format"] != _META_APP_FORMAT or any(type(item) is not str for item in record.values())):
+        return None
+    return record
+
+
+def meta_app():
+    """(app_id, app_secret) of the saved Meta app, or ProviderCredentialError."""
+    try:
+        record = _meta_app_record(protected_credential_entry(_META_APP_ENTRY))
+    except ProviderCredentialError:
+        record = None
+    if record is None:
+        raise ProviderCredentialError("meta_app_missing")
+    return record["app_id"], record["app_secret"]
+
+
 _SOCIAL_CREDENTIAL_FORMAT = "archhub-social-credential-1"          # operator-declared account
 _SOCIAL_VERIFIED_FORMAT = "archhub-social-credential-2"            # carries its account_binding
 _SOCIAL_BINDINGS = ("provider-verified", "operator-declared")
@@ -1518,17 +1585,22 @@ def save_social_credential(body, *, before_replace=None, verified=False):
     (token rotation); a declared rotation of a verified account is recorded as
     declared. No graph, settings index, alias or worker changes.
     """
-    from .social_connectors import _GRAPH_ID, _LINKEDIN_PERSON, _VAULT_ENTRY
+    from .social_connectors import _GRAPH_ID, _LINKEDIN_PERSON, _META_USER, _VAULT_ENTRY
 
     if before_replace is not None and not callable(before_replace):
         raise TypeError("before_replace must be callable")
     if type(body) is not dict or set(body) != {"vault_entry", "provider", "account_id", "token"}:
         raise ProviderCredentialError("invalid_social_credential")
     name, provider, account_id, token = body["vault_entry"], body["provider"], body["account_id"], body["token"]
+    account_ok = type(account_id) is str and (
+        _LINKEDIN_PERSON.fullmatch(account_id)
+        if provider == "linkedin"
+        else (_GRAPH_ID.fullmatch(account_id) or _META_USER.fullmatch(account_id))
+    )
     if (type(name) is not str or not name.startswith(_SOCIAL_ENTRY_PREFIX) or not _VAULT_ENTRY.fullmatch(name)
             or type(provider) is not str or provider not in ("linkedin", "meta")
             or type(account_id) is not str
-            or not (_LINKEDIN_PERSON if provider == "linkedin" else _GRAPH_ID).fullmatch(account_id)
+            or not account_ok
             or type(token) is not str or not 1 <= len(token) <= 16384
             or any(not 33 <= ord(char) <= 126 for char in token)
             or "://" in token or token.lower().startswith("inline:")):
@@ -1567,17 +1639,22 @@ def revoke_social_credential(body, *, before_replace=None):
     callback. The same protected mutation protocol as saves preserves every
     other entry, and the owner's callback rechecks admission before replacement.
     """
-    from .social_connectors import _GRAPH_ID, _LINKEDIN_PERSON, _VAULT_ENTRY
+    from .social_connectors import _GRAPH_ID, _LINKEDIN_PERSON, _META_USER, _VAULT_ENTRY
 
     if before_replace is not None and not callable(before_replace):
         raise TypeError("before_replace must be callable")
     if type(body) is not dict or set(body) != {"vault_entry", "provider", "account_id"}:
         raise ProviderCredentialError("invalid_social_revocation")
     name, provider, account_id = body["vault_entry"], body["provider"], body["account_id"]
+    account_ok = type(account_id) is str and (
+        _LINKEDIN_PERSON.fullmatch(account_id)
+        if provider == "linkedin"
+        else (_GRAPH_ID.fullmatch(account_id) or _META_USER.fullmatch(account_id))
+    )
     if (type(name) is not str or not name.startswith(_SOCIAL_ENTRY_PREFIX) or not _VAULT_ENTRY.fullmatch(name)
             or type(provider) is not str or provider not in ("linkedin", "meta")
             or type(account_id) is not str
-            or not (_LINKEDIN_PERSON if provider == "linkedin" else _GRAPH_ID).fullmatch(account_id)):
+            or not account_ok):
         raise ProviderCredentialError("invalid_social_revocation")
 
     def remove(entries):
@@ -1596,3 +1673,32 @@ def revoke_social_credential(body, *, before_replace=None):
     return {"ok": True, "vault_entry": name, "provider": provider, "account_id": account_id,
             "state": "removed" if removed else "absent", "provider_token_revoked": False,
             "source": "secrets store"}
+
+
+def list_social_credentials():
+    """List stored social account identities without returning provider tokens."""
+    try:
+        with _CREDENTIAL_LOCK:
+            store = _application_secrets_store()
+            raw = _credential_file_bytes(Path(store.SECRETS_FILE))
+            entries = _protected_credential_entries(store, raw)
+    except ProviderCredentialError:
+        raise
+    except Exception:
+        raise ProviderCredentialError("secure_store_unavailable") from None
+    items = []
+    for name, value in entries.items():
+        if not isinstance(name, str) or not name.startswith(_SOCIAL_ENTRY_PREFIX):
+            continue
+        record = _social_record(value)
+        if record is None:
+            continue
+        items.append({
+            "provider": record["provider"],
+            "account_id": record["account_id"],
+            "vault_entry": name,
+            "account_binding": record["account_binding"],
+            "vault_reference": "dpapi://ArchHub/" + name,
+        })
+    items.sort(key=lambda item: (item["provider"], item["vault_entry"], item["account_id"]))
+    return {"ok": True, "items": items, "source": "secrets store"}

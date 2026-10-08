@@ -135,11 +135,7 @@ test('Chat with no conversation: the design column holds the system prompt card 
       'no turns: the column holds the card only, as the design draws an empty conversation (design studio-lm.jsx:947-990)');
     assert.equal(studio.doc.body.textContent.includes('Ask for a change on the canvas'), false, 'no old status paragraph under the card');
     const [edit] = studio.buttons('edit', label.parentElement);
-    assert.ok(edit, 'the header keeps the design edit affordance (design studio-lm.jsx:960)');
-    assert.equal(edit.disabled, true, 'nothing edits the system prompt in this build, so edit is disabled');
-    assert.match(edit.title || '', /not available/i, 'edit says why');
-    assert.equal(edit.style.borderBottomStyle, 'dashed', 'disabled with a dashed line');
-    assert.equal(edit.style.opacity, '', 'disabled without alpha');
+    assert.equal(edit, undefined, 'no disabled edit affordance is shown without a handler');
     for (const seeded of ['312 tok', 'Revit 2025', 'Fargaly']) {
       assert.equal(studio.doc.body.textContent.includes(seeded), false, 'no seeded ' + seeded + ' in Chat');
     }

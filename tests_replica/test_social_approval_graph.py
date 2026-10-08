@@ -23,6 +23,7 @@ import pytest
 from nodelang import existing_workshop_social_execution as social
 from nodelang import commit_intent, model_router, social_approval, social_custody
 from nodelang import social_linkedin_signin as signin
+from nodelang import social_meta_signin as meta_signin
 from nodelang.cell_adapters import UserConsentBroker, read_permission
 from nodelang.cell_authorization import AuthorizationDenied
 from nodelang.cell_connector_execution import read_connector_delegation
@@ -289,6 +290,43 @@ def test_the_finish_route_enrolls_the_linkedin_named_account_as_verified_in_cust
     assert "AQX-token" not in json.dumps(answer)
     status, again = _http(server, "POST", "/api/universal/social-linkedin-finish", {})
     assert status == 409 and again["error_code"] == "linkedin_not_ready"
+
+
+def test_the_finish_route_enrolls_the_selected_meta_page_and_ig_as_verified_in_custody(server, monkeypatch):
+    entries = _memory_custody(monkeypatch)
+    taken = []
+
+    class Ready:
+        active = False
+
+        def take_page(self, page_id):
+            if taken:
+                raise meta_signin.MetaNotReady("no verified Meta Pages are waiting")
+            if page_id != "112233445566778":
+                raise meta_signin.MetaNotReady("the selected Meta Page is not waiting")
+            taken.append(1)
+            return {"page": {"id": "112233445566778", "name": "ArchHub Page",
+                             "instagram": {"id": "17841412345678901", "username": "archhub"}},
+                    "page_token": "EAAB-page-token",
+                    "instagram": {"id": "17841412345678901", "username": "archhub"},
+                    "instagram_token": "EAAB-page-token"}
+
+    monkeypatch.setattr(meta_signin, "_current", Ready())
+    status, answer = _http(server, "POST", "/api/universal/social-meta-finish", {"page_id": "112233445566778"})
+    assert status == 200 and answer["account_binding"] == "provider-verified", answer
+    page = json.loads(entries["social-meta-page-112233445566778"])
+    ig = json.loads(entries["social-meta-ig-17841412345678901"])
+    assert page["provider"] == "meta" and page["account_id"] == "112233445566778"
+    assert ig["provider"] == "meta" and ig["account_id"] == "17841412345678901"
+    assert page["account_binding"] == "provider-verified" and page["format"] == "archhub-social-credential-2"
+    assert ig["account_binding"] == "provider-verified" and ig["format"] == "archhub-social-credential-2"
+    assert social_custody.social_account_binding(provider="meta", account_id="112233445566778",
+                                                 vault_entry="social-meta-page-112233445566778") == "provider-verified"
+    assert social_custody.social_account_binding(provider="meta", account_id="17841412345678901",
+                                                 vault_entry="social-meta-ig-17841412345678901") == "provider-verified"
+    assert "EAAB-page-token" not in json.dumps(answer)
+    status, again = _http(server, "POST", "/api/universal/social-meta-finish", {"page_id": "112233445566778"})
+    assert status == 409 and again["error_code"] == "meta_not_ready"
 
 
 def test_an_unrelated_runtime_error_is_not_reported_as_linkedin_not_ready(server, monkeypatch):

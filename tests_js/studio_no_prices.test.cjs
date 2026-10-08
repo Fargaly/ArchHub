@@ -52,12 +52,12 @@ test('nothing in nodelang/studio still reaches for what was removed', () => {
   assert.deepEqual(dangling, [], `Removed identifiers are still referenced - a live ReferenceError:\n${dangling.join('\n')}`);
 });
 
-test('the account holds no quota or tier of its own: the graph answers, or the meter says so', () => {
+test('the account holds no quota or tier of its own: the graph answers, with no meter prose', () => {
   const account = source.get('studio-account.jsx');
   // 2026-09-24: no spend meter, operations meter or spend cap at all. Nothing measured spend
   // or enforced a cap, so the seeded $0 meters and the HARD CAP buttons were ornamental.
   assert.doesNotMatch(account, /usage:|acMeter|HARD CAP|opsCap/, 'The account still draws a usage meter or cap nobody measures.');
-  assert.match(account, /Model spend is not measured on this machine and no spend cap is enforced\./);
+  assert.doesNotMatch(account, /Model spend is not measured on this machine and no spend cap is enforced\./);
   assert.match(account, /graphTier: live\.tier/);
   assert.match(account, /\{a\.graphTier && \(/, 'The SUBSCRIPTION block is not gated on the graph tier.');
   const exported = lines('studio-account.jsx').find(line => line.startsWith('Object.assign(window,'));

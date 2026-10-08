@@ -1127,8 +1127,26 @@
         providerSave = operation;
         try { return await operation; } finally { providerSave = null; }
       },
+      async listLocalSocialAccounts() {
+        const result = await get('/api/universal/social-credentials');
+        if (result?.ok !== true || !Array.isArray(result.items)) fail('Saved social accounts are unavailable.');
+        return result.items.map(item => {
+          if (!['linkedin', 'meta'].includes(item?.provider) || !text(item.account_id) ||
+              typeof item.vault_entry !== 'string' || !/^social-[A-Za-z0-9._-]+$/.test(item.vault_entry) ||
+              !['provider-verified', 'operator-declared'].includes(item.account_binding)) {
+            fail('Saved social accounts are unavailable.');
+          }
+          return {provider:item.provider, account_id:item.account_id, vault_entry:item.vault_entry,
+            account_binding:item.account_binding};
+        });
+      },
       // Sign in with LinkedIn: the founder's own LinkedIn app, then LinkedIn's consent page.
       // The account is the one LinkedIn names; the token never reaches this page.
+      async linkedInAppStatus() {
+        const result = await get('/api/universal/social-linkedin-app');
+        if (result?.ok !== true || !['saved', 'missing'].includes(result.state)) fail('LinkedIn app status is unavailable.');
+        return result;
+      },
       async saveLinkedInApp({client_id, client_secret}) {
         if (providerSave) fail('Wait for the current credential change to finish.');
         if (typeof client_id !== 'string' || !/^[A-Za-z0-9]{6,64}$/.test(client_id) ||
@@ -1169,6 +1187,54 @@
           fail('The LinkedIn account could not be saved. Sign in again.');
         }
         return {ok:true, account_id:result.account_id, vault_entry:result.vault_entry, account_binding:'provider-verified'};
+      },
+      async saveMetaApp({app_id, app_secret}) {
+        if (providerSave) fail('Wait for the current credential change to finish.');
+        if (typeof app_id !== 'string' || !/^[0-9]{6,32}$/.test(app_id) ||
+            typeof app_secret !== 'string' || app_secret.length < 8 || app_secret.length > 256) {
+          fail('Enter the App ID and App Secret from your Meta app.');
+        }
+        const operation = Promise.resolve().then(async () => {
+          try {
+            const result = await post('/api/universal/social-meta-app', {app_id, app_secret});
+            if (result?.ok !== true || result.state !== 'saved' || result.app_id !== app_id) fail('not confirmed');
+            return {ok:true, app_id};
+          } catch (_) {
+            throw new Error('The Meta app could not be saved. Check the App ID and App Secret.');
+          }
+        });
+        providerSave = operation;
+        try { return await operation; } finally { providerSave = null; app_secret = ''; }
+      },
+      async startMetaSignIn() {
+        const result = await post('/api/universal/social-meta-signin', {});
+        if (result?.ok !== true || typeof result.phase !== 'string') fail('Meta sign-in could not start.');
+        return result;
+      },
+      async cancelMetaSignIn() {
+        const result = await post('/api/universal/social-meta-signin', {cancel:true});
+        if (result?.ok !== true || typeof result.phase !== 'string') fail('Meta sign-in could not be cancelled.');
+        return result;
+      },
+      async metaSignInStatus() {
+        const result = await get('/api/universal/social-meta-signin');
+        if (result?.ok !== true || typeof result.phase !== 'string') fail('Meta sign-in status is unavailable.');
+        return result;
+      },
+      async finishMetaSignIn({page_id}) {
+        if (!/^[0-9]{1,32}(?:_[0-9]{1,32})?$/.test(page_id || '')) fail('Choose one Facebook Page.');
+        const result = await post('/api/universal/social-meta-finish', {page_id});
+        if (result?.ok !== true || result.state !== 'enrolled' || result.provider !== 'meta' ||
+            result.account_binding !== 'provider-verified' || result.account_id !== page_id ||
+            result.vault_entry !== 'social-meta-page-' + page_id) {
+          fail('The Meta Page could not be saved. Sign in again.');
+        }
+        if (result.instagram && (!/^[0-9]{1,32}(?:_[0-9]{1,32})?$/.test(result.instagram.account_id || '') ||
+            result.instagram.vault_entry !== 'social-meta-ig-' + result.instagram.account_id)) {
+          fail('The linked Instagram account could not be confirmed.');
+        }
+        return {ok:true, account_id:result.account_id, vault_entry:result.vault_entry,
+          account_binding:'provider-verified', page:result.page || null, instagram:result.instagram || null};
       },
       // Social posts waiting for the founder: the exact request, then his Approve or Deny.
       async listSocialApprovals() {

@@ -93,10 +93,16 @@ def test_the_redirect_is_fixed_because_linkedin_matches_it_exactly():
 def test_the_linkedin_app_is_kept_protected_and_its_secret_never_returned(monkeypatch):
     entries = {}
     monkeypatch.setattr(model_router, "_mutate_protected_entries", lambda put, before_replace=None: put(entries))
+    def protected(name):
+        if name not in entries:
+            raise model_router.ProviderCredentialError("secure_store_unavailable")
+        return entries[name]
+    monkeypatch.setattr(model_router, "protected_credential_entry", protected)
+    assert model_router.linkedin_app_status() == {"state": "missing"}
     saved = model_router.save_linkedin_app({"client_id": "86abc123xyz", "client_secret": "secret-value-1"})
     assert saved == {"ok": True, "state": "saved", "client_id": "86abc123xyz", "source": "secrets store"}
-    monkeypatch.setattr(model_router, "protected_credential_entry", lambda name: entries[name])
     assert model_router.linkedin_app() == ("86abc123xyz", "secret-value-1")
+    assert model_router.linkedin_app_status() == {"state": "saved", "client_id": "86abc123xyz", "source": "secrets store"}
     for bad in ({"client_id": "x", "client_secret": "secret-value-1"}, {"client_id": "86abc123xyz", "client_secret": "a b"}):
         with pytest.raises(model_router.ProviderCredentialError):
             model_router.save_linkedin_app(bad)
@@ -112,7 +118,8 @@ def test_only_a_provider_named_account_is_recorded_as_verified(monkeypatch):
 
 def test_the_settings_routes_are_declared_for_every_graph():
     declared = {(method, path) for method, path, _ in _APPLICATION_HTTP_ROUTE_SPECS}
-    for route in (("POST", "/api/universal/social-linkedin-app"), ("GET", "/api/universal/social-linkedin-signin"),
+    for route in (("GET", "/api/universal/social-linkedin-app"), ("POST", "/api/universal/social-linkedin-app"),
+                  ("GET", "/api/universal/social-linkedin-signin"),
                   ("POST", "/api/universal/social-linkedin-signin"), ("POST", "/api/universal/social-linkedin-finish")):
         assert route in declared, route
 
@@ -121,7 +128,8 @@ def test_settings_offers_linkedin_sign_in_and_the_page_never_holds_the_token():
     studio = Path(signin.__file__).resolve().parent / "studio"
     page = (studio / "studio-lm.jsx").read_text(encoding="utf-8")
     transport = (studio / "studio-existing-workshop.js").read_text(encoding="utf-8")
-    assert "<SettingsLinkedInSignIn transport={transport}/>" in page
+    assert "<SettingsLinkedInSignIn transport={transport} compact/>" in page
+    assert "get('/api/universal/social-linkedin-app')" in transport
     assert "post('/api/universal/social-linkedin-app', {client_id, client_secret})" in transport
     assert "post('/api/universal/social-linkedin-signin', {})" in transport
     assert "get('/api/universal/social-linkedin-signin')" in transport

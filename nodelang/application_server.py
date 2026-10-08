@@ -398,6 +398,7 @@ from .cell_control_bindings import (
     CAPABILITY_VIEW_SECTION,
 )
 from .social_linkedin_signin import LinkedInNotReady
+from .social_meta_signin import MetaNotReady
 from .universal_cell import (
     NULL_CELL_ID,
     Cell,
@@ -6561,6 +6562,42 @@ class ApplicationServer:
                     from .social_linkedin_signin import current_status as linkedin_status
                     self._json(200, {'ok': True, **linkedin_status()})
                     return
+                if parsed.path == '/api/universal/social-linkedin-app':
+                    # Settings decides whether to show the LinkedIn app setup step. No secret.
+                    try:
+                        binding, _session_token = self._browser_session_binding()
+                        owner.require_universal_http_route('GET', parsed.path, authentication_context=binding.context)
+                    except AuthorizationDenied as denied:
+                        self._json(403, {'ok': False, 'error': str(denied)})
+                        return
+                    from .model_router import linkedin_app_status
+                    self._json(200, {'ok': True, **linkedin_app_status()})
+                    return
+                if parsed.path == '/api/universal/social-meta-signin':
+                    # What Settings polls while Facebook Login is open. No token.
+                    try:
+                        binding, _session_token = self._browser_session_binding()
+                        owner.require_universal_http_route('GET', parsed.path, authentication_context=binding.context)
+                    except AuthorizationDenied as denied:
+                        self._json(403, {'ok': False, 'error': str(denied)})
+                        return
+                    from .social_meta_signin import current_status as meta_status
+                    self._json(200, {'ok': True, **meta_status()})
+                    return
+                if parsed.path == '/api/universal/social-credentials':
+                    # Settings lists local social account identities only. Tokens never leave custody.
+                    try:
+                        binding, _session_token = self._browser_session_binding()
+                        owner.require_universal_http_route('GET', parsed.path, authentication_context=binding.context)
+                        if binding.subject_root != owner.universal_registry.authorization.subject_root:
+                            raise AuthorizationDenied('Social credentials belong to this application owner')
+                        from .model_router import list_social_credentials
+                        self._json(200, list_social_credentials())
+                    except AuthorizationDenied as denied:
+                        self._json(403, {'ok': False, 'error': str(denied)})
+                    except Exception:
+                        self._json(503, {'ok': False, 'error': 'Saved social accounts are unavailable.'})
+                    return
                 if parsed.path == '/api/universal/social-approvals':
                     # Social posts waiting for the founder, each with its exact request.
                     try:
@@ -7423,7 +7460,8 @@ class ApplicationServer:
                         return
                     if self.path in ('/api/universal/provider-key', '/api/universal/social-credential', '/api/universal/social-credential-remove',
                                      '/api/universal/social-linkedin-app', '/api/universal/social-linkedin-signin',
-                                     '/api/universal/social-linkedin-finish'):
+                                     '/api/universal/social-linkedin-finish', '/api/universal/social-meta-app',
+                                     '/api/universal/social-meta-signin', '/api/universal/social-meta-finish'):
                         from .model_router import ProviderCredentialError, save_provider_key
                         social_enrollment = self.path == '/api/universal/social-credential'
                         social_removal = self.path == '/api/universal/social-credential-remove'
@@ -7453,9 +7491,17 @@ class ApplicationServer:
                                     from .model_router import save_linkedin_app
                                     with owner.universal_store.stable_snapshot():
                                         payload = save_linkedin_app(body, before_replace=require_credential_admission)
+                                elif self.path == '/api/universal/social-meta-app':
+                                    from .model_router import save_meta_app
+                                    with owner.universal_store.stable_snapshot():
+                                        payload = save_meta_app(body, before_replace=require_credential_admission)
                                 elif self.path == '/api/universal/social-linkedin-signin' and body == {'cancel': True}:
                                     # Settings' Cancel: the waiting loopback closes.
                                     from .social_linkedin_signin import cancel_current
+                                    payload = {'ok': True, **cancel_current()}
+                                elif self.path == '/api/universal/social-meta-signin' and body == {'cancel': True}:
+                                    # Settings' Cancel: the waiting loopback closes.
+                                    from .social_meta_signin import cancel_current
                                     payload = {'ok': True, **cancel_current()}
                                 elif self.path == '/api/universal/social-linkedin-signin':
                                     # Opens LinkedIn's consent page; the loopback waits for its code.
@@ -7465,6 +7511,14 @@ class ApplicationServer:
                                         raise InvalidCell('LinkedIn sign-in takes no fields, or only cancel')
                                     client_id, client_secret = linkedin_app()
                                     payload = {'ok': True, **begin(client_id, client_secret)}
+                                elif self.path == '/api/universal/social-meta-signin':
+                                    # Opens Facebook Login; the loopback waits for its code.
+                                    from .model_router import meta_app
+                                    from .social_meta_signin import begin
+                                    if body != {}:
+                                        raise InvalidCell('Meta sign-in takes no fields, or only cancel')
+                                    app_id, app_secret = meta_app()
+                                    payload = {'ok': True, **begin(app_id, app_secret)}
                                 elif self.path == '/api/universal/social-linkedin-finish':
                                     # Enrolls the account LinkedIn itself confirmed; nothing is typed.
                                     from .social_linkedin_signin import take_verified
@@ -7475,6 +7529,33 @@ class ApplicationServer:
                                         'vault_entry': 'social-linkedin-' + account_id.rsplit(':', 1)[1],
                                         'token': token}, require_admission=require_credential_admission, verified=True)
                                     token = None
+                                elif self.path == '/api/universal/social-meta-finish':
+                                    # Enrolls the Page the founder picked from Meta's returned Page list.
+                                    from .social_meta_signin import take_verified_page
+                                    from .social_custody import enroll_social_account
+                                    if type(body) is not dict or set(body) != {'page_id'}:
+                                        raise InvalidCell('Meta finish requires one selected Page')
+                                    selected = take_verified_page(body['page_id'])
+                                    page = selected['page']
+                                    page_id = page['id']
+                                    payload = enroll_social_account(owner, {
+                                        'provider': 'meta', 'account_id': page_id,
+                                        'vault_entry': 'social-meta-page-' + page_id,
+                                        'token': selected['page_token']},
+                                        require_admission=require_credential_admission, verified=True)
+                                    payload = {**payload, 'page': page}
+                                    if 'instagram' in selected:
+                                        instagram = selected['instagram']
+                                        ig_id = instagram['id']
+                                        ig_payload = enroll_social_account(owner, {
+                                            'provider': 'meta', 'account_id': ig_id,
+                                            'vault_entry': 'social-meta-ig-' + ig_id,
+                                            'token': selected['instagram_token']},
+                                            require_admission=require_credential_admission, verified=True)
+                                        payload = {**payload, 'instagram': {**instagram,
+                                                                           'vault_entry': ig_payload['vault_entry'],
+                                                                           'account_id': ig_payload['account_id']}}
+                                    selected.clear()
                                 elif social_removal:
                                     from .social_custody import remove_local_social_account
                                     payload = remove_local_social_account(owner, body, require_admission=require_credential_admission)
@@ -7498,6 +7579,8 @@ class ApplicationServer:
                                 'error': 'The credential reference does not match this application custody.'})
                         except LinkedInNotReady as waiting:
                             self._json(409, {'ok': False, 'error_code': 'linkedin_not_ready', 'error': str(waiting)})
+                        except MetaNotReady as waiting:
+                            self._json(409, {'ok': False, 'error_code': 'meta_not_ready', 'error': str(waiting)})
                         except Exception:
                             self._json(503, {'ok': False, 'error_code': 'credential_change_unconfirmed',
                                 'error': 'The credential change could not be confirmed. Check the saved account before retrying.'})

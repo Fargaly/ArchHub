@@ -15,7 +15,7 @@ const slice = (from, to) => {
 };
 const overlaps = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
-test('the free slot meets no drawn card, starting at the canvas top-left card', () => {
+test('the free slot meets no drawn card, starting at the visible canvas centre when supplied', () => {
   const ctx = vm.createContext({});
   vm.runInContext(slice('const studioFreeSlot =', 'const studioRefreshCanvasInPlace =') + '\nglobalThis.slot = studioFreeSlot;', ctx);
   // The sample canvas as the founder sees it: two rows of cards under the frame.
@@ -28,10 +28,17 @@ test('the free slot meets no drawn card, starting at the canvas top-left card', 
   const card = {x:at.x, y:at.y, w:210, h:230};
   for (const node of nodes) assert.ok(!overlaps(card, node), 'the new card meets ' + node.id + ' at ' + JSON.stringify(at));
   assert.deepEqual(JSON.parse(JSON.stringify(ctx.slot([]))), {x:60, y:92}, 'an empty canvas starts at the first card point');
+  assert.deepEqual(JSON.parse(JSON.stringify(ctx.slot([{id:'far', x:0, y:0, w:210, h:200}], {x:900, y:700}))), {x:795, y:585},
+    'a double-click starts from the graph point under the visible canvas centre');
 });
 
-test('a double-click takes the free slot; only a drop names its own point', () => {
+test('a double-click takes the visible free slot, reveals it, and refresh never reloads the page', () => {
   const add = slice('const addNodeFromLibrary = (', '\n  };');
+  const refresh = slice('const studioRefreshCanvasInPlace =', '\nconst StudioLM =');
   assert.doesNotMatch(add, /=\s*200\s*,\s*y\s*=\s*200/, 'no fixed default point');
   assert.match(add, /studioFreeSlot\(/, 'the free slot answers when nothing was dropped');
+  assert.match(add, /visibleCanvasCenter\(\)/, 'double-click placement is anchored to the visible canvas');
+  assert.match(add, /setFocusId\(newId\)/, 'created node is selected');
+  assert.match(add, /requestCanvasReveal\(\[newId\]\)/, 'created node is revealed');
+  assert.doesNotMatch(refresh, /window\.location\.reload\(\)/, 'in-place refresh has no full reload fallback');
 });

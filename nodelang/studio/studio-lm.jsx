@@ -45,6 +45,18 @@ const useWorkshopProjection = () => {
 };
 const studioCanvasScope = canvas => JSON.stringify([canvas?.graph_id || canvas?.application_root || '',
   canvas?.root || canvas?.scope?.current || '', canvas?.authorization?.subject || '', canvas?.authorization?.session || '']);
+const studioCreatedNodeId = (result, refreshed, beforeIds) => {
+  const direct = result && (result.node || result.selected || result.id);
+  if (direct) return direct;
+  const scopeRoot = refreshed?.root || refreshed?.scope?.current || refreshed?.canvas?.root || refreshed?.canvas?.scope?.current;
+  const root = result?.root;
+  if (root && root !== scopeRoot) return root;
+  const held = refreshed?.nodes || refreshed?.graph?.nodes ||
+    refreshed?.topology?.canvas?.nodes ||
+    window.ARCHHUB_STUDIO_AUTHORITY?.getSnapshot?.()?.canvas?.nodes ||
+    window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot?.()?.topology?.canvas?.nodes || [];
+  return (held.find(node => node?.id && !beforeIds.has(node.id)) || {}).id || null;
+};
 const LM_SESSIONS = (window.ARCHHUB_LIVE?.sessions) || [];
 const _SEED_SESSIONS = [
   { id:'walls',   title:'Schedule wall types',   state:'running',  host:'revit',
@@ -280,26 +292,39 @@ const studioLeavesPage = e => e.key === 'BrowserBack' || e.key === 'BrowserForwa
   (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight'));
 // An ordinary canvas edit (place, copy, delete) re-reads the canvas in place. Reloading the whole
 // Studio page re-ran its boot, which on a large graph looked like the app breaking after every edit.
-// Where a library card goes when it has no drop point: the first lattice slot, row by row from the
-// canvas's top-left card, that meets no card already drawn (canvas_placement.free_slot's rule).
-const studioFreeSlot = (nodes, size = {w:210, h:230}, gap = 40, columns = 6) => {
+// Where a library card goes when it has no drop point: start at the visible
+// canvas centre when the canvas reports one, then search lattice slots outward.
+const studioFreeSlot = (nodes, originOrSize = null, size = {w:210, h:230}, gap = 40, columns = 6) => {
+  const hasOrigin = originOrSize && Number.isFinite(originOrSize.x) && Number.isFinite(originOrSize.y);
+  if (originOrSize && !hasOrigin && Number.isFinite(originOrSize.w) && Number.isFinite(originOrSize.h)) size = originOrSize;
   const rects = (nodes || []).filter(n => Number.isFinite(n.x) && Number.isFinite(n.y))
     .map(n => ({x:n.x, y:n.y, w:Number.isFinite(n.w) ? n.w : size.w, h:Math.max(Number.isFinite(n.h) ? n.h : 0, size.h)}));
-  const x0 = rects.length ? Math.min(...rects.map(r => r.x)) : 60;
-  const y0 = rects.length ? Math.min(...rects.map(r => r.y)) : 92;
+  const x0 = hasOrigin ? originOrSize.x - size.w / 2 : rects.length ? Math.min(...rects.map(r => r.x)) : 60;
+  const y0 = hasOrigin ? originOrSize.y - size.h / 2 : rects.length ? Math.min(...rects.map(r => r.y)) : 92;
   const meets = (x, y) => rects.some(r => x < r.x + r.w + gap && r.x < x + size.w + gap && y < r.y + r.h + gap && r.y < y + size.h + gap);
+  if (hasOrigin) {
+    const stepX = size.w + gap, stepY = size.h + gap;
+    for (let radius = 0; radius < 64; radius += 1) {
+      for (let dy = -radius; dy <= radius; dy += 1) for (let dx = -radius; dx <= radius; dx += 1) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+        const x = x0 + dx * stepX, y = y0 + dy * stepY;
+        if (!meets(x, y)) return {x, y};
+      }
+    }
+  }
   for (let i = 0; i < 4096; i += 1) {
     const x = x0 + (i % columns) * (size.w + gap), y = y0 + Math.floor(i / columns) * (size.h + gap);
     if (!meets(x, y)) return {x, y};
   }
-  return {x:x0, y:Math.max(...rects.map(r => r.y + r.h)) + gap};
+  return {x:x0, y:(rects.length ? Math.max(...rects.map(r => r.y + r.h)) + gap : y0)};
 };
 
 const studioRefreshCanvasInPlace = () => {
+  const authority = window.ARCHHUB_STUDIO_AUTHORITY;
+  if (typeof authority?.load === 'function') return authority.load();
   const workshop = window.ARCHHUB_EXISTING_WORKSHOP;
   if (typeof workshop?.refreshTopologyCanvas === 'function') return workshop.refreshTopologyCanvas();
-  window.location.reload();
-  return Promise.resolve();
+  return Promise.resolve(null);
 };
 const StudioLM = () => {
   React.useSyncExternalStore(window.ArchHubTheme.subscribe, window.ArchHubTheme.getEpoch);
@@ -414,6 +439,14 @@ const StudioLM = () => {
   const [toolView, setToolView] = React.useState(null);
   const [pendingCanvasReveal, setPendingCanvasReveal] = React.useState(null);
   const requestCanvasReveal = ids => setPendingCanvasReveal({ids:[...new Set((ids || []).filter(Boolean))], at:Date.now()});
+  const canvasViewportRef = React.useRef(null);
+  const updateCanvasViewport = React.useCallback(view => { canvasViewportRef.current = view; }, []);
+  const visibleCanvasCenter = () => {
+    const view = canvasViewportRef.current;
+    if (!view || !Number.isFinite(view.width) || !Number.isFinite(view.height) ||
+        !Number.isFinite(view.zoom) || view.zoom <= 0 || !view.pan) return null;
+    return {x:(view.width / 2 - view.pan.x) / view.zoom, y:(view.height / 2 - view.pan.y) / view.zoom};
+  };
   const authorityState = useStudioProjection();
   const [focusId, setLocalFocusId] = React.useState(() =>
     window.ARCHHUB_STUDIO_AUTHORITY?.getSnapshot()?.selected || LM_GRAPH.nodes[0]?.id || null);
@@ -611,7 +644,15 @@ const StudioLM = () => {
   const addNodeFromLibrary = (libItem, dropX, dropY) => {
     // A drop places the card where it was dropped; a double-click has no point, so it takes a free slot.
     const dropped = Number.isFinite(dropX) && Number.isFinite(dropY);
-    const {x, y} = dropped ? {x:dropX, y:dropY} : studioFreeSlot(authorityState?.graph?.nodes || []);
+    const graphNodesBefore = authorityState?.graph?.nodes || [];
+    const beforeIds = new Set(graphNodesBefore.map(node => node.id).filter(Boolean));
+    const {x, y} = dropped ? {x:dropX, y:dropY} : studioFreeSlot(graphNodesBefore, visibleCanvasCenter());
+    const revealCreated = async result => {
+      const refreshed = await studioRefreshCanvasInPlace();
+      const newId = studioCreatedNodeId(result, refreshed, beforeIds);
+      if (newId) { setFocusId(newId); requestCanvasReveal([newId]); }
+      return refreshed;
+    };
     if (window.ARCHHUB_STUDIO_AUTHORITY) {
       // A signed canvas places published definitions only. A card without one
       // is refused by name: its item id is not a definition id.
@@ -621,6 +662,7 @@ const StudioLM = () => {
       }
       return window.ARCHHUB_NODE_CREATE({definition: libItem.definition,
         definition_revision: libItem.revision_root, x, y})
+        .then(r => { if (r && r.ok === false) { window.alert('not created: ' + (r.error || '')); return false; } return revealCreated(r); })
         .catch(e => { window.alert('not created: ' + (e && e.message || e)); return false; });
     }
     if (libItem.noEngine || !libItem.engine || !window.ARCHHUB_NODE_CREATE) {
@@ -635,8 +677,8 @@ const StudioLM = () => {
     // A node with an engine is created ON THE GRAPH through the same governed
     // write the seed uses, then the canvas reloads from the graph. The item id
     // names the card, so a shared engine gets that card's own defaults.
-    window.ARCHHUB_NODE_CREATE({ item: libItem.id, title: libItem.title, engine: libItem.engine, x, y, params: libItem.params || {} })
-      .then(r => { if (r && r.ok !== false) return studioRefreshCanvasInPlace(); window.alert('not created: ' + ((r && r.error) || '')); })
+    return window.ARCHHUB_NODE_CREATE({ item: libItem.id, title: libItem.title, engine: libItem.engine, x, y, params: libItem.params || {} })
+      .then(r => { if (r && r.ok !== false) return revealCreated(r); window.alert('not created: ' + ((r && r.error) || '')); return false; })
       .catch(e => window.alert('not created: ' + (e && e.message || e)));
   };
 
@@ -2002,7 +2044,7 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, openTab
         </>
       ) : (
         <>
-          <NodeCanvas key={JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas), mode === 'system'])} system={mode === 'system'} focusId={focusId} setFocusId={setFocusId} pendingReveal={pendingCanvasReveal} clearPendingReveal={clearPendingCanvasReveal} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model}/>
+          <NodeCanvas key={JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas), mode === 'system'])} system={mode === 'system'} focusId={focusId} setFocusId={setFocusId} pendingReveal={pendingCanvasReveal} clearPendingReveal={clearPendingCanvasReveal} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model} onViewportChange={updateCanvasViewport}/>
           <NodeRail node={focusNode} hiddenWork={!focusNode && authorityState?.canvas?.selection_hidden === true}
             scope={authorityState?.canvas?.root || authorityState?.canvas?.scope?.current || ''}
             openConversation={root => updateView({conversationRoot:root, mode:'chat', target:''})}
@@ -3145,7 +3187,7 @@ const writeCanvasLayoutTrace = (scope, burst) => {
   } catch (error) { /* a session with no storage still draws and still saves the canvas */ }
 };
 
-const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingReveal = null, setLibraryOpen, userNodes = [], addNodeFromLibrary, model, system = false }) => {
+const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingReveal = null, setLibraryOpen, userNodes = [], addNodeFromLibrary, model, system = false, onViewportChange = null }) => {
   const authorityState = useStudioProjection();
   const projectedGraph = authorityState?.graph || LM_GRAPH;
   // The owner marks every top-level card with who placed it (graph shape, not a list of names).
@@ -3413,6 +3455,11 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   const [pan, setPan] = React.useState(() => readCanvasView(scopeKey).pan);
   const [zoom, setZoom] = React.useState(() => readCanvasView(scopeKey).zoom);
   React.useEffect(() => { CANVAS_VIEWS.set(scopeKey, {pan, zoom}); }, [scopeKey, pan, zoom]);
+  React.useEffect(() => {
+    if (typeof onViewportChange !== 'function' || !wrapRef.current) return;
+    const rect = wrapRef.current.getBoundingClientRect();
+    onViewportChange({scope:scopeKey, pan, zoom, width:rect.width, height:rect.height});
+  }, [onViewportChange, scopeKey, pan, zoom]);
   const [menuNotice, setMenuNotice] = React.useState('');
   // What the person picked on this canvas (a node or a wire), held here so the dim follows the click at
   // once without waiting on the owner. Nothing picked -- including a selection restored at start -- dims nothing.
@@ -5246,6 +5293,7 @@ const LibCatBtn = ({ id, label, icon, col, active, onSelect }) => (
 // ──────────────────────── NODE RAIL ────────────────────────
 const NodeModelConversation = ({node, scope = '', openConversation}) => {
   const [answer, setAnswer] = React.useState('');
+  const [transcriptTick, setTranscriptTick] = React.useState(0);
   // The node's Workshop transcript, read only. null while the first read is in flight.
   const [transcript, setTranscript] = React.useState(null);
   const cat = studioCategory('ai');
@@ -5280,7 +5328,7 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
     read();                                 // re-read whenever the rail opens or the bound node/scope changes
     const timer = setInterval(read, 8000);  // light poll \u2014 messages live in content, so the revision never moves
     return () => { live = false; clearInterval(timer); };
-  }, [bound, node.id, node.conversation_root, scope]);
+  }, [bound, node.id, node.conversation_root, scope, transcriptTick]);
   const rows = transcript ? transcript.rows : [];
   const hasOlder = !!(transcript && transcript.has_older);
   return <section aria-label={'Conversation with ' + node.title} style={{ display:'flex', flexDirection:'column', gap:10, borderTop:`1px solid ${LM.lineSoft}`, paddingTop:12 }}>
@@ -5319,7 +5367,10 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
     {answer && <p role="status" style={{ margin:0, whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontFamily:LM.serif, fontSize:14, lineHeight:1.55, color:LM.ink, letterSpacing:'-0.003em' }}>{answer}</p>}
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:7, padding:'8px 11px' }}>
       <div style={{ display:'flex', alignItems:'center', gap:6, minHeight:22, fontSize:13, color:LM.inkSoft }}>
-        <InlineAsk scale="reply" node={node} onAnswer={setAnswer} placeholder={'Ask ' + node.title + '\u2026'}/>
+        <InlineAsk scale="reply" node={node} onAnswer={line => {
+          setAnswer(line);
+          if (bound) setTranscriptTick(tick => tick + 1);
+        }} placeholder={'Ask ' + node.title + '\u2026'}/>
       </div>
     </div>
     </>) : null}

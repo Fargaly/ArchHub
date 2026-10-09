@@ -45,6 +45,16 @@ const helpers = () => {
   return context.h;
 };
 
+const createdNodeIdHelper = () => {
+  const start = source.indexOf('const studioCreatedNodeId =');
+  const end = source.indexOf('const LM_SESSIONS =', start);
+  assert.ok(start > 0 && end > start);
+  const context = vm.createContext({window:{}});
+  vm.runInContext(source.slice(start, end) +
+    '\nglobalThis.studioCreatedNodeId = studioCreatedNodeId;', context);
+  return context.studioCreatedNodeId;
+};
+
 const port = (id, side) => ({id, t:'any', label:id, connectable:true, mode:'connection', side});
 const NODES = () => [
   {id:'a', cat:'logic', live:true, x:40, y:60, w:210, h:110, title:'Sketch Lines', sub:'vision.sketch_lines',
@@ -61,6 +71,24 @@ const WIRES = () => [
   {id:'w-ab', from:['a', 'a-out'], to:['b', 'b-in']},
   {id:'w-bc', from:['b', 'b-out'], to:['c', 'c-in']},
 ];
+
+test('library create reveal uses the created node id from the projection, not the canvas root', () => {
+  const createdNodeId = createdNodeIdHelper();
+  const before = new Set(['old-node']);
+  const refreshed = {
+    root:'canvas-root',
+    selected:'created-node',
+    nodes:[{id:'old-node'}, {id:'created-node'}],
+  };
+  assert.equal(createdNodeId({
+    ok:true,
+    root:'canvas-root',
+    node:'created-node',
+    selected:'created-node',
+  }, refreshed, before), 'created-node');
+  assert.equal(createdNodeId({ok:true, root:'canvas-root'}, refreshed, before),
+    'created-node');
+});
 
 async function mount({focusId = null, history = null, nodes = NODES(), wires = WIRES()} = {}) {
   const {JSDOM} = await import('jsdom');

@@ -7739,8 +7739,24 @@ class ApplicationServer:
 
                         with _composer_planning(owner):
                             agent_node_kwargs = {'node_root': body['node']} if 'node' in body else {}
+                            persisted_turn = None
                             if agent_node_kwargs:
                                 model = body.get('model')
+                                with owner.mutation_lock:
+                                    from .universal_application import project_universal_canvas
+                                    current_authority()
+                                    projection = project_universal_canvas(
+                                        owner.universal_store, owner.universal_registry,
+                                        authentication_context=binding.context)
+                                    matches = [row for row in projection.get('nodes', ())
+                                        if row.get('id') == body['node']]
+                                    if (len(matches) == 1 and matches[0].get('has_conversation') is True
+                                            and type(matches[0].get('conversation_root')) is str
+                                            and matches[0].get('conversation_root')):
+                                        persisted_turn = {
+                                            'conversation': matches[0]['conversation_root'],
+                                            'node': body['node'],
+                                        }
                             else:
                                 with owner.mutation_lock:
                                     model = (
@@ -7748,6 +7764,17 @@ class ApplicationServer:
                                         or owner._read_agent_model()
                                         or owner._default_agent_model()[0]
                                     )
+                            conversation_context = None
+                            user_message = None
+                            append_turn = None
+                            if persisted_turn is not None:
+                                from .workshop_session_start import _turn_history, _append_user
+                                prefix = 'canvas-composer:%s' % uuid.uuid4().hex
+                                append_turn, _lookup_turn, turn_context = _turn_history(
+                                    owner, binding, persisted_turn['conversation'], prefix, current_authority)
+                                user_message = _append_user(owner.universal_registry, binding,
+                                    str(body.get('prompt', '')), persisted_turn['node'], append_turn, _lookup_turn)
+                                conversation_context = turn_context(user_message['sequence'])
                             try:
                                 agent_result = run_agent_composer(
                                     owner.universal_store,
@@ -7757,8 +7784,17 @@ class ApplicationServer:
                                     authentication_context=binding.context,
                                     mutation_lock=owner.mutation_lock,
                                     revalidate=current_authority,
+                                    conversation_context=conversation_context,
                                     **agent_node_kwargs,
                                 )
+                                if append_turn is not None and user_message is not None:
+                                    applied_roots = tuple(row['root'] for row in agent_result.get('applied', ())
+                                        if isinstance(row, dict) and row.get('root'))
+                                    append_turn("Model reply from %s:\n%s" % (
+                                        str(model or 'selected model'),
+                                        str(agent_result.get('answer') or ''),
+                                    ), ':reply', refs=tuple(dict.fromkeys((persisted_turn['node'], *applied_roots))),
+                                        reply_to=user_message['id'])
                             except ModelRouteRefused as refused:
                                 self._json(200, {
                                     'ok': False, 'error': str(refused),

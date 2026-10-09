@@ -48,7 +48,9 @@ then wire source {"ref":"reader"} to another previously declared reference.
 Use only declared connection ports. Port names may be omitted only when that
 side has one port. Missing or ambiguous ports need user refinement, not invented
 generic inputs or outputs. Only use definition names in the context. Answer in
-the founder's language. If the request needs no canvas change, return
+the founder's language. Propose actions ONLY when the user asks to change the canvas.
+A remark, question, note or anything to remember gets {"actions":[],"answer":"..."}.
+If the request needs no canvas change, return
 {"actions":[],"answer":"..."}.
 Return at most 12 actions. These actions prepare an editable workflow; they do
 not execute it. Never claim that effects ran. Execution follows user review and
@@ -68,6 +70,31 @@ instead of preparing execution. The user still reviews and approves the draft.
 _DRAFT_OPERATIONS = frozenset({
     "place", "node", "work", "select", "group", "ungroup", "set_property", "wire", "open", "run",
 })
+
+_CANVAS_OBJECT_RE = re.compile(
+    r"\b(canvas|card|cards|graph|node|nodes|root|roots|selection|workflow|work|wire|wires)\b",
+    re.IGNORECASE,
+)
+_CANVAS_IMPERATIVE_RE = re.compile(
+    r"^\s*(?:please\s+|kindly\s+)?"
+    r"(add|append|build|change|connect|create|delete|disconnect|draft|draw|edit|group|insert|"
+    r"link|make|move|open|place|prepare|remove|rename|select|set|ungroup|unlink|wire)\b",
+    re.IGNORECASE,
+)
+
+
+def _current_user_prompt(prompt: str) -> str:
+    marker = "\n\nFounder says: "
+    if marker in prompt:
+        return prompt.rsplit(marker, 1)[1]
+    return prompt
+
+
+def _prompt_requests_canvas_change(prompt: str) -> bool:
+    current = _current_user_prompt(prompt).strip()
+    if not current or "?" in current:
+        return False
+    return bool(_CANVAS_IMPERATIVE_RE.search(current) and _CANVAS_OBJECT_RE.search(current))
 
 
 def chosen_model_route(model: object) -> str:
@@ -301,6 +328,7 @@ def run_agent_composer(
 
     if type(prompt) is not str or not prompt.strip():
         raise InvalidCell("agent prompt must be a non-empty string")
+    current_prompt_allows_actions = _prompt_requests_canvas_change(prompt)
     if conversation_context is not None and (type(conversation_context) is not str
             or len(conversation_context.encode("utf-8")) > 24_000):
         raise InvalidCell("agent conversation context exceeds its bounded text interface")
@@ -349,6 +377,11 @@ def run_agent_composer(
     ):
         raise InvalidCell("agent draft contains an unsupported action")
     _validate_draft_references(actions, projection)
+    if actions and not current_prompt_allows_actions:
+        return {
+            "answer": "No canvas change applied because the current prompt did not ask to change the canvas.",
+            "applied": [],
+        }
     with lock:
         if revalidate is not None:
             revalidate()
@@ -607,8 +640,8 @@ def _apply_draft_actions(
     issues = [str(item["why"]) for item in applied if not item.get("ok")]
     answer = str(plan.get("answer", ""))
     if issues:
-        answer = "Draft needs attention: " + "; ".join(issues)
-    elif applied:
+        answer = ((answer + " ") if answer else "") + "Draft needs attention: " + "; ".join(issues)
+    elif applied and not answer:
         answer = "Draft updated on the canvas. Review its nodes, connections and parameters."
     if execution_requested:
         answer = (

@@ -44,11 +44,14 @@ test("W6 social accounts expose OAuth buttons, never raw access-token enrollment
   }
 });
 
-test("W6 Providers OpenCode is one action line, not repeated routing prose", () => {
+test("W6 Providers OpenCode can be selected as local chat route", () => {
   const manage = slice("const ProviderManage = ", "const SettingsProviders = ");
   assert.match(manage, /p\.id === 'opencode'/);
-  assert.match(manage, /Open OpenCode/);
-  assert.equal((manage.match(/installed but not routed/g) || []).length, 1);
+  assert.match(manage, /Use OpenCode/);
+  assert.match(manage, /local-cli\/opencode/);
+  assert.equal(manage.includes("127.0.0.1:4096"), false);
+  assert.equal(manage.includes("Open OpenCode"), false);
+  assert.equal(manage.includes("installed but not routed"), false);
 });
 
 test("W6 no visible button is left without an action in the swept shell areas", () => {

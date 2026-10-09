@@ -65,6 +65,7 @@ def _broker(tmp_path: Path, host: _Host, **kwargs) -> ModelExecutionBroker:
             "local-cli:codex": "codex-test.exe",
             "local-cli:claude": "claude-test.exe",
             "local-cli:gemini": "gemini-test.cmd",
+            "local-cli:opencode": "opencode-test.cmd",
         },
         **kwargs,
     )
@@ -185,6 +186,72 @@ def test_broker_returns_a_redacted_failed_receipt_material_for_invalid_or_failed
     assert failed.proposal_payload is None
 
 
+def test_broker_runs_opencode_with_plan_agent_and_approved_free_model(tmp_path):
+    raw = (json.dumps({"type": "message", "message": {"role": "assistant",
+        "parts": [{"type": "text", "text": _review().decode("utf-8")}]} }) + "\n").encode("utf-8")
+    host = _Host(HostProcessResult(True, raw))
+    result = _broker(tmp_path, host).execute(
+        provider="opencode",
+        location="local-cli:opencode",
+        model="openrouter/thinkingmachines/inkling:free",
+        data_class="internal-text",
+        task="Review the bounded Work plan.",
+        free_only=True,
+    )
+
+    assert result.outcome == "succeeded"
+    assert result.proposal_payload == json.loads(_review())
+    assert host.process_calls[0]["command"] == (
+        "opencode-test.cmd", "run", "--pure", "--agent", "plan",
+        "--format", "json", "--model", "openrouter/thinkingmachines/inkling:free",
+    )
+    assert b"Review the bounded Work plan." in host.process_calls[0]["prompt"]
+    assert all("Review the bounded" not in item for item in host.process_calls[0]["command"])
+
+
+def test_opencode_parser_accepts_real_json_text_events_and_excludes_tools():
+    raw = (Path(__file__).parent / "fixtures" / "opencode-run-format-json-reply-ok.jsonl").read_bytes()
+    text = broker_module._extract_provider_text("opencode", raw)
+
+    assert text is not None
+    assert 'You said "reply OK"' in text
+    assert "pwd && ls -la" not in text
+    assert "permission requested" not in text
+
+
+def test_broker_accepts_opencode_text_event_through_the_bounded_chat_path(tmp_path):
+    raw = (json.dumps({"type": "text", "part": {
+        "type": "text", "text": _review().decode("utf-8")}}) + "\n").encode("utf-8")
+    host = _Host(HostProcessResult(True, raw))
+    result = _broker(tmp_path, host).execute(
+        provider="opencode",
+        location="local-cli:opencode",
+        model="openrouter/thinkingmachines/inkling:free",
+        data_class="internal-text",
+        task="Review the bounded Work plan.",
+        free_only=True,
+    )
+
+    assert result.outcome == "succeeded"
+    assert result.proposal_payload == json.loads(_review())
+
+
+def test_broker_refuses_paid_opencode_model_before_host_call(tmp_path):
+    host = _Host(HostProcessResult(True, _review()))
+    result = _broker(tmp_path, host).execute(
+        provider="opencode",
+        location="local-cli:opencode",
+        model="openrouter/openai/gpt-5",
+        data_class="internal-text",
+        task="Review the bounded Work plan.",
+        free_only=True,
+    )
+
+    assert result.outcome == "failed"
+    assert result.error_code == "provider_binding_denied"
+    assert host.process_calls == []
+
+
 def test_broker_readiness_observes_hosts_without_invoking_any_model(tmp_path):
     catalog = json.dumps({"models": [{"name": "qwen3:8b"}]}).encode("utf-8")
     host = _Host(HostProcessResult(True, catalog))
@@ -197,6 +264,7 @@ def test_broker_readiness_observes_hosts_without_invoking_any_model(tmp_path):
     assert readiness["gpt"]["state"] == "executable-discovered"
     assert readiness["claude"]["state"] == "executable-discovered"
     assert readiness["gemini"]["state"] == "executable-discovered"
+    assert readiness["opencode"]["state"] == "executable-discovered"
     assert readiness["openrouter"]["state"] == "provider-unavailable"
     assert readiness["local"] == {
         "location": "local-http:ollama",

@@ -6493,6 +6493,20 @@ const ProviderManage = ({ p, providers, onTab }) => {
   const line = { fontSize:12, color:LM.inkSoft, lineHeight:1.55 };
   const refresh = <button type="button" disabled={saving || providers.loading} onClick={providers.refresh} style={{ ...smallBtn(), padding:'3px 9px' }}>
     {providers.loading ? 'Reading status…' : 'Refresh provider status'}</button>;
+  const useOpenCode = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true; setSaving(true); setErr(''); setSaved('');
+    try {
+      const savedModel = await rememberComposerModel({
+        name:'OpenCode (local)', route:'local-cli/opencode', routed:'local-cli/opencode',
+        vendor:'OpenCode', tag:'LOCAL', cost:'free · OpenRouter',
+      });
+      window.ARCHHUB_PICKED_MODEL = savedModel;
+      if (mounted.current) setSaved('OpenCode is now the chat model.');
+    } catch (error) {
+      if (mounted.current) setErr(error.message || 'OpenCode could not be selected.');
+    } finally { savingRef.current = false; if (mounted.current) setSaving(false); }
+  };
   if (KEY_LABEL[p.id]) {
     const label = KEY_LABEL[p.id];
     const blocked = saving || !hasKey || !transport?.saveProviderKey;
@@ -6520,12 +6534,15 @@ const ProviderManage = ({ p, providers, onTab }) => {
   if (p.id === 'opencode') {
     return (
       <div style={box}>
-        <div style={line}>OpenCode is installed but not routed as a tools-enabled chat provider in this build.</div>
+        <div style={line}>{providerDetail(p)}. Chat uses local-cli/opencode with the approved free OpenRouter model.</div>
         <div style={{ display:'flex', gap:7, marginTop:9, flexWrap:'wrap' }}>
-          <button type="button" onClick={() => window.open('http://127.0.0.1:4096', '_blank', 'noopener,noreferrer')}
-            style={{ ...smallBtn(), padding:'3px 9px' }}>Open OpenCode</button>
+          <button type="button" disabled={saving || p.state !== 'installed'} onClick={useOpenCode}
+            style={saving || p.state !== 'installed' ? { ...smallBtn(), padding:'3px 9px', borderStyle:'dashed', cursor:'default' } : { ...smallBtn(true), padding:'3px 9px' }}>
+            {saving ? 'Selecting…' : 'Use OpenCode'}</button>
           {refresh}
         </div>
+        {saved && <p role="status" style={{ fontSize:12, color:LM.ok, margin:'8px 0 0' }}>{saved}</p>}
+        {err && <p role="alert" style={{ fontSize:12, color:LM.err, margin:'8px 0 0' }}>{err}</p>}
       </div>
     );
   }

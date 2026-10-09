@@ -64,11 +64,16 @@ MESSAGES = [{"role": "system", "content": "You are ArchHub."},
     ("gemini", json.dumps({"response": "About 100 mm."}).encode(),
      ["--prompt", "", "--output-format", "json", "--approval-mode", "plan",
       "--allowed-mcp-server-names", "none", "--extensions", "none", "--model", "sonnet"]),
+    ("opencode", (json.dumps({"type": "message", "message": {"role": "assistant",
+        "parts": [{"type": "text", "text": "About 100 mm."}]}}) + "\n").encode(),
+     ["run", "--pure", "--agent", "plan", "--format", "json", "--model",
+      "openrouter/thinkingmachines/inkling:free"]),
 ])
 def test_each_assistant_answers_one_chat_turn(tmp_path, assistant, stdout, expect_args):
     host = FakeHost(stdout)
     broker = _broker(tmp_path, host, **{assistant: "C:/tools/%s.exe" % assistant})
-    said = broker.chat(assistant, "sonnet", MESSAGES, timeout_seconds=30)
+    model = "" if assistant == "opencode" else "sonnet"
+    said = broker.chat(assistant, model, MESSAGES, timeout_seconds=30)
     assert said == {"ok": True, "text": "About 100 mm."}
     (call,) = host.calls
     assert list(call["command"][1:]) == expect_args
@@ -89,15 +94,19 @@ def test_an_absent_assistant_is_not_installed(tmp_path, monkeypatch):
     assert host.calls == []
 
 
-def test_opencode_is_never_a_chat_route(tmp_path):
-    """OpenCode's permissions default to allow (edit, bash, webfetch) and no run
-    flag denies them: a chat turn could act on the machine (review 2026-09-29)."""
+def test_opencode_is_a_plan_agent_free_model_chat_route(tmp_path):
     host = FakeHost(b"x")
-    assert _broker(tmp_path, host, opencode="C:/tools/opencode.exe").chat("opencode", "", MESSAGES) == {
-        "ok": False, "error_code": "provider_binding_denied"}
+    route = model_router.resolve_model_route("local-cli/opencode")
+    assert route.family == "local-cli"
+    assert route.url == "local-cli:opencode"
+    assert route.provider == "OpenCode (local)"
+    assert route.model == "opencode/openrouter/thinkingmachines/inkling:free"
+    with pytest.raises(model_router.ModelRouteRefused, match="approved free OpenRouter"):
+        model_router.resolve_model_route("local-cli/opencode/openai/gpt-5")
+    assert _broker(tmp_path, host, opencode="C:/tools/opencode.exe").chat(
+        "opencode", "openrouter/not-free", MESSAGES) == {
+            "ok": False, "error_code": "provider_binding_denied"}
     assert host.calls == []
-    with pytest.raises(model_router.ModelRouteRefused, match="claude, codex or gemini"):
-        model_router.resolve_model_route("local-cli/opencode")
 
 
 def test_route_chat_goes_through_the_bound_broker_and_never_http(tmp_path):
@@ -117,13 +126,34 @@ def test_route_chat_goes_through_the_bound_broker_and_never_http(tmp_path):
     assert order == ["guard"] and len(host.calls) == 1
 
 
+def test_route_chat_sends_opencode_through_the_bound_broker_with_free_model(tmp_path, monkeypatch):
+    monkeypatch.setattr(model_router, "installed_cli_version",
+                        lambda executable, **_k: model_router._CLI_VERIFIED_VERSIONS["opencode"])
+    host = FakeHost((json.dumps({"type": "message", "role": "assistant",
+                                 "content": "Hello from OpenCode."}) + "\n").encode())
+    model_router.bind_local_cli_broker(_broker(tmp_path, host, opencode="C:/tools/opencode.exe"))
+    try:
+        answer = model_router.route_chat(
+            "local-cli/opencode", MESSAGES,
+            opener=lambda *a, **k: (_ for _ in ()).throw(AssertionError("HTTP was used")),
+            cloud_session=None, free_only=True)
+    finally:
+        model_router.bind_local_cli_broker(None)
+    assert answer["ok"] is True and answer["text"] == "Hello from OpenCode."
+    assert answer["provider"] == "OpenCode (local)"
+    assert answer["actual_model"] == "openrouter/thinkingmachines/inkling:free"
+    assert host.calls[0]["command"][1:] == (
+        "run", "--pure", "--agent", "plan", "--format", "json",
+        "--model", "openrouter/thinkingmachines/inkling:free")
+
+
 def test_route_chat_refuses_rather_than_falls_back(tmp_path, monkeypatch):
     monkeypatch.setattr(model_router, "installed_cli_version",
                         lambda executable, **_k: model_router._CLI_VERIFIED_VERSIONS["codex"])
     model_router.bind_local_cli_broker(None)
     with pytest.raises(model_router.ModelRouteRefused, match="not available in this process"):
         model_router.route_chat("local-cli/claude", MESSAGES, cloud_session=None)
-    with pytest.raises(model_router.ModelRouteRefused, match="claude, codex or gemini"):
+    with pytest.raises(model_router.ModelRouteRefused, match="claude, codex, gemini or opencode"):
         model_router.resolve_model_route("local-cli/notepad")
     host = FakeHost(b"", ok=False)
     model_router.bind_local_cli_broker(_broker(tmp_path, host, codex="C:/tools/codex.exe"))
@@ -157,8 +187,11 @@ def test_the_picker_row_says_where_the_chat_goes():
     assert "it can read files on this computer" in by["gemini-cli"]["source"]
     assert "Gemini CLI: not verified on this machine" in by["gemini-cli"]["source"]
     assert "not verified" not in by["claude-code"]["source"] + by["codex"]["source"]
-    assert by["opencode"]["state"] == "installed, not routed"
-    assert "run commands and change files" in by["opencode"]["source"]
+    assert by["opencode"]["state"] == "installed"
+    assert "OpenRouter sign-in not found" in by["opencode"]["source"]
+    assert "chat route not verified" in by["opencode"]["source"]
+    assert "local-cli/opencode" in by["opencode"]["source"]
+    assert "approved free OpenRouter model" in by["opencode"]["source"]
 
 
 def test_the_application_binds_its_broker_and_the_studio_knows_the_family():

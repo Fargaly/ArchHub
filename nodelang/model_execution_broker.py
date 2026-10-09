@@ -34,6 +34,29 @@ _ALLOWED_DATA_CLASSES = frozenset({
 })
 _LOCAL_ONLY_DATA_CLASS = "confidential-text"
 _REVIEW_FIELDS = frozenset({"summary", "next_actions", "risks", "uncertainty"})
+OPENCODE_FREE_MODEL_IDS = (
+    "qwen/qwen3.8-27b:free",
+    "nex-agi/nex-n2.5-pro:free",
+    "thinkingmachines/inkling:free",
+    "poolside/laguna-s-2.1:free",
+)
+OPENCODE_DEFAULT_FREE_MODEL_ID = "thinkingmachines/inkling:free"
+OPENCODE_DEFAULT_CLI_MODEL = "openrouter/" + OPENCODE_DEFAULT_FREE_MODEL_ID
+
+
+def opencode_free_cli_model(model: object = "") -> str:
+    """OpenCode receives only exact approved zero-price OpenRouter model ids."""
+    text = str(model or "").strip()
+    if text.startswith("opencode/"):
+        text = text[len("opencode/"):]
+    if not text:
+        text = OPENCODE_DEFAULT_CLI_MODEL
+    if any(ch.isspace() for ch in text) or not text.startswith("openrouter/"):
+        raise ValueError("OpenCode requires an approved free OpenRouter model.")
+    model_id = text[len("openrouter/"):]
+    if model_id not in OPENCODE_FREE_MODEL_IDS:
+        raise ValueError("OpenCode requires an approved free OpenRouter model.")
+    return "openrouter/" + model_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,6 +339,8 @@ def _extract_provider_text(provider: str, raw: bytes) -> str | None:
     text = text.strip()
     if not text:
         return None
+    if provider == "opencode":
+        return _extract_opencode_text(text)
     if provider not in {"claude", "gemini", "openrouter", "local"}:
         return text
     try:
@@ -340,6 +365,61 @@ def _extract_provider_text(provider: str, raw: bytes) -> str | None:
         if type(value) is str:
             return value.strip() or None
     return text
+
+
+def _text_from_opencode_value(value: object, *, assistant_only: bool = False) -> list[str]:
+    if isinstance(value, str):
+        return [value] if not assistant_only else []
+    if isinstance(value, list):
+        pieces: list[str] = []
+        for item in value:
+            pieces.extend(_text_from_opencode_value(item, assistant_only=assistant_only))
+        return pieces
+    if not isinstance(value, Mapping):
+        return []
+    role = str(value.get("role") or value.get("author") or "").casefold()
+    kind = str(value.get("type") or "").casefold()
+    if role in {"tool", "user"} or kind in {
+        "error", "reasoning", "reasoning_delta", "reasoning-part",
+        "tool", "tool_use", "tool-call", "tool-result",
+    }:
+        return []
+    nested_assistant = assistant_only or role == "assistant" or kind in {
+        "assistant", "message", "message.output", "assistant.message", "text",
+    }
+    pieces: list[str] = []
+    for key in ("text", "content", "result", "response"):
+        item = value.get(key)
+        if isinstance(item, str) and (
+            nested_assistant or role == "assistant" or kind == "text"
+        ):
+            pieces.append(item)
+        elif isinstance(item, (list, tuple, dict)):
+            pieces.extend(_text_from_opencode_value(item, assistant_only=nested_assistant))
+    for key in ("message", "part", "parts", "delta"):
+        if key in value:
+            pieces.extend(_text_from_opencode_value(value[key], assistant_only=nested_assistant))
+    return pieces
+
+
+def _extract_opencode_text(text: str) -> str | None:
+    payloads: list[object] = []
+    try:
+        payloads.append(json.loads(text))
+    except json.JSONDecodeError:
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                payloads.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    pieces: list[str] = []
+    for payload in payloads:
+        pieces.extend(_text_from_opencode_value(payload, assistant_only=False))
+    answer = "".join(pieces).strip()
+    return answer or None
 
 
 def _parse_review_payload(
@@ -407,6 +487,9 @@ def local_cli_chat_command(assistant: str, executable: str, model: str = "") -> 
     and writes nothing to the graph. Where the machine's managed requirements
     force Codex hooks on, ArchHub's deny-only scope gate and its read-only Stop
     hook still run; the Stop hook may keep a small per-session guard file on disk."""
+    if assistant == "opencode":
+        return (executable, "run", "--pure", "--agent", "plan", "--format", "json",
+                "--model", opencode_free_cli_model(model))
     with_model = ("--model", model) if model else ()
     return {
         "claude": (executable, "-p", "--output-format", "json", "--tools", "",
@@ -428,9 +511,9 @@ def local_cli_chat_command(assistant: str, executable: str, model: str = "") -> 
 
 
 # How each local assistant's chat answer is unwrapped (_extract_provider_text):
-# claude and gemini print one JSON object; codex prints the text. Not OpenCode:
-# its tools default to allowed and no run flag denies them.
-_CHAT_EXTRACT = {"claude": "claude", "gemini": "gemini", "codex": "gpt"}
+# claude and gemini print one JSON object; codex prints text; opencode emits
+# JSON events from `opencode run --format json`.
+_CHAT_EXTRACT = {"claude": "claude", "gemini": "gemini", "codex": "gpt", "opencode": "opencode"}
 
 
 class ModelExecutionBroker:
@@ -470,6 +553,7 @@ class ModelExecutionBroker:
             "local-cli:codex": (str(Path.home() / ".codex" / ".sandbox-bin" / "codex.exe"), "codex.exe", "codex"),
             "local-cli:claude": (str(Path.home() / ".local" / "bin" / "claude.exe"), "claude.exe", "claude"),
             "local-cli:gemini": (str(Path(os.environ.get("APPDATA", "")) / "npm" / "gemini.cmd"), "gemini.exe", "gemini.cmd", "gemini"),
+            "local-cli:opencode": (str(Path(os.environ.get("APPDATA", "")) / "npm" / "opencode.cmd"), "opencode.exe", "opencode.cmd", "opencode"),
         }.get(location, ())
         for candidate in candidates:
             path = Path(candidate)
@@ -511,7 +595,10 @@ class ModelExecutionBroker:
         executable = self._executable("local-cli:" + assistant)
         if not executable:
             return {"ok": False, "error_code": "provider_unavailable"}
-        command = local_cli_chat_command(assistant, executable, model)
+        try:
+            command = local_cli_chat_command(assistant, executable, model)
+        except ValueError:
+            return {"ok": False, "error_code": "provider_binding_denied"}
         timeout = self._timeout_seconds if timeout_seconds is None else min(
             self._timeout_seconds, max(1.0, float(timeout_seconds)))
         # A CLI (or a helper it started) can still hold the folder when the turn
@@ -534,6 +621,7 @@ class ModelExecutionBroker:
             ("codex", "local-cli:codex"),
             ("claude", "local-cli:claude"),
             ("gemini", "local-cli:gemini"),
+            ("opencode", "local-cli:opencode"),
         ):
             executable = self._executable(location)
             readiness[provider] = {
@@ -618,7 +706,12 @@ class ModelExecutionBroker:
             return _failed(b"", "data_class_denied")
         if data_class == _LOCAL_ONLY_DATA_CLASS and location != "local-http:ollama":
             return _failed(b"", "data_class_denied")
-        if (free_only or reasoning_effort is not None) and (provider, location) != ("openrouter", "network:openrouter"):
+        if reasoning_effort is not None and (provider, location) != ("openrouter", "network:openrouter"):
+            return _failed(b"", "provider_binding_denied")
+        if free_only and (provider, location) not in {
+            ("openrouter", "network:openrouter"),
+            ("opencode", "local-cli:opencode"),
+        }:
             return _failed(b"", "provider_binding_denied")
         prompt = (
             task
@@ -669,6 +762,20 @@ class ModelExecutionBroker:
                     executable, "--prompt", "", "--output-format", "json",
                     "--approval-mode", "plan", "--model", model,
                 ),
+                prompt=prompt,
+                cwd=self._workspace_root,
+                timeout_seconds=self._timeout_seconds,
+            )
+        elif location == "local-cli:opencode" and provider == "opencode":
+            executable = self._executable(location)
+            if not executable:
+                return _failed(b"", "provider_unavailable")
+            try:
+                cli_model = opencode_free_cli_model(model)
+            except ValueError:
+                return _failed(b"", "provider_binding_denied")
+            result = self._host.run_process(
+                local_cli_chat_command("opencode", executable, cli_model),
                 prompt=prompt,
                 cwd=self._workspace_root,
                 timeout_seconds=self._timeout_seconds,

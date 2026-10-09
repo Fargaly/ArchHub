@@ -57,7 +57,18 @@ def test_the_opencode_desktop_app_is_shown_installed(machine):
     """A: no CLI on PATH, the desktop app in its install folder -> installed."""
     assert _opencode_row(machine.env)["state"] == "not installed"
     _desktop(machine)
-    assert _opencode_row(machine.env)["state"] == "installed, not routed"
+    assert _opencode_row(machine.env)["state"] == "installed"
+
+
+def test_opencode_provider_row_does_not_claim_route_without_chat_evidence(machine):
+    _desktop(machine)
+    row = _opencode_row(machine.env)
+
+    assert row["state"] == "installed"
+    assert "OpenRouter sign-in not found" in row["source"]
+    assert "chat route not verified" in row["source"]
+    assert "signed in to OpenRouter" not in row["source"]
+    assert "route ok" not in row["source"]
 
 
 def test_setup_writes_one_portable_plugin_for_any_user_and_is_idempotent(machine):

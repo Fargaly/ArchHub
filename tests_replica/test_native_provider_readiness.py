@@ -12,7 +12,7 @@ def test_local_cli_readiness_uses_real_file_presence_without_http_or_credentials
     broker = broker_module.ModelExecutionBroker(workspace_root=tmp_path,
         host=object(), credential_resolver=object())
     readiness = broker.local_cli_readiness()
-    assert set(readiness) == {"codex", "claude", "gemini"}
+    assert set(readiness) == {"codex", "claude", "gemini", "opencode"}
     assert readiness["claude"]["state"] == "executable-discovered"
     assert readiness["codex"]["state"] == "provider-unavailable"
     assert "session_id" not in readiness["claude"]

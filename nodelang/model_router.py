@@ -25,6 +25,7 @@ import hmac
 import http.client
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 import threading
@@ -36,6 +37,10 @@ from pathlib import Path
 from typing import Callable, Mapping, Optional, Sequence
 
 from .universal_cell import InvalidCell
+from .model_execution_broker import (
+    OPENCODE_DEFAULT_CLI_MODEL,
+    opencode_free_cli_model,
+)
 
 OPENROUTER_CHAT = "https://openrouter.ai/api/v1/chat/completions"
 LM_STUDIO_CHAT = "http://127.0.0.1:1234/v1/chat/completions"
@@ -66,36 +71,36 @@ _PROVIDER_NAMES = {
     "google": "Google",
     "local-cli": "a local assistant",
 }
-# The assistants local-cli/ can chat through, by route name. Not OpenCode: its
-# permissions default to allow (edit, bash, webfetch), and no run flag denies
-# them, so a chat turn could act on the machine (review 2026-09-29).
 LOCAL_CLI_ASSISTANTS = {
     "claude": "Claude Code",
     "codex": "Codex",
     "gemini": "Gemini CLI",
+    "opencode": "OpenCode (local)",
 }
 # Settings rows (SUBSCRIPTION_CLIS) by the local-cli/ name they route through.
 _CLI_ROUTE_NAME = {"claude-code": "claude", "codex": "codex", "gemini-cli": "gemini",
                    "opencode": "opencode"}
 # Where a chat through each assistant is sent: the picker says so.
-_CLI_VENDOR = {"claude": "Anthropic", "codex": "OpenAI", "gemini": "Google"}
+_CLI_VENDOR = {"claude": "Anthropic", "codex": "OpenAI", "gemini": "Google",
+               "opencode": "OpenRouter"}
 # What the picker must say besides where the chat goes: only Claude Code can run
 # with every tool off; the others, read-only, can still read files on this computer.
 _CLI_CAUTION = {"claude": "", "codex": "",
-                "gemini": "; it can read files on this computer"}
+                "gemini": "; it can read files on this computer",
+                "opencode": "; approved free OpenRouter model only"}
 # The assistant versions whose chat turn was proven live (no MCP server, no
 # graph write, no command, no file read or write; 2026-09-29). A new version can
 # turn on a tool feature the chat argv does not switch off, so any other
 # installed version is "not verified" until the real courts pass on it. Gemini
 # is refused by Google on the machine it was built on: unproven.
-_CLI_VERIFIED_VERSIONS = {"claude": "2.1.169", "codex": "0.144.5"}
+_CLI_VERIFIED_VERSIONS = {"claude": "2.1.169", "codex": "0.144.5", "opencode": "1.18.34"}
 # Codex REFUSES a chat on any other version (717, 2026-09-29): a new version can
 # turn on a tool feature the chat argv does not switch off -- commands ran in
 # chat turns before every feature was disabled. Claude Code runs with no tools
 # at all in this invocation (--tools "", no MCP server), so another version is
 # disclosed, not refused. Re-verify: run the real local-cli courts
 # (ARCHHUB_REAL_CLI_COURT=1) on the new version, then record it here.
-_CLI_FAIL_CLOSED = frozenset({"codex"})
+_CLI_FAIL_CLOSED = frozenset({"codex", "opencode"})
 _REVERIFY = "re-verify it with the local-cli real courts, then record the version"
 _VERSION_CACHE: dict = {}
 _VERSION_PENDING: set = set()
@@ -318,7 +323,15 @@ def _destination(
         assistant = model.split("/", 1)[0].strip()
         if assistant not in LOCAL_CLI_ASSISTANTS:
             raise ModelRouteRefused(
-                "local-cli/ chats through claude, codex or gemini, not %r." % assistant)
+                "local-cli/ chats through claude, codex, gemini or opencode, not %r." % assistant)
+        if assistant == "opencode":
+            try:
+                cli_model = opencode_free_cli_model(model.split("/", 1)[1] if "/" in model else "")
+            except ValueError as exc:
+                raise ModelRouteRefused(
+                    "OpenCode chat requires an approved free OpenRouter model."
+                ) from exc
+            model = "opencode/" + cli_model
         return ModelRoute(family, model, "local-cli:" + assistant,
                           LOCAL_CLI_ASSISTANTS[assistant], False)
     from .cloud_relay import pinned_cloud_base  # noqa: PLC0415
@@ -665,16 +678,57 @@ def provider_catalogue() -> list:
     return records
 
 
+def probe_opencode_status(executable: str) -> dict[str, object]:
+    """Read OpenCode CLI readiness without claiming a chat route was tested."""
+    status = {
+        "installed": bool(executable),
+        "credentials_present": False,
+        "signed_in": False,
+        "cli_support": False,
+        "route_ok": False,
+        "route_verified": False,
+    }
+    if not executable:
+        return status
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        run_help = subprocess.run(
+            (str(executable), "run", "--help"), capture_output=True, timeout=5,
+            creationflags=flags)
+        help_text = (run_help.stdout + run_help.stderr).decode("utf-8", errors="replace")
+        status["cli_support"] = (
+            run_help.returncode == 0
+            and "--agent" in help_text
+            and "--format" in help_text
+            and "--model" in help_text
+        )
+    except (OSError, subprocess.SubprocessError):
+        status["cli_support"] = False
+    try:
+        auth = subprocess.run(
+            (str(executable), "auth", "list"), capture_output=True, timeout=5,
+            creationflags=flags)
+        auth_text = (auth.stdout + auth.stderr).decode("utf-8", errors="replace")
+        status["credentials_present"] = auth.returncode == 0 and "OpenRouter" in auth_text
+        status["signed_in"] = status["credentials_present"]
+    except (OSError, subprocess.SubprocessError):
+        status["credentials_present"] = False
+        status["signed_in"] = False
+    return status
+
+
 def provider_rows(*, environ=None, secrets_loader=None, cloud_session=None,
-                  local_probe=None, cli_probe=None, version_probe=None) -> list:
+                  local_probe=None, cli_probe=None, version_probe=None,
+                  opencode_status_probe=None) -> list:
     """What each provider really is on this machine: keyed or not, running or not.
 
     The studio's Providers tab showed invented keys and invented spend, typed
     into a fixture. Nothing here is invented. A cloud provider is 'keyed' with
     the place the key came from, 'no key', or 'key invalid' when the stored
     value is too short to be a key. A local runtime is 'running' or 'not
-    running'. A subscription CLI is 'installed, not routed' or 'not
-    installed'. There is no spend figure because nothing here measures one.
+    running'. A subscription CLI is 'installed' or 'not installed', with the
+    row source naming the exact route when ArchHub can chat through it. There is
+    no spend figure because nothing here measures one.
     """
     rows = []
     labels = {"openrouter": "OpenRouter", "cloud": "ArchHub cloud",
@@ -742,13 +796,27 @@ def provider_rows(*, environ=None, secrets_loader=None, cloud_session=None,
     for row_id, name, executable in SUBSCRIPTION_CLIS:
         found = cli_probe(executable)
         route = _CLI_ROUTE_NAME[row_id]
-        if found and route not in LOCAL_CLI_ASSISTANTS:
-            # OpenCode: shell, file edits and web fetches default to allowed, so
-            # ArchHub does not send chat through it.
-            rows.append({"id": row_id, "name": name, "state": "installed, not routed",
-                         "source": "installed on this machine; ArchHub does not chat through "
-                                   "it because it can run commands and change files by default",
-                         "sets": ""})
+        if found and route == "opencode":
+            status_probe = opencode_status_probe or (lambda _found: {
+                "installed": True,
+                "credentials_present": False,
+                "route_verified": False,
+            })
+            status = status_probe(found)
+            credentials_present = bool(isinstance(status, Mapping) and (
+                status.get("credentials_present") or status.get("signed_in")))
+            route_verified = bool(isinstance(status, Mapping) and status.get("route_verified"))
+            state = "installed" if found else "not installed"
+            source = (
+                "installed on this machine; %s; %s; choose local-cli/opencode "
+                "to chat through it: sent to OpenRouter through OpenCode with "
+                "approved free OpenRouter model %s"
+                % ("OpenRouter credentials present" if credentials_present else "OpenRouter sign-in not found",
+                   "chat route verified" if route_verified else "chat route not verified",
+                   OPENCODE_DEFAULT_CLI_MODEL)
+            )
+            rows.append({"id": row_id, "name": name, "state": state,
+                         "source": source, "sets": ""})
             continue
         unverified = _unverified_reason(route, version_probe or _broker_version) if found else ""
         rows.append({"id": row_id, "name": name,
@@ -1234,9 +1302,16 @@ def route_chat(
             and not any(char.isspace() for char in destination.model)
             and destination.model.endswith(":free")
         )
-        if destination.family != "openrouter" or not (
+        opencode_free = False
+        if destination.family == "local-cli" and destination.model.startswith("opencode/"):
+            try:
+                opencode_free_cli_model(destination.model)
+                opencode_free = True
+            except ValueError:
+                opencode_free = False
+        if not opencode_free and (destination.family != "openrouter" or not (
             destination.model == "openrouter/free" or explicit_free
-        ):
+        )):
             raise ModelRouteRefused(
                 "Free-only requests require openrouter/free or vendor/model:free."
             )

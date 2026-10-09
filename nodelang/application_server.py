@@ -11682,6 +11682,15 @@ class ApplicationServer:
         value = self._refresh_in_background("local-runtimes", 10.0, probe_local_runtimes)
         return value if isinstance(value, dict) else None
 
+    def _opencode_cli_status(self, executable):
+        """OpenCode auth/run readiness, refreshed off the Providers request path."""
+        from .model_router import probe_opencode_status
+
+        value = self._refresh_in_background(
+            "opencode-cli-status", 30.0, lambda: probe_opencode_status(executable))
+        return value if isinstance(value, dict) else {
+            "installed": bool(executable), "signed_in": False, "route_ok": False}
+
     def _staged_update(self) -> dict:
         """The build the quiet updater staged (state_dir/updates/staged.json), cached 30 s."""
         import json as _j, os as _os, time as _t
@@ -12786,7 +12795,8 @@ class ApplicationServer:
                 states = self._local_runtime_states()
                 return {'ok': True, 'providers': provider_rows(
                     cloud_session=session,
-                    local_probe=lambda _host, port: None if states is None else states.get(int(port)))}
+                    local_probe=lambda _host, port: None if states is None else states.get(int(port)),
+                    opencode_status_probe=self._opencode_cli_status)}
             from .model_catalogue import (groups_with_routes, held_model_groups,
                                           live_model_groups)
             # The held answer for this account is served at once and refreshed

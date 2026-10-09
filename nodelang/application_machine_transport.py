@@ -3644,6 +3644,41 @@ class UniversalRuntimeClient:
             )
         return result
 
+    def private_root_grant_status(
+        self,
+        *,
+        path: str,
+        operation: str,
+        response_timeout_seconds: float | None = None,
+    ) -> dict[str, object]:
+        """Read whether this Agent Session has a local PRIVATE-root grant."""
+        if not self.agent_session_root:
+            raise MachineTransportError(
+                "private-root grant status requires a bound runtime Agent Session"
+            )
+        if any(type(value) is not str or not value for value in (path, operation)):
+            raise MachineTransportError("private-root grant status request is invalid")
+        timeout_options = {}
+        if response_timeout_seconds is not None:
+            if (not isinstance(response_timeout_seconds, (int, float))
+                    or isinstance(response_timeout_seconds, bool)
+                    or not 0 < response_timeout_seconds <= _default_machine_response_timeout(
+                        "GET", "/api/universal/private-root-grant")):
+                raise MachineTransportError("universal runtime response timeout is invalid")
+            timeout_options["response_timeout_seconds"] = float(response_timeout_seconds)
+        result = self.request(
+            "GET",
+            "/api/universal/private-root-grant",
+            {"path": path, "operation": operation},
+            **timeout_options,
+        )
+        if (not isinstance(result, dict)
+                or result.get("agent_session") != self.agent_session_root
+                or type(result.get("granted")) is not bool
+                or type(result.get("reason", "")) is not str):
+            raise MachineTransportError("private-root grant status response is invalid")
+        return result
+
     def consume_cde_write_permit(
         self,
         *,

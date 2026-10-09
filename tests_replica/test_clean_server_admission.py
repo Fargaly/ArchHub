@@ -120,6 +120,7 @@ def _provision_clean_runtime(
         "archhub.unified.bootstrap",
         b"clean-server-admission-key" + b"0" * 7,
     )
+    provider.add_key("archhub.local.private-root-grants", b"private-root-grants-admission" + b"0" * 3)
     caller_keys = WindowsDpapiCallerKeyStore(root / "callers.dpapi.json")
     specification = (Path(__file__).parents[1] / "SPEC.md").read_bytes()
     grand_map = grand_map_source if grand_map_source is not None else _map_source()
@@ -136,7 +137,7 @@ def _provision_clean_runtime(
     return built, provider
 
 
-def _start_clean_server(built, provider, *, scope_root):
+def _start_clean_server(built, provider, *, scope_root, private_root_grants_path=None):
     assert hasattr(ApplicationServer, "from_unified_authority"), (
         "clean server admission requires "
         "ApplicationServer.from_unified_authority("
@@ -149,6 +150,7 @@ def _start_clean_server(built, provider, *, scope_root):
         scope_caller=built.caller,
         scope_root=scope_root,
         authority_key_provider=provider,
+        private_root_grants_path=private_root_grants_path,
     ).start()
 
 

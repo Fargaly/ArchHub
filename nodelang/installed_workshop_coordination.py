@@ -23,6 +23,7 @@ _OWNER_FIELDS = (
 _METHODS = frozenset({
     "register_session", "list_agents", "workshop_lens", "scope_lens",
     "send_message", "read_messages", "read_message", "acknowledge_message", "claim_work",
+    "private_root_grant_status",
 })
 _WORK_REF_RE = re.compile(r"^assembly-instance:[0-9a-f]{32}$")
 
@@ -257,6 +258,21 @@ class InstalledWorkshopCoordinationClient:
                     deadline=deadline, category=values.get("category", "note"),
                     refs=values.get("refs"), evidence=values.get("evidence"),
                     capture=values.get("capture"))
+            if method == "private_root_grant_status":
+                _shape(values, ("root_id",))
+                root_id = _text(values["root_id"], "private root id", 64)
+                status = self._client.private_root_grant_status(
+                    path="workspace-roots/%s/__grant_status__" % root_id,
+                    operation="write_file",
+                    response_timeout_seconds=max(0.1, deadline - time.monotonic()),
+                )
+                if status.get("granted") is True:
+                    until = status.get("until")
+                    return {**status, "ok": True, "status": "granted until %s" % until}
+                reason = status.get("reason")
+                if type(reason) is not str or not reason:
+                    reason = "no grant: ask the founder in Settings > Workspaces"
+                return {**status, "ok": True, "status": reason}
             _shape(values, ("work_root",))
             work_root = _text(values["work_root"], "graph Work root")
             result = self._request("POST", "/api/universal/work-transition",

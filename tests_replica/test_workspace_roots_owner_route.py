@@ -118,11 +118,15 @@ def runtime(tmp_path, monkeypatch):
     home = tmp_path / "home"
     monkeypatch.setattr(roots, "default_snapshot_path", lambda: home / "workspace-roots.json")
     monkeypatch.setattr(roots, "default_pin_path", lambda: home / "workspace-roots.pin")
+    monkeypatch.setattr(roots, "default_last_good_path", lambda: home / "workspace-roots.last-good.json",
+                        raising=False)
     monkeypatch.setattr(signing, "CngSigner", _Signer)
     monkeypatch.setattr(signing, "CngVerifier", _Verifier)
     _Owner.approve, _Owner.prompts, _Owner.key_exists = True, 0, False
     built, provider = _provision_clean_runtime(tmp_path, root_name="workspace-roots-route")
-    server = _start_clean_server(built, provider, scope_root=built.grand_map.root_id)
+    server = _start_clean_server(
+        built, provider, scope_root=built.grand_map.root_id,
+        private_root_grants_path=tmp_path / "private-root-grants.json")
     _issue_clean_session(built, token="roots-token", csrf="roots-csrf")
     deadline = time.monotonic() + 30
     while server.workspace_roots_boot == "checking" and time.monotonic() < deadline:
@@ -276,3 +280,51 @@ def test_an_unsigned_change_is_refused_by_the_owner_and_never_prompts(runtime):
         assert status == 403 and "Open the ArchHub window to approve" in body["error"], (unsigned, body)
     assert _Owner.prompts == prompts
     assert roots.read_state(built.location.authority, catalogue, caller=built.caller) == before
+
+
+def test_unsigned_private_root_grant_and_revoke_are_refused_before_store_mutation(runtime, monkeypatch):
+    server, _built, _home, tmp_path = runtime
+    folder = tmp_path / "client-a"
+    folder.mkdir()
+    assert _register(server, folder)[0] == 200
+    document = json.loads((_home / "workspace-roots.json").read_text(encoding="utf-8"))
+    signed = {key: value for key, value in document.items() if key != "signature"}
+    monkeypatch.setattr(roots, "verified_graph_state",
+                        lambda: {"registry_digest": roots.registry_digest(signed)})
+    _container, digest, registration = roots.root_bound_registration(
+        "workspace-roots/client-a/__grant__", runtime="claude")
+    assert registration["privacy"] == "private"
+
+    grant_body = {
+        "action": "grant-private-root",
+        "id": "client-a",
+        "runtime": "claude",
+        "session_id": "app:agent-session:unsigned",
+        "operations": ["write_file"],
+    }
+    status, body = _post(server, grant_body)
+    assert status == 403 and "authenticated workspace-roots settings admission" in body["error"]
+    assert server.private_root_grants.status(
+        root_id="client-a",
+        runtime="claude",
+        session_id="app:agent-session:unsigned",
+        operation="write_file",
+        root_digest=digest,
+    )["granted"] is False
+
+    server.private_root_grants.grant(
+        root_id="client-a",
+        runtime="claude",
+        session_id="app:agent-session:unsigned",
+        root_digest=digest,
+        operations=("write_file",),
+    )
+    status, body = _post(server, {**grant_body, "action": "revoke-private-root"})
+    assert status == 403 and "authenticated workspace-roots settings admission" in body["error"]
+    assert server.private_root_grants.status(
+        root_id="client-a",
+        runtime="claude",
+        session_id="app:agent-session:unsigned",
+        operation="write_file",
+        root_digest=digest,
+    )["granted"] is True

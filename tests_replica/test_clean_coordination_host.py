@@ -34,6 +34,7 @@ from nodelang.runtime_caller_capability import WindowsDpapiCallerKeyStore
 from nodelang.unified_authority import composition_root
 from nodelang.unified_authority_runtime import open_current_authority
 from nodelang.universal_cell import InvalidCell
+from nodelang.workspace_roots_catalogue import SETTINGS_IDENTITY
 
 
 pytestmark = pytest.mark.skipif(
@@ -500,6 +501,7 @@ def test_stdio_identity_has_no_random_fallback_and_schema_has_no_sender():
         "coordination.execute_workshop_task",
         "coordination.run_workshop_task",
         "coordination.publish_workshop_result",
+        "coordination.private_root_grant_status",
     }
     for schema in schemas.values():
         properties = schema["properties"]
@@ -534,5 +536,30 @@ def test_workshop_lens_rejects_wrong_session_signature_and_no_founder_substitute
         ).read_text(encoding="utf-8")
         assert "project_workshop_lens" not in host_source
         assert "caller=self._binding.caller" in coordinator_source
+    finally:
+        opened.authority.store.close()
+
+
+def test_workspace_settings_handler_typeerror_is_not_replayed_without_admission(tmp_path):
+    opened, keys, host = _host(tmp_path)
+    identity = CoordinationIdentity(*SETTINGS_IDENTITY)
+    calls = []
+
+    def handler(body, *, admission):
+        calls.append((body, admission))
+        raise TypeError("admission side effect exploded after one call")
+
+    host._workspace_settings = handler
+    try:
+        request = _request(
+            keys,
+            identity,
+            "workspace_roots_settings",
+            {"body": {"action": "grant-private-root"}},
+        )
+        with pytest.raises(TypeError, match="admission side effect"):
+            host.dispatch(request)
+        assert len(calls) == 1
+        assert calls[0][1]["principal"] == identity.normalized().key_id
     finally:
         opened.authority.store.close()

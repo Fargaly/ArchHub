@@ -3405,6 +3405,7 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("GET", "/api/universal/graphs", "read"),
     ("GET", "/api/universal/work", "read"),
     ("GET", "/api/universal/work-current", "read"),
+    ("GET", "/api/universal/private-root-grant", "read"),
     ("GET", "/api/universal/grand-map-work", "read"),
     ("GET", "/api/universal/roma-tree", "read"),
     ("GET", "/api/universal/workshop", "read"),
@@ -42207,10 +42208,65 @@ def authorize_universal_cde_write(
     agent_session_root: str,
     operation: str,
     path: str,
+    runtime: str | None = None,
+    private_root_grants=None,
     authentication_context: object | None = None,
     content_service=None,
 ) -> UniversalCdeWriteAdmission:
     """Resolve one write solely from the session's claimed Work and CDE node."""
+    registration_digest = None
+    root_writers = ()
+    root_registration = None
+    normalized_path = str(path).replace("\\", "/")
+    if normalized_path.startswith("workspace-roots/"):
+        from .workspace_roots_catalogue import root_bound_registration
+        try:
+            _root_container, registration_digest, registration = root_bound_registration(
+                normalized_path, runtime=runtime)
+        except InvalidCell as exc:
+            raise AuthorizationDenied(str(exc)) from exc
+        root_writers = tuple(registration.get("writers") or ())
+        root_registration = {
+            "id": registration.get("id"),
+            "path": registration.get("path"),
+            "identity": list(registration.get("identity") or ()),
+            "digest": registration_digest,
+        }
+        if runtime is not None and str(runtime) not in root_writers:
+            raise AuthorizationDenied("runtime is not a writer for this workspace root")
+        if (registration.get("privacy") == "private" and runtime is not None
+                and private_root_grants is not None):
+            status = private_root_grants.status(
+                root_id=str(registration.get("id")),
+                runtime=str(runtime),
+                session_id=agent_session_root,
+                operation=str(operation),
+                root_digest=registration_digest,
+                include_grant=True,
+            )
+            if status.get("granted") is True:
+                snapshot = store.snapshot()
+                if agent_session_root not in snapshot.cells:
+                    raise AuthorizationDenied("private-root grant session is not graph-held")
+                grant = status["grant"]
+                from .private_root_grants import grant_fingerprint
+                container_digest = hashlib.sha256(
+                    ("private-root-grant/v1:%s:%s" % (
+                        registration_digest, grant_fingerprint(grant))).encode("ascii")
+                ).hexdigest()
+                return UniversalCdeWriteAdmission(
+                    agent_session_root,
+                    agent_session_root,
+                    agent_session_root,
+                    agent_session_root,
+                    "GM.nodes.private-root-grant",
+                    container_digest,
+                    operation,
+                    normalized_path,
+                    snapshot.revision,
+                    root_writers=root_writers,
+                    root_registration=root_registration,
+                )
     work, authority_revision = read_universal_current_claimed_work(
         store,
         registry,
@@ -42238,27 +42294,12 @@ def authorize_universal_cde_write(
     _require_workshop_execution_gate(snapshot, registry, work_root=str(work_root),
                                      agent_session_root=agent_session_root,
                                      content_service=content_service)
-    registration_digest = None
-    root_writers = ()
-    root_registration = None
-    if str(path).replace("\\", "/").startswith("workspace-roots/"):
+    if normalized_path.startswith("workspace-roots/"):
         # A registered workspace root outside 00.ARCHUB. The owner's signed,
         # pinned registry must hold the root, and then the claimed Work's own
         # CDE container must grant this exact path and operation below, as for
         # any write. The route also requires the runtime to be a root writer.
-        from .workspace_roots_catalogue import root_bound_registration
-        try:
-            _root_container, registration_digest, registration = root_bound_registration(
-                str(path).replace("\\", "/"))
-        except InvalidCell as exc:
-            raise AuthorizationDenied(str(exc)) from exc
-        root_writers = tuple(registration.get("writers") or ())
-        root_registration = {
-            "id": registration.get("id"),
-            "path": registration.get("path"),
-            "identity": list(registration.get("identity") or ()),
-            "digest": registration_digest,
-        }
+        pass
     assembly = _instance_projection(snapshot, registry, str(work_root))
     if assembly is None:
         raise InvalidCell("claimed Work is not a projectable assembly")

@@ -1160,6 +1160,8 @@ class _CleanAuthorityHttpServer:
         host: str = "127.0.0.1",
         port: int = 0,
         host_invoker=None,
+        private_root_grants_path=None,
+        private_root_grant_provider: SigningKeyProvider | None = None,
     ) -> None:
         self.authority = authority
         # Which machine this runtime may reach is named by whoever stands
@@ -1175,6 +1177,11 @@ class _CleanAuthorityHttpServer:
         self.browser_authority = browser_authority
         self.clean_browser_authority = browser_authority
         self.authority_key_provider = authority_key_provider
+        from .private_root_grants import PrivateRootGrantStore
+        self.private_root_grants = PrivateRootGrantStore(
+            private_root_grants_path,
+            provider=private_root_grant_provider or authority_key_provider,
+        )
         self.clean_caller = scope_caller
         self.clean_scope_root = scope_root
         # The canvas page proves itself with this, not with a header any
@@ -1341,7 +1348,9 @@ class _CleanAuthorityHttpServer:
             install_workspace_root_catalogue,
             NO_WINDOW,
             owner_change,
+            root_bound_registration,
             roots_view,
+            SETTINGS_IDENTITY,
         )
         if type(body) is not dict:
             raise WorkspaceRootRefused("workspace-roots request is invalid")
@@ -1389,6 +1398,44 @@ class _CleanAuthorityHttpServer:
             view = roots_view(self.clean_authority.store.revision, (), None, boot,
                               built_in=self.clean_workspace_root)
         else:
+            if action in ("grant-private-root", "revoke-private-root"):
+                allowed = {"action", "id", "runtime", "session_id", "operations", "expires_at"}
+                if set(request) - allowed or not {"id", "runtime", "session_id"} <= set(request):
+                    raise WorkspaceRootRefused("workspace-roots request is invalid")
+                principal = admission.get("principal") if isinstance(admission, dict) else None
+                vendor, session = SETTINGS_IDENTITY
+                expected_principal = "agent-session.%s" % hashlib.sha256(
+                    (vendor.lower() + "\0" + session).encode("utf-8")
+                ).hexdigest()
+                if principal != expected_principal:
+                    raise WorkspaceRootRefused(
+                        "the authenticated workspace-roots settings admission is required; "
+                        "nothing was changed")
+                root_id = str(request["id"]).strip()
+                runtime = str(request["runtime"]).strip().lower()
+                session_id = str(request["session_id"]).strip()
+                try:
+                    _container, digest, registration = root_bound_registration(
+                        "workspace-roots/%s/__grant__" % root_id, runtime=runtime)
+                except InvalidCell as exc:
+                    raise WorkspaceRootRefused(str(exc)) from exc
+                if registration.get("privacy") != "private":
+                    raise WorkspaceRootRefused("only a private workspace root uses local grants")
+                if action == "grant-private-root":
+                    self.private_root_grants.grant(
+                        root_id=root_id,
+                        runtime=runtime,
+                        session_id=session_id,
+                        root_digest=digest,
+                        operations=request.get("operations"),
+                        expires_at=request.get("expires_at"),
+                    )
+                else:
+                    self.private_root_grants.revoke(
+                        root_id=root_id, runtime=runtime, session_id=session_id)
+                request = {"action": "list"}
+            if admission is None:
+                admission = {"principal": "archhub-browser-workspace-settings"}
             view = owner_change(
                 self.clean_authority,
                 catalogue,
@@ -1403,7 +1450,9 @@ class _CleanAuthorityHttpServer:
                 return view
             if action != "list":
                 self.workspace_roots_boot = view["projection"]
-        return {**view, "boot": self.workspace_roots_boot}
+        grant_store = getattr(self, "private_root_grants", None)
+        return {**view, "boot": self.workspace_roots_boot,
+                "private_grants": grant_store.list() if grant_store is not None else []}
 
     def _clean_sign_in(self):
         """Mint one bounded browser session for an explicit same-origin POST.
@@ -5366,6 +5415,8 @@ class ApplicationServer:
         authority_key_provider=None,
         scope_caller,
         scope_root,
+        private_root_grants_path=None,
+        private_root_grant_provider=None,
         **kwargs,
     ):
         """Bind one existing clean authority into one HTTP consumer path."""
@@ -5409,6 +5460,8 @@ class ApplicationServer:
             authority_key_provider=authority_key_provider,
             scope_caller=scope_caller,
             scope_root=scope_root,
+            private_root_grants_path=private_root_grants_path,
+            private_root_grant_provider=private_root_grant_provider,
             **kwargs,
         )
 
@@ -5455,6 +5508,7 @@ class ApplicationServer:
                  machine_descriptor_path=None,
                  machine_pointer_path=None,
                  machine_key_provider=None,
+                 private_root_grants_path=None,
                  machine_session_lifetime_seconds=900.0,
                  enable_machine_projection_prewarm=False,
                  machine_projection_prewarm_targets=(
@@ -6086,6 +6140,16 @@ class ApplicationServer:
         self._runtime_handoff_exit = threading.Event()
         self.cde_write_signing_provider = None
         self.cde_write_signing_descriptor_root = None
+        from .private_root_grants import PrivateRootGrantStore
+        private_root_grant_provider = machine_key_provider or universal_key_provider
+        if private_root_grant_provider is None:
+            private_root_grant_provider = WindowsDpapiSigningKeyProvider(
+                WindowsDpapiSigningKeyProvider.default_path()
+            )
+        self.private_root_grants = PrivateRootGrantStore(
+            private_root_grants_path,
+            provider=private_root_grant_provider,
+        )
         try:
             if owns_universal_store and self.universal_store.database_path is not None:
                 self._fresh_content_bootstrap = fresh_content_bootstrap_pending(
@@ -13303,6 +13367,7 @@ class ApplicationServer:
             ("GET", "/api/universal/canvas"),
             ("GET", "/api/universal/work"),
             ("GET", "/api/universal/work-current"),
+            ("GET", "/api/universal/private-root-grant"),
             ("GET", "/api/universal/grand-map-work"),
             ("GET", "/api/universal/roma-tree"),
             ("GET", "/api/universal/workshop"),
@@ -13430,6 +13495,41 @@ class ApplicationServer:
                         view_root=body.get("view", caller_view.root_id), agent_session_root=agent_session, context=context)
                 return repair_visibility_recovery(self.universal_store, self.universal_registry,
                     request=body, agent_session_root=agent_session, context=context)
+        if method == "GET" and path == "/api/universal/private-root-grant":
+            if direct or set(body) != {"path", "operation"}:
+                raise AuthorizationDenied("private-root grant status requires one exact path and operation")
+            agent_session_root = self._resolve_universal_machine_agent_session(request)
+            snapshot = self.universal_store.snapshot()
+            session = read_agent_session(
+                snapshot,
+                self.universal_registry.agent_body.protocol,
+                self.universal_registry.authorization.protocol,
+                agent_session_root,
+            )
+            runtime = _agent_body_catalog_entry_for_session(
+                snapshot, self.universal_registry, session
+            ).runtime
+            self.require_universal_http_route(method, path, authentication_context=context)
+            from .workspace_roots_catalogue import root_bound_registration
+            try:
+                _container, digest, registration = root_bound_registration(
+                    str(body["path"]).replace("\\", "/"), runtime=runtime)
+            except InvalidCell as exc:
+                return {"granted": False, "reason": str(exc), "agent_session": agent_session_root}
+            if registration.get("privacy") != "private":
+                return {"granted": False, "reason": "public roots still need Workshop Work",
+                        "agent_session": agent_session_root, "root_id": registration.get("id")}
+            grant_store = getattr(self, "private_root_grants", None)
+            status = ({"granted": False, "reason": "private-root grants are unavailable"}
+                      if grant_store is None else grant_store.status(
+                          root_id=str(registration.get("id")),
+                          runtime=runtime,
+                          session_id=agent_session_root,
+                          operation=str(body["operation"]),
+                          root_digest=digest,
+                      ))
+            return {**status, "agent_session": agent_session_root,
+                    "root_id": registration.get("id")}
         if method == "GET" and path in {'/api/universal/models', '/api/universal/providers'}:
             if body:
                 raise InvalidCell('model discovery request must be empty')
@@ -15169,21 +15269,7 @@ class ApplicationServer:
                 agent_session_root = (
                     self._resolve_universal_machine_agent_session(request)
                 )
-                admission = authorize_universal_cde_write(
-                    self.universal_store,
-                    self.universal_registry,
-                    agent_session_root=agent_session_root,
-                    operation=body["operation"],
-                    path=body["path"],
-                    authentication_context=context,
-                    # Without an owner service a content-store gate fails closed.
-                    content_service=getattr(self, "conversation_content", None),
-                )
                 snapshot = self.universal_store.snapshot()
-                if snapshot.revision != admission.authority_revision:
-                    raise AuthorizationDenied(
-                        "CDE receipt admission revision drifted"
-                    )
                 session = read_agent_session(
                     snapshot,
                     self.universal_registry.agent_body.protocol,
@@ -15193,6 +15279,23 @@ class ApplicationServer:
                 runtime = _agent_body_catalog_entry_for_session(
                     snapshot, self.universal_registry, session
                 ).runtime
+                admission = authorize_universal_cde_write(
+                    self.universal_store,
+                    self.universal_registry,
+                    agent_session_root=agent_session_root,
+                    operation=body["operation"],
+                    path=body["path"],
+                    runtime=runtime,
+                    private_root_grants=getattr(self, "private_root_grants", None),
+                    authentication_context=context,
+                    # Without an owner service a content-store gate fails closed.
+                    content_service=getattr(self, "conversation_content", None),
+                )
+                snapshot = self.universal_store.snapshot()
+                if snapshot.revision != admission.authority_revision:
+                    raise AuthorizationDenied(
+                        "CDE receipt admission revision drifted"
+                    )
                 if (admission.path.startswith("workspace-roots/")
                         and runtime not in admission.root_writers):
                     # The writers of the registration the admission read and
@@ -16314,21 +16417,7 @@ class ApplicationServer:
                 agent_session_root = (
                     self._resolve_universal_machine_agent_session(request)
                 )
-                admission = authorize_universal_cde_write(
-                    self.universal_store,
-                    self.universal_registry,
-                    agent_session_root=agent_session_root,
-                    operation=body["operation"],
-                    path=body["path"],
-                    authentication_context=context,
-                    # Without an owner service a content-store gate fails closed.
-                    content_service=getattr(self, "conversation_content", None),
-                )
                 snapshot = self.universal_store.snapshot()
-                if snapshot.revision != admission.authority_revision:
-                    raise AuthorizationDenied(
-                        "CDE permit admission revision drifted"
-                    )
                 session = read_agent_session(
                     snapshot,
                     self.universal_registry.agent_body.protocol,
@@ -16338,6 +16427,23 @@ class ApplicationServer:
                 runtime = _agent_body_catalog_entry_for_session(
                     snapshot, self.universal_registry, session
                 ).runtime
+                admission = authorize_universal_cde_write(
+                    self.universal_store,
+                    self.universal_registry,
+                    agent_session_root=agent_session_root,
+                    operation=body["operation"],
+                    path=body["path"],
+                    runtime=runtime,
+                    private_root_grants=getattr(self, "private_root_grants", None),
+                    authentication_context=context,
+                    # Without an owner service a content-store gate fails closed.
+                    content_service=getattr(self, "conversation_content", None),
+                )
+                snapshot = self.universal_store.snapshot()
+                if snapshot.revision != admission.authority_revision:
+                    raise AuthorizationDenied(
+                        "CDE permit admission revision drifted"
+                    )
                 if (admission.path.startswith("workspace-roots/")
                         and runtime not in admission.root_writers):
                     # The writers of the registration the admission read and

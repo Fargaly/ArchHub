@@ -25,12 +25,15 @@ UNAVAILABLE = {'decision':'block','reason':'Native Stop authority is unavailable
 # and the owner's bound client. Exact fields only; session and vendor select
 # the owner and are never forwarded.
 _WRITE_NAMES = {'brain.universal_cde_write_permit': 'cde_write_permit',
-                'brain.universal_cde_write_receipt': 'cde_write_receipt'}
+                'brain.universal_cde_write_receipt': 'cde_write_receipt',
+                'brain.private_root_grant_status': 'private_root_grant_status'}
 _WRITE_OPERATIONS = {
     'cde_write_permit': ('issue_cde_write_permit',
                          frozenset({'operation', 'path', 'content_digest', 'request_id', 'nonce'})),
     'cde_write_receipt': ('consume_cde_write_permit',
                           frozenset({'operation', 'path', 'content_digest', 'request_id', 'permit'})),
+    'private_root_grant_status': ('private_root_grant_status',
+                                  frozenset({'operation', 'path'})),
 }
 _WRITE_REQUEST_BYTES = 65536
 _WRITE_TIMEOUT_SECONDS = 25.0

@@ -483,8 +483,8 @@ class CleanCoordinationHost:
             admission = {"principal": request.identity.normalized().key_id}
             # Not under the coordinator lock: Add waits for the owner's key prompt
             # and Browse for his folder dialog; the route takes its own locks.
-            return {"ok": True, **handler(request.parameters.get("body"),
-                                          admission=admission)}
+            answer = handler(request.parameters.get("body"), admission=admission)
+            return {"ok": True, **answer}
         if request.method == "workspace_roots_state":
             with self._changed:
                 return {"ok": True, **current_registry_statement(

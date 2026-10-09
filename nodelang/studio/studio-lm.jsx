@@ -7298,6 +7298,7 @@ const SettingsWorkspaces = () => {
   React.useEffect(() => { read(); }, []);
   const registered = (view?.roots || []).filter(r => r.state === 'registered');
   const history = (view?.roots || []).filter(r => r.state !== 'registered');
+  const privateGrants = (view?.private_grants || []).filter(g => !g.revoked);
   const boot = view?.boot;
   const checking = boot === 'checking';
   // Changes are offered only when the start-up check and this read agree the hooks'
@@ -7325,6 +7326,23 @@ const SettingsWorkspaces = () => {
     try { const picked = await workspaceRoots({ action:'browse' }); if (picked.path) setPath(picked.path); }
     catch (e) { setError(e.message); }
     finally { setBusy(''); }
+  };
+  const grantWriter = async (root, writer) => {
+    if (!ready || busy) return;
+    const sessionId = window.prompt('Agent Session root to grant');
+    if (!sessionId) return;
+    await run('Granting private write access', {
+      action:'grant-private-root', id:root.root_id, runtime:writer,
+      session_id:sessionId.trim(), operations:['edit_file','apply_patch','write_file','create'],
+    });
+  };
+  const revokeWriter = async (root, writer) => {
+    if (!ready || busy) return;
+    const sessionId = window.prompt('Agent Session root to revoke');
+    if (!sessionId) return;
+    await run('Revoking private write access', {
+      action:'revoke-private-root', id:root.root_id, runtime:writer, session_id:sessionId.trim(),
+    });
   };
   const row = { padding:'10px 14px', display:'flex', alignItems:'center', gap:LM.sp.md };
   const mono = { fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em', marginTop:2 };
@@ -7363,6 +7381,21 @@ const SettingsWorkspaces = () => {
             <div style={{ flex:1, minWidth:0 }}>
               <div style={{ fontSize:13, fontWeight:500 }}>{r.root_id}</div>
               <div style={mono}>{r.path} · {r.profile} · {(r.writers || []).join(', ')}</div>
+              {r.privacy === 'private' && (
+                <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginTop:6 }}>
+                  {(r.writers || []).map(w => {
+                    const active = privateGrants.some(g => g.root_id === r.root_id && g.runtime === w);
+                    return (
+                      <React.Fragment key={w}>
+                        <button disabled={!!busy || !ready} onClick={() => grantWriter(r, w)}
+                          style={{ ...smallBtn(active), padding:'2px 7px' }}>Grant {w} write access</button>
+                        <button disabled={!!busy || !ready || !active} onClick={() => revokeWriter(r, w)}
+                          style={{ ...smallBtn(), padding:'2px 7px' }}>Revoke</button>
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+              )}
             </div>
             <span style={chip(r.privacy === 'private' ? LM.ok : LM.warn)}>{r.privacy}</span>
             <button disabled={!!busy || !ready} onClick={() => { if (ready && !busy) setConfirming(r); }}

@@ -403,6 +403,11 @@ def build_server(
         """Remove Workshop membership while preserving enrollment and history."""
         return control.call("detach_agent", {"target": target, "idempotency_key": idempotency_key})
 
+    @mcp.tool(name="coordination.private_root_grant_status")
+    def private_root_grant_status(root_id: str) -> dict[str, object]:
+        """Read this session's PRIVATE workspace-root grant status; no Work claim."""
+        return control.call("private_root_grant_status", {"root_id": root_id})
+
     # Keep ordinary content positions separate from clean graph revisions and
     # message Cells. This backend holds an existing process-local capability;
     # constructing the interface never enrolls another installed session.

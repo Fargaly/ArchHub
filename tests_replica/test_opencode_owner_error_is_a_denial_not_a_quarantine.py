@@ -1,15 +1,11 @@
-"""Only a PROVEN-unadmitted refusal is a clean denial; every other error keeps custody.
+"""Only a PROVEN-never-bound refusal is a clean denial; every other error keeps custody.
 
-The native owner is a real child process scripted per spawn. The gate marks a reply
-admitted:false only when its owner never sent an enrollment request (no client), so no
-permit or effect can exist. Such a refusal denies with its reason; a continuation whose
-worker never bound retires through the existing custody reconciliation and a fresh
-worker continues the actor. Any error from a bound owner, an execution or receipt
-error, a missing decision, or a reply naming another actor still aborts (retained).
-
-Known gap, stated not hidden: the real gate never reconnects a worker whose first
-connect failed, so a brand-new session (no recorded actor) keeps being denied with the
-reason until that worker ends. It is no longer quarantined, but it does not recover.
+The native owner is a real child process scripted per spawn. A brand-new actorless
+denial is trusted as no-enrollment evidence only when the gate says never_bound:true.
+Such a refusal denies with its reason; a continuation whose worker never bound retires
+through existing custody reconciliation and a fresh worker continues the actor. Any
+actorless denial without never_bound, error from a bound owner, execution or receipt
+error, missing decision, or reply naming another actor still aborts (retained).
 """
 import json
 import shutil
@@ -40,8 +36,9 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
  const error={decision:'deny',error:'native admission or receipt unavailable; no retry',
   reason:'MachineTransportError: an active persistent installed owner is required'};
  const other='app:agent-session:runtime:'+'b'.repeat(32);
- const reply={allow:{...base,decision:'allow',...bound},
-  unbound:{...base,...error,admitted:false},
+  const reply={allow:{...base,decision:'allow',...bound},
+   neverbound:{...base,...error,admitted:false,never_bound:true},
+   unbound:{...base,...error,admitted:false},
   error:{...base,...error},
   nodecision:{...base,admitted:false,error:'x'},
   wrongactor:{...base,decision:'allow',agent_session:other,continued:true},
@@ -74,7 +71,7 @@ def _run(tmp_path, spawns, lineage, body):
 
 
 def test_a_proven_unbound_refusal_denies_with_its_reason_and_the_continuation_recovers(tmp_path):
-    _run(tmp_path, [["unbound"], ["allow"]], True, r"""
+    _run(tmp_path, [["neverbound"], ["allow"]], True, r"""
 const first=await call('c-1');
 assert.equal(first.allow,false);
 assert.match(first.reason,/native owner could not decide: .*active persistent installed owner is required/);
@@ -83,12 +80,11 @@ assert.equal((await call('c-2')).allow,true,'custody reconciled, then a fresh wo
 """)
 
 
-def test_a_brand_new_session_is_denied_with_its_reason_not_quarantined(tmp_path):
+def test_a_brand_new_actorless_denial_without_never_bound_stays_quarantined(tmp_path):
     _run(tmp_path, [["unbound", "unbound"]], False, r"""
-assert.match((await call('c-1')).reason,/active persistent installed owner is required/);
-const again=await call('c-2');
-assert.equal(again.allow,false,'the real gate never reconnects this worker: still denied (known gap)');
-assert.match(again.reason,/native owner could not decide/);
+await assert.rejects(call('c-1'),/native reply identity or outcome unavailable|retained outcome requires reconciliation/);
+await settle();
+assert.throws(()=>call('c-2'),/unavailable or already active; no duplicate enrollment|quarantined; no duplicate enrollment/);
 """)
 
 

@@ -1,7 +1,9 @@
 """Synthetic OpenCode hooks and native owner custody; no live enrollment."""
 import json
 import os
+import sys
 from pathlib import Path
+import importlib.util
 import shutil
 import subprocess
 from dataclasses import replace
@@ -217,22 +219,35 @@ if(scenario==='unknown-tool'){
 
 
 @pytest.mark.parametrize("mode",["good","nonzero","malformed","foreign"])
-def test_persistent_native_gate_child_is_reused_and_never_retried(tmp_path,mode):
+def test_persistent_native_gate_child_is_reused_and_actorless_failures_stay_quarantined(tmp_path,mode):
     module=(Path(__file__).resolve().parents[1]/"nodelang/session_link/opencode-governance.mjs").as_uri()
     log=tmp_path/"fixture-frames.jsonl"
     worker=tmp_path/"worker.mjs"
-    worker.write_text("import fs from 'node:fs';import readline from 'node:readline';"+
-        "const actor='app:agent-session:runtime:'+'a'.repeat(32);let last=null;"+
-        "readline.createInterface({input:process.stdin}).on('line',line=>{"+
-        "const r=JSON.parse(line);if(r.command==='release'){console.log(JSON.stringify({kind:'released',released:true,last_request_id:last,agent_session:actor,release_id:'a'.repeat(32),session_id:r.session_id}));process.exit(0);return;}last=r.request_id;"+
-        "fs.appendFileSync("+json.dumps(str(log))+",JSON.stringify({pid:process.pid,session:r.event.session_id})+'\\n');"+
-        ("process.stderr.write('accepted\\n');process.exit(3);" if mode=="nonzero" else "console.log('bad-json');process.exit(0);" if mode=="malformed" else
-         "console.log(JSON.stringify({agent_session:actor,continued:true,request_id:r.request_id,session_id:"+("'ses_wrong'" if mode=="foreign" else "r.event.session_id")+",tool_use_id:r.event.tool_use_id,decision:'allow'}));"+("process.exit(0);" if mode=="foreign" else ""))+"});",encoding="utf-8")
+    marker=tmp_path/"first-failed"
+    worker.write_text('''import fs from 'node:fs';import readline from 'node:readline';
+const actor='app:agent-session:runtime:'+'a'.repeat(32);let last=null;
+const mode=MODE,marker=MARKER;
+const failOnce=mode!=='good'&&!fs.existsSync(marker);
+if(failOnce)fs.writeFileSync(marker,'1');
+readline.createInterface({input:process.stdin}).on('line',line=>{
+ const r=JSON.parse(line);
+ if(r.command==='release'){
+  console.log(JSON.stringify({kind:'released',released:true,last_request_id:last,agent_session:actor,release_id:'a'.repeat(32),session_id:r.session_id}));
+  process.exit(0);return;
+ }
+ last=r.request_id;
+ fs.appendFileSync(LOG,JSON.stringify({pid:process.pid,session:r.event.session_id})+'\\n');
+ if(failOnce&&mode==='nonzero'){process.stderr.write('accepted\\n');process.exit(3);return;}
+ if(failOnce&&mode==='malformed'){console.log('bad-json');process.exit(0);return;}
+ console.log(JSON.stringify({agent_session:actor,continued:true,request_id:r.request_id,
+  session_id:failOnce&&mode==='foreign'?'ses_wrong':r.event.session_id,tool_use_id:r.event.tool_use_id,decision:'allow'}));
+ if(failOnce&&mode==='foreign')process.exit(0);
+});'''.replace('MODE',json.dumps(mode)).replace('MARKER',json.dumps(str(marker))).replace('LOG',json.dumps(str(log))), encoding="utf-8")
     code=("import assert from 'node:assert/strict';import {createNativeGateRunner} from "+json.dumps(module)+";"+
         "const run=createNativeGateRunner(process.execPath,["+json.dumps(str(worker))+"]);"+
         "const event={cwd:process.cwd(),session_id:'ses_real123',tool_use_id:'call1'};"+
         ("assert.equal((await run(event)).allow,true);assert.equal((await run({...event,tool_use_id:'call2'})).allow,true);await run.close();" if mode=="good" else
-         "await assert.rejects(run(event));await new Promise(r=>setTimeout(r,50));assert.throws(()=>run({...event,tool_use_id:'call2'}),/no duplicate enrollment/);await run.close();"))
+         "await assert.rejects(run(event));await new Promise(r=>setTimeout(r,50));assert.throws(()=>run({...event,tool_use_id:'call2'}),/quarantined; no duplicate enrollment/);await run.close().catch(()=>{});"))
     result=subprocess.run([shutil.which("node"),"--input-type=module"],input=code,text=True,encoding="utf-8",capture_output=True,timeout=10)
     assert result.returncode==0,result.stderr
     rows=[json.loads(line) for line in log.read_text().splitlines()]
@@ -295,7 +310,7 @@ await run.close();
     assert result.returncode==0,result.stderr
 
 
-def test_actorless_owner_close_allows_fresh_enrollment(tmp_path):
+def test_actorless_owner_close_without_positive_no_enrollment_stays_quarantined(tmp_path):
     module=(Path(__file__).resolve().parents[1]/"nodelang/session_link/opencode-governance.mjs").as_uri()
     worker=tmp_path/'crash-then-allow-worker.mjs'
     marker=tmp_path/'first-done'
@@ -323,14 +338,14 @@ const run=createNativeGateRunner(process.execPath,[WORKER]);
 const event={session_id:'ses_crash',cwd:process.cwd(),tool_use_id:'a'};
 await assert.rejects(run(event),/retained outcome requires reconciliation|native release uncertain|prior native request unresolved/);
 await new Promise(resolve=>setTimeout(resolve,30));
-assert.throws(()=>run({...event,tool_use_id:'fresh'}),/quarantined; no duplicate enrollment; reconcile no recorded graph actor.*tool not delivered/);
+assert.throws(()=>run({...event,tool_use_id:'fresh'}),/quarantined; no duplicate enrollment/);
 await run.close().catch(()=>{});
 '''.replace('MODULE',json.dumps(module)).replace('WORKER',json.dumps(str(worker)))
     result=subprocess.run([shutil.which('node'),'--input-type=module'],input=code,text=True,capture_output=True,timeout=10)
     assert result.returncode==0,result.stderr
 
 
-def test_explicit_owner_pre_admission_refusal_clears_for_fresh_enrollment(tmp_path):
+def test_actorless_pre_admission_refusal_without_never_bound_stays_quarantined(tmp_path):
     module=(Path(__file__).resolve().parents[1]/"nodelang/session_link/opencode-governance.mjs").as_uri()
     worker=tmp_path/'refuse-then-allow-worker.mjs'
     marker=tmp_path/'refused'
@@ -357,10 +372,42 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
     code='''import assert from 'node:assert/strict';import {createNativeGateRunner} from MODULE;
 const run=createNativeGateRunner(process.execPath,[WORKER]);
 const event={session_id:'ses_denied',cwd:process.cwd(),tool_use_id:'a'};
+await assert.rejects(run(event),/native reply identity or outcome unavailable|retained outcome requires reconciliation|native release uncertain/);
+await new Promise(resolve=>setTimeout(resolve,80));
+assert.throws(()=>run({...event,tool_use_id:'fresh'}),/quarantined; no duplicate enrollment/);
+await run.close().catch(()=>{});
+'''.replace('MODULE',json.dumps(module)).replace('WORKER',json.dumps(str(worker)))
+    result=subprocess.run([shutil.which('node'),'--input-type=module'],input=code,text=True,capture_output=True,timeout=10)
+    assert result.returncode==0,result.stderr
+
+
+def test_never_bound_pre_admission_refusal_can_reenroll_only_once(tmp_path):
+    module=(Path(__file__).resolve().parents[1]/"nodelang/session_link/opencode-governance.mjs").as_uri()
+    worker=tmp_path/'refuse-twice-worker.mjs'
+    marker=tmp_path/'count.txt'
+    worker.write_text('''import fs from 'node:fs';import readline from 'node:readline';
+let count=Number(fs.existsSync(MARKER)?fs.readFileSync(MARKER,'utf8'):'0');
+readline.createInterface({input:process.stdin}).on('line',line=>{
+ const r=JSON.parse(line),e=r.event;
+  if(count<2){
+   count++;fs.writeFileSync(MARKER,String(count));
+   console.log(JSON.stringify({request_id:r.request_id,session_id:e.session_id,tool_use_id:e.tool_use_id,
+   admitted:false,decision:'deny',never_bound:true,error:'active persistent installed owner is required (stopped)'}));
+  setTimeout(()=>process.exit(3),20);return;
+ }
+ const actor='app:agent-session:runtime:'+'a'.repeat(32);
+ console.log(JSON.stringify({request_id:r.request_id,session_id:e.session_id,tool_use_id:e.tool_use_id,
+  decision:'allow',agent_session:actor,continued:true}));
+});'''.replace('MARKER',json.dumps(str(marker))),encoding='utf-8')
+    code='''import assert from 'node:assert/strict';import {createNativeGateRunner} from MODULE;
+const run=createNativeGateRunner(process.execPath,[WORKER]);
+const event={session_id:'ses_once',cwd:process.cwd(),tool_use_id:'a'};
 assert.equal((await run(event)).allow,false);
 await new Promise(resolve=>setTimeout(resolve,80));
-assert.equal((await run({...event,tool_use_id:'fresh'})).allow,true);
-await run.close();
+assert.equal((await run({...event,tool_use_id:'b'})).allow,false);
+await new Promise(resolve=>setTimeout(resolve,80));
+assert.throws(()=>run({...event,tool_use_id:'c'}),/quarantined; no duplicate enrollment/);
+await run.close().catch(()=>{});
 '''.replace('MODULE',json.dumps(module)).replace('WORKER',json.dumps(str(worker)))
     result=subprocess.run([shutil.which('node'),'--input-type=module'],input=code,text=True,capture_output=True,timeout=10)
     assert result.returncode==0,result.stderr
@@ -452,7 +499,7 @@ const run=createNativeGateRunner(process.execPath,[WORKER]);
 const event={session_id:'ses_silent',cwd:process.cwd(),tool_use_id:'a'};
 await assert.rejects(run(event),/retained outcome requires reconciliation|prior native request unresolved/);
 await new Promise(resolve=>setTimeout(resolve,80));
-assert.throws(()=>run({...event,tool_use_id:'fresh'}),/quarantined; no duplicate enrollment; reconcile no recorded graph actor.*tool not delivered/);
+assert.throws(()=>run({...event,tool_use_id:'fresh'}),/quarantined; no duplicate enrollment/);
 await run.close().catch(()=>{});
 '''.replace('MODULE',json.dumps(module)).replace('WORKER',json.dumps(str(worker)))
     result=subprocess.run([shutil.which('node'),'--input-type=module'],input=code,text=True,capture_output=True,timeout=10)
@@ -476,7 +523,7 @@ const event={session_id:'ses_late',cwd:process.cwd(),tool_use_id:'a'};
 const first=run(event);
 await assert.rejects(first,/invalid native UTF-8 JSON|retained outcome requires reconciliation|prior native request unresolved/);
 await new Promise(resolve=>setTimeout(resolve,300));
-assert.throws(()=>run({...event,tool_use_id:'fresh'}),/quarantined; no duplicate enrollment; reconcile no recorded graph actor.*tool not delivered/);
+assert.throws(()=>run({...event,tool_use_id:'fresh'}),/quarantined; no duplicate enrollment/);
 await run.close().catch(()=>{});
 '''.replace('MODULE',json.dumps(module)).replace('WORKER',json.dumps(str(worker)))
     result=subprocess.run([shutil.which('node'),'--input-type=module'],input=code,text=True,capture_output=True,timeout=10)
@@ -696,6 +743,250 @@ await assert.rejects(hooks['tool.execute.before']({sessionID:'ses_s',callID:'sh3
 await assert.rejects(hooks['tool.execute.before']({sessionID:'ses_s',callID:'wf',tool:'webfetch'},{args:{url:'x'}}),/no verified governance mapping: webfetch/);
 '''.replace('MODULE', json.dumps(module))
     _run_node(code)
+
+
+def test_archhub_mcp_tools_map_to_the_shared_hook_classifications():
+    module = (Path(__file__).resolve().parents[1] / 'nodelang/session_link/opencode-governance.mjs').as_uri()
+    code = '''import assert from 'node:assert/strict';import {createOpenCodeGovernance} from MODULE;
+const events=[];
+const runner=async e=>{
+ events.push(e);
+ if(e.tool_name==='mcp__archhub-hosts__revit_execute_csharp')return {allow:false,reason:'host effect denied by shared gate'};
+ if(e.tool_name==='mcp__archhub_agent_coordination__native_work_claim')return {allow:false,reason:'native claim denied by shared gate'};
+ if(e.tool_name==='mcp__archhub_agent_coordination__native_work_publish_artifact')return {allow:false,reason:'native publish denied by shared gate'};
+ if(e.tool_name==='mcp__archhub_agent_coordination__coordination_send_message')return {allow:false,reason:'coordination send denied by shared gate'};
+ return {allow:true};
+};
+const hooks=await createOpenCodeGovernance({gateRunner:runner})({directory:process.cwd()});
+const readHost={sessionID:'ses_mcp',callID:'hosts',tool:'archhub-hosts_hosts_state'};
+await hooks['tool.execute.before'](readHost,{args:{}});
+await hooks['tool.execute.after']({...readHost,args:{}},{});
+assert.equal(events.at(-2).tool_name,'mcp__archhub-hosts__hosts_state');
+const readCoord={sessionID:'ses_mcp',callID:'messages',tool:'archhub_agent_coordination_coordination_read_messages'};
+await hooks['tool.execute.before'](readCoord,{args:{limit:10}});
+await hooks['tool.execute.after']({...readCoord,args:{limit:10}},{});
+assert.equal(events.at(-2).tool_name,'mcp__archhub_agent_coordination__coordination_read_messages');
+const hostPing={sessionID:'ses_mcp',callID:'revit-ping',tool:'archhub-hosts_revit_ping'};
+await hooks['tool.execute.before'](hostPing,{args:{}});
+await hooks['tool.execute.after']({...hostPing,args:{}},{});
+assert.equal(events.at(-2).tool_name,'mcp__archhub-hosts__revit_ping');
+const hostInfo={sessionID:'ses_mcp',callID:'revit-info',tool:'archhub-hosts_revit_info'};
+await hooks['tool.execute.before'](hostInfo,{args:{port:48884}});
+await hooks['tool.execute.after']({...hostInfo,args:{port:48884}},{});
+assert.equal(events.at(-2).tool_name,'mcp__archhub-hosts__revit_info');
+const workRead={sessionID:'ses_mcp',callID:'work-read',tool:'archhub_agent_coordination_native_work_assignment'};
+await hooks['tool.execute.before'](workRead,{args:{}});
+await hooks['tool.execute.after']({...workRead,args:{}},{});
+assert.equal(events.at(-2).tool_name,'mcp__archhub_agent_coordination__native_work_assignment');
+await assert.rejects(
+ hooks['tool.execute.before']({sessionID:'ses_mcp',callID:'host-effect',tool:'archhub-hosts_revit_execute_csharp'},{args:{code:'result = 1;'}}),
+ /prewrite admission denied: host effect denied by shared gate/);
+await assert.rejects(
+ hooks['tool.execute.before']({sessionID:'ses_mcp',callID:'claim',tool:'archhub_agent_coordination_native_work_claim'},{args:{}}),
+ /prewrite admission denied: native claim denied by shared gate/);
+await assert.rejects(
+ hooks['tool.execute.before']({sessionID:'ses_mcp',callID:'publish',tool:'archhub_agent_coordination_native_work_publish_artifact'},{args:{work:'w',material_digest:'d',idempotency_key:'k',patch:'p',summary:'s'}}),
+ /prewrite admission denied: native publish denied by shared gate/);
+await assert.rejects(
+ hooks['tool.execute.before']({sessionID:'ses_mcp',callID:'send',tool:'archhub_agent_coordination_coordination_send_message'},{args:{target:'a',message:'b'}}),
+ /prewrite admission denied: coordination send denied by shared gate/);
+await assert.rejects(
+ hooks['tool.execute.before']({sessionID:'ses_mcp',callID:'unknown',tool:'archhub-hosts_delete_everything'},{args:{}}),
+ /no verified governance mapping: archhub-hosts_delete_everything/);
+'''.replace('MODULE', json.dumps(module))
+    _run_node(code)
+
+
+def test_opencode_shell_allows_read_only_diagnostics_inside_workspace(tmp_path, monkeypatch):
+    hooks = Path(__file__).resolve().parents[1] / '_gov/hooks/pretooluse_validate.py'
+    spec = importlib.util.spec_from_file_location('pretooluse_validate_oc_read_shapes', hooks)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    workspace = tmp_path / '00.ARCHUB'
+    product = workspace / '10.PRODUCT' / '13.NODE-LANGUAGE'
+    private = workspace / '20.CLIENTS'
+    product.mkdir(parents=True)
+    private.mkdir(parents=True)
+    (product / 'README.md').write_text('ArchHub\n', encoding='utf-8')
+    (product / 'cloud.json').write_text('{"secret":true}\n', encoding='utf-8')
+    (product / '.env.local').write_text('TOKEN=x\n', encoding='utf-8')
+    (product / '.git').mkdir()
+    monkeypatch.setattr(module, '_WS_RAW', str(workspace))
+    monkeypatch.setattr(module, '_WORKSPACE', module._real(str(workspace)))
+    monkeypatch.setattr(module, '_PRODUCT_ROOT', module._real(str(product)))
+    monkeypatch.setattr(module, '_PRODUCT_AREA', module._real(str(workspace / '10.PRODUCT')))
+    monkeypatch.setattr(module, '_PUBLIC_CHECKOUT', module._real(str(workspace / 'ArchHub')))
+    monkeypatch.setattr(module, '_PRIVATE_ROOTS', (module._real(str(private)), module._real(str(workspace / '60.PERSONAL'))))
+    monkeypatch.setattr(module, '_CANONICAL_CHECKOUTS', (module._real(str(product)),))
+    monkeypatch.setattr(module, '_HANDOFFS', module._real(str(workspace / '70.HANDOFFS')))
+    monkeypatch.setattr(module, '_private_registered_root', lambda path: False)
+    allowed = [
+        'dir .',
+        'ls .',
+        'Get-ChildItem .',
+        'type README.md',
+        'cat README.md',
+        'Get-Content README.md',
+        'where git',
+        'Get-Command git',
+        'rg -n -i -- ArchHub README.md',
+        'findstr /n /c:ArchHub README.md',
+        'ping 127.0.0.1 -n 1',
+        'Test-NetConnection localhost',
+        'git status',
+    ]
+    for command in allowed:
+        verdict = module.shell_admission(command, cwd=str(product), runtime='opencode')
+        assert verdict['allow'], (command, verdict)
+    refused = {
+        'Get-Content ..\\..\\20.CLIENTS\\secret.txt': '20.CLIENTS',
+        'Get-Content cloud.json': 'secret files',
+        'Get-Content .env.local': 'secret files',
+        'Get-ChildItem -Recurse': 'option -Recurse',
+        'Get-ChildItem /s': 'option /s',
+        'rg -- ArchHub .': 'secret descendant',
+        'findstr /s /c:ArchHub .': 'secret descendant',
+        'ping 8.8.8.8': 'localhost',
+        'node -e "console.log(1)"': 'SHELL-3',
+        'rg ArchHub .': 'pattern must follow --',
+        'rg --pre=calc -- ArchHub .': 'option --pre',
+        'rg --pre calc -- ArchHub .': 'option --pre',
+        'rg --config ripgreprc -- ArchHub .': 'option --config',
+        'rg -L -- ArchHub README.md': 'option -L',
+        'rg --follow -- ArchHub README.md': 'option --follow',
+        'rg -z -- ArchHub .': 'option -z',
+        'rg --search-zip -- ArchHub .': 'option --search-zip',
+        'rg --glob !*.pem -- ArchHub .': 'glob must be non-negated',
+        'rg -- ArchHub C:\\Windows': 'inside the public product root',
+        'rg -- ArchHub ..\\..': 'protected tree',
+        'rg -- ArchHub ..\\..\\20.CLIENTS': '20.CLIENTS',
+        'findstr /n -- ArchHub README.md': 'option --',
+        'findstr /s ArchHub README.md': 'pattern must use /c:',
+        'findstr /g:patterns.txt -- ArchHub README.md': 'option /g',
+        'git status': 'product repo',
+    }
+    for command, reason in refused.items():
+        cwd = str(tmp_path) if reason == 'product repo' else str(product)
+        verdict = module.shell_admission(command, cwd=cwd, runtime='opencode')
+        assert not verdict['allow'], (command, verdict)
+        assert reason in verdict['reason'], verdict
+    monkeypatch.setenv('RIPGREP_CONFIG_PATH', str(product / 'ripgreprc'))
+    verdict = module.shell_admission('rg -- ArchHub .', cwd=str(product), runtime='opencode')
+    assert not verdict['allow'], verdict
+    assert 'RIPGREP_CONFIG_PATH' in verdict['reason'], verdict
+
+
+def test_opencode_shell_denies_recursive_search_through_private_junction(tmp_path, monkeypatch):
+    hooks = Path(__file__).resolve().parents[1] / '_gov/hooks/pretooluse_validate.py'
+    spec = importlib.util.spec_from_file_location('pretooluse_validate_oc_junctions', hooks)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    workspace = tmp_path / '00.ARCHUB'
+    product = workspace / '10.PRODUCT' / '13.NODE-LANGUAGE'
+    private = workspace / '20.CLIENTS'
+    product.mkdir(parents=True)
+    private.mkdir(parents=True)
+    link = product / 'client-link'
+    monkeypatch.setattr(module, '_WS_RAW', str(workspace))
+    monkeypatch.setattr(module, '_WORKSPACE', module._real(str(workspace)))
+    monkeypatch.setattr(module, '_PRODUCT_ROOT', module._real(str(product)))
+    monkeypatch.setattr(module, '_PRODUCT_AREA', module._real(str(workspace / '10.PRODUCT')))
+    monkeypatch.setattr(module, '_PUBLIC_CHECKOUT', module._real(str(workspace / 'ArchHub')))
+    monkeypatch.setattr(module, '_PRIVATE_ROOTS', (module._real(str(private)),))
+    monkeypatch.setattr(module, '_CANONICAL_CHECKOUTS', (module._real(str(product)),))
+    monkeypatch.setattr(module, '_HANDOFFS', module._real(str(workspace / '70.HANDOFFS')))
+    monkeypatch.setattr(module, '_private_registered_root', lambda path: False)
+    created = False
+    try:
+        os.symlink(private, link, target_is_directory=True)
+        created = True
+    except OSError:
+        result = subprocess.run(['cmd', '/c', 'mklink', '/J', str(link), str(private)], text=True, capture_output=True)
+        created = result.returncode == 0
+    if not created:
+        pytest.skip('junction creation unavailable')
+    verdict = module.shell_admission('rg -- ArchHub .', cwd=str(product), runtime='opencode')
+    assert not verdict['allow'], verdict
+    assert 'protected descendant' in verdict['reason'], verdict
+
+
+def test_opencode_shell_denies_search_through_private_file_symlink(tmp_path, monkeypatch):
+    hooks = Path(__file__).resolve().parents[1] / '_gov/hooks/pretooluse_validate.py'
+    spec = importlib.util.spec_from_file_location('pretooluse_validate_oc_file_links', hooks)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    workspace = tmp_path / '00.ARCHUB'
+    product = workspace / '10.PRODUCT' / '13.NODE-LANGUAGE'
+    private = workspace / '20.CLIENTS'
+    product.mkdir(parents=True)
+    private.mkdir(parents=True)
+    target = private / 'README.md'
+    target.write_text('private ArchHub\n', encoding='utf-8')
+    link = product / 'public-name.md'
+    try:
+        os.symlink(target, link)
+    except OSError:
+        pytest.skip('file symlink creation unavailable')
+    monkeypatch.setattr(module, '_WS_RAW', str(workspace))
+    monkeypatch.setattr(module, '_WORKSPACE', module._real(str(workspace)))
+    monkeypatch.setattr(module, '_PRODUCT_ROOT', module._real(str(product)))
+    monkeypatch.setattr(module, '_PRODUCT_AREA', module._real(str(workspace / '10.PRODUCT')))
+    monkeypatch.setattr(module, '_PUBLIC_CHECKOUT', module._real(str(workspace / 'ArchHub')))
+    monkeypatch.setattr(module, '_PRIVATE_ROOTS', (module._real(str(private)),))
+    monkeypatch.setattr(module, '_CANONICAL_CHECKOUTS', (module._real(str(product)),))
+    monkeypatch.setattr(module, '_HANDOFFS', module._real(str(workspace / '70.HANDOFFS')))
+    monkeypatch.setattr(module, '_private_registered_root', lambda path: False)
+    verdict = module.shell_admission('rg -- ArchHub .', cwd=str(product), runtime='opencode')
+    assert not verdict['allow'], verdict
+    assert 'protected descendant' in verdict['reason'], verdict
+
+
+def test_real_native_gate_never_bound_reply_is_consumed_by_recovery_logic(tmp_path, monkeypatch):
+    gate = Path(__file__).resolve().parents[1] / '_gov/hooks/opencode_native_gate.py'
+    installed = tmp_path / 'ArchHub'
+    package = installed / 'nodelang'
+    package.mkdir(parents=True)
+    (package / '__init__.py').write_text('', encoding='utf-8')
+    (package / 'native_agent_session.py').write_text('''
+import os
+
+class Identity:
+    runtime = "opencode"
+    external_session_id = os.environ["OPENCODE_SESSION_ID"]
+
+class NativeAgentSession:
+    def __init__(self, expected_agent_session=None):
+        self._identity = Identity()
+        self._state = "unbound"
+        self._client = None
+        self._session_root = None
+        self._continued = False
+        self._descriptor = object()
+    def _check_identity(self):
+        return None
+    def connect(self):
+        raise RuntimeError("an active persistent installed owner is required")
+    def _read_owner(self):
+        return self._descriptor
+    def _lease_expired(self):
+        return False
+    def close(self):
+        return {"released": True, "release_id": "a" * 32, "agent_session": None}
+''', encoding='utf-8')
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path))
+    module = (Path(__file__).resolve().parents[1] / 'nodelang/session_link/opencode-governance.mjs').as_uri()
+    code = '''import assert from 'node:assert/strict';import {createNativeGateRunner} from MODULE;
+const run=createNativeGateRunner(PYTHON,[GATE]);
+const event={session_id:'ses_gate',cwd:process.cwd(),tool_use_id:'a',vendor:'opencode',
+ hook_event_name:'PreToolUse',tool_name:'read',tool_input:{filePath:'README.md'}};
+const first=await run(event);
+assert.equal(first.allow,false);
+assert.match(first.reason,/active persistent installed owner is required/);
+await run.close().catch(()=>{});
+'''.replace('MODULE',json.dumps(module)).replace('GATE',json.dumps(str(gate))).replace('PYTHON',json.dumps(sys.executable))
+    result = subprocess.run([shutil.which('node'), '--input-type=module'], input=code, text=True,
+                            encoding='utf-8', capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr + result.stdout
 
 
 @pytest.mark.parametrize('tool,args', [

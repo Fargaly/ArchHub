@@ -13,8 +13,84 @@ const shellTools = new Set(['bash','powershell']);
 const nativeTools = new Set(['archhub_work','archhub_message']);
 // Only these tools' effects are fully accounted by the owner's permit/receipt
 // ledger (reads have none; write/edit hold a permit until receipted).
-const ledgerTools = new Set([...readTools,'write','edit']);
 const stringify = value => JSON.stringify(value, (_key,item)=>object(item)?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
+const toolClassification = new Map([
+ ...[...readTools].map(tool=>[tool,'read']),
+ ['write','write'],['edit','write'],
+ ['bash','execute'],['powershell','execute'],
+ ['archhub_work','execute'],['archhub_message','execute'],
+ ['archhub-hosts_hosts_state','read'],
+ ['archhub-hosts_office_read','read'],
+ ['archhub-hosts_outlook_inbox','read'],
+ ['archhub-hosts_notion_search','read'],
+ ['archhub-hosts_dropbox_list','read'],
+ ['archhub-hosts_revit_ping','read'],['archhub-hosts_revit_info','read'],
+ ['archhub-hosts_revit_execute_csharp','execute'],
+ ['archhub-hosts_revit_screenshot','execute'],
+ ['archhub-hosts_acad_ping','read'],['archhub-hosts_acad_info','read'],
+ ['archhub-hosts_acad_execute_csharp','execute'],
+ ['archhub-hosts_max_ping','read'],['archhub-hosts_max_info','read'],
+ ['archhub-hosts_max_execute_python','execute'],['archhub-hosts_max_execute_maxscript','execute'],
+ ['archhub-hosts_blender_ping','read'],['archhub-hosts_blender_execute_python','execute'],
+ ['archhub-hosts_rhino_ping','read'],['archhub-hosts_rhino_execute_python','execute'],
+ ['archhub_agent_coordination_coordination_ping','read'],
+ ['archhub_agent_coordination_coordination_info','read'],
+ ['archhub_agent_coordination_coordination_list_agents','read'],
+ ['archhub_agent_coordination_coordination_read_messages','read'],
+ ['archhub_agent_coordination_coordination_read_message','read'],
+ ['archhub_agent_coordination_native_owner_status','read'],
+ ['archhub_agent_coordination_native_owner_inspect_effects','read'],
+ ['archhub_agent_coordination_coordination_send_message','execute'],
+ ['archhub_agent_coordination_coordination_acknowledge_message','execute'],
+ ['archhub_agent_coordination_native_work_artifact_material','read'],
+ ['archhub_agent_coordination_native_work_read_artifact','read'],
+ ['archhub_agent_coordination_native_work_assignment','read'],
+ ['archhub_agent_coordination_native_work_current','read'],
+ ['archhub_agent_coordination_native_work_material','read'],
+ ['archhub_agent_coordination_native_work_configuration','read'],
+ ['archhub_agent_coordination_native_work_plan_read','read'],
+ ['archhub_agent_coordination_native_work_reconcile','read'],
+ ['archhub_agent_coordination_native_work_claim','execute'],
+ ['archhub_agent_coordination_native_work_release','execute'],
+ ['archhub_agent_coordination_native_work_configure','execute'],
+ ['archhub_agent_coordination_native_work_plan_draft','execute'],
+ ['archhub_agent_coordination_native_work_submit','execute'],
+ ['archhub_agent_coordination_native_work_request_court','execute'],
+ ['archhub_agent_coordination_native_work_publish_artifact','execute'],
+ ['archhub_agent_coordination_native_work_review_artifact','execute'],
+ ['archhub_agent_coordination_native_work_task_attach','execute'],
+ ['archhub_agent_coordination_native_work_task_detach','execute'],
+ ['archhub_agent_coordination_native_owner_resume','execute'],
+ ['archhub_agent_coordination_native_owner_recover','execute'],
+ ['archhub_agent_coordination_native_connection_recover','execute'],
+ ['archhub_agent_coordination_native_resume_recover','execute'],
+ ['archhub_agent_coordination_native_owner_settle_effect','execute'],
+]);
+
+function toolClass(tool) {
+ return typeof tool==='string'?toolClassification.get(tool):undefined;
+}
+
+function isLedgerTool(tool) {
+ const kind=toolClass(tool);
+ return kind==='read'||tool==='write'||tool==='edit';
+}
+
+function mappedMcpTool(tool) {
+ if(typeof tool!=='string')return null;
+ let server='',name='';
+ if(tool.startsWith('archhub-hosts_')){server='archhub-hosts';name=tool.slice('archhub-hosts_'.length);}
+ else if(tool.startsWith('archhub_agent_coordination_')){server='archhub_agent_coordination';name=tool.slice('archhub_agent_coordination_'.length);}
+ else return null;
+ if(!name||name.length>128||!/^[A-Za-z0-9_.-]+$/.test(name))fail('tool has no verified governance mapping: '+tool);
+ const kind=toolClass(tool);
+ if(!kind)fail('tool has no verified governance mapping: '+tool);
+ return {toolName:'mcp__'+server+'__'+name,read:kind==='read'};
+}
+
+function isReadTool(tool) {
+ return toolClass(tool)==='read';
+}
 
 // The private installed loader supplies the existing admitted gate command.
 // No shell, Bun global, source-checkout lookup, enrollment or fallback service.
@@ -22,10 +98,9 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
  if(!path.isAbsolute(command)||!Array.isArray(args)||args.some(a=>typeof a!=='string'))fail('trusted native gate command required');
  if(!object(expectedSessions)||Object.keys(expectedSessions).length>128||Object.entries(expectedSessions).some(([session,actor])=>
     !/^ses_[A-Za-z0-9]+$/.test(session)||typeof actor!=='string'||!/^app:agent-session:runtime:[a-f0-9]{32}$/.test(actor)))fail('exact recovery session identities required');
- // Quarantine keeps the exact actor, delivery state and any release ack. If no
- // actor was ever recorded and no request reached admission, nothing exists in
- // the graph to reconcile, so the next call may enroll a fresh owner.
- const workers=new Map(),lineages=new Map(),queues=new Map(),quarantined=new Map(),probes=new Map();
+ // Quarantine keeps the exact actor, delivery state and any release ack. A
+ // fresh owner is allowed only after positive no-enrollment evidence, once.
+ const workers=new Map(),lineages=new Map(),queues=new Map(),quarantined=new Map(),probes=new Map(),reenrolls=new Map();
  if(!object(laneFolders)||Object.keys(laneFolders).length>128||Object.entries(laneFolders).some(([session,lane])=>
     !/^ses_[A-Za-z0-9]+$/.test(session)||typeof lane!=='string'||!path.isAbsolute(lane)||lane.length>1024||lane.includes('\0')))fail('trusted lane folders required');
  if(!object(selectedWorks)||Object.keys(selectedWorks).length>128||Object.entries(selectedWorks).some(([session,work])=>
@@ -91,10 +166,14 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
      state.closed?.resolve();
     }else{
      abort('native owner closed without confirmed release');
-     if(!state.actor&&!lineages.get(event.session_id)&&(state.preAdmissionRefused||state.inputUndelivered)&&!state.pending&&!state.notDelivered&&!state.deliveryUncertain){
+     const provenNeverEnrolled = state.neverBound===true&&!state.actor&&!lineages.get(event.session_id)&&
+      (state.preAdmissionRefused||state.inputUndelivered)&&!state.pending&&!state.notDelivered&&!state.deliveryUncertain;
+     const usedReenrolls = reenrolls.get(event.session_id)||0;
+     if(provenNeverEnrolled&&usedReenrolls<1){
+      reenrolls.set(event.session_id,usedReenrolls+1);
       probes.delete(event.session_id);
      }else quarantined.set(event.session_id,{actor:state.actor||lineages.get(event.session_id)||null,cwd:state.cwd,
-      delivered:!!(state.actor||state.lastCompleted||state.released||state.deliveryUncertain),
+      delivered:!!(state.actor||state.lastCompleted||state.released||state.deliveryUncertain||provenNeverEnrolled),
       ack:state.released?.released===true&&!state.notDelivered?state.released:null});
      workers.delete(event.session_id);
      state.closed?.reject(new Error('native release uncertain'));
@@ -128,13 +207,15 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
     // A reply naming another actor is an identity failure before anything else.
     if(reply.agent_session!==undefined&&(!state.actor?lineages.get(event.session_id)&&reply.agent_session!==lineages.get(event.session_id)
        :reply.agent_session!==state.actor)){abort('native graph identity changed');return;}
-    if(reply.request_id===held.id&&reply.session_id===event.session_id&&reply.tool_use_id===held.call&&
-       reply.admitted===false&&reply.decision==='deny'&&typeof reply.error==='string'&&!state.actor&&reply.agent_session===undefined){
+     if(reply.request_id===held.id&&reply.session_id===event.session_id&&reply.tool_use_id===held.call&&
+       reply.admitted===false&&reply.decision==='deny'&&(reply.never_bound===true||lineages.get(event.session_id))&&
+       typeof reply.error==='string'&&!state.actor&&reply.agent_session===undefined){
      // Only a never-bound owner proves this frame was not admitted: no permit can
      // exist, so this is a clean denial with its reason. Every other error keeps
      // custody (abort) below; an invalid or missing decision is a protocol failure.
      const why=[reply.error,reply.reason].filter(v=>typeof v==='string'&&v).join(': ');
-     clearTimeout(held.timer);state.pending=null;state.lastCompleted=held.id;state.deliveryUncertain=false;state.preAdmissionRefused=true;
+      clearTimeout(held.timer);state.pending=null;state.lastCompleted=held.id;state.deliveryUncertain=false;state.preAdmissionRefused=true;
+      state.neverBound=reply.never_bound===true;
      if(lineages.get(event.session_id)){
       // A continuation that never bound is not retried by this worker. Retire it:
       // its exit is reconciled against the owner's custody before a fresh worker.
@@ -277,6 +358,8 @@ function normalized(tool,args) {
   if(Object.keys(args).sort().join(',')!=='arguments,operation'||typeof args.operation!=='string'||!object(args.arguments))fail((tool==='archhub_work'?'selected Work':'agent message')+' arguments unavailable');
   return {tool_name:tool,tool_input:args};
  }
+ const mcp=mappedMcpTool(tool);
+ if(mcp)return {tool_name:mcp.toolName,tool_input:args};
  if(readTools.has(tool))return {tool_name:tool,tool_input:args};
  if(shellTools.has(tool)){
   // Admission is the shared shell allowlist in the native gate; nothing else runs.
@@ -348,7 +431,7 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
    },
    'tool.execute.before':async(input,output)=>{
     const key=identity(input);
-    const read=readTools.has(input.tool);
+    const read=isReadTool(input.tool);
     // OpenCode never runs tool.execute.after for an aborted or failed call. A read
     // admitted long ago with no receipt has ended; reads carry no write effect,
     // so drop it instead of refusing every later tool in the session forever.
@@ -362,7 +445,7 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
     // Shell calls and Work executions carry no permit, so the ledger cannot
     // prove their outcome; they stay retained and keep refusing.
     if(blocking&&blocking.state==='uncertain'&&invoke.reconcile&&!pending.get(key)&&
-       ![...pending.values()].some(p=>p.session===input.sessionID&&(p.state!=='uncertain'||!ledgerTools.has(p.tool)))){
+       ![...pending.values()].some(p=>p.session===input.sessionID&&(p.state!=='uncertain'||!isLedgerTool(p.tool)))){
      const verdict=await invoke.reconcile(input.sessionID);
      if(verdict.outcome==='unknown')fail('earlier tool outcome unresolved; reconcile '+verdict.reason+'; coordinator: '+verdict.command);
      for(const [held,record] of pending)if(record.session===input.sessionID&&record.state==='uncertain')pending.delete(held);

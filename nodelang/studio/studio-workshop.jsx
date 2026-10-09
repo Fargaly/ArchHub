@@ -584,7 +584,10 @@ const TaskCard = ({ t, sel, onSelect, onDecide, onOpen, compact, agent, busy, ro
   const [detail, setDetail] = React.useState(null);   // 'diff' | 'notes'
   const o = agent(t.owner);
   const thread = all ? t.thread : t.thread.slice(0, 2);
-  const graphRoot = wsRealGraphRoot(t.graphRoot || t.work) ? (t.graphRoot || t.work) : '';
+  const realGraphRoot = typeof wsRealGraphRoot === 'function' ? wsRealGraphRoot :
+    root => /^(assembly-instance|work|app|gm|fact|node):[A-Za-z0-9_.:@-]{3,}$/.test(String(root || '')) &&
+      !String(root || '').startsWith('proposal:');
+  const graphRoot = realGraphRoot(t.graphRoot || t.work) ? (t.graphRoot || t.work) : '';
   if (rowDesign) {
     const decisions = (t.decision || []).filter(row => !row.disabled);
     const approve = decisions.find(row => /^approve\b/i.test(row.label));
@@ -1380,7 +1383,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const existing = !window.ARCHHUB_STUDIO_AUTHORITY;
   const nativeAvailable = existing && descriptor.native_work_available !== false;
   const transcript = wsTranscript(state, descriptor);
-  const [preset, setPreset] = React.useState('chat');   // projects · board · chat · agents · approvals · task
+  const [preset, setPreset] = React.useState(sel?.tab || 'chat');   // projects · board · chat · agents · approvals · task
   const [ownSel, setOwnSel] = React.useState({ agent:null, task:null });
   const S = sel || ownSel, setS = setSel || setOwnSel;
   const [tidy, setTidy] = React.useState(false);
@@ -1388,6 +1391,9 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const [controlsOpen, setControlsOpen] = React.useState(false);
   // Per proposal message: {pending} | {work_root} | {declined} | {error}, from the founder's own decisions and reads.
   const [proposalHeld, setProposalHeld] = React.useState({});
+  React.useEffect(() => {
+    if (sel?.tab && WORKSHOP_TABS.some(([key]) => key === sel.tab)) setPreset(sel.tab);
+  }, [sel?.tab]);
   // The header's file line (design: Work title · model file): the hosts the
   // app's own probe sees connected, read once from its cached rows; null until it answers.
   const [liveHosts, setLiveHosts] = React.useState(null);

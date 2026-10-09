@@ -155,7 +155,8 @@ test('icon rail: the design icons in order, with no dead Share control', async (
     const rail = studio.doc.querySelector('aside').firstElementChild;
     const buttons = [...rail.querySelectorAll('button')];
     assert.deepEqual(buttons.map(button => button.title.split(' \u00b7 ')[0]),
-      ['Home', 'Chats', 'Nodes', 'Skills', 'Search', 'Documentation', 'Settings'], 'the rail only draws working controls');
+      ['Home', 'Chats', 'Nodes', 'Skills', 'Search', 'Studio', 'Workshop', 'Brain', 'BABOOM', 'Connectors', 'Cloud', 'Documentation', 'Settings'],
+      'the rail draws the working app controls plus the six tool controls');
     const dead = buttons.filter(button => !button.disabled && typeof reactProps(button).onClick !== 'function').map(button => button.title);
     assert.deepEqual(dead, [], 'enabled rail controls with no action: ' + dead.join(', '));
     assert.equal(buttons.some(button => button.title.startsWith('Share')), false, 'Share is not drawn without a binding');

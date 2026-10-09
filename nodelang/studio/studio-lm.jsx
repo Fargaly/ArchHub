@@ -341,6 +341,7 @@ const StudioLM = () => {
     return () => controller.abort();
   }, []);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
+  const [settingsTab, setSettingsTab] = React.useState('account');
   const [account, setAccount] = React.useState(() => acLoad());
   const [booting, setBooting] = React.useState(true);
   const [signUpOpen, setSignUpOpen] = React.useState(false);
@@ -410,6 +411,7 @@ const StudioLM = () => {
   const [docsOpen, setDocsOpen] = React.useState(false);
   const [libraryOpen, setLibraryOpen] = React.useState(false);
   const [panel, setPanel] = React.useState('nodes'); // chats | nodes | skills | search
+  const [toolView, setToolView] = React.useState(null);
   const [pendingCanvasReveal, setPendingCanvasReveal] = React.useState(null);
   const requestCanvasReveal = ids => setPendingCanvasReveal({ids:[...new Set((ids || []).filter(Boolean))], at:Date.now()});
   const authorityState = useStudioProjection();
@@ -463,6 +465,59 @@ const StudioLM = () => {
   const updateWorkspaceView = change => setWorkspaceSelection(previous => !workspaceReady ? previous : ({
     ...resolveWorkspaceView(previous), ...change, notice:'', scope:viewScope,
   }));
+  const viewScopeForSession = id => JSON.stringify([id || '', workshopState?.canvas?.graph_id || '',
+    workshopState?.canvas?.root || '',
+    (workshopState?.topology?.canvas || workshopState?.canvas)?.authorization?.subject || '',
+    (workshopState?.topology?.canvas || workshopState?.canvas)?.authorization?.session || '']);
+  const openSessionView = (id, view) => {
+    if (id && !window.ARCHHUB_GRAPH_OPEN) {
+      if (!openTabs.includes(id)) setOpenTabs(t => [...t, id]);
+      setOpenId(id);
+    } else if (id) openSession(id);
+    setWorkspaceSelection({...view, notice:'', scope:viewScopeForSession(id), pending:false});
+  };
+  const openTool = (tool, options = {}) => {
+    if (tool === 'workshop' && options.tab === 'approvals' && workshopState?.canvas?.graph_id) {
+      const workshopRows = Array.isArray(workshopState?.workshops) ? workshopState.workshops : [];
+      const room = workshopRows.find(row => row.root === options.root) ||
+        workshopRows.find(row => row.is_general === true) || workshopRows[0];
+      if (room) {
+        const authorization = (workshopState.topology?.canvas || workshopState.canvas)?.authorization || {};
+        setToolView(null);
+        setOpenTabs(tabs => tabs.includes(workshopState.canvas.graph_id) ? tabs : [...tabs, workshopState.canvas.graph_id]);
+        setWorkspaceSelection({mode:'chat', conversationRoot:room.root, target:'', notice:'', pending:false,
+          scope:JSON.stringify([workshopState.canvas.graph_id, workshopState.canvas.graph_id, workshopState.canvas.root,
+            authorization.subject || '', authorization.session || ''])});
+        setWorkshopSelection({root:room.root, agent:null, task:options.focus || null, tab:'approvals'});
+        setOpenId(workshopState.canvas.graph_id);
+        return;
+      }
+    }
+    const toolRow = toolRowsFromOwners({workshopState, account, personal:readPersonalThemeSnapshot(), hub:window.ARCHHUB_TOOL_HUB})
+      .find(row => row.id === tool);
+    if (toolRow?.state === 'off') {
+      setOpenId(null);
+      setToolView({id:tool, tab:firstToolTab(tool)});
+      return;
+    }
+    const firstSession = openId || window.ARCHHUB_LIVE?.currentGraph || LM_SESSIONS[0]?.id || null;
+    if (tool === 'studio') {
+      setToolView(null);
+      if (firstSession) openSessionView(firstSession, {mode:'canvas', conversationRoot:'', target:''});
+      return;
+    }
+    if (tool === 'workshop') {
+      setOpenId(null);
+      setToolView({id:tool, tab:options.tab || firstToolTab(tool), focus:options.focus || ''});
+      return;
+    }
+    setOpenId(null);
+    setToolView({id:tool, tab:options.tab || firstToolTab(tool), focus:options.focus || ''});
+  };
+  const openToolGraph = tool => {
+    setOpenId(null);
+    setToolView({id:tool, tab:firstToolTab(tool)});
+  };
   // A Conversations row that first walked to the Workshop canvas (WorkshopConversationMenu) names
   // its room here: the menu itself unmounts when the scope changes, and a selection made under the
   // old scope is reset. The room opens on the first render that lists it at the new scope.
@@ -488,7 +543,8 @@ const StudioLM = () => {
   const [workshopSelection, setWorkshopSelection] = React.useState({root:'', agent:null, task:null});
   const wsSel = workshopSelection.root === workspaceView.conversationRoot ? workshopSelection :
     {root:workspaceView.conversationRoot, agent:null, task:null};
-  const setWsSel = next => setWorkshopSelection({root:workspaceView.conversationRoot, agent:next.agent ?? null, task:next.task ?? null});
+  const setWsSel = next => setWorkshopSelection({root:workspaceView.conversationRoot, agent:next.agent ?? null,
+    task:next.task ?? null, tab:next.tab ?? null});
 
   const nativeConnection = React.useRef(null);
   const connectNativeSession = async row => {
@@ -532,6 +588,7 @@ const StudioLM = () => {
 
   // open a session — also pin as a tab if not already open
   const openSession = async (id) => {
+    setToolView(null);
     if (id && window.ARCHHUB_GRAPH_OPEN) {
       try {
         await window.ARCHHUB_GRAPH_OPEN(id);
@@ -584,7 +641,7 @@ const StudioLM = () => {
   };
 
   // Docs and Settings are mutually exclusive — they share a z-index, so opening one closes the other.
-  const openSettings = (v) => { if (v) setDocsOpen(false); setSettingsOpen(v); };
+  const openSettings = (v, tab) => { if (v) { setDocsOpen(false); if (tab) setSettingsTab(tab); } setSettingsOpen(v); };
   const openDocs = (v) => { if (v) setSettingsOpen(false); setDocsOpen(v); };
 
   // ⌘/ docs · ⌘, settings · ⌘K library — the keys the Shortcuts sheet documents
@@ -614,18 +671,21 @@ const StudioLM = () => {
       width:'100%', height:'100%', background:LM.bg, color:LM.ink,
       fontFamily:LM.sans, fontSize:13, lineHeight:1.5,
       display:'grid',
-      gridTemplateColumns: workshopContext ? '44px 1fr' : '292px 1fr',
+      gridTemplateColumns: ((!session && panel === 'nodes') || workshopContext) ? '44px 1fr' : '292px 1fr',
       gridTemplateRows:'1fr 22px',
       overflow:'hidden', position:'relative',
     }}>
       <Sidebar
         panel={panel} setPanel={setPanel}
         openId={openId} onOpen={openSession}
-        onHome={() => setOpenId(null)} onSettings={() => { setDocsOpen(false); setSettingsOpen(true); }} onDocs={() => { setSettingsOpen(false); setDocsOpen(true); }}
-        addNodeFromLibrary={addNodeFromLibrary} workshopContext={workshopContext} account={account}
+        onHome={() => { setToolView(null); setOpenId(null); }} onSettings={() => openSettings(true)} onDocs={() => { setSettingsOpen(false); setDocsOpen(true); }}
+        onOpenTool={openTool}
+        addNodeFromLibrary={addNodeFromLibrary} workshopContext={workshopContext} railOnly={(!session && panel === 'nodes') || !!workshopContext} account={account}
         wsSel={wsSel} setWsSel={setWsSel} onAddAgent={() => setLibraryOpen(true)}
         onWorkshopTarget={target => updateWorkspaceView({target})}/>
-      {session
+      {toolView && !session
+        ? <ToolMainView view={toolView} account={account} setAccount={setAccount} onSignOut={signOut} onSettings={openSettings}/>
+        : session
         ? <Workspace
             session={session} model={displayedModel} readiness={readiness} onReadinessStale={readReadiness}
             openTabs={openTabs} setOpenId={openSession} closeTab={closeTab}
@@ -637,8 +697,10 @@ const StudioLM = () => {
             clearPendingCanvasReveal={() => setPendingCanvasReveal(null)}
             userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary}
             view={workspaceView} updateView={updateWorkspaceView} wsSel={wsSel} setWsSel={setWsSel}
-            onHome={() => setOpenId(null)}/>
+            onHome={() => { setToolView(null); setOpenId(null); }}/>
         : <Home onOpen={openSession} model={model} native={homeNative} setPickerOpen={setPickerOpen}
+            setLibraryOpen={setLibraryOpen} setPanel={setPanel}
+            onOpenTool={openTool} onOpenToolGraph={openToolGraph} workshopState={workshopState} account={account}
             onStarted={async (result, continueInView = () => true) => {
               const owner = window.ARCHHUB_EXISTING_WORKSHOP;
               const identity = () => {
@@ -671,7 +733,7 @@ const StudioLM = () => {
                   authorization?.subject || '', authorization?.session || ''])});
               setOpenId(result.graph_id);
             }}/>}
-      <ServerStrip session={session} model={model} setSettingsOpen={openSettings} setDocsOpen={openDocs}/>
+      <ServerStrip session={session} model={model} setSettingsOpen={openSettings} setDocsOpen={openDocs} onOpenWaitingTask={openTool}/>
       {pickerOpen && <ModelPicker setModel={m => !session
         ? rememberComposerModel(m).then(picked => { setHomeNative(null); setModel(picked); }) : modelTarget
         ? window.pmPersistValue(modelTarget, 'model', modelRoute(m))
@@ -682,7 +744,7 @@ const StudioLM = () => {
           box that was not handed a model still asks the model the founder
           picked instead of falling through to a server default. */}
       <ModelInWindow model={model}/>
-      {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} account={account} setAccount={setAccount} onSignOut={signOut}/>}
+      {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} account={account} setAccount={setAccount} onSignOut={signOut} initialTab={settingsTab}/>}
       {signUpOpen && <SignUp onDone={(rec) => { setAccount(rec); setSignUpOpen(false); }} onCancel={() => setSignUpOpen(false)} plan={account.plan}/>}
       {booting && <AppBoot account={account} onDone={() => setBooting(false)}/>}
       {/* The design's own full-bleed screens: first-run onboarding, a skill's split view, a connector's diagnostic. */}
@@ -702,25 +764,52 @@ const StudioLM = () => {
 };
 
 // ──────────────────────── SIDEBAR (icon rail + active panel) ────────────────────────
-const Sidebar = ({ panel, setPanel, openId, onOpen, onHome, onSettings, onDocs, addNodeFromLibrary,
-  workshopContext, wsSel, setWsSel, onAddAgent, onWorkshopTarget, account }) => (
+const Sidebar = ({ panel, setPanel, openId, onOpen, onHome, onSettings, onDocs, onOpenTool, addNodeFromLibrary,
+  workshopContext, railOnly, wsSel, setWsSel, onAddAgent, onWorkshopTarget, account }) => (
   <aside style={{
     gridColumn:'1', gridRow:'1',
     display:'grid', gridTemplateColumns:'44px 1fr',
     background:LM.bgPanel, borderRight:`1px solid ${LM.line}`,
     overflow:'hidden', minHeight:0,
   }}>
-    <IconRail panel={panel} setPanel={setPanel} onHome={onHome} onSettings={onSettings} onDocs={onDocs}/>
-    {workshopContext ? null : <>
+    <IconRail panel={panel} setPanel={setPanel} onHome={onHome} onSettings={onSettings} onDocs={onDocs}
+      onOpenTool={onOpenTool} account={account}/>
+    {railOnly ? null : <>
     {panel === 'chats'  && <ChatsPanel openId={openId} onOpen={onOpen} onNew={onHome} account={account} onAccount={onSettings}/>}
     {panel === 'nodes'  && <NodesPanel addNodeFromLibrary={addNodeFromLibrary} account={account} onAccount={onSettings}/>}
     {panel === 'skills' && <SkillsPanel/>}
     {panel === 'search' && <SearchPanel/>}
+    {String(panel || '').startsWith('tool:') && <ToolOffPanelFromOwners panel={panel} account={account}/>}
       </>}
   </aside>
 );
 
-const IconRail = ({ panel, setPanel, onHome, onSettings, onDocs }) => {
+const ToolOffPanelFromOwners = ({ panel, account }) => {
+  const workshopState = useWorkshopProjection();
+  const personal = usePersonalTheme();
+  const hub = useToolHubProjection();
+  const tool = toolRowsFromOwners({workshopState, account, personal, hub}).find(row => row.id === String(panel).slice(5));
+  return <ToolOffPanel tool={tool}/>;
+};
+
+const IconRail = ({ panel, setPanel, onHome, onSettings, onDocs, onOpenTool, account }) => {
+  const workshopState = useWorkshopProjection();
+  const personal = usePersonalTheme();
+  const hub = useToolHubProjection();
+  const toolRows = toolRowsFromOwners({workshopState, account, personal, hub});
+  const [confirmOff, setConfirmOff] = React.useState(null);
+  React.useEffect(() => {
+    if (!confirmOff) return undefined;
+    const timer = setTimeout(() => setConfirmOff(null), 6000);
+    return () => clearTimeout(timer);
+  }, [confirmOff]);
+  const requestOff = tool => {
+    if (tool.state === 'off') {
+      tool.turnOn?.();
+      return;
+    }
+    setConfirmOff(tool);
+  };
   const items = [
     { id:'chats',  title:'Chats',  svg:<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4l-5 2 2-4.6A8.4 8.4 0 1 1 21 11.5z"/></svg> },
     { id:'nodes',  title:'Nodes',  svg:<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg> },
@@ -731,7 +820,7 @@ const IconRail = ({ panel, setPanel, onHome, onSettings, onDocs }) => {
     <div style={{
       background:LM.bgDeep, borderRight:`1px solid ${LM.line}`,
       display:'flex', flexDirection:'column', alignItems:'center',
-      padding:'10px 0 8px', gap:LM.sp.xs,
+      padding:'10px 0 8px', gap:LM.sp.xs, position:'relative',
     }}>
       <RailIcon active onClick={onHome} title="Home">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
@@ -745,6 +834,26 @@ const IconRail = ({ panel, setPanel, onHome, onSettings, onDocs }) => {
           {it.svg}
         </RailIcon>
       ))}
+      <div style={{ height:6 }}/>
+      {toolRows.map(tool => (
+        <RailIcon key={tool.id} active={false} onClick={() => onOpenTool && onOpenTool(tool.id)}
+          onContextMenu={event => { event.preventDefault(); requestOff(tool); }}
+          title={tool.label + ' · ' + tool.state}
+          dot={tool.color} dataToolRail={tool.id}>
+          <ToolGlyph id={tool.id}/>
+        </RailIcon>
+      ))}
+      {confirmOff && <div data-tool-off-confirm={confirmOff.id} style={{
+        position:'absolute', left:48, top:228, zIndex:8, width:232,
+        background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
+        padding:'8px 9px', color:LM.ink, fontFamily:LM.sans, fontSize:12,
+        boxShadow:'0 12px 24px rgba(0,0,0,.22)',
+      }}>
+        <span>Switch {confirmOff.label} off? Tools asking it will see '{confirmOff.label} is off'. · </span>
+        <button type="button" onClick={() => { confirmOff.turnOff?.(); setConfirmOff(null); }} style={inlineTextButton()}>Yes</button>
+        <span> · </span>
+        <button type="button" onClick={() => setConfirmOff(null)} style={inlineTextButton()}>No</button>
+      </div>}
       <div style={{ flex:1 }}/>
       <RailIcon onClick={onDocs} title="Documentation · ⌘/">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 19.5V5a2 2 0 0 1 2-2h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6.5A2.5 2.5 0 0 1 4 18.5v1z"/><path d="M8 7h6M8 11h6"/></svg>
@@ -759,8 +868,9 @@ const IconRail = ({ panel, setPanel, onHome, onSettings, onDocs }) => {
   );
 };
 
-const RailIcon = ({ active, onClick, title, children, disabled }) => (
-  <button onClick={onClick} title={title} disabled={disabled} style={{
+const RailIcon = ({ active, onClick, onContextMenu, title, children, disabled, dot, dataToolRail }) => (
+  <button onClick={onClick} onContextMenu={onContextMenu} title={title} disabled={disabled}
+    data-tool-rail={dataToolRail || undefined} style={{
     width:30, height:30, padding:0, border:0, borderRadius:LM.rad.md,
     background: active ? LM.accentDim : 'transparent',
     color: active ? LM.accent : LM.inkSoft,
@@ -769,9 +879,307 @@ const RailIcon = ({ active, onClick, title, children, disabled }) => (
   onMouseEnter={e => !active && (e.currentTarget.style.background = LM.bgSoft)}
   onMouseLeave={e => !active && (e.currentTarget.style.background = 'transparent')}>
     {active && <span style={{ position:'absolute', left:-7, top:6, bottom:6, width:2, background:LM.accent, borderRadius:2 }}/>}
+    {dot && <span data-tool-dot="" style={{ position:'absolute', right:3, bottom:3, width:6, height:6,
+      borderRadius:'50%', background:dot, boxShadow:`0 0 0 1.5px ${LM.bgDeep}` }}/>}
     {children}
   </button>
 );
+
+const inlineTextButton = () => ({
+  padding:0, border:0, background:'transparent', color:LM.accent,
+  font: 'inherit', cursor:'pointer',
+});
+
+const ToolGlyph = ({ id }) => {
+  const stroke = 'currentColor';
+  const common = {width:14, height:14, viewBox:'0 0 24 24', fill:'none', stroke, strokeWidth:1.8, strokeLinecap:'round', strokeLinejoin:'round'};
+  const paths = {
+    studio:<><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M12 8v8M8 12h8"/></>,
+    workshop:<><path d="M5 7h14M5 12h14M5 17h14"/></>,
+    brain:<><path d="M12 3l1.8 6.2L20 12l-6.2 2.8L12 21l-1.8-6.2L4 12l6.2-2.8z"/></>,
+    baboom:<><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/></>,
+    connectors:<><rect x="4" y="7" width="5" height="5" rx="1"/><rect x="15" y="12" width="5" height="5" rx="1"/><path d="M9 10h3c1.5 0 1.5 4 3 4"/></>,
+    cloud:<><path d="M17.5 18H8a5 5 0 1 1 .9-9.9A6 6 0 0 1 20 10.5 3.8 3.8 0 0 1 17.5 18z"/></>,
+  };
+  return <svg {...common}>{paths[id] || paths.studio}</svg>;
+};
+
+const TOOL_STATE_COLOR = {
+  running:'#2fb86a',
+  starting:'#27c2e6',
+  off:'#d48e2a',
+  failed:'#d94a4a',
+  unknown:LM.inkMuted,
+  not_installed:LM.inkMuted,
+};
+const toolColor = state => TOOL_STATE_COLOR[state] || LM.inkMuted;
+const plural = (n, one, many = one + 's') => String(n) + ' ' + (n === 1 ? one : many);
+const workshopWaitingItems = state => {
+  const items = [];
+  const work = state?.nativeWork;
+  if (work && (work.state === 'awaiting_approval' || work.approving || work.approved === false && work.review_text)) {
+    items.push({label:work.title || work.work || 'Workshop approval', source:'Workshop'});
+  }
+  const messages = state?.workshop?.messages || [];
+  for (const msg of messages) {
+    if (/ArchHub work proposal v1/.test(String(msg.body || ''))) {
+      let title = 'Work proposal';
+      try {
+        const body = String(msg.body || ''), json = body.slice(body.indexOf('\n') + 1);
+        title = JSON.parse(json).title || title;
+      } catch (_) {}
+      items.push({label:title, source:'Workshop proposal'});
+    }
+  }
+  return items;
+};
+const readPersonalThemeSnapshot = () => {
+  try { return window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot?.()?.theme || null; }
+  catch (_) { return null; }
+};
+const useToolHubProjection = () => {
+  const [hub, setHub] = React.useState(() => window.ARCHHUB_TOOL_HUB || null);
+  React.useEffect(() => {
+    let alive = true;
+    const request = typeof window.fetch === 'function' ? window.fetch.bind(window) :
+      (typeof fetch === 'function' ? fetch : null);
+    const read = () => Promise.all([
+      request ? request('/tools').then(response => response.ok ? response.json() : null).catch(() => null) : Promise.resolve(null),
+      request ? request('/waiting').then(response => response.ok ? response.json() : null).catch(() => null) : Promise.resolve(null),
+    ]).then(([tools, waiting]) => {
+      if (!alive) return;
+      const payload = {
+        ...(tools && Array.isArray(tools.tools) ? tools : {}),
+        waiting:Array.isArray(waiting?.items) ? waiting.items : [],
+        waiting_payload:waiting && typeof waiting === 'object' ? waiting : null,
+      };
+      if (!Array.isArray(payload.tools)) return;
+      window.ARCHHUB_TOOL_HUB = payload;
+      setHub(payload);
+    }).catch(() => {});
+    read();
+    const timer = window.setInterval(read, 2000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, []);
+  return hub || window.ARCHHUB_TOOL_HUB || null;
+};
+const useWaitingOpenShortcut = setOpen => {
+  React.useEffect(() => {
+    const onKey = event => {
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && String(event.key).toLowerCase() === 'w') {
+        event.preventDefault();
+        setOpen(open => !open);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [setOpen]);
+};
+const firstToolTab = tool => tool === 'workshop' ? 'projects' : tool === 'brain' ? 'facts' :
+  tool === 'connectors' ? 'hosts' : tool === 'cloud' ? 'account' : tool === 'baboom' ? 'settings' : 'workspace';
+const toolStateWord = state => ({
+  running:'RUNNING', starting:'STARTING', off:'OFF', failed:"DIDN'T START", unknown:'UNKNOWN', not_installed:'NOT INSTALLED',
+  didnt_start:"DIDN'T START",
+})[state] || String(state || 'OFF').replace(/_/g, ' ').toUpperCase();
+const waitingLine = item => {
+  const summary = String(item?.summary || item?.label || '').trim();
+  if (summary) return summary;
+  return `${item?.from || 'Someone'} wants ${item?.to || 'you'} to ${item?.action || 'review'}`;
+};
+const waitingMeta = item => {
+  const bits = [
+    'asked by ' + (item?.who || item?.from || 'unknown'),
+    'for ' + (item?.for || 'you'),
+    item?.time || '',
+    item?.plan_hash ? 'plan ' + item.plan_hash : '',
+    item?.file || '',
+  ].filter(Boolean);
+  if (item?.second_approval) bits.push(`${item.approvals_done || 1} of ${item.approvals_required || 2} · needs another member`);
+  if (item?.asker_alive === false) bits.push('asker restarted; approving delivers anyway');
+  return bits.join(' · ');
+};
+const toolStatLineIsPlaceholder = value => /…/.test(String(value || ''));
+const baboomMaxSpeaks = personal => {
+  const config = personal?.configuration || {};
+  const raw = config.baboom_max_speaks_per_hour?.value ?? config.baboom_speech_limit?.value ??
+    config.baboom_max_speaks?.value ?? 2;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : 2;
+};
+const WaitingButton = ({ items = [], variant = 'strip', onOpenTask }) => {
+  const [open, setOpen] = React.useState(false);
+  const [confirmReject, setConfirmReject] = React.useState('');
+  const [status, setStatus] = React.useState({});
+  const liveItems = Array.isArray(items) ? items : [];
+  useWaitingOpenShortcut(setOpen);
+  if (!liveItems.length && !open) return <span data-waiting-empty-host="" style={{display:'contents'}}/>;
+  const decide = (item, decision) => {
+    setStatus(state => ({...state, [item.id]: decision === 'approve' ? 'pending' : 'rejected'}));
+    const owner = window.ARCHHUB_EXISTING_WORKSHOP;
+    const postRoute = (path, body) => {
+      const session = window.__archhubSession || {};
+      if (typeof window.fetch !== 'function') throw new Error('No owner route is available for ' + (item.producer || 'this request') + '.');
+      return window.fetch(path, {method:'POST', headers:{'Content-Type':'application/json',
+        'X-ArchHub-Session':session.token || '', 'X-ArchHub-CSRF':session.csrf || ''}, body:JSON.stringify(body)})
+        .then(response => response.json().catch(() => ({})).then(payload => {
+          if (!response.ok || payload?.ok === false) throw new Error(payload?.error || 'Decision refused.');
+          return payload;
+        }));
+    };
+    const run = () => {
+      if (item.producer === 'workshop_gate') {
+        const root = item.root || item.workshop || '';
+        if (decision === 'approve' && owner?.approveNativeWork) return owner.approveNativeWork(root, item.input_digest);
+        if (decision === 'reject' && owner?.nativeWorkAction) return owner.nativeWorkAction(root, 'stop_native', item.work || item.open_target || '');
+      }
+      if (item.producer === 'social_approve' && owner?.decideSocialApproval) {
+        return owner.decideSocialApproval({delegation:item.delegation, input_digest:item.input_digest,
+          decision:decision === 'approve' ? 'approve' : 'deny'});
+      }
+      if (decision === 'approve' && item.producer === 'model_delegation' && item.delegation) {
+        return postRoute('/api/universal/model-delegation-approve', {delegation:item.delegation});
+      }
+      if (decision === 'approve' && (item.producer === 'baboom_execute' || item.producer === 'host_write') && item.delegation) {
+        return postRoute('/api/universal/connector-delegation-approve', {delegation:item.delegation});
+      }
+      throw new Error('No owner route is available for ' + (item.producer || 'this request') + '.');
+    };
+    Promise.resolve().then(run).then(() => {
+      const finish = decision === 'approve' ? 'approved · delivered to ' + (item.to || item.producer || 'producer') : 'rejected';
+      setStatus(state => ({...state, [item.id]: finish}));
+      window.setTimeout(() => setStatus(state => ({...state, [item.id]: ''})), 2000);
+    }).catch(error => setStatus(state => ({...state, [item.id]: error?.message || 'decision refused'})));
+  };
+  const showHost = item => {
+    const ids = item.host_ids || item.ids || [];
+    if (!ids.length || !window.ARCHHUB_CONNECTORS?.highlight) {
+      setStatus(state => ({...state, [item.id]:'No host route is available.'}));
+      return;
+    }
+    window.ARCHHUB_CONNECTORS.highlight({ids, readonly:true});
+    setStatus(state => ({...state, [item.id]:'shown'}));
+    window.setTimeout(() => setStatus(state => ({...state, [item.id]: ''})), 2000);
+  };
+  const label = variant === 'home' ? 'Waiting for you' : `${liveItems.length} waiting for you`;
+  return <span style={{position:'relative', display:variant === 'home' ? 'block' : 'inline-flex'}}>
+    <button type="button" data-waiting-trigger={variant} onClick={() => setOpen(value => !value)} style={{
+      width:variant === 'home' ? '100%' : 'auto', textAlign:'left', padding:variant === 'home' ? '8px 10px' : '0 4px',
+      border:variant === 'home' ? `1px solid ${LM.lineSoft}` : 0, borderRadius:variant === 'home' ? LM.rad.sm : 0,
+      background:variant === 'home' ? LM.bg : 'transparent', color:LM.inkSoft, cursor:'pointer',
+      fontFamily:LM.mono, fontSize:variant === 'home' ? 10.5 : 9.5, letterSpacing:'0.04em',
+    }}>
+      <span style={{color:LM.warn}}>{label}</span>
+      {variant === 'home' && <span style={{color:LM.ink, marginLeft:8}}>{waitingLine(liveItems[0])}</span>}
+    </button>
+    {open && <div data-waiting-popover="" style={{
+      position:'absolute', zIndex:20, bottom:variant === 'strip' ? 22 : 'auto', top:variant === 'home' ? '100%' : 'auto',
+      left:0, width:480, maxWidth:'calc(100vw - 40px)', maxHeight:'70vh', overflow:'auto',
+      background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
+      boxShadow:'0 18px 44px rgba(0,0,0,.32)', padding:10,
+    }}>
+      {liveItems.length === 0 ? <div style={{fontSize:13, color:LM.inkMuted}}>Nothing waiting.</div> :
+        liveItems.map(item => <div key={item.id} data-waiting-item={item.id} style={{
+          border:`1px solid ${item.second_approval ? '#8b5cf6' : LM.lineSoft}`,
+          borderRadius:LM.rad.sm, padding:'9px 10px', marginBottom:8,
+        }}>
+          <div style={{fontSize:13, fontWeight:500, color:LM.ink}}>{waitingLine(item)}</div>
+          <div style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:3}}>{waitingMeta(item)}</div>
+          <div style={{display:'flex', gap:6, alignItems:'center', marginTop:8, flexWrap:'wrap'}}>
+            {item.producer === 'workshop_gate' ? (
+              <button type="button" onClick={() => onOpenTask ? onOpenTask(item) :
+                setStatus(state => ({...state, [item.id]:'Approvals view is unavailable.'}))} style={smallBtn(true)}>
+                {item.open_label || 'Open in Approvals'}
+              </button>
+            ) : item.second_approval && status[item.id] === 'approved' ? <button disabled style={smallBtn()}>Approved by you</button> :
+              <button type="button" disabled={status[item.id] === 'pending'} onClick={() => decide(item, 'approve')} style={smallBtn(true)}>
+                {status[item.id] === 'pending' ? 'pending' : 'Approve'}
+              </button>}
+            {item.producer !== 'workshop_gate' && (confirmReject === item.id ? <>
+              <span style={{fontFamily:LM.mono, fontSize:10, color:LM.warn}}>Reject?</span>
+              <button type="button" onClick={() => { setConfirmReject(''); decide(item, 'reject'); }} style={smallBtn()}>Yes</button>
+              <button type="button" onClick={() => setConfirmReject('')} style={smallBtn()}>No</button>
+            </> : <button type="button" onClick={() => setConfirmReject(item.id)} style={smallBtn()}>Reject</button>)}
+            {(item.host_ids || item.ids || []).length > 0 && window.ARCHHUB_CONNECTORS?.highlight &&
+              <button type="button" onClick={() => showHost(item)} style={smallBtn()}>Show in host</button>}
+            {onOpenTask && item.producer !== 'workshop_gate' && <button type="button" onClick={() => onOpenTask(item)} style={smallBtn()}>Open task</button>}
+            {item.second_approval && <span style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>Needs {item.ask_member || 'member'}</span>}
+            {status[item.id] && status[item.id] !== 'pending' && <span style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>{status[item.id]}</span>}
+          </div>
+        </div>)}
+    </div>}
+  </span>;
+};
+const FRAME_TOOL_DEFAULTS = [
+  ['studio', 'Studio', 'running', 'Canvas, chats and graph sessions.', '… sessions · … running.', 'Switched off. Sessions are kept.', 'Studio → Brain · Connectors · Workshop', 'Studio is off', 'Canvas view unavailable. The window itself stays up.'],
+  ['workshop', 'Workshop', 'running', 'Projects, tasks and governed work.', '… projects · … tasks.', 'Switched off. Tasks are paused.', 'Workshop → Studio · Connectors · Brain', 'Workshop is off', 'No agent loop, no tasks run, no router. Chat still works locally.'],
+  ['brain', 'Brain', 'off', 'Memory, facts and local classification.', '… facts · … stay on this machine.', 'Switched off. Nothing is remembered or recalled.', 'Brain → Studio · Workshop · Cloud', 'Brain is off', 'What ArchHub remembers. Everything else keeps running.'],
+  ['baboom', 'BABOOM', 'running', 'Desktop companion and approved execution.', 'quiet off · speaks at most … times an hour.', 'Switched off. No companion on the desktop.', 'BABOOM ← Studio · Workshop', 'BABOOM is off', 'The companion is closed. Nothing else changes.'],
+  ['connectors', 'Connectors', 'running', 'Host bridges and Speckle access.', '…/… hosts running · Speckle not signed in.', 'Switched off. No reads or writes to your programs.', 'Connectors → Studio · Workshop · Speckle', 'Connectors are off', 'No host reads or writes. Pinned host outputs still feed downstream.'],
+  ['cloud', 'Cloud', 'starting', 'Devices, grants and cloud agents.', 'not signed in.', 'Switched off. Works on this machine only.', 'Cloud ← Brain · Workshop', 'Cloud is off', 'No tunnel, heartbeat, or sync. Everything local is unchanged.'],
+].map(([id, label, state, description, statLine, offSentence, wireSummary, emptyTitle, emptyLine]) => ({
+  id, label, state, description, stat_line:statLine, off_sentence:offSentence, wire_summary:wireSummary, emptyTitle, emptyLine,
+}));
+const toolRowsFromOwners = ({workshopState, account, personal, hub}) => {
+  const liveHosts = LM_HOSTS.filter(host => hostState(host) === 'connected');
+  const waiting = workshopWaitingItems(workshopState);
+  const graph = window.ARCHHUB_LIVE?.graph || LM_GRAPH;
+  const baboom = personal?.configuration?.baboom_startup;
+  const baboomOn = baboom?.value === 'on';
+  const signedIn = !!(account && account.signedIn);
+  const api = window.ARCHHUB_EXISTING_WORKSHOP;
+  const projects = (workshopState?.workshops || []).length;
+  const tasks = Math.max(waiting.length, workshopState?.nativeWork ? 1 : 0);
+  const stats = {
+    studio:{stat:plural(LM_SESSIONS.length, 'session') + ' · ' + plural(LM_SESSIONS.filter(s => s.state === 'running').length, 'running', 'running'), wire:plural((graph?.wires || []).length, 'wire')},
+    workshop:{stat:plural(projects, 'project') + ' · ' + plural(tasks, 'task'), wire:waiting.length ? plural(waiting.length, 'waiting') : 'no waiting work'},
+    brain:{stat:plural(LM_MEMORY.length, 'fact'), wire:plural((window.BRAIN_STRATA || []).length, 'stratum', 'strata')},
+    baboom:{stat:'Starts with Windows: ' + (baboomOn ? 'on' : 'off') + ' · runtime unknown', wire:baboom?.source ? String(baboom.source) : 'Personal Settings'},
+    connectors:{stat:String(liveHosts.length) + '/' + String(LM_HOSTS.length) + ' hosts running', wire:plural((window.ARCHHUB_LIVE?.connectors || []).length, 'connector')},
+    cloud:{stat:signedIn ? String(account.email || 'signed in') : 'signed out', wire:window.ARCHHUB_CLOUD_SESSION ? 'cloud session owner' : 'no device list owner'},
+  };
+  const baboomToggle = {
+    canToggle:!!api?.setBaboomStartup && !!baboom,
+    toggleChecked:baboomOn,
+    turnOn:() => api?.setBaboomStartup ? api.setBaboomStartup('on').catch(() => {}) : null,
+    turnOff:() => api?.setBaboomStartup ? api.setBaboomStartup('off').catch(() => {}) : null,
+  };
+  const hubRows = Array.isArray(hub?.tools) ? hub.tools
+    : Array.isArray(window.ARCHHUB_TOOL_HUB?.tools) ? window.ARCHHUB_TOOL_HUB.tools
+    : FRAME_TOOL_DEFAULTS;
+  return hubRows.map(row => ({
+    ...row,
+    ...(stats[row.id] || {}),
+    state:row.id === 'baboom' && baboom ? 'unknown' : row.state,
+    stateWord:row.id === 'baboom' && baboom ? 'UNKNOWN' : (row.state_word || toolStateWord(row.state)),
+    description:row.description || '',
+    emptyTitle:row.emptyTitle || row.empty_title || row.label + ' is off',
+    emptyLine:row.emptyLine || row.empty_line || row.off_sentence || '',
+    statLine:row.id === 'baboom' ? stats.baboom.stat : row.state === 'off' ? (row.off_sentence || stats[row.id]?.stat || '') :
+      (toolStatLineIsPlaceholder(row.stat_line) ? stats[row.id]?.stat : (row.stat_line || stats[row.id]?.stat || '')),
+    wireSummary:row.wire_summary || stats[row.id]?.wire || '',
+    color:toolColor(row.id === 'baboom' && baboom ? 'unknown' : row.state),
+    ...(row.id === 'baboom' ? baboomToggle : {}),
+  }));
+};
+
+const ToolOffPanel = ({ tool }) => {
+  if (!tool) return null;
+  return <div style={{display:'flex', flexDirection:'column', minHeight:0, padding:'12px'}}>
+    <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:14}}>
+      <span style={{color:tool.color, display:'inline-flex'}}><ToolGlyph id={tool.id}/></span>
+      <span style={{fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink}}>{tool.label}</span>
+    </div>
+    <div style={{padding:'10px 0 0'}}>
+      <h2 style={{fontFamily:LM.serif, fontSize:24, fontWeight:400, margin:'0 0 8px', color:LM.ink}}>{tool.emptyTitle}</h2>
+      <p style={{fontFamily:LM.sans, fontSize:13, color:LM.inkSoft, margin:'0 0 14px'}}>{tool.emptyLine}</p>
+      {tool.turnOn && <button type="button" onClick={tool.turnOn} style={{
+        padding:'7px 11px', border:0, borderRadius:LM.rad.sm, background:LM.accent,
+        color:(window.AH && window.AH.onFill) || '#180f08', fontFamily:LM.sans,
+        fontSize:12.5, fontWeight:600, cursor:'pointer',
+      }}>Turn on</button>}
+    </div>
+  </div>;
+};
 
 const ChatsPanel = ({ openId, onOpen, onNew, account, onAccount }) => (
   <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
@@ -1124,23 +1532,80 @@ const kbd = () => ({
 });
 
 // ──────────────────────── HOME ────────────────────────
-const Home = ({ onOpen, model, native, setPickerOpen, onStarted }) => {
+const Home = ({ onOpen, model, native, setPickerOpen, setLibraryOpen, setPanel, onOpenTool, onOpenToolGraph, workshopState, account, onStarted }) => {
   const [filter, onFilter] = React.useState('all');
   const [draft, setDraft] = React.useState('');
+  const [attachments, setAttachments] = React.useState([]);
+  const [attachmentError, setAttachmentError] = React.useState('');
+  const [hostMenuOpen, setHostMenuOpen] = React.useState(false);
+  const fileInputRef = React.useRef(null);
   const [starting, setStarting] = React.useState(false);
   const [startError, setStartError] = React.useState('');
   const startBusy = React.useRef(false), acceptedSession = React.useRef(null);
   const homeMounted = React.useRef(true);
+  const personal = usePersonalTheme();
+  const hub = useToolHubProjection();
+  const toolRows = toolRowsFromOwners({workshopState, account, personal, hub});
+  const waitingItems = Array.isArray(hub?.waiting) ? hub.waiting : [];
   React.useEffect(() => {homeMounted.current = true; return () => {homeMounted.current = false;};}, []);
+  const liveHosts = LM_HOSTS.filter(host => hostState(host) === 'connected');
+  const knownHosts = startableHosts(LM_HOSTS);
+  const attachFiles = async event => {
+    const picked = Array.from(event.target.files || []).slice(0, 4);
+    event.target.value = '';
+    if (!picked.length) return;
+    setAttachmentError('');
+    try {
+      const rows = [];
+      for (const file of picked) {
+        if (file.size > 65536) throw new Error(file.name + ' is over the 64 KiB attachment limit.');
+        rows.push({name:file.name, size:file.size, type:file.type || 'application/octet-stream',
+          content:await file.text()});
+      }
+      setAttachments(old => [...old, ...rows].slice(0, 4));
+    } catch (error) {
+      setAttachmentError(error?.message || 'The file could not be attached.');
+    }
+  };
+  const appendDraftToken = token => {
+    setDraft(text => {
+      const trimmed = text.replace(/\s+$/,'');
+      return (trimmed ? trimmed + ' ' : '') + token + ' ';
+    });
+  };
+  const startKnownHost = async host => {
+    const phrase = hostOpenPhrase(host);
+    if (!phrase) return;
+    setHostMenuOpen(false);
+    if (typeof window.ARCHHUB_AGENT !== 'function') {
+      setStartError('Host start is unavailable in this application view.');
+      return;
+    }
+    setStartError('');
+    try { await window.ARCHHUB_AGENT(phrase); }
+    catch (error) { setStartError(error?.message || 'Host start was refused.'); }
+  };
+  const startPrompt = () => {
+    if (!attachments.length) return draft.trim();
+    const block = attachments.map(file => [
+      'File: ' + file.name,
+      'Type: ' + file.type,
+      'Bytes: ' + file.size,
+      file.content,
+    ].join('\n')).join('\n\n');
+    return draft.trim() + '\n\nAttached files:\n' + block;
+  };
   const startSession = async event => {
     event.preventDefault();
+    const prompt = startPrompt();
     if (!draft.trim() || startBusy.current) return;
+    if (prompt.length > 12000) { setStartError('The request and attachments exceed the session start limit.'); return; }
     if (!native && !modelRoute(model)) { setPickerOpen(true); return; }
     startBusy.current = true; setStarting(true); setStartError('');
     try {
       const owner = window.ARCHHUB_EXISTING_WORKSHOP;
       if (!owner?.startSession) throw new Error('Session creation is unavailable in this application view.');
-      const details = {prompt:draft.trim(), ...(native ? {native:{app:native.app,session_id:native.session_id}} : {model:modelRoute(model)})};
+      const details = {prompt, ...(native ? {native:{app:native.app,session_id:native.session_id}} : {model:modelRoute(model)})};
       const viewIdentity = () => {
         const snapshot = owner.getSnapshot();
         const authorization = (snapshot?.topology?.canvas || snapshot?.canvas)?.authorization;
@@ -1159,6 +1624,7 @@ const Home = ({ onOpen, model, native, setPickerOpen, onStarted }) => {
       if (!navigationCurrent || viewIdentity() !== startedView) throw new Error('The session is saved in your previous workspace. Your current view was kept.');
       await onStarted(result, () => homeMounted.current && viewIdentity() === startedView);
       setDraft('');
+      setAttachments([]);
     } catch (error) {
       setStartError(error?.message || 'The session could not be confirmed. Your text is still here.');
     } finally { startBusy.current = false; setStarting(false); }
@@ -1206,9 +1672,33 @@ const Home = ({ onOpen, model, native, setPickerOpen, onStarted }) => {
             rows={1} maxLength={12000} style={{width:'100%', boxSizing:'border-box', resize:'none', display:'block',
               background:'transparent', border:0, outline:'none', color:LM.ink, fontFamily:LM.serif, fontSize:24,
               letterSpacing:'-0.01em', lineHeight:1.4, padding:'2px 0'}}/>
-          {/* The chip row (design studio-lm.jsx:811-816) names the route this session starts on. */}
-          <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:10, minWidth:0 }}>
-            <Chip mono>{native ? native.app + ' \u00b7 ' + (native.title || 'Connected session') : modelRoute(model) || 'Choose an agent or model above'}</Chip>
+          <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:10, minWidth:0, position:'relative', flexWrap:'wrap' }}>
+            <HomeChip mono onClick={() => setLibraryOpen(true)}>/ node</HomeChip>
+            <HomeChip mono onClick={() => setPanel('skills')}>@ skill</HomeChip>
+            <HomeChip mono onClick={() => setHostMenuOpen(open => !open)}># host</HomeChip>
+            <HomeChip onClick={() => fileInputRef.current?.click()}>+ attach</HomeChip>
+            <input ref={fileInputRef} aria-label="Attach file to new session" type="file" multiple
+              onChange={attachFiles} style={{display:'none'}}/>
+            {hostMenuOpen && <div role="menu" style={{
+              position:'absolute', zIndex:4, top:'100%', left:0, marginTop:6,
+              background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
+              padding:4, minWidth:190, boxShadow:'0 12px 24px rgba(0,0,0,.22)',
+            }}>
+              {liveHosts.length > 0 ? liveHosts.map(host => <button key={host.id || host.name} type="button" role="menuitem"
+                onClick={() => { appendDraftToken('#' + host.name); setHostMenuOpen(false); }}
+                style={{display:'block', width:'100%', textAlign:'left', padding:'5px 8px',
+                  background:'transparent', border:0, color:LM.ink, fontFamily:LM.sans,
+                  fontSize:12, cursor:'pointer'}}>{host.name}</button>) :
+                knownHosts.map(host => <button key={hostStartName(host)} type="button" role="menuitem"
+                  onClick={() => startKnownHost(host)}
+                  style={{display:'flex', width:'100%', alignItems:'center', justifyContent:'space-between', gap:14,
+                    textAlign:'left', padding:'5px 8px', background:'transparent', border:0,
+                    color:LM.ink, fontFamily:LM.sans, fontSize:12, cursor:'pointer'}}>
+                  <span>{hostDisplayName(host)}</span>
+                  <span style={{fontFamily:LM.mono, fontSize:9, color:LM.accent, letterSpacing:'0.06em', textTransform:'uppercase'}}>Start</span>
+                </button>)}
+            </div>}
+            {attachments.map(file => <Chip key={file.name + ':' + file.size} mono>{file.name}</Chip>)}
           </div>
         </div>
         <button type="submit" disabled={starting || !draft.trim()} style={{
@@ -1221,40 +1711,27 @@ const Home = ({ onOpen, model, native, setPickerOpen, onStarted }) => {
         </button>
       </div>
       {startError && <p role="alert" style={{color:LM.warn,marginBottom:0}}>{startError}</p>}
+      {attachmentError && <p role="alert" style={{color:LM.warn,marginBottom:0}}>{attachmentError}</p>}
     </form>
-    <details style={{marginBottom:24}}>
-      <summary style={{fontSize:12,color:LM.inkSoft,cursor:'pointer'}}>New blank graph</summary>
-    <form onSubmit={createGraph} style={{
-      background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.xl,
-      padding:'16px 18px', marginBottom:36, marginTop:14,
-    }}>
-      <div style={{ display:'flex', alignItems:'flex-end', gap:14 }}>
-        <div style={{ flex:1, minWidth:0 }}>
-          <input aria-label="New graph name" placeholder="Name your new graph…" value={title}
-            onChange={event => setTitle(event.target.value)} disabled={submitted.current} maxLength={80}
-            style={{width:'100%', boxSizing:'border-box', background:'transparent', border:0,
-              fontFamily:LM.serif, fontSize:24, color:LM.ink, padding:'2px 0'}}/>
-          <p style={{color:LM.inkMuted, margin:'10px 0 0'}}>Start with a blank graph, then add nodes from the library.</p>
-        </div>
-        <button type="submit" disabled={submitted.current || !title.trim()} style={{
-          padding:'9px 16px 9px 14px', background:LM.accent, color: (window.AH && window.AH.onFill) || '#180f08',
-          border:0, borderRadius:7, fontFamily:LM.sans, fontSize:13, fontWeight:500,
-          cursor:'pointer', display:'inline-flex', alignItems:'center', gap:7,
-        }}>
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={(window.AH && window.AH.onFill) || "#180f08"} strokeWidth="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-          {creating ? 'Creating…' : 'Create graph'}
-        </button>
+    <section aria-label="Tools" style={{ margin:'0 0 22px' }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(6, minmax(146px, 1fr))', gap:8 }}>
+        {toolRows.map(tool => <ToolCard key={tool.id} tool={tool}
+          onOpen={() => onOpenTool && onOpenTool(tool.id)}
+          onWire={() => onOpenToolGraph && onOpenToolGraph(tool.id)}/>)}
       </div>
-      {createError && <p role="alert" style={{color:LM.warn}}>{createError}
-        {' '}<button type="button" onClick={() => window.location.reload()}>Refresh graphs</button></p>}
-    </form>
-    </details>
+      <div style={{ marginTop:9 }}>
+        <WaitingButton variant="home" items={waitingItems} onOpenTask={item => onOpenTool && onOpenTool(
+          item.producer === 'workshop_gate' ? 'workshop' : item.producer === 'social_approve' ? 'cloud' : 'workshop',
+          item.producer === 'workshop_gate' ? {tab:'approvals', root:item.root || item.workshop || '', focus:item.open_target || item.work || item.id} : {})}/>
+      </div>
+    </section>
     <div style={{ display:'flex', alignItems:'baseline', gap:10, marginBottom:14 }}>
       <h2 style={{ fontFamily:LM.serif, fontSize:26, fontWeight:400, letterSpacing:'-0.015em', margin:0 }}>Sessions</h2>
       <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em' }}>
         {shown.length} · CLICK TO OPEN
       </span>
       <div style={{ flex:1 }}/>
+      {!title && <button type="button" onClick={() => setTitle(' ')} style={chipBtn(false)}>+ new graph</button>}
       {/* The chips are the states sessions really carry: an 'idle' chip could
           never match, and scheduled and workflow sessions had no chip at all
           (2026-09-07). One list, derived from the same table the badges use. */}
@@ -1263,6 +1740,21 @@ const Home = ({ onOpen, model, native, setPickerOpen, onStarted }) => {
           style={chipBtn(filter === kind)}>{kind}</button>
       ))}
     </div>
+    {title && <form onSubmit={createGraph} style={{
+      display:'flex', alignItems:'center', gap:8, margin:'-4px 0 16px',
+    }}>
+      <input autoFocus aria-label="New graph name" placeholder="Name graph" value={title.trimStart()}
+        onChange={event => setTitle(event.target.value)} disabled={submitted.current} maxLength={80}
+        style={{width:220, boxSizing:'border-box', background:LM.bgPanel, border:`1px solid ${LM.line}`,
+          borderRadius:LM.rad.sm, fontFamily:LM.sans, fontSize:13, color:LM.ink, padding:'5px 8px'}}/>
+      <button type="submit" disabled={submitted.current || !title.trim()} style={chipBtn(!!title.trim())}>
+        {creating ? 'Creating...' : 'Create'}
+      </button>
+      <button type="button" disabled={submitted.current} onClick={() => { setTitle(''); setCreateError(''); }}
+        style={chipBtn(false)}>cancel</button>
+      {createError && <p role="alert" style={{color:LM.warn, margin:0}}>{createError}
+        {' '}<button type="button" onClick={() => window.location.reload()}>Refresh graphs</button></p>}
+    </form>}
     <div style={{ display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:LM.sp.md }}>
       {shown.length === 0 ? (
         <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkMuted }}>no {filter} session on this machine</div>
@@ -1288,6 +1780,143 @@ const Chip = ({ children, mono }) => (
     letterSpacing: mono ? '0.04em' : 'normal', cursor:'pointer',
   }}>{children}</span>
 );
+
+const HomeChip = ({ children, mono, onClick }) => (
+  <button type="button" onClick={onClick} style={{
+    display:'inline-flex', alignItems:'center', gap:5, padding:'3px 9px',
+    background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
+    color:LM.inkSoft, fontFamily: mono ? LM.mono : LM.sans, fontSize: mono ? 10.5 : 11.5,
+    letterSpacing: mono ? '0.04em' : 'normal', cursor:'pointer',
+  }}>{children}</button>
+);
+
+const ToolCard = ({ tool, onOpen, onWire }) => (
+  <div data-tool-card={tool.id} style={{
+    minHeight:134, padding:'10px 11px', textAlign:'left', background:LM.bgPanel,
+    border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, color:LM.ink,
+    display:'flex', flexDirection:'column', gap:8, minWidth:0,
+  }}>
+    <div style={{display:'flex', alignItems:'center', gap:7, minWidth:0}}>
+      <span data-tool-dot="" style={{width:6, height:6, borderRadius:'50%', background:tool.color, flexShrink:0}}/>
+      <span style={{fontFamily:LM.mono, fontSize:10, color:tool.color, letterSpacing:'0.08em', textTransform:'uppercase'}}>
+        {tool.stateWord || toolStateWord(tool.state)}
+      </span>
+      <span style={{flex:1}}/>
+      {tool.canToggle && <button type="button" role="switch" aria-checked={!!tool.toggleChecked} title={tool.toggleChecked ? 'Turn off' : 'Turn on'}
+        onClick={() => tool.toggleChecked ? tool.turnOff?.() : tool.turnOn?.()} style={{
+        width:28, height:16, padding:2, border:0, borderRadius:8,
+        background:tool.toggleChecked ? LM.ok : LM.line, cursor:'pointer',
+      }}>
+        <span style={{display:'block', width:12, height:12, borderRadius:'50%', background:LM.bg,
+          transform:tool.toggleChecked ? 'translateX(12px)' : 'translateX(0)'}}/>
+      </button>}
+    </div>
+    <div style={{display:'flex', alignItems:'center', gap:8, minWidth:0}}>
+      <span aria-hidden="true" style={{width:24, height:24, borderRadius:LM.rad.sm, display:'grid', placeItems:'center',
+        color:tool.color, background:tool.color + '1a', flexShrink:0}}><ToolGlyph id={tool.id}/></span>
+      <span style={{fontFamily:LM.serif, fontSize:22, lineHeight:1, fontWeight:400, flex:1, minWidth:0,
+        overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{tool.label}</span>
+    </div>
+    <div style={{fontFamily:LM.sans, fontSize:12.5, color:LM.inkSoft, lineHeight:1.35, minHeight:34}}>
+      <span>{tool.description}</span>{tool.description ? ' ' : ''}<span>{tool.statLine || tool.stat}</span>
+    </div>
+    <div style={{display:'flex', alignItems:'center', gap:8, marginTop:'auto', minWidth:0}}>
+      <button type="button" data-tool-wire={tool.id} onClick={onWire} style={{
+        flex:1, minWidth:0, padding:0, border:0, background:'transparent', color:tool.state === 'off' ? LM.inkMuted : LM.inkSoft,
+        fontFamily:LM.mono, fontSize:10, lineHeight:1.25, textAlign:'left', cursor:'pointer', overflow:'hidden',
+        display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', whiteSpace:'normal',
+      }} title={tool.wireSummary || tool.wire || ''}>{tool.wireSummary || tool.wire}</button>
+      <button type="button" onClick={onOpen} style={{
+        padding:'2px 8px', border:`1px solid ${LM.line}`, borderRadius:999, background:LM.bg,
+        color:LM.ink, fontFamily:LM.mono, fontSize:10, letterSpacing:'0.06em', cursor:'pointer',
+      }}>OPEN</button>
+    </div>
+  </div>
+);
+
+const WorkshopToolProjects = ({ workshopState }) => {
+  const waiting = workshopWaitingItems(workshopState);
+  const projects = (workshopState?.workshops || []).map(row => ({
+    id:row.root,
+    name:row.label || 'Workshop',
+    status:row.status || 'unknown',
+    ...(row.tasks != null ? {tasks:row.tasks} : {}),
+    ...(row.blocked != null ? {blocked:row.blocked} : {}),
+    ...(row.hosts != null ? {hosts:row.hosts} : {}),
+    ...(row.agents != null ? {agents:row.agents} : {}),
+  }));
+  return <div style={{display:'flex', flexDirection:'column', gap:14}}>
+    <div>
+      <div style={{fontFamily:LM.serif, fontSize:22, letterSpacing:'-0.01em'}}>Projects</div>
+      <div style={{fontFamily:LM.sans, fontSize:13, color:LM.inkSoft, marginTop:3}}>
+        Governed Workshop projects and tasks from the current owner projection.
+      </div>
+    </div>
+    {window.WorkshopProjectsView && projects.length
+      ? <window.WorkshopProjectsView projects={projects}/>
+      : <SettingsEmpty>{projects.length ? 'Workshop projects are unavailable.' : 'No Workshop project is in this scope.'}</SettingsEmpty>}
+  </div>;
+};
+
+const SettingsBaboom = () => {
+  const personal = usePersonalTheme();
+  return <div style={{display:'flex', flexDirection:'column', gap:14}}>
+    <div>
+      <div style={{fontFamily:LM.serif, fontSize:22, letterSpacing:'-0.01em'}}>Companion settings</div>
+      <div style={{fontFamily:LM.sans, fontSize:13, color:LM.inkSoft, marginTop:3}}>
+        BABOOM starts and speaks from the graph-held personal companion settings.
+      </div>
+    </div>
+    <div style={{background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden'}}>
+      <BaboomStartupRow first/>
+      <div style={{padding:'10px 14px', borderTop:`1px solid ${LM.lineSoft}`, display:'flex', alignItems:'center', gap:LM.sp.md}}>
+        <span style={{width:8, height:8, borderRadius:'50%', background:LM.warn}}/>
+        <div style={{flex:1, lineHeight:1.2, minWidth:0}}>
+          <div style={{fontSize:13, fontWeight:500, color:LM.ink}}>Speech budget</div>
+          <div style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em', marginTop:2}}>
+            Speaks at most {baboomMaxSpeaks(personal)} times an hour.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>;
+};
+
+const ToolMainView = ({ view, account, setAccount, onSignOut, onSettings }) => {
+  const [store, setStore] = React.useState(() => ({forgotten:[], revealed:{}}));
+  const patch = (k, v) => setStore(old => Object.assign({}, old, typeof k === 'object' ? k : {[k]:v}));
+  const tool = view?.id || 'brain';
+  const title = tool === 'baboom' ? 'BABOOM' : tool[0].toUpperCase() + tool.slice(1);
+  const tab = view?.tab || firstToolTab(tool);
+  const workshopState = useWorkshopProjection();
+  const personal = usePersonalTheme();
+  const hub = useToolHubProjection();
+  const toolRow = toolRowsFromOwners({workshopState, account, personal, hub}).find(row => row.id === tool);
+  const offTool = toolRow?.state === 'off' ? toolRow : null;
+  return <main data-tool-view={tool} data-tool-tab={tab} data-tool-focus={view?.focus || ''} className="ah-scroll" style={{
+    gridColumn:'2', gridRow:'1', overflow:'auto', minHeight:0, padding:'28px 44px 36px',
+    background:LM.bg, color:LM.ink,
+  }}>
+    <div style={{display:'flex', alignItems:'baseline', gap:10, marginBottom:18}}>
+      <h1 style={{fontFamily:LM.serif, fontSize:30, fontWeight:400, margin:0}}>{title}</h1>
+      <span style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.08em', textTransform:'uppercase'}}>
+        {tab}
+      </span>
+      <div style={{flex:1}}/>
+      <button type="button" onClick={() => onSettings && onSettings(true, tool === 'brain' ? 'memory' : firstToolTab(tool))}
+        style={smallBtn()}>Settings panel</button>
+    </div>
+    {offTool ? <ToolOffPanel tool={offTool}/> : <>
+    {tool === 'workshop' && <WorkshopToolProjects workshopState={workshopState}/>}
+    {tool === 'brain' && <SettingsMemory store={store} patch={patch}/>}
+    {tool === 'connectors' && <SettingsHosts/>}
+    {tool === 'cloud' && <SettingsAccount account={account} setAccount={setAccount} onSignOut={onSignOut}/>}
+    {tool === 'baboom' && <SettingsBaboom/>}
+    {!['workshop','brain','connectors','cloud','baboom'].includes(tool) && <ToolOffPanel tool={{id:tool,label:title,state:'off',color:LM.inkMuted,
+      emptyTitle:title + ' is off', emptyLine:'This tool has no active view.'}}/>}
+    </>}
+  </main>;
+};
 
 const SessionCard = ({ s, onOpen }) => {
   const sm = LM_STATE_META[s.state];
@@ -5007,7 +5636,7 @@ const SettingsEmpty = ({ children, role = 'status', action }) => (
 // the badges previously counted only keys PRESENT in the store while the rows fell back to the
 // seed per item, so an empty or partial store made a badge contradict the panel beside it.
 const hostState = h => h.state; // the probe's answer; there is no local override
-const Settings = ({ onClose, account, setAccount, onSignOut }) => {
+const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'account' }) => {
   const providers = useProviderStatus();
   const release = releaseStatus(useWorkshopProjection());
   // The Hosts badge states the cached host probe, read when Settings opens. The brain is
@@ -5015,7 +5644,8 @@ const Settings = ({ onClose, account, setAccount, onSignOut }) => {
   // (SettingsMemory); the badge states the facts already held (2026-09-24 click-path gate).
   useLiveCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS);
   // Account first either way: signed in it states the account, signed out it is where you sign in.
-  const [tab, setTab] = React.useState('account');
+  const [tab, setTab] = React.useState(initialTab || 'account');
+  React.useEffect(() => { if (initialTab) setTab(initialTab); }, [initialTab]);
   const [store, setStore] = React.useState(() => {
     // Only the Brain panel's session record lives here. Permission modes and host on/off switches
     // were stored here too and nothing read them, so they are gone (2026-09-24).
@@ -5482,6 +6112,35 @@ const hostDetail = h => {
   if (h.detail) return cleanDetail(h.detail);
   if (h.file && h.file !== '\u2014') return cleanDetail(h.file);
   return h.state === 'connected' ? 'Live on this machine' : 'Not running';
+};
+const hostStartName = h => {
+  const id = String(h?.id || '').toLowerCase(), name = String(h?.name || '').toLowerCase();
+  if (name.includes('3ds max') || id.includes('3ds')) return '3ds Max';
+  if (name.includes('autocad') || id.includes('acad')) return 'AutoCAD';
+  if (name.includes('revit') || id.includes('revit') || /^r\d{2}$/.test(id)) return 'Revit';
+  if (name.includes('rhino') || id.includes('rhino')) return 'Rhino';
+  if (name.includes('blender') || id.includes('blender')) return 'Blender';
+  return '';
+};
+const hostOpenPhrase = h => {
+  const name = hostStartName(h);
+  return name ? 'open ' + name : '';
+};
+const hostDisplayName = h => hostStartName(h) || h?.name || h?.id || 'Host';
+const HOST_STARTERS = [
+  {id:'known-revit', name:'Revit', state:'off', file:'\u2014'},
+  {id:'known-autocad', name:'AutoCAD', state:'off', file:'\u2014'},
+  {id:'known-rhino', name:'Rhino', state:'off', file:'\u2014'},
+  {id:'known-blender', name:'Blender', state:'off', file:'\u2014'},
+  {id:'known-3ds-max', name:'3ds Max', state:'off', file:'\u2014'},
+];
+const startableHosts = hosts => {
+  const byName = new Map();
+  for (const host of [...(hosts || []), ...HOST_STARTERS]) {
+    const name = hostStartName(host);
+    if (name && !byName.has(name)) byName.set(name, {...host, name:host.name || name});
+  }
+  return [...byName.values()];
 };
 
 // Posts waiting for the founder (social_approval): the exact request an agent prepared,
@@ -6745,8 +7404,7 @@ const SettingsHosts = () => {
   const catalogue = useLiveCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS);
   const visibleHosts = LM_HOSTS.filter(h => !/no wire in this build/i.test(String(h.detail || '')));
   const startHost = async (h, button) => {
-    const name = String(h.name || '').toLowerCase();
-    const phrase = name.includes('rhino') ? 'open Rhino' : name.includes('blender') ? 'open Blender' : name.includes('3ds max') ? 'open 3ds Max' : '';
+    const phrase = hostOpenPhrase(h);
     if (!phrase || typeof window.ARCHHUB_AGENT !== 'function') return;
     const before = button.textContent;
     button.textContent = 'Starting...';
@@ -6786,7 +7444,7 @@ const SettingsHosts = () => {
               fontFamily:LM.mono, fontSize:9, padding:'2px 7px', borderRadius:LM.rad.xs,
               background: col + '14', color: col, letterSpacing:'0.1em', textTransform:'uppercase',
             }}>{state}</span>
-            {/(3ds max|rhino|blender)/i.test(h.name || '') && (
+            {hostOpenPhrase(h) && (
               <button type="button" onClick={e => startHost(h, e.currentTarget)}
                 style={{ ...smallBtn(), padding:'3px 9px' }}>Start</button>
             )}
@@ -7430,12 +8088,14 @@ const ApplicationUpdateNotice = () => {
 };
 
 // ──────────────────────── SERVER STRIP ────────────────────────
-const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen }) => {
+const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen, onOpenWaitingTask }) => {
   // Live values in the design's slots: this server's port, the connectors that drive a host, and the running build.
   const drives = (window.ARCHHUB_LIVE?.connectors || []).filter(c => c.drive);
   const live = drives.filter(c => c.state === 'connected' || c.state === 'listening').length;
   const port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
   const transport = window.ARCHHUB_EXISTING_WORKSHOP;
+  const hub = useToolHubProjection();
+  const waitingItems = Array.isArray(hub?.waiting) ? hub.waiting : [];
   const readBuild = () => String(transport?.getSnapshot?.()?.applicationUpdate?.current_build || '');
   const [build, setBuild] = React.useState(readBuild);
   React.useEffect(() => transport?.subscribe ? transport.subscribe(() => setBuild(readBuild())) : undefined, [transport]);
@@ -7483,6 +8143,10 @@ const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen }) => {
       )}
       <div style={{ flex:1 }}/>
       <ApplicationUpdateNotice/>
+      <WaitingButton variant="strip" items={waitingItems} onOpenTask={item => onOpenWaitingTask && onOpenWaitingTask(
+        item.producer === 'social_approve' ? 'cloud' : 'workshop',
+        item.producer === 'workshop_gate' ? {tab:'approvals', root:item.root || item.workshop || '', focus:item.open_target || item.work || item.id} : {})}/>
+      {waitingItems.length > 0 && <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>}
       <StripItem onClick={() => setDocsOpen && setDocsOpen(true)}>docs</StripItem>
       <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
       <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>settings</StripItem>

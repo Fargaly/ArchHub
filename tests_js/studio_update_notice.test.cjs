@@ -113,7 +113,10 @@ async function mountStrip(server) {
   assert.match(source, /const ServerStrip = /);
   assert.match(source, /<ApplicationUpdateNotice\/>/, 'the status strip carries the notice');
   // The strip names a picked model through modelRoute and restarts through the shared confirmation.
-  const shared = ['modelRoute', 'useRestartConfirmation'].filter(name => jsx.includes('\nconst ' + name + ' = '))
+  const shared = [
+    'modelRoute', 'useRestartConfirmation', 'useToolHubProjection', 'useWaitingOpenShortcut',
+    'waitingLine', 'waitingMeta', 'WaitingButton', 'smallBtn',
+  ].filter(name => jsx.includes('\nconst ' + name + ' = '))
     .map(name => definition(jsx, name)).join('\n');
   return mountSource(server, shared + '\n' + source, 'ServerStrip',
     {session:{file:'archhub.universal'}, model:{name:'Choose a model'}, account:null});

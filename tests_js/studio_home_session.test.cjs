@@ -93,6 +93,7 @@ function homeFixture() {
   const held=deferred(),opened=[],refs={startBusy:{current:false},acceptedSession:{current:null},homeMounted:{current:true}};
   let session='session-a',calls=0;
   const ctx=vm.createContext({...refs,draft:'Real prompt',native:null,model:{},modelRoute:()=>details.model,
+    startPrompt:()=>details.prompt,
     setPickerOpen:()=>{},setStarting:()=>{},setStartError:()=>{},setDraft:()=>{},
     onStarted:async result=>opened.push(result),window:{ARCHHUB_EXISTING_WORKSHOP:{
       getSnapshot:()=>({canvas:{graph_id:'graph-a'},topology:{canvas:{authorization:{subject:'owner-a',session}}}}),

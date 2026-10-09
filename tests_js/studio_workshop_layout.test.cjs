@@ -78,8 +78,8 @@ test('studio-workshop.jsx ships as its own Studio source, loaded after brain-mod
 
 test('studio-lm.jsx reads the Workshop from the module: the icon rail remains and the Workshop owns the workspace', () => {
   const sidebar = source.slice(source.indexOf('const Sidebar ='), source.indexOf('const IconRail ='));
-  assert.match(source, /gridTemplateColumns: workshopContext \? '44px 1fr' : '292px 1fr'/);
-  assert.match(sidebar, /workshopContext \? null : <>/);
+  assert.match(source, /gridTemplateColumns: \(\(!session && panel === 'nodes'\) \|\| workshopContext\) \? '44px 1fr' : '292px 1fr'/);
+  assert.match(sidebar, /railOnly \? null : <>/);
   assert.doesNotMatch(sidebar, /WorkshopAgentsRail/);
   const workspace = source.slice(source.indexOf('const Workspace ='), source.indexOf('const modelRoute ='));
   assert.match(workspace, /workshop && window\.WorkshopView \? <window\.WorkshopView key=[^]*?state=\{workshopState\} descriptor=\{workshop\} target=\{target\}[^]*?onLeave=\{\(\) => updateView\(\{conversationRoot:'', mode:'chat', target:''\}\)\}\s*sel=\{wsSel\} setSel=\{setWsSel\}\/>/);

@@ -6395,6 +6395,66 @@ class ApplicationServer:
                     self.send_header('Cache-Control', 'no-store')
                     self.end_headers()
                     return
+                if parsed.path in {'/tools', '/wires', '/waiting'}:
+                    try:
+                        hub_binding, _session_token = self._browser_session_binding()
+                    except AuthorizationDenied as denied:
+                        self._json(403, {'ok': False, 'error': str(denied)})
+                        return
+                    from .tool_hub import (
+                        project_tools, project_waiting, project_wires,
+                    )
+                    if parsed.path == '/tools':
+                        from .universal_graphs import project_graph_index
+                        with owner.mutation_lock:
+                            graph_index = project_graph_index(
+                                owner.universal_store, owner.universal_registry,
+                                authentication_context=hub_binding.context)
+                        self._json(200, project_tools(sessions=graph_index.get("graphs", ())))
+                    elif parsed.path == '/wires':
+                        self._json(200, project_wires())
+                    else:
+                        items = []
+                        errors = []
+                        host = getattr(owner, '_existing_workshop_native_host', None)
+                        identity = getattr(host, '_identity', None) if host is not None else None
+                        if host is not None and identity:
+                            try:
+                                status = dict(host.status(hub_binding, root=identity[3], scope=identity[4]) or {})
+                                if (status.get('state') == 'awaiting_approval'
+                                        and status.get('approved') is not True
+                                        and status.get('input_digest')):
+                                    work = status.get('work') or identity[5]
+                                    summary = (status.get('review_text') or status.get('work')
+                                               or 'Workshop approval')
+                                    if isinstance(summary, str) and len(summary) > 500:
+                                        summary = summary[:497] + '...'
+                                    items.append({
+                                        'id': 'workshop_gate:' + str(work or identity[5]),
+                                        'producer': 'workshop_gate',
+                                        'root': status.get('root') or identity[3],
+                                        'scope': status.get('scope') or identity[4],
+                                        'work': work,
+                                        'summary': summary,
+                                        'delegation': status.get('delegation') or '',
+                                        'input_digest': status.get('input_digest') or '',
+                                        'revision': status.get('revision') or owner.universal_store.revision,
+                                        'mode': status.get('mode') or status.get('selected_work_mode') or '',
+                                    })
+                            except Exception as exc:
+                                errors.append(str(exc) or exc.__class__.__name__)
+                        try:
+                            from .social_approval import pending as _pending_social_approvals
+                            for item in _pending_social_approvals(owner, hub_binding):
+                                items.append({
+                                    **item,
+                                    'producer': 'social_approve',
+                                    'summary': item.get('review_text') or item.get('operation') or 'Social approval',
+                                })
+                        except Exception as exc:
+                            errors.append(str(exc) or exc.__class__.__name__)
+                        self._json(200, project_waiting(items=items, errors=errors))
+                    return
                 if (
                     parsed.path == '/assets/fonts.css'
                     or parsed.path.startswith('/assets/fonts/')

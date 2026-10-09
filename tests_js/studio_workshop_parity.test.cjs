@@ -121,7 +121,7 @@ test('rail: an agent is named by its host; two sessions of one host get the sess
   const second = 'app:agent-session:runtime:codexb7f2e1';
   const now = Date.now() / 1000;
   fx.state.workshop.participants.push({root:second, label:'Runtime-b7f2e1', attached:true, is_agent:true, connection_status:'connected',
-    connection_basis:'authenticated-request', observed_at:now - 5, expires_at:now + 3600, runtime:'codex', host:'Codex', session_link:'none'});
+    connection_basis:'authenticated-request', observed_at:now - 5, expires_at:now + 3600, runtime:'codex', host:'Codex', model:'gpt-5.4', session_link:'none'});
   const ui = await mountModule();
   try {
     ui.win.ARCHHUB_EXISTING_WORKSHOP = fx.authority;
@@ -129,7 +129,7 @@ test('rail: an agent is named by its host; two sessions of one host get the sess
     await ui.render('WorkshopAgentsRail', {context, sel:null, onSelect:() => {}});
     const rows = [...ui.doc.querySelectorAll('[data-workshop-agent]')].map(text);
     assert.ok(rows.some(row => /^C Codex · codex- AGENT local · Codex session/.test(row)), rows.join(' | '));
-    assert.ok(rows.some(row => /^C Codex · codexb AGENT local · Codex session/.test(row)), rows.join(' | '));
+    assert.ok(rows.some(row => /^C Codex · gpt-5\.4 AGENT local · Codex session/.test(row)), rows.join(' | '));
     assert.ok(rows.some(row => /^C Claude AGENT local · Claude session/.test(row)), 'a host shared by no other session is the plain name');
     assert.ok(!rows.some(row => /Runtime-/.test(row)), 'the opaque runtime label is never the name when a host is known');
   } finally { await ui.close(); }

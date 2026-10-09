@@ -275,6 +275,17 @@ const wsLinkStatus = row => {
   if (row.session_link === 'attaching') return 'Session Link attaching';
   return '';
 };
+const wsModelLabel = row => {
+  const value = String(row.model || row.model_id || row.modelID || '').trim();
+  if (!value) return '';
+  return value.split('/').pop().replace(/:free$/, '');
+};
+const wsAgentName = (row, host, shared) => {
+  const vendor = host || String(row.vendor || row.provider || row.runtime || row.label || row.root || 'Agent');
+  const model = wsModelLabel(row);
+  if (model) return `${vendor} \u00b7 ${model}`;
+  return shared ? `${vendor} \u00b7 ${String(row.root).split(':').pop().slice(0, 6)}` : vendor;
+};
 // Agents: the transcript's agent participants in the design's rail-row shape.
 const wsAgents = (transcript, cards, clock) => {
   const rows = (Array.isArray(transcript?.participants) ? transcript.participants : []).filter(row => row.is_agent !== false);
@@ -285,7 +296,7 @@ const wsAgents = (transcript, cards, clock) => {
   const agents = rows.map((row, index) => {
     const host = hosts[index], shared = host && hosts.filter(value => value === host).length > 1;
     const self = row.root === transcript?.self;
-    const name = host ? (shared ? `${host} · ${String(row.root).split(':').pop().slice(0, 6)}` : host) : String(row.label || row.root);
+    const name = wsAgentName(row, host, shared);
     const tone = workshopAgentTone(row.root, self), verified = wsVerified(row, clock);
     const owned = cards.filter(card => card.owner === row.root);
     const latest = [...messages].reverse().find(message => message.sender_root === row.root);
@@ -294,14 +305,13 @@ const wsAgents = (transcript, cards, clock) => {
       row.connection_status === 'stale' || (row.connection_status === 'connected' && wsObserved(row)) ? 'stale' : 'unverified';
     const seen = wsObserved(row) ? new Date(row.observed_at * 1000).toLocaleString() : '';
     return {id:row.root, row, self, name, role:self ? 'YOU' : 'AGENT',
-      prov:row.attached === false ? 'history participant \u00b7 detached' :
+      prov:row.attached === false ? 'history participant' :
         row.runtime ? `local \u00b7 ${host || row.runtime} session` : 'agent session',
       col:tone.bg, ink:tone.fg, ini:wsInitial(name, '?'), round:self, status,
       ago:status === 'off' && wsObserved(row) ? wsAgo(row.observed_at) : '',
-      doing:status === 'off' ? 'Disconnected from this app.' + (seen ? ' Last seen ' + wsClockText(row.observed_at) + '.' : '') :
+      doing:status === 'off' ? (seen ? 'Last seen ' + wsClockText(row.observed_at) + '.' : 'No live presence.') :
         latest ? (isWorkProposal(latest) ? wsLine('Proposed: ' + wsProposalTask(latest).title, 90) : wsLine(latest.body, 90)) : seen ? 'Last seen ' + wsClockText(row.observed_at) + '.' : 'No message from this agent on this page.',
-      // The session does not report its model at enrolment; say so rather than guess one.
-      model:row.runtime ? 'model not reported' : 'runtime not projected', seen, verified,
+      model:wsModelLabel(row) || 'model unknown', seen, verified,
       tools:[row.runtime, row.connection_basis, row.session_link && row.session_link !== 'none' ? 'session link \u00b7 ' + row.session_link : '']
         .filter(Boolean),
       card:owned[owned.length - 1] || null};
@@ -328,7 +338,10 @@ const wsAgents = (transcript, cards, clock) => {
 // The rail's default list: agents that are here now (and you). Disconnected sessions stay in the
 // graph and in the transcript; they are listed only when asked for.
 const WS_SHOW_OFFLINE = '__show-disconnected__';
-const wsShownAgents = (agents, showOff) => showOff ? agents : agents.filter(a => a.status !== 'off' || a.self);
+const wsLiveAgent = a => a.self || a.verified;
+const wsShownAgents = (agents, showOff) => showOff ? agents : agents.filter(wsLiveAgent);
+const wsStatusLabel = status => status === 'working' ? 'Live' :
+  (status === 'waiting' || status === 'available') ? 'Idle' : status === 'off' ? 'Disconnected' : 'Unverified';
 const wsParam = (node, pattern) => {
   const row = (node?.params || []).find(param => pattern.test(String(param.k || '')));
   return row && row.v != null && String(row.v).trim() ? String(row.v) : '';
@@ -695,12 +708,12 @@ const AgentsRail = ({ context, sel, onSelect, onAddAgent, compact }) => {
   const canAddress = row => row.attached === true && row.root !== transcript?.self &&
     all.some(participant => participant.root === transcript?.self && participant.attached === true) &&
     transcript?.can_send !== false;
-  // Only agents that are here now are listed; a disconnected session is history, one toggle away.
-  // Nothing is removed from the graph.
+  // Only verified live presence is listed by default. Other sessions remain graph history.
   const [showOff, setShowOff] = React.useState(false);
-  const offCount = agents.filter(a => a.status === 'off' && !a.self).length;
+  const offCount = agents.filter(a => !wsLiveAgent(a)).length;
   const shown = wsShownAgents(agents, showOff);
   const current = shown.some(a => a.id === sel) ? sel : shown[0]?.id;
+
   return (
   <section aria-label="Workshop agents" style={{ background:W.bgPanel, borderRight:`1px solid ${W.line}`, overflow:'auto', display:'flex', flexDirection:'column', minHeight:0 }} className="ah-scroll">
     <div style={{ padding:'9px 12px 9px 14px', borderBottom:`1px solid ${W.lineSoft}`, display:'flex', alignItems:'center', gap:8 }}>
@@ -726,23 +739,27 @@ const AgentsRail = ({ context, sel, onSelect, onAddAgent, compact }) => {
           <div role={store.pending[a.id] || store.outcomes[a.id] ? 'status' : undefined} style={{ fontFamily:W.mono, fontSize:9.5, color:W.inkMuted, letterSpacing:'0.03em', marginTop:2, overflowWrap:'anywhere' }}>{a.prov}</div>
           {!compact && <>
             <div style={{ display:'flex', alignItems:'center', gap:5, marginTop:5, fontFamily:W.mono, fontSize:9, letterSpacing:'0.1em', color:s.col }}>
-              <Dot c={s.col} pulse={s.pulse}/>{s.label}{a.ago ? ` · ${a.ago}` : ''}
+              <Dot c={s.col} pulse={s.pulse}/>{wsStatusLabel(a.status)}{a.ago ? ` · ${a.ago}` : ''}
             </div>
             <div style={{ fontSize:11.5, color:W.inkSoft, lineHeight:1.4, marginTop:5, overflowWrap:'anywhere' }}>{a.doing}</div>
             {a.status==='off' && store.refreshContacts && <span role="button" tabIndex={0} onClick={e => { e.stopPropagation(); store.refreshContacts(); }} title="Refresh connection status" style={{ fontFamily:W.mono, fontSize:13, color:W.accent, cursor:'pointer', display:'inline-block', marginTop:6 }}>⟳</span>}
           </>}
         </div>
       </div> ); })}
-    {offCount > 0 && <button type="button" data-workshop-disconnected-toggle="" aria-pressed={showOff}
-      onClick={() => setShowOff(value => !value)}
-      style={{ margin:'8px 14px', alignSelf:'flex-start', fontFamily:W.mono, fontSize:10, letterSpacing:'0.06em',
-        color:W.inkMuted, background:'transparent', border:`1px solid ${W.line}`, borderRadius:4, padding:'3px 8px', cursor:'pointer' }}>
-      {showOff ? 'Hide disconnected' : `Show disconnected (${offCount})`}
-    </button>}
+    {offCount > 0 && <div data-workshop-disconnected-summary="" style={{ margin:'8px 14px', display:'flex', alignItems:'center', gap:8, flexWrap:'wrap',
+      fontFamily:W.mono, fontSize:10, letterSpacing:'0.06em', color:W.inkMuted }}>
+      <span>{offCount} inactive session{offCount === 1 ? '' : 's'}</span>
+      <button type="button" data-workshop-disconnected-toggle="" aria-pressed={showOff}
+        onClick={() => setShowOff(value => !value)}
+        style={{ fontFamily:W.mono, fontSize:10, letterSpacing:'0.06em',
+          color:W.inkMuted, background:'transparent', border:`1px solid ${W.line}`, borderRadius:4, padding:'3px 8px', cursor:'pointer' }}>
+        {showOff ? 'Hide' : 'Show'}
+      </button>
+    </div>}
     <div style={{ flex:1 }}/>
     <div style={{ padding:'11px 14px', borderTop:`1px solid ${W.lineSoft}` }}>
       <Lbl>SCOPE</Lbl>
-      <div style={{ fontSize:11.5, color:W.inkSoft, lineHeight:1.5, marginTop:7 }}>Write access: <b style={{ color:W.ink, fontWeight:500 }}>not projected</b> for these agents. Recent activity is not a running task.</div>
+      <div style={{ fontSize:11.5, color:W.inkSoft, lineHeight:1.5, marginTop:7 }}>Recent activity is not a running task.</div>
     </div>
   </section>
   );

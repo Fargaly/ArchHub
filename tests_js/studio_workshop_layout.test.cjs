@@ -124,9 +124,9 @@ function fixture() {
   const codex = 'app:agent-session:runtime:codex-a1', claude = 'app:agent-session:runtime:claude-b2', gone = 'app:agent-session:runtime:gone-c3';
   const participants = [
     {root:'owner-a', label:'Owner', attached:true, is_agent:false, connection_status:'unknown'},
-    {root:gone, label:'Gone agent', attached:true, is_agent:true, connection_status:'disconnected', observed_at:now - 360, runtime:'antigravity-ide'},
+    {root:gone, label:'Runtime-e2a3923f', attached:true, is_agent:true, connection_status:'disconnected', observed_at:now - 360, runtime:'antigravity-ide', host:'Antigravity', session_link:'attached'},
     {root:codex, label:'Codex', attached:true, is_agent:true, connection_status:'connected', connection_basis:'authenticated-request',
-      observed_at:now - 30, expires_at:now + 3600, runtime:'codex', host:'Codex', session_link:'attached'},
+      observed_at:now - 30, expires_at:now + 3600, runtime:'codex', host:'Codex', model:'gpt-5.5', session_link:'attached'},
     {root:claude, label:'Claude Code', attached:true, is_agent:true, connection_status:'connected', connection_basis:'authenticated-request',
       observed_at:now - 10, expires_at:now + 3600, runtime:'claude', host:'Claude', session_link:'none'},
   ];
@@ -273,17 +273,20 @@ test('the agents rail is the transcript participants with verified connection fa
     let rows = [...rail.querySelectorAll('[data-workshop-agent]')];
     assert.deepEqual(rows.map(r => r.getAttribute('data-workshop-agent')), [ids.codex, ids.claude], 'verified agents first; the owner is not an agent row; disconnected hidden');
     assert.deepEqual(rows.map(r => r.getAttribute('aria-pressed')), ['true', 'false']);
-    assert.match(text(rows[0]), /^C Codex AGENT local · Codex session WAITING FOR INPUT/);
-    assert.match(text(rows[1]), /^C Claude AGENT local · Claude session WORKING/);
+    assert.match(text(rows[0]), /^C Codex · gpt-5\.5 AGENT local · Codex session Idle/);
+    assert.match(text(rows[1]), /^C Claude AGENT local · Claude session Live/);
     const toggle = rail.querySelector('button[data-workshop-disconnected-toggle]');
-    assert.equal(text(toggle), 'Show disconnected (1)');
+    assert.match(text(rail.querySelector('[data-workshop-disconnected-summary]')), /^1 inactive session Show$/);
+    assert.equal(text(toggle), 'Show');
     assert.equal(toggle.getAttribute('aria-pressed'), 'false');
+    assert.doesNotMatch(text(rail), /Runtime-|not projected|not verified|Disconnected from this app|may:/);
+    assert.equal(rail.querySelector('button[data-workshop-disconnected-clear]'), null, 'no bulk revoke: a reconnecting session must never be cut');
     await ui.click(toggle);
     rows = [...rail.querySelectorAll('[data-workshop-agent]')];
     assert.deepEqual(rows.map(r => r.getAttribute('data-workshop-agent')), [ids.codex, ids.claude, ids.gone]);
-    assert.match(text(rows[2]), /^G Gone agent AGENT local · antigravity-ide session DISCONNECTED · 6m Disconnected from this app\./);
-    assert.equal(text(rail.querySelector('button[data-workshop-disconnected-toggle]')), 'Hide disconnected');
-    assert.match(text(rail), /SCOPE Write access: not projected for these agents\. Recent activity is not a running task\.$/);
+    assert.match(text(rows[2]), /^A Antigravity AGENT local · Antigravity session Disconnected · 6m Last seen/);
+    assert.equal(text(rail.querySelector('button[data-workshop-disconnected-toggle]')), 'Hide');
+    assert.match(text(rail), /SCOPE Recent activity is not a running task\.$/);
     await ui.click(rows[1]);
     await ui.click(rail.querySelector('button[aria-label^="Connect another agent"]'));
     assert.deepEqual(picked, [[ids.claude, true], ['library']]);

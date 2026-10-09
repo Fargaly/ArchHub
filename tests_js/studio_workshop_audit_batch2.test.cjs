@@ -117,7 +117,7 @@ const mountView = async (setup = () => {}) => {
   return {...fx, ui, render:() => ui.render('WorkshopView', props())};
 };
 
-test('gap 4: an agent that answered through the relay is in CONNECTED AGENTS, by name, unverified', async () => {
+test('gap 4: an agent that answered through the relay is collapsed until shown, by name, unverified', async () => {
   const fx = fixture();
   withReply(fx);
   const ui = await mountModule();
@@ -125,9 +125,11 @@ test('gap 4: an agent that answered through the relay is in CONNECTED AGENTS, by
     ui.win.ARCHHUB_EXISTING_WORKSHOP = fx.authority;
     const context = {descriptor:fx.state.workshops[0], graphId:'graph-a', scopeRoot:'scope-a', transcript:fx.state.workshop, state:fx.state};
     await ui.render('WorkshopAgentsRail', {context, sel:null, onSelect:() => {}});
+    assert.equal(ui.doc.querySelector(`[data-workshop-agent="${CONTACT}"]`), null);
+    await ui.click(ui.doc.querySelector('button[data-workshop-disconnected-toggle]'));
     const row = ui.doc.querySelector(`[data-workshop-agent="${CONTACT}"]`);
     assert.ok(row, 'the replying agent has a rail row');
-    assert.match(text(row), /^A acceptance-claude AGENT Session Link · claude session CONNECTION UNVERIFIED Proposed a workflow\./);
+    assert.match(text(row), /^A acceptance-claude AGENT Session Link · claude session Unverified Proposed a workflow\./);
     assert.ok(!text(ui.doc.querySelector('[aria-label="Workshop agents"]')).includes('app:wip-cell:'));
   } finally { await ui.close(); }
 });
@@ -266,6 +268,7 @@ test('avatars: an emoji-led agent name gives a whole first character, never a lo
     ui.win.ARCHHUB_EXISTING_WORKSHOP = fx.authority;
     const context = {descriptor:fx.state.workshops[0], graphId:'graph-a', scopeRoot:'scope-a', transcript:fx.state.workshop, state:fx.state};
     await ui.render('WorkshopAgentsRail', {context, sel:null, onSelect:() => {}});
+    await ui.click(ui.doc.querySelector('button[data-workshop-disconnected-toggle]'));
     const rail = ui.doc.querySelector('[data-workshop-agent="' + CONTACT + '"]');
     assert.ok(rail, 'the named agent is in the rail');
     assert.equal(initialOf(rail), FACE, 'the rail avatar is the whole emoji');

@@ -16,11 +16,10 @@ const body = (start, end) => {
   return source.slice(from, to);
 };
 
-test('the in-place refresh re-reads the canvas and reloads only when no canvas transport exists', () => {
+test('the in-place refresh re-reads the canvas and never reloads the page under the user', () => {
   const helper = body('const studioRefreshCanvasInPlace = () => {', '\n};');
   assert.match(helper, /refreshTopologyCanvas\(\)/);
-  assert.ok(helper.indexOf('refreshTopologyCanvas') < helper.indexOf('window.location.reload()'),
-    'the reload is only the fallback');
+  assert.doesNotMatch(helper, /location\.reload\(/, 'no full-page reload fallback');
 });
 
 for (const [name, start, end] of [

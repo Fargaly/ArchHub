@@ -49,6 +49,7 @@ CLOUD_CHAT_PATH = "/v1/chat/completions"
 # The vendors' own chat endpoints, in the same chat-completions shape.
 OPENAI_CHAT = "https://api.openai.com/v1/chat/completions"
 GOOGLE_CHAT = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+NVIDIA_CHAT = "https://integrate.api.nvidia.com/v1/chat/completions"
 
 _FAMILY_PREFIXES = {
     "lmstudio/": "lmstudio",
@@ -58,6 +59,7 @@ _FAMILY_PREFIXES = {
     # Direct vendor routes. Not "openai/": that spelling is an OpenRouter id.
     "openai-api/": "openai",
     "google-api/": "google",
+    "nvidia-api/": "nvidia",
     # A signed-in assistant on this machine answers one chat turn through the
     # model broker's host process: local-cli/<assistant>[/<model>].
     "local-cli/": "local-cli",
@@ -69,6 +71,7 @@ _PROVIDER_NAMES = {
     "openrouter": "OpenRouter",
     "openai": "OpenAI",
     "google": "Google",
+    "nvidia": "NVIDIA NIM",
     "local-cli": "a local assistant",
 }
 LOCAL_CLI_ASSISTANTS = {
@@ -211,9 +214,18 @@ _KEY_PLAN = {
             "Google key in Settings, then ask again."
         ),
     },
+    "nvidia": {
+        "variable": "NVIDIA_API_KEY",
+        "secret": "nvidia",
+        "from_cloud_session": False,
+        "missing": (
+            "No NVIDIA key on this machine: set NVIDIA_API_KEY, or paste a "
+            "NVIDIA key in Settings, then ask again."
+        ),
+    },
 }
 # Providers whose key can be pasted in Settings > Providers.
-KEYED_IN_SETTINGS = ("openrouter", "openai", "google", "anthropic")
+KEYED_IN_SETTINGS = ("openrouter", "openai", "google", "nvidia", "anthropic")
 # A stored value shorter than this is a placeholder, not a provider key.
 _PLAUSIBLE_KEY_LENGTH = 20
 KEY_INVALID = "key invalid, paste a real key in Settings"
@@ -267,12 +279,16 @@ class ModelRoute:
     needs_key: bool
 
 
-def _legacy_free_route(route: object) -> bool:
+def _bare_openrouter_route(route: object) -> bool:
     text = str(route or "").strip()
     parts = text.split("/")
-    return (len(parts) == 2 and all(parts) and text.endswith(":free")
+    return (len(parts) == 2 and all(parts)
             and not any(char.isspace() for char in text)
             and not any(text.startswith(prefix) for prefix in _FAMILY_PREFIXES))
+
+
+def _legacy_free_route(route: object) -> bool:
+    return _bare_openrouter_route(route) and str(route or "").strip().endswith(":free")
 
 
 def resolve_model_route(
@@ -295,13 +311,13 @@ def resolve_model_route(
                     % (text, _PROVIDER_NAMES[family])
                 )
             return _destination(family, model, cloud_base_url)
-    # Existing sealed Workshop requests use this explicitly free OpenRouter
-    # spelling. Preserve their identity; route_chat always enforces zero price.
-    if _legacy_free_route(text):
+    # Existing BYO and sealed Workshop requests use vendor/model OpenRouter
+    # spelling. Preserve their identity; route_chat enforces zero price in free mode.
+    if _bare_openrouter_route(text):
         return _destination("openrouter", text, cloud_base_url)
     raise ModelRouteRefused(
         "The model route %r names no provider this app can reach: use "
-        "cloud/, openrouter/, openai-api/, google-api/, lmstudio/, ollama/ "
+        "cloud/, openrouter/, openai-api/, google-api/, nvidia-api/, lmstudio/, ollama/ "
         "or local-cli/." % text
     )
 
@@ -319,6 +335,8 @@ def _destination(
         return ModelRoute(family, model, OPENAI_CHAT, "OpenAI", True)
     if family == "google":
         return ModelRoute(family, model, GOOGLE_CHAT, "Google", True)
+    if family == "nvidia":
+        return ModelRoute(family, model, NVIDIA_CHAT, "NVIDIA NIM", True)
     if family == "local-cli":
         assistant = model.split("/", 1)[0].strip()
         if assistant not in LOCAL_CLI_ASSISTANTS:
@@ -352,7 +370,7 @@ _CREDENTIAL_LOCK = threading.RLock()
 _CREDENTIAL_FILE_LIMIT = 1024 * 1024
 _CREDENTIAL_DPAPI_MARK = b"ARCHHUB-DPAPI-1:"
 _CREDENTIAL_ERRORS = {
-    "invalid_credential": "Enter a raw OpenRouter key of 1 to 8192 ASCII characters without whitespace. Credential aliases are not supported here.",
+    "invalid_credential": "Enter a raw provider key of 1 to 8192 ASCII characters without whitespace. Credential aliases are not supported here.",
     "secure_store_unavailable": "The Windows-protected credential store is unavailable. No save was confirmed.",
     "secure_store_invalid": "The existing credential store is not readable Windows-protected data. It was not replaced.",
     "secure_store_changed": "The credential store changed during saving. Refresh its status before retrying.",
@@ -668,7 +686,7 @@ def provider_catalogue() -> list:
     titles = {"cloud": "ArchHub cloud"}
     records = [{"id": family, "title": titles.get(family, _PROVIDER_NAMES[family]),
                 "capabilities": ["text"], "local": family in ("lmstudio", "ollama")}
-               for family in ("cloud", "openrouter", "openai", "google", "lmstudio", "ollama")]
+               for family in ("cloud", "openrouter", "openai", "google", "nvidia", "lmstudio", "ollama")]
     # "local" is LM Studio and Ollama above; "cli-subscription" is each CLI below.
     known = {record["id"] for record in records} | {"local", "cli-subscription"}
     records.extend({"id": name, "title": description, "capabilities": ["text"], "local": False}
@@ -732,7 +750,8 @@ def provider_rows(*, environ=None, secrets_loader=None, cloud_session=None,
     """
     rows = []
     labels = {"openrouter": "OpenRouter", "cloud": "ArchHub cloud",
-              "anthropic": "Anthropic", "openai": "OpenAI", "google": "Google"}
+              "anthropic": "Anthropic", "openai": "OpenAI", "google": "Google",
+              "nvidia": "NVIDIA NIM"}
     loader = _secrets_listing_loader() if secrets_loader is None else secrets_loader
     for family, plan in _KEY_PLAN.items():
         try:
@@ -922,6 +941,10 @@ READINESS_COPY = {
         "AI key in Settings \u2192 Providers."
     ),
     "no_key:cloud": "This model runs on the ArchHub cloud. Sign in to use it.",
+    "no_key:nvidia": (
+        "This model needs an NVIDIA key. Sign in to ArchHub, or add your own "
+        "AI key in Settings \u2192 Providers."
+    ),
     "unavailable:lmstudio": (
         "LM Studio is not running on this machine. Start it, or choose another model."
     ),
@@ -934,6 +957,7 @@ _READINESS_ACTIONS = {
     "invalid": ["choose_model"],
     "no_key:openrouter": ["choose_model", "sign_in"],
     "no_key:cloud": ["sign_in", "choose_model"],
+    "no_key:nvidia": ["choose_model", "sign_in"],
     "unavailable:lmstudio": ["choose_model"],
     "unavailable:ollama": ["choose_model"],
 }
@@ -971,7 +995,7 @@ def composer_readiness(route: object, *, environ=None, secrets_loader=None,
     session = default_cloud_session() if cloud_session is _DISCOVER else cloud_session
     families = {family: _family_readiness(
         family, environ=environ, secrets_loader=secrets_loader, session=session,
-        local_states=local_states) for family in ("openrouter", "cloud", "lmstudio", "ollama")}
+        local_states=local_states) for family in ("openrouter", "cloud", "nvidia", "lmstudio", "ollama")}
     messages = {"no_model": READINESS_COPY["no_model"], "invalid": READINESS_COPY["invalid"]}
 
     def answer(state, text, message, actions):

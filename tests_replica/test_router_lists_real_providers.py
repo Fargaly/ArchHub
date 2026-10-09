@@ -19,7 +19,8 @@ from nodelang.domains import models as models_domain
 ROOT = Path(__file__).resolve().parents[1]
 PLACEHOLDER = re.compile("provider-" + "fast|provider-" + "deep|Fast " + "provider|Deep " + "provider|model-" + "fast|model-" + "deep")
 REAL = "x" * 40
-MACHINE_KEYS = {"openrouter": REAL, "openai": REAL, "google": REAL, "anthropic": "123456789"}
+MACHINE_KEYS = {"openrouter": REAL, "openai": REAL, "google": REAL,
+                "nvidia": REAL, "anthropic": "123456789"}
 CLIS = {"claude": "claude.CMD", "codex": "codex.CMD", "gemini": "gemini.CMD"}
 
 
@@ -41,7 +42,7 @@ def test_no_placeholder_provider_in_product_source():
 def test_the_graph_catalogue_is_the_router_registry():
     catalogue = model_router.provider_catalogue()
     ids = [record["id"] for record in catalogue]
-    for family in ("cloud", "openrouter", "openai", "google", "lmstudio", "ollama", "anthropic"):
+    for family in ("cloud", "openrouter", "openai", "google", "nvidia", "lmstudio", "ollama", "anthropic"):
         assert family in ids, family
     assert not any(PLACEHOLDER.search(json.dumps(record)) for record in catalogue)
     store = Store()
@@ -61,6 +62,7 @@ def test_every_configured_provider_has_a_row_and_none_is_invented():
     assert by["cloud"]["state"] == "keyed"
     assert by["openai"]["state"] == "keyed" and by["openai"]["sets"] == "OPENAI_API_KEY"
     assert by["google"]["state"] == "keyed" and by["google"]["sets"] == "GOOGLE_API_KEY"
+    assert by["nvidia"]["state"] == "keyed" and by["nvidia"]["sets"] == "NVIDIA_API_KEY"
     assert by["anthropic"]["state"] == "key invalid"
     assert by["anthropic"]["source"] == "key invalid, paste a real key in Settings"
     assert by["lmstudio"]["state"] == "running" and by["ollama"]["state"] == "running"
@@ -77,7 +79,7 @@ def test_a_provider_the_machine_lacks_still_has_a_row():
         environ={}, secrets_loader=lambda name: "", cloud_session=None,
         local_probe=lambda host, port: False, cli_probe=lambda name: None)
     ids = {row["id"] for row in rows}
-    for family in ("openrouter", "cloud", "openai", "google", "lmstudio", "ollama",
+    for family in ("openrouter", "cloud", "openai", "google", "nvidia", "lmstudio", "ollama",
                    "claude-code", "codex", "gemini-cli", "opencode", "anthropic"):
         assert family in ids, family
     assert {record["id"] for record in model_router.provider_catalogue()} <= ids
@@ -121,6 +123,29 @@ def test_openai_and_google_route_directly_with_their_own_key():
     assert "max_completion_tokens" in openai_body and "temperature" not in openai_body
     # Sealed free OpenRouter requests keep their meaning.
     assert model_router.resolve_model_route("google/gemma-4-31b-it:free").family == "openrouter"
+
+
+def test_nvidia_routes_directly_with_its_own_key():
+    sent = []
+
+    def opener(request, timeout):
+        sent.append(request)
+        return _Answer({"model": "nvidia/nemotron-3-ultra-550b-a55b",
+                        "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]})
+
+    answer = model_router.route_chat(
+        "nvidia-api/nvidia/nemotron-3-ultra-550b-a55b",
+        [{"role": "user", "content": "hi"}],
+        opener=opener,
+        environ={},
+        secrets_loader=lambda name: REAL if name == "nvidia" else "",
+        cloud_session=None,
+    )
+    request = sent[-1]
+    assert answer["family"] == "nvidia"
+    assert request.full_url == "https://integrate.api.nvidia.com/v1/chat/completions"
+    assert request.get_header("Authorization") == "Bearer " + REAL
+    assert json.loads(request.data.decode("utf-8"))["model"] == "nvidia/nemotron-3-ultra-550b-a55b"
 
 
 def test_the_picker_offers_the_cheapest_text_models_read_from_the_vendor_lists():

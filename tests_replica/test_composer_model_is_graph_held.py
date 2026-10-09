@@ -191,7 +191,7 @@ def test_admitted_keyed_providers_are_listed_and_never_promise_an_unkeyed_openro
     assert "add an OpenRouter key" in by["anthropic"]["source"] and "reached through" not in by["anthropic"]["source"]
     assert by["google"]["state"] == "keyed" and by["google"]["source"] == "secrets store"
     assert by["openai"]["state"] == "no key"
-    assert "nvidia" not in by, "only providers the graph registry admits"
+    assert by["nvidia"]["state"] == "keyed" and by["nvidia"]["source"] == "secrets store"
     held["openrouter"] = "r-key-" + "r" * 30
     by = {row["id"]: row for row in model_router.provider_rows(environ={},
         secrets_loader=lambda name: held.get(name, ""), cloud_session=None, local_probe=lambda host, port: False)}

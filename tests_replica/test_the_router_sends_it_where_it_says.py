@@ -115,6 +115,20 @@ def test_a_byo_model_reaches_openrouter_with_the_key_from_the_environment():
     assert out["family"] == "openrouter" and out["key_source"] == "environment"
 
 
+def test_an_explicit_openrouter_free_model_keeps_its_vendor_id_and_zero_price_guard():
+    wire = _Wire({**_openai_answer("ok"), "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+                  "usage": {"cost": 0}})
+    out = route_chat("nvidia/nemotron-3-ultra-550b-a55b:free", ASK,
+                     opener=wire, environ={"OPENROUTER_API_KEY": "or-live-key"},
+                     secrets_loader=NO_SECRETS, cloud_session=None, free_only=True)
+    assert wire.url == OPENROUTER_CHAT
+    assert wire.header("Authorization") == "Bearer or-live-key"
+    assert wire.body["model"] == "nvidia/nemotron-3-ultra-550b-a55b:free"
+    assert wire.body["provider"]["allow_fallbacks"] is False
+    assert wire.body["provider"]["max_price"]["request"] == 0
+    assert out["family"] == "openrouter"
+
+
 def test_a_cloud_model_reaches_the_founders_cloud_with_his_session():
     wire = _Wire(_openai_answer("from the cloud"))
     out = route_chat("cloud/anthropic/claude-sonnet-5", ASK, opener=wire,

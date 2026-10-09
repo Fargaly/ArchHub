@@ -214,6 +214,7 @@ _ENV_VAR_MAP = {
     "anthropic": ["ANTHROPIC_API_KEY"],
     "openai":    ["OPENAI_API_KEY"],
     "google":    ["GOOGLE_API_KEY", "GOOGLE_GENERATIVEAI_API_KEY"],
+    "nvidia":    ["NVIDIA_API_KEY"],
 }
 
 # Per-call breadcrumb showing where the last loaded key came from.

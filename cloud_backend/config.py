@@ -128,7 +128,7 @@ GOOGLE_API_KEY    = _req("GOOGLE_API_KEY", "")
 NVIDIA_API_KEY    = _req("NVIDIA_API_KEY", "")
 NVIDIA_BASE_URL   = _req("NVIDIA_BASE_URL",
                          "https://integrate.api.nvidia.com/v1").strip().rstrip("/")
-NVIDIA_MODEL      = _req("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct").strip()
+NVIDIA_MODEL      = _req("NVIDIA_MODEL", "nvidia/nemotron-3-ultra-550b-a55b").strip()
 
 # ── OpenRouter (OpenAI-compatible) — the founder's FREE-FOR-ALL key ────
 # OpenRouter exposes a large pool of `:free` models behind ONE key. The
@@ -828,10 +828,10 @@ FREE_DEFAULT_ENABLED = _req("FREE_DEFAULT_ENABLED", "1").strip() in (
 # endpoint works: "groq" (default), "openrouter", "google", or "custom".
 FREE_PROVIDER = _req("FREE_PROVIDER", "nvidia").strip().lower()
 # The model id served for free. Sensible default per provider; override
-# with ARCHHUB_FREE_MODEL. NVIDIA NIM's Llama-3.3-70B is strong + free +
-# fast (founder steer #64); Groq's is the legacy fallback.
+# with ARCHHUB_FREE_MODEL. NVIDIA NIM is the preferred default when keyed;
+# Groq's is the legacy fallback.
 _FREE_MODEL_DEFAULTS = {
-    "nvidia":     "meta/llama-3.3-70b-instruct",
+    "nvidia":     "nvidia/nemotron-3-ultra-550b-a55b",
     "groq":       "llama-3.3-70b-versatile",
     # 2026-06-23: was meta-llama/llama-3.3-70b-instruct:free — that slug is no
     # longer free on OpenRouter (in-body 404). Point at a presently-free slug.

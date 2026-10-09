@@ -1047,3 +1047,88 @@ await hooks.dispose();
 '''.replace('MODULE',json.dumps(module))
     result=subprocess.run([shutil.which('node'),'--input-type=module'],input=code,text=True,capture_output=True,timeout=10)
     assert result.returncode==0,result.stderr
+
+
+def test_opencode_idle_offer_is_prompted_once_without_native_owner():
+    module = (Path(__file__).resolve().parents[1] / 'nodelang/session_link/opencode-governance.mjs').as_uri()
+    code = '''import assert from 'node:assert/strict';
+import {createOpenCodeGovernance} from MODULE;
+const prompts=[];
+const hooks=await createOpenCodeGovernance({gateRunner:{idle:async()=>null}})({directory:process.cwd(),client:{session:{prompt:async item=>prompts.push(item)}}});
+await hooks.event({event:{type:'session.message.completed',properties:{sessionID:'ses_idle',role:'assistant',channel:'final',message:{content:[{text:'Should I run the rest?'}]}}}});
+const event={type:'session.idle',properties:{sessionID:'ses_idle'}};
+await hooks.event({event});
+await hooks.event({event});
+assert.equal(prompts.length,1);
+assert.match(prompts[0].body.parts[0].text,/Continue the work instead of ending on a question/);
+await hooks.event({event:{type:'session.message.completed',properties:{sessionID:'ses_done',role:'assistant',channel:'final',message:{content:'PASS. Tests green.'}}}});
+await hooks.event({event:{type:'session.idle',properties:{sessionID:'ses_done'}}});
+await hooks.event({event:{type:'session.message.completed',properties:{sessionID:'ses_defer',role:'assistant',channel:'final',message:{content:'deferred: needs owner password. Do you want me to wait?'}}}});
+await hooks.event({event:{type:'session.idle',properties:{sessionID:'ses_defer'}}});
+assert.equal(prompts.length,1);
+'''.replace('MODULE',json.dumps(module))
+    result = subprocess.run([shutil.which('node'), '--input-type=module'], input=code, text=True,
+                            encoding='utf-8', capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr + result.stdout
+
+
+def test_opencode_local_idle_nudge_does_not_hide_later_owner_idle_check():
+    module = (Path(__file__).resolve().parents[1] / 'nodelang/session_link/opencode-governance.mjs').as_uri()
+    code = '''import assert from 'node:assert/strict';
+import {createOpenCodeGovernance} from MODULE;
+const prompts=[];const idleChecks=[];
+const hooks=await createOpenCodeGovernance({gateRunner:{idle:async session=>{idleChecks.push(session);return idleChecks.length===2?{reason:'owner has open Work'}:null;}}})({directory:process.cwd(),client:{session:{prompt:async item=>prompts.push(item)}}});
+await hooks.event({event:{type:'session.message.completed',properties:{sessionID:'ses_idle',role:'assistant',channel:'final',message:{content:'Should I run the rest?'}}}});
+const event={type:'session.idle',properties:{sessionID:'ses_idle'}};
+await hooks.event({event});
+await hooks.event({event});
+assert.deepEqual(idleChecks,['ses_idle','ses_idle']);
+assert.equal(prompts.length,2);
+assert.match(prompts[0].body.parts[0].text,/Continue the work instead of ending on a question/);
+assert.match(prompts[1].body.parts[0].text,/owner has open Work/);
+'''.replace('MODULE',json.dumps(module))
+    result = subprocess.run([shutil.which('node'), '--input-type=module'], input=code, text=True,
+                            encoding='utf-8', capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr + result.stdout
+
+
+def test_opencode_real_idle_shape_uses_retained_final_message_not_idle_properties():
+    module = (Path(__file__).resolve().parents[1] / 'nodelang/session_link/opencode-governance.mjs').as_uri()
+    code = '''import assert from 'node:assert/strict';
+import {createOpenCodeGovernance} from MODULE;
+const prompts=[];
+const hooks=await createOpenCodeGovernance({gateRunner:{idle:async()=>null}})({directory:process.cwd(),client:{session:{prompt:async item=>prompts.push(item)}}});
+await hooks.event({event:{type:'session.message.completed',properties:{sessionID:'ses_real',role:'assistant',channel:'final',message:{content:'Should I keep going?'}}}});
+await hooks.event({event:{type:'session.idle',properties:{sessionID:'ses_real'}}});
+assert.equal(prompts.length,1);
+await hooks.event({event:{type:'session.message.completed',properties:{sessionID:'ses_comment',role:'assistant',channel:'commentary',message:{content:'Should I run a command?'}}}});
+await hooks.event({event:{type:'session.idle',properties:{sessionID:'ses_comment'}}});
+assert.equal(prompts.length,1,'commentary is not final idle evidence');
+await hooks.event({event:{type:'session.message.completed',properties:{sessionID:'ses_queue',role:'assistant',channel:'final',message:{content:'adopted-not-installed: Desktop connector receipt'}}}});
+await hooks.event({event:{type:'session.idle',properties:{sessionID:'ses_queue'}}});
+assert.equal(prompts.length,2);
+assert.match(prompts[1].body.parts[0].text,/Resolve the local follow-up queue/);
+'''.replace('MODULE',json.dumps(module))
+    result = subprocess.run([shutil.which('node'), '--input-type=module'], input=code, text=True,
+                            encoding='utf-8', capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr + result.stdout
+
+
+def test_opencode_local_queue_requires_exact_followup_item_ids():
+    module = (Path(__file__).resolve().parents[1] / 'nodelang/session_link/opencode-governance.mjs').as_uri()
+    code = '''import assert from 'node:assert/strict';
+import {createOpenCodeGovernance} from MODULE;
+const prompts=[];
+const hooks=await createOpenCodeGovernance({gateRunner:{idle:async()=>null}})({directory:process.cwd(),client:{session:{prompt:async item=>prompts.push(item)}}});
+await hooks.event({event:{type:'session.message.completed',properties:{sessionID:'ses_queue',role:'assistant',channel:'final',message:{content:'FOLLOW-UP #1 re connector sent.\\nadopted-not-installed: Desktop connector receipt\\nsent-but-unanswered: Ping review reply'}}}});
+await hooks.event({event:{type:'session.idle',properties:{sessionID:'ses_queue'}}});
+assert.equal(prompts.length,1);
+assert.doesNotMatch(prompts[0].body.parts[0].text,/adopted-not-installed/);
+assert.match(prompts[0].body.parts[0].text,/sent-but-unanswered: Ping review reply/);
+await hooks.event({event:{type:'session.message.completed',properties:{sessionID:'ses_done',role:'assistant',channel:'final',message:{content:'FOLLOW-UP #1 re connector sent.\\nFOLLOW-UP #2 re ping sent.\\nadopted-not-installed: Desktop connector receipt\\nsent-but-unanswered: Ping review reply'}}}});
+await hooks.event({event:{type:'session.idle',properties:{sessionID:'ses_done'}}});
+assert.equal(prompts.length,1);
+'''.replace('MODULE',json.dumps(module))
+    result = subprocess.run([shutil.which('node'), '--input-type=module'], input=code, text=True,
+                            encoding='utf-8', capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr + result.stdout

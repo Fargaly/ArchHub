@@ -14,6 +14,12 @@ const nativeTools = new Set(['archhub_work','archhub_message']);
 // Only these tools' effects are fully accounted by the owner's permit/receipt
 // ledger (reads have none; write/edit hold a permit until receipted).
 const stringify = value => JSON.stringify(value, (_key,item)=>object(item)?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
+const localIdleAsk = /(want me to|should i|do you want|let me know if|تحب|عايزني)/iu;
+const localIdleDeferred = /\bdeferred:\s*needs\s+\S+/iu;
+const localIdleFollowed = /\bFOLLOW-UP\s+#?(\d+)\b/giu;
+const localQueue = /^\s*(sent-but-unanswered|adopted-not-installed)\s*:\s*(.+?)\s*$/gimu;
+const localIdleReason = 'Continue the work instead of ending on a question or offer. If blocked, state the exact deferred need as "deferred: needs <thing>".';
+const localQueueReason = items => 'Resolve the local follow-up queue before ending: '+items.slice(0,8).join('; ')+'. Follow it up or write "deferred: needs <thing>".';
 const toolClassification = new Map([
  ...[...readTools].map(tool=>[tool,'read']),
  ['write','write'],['edit','write'],
@@ -90,6 +96,56 @@ function mappedMcpTool(tool) {
 
 function isReadTool(tool) {
  return toolClass(tool)==='read';
+}
+
+function textOf(value, depth=0) {
+ if(depth>4||value==null)return '';
+ if(typeof value==='string')return value;
+ if(Array.isArray(value))return value.map(item=>textOf(item,depth+1)).filter(Boolean).join(' ');
+ if(object(value)){
+  for(const key of ['assistantText','text','content','message','parts']){
+   const text=textOf(value[key],depth+1);
+   if(text)return text;
+  }
+ }
+ return '';
+}
+
+function localIdleDecision(text) {
+ if(typeof text!=='string')return null;
+ const stripped=text.trim();
+ if(!stripped)return null;
+ localQueue.lastIndex=0;
+ const queued=[...stripped.matchAll(localQueue)].map((match,index)=>({id:String(index+1),text:match[1]+': '+match[2]}));
+ if(queued.length){
+  localIdleFollowed.lastIndex=0;
+  const followed=new Set([...stripped.matchAll(localIdleFollowed)].map(match=>match[1]));
+  const remaining=queued.filter(item=>!followed.has(item.id)).map(item=>item.text);
+  if(remaining.length)return {decision:'block',reason:localQueueReason(remaining)};
+  return null;
+ }
+ if(localIdleDeferred.test(stripped))return null;
+ return stripped.endsWith('?')||stripped.endsWith('؟')||localIdleAsk.test(stripped)?{decision:'block',reason:localIdleReason}:null;
+}
+
+function sessionOf(properties) {
+ const session=properties?.sessionID ?? properties?.sessionId ?? properties?.session?.id ?? properties?.path?.id;
+ return typeof session==='string'&&/^ses_[A-Za-z0-9]+$/.test(session)?session:null;
+}
+
+function messageEvidence(event) {
+ const p=event?.properties;
+ const session=sessionOf(p);
+ if(!session)return null;
+ const body=p?.message ?? p?.item ?? p;
+ const role=p?.role ?? body?.role ?? body?.message?.role;
+ const channel=p?.channel ?? body?.channel ?? body?.message?.channel ?? 'final';
+ if(role==='assistant'&&channel==='final'&&/message|assistant|response|turn/.test(String(event.type||''))&&/complete|completed|finish|finished|message/.test(String(event.type||''))){
+  const text=textOf(body);
+  return text?{session,role,text}:null;
+ }
+ if(role==='user'||role==='human')return {session,role:'user',text:''};
+ return null;
 }
 
 // The private installed loader supplies the existing admitted gate command.
@@ -373,10 +429,10 @@ function normalized(tool,args) {
 export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expectedSessions,selectedWorks={},workToolFactory,sessionLink,laneFolders={},readStaleMs=60000}) {
  const invoke=gateRunner||createNativeGateRunner(gateCommand,gateArgs,{expectedSessions,selectedWorks,sessionLink,laneFolders});
  // Retained for all workspaces in this loaded plugin; never clear on idle/error.
- const pending=new Map();
- // Sessions re-prompted once for open Work; their next idle passes (OpenCode's
- // stop_hook_active). Shared across workspaces of this loaded plugin.
- const nudged=new Set(),checking=new Set();
+  const pending=new Map();
+  // Local and native idle nudges are independent; local transcript prompts must
+  // not hide a later live-owner open-Work check.
+  const localNudged=new Set(),nativeNudged=new Set(),checking=new Set(),lastAssistant=new Map();
  return async ({directory,client})=>{
   if(!path.isAbsolute(directory))fail('native workspace unavailable');
   const identity=input=>{
@@ -412,22 +468,40 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
     }),
    }}:{}),
    dispose:async()=>{if(pending.size)fail('native receipts remain unresolved');await invoke.close?.();},
-   // No idle turn end with open Work: OpenCode cannot block a stop, so a session that
-   // goes idle with open Work is prompted once to continue; its next idle passes.
-   event:async({event})=>{
-    if(event?.type!=='session.idle'||typeof invoke.idle!=='function')return;
-    const session=event.properties?.sessionID;
-    if(typeof session!=='string'||!/^ses_[A-Za-z0-9]+$/.test(session))return;
-    if(nudged.delete(session)||checking.has(session))return;
-    // Concurrent idles of one session send a single prompt.
+    // No idle turn end with open Work: OpenCode cannot block a stop, so a session that
+    // goes idle with open Work is prompted once to continue; its next idle passes.
+    event:async({event})=>{
+     const seen=messageEvidence(event);
+     if(seen?.role==='assistant'){
+      lastAssistant.set(seen.session,seen.text);
+      localNudged.delete(seen.session);
+      nativeNudged.delete(seen.session);
+     }else if(seen?.role==='user'){
+      lastAssistant.delete(seen.session);
+      localNudged.delete(seen.session);
+      nativeNudged.delete(seen.session);
+     }
+     if(event?.type!=='session.idle')return;
+    const session=sessionOf(event.properties);
+    if(!session)return;
+    if(checking.has(session))return;
+    const local=localIdleDecision(lastAssistant.get(session));
+    let verdict=null;
     checking.add(session);
     try{
-     const verdict=await invoke.idle(session,directory);
-     if(!verdict||!client?.session?.prompt)return;
-     nudged.add(session);
+     if(typeof invoke.idle==='function')verdict=await invoke.idle(session,directory);
+    }finally{checking.delete(session);}
+    if(verdict&&client?.session?.prompt&&!nativeNudged.has(session)){
+     nativeNudged.add(session);
      await client.session.prompt({path:{id:session},query:{directory},body:{parts:[{type:'text',
       text:verdict.reason.slice(0,4000)+' (ArchHub: this session still has open Work; continue it. This reminder is sent once per turn.)'}]}});
-    }finally{checking.delete(session);}
+     return;
+    }
+    if(local&&client?.session?.prompt&&!localNudged.has(session)){
+     localNudged.add(session);
+     await client.session.prompt({path:{id:session},query:{directory},body:{parts:[{type:'text',
+      text:local.reason.slice(0,4000)}]}});
+    }
    },
    'tool.execute.before':async(input,output)=>{
     const key=identity(input);

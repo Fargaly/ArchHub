@@ -31,6 +31,7 @@ _NATIVE_IDS = {
     "gemini": ("GEMINI_SESSION_ID",),
     "opencode": ("OPENCODE_SESSION_ID",),
 }
+_SELECTED_SESSION = "ARCHHUB_COORDINATION_SESSION"
 _RUNTIME_NAMES = {name + suffix: name for name in _NATIVE_IDS
                   for suffix in ("", ".exe", ".cmd")}
 _RUNTIME_NAMES.update({"claude-code" + suffix: "claude"
@@ -146,6 +147,11 @@ def resolve_native_agent_identity(environment=None) -> NativeAgentIdentity:
     selected_runtime = _runtime(explicit_runtime) if explicit_runtime else (_runtime(vendor) if vendor else None)
     if vendor and selected_runtime != _runtime(vendor):
         raise ValueError("native agent runtime identities conflict")
+    selected_session = _environment_text(env, _SELECTED_SESSION)
+    if selected_session is not None and not selected_session:
+        raise ValueError("native agent selector session is empty")
+    if selected_session is not None:
+        raise ValueError("coordination session selection requires live owner proof")
     candidates = []
     for runtime, fields in _NATIVE_IDS.items():
         # A child harness may inherit its parent's native environment. Only a

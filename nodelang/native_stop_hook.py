@@ -797,6 +797,105 @@ def _transcript_tail(path, limit=_FOLLOWUP_TAIL_BYTES):
             yield entry
 
 
+_LOCAL_IDLE_ASK = re.compile(r'(want me to|should i|do you want|let me know if|تحب|عايزني)', re.IGNORECASE)
+_LOCAL_IDLE_DEFERRED = re.compile(r'\bdeferred:\s*needs\s+\S+', re.IGNORECASE)
+_LOCAL_IDLE_FOLLOWED = re.compile(r'\bFOLLOW-UP\s+#?(\d+)\b', re.IGNORECASE)
+_LOCAL_IDLE_STOP = re.compile(r'(?<![A-Za-z])(STOP|PAUSE|HOLD)(?![A-Za-z])', re.IGNORECASE)
+_LOCAL_QUEUE = re.compile(r'(?im)^\s*(sent-but-unanswered|adopted-not-installed)\s*:\s*(.+?)\s*$')
+_LOCAL_IDLE_REASON = ('Continue the work instead of ending on a question or offer. '
+                      'If blocked, state the exact deferred need as "deferred: needs <thing>".')
+_LOCAL_QUEUE_REASON = ('Resolve the local follow-up queue before ending: %s. '
+                       'Follow it up or write "deferred: needs <thing>".')
+
+
+def _text_parts(value):
+    if type(value) is str:
+        yield value
+        return
+    if isinstance(value, list):
+        for item in value:
+            if type(item) is str:
+                yield item
+            elif type(item) is dict:
+                text = item.get('text')
+                if type(text) is str:
+                    yield text
+
+
+def _entry_human_text(entry):
+    if entry.get('type') != 'user':
+        return None
+    content = (entry.get('message') or {}).get('content')
+    if isinstance(content, list) and any(type(item) is dict and item.get('type') == 'tool_result'
+                                        for item in content):
+        return None
+    text = ' '.join(part for part in _text_parts(content) if part.strip())
+    return text or None
+
+
+def _entry_assistant_text(entry):
+    content = (entry.get('message') or {}).get('content')
+    if entry.get('type') == 'assistant':
+        text = ' '.join(part for part in _text_parts(content) if part.strip())
+        return text or None
+    if entry.get('type') in _CODEX_ENTRY_TYPES and type(entry.get('payload')) is dict:
+        payload = entry['payload']
+        if payload.get('role') == 'assistant' and payload.get('channel', 'final') == 'final':
+            text = ' '.join(part for part in _text_parts(payload.get('content')) if part.strip())
+            if text:
+                return text
+        item = payload.get('item') if type(payload.get('item')) is dict else None
+        if item and item.get('role') == 'assistant' and item.get('channel', 'final') == 'final':
+            text = ' '.join(part for part in _text_parts(item.get('content')) if part.strip())
+            if text:
+                return text
+    return None
+
+
+def _last_assistant_text(entries):
+    text = None
+    for entry in entries:
+        human = _entry_human_text(entry)
+        if human is not None:
+            if _LOCAL_IDLE_STOP.search(human):
+                return None
+            text = None
+            continue
+        current = _entry_assistant_text(entry)
+        if current:
+            text = current
+    return text
+
+
+def local_idle_stop_decision(payload, vendor):
+    """Transcript-only idle guard: ending on a question/offer is still live work."""
+    if payload.get('stop_hook_active') is True:
+        return None
+    path = payload.get('transcript_path')
+    if type(path) is not str or not Path(path).is_file():
+        return None
+    canonical_runtime(vendor)
+    text = _last_assistant_text(_transcript_tail(path))
+    if type(text) is not str:
+        return None
+    stripped = text.strip()
+    if not stripped:
+        return None
+    queued = [(str(index + 1), ': '.join(match))
+              for index, match in enumerate(_LOCAL_QUEUE.findall(stripped))]
+    if queued:
+        followed = {match.group(1) for match in _LOCAL_IDLE_FOLLOWED.finditer(stripped)}
+        remaining = [text for item_id, text in queued if item_id not in followed]
+        if remaining:
+            return {'decision': 'block', 'reason': _LOCAL_QUEUE_REASON % '; '.join(remaining[:8])}
+        return None
+    if _LOCAL_IDLE_DEFERRED.search(stripped):
+        return None
+    if stripped.endswith(('?', '؟')) or _LOCAL_IDLE_ASK.search(stripped):
+        return {'decision': 'block', 'reason': _LOCAL_IDLE_REASON}
+    return None
+
+
 def _peer_key(value):
     address = _address(value)
     if address is None:
@@ -1229,6 +1328,13 @@ def main():
         result=query_stop(payload,vendor=args.vendor)
     except Exception:
         result=_ending_turn(UNAVAILABLE)
+    if type(payload) is dict:
+        try:
+            decision=local_idle_stop_decision(payload,args.vendor)
+            if decision is not None:
+                result=decision
+        except Exception:
+            pass
     if type(payload) is dict and result==_ending_turn(UNAVAILABLE):
         try:
             decision=no_idle_decision(payload,args.vendor)

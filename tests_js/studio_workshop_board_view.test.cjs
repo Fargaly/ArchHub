@@ -161,3 +161,10 @@ test('Workshop header exposes design-first Chat, Tasks, routed Router, Relay and
   assert.match(source, /readCloudPublishConsent|setCloudPublishConsent|WorkshopRelayTab|Relay on\/off/);
   assert.match(source, /ARCHHUB_LOAD_SKILLS/);
 });
+
+test('gate row l: no agent card or linked panel shows "not projected" or an empty "may:"', async () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'nodelang', 'studio', 'workshop-board.jsx'), 'utf8');
+  assert.doesNotMatch(src, /'not projected'/);
+  const ws = require('fs').readFileSync(require('path').join(__dirname, '..', 'nodelang', 'studio', 'studio-workshop.jsx'), 'utf8');
+  assert.doesNotMatch(ws, /v="not projected"/);
+});

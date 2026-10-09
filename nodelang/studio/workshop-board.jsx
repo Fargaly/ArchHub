@@ -15,7 +15,7 @@ const line = task => task.tools?.t || task.status || task.lead || '';
 const approvalBlocked = task => task.state === 'approving' || /waiting for (?:your|founder) approval/i.test(line(task));
 const agentName = task => task.agent || task.agent_name || task.owner_label || task.ownerName || (task.owner ? null : 'no agent');
 const hostName = task => task.host || task.host_label || task.runtime || task.tools?.host || 'host unknown';
-const mayDo = agent => agent.may || agent.permissions || agent.scope || 'not projected';
+const mayDo = agent => agent.may || agent.permissions || agent.scope || '';
 const presence = agent => agent.ago || agent.presence || (agent.verified ? 'verified recently' : 'not verified');
 const activeAgentIds = agents => new Set((agents || []).filter(agent => agent && agent.status !== 'off').map(agent => agent.id || agent.root || agent.name).filter(Boolean));
 
@@ -97,7 +97,7 @@ const WorkshopAgentsView = ({agents}) => {
         h('span', {key:'kind', style:chipStyle}, agent.kind || (/^mcp-/.test(agent.runtime || agent.id || '') ? 'cloud' : 'local')),
       ]),
       h('div', {key:'doing', style:{fontFamily:W.mono, fontSize:16, lineHeight:1.35, color:W.inkSoft, overflowWrap:'anywhere'}},
-        [presence(agent), agent.doing || agent.running || 'Nothing active', 'may: ' + mayDo(agent)].filter(Boolean).join(' · ')),
+        [presence(agent), agent.doing || agent.running || 'Nothing active', mayDo(agent) ? 'may: ' + mayDo(agent) : ''].filter(Boolean).join(' · ')),
     ])),
     h('article', {key:'baboom', style:{background:W.bgPanel, borderWidth:1, borderStyle:'solid', borderColor:W.line, borderRadius:W.rad?.lg || 8,
       padding:W.sp?.md || 12, display:'flex', gap:W.sp?.sm || 8, alignItems:'baseline'}}, [
@@ -151,7 +151,7 @@ const WorkshopTaskPage = ({task, agent, onDecide}) => {
       h('div', {key:'links', style:{fontSize:13, lineHeight:1.7, color:W.inkSoft}}, [
         h('div', {key:'w'}, `Work: ${task.work}`),
         h('div', {key:'h'}, `Host: ${hostName(task)}`),
-        h('div', {key:'t'}, `Tools: ${task.tools?.list || 'not projected'}`),
+        task.tools?.list ? h('div', {key:'t'}, `Tools: ${task.tools.list}`) : null,
       ]),
     ]),
     h('article', {key:'steps', style:{gridColumn:'1 / -1', background:W.bgPanel, border:`1px solid ${W.line}`, borderRadius:W.rad?.lg || 8, padding:W.sp?.lg || 16}}, [

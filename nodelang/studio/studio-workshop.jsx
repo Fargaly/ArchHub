@@ -1136,7 +1136,6 @@ const ContextPanel = ({ selAgent, selTask, tasks, agent, descriptor, activity, a
             <PRow k="gate" v={asks.gate} last/>
           </> : facts ? <>
             <PRow k="read" v={facts.attached === false ? 'history only · detached' : 'this Workshop'}/>
-            <PRow k="write" v="not projected" c={W.inkMuted}/>
             <PRow k="gate" v={wsLinkStatus(facts) || 'no Session Link channel'} last/>
           </> : <div style={{ fontSize:11.5, lineHeight:1.5, color:W.inkSoft }}>No participant is named for this selection, so no permission is projected.</div>}
         </div>

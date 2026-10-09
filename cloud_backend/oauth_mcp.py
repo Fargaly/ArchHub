@@ -139,9 +139,21 @@ CREATE TABLE IF NOT EXISTS oauth_families (
 '''
 
 
+EMAIL_LINK_SCHEMA = """
+CREATE TABLE IF NOT EXISTS oauth_email_links (
+    token_hash TEXT PRIMARY KEY,
+    pending_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+);
+"""
+EMAIL_LINK_TTL = 15 * 60
+
+
 def _ensure() -> None:
     with db.connect() as con:
         con.executescript(SCHEMA)
+        con.executescript(EMAIL_LINK_SCHEMA)
         # A table made before these columns existed gains them.
         _add_column(con, 'network', "network TEXT NOT NULL DEFAULT '-'")
         _add_column(con, 'lane', "lane TEXT NOT NULL DEFAULT ''")
@@ -590,9 +602,75 @@ def _consent_page(client: dict, redirect_uri: str, pending: str, csrf: str,
         '%s<form method=post action="/oauth/consent">'
         '<input type=hidden name=pending value="%s"><input type=hidden name=csrf value="%s">'
         '<button name=decision value=approve>Approve</button> '
-        '<button name=decision value=deny>Deny</button></form></body>'
-    ) % (name, host, workshop, html.escape(pending), html.escape(csrf))
+        '<button name=decision value=deny>Deny</button>%s</form></body>'
+    ) % (name, host, workshop, html.escape(pending), html.escape(csrf), _email_option())
     return HTMLResponse(body, headers={**_PAGE_HEADERS, 'Content-Security-Policy': _page_policy(redirect_uri)})
+
+
+def _email_option() -> str:
+    """The owner can approve by an emailed link instead of Google; only when an owner exists."""
+    if not config.founder_emails():
+        return ''
+    return ('<p style="margin-top:1.5rem;color:#555">The ArchHub owner can approve with a sign-in link '
+            'sent to the owner\'s email instead of Google. Open the link in this same browser.</p>'
+            '<button name=decision value=email>Approve: email the owner a sign-in link</button>')
+
+
+def _link_minutes(pending_id: str) -> tuple:
+    """A link lives no longer than the request it finishes: (expires_at, whole minutes left)."""
+    now = int(time.time())
+    with db.connect() as con:
+        row = con.execute('SELECT expires_at FROM oauth_pending WHERE id = ?', (pending_id,)).fetchone()
+    expires = min(now + EMAIL_LINK_TTL, int(row['expires_at']) if row else now)
+    return expires, max(0, (expires - now) // 60)
+
+
+def _send_owner_links(pending_id: str) -> int:
+    """One single-use link per owner address, each bound to this request. Returns how many were sent."""
+    import asyncio
+    import email_sender
+    sent = 0
+    expires, minutes = _link_minutes(pending_id)
+    if minutes < 1:
+        return 0
+    for address in sorted(config.founder_emails()):
+        token = secrets.token_urlsafe(32)
+        with db.connect() as con:
+            con.execute('INSERT INTO oauth_email_links VALUES (?, ?, ?, ?)',
+                        (_hash(token), pending_id, address, expires))
+        link = issuer() + '/oauth/email-link?' + urllib.parse.urlencode({'t': token})
+        body = ('<p>Someone asked to connect an application to your ArchHub. If that was you, '
+                'open this link in the same browser within %d minutes:</p>'
+                '<p><a href="%s">Approve the sign-in</a></p>'
+                '<p>If it was not you, ignore this email; nothing is connected.</p>') % (minutes, html.escape(link))
+        text = ('Someone asked to connect an application to your ArchHub. If that was you, open this '
+                'link in the same browser within %d minutes:\n%s\n\nIf it was not you, ignore this email.' % (minutes, link))
+        if asyncio.run(email_sender._send(to=address, subject='Approve the ArchHub sign-in',
+                                          text=text, html=email_sender._wrap(body))):
+            sent += 1
+    return sent
+
+
+@router.get('/oauth/email-link')
+def email_link(request: Request, t: str = ''):
+    """The owner opened the emailed link: the inbox proved the address; finish like Google would."""
+    _ensure()
+    with db.connect() as con:
+        row = con.execute('SELECT * FROM oauth_email_links WHERE token_hash = ?', (_hash(t or ''),)).fetchone() \
+            if t else None
+        # One use only: every link for this request is spent the moment one is opened.
+        if row is not None:
+            con.execute('DELETE FROM oauth_email_links WHERE pending_id = ?', (row['pending_id'],))
+    if row is None or int(row['expires_at']) < int(time.time()):
+        return _error('invalid_request', 'this sign-in link is unknown, used or expired')
+    if str(row['email']).strip().lower() not in config.founder_emails():
+        return _error('access_denied', 'this address no longer owns this ArchHub', 403)
+    try:
+        url = google_verified(row['pending_id'], str(row['email']).strip().lower(),
+                              consent_cookie=request.cookies.get(CONSENT_COOKIE, ''))
+    except ValueError:
+        return _error('invalid_request', 'open the link in the browser that approved the application')
+    return RedirectResponse(url, status_code=302, headers={'Referrer-Policy': 'no-referrer'})
 
 
 @router.post('/oauth/consent')
@@ -609,7 +687,7 @@ def consent(request: Request, pending: str = Form(''), csrf: str = Form(''), dec
                 or not browser or not hmac.compare_digest(grant['browser_hash'], _hash(browser))):
             return _error('invalid_request', 'this authorization request is unknown, expired, already decided '
                                              'or was not opened in this browser')
-        if decision != 'approve':
+        if decision not in ('approve', 'email') or (decision == 'email' and not config.founder_emails()):
             con.execute('DELETE FROM oauth_pending WHERE id = ?', (pending,))
             return RedirectResponse(_client_url(grant['redirect_uri'], error='access_denied',
                                                 state=grant['state'], iss=issuer()), status_code=302)
@@ -617,6 +695,15 @@ def consent(request: Request, pending: str = Form(''), csrf: str = Form(''), dec
                             (pending,)).rowcount
     if not taken:
         return _error('invalid_request', 'this authorization request was already decided')
+    if decision == 'email':
+        if not _send_owner_links(pending):
+            return _error('temporarily_unavailable', 'the sign-in email could not be sent', 503)
+        return HTMLResponse(
+            '<!doctype html><meta charset=utf-8><title>Check your email</title>'
+            '<body style="font-family:system-ui,sans-serif;max-width:34rem;margin:3rem auto;padding:0 1rem">'
+            '<h1 style="font-size:1.3rem">Check your email</h1><p>A sign-in link was sent to the '
+            'ArchHub owner\'s address. Open it in this browser within %d minutes.</p></body>'
+            % _link_minutes(pending)[1], headers=_PAGE_HEADERS)
     try:
         url = google_auth.build_authorization_url(mcp_grant=pending)
     except google_auth.GoogleLoginUnconfigured:

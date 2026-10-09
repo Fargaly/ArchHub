@@ -7263,6 +7263,7 @@ const workspaceSlug = path => String(path || '').replace(/[\\/]+$/, '').split(/[
   .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63);
 async function workspaceRoots(body, renewed) {
   const s = window.__archhubSession || {};
+  const isRead = body?.action === 'list';
   const response = await fetch('/api/universal/workspace-roots', {
     method:'POST',
     headers:{ 'Content-Type':'application/json', 'X-ArchHub-Session':s.token || '', 'X-ArchHub-CSRF':s.csrf || '' },
@@ -7272,7 +7273,7 @@ async function workspaceRoots(body, renewed) {
   // replaced once by a fresh sign-in; a second refusal is shown as it is.
   if (response.status === 403 && !renewed && typeof window.__archhubRenewSession === 'function') {
     await window.__archhubRenewSession();
-    return workspaceRoots(body, true);
+    if (isRead) return workspaceRoots(body, true);
   }
   let data = null;
   try { data = await response.json(); } catch (e) {}

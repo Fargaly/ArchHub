@@ -1809,17 +1809,18 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     // shared with every other service on this host, port regardless.
     const sessionToken=window.__archhubSession?.token;
     if (sessionToken) requestHeaders['X-ArchHub-Session']=sessionToken;
+    const method=path.endsWith('/canvas') ? 'GET' : 'POST';
     const response = await fetch(path, {
-      method:path.endsWith('/canvas') ? 'GET' : 'POST',
+      method,
       headers:requestHeaders,
       credentials:'same-origin',
-      body:path.endsWith('/canvas') ? undefined : JSON.stringify(payload),
+      body:method === 'GET' ? undefined : JSON.stringify(payload),
     });
     const result = await response.json();
     if (!response.ok || !result.ok) {
       if (!renewed && sessionHasLapsed(response,result)) {
         await renewBrowserSession();
-        return performUniversalFetch(path,payload,true);
+        if (method === 'GET') return performUniversalFetch(path,payload,true);
       }
       const error=new Error(result.error || 'Universal graph request failed');
       error.code=typeof result.code === 'string' ? result.code : '';

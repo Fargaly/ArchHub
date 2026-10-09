@@ -479,12 +479,46 @@
     // The probe below proves the held token only (a read needs no CSRF), so a held
     // pair without its CSRF is never kept, and a CSRF refusal later signs in again.
     if (session && !(session.token && session.csrf)) session = null;
+    // Browser sessions expire (about an hour). Every Studio call that the server refuses
+    // with an expired/drifted session is signed in again once and retried, instead of
+    // surfacing "browser session expired or not yet valid" and leaving the app dead.
+    const rawFetch = global.fetch.bind(global);
+    let renewing = null;
+    const sessionRefusal = /browser session|session lease|credential digest|browser-session/i;
+    global.fetch = async (input, init) => {
+      const response = await rawFetch(input, init);
+      const url = typeof input === 'string' ? input : (input && input.url) || '';
+      const given = (init && init.headers) || {};
+      const headersIn = {};
+      if (typeof given.forEach === 'function' && !Array.isArray(given)) given.forEach((v, k) => { headersIn[k] = v; });
+      else Object.assign(headersIn, Array.isArray(given) ? Object.fromEntries(given) : given);
+      const headerGet = name => { const k = Object.keys(headersIn).find(x => x.toLowerCase() === name.toLowerCase()); return k ? headersIn[k] : null; };
+      const headerSet = (name, value) => { Object.keys(headersIn).filter(x => x.toLowerCase() === name.toLowerCase()).forEach(x => delete headersIn[x]); headersIn[name] = value; };
+      if (response.status !== 403 || !/\/api\//.test(url) || headerGet('X-ArchHub-Sign-In')) return response;
+      let text = '';
+      try { text = await response.clone().text(); } catch (_) {}
+      if (!sessionRefusal.test(text)) return response;
+      try {
+        renewing = renewing || signIn().finally(() => { renewing = null; });
+        await renewing;
+      } catch (_) { return response; }
+      // Only reads are retried. A refused write is never replayed (it may have had an
+      // effect before a later binding check failed); the session is renewed so the
+      // user's next attempt succeeds.
+      const method = String((init && init.method) || (typeof input !== 'string' && input && input.method) || 'GET').toUpperCase();
+      if (method !== 'GET' && method !== 'HEAD') return response;
+      headerSet('X-ArchHub-Session', session?.token || '');
+      headerSet('X-ArchHub-CSRF', session?.csrf || '');
+      const meta = global.document && global.document.querySelector('meta[name="archhub-csrf"]');
+      if (meta && session?.csrf) meta.content = session.csrf;
+      return rawFetch(input, {...(init || {}), headers: headersIn});
+    };
     if (session) {
-      const probe = await global.fetch('/api/universal/canvas', {headers: headers()});
+      const probe = await rawFetch('/api/universal/canvas', {headers: headers()});
       if (!probe.ok) session = null;
     }
     async function signIn() {
-      const response = await global.fetch('/api/universal/session', {method: 'POST',
+      const response = await rawFetch('/api/universal/session', {method: 'POST',
         headers: {'Content-Type': 'application/json', 'X-ArchHub-Sign-In': '1',
           'X-ArchHub-Canvas-Key': descriptor.canvas_key}, body: '{}'});
       if (!response.ok) fail('Studio sign-in was refused. Reopen the application from its launcher.');

@@ -171,6 +171,24 @@ test('a refused session (CSRF drift) signs in again once and the read succeeds',
   } finally { ui.close(); }
 });
 
+test('a refused session renews once but does not replay a workspace write', async () => {
+  const ui = await mount([view('missing', 'missing'), {refused:'browser CSRF digest drifted'}, view('missing', 'missing', ['beta'])]);
+  try {
+    await ui.settle();
+    ui.typePath('D:\\Clients\\beta');
+    await ui.settle();
+    ui.click(ui.button('Add'));
+    await ui.settle(80);
+    assert.equal(ui.renewals.length, 1, 'one fresh sign-in prepares the next user attempt');
+    assert.deepEqual(ui.requests.map(item => item.action), ['list', 'register']);
+    assert.ok(ui.doc.body.textContent.includes('browser CSRF digest drifted'), 'the refused write is shown once');
+    ui.click(ui.button('Add'));
+    await ui.settle(80);
+    assert.deepEqual(ui.requests.map(item => item.action), ['list', 'register', 'register']);
+    assert.ok(ui.button('Remove'), 'the user retry succeeds with the renewed session');
+  } finally { ui.close(); }
+});
+
 test('a second refusal after renewal is shown, never retried forever', async () => {
   const ui = await mount([{refused:'browser CSRF digest drifted'}, {refused:'browser CSRF digest drifted'}]);
   try {

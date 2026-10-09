@@ -2029,15 +2029,20 @@
         const result = await post('/api/universal/workshop-native', {action:'read_work_proposals', root,
           scope:stamp.scope, request_id:requestId, data_class:'public-text', message_ids:ids});
         const bound = result?.bound;
+        const declined = result?.declined;
         if (!result || result.ok !== true || result.root !== root || result.scope !== stamp.scope ||
             result.request_id !== requestId || result.owner !== held.owner || !revision(result.revision) ||
             !bound || typeof bound !== 'object' || Array.isArray(bound) ||
+            !declined || typeof declined !== 'object' || Array.isArray(declined) ||
             Object.keys(bound).sort().join('\n') !== [...ids].sort().join('\n') ||
-            Object.values(bound).some(work => work !== null && !text(work))) {
+            Object.keys(declined).sort().join('\n') !== [...ids].sort().join('\n') ||
+            Object.values(bound).some(work => work !== null && !text(work)) ||
+            Object.entries(declined).some(([id, row]) => row !== null && (!row || row.state !== 'declined' ||
+              row.message_id !== id || !/^[a-f0-9]{64}$/.test(row.digest || '') || !text(row.actor) || !text(row.declined_at)))) {
           fail('Which proposals are already bound could not be verified.');
         }
         if (!current(stamp, root) || nativeWork !== held) fail('Workshop changed while reading the proposals.');
-        return {rows:rows.map(row => ({...row, work_root:bound[row.message_id]})), revision:result.revision};
+        return {rows:rows.map(row => ({...row, work_root:bound[row.message_id], declined:declined[row.message_id]})), revision:result.revision};
       },
       // The founder's one action: bind exactly the checked proposals, as shown.
       async bindWorkProposals(root, chosen) {
@@ -2061,6 +2066,30 @@
               row.digest !== proposals[index].digest || !text(row.work_root) || !text(row.proposer) ||
               row.external_key !== 'proposal:' + row.message_id || !text(row.authorization))) {
           fail('The bind was not confirmed. Read the proposals again to see which are bound.');
+        }
+        return result;
+      },
+      async declineWorkProposals(root, chosen) {
+        const stamp = stampFor(root), held = nativeWork;
+        if (!held || held.root !== root || held.scope !== stamp.scope) fail('Read this Workshop operation status first.');
+        if (!Array.isArray(chosen) || !chosen.length || chosen.length > 16 ||
+            new Set(chosen.map(row => row?.message_id)).size !== chosen.length ||
+            chosen.some(row => !row || !text(row.message_id) || !Number.isSafeInteger(row.sequence) ||
+              row.sequence < 1 || !/^[a-f0-9]{64}$/.test(row.digest) || row.work_root || row.declined || row.problem)) {
+          fail('Choose 1 to 16 unbound, pending proposals to decline.');
+        }
+        const proposals = chosen.map(row => ({message_id:row.message_id, sequence:row.sequence, digest:row.digest}));
+        const requestId = 'proposals-decline-' + uuid().replaceAll('-', '');
+        const result = await post('/api/universal/workshop-native', {action:'decline_work_proposals', root,
+          scope:stamp.scope, request_id:requestId, data_class:'public-text', proposals});
+        const declined = result?.declined;
+        if (!result || result.ok !== true || result.root !== root || result.scope !== stamp.scope ||
+            result.request_id !== requestId || result.owner !== held.owner || !revision(result.revision) ||
+            !Array.isArray(declined) || declined.length !== proposals.length ||
+            declined.some((row, index) => !row || row.message_id !== proposals[index].message_id ||
+              row.digest !== proposals[index].digest || row.state !== 'declined' ||
+              !text(row.actor) || !text(row.declined_at))) {
+          fail('The decline was not confirmed. Read the proposals again to see which are pending.');
         }
         return result;
       },

@@ -48,7 +48,9 @@ const MESSAGES = [
 function application(request, bound) {
   if (request.action === 'read_work_proposals') {
     return {ok:true, root:request.root, scope:request.scope, request_id:request.request_id, owner:'founder',
-      revision:2, bound:Object.fromEntries(request.message_ids.map(id => [id, bound[id] || null]))};
+      revision:2,
+      bound:Object.fromEntries(request.message_ids.map(id => [id, bound[id] || null])),
+      declined:Object.fromEntries(request.message_ids.map(id => [id, null]))};
   }
   assert.equal(request.action, 'bind_work_proposals');
   return {ok:true, root:request.root, scope:request.scope, request_id:request.request_id, owner:'founder', revision:3,

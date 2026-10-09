@@ -6063,6 +6063,7 @@ class ApplicationServer:
             "expires_at": 0.0,
             "count": None,
         }
+        self._baboom_pending_approvals_event_count = None
         self._baboom_pending_approvals_refreshing = False
         self._canvas_cache_revision = -1
         self._canvas_cache: dict[str, object] | None = None
@@ -7735,7 +7736,7 @@ class ApplicationServer:
                         host = getattr(owner, '_existing_workshop_native_host', None)
                         if host is None:
                             raise InvalidCell('Native Workshop owner is unavailable')
-                        if type(body) is dict and body.get('action') in ('bind_work_proposals', 'read_work_proposals'):
+                        if type(body) is dict and body.get('action') in ('bind_work_proposals', 'read_work_proposals', 'decline_work_proposals'):
                             # The founder binds agent proposals; each is read through his
                             # own Workshop reader, never taken from this request body.
                             from .work_proposals import founder_bind_route
@@ -12817,11 +12818,31 @@ class ApplicationServer:
             return None
         return None
 
+    def _adjust_baboom_pending_founder_approvals_event_count(self, delta, revision):
+        if type(delta) is not int or type(revision) is not int:
+            return
+        with self._baboom_pending_approvals_cache_lock:
+            count = self._baboom_pending_approvals_event_count
+            if count is None:
+                cached = self._baboom_pending_approvals_cache
+                count = cached["count"] if type(cached.get("count")) is int else 0
+            self._baboom_pending_approvals_event_count = max(0, min(500, count + delta))
+            self._baboom_pending_approvals_cache = {
+                "revision": -1,
+                "expires_at": 0.0,
+                "count": None,
+            }
+
     def _refresh_baboom_pending_founder_approvals(self, context, read_guard, revision):
         """Count unbound Work proposals from the founder's bounded Workshop view."""
         result = None
         stale = False
         try:
+            with self._baboom_pending_approvals_cache_lock:
+                event_count = self._baboom_pending_approvals_event_count
+            if type(event_count) is int:
+                result = min(max(event_count, 0), 500)
+                return result
             snapshot = self.universal_store.snapshot()
             if snapshot.revision != revision:
                 stale = True
@@ -12844,9 +12865,8 @@ class ApplicationServer:
                 expected_revision=snapshot.revision,
             )
             from . import work_proposals
-            bound = work_proposals._bound_keys(
-                self.universal_store.snapshot(), self.universal_registry
-            )
+            approval_snapshot = self.universal_store.snapshot()
+            bound = work_proposals._bound_keys(approval_snapshot, self.universal_registry)
             count = 0
             for message in page.get("messages") or ():
                 message_id = message.get("id")
@@ -12856,7 +12876,10 @@ class ApplicationServer:
                     work_proposals.parse(message.get("content"))
                 except InvalidCell:
                     continue
-                if work_proposals.KEY_PREFIX + message_id not in bound:
+                if (work_proposals.KEY_PREFIX + message_id not in bound
+                        and work_proposals._read_decline(
+                            approval_snapshot, self.universal_registry, message_id
+                        ) is None):
                     count += 1
         except Exception:
             result = None
@@ -12864,7 +12887,7 @@ class ApplicationServer:
             result = min(count, 500)
         finally:
             with self._baboom_pending_approvals_cache_lock:
-                if not stale and self.universal_store.revision == revision:
+                if result is not None and not stale and self.universal_store.revision == revision:
                     self._baboom_pending_approvals_cache = {
                         "revision": revision,
                         "expires_at": time.monotonic() + 3.0,
@@ -17147,6 +17170,14 @@ class ApplicationServer:
                         self.universal_registry.authorization.broker.revoke(entry_context)
                 from .conversation_content import workshop_message_identity
                 from .existing_workshop_conversation import _relay_native_recipients
+                try:
+                    from . import work_proposals as _work_proposals
+                    _work_proposals.parse(entry.content)
+                except Exception:
+                    pass
+                else:
+                    self._adjust_baboom_pending_founder_approvals_event_count(
+                        1, self.universal_store.revision)
                 relay = (_relay_native_recipients(self, entry.space_root, entry.message_id,
                     entry.actor_root, entry.recipient_roots, entry.content)
                     if hasattr(entry, "message_id") else {})

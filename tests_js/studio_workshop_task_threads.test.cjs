@@ -115,7 +115,7 @@ test('task ids are derived from the Work id; no progress bar is drawn without a 
   try {
     await view.render();
     const cards = [...view.ui.doc.querySelectorAll('[aria-label="Workshop conversation"] [data-workshop-task]')];
-    assert.deepEqual(cards.map(card => text(card).split(' ')[0]), ['T-3f9a1c', 'T-8b41d0', 'T-c5e2a9']);
+    assert.deepEqual(cards.map(card => card.getAttribute('data-workshop-task')), [view.ids.W1, view.ids.W2, view.ids.W3]);
     assert.ok(cards.every(card => !card.querySelector('i[style*="width"]')), 'no invented progress bar');
   } finally { await view.ui.close(); }
 });
@@ -132,13 +132,11 @@ test('an agent reply that names a Work is that agent speaking on the card, by it
     await view.render();
     const card = view.ui.doc.querySelector(`[data-workshop-task="${view.ids.W2}"]`);
     const body = text(card);
-    assert.match(body, /T-8b41d0 Wall creation A RUNNING/, 'the latest event is the agent, and its verb sets the state');
-    assert.match(body, /acceptance-claude · Claimed assembly-instance:8b41d0e27c93a5f1: exterior walls are under way\./);
+    assert.match(body, /^Wall creation CLAIMED · Wall creation · run Open as graph/, 'the latest event verb sets the row state');
     assert.ok(!body.includes('Session Link relayed reply'), 'the relay header is never the agent text');
     assert.ok(!body.includes('app:wip-cell:'), 'the contact root is never a name');
-    // Earlier events are the thread; a recipient is named as the rail names it (host name, not the label).
-    assert.match(body, /Claude → Workshop · Claimed Work assembly-instance:8b41d0e27c93a5f1\. Exterior walls first\./);
-    assert.match(body, /Owner → Claude · Founder note on assembly-instance:8b41d0e27c93a5f1: keep the exterior walls first\./);
+    // W8 chat rows keep the task compact; prior events remain data, but are no longer rendered as a thread on the row.
+    assert.ok(!/Founder note on/.test(body));
     assert.ok(!/Claude Code/.test(body), 'a thread recipient uses the rail name, not the participant label');
   } finally { await view.ui.close(); }
 });

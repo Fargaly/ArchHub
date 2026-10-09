@@ -1,11 +1,11 @@
 /* Court: an agent Work proposal is a task card with an inline decision (2026-10-01).
  *
  * The founder's design (handoff studio-workshop.jsx:221-223, :404-410): a decision sits
- * inline on the task card, first choice primary; Approve leads "Approved: …", Not now
- * leads "Left for later. It stays proposed, nothing runs." The app showed a proposal as
+ * inline on the task card, first choice primary; Approve leads "Approved: …", Reject
+ * leads "Declined: …" with a persisted graph record. The app showed a proposal as
  * raw "ArchHub work proposal v1 {json}" and hid the bind behind an unlabeled toggle; the
  * founder could not find it. Now each proposal message is the design's TaskCard with
- * [Approve, Not now]; Approve binds exactly that proposal through the existing bind.
+ * [Approve, Reject]; Approve binds exactly that proposal through the existing bind.
  *
  * RED-first: on source without PROPOSAL_MARKER/wsProposalTask/approveWorkProposal and the
  * stream wiring, every case fails.
@@ -43,8 +43,16 @@ const MESSAGES = [
 function application(request, bound) {
   if (request.action === 'read_work_proposals') {
     return {ok:true, root:request.root, scope:request.scope, request_id:request.request_id, owner:'founder',
-      revision:2, bound:Object.fromEntries(request.message_ids.map(id => [id, bound[id] || null]))};
+      revision:2,
+      bound:Object.fromEntries(request.message_ids.map(id => [id, bound[id] || null])),
+      declined:Object.fromEntries(request.message_ids.map(id => [id, null]))};
   }
+  if (request.action === 'decline_work_proposals') {
+    return {ok:true, root:request.root, scope:request.scope, request_id:request.request_id, owner:'founder', revision:3,
+      declined:request.proposals.map(item => ({state:'declined', message_id:item.message_id, sequence:item.sequence,
+        digest:item.digest, actor:'founder', proposer:PROPOSER, declined_at:'2026-10-09T00:00:00Z'}))};
+  }
+  assert.equal(request.action, 'bind_work_proposals');
   return {ok:true, root:request.root, scope:request.scope, request_id:request.request_id, owner:'founder', revision:3,
     bound:request.proposals.map(item => {
       bound[item.message_id] = 'work-' + item.message_id;
@@ -82,11 +90,11 @@ const helpers = () => {
   const {transformSync} = require('esbuild');
   const context = vm.createContext({});
   vm.runInContext(transformSync(slice('const PROPOSAL_MARKER = ', 'const wsTasks = (') +
-    '\nglobalThis.out={isWorkProposal, wsProposalTask, approveWorkProposal};', {loader:'jsx', format:'cjs'}).code, context);
+    '\nglobalThis.out={isWorkProposal, wsProposalTask, approveWorkProposal, declineWorkProposal};', {loader:'jsx', format:'cjs'}).code, context);
   return context.out;
 };
 
-test('a proposal message becomes a queued task card with [Approve, Not now] and the design leads', () => {
+test('a proposal message becomes a queued task card with [Approve, Reject] and the design leads', () => {
   const {isWorkProposal, wsProposalTask} = helpers();
   assert.equal(isWorkProposal(MESSAGES[2]), true);
   assert.equal(isWorkProposal(MESSAGES[0]), false);
@@ -95,7 +103,7 @@ test('a proposal message becomes a queued task card with [Approve, Not now] and 
   assert.equal(open.state, 'block', 'a proposal waiting on the founder reads NEEDS YOU (design T-01)');
   assert.equal(open.owner, PROPOSER, 'the proposing agent owns the card');
   assert.deepEqual(open.decision.map(d => [d.label, d.action, d.message]),
-    [['Approve', 'approve-proposal', 'm-3'], ['Not now', 'later-proposal', 'm-3']]);
+    [['Approve', 'approve-proposal', 'm-3'], ['Reject', 'decline-proposal', 'm-3']]);
   assert.match(open.lead, /^Proposes this Work: proposed by an agent\. Reviewers: app:agent-session:runtime:reviewer\. Nothing exists or is granted until you approve\.$/);
   assert.equal(open.tools.list, '10.PRODUCT/13.NODE-LANGUAGE/nodelang/work_proposals.py · exact · apply_patch');
   assert.equal(open.tools.t, 'CDE GM.nodes.cde-authority · T1');
@@ -105,9 +113,9 @@ test('a proposal message becomes a queued task card with [Approve, Not now] and 
   assert.equal(approved.state, 'open');
   assert.equal(approved.lead, 'Approved: Proposal B. Work work-m-3 is created; nothing runs until it is claimed.');
 
-  const later = plain(wsProposalTask(MESSAGES[2], {later:true}));
-  assert.equal(later.decision, null);
-  assert.equal(later.lead, 'Left for later. It stays proposed, nothing runs.');
+  const declined = plain(wsProposalTask(MESSAGES[2], {declined:{state:'declined', actor:'founder', declined_at:'2026-10-09T00:00:00Z'}}));
+  assert.equal(declined.decision, null);
+  assert.equal(declined.lead, 'Declined: Proposal B. Nothing exists or is granted.');
 
   const pending = plain(wsProposalTask(MESSAGES[2], {pending:true}));
   assert.ok(pending.decision.every(d => d.disabled === true), 'no second press while one is in flight');
@@ -202,7 +210,7 @@ test('rendered: a malformed proposal is an unreadable card in the thread, not a 
     const card = dom.window.document.querySelector('[data-workshop-task="proposal:bad-0"]');
     assert.ok(card && card.textContent.includes('Unreadable proposal'));
     assert.ok(card.textContent.includes('This proposal cannot be read; it cannot be approved.'));
-    assert.deepEqual([...card.querySelectorAll('button')].map(button => button.textContent).filter(label => ['Approve', 'Not now'].includes(label)), []);
+    assert.deepEqual([...card.querySelectorAll('button')].map(button => button.textContent).filter(label => ['Approve', 'Reject'].includes(label)), []);
   } finally {
     await React.act(async () => rootNode.unmount());
     dom.window.close(); global.window = oldWindow; global.document = oldDocument;
@@ -225,6 +233,16 @@ test('an already bound proposal is reported with its Work and never bound twice'
   assert.deepEqual(plain(await approveWorkProposal(api, 'workshop', 'm-3')), {work_root:'work-earlier'});
   assert.deepEqual(posts.map(request => request.action), ['read_work_proposals']);
   await assert.rejects(approveWorkProposal(api, 'workshop', 'm-404'), /not in the loaded messages/);
+});
+
+test('Reject declines exactly that proposal through the persisted decline route', async () => {
+  const {declineWorkProposal} = helpers();
+  const {api, posts} = await founder();
+  const done = await declineWorkProposal(api, 'workshop', 'm-3');
+  assert.equal(done.declined.state, 'declined');
+  assert.equal(done.declined.message_id, 'm-3');
+  assert.deepEqual(posts.map(request => request.action), ['read_work_proposals', 'decline_work_proposals']);
+  assert.deepEqual(posts[1].proposals.map(item => item.message_id), ['m-3'], 'only the rejected proposal is declined');
 });
 
 test('a status read racing the proposals read is read again, not shown as a failure (real-app run)', async () => {
@@ -279,7 +297,7 @@ test('rendered: the proposal is the design TaskCard; Approve is primary and deci
     assert.ok(card.textContent.includes('Runtime-proposer · Proposes this Work'));
     assert.ok(!card.textContent.includes('{"container"'), 'the raw proposal document is not shown');
     const buttons = [...card.querySelectorAll('button')].map(button => button.textContent);
-    assert.deepEqual(buttons.filter(text => ['Approve', 'Not now'].includes(text)), ['Approve', 'Not now'], 'Approve first, then Not now');
+    assert.deepEqual(buttons.filter(text => ['Approve', 'Reject'].includes(text)), ['Approve', 'Reject'], 'Approve first, then Reject');
     await React.act(async () => { [...card.querySelectorAll('button')].find(button => button.textContent === 'Approve').click(); });
     assert.deepEqual(decided, [['proposal:m-3', 'approve-proposal', 'm-3']]);
   } finally {
@@ -295,6 +313,7 @@ test('the Workshop stream and decide are wired to the proposal card', () => {
     'a proposal message is not rendered as raw text');
   assert.match(source, /const proposal = wsProposalTask\(item\.message, proposalHeld\[item\.message\.message_id \|\| item\.message\.root\]\);/);
   assert.match(source, /return <TaskCard key=\{proposal\.work\} t=\{proposal\}.*onDecide=\{decide\}/);
-  assert.match(source, /if \(choice && \['approve-proposal', 'later-proposal'\]\.includes\(choice\.action\)\) return decideProposal\(choice\);/);
+  assert.match(source, /if \(choice && \['approve-proposal', 'decline-proposal'\]\.includes\(choice\.action\)\) return decideProposal\(choice\);/);
   assert.match(source, /const done = await approveWorkProposal\(authority, descriptor\.root, id\);/);
+  assert.match(source, /const done = await declineWorkProposal\(authority, descriptor\.root, id\);/);
 });

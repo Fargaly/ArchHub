@@ -136,14 +136,14 @@ test('gap 8: with a proposed workflow the live graph draws its steps and its wir
   const view = await mountView(withWorkflow(null));
   try {
     await view.render();
-    assert.equal(view.ui.doc.querySelector('[role="tab"][aria-label="Router"]'), null);
+    assert.ok(view.ui.doc.querySelector('[role="tab"][aria-label="Router"]'));
     assert.equal(view.ui.doc.querySelector('[aria-label="Workshop live graph"]'), null);
     assert.match(text(view.ui.doc.querySelector('[data-workshop-workflow]')), /Claude drafts the release note/);
   } finally { await view.ui.close(); }
   const plain = await mountView();
   try {
     await plain.render();
-    assert.equal(plain.ui.doc.querySelector('[role="tab"][aria-label="Router"]'), null);
+    assert.ok(plain.ui.doc.querySelector('[role="tab"][aria-label="Router"]'));
     assert.equal(plain.ui.doc.querySelector('[aria-label="Workshop live graph"]'), null);
   } finally { await plain.ui.close(); }
 });

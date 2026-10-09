@@ -209,32 +209,26 @@ test('the Workshop view draws the design surfaces from the live projections and 
       sel, setSel:value => { sel = value; }, externalRail:true});
     await ui.render('WorkshopView', props());
     const doc = ui.doc;
-    // Header: design title, Workshop label, Hub pill, and five tabs.
+    // Header: design title, Workshop label, route/Hub chips, and design tabs.
     const main = doc.querySelector('main');
     assert.equal(main.style.gridTemplateColumns, 'minmax(0,1fr)');
-    assert.match(text(main.firstElementChild), /^Workshop L03 wall take-off · Layer selection · hosts not read yet Hub/);
+    assert.match(text(main.firstElementChild), /^Workshop L03 wall take-off · Layer selection · hosts not read yet openrouter\/model-a · route auto Relay Off Hub/);
     const strip = [...doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')];
-    assert.deepEqual(strip.map(b => b.getAttribute('aria-label')), ['Projects', 'Board', 'Chat', 'Agents', 'Approvals']);
-    assert.deepEqual(strip.map(b => b.getAttribute('aria-selected')), ['false', 'false', 'true', 'false', 'false']);
-    assert.deepEqual(strip.map(b => [b.style.fontFamily, b.style.fontSize, b.style.fontWeight]), [
-      ['"Inter", system-ui, sans-serif', '16px', '400'],
-      ['"Inter", system-ui, sans-serif', '16px', '400'],
-      ['"Inter", system-ui, sans-serif', '16px', '400'],
-      ['"Inter", system-ui, sans-serif', '16px', '400'],
-      ['"Inter", system-ui, sans-serif', '16px', '400'],
-    ]);
-    assert.equal(strip[2].style.borderRadius, '999px');
-    assert.equal(strip[2].style.background, 'rgb(58, 32, 24)');
-    assert.equal(strip[0].style.background, 'transparent');
-    assert.equal(text(strip[4]), 'Approvals 1');
-    // Conversation: the owner's ask, the canvas workflow with its approval row, then one card per named Work.
+    assert.deepEqual(strip.map(b => b.getAttribute('aria-label')),
+      ['Chat', 'Tasks', 'Router', 'Relay', 'Prompts', 'Projects', 'Board', 'Agents', 'Approvals']);
+    assert.deepEqual(strip.map(b => b.getAttribute('aria-selected')), ['true', 'false', 'false', 'false', 'false', 'false', 'false', 'false', 'false']);
+    assert.ok(strip.every(b => b.style.fontFamily === '"Inter", system-ui, sans-serif' && b.style.fontSize === '13px' && b.style.fontWeight === '400'));
+    assert.equal(strip[0].style.borderRadius, '5px');
+    assert.equal(strip[0].style.background, 'rgb(58, 32, 24)');
+    assert.equal(strip[1].style.background, 'transparent');
+    assert.equal(text(strip[8]), 'Approvals 1');
+    // Conversation: the owner's ask, the agent reply metadata, then one row per named Work.
     const stream = doc.querySelector('[aria-label="Workshop conversation"]');
-    assert.match(text(stream), /Here is the workflow on this canvas\. 4 nodes, 1 of them yours to confirm\./);
-    assert.match(text(stream), /AWAITING YOUR APPROVAL · LAYER SELECTION/);
+    assert.doesNotMatch(text(stream), /Here is the workflow on this canvas/);
     assert.deepEqual([...stream.querySelectorAll('[data-workshop-task]')].map(card => card.getAttribute('data-workshop-task')), [ids.W1, ids.W2, ids.W3]);
     const first = stream.querySelector('[data-workshop-task]');
-    assert.match(text(first), /^T-3f9a1c Layer selection C NEEDS YOU C Codex · Gate failed/);
-    assert.deepEqual([...first.querySelectorAll('button')].map(text), ['Approve this repair', 'Generate repair artifact']);
+    assert.match(text(first), /^Layer selection .* waiting for approval Approve Open as graph/);
+    assert.deepEqual([...first.querySelectorAll('button')].map(text), ['Approve', 'Open as graph']);
     // Send, approve: the live actions.
     const input = doc.querySelector('input[aria-label="Workshop message"]');
     await ui.act(() => { Object.getOwnPropertyDescriptor(ui.win.HTMLInputElement.prototype, 'value').set.call(input, 'Check the joins');
@@ -250,13 +244,13 @@ test('the Workshop view draws the design surfaces from the live projections and 
     assert.ok(doc.querySelector('[aria-label="Workshop task page"] input[aria-label="Workshop message"]'));
     // Board: the design's five lanes (design 2026-10-06, section 3).
     const tabs = () => [...doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')];
-    await ui.click(tabs()[1]);
+    await ui.click(tabs()[6]);
     const board = doc.querySelector('[aria-label="Workshop board"]');
     assert.deepEqual([...board.querySelectorAll('[data-workshop-lane] h3')].map(text), ['Backlog', 'Claimed', 'Running', 'Blocked', 'Done']);
     assert.equal(doc.querySelector('main').style.gridTemplateColumns, 'minmax(0,1fr)');
     assert.equal(doc.querySelector('input[aria-label="Workshop message"]'), null);
     // Chat remains available in the full-width shell.
-    await ui.click(tabs()[2]);
+    await ui.click(tabs()[0]);
     assert.ok(doc.querySelector('[aria-label="Workshop conversation"]'));
     assert.ok(doc.querySelector('input[aria-label="Workshop message"]'));
     await ui.click(doc.querySelector('button[aria-label^="Leave Workshop"]'));

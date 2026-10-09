@@ -78,6 +78,17 @@ def _bind(server, browser, *proposals, tamper=False):
         return _bind_now(server, browser, proposals, tamper)
 
 
+def _decline(server, browser, proposal, tamper=False):
+    registry = server.universal_registry
+    with _as_browser(browser):
+        return work_proposals.founder_bind_route(server, browser, {
+            "action": "decline_work_proposals", "root": registry.workshop_root,
+            "scope": registry.workshop_workbench_root, "request_id": "court-decline", "data_class": "public-text",
+            "proposals": [{"message_id": proposal["message_id"], "sequence": proposal["sequence"],
+                           "digest": ("0" * 64 if tamper else proposal["digest"])}]},
+            server.browser_session_token)
+
+
 def _bind_now(server, browser, proposals, tamper):
     registry = server.universal_registry
     return work_proposals.founder_bind_route(server, browser, {
@@ -201,6 +212,59 @@ def test_the_founders_list_reads_which_proposals_are_already_bound(world):
         listed({**request, "message_ids": [first["message_id"], first["message_id"]]})
     with pytest.raises(Exception, match="Only the founder"):
         work_proposals.read_work_proposals(server, type("Agent", (), {"subject_root": "not-the-founder"})(), request)
+
+
+def test_the_founder_declines_a_proposal_with_a_persisted_graph_record(world):
+    """Reject is a durable founder decision; the declined proposal stops appearing as pending."""
+    server, descriptor, provider, browser = world
+    proposer, _me = _tools(descriptor, provider, "court-proposer-decline")
+    first, second = _propose(proposer, "Declined A"), _propose(proposer, "Still pending")
+    registry = server.universal_registry
+    request = {"action": "read_work_proposals", "root": registry.workshop_root,
+               "scope": registry.workshop_workbench_root, "request_id": "court-read-decline",
+               "data_class": "public-text", "message_ids": [first["message_id"], second["message_id"]]}
+
+    declined = _decline(server, browser, first)["declined"][0]
+    assert declined["message_id"] == first["message_id"]
+    assert declined["state"] == "declined"
+    assert declined["actor"] == browser.subject_root
+    assert work_proposals._declined_proposals(server.universal_store.snapshot(), registry)[first["message_id"]]["state"] == "declined"
+
+    with _as_browser(browser):
+        listed = work_proposals.founder_bind_route(server, browser, request, server.browser_session_token)
+    assert listed["bound"] == {first["message_id"]: None, second["message_id"]: None}
+    assert listed["declined"][first["message_id"]]["state"] == "declined"
+    assert listed["declined"][second["message_id"]] is None
+    with pytest.raises(InvalidCell, match="already declined"):
+        _bind(server, browser, first)
+    with pytest.raises(InvalidCell, match="already declined"):
+        _decline(server, browser, first)
+    with pytest.raises(InvalidCell, match="changed since it was shown"):
+        _decline(server, browser, second, tamper=True)
+
+
+def test_reject_winning_the_approve_race_creates_no_work(world):
+    """Approve rechecks the proposal under the creation lock after validation."""
+    server, descriptor, provider, browser = world
+    proposer, _me = _tools(descriptor, provider, "court-proposer-race")
+    proposal = _propose(proposer, "Race proposal")
+
+    def reject_first():
+        _decline(server, browser, proposal)
+
+    before = server.universal_store.revision
+    work_proposals._AFTER_PROPOSAL_VALIDATION_HOOK = reject_first
+    try:
+        with pytest.raises(InvalidCell, match="already declined"):
+            _bind(server, browser, proposal)
+    finally:
+        work_proposals._AFTER_PROPOSAL_VALIDATION_HOOK = None
+
+    assert server.universal_store.revision > before
+    assert work_proposals.KEY_PREFIX + proposal["message_id"] not in _proposal_works(server)
+    declined = work_proposals._declined_proposals(server.universal_store.snapshot(),
+                                                  server.universal_registry)
+    assert declined[proposal["message_id"]]["state"] == "declined"
 
 
 def test_baboom_context_counts_unbound_work_proposals_waiting_for_founder(world):

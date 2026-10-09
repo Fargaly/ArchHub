@@ -155,8 +155,9 @@ test('Workshop approvals list predicate matches the badge count predicate', () =
   assert.doesNotMatch(source, /WorkshopApprovalsView tasks=\{allTasks\.filter\(t => t\.state === 'block' \|\| t\.approving \|\| t\.proposal\)\}/);
 });
 
-test('Workshop header exposes Projects, Board, Chat, Agents, Approvals and removes fake Router, Relay, Prompts tabs', () => {
+test('Workshop header exposes design-first Chat, Tasks, routed Router, Relay and Prompts tabs', () => {
   const source = read('nodelang/studio/studio-workshop.jsx');
-  assert.match(source, /WORKSHOP_TABS = \[\['projects', 'Projects'\], \['board', 'Board'\], \['chat', 'Chat'\], \['agents', 'Agents'\], \['approvals', 'Approvals'\]\]/);
-  assert.doesNotMatch(source, /\['router', 'Router'\]|\['relay', 'Relay'\]|\['prompts', 'Prompts'\]/);
+  assert.match(source, /WORKSHOP_TABS = \[\['chat', 'Chat'\], \['tasks', 'Tasks'\], \['router', 'Router'\], \['relay', 'Relay'\], \['prompts', 'Prompts'\],\s+\['projects', 'Projects'\], \['board', 'Board'\], \['agents', 'Agents'\], \['approvals', 'Approvals'\]\]/);
+  assert.match(source, /readCloudPublishConsent|setCloudPublishConsent|WorkshopRelayTab|Relay on\/off/);
+  assert.match(source, /ARCHHUB_LOAD_SKILLS/);
 });

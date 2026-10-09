@@ -17,6 +17,7 @@ evidence. Each Work is its own commit; the result names every Work created.
 import hashlib
 import json
 import re
+from datetime import datetime, timezone
 
 from .cell_authorization import AuthorizationDenied
 from .universal_cell import InvalidCell
@@ -29,6 +30,8 @@ _PURPOSES = {"general", "artifact-publication"}
 _RUNTIME_SESSION = "app:agent-session:runtime:"
 _MESSAGE_ID = re.compile(r"[A-Za-z0-9:._-]{1,256}\Z")
 KEY_PREFIX = "proposal:"
+DECLINE_PREFIX = "app:work-proposal-decline:"
+_AFTER_PROPOSAL_VALIDATION_HOOK = None
 
 
 def _refuse(message):
@@ -132,6 +135,41 @@ def _bound_keys(snapshot, registry):
     return set(_bound_works(snapshot, registry))
 
 
+def _decline_root(message_id):
+    return DECLINE_PREFIX + hashlib.sha256(message_id.encode("utf-8")).hexdigest()
+
+
+def _read_decline(snapshot, registry, message_id):
+    root = _decline_root(message_id)
+    if root not in snapshot.cells:
+        return None
+    from .cell_value_graph import read_value_graph
+    record = read_value_graph(snapshot, registry.value_graph_protocol, root)
+    if (type(record) is not dict or record.get("state") != "declined"
+            or record.get("message_id") != message_id
+            or type(record.get("digest")) is not str
+            or re.fullmatch("[0-9a-f]{64}", record["digest"]) is None
+            or type(record.get("actor")) is not str or not record["actor"]
+            or type(record.get("declined_at")) is not str or not record["declined_at"]):
+        _refuse("Work proposal decline record is malformed")
+    return record
+
+
+def _declined_proposals(snapshot, registry):
+    result = {}
+    for cell_id in snapshot.cells:
+        if not cell_id.startswith(DECLINE_PREFIX):
+            continue
+        try:
+            from .cell_value_graph import read_value_graph
+            record = read_value_graph(snapshot, registry.value_graph_protocol, cell_id)
+        except (InvalidCell, KeyError, TypeError):
+            continue
+        if type(record) is dict and record.get("state") == "declined" and type(record.get("message_id")) is str:
+            result[record["message_id"]] = record
+    return result
+
+
 def founder_bind_route(owner, binding, body, session_token):
     """The route's entry: the founder's own Workshop reader and browser guard, then the action."""
     registry = owner.universal_registry
@@ -149,6 +187,8 @@ def founder_bind_route(owner, binding, body, session_token):
     guard()
     if type(body) is dict and body.get("action") == "read_work_proposals":
         return read_work_proposals(owner, binding, body)
+    if type(body) is dict and body.get("action") == "decline_work_proposals":
+        return decline_work_proposals(owner, binding, body, read_message=read, browser_guard=guard)
     return bind_work_proposals(owner, binding, body, read_message=read, browser_guard=guard)
 
 
@@ -179,9 +219,24 @@ def read_work_proposals(owner, binding, body):
         host._admit(binding, body["root"], body["scope"])
         snapshot = store.snapshot()
         works = _bound_works(snapshot, registry)
+        declined = {item: _read_decline(snapshot, registry, item) for item in ids}
     return {"ok": True, "root": body["root"], "scope": body["scope"], "request_id": body["request_id"],
             "owner": binding.subject_root, "revision": snapshot.revision,
-            "bound": {item: works.get(KEY_PREFIX + item) for item in ids}}
+            "bound": {item: works.get(KEY_PREFIX + item) for item in ids},
+            "declined": declined}
+
+
+def _proposal_item(body):
+    items = body["proposals"]
+    if (type(items) is not list or not 0 < len(items) <= 16
+            or any(type(item) is not dict or set(item) != {"message_id", "sequence", "digest"}
+                   or type(item["message_id"]) is not str or not _MESSAGE_ID.fullmatch(item["message_id"])
+                   or type(item["sequence"]) is not int or not 0 < item["sequence"] < 2 ** 62
+                   or type(item["digest"]) is not str or not re.fullmatch("[0-9a-f]{64}", item["digest"])
+                   for item in items)
+            or len({item["message_id"] for item in items}) != len(items)):
+        _refuse("Choose 1 to 16 distinct proposals, each with its message, sequence and digest")
+    return items
 
 
 def bind_work_proposals(owner, binding, body, *, read_message, browser_guard):
@@ -201,15 +256,7 @@ def bind_work_proposals(owner, binding, body, *, read_message, browser_guard):
             or any(type(body[key]) is not str or not body[key] or len(body[key]) > 4096
                    for key in ("root", "scope", "request_id"))):
         _refuse("Binding Work proposals requires its exact request")
-    items = body["proposals"]
-    if (type(items) is not list or not 0 < len(items) <= 16
-            or any(type(item) is not dict or set(item) != {"message_id", "sequence", "digest"}
-                   or type(item["message_id"]) is not str or not _MESSAGE_ID.fullmatch(item["message_id"])
-                   or type(item["sequence"]) is not int or not 0 < item["sequence"] < 2 ** 62
-                   or type(item["digest"]) is not str or not re.fullmatch("[0-9a-f]{64}", item["digest"])
-                   for item in items)
-            or len({item["message_id"] for item in items}) != len(items)):
-        _refuse("Choose 1 to 16 distinct proposals, each with its message, sequence and digest")
+    items = _proposal_item(body)
     store, registry = owner.universal_store, owner.universal_registry
     founder = registry.authorization.subject_root
     if binding.subject_root != founder:
@@ -223,7 +270,9 @@ def bind_work_proposals(owner, binding, body, *, read_message, browser_guard):
     prepared = []
     with owner.mutation_lock:
         host._admit(binding, root, scope)
-        bound = _bound_keys(store.snapshot(), registry)
+        snapshot = store.snapshot()
+        bound = _bound_keys(snapshot, registry)
+        declined = _declined_proposals(snapshot, registry)
     for item in items:
         page = read_message(item["sequence"])
         messages = page.get("messages") if type(page) is dict else None
@@ -242,23 +291,40 @@ def bind_work_proposals(owner, binding, body, *, read_message, browser_guard):
         key = KEY_PREFIX + item["message_id"]
         if key in bound:
             _refuse("Proposal %s is already bound" % item["message_id"])
+        if item["message_id"] in declined:
+            _refuse("Proposal %s is already declined" % item["message_id"])
         if author in (payload["requirements"].get("artifact_reviewers") or ()):
             _refuse("The proposing agent cannot review its own proposed Work")
         prepared.append((item, author, payload, digest, key))
 
+    hook = _AFTER_PROPOSAL_VALIDATION_HOOK
+    if hook is not None:
+        hook()
+
     # 2. Bind each, in order, through the browser's creation and the one configuration path.
     results = []
     for item, author, payload, digest, key in prepared:
-        created = create_browser_workshop_work(owner, binding, {
-            "workshop_root": root, "workshop_scope": scope, "revision": store.revision,
-            "title": payload["title"], "description": payload["description"],
-            "priority": payload["priority"], "external_key": key, "projection": False},
-            browser_guard=browser_guard)
+        with owner.mutation_lock:
+            snapshot = store.snapshot()
+            if key in _bound_keys(snapshot, registry):
+                _refuse("Proposal %s is already bound" % item["message_id"])
+            if item["message_id"] in _declined_proposals(snapshot, registry):
+                _refuse("Proposal %s is already declined" % item["message_id"])
+            created = create_browser_workshop_work(owner, binding, {
+                "workshop_root": root, "workshop_scope": scope, "revision": store.revision,
+                "title": payload["title"], "description": payload["description"],
+                "priority": payload["priority"], "external_key": key, "projection": False},
+                browser_guard=browser_guard)
         work = created["created_root"]
         current = host._read_work_configuration(binding, root, scope, work, body["request_id"])
         values = {"inputs": payload["inputs"], "requirements": payload["requirements"],
                   "cde-container": cde_container(payload)}
         with owner.mutation_lock, registry.authorization.broker.live_context(binding.context):
+            snapshot = store.snapshot()
+            if key not in _bound_keys(snapshot, registry):
+                _refuse("Proposal %s is no longer bound" % item["message_id"])
+            if item["message_id"] in _declined_proposals(snapshot, registry):
+                _refuse("Proposal %s is already declined" % item["message_id"])
             host._admit(binding, root, scope, work, work_action="edit")
             configured = configure_work_interfaces(owner, binding, root=root, scope=scope, work=work,
                 revision_id=digest[:32], expected_revision=store.revision, purpose=payload["purpose"],
@@ -270,5 +336,85 @@ def bind_work_proposals(owner, binding, body, *, read_message, browser_guard):
         results.append({"message_id": item["message_id"], "proposer": author, "digest": digest,
                         "work_root": work, "external_key": key,
                         "authorization": configured["record"] + ":authorization"})
+    adjust = getattr(owner, "_adjust_baboom_pending_founder_approvals_event_count", None)
+    if callable(adjust):
+        adjust(-len(results), store.revision)
     return {"ok": True, "root": root, "scope": scope, "request_id": body["request_id"],
             "owner": binding.subject_root, "bound": results, "revision": store.revision}
+
+
+def decline_work_proposals(owner, binding, body, *, read_message, browser_guard):
+    """The founder's Reject: persist a declined proposal record without creating Work."""
+    from . import universal_application as app
+    from .cell_value_graph import prepare_value_graphs
+
+    fields = {"action", "root", "scope", "request_id", "data_class", "proposals"}
+    if (type(body) is not dict or set(body) != fields or body["action"] != "decline_work_proposals"
+            or body["data_class"] != "public-text"
+            or any(type(body[key]) is not str or not body[key] or len(body[key]) > 4096
+                   for key in ("root", "scope", "request_id"))):
+        _refuse("Declining Work proposals requires its exact request")
+    items = _proposal_item(body)
+    store, registry = owner.universal_store, owner.universal_registry
+    founder = registry.authorization.subject_root
+    if binding.subject_root != founder:
+        raise AuthorizationDenied("Only the founder declines Work proposals")
+    host = getattr(owner, "_existing_workshop_native_host", None)
+    if host is None:
+        _refuse("Native Workshop owner is unavailable")
+    root, scope = body["root"], body["scope"]
+
+    prepared = []
+    with owner.mutation_lock:
+        host._admit(binding, root, scope)
+        snapshot = store.snapshot()
+        bound = _bound_keys(snapshot, registry)
+        declined = _declined_proposals(snapshot, registry)
+    for item in items:
+        page = read_message(item["sequence"])
+        messages = page.get("messages") if type(page) is dict else None
+        message = messages[-1] if type(messages) is list and messages else None
+        if (type(message) is not dict or message.get("id") != item["message_id"]
+                or message.get("sequence") != item["sequence"]):
+            _refuse("Proposal %s is not visible in this Workshop" % item["message_id"])
+        author = message.get("author")
+        if type(author) is not str or not author.startswith(_RUNTIME_SESSION):
+            raise AuthorizationDenied("A Work proposal comes from an agent session")
+        if app._runtime_agent_session(store.snapshot(), registry, author).subject_root != founder:
+            raise AuthorizationDenied("A Work proposal comes from one of this founder's agent sessions")
+        _payload, digest = parse(message.get("content"))
+        if digest != item["digest"]:
+            _refuse("Proposal %s changed since it was shown; review it again" % item["message_id"])
+        key = KEY_PREFIX + item["message_id"]
+        if key in bound:
+            _refuse("Proposal %s is already bound" % item["message_id"])
+        if item["message_id"] in declined:
+            _refuse("Proposal %s is already declined" % item["message_id"])
+        prepared.append((item, author, digest))
+
+    results = []
+    with owner.mutation_lock:
+        browser_guard()
+        host._admit(binding, root, scope)
+        snapshot = store.snapshot()
+        bound = _bound_keys(snapshot, registry)
+        declined = _declined_proposals(snapshot, registry)
+        values = {}
+        for item, author, digest in prepared:
+            key = KEY_PREFIX + item["message_id"]
+            if key in bound:
+                _refuse("Proposal %s is already bound" % item["message_id"])
+            if item["message_id"] in declined:
+                _refuse("Proposal %s is already declined" % item["message_id"])
+            record = {"state": "declined", "message_id": item["message_id"], "sequence": item["sequence"],
+                      "digest": digest, "actor": binding.subject_root, "proposer": author,
+                      "declined_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+            values[_decline_root(item["message_id"])] = record
+            results.append(record)
+        prepared_values = prepare_value_graphs(snapshot, registry.value_graph_protocol, values)
+        store.commit(snapshot.revision, create=prepared_values.create, replace=prepared_values.replace)
+    adjust = getattr(owner, "_adjust_baboom_pending_founder_approvals_event_count", None)
+    if callable(adjust):
+        adjust(-len(results), store.revision)
+    return {"ok": True, "root": root, "scope": scope, "request_id": body["request_id"],
+            "owner": binding.subject_root, "declined": results, "revision": store.revision}

@@ -13,7 +13,7 @@ const file = process.env.ARCHHUB_WORKSHOP_TEST_PATH ||
 const source = fs.readFileSync(file, 'utf8');
 
 function loadHelper() {
-  const from = 'async function openWorkflowAsNodes', to = '\nconst WorkshopView =';
+  const from = 'async function openWorkflowAsNodes', to = '\nconst WorkshopUtilityPanel =';
   const start = source.indexOf(from), end = source.indexOf(to, start);
   assert.ok(start >= 0 && end > start, 'openWorkflowAsNodes is a slice of the shipped studio-workshop.jsx');
   const context = vm.createContext({});
@@ -107,7 +107,7 @@ test('a focus with no workflow focuses and switches with no scope walk', async (
 
 // The real card handler: slices BOTH functions and returns the one the workflow card calls.
 function loadCard() {
-  const from = 'async function openWorkflowAsNodes', to = '\nconst WorkshopView =';
+  const from = 'async function openWorkflowAsNodes', to = '\nconst WorkshopUtilityPanel =';
   const start = source.indexOf(from), end = source.indexOf(to, start);
   assert.ok(start >= 0 && end > start, 'the open helpers are a slice of the shipped studio-workshop.jsx');
   const context = vm.createContext({});

@@ -13,7 +13,8 @@
 (() => {
 const W = window.AH;
 const derive = build => window.ArchHubTheme ? window.ArchHubTheme.derive(build) : build(W);
-const WORKSHOP_TABS = [['projects', 'Projects'], ['board', 'Board'], ['chat', 'Chat'], ['agents', 'Agents'], ['approvals', 'Approvals']];
+const WORKSHOP_TABS = [['chat', 'Chat'], ['tasks', 'Tasks'], ['router', 'Router'], ['relay', 'Relay'], ['prompts', 'Prompts'],
+  ['projects', 'Projects'], ['board', 'Board'], ['agents', 'Agents'], ['approvals', 'Approvals']];
 
 // Conversation retention. After 20 idle days a conversation's messages move to
 // a file in the user's data folder; this notice says so on the conversation and
@@ -197,6 +198,49 @@ const wsLine = (text, limit = 140) => {
   const points = Array.from(line);
   return points.length > limit ? points.slice(0, limit - 1).join('') + '\u2026' : line;
 };
+const wsRoute = item => String((item && (item.routed || item.route)) || '').trim();
+const wsFreeRoute = item => {
+  const route = wsRoute(item);
+  if (!route) return false;
+  return route === 'openrouter/free' || route.endsWith(':free') || route.startsWith('lmstudio/') || route.startsWith('ollama/');
+};
+const wsModelOption = item => [item?.name || wsRoute(item), item?.vendor, item?.tag, item?.cost].filter(Boolean).join(' · ');
+const wsRouteLabel = route => String(route || '').replace(/^openrouter\//, '').replace(/^lmstudio\//, 'LM Studio · ').replace(/^ollama\//, 'Ollama · ');
+const wsTaskModel = (task, native, transcript) => {
+  const source = [
+    task?.model, task?.latest?.model, task?.latest?.route,
+    native?.work === task?.work ? native?.model : '',
+  ].find(Boolean);
+  return String(source || '').trim();
+};
+const wsTaskCost = task => {
+  const cost = [task?.cost, task?.usage?.cost, task?.latest?.cost, task?.latest?.usage?.cost, task?.latest?.usage_cost]
+    .find(value => value !== undefined && value !== null && String(value).trim() !== '');
+  return cost === undefined || cost === null ? '' : String(cost);
+};
+const wsBlankNames = text => {
+  const names = [], seen = new Set();
+  String(text || '').replace(/\{([^{}\n]{1,40})\}/g, (_, raw) => {
+    const name = raw.trim();
+    if (name && !seen.has(name)) { seen.add(name); names.push(name); }
+    return _;
+  });
+  return names;
+};
+const wsPromptText = prompt => String(prompt?.text || prompt?.prompt || prompt?.template || prompt?.body || prompt?.description || '').trim();
+const wsFactsUsed = message => (Array.isArray(message?.facts_used) ? message.facts_used : [])
+  .filter(row => row && typeof row.label === 'string' && row.label.trim() &&
+    typeof row.root === 'string' && row.root.trim());
+const wsRealGraphRoot = root => /^(assembly-instance|work|app|gm|fact|node):[A-Za-z0-9_.:@-]{3,}$/.test(String(root || '')) &&
+  !String(root || '').startsWith('proposal:');
+const wsReplyPlanLine = message => {
+  const body = wsText(message);
+  const structured = wsPlanReply(body);
+  if (structured?.prose) return structured.prose.replace(/\s+/g, ' ').trim();
+  const found = /\bPlan:\s*([\s\S]+)/i.exec(body);
+  if (found) return "Here's the plan: " + found[1].replace(/\s+/g, ' ').trim();
+  return '';
+};
 const wsTranscript = (state, descriptor) => {
   const held = state?.workshop;
   return held?.root === descriptor?.root ? held : null;
@@ -292,7 +336,7 @@ const wsParam = (node, pattern) => {
 // Tasks: Work named in the transcript (workshopTaskItems) plus the native Work status.
 // ── agent Work proposals as the design's task cards (design studio-workshop.jsx:221-223,
 // :404-410): the decision sits inline on the card, first choice primary; the lead reads
-// "Approved: …" or "Left for later. It stays proposed, nothing runs." An agent proposes;
+// "Approved: …" or "Declined: …" from persisted graph state. An agent proposes;
 // nothing exists or is granted until the founder approves (nodelang/work_proposals.py).
 const PROPOSAL_MARKER = 'ArchHub work proposal v1\n';
 const isWorkProposal = message => String(message?.body || '').startsWith(PROPOSAL_MARKER);
@@ -318,22 +362,23 @@ const wsProposalTask = (message, held = {}) => {
   const work = typeof held.work_root === 'string' && held.work_root ? held.work_root : null;
   const lead = !readable ? 'This proposal cannot be read; it cannot be approved.'
     : work ? `Approved: ${payload.title}. Work ${work} is created; nothing runs until it is claimed.`
-    : held.later ? 'Left for later. It stays proposed, nothing runs.'
+    : held.declined ? `Declined: ${payload.title}. Nothing exists or is granted.`
     : (held.error ? held.error + ' ' : '') +
       `Proposes this Work${payload.description ? ': ' + String(payload.description).replace(/\.?\s*$/, '.') : '.'} Reviewers: ${reviewers.length ? reviewers.join(', ') : 'none'}. Nothing exists or is granted until you approve.`;
   const gate = readable && text(payload.container.gate_kind) ?
     payload.container.gate_kind + (text(payload.container.gate_spec?.path) ? ' · ' + payload.container.gate_spec.path : '') : '';
-  // Waiting on the founder reads NEEDS YOU (design T-01 "block"); left for later it is only queued.
+  // Waiting on the founder reads NEEDS YOU (design T-01 "block"); declined is no longer pending.
   return {work:'proposal:' + id, id:'PROPOSAL', proposal:id, title:readable ? payload.title : 'Unreadable proposal',
-    state:work ? 'open' : held.later || !readable ? 'queued' : 'block', owner:message.sender_root || null, lead, thread:[], latest:message, progress:0, artifact:null,
+    state:work ? 'open' : held.declined || !readable ? 'queued' : 'block', owner:message.sender_root || null, lead, thread:[], latest:message, progress:0, artifact:null,
+    graphRoot:work,
     intent:readable ? (payload.description || payload.title) : '—', criteria:gate || '—', blocks:'—',
     permissions:{write:grants.length ? grants.map(grant => grant.path + ' (' + (grant.operations || []).join(', ') + ')').join(' · ') : 'none requested',
       gate:work ? 'approved by you' : 'your approval before any Work exists'},
     tools:{n:grants.length, t:container,
       list:grants.length ? grants.map(grant => grant.path + ' · ' + grant.scope + ' · ' + (grant.operations || []).join(', ')).join(' · ') : 'no write grants'},
-    decision:!readable || work || held.later ? null : [
+    decision:!readable || work || held.declined ? null : [
       {label:'Approve', action:'approve-proposal', message:id, disabled:!!held.pending},
-      {label:'Not now', action:'later-proposal', message:id, disabled:!!held.pending}]};
+      {label:'Reject', action:'decline-proposal', message:id, disabled:!!held.pending}]};
 };
 // The founder's Approve: read the proposals (the operation status first when it is not
 // held yet), then bind exactly this one through the existing bind.
@@ -356,6 +401,29 @@ const approveWorkProposal = async (authority, root, messageId) => {
   const result = await authority.bindWorkProposals(root, [row]);
   return {work_root:result.bound[0].work_root};
 };
+const declineWorkProposal = async (authority, root, messageId) => {
+  if (!authority || typeof authority.readWorkProposals !== 'function' || typeof authority.declineWorkProposals !== 'function') {
+    throw new Error('This Workshop cannot decline proposals yet.');
+  }
+  let read = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try { read = await authority.readWorkProposals(root); break; }
+    catch (error) {
+      if (/operation status first/i.test(error?.message || '')) {
+        if (typeof authority.refreshNativeWork === 'function') await authority.refreshNativeWork(root, null);
+        continue;
+      }
+      if (/changed while reading/i.test(error?.message || '') && attempt < 2) continue;
+      throw error;
+    }
+  }
+  const row = (read?.rows || []).find(item => item.message_id === messageId);
+  if (!row) throw new Error('Proposal ' + messageId + ' is not in the loaded messages.');
+  if (row.work_root) return {declined:null, work_root:row.work_root};
+  if (row.declined) return {declined:row.declined};
+  const result = await authority.declineWorkProposals(root, [row]);
+  return {declined:result.declined[0]};
+};
 const wsTasks = (items, nodes, wires, native, names) => {
   const cards = items.filter(item => item.kind === 'task');
   if (native?.work && !cards.some(card => card.work === native.work)) {
@@ -375,8 +443,9 @@ const wsTasks = (items, nodes, wires, native, names) => {
     const categories = [...new Set(events.map(event => event.category).filter(Boolean))];
     const [, short] = String(card.work).split(':');
     // The design's task id slot ("T-01"): derived from the Work id, stable across pages; never a counter.
-    return {id:'T-' + (short || card.work).slice(0, 6), work:card.work, title:card.title, owner:card.owner, state,
+    return {id:'T-' + (short || card.work).slice(0, 6), work:card.work, graphRoot:card.work, title:card.title, owner:card.owner, state,
       node:card.node ? card.node.id : null, latest,
+      nodeStatus:card.node?.status || card.node?.sub || '',
       intent:wsParam(card.node, /^(description|intent|summary)$/i) || card.title,
       criteria:wsParam(card.node, /criteri/i) || '\u2014',
       blocks:blocks.length ? blocks.join(' \u00b7 ') : '\u2014',
@@ -488,12 +557,49 @@ const agentOf = (agents, names, self, root) => {
   return {id:root, name, col:tone.bg, ink:tone.fg, ini:wsInitial(name, '?'), round:root === self, status:'available', tools:[]};
 };
 // ── task card: the container for its own thread ──
-const TaskCard = ({ t, sel, onSelect, onDecide, compact, agent, busy }) => {
+const taskRowMeta = t => {
+  const source = [t.intent, t.lead, t.nodeStatus].filter(Boolean).join(' · ');
+  const step = (/\bstep\s+\d+\s+of\s+\d+\b/i.exec(source) || [])[0] || '';
+  const count = String(t.intent || '').split('·').map(row => row.trim()).find(row => row && !/^step\s+\d+\s+of\s+\d+$/i.test(row)) || '';
+  const host = t.nodeStatus || (/([A-Za-z0-9 ._-]+\s+write)\b/i.exec(source) || [])[1] || '';
+  const status = t.approving ? 'waiting for approval' : String(t.state || '').replaceAll('_', ' ');
+  return [step, host, count, status].filter(Boolean).join(' · ');
+};
+const TaskCard = ({ t, sel, onSelect, onDecide, onOpen, compact, agent, busy, rowDesign }) => {
   const [open, setOpen] = React.useState(false);
   const [all, setAll] = React.useState(false);
   const [detail, setDetail] = React.useState(null);   // 'diff' | 'notes'
   const o = agent(t.owner);
   const thread = all ? t.thread : t.thread.slice(0, 2);
+  const graphRoot = wsRealGraphRoot(t.graphRoot || t.work) ? (t.graphRoot || t.work) : '';
+  if (rowDesign) {
+    const decisions = (t.decision || []).filter(row => !row.disabled);
+    const approve = decisions.find(row => /^approve\b/i.test(row.label));
+    const reject = decisions.find(row => /^reject\b/i.test(row.label));
+    return (
+      <div data-workshop-task={t.work} data-workshop-message={t.latest ? t.latest.root : undefined}
+        aria-current={sel ? 'true' : undefined}
+        onClick={() => onSelect(t.work)}
+        style={{ border:`1px solid ${sel ? W.accent : W.line}`, borderRadius:7, background:W.bgPanel, minWidth:0, overflow:'hidden' }}>
+        <div onClick={() => onSelect(t.work)}
+          style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 12px', minWidth:0, flexWrap:'wrap' }}>
+          <Dot c={(CHIP[t.state] || CHIP.open).c} pulse={t.state==='run'}/>
+          <div style={{ flex:'1 1 260px', minWidth:180, cursor:'pointer' }}>
+            <div style={{ fontSize:12.5, fontWeight:500, color:W.ink, overflowWrap:'anywhere' }}>{t.title}</div>
+            {' '}
+            <div style={{ marginTop:2, fontFamily:W.mono, fontSize:10, color:W.inkMuted, letterSpacing:'0.04em', overflowWrap:'anywhere' }}>
+              {taskRowMeta(t)}
+            </div>
+          </div>
+          <div style={{ display:'flex', gap:7, flexWrap:'wrap', marginLeft:'auto' }}>
+            {approve && <Btn sm pri disabled={busy} onClick={e => { e.stopPropagation(); onDecide(t.work, approve); }}>Approve</Btn>}
+            {reject && <Btn sm disabled={busy} onClick={e => { e.stopPropagation(); onDecide(t.work, reject); }}>{reject.label}</Btn>}
+            {onOpen && graphRoot && <Btn sm disabled={busy} onClick={e => { e.stopPropagation(); onOpen(graphRoot); }}>Open as graph</Btn>}
+          </div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div data-workshop-task={t.work} data-workshop-message={t.latest ? t.latest.root : undefined} aria-current={sel ? 'true' : undefined}
       onClick={() => onSelect(t.work)} style={{ background:W.bgPanel, borderRadius:9, cursor:'pointer',
@@ -1097,6 +1203,160 @@ function openShownWorkflowAsNodes(workflow, deps) {
   return openWorkflowAsNodes({ ...deps, focus, workflow: workflow || null });
 }
 
+const WorkshopUtilityPanel = ({ label, children }) => (
+  <section aria-label={label} style={{ display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
+    <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:16 }}>
+      <div style={{ display:'flex', flexDirection:'column', gap:10, maxWidth:980 }}>{children}</div>
+    </div>
+  </section>
+);
+
+const WorkshopRouterTab = ({ live, error, loading, saving, selected, onSave, tasks }) => {
+  const options = (live?.groups || []).flatMap(group => group.items || []).filter(wsFreeRoute)
+    .filter((item, index, all) => all.findIndex(other => wsRoute(other) === wsRoute(item)) === index);
+  const selectedRoute = options.some(item => wsRoute(item) === selected) ? selected : '';
+  return (
+    <WorkshopUtilityPanel label="Workshop router">
+      <div style={{ border:`1px solid ${W.line}`, borderRadius:8, background:W.bgPanel, padding:'12px 14px',
+        fontFamily:W.serif, fontSize:14.5, lineHeight:1.55, color:W.ink }}>
+        Workshop model selects the one recorded composer model. Per-task model and cost rows show only recorded task evidence.
+      </div>
+      <div style={{ border:`1px solid ${W.line}`, borderRadius:8, background:W.bgPanel, overflow:'hidden' }}>
+        <div style={{ display:'grid', gridTemplateColumns:'minmax(180px,.8fr) minmax(220px,1.2fr)', gap:12,
+          alignItems:'center', padding:'11px 13px' }}>
+          <div>
+            <div style={{ fontSize:13, color:W.ink, fontWeight:500 }}>Workshop model</div>
+            <div style={{ fontFamily:W.mono, fontSize:10, color:W.inkMuted, marginTop:2 }}>
+              {selected ? wsRouteLabel(selected) : loading ? 'Reading model routes' : 'No saved free/local route'}
+            </div>
+          </div>
+          <select aria-label="Workshop model" value={selectedRoute} disabled={saving || options.length === 0}
+            onChange={event => onSave(event.target.value)} style={{ width:'100%', padding:'7px 10px',
+              background:W.bg, color:W.ink, border:`1px solid ${W.line}`, borderRadius:5, fontFamily:W.mono, fontSize:11 }}>
+            <option value="">{error || (!live ? 'Reading free models...' : 'Choose a free/local model')}</option>
+            {options.map(item => <option key={wsRoute(item)} value={wsRoute(item)}>{wsModelOption(item)}</option>)}
+          </select>
+        </div>
+      </div>
+      <div style={{ border:`1px solid ${W.line}`, borderRadius:8, background:W.bgPanel, overflow:'hidden' }}>
+        {(tasks || []).length ? tasks.map((task, index) => (
+          <div key={task.work || index} style={{ display:'grid', gridTemplateColumns:'minmax(180px,1fr) minmax(180px,1fr) auto', gap:12,
+            padding:'10px 13px', alignItems:'center', borderTop:index ? `1px solid ${W.lineSoft}` : 0 }}>
+            <div style={{ minWidth:0, fontSize:12.5, color:W.ink, overflowWrap:'anywhere' }}>{task.title || task.work}</div>
+            <div style={{ minWidth:0, fontFamily:W.mono, fontSize:10.5, color:W.inkSoft, overflowWrap:'anywhere' }}>{task.model || 'model not recorded'}</div>
+            {task.cost && <div style={{ fontFamily:W.mono, fontSize:10.5, color:W.inkMuted }}>{task.cost}</div>}
+          </div>
+        )) : <div role="status" style={{ padding:'12px 13px', fontSize:12.5, color:W.inkSoft }}>No recent tasks in this Workshop.</div>}
+      </div>
+      {error && <div role="alert" style={{ fontSize:12, color:W.err }}>{error}</div>}
+    </WorkshopUtilityPanel>
+  );
+};
+
+const WorkshopRelayTab = ({ consent, session, error, busy, onToggle, onSignIn }) => {
+  const signedIn = !!session && session.state === 'signed_in';
+  const allowed = !!consent?.allowed;
+  return (
+    <WorkshopUtilityPanel label="Workshop relay">
+      <div style={{ border:`1px solid ${W.line}`, borderRadius:8, background:W.bgPanel, padding:'12px 14px',
+        fontFamily:W.serif, fontSize:14.5, lineHeight:1.55, color:W.ink }}>
+        Cloud relay — lets the cockpit send instructions to this app and see the map.
+      </div>
+      {!signedIn ? (
+        <div style={{ border:`1px solid ${W.line}`, borderRadius:8, background:W.bgPanel, padding:'12px 14px',
+          display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+          <div style={{ flex:'1 1 240px', minWidth:180 }}>
+            <div style={{ fontSize:13.5, color:W.ink, fontWeight:500 }}>Sign in to use the cloud relay</div>
+            <div style={{ marginTop:3, fontFamily:W.mono, fontSize:10.5, color:W.inkSoft }}>State: Off</div>
+          </div>
+          <Btn sm pri onClick={onSignIn}>Sign in</Btn>
+        </div>
+      ) : (
+        <div style={{ border:`1px solid ${W.line}`, borderRadius:8, background:W.bgPanel, padding:'12px 14px',
+          display:'flex', alignItems:'center', gap:12 }}>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:13.5, color:W.ink, fontWeight:500 }}>State: {allowed ? 'On' : 'Off'}</div>
+            <div role={error ? 'alert' : 'status'} style={{ marginTop:3, fontFamily:W.mono, fontSize:10.5,
+              color:error ? W.err : W.inkSoft, overflowWrap:'anywhere' }}>
+              {error || (allowed ? 'Cockpit instructions and the map are allowed for ' + (consent?.account || session.email || 'this account') + '.'
+                : 'The cockpit cannot instruct this app and cannot see the map.')}
+            </div>
+          </div>
+          <button type="button" role="switch" aria-checked={allowed} aria-label="Relay on/off" disabled={busy}
+            onClick={onToggle} title={allowed ? 'Turn relay off' : 'Turn relay on'}
+            style={{ width:34, height:18, borderRadius:999, padding:1, flexShrink:0, position:'relative',
+              border:`1px solid ${allowed ? W.accent : W.lineSoft}`, background:allowed ? W.accent : W.bgSoft,
+              cursor:busy ? 'default' : 'pointer' }}>
+            <span style={{ position:'absolute', top:1, left:allowed ? 16 : 1, width:14, height:14, borderRadius:'50%',
+              background:allowed ? W.onFill : W.inkSoft }}/>
+          </button>
+        </div>
+      )}
+      {error && !signedIn && <div role="alert" style={{ fontSize:12, color:W.err }}>{error}</div>}
+    </WorkshopUtilityPanel>
+  );
+};
+
+const PromptCard = ({ prompt, values, onValue, onUse, canShare, onShare }) => {
+  const body = wsPromptText(prompt);
+  const blanks = wsBlankNames(body);
+  return (
+    <div style={{ border:`1px solid ${W.line}`, borderRadius:8, background:W.bgPanel, padding:'12px 14px' }}>
+      <div style={{ fontSize:13.5, color:W.ink, fontWeight:500 }}>{prompt.name || prompt.title || 'Saved prompt'}</div>
+      <div style={{ marginTop:8, fontFamily:W.serif, fontSize:14, lineHeight:1.5, color:W.inkSoft, whiteSpace:'pre-wrap', overflowWrap:'anywhere' }}>
+        {body || prompt.description || 'No prompt text recorded.'}
+      </div>
+      {blanks.length > 0 && <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(160px, 1fr))', gap:8, marginTop:10 }}>
+        {blanks.map(name => <label key={name} style={{ fontFamily:W.mono, fontSize:10, color:W.inkMuted }}>{name}
+          <input aria-label={name} value={values?.[name] || ''} onChange={e => onValue(name, e.target.value)}
+            style={{ display:'block', width:'100%', marginTop:4, boxSizing:'border-box', padding:'6px 8px',
+              border:`1px solid ${W.line}`, borderRadius:5, background:W.bg, color:W.ink, fontFamily:W.sans, fontSize:12 }}/>
+        </label>)}
+      </div>}
+      <div style={{ display:'flex', gap:7, flexWrap:'wrap', marginTop:10 }}>
+        <Btn sm pri onClick={() => onUse(prompt)}>Use</Btn>
+        {canShare && <Btn sm onClick={() => onShare(prompt)}>Share with firm</Btn>}
+      </div>
+    </div>
+  );
+};
+
+const WorkshopPromptsTab = ({ prompts, loading, error, values, onValue, onUse, canSave, onSave, canShare, onShare }) => {
+  const [title, setTitle] = React.useState('');
+  const [text, setText] = React.useState('');
+  const save = event => {
+    event.preventDefault();
+    if (title.trim() && text.trim()) onSave({title:title.trim(), text:text.trim()});
+  };
+  return (
+    <WorkshopUtilityPanel label="Workshop prompts">
+      {loading && <div role="status" style={{ fontSize:12.5, color:W.inkSoft }}>Reading saved prompts...</div>}
+      {error && <div role="alert" style={{ fontSize:12, color:W.err }}>{error}</div>}
+      {prompts.length ? prompts.map(prompt => <PromptCard key={prompt.id || prompt.name || prompt.title}
+        prompt={prompt} values={values[prompt.id || prompt.name || prompt.title] || {}}
+        onValue={(name, value) => onValue(prompt, name, value)} onUse={onUse} canShare={canShare} onShare={onShare}/>)
+        : !loading && <div role="status" style={{ border:`1px solid ${W.line}`, borderRadius:8, background:W.bgPanel, padding:'12px 14px', color:W.inkSoft }}>
+          No saved prompts found in this Workshop store.
+        </div>}
+      {canSave && <form onSubmit={save} style={{ border:`1px solid ${W.line}`, borderRadius:8, background:W.bgPanel, padding:'12px 14px' }}>
+        <div style={{ fontSize:13.5, color:W.ink, fontWeight:500, marginBottom:8 }}>New prompt</div>
+        <input aria-label="Prompt title" value={title} onChange={e => setTitle(e.target.value)} placeholder="Prompt title"
+          style={{ width:'100%', boxSizing:'border-box', padding:'7px 9px', border:`1px solid ${W.line}`, borderRadius:5,
+            background:W.bg, color:W.ink, marginBottom:8 }}/>
+        <textarea aria-label="Prompt text" value={text} onChange={e => setText(e.target.value)} placeholder="Use {blank} fields for reusable values."
+          style={{ width:'100%', boxSizing:'border-box', minHeight:80, padding:'7px 9px', border:`1px solid ${W.line}`, borderRadius:5,
+            background:W.bg, color:W.ink, resize:'vertical' }}/>
+        <div style={{ marginTop:8 }}><button type="submit" disabled={!title.trim() || !text.trim()} style={{ padding:'3px 9px',
+          borderRadius:5, cursor:(!title.trim() || !text.trim()) ? 'default' : 'pointer', margin:0,
+          fontFamily:W.mono, fontSize:10.5, fontWeight:500, letterSpacing:'0.04em',
+          background:(!title.trim() || !text.trim()) ? 'transparent' : W.accent,
+          border:`1px ${(!title.trim() || !text.trim()) ? 'dashed' : 'solid'} ${(!title.trim() || !text.trim()) ? W.line : W.accent}`,
+          color:(!title.trim() || !text.trim()) ? W.inkSoft : W.onFill }}>New prompt</button></div>
+      </form>}
+    </WorkshopUtilityPanel>
+  );
+};
+
 const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusId, requestCanvasReveal, onLeave, sel, setSel, externalRail }) => {
   useStore();
   const authority = window.ARCHHUB_STUDIO_AUTHORITY || window.ARCHHUB_EXISTING_WORKSHOP;
@@ -1109,7 +1369,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const [tidy, setTidy] = React.useState(false);
   const [chain, setChain] = React.useState(false);
   const [controlsOpen, setControlsOpen] = React.useState(false);
-  // Per proposal message: {pending} | {work_root} | {later} | {error}, from the founder's own decisions and reads.
+  // Per proposal message: {pending} | {work_root} | {declined} | {error}, from the founder's own decisions and reads.
   const [proposalHeld, setProposalHeld] = React.useState({});
   // The header's file line (design: Work title · model file): the hosts the
   // app's own probe sees connected, read once from its cached rows; null until it answers.
@@ -1130,12 +1390,142 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const messageScroll = React.useRef(null), latestJump = React.useRef(false);
   if (!messageScroll.current) messageScroll.current = createWorkshopMessageScroll(setAwayFromLatest);
   const [draft, setDraft] = React.useState('');
+  const [routerLive, setRouterLive] = React.useState(null);
+  const [routerError, setRouterError] = React.useState('');
+  const [routerLoading, setRouterLoading] = React.useState(false);
+  const [routerSaving, setRouterSaving] = React.useState(false);
+  const [routerSelected, setRouterSelected] = React.useState('');
+  const [prompts, setPrompts] = React.useState([]);
+  const [promptsLoading, setPromptsLoading] = React.useState(false);
+  const [promptsError, setPromptsError] = React.useState('');
+  const [promptValues, setPromptValues] = React.useState({});
+  const [relayConsent, setRelayConsent] = React.useState({allowed:false, account:''});
+  const [relaySession, setRelaySession] = React.useState(null);
+  const [relayError, setRelayError] = React.useState('');
+  const [relayBusy, setRelayBusy] = React.useState(false);
   const [messageTextSize, setMessageTextSize] = React.useState(13.5); // the design's message size until chosen under ⋯
   const [execution, setExecution] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const busyRef = React.useRef(false);
   const mounted = React.useRef(true);
   const fileIntent = React.useRef(0);
+  const routerRead = React.useCallback(() => {
+    if (typeof fetch !== 'function') return;
+    const controller = new AbortController();
+    const s = window.__archhubSession || {};
+    setRouterLoading(true); setRouterError('');
+    fetch('/api/universal/models', {signal:controller.signal,
+      headers:{'X-ArchHub-Session':s.token || '', 'X-ArchHub-CSRF':s.csrf || ''}})
+      .then(r => { if (!r.ok) throw new Error('Model catalogue unavailable'); return r.json(); })
+      .then(d => {
+        if (!d || d.ok === false || !Array.isArray(d.groups)) throw new Error('Model catalogue unavailable');
+        setRouterLive(d);
+        setRouterSelected((typeof d.selected_route === 'string' && d.selected_route.trim()) ||
+          (typeof d.default_route === 'string' && d.default_route.trim()) || '');
+      })
+      .catch(error => { if (!controller.signal.aborted) setRouterError(error.message || 'Model catalogue unavailable'); })
+      .finally(() => { if (!controller.signal.aborted) setRouterLoading(false); });
+    return () => controller.abort();
+  }, []);
+  React.useEffect(() => preset === 'router' ? routerRead() : undefined, [preset, routerRead]);
+  const saveRouterModel = async route => {
+    if (routerSaving) return;
+    setRouterSaving(true); setRouterError('');
+    try {
+      if (typeof window.ARCHHUB_AGENT_SELECT === 'function') {
+        if (await window.ARCHHUB_AGENT_SELECT(route) !== route) throw new Error('The model selection could not be confirmed.');
+      } else if (authority?.setComposerModel) {
+        await authority.setComposerModel(route);
+      } else {
+        throw new Error('The model selection cannot be saved from this view.');
+      }
+      setRouterSelected(route);
+    } catch (error) {
+      setRouterError(error?.message || 'The model selection could not be saved.');
+    } finally { setRouterSaving(false); }
+  };
+  const promptSave = window.ARCHHUB_SAVE_PROMPT || authority?.savePrompt;
+  const promptShare = window.ARCHHUB_SHARE_PROMPT || authority?.sharePrompt;
+  const readPrompts = React.useCallback(() => {
+    const load = window.ARCHHUB_LOAD_PROMPTS || window.ARCHHUB_LOAD_SKILLS;
+    if (typeof load !== 'function') {
+      const rows = Array.isArray(window.ARCHHUB_LIVE?.skills) ? window.ARCHHUB_LIVE.skills : [];
+      setPrompts(rows.map(row => ({...row, id:row.id || row.name, text:wsPromptText(row)})));
+      return;
+    }
+    let gone = false;
+    setPromptsLoading(true); setPromptsError('');
+    Promise.resolve().then(load).then(async rows => {
+      if (!Array.isArray(rows)) throw new Error('Saved prompts could not be read.');
+      const limited = rows.slice(0, 12);
+      const read = window.ARCHHUB_READ_PROMPT || window.ARCHHUB_READ_SKILL;
+      const resolved = await Promise.all(limited.map(async row => {
+        let text = wsPromptText(row);
+        if (!text && typeof read === 'function') {
+          try { text = String(await read(row.name || row.title || row.id || '') || '').trim(); }
+          catch (_) { text = ''; }
+        }
+        return {...row, id:row.id || row.name || row.title, text};
+      }));
+      if (!gone) setPrompts(resolved.filter(row => wsPromptText(row) || row.name || row.title));
+    }).catch(error => { if (!gone) setPromptsError(error?.message || 'Saved prompts could not be read.'); })
+      .finally(() => { if (!gone) setPromptsLoading(false); });
+    return () => { gone = true; };
+  }, []);
+  React.useEffect(() => preset === 'prompts' ? readPrompts() : undefined, [preset, readPrompts]);
+  const readRelay = React.useCallback(() => {
+    let gone = false;
+    Promise.all([
+      typeof window.ARCHHUB_CLOUD_SESSION === 'function'
+        ? Promise.resolve().then(() => window.ARCHHUB_CLOUD_SESSION()).catch(error => ({ok:false, state:'unknown', error:String(error?.message || error)}))
+        : Promise.resolve({ok:false, state:'signed_out'}),
+      authority?.readCloudPublishConsent
+        ? Promise.resolve().then(() => authority.readCloudPublishConsent()).catch(error => ({allowed:false, account:'', error:String(error?.message || error)}))
+        : Promise.resolve({allowed:false, account:''}),
+    ]).then(([session, consent]) => {
+      if (gone) return;
+      setRelaySession(session && session.ok !== false ? session : {...(session || {}), state:(session && session.state) || 'signed_out'});
+      setRelayConsent({allowed:!!consent?.allowed, account:typeof consent?.account === 'string' ? consent.account : ''});
+      setRelayError(consent?.error || '');
+    });
+    return () => { gone = true; };
+  }, [authority]);
+  React.useEffect(() => readRelay(), [readRelay]);
+  const toggleRelay = async () => {
+    if (relayBusy || !authority?.setCloudPublishConsent) return;
+    setRelayBusy(true); setRelayError('');
+    const next = !relayConsent?.allowed;
+    try {
+      const result = await authority.setCloudPublishConsent(next);
+      setRelayConsent({allowed:!!result?.allowed, account:typeof result?.account === 'string' ? result.account : ''});
+    } catch (error) {
+      setRelayError(String(error?.message || error));
+    } finally { setRelayBusy(false); }
+  };
+  const signInRelay = () => {
+    if (typeof window.ARCHHUB_CLOUD_SIGNIN === 'function') return window.ARCHHUB_CLOUD_SIGNIN('google');
+  };
+  const keyPrompt = prompt => String(prompt.id || prompt.name || prompt.title || 'prompt');
+  const setPromptBlank = (prompt, name, value) => setPromptValues(current => {
+    const key = keyPrompt(prompt);
+    return {...current, [key]: {...(current[key] || {}), [name]:value}};
+  });
+  const usePrompt = prompt => {
+    const text = wsPromptText(prompt);
+    const values = promptValues[keyPrompt(prompt)] || {};
+    setDraft(text.replace(/\{([^{}\n]{1,40})\}/g, (_, raw) => values[raw.trim()] || ''));
+    setPreset('chat');
+  };
+  const savePrompt = async prompt => {
+    if (!promptSave) return;
+    try { await promptSave(prompt); readPrompts(); }
+    catch (error) { setPromptsError(error?.message || 'The prompt could not be saved.'); }
+  };
+  const sharePrompt = async prompt => {
+    if (!promptShare) return;
+    try { await promptShare(prompt); }
+    catch (error) { setPromptsError(error?.message || 'The prompt could not be shared.'); }
+  };
   // Retention: the first read after a person navigates to a room is an explicit
   // open (open=1), marked BEFORE the request so a failed open is never retried
   // as one. Timer polls and reads after an error are never opens.
@@ -1821,28 +2211,34 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     openWorkflowAsNodes({focus, workflow, authority, scopeOpen: window.ARCHHUB_SCOPE_OPEN,
       setFocusId, requestCanvasReveal, setMode, setError: setActionError});
   };
+  const openRootAsNodes = root => openWorkflowAsNodes({focus:root, workflow:null, authority,
+    scopeOpen: window.ARCHHUB_SCOPE_OPEN, setFocusId, requestCanvasReveal, setMode, setError: setActionError});
   const selectTask = id => {
     setS({ agent:S.agent, task: id === selTask ? null : id });
     if (id !== selTask) setPreset('task');
   };
   const setSelAgent = id => setS({ agent:id, task:null });
   // A proposal's inline decision (design studio-workshop.jsx:221-223, :404-410): Approve
-  // binds exactly this proposal through the existing bind; Not now leaves it proposed.
+  // binds exactly this proposal through the existing bind; Reject persists a decline record.
   const decideProposal = async choice => {
     const id = choice.message;
-    if (choice.action === 'later-proposal') { setProposalHeld(held => ({...held, [id]:{later:true}})); return; }
-    if (busyRef.current || !existing || typeof authority?.bindWorkProposals !== 'function') return;
+    if (busyRef.current || !existing) return;
     busyRef.current = true; setBusy(true); setProposalHeld(held => ({...held, [id]:{pending:true}}));
     try {
-      const done = await approveWorkProposal(authority, descriptor.root, id);
-      if (mounted.current) setProposalHeld(held => ({...held, [id]:{work_root:done.work_root}}));
+      if (choice.action === 'decline-proposal') {
+        const done = await declineWorkProposal(authority, descriptor.root, id);
+        if (mounted.current) setProposalHeld(held => ({...held, [id]:done.work_root ? {work_root:done.work_root} : {declined:done.declined}}));
+      } else {
+        const done = await approveWorkProposal(authority, descriptor.root, id);
+        if (mounted.current) setProposalHeld(held => ({...held, [id]:{work_root:done.work_root}}));
+      }
       try { await authority.refreshTopologyCanvas(); } catch (_) { /* the canvas shows the Work on its next read */ }
     } catch (failure) {
       if (mounted.current) setProposalHeld(held => ({...held, [id]:{error:failure?.message || 'The approval was not confirmed. Approve again to retry.'}}));
     } finally { busyRef.current = false; if (mounted.current) setBusy(false); }
   };
   const decide = (work, choice) => {
-    if (choice && ['approve-proposal', 'later-proposal'].includes(choice.action)) return decideProposal(choice);
+    if (choice && ['approve-proposal', 'decline-proposal'].includes(choice.action)) return decideProposal(choice);
     if (choice && choice.action) nativeAct(choice.action, {work});
   };
   // Which loaded proposals are already bound, so an approved one never offers Approve again.
@@ -1861,7 +2257,10 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
         }
         if (!gone && mounted.current) setProposalHeld(held => {
           const next = {...held};
-          for (const row of read.rows) if (row.work_root) next[row.message_id] = {work_root:row.work_root};
+          for (const row of read.rows) {
+            if (row.work_root) next[row.message_id] = {work_root:row.work_root};
+            else if (row.declined) next[row.message_id] = {declined:row.declined};
+          }
           return next;
         });
       } catch (_) { /* Approve reads the bound state again before it binds. */ }
@@ -2439,44 +2838,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   // its task card instead, and then the card keeps its own placement (Ping, batch 1 return).
   const anchoredWorkflow = !!shownWorkflow && typeof shownWorkflow.source_message === 'string' &&
     taskItems.some(item => item.kind === 'message' && item.message.root === shownWorkflow.source_message);
-  const workflowCard = shownWorkflow ? workflowProposalCard : chainNodes.length > 0 && (
-    <div style={{ display:'flex', gap:12 }}>
-      <Av a={room} s={28}/>
-      <div style={{ flex:1, minWidth:0 }}>
-        <div style={{ display:'flex', alignItems:'baseline', gap:8, marginBottom:4 }}>
-          <span style={{ fontSize:12.5, fontWeight:500 }}>{descriptor.label}</span>
-          <span style={{ fontFamily:W.mono, fontSize:9, color:W.inkMuted, border:`1px solid ${W.line}`, borderRadius:3, padding:'1px 5px' }}>canvas</span>
-        </div>
-        <div style={{ fontFamily:W.serif, fontSize:15, lineHeight:1.6, marginBottom:11 }}>
-          Here is the workflow on this canvas. {chainNodes.length} nodes, {chainNodes.filter(n => n.state === 'block').length} of them yours to confirm.
-        </div>
-        <div style={{ background:W.bg, border:`1px solid ${W.lineSoft}`, borderRadius:7, padding:'12px 13px', display:'flex', flexWrap:'wrap', alignItems:'center', columnGap:0, rowGap:10 }}>
-          {chainNodes.map((n, i, arr) => (
-            <React.Fragment key={n.id}>
-              <div style={{ border:`1px solid ${n.state==='block' ? W.accent : W.line}`, background:W.bgPanel, borderRadius:5, padding:'6px 9px', fontSize:11, lineHeight:1.25, maxWidth:220, overflowWrap:'anywhere' }}>
-                {n.t}<div style={{ fontFamily:W.mono, fontSize:8.5, color:W.inkMuted, letterSpacing:'0.06em', marginTop:2 }}>{n.p}</div>
-              </div>
-              {i < arr.length - 1 && <span style={{ width:22, height:1, background:W.line, flex:'none' }}/>}
-            </React.Fragment>
-          ))}
-          <div style={{ flexBasis:'100%', height:11 }}/>
-          <div style={{ display:'flex', alignItems:'center', gap:7, width:'100%' }}>
-            <span style={{ fontFamily:W.mono, fontSize:9, letterSpacing:'0.1em', padding:'2px 6px', borderRadius:3,
-              background:approval.bg, color:approval.c, overflowWrap:'anywhere' }}>
-              {approval.l}
-            </span>
-            <div style={{ flex:1 }}/>
-            <IBtn g="⌗" title="Open as nodes" onClick={openAsNodes}/>
-            {native?.mode === 'agent' && (running || awaiting)
-              ? <IBtn g="⊘" title="Stop native session — stops the builders" disabled={stoppingNative} onClick={stopNative}/>
-              : awaiting && native.approved !== true
-                ? <Btn sm pri disabled={busy || !editorsReady || (artifactReview && (artifactReviewExpired || !native.review_text || !native.input_digest))} onClick={() => nativeAct('approve')}>Approve</Btn>
-                : null}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+  const workflowCard = shownWorkflow ? workflowProposalCard : null;
 
   // Delivery state, relayed replies, agent-proposed workflows and independent review
   // (workshop_workflow.py). Every state shown here is read from the Workshop's own
@@ -2615,6 +2977,36 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
       </div>
     </div>
   );
+  const BrainFacts = ({ facts }) => facts.length ? (
+    <div style={{ marginTop:6, fontFamily:W.mono, fontSize:10.5, color:W.inkMuted, letterSpacing:'0.03em' }}>
+      Used {facts.length} fact{facts.length === 1 ? '' : 's'} from Brain:{' '}
+      {facts.map((fact, index) => <React.Fragment key={fact.root}>
+        {index > 0 && ' · '}
+        <button type="button" onClick={() => openRootAsNodes(fact.root)} title={fact.root}
+          style={{ padding:0, margin:0, border:0, background:'transparent', color:W.inkSoft,
+            textDecoration:'underline', cursor:'pointer', fontFamily:W.mono, fontSize:10.5 }}>
+          {fact.label}
+        </button>
+      </React.Fragment>)}
+    </div>
+  ) : null;
+  const AgentPlanReply = ({ message }) => {
+    const plan = wsReplyPlanLine(message);
+    const facts = wsFactsUsed(message);
+    if (!plan && !facts.length) return null;
+    const a = agent(wsSender(message));
+    return (
+      <div data-workshop-plan-reply={message.root} style={{ display:'flex', gap:12 }}>
+        <Av a={a} s={28}/>
+        <div style={{ flex:1, minWidth:0, background:W.bgPanel, border:`1px solid ${W.lineSoft}`,
+          borderRadius:7, padding:'10px 12px' }}>
+          {plan && <div style={{ fontSize:messageTextSize, lineHeight:1.6, fontFamily:W.serif, letterSpacing:'-0.003em',
+            overflowWrap:'anywhere' }}>{plan}</div>}
+          <BrainFacts facts={facts}/>
+        </div>
+      </div>
+    );
+  };
   const msgRow = message => {
     const relayed = typeof message.relayed_from === 'string' && typeof message.agent_text === 'string';
     if (relayed && anchoredWorkflow && message.root === shownWorkflow.source_message) {
@@ -2628,6 +3020,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
       </div>;
     }
     const plan = relayed ? wsPlanReply(message.agent_text) : null;
+    const facts = wsFactsUsed(message);
     // A relayed reply is recorded by this application, but it is the agent's own text.
     const isUser = !relayed && message.sender_root === transcript?.self;
     const a = relayed ? {...agent(message.relayed_from), name:contactLabel(message.relayed_from),
@@ -2635,9 +3028,21 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     const to = Array.isArray(message.recipient_roots) ?
       (message.recipient_roots.length ? message.recipient_roots.map(root => names.get(root) || root).join(', ') : 'Workshop') :
       (names.get(message.recipient_root) || message.recipient_root || 'Workshop');
+    if (isUser) {
+      return (
+        <div key={message.root} data-workshop-message={message.root} style={{ display:'flex', justifyContent:'flex-end' }}>
+          <div style={{ maxWidth:'min(100%, 560px)', background:W.bgPanel, border:`1px solid ${W.lineSoft}`,
+            borderRadius:7, padding:'10px 12px', fontSize:messageTextSize, lineHeight:1.55,
+            fontFamily:W.sans, color:W.ink, overflowWrap:'anywhere' }}>
+            {message.body}
+            {deliveryChips(message)}
+          </div>
+        </div>
+      );
+    }
     return (
       <div key={message.root} data-workshop-message={message.root} style={{ display:'flex', gap:12 }}>
-        {isUser ? <span aria-hidden="true" style={{ width:28, height:28, borderRadius:'50%', background:W.userAv, color:W.onUserAv, display:'grid', placeItems:'center', fontSize:12, fontWeight:700, flex:'none' }}>{a.ini}</span> : <Av a={a} s={28}/>}
+        <Av a={a} s={28}/>
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ display:'flex', alignItems:'baseline', gap:8, marginBottom:4, flexWrap:'wrap' }}>
             <span title={message.sender_root} style={{ fontSize:12.5, fontWeight:500, overflowWrap:'anywhere' }}>{a.name}</span>
@@ -2664,6 +3069,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
               </> : relayed ? message.agent_text :
               String(message.body || '').startsWith('Model review evidence. Independent review is still required.\n') ?
               <WorkshopReview text={message.body.slice(message.body.indexOf('\n') + 1)}/> : message.body}
+            {!plan && facts.length > 0 && <BrainFacts facts={facts}/>}
           </div>
           {relayed ? relayedActions(message) : deliveryChips(message)}
         </div>
@@ -2727,6 +3133,9 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     ? connectedHosts[0].name + (typeof connectedHosts[0].file === 'string' && connectedHosts[0].file ? ' · ' + connectedHosts[0].file : '')
     : connectedHosts.length ? `${connectedHosts.length} hosts connected` : 'no host connected';
   const headTitle = [descriptor.label, native?.work ? approvalWork : ''].filter(Boolean).join(' · ');
+  const modelChip = transcript?.model_agent?.model
+    ? `${transcript.model_agent.model} · route ${transcript.model_agent.route || 'auto'}`
+    : '';
   const setWorkshopTab = tab => setPreset(tab);
   const bar = (
     <>
@@ -2736,12 +3145,18 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
         {headTitle && <span title={descriptor.root} style={{ fontFamily:W.mono, fontSize:13, color:W.inkSoft,
           overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', minWidth:0 }} data-workshop-head="">{headTitle}{hostLine ? ' · ' + hostLine : ''}</span>}
         <div style={{ flex:1 }}/>
-        {connectedHosts.length === 1 && <span style={{ fontFamily:W.mono, fontSize:12, color:W.inkSoft, padding:'4px 10px',
-          borderRadius:5, background:W.bgSoft }}>{connectedHosts[0].name}</span>}
-        <span style={{ display:'inline-flex', alignItems:'center', gap:7, padding:'4px 10px', border:`1px solid ${W.line}`,
-          background:W.bgPanel, borderRadius:999, fontFamily:W.mono, fontSize:12, color:W.ink }}>
-          <Dot c={W.ok}/>Hub
-        </span>
+        <div aria-label="Workshop header chips" style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap', justifyContent:'flex-end' }}>
+          {modelChip && <span style={{ fontFamily:W.mono, fontSize:11, color:W.inkSoft, padding:'3px 8px',
+            border:`1px solid ${W.lineSoft}`, borderRadius:4, background:W.bgSoft }}>{modelChip}</span>}
+          <span style={{ fontFamily:W.mono, fontSize:11, color:relayConsent?.allowed ? W.ok : W.inkSoft, padding:'3px 8px',
+            border:`1px solid ${W.lineSoft}`, borderRadius:4, background:W.bgSoft }}>
+            Relay {relayConsent?.allowed ? 'On' : 'Off'}
+          </span>
+          <span style={{ display:'inline-flex', alignItems:'center', gap:7, padding:'3px 8px', border:`1px solid ${W.lineSoft}`,
+            background:W.bgPanel, borderRadius:999, fontFamily:W.mono, fontSize:11, color:W.ink }}>
+            <Dot c={W.ok}/>Hub
+          </span>
+        </div>
       </div>
       <div style={{ gridColumn:'1 / -1', gridRow:'2', display:'flex', alignItems:'center', gap:18, padding:'0 20px',
         minWidth:0, borderBottom:`1px solid ${W.line}`, background:W.bg }}>
@@ -2768,10 +3183,17 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
             if (item.kind !== 'task') {
               if (!isWorkProposal(item.message)) return msgRow(item.message);
               const proposal = wsProposalTask(item.message, proposalHeld[item.message.message_id || item.message.root]);
-              return <TaskCard key={proposal.work} t={proposal} sel={selTask===proposal.work} onSelect={selectTask} onDecide={decide} compact={['router', 'relay', 'prompts'].includes(preset)} agent={agent} busy={busy}/>;
+              return <TaskCard key={proposal.work} t={proposal} sel={selTask===proposal.work} onSelect={selectTask} onDecide={decide}
+                onOpen={openRootAsNodes} compact={['router', 'prompts'].includes(preset)}
+                agent={agent} busy={busy} rowDesign={preset === 'chat'}/>;
             }
             const t = tasks.find(x => x.work === item.work);
-            return t && <TaskCard key={'task:' + t.work} t={t} sel={selTask===t.work} onSelect={selectTask} onDecide={decide} compact={['router', 'relay', 'prompts'].includes(preset)} agent={agent} busy={busy}/>;
+            return t && <React.Fragment key={'task:' + t.work}>
+              {t.latest && <AgentPlanReply message={t.latest}/>}
+              <TaskCard t={t} sel={selTask===t.work} onSelect={selectTask} onDecide={decide}
+                onOpen={openRootAsNodes} compact={['router', 'prompts'].includes(preset)}
+                agent={agent} busy={busy} rowDesign={preset === 'chat'}/>
+            </React.Fragment>;
           }).flatMap((row, index) => index === openingAsk && !anchoredWorkflow ? [row, <React.Fragment key="workflow">{workflowCard}</React.Fragment>] : [row])}
           {baboomSummary}
         </div>
@@ -2833,15 +3255,73 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
       {composer}
     </section>
   );
+  const canStopTask = task => native?.mode === 'agent' && task?.work === native.work &&
+    ['attaching', 'preparing', 'awaiting_approval', 'executing', 'uncertain'].includes(native.state);
+  const tasksPage = (
+    <section aria-label="Workshop tasks" style={{ display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
+      <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:14 }}>
+        <div style={{ display:'grid', gridTemplateColumns:'minmax(180px,1.25fr) minmax(120px,.75fr) minmax(130px,.75fr) minmax(180px,1fr) auto',
+          gap:10, alignItems:'center', fontFamily:W.mono, fontSize:10.5, color:W.inkMuted, padding:'0 10px 8px' }}>
+          <div>task</div><div>agent</div><div>status</div><div>result</div><div></div>
+        </div>
+        {allTasks.length ? allTasks.map((task, index) => {
+          const decisions = (task.decision || []).filter(row => !row.disabled);
+          const approve = decisions.find(row => /^approve\b/i.test(row.label));
+          const reject = decisions.find(row => /^reject\b/i.test(row.label));
+          const result = task.artifact?.summary || task.artifact?.name || task.lead || wsLine(wsText(task.latest), 120) || 'No result recorded';
+          return (
+            <div key={task.work} data-workshop-task-row={task.work} style={{ borderTop:index ? `1px solid ${W.lineSoft}` : `1px solid ${W.line}`,
+              display:'grid', gridTemplateColumns:'minmax(180px,1.25fr) minmax(120px,.75fr) minmax(130px,.75fr) minmax(180px,1fr) auto',
+              gap:10, alignItems:'center', padding:'10px', minWidth:0 }}>
+              <button type="button" onClick={() => selectTask(task.work)} style={{ border:0, background:'transparent', color:W.ink,
+                textAlign:'left', padding:0, margin:0, fontSize:12.5, fontWeight:500, cursor:'pointer', overflowWrap:'anywhere' }}>
+                {task.title || task.work}
+              </button>
+              <div style={{ fontSize:12, color:W.inkSoft, overflowWrap:'anywhere' }}>{agent(task.owner).name}</div>
+              <div style={{ fontFamily:W.mono, fontSize:10.5, color:(CHIP[task.state] || CHIP.open).c, overflowWrap:'anywhere' }}>
+                {taskRowMeta(task) || task.state}
+              </div>
+              <div style={{ fontSize:12, color:W.inkSoft, overflowWrap:'anywhere' }}>{result}</div>
+              <div style={{ display:'flex', gap:7, alignItems:'center', justifyContent:'flex-end', flexWrap:'wrap' }}>
+                {approve && <Btn sm pri disabled={busy} onClick={() => decide(task.work, approve)}>Approve</Btn>}
+                {reject && <Btn sm disabled={busy} onClick={() => decide(task.work, reject)}>Reject</Btn>}
+                {canStopTask(task) && <Btn sm disabled={stoppingNative} onClick={stopNative}>Stop</Btn>}
+                <details style={{ fontSize:11, color:W.inkSoft }}>
+                  <summary>Details</summary>
+                  <div style={{ marginTop:6, minWidth:220, maxWidth:420, overflowWrap:'anywhere', lineHeight:1.5 }}>
+                    <div><b>Work</b> {task.work}</div>
+                    <div><b>Criteria</b> {task.criteria}</div>
+                    <div><b>Permissions</b> {task.permissions?.write || 'none recorded'}</div>
+                    <div><b>Tools</b> {task.tools?.list || task.tools?.t || 'none recorded'}</div>
+                  </div>
+                </details>
+              </div>
+            </div>
+          );
+        }) : <div role="status" style={{ padding:12, color:W.inkSoft }}>No governed tasks in this Workshop.</div>}
+      </div>
+      {composer}
+    </section>
+  );
+
+  const routerTasks = allTasks.slice(0, 12).map(task => ({...task, model:wsTaskModel(task, native, transcript), cost:wsTaskCost(task)}));
+  const routerPage = <WorkshopRouterTab live={routerLive} error={routerError} loading={routerLoading}
+    saving={routerSaving} selected={routerSelected} onSave={saveRouterModel} tasks={routerTasks}/>;
+  const relayPage = <WorkshopRelayTab consent={relayConsent} session={relaySession} error={relayError}
+    busy={relayBusy} onToggle={toggleRelay} onSignIn={signInRelay}/>;
+  const promptsPage = <WorkshopPromptsTab prompts={prompts} loading={promptsLoading} error={promptsError}
+    values={promptValues} onValue={setPromptBlank} onUse={usePrompt} canSave={!!promptSave} onSave={savePrompt}
+    canShare={!!promptShare} onShare={sharePrompt}/>;
 
   const cols = externalRail
     ? (preset==='board' ? 'minmax(0,1fr) 300px' : 'minmax(0,1fr) 320px')
     : (preset==='board' ? '212px minmax(0,1fr) 300px' : '262px minmax(0,1fr) 320px');
   const middle = preset === 'projects' ? projects : preset === 'board' ? board : preset === 'agents' ? agentsPage :
-    preset === 'approvals' ? approvalsPage : preset === 'task' ? taskPage : stream;
+    preset === 'approvals' ? approvalsPage : preset === 'task' ? taskPage : preset === 'router' ? routerPage :
+    preset === 'relay' ? relayPage : preset === 'prompts' ? promptsPage : preset === 'tasks' ? tasksPage : stream;
   return (
     <main style={{ gridColumn:'1 / -1', gridRow:'2', minHeight:0, overflow:'hidden', display:'grid',
-      gridTemplateColumns:'minmax(0,1fr)', gridTemplateRows:'58px 76px minmax(0,1fr)', border:`1px solid ${W.line}`,
+      gridTemplateColumns:'minmax(0,1fr)', gridTemplateRows:'42px 48px minmax(0,1fr)', border:`1px solid ${W.line}`,
       borderRadius:12, background:W.bg, margin:0 }}>
       {bar}
       {middle}
@@ -2864,12 +3344,12 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
 
 // ── header tabs: project board, conversation, agents, approvals, plus retained routing views ──
 const WorkshopTabs = ({tab, setTab, approvals = 0}) => (
-  <div role="tablist" aria-label="Workshop tabs" style={{ display:'flex', alignItems:'center', gap:18, minWidth:0 }}>
+  <div role="tablist" aria-label="Workshop tabs" style={{ display:'flex', alignItems:'center', gap:8, minWidth:0, flexWrap:'wrap' }}>
     {WORKSHOP_TABS.map(([k, l]) => (
       <button key={k} type="button" role="tab" onClick={() => setTab(k)} title={l} aria-label={l} aria-selected={tab === k}
-        style={{ minHeight:36, border:0, borderRadius:W.rad.pill, margin:0, cursor:'pointer', padding:'0 12px',
+        style={{ minHeight:28, border:0, borderRadius:5, margin:0, cursor:'pointer', padding:'0 10px',
           background: tab===k ? W.accentSoft : 'transparent', color:tab===k ? W.ink : W.inkSoft,
-          fontFamily:W.sans, fontSize:16, fontWeight:400, letterSpacing:0, display:'inline-flex', alignItems:'center', gap:7 }}>
+          fontFamily:W.sans, fontSize:13, fontWeight:400, letterSpacing:0, display:'inline-flex', alignItems:'center', gap:7 }}>
         <span>{l}</span>{k === 'approvals' && approvals > 0 && <span style={{ minWidth:18, height:18, padding:'0 5px',
           borderRadius:5, background:W.warn + '24', color:W.warn, display:'inline-flex', alignItems:'center',
           justifyContent:'center', fontFamily:W.sans, fontSize:12, lineHeight:1, fontWeight:600 }}>{approvals}</span>}

@@ -28,6 +28,8 @@ ROW_STATES = {
         "prerequisites-ready", "dependency-missing", "unavailable", "timeout", "unsupported",
     }),
     "outlook-imap": frozenset({"needs-sign-in"}),
+    # Notion connects with Notion's own browser sign-in (nodelang/notion_mcp.py).
+    "notion": frozenset({"needs-sign-in"}),
 }
 # Host rows that also say "unavailable" when the program is installed but its
 # ArchHub bridge is not: 3ds Max without MaxMCP (host_brokers.probe_host_rows)
@@ -81,6 +83,8 @@ def test_closed_hosts_answer_with_the_honest_zero(monkeypatch):
     monkeypatch.setattr(host_brokers, "_port_open", lambda port, timeout=0.15: False)
     monkeypatch.setattr(host_brokers, "_com_alive", lambda prog_id: False)
     monkeypatch.setattr(host_brokers, "_notion_token", lambda: "")
+    from nodelang import notion_mcp
+    monkeypatch.setattr(notion_mcp, "connected", lambda load=None: False)
     monkeypatch.setattr(host_brokers, "_dropbox_root", lambda: None)
     for engine, params in (("max.exec", {"code": "x"}), ("rhino.exec", {"code": "x"}), ("blender.exec", {"code": "x"}),
                            ("outlook.inbox", {}), ("notion.search", {"query": "x"}), ("dropbox.list", {})):

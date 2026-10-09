@@ -148,6 +148,7 @@ def test_open_hosts_never_discloses_dropbox_profile_path(served, monkeypatch, pr
     monkeypatch.setattr(host_brokers, "_installed", lambda *args: False)
     monkeypatch.setattr(host_brokers, "_com_alive", lambda *args: False)
     monkeypatch.setattr(host_brokers, "_notion_token", lambda: "")
+    monkeypatch.setattr(host_brokers, "_notion_signed_in", lambda: False)
     monkeypatch.setattr(outlook_graph, "invoke", lambda *args: {"ok": False, "state": "unavailable"})
     monkeypatch.setattr(pipeline_engines, "probe_connectors", host_brokers.probe_host_rows)
     server, client = served

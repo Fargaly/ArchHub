@@ -300,9 +300,11 @@ def probe_host_rows() -> list[dict]:
                  "drive": "outlook.imap.inbox", "state": "needs-sign-in",
                  "detail": "direct read-only mailbox access; connect with company email and an app password; status verifies the exact account"})
     token = _notion_token()
+    signed_in = _notion_signed_in()
     rows.append({"id": "notion", "name": "Notion", "drive": "notion.search",
-                 "state": "connected" if token else "needs-key",
-                 "detail": "integration token present" if token else "add a Notion integration token (Settings → keys → notion, or NOTION_API_KEY)"})
+                 "state": "connected" if token or signed_in else "needs-sign-in",
+                 "detail": ("integration token present" if token else "signed in to Notion" if signed_in
+                            else "connect Notion: one sign-in in the browser, no token to copy (notion.connect)")})
     dropbox = _dropbox_root()
     rows.append({"id": "dropbox", "name": "Dropbox", "drive": "dropbox.list",
                  "state": "connected" if dropbox else "absent",
@@ -487,11 +489,39 @@ def _notion_title(row: Mapping[str, object]) -> str:
     return ""
 
 
+def _notion_signed_in() -> bool:
+    from . import notion_mcp  # noqa: PLC0415
+    return notion_mcp.connected()
+
+
+def notion_connect(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Connect Notion with Notion's own sign-in: the browser asks once, nothing is copied."""
+    from . import notion_mcp  # noqa: PLC0415
+    try:
+        answer = notion_mcp.connect()
+    except (OSError, ValueError, urllib.error.URLError) as exc:
+        return _honest("Notion sign-in could not start: %s" % exc)
+    if not answer.get("ok"):
+        return _honest(str(answer.get("error") or "Notion sign-in did not complete"))
+    return {"out": [{"connected": True}]}, "Notion is connected"
+
+
 def notion_search(params: Mapping[str, object], feeds: Mapping[str, object]):
-    """Search the founder's Notion workspace with the integration token."""
+    """Search the founder's Notion workspace: an integration token if one is set, else the Notion sign-in."""
     token = _notion_token()
     if not token:
-        return _honest("no Notion token (Settings > keys > notion, or NOTION_API_KEY)")
+        from . import notion_mcp  # noqa: PLC0415
+        if not notion_mcp.connected():
+            return _honest("Notion is not connected yet: run notion.connect once (the browser asks to Allow)")
+        try:
+            rows = notion_mcp.search(str(params.get("query") or ""))
+        except notion_mcp.NotionNotConnected as exc:
+            return _honest(str(exc))
+        except notion_mcp.NotionToolError as exc:
+            return _honest("Notion refused the search: %s" % exc)
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            return _honest("Notion could not be reached: %s" % exc)
+        return {"out": rows}, "%d Notion result(s)" % len(rows)
     try:
         data = _http(NOTION_URL + "/search", {"query": str(params.get("query") or ""), "page_size": 20},
                      {"Authorization": "Bearer " + token, "Notion-Version": "2022-06-28"})
@@ -527,6 +557,7 @@ from .outlook_imap import inbox as _imap_inbox, status as _imap_status, message 
 ENGINES = {
     "max.exec": max_exec, "max.info": max_info, "max.python": max_python, "rhino.exec": rhino_exec, "blender.exec": blender_exec,
     "office.read": office_read, "outlook.inbox": outlook_inbox, "notion.search": notion_search,
+    "notion.connect": notion_connect,
     "dropbox.list": dropbox_list, "connector.rows": connector_rows,
     "outlook.graph.inbox": _graph_inbox, "outlook.graph.status": _graph_status,
     "outlook.graph.categories": _graph_categories, "outlook.graph.categorize": _graph_categorize,

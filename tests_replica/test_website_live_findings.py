@@ -64,14 +64,14 @@ REPO = Path(__file__).resolve().parents[1]
 CHROME = Path("C:/Program Files/Google/Chrome/Application/chrome.exe")
 ORIGIN = "https://archhub.io"
 OFFER = dict(BETA_OFFER)
-# The GitHub release build-20261010-1215-d6e2765 as its release notes and the
+# The GitHub release build-20261010-1426-405348d as its release notes and the
 # asset digest publish it, pinned here, not borrowed from the code under court.
-REVISION = "build-20261010-1215-d6e2765"
+REVISION = "build-20261010-1426-405348d"
 DOWNLOAD = (
     "https://github.com/Fargaly/ArchHub/releases/download/"
-    "build-20261010-1215-d6e2765/ArchHub-Setup-0.exe"
+    "build-20261010-1426-405348d/ArchHub-Setup-0.exe"
 )
-DOWNLOAD_SHA256 = "2ed2297d812e681d42da0c60d66e0bde74166235705791c1182fdbbae2ae2492"
+DOWNLOAD_SHA256 = "71882a412eb56046247ad96cf938b598bc059699d049687ccf94e82d9195277a"
 ARTIFACT = META_ROOT + ":artifact:" + REVISION
 REPOSITORY = "https://github.com/Fargaly/ArchHub"
 # The old Astro site (12.PRODUCTION/web/src/pages and its docs collection),

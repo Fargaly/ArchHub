@@ -174,11 +174,18 @@ test('sidebar account chip reads the account record, never a seeded person', asy
     }
     signed.flush(() => chip.click());
     assert.ok([...signed.doc.querySelectorAll('span')].some(span => span.textContent === 'Settings'), 'the chip opens Settings on Account');
+    assert.equal(signed.doc.querySelectorAll('[data-tool-card]').length, 0, 'the chip lands on Account, not the Hub');
+    signed.flush(() => [...signed.doc.querySelectorAll('button')].find(button => button.textContent.trim() === '✕').click());
+    signed.flush(() => signed.doc.querySelector('[title="Settings"]').click());
+    assert.equal(signed.doc.querySelectorAll('[data-tool-card]').length, 6, 'after an Account visit, the rail Settings opens on the Hub again');
   } finally { signed.close(); }
   const out = await mountStudio();
   try {
     const chip = out.doc.querySelector('aside [aria-label="Account"]');
     assert.ok(chip && chip.textContent.includes('Sign in'), 'signed out, the chip is the way in');
+    out.flush(() => chip.click());
+    assert.ok([...out.doc.querySelectorAll('span')].some(span => span.textContent === 'Settings'), 'signed out, the chip opens Settings');
+    assert.equal(out.doc.querySelectorAll('[data-tool-card]').length, 0, 'signed out, the chip lands on Account to sign in, not the Hub');
     assert.equal(out.doc.body.textContent.includes('Fargaly'), false, 'no seeded person when signed out');
   } finally { out.close(); }
 });

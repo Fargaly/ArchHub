@@ -14,7 +14,7 @@ const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const seedText = read('nodelang/universal_presentation_seed.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
 const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)].map(match => [match[1], match[2]]));
 // Workspaces (274e4f2a) registers the folders the graph governs; it sits after Permissions.
-const DESIGN_TABS = ['Account', 'Brain', 'Team', 'Profile', 'Permissions', 'Workspaces', 'Hosts', 'Providers', 'Models',
+const DESIGN_TABS = ['Hub', 'Account', 'Brain', 'Team', 'Profile', 'Permissions', 'Workspaces', 'Hosts', 'Providers', 'Models',
   'Theme', 'Shortcuts', 'Storage', 'About'];
 // Shaped as model_router.provider_rows() emits them. No row carries a key.
 const PROVIDERS = [
@@ -121,6 +121,7 @@ test('the Settings sidebar is the design tab table, in the design order, and sta
     assert.equal(badge('Providers'), '1 key', 'the Providers badge counts the keyed registry rows');
     assert.equal(badge('Theme'), 'Dark', 'the Theme badge states the mode the Studio draws');
     assert.equal(badge('Brain'), '4 strata \u00b7 1 facts');
+    assert.equal(badge('Hub'), '5/6 on', 'the Hub badge counts the tools that are on');
     assert.ok(s.doc.body.textContent.includes('STUDIO \u00b7 20260916-2130-e733a13'), 'the dialog header states the running build');
   } finally { s.close(); }
 });

@@ -108,6 +108,20 @@ async function mountStudio(options = {}) {
   return {win, doc:win.document, button, graphCreates, fileClicks, agentCalls, ownerCalls, accountCalls, setAccount, onSignOut, settle, close};
 }
 
+async function openSettingsHub(studio) {
+  const settings = studio.doc.querySelector('[title="Settings"]');
+  assert.ok(settings, 'actual Studio Settings control exists');
+  studio.win.ReactDOM.flushSync(() => settings.click());
+  await studio.settle();
+  const theme = [...studio.doc.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Theme');
+  assert.ok(theme, 'actual Settings sidebar exists');
+  const sidebar = theme.parentElement;
+  assert.equal(sidebar.firstElementChild.firstElementChild.textContent, 'Hub', 'Hub is the first Settings tab');
+  const panel = sidebar.nextElementSibling;
+  assert.equal(panel.querySelectorAll('[data-tool-card]').length, 6, 'Settings Hub has the six tool cards');
+  return panel;
+}
+
 test('Home composer shows the four design chip buttons and no raw model route chip', async () => {
   const studio = await mountStudio();
   try {
@@ -122,7 +136,7 @@ test('Home composer shows the four design chip buttons and no raw model route ch
   } finally { studio.close(); }
 });
 
-test('F2: Home starts rail-only, renders six hub tool cards, and hides waiting at zero', async () => {
+test('F2: Home starts rail-only, moves the six hub tool cards into Settings Hub, and hides waiting at zero', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
@@ -130,14 +144,17 @@ test('F2: Home starts rail-only, renders six hub tool cards, and hides waiting a
       'Home does not render the Nodes library panel');
     assert.equal(studio.doc.querySelectorAll('[data-tool-rail]').length, 6,
       'rail has the six tool icons');
-    assert.equal(studio.doc.querySelectorAll('[data-tool-card]').length, 6,
-      'Home has the six tool cards');
+    assert.equal(studio.doc.querySelectorAll('[data-tool-card]').length, 0,
+      'Home has no tool cards');
     for (const id of ['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud']) {
-      assert.ok(studio.doc.querySelector(`[data-tool-card="${id}"]`), id + ' card exists');
       assert.ok(studio.doc.querySelector(`[data-tool-rail="${id}"]`), id + ' rail icon exists');
     }
     assert.equal(studio.doc.body.textContent.includes('Waiting for you'), false);
-    assert.match(studio.doc.querySelector('[data-tool-card="studio"]').textContent, /StudioCanvas, chats and graph sessions\. 3 sessions · 0 running/);
+    const hub = await openSettingsHub(studio);
+    for (const id of ['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud']) {
+      assert.ok(hub.querySelector(`[data-tool-card="${id}"]`), id + ' card exists in Settings Hub');
+    }
+    assert.match(hub.querySelector('[data-tool-card="studio"]').textContent, /StudioCanvas, chats and graph sessions\. 3 sessions · 0 running/);
   } finally { studio.close(); }
 });
 
@@ -216,12 +233,15 @@ test('F1b: right-click on an on tool shows a six second in-panel off confirm', a
   } finally { studio.close(); }
 });
 
-test('F1: rail tool clicks open existing views and Studio opens Home', async () => {
+test('F1: Settings Hub card Open closes Settings and opens existing views; Studio rail opens Home', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
-    studio.win.ReactDOM.flushSync(() => [...studio.doc.querySelectorAll('[data-tool-card="brain"] button')]
+    const hub = await openSettingsHub(studio);
+    studio.win.ReactDOM.flushSync(() => [...hub.querySelectorAll('[data-tool-card="brain"] button')]
       .find(node => node.textContent.trim() === 'OPEN').click());
+    await studio.settle();
+    assert.equal(studio.doc.body.textContent.includes('SettingsSTUDIO'), false, 'Open closes Settings');
     assert.equal(studio.doc.querySelector('[data-tool-view="brain"]')?.getAttribute('data-tool-tab'), 'facts');
     studio.win.ReactDOM.flushSync(() => studio.win.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Escape', bubbles:true})));
     studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-tool-rail="studio"]').click());
@@ -325,14 +345,15 @@ test('F2R D1: placeholder tool stats are replaced from owner projections after t
   ]});
   try {
     await studio.settle(); await studio.settle();
-    assert.match(studio.doc.querySelector('[data-tool-card="studio"]').textContent, /3 sessions · 0 running/);
-    assert.match(studio.doc.querySelector('[data-tool-card="workshop"]').textContent, /1 project · 1 task/);
-    assert.match(studio.doc.querySelector('[data-tool-card="connectors"]').textContent, /1\/1 hosts running/);
-    assert.match(studio.doc.querySelector('[data-tool-card="baboom"]').textContent, /Starts with Windows: on · runtime unknown/);
-    assert.equal(studio.doc.querySelector('[data-tool-card="studio"]').textContent.includes('…'), false);
-    assert.equal(studio.doc.querySelector('[data-tool-card="workshop"]').textContent.includes('…'), false);
-    assert.equal(studio.doc.querySelector('[data-tool-card="connectors"]').textContent.includes('…'), false);
-    assert.equal(studio.doc.querySelector('[data-tool-card="baboom"]').textContent.includes('…'), false);
+    const hub = await openSettingsHub(studio);
+    assert.match(hub.querySelector('[data-tool-card="studio"]').textContent, /3 sessions · 0 running/);
+    assert.match(hub.querySelector('[data-tool-card="workshop"]').textContent, /1 project · 1 task/);
+    assert.match(hub.querySelector('[data-tool-card="connectors"]').textContent, /1\/1 hosts running/);
+    assert.match(hub.querySelector('[data-tool-card="baboom"]').textContent, /Starts with Windows: on · runtime unknown/);
+    assert.equal(hub.querySelector('[data-tool-card="studio"]').textContent.includes('…'), false);
+    assert.equal(hub.querySelector('[data-tool-card="workshop"]').textContent.includes('…'), false);
+    assert.equal(hub.querySelector('[data-tool-card="connectors"]').textContent.includes('…'), false);
+    assert.equal(hub.querySelector('[data-tool-card="baboom"]').textContent.includes('…'), false);
   } finally { studio.close(); }
 });
 
@@ -340,7 +361,8 @@ test('F2R D2: Workshop OPEN opens the Workshop tool view on the Projects tab, no
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
-    studio.win.ReactDOM.flushSync(() => [...studio.doc.querySelectorAll('[data-tool-card="workshop"] button')]
+    const hub = await openSettingsHub(studio);
+    studio.win.ReactDOM.flushSync(() => [...hub.querySelectorAll('[data-tool-card="workshop"] button')]
       .find(node => node.textContent.trim() === 'OPEN').click());
     await studio.settle();
     assert.equal(studio.doc.querySelector('[data-tool-view="workshop"]')?.getAttribute('data-tool-tab'), 'projects');
@@ -352,7 +374,8 @@ test('F2R D3: BABOOM OPEN renders the companion settings body, never the Hosts p
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
-    studio.win.ReactDOM.flushSync(() => [...studio.doc.querySelectorAll('[data-tool-card="baboom"] button')]
+    const hub = await openSettingsHub(studio);
+    studio.win.ReactDOM.flushSync(() => [...hub.querySelectorAll('[data-tool-card="baboom"] button')]
       .find(node => node.textContent.trim() === 'OPEN').click());
     await studio.settle();
     const main = studio.doc.querySelector('[data-tool-view="baboom"]');
@@ -378,20 +401,27 @@ test('F2R cosmetic: tool wire summaries can wrap to two lines and expose the ful
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
-    const wire = studio.doc.querySelector('[data-tool-wire="studio"]');
+    const hub = await openSettingsHub(studio);
+    const wire = hub.querySelector('[data-tool-wire="studio"]');
     assert.equal(wire.title, 'Studio → Brain · Connectors · Workshop');
     assert.equal(wire.style.whiteSpace, 'normal');
     assert.match(wire.style.WebkitLineClamp || wire.style.webkitLineClamp || '', /2/);
   } finally { studio.close(); }
 });
 
-test('F2R owner controls: only BABOOM renders an on/off switch and uses setBaboomStartup', async () => {
+test('F2R owner controls: only BABOOM renders an on/off switch and off-confirm works from Settings Hub', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
-    const switches = [...studio.doc.querySelectorAll('[data-tool-card] [role="switch"]')];
+    const hub = await openSettingsHub(studio);
+    const switches = [...hub.querySelectorAll('[data-tool-card] [role="switch"]')];
     assert.deepEqual(switches.map(node => node.closest('[data-tool-card]').getAttribute('data-tool-card')), ['baboom']);
-    studio.win.ReactDOM.flushSync(() => switches[0].click());
+    studio.win.ReactDOM.flushSync(() => hub.querySelector('[data-tool-card="baboom"]').dispatchEvent(
+      new studio.win.MouseEvent('contextmenu', {bubbles:true, cancelable:true})));
+    await studio.settle();
+    assert.match(studio.doc.body.textContent, /Switch BABOOM off\? Tools asking it will see 'BABOOM is off'\. · Yes · No/);
+    assert.deepEqual(studio.ownerCalls, []);
+    studio.win.ReactDOM.flushSync(() => studio.button('Yes').click());
     await studio.settle();
     assert.deepEqual(studio.ownerCalls, [['setBaboomStartup', 'off']]);
   } finally { studio.close(); }
@@ -401,7 +431,8 @@ test('F2U repair: BABOOM card separates Windows startup from runtime state', asy
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
-    const card = studio.doc.querySelector('[data-tool-card="baboom"]');
+    const hub = await openSettingsHub(studio);
+    const card = hub.querySelector('[data-tool-card="baboom"]');
     assert.match(card.textContent, /UNKNOWN/);
     assert.match(card.textContent, /Starts with Windows: on/);
     assert.match(card.textContent, /runtime unknown/);
@@ -413,7 +444,8 @@ test('F2R cloud tool view receives real account callbacks', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
-    studio.win.ReactDOM.flushSync(() => [...studio.doc.querySelectorAll('[data-tool-card="cloud"] button')]
+    const hub = await openSettingsHub(studio);
+    studio.win.ReactDOM.flushSync(() => [...hub.querySelectorAll('[data-tool-card="cloud"] button')]
       .find(node => node.textContent.trim() === 'OPEN').click());
     await studio.settle();
     assert.equal(studio.doc.querySelector('[data-tool-view="cloud"]')?.getAttribute('data-tool-tab'), 'account');
@@ -426,8 +458,10 @@ test('F2R tool wire button does not invent a tool:* focus root', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
-    studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-tool-wire="brain"]').click());
+    const hub = await openSettingsHub(studio);
+    studio.win.ReactDOM.flushSync(() => hub.querySelector('[data-tool-wire="brain"]').click());
     await studio.settle();
+    assert.equal(studio.doc.body.textContent.includes('SettingsSTUDIO'), false, 'Wire closes Settings');
     assert.equal(studio.doc.querySelector('[data-tool-view="brain"]')?.getAttribute('data-tool-tab'), 'facts');
     assert.equal(studio.doc.body.textContent.includes('tool:brain'), false);
   } finally { studio.close(); }

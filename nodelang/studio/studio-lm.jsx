@@ -366,7 +366,7 @@ const StudioLM = () => {
     return () => controller.abort();
   }, []);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
-  const [settingsTab, setSettingsTab] = React.useState('account');
+  const [settingsTab, setSettingsTab] = React.useState('hub');
   const [account, setAccount] = React.useState(() => acLoad());
   const [booting, setBooting] = React.useState(true);
   const [signUpOpen, setSignUpOpen] = React.useState(false);
@@ -430,7 +430,7 @@ const StudioLM = () => {
     const forget = window.ARCHHUB_CLOUD_SIGNOUT ? window.ARCHHUB_CLOUD_SIGNOUT() : Promise.resolve({ ok: true });
     Promise.resolve(forget).then(() => {
       const next = Object.assign({}, account, { signedIn: false, email: '' });
-      acSave(next); setAccount(next); setSettingsOpen(false); setSignUpOpen(true);
+      acSave(next); setAccount(next); setSettingsOpen(false); setSettingsTab('hub'); setSignUpOpen(true);
     }).catch(() => {});
   };
   const [docsOpen, setDocsOpen] = React.useState(false);
@@ -683,19 +683,20 @@ const StudioLM = () => {
   };
 
   // Docs and Settings are mutually exclusive — they share a z-index, so opening one closes the other.
-  const openSettings = (v, tab) => { if (v) { setDocsOpen(false); if (tab) setSettingsTab(tab); } setSettingsOpen(v); };
-  const openDocs = (v) => { if (v) setSettingsOpen(false); setDocsOpen(v); };
+  // A named tab (the account chip opens Account) lasts one opening; every other way in opens the Hub.
+  const openSettings = (v, tab) => { if (v) setDocsOpen(false); setSettingsTab(v && tab ? tab : 'hub'); setSettingsOpen(v); };
+  const openDocs = (v) => { if (v) openSettings(false); setDocsOpen(v); };
 
   // ⌘/ docs · ⌘, settings · ⌘K library — the keys the Shortcuts sheet documents
   React.useEffect(() => {
     const onKey = (e) => {
       // The Studio is the whole window: Back and Forward keys never leave it.
       if (studioLeavesPage(e)) { e.preventDefault(); return; }
-      if (e.key === 'Escape') { setDocsOpen(false); setSettingsOpen(false); setLibraryOpen(false); return; }
+      if (e.key === 'Escape') { setDocsOpen(false); openSettings(false); setLibraryOpen(false); return; }
       if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
       const key = String(e.key).toLowerCase();
-      if (key === '/') { e.preventDefault(); setDocsOpen(o => { if (!o) setSettingsOpen(false); return !o; }); }
-      else if (key === ',') { e.preventDefault(); setSettingsOpen(o => { if (!o) setDocsOpen(false); return !o; }); }
+      if (key === '/') { e.preventDefault(); setDocsOpen(o => { if (!o) openSettings(false); return !o; }); }
+      else if (key === ',') { e.preventDefault(); setSettingsTab('hub'); setSettingsOpen(o => { if (!o) setDocsOpen(false); return !o; }); }
       else if (key === 'k' && !e.shiftKey) { e.preventDefault(); setLibraryOpen(true); }
     };
     // The mouse's Back and Forward buttons (3 and 4) are the same request.
@@ -720,7 +721,7 @@ const StudioLM = () => {
       <Sidebar
         panel={panel} setPanel={setPanel}
         openId={openId} onOpen={openSession}
-        onHome={() => { setToolView(null); setOpenId(null); }} onSettings={() => openSettings(true)} onDocs={() => { setSettingsOpen(false); setDocsOpen(true); }}
+        onHome={() => { setToolView(null); setOpenId(null); }} onSettings={() => openSettings(true)} onAccount={() => openSettings(true, 'account')} onDocs={() => openDocs(true)}
         onOpenTool={openTool}
         addNodeFromLibrary={addNodeFromLibrary} workshopContext={workshopContext} railOnly={(!session && panel === 'nodes') || !!workshopContext} account={account}
         wsSel={wsSel} setWsSel={setWsSel} onAddAgent={() => setLibraryOpen(true)}
@@ -787,7 +788,8 @@ const StudioLM = () => {
           box that was not handed a model still asks the model the founder
           picked instead of falling through to a server default. */}
       <ModelInWindow model={model}/>
-      {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} account={account} setAccount={setAccount} onSignOut={signOut} initialTab={settingsTab}/>}
+      {settingsOpen && <Settings onClose={() => openSettings(false)} account={account} setAccount={setAccount} onSignOut={signOut}
+        initialTab={settingsTab} onOpenTool={openTool} onOpenToolGraph={openToolGraph}/>}
       {signUpOpen && <SignUp onDone={(rec) => { setAccount(rec); setSignUpOpen(false); }} onCancel={() => setSignUpOpen(false)} plan={account.plan}/>}
       {booting && <AppBoot account={account} onDone={() => setBooting(false)}/>}
       {/* The design's own full-bleed screens: first-run onboarding, a skill's split view, a connector's diagnostic. */}
@@ -807,7 +809,7 @@ const StudioLM = () => {
 };
 
 // ──────────────────────── SIDEBAR (icon rail + active panel) ────────────────────────
-const Sidebar = ({ panel, setPanel, openId, onOpen, onHome, onSettings, onDocs, onOpenTool, addNodeFromLibrary,
+const Sidebar = ({ panel, setPanel, openId, onOpen, onHome, onSettings, onAccount, onDocs, onOpenTool, addNodeFromLibrary,
   workshopContext, railOnly, wsSel, setWsSel, onAddAgent, onWorkshopTarget, account }) => (
   <aside style={{
     gridColumn:'1', gridRow:'1',
@@ -818,8 +820,8 @@ const Sidebar = ({ panel, setPanel, openId, onOpen, onHome, onSettings, onDocs, 
     <IconRail panel={panel} setPanel={setPanel} onHome={onHome} onSettings={onSettings} onDocs={onDocs}
       onOpenTool={onOpenTool} account={account}/>
     {railOnly ? null : <>
-    {panel === 'chats'  && <ChatsPanel openId={openId} onOpen={onOpen} onNew={onHome} account={account} onAccount={onSettings}/>}
-    {panel === 'nodes'  && <NodesPanel addNodeFromLibrary={addNodeFromLibrary} account={account} onAccount={onSettings}/>}
+    {panel === 'chats'  && <ChatsPanel openId={openId} onOpen={onOpen} onNew={onHome} account={account} onAccount={onAccount || onSettings}/>}
+    {panel === 'nodes'  && <NodesPanel addNodeFromLibrary={addNodeFromLibrary} account={account} onAccount={onAccount || onSettings}/>}
     {panel === 'skills' && <SkillsPanel/>}
     {panel === 'search' && <SearchPanel/>}
     {String(panel || '').startsWith('tool:') && <ToolOffPanelFromOwners panel={panel} account={account}/>}
@@ -1579,9 +1581,7 @@ const Home = ({ onOpen, model, native, setPickerOpen, setLibraryOpen, setPanel, 
   const [startError, setStartError] = React.useState('');
   const startBusy = React.useRef(false), acceptedSession = React.useRef(null);
   const homeMounted = React.useRef(true);
-  const personal = usePersonalTheme();
   const hub = useToolHubProjection();
-  const toolRows = toolRowsFromOwners({workshopState, account, personal, hub});
   const waitingItems = Array.isArray(hub?.waiting) ? hub.waiting : [];
   React.useEffect(() => {homeMounted.current = true; return () => {homeMounted.current = false;};}, []);
   const liveHosts = LM_HOSTS.filter(host => hostState(host) === 'connected');
@@ -1749,17 +1749,10 @@ const Home = ({ onOpen, model, native, setPickerOpen, setLibraryOpen, setPanel, 
       {startError && <p role="alert" style={{color:LM.warn,marginBottom:0}}>{startError}</p>}
       {attachmentError && <p role="alert" style={{color:LM.warn,marginBottom:0}}>{attachmentError}</p>}
     </form>
-    <section aria-label="Tools" style={{ margin:'0 0 22px' }}>
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(6, minmax(146px, 1fr))', gap:8 }}>
-        {toolRows.map(tool => <ToolCard key={tool.id} tool={tool}
-          onOpen={() => onOpenTool && onOpenTool(tool.id)}
-          onWire={() => onOpenToolGraph && onOpenToolGraph(tool.id)}/>)}
-      </div>
-      <div style={{ marginTop:9 }}>
-        <WaitingButton variant="home" items={waitingItems} onOpenTask={item => onOpenTool && onOpenTool(
-          item.producer === 'workshop_gate' ? 'workshop' : item.producer === 'social_approve' ? 'cloud' : 'workshop',
-          item.producer === 'workshop_gate' ? {tab:'approvals', root:item.root || item.workshop || '', focus:item.open_target || item.work || item.id} : {})}/>
-      </div>
+    <section aria-label="Waiting" style={{ margin:'0 0 18px' }}>
+      <WaitingButton variant="home" items={waitingItems} onOpenTask={item => onOpenTool && onOpenTool(
+        item.producer === 'workshop_gate' ? 'workshop' : item.producer === 'social_approve' ? 'cloud' : 'workshop',
+        item.producer === 'workshop_gate' ? {tab:'approvals', root:item.root || item.workshop || '', focus:item.open_target || item.work || item.id} : {})}/>
     </section>
     <div style={{ display:'flex', alignItems:'baseline', gap:10, marginBottom:14 }}>
       <h2 style={{ fontFamily:LM.serif, fontSize:26, fontWeight:400, letterSpacing:'-0.015em', margin:0 }}>Sessions</h2>
@@ -5681,15 +5674,19 @@ const SettingsEmpty = ({ children, role = 'status', action }) => (
 // the badges previously counted only keys PRESENT in the store while the rows fell back to the
 // seed per item, so an empty or partial store made a badge contradict the panel beside it.
 const hostState = h => h.state; // the probe's answer; there is no local override
-const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'account' }) => {
+const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub', onOpenTool, onOpenToolGraph }) => {
   const providers = useProviderStatus();
-  const release = releaseStatus(useWorkshopProjection());
+  const workshopState = useWorkshopProjection();
+  const release = releaseStatus(workshopState);
+  const personal = usePersonalTheme();
+  const hub = useToolHubProjection();
+  const toolRows = toolRowsFromOwners({workshopState, account, personal, hub});
+  const toolsOn = toolRows.filter(tool => tool.state !== 'off').length;
   // The Hosts badge states the cached host probe, read when Settings opens. The brain is
   // another process and may be slow or down, so it is read only when the Brain tab opens
   // (SettingsMemory); the badge states the facts already held (2026-09-24 click-path gate).
   useLiveCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS);
-  // Account first either way: signed in it states the account, signed out it is where you sign in.
-  const [tab, setTab] = React.useState(initialTab || 'account');
+  const [tab, setTab] = React.useState(initialTab || 'hub');
   React.useEffect(() => { if (initialTab) setTab(initialTab); }, [initialTab]);
   const [store, setStore] = React.useState(() => {
     // Only the Brain panel's session record lives here. Permission modes and host on/off switches
@@ -5717,6 +5714,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'accou
   const patch = (k, v) => setStore(st => Object.assign({}, st, typeof k === 'object' ? k : { [k]: v }));
   const keyed = providerKeyed(providers.rows);
   const tabs = [
+    ['hub',         'Hub',         `${toolsOn}/${toolRows.length} on`],
     ['account',     'Account',     (account || {}).graphTier || null],
     ['memory',      'Brain',       `${(window.BRAIN_STRATA || []).length} strata \u00b7 ${LM_MEMORY.length - (store.forgotten || []).length} facts`],
     ['team',        'Team',        null],
@@ -5766,6 +5764,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'accou
           ))}
         </div>
         <div className="ah-scroll" style={{ gridColumn:'2', gridRow:'2', overflow:'auto', padding:'20px 24px 24px' }}>
+          {tab === 'hub'         && <SettingsHub toolRows={toolRows} onClose={onClose} onOpenTool={onOpenTool} onOpenToolGraph={onOpenToolGraph}/>}
           {tab === 'account'     && <SettingsAccount account={account} setAccount={setAccount} onSignOut={onSignOut}/>}
           {tab === 'memory'      && <SettingsMemory store={store} patch={patch}/>}
           {tab === 'team'        && <SettingsTeam/>}
@@ -5783,6 +5782,50 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'accou
       </div>
     </div>
   );
+};
+const SettingsHub = ({ toolRows, onClose, onOpenTool, onOpenToolGraph }) => {
+  const [confirmOff, setConfirmOff] = React.useState(null);
+  React.useEffect(() => {
+    if (!confirmOff) return undefined;
+    const timer = setTimeout(() => setConfirmOff(null), 6000);
+    return () => clearTimeout(timer);
+  }, [confirmOff]);
+  const requestOff = tool => {
+    if (tool.state === 'off') {
+      tool.turnOn?.();
+      return;
+    }
+    setConfirmOff(tool);
+  };
+  const openToolFromHub = id => {
+    onClose?.();
+    onOpenTool?.(id);
+  };
+  const openToolGraphFromHub = id => {
+    onClose?.();
+    onOpenToolGraph?.(id);
+  };
+  return <div style={{position:'relative'}}>
+    <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(180px, 1fr))', gap:8 }}>
+      {toolRows.map(tool => <div key={tool.id}
+        onContextMenu={event => { event.preventDefault(); requestOff(tool); }}>
+        <ToolCard tool={tool}
+          onOpen={() => openToolFromHub(tool.id)}
+          onWire={() => openToolGraphFromHub(tool.id)}/>
+      </div>)}
+    </div>
+    {confirmOff && <div data-tool-off-confirm={confirmOff.id} style={{
+      position:'absolute', left:0, top:0, zIndex:8, width:232,
+      background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
+      padding:'8px 9px', color:LM.ink, fontFamily:LM.sans, fontSize:12,
+      boxShadow:'0 12px 24px rgba(0,0,0,.22)',
+    }}>
+      <span>Switch {confirmOff.label} off? Tools asking it will see '{confirmOff.label} is off'. · </span>
+      <button type="button" onClick={() => { confirmOff.turnOff?.(); setConfirmOff(null); }} style={inlineTextButton()}>Yes</button>
+      <span> · </span>
+      <button type="button" onClick={() => setConfirmOff(null)} style={inlineTextButton()}>No</button>
+    </div>}
+  </div>;
 };
 // ── Settings section header
 const SHead = ({ title, sub }) => (

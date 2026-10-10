@@ -865,13 +865,6 @@ const IconRail = ({ panel, setPanel, onHome, onSettings, onDocs, onOpenTool, acc
       display:'flex', flexDirection:'column', alignItems:'center',
       padding:'10px 0 8px', gap:LM.sp.xs, position:'relative',
     }}>
-      <RailIcon active onClick={onHome} title="Home">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
-          <path d="M3 21 V12 a9 9 0 0 1 18 0 V21" stroke={LM.accent} strokeWidth="2" strokeLinecap="round"/>
-          <circle cx="12" cy="8.5" r="1.5" fill={LM.accent}/>
-        </svg>
-      </RailIcon>
-      <div style={{ height:6 }}/>
       {items.map(it => (
         <RailIcon key={it.id} active={panel === it.id} onClick={() => setPanel(it.id)} title={it.title}>
           {it.svg}
@@ -879,7 +872,7 @@ const IconRail = ({ panel, setPanel, onHome, onSettings, onDocs, onOpenTool, acc
       ))}
       <div style={{ height:6 }}/>
       {toolRows.map(tool => (
-        <RailIcon key={tool.id} active={false} onClick={() => onOpenTool && onOpenTool(tool.id)}
+        <RailIcon key={tool.id} active={tool.id === 'studio'} onClick={() => tool.id === 'studio' ? onHome() : onOpenTool && onOpenTool(tool.id)}
           onContextMenu={event => { event.preventDefault(); requestOff(tool); }}
           title={tool.label + ' · ' + tool.state}
           dot={tool.color} dataToolRail={tool.id}>

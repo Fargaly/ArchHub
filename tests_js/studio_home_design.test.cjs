@@ -216,7 +216,7 @@ test('F1b: right-click on an on tool shows a six second in-panel off confirm', a
   } finally { studio.close(); }
 });
 
-test('F1: rail tool clicks open existing views', async () => {
+test('F1: rail tool clicks open existing views and Studio opens Home', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
@@ -226,9 +226,8 @@ test('F1: rail tool clicks open existing views', async () => {
     studio.win.ReactDOM.flushSync(() => studio.win.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Escape', bubbles:true})));
     studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-tool-rail="studio"]').click());
     await studio.settle();
-    assert.match(studio.doc.body.textContent, /ChatWorkshopCanvas/);
-    assert.match(studio.doc.body.textContent, /Tool node/);
-    studio.win.ReactDOM.flushSync(() => studio.button('+').click());
+    assert.ok(studio.doc.querySelector('textarea[aria-label="Start a new session"]'), 'Studio rail opens Home');
+    assert.match(studio.doc.body.textContent, /Sessions/);
   } finally { studio.close(); }
 });
 

@@ -121,15 +121,18 @@ def test_brain_health_answers_from_the_live_brain_not_a_default():
 def test_a_transient_open_error_never_sets_the_graph_aside():
     """2026-09-03: a force-stopped predecessor left the WAL closing; the next launch hit
     'disk I/O error', retried once, then quarantined 337 MB of the founder's graph and
-    opened an empty canvas. Since b196313 every boot refusal is retried six times and
-    then refused with the graph kept in place: no path sets it aside or replaces it."""
+    opened an empty canvas. Owner-conflict refusals now poll for the predecessor
+    to release the OS fence, then refuse with the graph kept in place: no path
+    sets it aside or replaces it."""
     src = (Path(__file__).resolve().parents[1] / "launch_archhub_test.py").read_text(encoding="utf-8")
     retry = src[src.index("boot_refusal = None"):src.index('print(f"  booted in')]
-    assert "for _open_attempt in range(6):" in retry
+    assert "while time.monotonic() - started_wait < max_wait_seconds:" in retry
+    assert "_is_transient_owner_conflict(refusal)" in retry
+    assert "owner lock still held" in retry
     assert "_release_own_fence(again)" in retry, "each failed attempt clears only our own fence"
     refused = retry[retry.index("if boot_refusal is not None:"):]
     assert "the saved graph is KEPT IN PLACE. No replacement graph was created." in refused
-    assert "raise boot_refusal" in refused
+    assert "_refuse_boot_without_living(boot_refusal)" in refused
     for set_aside in ("old data kept in", "state_path.rename(", "state_path.replace(",
                       "shutil.move(state_path", "quarantine"):
         assert set_aside not in src, set_aside

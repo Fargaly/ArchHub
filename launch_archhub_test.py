@@ -56,17 +56,65 @@ _require_complete_local_update(Path(__file__).resolve().parent)
 # window that never opened and a colleague with nothing to send. The log
 # keeps the full traceback; the colleague gets its last line and where the
 # log is, in a box he can read.
-def _message_box(message):
+def _message_box(message, *, blocking=True, timeout_ms=45000, quit_event=None):
     """The only window a person without a console ever sees.
 
     Every refusal on the boot path goes through here. A launch that ends
     without one is a double-click that did nothing, and the colleague is left
     with nothing to read and nothing to send.
     """
+    def _show():
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            timeout_box = getattr(user32, "MessageBoxTimeoutW", None)
+            if timeout_box is not None:
+                timeout_box(0, message, 'ArchHub', 0x10, 0, int(timeout_ms))
+            else:
+                user32.MessageBoxW(0, message, 'ArchHub', 0x10)
+            return True
+        except Exception:
+            return False
+
+    if not blocking:
+        import threading
+        done = threading.Event()
+
+        def _run():
+            try:
+                _show()
+            finally:
+                done.set()
+
+        threading.Thread(target=_run, name="archhub-refusal-message", daemon=True).start()
+        return done
     try:
-        import ctypes
-        ctypes.windll.user32.MessageBoxW(0, message, 'ArchHub', 0x10)
-        return True
+        return _show()
+    except Exception:
+        return False
+
+
+def _boot_refusal_message(kind, value):
+    import traceback as _traceback
+    last = ''.join(_traceback.format_exception_only(kind, value)).strip().splitlines()[-1]
+    message = 'ArchHub could not open.' + chr(10) + chr(10) + last[:300]
+    message += chr(10) + chr(10) + 'The full log is at:' + chr(10) + str(_log_path)
+    message += chr(10) + chr(10) + 'Share that log when requesting support.'
+    return message
+
+
+def _qt_event_loop_running():
+    probe = globals().get("_qt_app_event_loop_active")
+    if callable(probe):
+        try:
+            return bool(probe())
+        except Exception:
+            return False
+    try:
+        from PyQt6.QtCore import QAbstractEventDispatcher, QCoreApplication
+        if QCoreApplication.instance() is None:
+            return False
+        return QAbstractEventDispatcher.instance() is not None
     except Exception:
         return False
 
@@ -74,11 +122,10 @@ def _message_box(message):
 def _tell_the_person(kind, value, tb):
     traceback.print_exception(kind, value, tb)
     try:
-        last = ''.join(traceback.format_exception_only(kind, value)).strip().splitlines()[-1]
-        message = 'ArchHub could not open.' + chr(10) + chr(10) + last[:300]
-        message += chr(10) + chr(10) + 'The full log is at:' + chr(10) + str(_log_path)
-        message += chr(10) + chr(10) + 'Share that log when requesting support.'
-        _message_box(message)
+        _message_box(
+            _boot_refusal_message(kind, value),
+            blocking=not _qt_event_loop_running(),
+        )
     except Exception:
         pass
 sys.excepthook = _tell_the_person
@@ -528,6 +575,133 @@ def _release_own_fence(refusal) -> None:
         except OSError:
             pass
 
+
+def _is_transient_owner_conflict(refusal):
+    try:
+        from nodelang.universal_cell import DatabaseOwnerConflict
+    except Exception:
+        DatabaseOwnerConflict = ()
+    cursor = refusal
+    while cursor is not None:
+        if isinstance(cursor, DatabaseOwnerConflict):
+            return True
+        cursor = getattr(cursor, "__cause__", None) or getattr(cursor, "__context__", None)
+    return False
+
+
+def _mark_runtime_refused(refusal) -> None:
+    """If this failed process announced itself active, replace that with failed."""
+    try:
+        from datetime import datetime, timezone
+        from nodelang.application_machine_transport import (
+            RuntimeDescriptor,
+            _atomic_json,
+            _canonical,
+            _owner_record_path,
+            _read_descriptor,
+        )
+        record_path = _owner_record_path(descriptor_path, machine_key_provider)
+        descriptor = _read_descriptor(descriptor_path, machine_key_provider)
+        if descriptor.status != "active" or descriptor.process_id != os.getpid():
+            return
+        unsigned = RuntimeDescriptor(
+            descriptor.runtime_id,
+            "failed",
+            descriptor.pipe,
+            descriptor.process_id,
+            descriptor.started_at,
+            datetime.now(timezone.utc).isoformat(),
+            descriptor.application_root,
+            descriptor.agent_session_root,
+            descriptor.workshop_root,
+            descriptor.work_registry_root,
+            descriptor.database,
+            descriptor.key_id,
+            descriptor.key_version,
+            "",
+            descriptor.format_version,
+            descriptor.owner_generation,
+            descriptor.process_created_at,
+        )
+        signature = machine_key_provider.sign(
+            unsigned.key_id,
+            unsigned.key_version,
+            _canonical(unsigned.unsigned()),
+        )
+        failed = RuntimeDescriptor(
+            unsigned.runtime_id,
+            unsigned.status,
+            unsigned.pipe,
+            unsigned.process_id,
+            unsigned.started_at,
+            unsigned.stopped_at,
+            unsigned.application_root,
+            unsigned.agent_session_root,
+            unsigned.workshop_root,
+            unsigned.work_registry_root,
+            unsigned.database,
+            unsigned.key_id,
+            unsigned.key_version,
+            signature,
+            unsigned.format_version,
+            unsigned.owner_generation,
+            unsigned.process_created_at,
+        )
+        _atomic_json(record_path, failed.document())
+        print("  runtime    : marked failed before boot refusal notice (%s)"
+              % type(refusal).__name__, flush=True)
+    except Exception as descriptor_refusal:
+        print("  runtime    : refusal descriptor not changed (%s)"
+              % type(descriptor_refusal).__name__, flush=True)
+
+
+def _exit_process(code):
+    raise SystemExit(code)
+
+
+def _refusal_quit_requested(quit_event):
+    if quit_event is not None and quit_event.is_set():
+        return True
+    try:
+        marker = state_dir / "quit-request"
+        if marker.is_file():
+            try:
+                marker.unlink()
+            except Exception:
+                pass
+            if quit_event is not None:
+                quit_event.set()
+            print("  quit       : asked during boot refusal; leaving cleanly", flush=True)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _refuse_boot_without_living(refusal, *, quit_event=None, notice_seconds=45.0):
+    import threading
+    import time as _refusal_time
+    if quit_event is None:
+        quit_event = threading.Event()
+    _mark_runtime_refused(refusal)
+    notice = _message_box(
+        _boot_refusal_message(type(refusal), refusal),
+        blocking=False,
+        timeout_ms=int(max(1.0, notice_seconds) * 1000),
+        quit_event=quit_event,
+    )
+    if not hasattr(notice, "is_set"):
+        _exit_process(1)
+        return
+    deadline = _refusal_time.monotonic() + max(0.0, float(notice_seconds))
+    while _refusal_time.monotonic() < deadline:
+        if _refusal_quit_requested(quit_event):
+            break
+        if hasattr(notice, "is_set") and notice.is_set():
+            break
+        _refusal_time.sleep(0.2)
+    _exit_process(1)
+
 # The window stands before the graph opens and shows the boot's own progress
 # page ("phase k of n"); the graph opens off the Qt thread so the window keeps
 # painting. A launch used to show nothing at all until the boot had finished.
@@ -642,15 +816,12 @@ def _boot_phase(index, finished=False):
         (_boot_surface.progress.finish if finished else _boot_surface.progress.begin)(label)
 
 
-def _open_saved_graph():
+def _open_saved_graph(*, max_wait_seconds=45.0, sleep_seconds=1.0):
     server, boot_refusal = None, None
     try:
         server = _boot()
     except Exception as refusal:
         boot_refusal = refusal
-        # A lock held by a dying predecessor clears on its own; retrying once
-        # costs a second and saves the founder's whole graph from being set
-        # aside for a transient.
         import gc
 
         gc.collect()
@@ -658,17 +829,25 @@ def _open_saved_graph():
         # conflict then names this very process. Releasing our own lock is
         # honest -- it is nobody else's.
         _release_own_fence(refusal)
-        # A transient (a predecessor still closing its WAL, a lock not yet
-        # released, an I/O hiccup) is retried for a while; it is never a
-        # reason to set the founder's graph aside -- a fresh graph on the
-        # same disk would fail the same way, and the founder would open
-        # an empty canvas over 300 MB of his own work.
-        for _open_attempt in range(6):
-            time.sleep(1.5)
+        # A predecessor can still be releasing the graph OS owner fence after
+        # an update relaunch. Wait for that exact condition; never force-take
+        # the lock and never create a replacement graph.
+        if not _is_transient_owner_conflict(refusal):
+            return server, boot_refusal
+        started_wait = time.monotonic()
+        _open_attempt = 1
+        while time.monotonic() - started_wait < max_wait_seconds:
+            delay = min(float(sleep_seconds), max_wait_seconds - (time.monotonic() - started_wait))
+            if delay <= 0:
+                break
+            print("  owner lock still held; retrying saved graph open attempt %d in %.1fs (%s)"
+                  % (_open_attempt + 1, delay, str(boot_refusal).splitlines()[-1][:160]),
+                  flush=True)
+            time.sleep(delay)
             try:
                 server = _boot()
                 print("  recovered  : the saved graph opened on attempt %d"
-                      % (_open_attempt + 2), flush=True)
+                      % (_open_attempt + 1), flush=True)
                 boot_refusal = None
                 break
             except Exception as again:
@@ -676,6 +855,9 @@ def _open_saved_graph():
                 # Each failed attempt can leave OUR OWN fence behind; without
                 # clearing it every later attempt fails on ourselves.
                 _release_own_fence(again)
+                if not _is_transient_owner_conflict(again):
+                    break
+                _open_attempt += 1
     return server, boot_refusal
 
 
@@ -688,7 +870,7 @@ if boot_refusal is not None:
     print("  could not open the saved graph: %s"
           % str(boot_refusal).splitlines()[-1][:160], flush=True)
     print("  the saved graph is KEPT IN PLACE. No replacement graph was created.", flush=True)
-    raise boot_refusal
+    _refuse_boot_without_living(boot_refusal)
 print(f"  booted in {time.perf_counter()-started:.0f}s", flush=True)
 
 # Brain and Workshop belong to the application owner opened above.

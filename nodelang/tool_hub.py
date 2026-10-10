@@ -5,6 +5,13 @@ from __future__ import annotations
 from typing import Mapping, Sequence
 
 HUB_OWNED_FILES = ("tools.json", "wires.json", "waiting.json", "activity.log")
+TOOL_STATE_WORDS = {
+    "running": "RUNNING",
+    "starting": "STARTING",
+    "off": "OFF",
+    "failed": "DIDN'T START",
+    "not_installed": "NOT INSTALLED",
+}
 
 TOOL_ROWS = (
     {
@@ -22,11 +29,11 @@ TOOL_ROWS = (
     {
         "id": "workshop",
         "label": "Workshop",
-        "state": "unknown",
-        "state_word": "UNKNOWN",
+        "state": "running",
+        "state_word": "RUNNING",
         "description": "Projects, tasks and governed work.",
-        "stat_line": "unknown",
-        "off_sentence": "Workshop owner state is unavailable.",
+        "stat_line": "Workshop graph ready.",
+        "off_sentence": "Workshop owner is not attached.",
         "wire_summary": "Workshop → Studio · Connectors · Brain",
         "empty_title": "Workshop is off",
         "empty_line": "No agent loop, no tasks run, no router. Chat still works locally.",
@@ -34,11 +41,11 @@ TOOL_ROWS = (
     {
         "id": "brain",
         "label": "Brain",
-        "state": "unknown",
-        "state_word": "UNKNOWN",
+        "state": "starting",
+        "state_word": "STARTING",
         "description": "Memory, facts and local classification.",
-        "stat_line": "unknown",
-        "off_sentence": "Brain owner state is unavailable.",
+        "stat_line": "Checking local Brain.",
+        "off_sentence": "Local Brain is not answering.",
         "wire_summary": "Brain → Studio · Workshop · Cloud",
         "empty_title": "Brain is off",
         "empty_line": "What ArchHub remembers. Everything else keeps running.",
@@ -46,11 +53,11 @@ TOOL_ROWS = (
     {
         "id": "baboom",
         "label": "BABOOM",
-        "state": "unknown",
-        "state_word": "UNKNOWN",
+        "state": "starting",
+        "state_word": "NOT ATTACHED",
         "description": "Desktop companion and approved execution.",
-        "stat_line": "startup setting unknown",
-        "off_sentence": "BABOOM state is unavailable.",
+        "stat_line": "No signed runtime attached.",
+        "off_sentence": "No signed companion runtime is attached.",
         "wire_summary": "BABOOM ← Studio · Workshop",
         "empty_title": "BABOOM is off",
         "empty_line": "The companion is closed. Nothing else changes.",
@@ -58,11 +65,11 @@ TOOL_ROWS = (
     {
         "id": "connectors",
         "label": "Connectors",
-        "state": "unknown",
-        "state_word": "UNKNOWN",
+        "state": "starting",
+        "state_word": "STARTING",
         "description": "Host bridges and Speckle access.",
-        "stat_line": "unknown",
-        "off_sentence": "Connector owner state is unavailable.",
+        "stat_line": "Checking host probes.",
+        "off_sentence": "No host bridge is answering.",
         "wire_summary": "Connectors → Studio · Workshop · Speckle",
         "empty_title": "Connectors are off",
         "empty_line": "No host reads or writes. Pinned host outputs still feed downstream.",
@@ -70,10 +77,10 @@ TOOL_ROWS = (
     {
         "id": "cloud",
         "label": "Cloud",
-        "state": "unknown",
-        "state_word": "UNKNOWN",
+        "state": "starting",
+        "state_word": "NOT SIGNED IN",
         "description": "Devices, grants and cloud agents.",
-        "stat_line": "unknown",
+        "stat_line": "Not signed in.",
         "off_sentence": "Cloud owner state is unavailable.",
         "wire_summary": "Cloud ← Brain · Workshop",
         "empty_title": "Cloud is off",
@@ -97,10 +104,86 @@ def _plural(count: int, singular: str, plural: str | None = None) -> str:
 
 def _studio_stat_line(sessions: Sequence[Mapping[str, object]]) -> str:
     running = sum(1 for session in sessions if session.get("state") == "running")
-    return f"{len(sessions)} sessions · {_plural(running, 'running', 'running')}."
+    return f"{_plural(len(sessions), 'session')} · {_plural(running, 'running', 'running')}."
 
 
-def project_tools(*, sessions=()) -> dict[str, object]:
+def _set_state(row: dict[str, object], state: str, stat_line: str,
+               *, state_word: str | None = None) -> None:
+    row["state"] = state
+    row["state_word"] = state_word or TOOL_STATE_WORDS.get(state, state.replace("_", " ").upper())
+    row["stat_line"] = stat_line
+
+
+def _apply_workshop(row: dict[str, object], state: Mapping[str, object] | None) -> None:
+    if not state:
+        return
+    attached = bool(state.get("native_host_attached"))
+    available = bool(state.get("available"))
+    if attached:
+        _set_state(row, "running", "Native Workshop owner attached.")
+    elif available:
+        _set_state(row, "running", "Workshop graph ready.")
+    else:
+        _set_state(row, "off", "No Workshop graph in this scope.")
+
+
+def _apply_brain(row: dict[str, object], state: Mapping[str, object] | None) -> None:
+    if not state:
+        return
+    ok = state.get("ok")
+    facts = int(state.get("facts") or 0)
+    if ok is True:
+        _set_state(row, "running", f"{_plural(facts, 'fact')} in local Brain.")
+    elif ok is False:
+        _set_state(row, "off", "Local Brain is not answering.")
+    else:
+        _set_state(row, "starting", "Checking local Brain.")
+
+
+def _apply_baboom(row: dict[str, object], presence: Mapping[str, object] | None) -> None:
+    if not presence:
+        return
+    sessions = int(presence.get("active_runtime_sessions") or 0)
+    if presence.get("baboom_connected"):
+        _set_state(
+            row, "running",
+            f"Attached signed runtime · {_plural(sessions, 'runtime session')}.",
+            state_word="ATTACHED",
+        )
+    else:
+        _set_state(row, "starting", "No signed runtime attached.", state_word="NOT ATTACHED")
+
+
+def _apply_connectors(row: dict[str, object], host_rows, *, probing: bool = False) -> None:
+    if probing:
+        _set_state(row, "starting", "Checking host probes.")
+        return
+    if not isinstance(host_rows, Sequence) or isinstance(host_rows, (str, bytes)):
+        return
+    total = len([item for item in host_rows if isinstance(item, Mapping)])
+    running = sum(
+        1 for item in host_rows
+        if isinstance(item, Mapping) and item.get("state") in ("connected", "listening")
+    )
+    _set_state(row, "running", f"{running}/{total} hosts running.")
+
+
+def _apply_cloud(row: dict[str, object], state: Mapping[str, object] | None) -> None:
+    if not state:
+        return
+    name = str(state.get("state") or "signed_out")
+    email = str(state.get("email") or "").strip()
+    if state.get("signed_in") and email:
+        _set_state(row, "running", email, state_word="SIGNED IN")
+    elif name == "expired":
+        _set_state(row, "failed", "Sign in expired.", state_word="EXPIRED")
+    else:
+        _set_state(row, "starting", "Not signed in.", state_word="NOT SIGNED IN")
+
+
+def project_tools(*, sessions=(), workshop_state=None, brain_state=None,
+                  baboom_presence=None, host_rows=None, hosts_probing=False,
+                  cloud_state=None) -> dict[str, object]:
     rows = [dict(row) for row in TOOL_ROWS]
     if isinstance(sessions, Sequence) and not isinstance(sessions, (str, bytes)):
         session_rows = [row for row in sessions if isinstance(row, Mapping)]
@@ -108,6 +191,17 @@ def project_tools(*, sessions=()) -> dict[str, object]:
             if row.get("id") == "studio":
                 row["stat_line"] = _studio_stat_line(session_rows)
                 break
+    for row in rows:
+        if row.get("id") == "workshop":
+            _apply_workshop(row, workshop_state)
+        elif row.get("id") == "brain":
+            _apply_brain(row, brain_state)
+        elif row.get("id") == "baboom":
+            _apply_baboom(row, baboom_presence)
+        elif row.get("id") == "connectors":
+            _apply_connectors(row, host_rows, probing=hosts_probing)
+        elif row.get("id") == "cloud":
+            _apply_cloud(row, cloud_state)
     return {
         "ok": True,
         "tools": rows,

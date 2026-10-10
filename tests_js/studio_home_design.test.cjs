@@ -35,13 +35,13 @@ async function mountStudio(options = {}) {
         off_sentence:'Switched off. Nothing is remembered or recalled.', wire_summary:'Brain → Studio · Workshop · Cloud',
         empty_title:'Brain is off', empty_line:'What ArchHub remembers. Everything else keeps running.'},
       {id:'baboom', label:'BABOOM', state:'running', state_word:'RUNNING',
-        description:'Desktop companion and approved execution.', stat_line:'quiet off · speaks at most 2 times an hour.',
+        description:'Desktop companion and approved execution.', stat_line:'Attached signed runtime · 1 runtime session.',
         off_sentence:'Switched off. No companion on the desktop.', wire_summary:'BABOOM ← Studio · Workshop'},
       {id:'connectors', label:'Connectors', state:'running', state_word:'RUNNING',
         description:'Host bridges and Speckle access.', stat_line:'1/1 hosts running · Speckle connected.',
         off_sentence:'Switched off. No reads or writes to your programs.', wire_summary:'Connectors → Studio · Workshop · Speckle'},
       {id:'cloud', label:'Cloud', state:'starting', state_word:'STARTING',
-        description:'Devices, grants and cloud agents.', stat_line:'device-a · 0 cloud agents.',
+        description:'Devices, grants and cloud agents.', stat_line:'Not signed in.',
         off_sentence:'Switched off. Works on this machine only.', wire_summary:'Cloud ← Brain · Workshop'},
     ];
   win.fetch = url => String(url).includes('/api/universal/models')
@@ -169,7 +169,7 @@ test('F1b: rail tools match the hub order, state tooltips, and 6px dot colours',
       'Studio \u00b7 running',
       'Workshop \u00b7 running',
       'Brain \u00b7 off',
-      'BABOOM \u00b7 unknown',
+      'BABOOM \u00b7 running',
       'Connectors \u00b7 running',
       'Cloud \u00b7 starting',
     ]);
@@ -177,7 +177,7 @@ test('F1b: rail tools match the hub order, state tooltips, and 6px dot colours',
       studio:'rgb(47, 184, 106)',
       workshop:'rgb(47, 184, 106)',
       brain:'rgb(212, 142, 42)',
-      baboom:'rgb(139, 131, 122)',
+      baboom:'rgb(47, 184, 106)',
       connectors:'rgb(47, 184, 106)',
       cloud:'rgb(39, 194, 230)',
     };
@@ -186,6 +186,13 @@ test('F1b: rail tools match the hub order, state tooltips, and 6px dot colours',
       assert.equal(dot.style.width, '6px', button.title + ' dot is 6px');
       assert.equal(dot.style.height, '6px', button.title + ' dot is 6px');
       assert.equal(dot.style.background, expected[button.getAttribute('data-tool-rail')]);
+    }
+    const hub = await openSettingsHub(studio);
+    for (const button of tools) {
+      const id = button.getAttribute('data-tool-rail');
+      const railDot = button.querySelector('[data-tool-dot]');
+      const cardDot = hub.querySelector(`[data-tool-card="${id}"] [data-tool-dot]`);
+      assert.equal(cardDot.style.background, railDot.style.background, id + ' rail dot equals card dot');
     }
   } finally { studio.close(); }
 });
@@ -233,13 +240,14 @@ test('F1b: right-click on an on tool shows a six second in-panel off confirm', a
   } finally { studio.close(); }
 });
 
-test('F1: Settings Hub card Open closes Settings and opens existing views; Studio rail opens Home', async () => {
+test('F1: Settings Hub card click closes Settings and opens existing views; Studio rail opens Home', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
     const hub = await openSettingsHub(studio);
-    studio.win.ReactDOM.flushSync(() => [...hub.querySelectorAll('[data-tool-card="brain"] button')]
-      .find(node => node.textContent.trim() === 'OPEN').click());
+    assert.equal([...hub.querySelectorAll('[data-tool-card] button')].some(node => node.textContent.trim() === 'OPEN'), false,
+      'Tool cards have no separate OPEN pill');
+    studio.win.ReactDOM.flushSync(() => hub.querySelector('[data-tool-card="brain"]').click());
     await studio.settle();
     assert.equal(studio.doc.body.textContent.includes('SettingsSTUDIO'), false, 'Open closes Settings');
     assert.equal(studio.doc.querySelector('[data-tool-view="brain"]')?.getAttribute('data-tool-tab'), 'facts');
@@ -321,62 +329,62 @@ test('F2R owner decisions: unsupported waiting producers are refused and not mar
   } finally { studio.close(); }
 });
 
-test('F2R D1: placeholder tool stats are replaced from owner projections after the first tools poll', async () => {
+test('F2R D1: Settings Hub cards show owner state lines, no placeholders or plumbing', async () => {
   const studio = await mountStudio({tools:[
     {id:'studio', label:'Studio', state:'running', state_word:'RUNNING',
-      description:'Canvas, chats and graph sessions.', stat_line:'… sessions · … running.',
+      description:'Canvas, chats and graph sessions.', stat_line:'3 sessions · 0 running.',
       off_sentence:'Switched off. Sessions are kept.', wire_summary:'Studio → Brain · Connectors · Workshop'},
     {id:'workshop', label:'Workshop', state:'running', state_word:'RUNNING',
-      description:'Projects, tasks and governed work.', stat_line:'… projects · … tasks.',
+      description:'Projects, tasks and governed work.', stat_line:'1 project · 1 task.',
       off_sentence:'Switched off. Tasks are paused.', wire_summary:'Workshop → Studio · Connectors · Brain'},
-    {id:'brain', label:'Brain', state:'off', state_word:'OFF',
-      description:'Memory, facts and local classification.', stat_line:'… facts · … stay on this machine.',
+    {id:'brain', label:'Brain', state:'running', state_word:'RUNNING',
+      description:'Memory, facts and local classification.', stat_line:'1 fact in local Brain.',
       off_sentence:'Switched off. Nothing is remembered or recalled.', wire_summary:'Brain → Studio · Workshop · Cloud',
       empty_title:'Brain is off', empty_line:'What ArchHub remembers. Everything else keeps running.'},
-    {id:'baboom', label:'BABOOM', state:'running', state_word:'RUNNING',
-      description:'Desktop companion and approved execution.', stat_line:'quiet off · speaks at most … times an hour.',
+    {id:'baboom', label:'BABOOM', state:'running', state_word:'ATTACHED',
+      description:'Desktop companion and approved execution.', stat_line:'Attached signed runtime · 1 runtime session.',
       off_sentence:'Switched off. No companion on the desktop.', wire_summary:'BABOOM ← Studio · Workshop'},
     {id:'connectors', label:'Connectors', state:'running', state_word:'RUNNING',
-      description:'Host bridges and Speckle access.', stat_line:'…/… hosts running · Speckle not signed in.',
+      description:'Host bridges and Speckle access.', stat_line:'1/1 hosts running.',
       off_sentence:'Switched off. No reads or writes to your programs.', wire_summary:'Connectors → Studio · Workshop · Speckle'},
-    {id:'cloud', label:'Cloud', state:'starting', state_word:'STARTING',
-      description:'Devices, grants and cloud agents.', stat_line:'not signed in.',
+    {id:'cloud', label:'Cloud', state:'starting', state_word:'NOT SIGNED IN',
+      description:'Devices, grants and cloud agents.', stat_line:'Not signed in.',
       off_sentence:'Switched off. Works on this machine only.', wire_summary:'Cloud ← Brain · Workshop'},
   ]});
   try {
     await studio.settle(); await studio.settle();
     const hub = await openSettingsHub(studio);
-    assert.match(hub.querySelector('[data-tool-card="studio"]').textContent, /3 sessions · 0 running/);
-    assert.match(hub.querySelector('[data-tool-card="workshop"]').textContent, /1 project · 1 task/);
-    assert.match(hub.querySelector('[data-tool-card="connectors"]').textContent, /1\/1 hosts running/);
-    assert.match(hub.querySelector('[data-tool-card="baboom"]').textContent, /Starts with Windows: on · runtime unknown/);
-    assert.equal(hub.querySelector('[data-tool-card="studio"]').textContent.includes('…'), false);
-    assert.equal(hub.querySelector('[data-tool-card="workshop"]').textContent.includes('…'), false);
-    assert.equal(hub.querySelector('[data-tool-card="connectors"]').textContent.includes('…'), false);
-    assert.equal(hub.querySelector('[data-tool-card="baboom"]').textContent.includes('…'), false);
+    assert.equal(hub.querySelectorAll('[data-tool-card]').length, 6);
+    for (const text of [
+      '3 sessions · 0 running.', '1 project · 1 task.', '1 fact in local Brain.',
+      'Attached signed runtime · 1 runtime session.', 'Starts with Windows: on',
+      '1/1 hosts running.', 'Not signed in.',
+    ]) {
+      assert.ok(hub.textContent.includes(text), 'missing owner state line: ' + text);
+    }
+    assert.doesNotMatch(hub.textContent, /unknown|UNKNOWN|…/);
+    assert.doesNotMatch(hub.textContent, /Studio → Brain|Workshop → Studio|Brain → Studio|BABOOM ← Studio|Connectors → Studio|Cloud ← Brain|no device list owner|cloud session owner/);
   } finally { studio.close(); }
 });
 
-test('F2R D2: Workshop OPEN opens the Workshop tool view on the Projects tab, not Studio Chat', async () => {
+test('F2R D2: Workshop card opens the Workshop tool view on the Projects tab, not Studio Chat', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
     const hub = await openSettingsHub(studio);
-    studio.win.ReactDOM.flushSync(() => [...hub.querySelectorAll('[data-tool-card="workshop"] button')]
-      .find(node => node.textContent.trim() === 'OPEN').click());
+    studio.win.ReactDOM.flushSync(() => hub.querySelector('[data-tool-card="workshop"]').click());
     await studio.settle();
     assert.equal(studio.doc.querySelector('[data-tool-view="workshop"]')?.getAttribute('data-tool-tab'), 'projects');
     assert.equal(studio.doc.querySelector('textarea[aria-label="Message the model"]'), null);
   } finally { studio.close(); }
 });
 
-test('F2R D3: BABOOM OPEN renders the companion settings body, never the Hosts panel', async () => {
+test('F2R D3: BABOOM card renders the companion settings body, never the Hosts panel', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
     const hub = await openSettingsHub(studio);
-    studio.win.ReactDOM.flushSync(() => [...hub.querySelectorAll('[data-tool-card="baboom"] button')]
-      .find(node => node.textContent.trim() === 'OPEN').click());
+    studio.win.ReactDOM.flushSync(() => hub.querySelector('[data-tool-card="baboom"]').click());
     await studio.settle();
     const main = studio.doc.querySelector('[data-tool-view="baboom"]');
     assert.ok(main, 'BABOOM opens its tool view');
@@ -397,15 +405,13 @@ test('F2R D4: Ctrl+Shift+W opens an empty waiting popover that says Nothing wait
   } finally { studio.close(); }
 });
 
-test('F2R cosmetic: tool wire summaries can wrap to two lines and expose the full text in a tooltip', async () => {
+test('F2R cosmetic: tool cards hide plumbing wire summaries', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
     const hub = await openSettingsHub(studio);
-    const wire = hub.querySelector('[data-tool-wire="studio"]');
-    assert.equal(wire.title, 'Studio → Brain · Connectors · Workshop');
-    assert.equal(wire.style.whiteSpace, 'normal');
-    assert.match(wire.style.WebkitLineClamp || wire.style.webkitLineClamp || '', /2/);
+    assert.equal(hub.querySelector('[data-tool-wire]'), null);
+    assert.doesNotMatch(hub.textContent, /Studio → Brain|Workshop → Studio|Brain → Studio|BABOOM ← Studio|Connectors → Studio|Cloud ← Brain/);
   } finally { studio.close(); }
 });
 
@@ -433,10 +439,10 @@ test('F2U repair: BABOOM card separates Windows startup from runtime state', asy
     await studio.settle(); await studio.settle();
     const hub = await openSettingsHub(studio);
     const card = hub.querySelector('[data-tool-card="baboom"]');
-    assert.match(card.textContent, /UNKNOWN/);
+    assert.doesNotMatch(card.textContent, /UNKNOWN|unknown|…/);
+    assert.match(card.textContent, /RUNNING|ATTACHED/);
     assert.match(card.textContent, /Starts with Windows: on/);
-    assert.match(card.textContent, /runtime unknown/);
-    assert.doesNotMatch(card.textContent, /RUNNING/);
+    assert.match(card.textContent, /Attached signed runtime/);
   } finally { studio.close(); }
 });
 
@@ -445,8 +451,7 @@ test('F2R cloud tool view receives real account callbacks', async () => {
   try {
     await studio.settle(); await studio.settle();
     const hub = await openSettingsHub(studio);
-    studio.win.ReactDOM.flushSync(() => [...hub.querySelectorAll('[data-tool-card="cloud"] button')]
-      .find(node => node.textContent.trim() === 'OPEN').click());
+    studio.win.ReactDOM.flushSync(() => hub.querySelector('[data-tool-card="cloud"]').click());
     await studio.settle();
     assert.equal(studio.doc.querySelector('[data-tool-view="cloud"]')?.getAttribute('data-tool-tab'), 'account');
     const source = read('nodelang/studio/studio-lm.jsx');
@@ -454,14 +459,15 @@ test('F2R cloud tool view receives real account callbacks', async () => {
   } finally { studio.close(); }
 });
 
-test('F2R tool wire button does not invent a tool:* focus root', async () => {
+test('F2R tool card keyboard open does not invent a tool:* focus root', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
     const hub = await openSettingsHub(studio);
-    studio.win.ReactDOM.flushSync(() => hub.querySelector('[data-tool-wire="brain"]').click());
+    studio.win.ReactDOM.flushSync(() => hub.querySelector('[data-tool-card="brain"]').dispatchEvent(
+      new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
     await studio.settle();
-    assert.equal(studio.doc.body.textContent.includes('SettingsSTUDIO'), false, 'Wire closes Settings');
+    assert.equal(studio.doc.body.textContent.includes('SettingsSTUDIO'), false, 'Card closes Settings');
     assert.equal(studio.doc.querySelector('[data-tool-view="brain"]')?.getAttribute('data-tool-tab'), 'facts');
     assert.equal(studio.doc.body.textContent.includes('tool:brain'), false);
   } finally { studio.close(); }

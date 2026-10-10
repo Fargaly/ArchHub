@@ -1074,7 +1074,7 @@ const useWaitingOpenShortcut = setOpen => {
 const firstToolTab = tool => tool === 'workshop' ? 'projects' : tool === 'brain' ? 'facts' :
   tool === 'connectors' ? 'hosts' : tool === 'cloud' ? 'account' : tool === 'baboom' ? 'settings' : 'workspace';
 const toolStateWord = state => ({
-  running:'RUNNING', starting:'STARTING', off:'OFF', failed:"DIDN'T START", unknown:'UNKNOWN', not_installed:'NOT INSTALLED',
+  running:'RUNNING', starting:'STARTING', off:'OFF', failed:"DIDN'T START", not_installed:'NOT INSTALLED',
   didnt_start:"DIDN'T START",
 })[state] || String(state || 'OFF').replace(/_/g, ' ').toUpperCase();
 const waitingLine = item => {
@@ -1094,7 +1094,7 @@ const waitingMeta = item => {
   if (item?.asker_alive === false) bits.push('asker restarted; approving delivers anyway');
   return bits.join(' · ');
 };
-const toolStatLineIsPlaceholder = value => /…/.test(String(value || ''));
+const toolStatLineIsPlaceholder = value => /…|unknown/i.test(String(value || ''));
 const baboomMaxSpeaks = personal => {
   const config = personal?.configuration || {};
   const raw = config.baboom_max_speaks_per_hour?.value ?? config.baboom_speech_limit?.value ??
@@ -1206,12 +1206,12 @@ const WaitingButton = ({ items = [], variant = 'strip', onOpenTask }) => {
   </span>;
 };
 const FRAME_TOOL_DEFAULTS = [
-  ['studio', 'Studio', 'running', 'Canvas, chats and graph sessions.', '… sessions · … running.', 'Switched off. Sessions are kept.', 'Studio → Brain · Connectors · Workshop', 'Studio is off', 'Canvas view unavailable. The window itself stays up.'],
-  ['workshop', 'Workshop', 'running', 'Projects, tasks and governed work.', '… projects · … tasks.', 'Switched off. Tasks are paused.', 'Workshop → Studio · Connectors · Brain', 'Workshop is off', 'No agent loop, no tasks run, no router. Chat still works locally.'],
-  ['brain', 'Brain', 'off', 'Memory, facts and local classification.', '… facts · … stay on this machine.', 'Switched off. Nothing is remembered or recalled.', 'Brain → Studio · Workshop · Cloud', 'Brain is off', 'What ArchHub remembers. Everything else keeps running.'],
-  ['baboom', 'BABOOM', 'running', 'Desktop companion and approved execution.', 'quiet off · speaks at most … times an hour.', 'Switched off. No companion on the desktop.', 'BABOOM ← Studio · Workshop', 'BABOOM is off', 'The companion is closed. Nothing else changes.'],
-  ['connectors', 'Connectors', 'running', 'Host bridges and Speckle access.', '…/… hosts running · Speckle not signed in.', 'Switched off. No reads or writes to your programs.', 'Connectors → Studio · Workshop · Speckle', 'Connectors are off', 'No host reads or writes. Pinned host outputs still feed downstream.'],
-  ['cloud', 'Cloud', 'starting', 'Devices, grants and cloud agents.', 'not signed in.', 'Switched off. Works on this machine only.', 'Cloud ← Brain · Workshop', 'Cloud is off', 'No tunnel, heartbeat, or sync. Everything local is unchanged.'],
+  ['studio', 'Studio', 'running', 'Canvas, chats and graph sessions.', '0 sessions · 0 running.', 'Switched off. Sessions are kept.', 'Studio → Brain · Connectors · Workshop', 'Studio is off', 'Canvas view unavailable. The window itself stays up.'],
+  ['workshop', 'Workshop', 'running', 'Projects, tasks and governed work.', '0 projects · 0 tasks.', 'Switched off. Tasks are paused.', 'Workshop → Studio · Connectors · Brain', 'Workshop is off', 'No agent loop, no tasks run, no router. Chat still works locally.'],
+  ['brain', 'Brain', 'off', 'Memory, facts and local classification.', '0 facts in local Brain.', 'Switched off. Nothing is remembered or recalled.', 'Brain → Studio · Workshop · Cloud', 'Brain is off', 'What ArchHub remembers. Everything else keeps running.'],
+  ['baboom', 'BABOOM', 'starting', 'Desktop companion and approved execution.', 'No signed runtime attached.', 'Switched off. No companion on the desktop.', 'BABOOM ← Studio · Workshop', 'BABOOM is off', 'The companion is closed. Nothing else changes.'],
+  ['connectors', 'Connectors', 'running', 'Host bridges and Speckle access.', '0/0 hosts running.', 'Switched off. No reads or writes to your programs.', 'Connectors → Studio · Workshop · Speckle', 'Connectors are off', 'No host reads or writes. Pinned host outputs still feed downstream.'],
+  ['cloud', 'Cloud', 'starting', 'Devices, grants and cloud agents.', 'Not signed in.', 'Switched off. Works on this machine only.', 'Cloud ← Brain · Workshop', 'Cloud is off', 'No tunnel, heartbeat, or sync. Everything local is unchanged.'],
 ].map(([id, label, state, description, statLine, offSentence, wireSummary, emptyTitle, emptyLine]) => ({
   id, label, state, description, stat_line:statLine, off_sentence:offSentence, wire_summary:wireSummary, emptyTitle, emptyLine,
 }));
@@ -1229,7 +1229,7 @@ const toolRowsFromOwners = ({workshopState, account, personal, hub}) => {
     studio:{stat:plural(LM_SESSIONS.length, 'session') + ' · ' + plural(LM_SESSIONS.filter(s => s.state === 'running').length, 'running', 'running'), wire:plural((graph?.wires || []).length, 'wire')},
     workshop:{stat:plural(projects, 'project') + ' · ' + plural(tasks, 'task'), wire:waiting.length ? plural(waiting.length, 'waiting') : 'no waiting work'},
     brain:{stat:plural(LM_MEMORY.length, 'fact'), wire:plural((window.BRAIN_STRATA || []).length, 'stratum', 'strata')},
-    baboom:{stat:'Starts with Windows: ' + (baboomOn ? 'on' : 'off') + ' · runtime unknown', wire:baboom?.source ? String(baboom.source) : 'Personal Settings'},
+    baboom:{stat:'Starts with Windows: ' + (baboomOn ? 'on' : 'off'), wire:baboom?.source ? String(baboom.source) : 'Personal Settings'},
     connectors:{stat:String(liveHosts.length) + '/' + String(LM_HOSTS.length) + ' hosts running', wire:plural((window.ARCHHUB_LIVE?.connectors || []).length, 'connector')},
     cloud:{stat:signedIn ? String(account.email || 'signed in') : 'signed out', wire:window.ARCHHUB_CLOUD_SESSION ? 'cloud session owner' : 'no device list owner'},
   };
@@ -1242,20 +1242,30 @@ const toolRowsFromOwners = ({workshopState, account, personal, hub}) => {
   const hubRows = Array.isArray(hub?.tools) ? hub.tools
     : Array.isArray(window.ARCHHUB_TOOL_HUB?.tools) ? window.ARCHHUB_TOOL_HUB.tools
     : FRAME_TOOL_DEFAULTS;
-  return hubRows.map(row => ({
-    ...row,
-    ...(stats[row.id] || {}),
-    state:row.id === 'baboom' && baboom ? 'unknown' : row.state,
-    stateWord:row.id === 'baboom' && baboom ? 'UNKNOWN' : (row.state_word || toolStateWord(row.state)),
-    description:row.description || '',
-    emptyTitle:row.emptyTitle || row.empty_title || row.label + ' is off',
-    emptyLine:row.emptyLine || row.empty_line || row.off_sentence || '',
-    statLine:row.id === 'baboom' ? stats.baboom.stat : row.state === 'off' ? (row.off_sentence || stats[row.id]?.stat || '') :
-      (toolStatLineIsPlaceholder(row.stat_line) ? stats[row.id]?.stat : (row.stat_line || stats[row.id]?.stat || '')),
-    wireSummary:row.wire_summary || stats[row.id]?.wire || '',
-    color:toolColor(row.id === 'baboom' && baboom ? 'unknown' : row.state),
-    ...(row.id === 'baboom' ? baboomToggle : {}),
-  }));
+  return hubRows.map(row => {
+    const rawState = String(row.state || 'off');
+    const normalizedState = rawState === 'unknown' ? 'starting' : rawState;
+    const rowWord = String(row.state_word || '');
+    const stateWord = /unknown/i.test(rowWord) ? toolStateWord(normalizedState) : (rowWord || toolStateWord(normalizedState));
+    const ownerLine = toolStatLineIsPlaceholder(row.stat_line) ? stats[row.id]?.stat : (row.stat_line || stats[row.id]?.stat || '');
+    const baboomRuntime = ownerLine || 'No signed runtime attached.';
+    const statLine = row.id === 'baboom'
+      ? [baboomRuntime, stats.baboom.stat].filter(Boolean).join(' · ')
+      : normalizedState === 'off' ? (row.off_sentence || stats[row.id]?.stat || ownerLine || '') : ownerLine;
+    return {
+      ...row,
+      ...(stats[row.id] || {}),
+      state:row.id === 'baboom' && baboom?.value === 'off' ? 'off' : normalizedState,
+      stateWord:row.id === 'baboom' && baboom?.value === 'off' ? 'OFF' : stateWord,
+      description:row.description || '',
+      emptyTitle:row.emptyTitle || row.empty_title || row.label + ' is off',
+      emptyLine:row.emptyLine || row.empty_line || row.off_sentence || '',
+      statLine,
+      wireSummary:row.wire_summary || stats[row.id]?.wire || '',
+      color:toolColor(row.id === 'baboom' && baboom?.value === 'off' ? 'off' : normalizedState),
+      ...(row.id === 'baboom' ? baboomToggle : {}),
+    };
+  });
 };
 
 const ToolOffPanel = ({ tool }) => {
@@ -1881,11 +1891,20 @@ const HomeChip = ({ children, mono, onClick }) => (
   }}>{children}</button>
 );
 
-const ToolCard = ({ tool, onOpen, onWire }) => (
-  <div data-tool-card={tool.id} style={{
+const ToolCard = ({ tool, onOpen }) => (
+  <div data-tool-card={tool.id} role="button" tabIndex={0}
+    aria-label={`Open ${tool.label}`}
+    onClick={onOpen}
+    onKeyDown={event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        onOpen?.();
+      }
+    }}
+    style={{
     minHeight:134, padding:'10px 11px', textAlign:'left', background:LM.bgPanel,
     border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, color:LM.ink,
-    display:'flex', flexDirection:'column', gap:8, minWidth:0,
+    display:'flex', flexDirection:'column', gap:8, minWidth:0, cursor:'pointer',
   }}>
     <div style={{display:'flex', alignItems:'center', gap:7, minWidth:0}}>
       <span data-tool-dot="" style={{width:6, height:6, borderRadius:'50%', background:tool.color, flexShrink:0}}/>
@@ -1894,7 +1913,7 @@ const ToolCard = ({ tool, onOpen, onWire }) => (
       </span>
       <span style={{flex:1}}/>
       {tool.canToggle && <button type="button" role="switch" aria-checked={!!tool.toggleChecked} title={tool.toggleChecked ? 'Turn off' : 'Turn on'}
-        onClick={() => tool.toggleChecked ? tool.turnOff?.() : tool.turnOn?.()} style={{
+        onClick={event => { event.stopPropagation(); tool.toggleChecked ? tool.turnOff?.() : tool.turnOn?.(); }} style={{
         width:28, height:16, padding:2, border:0, borderRadius:8,
         background:tool.toggleChecked ? LM.ok : LM.line, cursor:'pointer',
       }}>
@@ -1911,17 +1930,7 @@ const ToolCard = ({ tool, onOpen, onWire }) => (
     <div style={{fontFamily:LM.sans, fontSize:12.5, color:LM.inkSoft, lineHeight:1.35, minHeight:34}}>
       <span>{tool.description}</span>{tool.description ? ' ' : ''}<span>{tool.statLine || tool.stat}</span>
     </div>
-    <div style={{display:'flex', alignItems:'center', gap:8, marginTop:'auto', minWidth:0}}>
-      <button type="button" data-tool-wire={tool.id} onClick={onWire} style={{
-        flex:1, minWidth:0, padding:0, border:0, background:'transparent', color:tool.state === 'off' ? LM.inkMuted : LM.inkSoft,
-        fontFamily:LM.mono, fontSize:10, lineHeight:1.25, textAlign:'left', cursor:'pointer', overflow:'hidden',
-        display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', whiteSpace:'normal',
-      }} title={tool.wireSummary || tool.wire || ''}>{tool.wireSummary || tool.wire}</button>
-      <button type="button" onClick={onOpen} style={{
-        padding:'2px 8px', border:`1px solid ${LM.line}`, borderRadius:999, background:LM.bg,
-        color:LM.ink, fontFamily:LM.mono, fontSize:10, letterSpacing:'0.06em', cursor:'pointer',
-      }}>OPEN</button>
-    </div>
+    <div style={{marginTop:'auto', minHeight:18}}/>
   </div>
 );
 

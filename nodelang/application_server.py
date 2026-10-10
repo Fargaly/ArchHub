@@ -6469,12 +6469,24 @@ class ApplicationServer:
                         project_tools, project_waiting, project_wires,
                     )
                     if parsed.path == '/tools':
-                        from .universal_graphs import project_graph_index
-                        with owner.mutation_lock:
-                            graph_index = project_graph_index(
-                                owner.universal_store, owner.universal_registry,
-                                authentication_context=hub_binding.context)
-                        self._json(200, project_tools(sessions=graph_index.get("graphs", ())))
+                        from .cloud_signin import sign_in_state
+                        sessions = owner._tool_hub_graph_sessions(hub_binding)
+                        baboom_presence = owner._machine_agent_runtime_presence()
+                        brain_state = owner._brain_state()
+                        host_rows = owner._host_rows_or_none()
+                        workshop_state = {
+                            "available": bool(getattr(owner.universal_registry, "workshop_root", "")),
+                            "native_host_attached": getattr(owner, "_existing_workshop_native_host", None) is not None,
+                        }
+                        self._json(200, project_tools(
+                            sessions=sessions,
+                            workshop_state=workshop_state,
+                            brain_state=brain_state,
+                            baboom_presence=baboom_presence,
+                            host_rows=host_rows,
+                            hosts_probing=host_rows is None,
+                            cloud_state=sign_in_state(),
+                        ))
                     elif parsed.path == '/wires':
                         self._json(200, project_wires())
                     else:
@@ -7110,6 +7122,8 @@ class ApplicationServer:
                     with owner.mutation_lock:
                         payload = project_graph_index(owner.universal_store,
                             owner.universal_registry, authentication_context=binding.context)
+                        read_at = owner.universal_store.revision
+                    owner._remember_tool_hub_graph_sessions(binding, payload, read_at)
                     self._json(200, payload)
                     return
                 if parsed.path == '/api/universal/application-update':
@@ -8999,6 +9013,7 @@ class ApplicationServer:
                                     payload = open_graph(owner.universal_store,
                                         owner.universal_registry, body['root'],
                                         authentication_context=binding.context)
+                                owner._remember_tool_hub_graph_sessions(binding, payload)
                                 self._json(200, payload)
                                 return
                             elif self.path == '/api/universal/node-create':
@@ -18594,6 +18609,88 @@ class ApplicationServer:
                 'authority': 'migration test only',
             }
         return payload
+
+    def _tool_hub_graph_cache_key(self, binding) -> tuple[object, ...]:
+        return (
+            binding.subject_root,
+            binding.view_root,
+            binding.tenant_root,
+            binding.assurance_root,
+        )
+
+    def _remember_tool_hub_graph_sessions(self, binding, payload, revision=None) -> None:
+        """Keep the Studio card's session count off the /tools poll path.
+
+        /api/universal/graphs, graph-create and graph-open already pay the
+        admitted graph-index cost. The Hub poll reads only this revision-keyed
+        cache, so it never repeats project_graph_index or the canvas scan.
+        """
+        if not isinstance(payload, Mapping):
+            return
+        graphs = payload.get("graphs")
+        if not isinstance(graphs, list):
+            return
+        cache = dict(getattr(self, "_tool_hub_graph_sessions_cache", {}) or {})
+        cache[self._tool_hub_graph_cache_key(binding)] = {
+            # The revision the list was read at; a later write must not adopt it.
+            "revision": self.universal_store.revision if revision is None else revision,
+            "graphs": tuple(dict(row) for row in graphs if isinstance(row, Mapping)),
+        }
+        self._tool_hub_graph_sessions_cache = cache
+
+    def _refresh_tool_hub_graph_sessions(self, binding) -> None:
+        """Re-read the admitted graph list off the /tools request thread.
+
+        At most one refresh runs per binding; a poll arriving meanwhile keeps
+        serving the last list. Failures keep the last list (never a guess).
+        """
+        key = self._tool_hub_graph_cache_key(binding)
+        guard = self.__dict__.setdefault("_tool_hub_graph_refresh_guard", threading.Lock())
+        with guard:
+            running = self.__dict__.setdefault("_tool_hub_graph_refreshing", set())
+            if key in running:
+                return
+            running.add(key)
+
+        def refresh():
+            try:
+                from .universal_graphs import project_graph_index
+                with self.mutation_lock:
+                    read_at = self.universal_store.revision
+                    payload = project_graph_index(self.universal_store,
+                        self.universal_registry, authentication_context=binding.context)
+                self._remember_tool_hub_graph_sessions(binding, payload, read_at)
+            except Exception:
+                pass
+            finally:
+                with guard:
+                    running.discard(key)
+
+        threading.Thread(target=refresh, name="archhub-tool-hub-graphs", daemon=True).start()
+
+    def _tool_hub_graph_sessions(self, binding) -> tuple[dict[str, object], ...]:
+        cache = getattr(self, "_tool_hub_graph_sessions_cache", {}) or {}
+        entry = cache.get(self._tool_hub_graph_cache_key(binding))
+        # A revision change may or may not change the admitted graph list
+        # (retract, group, undo and the composer can; most writes do not). The
+        # poll never pays for the index: it serves the last list at once and a
+        # single background refresh re-reads it for the new revision.
+        if isinstance(entry, Mapping) and isinstance(entry.get("graphs"), tuple):
+            if entry.get("revision") != self.universal_store.revision:
+                self._refresh_tool_hub_graph_sessions(binding)
+            return entry["graphs"]
+        self._refresh_tool_hub_graph_sessions(binding)
+        root = str(getattr(self.universal_registry, "canvas_root", "") or "")
+        return ({
+            "id": root,
+            "title": "ArchHub",
+            "state": "idle",
+            "host": "archhub",
+            "when": "saved",
+            "file": "Graph composition",
+            "last": "Open graph",
+            "model": "",
+        },)
 
     def _snapshot_loop(self):
         while not self._snapshot_stop.is_set():

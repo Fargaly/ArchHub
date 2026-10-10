@@ -551,6 +551,7 @@ const StudioLM = () => {
     setWorkspaceSelection({...view, notice:'', scope:viewScopeForSession(id), pending:false});
   };
   const openTool = (tool, options = {}) => {
+    requestToolHubRefresh();
     if (tool === 'workshop' && options.tab === 'approvals' && workshopState?.canvas?.graph_id) {
       const workshopRows = Array.isArray(workshopState?.workshops) ? workshopState.workshops : [];
       const room = workshopRows.find(row => row.root === options.root) ||
@@ -589,6 +590,7 @@ const StudioLM = () => {
     setToolView({id:tool, tab:options.tab || firstToolTab(tool), focus:options.focus || ''});
   };
   const openToolGraph = tool => {
+    requestToolHubRefresh();
     setOpenId(null);
     setToolView({id:tool, tab:firstToolTab(tool)});
   };
@@ -1033,32 +1035,118 @@ const readPersonalThemeSnapshot = () => {
   try { return window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot?.()?.theme || null; }
   catch (_) { return null; }
 };
-const useToolHubProjection = () => {
-  const [hub, setHub] = React.useState(() => window.ARCHHUB_TOOL_HUB || null);
-  React.useEffect(() => {
-    let alive = true;
-    const request = typeof window.fetch === 'function' ? window.fetch.bind(window) :
-      (typeof fetch === 'function' ? fetch : null);
-    const read = () => Promise.all([
-      request ? request('/tools').then(response => response.ok ? response.json() : null).catch(() => null) : Promise.resolve(null),
-      request ? request('/waiting').then(response => response.ok ? response.json() : null).catch(() => null) : Promise.resolve(null),
-    ]).then(([tools, waiting]) => {
-      if (!alive) return;
-      const payload = {
-        ...(tools && Array.isArray(tools.tools) ? tools : {}),
-        waiting:Array.isArray(waiting?.items) ? waiting.items : [],
-        waiting_payload:waiting && typeof waiting === 'object' ? waiting : null,
-      };
-      if (!Array.isArray(payload.tools)) return;
-      window.ARCHHUB_TOOL_HUB = payload;
-      setHub(payload);
-    }).catch(() => {});
-    read();
-    const timer = window.setInterval(read, 2000);
-    return () => { alive = false; window.clearInterval(timer); };
-  }, []);
-  return hub || window.ARCHHUB_TOOL_HUB || null;
+const TOOL_HUB_POLL_MS = 5000;
+const TOOL_HUB_READ_TIMEOUT_MS = 15000;
+let toolHubSnapshot = window.ARCHHUB_TOOL_HUB || null;
+let toolHubTimer = null;
+let toolHubController = null;
+let toolHubInFlight = false;
+let toolHubListeningVisibility = false;
+const toolHubSubscribers = new Set();
+const getToolHubSnapshot = () => toolHubSnapshot || window.ARCHHUB_TOOL_HUB || null;
+const notifyToolHubSubscribers = () => {
+  for (const subscriber of [...toolHubSubscribers]) subscriber();
 };
+const stopToolHubTimer = () => {
+  if (toolHubTimer != null) window.clearInterval(toolHubTimer);
+  toolHubTimer = null;
+};
+let toolHubWatchdog = null;
+const abortToolHubRead = () => {
+  if (toolHubWatchdog != null) window.clearTimeout(toolHubWatchdog);
+  toolHubWatchdog = null;
+  if (toolHubController) toolHubController.abort();
+  toolHubController = null;
+  toolHubInFlight = false;
+};
+const readToolHubProjection = () => {
+  if (toolHubSubscribers.size === 0 || document.hidden || toolHubInFlight) return Promise.resolve(null);
+  const request = typeof window.fetch === 'function' ? window.fetch.bind(window) :
+    (typeof fetch === 'function' ? fetch : null);
+  if (!request) return Promise.resolve(null);
+  toolHubInFlight = true;
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  toolHubController = controller;
+  // A read that never settles must not silence the Hub: after 15 s it is
+  // abandoned (aborted) and the guard is released for the next tick.
+  const watchdog = window.setTimeout(() => {
+    if (toolHubController !== controller) return;
+    controller?.abort();
+    toolHubController = null;
+    toolHubInFlight = false;
+    toolHubWatchdog = null;
+  }, TOOL_HUB_READ_TIMEOUT_MS);
+  toolHubWatchdog = watchdog;
+  const options = controller ? {signal:controller.signal} : undefined;
+  return Promise.all([
+    request('/tools', options).then(response => response.ok ? response.json() : null).catch(() => null),
+    request('/waiting', options).then(response => response.ok ? response.json() : null).catch(() => null),
+  ]).then(([tools, waiting]) => {
+    if (controller?.signal.aborted || toolHubSubscribers.size === 0) return null;
+    const payload = {
+      ...(tools && Array.isArray(tools.tools) ? tools : {}),
+      waiting:Array.isArray(waiting?.items) ? waiting.items : [],
+      waiting_payload:waiting && typeof waiting === 'object' ? waiting : null,
+    };
+    if (!Array.isArray(payload.tools)) return null;
+    toolHubSnapshot = payload;
+    window.ARCHHUB_TOOL_HUB = payload;
+    notifyToolHubSubscribers();
+    return payload;
+  }).catch(() => null).finally(() => {
+    window.clearTimeout(watchdog);
+    if (toolHubWatchdog === watchdog) toolHubWatchdog = null;
+    // Only the current read releases the guard: an aborted older read that
+    // settles after a newer one started must not let a third read overlap it.
+    if (toolHubController === controller) {
+      toolHubController = null;
+      toolHubInFlight = false;
+    }
+  });
+};
+const armToolHubTimer = () => {
+  if (toolHubTimer == null && toolHubSubscribers.size > 0 && !document.hidden) {
+    toolHubTimer = window.setInterval(readToolHubProjection, TOOL_HUB_POLL_MS);
+  }
+};
+const onToolHubVisibilityChange = () => {
+  if (document.hidden) {
+    stopToolHubTimer();
+    abortToolHubRead();
+    return;
+  }
+  armToolHubTimer();
+  readToolHubProjection();
+};
+const subscribeToolHubProjection = subscriber => {
+  toolHubSubscribers.add(subscriber);
+  const first = toolHubSubscribers.size === 1;
+  if (first && !toolHubListeningVisibility) {
+    document.addEventListener('visibilitychange', onToolHubVisibilityChange);
+    toolHubListeningVisibility = true;
+  }
+  if (first) {
+    armToolHubTimer();
+    readToolHubProjection();
+  }
+  return () => {
+    toolHubSubscribers.delete(subscriber);
+    if (toolHubSubscribers.size !== 0) return;
+    stopToolHubTimer();
+    abortToolHubRead();
+    if (toolHubListeningVisibility) {
+      document.removeEventListener('visibilitychange', onToolHubVisibilityChange);
+      toolHubListeningVisibility = false;
+    }
+  };
+};
+const requestToolHubRefresh = () => readToolHubProjection();
+const refreshToolHubAfter = action => Promise.resolve(action).catch(() => null).finally(() => requestToolHubRefresh());
+const useToolHubProjection = () => React.useSyncExternalStore(
+  subscribeToolHubProjection,
+  getToolHubSnapshot,
+  getToolHubSnapshot
+);
 const useWaitingOpenShortcut = setOpen => {
   React.useEffect(() => {
     const onKey = event => {
@@ -1236,8 +1324,8 @@ const toolRowsFromOwners = ({workshopState, account, personal, hub}) => {
   const baboomToggle = {
     canToggle:!!api?.setBaboomStartup && !!baboom,
     toggleChecked:baboomOn,
-    turnOn:() => api?.setBaboomStartup ? api.setBaboomStartup('on').catch(() => {}) : null,
-    turnOff:() => api?.setBaboomStartup ? api.setBaboomStartup('off').catch(() => {}) : null,
+    turnOn:() => api?.setBaboomStartup ? refreshToolHubAfter(api.setBaboomStartup('on')) : requestToolHubRefresh(),
+    turnOff:() => api?.setBaboomStartup ? refreshToolHubAfter(api.setBaboomStartup('off')) : requestToolHubRefresh(),
   };
   const hubRows = Array.isArray(hub?.tools) ? hub.tools
     : Array.isArray(window.ARCHHUB_TOOL_HUB?.tools) ? window.ARCHHUB_TOOL_HUB.tools

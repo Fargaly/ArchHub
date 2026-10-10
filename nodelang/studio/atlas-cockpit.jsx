@@ -11,6 +11,12 @@ const { HB, hsc, HBtn, HIconBtn, HPill, HDot, HAvatar, MapCanvas, STC, catCol, E
 const ALS = 'archhub.atlas.v7';
 const aLoad = () => { try { return JSON.parse(localStorage.getItem(ALS)); } catch (e) { return null; } };
 const aSave = (o) => { try { localStorage.setItem(ALS, JSON.stringify(o)); } catch (e) {} };
+const atlasStableStringify = value => JSON.stringify(value, (key, held) => held instanceof Set ? [...held].sort() : held);
+const atlasModelFingerprint = value => {
+  try { return atlasStableStringify(value || null); }
+  catch (e) { return ''; }
+};
+const atlasSameModel = (left, right) => atlasModelFingerprint(left) === atlasModelFingerprint(right);
 // One agent list for every panel: the agents the running app reported in its control
 // push (M.control.agents). This page keeps no list of its own, so no panel can offer
 // an agent the app does not have.
@@ -107,6 +113,8 @@ function ScaleLadder({ level, onClimb, depth }) {
 
 function AtlasCockpit() {
   const [M, setM] = React.useState(null);
+  const mRef = React.useRef(null);
+  React.useEffect(() => { mRef.current = M; }, [M]);
   const [expanded, setExpanded] = React.useState(() => ({ open: new Set(), collapsed: new Set() }));
   const [openNodes, setOpenNodes] = React.useState(() => new Set());
   const [activeWires, setActiveWires] = React.useState(() => new Set());
@@ -127,7 +135,7 @@ function AtlasCockpit() {
     // Track BOTH dimensions: the SVG scales to fit, so its painted scale changes when the
     // column's HEIGHT changes even if the width is pinned at its floor — signalling width
     // alone left the labels sized for a scale that was no longer being painted.
-    let lw = 0, lh = 0;
+    let lw = 0, lh = 0, poll = null;
     const read = () => {
       const el = mapColRef.current; if (!el) return;
       const r = el.getBoundingClientRect();
@@ -141,8 +149,19 @@ function AtlasCockpit() {
     ro.observe(document.documentElement);
     if (mapColRef.current) ro.observe(mapColRef.current);
     window.addEventListener('resize', read);
-    const poll = setInterval(read, 350);
-    return () => { ro.disconnect(); window.removeEventListener('resize', read); clearInterval(poll); };
+    const startPoll = () => {
+      if (!poll && !document.hidden) poll = setInterval(read, 350);
+    };
+    const stopPoll = () => {
+      if (poll) { clearInterval(poll); poll = null; }
+    };
+    const onVisibility = () => {
+      if (document.hidden) stopPoll();
+      else { read(); startPoll(); }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    startPoll();
+    return () => { ro.disconnect(); window.removeEventListener('resize', read); document.removeEventListener('visibilitychange', onVisibility); stopPoll(); };
   }, []);
   const [offGrid, setOffGrid] = React.useState([]);
   const [offGridDismissed, setOffGridDismissed] = React.useState(false);
@@ -313,9 +332,11 @@ function AtlasCockpit() {
     .then(r => r.ok ? r.text() : Promise.reject(new Error('map ' + r.status)))
     .then(text => {
       (0, eval)(text);                       // the same script tag map.html loads, re-run
-      setM(assembleModel());
-      setMapMeta({ live: !!window.ATLAS_LIVE, at: Date.now() });
-      flash('Map refreshed from your app');
+      const next = assembleModel();
+      const changed = !atlasSameModel(mRef.current, next);
+      if (changed) { mRef.current = next; setM(next); }
+      setMapMeta(meta => !changed && meta.live === !!window.ATLAS_LIVE ? meta : { live: !!window.ATLAS_LIVE, at: Date.now() });
+      if (changed) flash('Map refreshed from your app');
     })
     .catch(e => { flash('Could not refresh the map: ' + e.message); }), [assembleModel]);
   React.useEffect(() => { window.ATLAS_RELOAD = reloadMap; return () => { if (window.ATLAS_RELOAD === reloadMap) delete window.ATLAS_RELOAD; }; }, [reloadMap]);

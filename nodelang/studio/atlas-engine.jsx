@@ -140,7 +140,7 @@ const MapCanvas = React.forwardRef(function MapCanvas(props, ref) {
     // recomputed. It now never early-returns: it (re)attaches its observer whenever the ref
     // appears, watches the parent box too, and polls as a floor. pxW exists only to tell React
     // that geometry moved; the size maths reads the painted transform.
-    let last = 0, ro = null, seen = null;
+    let last = 0, ro = null, seen = null, poll = null;
     const read = () => {
       const el = svgRef.current;
       if (!el) return;
@@ -157,14 +157,26 @@ const MapCanvas = React.forwardRef(function MapCanvas(props, ref) {
       if (!w || Math.abs(w - last) < 2) return;
       last = w; setPxW(w);
     };
+    const startPoll = () => {
+      if (!poll && !document.hidden) poll = setInterval(read, 400);
+    };
+    const stopPoll = () => {
+      if (poll) { clearInterval(poll); poll = null; }
+    };
+    const onVisibility = () => {
+      if (document.hidden) stopPoll();
+      else { read(); startPoll(); }
+    };
     read();
     window.addEventListener('resize', read);
-    const poll = setInterval(read, 400);
+    document.addEventListener('visibilitychange', onVisibility);
+    startPoll();
     const inval = () => { rectRef.current = null; };
     window.addEventListener('scroll', inval, true);
     return () => {
       window.removeEventListener('resize', read);
-      clearInterval(poll);
+      document.removeEventListener('visibilitychange', onVisibility);
+      stopPoll();
       if (ro) ro.disconnect();
       window.removeEventListener('scroll', inval, true);
     };
@@ -205,7 +217,7 @@ const MapCanvas = React.forwardRef(function MapCanvas(props, ref) {
     let rafAlive = false;
     const step = (now) => { rafAlive = true; if (!at(now)) raf.current = requestAnimationFrame(step); };
     raf.current = requestAnimationFrame(step);
-    setTimeout(() => { if (!rafAlive) animFb.current = setInterval(() => at(performance.now()), 16); }, 80);
+    setTimeout(() => { if (!rafAlive && !document.hidden) animFb.current = setInterval(() => at(performance.now()), 16); }, 80);
   };
   const aspect = () => { const r = rect(); return r.height / r.width; };
   // FRAME — fits a world box inside the canvas SAFE AREA, not the raw viewport: the

@@ -370,7 +370,8 @@ var MapCanvas = React.forwardRef(function MapCanvas(props, ref) {
     // that geometry moved; the size maths reads the painted transform.
     var last = 0,
       ro = null,
-      seen = null;
+      seen = null,
+      poll = null;
     var _read = function read() {
       var el = svgRef.current;
       if (!el) return;
@@ -389,16 +390,33 @@ var MapCanvas = React.forwardRef(function MapCanvas(props, ref) {
       last = w;
       setPxW(w);
     };
+    var startPoll = function startPoll() {
+      if (!poll && !document.hidden) poll = setInterval(_read, 400);
+    };
+    var stopPoll = function stopPoll() {
+      if (poll) {
+        clearInterval(poll);
+        poll = null;
+      }
+    };
+    var onVisibility = function onVisibility() {
+      if (document.hidden) stopPoll();else {
+        _read();
+        startPoll();
+      }
+    };
     _read();
     window.addEventListener('resize', _read);
-    var poll = setInterval(_read, 400);
+    document.addEventListener('visibilitychange', onVisibility);
+    startPoll();
     var inval = function inval() {
       rectRef.current = null;
     };
     window.addEventListener('scroll', inval, true);
     return function () {
       window.removeEventListener('resize', _read);
-      clearInterval(poll);
+      document.removeEventListener('visibilitychange', onVisibility);
+      stopPoll();
       if (ro) ro.disconnect();
       window.removeEventListener('scroll', inval, true);
     };
@@ -465,7 +483,7 @@ var MapCanvas = React.forwardRef(function MapCanvas(props, ref) {
     };
     raf.current = requestAnimationFrame(_step);
     setTimeout(function () {
-      if (!rafAlive) animFb.current = setInterval(function () {
+      if (!rafAlive && !document.hidden) animFb.current = setInterval(function () {
         return at(performance.now());
       }, 16);
     }, 80);

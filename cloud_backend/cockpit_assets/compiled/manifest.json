@@ -32,9 +32,9 @@
   {
    "module": "atlas-engine",
    "source": "atlas-engine.jsx",
-   "source_sha256": "509a11d888dff4fed39fd04632dae7b38fe554d60ce81efac99ec9b3d44e5a9d",
+   "source_sha256": "62d3db9447017fbdefda2908ad22652a4335a864bca489660f2e9117e37fc213",
    "output": "atlas-engine.js",
-   "output_sha256": "0f24a0b056ddbde2bb130a1040eaba740973835897bb77373e478b2c205733b0"
+   "output_sha256": "47f5ba943ffe044a3df7e69753b6eda9d6d2cb8da041685ced7d0fca00038c4a"
   },
   {
    "module": "atlas-runtime",
@@ -60,9 +60,9 @@
   {
    "module": "atlas-cockpit",
    "source": "atlas-cockpit.jsx",
-   "source_sha256": "832cf56048ddfbd04998e2df8978e3ce62786efcac7b05de8af3e50216280a3a",
+   "source_sha256": "382b16f110b894c305b0bb7ce9003afec43476d10b842e525d9b7901e2491777",
    "output": "atlas-cockpit.js",
-   "output_sha256": "3d62ef69bf4df0948d86377c954130c719a6a41e4b6f47aef284d598b56b71ed"
+   "output_sha256": "a7cfe44f56fbd5778352a957a4629a9cafdfc51bda7cd21f699e8bd89c82a88c"
   }
  ]
 }

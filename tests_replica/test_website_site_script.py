@@ -29,7 +29,7 @@ REPO = Path(__file__).resolve().parents[1]
 SITE_SCRIPT_SHA256 = "4e7a942421c969557a068fe537491b77eae7315c3890588f8c4de8596605840a"
 SCRIPT_TAG = '<script src="/assets/site.js" defer></script>'
 SCRIPT_FILE = REPO / "nodelang" / "data" / "website" / "site.js"
-REVISION = "build-20260929-1451-fe33148"
+REVISION = "build-20261010-1053-7416160"
 NAV = ("Features", "Connectors", "Brain", "Security", "Pricing")
 OFFER = dict(BETA_OFFER)
 

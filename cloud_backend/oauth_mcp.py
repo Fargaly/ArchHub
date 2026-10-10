@@ -59,7 +59,9 @@ MAX_PENDING_ALL = 5000         # every live request: the storage ceiling
 MAX_PENDING_PER_CLIENT = 5     # per client, per caller address
 MAX_PENDING_PER_ADDRESS = 20   # per caller address (an IPv4 address, an IPv6 /64)
 MAX_PENDING_PER_NETWORK = 100  # per caller network (an IPv4 /24, an IPv6 /48)
-MAX_STATE = 512
+# Gemini's connector (Google oauth-redirect) sends a state well over 512 characters;
+# a bounded 4 KiB (UTF-8 bytes, not characters) still refuses abuse without refusing real clients.
+MAX_STATE = 4096
 MAX_FOUNDER_LANE = 20          # live requests in the founder's own lane, per founder account
 MAX_VERIFIED_PER_EMAIL = 2     # live Google-verified requests per signed-in account
 MAX_ENDED = 10000              # tombstones kept for ended sign-ins; the oldest go first
@@ -313,8 +315,8 @@ def authorize(request: Request, response_type: str = '', client_id: str = '', re
     # An unknown client or an unregistered redirect is never redirected to.
     if client is None or redirect_uri not in client['redirect_uris'] or not _redirect_allowed(redirect_uri):
         return _error('invalid_request', 'unknown client or unregistered redirect_uri')
-    if len(state) > MAX_STATE:
-        return _error('invalid_request', 'state is longer than %d characters' % MAX_STATE)
+    if len(state.encode('utf-8')) > MAX_STATE:
+        return _error('invalid_request', 'state is longer than %d bytes' % MAX_STATE)
 
     def fail(error: str, text: str) -> RedirectResponse:
         return RedirectResponse(_client_url(redirect_uri, error=error, error_description=text,

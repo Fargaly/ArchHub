@@ -488,12 +488,18 @@ def test_F7_an_overlong_state_is_refused_not_truncated(client):
     import oauth_mcp
     client_id = _register(client)
     _, challenge = _pkce()
-    assert client.get("/oauth/authorize", params=_authorize_params(client_id, challenge, state="s" * 512)).status_code == 200
-    r = client.get("/oauth/authorize", params=_authorize_params(client_id, challenge, state="s" * 513))
+    limit = oauth_mcp.MAX_STATE
+    assert limit == 4096, "a 4 KiB byte cap: room for Gemini's long state, no room for abuse"
+    assert client.get("/oauth/authorize", params=_authorize_params(client_id, challenge, state="s" * limit)).status_code == 200
+    r = client.get("/oauth/authorize", params=_authorize_params(client_id, challenge, state="s" * (limit + 1)))
     assert r.status_code == 400 and "location" not in r.headers
     oauth_mcp._ensure()
     with db.connect() as con:
-        assert [len(row[0]) for row in con.execute("SELECT state FROM oauth_pending")] == [512]
+        assert [len(row[0]) for row in con.execute("SELECT state FROM oauth_pending")] == [limit]
+    # The cap counts UTF-8 bytes: 2048 two-byte characters fit, one more is refused.
+    assert client.get("/oauth/authorize", params=_authorize_params(client_id, challenge, state="é" * 2048)).status_code == 200
+    r = client.get("/oauth/authorize", params=_authorize_params(client_id, challenge, state="é" * 2049))
+    assert r.status_code == 400 and "bytes" in r.text
 
 
 def test_concurrent_redemptions_that_both_read_the_code_still_issue_one_token(client, monkeypatch):

@@ -57,7 +57,7 @@ const studioCreatedNodeId = (result, refreshed, beforeIds) => {
     window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot?.()?.topology?.canvas?.nodes || [];
   return (held.find(node => node?.id && !beforeIds.has(node.id)) || {}).id || null;
 };
-const LM_SESSIONS = (window.ARCHHUB_LIVE?.sessions) || [];
+let LM_SESSIONS = (window.ARCHHUB_LIVE?.sessions) || [];
 const _SEED_SESSIONS = [
   { id:'walls',   title:'Schedule wall types',   state:'running',  host:'revit',
     file:'Tower-A_central.rvt · L03', model:'sonnet 4.5', when:'1 min',
@@ -105,7 +105,7 @@ const LM_STATE_META = window.ArchHubTheme.derive((LM) => ({
 }));
 
 // ─── The active graph for "walls" session — typed AEC nodes
-const LM_GRAPH = (window.ARCHHUB_LIVE?.graph) || { nodes: [], wires: [] };
+let LM_GRAPH = (window.ARCHHUB_LIVE?.graph) || { nodes: [], wires: [] };
 const _SEED_GRAPH = {
   nodes: [
     { id:'revit', cat:'host', x:24, y:48, w:220, h:124,
@@ -324,6 +324,7 @@ const studioRefreshCanvasInPlace = () => {
   if (typeof authority?.load === 'function') return authority.load();
   const workshop = window.ARCHHUB_EXISTING_WORKSHOP;
   if (typeof workshop?.refreshTopologyCanvas === 'function') return workshop.refreshTopologyCanvas();
+  if (typeof window.ARCHHUB_GET_CANVAS === 'function') return window.ARCHHUB_GET_CANVAS();
   return Promise.resolve(null);
 };
 const StudioLM = () => {
@@ -331,6 +332,8 @@ const StudioLM = () => {
   useCatalogueVersion();
   const [openId, setOpenId] = React.useState(window.ARCHHUB_LIVE?.currentGraph || LM_SESSIONS[0]?.id || null);
   const [openTabs, setOpenTabs] = React.useState(() => [window.ARCHHUB_LIVE?.currentGraph || LM_SESSIONS[0]?.id].filter(Boolean));
+  const [, refreshLiveProjection] = React.useState(0);
+  const [sessionOpenError, setSessionOpenError] = React.useState('');
   const [model, setModel] = React.useState(noModelPicked);
   const [homeNative, setHomeNative] = React.useState(null);
   const [pickerOpen, setPickerOpen] = React.useState(false);
@@ -468,6 +471,44 @@ const StudioLM = () => {
   const [userNodes, setUserNodes] = React.useState([]);
   const session = openId ? LM_SESSIONS.find(s => s.id === openId) : null;
   const workshopState = useWorkshopProjection();
+  const applyGraphIndex = React.useCallback((result, fallbackId) => {
+    const rows = Array.isArray(result?.graphs) ? result.graphs : null;
+    const current = result?.current_graph || result?.graph?.id || fallbackId || '';
+    if (rows) {
+      LM_SESSIONS = rows;
+    } else if (result?.graph?.id) {
+      const known = new Map(LM_SESSIONS.map(row => [row.id, row]));
+      known.set(result.graph.id, {...(known.get(result.graph.id) || {}), ...result.graph});
+      LM_SESSIONS = [...known.values()];
+    } else if (current && !LM_SESSIONS.some(row => row.id === current)) {
+      LM_SESSIONS = [...LM_SESSIONS, {
+        id:current, title:result?.canvas?.scope?.current_label || 'Graph',
+        state:'idle', host:'archhub', when:'saved', file:'Graph composition',
+        last:'Open graph', model:'',
+      }];
+    }
+    if (window.ARCHHUB_LIVE) {
+      window.ARCHHUB_LIVE.sessions = LM_SESSIONS;
+      window.ARCHHUB_LIVE.currentGraph = current || window.ARCHHUB_LIVE.currentGraph;
+    }
+    refreshLiveProjection(value => value + 1);
+    return current;
+  }, []);
+  const switchOpenGraphInPlace = React.useCallback(async (result, fallbackId) => {
+    // The installed app refused the graph-open/create receipt's canvas as the topology
+    // canvas ("current graph interaction authority", rig nav-g1-final 2026-10-10), so the same
+    // page re-reads its canvas once: no navigation, no new connection, no re-post.
+    const refreshed = await studioRefreshCanvasInPlace();
+    const current = applyGraphIndex(result, fallbackId);
+    const graph = window.ARCHHUB_STUDIO_AUTHORITY?.getSnapshot?.()?.graph ||
+      window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot?.()?.topology?.graph ||
+      window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot?.()?.graph;
+    if (graph && window.ARCHHUB_LIVE) {
+      LM_GRAPH = graph;
+      window.ARCHHUB_LIVE.graph = graph;
+    }
+    return {current, refreshed};
+  }, [applyGraphIndex]);
   const viewScope = JSON.stringify([session?.id || '', workshopState?.canvas?.graph_id || '',
     workshopState?.canvas?.root || '',
     (workshopState?.topology?.canvas || workshopState?.canvas)?.authorization?.subject || '',
@@ -622,11 +663,18 @@ const StudioLM = () => {
   // open a session — also pin as a tab if not already open
   const openSession = async (id) => {
     setToolView(null);
+    setSessionOpenError('');
     if (id && window.ARCHHUB_GRAPH_OPEN) {
       try {
-        await window.ARCHHUB_GRAPH_OPEN(id);
-        window.location.reload();
-      } catch (error) { window.alert(error?.message || 'Graph opening was refused.'); }
+        const result = await window.ARCHHUB_GRAPH_OPEN(id);
+        const opened = await switchOpenGraphInPlace(result, id);
+        const current = opened.current || id;
+        if (current && !openTabs.includes(current)) setOpenTabs(t => t.includes(current) ? t : [...t, current]);
+        setOpenId(current || id);
+      } catch (error) {
+        setSessionOpenError(error?.message || 'Graph opening was refused.');
+        setOpenId(null);
+      }
       return;
     }
     if (id && !openTabs.includes(id)) setOpenTabs(t => [...t, id]);
@@ -745,6 +793,16 @@ const StudioLM = () => {
         : <Home onOpen={openSession} model={model} native={homeNative} setPickerOpen={setPickerOpen}
             setLibraryOpen={setLibraryOpen} setPanel={setPanel}
             onOpenTool={openTool} onOpenToolGraph={openToolGraph} workshopState={workshopState} account={account}
+            sessionError={sessionOpenError}
+            onCreateGraph={async result => {
+              const opened = await switchOpenGraphInPlace(result, result?.graph?.id || result?.current_graph);
+              const current = opened.current || result?.graph?.id || result?.current_graph;
+              if (current) {
+                setOpenTabs(tabs => tabs.includes(current) ? tabs : [...tabs, current]);
+                setOpenId(current);
+              }
+              setSessionOpenError('');
+            }}
             onStarted={async (result, continueInView = () => true) => {
               const owner = window.ARCHHUB_EXISTING_WORKSHOP;
               const identity = () => {
@@ -1570,7 +1628,8 @@ const kbd = () => ({
 });
 
 // ──────────────────────── HOME ────────────────────────
-const Home = ({ onOpen, model, native, setPickerOpen, setLibraryOpen, setPanel, onOpenTool, onOpenToolGraph, workshopState, account, onStarted }) => {
+const Home = ({ onOpen, model, native, setPickerOpen, setLibraryOpen, setPanel, onOpenTool, onOpenToolGraph, workshopState, account,
+  onStarted, sessionError = '', onCreateGraph }) => {
   const [filter, onFilter] = React.useState('all');
   const [draft, setDraft] = React.useState('');
   const [attachments, setAttachments] = React.useState([]);
@@ -1677,8 +1736,9 @@ const Home = ({ onOpen, model, native, setPickerOpen, setLibraryOpen, setPanel, 
     setCreating(true); setCreateError('');
     try {
       if (!window.ARCHHUB_GRAPH_CREATE) throw new Error('Graph creation is unavailable in this view.');
-      await window.ARCHHUB_GRAPH_CREATE(title.trim());
-      window.location.reload();
+      const result = await window.ARCHHUB_GRAPH_CREATE(title.trim());
+      if (typeof onCreateGraph === 'function') await onCreateGraph(result);
+      else window.location.reload();
     } catch (error) {
       // A lost receipt may follow a successful write. Re-open the saved
       // graph list before another creation; never automatically replay it.
@@ -1769,6 +1829,8 @@ const Home = ({ onOpen, model, native, setPickerOpen, setLibraryOpen, setPanel, 
           style={chipBtn(filter === kind)}>{kind}</button>
       ))}
     </div>
+    {sessionError && <p role="alert" style={{color:LM.warn, margin:'-4px 0 14px'}}>{sessionError}
+      {' '}<button type="button" onClick={() => window.location.reload()}>Refresh graphs</button></p>}
     {title && <form onSubmit={createGraph} style={{
       display:'flex', alignItems:'center', gap:8, margin:'-4px 0 16px',
     }}>
@@ -1996,6 +2058,7 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, openTab
   const workshopState = useWorkshopProjection();
   const workshops = workshopState?.workshops || [];
   const workshop = workshops.find(row => row.root === conversationRoot);
+  const graphScopeKey = JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas)]);
   if (view.pending) return <main style={{gridColumn:'2', gridRow:'1', padding:24, color:LM.inkSoft}}>
     <p role="status">{view.notice}</p>
   </main>;
@@ -2023,7 +2086,7 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, openTab
           requestCanvasReveal={requestCanvasReveal}
           onLeave={() => updateView({conversationRoot:'', mode:'chat', target:''})}
           sel={wsSel} setSel={setWsSel}/> : <>
-          <ChatView session={session} model={model} setMode={setMode} onPickModel={() => setPickerOpen(true)}
+          <ChatView key={graphScopeKey} session={session} model={model} setMode={setMode} onPickModel={() => setPickerOpen(true)}
             readiness={readiness} onReadinessStale={onReadinessStale}
             workshopRoom={workshopModeRoom(workshops, '')} workshopUnavailable={workshopState?.canvas?.unavailable || ''}
             openWorkshop={root => updateView({conversationRoot:root, mode:'chat', target:''})}/>

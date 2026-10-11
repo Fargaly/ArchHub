@@ -28,14 +28,14 @@ test("W6 social accounts expose OAuth buttons, never raw access-token enrollment
   const transport = fs.readFileSync(path.join(root, "nodelang/studio/studio-existing-workshop.js"), "utf8");
   assert.match(source, /Connect LinkedIn/);
   assert.match(source, /Connect Facebook \/ Instagram/);
-  assert.match(meta, /saveMetaApp/);
+  assert.match(meta, /metaAppStatus/);
   assert.match(meta, /startMetaSignIn/);
   assert.match(meta, /metaSignInStatus/);
   assert.match(meta, /finishMetaSignIn/);
   assert.match(meta, /Use \{page\.name \|\| page\.id\}/);
   assert.match(meta, /\+ Instagram @/);
   assert.match(meta, /removeLocalSocialAccount/);
-  assert.match(transport, /social-meta-app/);
+  assert.match(transport, /get\('\/api\/universal\/social-meta-app'\)/);
   assert.match(transport, /social-meta-signin/);
   assert.match(transport, /social-meta-finish/);
   assert.match(transport, /post\('\/api\/universal\/social-meta-finish', \{page_id\}\)/);

@@ -34,6 +34,10 @@ Optional:
   GOOGLE_OAUTH_CLIENT_ID     — Sign in with Google OAuth client id (empty → disabled)
   GOOGLE_OAUTH_CLIENT_SECRET — Sign in with Google OAuth client secret (server-side only)
   GOOGLE_OAUTH_REDIRECT      — OAuth callback URL (default {PUBLIC_URL}/v1/auth/google/callback)
+  LINKEDIN_OAUTH_CLIENT_ID     — LinkedIn publisher app id (server-side social broker)
+  LINKEDIN_OAUTH_CLIENT_SECRET — LinkedIn publisher app secret (server-side only)
+  META_OAUTH_APP_ID            — Meta publisher app id (server-side social broker)
+  META_OAUTH_APP_SECRET        — Meta publisher app secret (server-side only)
   BILLING_PROVIDER         — "stripe" (default) | "polar"
   POLAR_ACCESS_TOKEN       — Polar.sh API key (when BILLING_PROVIDER=polar)
   POLAR_WEBHOOK_SECRET     — Polar.sh webhook signing key
@@ -330,6 +334,57 @@ def google_login_enabled() -> bool:
     keeps Sign in with Google dark (503). Google is the only human
     sign-in, so with it dark nobody can sign in."""
     return bool(GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET)
+
+
+# Server-side publisher apps for user social-account sign-in. Settings checks
+# these by configured/not-configured only; the app id/secret values never leave
+# the cloud backend and are never entered in the desktop Settings screen.
+LINKEDIN_OAUTH_CLIENT_ID = _req("LINKEDIN_OAUTH_CLIENT_ID", "")
+LINKEDIN_OAUTH_CLIENT_SECRET = _req("LINKEDIN_OAUTH_CLIENT_SECRET", "")
+LINKEDIN_OAUTH_REDIRECT = _req(
+    "LINKEDIN_OAUTH_REDIRECT",
+    PUBLIC_URL.rstrip("/") + "/oauth/linkedin/callback",
+)
+META_OAUTH_APP_ID = _req("META_OAUTH_APP_ID", "")
+META_OAUTH_APP_SECRET = _req("META_OAUTH_APP_SECRET", "")
+META_OAUTH_REDIRECT = _req(
+    "META_OAUTH_REDIRECT",
+    PUBLIC_URL.rstrip("/") + "/oauth/meta/callback",
+)
+SOCIAL_OAUTH_STATE_SECRET = _req("SOCIAL_OAUTH_STATE_SECRET", "")
+
+
+def _social_redirect_allowlist(provider: str) -> frozenset[str]:
+    defaults = (
+        PUBLIC_URL.rstrip("/") + "/oauth/" + provider + "/callback",
+    )
+    raw = _req("SOCIAL_OAUTH_REDIRECT_ALLOWLIST", "")
+    items = tuple(p.strip() for p in raw.split(",") if p.strip()) if raw.strip() else defaults
+    return frozenset(item.rstrip("/") for item in items if item)
+
+
+LINKEDIN_OAUTH_REDIRECT_ALLOWLIST = _social_redirect_allowlist("linkedin")
+META_OAUTH_REDIRECT_ALLOWLIST = _social_redirect_allowlist("meta")
+
+
+def social_oauth_redirect_allowed(provider: str, redirect: str) -> bool:
+    if not redirect:
+        return False
+    allowed = {
+        "linkedin": LINKEDIN_OAUTH_REDIRECT_ALLOWLIST
+        or frozenset({"https://api.archhub.io/oauth/linkedin/callback"}),
+        "meta": META_OAUTH_REDIRECT_ALLOWLIST
+        or frozenset({"https://api.archhub.io/oauth/meta/callback"}),
+    }
+    return redirect.rstrip("/") in allowed.get(provider, frozenset())
+
+
+def social_oauth_enabled(provider: str) -> bool:
+    if provider == "linkedin":
+        return bool(LINKEDIN_OAUTH_CLIENT_ID and LINKEDIN_OAUTH_CLIENT_SECRET)
+    if provider == "meta":
+        return bool(META_OAUTH_APP_ID and META_OAUTH_APP_SECRET)
+    return False
 
 
 # ── Cross-domain website sign-in return (founder, 2026-06-22) ─────────

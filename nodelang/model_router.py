@@ -1878,6 +1878,17 @@ def meta_app():
     return record["app_id"], record["app_secret"]
 
 
+def meta_app_status():
+    """Non-secret saved-app status for Settings."""
+    try:
+        record = _meta_app_record(protected_credential_entry(_META_APP_ENTRY))
+    except ProviderCredentialError:
+        record = None
+    if record is None:
+        return {"state": "missing"}
+    return {"state": "saved", "source": "secrets store"}
+
+
 _SOCIAL_CREDENTIAL_FORMAT = "archhub-social-credential-1"          # operator-declared account
 _SOCIAL_VERIFIED_FORMAT = "archhub-social-credential-2"            # carries its account_binding
 _SOCIAL_BINDINGS = ("provider-verified", "operator-declared")

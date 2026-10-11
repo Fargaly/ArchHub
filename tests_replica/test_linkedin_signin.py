@@ -130,11 +130,14 @@ def test_settings_offers_linkedin_sign_in_and_the_page_never_holds_the_token():
     transport = (studio / "studio-existing-workshop.js").read_text(encoding="utf-8")
     assert "<SettingsLinkedInSignIn transport={transport} compact/>" in page
     assert "get('/api/universal/social-linkedin-app')" in transport
-    assert "post('/api/universal/social-linkedin-app', {client_id, client_secret})" in transport
+    assert "saveLinkedInApp" not in transport
     assert "post('/api/universal/social-linkedin-signin', {})" in transport
     assert "get('/api/universal/social-linkedin-signin')" in transport
     assert "post('/api/universal/social-linkedin-finish', {})" in transport, "finish sends no token"
     assert "result.account_binding !== 'provider-verified'" in transport
+    user_settings = page[page.index("const SettingsLinkedInSignIn"):page.index("const SocialConnectButton")]
+    assert "CLIENT ID" not in user_settings and "CLIENT SECRET" not in user_settings
+    assert "Save LinkedIn app" not in user_settings
 
 # -- v2: the loopback listener (review items 2 and 3) and the stored binding (item 4) --
 def _waiting(attempt, seconds=5.0):

@@ -6472,38 +6472,25 @@ const SettingsConnectedSocialAccounts = ({transport}) => {
   </div>;
 };
 
-// Sign in with LinkedIn (social_linkedin_signin). Step one saves the founder's own LinkedIn
-// app; step two opens LinkedIn's consent page and saves the account LinkedIn names.
+// Sign in with LinkedIn (social_linkedin_signin). The publisher app is owned by
+// ArchHub/Cockpit; Settings only opens provider sign-in when that owner exists.
 const SettingsLinkedInSignIn = ({transport, compact = false}) => {
-  const form = React.useRef(null), alive = React.useRef(true), timer = React.useRef(null);
+  const alive = React.useRef(true), timer = React.useRef(null);
   const [busy, setBusy] = React.useState(false), [message, setMessage] = React.useState(''), [failed, setFailed] = React.useState(false);
-  const [appSaved, setAppSaved] = React.useState(false);
-  const [redirect, setRedirect] = React.useState('http://127.0.0.1:48720/linkedin/callback');
+  const [appSaved, setAppSaved] = React.useState(false), [appState, setAppState] = React.useState('');
   React.useEffect(() => {
     let active = true;
     if (!transport?.linkedInAppStatus) return () => { active = false; };
     transport.linkedInAppStatus()
-      .then(status => { if (active && alive.current) setAppSaved(status?.state === 'saved'); })
+      .then(status => { if (active && alive.current) { setAppSaved(status?.state === 'saved'); setAppState(status?.state || ''); } })
       .catch(error => { if (active && alive.current) say(error.message, true); });
     return () => { active = false; };
   }, [transport]);
-  React.useEffect(() => () => { alive.current = false; clearTimeout(timer.current);
-    if (form.current) form.current.elements.client_secret.value = ''; }, []);
+  React.useEffect(() => () => { alive.current = false; clearTimeout(timer.current); }, []);
   const say = (text, bad = false) => { if (alive.current) { setMessage(text); setFailed(bad); } };
-  const saveApp = async event => {
-    event.preventDefault();
-    const fields = form.current.elements;
-    const request = {client_id:fields.client_id.value.trim(), client_secret:fields.client_secret.value};
-    fields.client_secret.value = '';
-    setBusy(true);
-    try { await transport.saveLinkedInApp(request); setAppSaved(true); say('LinkedIn app saved on this machine. Now sign in with LinkedIn.'); }
-    catch (error) { say(error.message, true); }
-    finally { request.client_secret = ''; if (alive.current) setBusy(false); }
-  };
   const poll = async () => {
     try {
       const status = await transport.linkedInSignInStatus();
-      if (status.redirect_uri) setRedirect(status.redirect_uri);
       if (status.phase === 'ready') {
         const saved = await transport.finishLinkedInSignIn();
         say('Connected ' + (status.name || 'your LinkedIn account') + ' (' + saved.account_id + '). LinkedIn confirmed this account. Reference: ' + saved.vault_entry + '.');
@@ -6515,8 +6502,8 @@ const SettingsLinkedInSignIn = ({transport, compact = false}) => {
   };
   const signIn = async () => {
     setBusy(true); say('Finish in the LinkedIn page that opened, then return here.');
-    try { const started = await transport.startLinkedInSignIn(); if (started.redirect_uri) setRedirect(started.redirect_uri); poll(); }
-    catch (error) { say(error.message, true); setBusy(false); }
+    try { await transport.startLinkedInSignIn(); say('Finish in the LinkedIn page that opened.'); await poll(); }
+    catch (error) { say(error.message, true); if (alive.current) setBusy(false); }
   };
   const cancel = async () => {
     clearTimeout(timer.current);
@@ -6524,80 +6511,52 @@ const SettingsLinkedInSignIn = ({transport, compact = false}) => {
     catch (error) { say(error.message, true); }
     finally { if (alive.current) setBusy(false); }
   };
-  const available = !!(transport?.saveLinkedInApp && transport?.startLinkedInSignIn);
-  const inputStyle = {display:'block', width:'100%', margin:'6px 0 12px', padding:'7px 10px',
-    background:LM.bg, color:LM.ink, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, fontFamily:LM.mono, fontSize:11.5};
-  const labelStyle = {display:'block', fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.1em'};
-  const appSetup = compact ? <form ref={form} onSubmit={saveApp} style={{maxWidth:440}}>
-    <fieldset disabled={busy || !transport?.saveLinkedInApp} style={{border:0, padding:0, margin:0, minWidth:0}}>
-      <div style={{fontSize:12, color:LM.inkSoft, lineHeight:1.55, marginBottom:10}}>In your LinkedIn app, add this exact redirect URL: <code style={{fontFamily:LM.mono}}>{redirect}</code></div>
-      <label style={labelStyle}>CLIENT ID<input name="client_id" required maxLength={64} pattern="[A-Za-z0-9]{6,64}" style={inputStyle}/></label>
-      <label style={labelStyle}>CLIENT SECRET<input name="client_secret" type="password" required maxLength={256} autoComplete="new-password"
-        autoCapitalize="none" spellCheck={false} style={inputStyle}/></label>
-      <button type="submit" style={smallBtn()}>Save LinkedIn app</button>
-    </fieldset>
-    {!transport?.saveLinkedInApp && <p role="status" style={{fontSize:12, color:LM.inkSoft}}>LinkedIn app setup is unavailable in this connection.</p>}
-    {message && <p role={failed ? 'alert' : 'status'} style={{fontSize:12, overflowWrap:'anywhere', color:failed ? LM.err : LM.ok}}>{message}</p>}
-  </form> : null;
-  if (compact && appSaved) {
-    return <SocialConnectButton label="Connect LinkedIn" available={available} busy={busy}
-      onClick={signIn} note="needs the ArchHub app registered with LinkedIn" message={message} failed={failed}/>;
-  }
-  if (compact) return <div style={{display:'inline-flex', flexDirection:'column', gap:6, alignItems:'flex-start'}}>{appSetup}</div>;
+  const available = !!(appSaved && transport?.startLinkedInSignIn);
+  // 'missing' means this machine is not signed in to the ArchHub cloud that brokers LinkedIn.
+  const needsSignIn = !available && appState === 'missing';
+  if (compact) return <SocialConnectButton label="Connect LinkedIn" available={available} busy={busy}
+    unavailableLabel={needsSignIn ? 'Sign in to ArchHub to connect' : 'Coming soon'}
+    onClick={signIn} note={needsSignIn ? 'This connection goes through your ArchHub account. Sign in under Settings › Account, then connect here.' : 'Coming soon'} message={message} failed={failed}/>;
   return <div style={{padding:'12px 14px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, marginBottom:10}}>
     <div style={{fontSize:13, fontWeight:500}}>Sign in with LinkedIn</div>
     <div style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, marginBottom:12, letterSpacing:'0.04em'}}>Posts go to your personal LinkedIn profile, and only after you approve each one.</div>
-    <form ref={form} onSubmit={saveApp}>
-      <fieldset disabled={busy || !available} style={{border:0, padding:0, margin:0, minWidth:0}}>
-        <div style={{fontSize:12, color:LM.inkSoft, lineHeight:1.55, marginBottom:10}}>In your LinkedIn app, add this exact redirect URL: <code style={{fontFamily:LM.mono}}>{redirect}</code></div>
-        <label style={labelStyle}>CLIENT ID<input name="client_id" required maxLength={64} pattern="[A-Za-z0-9]{6,64}" style={inputStyle}/></label>
-        <label style={labelStyle}>CLIENT SECRET<input name="client_secret" type="password" required maxLength={256} autoComplete="new-password"
-          autoCapitalize="none" spellCheck={false} style={inputStyle}/></label>
-        <div style={{display:'flex', gap:7, flexWrap:'wrap'}}>
-          <button type="submit" style={smallBtn()}>Save LinkedIn app</button>
-          <button type="button" onClick={signIn} style={smallBtn(true)}>{busy ? 'Waiting for LinkedIn…' : 'Sign in with LinkedIn'}</button>
-        </div>
-      </fieldset>
+    <div>
+      <button type="button" disabled={!available || busy} onClick={signIn} style={smallBtn(available)}>{busy ? 'Waiting for LinkedIn...' : (available ? 'Connect LinkedIn' : (needsSignIn ? 'Sign in to ArchHub to connect' : 'Coming soon'))}</button>
+      {needsSignIn && <p role="status" style={{fontSize:12, color:LM.inkSoft}}>This connection goes through your ArchHub account. Sign in under Settings › Account, then connect here.</p>}
       {busy && transport?.cancelLinkedInSignIn && <button type="button" onClick={cancel} style={{...smallBtn(), marginTop:7}}>Cancel sign-in</button>}
-      {!available && <p role="status" style={{fontSize:12, color:LM.inkSoft}}>LinkedIn sign-in is unavailable in this connection.</p>}
       {message && <p role={failed ? 'alert' : 'status'} style={{fontSize:12, overflowWrap:'anywhere', color:failed ? LM.err : LM.ok}}>{message}</p>}
-    </form>
+    </div>
   </div>;
 };
 
-const SocialConnectButton = ({label, available, busy, onClick, note, message, failed}) => {
+const SocialConnectButton = ({label, available, busy, onClick, note, message, failed, unavailableLabel = 'Coming soon'}) => {
   const [open, setOpen] = React.useState(false);
   return <div style={{display:'inline-flex', flexDirection:'column', gap:6, alignItems:'flex-start'}}>
     <button type="button" onClick={() => available ? onClick() : setOpen(!open)}
-      style={smallBtn(available)}>{busy ? 'Connecting...' : label}</button>
+      style={smallBtn(available)}>{busy ? 'Connecting...' : (available ? label : unavailableLabel)}</button>
     {!available && open && <div role="status" style={{fontSize:12, color:LM.inkSoft, maxWidth:420}}>{note}</div>}
     {message && <div role={failed ? 'alert' : 'status'} style={{fontSize:12, color:failed ? LM.err : LM.ok, maxWidth:420, overflowWrap:'anywhere'}}>{message}</div>}
   </div>;
 };
 
 const SettingsMetaSignIn = ({transport}) => {
-  const form = React.useRef(null), alive = React.useRef(true), timer = React.useRef(null);
-  const available = !!(transport?.saveMetaApp && transport?.startMetaSignIn);
+  const alive = React.useRef(true), timer = React.useRef(null);
   const [message, setMessage] = React.useState(''), [failed, setFailed] = React.useState(false), [busy, setBusy] = React.useState(false);
-  const [open, setOpen] = React.useState(false), [redirect, setRedirect] = React.useState('http://127.0.0.1:48721/meta/callback');
+  const [appSaved, setAppSaved] = React.useState(false), [appState, setAppState] = React.useState('');
   const [pages, setPages] = React.useState([]), [connected, setConnected] = React.useState(null);
-  React.useEffect(() => () => { alive.current = false; clearTimeout(timer.current);
-    if (form.current) form.current.elements.app_secret.value = ''; }, []);
+  React.useEffect(() => {
+    let active = true;
+    if (!transport?.metaAppStatus) return () => { active = false; };
+    transport.metaAppStatus()
+      .then(status => { if (active && alive.current) { setAppSaved(status?.state === 'saved'); setAppState(status?.state || ''); } })
+      .catch(error => { if (active && alive.current) say(error.message, true); });
+    return () => { active = false; };
+  }, [transport]);
+  React.useEffect(() => () => { alive.current = false; clearTimeout(timer.current); }, []);
   const say = (text, bad = false) => { if (alive.current) { setMessage(text); setFailed(bad); } };
-  const saveApp = async event => {
-    event.preventDefault();
-    const fields = form.current.elements;
-    const request = {app_id:fields.app_id.value.trim(), app_secret:fields.app_secret.value};
-    fields.app_secret.value = '';
-    setBusy(true);
-    try { await transport.saveMetaApp(request); say('Meta app saved on this machine. Now connect Facebook / Instagram.'); }
-    catch (error) { say(error.message, true); }
-    finally { request.app_secret = ''; if (alive.current) setBusy(false); }
-  };
   const poll = async () => {
     try {
       const status = await transport.metaSignInStatus();
-      if (status.redirect_uri) setRedirect(status.redirect_uri);
       if (status.phase === 'ready') {
         setPages(Array.isArray(status.pages) ? status.pages : []);
         say(status.pages?.length ? 'Choose the Facebook Page to use.' : 'Meta returned no Pages for this account.', !status.pages?.length);
@@ -6609,8 +6568,8 @@ const SettingsMetaSignIn = ({transport}) => {
   };
   const signIn = async () => {
     setBusy(true); say('Finish in the Meta page that opened, then return here.');
-    try { const started = await transport.startMetaSignIn(); if (started.redirect_uri) setRedirect(started.redirect_uri); poll(); }
-    catch (error) { say(error.message, true); setBusy(false); }
+    try { await transport.startMetaSignIn(); say('Finish in the Meta page that opened.'); await poll(); }
+    catch (error) { say(error.message, true); if (alive.current) setBusy(false); }
   };
   const cancel = async () => {
     clearTimeout(timer.current);
@@ -6640,22 +6599,12 @@ const SettingsMetaSignIn = ({transport}) => {
     } catch (error) { say(error.message, true); }
     finally { if (alive.current) setBusy(false); }
   };
-  const inputStyle = {display:'block', width:'100%', margin:'6px 0 10px', padding:'7px 10px',
-    background:LM.bg, color:LM.ink, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, fontFamily:LM.mono, fontSize:11.5};
-  const labelStyle = {display:'block', fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.1em'};
+  const available = !!(appSaved && transport?.startMetaSignIn);
+  const needsSignIn = !available && appState === 'missing';
   return <div style={{display:'inline-flex', flexDirection:'column', gap:6, alignItems:'flex-start'}}>
-    <button type="button" onClick={() => available ? signIn() : setOpen(!open)}
-      style={smallBtn(available)}>{busy ? 'Connecting...' : 'Connect Facebook / Instagram'}</button>
-    <button type="button" onClick={() => setOpen(!open)} style={smallBtn()}>{open ? 'Hide Meta app' : 'Meta app'}</button>
-    {open && <form ref={form} onSubmit={saveApp} style={{maxWidth:440}}>
-      <fieldset disabled={busy || !transport?.saveMetaApp} style={{border:0, padding:0, margin:0, minWidth:0}}>
-        <div style={{fontSize:12, color:LM.inkSoft, lineHeight:1.55, marginBottom:10}}>In your Meta app, add this exact redirect URL: <code style={{fontFamily:LM.mono}}>{redirect}</code></div>
-        <label style={labelStyle}>APP ID<input name="app_id" required maxLength={32} pattern="[0-9]{6,32}" style={inputStyle}/></label>
-        <label style={labelStyle}>APP SECRET<input name="app_secret" type="password" required maxLength={256} autoComplete="new-password"
-          autoCapitalize="none" spellCheck={false} style={inputStyle}/></label>
-        <button type="submit" style={smallBtn()}>Save Meta app</button>
-      </fieldset>
-    </form>}
+    <button type="button" onClick={available ? signIn : undefined}
+      style={smallBtn(available)}>{busy ? 'Connecting...' : (available ? 'Connect Facebook / Instagram' : (needsSignIn ? 'Sign in to ArchHub to connect' : 'Coming soon'))}</button>
+    {needsSignIn && <div role="status" style={{fontSize:12, color:LM.inkSoft, maxWidth:420}}>This connection goes through your ArchHub account. Sign in under Settings › Account, then connect here.</div>}
     {!!pages.length && <div style={{display:'flex', flexDirection:'column', gap:6, maxWidth:440}}>
       {pages.map(page => <button key={page.id} type="button" disabled={busy} onClick={() => usePage(page)} style={smallBtn(true)}>
         Use {page.name || page.id}{page.instagram?.username ? ' + Instagram @' + page.instagram.username : ''}
@@ -6666,20 +6615,49 @@ const SettingsMetaSignIn = ({transport}) => {
       <button type="button" disabled={busy || !transport?.removeLocalSocialAccount} onClick={disconnect} style={smallBtn()}>Disconnect</button>
     </div>}
     {busy && transport?.cancelMetaSignIn && <button type="button" onClick={cancel} style={smallBtn()}>Cancel sign-in</button>}
-    {!available && <div role="status" style={{fontSize:12, color:LM.inkSoft, maxWidth:420}}>needs the ArchHub app registered with Meta</div>}
     {message && <div role={failed ? 'alert' : 'status'} style={{fontSize:12, color:failed ? LM.err : LM.ok, maxWidth:420, overflowWrap:'anywhere'}}>{message}</div>}
   </div>;
+};
+
+const SocialConnectionRow = ({icon, name, detail, control}) => (
+  <div style={{display:'grid', gridTemplateColumns:'24px minmax(0,1fr) auto', alignItems:'center', gap:10,
+    padding:'10px 0', borderTop:`1px solid ${LM.lineSoft}`}}>
+    <span style={{width:24, height:24, borderRadius:LM.rad.sm, background:LM.bgSoft, color:LM.ink,
+      display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:11, fontWeight:700}}>{icon}</span>
+    <div style={{minWidth:0}}>
+      <div style={{fontSize:13, fontWeight:500}}>{name}</div>
+      <div style={{fontSize:11.5, color:LM.inkSoft, lineHeight:1.35}}>{detail}</div>
+    </div>
+    {control || <button type="button" style={smallBtn(false)}>Coming soon</button>}
+  </div>
+);
+
+const SettingsNotionSignIn = ({transport}) => {
+  const [busy, setBusy] = React.useState(false), [message, setMessage] = React.useState(''), [failed, setFailed] = React.useState(false);
+  const connect = async () => {
+    setBusy(true); setMessage(''); setFailed(false);
+    try { const result = await transport.connectNotion(); setMessage(result.label || 'Notion is connected.'); }
+    catch (error) { setMessage(error.message); setFailed(true); }
+    finally { setBusy(false); }
+  };
+  const available = !!transport?.connectNotion;
+  return <SocialConnectButton label="Connect Notion" available={available} busy={busy}
+    onClick={connect} note="Coming soon" message={message} failed={failed}/>;
 };
 
 const SettingsSocialEnrollment = ({transport}) => {
   const [message, setMessage] = React.useState('');
   return <div style={{padding:'12px 14px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg}}>
-    <div style={{fontSize:13, fontWeight:500}}>Social accounts</div>
-    <div style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, marginBottom:12, letterSpacing:'0.04em'}}>Connect through provider sign-in. Users never paste access tokens here.</div>
-    <div style={{display:'flex', gap:8, flexWrap:'wrap'}}>
-      <SettingsLinkedInSignIn transport={transport} compact/>
-      <SettingsMetaSignIn transport={transport}/>
-    </div>
+    <div style={{fontSize:13, fontWeight:500}}>Connections</div>
+    <div style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, marginBottom:4, letterSpacing:'0.04em'}}>Connect through each provider's sign-in.</div>
+    <SocialConnectionRow icon="in" name="LinkedIn" detail="Draft posts you approve."
+      control={<SettingsLinkedInSignIn transport={transport} compact/>}/>
+    <SocialConnectionRow icon="f" name="Facebook and Instagram" detail="Post to your page and business account."
+      control={<SettingsMetaSignIn transport={transport}/>}/>
+    <SocialConnectionRow icon="N" name="Notion" detail="Uses Notion's own sign-in."
+      control={<SettingsNotionSignIn transport={transport}/>}/>
+    <SocialConnectionRow icon="O" name="Outlook" detail="Connects through the existing mail owner when available."/>
+    <SocialConnectionRow icon="D" name="Dropbox" detail="Uses the existing local Dropbox owner when available."/>
     {message && <p role="status" style={{fontSize:12, overflowWrap:'anywhere', color:LM.ok}}>{message}</p>}
   </div>;
 };
@@ -6734,26 +6712,15 @@ const ProviderManage = ({ p, providers, onTab }) => {
   };
   if (KEY_LABEL[p.id]) {
     const label = KEY_LABEL[p.id];
-    const blocked = saving || !hasKey || !transport?.saveProviderKey;
     return (
-      <form onSubmit={saveKey} style={box}>
-        <label style={{ display:'block', fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.1em' }}>{label.toUpperCase()} API KEY
-          <input ref={keyInput} type="password" aria-label={label + ' API key'} autoComplete="new-password"
-            autoCapitalize="none" spellCheck={false} maxLength={8192} disabled={saving || !transport?.saveProviderKey}
-            onChange={event => { setHasKey(!!event.target.value.trim()); setSaved(''); }}
-            style={{ display:'block', width:'100%', margin:'6px 0 8px', padding:'7px 10px', background:LM.bg,
-              color:LM.ink, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, fontFamily:LM.mono, fontSize:11.5 }}/>
-        </label>
-        <div style={line}>Paste the raw key to save it in this machine’s encrypted secrets store. An existing environment key remains the active source when one is set.</div>
+      <div style={box}>
+        <div style={line}>{label} keys are managed by the configured service owner. This Settings screen does not accept pasted keys.</div>
         <div style={{ display:'flex', gap:7, marginTop:9, flexWrap:'wrap' }}>
-          <button type="submit" disabled={blocked}
-            style={blocked ? { ...smallBtn(), padding:'3px 9px', borderStyle:'dashed', cursor:'default' } : { ...smallBtn(true), padding:'3px 9px' }}>
-            {saving ? 'Saving key…' : 'Save ' + label + ' key'}</button>
           {refresh}
         </div>
         {saved && <p role="status" style={{ fontSize:12, color:LM.ok, margin:'8px 0 0' }}>{saved}</p>}
         {err && <p role="alert" style={{ fontSize:12, color:LM.err, margin:'8px 0 0' }}>{err}</p>}
-      </form>
+      </div>
     );
   }
   if (p.id === 'opencode') {
@@ -6829,14 +6796,14 @@ const SettingsProviders = ({ providers, onTab }) => {
         {error ? 'Provider status was not read: ' + error : 'Reading the providers on this machine\u2026'}</SettingsEmpty>}
       {rows && rows.length === 0 && <SettingsEmpty>No provider is registered on this machine.</SettingsEmpty>}
     </div>
-    {/* Social account credentials for connector nodes are not in the design. They sit behind the
+    {/* Connections for connector nodes are not in the design. They sit behind the
         design's own dashed "+ ..." affordance (drawn in Settings › Hosts), below the drawn list. */}
     <button onClick={() => setSocial(!social)} aria-expanded={social} style={{
       marginTop:14, padding:'8px 12px', border:`1px dashed ${LM.line}`, background:'transparent',
       borderRadius:LM.rad.md, color:LM.accent, fontFamily:LM.sans, fontSize:12.5, cursor:'pointer',
       display:'inline-flex', alignItems:'center', gap:7, width:'fit-content',
     }}>
-      <span>{social ? '\u2212' : '+'}</span> Social account credentials…
+      <span>{social ? '\u2212' : '+'}</span> Connections…
     </button>
     {social && <div style={{ marginTop:10 }}>
       <SettingsConnectedSocialAccounts transport={transport}/>

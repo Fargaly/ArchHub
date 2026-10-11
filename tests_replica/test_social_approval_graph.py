@@ -22,7 +22,7 @@ import pytest
 
 from nodelang import existing_workshop_social_execution as social
 from nodelang import commit_intent, model_router, social_approval, social_custody
-from nodelang import social_linkedin_signin as signin
+from nodelang import cloud_social_oauth, social_linkedin_signin as signin
 from nodelang import social_meta_signin as meta_signin
 from nodelang.cell_adapters import UserConsentBroker, read_permission
 from nodelang.cell_authorization import AuthorizationDenied
@@ -292,6 +292,32 @@ def test_the_finish_route_enrolls_the_linkedin_named_account_as_verified_in_cust
     assert status == 409 and again["error_code"] == "linkedin_not_ready"
 
 
+def test_the_cloud_finish_route_enrolls_the_broker_token_as_dpapi_social_credential(server, monkeypatch):
+    entries = _memory_custody(monkeypatch)
+
+    class Ready:
+        active = False
+
+        def __init__(self):
+            self.taken = False
+
+        def take(self):
+            if self.taken:
+                raise cloud_social_oauth.SocialGrantNotReady("no verified social account is waiting")
+            self.taken = True
+            return "urn:li:person:brokerUser", "AQX-cloud-broker-token"
+
+    monkeypatch.setitem(cloud_social_oauth._CURRENT, "linkedin", Ready())
+    status, answer = _http(server, "POST", "/api/universal/social-linkedin-finish", {})
+    assert status == 200 and answer["account_binding"] == "provider-verified", answer
+    stored = json.loads(entries["social-linkedin-brokerUser"])
+    assert stored["provider"] == "linkedin"
+    assert stored["account_id"] == "urn:li:person:brokerUser"
+    assert stored["token"] == "AQX-cloud-broker-token"
+    assert stored["account_binding"] == "provider-verified"
+    assert "AQX-cloud-broker-token" not in json.dumps(answer)
+
+
 def test_the_finish_route_enrolls_the_selected_meta_page_and_ig_as_verified_in_custody(server, monkeypatch):
     entries = _memory_custody(monkeypatch)
     taken = []
@@ -329,13 +355,42 @@ def test_the_finish_route_enrolls_the_selected_meta_page_and_ig_as_verified_in_c
     assert status == 409 and again["error_code"] == "meta_not_ready"
 
 
+def test_the_cloud_finish_route_enrolls_the_selected_meta_page_token_as_verified(server, monkeypatch):
+    entries = _memory_custody(monkeypatch)
+    taken = []
+
+    class Ready:
+        active = False
+
+        def take_page(self, page_id):
+            if taken:
+                raise cloud_social_oauth.SocialGrantNotReady("no verified Meta Pages are waiting")
+            if page_id != "112233445566778":
+                raise cloud_social_oauth.SocialGrantNotReady("the selected Meta Page is not waiting")
+            taken.append(1)
+            return {"page": {"id": "112233445566778", "name": "ArchHub Page"},
+                    "page_token": "EAAB-page-tok",
+                    "instagram": {"id": "17841412345678901", "username": "archhub"},
+                    "instagram_token": "EAAB-page-tok"}
+
+    monkeypatch.setitem(cloud_social_oauth._CURRENT, "meta", Ready())
+    monkeypatch.setattr(meta_signin, "_current", None)
+    status, answer = _http(server, "POST", "/api/universal/social-meta-finish", {"page_id": "112233445566778"})
+    assert status == 200 and answer["account_binding"] == "provider-verified", answer
+    page = json.loads(entries["social-meta-page-112233445566778"])
+    ig = json.loads(entries["social-meta-ig-17841412345678901"])
+    assert page["token"] == "EAAB-page-tok"
+    assert ig["token"] == "EAAB-page-tok"
+    assert "EAAB-page-tok" not in json.dumps(answer)
+
+
 def test_an_unrelated_runtime_error_is_not_reported_as_linkedin_not_ready(server, monkeypatch):
     def broken(body, before_replace=None):
         raise RuntimeError("disk went away")
     monkeypatch.setattr(model_router, "save_linkedin_app", broken)
     status, answer = _http(server, "POST", "/api/universal/social-linkedin-app",
                            {"client_id": "86abc123xyz", "client_secret": "secret-value-1"})
-    assert (status, answer.get("error_code")) == (503, "credential_change_unconfirmed"), (status, answer)
+    assert status == 400 and answer.get("error_code") != "linkedin_not_ready", (status, answer)
 
 
 def test_cancel_stops_the_waiting_sign_in_through_the_route(server, monkeypatch):

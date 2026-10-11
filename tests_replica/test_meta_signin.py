@@ -157,7 +157,7 @@ def test_meta_page_and_instagram_credentials_resolve_for_existing_work_paths(mon
 
 def test_the_settings_routes_are_declared_for_every_graph():
     declared = {(method, path) for method, path, _ in _APPLICATION_HTTP_ROUTE_SPECS}
-    for route in (("POST", "/api/universal/social-meta-app"), ("GET", "/api/universal/social-meta-signin"),
+    for route in (("GET", "/api/universal/social-meta-app"), ("POST", "/api/universal/social-meta-app"), ("GET", "/api/universal/social-meta-signin"),
                   ("POST", "/api/universal/social-meta-signin"), ("POST", "/api/universal/social-meta-finish"),
                   ("GET", "/api/universal/social-credentials")):
         assert route in declared, route
@@ -201,12 +201,16 @@ def test_settings_offers_meta_sign_in_and_the_page_never_holds_the_token():
     page = (studio / "studio-lm.jsx").read_text(encoding="utf-8")
     transport = (studio / "studio-existing-workshop.js").read_text(encoding="utf-8")
     assert "<SettingsMetaSignIn transport={transport}/>" in page
-    assert "post('/api/universal/social-meta-app', {app_id, app_secret})" in transport
+    assert "get('/api/universal/social-meta-app')" in transport
+    assert "saveMetaApp" not in transport
     assert "post('/api/universal/social-meta-signin', {})" in transport
     assert "get('/api/universal/social-meta-signin')" in transport
     assert "post('/api/universal/social-meta-finish', {page_id})" in transport, "finish sends no token"
     assert "result.account_binding !== 'provider-verified'" in transport
     assert "Use {page.name || page.id}" in page
+    user_settings = page[page.index("const SettingsMetaSignIn"):page.index("const SocialConnectionRow")]
+    assert "APP ID" not in user_settings and "APP SECRET" not in user_settings
+    assert "Save Meta app" not in user_settings and "Meta app" not in user_settings
 
 
 def test_cancel_ends_the_wait_and_frees_the_port():

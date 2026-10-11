@@ -207,6 +207,33 @@ CREATE TABLE IF NOT EXISTS codes (
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
+CREATE TABLE IF NOT EXISTS social_oauth_states (
+    nonce          TEXT PRIMARY KEY,
+    user_id        TEXT NOT NULL,
+    device_id      TEXT NOT NULL,
+    session_digest TEXT NOT NULL,
+    provider       TEXT NOT NULL,
+    return_url     TEXT NOT NULL,
+    created_at     INTEGER NOT NULL,
+    expires_at     INTEGER NOT NULL,
+    used_at        INTEGER,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS social_oauth_grants (
+    handle          TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    device_id       TEXT NOT NULL,
+    session_digest  TEXT NOT NULL,
+    provider        TEXT NOT NULL,
+    account_id      TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    encrypted_payload TEXT NOT NULL,
+    created_at      INTEGER NOT NULL,
+    expires_at      INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
 CREATE TABLE IF NOT EXISTS tokens (
     token         TEXT PRIMARY KEY,   -- token_digest(bearer), never the bearer
     user_id       TEXT NOT NULL,
@@ -1403,6 +1430,107 @@ def consume_code(code: str, code_verifier: str) -> Optional[str]:
         user_id = r["user_id"]
         con.execute("DELETE FROM codes WHERE code = ?", (code,))
         return user_id
+
+
+def issue_social_oauth_state(*, nonce: str, user_id: str, device_id: str,
+                             session_digest: str, provider: str,
+                             return_url: str, ttl_seconds: int = 600) -> dict:
+    now = int(time.time())
+    expires_at = now + min(int(ttl_seconds), 600)
+    with connect() as con:
+        con.execute(
+            "DELETE FROM social_oauth_states WHERE expires_at < ? OR used_at IS NOT NULL",
+            (now,),
+        )
+        con.execute(
+            "INSERT INTO social_oauth_states"
+            " (nonce, user_id, device_id, session_digest, provider, return_url,"
+            "  created_at, expires_at, used_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+            (nonce, user_id, device_id, session_digest, provider, return_url,
+             now, expires_at),
+        )
+    return {"nonce": nonce, "uid": user_id, "device_id": device_id,
+            "provider": provider, "created_at": now, "expires_at": expires_at}
+
+
+def consume_social_oauth_state(*, nonce: str, user_id: str, device_id: str,
+                               provider: str, now: int | None = None) -> Optional[dict]:
+    now = int(time.time()) if now is None else int(now)
+    with connect() as con:
+        row = con.execute(
+            "SELECT * FROM social_oauth_states WHERE nonce = ?",
+            (nonce,),
+        ).fetchone()
+        if row is None:
+            return None
+        record = dict(row)
+        if (record["user_id"] != user_id or record["device_id"] != device_id
+                or record["provider"] != provider or record["used_at"] is not None
+                or int(record["expires_at"]) < now):
+            return None
+        changed = con.execute(
+            "UPDATE social_oauth_states SET used_at = ?"
+            " WHERE nonce = ? AND user_id = ? AND device_id = ?"
+            " AND provider = ? AND used_at IS NULL AND expires_at >= ?",
+            (now, nonce, user_id, device_id, provider, now),
+        )
+        if changed.rowcount != 1:
+            return None
+        return record
+
+
+def issue_social_oauth_grant(*, handle: str, user_id: str, device_id: str,
+                             session_digest: str, provider: str,
+                             account_id: str, name: str,
+                             encrypted_payload: str,
+                             ttl_seconds: int = 300) -> dict:
+    now = int(time.time())
+    expires_at = now + min(int(ttl_seconds), 300)
+    with connect() as con:
+        con.execute(
+            "DELETE FROM social_oauth_grants WHERE expires_at < ?",
+            (now,),
+        )
+        con.execute(
+            "INSERT INTO social_oauth_grants"
+            " (handle, user_id, device_id, session_digest, provider, account_id,"
+            "  name, encrypted_payload, created_at, expires_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (handle, user_id, device_id, session_digest, provider, account_id,
+             name, encrypted_payload, now, expires_at),
+        )
+    return {"handle": handle, "uid": user_id, "device_id": device_id,
+            "provider": provider, "account_id": account_id,
+            "created_at": now, "expires_at": expires_at}
+
+
+def consume_social_oauth_grant(*, handle: str, user_id: str, device_id: str,
+                               session_digest: str, provider: str,
+                               now: int | None = None) -> Optional[dict]:
+    now = int(time.time()) if now is None else int(now)
+    with connect() as con:
+        row = con.execute(
+            "SELECT * FROM social_oauth_grants WHERE handle = ?",
+            (handle,),
+        ).fetchone()
+        if row is None:
+            return None
+        record = dict(row)
+        if (record["user_id"] != user_id or record["device_id"] != device_id
+                or record["session_digest"] != session_digest
+                or record["provider"] != provider
+                or int(record["expires_at"]) < now):
+            return None
+        removed = con.execute(
+            "DELETE FROM social_oauth_grants"
+            " WHERE handle = ? AND user_id = ? AND device_id = ?"
+            " AND session_digest = ? AND provider = ? AND expires_at >= ?",
+            (handle, user_id, device_id, session_digest, provider, now),
+        )
+        if removed.rowcount != 1:
+            return None
+        return record
 
 
 def token_digest(token: str) -> str:

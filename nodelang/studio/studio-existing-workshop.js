@@ -1140,30 +1140,12 @@
             account_binding:item.account_binding};
         });
       },
-      // Sign in with LinkedIn: the founder's own LinkedIn app, then LinkedIn's consent page.
+      // Sign in with LinkedIn: the cloud-owned publisher app opens LinkedIn's consent page.
       // The account is the one LinkedIn names; the token never reaches this page.
       async linkedInAppStatus() {
         const result = await get('/api/universal/social-linkedin-app');
         if (result?.ok !== true || !['saved', 'missing'].includes(result.state)) fail('LinkedIn app status is unavailable.');
         return result;
-      },
-      async saveLinkedInApp({client_id, client_secret}) {
-        if (providerSave) fail('Wait for the current credential change to finish.');
-        if (typeof client_id !== 'string' || !/^[A-Za-z0-9]{6,64}$/.test(client_id) ||
-            typeof client_secret !== 'string' || client_secret.length < 8 || client_secret.length > 256) {
-          fail('Enter the Client ID and Client Secret from your LinkedIn app.');
-        }
-        const operation = Promise.resolve().then(async () => {
-          try {
-            const result = await post('/api/universal/social-linkedin-app', {client_id, client_secret});
-            if (result?.ok !== true || result.state !== 'saved' || result.client_id !== client_id) fail('not confirmed');
-            return {ok:true, client_id};
-          } catch (_) {
-            throw new Error('The LinkedIn app could not be saved. Check the Client ID and Client Secret.');
-          }
-        });
-        providerSave = operation;
-        try { return await operation; } finally { providerSave = null; client_secret = ''; }
       },
       async startLinkedInSignIn() {
         const result = await post('/api/universal/social-linkedin-signin', {});
@@ -1188,23 +1170,10 @@
         }
         return {ok:true, account_id:result.account_id, vault_entry:result.vault_entry, account_binding:'provider-verified'};
       },
-      async saveMetaApp({app_id, app_secret}) {
-        if (providerSave) fail('Wait for the current credential change to finish.');
-        if (typeof app_id !== 'string' || !/^[0-9]{6,32}$/.test(app_id) ||
-            typeof app_secret !== 'string' || app_secret.length < 8 || app_secret.length > 256) {
-          fail('Enter the App ID and App Secret from your Meta app.');
-        }
-        const operation = Promise.resolve().then(async () => {
-          try {
-            const result = await post('/api/universal/social-meta-app', {app_id, app_secret});
-            if (result?.ok !== true || result.state !== 'saved' || result.app_id !== app_id) fail('not confirmed');
-            return {ok:true, app_id};
-          } catch (_) {
-            throw new Error('The Meta app could not be saved. Check the App ID and App Secret.');
-          }
-        });
-        providerSave = operation;
-        try { return await operation; } finally { providerSave = null; app_secret = ''; }
+      async metaAppStatus() {
+        const result = await get('/api/universal/social-meta-app');
+        if (result?.ok !== true || !['saved', 'missing'].includes(result.state)) fail('Meta app status is unavailable.');
+        return result;
       },
       async startMetaSignIn() {
         const result = await post('/api/universal/social-meta-signin', {});
@@ -1235,6 +1204,11 @@
         }
         return {ok:true, account_id:result.account_id, vault_entry:result.vault_entry,
           account_binding:'provider-verified', page:result.page || null, instagram:result.instagram || null};
+      },
+      async connectNotion() {
+        const result = await post('/api/universal/notion-connect', {});
+        if (result?.ok !== true) fail(result?.label || 'Notion sign-in could not start.');
+        return result;
       },
       // Social posts waiting for the founder: the exact request, then his Approve or Deny.
       async listSocialApprovals() {

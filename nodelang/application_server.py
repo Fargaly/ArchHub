@@ -397,6 +397,7 @@ from .cell_control_bindings import (
     CAPABILITY_TRANSITION,
     CAPABILITY_VIEW_SECTION,
 )
+from .cloud_social_oauth import SocialGrantNotReady
 from .social_linkedin_signin import LinkedInNotReady
 from .social_meta_signin import MetaNotReady
 from .universal_cell import (
@@ -6697,7 +6698,8 @@ class ApplicationServer:
                         self._json(403, {'ok': False, 'error': str(denied)})
                         return
                     from .social_linkedin_signin import current_status as linkedin_status
-                    self._json(200, {'ok': True, **linkedin_status()})
+                    payload = linkedin_status()
+                    self._json(200, {'ok': True, **payload})
                     return
                 if parsed.path == '/api/universal/social-linkedin-app':
                     # Settings decides whether to show the LinkedIn app setup step. No secret.
@@ -6707,8 +6709,8 @@ class ApplicationServer:
                     except AuthorizationDenied as denied:
                         self._json(403, {'ok': False, 'error': str(denied)})
                         return
-                    from .model_router import linkedin_app_status
-                    self._json(200, {'ok': True, **linkedin_app_status()})
+                    from .cloud_social_oauth import status as cloud_social_status
+                    self._json(200, {'ok': True, **cloud_social_status('linkedin')})
                     return
                 if parsed.path == '/api/universal/social-meta-signin':
                     # What Settings polls while Facebook Login is open. No token.
@@ -6719,7 +6721,19 @@ class ApplicationServer:
                         self._json(403, {'ok': False, 'error': str(denied)})
                         return
                     from .social_meta_signin import current_status as meta_status
-                    self._json(200, {'ok': True, **meta_status()})
+                    payload = meta_status()
+                    self._json(200, {'ok': True, **payload})
+                    return
+                if parsed.path == '/api/universal/social-meta-app':
+                    # Settings decides whether to show Meta as configured. No secret.
+                    try:
+                        binding, _session_token = self._browser_session_binding()
+                        owner.require_universal_http_route('GET', parsed.path, authentication_context=binding.context)
+                    except AuthorizationDenied as denied:
+                        self._json(403, {'ok': False, 'error': str(denied)})
+                        return
+                    from .cloud_social_oauth import status as cloud_social_status
+                    self._json(200, {'ok': True, **cloud_social_status('meta')})
                     return
                 if parsed.path == '/api/universal/social-credentials':
                     # Settings lists local social account identities only. Tokens never leave custody.
@@ -7600,7 +7614,8 @@ class ApplicationServer:
                     if self.path in ('/api/universal/provider-key', '/api/universal/social-credential', '/api/universal/social-credential-remove',
                                      '/api/universal/social-linkedin-app', '/api/universal/social-linkedin-signin',
                                      '/api/universal/social-linkedin-finish', '/api/universal/social-meta-app',
-                                     '/api/universal/social-meta-signin', '/api/universal/social-meta-finish'):
+                                     '/api/universal/social-meta-signin', '/api/universal/social-meta-finish',
+                                     '/api/universal/notion-connect'):
                         from .model_router import ProviderCredentialError, save_provider_key
                         social_enrollment = self.path == '/api/universal/social-credential'
                         social_removal = self.path == '/api/universal/social-credential-remove'
@@ -7627,13 +7642,9 @@ class ApplicationServer:
                             with owner.mutation_lock, owner.universal_registry.authorization.broker.live_context(credential_context):
                                 require_credential_admission()
                                 if self.path == '/api/universal/social-linkedin-app':
-                                    from .model_router import save_linkedin_app
-                                    with owner.universal_store.stable_snapshot():
-                                        payload = save_linkedin_app(body, before_replace=require_credential_admission)
+                                    raise InvalidCell('LinkedIn app configuration belongs to ArchHub cloud')
                                 elif self.path == '/api/universal/social-meta-app':
-                                    from .model_router import save_meta_app
-                                    with owner.universal_store.stable_snapshot():
-                                        payload = save_meta_app(body, before_replace=require_credential_admission)
+                                    raise InvalidCell('Meta app configuration belongs to ArchHub cloud')
                                 elif self.path == '/api/universal/social-linkedin-signin' and body == {'cancel': True}:
                                     # Settings' Cancel: the waiting loopback closes.
                                     from .social_linkedin_signin import cancel_current
@@ -7643,38 +7654,69 @@ class ApplicationServer:
                                     from .social_meta_signin import cancel_current
                                     payload = {'ok': True, **cancel_current()}
                                 elif self.path == '/api/universal/social-linkedin-signin':
-                                    # Opens LinkedIn's consent page; the loopback waits for its code.
-                                    from .model_router import linkedin_app
-                                    from .social_linkedin_signin import begin
+                                    # Opens the ArchHub cloud broker; the publisher app lives server-side.
+                                    from .cloud_social_oauth import start as cloud_social_start
                                     if body != {}:
                                         raise InvalidCell('LinkedIn sign-in takes no fields, or only cancel')
-                                    client_id, client_secret = linkedin_app()
-                                    payload = {'ok': True, **begin(client_id, client_secret)}
+                                    payload = {'ok': True, **cloud_social_start('linkedin')}
                                 elif self.path == '/api/universal/social-meta-signin':
-                                    # Opens Facebook Login; the loopback waits for its code.
-                                    from .model_router import meta_app
-                                    from .social_meta_signin import begin
+                                    # Opens the ArchHub cloud broker; the publisher app lives server-side.
+                                    from .cloud_social_oauth import start as cloud_social_start
                                     if body != {}:
                                         raise InvalidCell('Meta sign-in takes no fields, or only cancel')
-                                    app_id, app_secret = meta_app()
-                                    payload = {'ok': True, **begin(app_id, app_secret)}
+                                    payload = {'ok': True, **cloud_social_start('meta')}
+                                elif self.path == '/api/universal/notion-connect':
+                                    # Notion's existing owner route: hosted MCP OAuth, no token paste.
+                                    from .host_brokers import notion_connect
+                                    if body != {}:
+                                        raise InvalidCell('Notion sign-in takes no fields')
+                                    out, label = notion_connect({}, {})
+                                    payload = {'ok': bool(out.get('ok', True)), 'label': label}
                                 elif self.path == '/api/universal/social-linkedin-finish':
                                     # Enrolls the account LinkedIn itself confirmed; nothing is typed.
-                                    from .social_linkedin_signin import take_verified
                                     from .social_custody import enroll_social_account
-                                    account_id, token = take_verified()
+                                    from . import cloud_social_oauth
+                                    from . import social_linkedin_signin
+                                    cloud_attempt = cloud_social_oauth._CURRENT.get('linkedin')
+                                    with social_linkedin_signin._current_lock:
+                                        local_attempt = social_linkedin_signin._current
+                                    local_is_cloud = (
+                                        local_attempt is not None
+                                        and local_attempt.__class__.__module__ == cloud_social_oauth.__name__
+                                    )
+                                    if cloud_attempt is not None and (local_attempt is None or local_attempt is cloud_attempt or local_is_cloud):
+                                        try:
+                                            account_id, credential = cloud_social_oauth.take_verified('linkedin')
+                                        except SocialGrantNotReady as waiting:
+                                            raise LinkedInNotReady(str(waiting)) from waiting
+                                    else:
+                                        account_id, credential = social_linkedin_signin.take_verified()
                                     payload = enroll_social_account(owner, {
                                         'provider': 'linkedin', 'account_id': account_id,
                                         'vault_entry': 'social-linkedin-' + account_id.rsplit(':', 1)[1],
-                                        'token': token}, require_admission=require_credential_admission, verified=True)
-                                    token = None
+                                        'token': credential}, require_admission=require_credential_admission, verified=True)
+                                    credential = None
                                 elif self.path == '/api/universal/social-meta-finish':
                                     # Enrolls the Page the founder picked from Meta's returned Page list.
-                                    from .social_meta_signin import take_verified_page
                                     from .social_custody import enroll_social_account
                                     if type(body) is not dict or set(body) != {'page_id'}:
                                         raise InvalidCell('Meta finish requires one selected Page')
-                                    selected = take_verified_page(body['page_id'])
+                                    from . import cloud_social_oauth
+                                    from . import social_meta_signin
+                                    cloud_attempt = cloud_social_oauth._CURRENT.get('meta')
+                                    with social_meta_signin._current_lock:
+                                        local_attempt = social_meta_signin._current
+                                    local_is_cloud = (
+                                        local_attempt is not None
+                                        and local_attempt.__class__.__module__ == cloud_social_oauth.__name__
+                                    )
+                                    if cloud_attempt is not None and (local_attempt is None or local_attempt is cloud_attempt or local_is_cloud):
+                                        try:
+                                            selected = cloud_social_oauth.take_verified_page(body['page_id'])
+                                        except SocialGrantNotReady as waiting:
+                                            raise MetaNotReady(str(waiting)) from waiting
+                                    else:
+                                        selected = social_meta_signin.take_verified_page(body['page_id'])
                                     page = selected['page']
                                     page_id = page['id']
                                     payload = enroll_social_account(owner, {

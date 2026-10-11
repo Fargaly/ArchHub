@@ -70,7 +70,7 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
         const file = manifest.files[index];
         if (!file || file.source !== names[index] || file.output !== names[index].replace(/\.jsx$/, '.js') ||
             !/^[a-f0-9]{64}$/.test(file.source_sha256) || !/^[a-f0-9]{64}$/.test(file.sha256) ||
-            !Number.isSafeInteger(file.source_bytes) || file.source_bytes < 0 || file.source_bytes > 524288 ||
+            !Number.isSafeInteger(file.source_bytes) || file.source_bytes < 0 || file.source_bytes > 1048576 ||
             !Number.isSafeInteger(file.bytes) || file.bytes < 1 || file.bytes > 2097152) {
           refusal('Studio build file metadata is invalid.');
         }
@@ -82,7 +82,7 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       // Read/hash the fourteen fixed sources sequentially. Never fetch vendored Babel.
       // This detects stale source-mode builds without Node on an installed app.
       for (const file of manifest.files) {
-        const bytes = await asset(file.source, 524288);
+        const bytes = await asset(file.source, 1048576);
         const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
           byte => byte.toString(16).padStart(2, '0')).join('');
         if (bytes.byteLength !== file.source_bytes || hash !== file.source_sha256) refusal('Studio build is stale: ' + file.source + '.');

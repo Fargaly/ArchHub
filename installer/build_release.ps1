@@ -638,9 +638,9 @@ if (Test-Path -LiteralPath $studioOutput) { throw 'Verified source snapshot alre
 # Serial, explicit build only. 192 MiB bounds V8 old space, not total RSS;
 # local physical builds additionally run under the parent's process-tree guard.
 # The compiler uses only vendored Babel; no npm install or runtime JSX compiler.
-& $node --max-old-space-size=192 $studioCompiler
+& $node --max-old-space-size=256 $studioCompiler
 if ($LASTEXITCODE -ne 0) { throw 'Studio compilation failed; retained output must not be installed.' }
-& $node --max-old-space-size=192 $studioCompiler --check
+& $node --max-old-space-size=256 $studioCompiler --check
 if ($LASTEXITCODE -ne 0) { throw 'Studio compiled output failed its source/output reconciliation.' }
 $candidateClock.Start()
 Assert-BuildSnapshot $snapshot
@@ -708,7 +708,7 @@ if ((Get-FileHash -LiteralPath $node -Algorithm SHA256).Hash.ToLowerInvariant() 
     throw 'Node runtime changed during installer compilation; retain artifact for inspection only.'
 }
 
-& $node --max-old-space-size=192 $studioCompiler --check
+& $node --max-old-space-size=256 $studioCompiler --check
 if ($LASTEXITCODE -ne 0) { throw 'Studio output changed during installer compilation.' }
 $candidateClock.Start()
 Assert-BuildSnapshot $snapshot

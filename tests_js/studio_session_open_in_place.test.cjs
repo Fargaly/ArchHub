@@ -15,7 +15,9 @@ const workshopScope = (id, title, revision) => ({
   graph_id:'app:archhub', root:id, revision,
   workshops:[], unavailable:'No Workshop is attached to this graph.',
 });
-const canvas = (id, title, node, revision) => ({
+const canvas = (id, title, node, revision) => {
+  const nodes = Array.isArray(node) ? node : [node];
+  return ({
   ok:true,
   revision,
   application_root:'app:archhub',
@@ -30,17 +32,18 @@ const canvas = (id, title, node, revision) => ({
   ]},
   authorization:auth,
   configuration:{theme:{...seed}},
-  nodes:[{
+  nodes:nodes.map(node => ({
     id:node.id, label:node.label, engine:'engine:noop',
     assembly:'Domain composition', params:[], ports:[],
     x:node.x, y:node.y, status:'',
-  }],
+  })),
   wires:[],
   catalog:[],
   workshops:[],
   interaction_projection:{revision, lifecycle:'wip', bindings:[]},
   workshop_scope:workshopScope(id, title, revision),
-});
+  });
+};
 const canvases = {
   'graph-a': canvas('graph-a', 'Graph Alpha', {id:'node-a', label:'Alpha node', x:40, y:60}, 11),
   'graph-b': canvas('graph-b', 'Graph Beta', {id:'node-b', label:'Beta node', x:80, y:90}, 12),
@@ -105,9 +108,23 @@ async function mountStudio(options = {}) {
   const dom = new JSDOM('<div id="root"></div>', {url:'http://127.0.0.1:53914/', runScripts:'outside-only',
     pretendToBeVisual:true, virtualConsole});
   const win = dom.window;
-  const calls = {open:[], create:[], canvas:0, refresh:0, alerts:[]};
+  Object.defineProperty(win.HTMLElement.prototype, 'offsetWidth', {configurable:true, get() { return 220; }});
+  Object.defineProperty(win.HTMLElement.prototype, 'offsetHeight', {configurable:true, get() { return 110; }});
+  win.HTMLElement.prototype.getBoundingClientRect = function() {
+    return this.getAttribute('role') === 'region' && this.getAttribute('aria-label') === 'Workflow canvas'
+      ? {width:1000, height:760, left:0, top:0, right:1000, bottom:760}
+      : {width:220, height:110, left:0, top:0, right:220, bottom:110};
+  };
+  const calls = {open:[], create:[], nodeCreate:[], canvas:0, refresh:0, alerts:[]};
   let current = options.current || 'graph-a';
   let failRead = false;
+  let nodeCreated = false;
+  const currentCanvas = () => nodeCreated && current === 'graph-a'
+    ? canvas('graph-a', 'Graph Alpha', [
+      {id:'node-a', label:'Alpha node', x:40, y:60},
+      {id:'node-created', label:'Created node', x:920, y:640},
+    ], 14)
+    : canvases[current];
   const sessions = options.sessions || [graphRows['graph-a'], graphRows['graph-b']];
   win.fetch = url => String(url).includes('/api/universal/models')
     ? Promise.resolve({ok:true, json:() => Promise.resolve({ok:true, groups:[], selected_route:'openrouter/free'})})
@@ -121,14 +138,14 @@ async function mountStudio(options = {}) {
   win.alert = message => calls.alerts.push(String(message));
   win.eval(read('nodelang/studio/studio-existing-workshop.js'));
   win.ARCHHUB_EXISTING_WORKSHOP = win.ArchHubExistingWorkshop.create({
-    get:async () => { calls.canvas += 1; if (failRead) throw new Error('The canvas could not be read.'); return canvases[current]; },
+    get:async () => { calls.canvas += 1; if (failRead) throw new Error('The canvas could not be read.'); return currentCanvas(); },
     post:async () => { throw new Error('unexpected post'); },
     projectCanvas:projectStudioCanvas,
   });
-  win.ARCHHUB_EXISTING_WORKSHOP.setTopologyCanvas(canvases[current]);
+  win.ARCHHUB_EXISTING_WORKSHOP.setTopologyCanvas(currentCanvas());
   win.ARCHHUB_GET_CANVAS = async () => {
     calls.canvas += 1;
-    return canvases[current];
+    return currentCanvas();
   };
   win.ARCHHUB_GRAPH_OPEN = async id => {
     calls.open.push(id);
@@ -142,6 +159,12 @@ async function mountStudio(options = {}) {
     return {ok:true, graphs:[...sessions, graphRows['graph-c']], current_graph:'graph-c',
       graph:graphRows['graph-c'], canvas:receiptCanvas('graph-c')};
   };
+  win.ARCHHUB_NODE_CREATE = async spec => {
+    calls.nodeCreate.push(JSON.parse(JSON.stringify(spec)));
+    nodeCreated = true;
+    return {ok:true, node:'node-created', selected:'node-created'};
+  };
+  win.AH_LIBRARY = [{cat:'logic', items:[{id:'test-node', title:'Test node', sub:'Noop node', engine:'engine:noop'}]}];
   win.ARCHHUB_LIVE = {sessions, currentGraph:current, hosts:[], connectors:[],
     graph:win.ARCHHUB_EXISTING_WORKSHOP.getSnapshot().topology.graph, memory:[], skills:[]};
   win.eval(read('nodelang/studio/vendor/react.js'));
@@ -153,10 +176,13 @@ async function mountStudio(options = {}) {
   const settle = () => new Promise(resolve => win.setTimeout(resolve, 80));
   const close = () => { try { win.ReactDOM.flushSync(() => win.__studioRoot.unmount()); } finally { dom.window.close(); } };
   const button = label => [...win.document.querySelectorAll('button')].find(node => node.textContent.trim() === label);
+  const buttonIncludes = label => [...win.document.querySelectorAll('button')].find(node => node.textContent.includes(label));
   const byTitle = title => [...win.document.querySelectorAll('button')].find(node => node.title === title);
   const click = node => win.ReactDOM.flushSync(() => node.click());
-  return {win, doc:win.document, calls, navigationErrors, button, byTitle, click, settle, close,
-    failNextRead:() => { failRead = true; }};
+  const tabCount = () => win.document.querySelectorAll('button[title="Close tab"]').length;
+  const transform = () => win.document.querySelector('[role="region"][aria-label="Workflow canvas"]')?.firstElementChild?.style.transform || '';
+  return {win, doc:win.document, calls, navigationErrors, button, buttonIncludes, byTitle, click, settle, close,
+    failNextRead:() => { failRead = true; }, tabCount, transform};
 }
 
 function openHome(studio) {
@@ -242,6 +268,74 @@ test('creating a new session opens the graph-create receipt in place without rel
     assert.equal(studio.navigationErrors.length, 0, 'no reload/assign/replace navigation');
     assert.match(studio.doc.body.textContent, /Created Graph/);
     assert.match(studio.doc.body.textContent, /Created node/);
+  } finally { studio.close(); }
+});
+
+test('clicking the workspace + creates a second graph tab in place and keeps the first tab', async () => {
+  const studio = await mountStudio();
+  try {
+    await studio.settle();
+    assert.equal(studio.tabCount(), 1, 'one graph tab is open before creation');
+    studio.calls.canvas = 0;
+    studio.click(studio.byTitle('New session'));
+    await studio.settle();
+    showCanvas(studio);
+    await studio.settle();
+    assert.deepEqual(studio.calls.create, ['New session']);
+    assert.deepEqual(studio.calls.open, [], 'the create receipt is opened directly, not re-posted as graph-open');
+    assert.equal(studio.calls.canvas, 1, 'one in-place canvas re-read after create');
+    assert.equal(studio.tabCount(), 2, 'the first graph tab remains and the created graph opens as a second tab');
+    assert.equal(studio.navigationErrors.length, 0, 'no reload/assign/replace navigation');
+    assert.match(studio.doc.body.textContent, /Graph Alpha/);
+    assert.match(studio.doc.body.textContent, /Created Graph/);
+  } finally { studio.close(); }
+});
+
+test('after a create whose canvas refresh fails, the workspace + never posts a second create', async () => {
+  const studio = await mountStudio();
+  try {
+    await studio.settle();
+    studio.failNextRead();
+    studio.click(studio.byTitle('New session'));
+    await studio.settle();
+    assert.deepEqual(studio.calls.create, ['New session'], 'one create was posted');
+    assert.match(studio.doc.body.textContent, /Refresh the graph list before creating again/);
+    studio.click(studio.byTitle('New session'));
+    await studio.settle();
+    assert.deepEqual(studio.calls.create, ['New session'], 'a lost receipt is never replayed as a second create');
+    assert.equal(studio.navigationErrors.length, 0, 'no automatic reload');
+  } finally { studio.close(); }
+});
+
+test('creating a node pans it into view without zooming in past the current viewport zoom', async () => {
+  const studio = await mountStudio();
+  try {
+    await studio.settle();
+    showCanvas(studio);
+    await studio.settle();
+    const region = studio.doc.querySelector('[role="region"][aria-label="Workflow canvas"]');
+    const before = studio.transform();
+    const beforeZoom = Number(before.match(/scale\(([^)]+)\)/)?.[1]);
+    assert.ok(Number.isFinite(beforeZoom), 'canvas zoom is readable before node create: ' + before);
+    studio.click(studio.byTitle('Add node'));
+    await studio.settle();
+    studio.click(studio.buttonIncludes('Test node'));
+    for (let i = 0; i < 12; i += 1) await studio.settle();
+    const after = studio.transform();
+    const match = after.match(/translate3d\(([-0-9.]+)px,\s*([-0-9.]+)px,\s*0\) scale\(([^)]+)\)/);
+    assert.ok(match, 'canvas transform is readable after node create: ' + after);
+    const [, panXText, panYText, zoomText] = match;
+    const panX = Number(panXText), panY = Number(panYText), zoom = Number(zoomText);
+    assert.ok(zoom <= beforeZoom, 'new-node reveal does not zoom in: before ' + beforeZoom + ', after ' + zoom);
+    const card = studio.doc.querySelector('.lm-node[data-node-id="node-created"]');
+    assert.ok(card, 'created node card exists');
+    const x = parseFloat(card.style.left), y = parseFloat(card.style.top);
+    const left = panX + x * zoom, right = panX + (x + 220) * zoom;
+    const top = panY + y * zoom, bottom = panY + (y + 110) * zoom;
+    assert.ok(left >= 24 && right <= region.getBoundingClientRect().width - 24 &&
+      top >= 72 && bottom <= region.getBoundingClientRect().height - 80,
+      'created node is inside the viewport: ' + JSON.stringify({left, right, top, bottom, zoom}));
+    assert.deepEqual(studio.calls.nodeCreate.map(call => call.item), ['test-node']);
   } finally { studio.close(); }
 });
 

@@ -41,7 +41,7 @@ function inputs() {
 }
 function sourceFiles() {
   const files = names.map(source => {
-    const bytes = readFile(path.join(studio, source), 512 * 1024);
+    const bytes = readFile(path.join(studio, source), 1024 * 1024);
     return {source, output:source.replace(/\.jsx$/, '.js'), source_bytes:bytes.length,
       source_sha256:digest(bytes), text:new TextDecoder('utf-8', {fatal:true}).decode(bytes)};
   });

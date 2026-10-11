@@ -98,7 +98,7 @@ async function mountStudio(options = {}) {
     if (file.source !== 'mount.jsx') win.eval(read('nodelang/studio/compiled/' + file.output));
   }
   win.eval('window.__studioRoot=ReactDOM.createRoot(document.getElementById("root")); ReactDOM.flushSync(()=>window.__studioRoot.render(React.createElement(StudioLM)));');
-  const home = [...win.document.querySelectorAll('button')].find(node => node.textContent.trim() === '+');
+  const home = [...win.document.querySelectorAll('button')].find(node => node.title === 'All sessions');
   if (home) win.ReactDOM.flushSync(() => home.click());
   const close = () => { try { win.ReactDOM.flushSync(() => win.__studioRoot.unmount()); } finally { dom.window.close(); } };
   const button = label => [...win.document.querySelectorAll('button')].find(node => node.textContent.trim() === label);

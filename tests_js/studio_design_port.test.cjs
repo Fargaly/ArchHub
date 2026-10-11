@@ -123,7 +123,7 @@ test('header: the design row has only working controls; three-segment switch, Ne
 
     const tab = [...header.querySelectorAll('span')].find(span => span.textContent === 'ArchHub');
     assert.ok(tab, 'the open graph tab is drawn from the projected session list');
-    const fresh = header.querySelector('button[title="Start a new session from Home"]');
+    const fresh = header.querySelector('button[title="New session"]');
     assert.ok(fresh, 'New session is drawn (design studio-lm.jsx:1123-1129)');
     const strip = tab.parentElement.parentElement;
     assert.equal(fresh.parentElement, strip, 'New session sits in the tab strip');
@@ -139,8 +139,9 @@ test('header: the design row has only working controls; three-segment switch, Ne
       'the Workshop conversation menu is gated on an open Workshop conversation');
     assert.ok(wsHeader.indexOf('<WorkshopConversationMenu') < wsHeader.indexOf('workshopModeSegments('), 'and sits before the switch, outside it');
 
-    studio.flush(() => studio.doc.querySelector('button[title="Start a new session from Home"]').click());
-    assert.ok(studio.doc.querySelector('textarea[aria-label="Start a new session"]'), 'New session opens Home, where a session starts');
+    // New session creates the graph in place (CORE-A, founder G2); All sessions is the way back to Home.
+    studio.flush(() => studio.doc.querySelector('button[title="All sessions"]').click());
+    assert.ok(studio.doc.querySelector('textarea[aria-label="Start a new session"]'), 'All sessions opens Home, where a session starts');
     assert.equal(studio.buttons('Canvas').filter(button => button.hasAttribute('aria-pressed')).length, 0, 'the workspace header is gone');
   } finally { studio.close(); }
 

@@ -546,6 +546,36 @@ const StudioLM = () => {
     }
     return {current, refreshed};
   }, [applyGraphIndex]);
+  const graphCreateBusy = React.useRef(false);
+  const openCreatedGraphInPlace = React.useCallback(async result => {
+    const opened = await switchOpenGraphInPlace(result, result?.graph?.id || result?.current_graph);
+    const current = opened.current || result?.graph?.id || result?.current_graph;
+    if (current) {
+      setOpenTabs(tabs => tabs.includes(current) ? tabs : [...tabs, current]);
+      setOpenId(current);
+    }
+    setSessionOpenError('');
+    return current;
+  }, [switchOpenGraphInPlace]);
+  const createSessionGraphInPlace = React.useCallback(async () => {
+    if (graphCreateBusy.current) return;
+    if (!window.ARCHHUB_GRAPH_CREATE) {
+      setSessionOpenError('Graph creation is unavailable in this view.');
+      return;
+    }
+    graphCreateBusy.current = true;
+    setToolView(null);
+    setSessionOpenError('');
+    try {
+      await openCreatedGraphInPlace(await window.ARCHHUB_GRAPH_CREATE('New session'));
+      graphCreateBusy.current = false;
+    } catch (error) {
+      // A lost receipt may follow a successful create: never post it again from here.
+      // The guard stays held until the graph list is refreshed (the Refresh graphs control).
+      setSessionOpenError((error?.message || 'Graph creation was not confirmed.') +
+        ' Refresh the graph list before creating again.');
+    }
+  }, [openCreatedGraphInPlace]);
   const viewScope = JSON.stringify([session?.id || '', workshopState?.canvas?.graph_id || '',
     workshopState?.canvas?.root || '',
     (workshopState?.topology?.canvas || workshopState?.canvas)?.authorization?.subject || '',
@@ -824,6 +854,10 @@ const StudioLM = () => {
         addNodeFromLibrary={addNodeFromLibrary} workshopContext={workshopContext} railOnly={(!session && panel === 'nodes') || !!workshopContext} account={account}
         wsSel={wsSel} setWsSel={setWsSel} onAddAgent={() => setLibraryOpen(true)}
         onWorkshopTarget={target => updateWorkspaceView({target})}/>
+      {session && sessionOpenError && <div role="alert" style={{position:'absolute', top:56, left:'50%', transform:'translateX(-50%)',
+        zIndex:40, maxWidth:560, padding:'8px 12px', background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md,
+        color:LM.warn, fontFamily:LM.sans, fontSize:12.5}}>{sessionOpenError}
+        {' '}<button type="button" onClick={() => window.location.reload()}>Refresh graphs</button></div>}
       {toolView && !session
         ? <ToolMainView view={toolView} account={account} setAccount={setAccount} onSignOut={signOut} onSettings={openSettings}/>
         : session
@@ -839,19 +873,14 @@ const StudioLM = () => {
             userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary}
             view={workspaceView} updateView={updateWorkspaceView} wsSel={wsSel} setWsSel={setWsSel}
             onHome={() => { setToolView(null); setOpenId(null); }}
+            onNewSession={createSessionGraphInPlace}
             onAccount={() => openSettings(true, 'account')}/>
         : <Home onOpen={openSession} sessions={visibleSessions} model={model} native={homeNative} setPickerOpen={setPickerOpen}
             setLibraryOpen={setLibraryOpen} setPanel={setPanel}
             onOpenTool={openTool} onOpenToolGraph={openToolGraph} workshopState={workshopState} account={account}
             sessionError={sessionOpenError}
             onCreateGraph={async result => {
-              const opened = await switchOpenGraphInPlace(result, result?.graph?.id || result?.current_graph);
-              const current = opened.current || result?.graph?.id || result?.current_graph;
-              if (current) {
-                setOpenTabs(tabs => tabs.includes(current) ? tabs : [...tabs, current]);
-                setOpenId(current);
-              }
-              setSessionOpenError('');
+              await openCreatedGraphInPlace(result);
             }}
             onStarted={async (result, continueInView = () => true) => {
               const owner = window.ARCHHUB_EXISTING_WORKSHOP;
@@ -2216,7 +2245,7 @@ const SessionCard = ({ s, onOpen }) => {
 };
 
 // ──────────────────────── WORKSPACE ────────────────────────
-const Workspace = ({ session, model, readiness = null, onReadinessStale, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, setPickerOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, onHome, onAccount, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
+const Workspace = ({ session, model, readiness = null, onReadinessStale, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, setPickerOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, onHome, onNewSession, onAccount, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
   const authorityState = useStudioProjection();
   const graph = authorityState?.graph || LM_GRAPH;
   const allNodes = [...graph.nodes, ...(userNodes || [])];
@@ -2249,7 +2278,7 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, openTab
         workshopUnavailable={workshopState?.canvas?.unavailable || ''}
         workshopModel={workshopState?.nativeWork?.model}
         setConversationRoot={root => updateView({conversationRoot:root, mode:'chat', target:''})}
-        setPickerOpen={setPickerOpen} onHome={onHome}
+        setPickerOpen={setPickerOpen} onHome={onHome} onNewSession={onNewSession}
         systemAllowed={systemAllowed(authorityState?.canvas, graph)}/>
       {mode === 'chat' ? (
         workshop && window.WorkshopView ? <window.WorkshopView key={JSON.stringify([session.id, workshopState.canvas.graph_id,
@@ -3052,7 +3081,7 @@ const chooseWorkshopMode = (key, {mode, conversationRoot = '', workshops = [], s
 };
 
 // Workspace header uses workspace tabs and one compact conversation menu.
-const WsHeader = ({ session, model, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, mode, setMode, setPickerOpen, onHome, systemAllowed = false,
+const WsHeader = ({ session, model, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, mode, setMode, setPickerOpen, onHome, onNewSession, systemAllowed = false,
   workshops = [], conversationRoot = '', setConversationRoot, workshopModel, conversationNotice = '',
   workshopUnavailable = '' }) => {
   const [workshopRefusal, setWorkshopRefusal] = React.useState('');
@@ -3081,8 +3110,8 @@ const WsHeader = ({ session, model, openTabs, sessionRows = LM_SESSIONS, setOpen
         const sm = LM_STATE_META[s.state];
         return <WsTab key={id} s={s} a={a} sm={sm} onClick={() => setOpenId(id)} onClose={(e) => { e.stopPropagation(); closeTab(id); }}/>;
       })}
-      {/* New session after the tabs (design studio-lm.jsx:1123-1129). Home is where a session or a graph starts. */}
-      <button type="button" onClick={onHome} title="Start a new session from Home" aria-label="Start a new session from Home" style={{
+      {/* New session after the tabs (design studio-lm.jsx:1123-1129). */}
+      <button type="button" onClick={onNewSession || onHome} title="New session" aria-label="New session" style={{
         width:26, height:26, padding:0, border:0, borderRadius:LM.rad.sm,
         background:'transparent', color:LM.inkMuted, cursor:'pointer', flexShrink:0,
         display:'grid', placeItems:'center', fontSize:14,
@@ -3316,6 +3345,25 @@ const canvasFitBounds = (ids, positions, sizes, viewport) => {
   }
   return {zoom, pan:{x:24 + width / 2 - (left + right) * zoom / 2,
     y:72 + height / 2 - (top + bottom) * zoom / 2}, bounds:{left, top, right, bottom}};
+};
+const canvasRevealBounds = (ids, positions, sizes, viewport, currentZoom, currentPan) => {
+  const fit = canvasFitBounds(ids, positions, sizes, viewport);
+  const targetZoom = canvasClampZoom(Math.min(currentZoom, fit.zoom));
+  const usable = {left:24, right:viewport.width - 24, top:72, bottom:viewport.height - 80};
+  const bounds = fit.bounds;
+  const pan = {x:currentPan.x, y:currentPan.y};
+  const adjust = (low, high, viewLow, viewHigh, held) => {
+    const span = high - low, viewSpan = viewHigh - viewLow;
+    if (span > viewSpan) return viewLow + viewSpan / 2 - (low + high) / 2;
+    if (low < viewLow) return held + (viewLow - low);
+    if (high > viewHigh) return held - (high - viewHigh);
+    return held;
+  };
+  const left = pan.x + bounds.left * targetZoom, right = pan.x + bounds.right * targetZoom;
+  const top = pan.y + bounds.top * targetZoom, bottom = pan.y + bounds.bottom * targetZoom;
+  pan.x = adjust(left, right, usable.left, usable.right, pan.x);
+  pan.y = adjust(top, bottom, usable.top, usable.bottom, pan.y);
+  return {zoom:targetZoom, pan, bounds};
 };
 // `groupOf` names the frame a card is drawn in (the projection's `group`: the
 // instances of one definition, the groups, the Cells). Each frame is packed as
@@ -4054,13 +4102,24 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     } catch (error) { if (!silent) setLayoutError(error.message); }
     return false;
   };
+  const revealIds = (ids, silent = false) => {
+    if (!scopeStillCurrent() || !ids.length) return false;
+    const sizes = measureCards(silent);
+    if (!sizes) return false;
+    try {
+      const result = canvasRevealBounds(ids, positions, sizes, wrapRef.current.getBoundingClientRect(), zoom, pan);
+      setZoom(result.zoom); setPan(result.pan); closeContextMenu();
+      return true;
+    } catch (error) { if (!silent) setLayoutError(error.message); }
+    return false;
+  };
   React.useEffect(() => {
     const ids = Array.isArray(pendingReveal?.ids) ? pendingReveal.ids.filter(Boolean) : [];
     if (!ids.length) return;
     let frame = 0, cancelled = false, timer = null;
     const tick = () => {
       if (cancelled) return;
-      if (fitIds(ids, true)) {
+      if (revealIds(ids, true)) {
         if (clearPendingReveal) clearPendingReveal();
         return;
       }

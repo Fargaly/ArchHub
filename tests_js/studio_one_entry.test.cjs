@@ -87,7 +87,7 @@ const openCanvas = studio => {
   assert.ok(studio.doc.querySelector('.lm-node[data-node-id="work-a"]'), 'canvas opens');
 };
 const openHome = studio => {
-  const home = studio.doc.querySelector('button[title="Start a new session from Home"]');
+  const home = studio.doc.querySelector('button[title="All sessions"]');
   assert.ok(home, 'the header offers Home');
   studio.flush(() => home.click());
   assert.ok(studio.doc.querySelector('textarea[aria-label="Start a new session"]'), 'Home opens');

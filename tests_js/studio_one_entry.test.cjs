@@ -82,8 +82,7 @@ const settingsEntryControls = doc => [...doc.querySelectorAll('button')]
 const modelIndicators = doc => [...doc.querySelectorAll('[data-model-indicator]')];
 const openCanvas = studio => {
   const canvas = [...studio.doc.querySelectorAll('button[aria-pressed]')].find(button => button.textContent.trim() === 'Canvas');
-  assert.ok(canvas, 'the header offers Canvas');
-  studio.flush(() => canvas.click());
+  if (canvas) studio.flush(() => canvas.click());
   assert.ok(studio.doc.querySelector('.lm-node[data-node-id="work-a"]'), 'canvas opens');
 };
 const openHome = studio => {
@@ -96,16 +95,17 @@ const openHome = studio => {
 test('Settings has one visible entry point plus Ctrl+, and the model has one picker indicator on app surfaces', async () => {
   const studio = await mountStudio();
   try {
-    await studio.settle(() => studio.doc.body.textContent.includes(MODEL), 'the selected model is visible once the catalogue answers');
+    await studio.settle(() => studio.doc.body.textContent.includes('openrouter/free'), 'the selected model route is visible once the catalogue answers');
     assert.equal(settingsEntryControls(studio.doc).length, 1, 'only the rail Settings control is visible');
     studio.flush(() => studio.win.dispatchEvent(new studio.win.KeyboardEvent('keydown', {bubbles:true, ctrlKey:true, key:','})));
     await studio.settle(() => [...studio.doc.querySelectorAll('button')].some(button => button.firstElementChild?.textContent === 'Hub'),
       'Ctrl+, opens Settings');
     studio.flush(() => studio.win.dispatchEvent(new studio.win.KeyboardEvent('keydown', {bubbles:true, key:'Escape'})));
 
-    assert.ok(studio.doc.querySelector('[data-chat-view]'), 'Chat is the default session view');
-    assert.equal(modelIndicators(studio.doc).length, 1, 'Chat has exactly one model indicator');
-    assert.match(modelIndicators(studio.doc)[0].textContent, /Free Models Router/, 'the Chat indicator is the full picker label');
+    assert.ok(studio.doc.querySelector('aside[aria-label="Selection inspector"]'), 'Canvas is the default session view');
+    assert.equal(modelIndicators(studio.doc).length, 1, 'the selection panel has exactly one model indicator');
+    assert.match(modelIndicators(studio.doc)[0].textContent, /openrouter\/free|Free Models Router/,
+      'the moved model indicator is in the selection-panel composer');
     openCanvas(studio);
     assert.ok(modelIndicators(studio.doc).length <= 1, 'Canvas has at most one model indicator');
     openHome(studio);

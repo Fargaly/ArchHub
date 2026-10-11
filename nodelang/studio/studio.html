@@ -153,11 +153,15 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
     };
     window.ARCHHUB_AGENT = async (prompt, model, options) => {
       const node = options && typeof options === 'object' && !Array.isArray(options) ? options.node : options;
+      const graph = options && typeof options === 'object' && !Array.isArray(options) ? options.graph : undefined;
+      const graphId = options && typeof options === 'object' && !Array.isArray(options) ? options.graph_id : undefined;
       const generation = options && typeof options === 'object' && !Array.isArray(options) ? options.generation : undefined;
       const requestId = options && typeof options === 'object' && !Array.isArray(options) ? options.request_id : undefined;
       const result = await jpost('/api/universal/agent', {prompt, model,
         ...(generation !== undefined ? {generation} : {}),
-        ...(typeof node === 'string' && node.trim() && typeof requestId === 'string' && requestId.trim() ? {request_id:requestId} : {}),
+        ...(((typeof node === 'string' && node.trim()) || graph === true) && typeof requestId === 'string' && requestId.trim() ? {request_id:requestId} : {}),
+        ...(graph === true ? {graph:true} : {}),
+        ...(graph === true && typeof graphId === 'string' && graphId.trim() ? {graph_id:graphId} : {}),
         ...(typeof node === 'string' && node.trim() ? {node} : {})});
       return {...(result && typeof result === 'object' ? result : {}), answer:(result && result.answer) || 'done'};
     };
@@ -457,6 +461,7 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
         // The same live-node fields the signed authority projects (studio-authority.js):
         // a node's Workshop conversation and its latest run, so NodeRail shows them here too.
         conversation_root: n.conversation_root || null, has_conversation: n.has_conversation === true,
+        assembly: n.assembly || '', kind: n.kind || n.assembly || '',
         result: n.result || '', mutates: n.mutates === true,
         group: typeof n.group === 'string' ? n.group : '', pinned: n.pinned === true,
         ...(typeof n.application === 'boolean' ? {application: n.application} : {}),

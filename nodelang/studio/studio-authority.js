@@ -43,7 +43,7 @@
         return {
           id: node.id, definition_revision_root: node.definition_revision_root,
           cat: node.category || 'Definitions', title: node.label,
-          sub: node.summary || node.assembly || '', x: node.x, y: node.y,
+          sub: node.summary || node.assembly || '', assembly: node.assembly || '', kind: node.kind || node.assembly || '', x: node.x, y: node.y,
           w: 220, h: Math.max(110, 54 + ports.length * 20), live: true,
           color: node.resolved_color || node.color, status: node.status || '',
           result: node.result || '', mutates: node.mutates === true,
@@ -576,12 +576,16 @@
     global.ARCHHUB_RETRACT = root => api.remove(root);
     global.ARCHHUB_AGENT = async (prompt, model, options) => {
       const node = options && typeof options === 'object' && !Array.isArray(options) ? options.node : options;
+      const graph = options && typeof options === 'object' && !Array.isArray(options) ? options.graph : undefined;
+      const graphId = options && typeof options === 'object' && !Array.isArray(options) ? options.graph_id : undefined;
       const generation = options && typeof options === 'object' && !Array.isArray(options) ? options.generation : undefined;
       const requestId = options && typeof options === 'object' && !Array.isArray(options) ? options.request_id : undefined;
       const result = await request('/api/universal/agent', {prompt, model,
         expected_scope:api.getSnapshot()?.canvas?.root,
         ...(generation !== undefined ? {generation} : {}),
-        ...(typeof node === 'string' && node.trim() && typeof requestId === 'string' && requestId.trim() ? {request_id:requestId} : {}),
+        ...(((typeof node === 'string' && node.trim()) || graph === true) && typeof requestId === 'string' && requestId.trim() ? {request_id:requestId} : {}),
+        ...(graph === true ? {graph:true} : {}),
+        ...(graph === true && typeof graphId === 'string' && graphId.trim() ? {graph_id:graphId} : {}),
         ...(typeof node === 'string' && node.trim() ? {node} : {})});
       return {...(result && typeof result === 'object' ? result : {}), answer:(result && result.answer) || 'done'};
     };

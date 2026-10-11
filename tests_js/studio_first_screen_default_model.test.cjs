@@ -43,7 +43,11 @@ async function mountStudio() {
         nvidia:{state:'no_key', message:'', actions:[]}, lmstudio:{state:'ready', message:'', actions:[]},
         ollama:{state:'ready', message:'', actions:[]}}, messages:{}}, groups:[]})})
     : new Promise(() => {});
-  win.ARCHHUB_AGENT = async () => ({answer:'PONG'});
+  const agentCalls = [];
+  win.ARCHHUB_AGENT = async (text, route, context) => {
+    agentCalls.push({text, route, context});
+    return {answer:'PONG'};
+  };
   win.ARCHHUB_AGENT_SELECT = async route => route;
   win.ARCHHUB_THEME = {...seed};
   win.matchMedia = () => ({matches:false, addEventListener() {}, removeEventListener() {}});
@@ -77,7 +81,7 @@ async function mountStudio() {
     Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set.call(input, text);
     input.dispatchEvent(new win.Event('input', {bubbles:true}));
   });
-  return {win, doc:win.document, settle, flush, type,
+  return {win, doc:win.document, settle, flush, type, agentCalls,
     close:() => { try { flush(() => win.__studioRoot.unmount()); } finally { dom.window.close(); } }};
 }
 
@@ -93,12 +97,17 @@ test('fresh signed-out first screen preselects the free router with its friendly
     assert.match(modelIndicators(studio.doc)[0].textContent, /Free Models Router/);
     assert.doesNotMatch(modelIndicators(studio.doc)[0].textContent, /openrouter\/free/);
     assert.equal(studio.doc.querySelector('[data-chat-no-model]'), null, 'the default free route is selected, not the no-model state');
-    const input = [...studio.doc.querySelectorAll('input')].find(node => /Reply/.test(node.placeholder || ''));
-    assert.ok(input, 'the chat composer is visible');
+    const inputs = [...studio.doc.querySelectorAll('input[aria-label="Ask selection"]')];
+    assert.equal(inputs.length, 1,
+      'CORE-C moved the first-screen composer into the right selection panel; exactly one real composer is mounted');
+    const panel = studio.doc.querySelector('aside[aria-label="Selection inspector"]');
+    assert.ok(panel && panel.contains(inputs[0]), 'the real single composer lives in the selection panel');
+    const input = inputs[0];
     studio.type(input, 'ping');
-    studio.flush(() => button(studio.doc, 'Send \u21b5').click());
+    studio.flush(() => button(studio.doc, 'Send').click());
     await studio.settle(() => studio.doc.body.textContent.includes('PONG'), 'the chat answer is drawn');
-    assert.ok([...studio.doc.querySelectorAll('span')].some(node => node.textContent === MODEL),
+    assert.deepEqual(studio.agentCalls.map(call => [call.text, call.route]), [['ping', ROUTE]]);
+    assert.ok([...studio.doc.querySelectorAll('[role="status"] span')].some(node => node.textContent === MODEL),
       'the answer turn is signed with the friendly model label');
   } finally { studio.close(); }
 });

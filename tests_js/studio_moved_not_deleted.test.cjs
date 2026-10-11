@@ -101,9 +101,9 @@ async function mountStudio({home = false, systemAllowed = true,
     if (home && id !== 'app:canvas') throw new Error('graph is outside the admitted graph list');
     // Like the server: graph_id is the application root; opening a graph moves the scope root.
     if (id === 'app:canvas') snapshot.canvas.root = id; else snapshot.canvas.graph_id = id;
-    snapshot.topology = {...snapshot.topology, graph,
-      canvas:{...(snapshot.topology?.canvas || {}), application_root:snapshot.canvas.graph_id,
-        scope:{...(snapshot.topology?.canvas?.scope || {}), current:snapshot.canvas.root}}};
+    topologyCanvas = {...topologyCanvas, application_root:snapshot.canvas.graph_id,
+      scope:{...(topologyCanvas.scope || {}), current:snapshot.canvas.root}};
+    snapshot.topology = {...snapshot.topology, graph, canvas:topologyCanvas};
     return {ok:true, current_graph:id, graphs:[{id, title:'System', state:'idle', host:'archhub', when:'saved',
       file:'Application graph', last:'2 nodes', model:''}]};
   };
@@ -152,15 +152,18 @@ test('Settings Models generation values persist through the model owner and reac
       'generation defaults persist beside the selected composer model');
     studio.flush(() => studio.win.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Escape', bubbles:true})));
     await studio.settle();
-    const reply = studio.doc.querySelector('input[aria-label="Reply"]');
+    const reply = studio.doc.querySelector('input[aria-label="Ask selection"]');
+    assert.ok(reply, 'the moved selection composer is available after Settings closes');
     studio.typeInput(reply, 'Use the settings defaults.');
     studio.flush(() => reply.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
     await studio.settle();
-    assert.equal(JSON.stringify(studio.calls.agent.at(-1)), JSON.stringify([
-      'Use the settings defaults.',
-      freeRoute,
-      {generation:{temperature:0.35, top_p:0.95, max_tokens:4096}, returnResult:true},
-    ]));
+    const sent = studio.calls.agent.at(-1);
+    assert.equal(sent[0], 'Use the settings defaults.');
+    assert.equal(sent[1], freeRoute);
+    assert.equal(sent[2].node, 'ai_intent');
+    assert.equal(typeof sent[2].request_id, 'string');
+    assert.ok(sent[2].request_id);
+    assert.equal(JSON.stringify(sent[2].generation), JSON.stringify({temperature:0.35, top_p:0.95, max_tokens:4096}));
   } finally { studio.close(); }
 });
 

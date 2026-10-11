@@ -367,15 +367,16 @@ test('F2R D1: Settings Hub cards show owner state lines, no placeholders or plum
   } finally { studio.close(); }
 });
 
-test('F2R D2: Workshop card opens the Workshop tool view on its Tasks tab (Tasks, Board and Projects folded), not Studio Chat', async () => {
+test('F2R D2: Workshop card opens the full Workshop view on its Tasks tab, not Studio Chat', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
     const hub = await openSettingsHub(studio);
     studio.win.ReactDOM.flushSync(() => hub.querySelector('[data-tool-card="workshop"]').click());
     await studio.settle();
-    assert.equal(studio.doc.querySelector('[data-tool-view="workshop"]')?.getAttribute('data-tool-tab'), 'tasks');
-    assert.ok(!/\bProjects\b/.test(studio.doc.querySelector('[data-tool-view="workshop"]').textContent), 'no separate Projects page');
+    const tabs = [...studio.doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')];
+    assert.deepEqual(tabs.map(tab => tab.getAttribute('aria-label')), ['Chat', 'Tasks', 'Router', 'Relay', 'Prompts', 'Agents', 'Approvals']);
+    assert.equal(tabs.find(tab => tab.getAttribute('aria-label') === 'Tasks')?.getAttribute('aria-selected'), 'true');
     assert.equal(studio.doc.querySelector('textarea[aria-label="Message the model"]'), null);
   } finally { studio.close(); }
 });

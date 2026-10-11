@@ -1,5 +1,5 @@
 /* Design port courts: the workspace header, the sidebar account chip, the canvas chrome and the
-   canvas composer, measured against the founder design bundle (archhub/project/studio-lm.jsx:
+   selection-panel composer, measured against the founder design bundle (archhub/project/studio-lm.jsx:
    WsHeader 1099-1150, NodesPanel footer 644-654, CanvasHint 1504-1517, CanvasToolbar 2042-2061,
    FloatingComposer 2069-2087, MiniMap 2090-2114; DECISIONS.md "Disabled controls use a dashed border,
    never alpha" and "Draw or omit"). The whole compiled Studio is mounted in an in-memory DOM over an
@@ -98,21 +98,20 @@ const segmentedControl = studio => {
   return canvas.parentElement;
 };
 const openCanvas = studio => {
-  const segmented = segmentedControl(studio);
-  studio.flush(() => [...segmented.children].find(child => child.textContent.trim() === 'Canvas').click());
   assert.ok(studio.doc.querySelector('.lm-node[data-node-id="work-a"]'), 'the canvas draws the projected Work node');
 };
 
-test('header: the design row has only working controls; three-segment switch, New session after the tabs, and no duplicate model chip', async () => {
+test('header: Studio owns session tabs only; Chat, Workshop and System moved out of the header', async () => {
   const studio = await mountStudio();
   try {
-    const segmented = segmentedControl(studio);
-    assert.deepEqual([...segmented.children].map(child => child.textContent.trim()), ['Chat', 'Workshop', 'Canvas'],
-      'the segmented control holds only Chat, Workshop and Canvas (design studio-lm.jsx:1132-1144)');
-    assert.equal([...segmented.children][0].getAttribute('aria-pressed'), 'true', 'the Studio still opens on Chat');
-    const header = segmented.parentElement;
+    const header = studio.doc.querySelector('main > div');
+    assert.ok(header, 'the workspace header exists');
+    const exactHeaderButtons = [...header.querySelectorAll('button')].map(button => button.textContent.trim());
+    for (const moved of ['Chat', 'Workshop', 'System']) {
+      assert.equal(exactHeaderButtons.includes(moved), false, moved + ' is not a Studio session-header tab');
+    }
     assert.equal(header.querySelector('[aria-label="Conversations"]') === null, true,
-      'Chat draws the design row: no conversation menu beside the switch (design studio-lm.jsx:1099-1150)');
+      'conversation picking moved out of the Studio session header');
     // Founder, 2026-09-18: the update icons belong in the header, where he sees them.
     assert.ok(header.querySelector('section[aria-label="Application release updates"]'),
       'the release update icons close the header row');
@@ -132,12 +131,10 @@ test('header: the design row has only working controls; three-segment switch, Ne
     const chip = [...header.querySelectorAll('button')].find(button => button.textContent.includes('Choose a model'));
     assert.equal(chip, undefined, 'the duplicate header model chip is not drawn');
 
-    // The conversation menu is drawn only while a Workshop conversation is open, beside the switch, never inside it.
     const jsx = read('nodelang/studio/studio-lm.jsx');
     const wsHeader = jsx.slice(jsx.indexOf('\nconst WsHeader = '), jsx.indexOf('\nconst WsTab = '));
-    assert.match(wsHeader, /workshops\.length > 0 && mode === 'chat' && conversationRoot && \(window\.ARCHHUB_EXISTING_WORKSHOP\?\.refreshConversationCatalog \?\s*<WorkshopConversationMenu/,
-      'the Workshop conversation menu is gated on an open Workshop conversation');
-    assert.ok(wsHeader.indexOf('<WorkshopConversationMenu') < wsHeader.indexOf('workshopModeSegments('), 'and sits before the switch, outside it');
+    assert.doesNotMatch(wsHeader, /WorkshopConversationMenu|workshopModeSegments/,
+      'the old Chat/Workshop/Canvas switch and conversation menu are not in the header');
 
     // New session creates the graph in place (CORE-A, founder G2); All sessions is the way back to Home.
     studio.flush(() => studio.doc.querySelector('button[title="All sessions"]').click());
@@ -147,15 +144,8 @@ test('header: the design row has only working controls; three-segment switch, Ne
 
   const empty = await mountStudio({workshops:[]});
   try {
-    const workshop = [...segmentedControl(empty).children].find(child => child.textContent.trim() === 'Workshop');
-    // Founder 2026-09-23: no silent Workshop. No room marks it unavailable; the click says why.
-    assert.equal(workshop.disabled, false, 'Workshop stays clickable so it can say why');
-    assert.equal(workshop.getAttribute('aria-disabled'), 'true', 'no room in scope marks Workshop unavailable');
-    assert.equal(workshop.style.opacity, '', 'the unavailable segment carries no alpha');
-    assert.match(workshop.style.outline, /dashed/, 'the unavailable segment is dashed');
-    empty.flush(() => workshop.click());
-    const said = [...empty.doc.querySelectorAll('[role="alert"]')].map(node => node.textContent.trim());
-    assert.ok(said.includes('No Workshop conversation in this scope'), 'the click says why, on screen: ' + JSON.stringify(said));
+    assert.equal([...empty.doc.querySelectorAll('main > div button')].some(button => button.textContent.trim() === 'Workshop'), false,
+      'a missing Workshop is not represented by a disabled Studio header segment');
   } finally { empty.close(); }
 });
 
@@ -214,30 +204,19 @@ test('canvas chrome: no status chip idle or selected, the minimap at its design 
   } finally { studio.close(); }
 });
 
-test('composer: one design row (slash, caret, field, library, Send), no route line, a drawn caret that yields to the real one', async () => {
+test('composer: the one Studio ask field is scoped in the right selection panel', async () => {
   const studio = await mountStudio();
   try {
     openCanvas(studio);
-    const input = [...studio.doc.querySelectorAll('input')].find(node => (node.placeholder || '').includes('type / to add a node'));
-    assert.ok(input, 'the composer field is drawn');
-    const composer = input.closest('[data-no-pan]');
-    const row = input.parentElement;
-    assert.equal(row.parentElement, composer, 'the field sits in the composer row');
-    assert.equal(composer.children.length, 1, 'one row and nothing under it (design studio-lm.jsx:2069-2087): ' + composer.children.length + ' children');
-    assert.equal([...composer.querySelectorAll('div')].some(node => node.textContent.startsWith(ARROW + ' ')), false, 'no second route line');
-    assert.equal([...row.querySelectorAll('span')].some(node => /no model picked/.test(node.textContent)), false,
-      'the design row names no route: the composer model state names the model that answers');
-    const [library] = studio.buttons('library', row), [send] = studio.buttons('Send \u21b5', row);
-    assert.ok(library && send, 'library and Send stay in the row');
-    assert.deepEqual([...row.children].map(child => child.tagName.toLowerCase()), ['span', 'span', 'input', 'button', 'button'],
-      'slash, caret, field, library, then Send as the rightmost control (design studio-lm.jsx:2069-2087)');
-    assert.ok(library.compareDocumentPosition(send) & studio.win.Node.DOCUMENT_POSITION_FOLLOWING, 'library sits before Send');
-    const caret = [...row.querySelectorAll('span')].find(node => (node.style.animation || '').includes('lmCaret'));
-    assert.ok(caret, 'the drawn caret is there while the field is idle');
-    assert.notEqual(caret.style.visibility, 'hidden', 'idle: the drawn caret shows');
-    studio.flush(() => input.focus());
-    assert.equal(caret.style.visibility, 'hidden', 'focused: the field caret is the only caret');
-    studio.flush(() => input.blur());
-    assert.notEqual(caret.style.visibility, 'hidden', 'blurred: the drawn caret returns');
+    const inputs = [...studio.doc.querySelectorAll('input[aria-label="Ask selection"]')];
+    assert.equal(inputs.length, 1, 'there is exactly one Studio ask/reply/message input');
+    const panel = studio.doc.querySelector('aside[aria-label="Selection inspector"]');
+    assert.ok(panel && panel.contains(inputs[0]), 'the composer lives in the right selection panel');
+    assert.match(inputs[0].placeholder, /whole graph|ask about this node|reply in this session/i);
+    const chip = panel.querySelector('[data-model-indicator]');
+    assert.ok(chip, 'the scope chip reuses the model indicator marker');
+    assert.match(chip.textContent, /ArchHub|graph|Claude717|openrouter|Choose a model/i);
+    assert.equal(studio.doc.querySelectorAll('[data-no-pan] input[aria-label="Ask selection"]').length, 0,
+      'the old floating canvas composer is not drawn');
   } finally { studio.close(); }
 });

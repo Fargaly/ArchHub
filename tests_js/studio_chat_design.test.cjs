@@ -111,11 +111,11 @@ async function mountStudio({raw = wiredCanvas, account = {signedIn:true, email:'
     Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set.call(input, text);
     input.dispatchEvent(new win.Event('input', {bubbles:true}));
   });
-  const reply = () => [...doc.querySelectorAll('input')].find(input => (input.placeholder || '') === 'Reply, or ask for another step' + ELLIPSIS);
+  const reply = () => doc.querySelector('input[aria-label="Ask selection"]');
   const openPicker = async () => {
-    const [label] = exact('MODEL');
-    assert.ok(label && label.nextElementSibling, 'the inspector draws its MODEL button');
-    flush(() => label.nextElementSibling.click());
+    const button = doc.querySelector('[data-model-indicator]');
+    assert.ok(button, 'the selection-panel scope chip draws the model button');
+    flush(() => button.click());
     await settle();
     const search = [...doc.querySelectorAll('input')].find(input => /^Search (models|available models)/.test(input.placeholder || ''));
     assert.ok(search, 'the picker opens with its search field');
@@ -124,7 +124,7 @@ async function mountStudio({raw = wiredCanvas, account = {signedIn:true, email:'
   return {win, doc, flush, settle, buttons, exact, close, type, reply, requests, agent, openPicker, answer:text => answer(text)};
 }
 
-test('Chat with no conversation: the chat column has no system prompt card or generation controls, and the reply field is the design line', async () => {
+test('Chat with no conversation: the moved selection panel has no system prompt card or generation controls, and one ask field', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle();
@@ -140,29 +140,16 @@ test('Chat with no conversation: the chat column has no system prompt card or ge
     }
 
     const input = studio.reply();
-    assert.ok(input, 'the reply field carries the design prompt as its placeholder');
-    assert.equal(input.style.display, 'block', 'the field is a block line like the design prompt, no inline strut');
-    assert.equal(input.style.fontSize, '17px');
+    assert.ok(input, 'the ask field moved into the selection panel');
+    assert.ok(studio.doc.querySelector('aside[aria-label="Selection inspector"]').contains(input),
+      'the chat input moved into the right selection panel');
+    assert.match(input.placeholder, /whole graph|ask about this node|reply in this session/i);
+    assert.equal(input.style.fontSize, '13px');
     assert.equal(input.style.fontStyle, 'italic');
-    assert.equal(input.style.lineHeight, '1.5', 'the field holds the design line height');
-    assert.equal(input.style.padding, '2px 0px 8px');
-    assert.ok(input.classList.contains('lm-chat-draft'), 'the field is styled by its placeholder rule');
-    const rule = [...studio.doc.querySelectorAll('style')].map(node => node.textContent).find(text => text.includes('.lm-chat-draft::placeholder'));
-    assert.ok(rule && rule.includes(studio.win.AH.inkMuted) && /opacity:\s*1/.test(rule), 'the placeholder is drawn in inkMuted, as the design prompt is');
-
-    const row = input.nextElementSibling;
-    assert.deepEqual([...row.children].map(node => node.textContent.trim()).slice(0, 4),
-      ['@ skill', '\uff0b sketch', '\u25c6 workshop', '\u2317 open as nodes'], 'the design chips in the design order');
-    assert.equal([...row.children].some(node => node.tagName === 'DIV' && !node.textContent), false,
-      'the spacer is the flexible part of the row, so long content cannot wrap the chips');
-    const route = row.children[4];
-    assert.equal(route.style.minWidth, '0px', 'the spacer can shrink');
-    assert.equal(route.style.textOverflow, 'ellipsis', 'and ellipsizes instead');
-    assert.equal(route.style.textAlign, 'right', 'it still sits against Send');
   } finally { studio.close(); }
 });
 
-test('Chat with a conversation: Send asks the agent route, turns carry the account and the answerer, and a busy Send is dashed without alpha', async () => {
+test('Selection-panel composer: no model opens the picker; a picked model sends graph-scoped chat', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle();
@@ -176,60 +163,41 @@ test('Chat with a conversation: Send asks the agent route, turns carry the accou
     assert.ok(dialog, 'Send without a model opens the picker');
     studio.flush(() => studio.exact('DeepSeek R1', dialog)[0].closest('[style]').parentElement.click());
     await studio.settle();
+    studio.type(input, 'Dimension all walls in active view at 1:50.');
     studio.flush(() => input.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
     await studio.settle();
     assert.equal(JSON.stringify(studio.agent), JSON.stringify([[
       'Dimension all walls in active view at 1:50.',
       'deepseek/deepseek-r1',
-      {generation:{temperature:0.7, top_p:0.95, max_tokens:4096}, returnResult:true},
+      {graph:true, graph_id:'scope-a', request_id:studio.agent[0][2].request_id,
+        generation:{temperature:0.7, top_p:0.95, max_tokens:4096}},
     ]]), 'the typed text goes to the agent route with the chosen route and generation defaults');
-    assert.equal(Object.prototype.hasOwnProperty.call(studio.agent[0][2], 'node'), false,
-      'no selected node means the chat send omits node');
-    const [send] = studio.buttons('Send \u21b5');
-    assert.ok(send && send.disabled, 'Send is disabled while the answer is out');
-    assert.equal(send.style.opacity, '', 'disabled without alpha');
-    assert.equal(send.style.borderStyle, 'dashed', 'disabled with a dashed border');
-    assert.equal(send.style.backgroundColor, 'transparent', 'not drawn as a filled primary while disabled');
-    studio.answer({answer:'Prepared an editable change on the canvas for review.',
-      via:{family:'lmstudio', provider:'LM Studio', model:'qwen2.5-coder-7b-instruct'}});
+    const send = studio.doc.querySelector('aside[aria-label="Selection inspector"] button:disabled');
+    assert.ok(send && /Waiting|Send/.test(send.textContent), 'Send is disabled while the answer is out');
+    studio.answer({answer:'Prepared an editable change on the canvas for review.'});
     await studio.settle();
-    assert.equal(send.disabled, false, 'the answer re-enables Send');
-    assert.notEqual(send.style.borderStyle, 'dashed', 'and it returns to the design primary');
-    const names = studio.exact('Ana').filter(node => node.tagName === 'SPAN');
-    assert.ok(names.length >= 1, 'the question is signed with the account name');
-    assert.ok(studio.exact('DeepSeek R1').some(node => node.tagName === 'SPAN' && node.nextElementSibling),
-      'the answer is signed by the chosen model');
-    assert.ok(studio.exact('Prepared an editable change on the canvas for review.').length, 'the answer is drawn as a turn');
-    assert.ok(studio.exact('via LM Studio ' + DOT + ' qwen2.5-coder-7b-instruct').length,
-      'the answer shows the actual route underneath');
+    assert.equal(!!studio.doc.querySelector('aside[aria-label="Selection inspector"] button:disabled')?.textContent.includes('Waiting'), false,
+      'the answer leaves the busy state');
+    assert.ok(studio.exact('Prepared an editable change on the canvas for review.').length,
+      'the answer is drawn above the moved selection-panel composer');
   } finally { studio.close(); }
 });
 
-test('Inspector: the parametric chain is the design stage track with CalmRows, and an unwired canvas is simply 0 stages', async () => {
+test('Inspector: empty selection shows the graph as a node with graph properties instead of the old Chat rail chain', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle();
-    const [title] = studio.exact('PARAMETRIC CHAIN ' + DOT + ' 2 STAGES');
-    assert.ok(title, 'two wired nodes are two stages');
-    const section = title.parentElement;
-    assert.equal([...section.querySelectorAll('*')].some(node => /^\d+ \u00b7 /.test(node.textContent) && !node.children.length), false,
-      'no per-node title lines: the design draws the track and its rows only (design studio-lm.jsx:1054-1065)');
-    assert.equal([...section.querySelectorAll('div')].some(node => node.style.borderBottomStyle === 'dashed'), false, 'no dashed leader rows');
-    for (const hidden of ['source_digest', 'seed', 'image_path', 'sample-plan.png']) {
-      assert.equal(section.textContent.includes(hidden), false, 'the chain hides internal param ' + hidden);
-    }
-    for (const [k, v] of [['threshold', '80'], ['height_mm', '3000']]) {
-      const [key] = studio.exact(k, section);
-      assert.ok(key, 'the chain draws ' + k);
-      assert.equal(key.style.flexGrow, '1', k + ' is a CalmRow key (design studio-lm.jsx:1091-1096)');
-      assert.equal(key.nextElementSibling && key.nextElementSibling.textContent, v, k + ' shows its projected value');
-    }
+    const panel = studio.doc.querySelector('aside[aria-label="Selection inspector"]');
+    assert.ok(panel, 'the right selection inspector is drawn');
+    assert.match(panel.textContent, /GRAPH|ArchHub/);
+    assert.ok(panel.textContent.indexOf('Chat') < panel.textContent.indexOf('Properties'),
+      'empty selection shows graph chat before graph properties');
   } finally { studio.close(); }
   const unwired = await mountStudio({raw:unwiredCanvas});
   try {
     await unwired.settle();
-    assert.ok(unwired.exact('PARAMETRIC CHAIN ' + DOT + ' 0 STAGES').length, 'an unwired canvas is 0 stages');
-    assert.equal(unwired.doc.body.textContent.includes('No wired nodes on this canvas yet.'), false, 'the count says it; no extra status line');
+    const panel = unwired.doc.querySelector('aside[aria-label="Selection inspector"]');
+    assert.ok(panel && /GRAPH|ArchHub/.test(panel.textContent), 'an unwired canvas still shows the graph inspector');
   } finally { unwired.close(); }
 });
 
@@ -283,7 +251,8 @@ test('Model picker: the design header, live groups without prices, then native s
     studio.flush(() => studio.exact('DeepSeek R1', dialog)[0].closest('[style]').parentElement.click());
     await studio.settle();
     assert.equal(!!studio.doc.querySelector('[aria-label="Clear this model selection"]'), false, 'choosing a row closes the picker');
-    assert.ok(studio.exact('DeepSeek R1').length, 'the inspector reads the chosen model');
+    assert.ok(studio.doc.querySelector('[data-model-indicator]').textContent.includes('deepseek/deepseek-r1'),
+      'the selection-panel scope chip reads the chosen model route');
     await studio.openPicker();
     const clear = studio.doc.querySelector('[aria-label="Clear this model selection"]');
     assert.ok(clear && clear.textContent.includes('deepseek/deepseek-r1'), 'Clear selection names the held route');

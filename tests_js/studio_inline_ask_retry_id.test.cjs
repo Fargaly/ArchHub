@@ -80,7 +80,7 @@ async function mountStudio(agent) {
     input.dispatchEvent(new win.Event('input', {bubbles:true}));
   });
   const button = label => [...win.document.querySelectorAll('button')].find(node => node.textContent.trim() === label);
-  const composer = () => [...win.document.querySelectorAll('input')].find(input => /^Ask Conversation/.test(input.placeholder || ''));
+  const composer = () => win.document.querySelector('input[aria-label="Ask selection"]');
   return {win, doc:win.document, settle, flush, type, button, composer,
     close:() => { try { flush(() => win.__studioRoot.unmount()); } finally { dom.window.close(); } }};
 }
@@ -97,24 +97,25 @@ test('a retry after a lost node reply reuses the same request_id until a confirm
   });
   try {
     await studio.settle();
-    studio.flush(() => studio.button('Canvas').click());
+    const canvas = studio.button('Canvas');
+    if (canvas) studio.flush(() => canvas.click());
     await studio.settle();
     const input = studio.composer();
-    assert.ok(input, 'the selected AI node owns the floating ask field');
+    assert.ok(input, 'the selected AI node owns the selection ask field');
     studio.type(input, 'still-present text');
-    studio.flush(() => studio.button('Send ↵').click());
+    studio.flush(() => studio.button('Send').click());
     await studio.settle();
     assert.equal(studio.composer().value, 'still-present text', 'lost replies leave the typed text present');
     assert.ok(studio.doc.body.textContent.includes('reply not confirmed - check before sending again'),
       'lost replies show the plain not-confirmed line');
-    studio.flush(() => studio.button('Send ↵').click());
+    studio.flush(() => studio.button('Send').click());
     await studio.settle();
     mode = 'ok';
-    studio.flush(() => studio.button('Send ↵').click());
+    studio.flush(() => studio.button('Send').click());
     await studio.settle();
     const next = studio.composer();
     studio.type(next, 'next send');
-    studio.flush(() => studio.button('Send ↵').click());
+    studio.flush(() => studio.button('Send').click());
     await studio.settle();
     assert.deepEqual(calls.map(call => call.options.request_id), ['id-X', 'id-X', 'id-X', 'id-Y']);
   } finally { studio.close(); }

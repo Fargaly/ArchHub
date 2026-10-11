@@ -11,6 +11,7 @@
 (() => {
 
 const LM = window.AH;  // tokens.jsx — single source of truth
+const WORKSHOP_UNAVAILABLE_ROOT = 'studio:workshop-unavailable';
 
 // Categories and signal colours come from node-registry.jsx - one definition, read by the
 // canvas, the node library and the minimap alike.
@@ -434,7 +435,8 @@ const StudioLM = () => {
           .find(item => (item.routed || item.route) === route);
         const serverDefault = defaultModelRowFromPayload(result, route);
         setModel(current => current.routed || current.route ? current :
-          selected || serverDefault || defaultModelRow(route, source, fallback));
+          selected || (serverDefault && fallback ? {...serverDefault, defaultRouteModel:true} : serverDefault) ||
+          defaultModelRow(route, source, fallback));
       }).catch(() => {});
     return () => controller.abort();
   }, []);
@@ -525,12 +527,12 @@ const StudioLM = () => {
   };
   const authorityState = useStudioProjection();
   const [focusId, setLocalFocusId] = React.useState(() =>
-    window.ARCHHUB_STUDIO_AUTHORITY?.getSnapshot()?.selected || LM_GRAPH.nodes[0]?.id || null);
+    window.ARCHHUB_STUDIO_AUTHORITY?.getSnapshot()?.selected || null);
   const setFocusId = root => {
     const signed = window.ARCHHUB_STUDIO_AUTHORITY, existing = window.ARCHHUB_EXISTING_WORKSHOP;
+    setLocalFocusId(root || null);
     if (root && signed) signed.select(root).catch(() => {});
     else if (root && existing?.selectTopology) existing.selectTopology(root).catch(() => {});
-    else setLocalFocusId(root);
   };
   React.useEffect(() => {
     if (authorityState) setLocalFocusId(authorityState.selected);
@@ -603,6 +605,7 @@ const StudioLM = () => {
     }
     graphCreateBusy.current = true;
     setToolView(null);
+    setWorkspaceSelection(canvasWorkspaceView(''));
     setSessionOpenError('');
     try {
       await openCreatedGraphInPlace(await window.ARCHHUB_GRAPH_CREATE('New session'));
@@ -618,6 +621,7 @@ const StudioLM = () => {
     workshopState?.canvas?.root || '',
     (workshopState?.topology?.canvas || workshopState?.canvas)?.authorization?.subject || '',
     (workshopState?.topology?.canvas || workshopState?.canvas)?.authorization?.session || '']);
+  const canvasWorkspaceView = scope => ({mode:'canvas', conversationRoot:'', target:'', notice:'', scope, pending:false});
   // Selection is presentation state. Participants and connection status stay owner projections.
   const [workspaceSelection, setWorkspaceSelection] = React.useState(null);
   const projectedAuthorization = (workshopState?.topology?.canvas || workshopState?.canvas)?.authorization;
@@ -626,13 +630,23 @@ const StudioLM = () => {
     (!workshopState.topology?.canvas || (workshopState.topology.canvas.application_root === workshopState.canvas.graph_id &&
       workshopState.topology.canvas.scope?.current === workshopState.canvas.root)));
   const availableWorkshops = workspaceReady ? workshopState.workshops : [];
-  // The Studio opens on plain Chat, the design's default (design studio-lm.jsx:962). A Workshop
-  // room is opened from Chat's Workshop button, a node's rail or the Conversations menu.
-  const defaultWorkspaceView = {mode:'chat', conversationRoot:'', target:'', notice:'', scope:viewScope, pending:false};
+  // Studio sessions open as the graph canvas. Workshop and System are separate Hub/Cockpit surfaces,
+  // not Studio header modes.
+  const defaultWorkspaceView = canvasWorkspaceView(viewScope);
   const resolveWorkspaceView = previous => {
+    const unavailableWorkshopRoot = 'studio:workshop-unavailable';
+    if (!workspaceReady && previous?.mode === 'chat' && previous?.conversationRoot === unavailableWorkshopRoot) {
+      return {...previous, target:'', pending:false, notice:previous.notice || workshopUnavailableText(workshopState?.canvas?.unavailable)};
+    }
     if (!workspaceReady) return {mode:previous?.mode || 'chat', conversationRoot:'', target:'', pending:true,
       notice:workshopState?.error || workshopState?.topology?.error || 'Loading your workspace…'};
-    if (previous?.scope !== viewScope) return defaultWorkspaceView;
+    if (previous?.scope !== viewScope) return {
+      ...defaultWorkspaceView,
+      mode:previous?.mode === 'system' && String(session?.id || '').startsWith('system:') ? 'system' : defaultWorkspaceView.mode,
+    };
+    if (previous?.mode === 'chat' && previous?.conversationRoot === unavailableWorkshopRoot) {
+      return {...previous, target:'', pending:false, notice:previous.notice || workshopUnavailableText(workshopState?.canvas?.unavailable)};
+    }
     // Empty is an explicit Chat choice, distinct from no selection at startup.
     if (!previous.conversationRoot || availableWorkshops.some(row => row.root === previous.conversationRoot)) {
       return previous;
@@ -649,6 +663,7 @@ const StudioLM = () => {
     (workshopState?.topology?.canvas || workshopState?.canvas)?.authorization?.subject || '',
     (workshopState?.topology?.canvas || workshopState?.canvas)?.authorization?.session || '']);
   const openSessionView = (id, view) => {
+    setLocalFocusId(null);
     if (id && !window.ARCHHUB_GRAPH_OPEN) {
       if (!openTabs.includes(id)) setOpenTabs(t => [...t, id]);
       setOpenId(id);
@@ -657,22 +672,27 @@ const StudioLM = () => {
   };
   const openTool = (tool, options = {}) => {
     requestToolHubRefresh();
-    if (tool === 'workshop' && options.tab === 'approvals' && workshopState?.canvas?.graph_id) {
+    if (tool === 'workshop') {
       const workshopRows = Array.isArray(workshopState?.workshops) ? workshopState.workshops : [];
       const room = workshopRows.find(row => row.root === options.root) ||
         workshopRows.find(row => row.is_general === true) || workshopRows[0];
-      if (room) {
-        const authorization = (workshopState.topology?.canvas || workshopState.canvas)?.authorization || {};
+      const liveSessions = Array.isArray(window.ARCHHUB_LIVE?.sessions) ? window.ARCHHUB_LIVE.sessions : [];
+      const graphId = openId || window.ARCHHUB_LIVE?.currentGraph || visibleSessions[0]?.id ||
+        liveSessions[0]?.id || LM_SESSIONS[0]?.id || workshopState?.canvas?.graph_id || '';
+      if (room || graphId) {
+        const authorization = (workshopState?.topology?.canvas || workshopState?.canvas)?.authorization || {};
+        const conversationRoot = room?.root || WORKSHOP_UNAVAILABLE_ROOT;
         setToolView(null);
-        setOpenTabs(tabs => tabs.includes(workshopState.canvas.graph_id) ? tabs : [...tabs, workshopState.canvas.graph_id]);
-        setWorkspaceSelection({mode:'chat', conversationRoot:room.root, target:'', notice:'', pending:false,
-          scope:JSON.stringify([workshopState.canvas.graph_id, workshopState.canvas.graph_id, workshopState.canvas.root,
+        if (graphId) setOpenTabs(tabs => tabs.includes(graphId) ? tabs : [...tabs, graphId]);
+        setWorkspaceSelection({mode:'chat', conversationRoot, target:'', notice:room ? '' : workshopUnavailableText(workshopState?.canvas?.unavailable), pending:false,
+          scope:JSON.stringify([graphId, workshopState?.canvas?.graph_id || '', workshopState?.canvas?.root || '',
             authorization.subject || '', authorization.session || ''])});
-        setWorkshopSelection({root:room.root, agent:null, task:options.focus || null, tab:'approvals'});
-        setOpenId(workshopState.canvas.graph_id);
+        setWorkshopSelection({root:conversationRoot, agent:null, task:options.focus || null, tab:options.tab || 'tasks'});
+        if (graphId) setOpenId(graphId);
         return;
       }
     }
+    setWorkspaceSelection(canvasWorkspaceView(viewScope));
     const toolRow = toolRowsFromOwners({workshopState, account, personal:readPersonalThemeSnapshot(), hub:window.ARCHHUB_TOOL_HUB})
       .find(row => row.id === tool);
     if (toolRow?.state === 'off') {
@@ -686,16 +706,13 @@ const StudioLM = () => {
       if (firstSession) openSessionView(firstSession, {mode:'canvas', conversationRoot:'', target:''});
       return;
     }
-    if (tool === 'workshop') {
-      setOpenId(null);
-      setToolView({id:tool, tab:options.tab || firstToolTab(tool), focus:options.focus || ''});
-      return;
-    }
+    // No graph exists at all yet: the Workshop tool page still opens (never a silent no-op on Home).
     setOpenId(null);
     setToolView({id:tool, tab:options.tab || firstToolTab(tool), focus:options.focus || ''});
   };
   const openToolGraph = tool => {
     requestToolHubRefresh();
+    setWorkspaceSelection(canvasWorkspaceView(viewScope));
     setOpenId(null);
     setToolView({id:tool, tab:firstToolTab(tool)});
   };
@@ -769,6 +786,7 @@ const StudioLM = () => {
 
   // open a session — also pin as a tab if not already open
   const openSession = async (id) => {
+    setLocalFocusId(null);
     const systemId = systemSessionId(workshopState?.canvas, authorityState?.canvas, authorityState?.graph || LM_GRAPH);
     const isSystem = id && id === systemId;
     // The System view is a mode of the application's root graph (as the old System tab was):
@@ -777,6 +795,7 @@ const StudioLM = () => {
     const rootGraphId = (LM_SESSIONS.find(row => row && row.id && !String(row.id).startsWith('system:')) || {}).id || '';
     const graphId = isSystem ? rootGraphId : id;
     setToolView(null);
+    setWorkspaceSelection(canvasWorkspaceView(viewScopeForSession(id)));
     setSessionOpenError('');
     if (graphId && window.ARCHHUB_GRAPH_OPEN) {
       try {
@@ -784,8 +803,7 @@ const StudioLM = () => {
         const opened = await switchOpenGraphInPlace(result, graphId);
         const current = isSystem ? id : (opened.current || graphId);
         if (current && !openTabs.includes(current)) setOpenTabs(t => t.includes(current) ? t : [...t, current]);
-        if (isSystem) setWorkspaceSelection({mode:'system', conversationRoot:'', target:'', notice:'',
-          scope:viewScopeForSession(id), pending:false});
+        setWorkspaceSelection(canvasWorkspaceView(viewScopeForSession(current || id)));
         setOpenId(current || id);
       } catch (error) {
         setSessionOpenError(error?.message || 'Graph opening was refused.');
@@ -793,8 +811,7 @@ const StudioLM = () => {
       }
       return;
     }
-    if (isSystem) setWorkspaceSelection({mode:'system', conversationRoot:'', target:'', notice:'',
-      scope:viewScopeForSession(id), pending:false});
+    setWorkspaceSelection(canvasWorkspaceView(viewScopeForSession(id)));
     if (id && !openTabs.includes(id)) setOpenTabs(t => [...t, id]);
     setOpenId(id);
   };
@@ -894,7 +911,7 @@ const StudioLM = () => {
       <Sidebar
         panel={panel} setPanel={setPanel}
         openId={openId} onOpen={openSession}
-        onHome={() => { setToolView(null); setOpenId(null); }} onSettings={() => openSettings(true)} onAccount={() => openSettings(true, 'account')} onDocs={() => openDocs(true)}
+        onHome={() => { setWorkspaceSelection(canvasWorkspaceView(viewScope)); setToolView(null); setOpenId(null); }} onSettings={() => openSettings(true)} onAccount={() => openSettings(true, 'account')} onDocs={() => openDocs(true)}
         onOpenTool={openTool}
         addNodeFromLibrary={addNodeFromLibrary} workshopContext={workshopContext} railOnly={(!session && panel === 'nodes') || !!workshopContext} account={account}
         wsSel={wsSel} setWsSel={setWsSel} onAddAgent={() => setLibraryOpen(true)}
@@ -917,7 +934,7 @@ const StudioLM = () => {
             clearPendingCanvasReveal={() => setPendingCanvasReveal(null)}
             userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary}
             view={workspaceView} updateView={updateWorkspaceView} wsSel={wsSel} setWsSel={setWsSel}
-            onHome={() => { setToolView(null); setOpenId(null); }}
+            onHome={() => { setWorkspaceSelection(canvasWorkspaceView(viewScope)); setToolView(null); setOpenId(null); }}
             onNewSession={createSessionGraphInPlace}
             onAccount={() => openSettings(true, 'account')}/>
         : <Home onOpen={openSession} sessions={visibleSessions} model={model} native={homeNative} setPickerOpen={setPickerOpen}
@@ -1478,8 +1495,8 @@ const toolRowsFromOwners = ({workshopState, account, personal, hub}) => {
     turnOn:() => api?.setBaboomStartup ? refreshToolHubAfter(api.setBaboomStartup('on')) : requestToolHubRefresh(),
     turnOff:() => api?.setBaboomStartup ? refreshToolHubAfter(api.setBaboomStartup('off')) : requestToolHubRefresh(),
   };
-  const hubRows = Array.isArray(hub?.tools) ? hub.tools
-    : Array.isArray(window.ARCHHUB_TOOL_HUB?.tools) ? window.ARCHHUB_TOOL_HUB.tools
+  const hubRows = Array.isArray(hub?.tools) && hub.tools.length ? hub.tools
+    : Array.isArray(window.ARCHHUB_TOOL_HUB?.tools) && window.ARCHHUB_TOOL_HUB.tools.length ? window.ARCHHUB_TOOL_HUB.tools
     : FRAME_TOOL_DEFAULTS;
   return hubRows.map(row => {
     const rawState = String(row.state || 'off');
@@ -2329,10 +2346,14 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, openTab
     ? window.wireAsNode(graph.wires[wireIdx], wireIdx, allNodes)
     : allNodes.find(n => n.id === focusId);
   const {mode, conversationRoot, target} = view;
+  const effectiveMode = String(session?.id || '').startsWith('system:') ? 'system' : mode;
   const setMode = mode => updateView({mode});
   const workshopState = useWorkshopProjection();
   const workshops = workshopState?.workshops || [];
-  const workshop = workshops.find(row => row.root === conversationRoot);
+  const workshop = workshops.find(row => row.root === conversationRoot) ||
+    (conversationRoot === WORKSHOP_UNAVAILABLE_ROOT ? {root:WORKSHOP_UNAVAILABLE_ROOT, label:'Workshop',
+      is_general:true, native_work_available:false, unavailable:true,
+      unavailable_reason:view.notice || workshopUnavailableText(workshopState?.canvas?.unavailable)} : null);
   const graphScopeKey = JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas)]);
   if (view.pending) return <main style={{gridColumn:'2', gridRow:'1', padding:24, color:LM.inkSoft}}>
     <p role="status">{view.notice}</p>
@@ -2347,31 +2368,27 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, openTab
       <WsHeader
         session={session} model={model} openTabs={openTabs}
         sessionRows={sessionRows}
-        setOpenId={setOpenId} closeTab={closeTab} mode={mode} setMode={setMode}
+        setOpenId={setOpenId} closeTab={closeTab} mode={effectiveMode} setMode={setMode}
         workshops={workshops} conversationRoot={workshop?.root || ''} conversationNotice={view.notice}
         workshopUnavailable={workshopState?.canvas?.unavailable || ''}
         workshopModel={workshopState?.nativeWork?.model}
         setConversationRoot={root => updateView({conversationRoot:root, mode:'chat', target:''})}
         setPickerOpen={setPickerOpen} onHome={onHome} onNewSession={onNewSession}
         systemAllowed={systemAllowed(authorityState?.canvas, graph)}/>
-      {mode === 'chat' ? (
-        workshop && window.WorkshopView ? <window.WorkshopView key={JSON.stringify([session.id, workshopState.canvas.graph_id,
+      {effectiveMode === 'chat' && workshop && window.WorkshopView ? (
+        <window.WorkshopView key={JSON.stringify([session.id, workshopState.canvas.graph_id,
           workshopState.canvas.root, workshop.root])} state={workshopState} descriptor={workshop} target={target}
           setTarget={target => updateView({target})} setMode={setMode} setFocusId={setFocusId}
           requestCanvasReveal={requestCanvasReveal}
-          onLeave={() => updateView({conversationRoot:'', mode:'chat', target:''})}
-          sel={wsSel} setSel={setWsSel}/> : <>
-          <ChatView key={graphScopeKey} session={session} model={model} setMode={setMode} onPickModel={() => setPickerOpen(true)}
-            onAccount={onAccount}
-            readiness={readiness} onReadinessStale={onReadinessStale}
-            workshopRoom={workshopModeRoom(workshops, '')} workshopUnavailable={workshopState?.canvas?.unavailable || ''}
-            openWorkshop={root => updateView({conversationRoot:root, mode:'chat', target:''})}/>
-          <InferenceInspector model={model} setPickerOpen={setPickerOpen}/>
-        </>
+          onLeave={() => updateView({conversationRoot:'', mode:'canvas', target:''})}
+          sel={wsSel} setSel={setWsSel}/>
       ) : (
         <>
-          <NodeCanvas key={JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas), mode === 'system'])} system={mode === 'system'} focusId={focusId} setFocusId={setFocusId} pendingReveal={pendingCanvasReveal} clearPendingReveal={clearPendingCanvasReveal} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model} onViewportChange={updateCanvasViewport}/>
+          <NodeCanvas key={JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas), effectiveMode === 'system'])} system={effectiveMode === 'system'} focusId={focusId} setFocusId={setFocusId} pendingReveal={pendingCanvasReveal} clearPendingReveal={clearPendingCanvasReveal} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model} onViewportChange={updateCanvasViewport}/>
           <NodeRail node={focusNode} hiddenWork={!focusNode && authorityState?.canvas?.selection_hidden === true}
+            graph={graph} canvas={authorityState?.canvas} session={session} sessionRows={sessionRows}
+            model={model} setPickerOpen={setPickerOpen} readiness={readiness}
+            onReadinessStale={onReadinessStale} onAccount={onAccount}
             scope={authorityState?.canvas?.root || authorityState?.canvas?.scope?.current || ''}
             openConversation={root => updateView({conversationRoot:root, mode:'chat', target:''})}
             workshopRoom={workshopModeRoom(workshops, workshop?.root || '')}
@@ -2415,6 +2432,11 @@ const nodeModelRow = n => (n?.params || []).find(row => row.k === 'model') || nu
 const nodeModelRoute = n => {
   const route = String(nodeModelRow(n)?.v || '').trim();
   return route === 'provider-selected' ? '' : route;
+};
+const modelDisplayName = m => {
+  const name = String((m && m.name) || '').trim();
+  if (m?.defaultRouteModel && name && name !== 'Choose a model') return name;
+  return modelRoute(m) || name;
 };
 const GENERATION_SPECS = [
   { k:'temperature', label:'temperature', type:'number', min:0, max:2, step:0.05, v:0.7, page:'Model' },
@@ -3146,29 +3168,13 @@ const WorkshopConversationMenu = ({workshops, conversationRoot, setConversationR
   </div>;
 };
 
-// ── Chat · Canvas (design studio-lm.jsx:1182; WORKSHOP-DESIGN-BRIEF.md: "Conversation / Canvas view
-// switch"). The Workshop is not a segment: it is Chat with a conversation root from the real Workshop scope
-// (window.ARCHHUB_EXISTING_WORKSHOP.getSnapshot().workshops, fed by canvas.workshop_scope).
-// The segment selects the held room, else the general room, else the first; Chat clears the
-// root; no room in scope disables the segment and says so. Nothing about agents, tasks or
-// progress is inferred from the choice.
+// Workshop opens through the tool rail or a selection-panel handoff. A Studio session itself stays
+// on Canvas; chat lives in the selection panel composer, not in a session-level tab.
 const workshopModeRoom = (workshops, conversationRoot) => conversationRoot ||
   workshops.find(row => row?.is_general === true && row.root)?.root || workshops.find(row => row?.root)?.root || '';
 // The owner states why no Workshop room is available (workshop_scope.unavailable).
 const workshopUnavailableText = reason => (typeof reason === 'string' && reason.trim()) ||
   'No Workshop conversation in this scope';
-// Workshop is never disabled into silence: without a room the click answers with that reason.
-// Chat · Workshop · Canvas. The Workshop segment is the founder's way in (restored after 8cc3463d took it
-// out): Chat with the held room, else the general room, else the first; no room keeps it visible and
-// answers with the owner's reason (workshop_scope.unavailable).
-const workshopModeSegments = ({mode, conversationRoot = '', workshops = [], unavailable = '', systemAllowed = false}) => {
-  const room = workshopModeRoom(workshops, conversationRoot);
-  const active = mode === 'chat' ? (conversationRoot ? 'workshop' : 'chat') : mode;
-  return [['chat', 'Chat'], ['workshop', 'Workshop'], ['canvas', 'Canvas']].map(([key, label]) => ({
-    key, label, active:active === key, disabled:false, unavailable:key === 'workshop' && !room,
-    title:key === 'workshop' && !room ? workshopUnavailableText(unavailable) : undefined,
-  }));
-};
 const chooseWorkshopMode = (key, {mode, conversationRoot = '', workshops = [], setMode, setConversationRoot,
   unavailable = '', onUnavailable}) => {
   if (key === 'canvas' || typeof setConversationRoot !== 'function') return setMode(key === 'canvas' ? 'canvas' : 'chat');
@@ -3186,8 +3192,6 @@ const chooseWorkshopMode = (key, {mode, conversationRoot = '', workshops = [], s
 const WsHeader = ({ session, model, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, mode, setMode, setPickerOpen, onHome, onNewSession, systemAllowed = false,
   workshops = [], conversationRoot = '', setConversationRoot, workshopModel, conversationNotice = '',
   workshopUnavailable = '' }) => {
-  const [workshopRefusal, setWorkshopRefusal] = React.useState('');
-  const workshopRefused = workshopRefusal && !workshopModeRoom(workshops, conversationRoot) ? workshopRefusal : '';
   return (
   <div style={{
     gridColumn:'1 / -1', gridRow:'1',
@@ -3222,38 +3226,6 @@ const WsHeader = ({ session, model, openTabs, sessionRows = LM_SESSIONS, setOpen
       onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>+</button>
     </div>
 
-    {/* Chat and Canvas draw the design row. While a Workshop conversation is open, its source menu sits beside the switch. */}
-    {workshops.length > 0 && mode === 'chat' && conversationRoot && (window.ARCHHUB_EXISTING_WORKSHOP?.refreshConversationCatalog ?
-        <WorkshopConversationMenu key={JSON.stringify([workshops.find(row => row.is_general)?.root, session.id])}
-          workshops={workshops} conversationRoot={conversationRoot} setConversationRoot={setConversationRoot}/> :
-        <select aria-label="Conversation source" value={conversationRoot}
-        onChange={event => setConversationRoot(event.target.value)} style={{maxWidth:180,
-          background:LM.bg, color:LM.ink, border:0, fontFamily:LM.sans, fontSize:12}}>
-        <option value="">Conversation</option>
-        {workshops.map(row => <option key={row.root} value={row.root}>{row.label}</option>)}
-      </select>)}
-
-    <div style={{
-      display:'flex', alignItems:'center', gap:1, padding:2, background:LM.bg,
-      border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, flexShrink:0,
-    }}>
-      {workshopModeSegments({mode, conversationRoot, workshops, unavailable:workshopUnavailable, systemAllowed}).map(segment => (
-        <button key={segment.key} type="button" disabled={segment.disabled} title={segment.title} aria-pressed={segment.active}
-          aria-disabled={segment.unavailable ? 'true' : undefined}
-          onClick={() => chooseWorkshopMode(segment.key, {mode, conversationRoot, workshops, setMode, setConversationRoot,
-            unavailable:workshopUnavailable, onUnavailable:setWorkshopRefusal})} style={{
-          padding:'4px 11px', borderRadius:LM.rad.sm, border:0, cursor:segment.disabled ? 'default' : 'pointer',
-          background:segment.active ? LM.accentDim : 'transparent',
-          outline:segment.disabled || segment.unavailable ? `1px dashed ${LM.line}` : 'none', outlineOffset:-1,
-          color:segment.active ? LM.accent : LM.inkSoft,
-          fontFamily:LM.sans, fontSize:11.5, fontWeight:segment.active ? 500 : 400,
-        }}>{segment.label}</button>
-      ))}
-    </div>
-
-    {workshopRefused && <span role="alert" title={workshopRefused} style={{fontSize:11,
-      color:LM.ink, maxWidth:320, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
-      {workshopRefused}</span>}
     {conversationNotice && <span role="status" title={conversationNotice} style={{fontSize:11,
       color:LM.inkSoft, maxWidth:220, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
       {conversationNotice}</span>}
@@ -3953,7 +3925,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       setMarquee({x0:at.x, y0:at.y, x1:at.x, y1:at.y});
       return;
     }
-    setSelectedIds([]); setPickedId(null);
+    setSelectedIds([]); setPickedId(null); setFocusId(null);
     dragRef.current = { mode:'pan', sx:e.clientX, sy:e.clientY, px:pan.x, py:pan.y };
   };
   // Which cards a box takes, read from the drawn cards (their real size) at their current places.
@@ -4867,8 +4839,6 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
         });
       }} onFit={() => fitIds(selected.size ? [...selected] : allIds)}
         fitLabel={selected.size ? 'Fit selection' : 'Fit all nodes'} setLibraryOpen={setLibraryOpen}/>
-      <FloatingComposer key={focusId || 'canvas'} setLibraryOpen={setLibraryOpen} model={model}
-        node={allNodes.find(n => n.id === focusId && n.live && nodeModelRow(n))}/>
       <MiniMap pan={pan} zoom={zoom} positions={positions} allNodes={allNodes}/>
       {ctxMenu && <CanvasMenu x={ctxMenu.x} y={ctxMenu.y} maxHeight={ctxMenu.maxHeight}
         opener={ctxMenu.opener} items={ctxMenu.nodeId ? nodeMenuItems : ctxMenu.wireId ? wireMenuItems : canvasMenuItems}
@@ -5850,7 +5820,7 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
   // `conversation` and no `model`); the model route + composer are for model-bearing nodes only.
   const model = nodeModelRow(node);
   const route = model ? nodeModelRoute(node) : '';
-  const bound = node.has_conversation === true && !!node.conversation_root;
+  const bound = node.graphNode === true || (node.has_conversation === true && !!node.conversation_root);
   React.useEffect(() => {
     if (!bound || typeof window === 'undefined' || typeof window.ARCHHUB_WORKSHOP_TRANSCRIPT !== 'function') {
       setTranscript(null); return;
@@ -5869,7 +5839,7 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
         }
         // Exact bound-root match: a response for another node, or one whose conversation_root is
         // null/missing/different while this node is bound, is refused — never rendered.
-        if (result.node !== want.node || result.conversation_root !== want.conv) return;
+        if (result.node !== want.node || (want.conv && result.conversation_root !== want.conv)) return;
         setTranscript({rows: Array.isArray(result.rows) ? result.rows : [], error:'', has_older: result.has_older === true});
       } catch (reason) { if (live) setTranscript({rows:[], error: reason?.message || String(reason), has_older:false}); }
       finally { inFlight = false; }
@@ -5912,17 +5882,7 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
           Continue in the Workshop</HoverBtn>
       </div>
     ) : null}
-    {model ? (<>
     {answer && <p role="status" style={{ margin:0, whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontFamily:LM.serif, fontSize:14, lineHeight:1.55, color:LM.ink, letterSpacing:'-0.003em' }}>{answer}</p>}
-    <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:7, padding:'8px 11px' }}>
-      <div style={{ display:'flex', alignItems:'center', gap:6, minHeight:22, fontSize:13, color:LM.inkSoft }}>
-        <InlineAsk scale="reply" node={node} onAnswer={line => {
-          setAnswer(line);
-          if (bound) setTranscriptTick(tick => tick + 1);
-        }} placeholder={'Ask ' + node.title + '\u2026'}/>
-      </div>
-    </div>
-    </>) : null}
   </section>;
 };
 
@@ -5944,7 +5904,141 @@ const NodeTranscriptRow = ({ row }) => (
     <div style={{ fontFamily:LM.serif, fontSize:13, lineHeight:1.5, color:LM.ink, whiteSpace:'pre-wrap', overflowWrap:'anywhere', maxHeight:150, overflow:'auto' }}>{row.text}</div>
   </div>
 );
-const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop, scope = '', openConversation }) => {
+const graphInspectorNode = (canvas, graph, session, sessionRows = []) => {
+  const scope = canvas?.scope || {};
+  const graphId = scope.current || canvas?.root || session?.id || 'current';
+  const name = scope.current_label || canvas?.selected_title || session?.title || 'ArchHub graph';
+  const params = [{k:'name', v:name}];
+  if (canvas?.authorization?.subject) params.push({k:'owner', v:canvas.authorization.subject});
+  if (canvas?.description) params.push({k:'description', v:canvas.description});
+  if (Array.isArray(sessionRows) && sessionRows.length) params.push({k:'sessions', v:sessionRows.length});
+  if (Array.isArray(graph?.agents) && graph.agents.length) params.push({k:'agents', v:graph.agents.length});
+  if (Array.isArray(graph?.programs) && graph.programs.length) params.push({k:'programs', v:graph.programs.length});
+  if (session?.last) params.push({k:'last run', v:session.last});
+  return {id:'graph:' + graphId, graph_id:graphId, cat:'graph',
+    title:name, sub:'the graph as a node', live:true, params, ins:[], outs:[], messages:[],
+    graphNode:true, has_conversation:true, conversation_root:''};
+};
+// A session node is a node of the session kind; an ordinary node that has chatted is still an ordinary node.
+const isSessionInspectorNode = node => /^session$/i.test(String(node?.kind || node?.assembly || node?.cat || '')) ||
+  /session/i.test(String(node?.sub || node?.engine || ''));
+const hasRunsPanel = (node, graph) => {
+  if (!node || node.graphNode) return false;
+  return !!(node.last_run || node.run || node.status || (graph?.wires || []).some(wire =>
+    wire.from?.[0] === node.id || wire.to?.[0] === node.id));
+};
+const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadinessStale, onAccount }) => {
+  const [text, setText] = React.useState('');
+  const [state, setState] = React.useState('');
+  const [stateModel, setStateModel] = React.useState('');
+  const [asking, setAsking] = React.useState(false);
+  const pendingSend = React.useRef(null);
+  const nodeRoute = target?.node && nodeModelRow(target.node) ? nodeModelRoute(target.node) : '';
+  const route = nodeRoute || modelRoute(model);
+  const blocked = routeReadiness(route, readiness);
+  const offers = new Set((blocked && blocked.actions) || []);
+  const modelName = nodeRoute || modelDisplayName(model) || route || 'Choose a model';
+  const placeholder = target.kind === 'session' ? 'reply in this session · @ agent' :
+    target.kind === 'graph' ? 'whole graph · @ agent or session' : 'ask about this node · @ agent';
+  const updateText = next => {
+    if (pendingSend.current && next !== pendingSend.current.raw) pendingSend.current = null;
+    setText(next);
+  };
+  const nextRequestId = said => {
+    const held = pendingSend.current;
+    if (held && held.raw === text && held.said === said && held.target === target.id) return held.requestId;
+    return window.crypto?.randomUUID?.() || String(Date.now()) + '-' + String(Math.random()).slice(2);
+  };
+  const ask = async () => {
+    const said = text.trim();
+    if (!said || asking || !window.ARCHHUB_AGENT) return;
+    if (blocked || !route) {
+      if (typeof setPickerOpen === 'function') setPickerOpen(true);
+      return;
+    }
+    const requestId = nextRequestId(said);
+    pendingSend.current = {raw:text, said, target:target.id, requestId};
+    setAsking(true); setState(''); setStateModel('');
+    try {
+      const context = target.kind === 'graph'
+        ? {graph:true, graph_id:target.graphId, request_id:requestId, generation:generationRequestOptions()}
+        : {node:target.node.id, request_id:requestId, generation:generationRequestOptions()};
+      const result = await window.ARCHHUB_AGENT(said, route, context);
+      const answer = agentAnswerText(result);
+      const deliveryState = agentDeliveryState(result);
+      setState(answer);
+      setStateModel(modelName);
+      if (!deliveryState || deliveryState === 'replied') {
+        pendingSend.current = null;
+        setText('');
+      }
+    } catch (error) {
+      setState('refused: ' + ((error && error.message) || error || 'no reply') +
+        ' Your text is still here; sending again will not ask twice.');
+    } finally { setAsking(false); }
+  };
+  return <div style={{ borderTop:`1px solid ${LM.lineSoft}`, padding:'10px 12px 12px', display:'flex', flexDirection:'column', gap:8 }}>
+    {state && <p role="status" style={{ margin:0, maxHeight:120, overflow:'auto', whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontFamily:LM.serif, fontSize:13, lineHeight:1.45, color:LM.ink }}>
+      {stateModel && <span style={{ display:'block', fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.06em', marginBottom:3 }}>{stateModel}</span>}
+      <span>{state}</span>
+    </p>}
+    {blocked && <div data-chat-no-model="" role="status" style={{
+      background:LM.bgPanel, border:`1px solid ${LM.line}`, borderLeft:`3px solid ${LM.warn}`,
+      borderRadius:LM.rad.md, padding:'9px 10px', display:'flex', flexDirection:'column', gap:7,
+    }}>
+      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.warn, letterSpacing:'0.14em' }}>
+        {READINESS_LABELS[blocked.state] || 'NO MODEL'}</div>
+      <div style={{ fontSize:12.5, lineHeight:1.45, color:LM.ink }}>{blocked.message}</div>
+      <div style={{ display:'flex', gap:7, flexWrap:'wrap' }}>
+        {offers.has('sign_in') && <button type="button" onClick={() => {
+          if (typeof onAccount === 'function') onAccount();
+          else if (typeof onReadinessStale === 'function') onReadinessStale();
+        }} style={{ padding:'5px 10px', background:LM.accent, color:(window.AH && window.AH.onFill) || '#180f08',
+          border:0, borderRadius:LM.rad.sm, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Sign in</button>}
+        <button type="button" onClick={() => typeof setPickerOpen === 'function' && setPickerOpen(true)} style={{
+          padding:'4px 9px', background:'transparent', color:LM.ink, border:`1px solid ${LM.line}`,
+          borderRadius:LM.rad.sm, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Choose a model</button>
+      </div>
+    </div>}
+    <button type="button" data-model-indicator="" onClick={() => setPickerOpen && setPickerOpen(true)}
+      style={{ alignSelf:'flex-start', maxWidth:'100%', display:'flex', alignItems:'center', gap:6, padding:'5px 9px',
+        background:LM.bg, border:`1px solid ${LM.accent}66`, borderRadius:LM.rad.sm, color:LM.accent,
+        fontFamily:LM.mono, fontSize:10.5, cursor:'pointer' }}>
+      <span style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{'→ ' + target.name + ' · ' + modelName}</span>
+      <span aria-hidden="true">▾</span>
+    </button>
+    <div style={{ display:'flex', alignItems:'center', gap:7, background:LM.bg, border:`1px solid ${LM.accent}66`, borderRadius:7, padding:'8px 10px' }}>
+      <input aria-label="Ask selection" value={text} onChange={e => updateText(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') ask(); }} placeholder={placeholder}
+        style={{ flex:1, minWidth:0, background:'transparent', border:0, outline:0, color:LM.ink,
+          fontFamily:LM.serif, fontSize:13, fontStyle:'italic' }}/>
+      <button onClick={ask} disabled={asking || !text.trim()} style={{ padding:'4px 11px', background:LM.accent,
+        color:(window.AH && window.AH.onFill) || '#180f08', border:0, borderRadius:LM.rad.sm,
+        fontSize:11.5, fontWeight:500, cursor:asking || !text.trim() ? 'default' : 'pointer' }}>{asking ? 'Waiting…' : 'Send'}</button>
+    </div>
+  </div>;
+};
+const InspectorTabs = ({ labels, active, onSelect }) => <div role="tablist" aria-label="Selection inspector tabs" style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+  {labels.map(label => {
+    const selected = active === label;
+    return <button key={label} type="button" role="tab" aria-selected={selected ? 'true' : 'false'}
+      onClick={() => onSelect(label)} style={{
+      padding:'4px 9px', border:0, borderRadius:LM.rad.sm, background:selected ? LM.accentDim : 'transparent',
+      color:selected ? LM.accent : LM.inkSoft, fontFamily:LM.sans, fontSize:11.5, cursor:'pointer' }}>{label}</button>;
+  })}
+</div>;
+const InspectorRuns = ({ node, graph }) => {
+  const wires = (graph?.wires || []).filter(wire => wire.from?.[0] === node.id || wire.to?.[0] === node.id);
+  if (!hasRunsPanel(node, graph)) return null;
+  return <section aria-label="Runs" style={{ display:'flex', flexDirection:'column', gap:7 }}>
+    {node.status && <CalmRow k="last run" v={node.status}/>}
+    {wires.map((wire, index) => <CalmRow key={wire.id || index} k={wire.from?.[0] === node.id ? 'out' : 'in'}
+      v={wire.id || [wire.from?.[0], wire.to?.[0]].filter(Boolean).join(' → ')}/>)}
+  </section>;
+};
+const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop, scope = '', openConversation,
+  graph = null, canvas = null, session = null, sessionRows = [], model, setPickerOpen, readiness = null,
+  onReadinessStale, onAccount }) => {
   // Work lives in the Workshop. A selection the canvas does not draw points there instead of an empty panel.
   if (!node && hiddenWork) return (
     <aside role="status" style={{ gridColumn:'2', gridRow:'2', background:LM.bgPanel, borderLeft:`1px solid ${LM.line}`,
@@ -5955,35 +6049,49 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
       <div><HoverBtn primary disabled={!workshopRoom} onClick={onOpenWorkshop}>Open the Workshop</HoverBtn></div>
     </aside>
   );
-  if (!node) return <aside style={{ gridColumn:'2', gridRow:'2', background:LM.bgPanel, borderLeft:`1px solid ${LM.line}` }}/>;
-  const inspectedNode = aiNodeWithMovedParams(node);
-  // AI node gets a dedicated conversation rail — full scrollback + composer
-  if (node.cat === 'ai' && !node.live) return <ConversationRail node={inspectedNode}/>;
+  const inspectedNode = node ? aiNodeWithMovedParams(node) : graphInspectorNode(canvas, graph, session, sessionRows);
+  const sessionNode = isSessionInspectorNode(inspectedNode);
   const cat = studioCategory(inspectedNode.cat);
+  const labels = [sessionNode || inspectedNode.graphNode ? 'Chat' : 'Properties',
+    sessionNode || inspectedNode.graphNode ? 'Properties' : 'Chat',
+    ...(hasRunsPanel(inspectedNode, graph) ? ['Runs'] : [])];
+  const defaultInspectorTab = sessionNode || inspectedNode.graphNode ? 'Chat' : 'Properties';
+  const [activeTab, setActiveTab] = React.useState(defaultInspectorTab);
+  React.useEffect(() => setActiveTab(defaultInspectorTab), [defaultInspectorTab, inspectedNode.id]);
+  const visibleTab = labels.includes(activeTab) ? activeTab : defaultInspectorTab;
+  const target = {kind:inspectedNode.graphNode ? 'graph' : sessionNode ? 'session' : 'node',
+    id:inspectedNode.id, graphId:inspectedNode.graph_id || '', name:inspectedNode.title,
+    node:inspectedNode.graphNode ? null : inspectedNode};
+  const properties = <section aria-label="Properties"><window.NodeInspector key={inspectedNode.id} node={inspectedNode}/></section>;
+  const chat = <section aria-label="Chat">{inspectedNode.live && (inspectedNode.has_conversation || inspectedNode.graphNode || nodeModelRow(inspectedNode)) ?
+    <NodeModelConversation key={inspectedNode.id + ':conversation'} node={inspectedNode} scope={scope} openConversation={openConversation}/> :
+    <p role="status" style={{ margin:0, fontSize:12, lineHeight:1.5, color:LM.inkSoft }}>No conversation yet.</p>}</section>;
   return (
-    <aside className="ah-scroll" style={{
+    <aside aria-label="Selection inspector" style={{
       gridColumn:'2', gridRow:'2',
       background:LM.bgPanel, borderLeft:`1px solid ${LM.line}`,
-      overflow:'auto', minHeight:0,
-      padding:'14px 16px 20px',
-      display:'flex', flexDirection:'column', gap:LM.sp.lg,
+      overflow:'hidden', minHeight:0,
+      display:'grid', gridTemplateRows:'1fr auto',
     }}>
-      <div>
-        <div style={{ display:'flex', alignItems:'center', gap:7 }}>
-          <span style={{ color:cat.col, fontFamily:LM.mono }}>{cat.icon}</span>
-          <span style={{ fontFamily:LM.mono, fontSize:9, color:cat.col, letterSpacing:'0.18em' }}>{cat.label}</span>
+      <div className="ah-scroll" style={{ overflow:'auto', padding:'14px 16px 20px', display:'flex', flexDirection:'column', gap:LM.sp.lg }}>
+        <div>
+          <div style={{ display:'flex', alignItems:'center', gap:7 }}>
+            <span style={{ color:cat.col, fontFamily:LM.mono }}>{cat.icon}</span>
+            <span style={{ fontFamily:LM.mono, fontSize:9, color:cat.col, letterSpacing:'0.18em' }}>
+              {inspectedNode.graphNode ? 'GRAPH' : cat.label}</span>
+          </div>
+          <div style={{ fontFamily:LM.serif, fontSize:21, letterSpacing:'-0.015em', marginTop:5, lineHeight:1.05 }}>
+            {inspectedNode.title}
+          </div>
+          {inspectedNode.sub && <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:5, letterSpacing:'0.04em' }}>{inspectedNode.sub}</div>}
         </div>
-        <div style={{ fontFamily:LM.serif, fontSize:21, letterSpacing:'-0.015em', marginTop:5, lineHeight:1.05 }}>
-          {inspectedNode.title}
-        </div>
-        {inspectedNode.sub && <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:5, letterSpacing:'0.04em' }}>{inspectedNode.sub}</div>}
+        <InspectorTabs labels={labels} active={visibleTab} onSelect={setActiveTab}/>
+        {visibleTab === 'Chat' && chat}
+        {visibleTab === 'Properties' && properties}
+        {visibleTab === 'Runs' && <InspectorRuns node={inspectedNode} graph={graph}/>}
       </div>
-
-      {/* Connections, parameters and actions are one instrument — see studio-params.jsx.
-          The old block was dead form widgets: native selects, a bare range input and four
-          equal-weight buttons, none of which could be typed into or reverted. */}
-      <window.NodeInspector key={inspectedNode.id} node={inspectedNode}/>
-      {inspectedNode.live && (inspectedNode.has_conversation || nodeModelRow(inspectedNode)) && <NodeModelConversation key={inspectedNode.id + ':conversation'} node={inspectedNode} scope={scope} openConversation={openConversation}/>}
+      <ScopeComposer target={target} model={model} setPickerOpen={setPickerOpen} readiness={readiness}
+        onReadinessStale={onReadinessStale} onAccount={onAccount}/>
     </aside>
   );
 };

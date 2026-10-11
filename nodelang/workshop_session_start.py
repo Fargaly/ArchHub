@@ -29,7 +29,8 @@ def _turn_history(owner, browser, conversation, prefix, guard):
 
     def lookup(suffix):
         with owner.mutation_lock:
-            return history().get_by_idempotency(conversation, prefix + suffix, principal=browser.subject_root)
+            return history().get_by_idempotency(conversation, prefix + suffix,
+                principal=browser.subject_root, read_all=True)
 
     def context(before):
         with owner.mutation_lock:

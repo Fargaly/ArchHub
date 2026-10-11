@@ -140,6 +140,145 @@ def test_node_agent_turn_survives_reopen_without_replay(tmp_path, monkeypatch):
         reopened.close()
 
 
+def test_graph_agent_turn_survives_reopen_and_retry_without_replay(tmp_path, monkeypatch):
+    from nodelang import (
+        agent_composer, application_server, pipeline_engines, universal_application,
+    )
+    from nodelang.cell_secret_keys import MemorySigningKeyProvider
+
+    monkeypatch.setenv("ARCHHUB_GRAND_MAP_PATH",
+        str(Path(universal_application.__file__).parent / "data" / "public_runtime_map.json"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
+    monkeypatch.setattr(pipeline_engines, "brain_recall", lambda params, feeds: ({"out": ""}, ""))
+    calls = []
+
+    def fake_chat(prompt, context_block, model, **kwargs):
+        calls.append({"prompt": prompt, "model": model})
+        return json.dumps({"actions": [], "answer": "Graph answer one."})
+
+    monkeypatch.setattr(agent_composer, "_chat", fake_chat)
+    keys = MemorySigningKeyProvider("archhub.local.relationship-authority", secrets.token_bytes(32))
+    keys.add_key("archhub.local.court-attestation", secrets.token_bytes(32))
+    state = tmp_path / "app.sqlite3"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    def start():
+        return application_server.ApplicationServer(universal_state_path=state,
+            universal_key_provider=keys, universal_workspace_root=workspace,
+            enable_machine_transport=False, enable_universal_cloud_gateway=False,
+            enable_machine_projection_prewarm=False, live_watch=False).start()
+
+    def request(server, path, body=None):
+        call = Request(server.url + path, headers={"Content-Type": "application/json",
+            "Origin": server.url, "Cookie": "ArchHub-Session=" + server.browser_session_token,
+            "X-ArchHub-Session": server.browser_session_token,
+            "X-ArchHub-CSRF": server.browser_csrf_token},
+            data=None if body is None else json.dumps(body).encode())
+        try:
+            with urlopen(call, timeout=120) as response:
+                return json.loads(response.read())
+        except HTTPError as exc:
+            raise AssertionError(json.loads(exc.read())) from exc
+
+    first = start()
+    try:
+        scope = request(first, "/api/universal/canvas")["scope"]["current"]
+        body = {"prompt": "remember this graph turn", "model": "court/free",
+            "graph": True, "graph_id": scope, "request_id": "g1"}
+        sent = request(first, "/api/universal/agent", body)
+        assert sent["answer"] == "Graph answer one."
+    finally:
+        first.close()
+
+    reopened = start()
+    try:
+        read_before_retry = request(reopened, "/api/universal/workshop-transcript?" + urlencode(
+            {"node": "graph:" + scope, "scope": scope}))
+        assert [(row["kind"], row["text"]) for row in read_before_retry["rows"]] == [
+            ("message", "remember this graph turn"),
+            ("reply", "Graph answer one."),
+        ]
+        repeated = request(reopened, "/api/universal/agent", body)
+        assert repeated["answer"] == "Graph answer one."
+        assert len(calls) == 1
+        read = request(reopened, "/api/universal/workshop-transcript?" + urlencode(
+            {"node": "graph:" + scope, "scope": scope}))
+        assert read["conversation_root"] == application_server._agent_graph_conversation_root(
+            reopened.universal_registry, scope)
+        assert [(row["kind"], row["text"]) for row in read["rows"]] == [
+            ("message", "remember this graph turn"),
+            ("reply", "Graph answer one."),
+        ]
+    finally:
+        reopened.close()
+
+
+def test_non_model_canvas_node_agent_turn_uses_picked_model_and_persists(tmp_path, monkeypatch):
+    from nodelang import (
+        agent_composer, application_server, commit_intent, pipeline_engines,
+        universal_application,
+    )
+    from nodelang.cell_secret_keys import MemorySigningKeyProvider
+    from nodelang.universal_pipeline import create_engine_node
+
+    monkeypatch.setenv("ARCHHUB_GRAND_MAP_PATH",
+        str(Path(universal_application.__file__).parent / "data" / "public_runtime_map.json"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
+    monkeypatch.setattr(pipeline_engines, "brain_recall", lambda params, feeds: ({"out": ""}, ""))
+    calls = []
+
+    def fake_chat(prompt, context_block, model, **kwargs):
+        calls.append({"prompt": prompt, "model": model})
+        return json.dumps({"actions": [], "answer": "Node default model answer."})
+
+    monkeypatch.setattr(agent_composer, "_chat", fake_chat)
+    keys = MemorySigningKeyProvider("archhub.local.relationship-authority", secrets.token_bytes(32))
+    keys.add_key("archhub.local.court-attestation", secrets.token_bytes(32))
+    (tmp_path / "workspace").mkdir()
+    server = application_server.ApplicationServer(universal_state_path=tmp_path / "app.sqlite3",
+        universal_key_provider=keys, universal_workspace_root=tmp_path / "workspace",
+        enable_machine_transport=False, enable_universal_cloud_gateway=False,
+        enable_machine_projection_prewarm=False, live_watch=False).start()
+
+    def request(path, body=None):
+        call = Request(server.url + path, headers={"Content-Type": "application/json",
+            "Origin": server.url, "Cookie": "ArchHub-Session=" + server.browser_session_token,
+            "X-ArchHub-Session": server.browser_session_token,
+            "X-ArchHub-CSRF": server.browser_csrf_token},
+            data=None if body is None else json.dumps(body).encode())
+        try:
+            with urlopen(call, timeout=120) as response:
+                return json.loads(response.read())
+        except HTTPError as exc:
+            raise AssertionError(json.loads(exc.read())) from exc
+
+    try:
+        browser = server._resolve_browser_session(server.browser_session_token)
+        with server.mutation_lock:
+            with commit_intent.declare(commit_intent.USER_ACTION, actor="court",
+                                       reason="the user places a non-model node-chat fixture"):
+                node = create_engine_node(server.universal_store, server.universal_registry,
+                    title="Line Watcher", engine="lines.watch",
+                    authentication_context=browser.context)["root"]
+        body = {"prompt": "remember this ordinary node", "model": "court/free",
+            "node": node, "request_id": "n2"}
+        sent = request("/api/universal/agent", body)
+        assert sent["answer"] == "Node default model answer."
+        assert calls == [{"prompt": "remember this ordinary node", "model": "court/free"}]
+        scope = request("/api/universal/canvas")["scope"]["current"]
+        read = request("/api/universal/workshop-transcript?" + urlencode(
+            {"node": node, "scope": scope}))
+        assert [(row["kind"], row["text"]) for row in read["rows"]] == [
+            ("message", "remember this ordinary node"),
+            ("reply", "Node default model answer."),
+        ]
+    finally:
+        server.close()
+
+
 def test_node_agent_retry_after_dispatched_without_reply_does_not_replay(tmp_path, monkeypatch):
     from nodelang import (
         agent_composer, application_server, commit_intent, pipeline_engines,

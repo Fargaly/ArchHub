@@ -14,7 +14,8 @@ const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const seedText = read('nodelang/universal_presentation_seed.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
 const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)].map(m => [m[1], m[2]]));
 
-async function mountStudio({workshops = [], unavailable, models} = {}) {
+async function mountStudio({workshops = [], unavailable, models, canvasGraphId = 'graph-a',
+  sessions = [{id:'graph-a', title:'ArchHub', state:'idle', file:'Graph composition'}], currentGraph = 'graph-a'} = {}) {
   const manifest = JSON.parse(read('nodelang/studio/compiled/manifest.json'));
   const held = manifest.files.find(file => file.source === 'studio-lm.jsx');
   const live = createHash('sha256').update(fs.readFileSync(path.join(root, 'nodelang/studio/studio-lm.jsx'))).digest('hex');
@@ -30,8 +31,9 @@ async function mountStudio({workshops = [], unavailable, models} = {}) {
   const authorization = {subject:'owner-a', session:'view-a'};
   const graph = {nodes:[], wires:[]};
   const listeners = new Set();
-  const snapshot = {canvas:{graph_id:'graph-a', root:'scope-a', revision:7, authorization,
-      ...(unavailable === undefined ? {} : {unavailable})}, workshops,
+  const canvas = {root:'scope-a', revision:7, authorization, ...(unavailable === undefined ? {} : {unavailable})};
+  if (canvasGraphId) canvas.graph_id = canvasGraphId;
+  const snapshot = {canvas, workshops,
     applicationUpdate:{state:'idle', current_build:'20260923-r8'},
     topology:{canvas:{application_root:'graph-a', scope:{current:'scope-a'}, authorization, revision:7}, graph, selected:null}};
   const owner = {
@@ -41,8 +43,7 @@ async function mountStudio({workshops = [], unavailable, models} = {}) {
   };
   win.ARCHHUB_EXISTING_WORKSHOP = new Proxy(owner, {get:(target, key) => key in target || typeof key !== 'string' ||
     key === 'then' ? target[key] : () => new Promise(() => {})});
-  win.ARCHHUB_LIVE = {sessions:[{id:'graph-a', title:'ArchHub', state:'idle', file:'Graph composition'}],
-    currentGraph:'graph-a', hosts:[], connectors:[], graph, memory:[], skills:[]};
+  win.ARCHHUB_LIVE = {sessions, currentGraph, hosts:[], connectors:[], graph, memory:[], skills:[]};
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
   for (const file of manifest.files) {
@@ -51,42 +52,92 @@ async function mountStudio({workshops = [], unavailable, models} = {}) {
   win.eval('window.__studioRoot=ReactDOM.createRoot(document.getElementById("root")); ReactDOM.flushSync(()=>window.__studioRoot.render(React.createElement(StudioLM)));');
   const doc = win.document;
   const flush = action => win.ReactDOM.flushSync(action);
-  const segment = label => label === 'Workshop' ? doc.querySelector('button[aria-label="Open the Workshop"]') :
+  const segment = label => label === 'Workshop' ? doc.querySelector('button[data-tool-rail="workshop"]') :
     [...doc.querySelectorAll('button[aria-pressed]')].find(button => button.textContent.trim() === label);
-  const inWorkshop = () => !doc.querySelector('button[aria-label="Open the Workshop"]');
+  const fullWorkshopTabs = () => [...doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')];
+  const inWorkshop = () => fullWorkshopTabs().length > 0 || !!doc.querySelector('main[data-tool-view="workshop"]') ||
+    /Workshop projects|No Workshop project/.test(doc.body.textContent);
   const spoken = () => [...doc.querySelectorAll('[role="alert"], [role="status"]')].map(node => node.textContent.trim()).join(' | ');
   const close = () => { try { flush(() => win.__studioRoot.unmount()); } finally { dom.window.close(); } };
-  return {doc, win, flush, segment, spoken, close, inWorkshop};
+  return {doc, win, flush, segment, spoken, close, inWorkshop, fullWorkshopTabs};
 }
-test('Workshop with no room answers the click with the owner reason as visible text; with a room it opens', async () => {
+test('Workshop opens from the rail view, not from a Studio header Chat segment', async () => {
   const reason = 'This account has no read access to the Workshop.';
   const refused = await mountStudio({workshops:[], unavailable:reason});
   try {
     const workshop = refused.segment('Workshop');
-    assert.ok(workshop, 'Chat offers the Workshop button');
-    assert.equal(refused.spoken().includes(reason), false, 'nothing is claimed before the click');
+    assert.ok(workshop, 'the rail offers Workshop');
+    assert.equal([...refused.doc.querySelectorAll('main > div button')].some(button => button.textContent.trim() === 'Workshop'), false,
+      'the Studio header does not offer a Workshop tab');
     refused.flush(() => workshop.click());
-    assert.ok(refused.spoken().includes(reason), 'the click draws why, got: ' + JSON.stringify(refused.spoken()));
-    assert.equal(workshop.disabled, false, 'Workshop stays clickable so it can answer');
-    assert.equal(workshop.getAttribute('aria-disabled'), 'true', 'and states that no room is available');
-    assert.match(workshop.style.border, /dashed/, 'drawn dashed, never alpha');
-    assert.equal(refused.segment('Chat').getAttribute('aria-pressed'), 'true', 'no conversation was opened');
+    assert.equal(refused.inWorkshop(), true,
+      'the Workshop rail opens the Workshop view even with no room: ' + refused.doc.body.textContent.slice(0, 240));
   } finally { refused.close(); }
 
-  const silent = await mountStudio({workshops:[]});
+  const silent = await mountStudio({workshops:[], canvasGraphId:''});
   try {
     silent.flush(() => silent.segment('Workshop').click());
-    assert.ok(silent.spoken().includes('No Workshop conversation in this scope'),
-      'without an owner reason the click still says why, got: ' + JSON.stringify(silent.spoken()));
+    assert.equal(silent.doc.querySelector('main[data-tool-view="workshop"]'), null,
+      'fresh profile Workshop rail does not fall back to the Studio Home tool page');
+    assert.deepEqual(silent.fullWorkshopTabs().map(tab => tab.getAttribute('aria-label')),
+      ['Chat', 'Tasks', 'Router', 'Relay', 'Prompts', 'Agents', 'Approvals'],
+      'fresh profile with no owner rows still opens the full Workshop tab bar');
+    assert.ok(silent.fullWorkshopTabs().some(tab => tab.getAttribute('aria-label') === 'Router'));
+    assert.ok(silent.fullWorkshopTabs().some(tab => tab.getAttribute('aria-label') === 'Relay'));
+    assert.ok(silent.fullWorkshopTabs().some(tab => tab.getAttribute('aria-label') === 'Tasks'));
   } finally { silent.close(); }
 
   const open = await mountStudio({workshops:[{root:'room-a', label:'Wall conversion', is_general:false}]});
   try {
-    assert.equal(open.inWorkshop(), false, 'the Studio opens on plain Chat');
+    assert.equal(open.inWorkshop(), false, 'the Studio opens on the canvas, not inside Workshop');
     open.flush(() => open.segment('Workshop').click());
-    assert.equal(open.inWorkshop(), true, 'the room opens as the Workshop conversation');
-    const header = [...open.doc.querySelectorAll('button[aria-pressed]')].find(button => button.textContent.trim() === 'Workshop');
-    assert.equal(header && header.getAttribute('aria-pressed'), 'true', 'the open room shows as the header Workshop segment');
-    assert.equal(open.spoken().includes('No Workshop conversation'), false, 'no refusal is drawn beside an open room');
+    assert.equal(open.inWorkshop(), true, 'the rail opens the Workshop view');
+    assert.deepEqual(open.fullWorkshopTabs().map(tab => tab.getAttribute('aria-label')),
+      ['Chat', 'Tasks', 'Router', 'Relay', 'Prompts', 'Agents', 'Approvals'],
+      'rail Workshop opens the full Workshop tab bar');
+    assert.equal(open.fullWorkshopTabs().find(tab => tab.getAttribute('aria-label') === 'Tasks')?.getAttribute('aria-selected'), 'true',
+      'rail Workshop lands on the Tasks tab');
+    assert.equal([...open.doc.querySelectorAll('main > div button')].some(button => button.textContent.trim() === 'Workshop'), false,
+      'the open Workshop is not represented as a Studio header segment');
+    open.flush(() => open.doc.querySelector('button[aria-label^="Leave Workshop"]').click());
+    assert.ok(open.doc.querySelector('[role="region"][aria-label="Workflow canvas"]'), 'leaving Workshop returns to Canvas');
+    assert.equal(open.doc.querySelectorAll('input[aria-label="Ask selection"]').length, 1,
+      'Canvas selection panel has one composer after leaving Workshop');
+    assert.equal(open.doc.querySelectorAll('[data-model-indicator]').length, 1,
+      'Canvas selection panel has one model indicator after leaving Workshop');
+    assert.equal(open.doc.querySelector('input[aria-label="Reply"]'), null,
+      'legacy ChatView reply input is not mounted after leaving Workshop');
   } finally { open.close(); }
+});
+
+test('graphless profile Workshop rail opens Workshop content, never Home', async () => {
+  const studio = await mountStudio({workshops:[], canvasGraphId:'', sessions:[], currentGraph:null});
+  try {
+    studio.flush(() => studio.segment('Workshop').click());
+    assert.equal(studio.doc.querySelector('main[data-tool-view="workshop"]') !== null || studio.fullWorkshopTabs().length > 0, true,
+      'Workshop content is visible with no session and no graph id');
+    assert.equal(/New graph|Open a saved graph|Recent sessions/.test(studio.doc.body.textContent), false,
+      'Workshop rail did not fall through to Home');
+  } finally { studio.close(); }
+});
+
+test('first Workshop rail switch stays under the synchronous render budget', async () => {
+  const studio = await mountStudio({workshops:[{root:'room-a', label:'Wall conversion', is_general:false}]});
+  try {
+    const started = studio.win.performance.now();
+    studio.flush(() => studio.segment('Workshop').click());
+    const elapsed = studio.win.performance.now() - started;
+    assert.equal(studio.inWorkshop(), true, 'Workshop opened from rail');
+    assert.ok(elapsed < 300, 'first Workshop switch took ' + elapsed.toFixed(1) + ' ms');
+    console.log('first Workshop rail switch ms=' + elapsed.toFixed(1));
+    const chat = studio.fullWorkshopTabs().find(tab => tab.getAttribute('aria-label') === 'Chat');
+    assert.ok(chat, 'Workshop Chat tab exists');
+    const chatStarted = studio.win.performance.now();
+    studio.flush(() => chat.click());
+    const chatElapsed = studio.win.performance.now() - chatStarted;
+    assert.equal(studio.fullWorkshopTabs().find(tab => tab.getAttribute('aria-label') === 'Chat')?.getAttribute('aria-selected'), 'true',
+      'Chat tab selected');
+    assert.ok(chatElapsed < 300, 'first Workshop Chat tab switch took ' + chatElapsed.toFixed(1) + ' ms');
+    console.log('first Workshop Chat tab switch ms=' + chatElapsed.toFixed(1));
+  } finally { studio.close(); }
 });

@@ -125,6 +125,8 @@ def _admit(owner, binding, root, scope, *, allow_child=False):
         if workbench_visible:
             workbench_visible = any(member.role_id == registry.roles["scope"] and member.participant_id == root
                 for member in read_relation(snapshot, workbench, budget=100_000))
+        graph_bound_visible = bool(allow_child and trail and trail[-1] == scope
+            and root == agent_graph_conversation_root(registry, scope))
         node_bound_visible = False
         if allow_child and trail and trail[-1] == scope:
             lens_roots = tuple(member.participant_id for member in read_relation(
@@ -138,12 +140,12 @@ def _admit(owner, binding, root, scope, *, allow_child=False):
                        for row in rows):
                     node_bound_visible = True
                     break
-        if not trail or trail[-1] != scope or not (root in visible or workbench_visible or node_bound_visible):
+        if not trail or trail[-1] != scope or not (root in visible or workbench_visible or node_bound_visible or graph_bound_visible):
             raise AuthorizationDenied("Workshop is no longer on this canvas")
     space = read_deliberation_space(snapshot, registry.deliberation_protocol, root)
     if root != registry.workshop_root:
         from .conversation_content import read_content_binding
-        if not (workbench_visible or node_bound_visible) or binding.subject_root not in space.participant_roots:
+        if not (workbench_visible or node_bound_visible or graph_bound_visible) or binding.subject_root not in space.participant_roots:
             raise AuthorizationDenied("Conversation is not attached to this Workshop, canvas node or caller")
         read_content_binding(snapshot, registry.deliberation_protocol,
             application_root=registry.application_root, space_root=root)
@@ -519,6 +521,13 @@ def _read_ordinary_browser_workshop(owner, binding, *, root, scope, expected_rev
 TRANSCRIPT_KINDS = ("message", "reply", "tool")
 
 
+def agent_graph_conversation_root(registry, graph):
+    digest = hashlib.sha256(
+        json.dumps(["graph", graph], separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return "app:workshop:conversation:graph:" + digest
+
+
 def _direct_model_reply(content):
     prefix = "Model reply from "
     if type(content) is not str or not content.startswith(prefix) or ":\n" not in content:
@@ -545,6 +554,17 @@ def read_canvas_node_transcript(owner, binding, *, node, scope, session_token, b
         authentication_context=binding.context)
     if (projection.get("scope") or {}).get("current") != scope:
         raise AuthorizationDenied("Canvas scope changed; refresh the canvas")
+    graph_id = node[len("graph:"):] if node.startswith("graph:") else None
+    if graph_id is not None:
+        if graph_id != scope:
+            raise AuthorizationDenied("That graph is not the current canvas")
+        root = agent_graph_conversation_root(owner.universal_registry, graph_id)
+        head = {"ok": True, "node": node, "conversation_root": root, "revision": projection.get("revision")}
+        if root not in owner.universal_store.snapshot().cells:
+            return {**head, "has_older": False, "next_before": None, "rows": []}
+        page = read_browser_workshop(owner, binding, root=root, scope=scope, session_token=session_token,
+                                     before=before, feed="messages")
+        return _render_canvas_transcript(owner, binding, root, head, page)
     found = [row for row in projection.get("nodes", ()) if row.get("id") == node]
     if len(found) != 1:
         raise AuthorizationDenied("That node is not on this canvas")
@@ -554,6 +574,10 @@ def read_canvas_node_transcript(owner, binding, *, node, scope, session_token, b
         return {**head, "has_older": False, "next_before": None, "rows": []}
     page = read_browser_workshop(owner, binding, root=root, scope=scope, session_token=session_token,
                                  before=before, feed="messages")
+    return _render_canvas_transcript(owner, binding, root, head, page)
+
+
+def _render_canvas_transcript(owner, binding, root, head, page):
     labels = {row["root"]: (row.get("host") or row.get("label") or "") for row in page.get("participants", ())}
     me = page.get("self")
     messages = list(page.get("messages", ()))

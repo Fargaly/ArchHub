@@ -1232,6 +1232,27 @@ const WorkshopUtilityPanel = ({ label, children }) => (
     </div>
   </section>
 );
+const useDeferredWorkshopPanel = panel => {
+  const shouldDefer = panel === 'chat' || panel === 'router';
+  const [readyPanel, setReadyPanel] = React.useState(shouldDefer ? '' : panel);
+  React.useEffect(() => {
+    if (!shouldDefer) { setReadyPanel(panel); return; }
+    let gone = false, timer = 0, frame = 0;
+    setReadyPanel('');
+    const done = () => { if (!gone) setReadyPanel(panel); };
+    if (typeof requestAnimationFrame === 'function') {
+      frame = requestAnimationFrame(() => { timer = setTimeout(done, 0); });
+    } else {
+      timer = setTimeout(done, 0);
+    }
+    return () => {
+      gone = true;
+      if (frame && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame);
+      if (timer) clearTimeout(timer);
+    };
+  }, [shouldDefer, panel]);
+  return !shouldDefer || readyPanel === panel;
+};
 
 const WorkshopRouterTab = ({ live, error, loading, saving, selected, onSave, tasks }) => {
   const options = (live?.groups || []).flatMap(group => group.items || []).filter(wsFreeRoute)
@@ -1383,11 +1404,13 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   useStore();
   const authority = window.ARCHHUB_STUDIO_AUTHORITY || window.ARCHHUB_EXISTING_WORKSHOP;
   const existing = !window.ARCHHUB_STUDIO_AUTHORITY;
-  const nativeAvailable = existing && descriptor.native_work_available !== false;
+  const unavailableWorkshop = descriptor?.unavailable === true;
+  const nativeAvailable = existing && !unavailableWorkshop && descriptor.native_work_available !== false;
   const transcript = wsTranscript(state, descriptor);
   const [preset, setPreset] = React.useState(sel?.tab || 'chat');   // projects · board · chat · agents · approvals · task
   const [ownSel, setOwnSel] = React.useState({ agent:null, task:null });
   const S = sel || ownSel, setS = setSel || setOwnSel;
+  const panelReady = useDeferredWorkshopPanel(preset);
   const [tidy, setTidy] = React.useState(false);
   const [chain, setChain] = React.useState(false);
   const [controlsOpen, setControlsOpen] = React.useState(false);
@@ -1452,7 +1475,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
       .finally(() => { if (!controller.signal.aborted) setRouterLoading(false); });
     return () => controller.abort();
   }, []);
-  React.useEffect(() => preset === 'router' ? routerRead() : undefined, [preset, routerRead]);
+  React.useEffect(() => preset === 'router' && panelReady ? routerRead() : undefined, [preset, panelReady, routerRead]);
   const saveRouterModel = async route => {
     if (routerSaving) return;
     setRouterSaving(true); setRouterError('');
@@ -2077,6 +2100,8 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     finally { busyRef.current = false; if (mounted.current) setBusy(false); }
   };
   React.useEffect(() => {
+    const unavailable = descriptor?.unavailable === true;
+    if (unavailable || !descriptor.root) return;
     let disposed = false, timer, active = false;
     let nativeCursor = authority.getSnapshot()?.workshop?.content_cursor || null;
     let lastNativeRead = Date.now();
@@ -2122,7 +2147,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     document.addEventListener('visibilitychange', visibility);
     refresh();
     return () => { disposed = true; clearTimeout(timer); document.removeEventListener('visibilitychange', visibility); };
-  }, [authority, descriptor.root, nativeAvailable, nativeTarget]);
+  }, [authority, descriptor.root, nativeAvailable, nativeTarget, descriptor?.unavailable]);
   const participants = transcript?.participants || [];
   const nativeContacts = store.contacts, contactError = store.contactError, contactsLoading = store.contactsLoading;
   // The recipient picker offers connections that are here now; an offline one is one choice away.
@@ -2172,7 +2197,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   // The Workshop itself is the default recipient (design studio-workshop.jsx composer,
   // "to: Workshop"): opening a room no longer pre-addresses one model agent.
   const names = new Map(participants.map(row => [row.root, row.label]));
-  const messages = transcript?.messages || [];
+  const messages = panelReady ? (transcript?.messages || []) : [];
   // A connected agent's name as the relay recorded it on its reply ("relayed reply from <name>"),
   // so an agent is never shown by its contact root on this page.
   const relayLabels = new Map(messages.filter(m => typeof m.relayed_from === 'string' && typeof m.relayed_label === 'string' && m.relayed_label)
@@ -2311,11 +2336,12 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const messagePageIdentity = JSON.stringify([state?.canvas?.graph_id, state?.canvas?.root,
     descriptor.root, feed, page?.before ?? null, transcript?.owner ?? null, transcript?.view ?? null]);
   React.useLayoutEffect(() => {
+    if (!panelReady) return;
     const successful = !!transcript && !transcript.error &&
       (!content || transcript.page_before === (page?.before ?? null));
     messageScroll.current.update(messageViewport.current, messagePageIdentity, successful, olderPage, latestJump.current);
     if (successful && !olderPage) latestJump.current = false;
-  }, [messagePageIdentity, transcript, messageTextSize, preset]);
+  }, [panelReady, messagePageIdentity, transcript, messageTextSize, preset]);
   React.useEffect(() => {
     if (typeof ResizeObserver !== 'function') return;
     const observer = new ResizeObserver(() => messageScroll.current.reflow(messageViewport.current));
@@ -3192,19 +3218,23 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     </>
   );
 
-  const stream = (
+  const renderStream = () => (
     <section aria-label="Workshop conversation" style={{ display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
       <div ref={messageViewport} className="ah-scroll" onScroll={() => messageScroll.current.scroll(messageViewport.current)}
         style={{ flex:1, overflow:'auto', overflowAnchor:'none', padding:'20px 0 10px' }}>
         <div ref={messageContent} style={{ maxWidth: preset==='chat' ? 760 : 'none', margin:'0 auto', padding:'0 26px', display:'flex', flexDirection:'column', gap:20 }}>
-          {transcript?.error && <div role="alert" style={{ fontSize:12.5, color:W.err }}>{transcript.error}</div>}
-          {!transcript && <div role="status" style={{ fontFamily:W.serif, fontSize:15, color:W.inkSoft }}>Loading messages…</div>}
-          <ConversationArchiveNotice root={descriptor.root}/>
-          {!content && transcript?.has_older && <div style={{ fontSize:12.5, color:W.inkSoft }}>Showing the available recent messages.</div>}
-          {openingAsk < 0 && !anchoredWorkflow && workflowCard}
-          {workflowsPanel}
-          {transcript && !transcript.error && !messages.length && <div style={{ fontFamily:W.serif, fontSize:15, color:W.inkSoft }}>{olderPage ? 'No messages on this page.' : 'No messages have been sent in this Workshop yet.'}</div>}
-          {taskItems.map((item, index) => {
+          {!panelReady && <div role="status" style={{ fontFamily:W.serif, fontSize:15, color:W.inkSoft }}>Loading messages…</div>}
+          {panelReady && transcript?.error && <div role="alert" style={{ fontSize:12.5, color:W.err }}>{transcript.error}</div>}
+          {unavailableWorkshop && <div role="status" style={{ fontFamily:W.serif, fontSize:15, color:W.inkSoft }}>
+            {descriptor.unavailable_reason || 'No Workshop conversation in this scope'}
+          </div>}
+          {panelReady && !unavailableWorkshop && !transcript && <div role="status" style={{ fontFamily:W.serif, fontSize:15, color:W.inkSoft }}>Loading messages…</div>}
+          {panelReady && <ConversationArchiveNotice root={descriptor.root}/>}
+          {panelReady && !content && transcript?.has_older && <div style={{ fontSize:12.5, color:W.inkSoft }}>Showing the available recent messages.</div>}
+          {panelReady && openingAsk < 0 && !anchoredWorkflow && workflowCard}
+          {panelReady && workflowsPanel}
+          {panelReady && transcript && !transcript.error && !messages.length && <div style={{ fontFamily:W.serif, fontSize:15, color:W.inkSoft }}>{olderPage ? 'No messages on this page.' : 'No messages have been sent in this Workshop yet.'}</div>}
+          {panelReady && taskItems.map((item, index) => {
             if (item.kind !== 'task') {
               if (!isWorkProposal(item.message)) return msgRow(item.message);
               const proposal = wsProposalTask(item.message, proposalHeld[item.message.message_id || item.message.root]);
@@ -3348,21 +3378,26 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     </section>
   );
 
-  const routerTasks = allTasks.slice(0, 12).map(task => ({...task, model:wsTaskModel(task, native, transcript), cost:wsTaskCost(task)}));
-  const routerPage = <WorkshopRouterTab live={routerLive} error={routerError} loading={routerLoading}
-    saving={routerSaving} selected={routerSelected} onSave={saveRouterModel} tasks={routerTasks}/>;
-  const relayPage = <WorkshopRelayTab consent={relayConsent} session={relaySession} error={relayError}
-    busy={relayBusy} onToggle={toggleRelay} onSignIn={signInRelay}/>;
-  const promptsPage = <WorkshopPromptsTab prompts={prompts} loading={promptsLoading} error={promptsError}
-    values={promptValues} onValue={setPromptBlank} onUse={usePrompt} canSave={!!promptSave} onSave={savePrompt}
-    canShare={!!promptShare} onShare={sharePrompt}/>;
-
   const cols = externalRail
     ? (preset==='board' ? 'minmax(0,1fr) 300px' : 'minmax(0,1fr) 320px')
     : (preset==='board' ? '212px minmax(0,1fr) 300px' : '262px minmax(0,1fr) 320px');
-  const middle = WORKSHOP_TASK_PRESETS.includes(preset) ? workPage : preset === 'agents' ? agentsPage :
-    preset === 'approvals' ? approvalsPage : preset === 'task' ? taskPage : preset === 'router' ? routerPage :
-    preset === 'relay' ? relayPage : preset === 'prompts' ? promptsPage : stream;
+  let middle = null;
+  if (WORKSHOP_TASK_PRESETS.includes(preset)) middle = workPage;
+  else if (preset === 'agents') middle = agentsPage;
+  else if (preset === 'approvals') middle = approvalsPage;
+  else if (preset === 'task') middle = taskPage;
+  else if (preset === 'router') {
+    const routerTasks = panelReady ? allTasks.slice(0, 12).map(task => ({...task, model:wsTaskModel(task, native, transcript), cost:wsTaskCost(task)})) : [];
+    middle = <WorkshopRouterTab live={panelReady ? routerLive : null} error={routerError} loading={!panelReady || routerLoading}
+      saving={routerSaving} selected={routerSelected} onSave={saveRouterModel} tasks={routerTasks}/>;
+  } else if (preset === 'relay') {
+    middle = <WorkshopRelayTab consent={relayConsent} session={relaySession} error={relayError}
+      busy={relayBusy} onToggle={toggleRelay} onSignIn={signInRelay}/>;
+  } else if (preset === 'prompts') {
+    middle = <WorkshopPromptsTab prompts={prompts} loading={promptsLoading} error={promptsError}
+      values={promptValues} onValue={setPromptBlank} onUse={usePrompt} canSave={!!promptSave} onSave={savePrompt}
+      canShare={!!promptShare} onShare={sharePrompt}/>;
+  } else middle = renderStream();
   return (
     <main style={{ gridColumn:'1 / -1', gridRow:'2', minHeight:0, overflow:'hidden', display:'grid',
       gridTemplateColumns:'minmax(0,1fr)', gridTemplateRows:'42px 48px minmax(0,1fr)', border:`1px solid ${W.line}`,

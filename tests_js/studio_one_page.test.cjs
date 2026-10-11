@@ -3,7 +3,8 @@
          empties the history behind /studio; tests_replica/test_studio_window_is_one_page.py);
      P2  the mouse's Back / Forward buttons (3, 4) are refused;
      P3  Ctrl+K opens the node library (User-Agency mandate), and Esc closes it;
-     P4  the Studio opens on Chat with the design's two-segment switch, Chat and Canvas. */
+     P4  the Studio opens on Canvas; Chat moved into the selection inspector composer and
+         Workshop moved to the rail tool view. */
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -94,12 +95,15 @@ test('P3: Ctrl+K opens the node library; Esc closes it', async () => {
   } finally { studio.close(); }
 });
 
-test('P4: the Studio opens on Chat; the header is Chat · Workshop · Canvas', async () => {
+test('P4: the Studio opens on Canvas; Chat input moved to the selection panel and Workshop to the rail', async () => {
   const studio = await mountStudio({workshops:[{root:'general-a', label:'Workshop', is_general:true}]});
   try {
-    const segments = [...studio.doc.querySelectorAll('button[aria-pressed]')].map(button =>
-      button.textContent.trim() + (button.getAttribute('aria-pressed') === 'true' ? '*' : ''));
-    assert.deepEqual(segments, ['Chat*', 'Workshop', 'Canvas']);
-    assert.ok(studio.doc.querySelector('button[aria-label="Open the Workshop"]'), 'plain Chat, with the Workshop one click away');
+    assert.ok(studio.doc.querySelector('[role="region"][aria-label="Workflow canvas"]'), 'Canvas is the default session view');
+    const headerButtons = [...studio.doc.querySelectorAll('main > div button')].map(button => button.textContent.trim());
+    for (const moved of ['Chat', 'Workshop', 'System']) assert.equal(headerButtons.includes(moved), false,
+      moved + ' moved out of the Studio session header');
+    assert.equal(studio.doc.querySelectorAll('input[aria-label="Ask selection"]').length, 1,
+      'Chat moved to the single selection-panel composer');
+    assert.ok(studio.doc.querySelector('button[data-tool-rail="workshop"]'), 'Workshop is reached from the rail');
   } finally { studio.close(); }
 });

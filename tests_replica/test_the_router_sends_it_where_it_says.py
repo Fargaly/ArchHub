@@ -1632,13 +1632,16 @@ def _block(source, opening, closing):
 
 def test_the_canvas_composer_asks_the_model_that_is_selected():
     jsx = _jsx()
-    composer = _block(jsx, "const FloatingComposer = ", "// ─── mini-map")
-    assert "FloatingComposer = ({ setLibraryOpen, model, node })" in composer
-    assert "model={model}" in composer, "the picked model reaches the ask"
-    canvas = _block(jsx, "const NodeCanvas = ", "// Top-left hint strip")
-    assert "addNodeFromLibrary, model," in canvas, "the canvas carries it down"
-    assert "<FloatingComposer key={focusId || 'canvas'} setLibraryOpen={setLibraryOpen} model={model}" in canvas
-    assert "node={allNodes.find(n => n.id === focusId && n.live && nodeModelRow(n))}" in canvas
+    composer = _block(jsx, "const ScopeComposer = ", "const InspectorTabs = ")
+    assert "const route = nodeRoute || modelRoute(model);" in composer, "the picked/default model reaches the moved composer"
+    assert "target.kind === 'graph'" in composer and "graph:true" in composer, "empty selection sends the graph target"
+    assert "request_id:requestId" in composer, "canvas sends carry the idempotency key"
+    rail = _block(jsx, "const NodeRail = ", "// ─── Conversation rail")
+    assert "<ScopeComposer target={target} model={model}" in rail, "the one composer sits in the selection panel"
+    assert "node:inspectedNode.graphNode ? null : inspectedNode" in rail, "node selection targets that node"
+    workspace = _block(jsx, "const Workspace = ", "// The string the server's router reads")
+    assert "<NodeCanvas" in workspace and "addNodeFromLibrary={addNodeFromLibrary} model={model}" in workspace
+    assert "<NodeRail" in workspace and "model={model}" in workspace
     assert "<NodeCanvas" in jsx and "addNodeFromLibrary={addNodeFromLibrary} model={model}" in jsx
     ask = _block(jsx, "const InlineAsk = ", "const NodeBody = ")
     # Canvas asks use the picked route; focused node asks use the node's
@@ -1652,10 +1655,10 @@ def test_the_canvas_composer_asks_the_model_that_is_selected():
 
 def test_the_answer_is_rendered_where_the_person_typed():
     jsx = _jsx()
-    composer = _block(jsx, "const FloatingComposer = ", "// ─── mini-map")
-    assert "const [answer, setAnswer] = React.useState('')" in composer
-    assert "onAnswer={setAnswer}" in composer, "the ask reports back into the box"
-    assert "{answer && (" in composer, "and the box draws it"
+    composer = _block(jsx, "const ScopeComposer = ", "const InspectorTabs = ")
+    assert "const [state, setState] = React.useState('')" in composer
+    assert "setState(answer)" in composer, "the ask reports back into the box"
+    assert "{state && <p role=\"status\"" in composer, "and the box draws it"
     assert "whiteSpace:'pre-wrap'" in composer, "a whole answer, not a 60 character stub"
     ask = _block(jsx, "const InlineAsk = ", "const NodeBody = ")
     assert "report(answer)" in ask and "report('refused: '" in ask

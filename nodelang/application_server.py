@@ -4798,11 +4798,16 @@ def _agent_node_conversation_root(registry, node):
     return "app:workshop:conversation:node:" + digest
 
 
+def _agent_graph_conversation_root(registry, graph):
+    from .existing_workshop_conversation import agent_graph_conversation_root
+    return agent_graph_conversation_root(registry, graph)
+
+
 def _agent_node_request_id(body):
     request_id = body.get("request_id") if isinstance(body, Mapping) else None
     if (type(request_id) is not str or not 1 <= len(request_id) <= 128
             or "\x00" in request_id):
-        raise InvalidCell("Agent node send requires one exact request identity")
+        raise InvalidCell("Agent canvas send requires one exact request identity")
     return request_id
 
 
@@ -4826,8 +4831,19 @@ def _agent_node_conversation_binding(owner, binding, body, current_authority):
         matches = [row for row in projection.get("nodes", ()) if row.get("id") == node]
         if len(matches) != 1:
             raise InvalidCell("agent node is not visible in this canvas scope")
-        route = resolve_node_model_route(store, registry, projection, node,
-            model=model, authentication_context=binding.context)
+        node_model_capable = True
+        try:
+            route = resolve_node_model_route(store, registry, projection, node,
+                model=model, authentication_context=binding.context)
+        except InvalidCell as exc:
+            if "does not declare a supported model capability" not in str(exc):
+                raise
+            node_model_capable = False
+            route = (
+                str(model or "").strip()
+                or owner._read_agent_model()
+                or owner._default_agent_model()[0]
+            )
         snapshot = store.snapshot()
         view, _ = app._view_session_for_context(registry, binding.context)
         lens_roots = tuple(member.participant_id for member in read_relation(
@@ -4840,12 +4856,13 @@ def _agent_node_conversation_binding(owner, binding, body, current_authority):
         conversation = None
         if conversation_rows:
             conversation = app._node_conversation_root(app._text(snapshot, conversation_rows[0].value_root))
-        return projection, matches[0], route, (conversation_rows[0] if conversation_rows else None), conversation
+        return projection, matches[0], route, node_model_capable, (conversation_rows[0] if conversation_rows else None), conversation
 
     with owner.mutation_lock:
-        _projection, row, route, conversation_row, conversation = read_binding()
+        _projection, row, route, node_model_capable, conversation_row, conversation = read_binding()
         if conversation is not None:
-            return {"conversation": conversation, "node": node, "model": route}
+            return {"conversation": conversation, "node": node, "model": route,
+                "node_model_capable": node_model_capable}
         conversation_root = _agent_node_conversation_root(registry, node)
         title = "Node conversation " + conversation_root.rsplit(":", 1)[1][:12]
         key_digest = conversation_root.rsplit(":", 1)[1]
@@ -4858,21 +4875,67 @@ def _agent_node_conversation_binding(owner, binding, body, current_authority):
             participant_roots=(binding.subject_root,),
             idempotency_key="canvas-node:" + key_digest, before_commit=current_authority,
             conversation_root=conversation_root)
-        _projection, _row, route, conversation_row, conversation = read_binding()
+        _projection, _row, route, node_model_capable, conversation_row, conversation = read_binding()
         if conversation is not None:
             if conversation != created["root"]:
                 raise InvalidCell("agent node conversation binding changed")
-            return {"conversation": conversation, "node": node, "model": route}
+            return {"conversation": conversation, "node": node, "model": route,
+                "node_model_capable": node_model_capable}
         if conversation_row is None:
             app.create_universal_property(store, registry, node, "conversation", created["root"],
                 authentication_context=binding.context)
         else:
             app.edit_universal_property(store, registry, conversation_row.relation_root, created["root"],
                 authentication_context=binding.context)
-        _projection, _row, route, _conversation_row, conversation = read_binding()
+        _projection, _row, route, node_model_capable, _conversation_row, conversation = read_binding()
         if conversation != created["root"]:
             raise InvalidCell("agent node conversation binding was not saved")
-        return {"conversation": conversation, "node": node, "model": route}
+        return {"conversation": conversation, "node": node, "model": route,
+            "node_model_capable": node_model_capable}
+
+
+def _agent_graph_conversation_binding(owner, binding, body, current_authority):
+    """Return the durable conversation for the current graph-as-node target."""
+    from . import universal_application as app
+    from .workshop_conversation_catalog import create_workshop_conversation
+
+    if not (isinstance(body, Mapping) and body.get("graph") is True):
+        return None
+    requested_graph = body.get("graph_id")
+    if requested_graph is not None and (type(requested_graph) is not str or not requested_graph.strip()):
+        raise InvalidCell("agent graph target is invalid")
+    registry, store = owner.universal_registry, owner.universal_store
+
+    def read_binding():
+        current_authority()
+        projection = app.project_universal_canvas(
+            store, registry, authentication_context=binding.context)
+        graph = (projection.get("scope") or {}).get("current")
+        if type(graph) is not str or not graph:
+            raise InvalidCell("agent graph target is unavailable")
+        if requested_graph and requested_graph != graph:
+            raise AuthorizationDenied("agent graph target changed; refresh the canvas")
+        model = (
+            str(body.get("model") or "").strip()
+            or owner._read_agent_model()
+            or owner._default_agent_model()[0]
+        )
+        return projection, graph, model
+
+    with owner.mutation_lock:
+        _projection, graph, model = read_binding()
+        conversation_root = _agent_graph_conversation_root(registry, graph)
+        title = "Graph conversation " + conversation_root.rsplit(":", 1)[1][:12]
+        key_digest = conversation_root.rsplit(":", 1)[1]
+        created = create_workshop_conversation(owner, authentication_context=binding.context,
+            expected_revision=store.revision, title=title,
+            participant_roots=(binding.subject_root,),
+            idempotency_key="canvas-graph:" + key_digest, before_commit=current_authority,
+            conversation_root=conversation_root)
+        _projection, graph, model = read_binding()
+        if created["root"] != conversation_root:
+            raise InvalidCell("agent graph conversation binding changed")
+        return {"conversation": conversation_root, "node": graph, "model": model, "kind": "graph"}
 
 
 def answer_open_question(owner, utterance, context, payload, *, revalidate=None):
@@ -7885,10 +7948,21 @@ class ApplicationServer:
                             _revalidate_composer_context(owner, binding.context, self.path)
 
                         with _composer_planning(owner):
+                            if (isinstance(body, Mapping) and body.get("graph") is True
+                                    and type(body.get("node")) is str and body.get("node").strip()):
+                                raise InvalidCell("Agent send has more than one canvas target")
                             agent_node_kwargs = _agent_node_request_kwargs(body)
                             persisted_turn = None
                             if agent_node_kwargs:
                                 persisted_turn = _agent_node_conversation_binding(
+                                    owner, binding, body, current_authority)
+                                model = persisted_turn['model']
+                                agent_node_kwargs = (
+                                    {"node_root": persisted_turn["node"]}
+                                    if persisted_turn.get("node_model_capable") else {}
+                                )
+                            elif isinstance(body, Mapping) and body.get("graph") is True:
+                                persisted_turn = _agent_graph_conversation_binding(
                                     owner, binding, body, current_authority)
                                 model = persisted_turn['model']
                             else:
@@ -7911,25 +7985,28 @@ class ApplicationServer:
                                 intent_text = "Canvas node request " + hashlib.sha256(json.dumps({
                                     "prompt": str(body.get('prompt', '')),
                                     "model": str(model or ""),
-                                    "node": persisted_turn['node'],
+                                    "target": persisted_turn['node'],
+                                    "kind": persisted_turn.get("kind", "node"),
                                     "generation": body.get('generation'),
                                 }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
                                 held_intent = _lookup_turn(":intent")
                                 if held_intent is not None and held_intent["content"] != intent_text:
                                     raise InvalidCell("This node request changed; use a new request identity")
                                 previous_user = _lookup_turn(":user")
+                                reply = _lookup_turn(":reply")
+                                if reply is not None:
+                                    if previous_user is None:
+                                        raise InvalidCell("The saved canvas request has a reply but no user message")
+                                    reply_text = str(reply["content"])
+                                    marker = ":\n"
+                                    answer = reply_text.split(marker, 1)[1] if marker in reply_text else reply_text
+                                    self._json(200, {"ok": True, "answer": answer, "applied": [],
+                                        "delivery": {"state": "replied", "request_id": request_id,
+                                            "message_id": previous_user["id"], "reply_message_id": reply["id"]}})
+                                    return
                                 if _lookup_turn(":started") is not None:
                                     if previous_user is None:
                                         raise InvalidCell("The saved node request has no user message")
-                                    reply = _lookup_turn(":reply")
-                                    if reply is not None:
-                                        reply_text = str(reply["content"])
-                                        marker = ":\n"
-                                        answer = reply_text.split(marker, 1)[1] if marker in reply_text else reply_text
-                                        self._json(200, {"ok": True, "answer": answer, "applied": [],
-                                            "delivery": {"state": "replied", "request_id": request_id,
-                                                "message_id": previous_user["id"], "reply_message_id": reply["id"]}})
-                                        return
                                     message = "reply not confirmed - check before sending again"
                                     self._json(200, {"ok": True, "answer": message, "applied": [],
                                         "delivery": {"state": "reply_not_confirmed", "request_id": request_id,

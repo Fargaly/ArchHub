@@ -70,6 +70,7 @@ test('the canvas joins a member port\'s owner, in either order, never the group 
   assert.ok(start > 0 && end > start, 'the socket handler is a slice of the shipped studio-lm.jsx');
   const connected = [], errors = [];
   let wireStart = null;
+  const wireStartRef = {current:null};
   const ctx = vm.createContext({
     authority:null, authorityState:null, saving:{current:false}, layoutNeedsRefresh:false,
     normal:{connectTopology:async (...args) => { connected.push(args); }},

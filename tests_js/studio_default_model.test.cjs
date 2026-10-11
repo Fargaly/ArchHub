@@ -1,6 +1,6 @@
 /* Court (fix 2): with no saved pick the Studio shows the model the founder configured
-   (default_route = settings default_model) and sends with it; with none, no model is chosen for
-   him: Send is not offered, a visible "Choose a model" opens the picker and nothing is sent
+   (default_route = settings default_model) in the selection-panel scope chip and sends with it; with none,
+   no model is chosen for him: the moved selection-panel composer opens the picker and nothing is sent
    (founder report 2026-09-23; coordination review). Only the model listing is answered.
    No application, provider, network or graph file is touched. */const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -65,7 +65,7 @@ test('no saved pick: the header names the configured default model', async () =>
     await settle(studio.win); await settle(studio.win);
     const text = studio.doc.body.textContent;
     assert.ok(text.includes('openrouter/vendor/configured'), 'the configured default is shown');
-    assert.ok(button(studio.doc, 'Send ↵'), 'Send is offered with a configured model');
+    assert.ok(button(studio.doc, 'Send'), 'Send is offered with a configured model in the selection panel');
   } finally { studio.close(); }
 });
 
@@ -75,10 +75,9 @@ test('no pick and no configured model: nothing is sent, "Choose a model" opens t
     agent:(text, route) => { asked.push([text, route]); return Promise.resolve('answer'); }});
   try {
     await settle(studio.win); await settle(studio.win);
-    assert.equal(button(studio.doc, 'Send ↵'), undefined, 'Send is not offered without a model');
     const choose = button(studio.doc, 'Choose a model');
-    assert.ok(choose, 'a visible "Choose a model" stands where Send would be');
-    const reply = studio.doc.querySelector('input[aria-label="Reply"]');
+    assert.ok(choose, 'the no-model state moved to the selection panel');
+    const reply = studio.doc.querySelector('input[aria-label="Ask selection"]');
     studio.flush(() => { const set = Object.getOwnPropertyDescriptor(studio.win.HTMLInputElement.prototype, 'value').set;
       set.call(reply, 'hello'); reply.dispatchEvent(new studio.win.Event('input', {bubbles:true})); });
     studio.flush(() => reply.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));

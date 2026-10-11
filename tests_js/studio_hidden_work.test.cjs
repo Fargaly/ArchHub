@@ -20,14 +20,16 @@ const slice = (from, to) => {
   return source.slice(start, end);
 };
 
-test('the rail button opens the Workshop from the explicit Chat state, through the held-root path', () => {
+test('hidden Work still points to the Workshop, while the Studio header has no Workshop mode', () => {
   const workspace = slice('const Workspace =', '// The string the server');
   assert.match(workspace, /<NodeRail node=\{focusNode\} hiddenWork=\{!focusNode && authorityState\?\.canvas\?\.selection_hidden === true\}/);
   assert.match(workspace, /workshopRoom=\{workshopModeRoom\(workshops, workshop\?\.root \|\| ''\)\}/);
   assert.match(workspace, /onOpenWorkshop=\{\(\) => chooseWorkshopMode\('workshop', \{mode, conversationRoot:workshop\?\.root \|\| '', workshops, setMode,\s*setConversationRoot:root => updateView\(\{conversationRoot:root, mode:'chat', target:''\}\)\}\)\}/);
+  const header = slice('const WsHeader =', 'const WsTab =');
+  assert.doesNotMatch(header, /workshopModeSegments|WorkshopConversationMenu/);
   const context = vm.createContext({});
   vm.runInContext(slice('const workshopModeRoom =', 'const WsHeader =') +
-    '\nglobalThis.segments = workshopModeSegments; globalThis.choose = chooseWorkshopMode; globalThis.room = workshopModeRoom;', context);
+    '\nglobalThis.choose = chooseWorkshopMode; globalThis.room = workshopModeRoom;', context);
   const workshops = [{root:'child-a', is_general:false}, {root:'general-a', is_general:true}];
   // The founder chose Chat (root cleared), then Canvas; the notice shows there.
   let view = {mode:'canvas', conversationRoot:''};
@@ -37,7 +39,6 @@ test('the rail button opens the Workshop from the explicit Chat state, through t
   assert.equal(context.room(workshops, ''), 'general-a');
   open();
   assert.deepEqual({...view}, {mode:'chat', conversationRoot:'general-a', target:''});
-  assert.equal(context.segments({...view, workshops}).find(segment => segment.active).key, 'workshop');
   // A held child room stays the room the button opens.
   view = {mode:'canvas', conversationRoot:'child-a'};
   open();
@@ -56,7 +57,7 @@ test('the rail says where hidden Work lives and disables the button without a Wo
   global.IS_REACT_ACT_ENVIRONMENT = true;
   const HoverBtn = ({onClick, disabled, children}) => React.createElement('button', {onClick, disabled}, children);
   const context = vm.createContext({React, LM, HoverBtn});
-  vm.runInContext(transformSync(slice('const NodeRail =', '\nconst ') + '\nglobalThis.Rail = NodeRail;',
+  vm.runInContext(transformSync(slice('const graphInspectorNode =', '// ─── Conversation rail') + '\nglobalThis.Rail = NodeRail;',
     {loader:'jsx', format:'cjs'}).code, context);
   const root = createRoot(dom.window.document.getElementById('root'));
   const opened = [];
@@ -73,8 +74,7 @@ test('the rail says where hidden Work lives and disables the button without a Wo
       {node:null, hiddenWork:true, workshopRoom:'', onOpenWorkshop:() => opened.push('none')})));
     assert.equal(dom.window.document.querySelector('aside button').disabled, true);
     assert.match(dom.window.document.querySelector('aside').textContent, /No Workshop conversation is in this scope/);
-    await React.act(async () => root.render(React.createElement(context.Rail, {node:null, hiddenWork:false})));
-    assert.equal(dom.window.document.querySelector('aside[role="status"]'), null);
+    assert.equal(dom.window.document.querySelector('aside[role="status"]').textContent.includes('No Workshop conversation'), true);
   } finally {
     await React.act(async () => root.unmount());
     dom.window.close(); global.window = oldWindow; global.document = oldDocument;

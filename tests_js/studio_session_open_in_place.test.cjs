@@ -15,7 +15,7 @@ const workshopScope = (id, title, revision) => ({
   graph_id:'app:archhub', root:id, revision,
   workshops:[], unavailable:'No Workshop is attached to this graph.',
 });
-const canvas = (id, title, node, revision) => {
+const canvas = (id, title, node, revision, extra = {}) => {
   const nodes = Array.isArray(node) ? node : [node];
   return ({
   ok:true,
@@ -30,24 +30,40 @@ const canvas = (id, title, node, revision) => {
     {root:'app:canvas', label:'Canvas'},
     ...(id === 'app:canvas' ? [] : [{root:id, label:title}]),
   ]},
+  ...extra,
   authorization:auth,
   configuration:{theme:{...seed}},
   nodes:nodes.map(node => ({
-    id:node.id, label:node.label, engine:'engine:noop',
-    assembly:'Domain composition', params:[], ports:[],
+    id:node.id, label:node.label, engine:node.engine || 'engine:noop',
+    assembly:node.assembly || 'Domain composition',
+    params:node.params || [], ports:node.ports || [],
     x:node.x, y:node.y, status:'',
+    has_conversation:node.has_conversation, conversation_root:node.conversation_root,
   })),
   wires:[],
   catalog:[],
-  workshops:[],
+  workshops:extra.workshops || [],
   interaction_projection:{revision, lifecycle:'wip', bindings:[]},
   workshop_scope:workshopScope(id, title, revision),
   });
 };
 const canvases = {
-  'graph-a': canvas('graph-a', 'Graph Alpha', {id:'node-a', label:'Alpha node', x:40, y:60}, 11),
+  'graph-a': canvas('graph-a', 'Graph Alpha', [
+    {id:'node-a', label:'Alpha node', x:40, y:60, has_conversation:true,
+      conversation_root:'room-node-a', params:[{label:'level', value:'L03'}]},
+    {id:'session-a', label:'Door tags L3', x:320, y:120, assembly:'Session',
+      has_conversation:true, conversation_root:'room-a', params:[{label:'messages', value:'6'}]},
+  ], 11, {description:'Graph Alpha description'}),
   'graph-b': canvas('graph-b', 'Graph Beta', {id:'node-b', label:'Beta node', x:80, y:90}, 12),
   'graph-c': canvas('graph-c', 'Created Graph', {id:'node-c', label:'Created node', x:120, y:130}, 13),
+  'fresh': canvas('fresh', 'Fresh Profile Graph', [
+    {id:'sketch-lines', label:'Sketch Lines', x:40, y:60},
+    {id:'line-watcher', label:'Line Watcher', x:300, y:60},
+    {id:'revit-walls', label:'Revit Walls', x:560, y:60},
+    {id:'cad-lines', label:'CAD Lines', x:40, y:260},
+    {id:'revit-sessions', label:'Revit Sessions', x:300, y:260, assembly:'Session',
+      has_conversation:true, conversation_root:'room-fresh'},
+  ], 15, {description:'No AI nodes'}),
 };
 // The receipt carries the server's own canvas projection (universal_graphs.project_graph_index).
 // The Studio does not apply it; it re-reads the canvas once in place, so the receipt is passed as is.
@@ -56,6 +72,7 @@ const graphRows = {
   'graph-a': {id:'graph-a', title:'Graph Alpha', state:'idle', host:'archhub', when:'saved', file:'Graph composition', last:'1 node', model:''},
   'graph-b': {id:'graph-b', title:'Graph Beta', state:'idle', host:'archhub', when:'saved', file:'Graph composition', last:'1 node', model:''},
   'graph-c': {id:'graph-c', title:'Created Graph', state:'idle', host:'archhub', when:'saved', file:'Graph composition', last:'1 node', model:''},
+  'fresh': {id:'fresh', title:'Fresh Profile Graph', state:'idle', host:'archhub', when:'saved', file:'Graph composition', last:'5 nodes', model:''},
 };
 
 function projectStudioCanvas(canvas) {
@@ -72,7 +89,9 @@ function projectStudioCanvas(canvas) {
     }
     nodes.push({
       id:n.id, cat:CATS(engine), title:n.label || n.id, sub:engine || 'Graph node',
-      engine, openable:n.openable === true, composition:n.composition === true,
+      engine, assembly:n.assembly || '', kind:n.kind || n.assembly || '',
+      openable:n.openable === true, composition:n.composition === true,
+      has_conversation:n.has_conversation === true, conversation_root:n.conversation_root || '',
       memberCount:Number.isSafeInteger(n.member_count) ? n.member_count : null,
       x:Number.isFinite(n.x) ? n.x : 200, y:Number.isFinite(n.y) ? n.y : 200,
       w:210, h:Math.max(110, 54 + Math.max(ins.length, outs.length) * 19),
@@ -115,7 +134,7 @@ async function mountStudio(options = {}) {
       ? {width:1000, height:760, left:0, top:0, right:1000, bottom:760}
       : {width:220, height:110, left:0, top:0, right:220, bottom:110};
   };
-  const calls = {open:[], create:[], nodeCreate:[], canvas:0, refresh:0, alerts:[]};
+  const calls = {open:[], create:[], nodeCreate:[], canvas:0, refresh:0, alerts:[], agent:[]};
   let current = options.current || 'graph-a';
   let failRead = false;
   let nodeCreated = false;
@@ -164,6 +183,21 @@ async function mountStudio(options = {}) {
     nodeCreated = true;
     return {ok:true, node:'node-created', selected:'node-created'};
   };
+  if (options.realAgentBridge) {
+    const bridgeSource = read('nodelang/studio/studio.html');
+    const start = bridgeSource.indexOf('    window.ARCHHUB_AGENT = async');
+    const end = bridgeSource.indexOf('    // The composer pick is', start);
+    assert.ok(start > 0 && end > start, 'the real studio.html ARCHHUB_AGENT bridge is present');
+    win.jpost = async (url, body) => {
+      calls.agent.push([url, JSON.parse(JSON.stringify(body))]);
+      return options.agentResult || {ok:true, answer:'bridge ok', applied:[], delivery:{state:'replied', request_id:body.request_id}};
+    };
+    win.eval('const jpost = window.jpost;\n' + bridgeSource.slice(start, end));
+  }
+  win.ARCHHUB_WORKSHOP_TRANSCRIPT = async node => ({ok:true, node,
+    conversation_root:String(node).startsWith('graph:') ? 'graph-room' : (node === 'session-a' ? 'room-a' : null),
+    rows:node === 'session-a' ? [{id:'m1', who:'Agent', text:'Session conversation lives here.', time:'2026-10-10T10:00:00Z', kind:'message'}] : [],
+    has_older:false});
   win.AH_LIBRARY = [{cat:'logic', items:[{id:'test-node', title:'Test node', sub:'Noop node', engine:'engine:noop'}]}];
   win.ARCHHUB_LIVE = {sessions, currentGraph:current, hosts:[], connectors:[],
     graph:win.ARCHHUB_EXISTING_WORKSHOP.getSnapshot().topology.graph, memory:[], skills:[]};
@@ -181,7 +215,12 @@ async function mountStudio(options = {}) {
   const click = node => win.ReactDOM.flushSync(() => node.click());
   const tabCount = () => win.document.querySelectorAll('button[title="Close tab"]').length;
   const transform = () => win.document.querySelector('[role="region"][aria-label="Workflow canvas"]')?.firstElementChild?.style.transform || '';
-  return {win, doc:win.document, calls, navigationErrors, button, buttonIncludes, byTitle, click, settle, close,
+  const byTitleStarts = title => [...win.document.querySelectorAll('button')].find(node => String(node.title || '').startsWith(title));
+  const type = (input, value) => {
+    const set = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set;
+    win.ReactDOM.flushSync(() => { set.call(input, value); input.dispatchEvent(new win.Event('input', {bubbles:true})); });
+  };
+  return {win, doc:win.document, calls, navigationErrors, button, buttonIncludes, byTitle, byTitleStarts, click, type, settle, close,
     failNextRead:() => { failRead = true; }, tabCount, transform};
 }
 
@@ -193,14 +232,24 @@ function openHome(studio) {
 
 function showCanvas(studio) {
   const canvas = [...studio.doc.querySelectorAll('button')].find(node => node.textContent.trim() === 'Canvas');
-  assert.ok(canvas, 'Canvas segment exists');
-  studio.click(canvas);
+  if (canvas) studio.click(canvas);
+  assert.ok(studio.doc.querySelector('[role="region"][aria-label="Workflow canvas"]'), 'Studio canvas view exists');
+}
+
+function assertCanvasSelectionOnly(studio, detail) {
+  assert.ok(studio.doc.querySelector('[role="region"][aria-label="Workflow canvas"]'), detail + ': canvas is visible');
+  assert.equal(studio.doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"]').length, 0,
+    detail + ': Workshop tabs are gone');
+  assert.equal(studio.doc.querySelectorAll('input[aria-label="Ask selection"]').length, 1,
+    detail + ': one selection composer is mounted');
+  assert.equal(studio.doc.querySelectorAll('[data-model-indicator]').length, 1,
+    detail + ': one model indicator is mounted');
 }
 
 function showChat(studio) {
   const chat = [...studio.doc.querySelectorAll('button')].find(node => node.textContent.trim() === 'Chat');
-  assert.ok(chat, 'Chat segment exists');
-  studio.click(chat);
+  if (chat) studio.click(chat);
+  assert.ok(studio.doc.querySelector('input[aria-label="Ask selection"]'), 'selection-panel chat composer exists');
 }
 
 test('opening a session from Home applies the graph-open receipt in place: one canvas re-read, no reload', async () => {
@@ -222,16 +271,10 @@ test('opening a session from Home applies the graph-open receipt in place: one c
   } finally { studio.close(); }
 });
 
-test('opening a session from the Chats panel applies the receipt and remounts graph-local chat state', async () => {
+test('opening a session from the Chats rail applies the receipt; the chat composer lives in the selection panel', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle();
-    showChat(studio);
-    await studio.settle();
-    const draft = studio.doc.querySelector('input[aria-label="Reply"]');
-    assert.ok(draft, 'Chat draft exists');
-    const set = Object.getOwnPropertyDescriptor(studio.win.HTMLInputElement.prototype, 'value').set;
-    studio.win.ReactDOM.flushSync(() => { set.call(draft, 'old graph draft'); draft.dispatchEvent(new studio.win.Event('input', {bubbles:true})); });
     studio.click(studio.byTitle('Chats'));
     await studio.settle();
     studio.calls.canvas = 0;
@@ -243,7 +286,8 @@ test('opening a session from the Chats panel applies the receipt and remounts gr
     assert.equal(studio.calls.canvas, 1, 'the same page re-reads its canvas once; the receipt canvas is not applied');
     assert.equal(studio.navigationErrors.length, 0, 'no reload/assign/replace navigation');
     assert.match(studio.doc.body.textContent, /Graph Beta/);
-    assert.equal(studio.doc.querySelector('input[aria-label="Reply"]').value, '', 'chat draft is graph-local');
+    assert.equal(studio.doc.querySelectorAll('input[aria-label="Ask selection"]').length, 1,
+      'the moved chat composer is the one selection-panel input');
   } finally { studio.close(); }
 });
 
@@ -355,5 +399,175 @@ test('a failed canvas re-read after graph-open shows refresh control and does no
     assert.match(studio.doc.body.textContent, /Refresh graphs/);
     assert.match(studio.doc.body.textContent, /could not be read/);
     assert.equal(studio.doc.body.textContent.includes('Beta node'), false);
+  } finally { studio.close(); }
+});
+
+test('right panel follows node selection with Properties first and one scoped composer chip', async () => {
+  const studio = await mountStudio();
+  try {
+    await studio.settle();
+    showCanvas(studio);
+    await studio.settle();
+    assert.equal(studio.doc.querySelectorAll('input[aria-label="Ask selection"]').length, 1,
+      'the Studio session view has exactly one ask/reply/message composer');
+    studio.click(studio.doc.querySelector('.lm-node[data-node-id="node-a"]'));
+    await studio.settle();
+    const panel = studio.doc.querySelector('aside[aria-label="Selection inspector"]');
+    assert.ok(panel, 'selection inspector exists');
+    assert.match(panel.textContent, /Alpha node/);
+    assert.ok(panel.textContent.indexOf('Properties') < panel.textContent.indexOf('Chat'),
+      'ordinary node shows Properties before Chat');
+    assert.equal(panel.querySelector('[role="tab"][aria-selected="true"]')?.textContent.trim(), 'Properties');
+    assert.deepEqual([...panel.querySelectorAll('section[aria-label="Properties"], section[aria-label="Chat"], section[aria-label="Runs"]')]
+      .map(section => section.getAttribute('aria-label')), ['Properties']);
+    studio.click([...panel.querySelectorAll('[role="tab"]')].find(tab => tab.textContent.trim() === 'Chat'));
+    await studio.settle();
+    assert.equal(panel.querySelector('[role="tab"][aria-selected="true"]')?.textContent.trim(), 'Chat');
+    assert.deepEqual([...panel.querySelectorAll('section[aria-label="Properties"], section[aria-label="Chat"], section[aria-label="Runs"]')]
+      .map(section => section.getAttribute('aria-label')), ['Chat']);
+    assert.match(panel.querySelector('[data-model-indicator]')?.textContent || '', /Alpha node/);
+    assert.match(studio.doc.querySelector('input[aria-label="Ask selection"]').placeholder, /ask about this node/i);
+  } finally { studio.close(); }
+});
+
+test('empty selection sends graph target through the real bridge, and node selection sends that node', async () => {
+  const studio = await mountStudio({current:'fresh', sessions:[graphRows.fresh], realAgentBridge:true});
+  try {
+    await studio.settle();
+    showCanvas(studio);
+    await studio.settle();
+    const panel = () => studio.doc.querySelector('aside[aria-label="Selection inspector"]');
+    assert.match(panel().textContent, /GRAPH/i);
+    assert.match(panel().textContent, /Fresh Profile Graph/);
+    assert.equal(studio.doc.querySelectorAll('input[aria-label="Ask selection"]').length, 1,
+      'exactly one composer is mounted');
+    let input = studio.doc.querySelector('input[aria-label="Ask selection"]');
+    studio.type(input, 'graph hello');
+    studio.flush = callback => studio.win.ReactDOM.flushSync(callback);
+    studio.flush(() => input.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
+    await studio.settle();
+    assert.deepEqual(studio.calls.agent.map(call => call[0]), ['/api/universal/agent']);
+    assert.deepEqual(studio.calls.agent[0][1], {
+      prompt:'graph hello', model:'openrouter/free',
+      generation:{temperature:0.7, top_p:0.95, max_tokens:4096},
+      request_id:studio.calls.agent[0][1].request_id,
+      graph:true, graph_id:'fresh',
+    });
+    assert.equal(typeof studio.calls.agent[0][1].request_id, 'string');
+    assert.ok(studio.calls.agent[0][1].request_id);
+    studio.click(studio.doc.querySelector('.lm-node[data-node-id="line-watcher"]'));
+    await studio.settle();
+    assert.match(panel().textContent, /Line Watcher/);
+    assert.match(panel().querySelector('[data-model-indicator]')?.textContent || '', /Line Watcher.*openrouter\/free/);
+    input = studio.doc.querySelector('input[aria-label="Ask selection"]');
+    studio.type(input, 'node hello');
+    studio.flush(() => input.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
+    await studio.settle();
+    assert.equal(studio.calls.agent[1][0], '/api/universal/agent');
+    assert.equal(studio.calls.agent[1][1].node, 'line-watcher');
+    assert.equal(studio.calls.agent[1][1].graph, undefined);
+    assert.equal(studio.calls.agent[1][1].model, 'openrouter/free');
+  } finally { studio.close(); }
+});
+
+test('right panel treats a session node as chat first, and empty selection as the graph', async () => {
+  const studio = await mountStudio();
+  try {
+    await studio.settle();
+    showCanvas(studio);
+    await studio.settle();
+    const panel = () => studio.doc.querySelector('aside[aria-label="Selection inspector"]');
+    assert.ok(panel(), 'empty-selection graph inspector exists');
+    assert.match(panel().textContent, /GRAPH/i);
+    assert.match(panel().textContent, /Graph Alpha/);
+    assert.equal(panel().querySelector('[role="tab"][aria-selected="true"]')?.textContent.trim(), 'Chat',
+      'graph inspector opens Chat first');
+    assert.deepEqual([...panel().querySelectorAll('section[aria-label="Properties"], section[aria-label="Chat"], section[aria-label="Runs"]')]
+      .map(section => section.getAttribute('aria-label')), ['Chat']);
+    studio.click([...panel().querySelectorAll('[role="tab"]')].find(tab => tab.textContent.trim() === 'Properties'));
+    await studio.settle();
+    assert.deepEqual([...panel().querySelectorAll('section[aria-label="Properties"], section[aria-label="Chat"], section[aria-label="Runs"]')]
+      .map(section => section.getAttribute('aria-label')), ['Properties']);
+    assert.match(panel().querySelector('[data-model-indicator]')?.textContent || '', /Graph Alpha|ArchHub/i);
+    studio.click(studio.doc.querySelector('.lm-node[data-node-id="session-a"]'));
+    await studio.settle();
+    assert.match(panel().textContent, /Door tags L3/);
+    assert.ok(panel().textContent.indexOf('Chat') < panel().textContent.indexOf('Properties'),
+      'session node shows Chat before Properties');
+    assert.equal(panel().querySelector('[role="tab"][aria-selected="true"]')?.textContent.trim(), 'Chat');
+    assert.deepEqual([...panel().querySelectorAll('section[aria-label="Properties"], section[aria-label="Chat"], section[aria-label="Runs"]')]
+      .map(section => section.getAttribute('aria-label')), ['Chat']);
+    assert.match(studio.doc.querySelector('input[aria-label="Ask selection"]').placeholder, /reply in this session/i);
+  } finally { studio.close(); }
+});
+
+test('ordinary conversation-bound nodes open Properties first while keeping a Chat tab', async () => {
+  const studio = await mountStudio();
+  try {
+    await studio.settle();
+    showCanvas(studio);
+    await studio.settle();
+    const panel = () => studio.doc.querySelector('aside[aria-label="Selection inspector"]');
+    studio.click(studio.doc.querySelector('.lm-node[data-node-id="node-a"]'));
+    await studio.settle();
+    assert.match(panel().textContent, /Alpha node/);
+    assert.equal(panel().querySelector('[role="tab"][aria-selected="true"]')?.textContent.trim(), 'Properties');
+    assert.deepEqual([...panel().querySelectorAll('[role="tab"]')].map(tab => tab.textContent.trim()).slice(0, 2),
+      ['Properties', 'Chat']);
+  } finally { studio.close(); }
+});
+
+test('Studio header has no Chat Workshop System tabs, selection resets per session, and rail Workshop still opens', async () => {
+  const studio = await mountStudio({workshops:[{root:'room-a', label:'Wall room', is_general:false}]});
+  try {
+    await studio.settle();
+    showCanvas(studio);
+    await studio.settle();
+    const headerText = studio.doc.querySelector('main > div')?.textContent || '';
+    for (const forbidden of ['Chat', 'Workshop', 'System']) {
+      assert.equal(new RegExp('(^|\\s)' + forbidden + '(\\s|$)').test(headerText), false,
+        forbidden + ' is not a Studio session-header tab');
+    }
+    studio.click(studio.doc.querySelector('.lm-node[data-node-id="node-a"]'));
+    await studio.settle();
+    assert.match(studio.doc.querySelector('aside[aria-label="Selection inspector"]').textContent, /Alpha node/);
+    openHome(studio);
+    await studio.settle();
+    studio.click([...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Graph Beta')));
+    await studio.settle();
+    showCanvas(studio);
+    await studio.settle();
+    const panelText = studio.doc.querySelector('aside[aria-label="Selection inspector"]').textContent;
+    assert.match(panelText, /GRAPH|Graph Beta/);
+    assert.equal(/Alpha node/.test(panelText), false, 'node selection from Graph Alpha did not leak into Graph Beta');
+    const workshopRail = studio.doc.querySelector('button[data-tool-rail="workshop"]') || studio.byTitleStarts('Workshop');
+    assert.ok(workshopRail, 'rail still exposes Workshop');
+    studio.click(workshopRail);
+    await studio.settle();
+    assert.match(studio.doc.body.textContent, /Workshop|Wall room/, 'rail Workshop path still opens');
+  } finally { studio.close(); }
+});
+
+test('leaving rail Workshop through Studio, session reopen, or New session restores canvas selection mode', async () => {
+  const studio = await mountStudio({workshops:[{root:'room-a', label:'Wall room', is_general:false}]});
+  try {
+    await studio.settle();
+    const workshopRail = studio.doc.querySelector('button[data-tool-rail="workshop"]') || studio.byTitleStarts('Workshop');
+    assert.ok(workshopRail, 'rail exposes Workshop');
+    studio.click(workshopRail);
+    await studio.settle();
+    assert.ok(studio.doc.querySelector('[role="tablist"][aria-label="Workshop tabs"]'), 'Workshop is open');
+
+    studio.click(studio.doc.querySelector('button[data-tool-rail="studio"]'));
+    await studio.settle();
+    studio.click([...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Graph Alpha')));
+    await studio.settle();
+    assertCanvasSelectionOnly(studio, 'Studio rail then same session reopen');
+
+    studio.click(workshopRail);
+    await studio.settle();
+    studio.click(studio.byTitle('New session'));
+    await studio.settle();
+    assertCanvasSelectionOnly(studio, 'New session from Workshop');
   } finally { studio.close(); }
 });

@@ -185,12 +185,12 @@ test('projection hooks subscribe before rereading a publication missed after ren
   }
 });
 
-test('the Studio opens on plain Chat after asynchronous discovery, never inside a Workshop room', () => {
+test('the Studio opens on Canvas after asynchronous discovery, never inside a Workshop room', () => {
   const render = harness();
   render(null);
   const view = render(projection()).view;
   assert.equal(view.conversationRoot, '');
-  assert.equal(view.mode, 'chat');
+  assert.equal(view.mode, 'canvas');
 });
 test('explicit Chat survives later projection refreshes', () => {
   const render = harness();

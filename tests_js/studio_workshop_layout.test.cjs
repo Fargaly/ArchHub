@@ -21,19 +21,17 @@ function modeHarness() {
   assert.ok(start > 0 && end > start, 'the mode switch helpers are a slice of the shipped studio-lm.jsx');
   const context = vm.createContext({});
   vm.runInContext(source.slice(start, end) +
-    '\nglobalThis.segments = workshopModeSegments; globalThis.choose = chooseWorkshopMode;', context);
+    '\nglobalThis.room = workshopModeRoom; globalThis.choose = chooseWorkshopMode;', context);
   return context;
 }
 const rooms = [{root:'child-a', label:'Child', is_general:false}, {root:'general-a', label:'General', is_general:true}];
 
-test('Workshop is Chat with the held room, else the general room, else the first; no room marks the segment unavailable', () => {
-  const {segments, choose} = modeHarness();
-  const labels = view => segments(view).map(row => `${row.label}${row.active ? '*' : ''}${row.disabled || row.unavailable ? '!' : ''}`).join(' ');
-  assert.equal(labels({mode:'chat', conversationRoot:'', workshops:rooms}), 'Chat* Workshop Canvas');
-  assert.equal(labels({mode:'chat', conversationRoot:'child-a', workshops:rooms}), 'Chat Workshop* Canvas');
-  assert.equal(labels({mode:'canvas', conversationRoot:'child-a', workshops:rooms}), 'Chat Workshop Canvas*');
-  assert.equal(labels({mode:'chat', conversationRoot:'', workshops:[]}), 'Chat* Workshop! Canvas');
-  assert.equal(segments({mode:'chat', conversationRoot:'', workshops:[]})[1].title, 'No Workshop conversation in this scope');
+test('Workshop handoff uses the held room, else the general room, else the first; no session-level Chat segment remains', () => {
+  const {room, choose} = modeHarness();
+  assert.equal(room(rooms, ''), 'general-a');
+  assert.equal(room(rooms, 'child-a'), 'child-a');
+  assert.equal(room([{root:'only-a', label:'Only'}], ''), 'only-a');
+  assert.equal(room([], ''), '');
   const calls = [];
   const view = (mode, conversationRoot, workshops = rooms) => ({mode, conversationRoot, workshops,
     setMode:value => calls.push(['mode', value]), setConversationRoot:value => calls.push(['root', value])});
@@ -46,17 +44,16 @@ test('Workshop is Chat with the held room, else the general room, else the first
   choose('workshop', view('chat', '', []));
   choose('workshop', view('chat', '', [{root:'only-a', label:'Only'}]));
   assert.deepEqual(calls, [['root', 'general-a'], ['root', 'child-a'], ['root', ''], ['mode', 'canvas'], ['root', 'only-a']]);
+  assert.equal(/workshopModeSegments/.test(source), false, 'the old Chat|Workshop|Canvas segment helper is gone');
 });
 
 test('the System graph is its own session, not a header tab; the system mode still opens it', () => {
-  const {segments, choose} = modeHarness();
-  const labels = view => segments(view).map(row => `${row.label}${row.active ? '*' : ''}`).join(' ');
-  assert.equal(labels({mode:'chat', conversationRoot:'', workshops:rooms}), 'Chat* Workshop Canvas');
-  assert.equal(labels({mode:'chat', conversationRoot:'', workshops:rooms, systemAllowed:true}), 'Chat* Workshop Canvas',
-    'the founder sees no System tab; Studio Home lists the System session');
-  assert.equal(segments({mode:'chat', conversationRoot:'', workshops:rooms, systemAllowed:true}).some(row => /system/i.test(row.label)), false,
-    'System opens from its Studio Home session (studio_moved_not_deleted), never from the header');
-
+  modeHarness();
+  const headerStart = source.indexOf('const WsHeader =');
+  const headerEnd = source.indexOf('const WsTab =', headerStart);
+  const header = source.slice(headerStart, headerEnd);
+  assert.doesNotMatch(header, /System|workshopModeSegments|WorkshopConversationMenu/,
+    'System and the old Chat|Workshop|Canvas switch are not header tabs');
 });
 
 test('studio-workshop.jsx ships as its own Studio source, loaded after brain-model.jsx and before studio-lm.jsx everywhere', () => {
@@ -81,7 +78,8 @@ test('studio-lm.jsx reads the Workshop from the module: the icon rail remains an
   assert.match(sidebar, /railOnly \? null : <>/);
   assert.doesNotMatch(sidebar, /WorkshopAgentsRail/);
   const workspace = source.slice(source.indexOf('const Workspace ='), source.indexOf('const modelRoute ='));
-  assert.match(workspace, /workshop && window\.WorkshopView \? <window\.WorkshopView key=[^]*?state=\{workshopState\} descriptor=\{workshop\} target=\{target\}[^]*?onLeave=\{\(\) => updateView\(\{conversationRoot:'', mode:'chat', target:''\}\)\}\s*sel=\{wsSel\} setSel=\{setWsSel\}\/>/);
+  assert.match(workspace, /effectiveMode === 'chat' && workshop && window\.WorkshopView \? \(\s*<window\.WorkshopView key=[^]*?state=\{workshopState\} descriptor=\{workshop\} target=\{target\}[^]*?onLeave=\{\(\) => updateView\(\{conversationRoot:'', mode:'canvas', target:''\}\)\}\s*sel=\{wsSel\} setSel=\{setWsSel\}\/>/);
+  assert.doesNotMatch(workspace, /<ChatView key=|<InferenceInspector model=/);
   assert.doesNotMatch(workspace, /externalRail\/>/);
   for (const retired of ['const WorkshopConversation =', 'const WorkshopAgentsPanel =', 'const WorkshopTaskCard =',
     'const WorkshopTaskBoard =', 'const WorkshopLayoutPane =', 'const workshopTaskItems =']) {

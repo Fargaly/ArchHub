@@ -26,7 +26,7 @@ from nodelang.application_server import _CleanAuthorityHttpServer
 from nodelang.http_server import QuietThreadingHTTPServer
 from nodelang.runtime_activity import RuntimeActivity
 
-# Split literals: the public-repo commit gate reads "token = <long string>" as a leaked credential.
+# Split literals: the public-repo commit gate flags long credential-shaped text.
 SESSION = {"token": "fixture-" + "cloud-session", "base_url": "https://cloud.example"}
 OTHER = {"token": "fixture-" + "other-session", "base_url": "https://cloud.example"}
 ROWS = [{"name": "Model A", "route": "vendor/model-a", "vendor": "vendor", "tag": "BYO",
@@ -170,6 +170,22 @@ def test_the_held_answer_is_served_at_once_and_refreshed_behind_it(sources):
         time.sleep(0.05)
     assert len(reads) == 2, "nothing was refreshed behind the stale answer"
     assert catalogue.held_model_groups(SESSION, now=100.0)["stale"] is False
+
+
+def test_the_send_path_can_read_stale_held_cache_without_refreshing(sources):
+    reads = []
+
+    def openrouter(**kwargs):
+        reads.append(time.time())
+        return [dict(row) for row in ROWS]
+
+    sources.setattr(catalogue, "openrouter_models", openrouter)
+    catalogue.live_model_groups(SESSION, now=0.0)
+    stale = catalogue.held_model_groups_read_only(SESSION, now=100.0)
+    assert stale["stale"] is True
+    assert stale["refreshing"] is False
+    time.sleep(0.05)
+    assert len(reads) == 1, "read-only held cache started a source refresh"
 
 
 def test_another_account_is_never_answered_from_this_one(sources):

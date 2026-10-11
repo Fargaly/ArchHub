@@ -181,7 +181,7 @@ test('Chat with a conversation: Send asks the agent route, turns carry the accou
     assert.equal(JSON.stringify(studio.agent), JSON.stringify([[
       'Dimension all walls in active view at 1:50.',
       'deepseek/deepseek-r1',
-      {generation:{temperature:0.7, top_p:0.95, max_tokens:4096}},
+      {generation:{temperature:0.7, top_p:0.95, max_tokens:4096}, returnResult:true},
     ]]), 'the typed text goes to the agent route with the chosen route and generation defaults');
     assert.equal(Object.prototype.hasOwnProperty.call(studio.agent[0][2], 'node'), false,
       'no selected node means the chat send omits node');
@@ -190,7 +190,8 @@ test('Chat with a conversation: Send asks the agent route, turns carry the accou
     assert.equal(send.style.opacity, '', 'disabled without alpha');
     assert.equal(send.style.borderStyle, 'dashed', 'disabled with a dashed border');
     assert.equal(send.style.backgroundColor, 'transparent', 'not drawn as a filled primary while disabled');
-    studio.answer('Prepared an editable change on the canvas for review.');
+    studio.answer({answer:'Prepared an editable change on the canvas for review.',
+      via:{family:'lmstudio', provider:'LM Studio', model:'qwen2.5-coder-7b-instruct'}});
     await studio.settle();
     assert.equal(send.disabled, false, 'the answer re-enables Send');
     assert.notEqual(send.style.borderStyle, 'dashed', 'and it returns to the design primary');
@@ -199,6 +200,8 @@ test('Chat with a conversation: Send asks the agent route, turns carry the accou
     assert.ok(studio.exact('DeepSeek R1').some(node => node.tagName === 'SPAN' && node.nextElementSibling),
       'the answer is signed by the chosen model');
     assert.ok(studio.exact('Prepared an editable change on the canvas for review.').length, 'the answer is drawn as a turn');
+    assert.ok(studio.exact('via LM Studio ' + DOT + ' qwen2.5-coder-7b-instruct').length,
+      'the answer shows the actual route underneath');
   } finally { studio.close(); }
 });
 

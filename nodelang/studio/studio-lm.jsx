@@ -2419,6 +2419,20 @@ const chatPeople = model => {
   const answerer = String((modelRoute(model) ? model.name : 'ArchHub') || 'ArchHub');
   return {me, answerer};
 };
+const agentAnswerText = answer => {
+  if (answer && typeof answer === 'object' && !Array.isArray(answer)) return String(answer.answer || answer.text || '');
+  return String(answer || '');
+};
+const agentAnswerVia = answer => {
+  if (!answer || typeof answer !== 'object' || Array.isArray(answer)) return null;
+  const via = answer.via;
+  if (!via || typeof via !== 'object' || Array.isArray(via)) return null;
+  const provider = String(via.provider || via.family || '').trim();
+  const model = String(via.model || '').trim();
+  if (!provider && !model) return null;
+  return {provider, model};
+};
+const agentViaLabel = via => via ? ('via ' + (via.provider || 'model') + (via.model ? ' · ' + via.model : '')) : '';
 // The wired pipeline in topological stages (at most eight), read from the projected graph.
 const chatStages = graph => {
   if (!graph) return [];
@@ -2514,8 +2528,8 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
     setBusy(true);
     try {
       const answer = await window.ARCHHUB_AGENT(text, modelRoute(model),
-        {generation:generationRequestOptions()});
-      setMessages(m => [...m, { me:false, time:stamp(), text:answer }]);
+        {generation:generationRequestOptions(), returnResult:true});
+      setMessages(m => [...m, { me:false, time:stamp(), text:agentAnswerText(answer), via:agentAnswerVia(answer) }]);
     } catch (error) {
       setMessages(m => [...m, { me:false, time:stamp(),
         text:'refused: ' + (error?.message || error) }]);
@@ -2551,6 +2565,10 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
                   fontStyle: m.me ? 'normal' : 'normal',
                   lineHeight:1.6, color: m.me ? LM.ink : LM.ink, letterSpacing: m.me ? '0' : '-0.003em',
                 }}>{m.text}</div>
+                {!m.me && m.via && <div data-chat-via="" style={{
+                  marginTop:6, fontFamily:LM.sans, fontSize:11, lineHeight:1.35,
+                  color:LM.inkMuted, letterSpacing:0,
+                }}>{agentViaLabel(m.via)}</div>}
               </div>
             </div>
           ))}
@@ -6111,6 +6129,7 @@ const pickedModel = () => {
 const freeModelRoute = item => {
   const route = modelRoute(item).trim();
   if (!route) return false;
+  if (/(safety|guard|moderation|embed|rerank|whisper|tts|audio)/i.test(route)) return false;
   if (route === 'openrouter/free' || route.endsWith(':free')) return true;
   return route.startsWith('lmstudio/') || route.startsWith('ollama/');
 };

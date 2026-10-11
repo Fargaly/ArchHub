@@ -159,7 +159,7 @@ test('Settings Models generation values persist through the model owner and reac
     assert.equal(JSON.stringify(studio.calls.agent.at(-1)), JSON.stringify([
       'Use the settings defaults.',
       freeRoute,
-      {generation:{temperature:0.35, top_p:0.95, max_tokens:4096}},
+      {generation:{temperature:0.35, top_p:0.95, max_tokens:4096}, returnResult:true},
     ]));
   } finally { studio.close(); }
 });

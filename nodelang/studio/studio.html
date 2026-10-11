@@ -154,9 +154,10 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
     window.ARCHHUB_AGENT = async (prompt, model, options) => {
       const node = options && typeof options === 'object' && !Array.isArray(options) ? options.node : options;
       const generation = options && typeof options === 'object' && !Array.isArray(options) ? options.generation : undefined;
-      return (await jpost('/api/universal/agent', {prompt, model,
+      const result = await jpost('/api/universal/agent', {prompt, model,
         ...(generation !== undefined ? {generation} : {}),
-        ...(typeof node === 'string' && node.trim() ? {node} : {})})).answer || 'done';
+        ...(typeof node === 'string' && node.trim() ? {node} : {})});
+      return options && typeof options === 'object' && options.returnResult ? result : result.answer || 'done';
     };
     // The composer pick is the owner's graph-held setting
     // (configuration.composer_model), saved through the interaction route

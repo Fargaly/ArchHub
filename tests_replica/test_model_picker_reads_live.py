@@ -57,7 +57,7 @@ def test_groups_come_from_the_three_live_sources_with_real_prices():
     assert out["count"] == 4 and out["source_errors"] == {}
     # cached: a second read inside ten minutes does not touch the network
     again = mc.live_model_groups({"token": "t", "base_url": "https://api.archhub.io"}, opener=_opener({}), now=1100.0)
-    assert again is out
+    assert again == out and again is not out
 
 
 def test_a_silent_source_is_named_never_invented():
@@ -67,10 +67,51 @@ def test_a_silent_source_is_named_never_invented():
     assert "BYO · OpenRouter" in out["source_errors"]
 
 
+def test_openrouter_free_routes_require_numeric_zero_pricing_fields():
+    payload = {"groups": [{"name": mc.BYO_GROUP, "items": [
+        {"route": "vendor/display-only:free", "tag": "BYO", "cost": "$0 / $0 per M"},
+        {"route": "vendor/request-cost:free", "tag": "BYO", "prompt_price_per_m": 0.0,
+         "completion_price_per_m": 0.0, "request_price": 0.01},
+        {"route": "vendor/image-cost:free", "tag": "BYO", "prompt_price_per_m": 0.0,
+         "completion_price_per_m": 0.0, "image_price": 0.01},
+        {"route": "vendor/strict-free:free", "tag": "BYO", "prompt_price_per_m": 0.0,
+         "completion_price_per_m": 0.0, "request_price": 0.0, "image_price": 0.0, "all_prices_zero": True},
+        {"route": "vendor/no-request-image:free", "tag": "BYO", "prompt_price_per_m": 0.0,
+         "completion_price_per_m": 0.0, "all_prices_zero": True},
+        # Another pricing field OpenRouter sent (e.g. web_search) is not zero: never free.
+        {"route": "vendor/other-field-cost:free", "tag": "BYO", "prompt_price_per_m": 0.0,
+         "completion_price_per_m": 0.0, "all_prices_zero": False},
+    ]}]}
+    assert mc.openrouter_free_chat_routes(payload) == (
+        "vendor/strict-free:free", "vendor/no-request-image:free")
+
+
+def test_every_openrouter_pricing_field_must_be_zero_for_all_prices_zero():
+    rows = {"data": [
+        {"id": "a/strict:free", "pricing": {"prompt": "0", "completion": "0", "request": "0", "image": "0",
+                                            "web_search": "0", "internal_reasoning": "0"}},
+        {"id": "b/search-cost:free", "pricing": {"prompt": "0", "completion": "0", "web_search": "0.004"}},
+        {"id": "c/no-pricing:free"},
+        {"id": "d/boolean-price:free", "pricing": {"prompt": False, "completion": "0"}},
+    ]}
+    import json as _json, io as _io
+
+    class _Ans(_io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *exc): return False
+
+    items = mc.openrouter_models(opener=lambda req, timeout=None: _Ans(_json.dumps(rows).encode()), timeout=1)
+    flags = {item["route"]: item["all_prices_zero"] for item in items}
+    assert flags == {"a/strict:free": True, "b/search-cost:free": False, "c/no-pricing:free": False,
+                     "d/boolean-price:free": False}
+
+
 def test_the_route_and_the_picker_are_wired():
     server = (ROOT / "nodelang" / "application_server.py").read_text(encoding="utf-8")
     assert "'/api/universal/models'" in server and "live_model_groups(session)" in server
     app = (ROOT / "nodelang" / "universal_application.py").read_text(encoding="utf-8")
     assert '("GET", "/api/universal/models", "read")' in app
     jsx = (ROOT / "nodelang" / "studio" / "studio-lm.jsx").read_text(encoding="utf-8")
-    assert "fetch('/api/universal/models'" in jsx and "'LIVE · '" in jsx and "OFFLINE LIST" in jsx
+    assert "fetch('/api/universal/models'" in jsx
+    assert "Showing the list last discovered" in jsx
+    assert "OFFLINE LIST" not in jsx

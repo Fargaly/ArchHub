@@ -185,7 +185,14 @@ def _generation_options(generation: object) -> dict[str, object]:
     return options
 
 
-def _chat(prompt: str, context_block: str, model: str, *, before_dispatch=None, generation=None) -> str:
+def _answer_via(answer: Mapping[str, object]) -> dict[str, str]:
+    family = str(answer.get("family") or "")
+    model = str(answer.get("actual_model") or answer.get("model") or "")
+    provider = str(answer.get("provider") or family)
+    return {"family": family, "model": model, "provider": provider}
+
+
+def _chat(prompt: str, context_block: str, model: str, *, before_dispatch=None, generation=None) -> dict[str, object]:
     """The chosen route decides the endpoint, the payload and the key.
 
     This used to be one hardcoded OpenRouter URL, so a local or cloud model
@@ -206,7 +213,7 @@ def _chat(prompt: str, context_block: str, model: str, *, before_dispatch=None, 
             **generation_options,
             **({"before_dispatch":before_dispatch} if before_dispatch is not None else {}),
         )
-        return str(answer["text"])
+        return {"text": str(answer["text"]), "via": _answer_via(answer)}
     except (InvalidCell, AuthorizationDenied):
         raise
     except Exception:
@@ -382,7 +389,9 @@ def run_agent_composer(
         chat_kwargs["generation"] = generation
     if before_dispatch is not None:
         chat_kwargs["before_dispatch"] = before_dispatch
-    raw = _chat(prompt.strip(), context_block, chosen, **chat_kwargs)
+    routed_answer = _chat(prompt.strip(), context_block, chosen, **chat_kwargs)
+    via = routed_answer.get("via") if isinstance(routed_answer, Mapping) else None
+    raw = str(routed_answer.get("text") if isinstance(routed_answer, Mapping) else routed_answer)
     try:
         text = raw.strip()
         if text.startswith("```"):
@@ -408,10 +417,13 @@ def run_agent_composer(
         raise InvalidCell("agent draft contains an unsupported action")
     _validate_draft_references(actions, projection)
     if actions and not current_prompt_allows_actions:
-        return {
+        refused = {
             "answer": "No canvas change applied because the current prompt did not ask to change the canvas.",
             "applied": [],
         }
+        if isinstance(via, Mapping):
+            refused["via"] = dict(via)
+        return refused
     with lock:
         if revalidate is not None:
             revalidate()
@@ -423,10 +435,13 @@ def run_agent_composer(
                 model=chosen, authentication_context=authentication_context)
         if actions and store.revision != source_revision:
             raise InvalidCell("canvas changed during planning; refresh the draft before applying")
-        return _apply_draft_actions(
+        result = _apply_draft_actions(
             store, registry, projection, plan, actions,
             authentication_context=authentication_context,
         )
+        if isinstance(via, Mapping):
+            result["via"] = dict(via)
+        return result
 
 
 def _draft_position(action, unplaced_when_omitted):

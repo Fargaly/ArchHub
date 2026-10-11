@@ -215,13 +215,13 @@ test('the Workshop view draws the design surfaces from the live projections and 
     assert.match(text(main.firstElementChild), /^Workshop L03 wall take-off · Layer selection · hosts not read yet openrouter\/model-a · route auto Relay Off Hub/);
     const strip = [...doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')];
     assert.deepEqual(strip.map(b => b.getAttribute('aria-label')),
-      ['Chat', 'Tasks', 'Router', 'Relay', 'Prompts', 'Projects', 'Board', 'Agents', 'Approvals']);
-    assert.deepEqual(strip.map(b => b.getAttribute('aria-selected')), ['true', 'false', 'false', 'false', 'false', 'false', 'false', 'false', 'false']);
+      ['Chat', 'Tasks', 'Router', 'Relay', 'Prompts', 'Agents', 'Approvals']);
+    assert.deepEqual(strip.map(b => b.getAttribute('aria-selected')), ['true', 'false', 'false', 'false', 'false', 'false', 'false']);
     assert.ok(strip.every(b => b.style.fontFamily === '"Inter", system-ui, sans-serif' && b.style.fontSize === '13px' && b.style.fontWeight === '400'));
     assert.equal(strip[0].style.borderRadius, '5px');
     assert.equal(strip[0].style.background, 'rgb(58, 32, 24)');
     assert.equal(strip[1].style.background, 'transparent');
-    assert.equal(text(strip[8]), 'Approvals 1');
+    assert.equal(text(strip[6]), 'Approvals 1');
     // Conversation: the owner's ask, the agent reply metadata, then one row per named Work.
     const stream = doc.querySelector('[aria-label="Workshop conversation"]');
     assert.doesNotMatch(text(stream), /Here is the workflow on this canvas/);
@@ -244,7 +244,10 @@ test('the Workshop view draws the design surfaces from the live projections and 
     assert.ok(doc.querySelector('[aria-label="Workshop task page"] input[aria-label="Workshop message"]'));
     // Board: the design's five lanes (design 2026-10-06, section 3).
     const tabs = () => [...doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')];
-    await ui.click(tabs()[6]);
+    // Board is a view of the one Tasks tab (founder 2026-10-11: Tasks, Board and Projects repeated each other).
+    await ui.click(tabs()[1]);
+    await ui.click([...doc.querySelectorAll('[role="tablist"][aria-label="Task view"] [role="tab"]')].find(t => text(t) === 'Board'));
+    assert.equal(tabs()[1].getAttribute('aria-selected'), 'true');
     const board = doc.querySelector('[aria-label="Workshop board"]');
     assert.deepEqual([...board.querySelectorAll('[data-workshop-lane] h3')].map(text), ['Backlog', 'Claimed', 'Running', 'Blocked', 'Done']);
     assert.equal(doc.querySelector('main').style.gridTemplateColumns, 'minmax(0,1fr)');
@@ -255,6 +258,40 @@ test('the Workshop view draws the design surfaces from the live projections and 
     assert.ok(doc.querySelector('input[aria-label="Workshop message"]'));
     await ui.click(doc.querySelector('button[aria-label^="Leave Workshop"]'));
     assert.equal(left, 1);
+  } finally { await ui.close(); }
+});
+
+test('Tasks, Board and Projects are one Tasks tab: old board/projects links land in it and the project card opens Board', async () => {
+  const {state, authority} = fixture();
+  const ui = await mountModule();
+  try {
+    ui.win.ARCHHUB_EXISTING_WORKSHOP = authority;
+    const props = sel => ({state, descriptor:state.workshops[0], target:'model:model-a', setTarget:() => {},
+      setMode:() => {}, setFocusId:() => {}, onLeave:() => {}, sel, setSel:() => {}, externalRail:true});
+    const doc = ui.doc;
+    const selected = () => [...doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')]
+      .filter(t => t.getAttribute('aria-selected') === 'true').map(text);
+    const view = () => [...doc.querySelectorAll('[role="tablist"][aria-label="Task view"] [role="tab"]')]
+      .filter(t => t.getAttribute('aria-selected') === 'true').map(text);
+    // A link that still names the old Board tab opens Tasks on its Board view.
+    await ui.render('WorkshopView', props({agent:null, task:null, tab:'board'}));
+    assert.deepEqual(selected(), ['Tasks']);
+    assert.deepEqual(view(), ['Board']);
+    assert.ok(doc.querySelector('[aria-label="Workshop task board"]'), 'the board is drawn inside Tasks');
+    assert.equal(doc.querySelector('[aria-label="Workshop tasks"]'), null);
+    // A link that still names the old Projects tab opens Tasks on its list, with the project summary on top.
+    await ui.render('WorkshopView', props({agent:null, task:null, tab:'projects'}));
+    assert.deepEqual(selected(), ['Tasks']);
+    assert.deepEqual(view(), ['List']);
+    assert.ok(doc.querySelector('[aria-label="Workshop projects"] article'), 'the project summary card is on the Tasks tab');
+    assert.ok(doc.querySelector('[aria-label="Workshop tasks"]'), 'the task list is shown');
+    // The project card still opens the board, now as the Board view of the same Tasks tab.
+    await ui.click(doc.querySelector('[aria-label="Workshop projects"] article'));
+    assert.deepEqual(selected(), ['Tasks']);
+    assert.deepEqual(view(), ['Board']);
+    assert.ok(doc.querySelector('[aria-label="Workshop task board"]'));
+    // No separate Board or Projects tab is offered.
+    assert.ok(![...doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')].some(t => /^(Board|Projects)$/.test(text(t))));
   } finally { await ui.close(); }
 });
 

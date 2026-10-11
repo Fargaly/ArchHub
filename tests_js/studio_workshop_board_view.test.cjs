@@ -157,7 +157,9 @@ test('Workshop approvals list predicate matches the badge count predicate', () =
 
 test('Workshop header exposes design-first Chat, Tasks, routed Router, Relay and Prompts tabs', () => {
   const source = read('nodelang/studio/studio-workshop.jsx');
-  assert.match(source, /WORKSHOP_TABS = \[\['chat', 'Chat'\], \['tasks', 'Tasks'\], \['router', 'Router'\], \['relay', 'Relay'\], \['prompts', 'Prompts'\],\s+\['projects', 'Projects'\], \['board', 'Board'\], \['agents', 'Agents'\], \['approvals', 'Approvals'\]\]/);
+  assert.match(source, /WORKSHOP_TABS = \[\['chat', 'Chat'\], \['tasks', 'Tasks'\], \['router', 'Router'\], \['relay', 'Relay'\], \['prompts', 'Prompts'\],\s+\['agents', 'Agents'\], \['approvals', 'Approvals'\]\]/);
+  // Tasks, Board and Projects are one Tasks tab (founder 2026-10-11); the old presets still open it.
+  assert.match(source, /WORKSHOP_TASK_PRESETS = \['tasks', 'board', 'projects'\]/);
   assert.match(source, /readCloudPublishConsent|setCloudPublishConsent|WorkshopRelayTab|Relay on\/off/);
   assert.match(source, /ARCHHUB_LOAD_SKILLS/);
 });

@@ -269,7 +269,13 @@ test('gap 7: the board does not say "nothing to group" beside a NEEDS YOU card',
   });
   try {
     await view.render();
-    await view.ui.click([...view.ui.doc.querySelectorAll('[role="tab"]')].find(t => t.textContent.trim() === 'Board'));
+    // One Tasks tab holds the project summary and a List | Board switch (founder 2026-10-11: no three views of one list).
+    await view.ui.click([...view.ui.doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')].find(t => t.textContent.trim() === 'Tasks'));
+    assert.ok(view.ui.doc.querySelector('[aria-label="Workshop projects"]'), 'the project summary sits on the Tasks tab');
+    assert.ok(view.ui.doc.querySelector('[aria-label="Workshop tasks"]'), 'the Tasks tab opens on the list');
+    await view.ui.click([...view.ui.doc.querySelectorAll('[role="tablist"][aria-label="Task view"] [role="tab"]')].find(t => t.textContent.trim() === 'Board'));
+    const strip = [...view.ui.doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')];
+    assert.equal(strip.find(t => t.getAttribute('aria-selected') === 'true')?.textContent.trim(), 'Tasks', 'Board is a view of Tasks, not its own tab');
     const board = view.ui.doc.querySelector('[aria-label="Workshop board"]');
     assert.ok(board.querySelector('[data-workshop-board-card="proposal:p1"]'), 'the proposal is on the board');
     assert.ok(!text(board).includes('nothing to group'), text(board));

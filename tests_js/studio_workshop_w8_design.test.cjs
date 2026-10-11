@@ -106,7 +106,7 @@ test('W8 Workshop matches the design tab/header/chat contract from live data', a
 
     const tabs = [...ui.doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')];
     assert.deepEqual(tabs.map(tab => tab.getAttribute('aria-label')),
-      ['Chat', 'Tasks', 'Router', 'Relay', 'Prompts', 'Projects', 'Board', 'Agents', 'Approvals']);
+      ['Chat', 'Tasks', 'Router', 'Relay', 'Prompts', 'Agents', 'Approvals']);
     assert.match(text(ui.doc.querySelector('[data-workshop-head]')), /Nile Tower/);
     assert.match(text(ui.doc.querySelector('[aria-label="Workshop header chips"]')), /Sonnet · route auto/);
     assert.match(text(ui.doc.querySelector('[aria-label="Workshop header chips"]')), /Relay Off/);

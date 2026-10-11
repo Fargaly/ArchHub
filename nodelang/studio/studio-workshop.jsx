@@ -14,7 +14,10 @@
 const W = window.AH;
 const derive = build => window.ArchHubTheme ? window.ArchHubTheme.derive(build) : build(W);
 const WORKSHOP_TABS = [['chat', 'Chat'], ['tasks', 'Tasks'], ['router', 'Router'], ['relay', 'Relay'], ['prompts', 'Prompts'],
-  ['projects', 'Projects'], ['board', 'Board'], ['agents', 'Agents'], ['approvals', 'Approvals']];
+  ['agents', 'Agents'], ['approvals', 'Approvals']];
+// Tasks, Board and Projects showed the same tasks three times (founder 2026-10-11: they repeat each other).
+// One Tasks tab now holds the project summary and a List | Board switch; 'board' and 'projects' stay valid presets.
+const WORKSHOP_TASK_PRESETS = ['tasks', 'board', 'projects'];
 
 // Conversation retention. After 20 idle days a conversation's messages move to
 // a file in the user's data folder; this notice says so on the conversation and
@@ -1391,7 +1394,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   // Per proposal message: {pending} | {work_root} | {declined} | {error}, from the founder's own decisions and reads.
   const [proposalHeld, setProposalHeld] = React.useState({});
   React.useEffect(() => {
-    if (sel?.tab && WORKSHOP_TABS.some(([key]) => key === sel.tab)) setPreset(sel.tab);
+    if (sel?.tab && (WORKSHOP_TABS.some(([key]) => key === sel.tab) || WORKSHOP_TASK_PRESETS.includes(sel.tab))) setPreset(sel.tab);
   }, [sel?.tab]);
   // The header's file line (design: Work title · model file): the hosts the
   // app's own probe sees connected, read once from its cached rows; null until it answers.
@@ -3182,7 +3185,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
       </div>
       <div style={{ gridColumn:'1 / -1', gridRow:'2', display:'flex', alignItems:'center', gap:18, padding:'0 20px',
         minWidth:0, borderBottom:`1px solid ${W.line}`, background:W.bg }}>
-        <WorkshopTabs tab={preset} setTab={setWorkshopTab} approvals={approvalCount}/>
+        <WorkshopTabs tab={WORKSHOP_TASK_PRESETS.includes(preset) ? 'tasks' : preset} setTab={setWorkshopTab} approvals={approvalCount}/>
         <div style={{ flex:1 }}/>
         <IBtn g="✕" title="Leave Workshop — back to the plain conversation" s={24} onClick={() => (onLeave ? onLeave() : setMode('chat'))}/>
       </div>
@@ -3224,9 +3227,9 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     </section>
   );
 
-  const projects = (
-    <section aria-label="Workshop projects" style={{ display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
-      <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:14 }}>
+  const projectSummary = (
+    <div aria-label="Workshop projects" style={{ minWidth:0 }}>
+      <div>
         {window.WorkshopProjectsView
           ? <window.WorkshopProjectsView projects={[{id:descriptor.root, name:descriptor.label || 'Workshop', status:counts.block ? counts.block + ' waiting for you' : counts.run ? 'running' : 'quiet',
               tasks:allTasks.length, done:counts.done, blocked:counts.block, hosts:hostLine, agents:agents.map(a => a.name).slice(0, 4).join(', '),
@@ -3234,11 +3237,11 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
               onOpen={() => setPreset('board')}/>
           : <div role="status" style={{ fontSize:11.5, lineHeight:1.5, color:W.inkSoft }}>Workshop projects are unavailable.</div>}
       </div>
-    </section>
+    </div>
   );
 
   const board = (
-    <section aria-label="Workshop task board" style={{ display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
+    <section aria-label="Workshop task board" style={{ flex:1, display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
       <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:14 }}>
         {window.WorkshopBoardView
           ? <window.WorkshopBoardView tasks={allTasks} agents={agents} selected={selTask} onSelect={selectTask} onDecide={decide}/>
@@ -3280,7 +3283,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const canStopTask = task => native?.mode === 'agent' && task?.work === native.work &&
     ['attaching', 'preparing', 'awaiting_approval', 'executing', 'uncertain'].includes(native.state);
   const tasksPage = (
-    <section aria-label="Workshop tasks" style={{ display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
+    <section aria-label="Workshop tasks" style={{ flex:1, display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
       <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:14 }}>
         <div style={{ display:'grid', gridTemplateColumns:'minmax(180px,1.25fr) minmax(120px,.75fr) minmax(130px,.75fr) minmax(180px,1fr) auto',
           gap:10, alignItems:'center', fontFamily:W.mono, fontSize:10.5, color:W.inkMuted, padding:'0 10px 8px' }}>
@@ -3326,6 +3329,25 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     </section>
   );
 
+  // One Tasks tab: the project summary on top, then the same tasks as a list or as a board.
+  const taskView = preset === 'board' ? 'board' : 'list';
+  const workPage = (
+    <section aria-label="Workshop work" data-workshop-work="" style={{ display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
+      <div style={{ display:'flex', alignItems:'flex-start', gap:12, padding:'14px 14px 0', minWidth:0 }}>
+        <div style={{ flex:1, minWidth:0 }}>{projectSummary}</div>
+        <div role="tablist" aria-label="Task view" style={{ display:'inline-flex', gap:4, flexShrink:0, border:`1px solid ${W.line}`, borderRadius:6, padding:2 }}>
+          {[['list', 'List', 'tasks'], ['board', 'Board', 'board']].map(([key, label, target]) => (
+            <button key={key} type="button" role="tab" aria-selected={taskView === key} onClick={() => setPreset(target)}
+              style={{ minHeight:24, border:0, borderRadius:4, margin:0, padding:'0 10px', cursor:'pointer',
+                background:taskView === key ? W.accentSoft : 'transparent', color:taskView === key ? W.ink : W.inkSoft,
+                fontFamily:W.sans, fontSize:12 }}>{label}</button>
+          ))}
+        </div>
+      </div>
+      {taskView === 'board' ? board : tasksPage}
+    </section>
+  );
+
   const routerTasks = allTasks.slice(0, 12).map(task => ({...task, model:wsTaskModel(task, native, transcript), cost:wsTaskCost(task)}));
   const routerPage = <WorkshopRouterTab live={routerLive} error={routerError} loading={routerLoading}
     saving={routerSaving} selected={routerSelected} onSave={saveRouterModel} tasks={routerTasks}/>;
@@ -3338,9 +3360,9 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const cols = externalRail
     ? (preset==='board' ? 'minmax(0,1fr) 300px' : 'minmax(0,1fr) 320px')
     : (preset==='board' ? '212px minmax(0,1fr) 300px' : '262px minmax(0,1fr) 320px');
-  const middle = preset === 'projects' ? projects : preset === 'board' ? board : preset === 'agents' ? agentsPage :
+  const middle = WORKSHOP_TASK_PRESETS.includes(preset) ? workPage : preset === 'agents' ? agentsPage :
     preset === 'approvals' ? approvalsPage : preset === 'task' ? taskPage : preset === 'router' ? routerPage :
-    preset === 'relay' ? relayPage : preset === 'prompts' ? promptsPage : preset === 'tasks' ? tasksPage : stream;
+    preset === 'relay' ? relayPage : preset === 'prompts' ? promptsPage : stream;
   return (
     <main style={{ gridColumn:'1 / -1', gridRow:'2', minHeight:0, overflow:'hidden', display:'grid',
       gridTemplateColumns:'minmax(0,1fr)', gridTemplateRows:'42px 48px minmax(0,1fr)', border:`1px solid ${W.line}`,

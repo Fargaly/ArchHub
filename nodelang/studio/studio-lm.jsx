@@ -1157,7 +1157,8 @@ const useWaitingOpenShortcut = setOpen => {
     return () => window.removeEventListener('keydown', onKey);
   }, [setOpen]);
 };
-const firstToolTab = tool => tool === 'workshop' ? 'projects' : tool === 'brain' ? 'facts' :
+// The Workshop opens on its one Tasks tab: Tasks, Board and Projects are folded together (founder 2026-10-11).
+const firstToolTab = tool => tool === 'workshop' ? 'tasks' : tool === 'brain' ? 'facts' :
   tool === 'connectors' ? 'hosts' : tool === 'cloud' ? 'account' : tool === 'baboom' ? 'settings' : 'workspace';
 const toolStateWord = state => ({
   running:'RUNNING', starting:'STARTING', off:'OFF', failed:"DIDN'T START", not_installed:'NOT INSTALLED',
@@ -2033,9 +2034,9 @@ const WorkshopToolProjects = ({ workshopState }) => {
   }));
   return <div style={{display:'flex', flexDirection:'column', gap:14}}>
     <div>
-      <div style={{fontFamily:LM.serif, fontSize:22, letterSpacing:'-0.01em'}}>Projects</div>
+      <div style={{fontFamily:LM.serif, fontSize:22, letterSpacing:'-0.01em'}}>Tasks</div>
       <div style={{fontFamily:LM.sans, fontSize:13, color:LM.inkSoft, marginTop:3}}>
-        Governed Workshop projects and tasks from the current owner projection.
+        Each Workshop's tasks and progress, from the current owner projection.
       </div>
     </div>
     {window.WorkshopProjectsView && projects.length

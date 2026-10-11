@@ -447,7 +447,7 @@ test('F2U repair: BABOOM card separates Windows startup from runtime state', asy
   } finally { studio.close(); }
 });
 
-test('F2R cloud tool view receives real account callbacks', async () => {
+test('F2R cloud tool view opens status-only account navigation', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
@@ -455,8 +455,12 @@ test('F2R cloud tool view receives real account callbacks', async () => {
     studio.win.ReactDOM.flushSync(() => hub.querySelector('[data-tool-card="cloud"]').click());
     await studio.settle();
     assert.equal(studio.doc.querySelector('[data-tool-view="cloud"]')?.getAttribute('data-tool-tab'), 'account');
+    const cloudView = studio.doc.querySelector('[data-tool-view="cloud"]');
+    assert.match(cloudView.textContent, /Cloud status/);
+    assert.equal([...cloudView.querySelectorAll('button')]
+      .filter(button => button.textContent.trim() === 'Manage account in Settings › Account').length, 1);
     const source = read('nodelang/studio/studio-lm.jsx');
-    assert.doesNotMatch(source, /<SettingsAccount account=\{account\} setAccount=\{\(\) => \{\}\} onSignOut=\{\(\) => \{\}\}/);
+    assert.doesNotMatch(source, /tool === 'cloud' && <SettingsAccount/);
   } finally { studio.close(); }
 });
 

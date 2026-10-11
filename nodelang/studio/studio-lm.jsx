@@ -2177,7 +2177,36 @@ const SettingsBaboom = () => {
   </div>;
 };
 
-const ToolMainView = ({ view, account, setAccount, onSignOut }) => {
+const SettingsCloudStatus = ({ toolRow, account, onSettings }) => {
+  const signedIn = !!(account && account.signedIn);
+  const hasToolRow = !!toolRow;
+  const stateWord = hasToolRow
+    ? (toolRow.stateWord || toolRow.state_word || toolStateWord(toolRow.state || 'starting'))
+    : (signedIn ? 'SIGNED IN' : 'STARTING');
+  const accountLine = signedIn ? 'Signed in as ' + String(account.email || 'this account') + '.' : 'Not signed in.';
+  const statusLine = hasToolRow ? (toolRow.statLine || toolRow.stat_line || '') : accountLine;
+  const rows = [
+    ['STATE', stateWord],
+    ['STATUS', statusLine],
+  ];  // No wiring line: the founder removed tool-to-tool plumbing text from the Hub (ITEM 3b).
+  return <div style={{display:'flex', flexDirection:'column', gap:14}}>
+    <SHead title="Cloud status" sub={toolRow?.description || 'Devices, grants and cloud agents.'}/>
+    <div style={{background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden'}}>
+      {rows.map((row, i) => (
+        <div key={row[0]} style={{padding:'10px 14px', display:'flex', gap:LM.sp.md, borderTop:i ? `1px solid ${LM.lineSoft}` : 'none', alignItems:'baseline'}}>
+          <span style={{fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.12em', width:58, flexShrink:0}}>{row[0]}</span>
+          <span style={{fontSize:13, color:LM.ink, minWidth:0, overflowWrap:'anywhere'}}>{row[1]}</span>
+        </div>
+      ))}
+    </div>
+    <div>
+      <button type="button" onClick={() => onSettings && onSettings(true, 'account')}
+        style={{...smallBtn(), padding:'4px 10px', fontStyle:'normal'}}>Manage account in Settings › Account</button>
+    </div>
+  </div>;
+};
+
+const ToolMainView = ({ view, account, setAccount, onSignOut, onSettings }) => {
   const [store, setStore] = React.useState(() => ({forgotten:[], revealed:{}}));
   const patch = (k, v) => setStore(old => Object.assign({}, old, typeof k === 'object' ? k : {[k]:v}));
   const tool = view?.id || 'brain';
@@ -2202,7 +2231,7 @@ const ToolMainView = ({ view, account, setAccount, onSignOut }) => {
     {tool === 'workshop' && <WorkshopToolProjects workshopState={workshopState}/>}
     {tool === 'brain' && <SettingsMemory store={store} patch={patch}/>}
     {tool === 'connectors' && <SettingsHosts/>}
-    {tool === 'cloud' && <SettingsAccount account={account} setAccount={setAccount} onSignOut={onSignOut}/>}
+    {tool === 'cloud' && <SettingsCloudStatus toolRow={toolRow} account={account} onSettings={onSettings}/>}
     {tool === 'baboom' && <SettingsBaboom/>}
     {!['workshop','brain','connectors','cloud','baboom'].includes(tool) && <ToolOffPanel tool={{id:tool,label:title,state:'off',color:LM.inkMuted,
       emptyTitle:title + ' is off', emptyLine:'This tool has no active view.'}}/>}

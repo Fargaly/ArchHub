@@ -161,7 +161,31 @@ def resolve_node_model_route(
     return chosen
 
 
-def _chat(prompt: str, context_block: str, model: str, *, before_dispatch=None) -> str:
+def _generation_options(generation: object) -> dict[str, object]:
+    if generation is None:
+        return {}
+    if not isinstance(generation, Mapping):
+        raise InvalidCell("agent generation options are invalid")
+    options: dict[str, object] = {}
+    if "max_tokens" in generation:
+        max_tokens = int(generation["max_tokens"])
+        if max_tokens < 1 or max_tokens > 32000:
+            raise InvalidCell("agent max_tokens is outside the allowed range")
+        options["max_tokens"] = max_tokens
+    if "temperature" in generation:
+        temperature = float(generation["temperature"])
+        if not math.isfinite(temperature) or temperature < 0 or temperature > 2:
+            raise InvalidCell("agent temperature is outside the allowed range")
+        options["temperature"] = temperature
+    if "top_p" in generation:
+        top_p = float(generation["top_p"])
+        if not math.isfinite(top_p) or top_p < 0 or top_p > 1:
+            raise InvalidCell("agent top_p is outside the allowed range")
+        options["top_p"] = top_p
+    return options
+
+
+def _chat(prompt: str, context_block: str, model: str, *, before_dispatch=None, generation=None) -> str:
     """The chosen route decides the endpoint, the payload and the key.
 
     This used to be one hardcoded OpenRouter URL, so a local or cloud model
@@ -169,6 +193,8 @@ def _chat(prompt: str, context_block: str, model: str, *, before_dispatch=None) 
     of substituting, and its refusal is one sentence fit to show a person.
     """
     try:
+        generation_options = {"max_tokens": 900, "temperature": 0}
+        generation_options.update(_generation_options(generation))
         answer = route_chat(
             model,
             [
@@ -176,9 +202,8 @@ def _chat(prompt: str, context_block: str, model: str, *, before_dispatch=None) 
                 {"role": "user",
                  "content": context_block + chr(10) + chr(10) + "FOUNDER: " + prompt},
             ],
-            max_tokens=900,
-            temperature=0,
             free_only=model == "openrouter/free" or model.endswith(":free"),
+            **generation_options,
             **({"before_dispatch":before_dispatch} if before_dispatch is not None else {}),
         )
         return str(answer["text"])
@@ -318,6 +343,7 @@ def run_agent_composer(
     revalidate=None,
     before_dispatch=None,
     conversation_context=None,
+    generation=None,
 ) -> dict[str, object]:
     """Read and edit under the caller's lock; wait for the model outside it.
 
@@ -351,8 +377,12 @@ def run_agent_composer(
                 + conversation_context)
     if node_root is _NO_AGENT_NODE:
         chosen = chosen_model_route(model)
-    raw = _chat(prompt.strip(), context_block, chosen,
-        **({"before_dispatch":before_dispatch} if before_dispatch is not None else {}))
+    chat_kwargs = {}
+    if generation is not None:
+        chat_kwargs["generation"] = generation
+    if before_dispatch is not None:
+        chat_kwargs["before_dispatch"] = before_dispatch
+    raw = _chat(prompt.strip(), context_block, chosen, **chat_kwargs)
     try:
         text = raw.strip()
         if text.startswith("```"):

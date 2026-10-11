@@ -58,8 +58,12 @@ const PM_META = {
   snap_to:   { label: 'Snap to', help: 'Which face of the wall the witness line lands on.' },
   key:       { label: 'Sort by' }, order: { label: 'Order' }, body: { label: 'Text' },
   family:    { label: 'Tag family' }, leader: { label: 'Leader' },
+  temperature:{ label: 'temperature' }, 'top-p': { label: 'top-p' },
+  'max tokens': { label: 'max tokens' }, 'system prompt': { label: 'system prompt' },
 };
 const pmLabel = (spec, labels) => (labels && labels[spec.k]) || spec.label || (PM_META[spec.k] || {}).label || spec.k.replace(/_/g, ' ');
+const INTERNAL_PARAM_KEYS = new Set(['source_digest', 'seed', 'image_path']);
+if (typeof window !== 'undefined') window.ARCHHUB_INTERNAL_PARAM_KEYS = INTERNAL_PARAM_KEYS;
 
 // ── A WIRE IS A NODE ────────────────────────────────────────────────────────
 // Everything in the application is a node, so a connection is not a special case with its own
@@ -236,7 +240,7 @@ async function pmFlushParameters() {
 // A built-in parameter arrives in the node's own shorthand; normalise it into the same spec
 // shape a user-added one has, so one row component renders both.
 const pmNorm = (p) => ({
-  k: p.k, type: p.type === 'slider' ? 'number' : p.type === 'select' ? 'menu' : 'text',
+  k: p.k, type: p.type === 'slider' || p.type === 'number' ? 'number' : p.type === 'select' ? 'menu' : p.type === 'textarea' ? 'textarea' : 'text',
   min: p.min, max: p.max, step: p.step, opts: PM_OPTS[p.k], page: 'Main', builtin: true,
   unit: (PM_META[p.k] || {}).unit, hard: (PM_META[p.k] || {}).hard, help: (PM_META[p.k] || {}).help,
 });
@@ -331,7 +335,7 @@ function ParamRow({ spec, labels, val, def, wired, onChange, onRevert, onPromote
   const [menu, setMenu] = React.useState(false);
   const [open, setOpen] = React.useState(false);
   const [naming, setNaming] = React.useState('');
-  const T = pmType(spec.type);
+  const T = pmType(spec.type === 'textarea' ? 'text' : spec.type);
   const dataOnly = T.wire;
   const changed = !wired && !dataOnly && String(val) !== String(def);
   const isNum = spec.type === 'number';
@@ -362,6 +366,11 @@ function ParamRow({ spec, labels, val, def, wired, onChange, onRevert, onPromote
   ) : spec.type === 'colour' ? (
     <button onClick={() => setOpen(o => !o)} title="Choose colour"
       style={{ width: 104, height: 24, borderRadius: 4, border: `1px solid ${open ? PM.accent : PM.line}`, background: String(val) || PM.bg, cursor: 'pointer' }}/>
+  ) : spec.type === 'textarea' ? (
+    <textarea value={val == null ? '' : val} onChange={e => onChange(e.target.value)} placeholder="value..."
+      rows={3} style={{ width: 128, minHeight: 58, boxSizing: 'border-box', padding: '5px 7px', borderRadius: 4,
+        border: `1px solid ${PM.line}`, background: PM.bg, color: PM.ink, fontFamily: PM.mono, fontSize: 11,
+        outline: 'none', resize: 'vertical' }}/>
   ) : (spec.opts && spec.opts.length) ? (
     <button onClick={() => setOpen(o => !o)} title={label + ' — ' + spec.opts.length + ' options'}
       style={{ width: 104, boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, padding: '4px 7px', borderRadius: 4, cursor: 'pointer', border: `1px solid ${open ? PM.accent : PM.line}`, background: PM.bg, color: PM.ink, fontFamily: PM.mono, fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden' }}>
@@ -567,11 +576,13 @@ function TerminalPanel({ node }) {
 }
 
 function NodeInspector({ node }) {
-  const builtins = React.useMemo(() => (node.params || []).map(pmNorm2), [node.id]);
-  const defs = React.useMemo(() => { const d = {}; builtins.forEach(p => d[p.k] = (node.params.find(x => x.k === p.k) || {}).v); return d; }, [node.id]);
+  const visibleParams = React.useMemo(() => (node.params || []).filter(row =>
+    !INTERNAL_PARAM_KEYS.has(String(row.k || row.label || '').toLowerCase())), [node.id]);
+  const builtins = React.useMemo(() => visibleParams.map(pmNorm2), [node.id]);
+  const defs = React.useMemo(() => { const d = {}; builtins.forEach(p => d[p.k] = (visibleParams.find(x => x.k === p.k) || {}).v); return d; }, [node.id]);
 
   const seedPages = React.useMemo(() => {
-    const ps = ['Main']; (node.params || []).forEach(p => { if (p.page && ps.indexOf(p.page) < 0) ps.push(p.page); });
+    const ps = ['Main']; visibleParams.forEach(p => { if (p.page && ps.indexOf(p.page) < 0) ps.push(p.page); });
     return ps;
   }, [node.id]);
   const rec = pmEdit(node.id, defs);

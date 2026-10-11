@@ -5,6 +5,9 @@ created here. The browser server must supply fresh session/CSRF admission.
 """
 from __future__ import annotations
 
+import math
+from typing import Mapping
+
 from .model_router import ModelRouteRefused, route_chat
 from .unified_authority import read_instance, read_instance_definition, read_scope_level
 from .universal_cell import InvalidCell
@@ -17,6 +20,30 @@ _SYSTEM = (
     "happened. If asked for a workflow, propose its steps for review and state "
     "that the graph has not been changed."
 )
+
+
+def _generation_options(generation: object) -> dict[str, object]:
+    if generation is None:
+        return {}
+    if not isinstance(generation, Mapping):
+        raise InvalidCell("agent generation options are invalid")
+    options: dict[str, object] = {}
+    if "max_tokens" in generation:
+        max_tokens = int(generation["max_tokens"])
+        if max_tokens < 1 or max_tokens > 32000:
+            raise InvalidCell("agent max_tokens is outside the allowed range")
+        options["max_tokens"] = max_tokens
+    if "temperature" in generation:
+        temperature = float(generation["temperature"])
+        if not math.isfinite(temperature) or temperature < 0 or temperature > 2:
+            raise InvalidCell("agent temperature is outside the allowed range")
+        options["temperature"] = temperature
+    if "top_p" in generation:
+        top_p = float(generation["top_p"])
+        if not math.isfinite(top_p) or top_p < 0 or top_p > 1:
+            raise InvalidCell("agent top_p is outside the allowed range")
+        options["top_p"] = top_p
+    return options
 
 
 def resolve_clean_node_model_route(authority, caller, projection, node_root, *, scope_root, model=None):
@@ -54,7 +81,7 @@ def resolve_clean_node_model_route(authority, caller, projection, node_root, *, 
 
 def run_clean_agent_conversation(owner, binding, body, *, revalidate):
     """Resolve under the owner lock, call the provider outside it, re-admit reply."""
-    if type(body) is not dict or set(body) - {"node", "prompt", "model", "expected_scope"}:
+    if type(body) is not dict or set(body) - {"node", "prompt", "model", "expected_scope", "generation"}:
         raise InvalidCell("agent conversation fields are invalid")
     prompt = body.get("prompt")
     if type(prompt) is not str or not prompt.strip() or len(prompt.encode("utf-8")) > 32768:
@@ -75,10 +102,13 @@ def run_clean_agent_conversation(owner, binding, body, *, revalidate):
     if type(instruction) is not str or len(instruction.encode("utf-8")) > 16384:
         raise InvalidCell("agent node prompt must be text of at most 16384 bytes")
     try:
+        generation_options = {"max_tokens": 900, "temperature": 0}
+        generation_options.update(_generation_options(body.get("generation")))
         routed = route_chat(admitted["model"], [
             {"role": "system", "content": _SYSTEM},
             {"role": "user", "content": (instruction + "\n\n" if instruction else "") + prompt.strip()},
-        ], max_tokens=900, temperature=0, response_byte_limit=262144,
+        ], response_byte_limit=262144,
+            **generation_options,
             free_only=admitted["model"] == "openrouter/free" or admitted["model"].endswith(":free"))
     except ModelRouteRefused:
         raise

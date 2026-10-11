@@ -45,6 +45,27 @@ const useWorkshopProjection = () => {
 };
 const studioCanvasScope = canvas => JSON.stringify([canvas?.graph_id || canvas?.application_root || '',
   canvas?.root || canvas?.scope?.current || '', canvas?.authorization?.subject || '', canvas?.authorization?.session || '']);
+const systemSessionOpenId = id => String(id || '').startsWith('system:') ? String(id).slice(7) : id;
+const systemAllowed = (canvas, graph) => canvas?.authorization?.system_view === true &&
+  (graph?.nodes || []).some(node => node.application === true);
+const systemSessionId = (rootCanvas, gateCanvas, graph) => {
+  const root = rootCanvas?.application_root || rootCanvas?.graph_id ||
+    gateCanvas?.application_root || gateCanvas?.graph_id || '';
+  return root && systemAllowed(gateCanvas, graph) ? 'system:' + root : '';
+};
+const systemSessionRow = (rootCanvas, gateCanvas, graph) => {
+  const id = systemSessionId(rootCanvas, gateCanvas, graph);
+  if (!id) return null;
+  return { id, title:'System', state:'idle', host:'archhub', when:'saved',
+    file:'Application graph', last:'ArchHub application parts and registries.', model:'' };
+};
+const sessionRowsWithSystem = (rows, rootCanvas, gateCanvas, graph) => {
+  const system = systemSessionRow(rootCanvas, gateCanvas, graph);
+  if (!system) return rows || [];
+  const held = new Map((rows || []).map(row => [row.id, row]));
+  held.set(system.id, system);
+  return [...held.values()];
+};
 const studioCreatedNodeId = (result, refreshed, beforeIds) => {
   const direct = result && (result.node || result.selected || result.id);
   if (direct) return direct;
@@ -319,14 +340,25 @@ const studioFreeSlot = (nodes, originOrSize = null, size = {w:210, h:230}, gap =
   return {x:x0, y:(rects.length ? Math.max(...rects.map(r => r.y + r.h)) + gap : y0)};
 };
 
-const studioRefreshCanvasInPlace = () => {
+const studioRefreshCanvasInPlace = async () => {
   const authority = window.ARCHHUB_STUDIO_AUTHORITY;
-  if (typeof authority?.load === 'function') return authority.load();
-  const workshop = window.ARCHHUB_EXISTING_WORKSHOP;
-  if (typeof workshop?.refreshTopologyCanvas === 'function') return workshop.refreshTopologyCanvas();
-  if (typeof window.ARCHHUB_GET_CANVAS === 'function') return window.ARCHHUB_GET_CANVAS();
-  return Promise.resolve(null);
+  let refreshed = null;
+  if (typeof authority?.load === 'function') refreshed = await authority.load();
+  else {
+    const workshop = window.ARCHHUB_EXISTING_WORKSHOP;
+    if (typeof workshop?.refreshTopologyCanvas === 'function') refreshed = await workshop.refreshTopologyCanvas();
+    else if (typeof window.ARCHHUB_GET_CANVAS === 'function') refreshed = await window.ARCHHUB_GET_CANVAS();
+  }
+  const graph = authority?.getSnapshot?.()?.graph ||
+    window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot?.()?.topology?.graph ||
+    window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot?.()?.graph;
+  if (graph && window.ARCHHUB_LIVE) {
+    LM_GRAPH = graph;
+    window.ARCHHUB_LIVE.graph = graph;
+  }
+  return refreshed;
 };
+if (typeof window !== 'undefined') window.__archhubRefreshCanvasInPlace = studioRefreshCanvasInPlace;
 const StudioLM = () => {
   React.useSyncExternalStore(window.ArchHubTheme.subscribe, window.ArchHubTheme.getEpoch);
   useCatalogueVersion();
@@ -472,8 +504,10 @@ const StudioLM = () => {
     routed:targetRoute, vendor:modelTarget.title, col:LM.inkMuted, latency:null} : model;
   // User-added nodes appear on top of the demo graph
   const [userNodes, setUserNodes] = React.useState([]);
-  const session = openId ? LM_SESSIONS.find(s => s.id === openId) : null;
   const workshopState = useWorkshopProjection();
+  const visibleSessions = sessionRowsWithSystem(LM_SESSIONS, workshopState?.canvas,
+    authorityState?.canvas, authorityState?.graph || LM_GRAPH);
+  const session = openId ? visibleSessions.find(s => s.id === openId) : null;
   const applyGraphIndex = React.useCallback((result, fallbackId) => {
     const rows = Array.isArray(result?.graphs) ? result.graphs : null;
     const current = result?.current_graph || result?.graph?.id || fallbackId || '';
@@ -578,7 +612,7 @@ const StudioLM = () => {
       setToolView({id:tool, tab:firstToolTab(tool)});
       return;
     }
-    const firstSession = openId || window.ARCHHUB_LIVE?.currentGraph || LM_SESSIONS[0]?.id || null;
+    const firstSession = openId || window.ARCHHUB_LIVE?.currentGraph || visibleSessions[0]?.id || null;
     if (tool === 'studio') {
       setToolView(null);
       if (firstSession) openSessionView(firstSession, {mode:'canvas', conversationRoot:'', target:''});
@@ -667,14 +701,23 @@ const StudioLM = () => {
 
   // open a session — also pin as a tab if not already open
   const openSession = async (id) => {
+    const systemId = systemSessionId(workshopState?.canvas, authorityState?.canvas, authorityState?.graph || LM_GRAPH);
+    const isSystem = id && id === systemId;
+    // The System view is a mode of the application's root graph (as the old System tab was):
+    // open the admitted root graph, then switch to the system view. The application root itself
+    // is not an admitted graph, so it is never posted to graph-open.
+    const rootGraphId = (LM_SESSIONS.find(row => row && row.id && !String(row.id).startsWith('system:')) || {}).id || '';
+    const graphId = isSystem ? rootGraphId : id;
     setToolView(null);
     setSessionOpenError('');
-    if (id && window.ARCHHUB_GRAPH_OPEN) {
+    if (graphId && window.ARCHHUB_GRAPH_OPEN) {
       try {
-        const result = await window.ARCHHUB_GRAPH_OPEN(id);
-        const opened = await switchOpenGraphInPlace(result, id);
-        const current = opened.current || id;
+        const result = await window.ARCHHUB_GRAPH_OPEN(graphId);
+        const opened = await switchOpenGraphInPlace(result, graphId);
+        const current = isSystem ? id : (opened.current || graphId);
         if (current && !openTabs.includes(current)) setOpenTabs(t => t.includes(current) ? t : [...t, current]);
+        if (isSystem) setWorkspaceSelection({mode:'system', conversationRoot:'', target:'', notice:'',
+          scope:viewScopeForSession(id), pending:false});
         setOpenId(current || id);
       } catch (error) {
         setSessionOpenError(error?.message || 'Graph opening was refused.');
@@ -682,6 +725,8 @@ const StudioLM = () => {
       }
       return;
     }
+    if (isSystem) setWorkspaceSelection({mode:'system', conversationRoot:'', target:'', notice:'',
+      scope:viewScopeForSession(id), pending:false});
     if (id && !openTabs.includes(id)) setOpenTabs(t => [...t, id]);
     setOpenId(id);
   };
@@ -785,7 +830,7 @@ const StudioLM = () => {
         ? <Workspace
             session={session} model={displayedModel} readiness={readiness} onReadinessStale={readReadiness}
             updateCanvasViewport={updateCanvasViewport}
-            openTabs={openTabs} setOpenId={openSession} closeTab={closeTab}
+            openTabs={openTabs} sessionRows={visibleSessions} setOpenId={openSession} closeTab={closeTab}
             setPickerOpen={setPickerOpen}
             setLibraryOpen={setLibraryOpen}
             focusId={focusId} setFocusId={setFocusId}
@@ -794,7 +839,7 @@ const StudioLM = () => {
             userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary}
             view={workspaceView} updateView={updateWorkspaceView} wsSel={wsSel} setWsSel={setWsSel}
             onHome={() => { setToolView(null); setOpenId(null); }}/>
-        : <Home onOpen={openSession} model={model} native={homeNative} setPickerOpen={setPickerOpen}
+        : <Home onOpen={openSession} sessions={visibleSessions} model={model} native={homeNative} setPickerOpen={setPickerOpen}
             setLibraryOpen={setLibraryOpen} setPanel={setPanel}
             onOpenTool={openTool} onOpenToolGraph={openToolGraph} workshopState={workshopState} account={account}
             sessionError={sessionOpenError}
@@ -1725,7 +1770,7 @@ const kbd = () => ({
 });
 
 // ──────────────────────── HOME ────────────────────────
-const Home = ({ onOpen, model, native, setPickerOpen, setLibraryOpen, setPanel, onOpenTool, onOpenToolGraph, workshopState, account,
+const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, setPickerOpen, setLibraryOpen, setPanel, onOpenTool, onOpenToolGraph, workshopState, account,
   onStarted, sessionError = '', onCreateGraph }) => {
   const [filter, onFilter] = React.useState('all');
   const [draft, setDraft] = React.useState('');
@@ -1845,8 +1890,8 @@ const Home = ({ onOpen, model, native, setPickerOpen, setLibraryOpen, setPanel, 
     }
   };
   const shown = filter === 'all'
-    ? LM_SESSIONS
-    : LM_SESSIONS.filter(s => (s.state || 'idle') === filter);
+    ? sessions
+    : sessions.filter(s => (s.state || 'idle') === filter);
   return (
   <main className="ah-scroll" style={{
     gridColumn:'2', gridRow:'1', overflow:'auto', minHeight:0,
@@ -2137,7 +2182,7 @@ const SessionCard = ({ s, onOpen }) => {
 };
 
 // ──────────────────────── WORKSPACE ────────────────────────
-const Workspace = ({ session, model, readiness = null, onReadinessStale, openTabs, setOpenId, closeTab, setPickerOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, onHome, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
+const Workspace = ({ session, model, readiness = null, onReadinessStale, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, setPickerOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, onHome, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
   const authorityState = useStudioProjection();
   const graph = authorityState?.graph || LM_GRAPH;
   const allNodes = [...graph.nodes, ...(userNodes || [])];
@@ -2164,14 +2209,14 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, openTab
     }}>
       <WsHeader
         session={session} model={model} openTabs={openTabs}
+        sessionRows={sessionRows}
         setOpenId={setOpenId} closeTab={closeTab} mode={mode} setMode={setMode}
         workshops={workshops} conversationRoot={workshop?.root || ''} conversationNotice={view.notice}
         workshopUnavailable={workshopState?.canvas?.unavailable || ''}
         workshopModel={workshopState?.nativeWork?.model}
         setConversationRoot={root => updateView({conversationRoot:root, mode:'chat', target:''})}
         setPickerOpen={setPickerOpen} onHome={onHome}
-        systemAllowed={authorityState?.canvas?.authorization?.system_view === true &&
-          graph.nodes.some(node => node.application === true)}/>
+        systemAllowed={systemAllowed(authorityState?.canvas, graph)}/>
       {mode === 'chat' ? (
         workshop && window.WorkshopView ? <window.WorkshopView key={JSON.stringify([session.id, workshopState.canvas.graph_id,
           workshopState.canvas.root, workshop.root])} state={workshopState} descriptor={workshop} target={target}
@@ -2223,6 +2268,50 @@ const nodeModelRoute = n => {
   const route = String(nodeModelRow(n)?.v || '').trim();
   return route === 'provider-selected' ? '' : route;
 };
+const GENERATION_SPECS = [
+  { k:'temperature', label:'temperature', type:'number', min:0, max:2, step:0.05, v:0.7, page:'Model' },
+  { k:'top-p', label:'top-p', type:'number', min:0, max:1, step:0.01, v:0.95, page:'Model' },
+  { k:'max tokens', label:'max tokens', type:'number', min:256, max:32000, step:256, v:4096, page:'Model' },
+];
+const normalizeGenerationDefaults = values => Object.fromEntries(GENERATION_SPECS.map(spec => {
+  const raw = values && Object.prototype.hasOwnProperty.call(values, spec.k) ? values[spec.k] : spec.v;
+  const number = Number(raw);
+  return [spec.k, Number.isFinite(number) ? number : spec.v];
+}));
+const modelGenerationDefaults = () => normalizeGenerationDefaults(window.ARCHHUB_MODEL_DEFAULTS ||
+  window.ARCHHUB_PICKED_MODEL?.generation ||
+  window.ARCHHUB_LIVE?.model_defaults ||
+  window.ARCHHUB_STUDIO_AUTHORITY?.getSnapshot?.()?.canvas?.configuration?.model_defaults ||
+  window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot?.()?.canvas?.configuration?.model_defaults || {});
+const generationRequestOptions = values => {
+  const next = normalizeGenerationDefaults(values || modelGenerationDefaults());
+  return {temperature:next.temperature, top_p:next['top-p'], max_tokens:next['max tokens']};
+};
+const saveModelDefaults = async values => {
+  const next = normalizeGenerationDefaults(values);
+  if (typeof window.ARCHHUB_MODEL_DEFAULTS_SAVE === 'function') {
+    const saved = await window.ARCHHUB_MODEL_DEFAULTS_SAVE(next);
+    window.ARCHHUB_MODEL_DEFAULTS = normalizeGenerationDefaults(saved?.model_defaults || saved?.defaults || next);
+  } else {
+    const owner = window.ARCHHUB_EXISTING_WORKSHOP;
+    const route = modelRoute(pickedModel());
+    if (!owner?.setComposerModel || !route) throw new Error('Choose a model before saving generation defaults.');
+    const saved = await owner.setComposerModel(route, next);
+    window.ARCHHUB_MODEL_DEFAULTS = normalizeGenerationDefaults(
+      saved?.configuration_state?.model_defaults || saved?.model_defaults || next);
+    window.ARCHHUB_PICKED_MODEL = {...window.ARCHHUB_PICKED_MODEL, generation:window.ARCHHUB_MODEL_DEFAULTS};
+  }
+  return window.ARCHHUB_MODEL_DEFAULTS;
+};
+const aiNodeWithMovedParams = node => {
+  if (!node || node.cat !== 'ai') return node;
+  const params = [...(node.params || [])];
+  const has = key => params.some(row => row.k === key || row.label === key);
+  GENERATION_SPECS.forEach(spec => {
+    if (!has(spec.k)) params.push({...spec, owner:node.id});
+  });
+  return {...node, params};
+};
 
 // ─── Chat lane data seam ───
 // ChatView, InferenceInspector and ModelPicker are the design bundle's components
@@ -2230,7 +2319,6 @@ const nodeModelRoute = n => {
 // 3145-3208), kept to its layout, spacing, type, tokens and copy. This seam is where they differ:
 // it maps what the application holds onto the shapes those components read. No seeded person,
 // file, token count, stage progress, host or price is drawn.
-const CHAT_SYSTEM_PROMPT = 'You operate the ArchHub node canvas. Prepare editable, wired changes for review; never claim that effects ran.';
 const chatPeople = model => {
   const account = typeof acLoad === 'function' ? (acLoad() || {}) : {};
   const me = String(account.name || account.email || '').trim() || 'You';
@@ -2335,7 +2423,8 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
     setDraft('');
     setBusy(true);
     try {
-      const answer = await window.ARCHHUB_AGENT(text, modelRoute(model));
+      const answer = await window.ARCHHUB_AGENT(text, modelRoute(model),
+        {generation:generationRequestOptions()});
       setMessages(m => [...m, { me:false, time:stamp(), text:answer }]);
     } catch (error) {
       setMessages(m => [...m, { me:false, time:stamp(),
@@ -2352,20 +2441,6 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
       <style>{`.lm-chat-draft::placeholder { color: ${LM.inkMuted}; opacity: 1 }`}</style>
       <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'24px 0 12px' }}>
         <div style={{ maxWidth:720, margin:'0 auto', padding:'0 36px' }}>
-          {/* System prompt card — always anchored at top */}
-          <div style={{
-            background:LM.bgPanel, border:`1px solid ${LM.line}`, borderLeft:`3px solid ${LM.cyan}`,
-            borderRadius:LM.rad.lg, padding:'12px 16px', marginBottom:26,
-          }}>
-            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
-              <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.cyan, letterSpacing:'0.14em' }}>SYSTEM PROMPT</span>
-              <div style={{ flex:1 }}/>
-            </div>
-            <div style={{ fontFamily:LM.serif, fontStyle:'italic', fontSize:15, lineHeight:1.55, color:LM.inkSoft, letterSpacing:'-0.005em' }}>
-              {CHAT_SYSTEM_PROMPT}
-            </div>
-          </div>
-
           {/* Conversation — calm, generous, serif for Claude */}
           {messages.map((m, i) => (
             <div key={i} data-chat-turn={m.me ? 'me' : 'answer'} style={{ display:'flex', gap:14, marginBottom:24 }}>
@@ -2474,7 +2549,10 @@ const LiveChain = () => {
   const graph = window.ARCHHUB_LIVE?.graph;
   if (!graph) return null;
   const stages = chatStages(graph);
-  const rows = stages.flatMap((nodes, i) => nodes.flatMap(n => (n.params || []).slice(0, 2).map(p =>
+  const hidden = window.ARCHHUB_INTERNAL_PARAM_KEYS || new Set(['source_digest', 'seed', 'image_path']);
+  const rows = stages.flatMap((nodes, i) => nodes.flatMap(n => (n.params || [])
+    .filter(p => !hidden.has(String(p.k || p.label || '').toLowerCase()))
+    .slice(0, 2).map(p =>
     ({key:n.id + '|' + p.k, node:'stage ' + (i + 1) + ' · ' + n.title, k:p.k, v:String(p.v)}))));
   return (
     <div data-chat-chain="" style={{ padding:'14px 16px', borderBottom:`1px solid ${LM.lineSoft}` }}>
@@ -2517,14 +2595,6 @@ const InferenceInspector = ({ model, setPickerOpen }) => {
         </div>
         <span style={{ color:LM.inkSoft, fontSize:11 }}>▾</span>
       </button>
-    </div>
-
-    {/* generation params */}
-    <div style={{ padding:'14px 16px', borderBottom:`1px solid ${LM.lineSoft}` }}>
-      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:10 }}>GENERATION</div>
-      <CalmSlider k="temperature" v={0.7} min={0} max={2} step={0.05}/>
-      <CalmSlider k="top-p" v={0.95} min={0} max={1} step={0.01}/>
-      <CalmSlider k="max tokens" v={4096} min={256} max={32000} step={256} int/>
     </div>
 
     {/* parametric chain -- the LIVE wired pipeline, stage by stage */}
@@ -2927,18 +2997,16 @@ const workshopUnavailableText = reason => (typeof reason === 'string' && reason.
 // Chat · Workshop · Canvas. The Workshop segment is the founder's way in (restored after 8cc3463d took it
 // out): Chat with the held room, else the general room, else the first; no room keeps it visible and
 // answers with the owner's reason (workshop_scope.unavailable).
-// Founder only: "System" opens the application's own parts as their own view, never from inside a session canvas.
 const workshopModeSegments = ({mode, conversationRoot = '', workshops = [], unavailable = '', systemAllowed = false}) => {
   const room = workshopModeRoom(workshops, conversationRoot);
   const active = mode === 'chat' ? (conversationRoot ? 'workshop' : 'chat') : mode;
-  return [['chat', 'Chat'], ['workshop', 'Workshop'], ['canvas', 'Canvas'], ...(systemAllowed ? [['system', 'System']] : [])].map(([key, label]) => ({
+  return [['chat', 'Chat'], ['workshop', 'Workshop'], ['canvas', 'Canvas']].map(([key, label]) => ({
     key, label, active:active === key, disabled:false, unavailable:key === 'workshop' && !room,
     title:key === 'workshop' && !room ? workshopUnavailableText(unavailable) : undefined,
   }));
 };
 const chooseWorkshopMode = (key, {mode, conversationRoot = '', workshops = [], setMode, setConversationRoot,
   unavailable = '', onUnavailable}) => {
-  if (key === 'system') return setMode('system');
   if (key === 'canvas' || typeof setConversationRoot !== 'function') return setMode(key === 'canvas' ? 'canvas' : 'chat');
   const room = key === 'workshop' ? workshopModeRoom(workshops, conversationRoot) : '';
   if (key === 'workshop' && !room) {
@@ -2951,7 +3019,7 @@ const chooseWorkshopMode = (key, {mode, conversationRoot = '', workshops = [], s
 };
 
 // Workspace header uses workspace tabs and one compact conversation menu.
-const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode, setPickerOpen, onHome, systemAllowed = false,
+const WsHeader = ({ session, model, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, mode, setMode, setPickerOpen, onHome, systemAllowed = false,
   workshops = [], conversationRoot = '', setConversationRoot, workshopModel, conversationNotice = '',
   workshopUnavailable = '' }) => {
   const [workshopRefusal, setWorkshopRefusal] = React.useState('');
@@ -2974,7 +3042,7 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode
 
     <div style={{ flex:1, minWidth:0, display:'flex', alignItems:'center', gap:2, overflow:'hidden' }}>
       {openTabs.map(id => {
-        const s = LM_SESSIONS.find(x => x.id === id);
+        const s = sessionRows.find(x => x.id === id);
         if (!s) return null;
         const a = session.id === id;
         const sm = LM_STATE_META[s.state];
@@ -3330,9 +3398,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   // The canvas draws the user's cards; the application's own -- map domains, core values,
   // registries, agent sessions -- are the founder's System view, framed by domain. Only the
   // founder's view holds them, and only the founder is offered the switch.
-  const systemViewAllowed = authorityState?.canvas?.authorization?.system_view === true;
-  const hasApplicationNodes = projectedGraph.nodes.some(node => node.application === true);
-  const showingSystem = system && systemViewAllowed && hasApplicationNodes;
+  const showingSystem = system && systemAllowed(authorityState?.canvas, projectedGraph);
   const graph = React.useMemo(() => {
     const nodes = projectedGraph.nodes.filter(node =>
       typeof node.application !== 'boolean' || node.application === showingSystem);
@@ -4427,7 +4493,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
         transform:'translate(-50%, -50%)', margin:0, maxWidth:360, textAlign:'center', fontSize:12.5,
         lineHeight:1.5, color:LM.inkSoft}}>
         This canvas holds only what you place on it. Add a node from the library (⌘L).
-        {systemViewAllowed && hasApplicationNodes ? " The application's own parts are under the System tab." : ''}
+        {systemAllowed(authorityState?.canvas, projectedGraph) ? " The application's own parts are under the System tab." : ''}
       </p>}
       {/* Below the minimap (MiniMap: right 14, top 14, 96 tall), never over it. The design canvas draws no status chip:
           only a save in flight, a refusal or a half-made wire draws one. Refresh is also in a node's own menu. */}
@@ -4756,7 +4822,8 @@ const InlineAsk = ({ placeholder, model, node, onAnswer, scale, before }) => {
     report('asking ' + (node ? route : ((picked && picked.name) || 'the agent')) + '…');
     try {
       // Node asks carry the committed route as a consistency check.
-      const answer = String(await window.ARCHHUB_AGENT(said, route, node ? node.id : undefined));
+      const answer = String(await window.ARCHHUB_AGENT(said, route,
+        node ? {node:node.id, generation:generationRequestOptions()} : {generation:generationRequestOptions()}));
       report(answer);
       setText('');
     } catch (error) {
@@ -5531,9 +5598,10 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
     </aside>
   );
   if (!node) return <aside style={{ gridColumn:'2', gridRow:'2', background:LM.bgPanel, borderLeft:`1px solid ${LM.line}` }}/>;
+  const inspectedNode = aiNodeWithMovedParams(node);
   // AI node gets a dedicated conversation rail — full scrollback + composer
-  if (node.cat === 'ai' && !node.live) return <ConversationRail node={node}/>;
-  const cat = studioCategory(node.cat);
+  if (node.cat === 'ai' && !node.live) return <ConversationRail node={inspectedNode}/>;
+  const cat = studioCategory(inspectedNode.cat);
   return (
     <aside className="ah-scroll" style={{
       gridColumn:'2', gridRow:'2',
@@ -5548,16 +5616,16 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
           <span style={{ fontFamily:LM.mono, fontSize:9, color:cat.col, letterSpacing:'0.18em' }}>{cat.label}</span>
         </div>
         <div style={{ fontFamily:LM.serif, fontSize:21, letterSpacing:'-0.015em', marginTop:5, lineHeight:1.05 }}>
-          {node.title}
+          {inspectedNode.title}
         </div>
-        {node.sub && <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:5, letterSpacing:'0.04em' }}>{node.sub}</div>}
+        {inspectedNode.sub && <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:5, letterSpacing:'0.04em' }}>{inspectedNode.sub}</div>}
       </div>
 
       {/* Connections, parameters and actions are one instrument — see studio-params.jsx.
           The old block was dead form widgets: native selects, a bare range input and four
           equal-weight buttons, none of which could be typed into or reverted. */}
-      <window.NodeInspector key={node.id} node={node}/>
-      {node.live && (node.has_conversation || nodeModelRow(node)) && <NodeModelConversation key={node.id + ':conversation'} node={node} scope={scope} openConversation={openConversation}/>}
+      <window.NodeInspector key={inspectedNode.id} node={inspectedNode}/>
+      {inspectedNode.live && (inspectedNode.has_conversation || nodeModelRow(inspectedNode)) && <NodeModelConversation key={inspectedNode.id + ':conversation'} node={inspectedNode} scope={scope} openConversation={openConversation}/>}
     </aside>
   );
 };
@@ -5602,6 +5670,8 @@ const ConversationRail = ({ node }) => {
         overflow:'auto', padding:'14px 16px',
         display:'flex', flexDirection:'column', gap:14,
       }}>
+        <window.NodeInspector key={node.id + ':params'} node={node}/>
+
         {/* Date breakpoint */}
         <div style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.14em' }}>
           <span style={{ flex:1, height:1, background:LM.lineHair }}/>
@@ -6814,6 +6884,22 @@ const SettingsProviders = ({ providers, onTab }) => {
   );
 };
 
+const SettingsGenerationControl = ({ spec, value, disabled, onChange }) => (
+  <div style={{ display:'grid', gridTemplateColumns:'1fr 1.3fr auto', gap:10, alignItems:'center',
+    padding:'8px 10px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.sm, marginBottom:6 }}>
+    <label htmlFor={'model-default-' + spec.k} style={{ fontSize:12.5, color:LM.ink }}>{spec.label}</label>
+    <input id={'model-default-' + spec.k} aria-label={spec.label} type="range" value={value}
+      min={spec.min} max={spec.max} step={spec.step} disabled={disabled}
+      onChange={event => onChange(spec.k, Number(event.target.value))}
+      style={{ width:'100%', accentColor:LM.accent }}/>
+    <input aria-label={spec.label + ' value'} type="number" value={value}
+      min={spec.min} max={spec.max} step={spec.step} disabled={disabled}
+      onChange={event => onChange(spec.k, Number(event.target.value))}
+      style={{ width:80, boxSizing:'border-box', padding:'4px 6px', borderRadius:LM.rad.sm,
+        border:`1px solid ${LM.line}`, background:LM.bgDeep, color:LM.ink, fontFamily:LM.mono, fontSize:10.5 }}/>
+  </div>
+);
+
 // ── Models: route only jobs the app can really route in this build. The router exposes one
 // persisted composer route, so Reasoning is editable and the other jobs are stated once.
 const SettingsModels = () => {
@@ -6821,6 +6907,8 @@ const SettingsModels = () => {
   const [error, setError] = React.useState('');
   const [saving, setSaving] = React.useState(false);
   const [selected, setSelected] = React.useState(() => modelRoute(pickedModel()));
+  const [defaults, setDefaults] = React.useState(() => modelGenerationDefaults());
+  const [defaultsStatus, setDefaultsStatus] = React.useState('');
   const read = React.useCallback(() => {
     const controller = new AbortController();
     const s = window.__archhubSession || {};
@@ -6857,6 +6945,14 @@ const SettingsModels = () => {
       setError(failure?.message || 'The model selection could not be saved.');
     } finally { setSaving(false); }
   };
+  const saveDefault = (key, value) => {
+    const next = normalizeGenerationDefaults({...defaults, [key]: value});
+    setDefaults(next); setDefaultsStatus('saving');
+    saveModelDefaults(next).then(saved => {
+      setDefaults(normalizeGenerationDefaults(saved));
+      setDefaultsStatus('saved');
+    }).catch(failure => setDefaultsStatus(failure?.message || 'not saved'));
+  };
   const selectStyle = { width:'100%', padding:'7px 10px', background:LM.bgDeep, color:LM.ink,
     border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, fontFamily:LM.mono, fontSize:11.5 };
   const rowStyle = { display:'grid', gridTemplateColumns:'1fr 1.25fr', gap:14, alignItems:'center',
@@ -6886,6 +6982,21 @@ const SettingsModels = () => {
         {localOptions.map(item => modelRoute(item)).join(' · ')}
       </div>
     </div>}
+    <div style={rowStyle}>
+      <div>
+        <div style={{ fontSize:13, fontWeight:500 }}>Generation defaults</div>
+        <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, letterSpacing:'0.04em' }}>
+          saved with model settings
+        </div>
+      </div>
+      <div>
+        {GENERATION_SPECS.map(spec => <SettingsGenerationControl key={spec.k} spec={spec}
+          value={defaults[spec.k]} disabled={saving} onChange={saveDefault}/>)}
+        {defaultsStatus && <div role="status" style={{ fontFamily:LM.mono, fontSize:10, color:defaultsStatus === 'not saved' ? LM.err : LM.inkMuted }}>
+          {defaultsStatus}
+        </div>}
+      </div>
+    </div>
     <div role="status" style={{ padding:'9px 12px', fontFamily:LM.serif, fontStyle:'italic', fontSize:13, color:LM.inkSoft }}>
       Other jobs use the reasoning model.
     </div>

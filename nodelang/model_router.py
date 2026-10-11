@@ -1160,6 +1160,7 @@ def _body(
     messages: Sequence,
     max_tokens: int,
     temperature: float,
+    top_p: float,
 ) -> dict:
     if destination.family == "ollama":
         if _carries_an_image(messages):
@@ -1171,7 +1172,7 @@ def _body(
             "model": destination.model,
             "messages": list(messages),
             "stream": False,
-            "options": {"temperature": temperature, "num_predict": max_tokens},
+            "options": {"temperature": temperature, "top_p": top_p, "num_predict": max_tokens},
         }
     if destination.family == "openai":
         # Current OpenAI chat models take max_completion_tokens, and the
@@ -1184,12 +1185,17 @@ def _body(
         if destination.model.startswith(("gpt-4", "gpt-3.5")):
             body["temperature"] = temperature
         return body
-    return {
+    body = {
         "model": destination.model,
         "messages": list(messages),
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
+    # The default request stays byte-identical to the one free routes answer;
+    # top_p is sent only when the owner changed it.
+    if top_p is not None and top_p != 1.0:
+        body["top_p"] = top_p
+    return body
 
 
 def _answer_text(destination: ModelRoute, payload: object) -> str:
@@ -1519,6 +1525,7 @@ def route_chat(
     *,
     max_tokens: int = 900,
     temperature: float = 0.0,
+    top_p: float = 1.0,
     timeout: float = 60.0,
     opener: Optional[Callable] = None,
     environ: Optional[Mapping[str, str]] = None,
@@ -1616,7 +1623,7 @@ def route_chat(
     attempts = _openrouter_free_attempts(destination, free_only, environ)
     before_dispatch_once()
     for index, attempt in enumerate(attempts):
-        body = _body(attempt, rows, max_tokens, temperature)
+        body = _body(attempt, rows, max_tokens, temperature, top_p)
         if reasoning_effort is not None:
             body["reasoning"] = {"effort": reasoning_effort}
         if free_only:

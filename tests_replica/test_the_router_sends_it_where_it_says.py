@@ -136,6 +136,17 @@ def test_a_byo_model_reaches_openrouter_with_the_key_from_the_environment():
     assert out["family"] == "openrouter" and out["key_source"] == "environment"
 
 
+def test_generation_defaults_are_carried_to_the_openrouter_request_body():
+    wire = _Wire(_openai_answer("ok"))
+    route_chat("deepseek/deepseek-r1", ASK, opener=wire,
+               environ={"OPENROUTER_API_KEY": "or-live-key"},
+               secrets_loader=NO_SECRETS, cloud_session=None,
+               temperature=0.35, top_p=0.81, max_tokens=2048)
+    assert wire.body["temperature"] == 0.35
+    assert wire.body["top_p"] == 0.81
+    assert wire.body["max_tokens"] == 2048
+
+
 def test_an_explicit_openrouter_free_model_keeps_its_vendor_id_and_zero_price_guard():
     wire = _Wire({**_openai_answer("ok"), "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
                   "usage": {"cost": 0}})

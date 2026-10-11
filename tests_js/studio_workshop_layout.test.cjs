@@ -48,16 +48,15 @@ test('Workshop is Chat with the held room, else the general room, else the first
   assert.deepEqual(calls, [['root', 'general-a'], ['root', 'child-a'], ['root', ''], ['mode', 'canvas'], ['root', 'only-a']]);
 });
 
-test('the founder\'s header adds a System tab that opens the system view; nobody else sees it', () => {
+test('the System graph is its own session, not a header tab; the system mode still opens it', () => {
   const {segments, choose} = modeHarness();
   const labels = view => segments(view).map(row => `${row.label}${row.active ? '*' : ''}`).join(' ');
   assert.equal(labels({mode:'chat', conversationRoot:'', workshops:rooms}), 'Chat* Workshop Canvas');
-  assert.equal(labels({mode:'chat', conversationRoot:'', workshops:rooms, systemAllowed:true}), 'Chat* Workshop Canvas System');
-  assert.equal(labels({mode:'system', conversationRoot:'', workshops:rooms, systemAllowed:true}), 'Chat Workshop Canvas System*');
-  const calls = [];
-  choose('system', {mode:'canvas', conversationRoot:'', workshops:rooms,
-    setMode:value => calls.push(['mode', value]), setConversationRoot:value => calls.push(['root', value])});
-  assert.deepEqual(calls, [['mode', 'system']]);
+  assert.equal(labels({mode:'chat', conversationRoot:'', workshops:rooms, systemAllowed:true}), 'Chat* Workshop Canvas',
+    'the founder sees no System tab; Studio Home lists the System session');
+  assert.equal(segments({mode:'chat', conversationRoot:'', workshops:rooms, systemAllowed:true}).some(row => /system/i.test(row.label)), false,
+    'System opens from its Studio Home session (studio_moved_not_deleted), never from the header');
+
 });
 
 test('studio-workshop.jsx ships as its own Studio source, loaded after brain-model.jsx and before studio-lm.jsx everywhere', () => {

@@ -107,7 +107,16 @@
       return {interaction:row.interaction, control, event:row.event, revision:value.revision,
         projection_mode:'interaction-delta-v1', ...(facts.length ? {event_facts:facts} : {})};
     };
-    const changeTheme = (kind, key, value) => {
+    const normalizeModelDefaults = value => {
+      const source = value && typeof value === 'object' ? value : {};
+      const number = (key, fallback) => {
+        const n = Number(source[key]);
+        return Number.isFinite(n) ? n : fallback;
+      };
+      return {temperature:number('temperature', 0.7), 'top-p':number('top-p', 0.95),
+        'max tokens':number('max tokens', 4096)};
+    };
+    const changeTheme = (kind, key, value, generation) => {
       if (themeWrite) fail('Wait for the current theme save to finish.');
       if (kind === 'preview' && (typeof value !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(value))) {
         fail('Enter a six-digit hex colour, such as #1177aa.');
@@ -147,7 +156,10 @@
           // takes its first value, even '', so a clear also retires a pick an
           // older build recorded beside the graph.
           if (setting.source === 'graph' && setting.value === value) {
-            return held ? null : {ok:true, unchanged:true, configuration_state:{composer_model:setting}};
+            const state = {composer_model:setting};
+            if (generation !== undefined) state.model_defaults = normalizeModelDefaults(generation);
+            if (generation !== undefined) acceptTheme({...base, configuration:{...config, ...state}});
+            return held ? null : {ok:true, unchanged:true, configuration_state:state};
           }
           control = setting.control;
           facts = [{input:setting.event_fact_input, value}];
@@ -171,8 +183,11 @@
             (kind === 'restore' && result.configuration_state.preview_revision === config.preview_revision)) {
           fail('The theme save needs reconciliation. Refresh Personal Settings before another save.');
         }
+        const state = {...result.configuration_state};
+        if (kind === 'composer-model' && generation !== undefined) state.model_defaults = normalizeModelDefaults(generation);
         acceptTheme({...base, revision:result.revision, interaction_projection:result.interaction_projection,
-          configuration:{...config, ...result.configuration_state}});
+          configuration:{...config, ...state}});
+        if (kind === 'composer-model' && generation !== undefined) result.configuration_state = state;
         return result;
       };
       const operation = Promise.resolve().then(async () => {
@@ -1018,7 +1033,7 @@
       previewThemeToken: (key, value) => changeTheme('preview', key, value),
       restoreThemeRevision: root => changeTheme('restore', root),
       setBaboomStartup: value => changeTheme('baboom-startup', null, value),
-      setComposerModel: value => changeTheme('composer-model', null, value),
+      setComposerModel: (value, generation) => changeTheme('composer-model', null, value, generation),
       subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
       // Terminal nodes: one shell per session in a folder the application admits.
       async terminalStart(cwd) {

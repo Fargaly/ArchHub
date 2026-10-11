@@ -556,7 +556,12 @@
     };
     global.ARCHHUB_GET_CANVAS = () => api.load();
     global.ARCHHUB_NODE_CREATE = spec => api.create(spec);
-    global.ARCHHUB_SET_NODE_PROP = (root, label, value) => api.setProperty(root, label, value);
+    global.ARCHHUB_SET_NODE_PROP = async (root, label, value) => {
+      const result = await api.setProperty(root, label, value);
+      if (typeof global.__archhubRefreshCanvasInPlace === 'function') await global.__archhubRefreshCanvasInPlace();
+      else await api.load();
+      return result;
+    };
     let running = null;
     global.ARCHHUB_RUN = () => {
       if (running) return Promise.reject(new Error('A run is already in progress.'));
@@ -569,10 +574,14 @@
       return running;
     };
     global.ARCHHUB_RETRACT = root => api.remove(root);
-    global.ARCHHUB_AGENT = async (prompt, model, node) =>
-      (await request('/api/universal/agent', {prompt, model,
+    global.ARCHHUB_AGENT = async (prompt, model, options) => {
+      const node = options && typeof options === 'object' && !Array.isArray(options) ? options.node : options;
+      const generation = options && typeof options === 'object' && !Array.isArray(options) ? options.generation : undefined;
+      return (await request('/api/universal/agent', {prompt, model,
         expected_scope:api.getSnapshot()?.canvas?.root,
-        ...(node !== undefined ? {node} : {})})).answer || 'done';
+        ...(generation !== undefined ? {generation} : {}),
+        ...(typeof node === 'string' && node.trim() ? {node} : {})})).answer || 'done';
+    };
     const state = api.getSnapshot();
     global.ARCHHUB_LIVE = {graph: state.graph, library: state.library, hosts: [], connectors: [], memory: [], skills: [],
       sessions: [{id: state.canvas.root, title: state.canvas.scope?.current_label || 'Workspace',

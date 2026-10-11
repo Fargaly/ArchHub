@@ -4784,6 +4784,13 @@ def _composer_planning(owner):
         owner._composer_planning_slot.release()
 
 
+def _agent_node_request_kwargs(body):
+    node = body.get("node") if isinstance(body, Mapping) else None
+    if node is None or (isinstance(node, str) and not node.strip()):
+        return {}
+    return {"node_root": node}
+
+
 def answer_open_question(owner, utterance, context, payload, *, revalidate=None):
     with _composer_planning(owner):
         return _answer_open_question(owner, utterance, context, payload, revalidate=revalidate)
@@ -7794,7 +7801,7 @@ class ApplicationServer:
                             _revalidate_composer_context(owner, binding.context, self.path)
 
                         with _composer_planning(owner):
-                            agent_node_kwargs = {'node_root': body['node']} if 'node' in body else {}
+                            agent_node_kwargs = _agent_node_request_kwargs(body)
                             persisted_turn = None
                             if agent_node_kwargs:
                                 model = body.get('model')
@@ -7841,6 +7848,7 @@ class ApplicationServer:
                                     mutation_lock=owner.mutation_lock,
                                     revalidate=current_authority,
                                     conversation_context=conversation_context,
+                                    generation=body.get('generation'),
                                     **agent_node_kwargs,
                                 )
                                 if append_turn is not None and user_message is not None:

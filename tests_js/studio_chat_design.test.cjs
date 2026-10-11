@@ -71,7 +71,7 @@ async function mountStudio({raw = wiredCanvas, account = {signedIn:true, email:'
     return Promise.resolve(body ? {ok:true, status:200, json:async () => body} : {ok:false, status:404, json:async () => ({ok:false})});
   };
   let answer = null;
-  win.ARCHHUB_AGENT = (prompt, route) => { agent.push([prompt, route]); return new Promise(resolve => { answer = resolve; }); };
+  win.ARCHHUB_AGENT = (prompt, route, options) => { agent.push([prompt, route, options]); return new Promise(resolve => { answer = resolve; }); };
   win.ARCHHUB_REMEMBER = async () => ({ok:true});
   // studio.html's graph-held composer pick bridge: the save is confirmed with the route it was given.
   win.ARCHHUB_AGENT_SELECT = async model => model;
@@ -124,18 +124,17 @@ async function mountStudio({raw = wiredCanvas, account = {signedIn:true, email:'
   return {win, doc, flush, settle, buttons, exact, close, type, reply, requests, agent, openPicker, answer:text => answer(text)};
 }
 
-test('Chat with no conversation: the design column holds the system prompt card and nothing else, and the reply field is the design line', async () => {
+test('Chat with no conversation: the chat column has no system prompt card or generation controls, and the reply field is the design line', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle();
-    const [label] = studio.exact('SYSTEM PROMPT');
-    assert.ok(label, 'the system prompt card is drawn');
-    const card = label.parentElement.parentElement;
-    assert.equal(card.parentElement.children.length, 1,
-      'no turns: the column holds the card only, as the design draws an empty conversation (design studio-lm.jsx:947-990)');
+    assert.equal(studio.doc.body.textContent.includes('SYSTEM PROMPT'), false, 'the system prompt card moved out of Chat');
+    assert.equal(studio.doc.querySelectorAll('section[data-chat-view] input[type="range"]').length, 0,
+      'generation controls moved out of ChatView');
+    assert.equal(studio.doc.body.textContent.includes('temperature'), false, 'temperature is not in Chat');
+    assert.equal(studio.doc.body.textContent.includes('top-p'), false, 'top-p is not in Chat');
+    assert.equal(studio.doc.body.textContent.includes('max tokens'), false, 'max tokens is not in Chat');
     assert.equal(studio.doc.body.textContent.includes('Ask for a change on the canvas'), false, 'no old status paragraph under the card');
-    const [edit] = studio.buttons('edit', label.parentElement);
-    assert.equal(edit, undefined, 'no disabled edit affordance is shown without a handler');
     for (const seeded of ['312 tok', 'Revit 2025', 'Fargaly']) {
       assert.equal(studio.doc.body.textContent.includes(seeded), false, 'no seeded ' + seeded + ' in Chat');
     }
@@ -179,7 +178,13 @@ test('Chat with a conversation: Send asks the agent route, turns carry the accou
     await studio.settle();
     studio.flush(() => input.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
     await studio.settle();
-    assert.deepEqual(studio.agent, [['Dimension all walls in active view at 1:50.', 'deepseek/deepseek-r1']], 'the typed text goes to the agent route with the chosen route');
+    assert.equal(JSON.stringify(studio.agent), JSON.stringify([[
+      'Dimension all walls in active view at 1:50.',
+      'deepseek/deepseek-r1',
+      {generation:{temperature:0.7, top_p:0.95, max_tokens:4096}},
+    ]]), 'the typed text goes to the agent route with the chosen route and generation defaults');
+    assert.equal(Object.prototype.hasOwnProperty.call(studio.agent[0][2], 'node'), false,
+      'no selected node means the chat send omits node');
     const [send] = studio.buttons('Send \u21b5');
     assert.ok(send && send.disabled, 'Send is disabled while the answer is out');
     assert.equal(send.style.opacity, '', 'disabled without alpha');
@@ -207,7 +212,10 @@ test('Inspector: the parametric chain is the design stage track with CalmRows, a
     assert.equal([...section.querySelectorAll('*')].some(node => /^\d+ \u00b7 /.test(node.textContent) && !node.children.length), false,
       'no per-node title lines: the design draws the track and its rows only (design studio-lm.jsx:1054-1065)');
     assert.equal([...section.querySelectorAll('div')].some(node => node.style.borderBottomStyle === 'dashed'), false, 'no dashed leader rows');
-    for (const [k, v] of [['image_path', 'sample-plan.png'], ['threshold', '80'], ['height_mm', '3000'], ['level', 'L03']]) {
+    for (const hidden of ['source_digest', 'seed', 'image_path', 'sample-plan.png']) {
+      assert.equal(section.textContent.includes(hidden), false, 'the chain hides internal param ' + hidden);
+    }
+    for (const [k, v] of [['threshold', '80'], ['height_mm', '3000']]) {
       const [key] = studio.exact(k, section);
       assert.ok(key, 'the chain draws ' + k);
       assert.equal(key.style.flexGrow, '1', k + ' is a CalmRow key (design studio-lm.jsx:1091-1096)');

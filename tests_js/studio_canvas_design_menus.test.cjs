@@ -37,6 +37,12 @@ const slice = () => {
   assert.ok(start > 0 && end > start);
   return source.slice(start, end);
 };
+const shortcutSlice = () => {
+  const start = source.indexOf('const studioShortcut =');
+  const end = source.indexOf('// An ordinary canvas edit', start);
+  assert.ok(start > 0 && end > start);
+  return source.slice(start, end);
+};
 const helpers = () => {
   const context = vm.createContext({});
   vm.runInContext(slice().replace(/const NodeCanvas = [^]*$/, '') +
@@ -47,7 +53,7 @@ const helpers = () => {
 
 const createdNodeIdHelper = () => {
   const start = source.indexOf('const studioCreatedNodeId =');
-  const end = source.indexOf('const LM_SESSIONS =', start);
+  const end = source.indexOf('let LM_SESSIONS =', start);
   assert.ok(start > 0 && end > start);
   const context = vm.createContext({window:{}});
   vm.runInContext(source.slice(start, end) +
@@ -142,7 +148,7 @@ async function mount({focusId = null, history = null, nodes = NODES(), wires = W
         onClick:() => held.run()}, label))), FloatingComposer:() => null, MiniMap:() => null, Socket:() => null,
     nodeModelRow:() => null, smallBtn:() => ({}), toolBtn:() => ({}), kbd:() => ({}),
     setTimeout:dom.window.setTimeout.bind(dom.window), clearTimeout:dom.window.clearTimeout.bind(dom.window)});
-  vm.runInContext(transformSync(slice() + '\nglobalThis.NodeCanvas = NodeCanvas;',
+  vm.runInContext(transformSync(shortcutSlice() + slice() + '\nglobalThis.NodeCanvas = NodeCanvas;',
     {loader:'jsx', format:'cjs'}).code, context);
   const reactRoot = createRoot(dom.window.document.getElementById('root'));
   const props = {focusId, setFocusId:() => {}, setLibraryOpen:() => {}, userNodes:[], addNodeFromLibrary:() => {}, model:null};
@@ -373,9 +379,19 @@ test('K1: F fits, arrows nudge the selection through the layout save, middle-dra
   const view = await mount();
   try {
     const before = view.transform();
-    await view.key(view.region(), {key:'f'});
-    assert.notEqual(view.transform(), before, 'F fits the graph');
+    const selected = await view.key(view.region(), {key:'a', ctrlKey:true});
+    assert.equal(selected.defaultPrevented, true, 'Ctrl+A is taken by the canvas');
+    assert.deepEqual(['a', 'b', 'c', 'd'].map(id => view.card(id).getAttribute('data-selected')), ['true', 'true', 'true', 'true']);
+    const fittedAll = await view.key(view.region(), {key:'0', ctrlKey:true});
+    assert.equal(fittedAll.defaultPrevented, true, 'Ctrl+0 is taken by the canvas');
+    assert.notEqual(view.transform(), before, 'Ctrl+0 fits the graph');
+    const allFit = view.transform();
+    await view.mouse(view.region(), 'mousedown', {button:0, clientX:5, clientY:5});
+    await view.mouse(view.doc, 'mouseup', {});
     await view.click(view.card('b'));
+    const fittedSelection = await view.key(view.region(), {key:'f'});
+    assert.equal(fittedSelection.defaultPrevented, true, 'F is taken by the canvas');
+    assert.notEqual(view.transform(), allFit, 'F fits the selection');
     const nudged = await view.key(view.card('b'), {key:'ArrowRight'});
     assert.equal(nudged.defaultPrevented, true);
     assert.equal(view.card('b').style.left, '420px', 'one grid step right');

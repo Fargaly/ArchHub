@@ -14,7 +14,8 @@ const read = name => fs.readFileSync(path.join(root, name), "utf8");
 const seedText = read("nodelang/universal_presentation_seed.py").match(/^THEME = \{([\s\S]*?)^\}/m)[1];
 const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)].map(m => [m[1], m[2]]));
 
-async function openSettings({account = null, connectors = [], memory = null, session = undefined, models = undefined} = {}) {
+async function openSettings({account = null, connectors = [], hosts = [], memory = null, session = undefined, models = undefined,
+  providers = [], socialAccounts = [], socialApprovals = []} = {}) {
   const manifest = JSON.parse(read("nodelang/studio/compiled/manifest.json"));
   for (const source of ["studio-lm.jsx", "studio-account.jsx"]) {
     const held = manifest.files.find(file => file.source === source);
@@ -33,7 +34,7 @@ async function openSettings({account = null, connectors = [], memory = null, ses
   win.ARCHHUB_THEME = {...seed};
   win.matchMedia = () => ({matches:false, addEventListener() {}, removeEventListener() {}});
   if (account) win.localStorage.setItem("archhub.account.v1", JSON.stringify(account));
-  const calls = {consent:[], reveal:[], memory:0, modelSelect:[]};
+  const calls = {consent:[], reveal:[], memory:0, modelSelect:[], socialRemovals:[], approvals:[]};
   win.ARCHHUB_AGENT_SELECT = async route => { calls.modelSelect.push(route); return route; };
   if (memory) win.ARCHHUB_LOAD_MEMORY = async () => { calls.memory += 1; return memory(); };
   let consent = {allowed:false, account:""};
@@ -47,13 +48,17 @@ async function openSettings({account = null, connectors = [], memory = null, ses
   win.ARCHHUB_EXISTING_WORKSHOP = {
     getSnapshot:() => snapshot,
     subscribe:listener => { listeners.add(listener); return () => listeners.delete(listener); },
-    readProviders:async () => [],
+    readProviders:async () => providers.map(row => ({...row})),
     watchApplicationUpdate:() => () => {},
     readCloudPublishConsent:async () => ({...consent}),
     setCloudPublishConsent:async allow => { calls.consent.push(allow); consent = {allowed:allow, account:allow ? "owner@example.com" : ""}; return {...consent}; },
+    listLocalSocialAccounts:async () => socialAccounts.map(row => ({...row})),
+    removeLocalSocialAccount:async body => { calls.socialRemovals.push({...body}); return {ok:true, ...body, state:"removed"}; },
+    listSocialApprovals:async () => socialApprovals.map(row => ({...row})),
+    decideSocialApproval:async body => { calls.approvals.push({...body}); return {ok:true, ...body}; },
     refreshTopologyCanvas:async () => {}, refreshConversationCatalog:async () => {}, selectTopology:async () => {},
   };
-  win.ARCHHUB_LIVE = {sessions:[], currentGraph:null, hosts:[], connectors, graph:{nodes:[], wires:[]},
+  win.ARCHHUB_LIVE = {sessions:[], currentGraph:null, hosts, connectors, graph:{nodes:[], wires:[]},
     memory:[{id:"m1", text:"Real fact read from the brain.", src:"folder"}], skills:[]};
   win.eval(read("nodelang/studio/vendor/react.js"));
   win.eval(read("nodelang/studio/vendor/react-dom.js"));
@@ -78,8 +83,90 @@ async function openSettings({account = null, connectors = [], memory = null, ses
     return sidebar.nextElementSibling;
   };
   const close = () => { try { if (win.__studioRoot) flush(() => win.__studioRoot.unmount()); } finally { dom.window.close(); } };
-  return {win, doc, flush, settle, tab, calls, close};
+  return {win, doc, flush, settle, sidebar, tab, calls, close};
 }
+
+test("Team uses the signed-in account as Owner and draws no fake rows", async () => {
+  const s = await openSettings({account:{signedIn:true, email:"o@x.test", name:"Owner"}, session:{signed_in:true, email:"o@x.test"}});
+  try {
+    const panel = await s.tab("Team");
+    assert.match(panel.textContent, /Owner/);
+    assert.match(panel.textContent, /o@x\.test/);
+    assert.match(panel.textContent, /Members you invite will appear here\./);
+    for (const fake of ["Amina", "Karim", "Dina", "seat", "invite a teammate"]) {
+      assert.equal(panel.textContent.includes(fake), false, "no fake Team value: " + fake);
+    }
+    assert.ok([...panel.querySelectorAll("button")].some(button => button.textContent.trim() === "Manage account"));
+  } finally { s.close(); }
+});
+
+test("Team signed out asks for sign-in through the existing Account route", async () => {
+  const s = await openSettings({account:{signedIn:false, email:"", name:""}, session:{signed_in:false}});
+  try {
+    const panel = await s.tab("Team");
+    assert.match(panel.textContent, /Sign in to see your team/);
+    const signIn = [...panel.querySelectorAll("button")].find(button => button.textContent.trim() === "Sign in");
+    assert.ok(signIn, "Team has a real sign-in control");
+    s.flush(() => signIn.click());
+    await s.settle();
+    assert.match(panel.parentElement.textContent, /Account/);
+  } finally { s.close(); }
+});
+
+test("Permissions renders only rows backed by stores and its controls call existing endpoints", async () => {
+  const s = await openSettings({
+    account:{signedIn:true, email:"o@x.test", name:"Owner"},
+    session:{signed_in:true, email:"o@x.test"},
+    hosts:[{id:"h1", name:"Rhino", state:"connected", detail:"ready"}],
+    connectors:[{id:"c1", name:"Rhino"}],
+    socialAccounts:[{provider:"linkedin", account_id:"li-a", vault_entry:"social-li-a", account_binding:"provider-verified"}],
+    socialApprovals:[{delegation:"d1", input_digest:"dg1", operation:"linkedin.post", account_id:"li-a", review_text:"post"}],
+  });
+  try {
+    const panel = await s.tab("Permissions");
+    for (const row of ["Connectors / hosts", "Cloud relay / publish", "Social accounts", "Agents / approvals"]) {
+      assert.ok(panel.textContent.includes(row), row + " row is backed and rendered");
+    }
+    assert.equal(panel.textContent.includes("File system"), false, "unbacked rows are omitted");
+    const relay = panel.querySelector("[role=\"switch\"][aria-label=\"Allow cloud relay publish\"]");
+    assert.ok(relay, "cloud relay row has the existing consent toggle");
+    s.flush(() => relay.click());
+    await s.settle();
+    assert.deepEqual(s.calls.consent, [true]);
+    const disconnect = [...panel.querySelectorAll("button")].find(button => button.textContent.trim() === "Disconnect");
+    assert.ok(disconnect, "social row has the existing revoke control");
+    s.flush(() => disconnect.click());
+    await s.settle();
+    assert.deepEqual(s.calls.socialRemovals, [{provider:"linkedin", account_id:"li-a", vault_entry:"social-li-a"}]);
+    const approve = [...panel.querySelectorAll("button")].find(button => button.textContent.trim() === "Approve");
+    assert.ok(approve, "approval row has the existing approval control");
+    s.flush(() => approve.click());
+    await s.settle();
+    assert.deepEqual(s.calls.approvals, [{delegation:"d1", input_digest:"dg1", decision:"approve"}]);
+  } finally { s.close(); }
+});
+
+test("Every Settings section has a working control and no stub words", async () => {
+  const s = await openSettings({
+    account:{signedIn:true, email:"o@x.test", name:"Owner"},
+    session:{signed_in:true, state:"signed_in", email:"o@x.test"},
+    hosts:[{id:"h1", name:"Rhino", state:"connected", detail:"ready"}],
+    connectors:[{id:"c1", name:"Rhino"}],
+    providers:[{id:"cloud", name:"ArchHub cloud", state:"no key", source:"", sets:""}],
+    models:{ok:true, groups:[{name:"Local", items:[{name:"Local model", route:"ollama/m", routed:"ollama/m", vendor:"Ollama", tag:"LOCAL"}]}], selected_route:""},
+    socialAccounts:[{provider:"linkedin", account_id:"li-a", vault_entry:"social-li-a", account_binding:"provider-verified"}],
+    socialApprovals:[{delegation:"d1", input_digest:"dg1", operation:"linkedin.post", account_id:"li-a", review_text:"post"}],
+  });
+  try {
+    const labels = [...s.sidebar.children].map(child => child.firstElementChild.textContent);
+    for (const label of labels) {
+      const panel = await s.tab(label);
+      assert.equal(/coming soon|not available yet|placeholder|stub/i.test(panel.textContent), false, label + " has no stub words");
+      const controls = panel.querySelectorAll("button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [role=\"button\"]:not([disabled]), [role=\"switch\"]:not([disabled])");
+      assert.ok(controls.length >= 1, label + " has at least one working control");
+    }
+  } finally { s.close(); }
+});
 
 test("Permissions and Hosts draw no switch that nothing reads", async () => {
   const s = await openSettings();
@@ -87,7 +174,7 @@ test("Permissions and Hosts draw no switch that nothing reads", async () => {
     const perms = await s.tab("Permissions");
     const labels = [...perms.querySelectorAll("button")].map(b => b.textContent.trim());
     for (const mode of ["AUTO", "ASK", "BLOCK"]) assert.equal(labels.includes(mode), false, "no " + mode + " switch");
-    assert.match(perms.textContent, /run only inside a Workshop workflow you approved/);
+    assert.match(perms.textContent, /Access matrix/);
     assert.equal(/Cost ceiling per session|Auto-undo window/.test(perms.textContent), false, "no invented ceiling or undo window");
     const hosts = await s.tab("Hosts");
     const switches = [...hosts.querySelectorAll("[role=\"switch\"]")].map(node => node.getAttribute("aria-label") || node.getAttribute("title"));
@@ -180,7 +267,7 @@ test("Shortcuts lists only keys that have a handler, and they act", async () => 
     for (const unbound of ["⌘N", "⌘↵", "⌥B", "⌘⇧S", "⌘M", "⌥R"]) {
       assert.equal(keys.includes(unbound), false, unbound + " has no handler in this build");
     }
-    assert.ok(keys.includes("⌘,") && keys.includes("⌘/") && keys.includes("⌘K"), "⌘K opens the library (User-Agency)");
+    assert.ok(keys.includes("Ctrl/Cmd+,") && keys.includes("Ctrl/Cmd+/") && keys.includes("Ctrl/Cmd+K"), "Ctrl/Cmd+K opens the library (User-Agency)");
     const before = !!s.doc.querySelector("[title=\"Settings\"]") && [...s.doc.querySelectorAll("button")].some(b => b.firstElementChild?.textContent === "Theme");
     assert.equal(before, true);
     s.flush(() => s.win.dispatchEvent(new s.win.KeyboardEvent("keydown", {key:",", ctrlKey:true, bubbles:true})));

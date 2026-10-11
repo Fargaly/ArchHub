@@ -311,6 +311,45 @@ const LM_LIBRARY = window.AH_LIBRARY || [];
 // Alt+Left / Alt+Right and the keyboard's Back / Forward keys ask the page to navigate away.
 const studioLeavesPage = e => e.key === 'BrowserBack' || e.key === 'BrowserForward' ||
   (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight'));
+const studioShortcut = binding => Object.freeze({
+  ...binding,
+  combos:Object.freeze(binding.combos.map(combo => Object.freeze(combo))),
+});
+const STUDIO_SHORTCUT_BINDINGS = Object.freeze([
+  studioShortcut({id:'open-node-library', label:'Open the node catalogue', scope:'global', display:'Ctrl/Cmd+K', menu:'⌘K', action:'open-node-library', combos:[{key:'k', ctrlOrMeta:true}]}),
+  studioShortcut({id:'toggle-settings', label:'Toggle settings', scope:'global', display:'Ctrl/Cmd+,', menu:'⌘,', action:'toggle-settings', combos:[{key:',', ctrlOrMeta:true}]}),
+  studioShortcut({id:'open-documentation', label:'Open documentation', scope:'global', display:'Ctrl/Cmd+/', menu:'⌘/', action:'open-documentation', combos:[{key:'/', ctrlOrMeta:true}]}),
+  studioShortcut({id:'close-overlays', label:'Close settings, docs, or catalogue', scope:'global', display:'Esc', menu:'Esc', action:'close-overlays', combos:[{key:'Escape', anyModifiers:true}]}),
+  studioShortcut({id:'canvas-open-menu', label:'Open canvas menu', scope:'canvas', display:'Menu / Shift+F10', menu:'⇧F10', action:'open-canvas-menu', combos:[{key:'ContextMenu'}, {key:'F10', shift:true}]}),
+  studioShortcut({id:'canvas-select-all', label:'Select all nodes', scope:'canvas', display:'Ctrl/Cmd+A', menu:'⌘A', action:'select-all-nodes', combos:[{key:'a', ctrlOrMeta:true}]}),
+  studioShortcut({id:'canvas-add-node', label:'Add node from library', scope:'canvas', display:'Ctrl/Cmd+L', menu:'⌘L', action:'add-node-library', combos:[{key:'l', ctrlOrMeta:true}]}),
+  studioShortcut({id:'canvas-fit-graph', label:'Fit graph to view', scope:'canvas', display:'Ctrl/Cmd+0', menu:'⌘0', action:'fit-graph', combos:[{key:'0', ctrlOrMeta:true}]}),
+  studioShortcut({id:'canvas-zoom-100', label:'Zoom to 100%', scope:'canvas', display:'Ctrl/Cmd+1', menu:'⌘1', action:'zoom-100', combos:[{key:'1', ctrlOrMeta:true}]}),
+  studioShortcut({id:'canvas-auto-layout', label:'Auto-layout', scope:'canvas', display:'Ctrl/Cmd+Shift+L', menu:'⌘⇧L', action:'auto-layout', combos:[{key:'l', ctrlOrMeta:true, shift:true}]}),
+  studioShortcut({id:'canvas-undo', label:'Undo', scope:'canvas', display:'Ctrl/Cmd+Z', menu:'⌘Z', action:'undo', combos:[{key:'z', ctrlOrMeta:true}]}),
+  studioShortcut({id:'canvas-redo', label:'Redo', scope:'canvas', display:'Ctrl/Cmd+Shift+Z / Ctrl/Cmd+Y', menu:'⌘⇧Z', action:'redo', combos:[{key:'z', ctrlOrMeta:true, shift:true}, {key:'y', ctrlOrMeta:true}]}),
+  studioShortcut({id:'canvas-fit-selection', label:'Fit selection or all', scope:'canvas', display:'F', menu:'F', action:'fit-selection-or-all', combos:[{key:'f'}]}),
+  studioShortcut({id:'canvas-move-selection', label:'Move selected nodes', scope:'canvas', display:'Arrows / Shift+Arrows', menu:'← ↑ → ↓', action:'move-selection', combos:[
+    {key:'ArrowLeft', allowShift:true}, {key:'ArrowRight', allowShift:true}, {key:'ArrowUp', allowShift:true}, {key:'ArrowDown', allowShift:true},
+  ]}),
+  studioShortcut({id:'canvas-cut-wire', label:'Cut selected wire', scope:'canvas', display:'Delete / Backspace', menu:'Del', action:'cut-wire', combos:[{key:'Delete', allowShift:true}, {key:'Backspace', allowShift:true}]}),
+]);
+if (typeof window !== 'undefined') window.STUDIO_SHORTCUT_BINDINGS = STUDIO_SHORTCUT_BINDINGS;
+const studioShortcutMatchesCombo = (combo, e) => {
+  if (combo.anyModifiers) return String(e.key).toLowerCase() === String(combo.key).toLowerCase();
+  if (!!combo.alt !== !!e.altKey) return false;
+  if (!combo.allowShift && !!combo.shift !== !!e.shiftKey) return false;
+  if (combo.ctrlOrMeta) {
+    if (!(e.ctrlKey || e.metaKey)) return false;
+  } else if (e.ctrlKey || e.metaKey) return false;
+  return String(e.key).toLowerCase() === String(combo.key).toLowerCase();
+};
+const studioShortcutMatches = (binding, e) => binding.combos.some(combo => studioShortcutMatchesCombo(combo, e));
+const studioShortcutFromEvent = (e, scope = null) =>
+  STUDIO_SHORTCUT_BINDINGS.find(binding => (!scope || binding.scope === scope) && studioShortcutMatches(binding, e)) || null;
+const studioShortcutById = id => STUDIO_SHORTCUT_BINDINGS.find(binding => binding.id === id) || null;
+const studioShortcutMenu = id => studioShortcutById(id)?.menu || '';
+const studioShortcutScopeLabel = scope => String(scope || '').replace(/^\w/, c => c.toUpperCase());
 // An ordinary canvas edit (place, copy, delete) re-reads the canvas in place. Reloading the whole
 // Studio page re-ran its boot, which on a large graph looked like the app breaking after every edit.
 // Where a library card goes when it has no drop point: start at the visible
@@ -814,17 +853,24 @@ const StudioLM = () => {
   const openSettings = (v, tab) => { if (v) setDocsOpen(false); setSettingsTab(v && tab ? tab : 'hub'); setSettingsOpen(v); };
   const openDocs = (v) => { if (v) openSettings(false); setDocsOpen(v); };
 
-  // ⌘/ docs · ⌘, settings · ⌘K library — the keys the Shortcuts sheet documents
+  // The Settings shortcut sheet and this handler read the same binding table.
   React.useEffect(() => {
     const onKey = (e) => {
       // The Studio is the whole window: Back and Forward keys never leave it.
       if (studioLeavesPage(e)) { e.preventDefault(); return; }
-      if (e.key === 'Escape') { setDocsOpen(false); openSettings(false); setLibraryOpen(false); return; }
-      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
-      const key = String(e.key).toLowerCase();
-      if (key === '/') { e.preventDefault(); setDocsOpen(o => { if (!o) openSettings(false); return !o; }); }
-      else if (key === ',') { e.preventDefault(); setSettingsTab('hub'); setSettingsOpen(o => { if (!o) setDocsOpen(false); return !o; }); }
-      else if (key === 'k' && !e.shiftKey) { e.preventDefault(); setLibraryOpen(true); }
+      const shortcut = studioShortcutFromEvent(e, 'global');
+      if (!shortcut) return;
+      e.preventDefault();
+      if (shortcut.action === 'close-overlays') {
+        setDocsOpen(false); openSettings(false); setLibraryOpen(false); return;
+      }
+      if (shortcut.action === 'open-documentation') {
+        setDocsOpen(o => { if (!o) openSettings(false); return !o; }); return;
+      }
+      if (shortcut.action === 'toggle-settings') {
+        setSettingsTab('hub'); setSettingsOpen(o => { if (!o) setDocsOpen(false); return !o; }); return;
+      }
+      if (shortcut.action === 'open-node-library') { setLibraryOpen(true); }
     };
     // The mouse's Back and Forward buttons (3 and 4) are the same request.
     const onButton = (e) => { if (e.button === 3 || e.button === 4) e.preventDefault(); };
@@ -3966,10 +4012,11 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   };
   const ARROWS = {ArrowLeft:[-1, 0], ArrowRight:[1, 0], ArrowUp:[0, -1], ArrowDown:[0, 1]};
   const onCanvasKeyDown = e => {
-    if (e.target === e.currentTarget && isContextKey(e)) { openContextMenu(e); return; }
+    const shortcut = studioShortcutFromEvent(e, 'canvas');
+    if (e.target === e.currentTarget && shortcut?.action === 'open-canvas-menu') { openContextMenu(e); return; }
     const inField = e.target.closest('input,textarea,select,[contenteditable="true"],[role="menu"]');
     if (!inField && !e.metaKey && !e.ctrlKey && !e.altKey) {
-      if (ARROWS[e.key]) {
+      if (shortcut?.action === 'move-selection' && ARROWS[e.key]) {
         const step = e.shiftKey ? 1 : CANVAS_GRID;
         if (nudgeSelection(ARROWS[e.key][0] * step, ARROWS[e.key][1] * step)) e.preventDefault();
         return;
@@ -3980,21 +4027,20 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       const pickedWireIdx = pickedId == null ? -1 : authorityState ? graph.wires.findIndex(w => w.id === pickedId)
         : (String(pickedId).indexOf('wire:') === 0 ? +String(pickedId).slice(5) : -1);
       const cutIdx = pickedWireIdx >= 0 ? pickedWireIdx : focusWireIdx;
-      if ((e.key === 'Delete' || e.key === 'Backspace') && cutIdx >= 0 && graph.wires[cutIdx]?.id && cutWire) {
+      if (shortcut?.action === 'cut-wire' && cutIdx >= 0 && graph.wires[cutIdx]?.id && cutWire) {
         e.preventDefault();
         if (layoutNeedsRefresh) { setWireError('Refresh the canvas before editing connections.'); return; }
         menuDisconnect([graph.wires[cutIdx].id]);
         return;
       }
-      if (!e.shiftKey && String(e.key).toLowerCase() === 'f') {
+      if (shortcut?.action === 'fit-selection-or-all') {
         e.preventDefault(); fitIds(selected.size ? [...selected] : allNodes.map(node => node.id)); return;
       }
     }
     // The shortcuts the canvas menu names (design CanvasMenu), while focus is on the canvas and not in a field.
     if (!(e.metaKey || e.ctrlKey) || e.altKey || e.target.closest('input,textarea,select,[contenteditable="true"]')) return;
-    const combo = (e.shiftKey ? 'shift+' : '') + String(e.key).toLowerCase();
-    if (combo === 'a') { e.preventDefault(); setSelectedIds(allNodes.map(node => node.id)); return; }
-    const item = canvasMenuItems.find(row => row.keys === (combo === 'y' ? 'shift+z' : combo));
+    if (shortcut?.action === 'select-all-nodes') { e.preventDefault(); setSelectedIds(allNodes.map(node => node.id)); return; }
+    const item = canvasMenuItems.find(row => row.shortcutId && studioShortcutById(row.shortcutId)?.action === shortcut?.action);
     if (!item) return;
     e.preventDefault();
     if (!item.disabled && typeof item.action === 'function') item.action();
@@ -4576,19 +4622,19 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   // The design's canvas menu, row for row (design studio-lm.jsx:1520-1573). Each row runs the application's own
   // action; a row this build has no action for is drawn disabled and says why.
   const canvasMenuItems = [
-    {i:'＋', t:'Add node…', k:'⌘L', keys:'l', action:() => setLibraryOpen(true), disabled:blocked, why:busyWhy},
+    {i:'＋', t:'Add node…', k:studioShortcutMenu('canvas-add-node'), shortcutId:'canvas-add-node', action:() => setLibraryOpen(true), disabled:blocked, why:busyWhy},
     {i:'⎘', t:'Paste', k:'⌘V', disabled:true, why:'Copying and pasting nodes is not available in this build'},
     {sep:true},
-    {i:'⌴', t:'Fit graph to view', k:'⌘0', keys:'0', action:() => fitIds(allIds), disabled:!allIds.length, why:noNodesWhy},
-    {i:'⊜', t:'Zoom to 100%', k:'⌘1', keys:'1', action:() => setZoom(1)},
+    {i:'⌴', t:'Fit graph to view', k:studioShortcutMenu('canvas-fit-graph'), shortcutId:'canvas-fit-graph', action:() => fitIds(allIds), disabled:!allIds.length, why:noNodesWhy},
+    {i:'⊜', t:'Zoom to 100%', k:studioShortcutMenu('canvas-zoom-100'), shortcutId:'canvas-zoom-100', action:() => setZoom(1)},
     {sep:true},
     {i:'·', t:'Snap to grid', toggle:true, on:snap, action:() => setSnap(value => !value)},
-    {i:'⧉', t:'Auto-layout', k:'⌘⇧L', keys:'shift+l', action:() => arrangeIds(selected.size ? [...selected] : allIds),
+    {i:'⧉', t:'Auto-layout', k:studioShortcutMenu('canvas-auto-layout'), shortcutId:'canvas-auto-layout', action:() => arrangeIds(selected.size ? [...selected] : allIds),
       disabled:layoutNeedsRefresh || !canSaveLayout || !allIds.length, why:layoutWhy(noNodesWhy)},
     {sep:true},
-    {i:'↶', t:'Undo', k:'⌘Z', keys:'z', action:() => runHistory('undo'), disabled:blocked || menuBusy || !canUndo,
+    {i:'↶', t:'Undo', k:studioShortcutMenu('canvas-undo'), shortcutId:'canvas-undo', action:() => runHistory('undo'), disabled:blocked || menuBusy || !canUndo,
       why:blocked || menuBusy ? menuWhyBusy : undoWhy},
-    {i:'↷', t:'Redo', k:'⌘⇧Z', keys:'shift+z', action:() => runHistory('redo'), disabled:blocked || menuBusy || !canRedo,
+    {i:'↷', t:'Redo', k:studioShortcutMenu('canvas-redo'), shortcutId:'canvas-redo', action:() => runHistory('redo'), disabled:blocked || menuBusy || !canRedo,
       why:blocked || menuBusy ? menuWhyBusy : redoWhy},
     {i:'✕', t:'Clear all nodes', danger:true, action:() => askClearAll(),
       disabled:!allIds.length || !removeNode || menuBusy || blocked,
@@ -4629,7 +4675,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     {sep:true},
     {i:'⇄', t:'Select direct neighbours', action:() => selectConnected(false), disabled:!menuHasSeed, why:noSeedWhy},
     {i:'⧉', t:'Select connected group', action:() => selectConnected(true), disabled:!menuHasSeed, why:noSeedWhy},
-    {i:'▣', t:'Select all nodes', k:'⌘A', action:() => setSelectedIds(allIds), disabled:!allIds.length, why:noNodesWhy},
+    {i:'▣', t:'Select all nodes', k:studioShortcutMenu('canvas-select-all'), action:() => setSelectedIds(allIds), disabled:!allIds.length, why:noNodesWhy},
     {i:'✕', t:'Clear selection', action:() => setSelectedIds([]), disabled:!selected.size, why:noSelectionWhy},
     {sep:true},
     {i:'⌴', t:'Fit selection', action:() => fitIds([...selected]), disabled:!selected.size, why:noSelectionWhy},
@@ -6287,9 +6333,9 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
           {tab === 'hub'         && <SettingsHub toolRows={toolRows} onClose={onClose} onOpenTool={onOpenTool} onOpenToolGraph={onOpenToolGraph}/>}
           {tab === 'account'     && <SettingsAccount account={account} setAccount={setAccount} onSignOut={onSignOut}/>}
           {tab === 'memory'      && <SettingsMemory store={store} patch={patch}/>}
-          {tab === 'team'        && <SettingsTeam/>}
+          {tab === 'team'        && <SettingsTeam account={account} onAccount={() => setTab('account')}/>}
           {tab === 'profile'     && <SettingsProfile/>}
-          {tab === 'permissions' && <SettingsPermissions/>}
+          {tab === 'permissions' && <SettingsPermissions account={account} onTab={setTab}/>}
           {tab === 'workspaces'  && <SettingsWorkspaces/>}
           {tab === 'hosts'       && <SettingsHosts/>}
           {tab === 'providers'   && <SettingsProviders providers={providers} onTab={setTab}/>}
@@ -6597,20 +6643,34 @@ const SettingsMemory = ({ store, patch }) => {
   );
 };
 
-// -- Team: identity, seats, invites (design studio-lm.jsx:2731-2792). No firm roster is drawn
-// until the connection provides one; placeholder metric cards would only state blanks.
-const SettingsTeam = () => {
+// -- Team: identity, seats, invites. There is no member/invite route in the current cloud client,
+// so the only roster fact drawn here is the signed-in account the app already holds.
+const SettingsTeam = ({ account, onAccount }) => {
+  const signedIn = !!account?.signedIn;
+  const email = String(account?.email || '');
+  const name = String(account?.name || '') || (email ? email.split('@')[0] : '');
   return (
   <div>
     <SHead title="Team" sub="One person owns the workspace and invites teammates by email. Firm brain access follows membership &#x2014; removing someone stops what they can read next, not what they already hold."/>
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden', marginBottom:LM.sp.sm }}>
-      <div role="status" style={{ padding:'12px 14px', fontFamily:LM.serif, fontStyle:'italic', fontSize:13.5, color:LM.inkSoft }}>
-        No firm in this connection. Members appear here when the workspace has one.
-      </div>
+      {!signedIn && <div role="status" style={{ padding:'12px 14px', display:'flex', alignItems:'center', gap:10 }}>
+        <span style={{ flex:1, minWidth:0, fontFamily:LM.serif, fontStyle:'italic', fontSize:13.5, color:LM.inkSoft }}>Sign in to see your team</span>
+        <button type="button" onClick={onAccount} style={{...smallBtn(true), padding:'4px 10px'}}>Sign in</button>
+      </div>}
+      {signedIn && <div style={{ padding:'12px 14px', display:'grid', gridTemplateColumns:'minmax(0,1fr) auto', gap:12, alignItems:'center' }}>
+        <div style={{ minWidth:0 }}>
+          <div style={{ fontSize:13.5, color:LM.ink, fontWeight:500 }}>{name || email}</div>
+          <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:3, overflowWrap:'anywhere' }}>{email}</div>
+        </div>
+        <span style={{ fontFamily:LM.mono, fontSize:9, padding:'2px 7px', borderRadius:LM.rad.xs, background:LM.accentSoft, color:LM.accent, letterSpacing:'0.08em', textTransform:'uppercase' }}>Owner</span>
+      </div>}
     </div>
     <div style={{ marginTop:LM.sp.md, padding:'10px 12px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.md }}>
-      <div style={{ fontSize:12, color:LM.inkSoft, lineHeight:1.6 }}>
-        <b style={{ color:LM.ink, fontWeight:500 }}>Seats are protected against over-inviting.</b> The check counts current members plus outstanding invites, so pending invites cannot squeeze past a seat limit once accepted.
+      <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+        <div style={{ flex:1, minWidth:0, fontSize:12, color:LM.inkSoft, lineHeight:1.6 }}>
+          Members you invite will appear here.
+        </div>
+        {signedIn && <button type="button" onClick={onAccount} style={{...smallBtn(), padding:'4px 10px'}}>Manage account</button>}
       </div>
     </div>
   </div>
@@ -6669,21 +6729,99 @@ const SField = ({ label, value }) => (
   </div>
 );
 
-// ── Permissions. The design drew eight capabilities with AUTO / ASK / BLOCK switches. They were
-// saved to this page's localStorage and nothing that runs a host, agent or connector read them, so
-// every switch was ornamental (audit 2026-09-24). The panel now states the gate that is enforced:
-// effects run only inside Work you approved, and each Workshop run can be stopped there.
-const SettingsPermissions = () => (
+const accessCell = text => <span style={{ fontFamily:LM.mono, fontSize:10, color:text === 'yes' ? LM.ok : LM.inkSoft }}>{text}</span>;
+const accessButton = { ...smallBtn(), padding:'3px 8px', whiteSpace:'nowrap' };
+const SettingsPermissions = ({ account, onTab }) => {
+  const transport = window.ARCHHUB_EXISTING_WORKSHOP;
+  const [relay, setRelay] = React.useState(null);
+  const [relayBusy, setRelayBusy] = React.useState(false);
+  const [social, setSocial] = React.useState([]);
+  const [approvals, setApprovals] = React.useState([]);
+  const [message, setMessage] = React.useState('');
+  const signedIn = !!account?.signedIn;
+  React.useEffect(() => {
+    let alive = true;
+    if (transport?.readCloudPublishConsent) transport.readCloudPublishConsent()
+      .then(next => { if (alive) setRelay(next); })
+      .catch(error => { if (alive) setMessage(error.message || 'Cloud relay consent could not be read.'); });
+    if (transport?.listLocalSocialAccounts) transport.listLocalSocialAccounts()
+      .then(next => { if (alive) setSocial(Array.isArray(next) ? next : []); })
+      .catch(error => { if (alive) setMessage(error.message || 'Saved social accounts could not be read.'); });
+    if (transport?.listSocialApprovals) transport.listSocialApprovals()
+      .then(next => { if (alive) setApprovals(Array.isArray(next) ? next : []); })
+      .catch(error => { if (alive) setMessage(error.message || 'Pending approvals could not be read.'); });
+    return () => { alive = false; };
+  }, [transport]);
+  const toggleRelay = async () => {
+    if (!transport?.setCloudPublishConsent || !relay || relayBusy) return;
+    setRelayBusy(true); setMessage('');
+    try { setRelay(await transport.setCloudPublishConsent(!relay.allowed)); }
+    catch (error) { setMessage(error.message || 'Cloud relay consent could not be changed.'); }
+    finally { setRelayBusy(false); }
+  };
+  const disconnect = async account => {
+    if (!transport?.removeLocalSocialAccount) return;
+    setMessage('');
+    try {
+      await transport.removeLocalSocialAccount({provider:account.provider, account_id:account.account_id, vault_entry:account.vault_entry});
+      setSocial(social.filter(row => row.provider !== account.provider || row.account_id !== account.account_id || row.vault_entry !== account.vault_entry));
+    } catch (error) { setMessage(error.message || 'Saved social account could not be disconnected.'); }
+  };
+  const decide = async (item, decision) => {
+    if (!transport?.decideSocialApproval) return;
+    setMessage('');
+    try {
+      await transport.decideSocialApproval({delegation:item.delegation, input_digest:item.input_digest, decision});
+      setApprovals(approvals.filter(row => row.delegation !== item.delegation));
+    } catch (error) { setMessage(error.message || 'Approval decision could not be recorded.'); }
+  };
+  const hostCount = LM_HOSTS.filter(h => hostState(h) !== 'off').length;
+  const connectorCount = (window.ARCHHUB_LIVE?.connectors || []).length;
+  const rows = [];
+  if (hostCount || connectorCount) rows.push({
+    key:'hosts', actor:'Connectors / hosts', read:'yes', write:'workflow', publish:'host route', approval:'yes',
+    control:<button type="button" onClick={() => onTab && onTab('hosts')} style={accessButton}>Open Hosts</button>,
+  });
+  if (relay && transport?.setCloudPublishConsent) rows.push({
+    key:'relay', actor:'Cloud relay / publish', read:relay.allowed ? 'yes' : 'no', write:'no',
+    publish:relay.allowed ? 'allowed' : 'blocked', approval:signedIn ? 'consent' : 'sign in',
+    control:<button type="button" role="switch" aria-checked={!!relay.allowed} aria-label="Allow cloud relay publish"
+      disabled={relayBusy || (!signedIn && !relay.allowed)} onClick={toggleRelay}
+      style={{ width:30, height:16, borderRadius:999, padding:1, border:0, background:relay.allowed ? LM.accent : LM.lineSoft, position:'relative' }}>
+      <span style={{ position:'absolute', top:1, left:relay.allowed ? 14 : 1, width:14, height:14, borderRadius:'50%', background:'#fff' }}/>
+    </button>,
+  });
+  if (social.length && transport?.removeLocalSocialAccount) rows.push({
+    key:'social', actor:'Social accounts', read:'yes', write:'no', publish:'approval only', approval:'yes',
+    control:<button type="button" onClick={() => disconnect(social[0])} style={accessButton}>Disconnect</button>,
+  });
+  if (approvals.length && transport?.decideSocialApproval) rows.push({
+    key:'approvals', actor:'Agents / approvals', read:'request', write:'no', publish:'after approval', approval:'yes',
+    control:<span style={{ display:'inline-flex', gap:6 }}>
+      <button type="button" onClick={() => decide(approvals[0], 'approve')} style={accessButton}>Approve</button>
+      <button type="button" onClick={() => decide(approvals[0], 'deny')} style={accessButton}>Deny</button>
+    </span>,
+  });
+  return (
   <div>
-    <SHead title="Permissions" sub="What agents may do on their own, and where you stop them."/>
-    <div role="status" style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, padding:'12px 14px', fontSize:12.5, color:LM.inkSoft, lineHeight:1.6 }}>
-      <div>Host, file and connector effects run only inside a Workshop workflow you approved. Reads that change nothing need no approval.</div>
-      <div style={{ marginTop:6 }}>A running agent is stopped from its Workshop; a stop ends its process.</div>
-      <div style={{ marginTop:6 }}>Terminal nodes run only inside the workspace folders this ArchHub admits.</div>
-      <div style={{ marginTop:6, color:LM.inkMuted }}>Per-operation AUTO / ASK / BLOCK modes are not configurable in this build.</div>
+    <SHead title="Permissions" sub="The Access matrix shows only actors with a store or endpoint this build can read."/>
+    <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
+      <div style={{ display:'grid', gridTemplateColumns:'1.35fr .55fr .65fr .9fr .8fr auto', gap:10, padding:'8px 12px',
+        borderBottom:`1px solid ${LM.lineSoft}`, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em', textTransform:'uppercase' }}>
+        <span>What can act</span><span>Read</span><span>Write</span><span>Publish/send</span><span>Needs approval</span><span>Control</span>
+      </div>
+      {rows.map((row, index) => <div key={row.key} style={{ display:'grid', gridTemplateColumns:'1.35fr .55fr .65fr .9fr .8fr auto',
+        gap:10, alignItems:'center', padding:'10px 12px', borderTop:index ? `1px solid ${LM.lineSoft}` : 'none' }}>
+        <span style={{ fontSize:12.5, color:LM.ink }}>{row.actor}</span>
+        {accessCell(row.read)}{accessCell(row.write)}{accessCell(row.publish)}{accessCell(row.approval)}
+        <span>{row.control}</span>
+      </div>)}
+      {!rows.length && <SettingsEmpty>No access records are exposed by this connection.</SettingsEmpty>}
     </div>
+    {message && <p role="alert" style={{ fontSize:12, color:LM.err, overflowWrap:'anywhere' }}>{message}</p>}
   </div>
-);
+  );
+};
 
 // ── Providers (design studio-lm.jsx:2895-2933). The rows are the provider registry's: a cloud
 // provider is keyed or has no key, a local runtime is running or not. The registry never returns a
@@ -6898,13 +7036,13 @@ const SettingsLinkedInSignIn = ({transport, compact = false}) => {
   // 'missing' means this machine is not signed in to the ArchHub cloud that brokers LinkedIn.
   const needsSignIn = !available && appState === 'missing';
   if (compact) return <SocialConnectButton label="Connect LinkedIn" available={available} busy={busy}
-    unavailableLabel={needsSignIn ? 'Sign in to ArchHub to connect' : 'Coming soon'}
-    onClick={signIn} note={needsSignIn ? 'This connection goes through your ArchHub account. Sign in under Settings › Account, then connect here.' : 'Coming soon'} message={message} failed={failed}/>;
+    unavailableLabel={needsSignIn ? 'Sign in to ArchHub to connect' : 'Connect from Account'}
+    onClick={signIn} note={needsSignIn ? 'This connection goes through your ArchHub account. Sign in under Settings › Account, then connect here.' : 'Open Settings › Account before connecting LinkedIn.'} message={message} failed={failed}/>;
   return <div style={{padding:'12px 14px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, marginBottom:10}}>
     <div style={{fontSize:13, fontWeight:500}}>Sign in with LinkedIn</div>
     <div style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, marginBottom:12, letterSpacing:'0.04em'}}>Posts go to your personal LinkedIn profile, and only after you approve each one.</div>
     <div>
-      <button type="button" disabled={!available || busy} onClick={signIn} style={smallBtn(available)}>{busy ? 'Waiting for LinkedIn...' : (available ? 'Connect LinkedIn' : (needsSignIn ? 'Sign in to ArchHub to connect' : 'Coming soon'))}</button>
+      <button type="button" disabled={!available || busy} onClick={signIn} style={smallBtn(available)}>{busy ? 'Waiting for LinkedIn...' : (available ? 'Connect LinkedIn' : (needsSignIn ? 'Sign in to ArchHub to connect' : 'Connect from Account'))}</button>
       {needsSignIn && <p role="status" style={{fontSize:12, color:LM.inkSoft}}>This connection goes through your ArchHub account. Sign in under Settings › Account, then connect here.</p>}
       {busy && transport?.cancelLinkedInSignIn && <button type="button" onClick={cancel} style={{...smallBtn(), marginTop:7}}>Cancel sign-in</button>}
       {message && <p role={failed ? 'alert' : 'status'} style={{fontSize:12, overflowWrap:'anywhere', color:failed ? LM.err : LM.ok}}>{message}</p>}
@@ -6912,7 +7050,7 @@ const SettingsLinkedInSignIn = ({transport, compact = false}) => {
   </div>;
 };
 
-const SocialConnectButton = ({label, available, busy, onClick, note, message, failed, unavailableLabel = 'Coming soon'}) => {
+const SocialConnectButton = ({label, available, busy, onClick, note, message, failed, unavailableLabel = 'Connect from Account'}) => {
   const [open, setOpen] = React.useState(false);
   return <div style={{display:'inline-flex', flexDirection:'column', gap:6, alignItems:'flex-start'}}>
     <button type="button" onClick={() => available ? onClick() : setOpen(!open)}
@@ -6986,7 +7124,7 @@ const SettingsMetaSignIn = ({transport}) => {
   const needsSignIn = !available && appState === 'missing';
   return <div style={{display:'inline-flex', flexDirection:'column', gap:6, alignItems:'flex-start'}}>
     <button type="button" onClick={available ? signIn : undefined}
-      style={smallBtn(available)}>{busy ? 'Connecting...' : (available ? 'Connect Facebook / Instagram' : (needsSignIn ? 'Sign in to ArchHub to connect' : 'Coming soon'))}</button>
+      style={smallBtn(available)}>{busy ? 'Connecting...' : (available ? 'Connect Facebook / Instagram' : (needsSignIn ? 'Sign in to ArchHub to connect' : 'Connect from Account'))}</button>
     {needsSignIn && <div role="status" style={{fontSize:12, color:LM.inkSoft, maxWidth:420}}>This connection goes through your ArchHub account. Sign in under Settings › Account, then connect here.</div>}
     {!!pages.length && <div style={{display:'flex', flexDirection:'column', gap:6, maxWidth:440}}>
       {pages.map(page => <button key={page.id} type="button" disabled={busy} onClick={() => usePage(page)} style={smallBtn(true)}>
@@ -7002,7 +7140,7 @@ const SettingsMetaSignIn = ({transport}) => {
   </div>;
 };
 
-const SocialConnectionRow = ({icon, name, detail, control}) => (
+const SocialConnectionRow = ({icon, name, detail, control, onAccount}) => (
   <div style={{display:'grid', gridTemplateColumns:'24px minmax(0,1fr) auto', alignItems:'center', gap:10,
     padding:'10px 0', borderTop:`1px solid ${LM.lineSoft}`}}>
     <span style={{width:24, height:24, borderRadius:LM.rad.sm, background:LM.bgSoft, color:LM.ink,
@@ -7011,7 +7149,7 @@ const SocialConnectionRow = ({icon, name, detail, control}) => (
       <div style={{fontSize:13, fontWeight:500}}>{name}</div>
       <div style={{fontSize:11.5, color:LM.inkSoft, lineHeight:1.35}}>{detail}</div>
     </div>
-    {control || <button type="button" style={smallBtn(false)}>Coming soon</button>}
+    {control || <button type="button" onClick={() => onAccount && onAccount()} style={smallBtn(false)}>Connect from Account</button>}
   </div>
 );
 
@@ -7025,10 +7163,10 @@ const SettingsNotionSignIn = ({transport}) => {
   };
   const available = !!transport?.connectNotion;
   return <SocialConnectButton label="Connect Notion" available={available} busy={busy}
-    onClick={connect} note="Coming soon" message={message} failed={failed}/>;
+    onClick={connect} note="Open Settings › Account before connecting Notion." message={message} failed={failed}/>;
 };
 
-const SettingsSocialEnrollment = ({transport}) => {
+const SettingsSocialEnrollment = ({transport, onAccount}) => {
   const [message, setMessage] = React.useState('');
   return <div style={{padding:'12px 14px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg}}>
     <div style={{fontSize:13, fontWeight:500}}>Connections</div>
@@ -7039,8 +7177,8 @@ const SettingsSocialEnrollment = ({transport}) => {
       control={<SettingsMetaSignIn transport={transport}/>}/>
     <SocialConnectionRow icon="N" name="Notion" detail="Uses Notion's own sign-in."
       control={<SettingsNotionSignIn transport={transport}/>}/>
-    <SocialConnectionRow icon="O" name="Outlook" detail="Connects through the existing mail owner when available."/>
-    <SocialConnectionRow icon="D" name="Dropbox" detail="Uses the existing local Dropbox owner when available."/>
+    <SocialConnectionRow icon="O" name="Outlook" detail="Connects through the existing mail owner when available." onAccount={onAccount}/>
+    <SocialConnectionRow icon="D" name="Dropbox" detail="Uses the existing local Dropbox owner when available." onAccount={onAccount}/>
     {message && <p role="status" style={{fontSize:12, overflowWrap:'anywhere', color:LM.ok}}>{message}</p>}
   </div>;
 };
@@ -7192,7 +7330,7 @@ const SettingsProviders = ({ providers, onTab }) => {
     {social && <div style={{ marginTop:10 }}>
       <SettingsConnectedSocialAccounts transport={transport}/>
       <SettingsSocialApprovals transport={transport}/>
-      <SettingsSocialEnrollment transport={transport}/>
+      <SettingsSocialEnrollment transport={transport} onAccount={() => onTab && onTab('account')}/>
     </div>}
   </div>
   );
@@ -7521,38 +7659,34 @@ const SettingsTheme = () => {
     {alert && <p role="alert" style={{fontSize:12, color:LM.warn}}>{alert}</p>}
   </div>;
 };
-// Only keys that have a handler in this build (the design sheet listed thirteen; seven had none).
-// Global: StudioLM keydown (Escape, Ctrl/Cmd+, Ctrl/Cmd+/ and Ctrl/Cmd+K). Canvas: onCanvasKeyDown, which runs
-// select-all and the canvas menu rows whose keys are declared in canvasMenuItems.
-const STUDIO_SHORTCUTS = [
-  ['Open the node library', '⌘K'],
-  ['Toggle settings',       '⌘,'],
-  ['Open documentation',    '⌘/'],
-  ['Close settings or docs', 'Esc'],
-  ['Select all nodes',      '⌘A'],
-  ['Add node — library', '⌘L'],
-  ['Fit graph to view',     '⌘0'],
-  ['Zoom to 100%',          '⌘1'],
-  ['Auto-layout',           '⌘⇧L'],
-  ['Undo',                  '⌘Z'],
-  ['Redo',                  '⌘⇧Z'],
-  ['Fit selection or all',  'F'],
-  ['Move selected nodes',   '← ↑ → ↓'],
-  ['Pan the canvas',        'Middle-drag'],
-];
-const SettingsShortcuts = () => (
-  <div>
-    <SHead title="Shortcuts" sub="The keys this build answers. Canvas keys work while the canvas has focus."/>
-    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'4px 24px' }}>
-      {STUDIO_SHORTCUTS.map(([label, key]) => (
-        <div key={label} style={{ display:'flex', alignItems:'center', gap:10, padding:'7px 0', borderBottom:`1px solid ${LM.lineSoft}` }}>
-          <span style={{ flex:1, fontSize:12.5, color:LM.ink }}>{label}</span>
-          <kbd style={{ ...kbd(), fontSize:10.5, padding:'2px 7px' }}>{key}</kbd>
-        </div>
-      ))}
+const SettingsShortcuts = () => {
+  const [q, setQ] = React.useState('');
+  const needle = q.trim().toLowerCase();
+  const rows = STUDIO_SHORTCUT_BINDINGS.filter(binding =>
+    !needle || [binding.label, binding.scope, binding.display].some(value => String(value || '').toLowerCase().includes(needle)));
+  return (
+    <div>
+      <SHead title="Shortcuts" sub="Keyboard bindings handled by this Studio build."/>
+      <div style={{display:'flex', alignItems:'center', gap:LM.sp.sm, padding:'7px 10px', margin:'0 0 14px',
+        background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md}}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={LM.inkMuted} strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input aria-label="Filter shortcuts" value={q} onChange={e => setQ(e.target.value)} placeholder="Filter shortcuts..." style={{
+          flex:1, border:0, background:'transparent', color:LM.ink, fontSize:12.5, outline:'none', fontFamily:LM.sans,
+        }}/>
+      </div>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'4px 24px' }}>
+        {rows.map(binding => (
+          <div key={binding.id} data-shortcut-id={binding.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'7px 0', borderBottom:`1px solid ${LM.lineSoft}` }}>
+            <span style={{ flex:1, fontSize:12.5, color:LM.ink }}>{binding.label}</span>
+            <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.08em', textTransform:'uppercase' }}>{studioShortcutScopeLabel(binding.scope)}</span>
+            <kbd style={{ ...kbd(), fontSize:10.5, padding:'2px 7px' }}>{binding.display}</kbd>
+          </div>
+        ))}
+      </div>
+      {!rows.length && <SettingsEmpty>No shortcut matches this filter.</SettingsEmpty>}
     </div>
-  </div>
-);
+  );
+};
 
 // Conversation retention (Settings > Storage). Everything shown is read from
 // /api/universal/conversation-retention: the policy the idle maintenance pass

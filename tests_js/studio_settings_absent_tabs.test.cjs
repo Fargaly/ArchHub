@@ -19,7 +19,7 @@ const model = read('nodelang/studio/brain-model.jsx');
 const SEEDED = ['Habib Studio', 'ah-inv-', '@practice.com', 'AHUB-4K7M', '5 seats', 'Fargaly Habib',
   'Amina Habib', 'Karim Saleh', 'Dina Wasfy', 'L02 cladding', '\u00a3', 'Studio \u00b7 5'];
 const STRATA = ['Ontology', 'Relationships', 'Categorisation', 'Instances'];
-const TEAM_STATUS = 'No firm in this connection. Members appear here when the workspace has one.';
+const TEAM_STATUS = 'Sign in to see your team';
 const seedText = read('nodelang/universal_presentation_seed.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
 const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)]
   .map(match => [match[1], match[2]]));
@@ -52,7 +52,7 @@ test('the Settings tab table matches the design: Brain on the memory tab, Team b
   assert.match(tabs, /\['team',\s*'Team',\s*null\]/, 'the Team badge states nothing it cannot read');
   assert.equal(/\['brain',/.test(tabs), false, 'there is one Brain tab, not a Memory tab beside an empty Brain tab');
   assert.match(rendered, /\{tab === 'memory'\s+&& <SettingsMemory /);
-  assert.match(rendered, /\{tab === 'team'\s+&& <SettingsTeam\/>\}/);
+  assert.match(rendered, /\{tab === 'team'\s+&& <SettingsTeam account=\{account\} onAccount=\{\(\) => setTab\('account'\)\}\/>\}/);
 });
 
 test('the shipped Settings dialog draws the brain strata with real facts and an empty Team', async () => {
@@ -101,10 +101,9 @@ test('the shipped Settings dialog draws the brain strata with real facts and an 
     assert.ok(team && !team.lastElementChild.textContent.includes('seat'), 'the Team badge names no firm or seats');
     win.ReactDOM.flushSync(() => team.click());
     const teamPanel = sidebar.nextElementSibling;
-    assert.ok([...teamPanel.querySelectorAll('[role="status"]')].some(node => node.textContent.trim() === TEAM_STATUS));
+    assert.ok([...teamPanel.querySelectorAll('[role="status"]')].some(node => node.textContent.trim().startsWith(TEAM_STATUS)));
     const controls = [...teamPanel.querySelectorAll('button')];
-    // Founder 2026-10-08: no dead controls. Without a firm, Team draws its status and no disabled buttons.
-    assert.deepEqual(controls.map(button => button.textContent), []);
+    assert.deepEqual(controls.map(button => button.textContent), ['Sign in']);
     for (const seeded of SEEDED) assert.equal(win.document.body.textContent.includes(seeded), false, `no ${JSON.stringify(seeded)} on screen`);
   } finally {
     if (win.__studioRoot) win.ReactDOM.flushSync(() => win.__studioRoot.unmount());

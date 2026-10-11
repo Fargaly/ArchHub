@@ -33,6 +33,12 @@ const slice = () => {
   assert.ok(start > 0 && end > start, 'the canvas is a slice of the shipped studio-lm.jsx');
   return source.slice(start, end);
 };
+const shortcutSlice = () => {
+  const start = source.indexOf('const studioShortcut =');
+  const end = source.indexOf('// An ordinary canvas edit', start);
+  assert.ok(start > 0 && end > start, 'the shortcut table is a slice of the shipped studio-lm.jsx');
+  return source.slice(start, end);
+};
 
 // The window this build coalesces a burst over. A build that does not name the constant is
 // not what the courts below are about: they mount the canvas and judge what it WRITES, so
@@ -121,7 +127,7 @@ async function mount({refuse = null, hold = null, seedTrace = null, nodes = NODE
     NodeBody:() => null, CanvasToolbar:() => null, FloatingComposer:() => null, MiniMap:() => null,
     nodeModelRow:() => null, smallBtn:() => ({}), toolBtn:() => ({}), kbd:() => ({}),
     setTimeout:dom.window.setTimeout.bind(dom.window), clearTimeout:dom.window.clearTimeout.bind(dom.window)});
-  vm.runInContext(transformSync(slice() + '\nglobalThis.NodeCanvas = NodeCanvas;',
+  vm.runInContext(transformSync(shortcutSlice() + slice() + '\nglobalThis.NodeCanvas = NodeCanvas;',
     {loader:'jsx', format:'cjs'}).code, context);
   const reactRoot = createRoot(dom.window.document.getElementById('root'));
   const props = {focusId:null, setFocusId:() => {}, setLibraryOpen:() => {}, userNodes:[],
@@ -523,7 +529,7 @@ async function mountOnTransport({hold = null} = {}) {
     NodeBody:() => null, CanvasToolbar:() => null, FloatingComposer:() => null, MiniMap:() => null,
     nodeModelRow:() => null, smallBtn:() => ({}), toolBtn:() => ({}), kbd:() => ({}),
     setTimeout:dom.window.setTimeout.bind(dom.window), clearTimeout:dom.window.clearTimeout.bind(dom.window)});
-  vm.runInContext(transformSync(slice() + '\nglobalThis.NodeCanvas = NodeCanvas;',
+  vm.runInContext(transformSync(shortcutSlice() + slice() + '\nglobalThis.NodeCanvas = NodeCanvas;',
     {loader:'jsx', format:'cjs'}).code, context);
   const reactRoot = createRoot(dom.window.document.getElementById('root'));
   await React.act(async () => reactRoot.render(React.createElement(context.NodeCanvas,

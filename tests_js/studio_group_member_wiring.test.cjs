@@ -73,6 +73,8 @@ test('the canvas joins a member port\'s owner, in either order, never the group 
   const ctx = vm.createContext({
     authority:null, authorityState:null, saving:{current:false}, layoutNeedsRefresh:false,
     normal:{connectTopology:async (...args) => { connected.push(args); }},
+    wireStartRef:{get current() { return wireStart; }, set current(value) { wireStart = value; }},
+    setWireStartState:value => { wireStart = value; },
     setWireError:text => { if (text) errors.push(text); }, setWireStart:value => { wireStart = value; },
   });
   Object.defineProperty(ctx, 'wireStart', {get:() => wireStart});

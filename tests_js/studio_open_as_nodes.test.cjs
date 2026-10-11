@@ -411,7 +411,10 @@ async function mountCanvasReveal(options = {}) {
   const lmSource = fs.readFileSync(path.join(path.dirname(file), 'studio-lm.jsx'), 'utf8');
   const start = lmSource.indexOf('const SOCKET_TOP =');
   const end = lmSource.indexOf('const NodeStateDot =', start);
+  const shortcutStart = lmSource.indexOf('const studioShortcut =');
+  const shortcutEnd = lmSource.indexOf('// An ordinary canvas edit', shortcutStart);
   assert.ok(start > 0 && end > start, 'NodeCanvas is a slice of shipped studio-lm.jsx');
+  assert.ok(shortcutStart > 0 && shortcutEnd > shortcutStart, 'shortcuts are a slice of shipped studio-lm.jsx');
   const dom = new JSDOM('<div id="root"></div>', {url:'http://127.0.0.1:53913/'});
   let measurable = options.measurable !== false;
   Object.defineProperty(dom.window.HTMLElement.prototype, 'offsetWidth', {configurable:true, get() { return measurable ? 220 : 0; }});
@@ -444,7 +447,7 @@ async function mountCanvasReveal(options = {}) {
     NodeBody:() => null, CanvasToolbar:() => null, FloatingComposer:() => null, MiniMap:() => null, Socket:() => null,
     nodeModelRow:() => null, smallBtn:() => ({}), toolBtn:() => ({}), kbd:() => ({}),
     setTimeout:dom.window.setTimeout.bind(dom.window), clearTimeout:dom.window.clearTimeout.bind(dom.window)});
-  vm.runInContext(transformSync(lmSource.slice(start, end) + '\nglobalThis.NodeCanvas = NodeCanvas;',
+  vm.runInContext(transformSync(lmSource.slice(shortcutStart, shortcutEnd) + lmSource.slice(start, end) + '\nglobalThis.NodeCanvas = NodeCanvas;',
     {loader:'jsx', format:'cjs'}).code, context);
   const root = createRoot(dom.window.document.getElementById('root'));
   let props = {focusId:null, setFocusId:() => {}, pendingReveal:null, clearPendingReveal:() => {},

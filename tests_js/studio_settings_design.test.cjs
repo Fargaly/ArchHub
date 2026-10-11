@@ -197,7 +197,7 @@ test('Connections render stored accounts and disconnect by exact saved identity'
   } finally { s.close(); }
 });
 
-test('Connections show coming soon before a LinkedIn app is configured', async () => {
+test('Connections show account-route controls before a LinkedIn app is configured', async () => {
   const s = await openSettings({linkedInAppSaved:false});
   try {
     const panel = await s.tab('Providers');
@@ -209,7 +209,13 @@ test('Connections show coming soon before a LinkedIn app is configured', async (
     assert.ok(s.buttons(panel, 'Sign in to ArchHub to connect').length >= 2,
       'signed out, LinkedIn and Meta say a cloud sign-in is needed (not "coming soon"), never a form');
     assert.match(panel.textContent, /Sign in under Settings › Account, then connect here\./, 'the row says where to sign in');
-    assert.ok(s.buttons(panel, 'Coming soon').length >= 1, 'a provider with no broker yet is still a coming soon row');
+    assert.ok(s.buttons(panel, 'Connect from Account').length >= 1, 'a provider with no broker points at the account route');
+    assert.equal(/coming soon/i.test(panel.textContent), false, 'Connections show no stub wording');
+    assert.equal(/Continue with Google|Signed in as/.test(s.doc.body.textContent), false, 'the account block is not on Providers');
+    s.flush(() => s.buttons(panel, 'Connect from Account')[0].click());
+    await s.settle();
+    assert.ok(s.doc.querySelector('[data-settings-tab="account"], [data-tab="account"]') ||
+      /Continue with Google|Signed in as/.test(s.doc.body.textContent), 'Connect from Account opens Settings › Account');
   } finally { s.close(); }
 });
 

@@ -86,7 +86,7 @@ test("W6b Settings has no global disabled edit or dash-grid Team placeholders", 
   for (const placeholder of ["FIRM", "SEATS", "USED", "YOUR ROLE", "\\u2014"]) {
     assert.equal(team.includes(placeholder), false, placeholder + " placeholder is not rendered");
   }
-  assert.match(team, /No firm in this connection/);
+  assert.match(team, /Members you invite will appear here/);
 });
 
 test("W6b Account and Workspaces hide or explain disabled crawl targets", () => {

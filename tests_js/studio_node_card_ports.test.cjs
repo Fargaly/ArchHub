@@ -26,6 +26,12 @@ const LM = new Proxy(Object.fromEntries([...palette.matchAll(/^ {2}(\w+):/gm)].m
 // The socket geometry: one 19px row per port, radius 5, the band padded 4px (studio-lm.jsx PORT_BAND_PAD).
 const STEP = 19, RADIUS = 5, PAD = 4;
 const rowCentre = index => PAD + index * STEP + STEP / 2;
+const shortcutSlice = () => {
+  const start = source.indexOf('const studioShortcut =');
+  const end = source.indexOf('// An ordinary canvas edit', start);
+  assert.ok(start > 0 && end > start, 'the shortcut table is a slice of the shipped studio-lm.jsx');
+  return source.slice(start, end);
+};
 // jsdom has no layout: the band's offsetTop is what the card reports, so the court sets it.
 let bandTop = 0;
 const connection = {mode:'connection', connect_control:'control-a', connect_choices:[{id:'in-a'}]};
@@ -74,7 +80,7 @@ async function mount() {
     studioCategory:cat => ({col:'token-cat', icon:'+', label:String(cat).toUpperCase()}), WIRE:{},
     NodeBody:() => null, CanvasToolbar:() => null, FloatingComposer:() => null, MiniMap:() => null,
     nodeModelRow:() => null, smallBtn:() => ({}), toolBtn:() => ({}), kbd:() => ({})});
-  vm.runInContext(transformSync(source.slice(start, end) + '\n' + source.slice(socketStart, socketEnd) +
+  vm.runInContext(transformSync(shortcutSlice() + source.slice(start, end) + '\n' + source.slice(socketStart, socketEnd) +
     '\nglobalThis.NodeCanvas = NodeCanvas;', {loader:'jsx', format:'cjs'}).code, context);
   const root = createRoot(dom.window.document.getElementById('root'));
   const props = {focusId:null, setFocusId:() => {}, setLibraryOpen:() => {}, userNodes:[], addNodeFromLibrary:() => {}, model:null};

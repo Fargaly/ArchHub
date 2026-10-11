@@ -241,7 +241,8 @@ def list_workshop_conversations(owner, *, authentication_context, expected_revis
 
 
 def create_workshop_conversation(owner, *, authentication_context, expected_revision,
-                                title, participant_roots, idempotency_key, before_commit=None):
+                                title, participant_roots, idempotency_key, before_commit=None,
+                                conversation_root=None):
     _revision(expected_revision)
     title, participants = _input(title, participant_roots, idempotency_key)
     if before_commit is not None and not callable(before_commit):
@@ -266,7 +267,14 @@ def create_workshop_conversation(owner, *, authentication_context, expected_revi
                     registry.workshop_workbench_root, creator, idempotency_key])
                 prefix = "app:workshop:conversation:" + namespace + ":"
                 intent = _digest([title, participants, controls])
-                root = prefix + intent
+                fixed_root = conversation_root is not None
+                if fixed_root:
+                    if (type(conversation_root) is not str or not conversation_root
+                            or "\x00" in conversation_root or len(conversation_root.encode("utf-8")) > 512):
+                        raise InvalidCell("conversation root identity is invalid")
+                    root = conversation_root
+                else:
+                    root = prefix + intent
                 binding_root = "conversation-content:" + _digest([root, "binding"])[:32]
                 history = service._history_for(canonical_binding)
                 pending = None if root in snapshot.cells else _prepare_child(snapshot, registry, service,
@@ -287,10 +295,15 @@ def create_workshop_conversation(owner, *, authentication_context, expected_revi
                 # Binary primary-key range over at most two ordinary identities.
                 # The trailing ':' is replaced by ';' for an exclusive upper bound.
                 with history._transaction(write=True, before_commit=guard):
-                    reservations = history._db.execute(
-                        "SELECT id,last_sequence FROM conversations WHERE id>=? COLLATE BINARY "
-                        "AND id<? COLLATE BINARY ORDER BY id COLLATE BINARY LIMIT 2",
-                        (prefix, prefix[:-1] + ";")).fetchall()
+                    if fixed_root:
+                        reservations = history._db.execute(
+                            "SELECT id,last_sequence FROM conversations WHERE id=?",
+                            (root,)).fetchall()
+                    else:
+                        reservations = history._db.execute(
+                            "SELECT id,last_sequence FROM conversations WHERE id>=? COLLATE BINARY "
+                            "AND id<? COLLATE BINARY ORDER BY id COLLATE BINARY LIMIT 2",
+                            (prefix, prefix[:-1] + ";")).fetchall()
                     if len(reservations) > 1 or reservations and reservations[0]["id"] != root:
                         raise InvalidCell("conversation creation idempotency intent changed")
                     if root in snapshot.cells:

@@ -86,6 +86,25 @@ def test_openrouter_free_routes_require_numeric_zero_pricing_fields():
         "vendor/strict-free:free", "vendor/no-request-image:free")
 
 
+def test_default_route_display_row_uses_catalogue_then_server_fallback():
+    payload = mc.groups_with_routes({"groups": [{"name": mc.BYO_GROUP, "items": [{
+        "name": "OpenRouter catalogue name",
+        "route": "openrouter/free",
+        "vendor": "OpenRouter",
+        "tag": "BYO",
+        "col": "#123456",
+    }]}]})
+    row = mc.default_route_display_row(payload, "openrouter/free", "free · OpenRouter")
+    assert row["name"] == "OpenRouter catalogue name"
+    assert row["route"] == "openrouter/free"
+    assert row["routed"] == "openrouter/free"
+
+    fallback = mc.default_route_display_row({"groups": []}, "openrouter/free", "free · OpenRouter")
+    assert fallback["name"] == "Free Models Router"
+    assert fallback["route"] == "openrouter/free"
+    assert fallback["routed"] == "openrouter/free"
+
+
 def test_every_openrouter_pricing_field_must_be_zero_for_all_prices_zero():
     rows = {"data": [
         {"id": "a/strict:free", "pricing": {"prompt": "0", "completion": "0", "request": "0", "image": "0",

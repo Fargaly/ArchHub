@@ -451,6 +451,41 @@ def groups_with_routes(payload: Mapping[str, object]) -> dict:
     return {**payload, "groups": groups}
 
 
+def default_route_display_row(payload: Mapping[str, object], route: str,
+                              source: str = "") -> Optional[dict]:
+    """Return the display row for the server-selected default route.
+
+    The catalogue row wins because it carries the provider's live name. The
+    server fallback is deliberately here, beside model_router's default route
+    contract, so Studio never has to name the free router itself.
+    """
+    route = str(route or "").strip()
+    if not route:
+        return None
+    for group in payload.get("groups") or ():
+        if not isinstance(group, Mapping):
+            continue
+        for item in group.get("items") or ():
+            if not isinstance(item, Mapping):
+                continue
+            routed = str(item.get("routed") or item.get("route") or "").strip()
+            if routed == route:
+                return dict(item)
+    if route == "openrouter/free":
+        from .model_router import DEFAULT_FREE_ROUTE_ROW
+        return dict(DEFAULT_FREE_ROUTE_ROW)
+    return {
+        "name": route,
+        "route": route,
+        "routed": route,
+        "vendor": "Default",
+        "tag": str(source or "default"),
+        "ctx": "",
+        "col": _VENDOR_COLOURS.get(_vendor(route), "#3a6acc"),
+        "latency": None,
+    }
+
+
 def reset_cache() -> None:
     with _lock:
         _cache["at"] = 0.0
@@ -461,4 +496,5 @@ def reset_cache() -> None:
 
 __all__ = ["live_model_groups", "held_model_groups", "held_model_groups_read_only",
            "cloud_models", "openrouter_models", "direct_models",
-           "local_models", "routable_route", "groups_with_routes", "reset_cache"]
+           "local_models", "routable_route", "groups_with_routes",
+           "default_route_display_row", "reset_cache"]

@@ -84,6 +84,8 @@ def test_the_configured_concrete_default_model_is_used_when_nothing_is_picked(tm
         assert status == 200, models
         assert models["selected_route"] == "", "nothing was picked"
         assert models.get("default_route") == "openrouter/vendor/default-model", models
+        assert models.get("default_model", {}).get("name") == "openrouter/vendor/default-model", models
+        assert models.get("default_model", {}).get("routed") == "openrouter/vendor/default-model", models
         status, answer = _request(server, "/api/universal/agent", {"prompt": "hello", "model": ""})
         assert status == 200 and answer.get("answer") == "fixture answer", answer
         assert calls == ["vendor/default-model"], calls
@@ -99,6 +101,8 @@ def test_only_the_free_default_is_chosen_automatically_even_with_a_stored_key(tm
             status, models = _request(server, "/api/universal/models")
             assert status == 200 and models["selected_route"] == "", models
             assert models.get("default_route") == "openrouter/free", models
+            assert models.get("default_model", {}).get("name") == "Free Models Router", models
+            assert models.get("default_model", {}).get("routed") == "openrouter/free", models
             status, answer = _request(server, "/api/universal/agent", {"prompt": "hello", "model": ""})
             assert status == 200 and answer.get("answer") == "fixture answer", (setting, answer)
             assert calls == ["openrouter/free"], "only the free route may be automatic for setting %r: %r" % (setting, calls)

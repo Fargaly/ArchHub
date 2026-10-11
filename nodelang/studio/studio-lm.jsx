@@ -393,10 +393,9 @@ const StudioLM = () => {
         if (!route || controller.signal.aborted) return;
         const selected = (result.groups || []).flatMap(group => group.items || [])
           .find(item => (item.routed || item.route) === route);
-        setModel(current => current.routed || current.route ? current : selected || {
-          name:route, route, routed:route, vendor:fallback ? 'Default' : 'Saved selection',
-          tag:fallback ? (source || 'default') : 'Availability not verified',
-          ctx:'', col:LM.inkMuted, latency:null});
+        const serverDefault = defaultModelRowFromPayload(result, route);
+        setModel(current => current.routed || current.route ? current :
+          selected || serverDefault || defaultModelRow(route, source, fallback));
       }).catch(() => {});
     return () => controller.abort();
   }, []);
@@ -2342,6 +2341,16 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, openTab
 // (the cloud and OpenRouter ids are the same shape, so the row says which);
 // older rows only have `route`.
 const modelRoute = (m) => String((m && (m.routed || m.route)) || '');
+const defaultModelRowFromPayload = (payload, route) => {
+  const row = payload && payload.default_model && typeof payload.default_model === 'object' ? payload.default_model : null;
+  if (!row || modelRoute(row) !== route) return null;
+  return {...row, route:row.route || route, routed:row.routed || route};
+};
+const defaultModelRow = (route, source, fallback) => {
+  return {name:route, route, routed:route, vendor:fallback ? 'Default' : 'Saved selection',
+    tag:fallback ? (source || 'default') : 'Availability not verified',
+    ctx:'', col:LM.inkMuted, latency:null};
+};
 // A composer pick is the owner's graph-held setting, saved when it is made.
 // It lived only in this page until a Send reached the server, so a restart or
 // an update came back "Choose a model" (2026-09-17). The signed clean engine
@@ -5082,6 +5091,9 @@ const ASK_SCALE = {
   reply:    { field: 13.5, send: { padding: '4px 11px', radius: LM.rad.sm, size: 11.5 }, lead: 0 },
   node:     { field: 12, send: { padding: '3px 8px', radius: 4, size: 10 }, lead: 0 },
 };
+// agentAnswerText (above, with the chat view) reads both the structured result and a plain string.
+const agentDeliveryState = result => result && typeof result === 'object' && !Array.isArray(result) && result.delivery
+  ? result.delivery.state : null;
 
 const InlineAsk = ({ placeholder, model, node, onAnswer, scale, before }) => {
   const S = ASK_SCALE[scale] || ASK_SCALE.node;
@@ -5091,9 +5103,14 @@ const InlineAsk = ({ placeholder, model, node, onAnswer, scale, before }) => {
   const needsNode = !!window.ARCHHUB_STUDIO_AUTHORITY && !node;
   const [text, setText] = React.useState('');
   const [state, setState] = React.useState('');
+  const pendingSend = React.useRef(null);
   // The composer renders the answer itself; the older inline replies have
   // nowhere to put it, so they keep showing it in the field.
   const report = (line) => { if (onAnswer) onAnswer(line); else setState(String(line).slice(0, 60)); };
+  const updateText = next => {
+    if (pendingSend.current && next !== pendingSend.current.raw) pendingSend.current = null;
+    setText(next);
+  };
   const ask = async () => {
     const said = text.trim();
     if (!said || asking || !window.ARCHHUB_AGENT) return;
@@ -5103,19 +5120,33 @@ const InlineAsk = ({ placeholder, model, node, onAnswer, scale, before }) => {
     report('asking ' + (node ? route : ((picked && picked.name) || 'the agent')) + '…');
     try {
       // Node asks carry the committed route as a consistency check.
-      const answer = String(await window.ARCHHUB_AGENT(said, route,
-        node ? {node:node.id, generation:generationRequestOptions()} : {generation:generationRequestOptions()}));
+      const held = pendingSend.current;
+      const requestId = node ? (held && held.raw === text && held.said === said
+        ? held.requestId : window.crypto.randomUUID()) : null;
+      if (node) pendingSend.current = {raw:text, said, requestId};
+      const result = await window.ARCHHUB_AGENT(said, route,
+        node ? {node:node.id, request_id:requestId, generation:generationRequestOptions()} : {generation:generationRequestOptions()});
+      const answer = agentAnswerText(result);
+      const deliveryState = agentDeliveryState(result);
+      if (deliveryState && deliveryState !== 'replied') {
+        report(answer);
+        return;
+      }
+      pendingSend.current = null;
       report(answer);
       setText('');
     } catch (error) {
-      report('refused: ' + ((error && error.message) || error));
+      // The send failed or its reply was lost: keep the text; a retry reuses the same request id,
+      // so the server answers from what it already holds instead of asking the model twice.
+      report('refused: ' + ((error && error.message) || error || 'no reply') +
+        (node ? ' Your text is still here; sending again will not ask twice.' : ''));
     } finally {
       setAsking(false);
     }
   };
   return (
     <>
-      <input value={text} disabled={needsNode} onChange={e => setText(e.target.value)}
+      <input value={text} disabled={needsNode} onChange={e => updateText(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter') ask(); }}
         placeholder={needsNode ? 'Select an AI node to ask…' : state || placeholder || 'Reply…'}
         style={{ flex:1, background:'transparent', border:0, outline:0,
@@ -6617,7 +6648,7 @@ const SettingsProfile = () => (
           try {
             const answer = await window.ARCHHUB_AGENT(
               'In one sentence, state the standing instruction you are working under.');
-            b.textContent = String(answer).slice(0, 48);
+            b.textContent = agentAnswerText(answer).slice(0, 48);
           } catch (error) { b.textContent = 'refused'; }
           setTimeout(() => { b.textContent = 'preview with this session'; }, 8000);
         }} style={smallBtn()}>preview with this session</button>

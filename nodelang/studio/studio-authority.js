@@ -577,10 +577,13 @@
     global.ARCHHUB_AGENT = async (prompt, model, options) => {
       const node = options && typeof options === 'object' && !Array.isArray(options) ? options.node : options;
       const generation = options && typeof options === 'object' && !Array.isArray(options) ? options.generation : undefined;
-      return (await request('/api/universal/agent', {prompt, model,
+      const requestId = options && typeof options === 'object' && !Array.isArray(options) ? options.request_id : undefined;
+      const result = await request('/api/universal/agent', {prompt, model,
         expected_scope:api.getSnapshot()?.canvas?.root,
         ...(generation !== undefined ? {generation} : {}),
-        ...(typeof node === 'string' && node.trim() ? {node} : {})})).answer || 'done';
+        ...(typeof node === 'string' && node.trim() && typeof requestId === 'string' && requestId.trim() ? {request_id:requestId} : {}),
+        ...(typeof node === 'string' && node.trim() ? {node} : {})});
+      return {...(result && typeof result === 'object' ? result : {}), answer:(result && result.answer) || 'done'};
     };
     const state = api.getSnapshot();
     global.ARCHHUB_LIVE = {graph: state.graph, library: state.library, hosts: [], connectors: [], memory: [], skills: [],

@@ -4791,6 +4791,90 @@ def _agent_node_request_kwargs(body):
     return {"node_root": node}
 
 
+def _agent_node_conversation_root(registry, node):
+    digest = hashlib.sha256(
+        json.dumps([registry.application_root, node], separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return "app:workshop:conversation:node:" + digest
+
+
+def _agent_node_request_id(body):
+    request_id = body.get("request_id") if isinstance(body, Mapping) else None
+    if (type(request_id) is not str or not 1 <= len(request_id) <= 128
+            or "\x00" in request_id):
+        raise InvalidCell("Agent node send requires one exact request identity")
+    return request_id
+
+
+def _agent_node_conversation_binding(owner, binding, body, current_authority):
+    """Return the durable conversation for one visible model node, creating it once."""
+    from . import universal_application as app
+    from .agent_composer import resolve_node_model_route
+    from .cell_protocols import read_relation
+    from .workshop_conversation_catalog import create_workshop_conversation
+
+    node = body.get("node") if isinstance(body, Mapping) else None
+    if type(node) is not str or not node.strip():
+        return None
+    model = body.get("model")
+    registry, store = owner.universal_registry, owner.universal_store
+
+    def read_binding():
+        current_authority()
+        projection = app.project_universal_canvas(
+            store, registry, authentication_context=binding.context)
+        matches = [row for row in projection.get("nodes", ()) if row.get("id") == node]
+        if len(matches) != 1:
+            raise InvalidCell("agent node is not visible in this canvas scope")
+        route = resolve_node_model_route(store, registry, projection, node,
+            model=model, authentication_context=binding.context)
+        snapshot = store.snapshot()
+        view, _ = app._view_session_for_context(registry, binding.context)
+        lens_roots = tuple(member.participant_id for member in read_relation(
+            snapshot, view.properties_lens_root, budget=100_000)
+            if member.role_id == registry.roles["scope"])
+        rows = app._property_index(snapshot, registry, lens_roots).get(node, ())
+        conversation_rows = [row for row in rows if app._text(snapshot, row.label_root) == "conversation"]
+        if len(conversation_rows) > 1:
+            raise InvalidCell("agent node conversation binding is ambiguous")
+        conversation = None
+        if conversation_rows:
+            conversation = app._node_conversation_root(app._text(snapshot, conversation_rows[0].value_root))
+        return projection, matches[0], route, (conversation_rows[0] if conversation_rows else None), conversation
+
+    with owner.mutation_lock:
+        _projection, row, route, conversation_row, conversation = read_binding()
+        if conversation is not None:
+            return {"conversation": conversation, "node": node, "model": route}
+        conversation_root = _agent_node_conversation_root(registry, node)
+        title = "Node conversation " + conversation_root.rsplit(":", 1)[1][:12]
+        key_digest = conversation_root.rsplit(":", 1)[1]
+        # Two stores are updated in order: first reserve/publish the Workshop
+        # conversation under a deterministic graph identity, then bind the node
+        # property to it. If the process stops between them, the next open/send
+        # repeats the same conversation create and repairs only the missing bind.
+        created = create_workshop_conversation(owner, authentication_context=binding.context,
+            expected_revision=store.revision, title=title,
+            participant_roots=(binding.subject_root,),
+            idempotency_key="canvas-node:" + key_digest, before_commit=current_authority,
+            conversation_root=conversation_root)
+        _projection, _row, route, conversation_row, conversation = read_binding()
+        if conversation is not None:
+            if conversation != created["root"]:
+                raise InvalidCell("agent node conversation binding changed")
+            return {"conversation": conversation, "node": node, "model": route}
+        if conversation_row is None:
+            app.create_universal_property(store, registry, node, "conversation", created["root"],
+                authentication_context=binding.context)
+        else:
+            app.edit_universal_property(store, registry, conversation_row.relation_root, created["root"],
+                authentication_context=binding.context)
+        _projection, _row, route, _conversation_row, conversation = read_binding()
+        if conversation != created["root"]:
+            raise InvalidCell("agent node conversation binding was not saved")
+        return {"conversation": conversation, "node": node, "model": route}
+
+
 def answer_open_question(owner, utterance, context, payload, *, revalidate=None):
     with _composer_planning(owner):
         return _answer_open_question(owner, utterance, context, payload, revalidate=revalidate)
@@ -7804,22 +7888,9 @@ class ApplicationServer:
                             agent_node_kwargs = _agent_node_request_kwargs(body)
                             persisted_turn = None
                             if agent_node_kwargs:
-                                model = body.get('model')
-                                with owner.mutation_lock:
-                                    from .universal_application import project_universal_canvas
-                                    current_authority()
-                                    projection = project_universal_canvas(
-                                        owner.universal_store, owner.universal_registry,
-                                        authentication_context=binding.context)
-                                    matches = [row for row in projection.get('nodes', ())
-                                        if row.get('id') == body['node']]
-                                    if (len(matches) == 1 and matches[0].get('has_conversation') is True
-                                            and type(matches[0].get('conversation_root')) is str
-                                            and matches[0].get('conversation_root')):
-                                        persisted_turn = {
-                                            'conversation': matches[0]['conversation_root'],
-                                            'node': body['node'],
-                                        }
+                                persisted_turn = _agent_node_conversation_binding(
+                                    owner, binding, body, current_authority)
+                                model = persisted_turn['model']
                             else:
                                 with owner.mutation_lock:
                                     model = (
@@ -7832,12 +7903,53 @@ class ApplicationServer:
                             append_turn = None
                             if persisted_turn is not None:
                                 from .workshop_session_start import _turn_history, _append_user
-                                prefix = 'canvas-composer:%s' % uuid.uuid4().hex
+                                request_id = _agent_node_request_id(body)
+                                prefix = 'canvas-composer:%s' % hashlib.sha256(
+                                    request_id.encode("utf-8")).hexdigest()
                                 append_turn, _lookup_turn, turn_context = _turn_history(
                                     owner, binding, persisted_turn['conversation'], prefix, current_authority)
+                                intent_text = "Canvas node request " + hashlib.sha256(json.dumps({
+                                    "prompt": str(body.get('prompt', '')),
+                                    "model": str(model or ""),
+                                    "node": persisted_turn['node'],
+                                    "generation": body.get('generation'),
+                                }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+                                held_intent = _lookup_turn(":intent")
+                                if held_intent is not None and held_intent["content"] != intent_text:
+                                    raise InvalidCell("This node request changed; use a new request identity")
+                                previous_user = _lookup_turn(":user")
+                                if _lookup_turn(":started") is not None:
+                                    if previous_user is None:
+                                        raise InvalidCell("The saved node request has no user message")
+                                    reply = _lookup_turn(":reply")
+                                    if reply is not None:
+                                        reply_text = str(reply["content"])
+                                        marker = ":\n"
+                                        answer = reply_text.split(marker, 1)[1] if marker in reply_text else reply_text
+                                        self._json(200, {"ok": True, "answer": answer, "applied": [],
+                                            "delivery": {"state": "replied", "request_id": request_id,
+                                                "message_id": previous_user["id"], "reply_message_id": reply["id"]}})
+                                        return
+                                    message = "reply not confirmed - check before sending again"
+                                    self._json(200, {"ok": True, "answer": message, "applied": [],
+                                        "delivery": {"state": "reply_not_confirmed", "request_id": request_id,
+                                            "message_id": previous_user["id"],
+                                            # The first attempt may have reached the provider; this retry did not send again.
+                                            "provider_may_have_been_called": True, "resent": False}})
+                                    return
+                                append_turn(intent_text, ":intent")
                                 user_message = _append_user(owner.universal_registry, binding,
                                     str(body.get('prompt', '')), persisted_turn['node'], append_turn, _lookup_turn)
                                 conversation_context = turn_context(user_message['sequence'])
+                                dispatched = False
+
+                                def before_dispatch():
+                                    nonlocal dispatched
+                                    append_turn(
+                                        "The agent request started. An unrecorded outcome is unknown and is not retried automatically.",
+                                        ":started", refs=(persisted_turn['node'],),
+                                        reply_to=user_message['id'], require_new=True)
+                                    dispatched = True
                             try:
                                 agent_result = run_agent_composer(
                                     owner.universal_store,
@@ -7847,6 +7959,7 @@ class ApplicationServer:
                                     authentication_context=binding.context,
                                     mutation_lock=owner.mutation_lock,
                                     revalidate=current_authority,
+                                    before_dispatch=before_dispatch if persisted_turn is not None else None,
                                     conversation_context=conversation_context,
                                     generation=body.get('generation'),
                                     **agent_node_kwargs,
@@ -7859,12 +7972,22 @@ class ApplicationServer:
                                         str(agent_result.get('answer') or ''),
                                     ), ':reply', refs=tuple(dict.fromkeys((persisted_turn['node'], *applied_roots))),
                                         reply_to=user_message['id'])
+                                    agent_result = {**agent_result, "delivery": {"state": "replied",
+                                        "request_id": request_id, "message_id": user_message["id"]}}
                             except ModelRouteRefused as refused:
                                 self._json(200, {
                                     'ok': False, 'error': str(refused),
                                     'answer': str(refused), 'applied': [],
                                 })
                                 return
+                            except Exception:
+                                if persisted_turn is not None and dispatched:
+                                    message = "reply not confirmed - check before sending again"
+                                    self._json(200, {"ok": True, "answer": message, "applied": [],
+                                        "delivery": {"state": "reply_not_confirmed", "request_id": request_id,
+                                            "message_id": user_message["id"], "provider_may_have_been_called": True}})
+                                    return
+                                raise
                         self._json(200, agent_result)
                         return
                     if self.path == '/api/universal/terminal':
@@ -12962,8 +13085,8 @@ class ApplicationServer:
                     cloud_session=session,
                     local_probe=lambda _host, port: None if states is None else states.get(int(port)),
                     opencode_status_probe=self._opencode_cli_status)}
-            from .model_catalogue import (groups_with_routes, held_model_groups,
-                                          live_model_groups)
+            from .model_catalogue import (default_route_display_row, groups_with_routes,
+                                          held_model_groups, live_model_groups)
             # The held answer for this account is served at once and refreshed
             # behind it; only a machine with nothing held reads live here.
             held = held_model_groups(session)
@@ -12972,6 +13095,8 @@ class ApplicationServer:
             result['selected_route'] = selected_route
             result['default_route'] = default_route
             result['default_source'] = default_source
+            result['default_model'] = default_route_display_row(
+                result, default_route, default_source)
             result['readiness'] = readiness
             # Source exceptions can contain authenticated URLs. Keep availability
             # visible without forwarding exception text or cloud credentials.
@@ -12984,9 +13109,12 @@ class ApplicationServer:
             return result
         except Exception:
             if models:
+                from .model_catalogue import default_route_display_row
                 return {'ok': False, 'live': False, 'groups': [], 'count': 0,
                         'selected_route': selected_route,
                         'default_route': default_route, 'default_source': default_source,
+                        'default_model': default_route_display_row(
+                            {'groups': []}, default_route, default_source),
                         'readiness': readiness,
                         'error': 'Model catalogue unavailable'}
             return {'ok': False, 'providers': [], 'error': 'Provider discovery unavailable'}

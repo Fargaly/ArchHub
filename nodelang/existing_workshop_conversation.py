@@ -95,7 +95,8 @@ def canvas_workshop_scope(registry, projection, *, snapshot=None, subject_root=N
 def _admit(owner, binding, root, scope, *, allow_child=False):
     from .universal_application import (
         _view_session_for_context, _require_application_authorization,
-        _session_canvas_roots, _cached_authority_snapshot)
+        _session_canvas_roots, _cached_authority_snapshot, _property_index,
+        _text, _node_conversation_root)
     registry, store = owner.universal_registry, owner.universal_store
     if binding.context is None or (root != registry.workshop_root and not allow_child):
         raise AuthorizationDenied("Workshop request is outside this application")
@@ -124,13 +125,26 @@ def _admit(owner, binding, root, scope, *, allow_child=False):
         if workbench_visible:
             workbench_visible = any(member.role_id == registry.roles["scope"] and member.participant_id == root
                 for member in read_relation(snapshot, workbench, budget=100_000))
-        if not trail or trail[-1] != scope or not (root in visible or workbench_visible):
+        node_bound_visible = False
+        if allow_child and trail and trail[-1] == scope:
+            lens_roots = tuple(member.participant_id for member in read_relation(
+                snapshot, view.properties_lens_root, budget=100_000)
+                if member.role_id == registry.roles["scope"])
+            indexed = _property_index(snapshot, registry, lens_roots)
+            for owner_root in visible:
+                rows = indexed.get(owner_root, ())
+                if any(_text(snapshot, row.label_root) == "conversation"
+                       and _node_conversation_root(_text(snapshot, row.value_root)) == root
+                       for row in rows):
+                    node_bound_visible = True
+                    break
+        if not trail or trail[-1] != scope or not (root in visible or workbench_visible or node_bound_visible):
             raise AuthorizationDenied("Workshop is no longer on this canvas")
     space = read_deliberation_space(snapshot, registry.deliberation_protocol, root)
     if root != registry.workshop_root:
         from .conversation_content import read_content_binding
-        if not workbench_visible or binding.subject_root not in space.participant_roots:
-            raise AuthorizationDenied("Conversation is not attached to this Workshop or caller")
+        if not (workbench_visible or node_bound_visible) or binding.subject_root not in space.participant_roots:
+            raise AuthorizationDenied("Conversation is not attached to this Workshop, canvas node or caller")
         read_content_binding(snapshot, registry.deliberation_protocol,
             application_root=registry.application_root, space_root=root)
     if store.revision != snapshot.revision:
@@ -505,6 +519,15 @@ def _read_ordinary_browser_workshop(owner, binding, *, root, scope, expected_rev
 TRANSCRIPT_KINDS = ("message", "reply", "tool")
 
 
+def _direct_model_reply(content):
+    prefix = "Model reply from "
+    if type(content) is not str or not content.startswith(prefix) or ":\n" not in content:
+        return None
+    label, text = content[len(prefix):].split(":\n", 1)
+    label = label.strip()
+    return (label or "agent", text)
+
+
 def read_canvas_node_transcript(owner, binding, *, node, scope, session_token, before=None):
     """Read-only transcript of a canvas node's Workshop conversation (canvas live-node contract).
 
@@ -533,18 +556,51 @@ def read_canvas_node_transcript(owner, binding, *, node, scope, session_token, b
                                  before=before, feed="messages")
     labels = {row["root"]: (row.get("host") or row.get("label") or "") for row in page.get("participants", ())}
     me = page.get("self")
+    messages = list(page.get("messages", ()))
+    message_ids = [message["message_id"] for message in messages]
+    if message_ids:
+        registry, store, service = owner.universal_registry, owner.universal_store, owner.conversation_content
+        with owner.mutation_lock:
+            snapshot = store.snapshot()
+            content = service._authorize_content_read(snapshot, registry, space_root=root,
+                authentication_context=binding.context, principal=binding.subject_root, machine=False)
+            history = service._history_for(content)
+            founder = binding.subject_root == registry.authorization.subject_root
+            principal = registry.agent_body.session.root_id if founder else binding.subject_root
+            replies = history.replies_to(root, message_ids, principal=principal,
+                read_all=founder)["messages"]
+        categories = {value:key for key, value in registry.workshop_category_roots.items()}
+        shown = {message["message_id"] for message in messages}
+        for reply in replies:
+            key = reply.get("idempotency_key")
+            if (type(key) is str and key.startswith("canvas-composer:") and key.endswith(":reply")
+                    and reply["id"] not in shown):
+                messages.append({"message_id": reply["id"], "sequence": reply["sequence"],
+                    "sender_root": reply["author"], "body": reply["content"],
+                    "category": categories.get(reply["category"], reply["category"]),
+                    "reply_to_root": reply["reply_to"], "created_at": reply["created_at"]})
+                shown.add(reply["id"])
+        messages.sort(key=lambda row: row.get("sequence", 0))
     rows = []
-    for message in page.get("messages", ()):
+    for message in messages:
         relayed = type(message.get("relayed_from")) is str
         sender = message.get("sender_root")
+        direct_reply = (_direct_model_reply(message.get("body", ""))
+            if not relayed and message.get("category") == "tool" else None)
+        relayed_label = message.get("relayed_label")
+        if isinstance(relayed_label, list):
+            relayed_label = " / ".join(str(item) for item in relayed_label if str(item).strip())
+        who = (relayed_label or "agent") if relayed else (direct_reply[0] if direct_reply else
+               ("You" if sender == me else (labels.get(sender) or "participant")))
+        if not isinstance(who, str):
+            who = " / ".join(str(item) for item in who) if isinstance(who, list) else str(who)
         rows.append({
             "id": message["message_id"],
-            "who": (message.get("relayed_label") or "agent") if relayed else
-                   ("You" if sender == me else (labels.get(sender) or "participant")),
-            "is_me": (not relayed) and sender == me,
+            "who": who,
+            "is_me": (not relayed) and direct_reply is None and sender == me,
             "time": message.get("created_at"),
-            "text": message.get("agent_text") if relayed else message.get("body", ""),
-            "kind": "reply" if relayed else ("tool" if message.get("category") == "tool" else "message"),
+            "text": message.get("agent_text") if relayed else (direct_reply[1] if direct_reply else message.get("body", "")),
+            "kind": "reply" if (relayed or direct_reply) else ("tool" if message.get("category") == "tool" else "message"),
         })
     return {**head, "revision": page.get("revision", head["revision"]), "has_older": page.get("has_older", False),
             "next_before": page.get("next_before"), "rows": rows}

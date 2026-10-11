@@ -1011,6 +1011,19 @@ def probe_local_runtimes() -> dict:
 # A first-run default is offered ONLY as the free route whose free billing the composer
 # ENFORCES at dispatch -- "openrouter/free". It is never inferred from a ready credential,
 # a cloud session, or an installed executable: none of those is a free-billing contract.
+DEFAULT_FREE_ROUTE = "openrouter/free"
+DEFAULT_FREE_ROUTE_ROW = {
+    "name": "Free Models Router",
+    "route": DEFAULT_FREE_ROUTE,
+    "routed": DEFAULT_FREE_ROUTE,
+    "vendor": "OpenRouter",
+    "tag": "FREE",
+    "ctx": "",
+    "col": "#3a6acc",
+    "latency": None,
+}
+
+
 def admissible_default_route(readiness) -> tuple:
     """The one route the founder can use for free, enforced at DISPATCH, or ("", "").
 
@@ -1029,9 +1042,9 @@ def admissible_default_route(readiness) -> tuple:
     only that the executable exists, never that the founder is signed in. NEVER a paid
     model. `readiness` is injected so a court can drive the real seam.
     """
-    answer = readiness("openrouter/free")
+    answer = readiness(DEFAULT_FREE_ROUTE)
     if isinstance(answer, Mapping) and answer.get("state") == "ready":
-        return "openrouter/free", "free · OpenRouter"
+        return DEFAULT_FREE_ROUTE, "free · OpenRouter"
     return "", ""
 
 

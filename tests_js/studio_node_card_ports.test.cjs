@@ -54,7 +54,7 @@ async function mount() {
   const start = source.indexOf('const SOCKET_TOP =');
   const end = source.indexOf('const NodeStateDot =', start);
   const socketStart = source.indexOf('const Socket = (', end);
-  const socketEnd = source.indexOf('const ModelInWindow =', socketStart);
+  const socketEnd = source.indexOf('const ASK_SCALE =', socketStart);
   assert.ok(start > 0 && end > start && socketStart > end && socketEnd > socketStart,
     'the canvas, node card and socket are slices of the shipped studio-lm.jsx');
   const dom = new JSDOM('<div id="root"></div>');

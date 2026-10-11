@@ -103,7 +103,7 @@ const openCanvas = studio => {
   assert.ok(studio.doc.querySelector('.lm-node[data-node-id="work-a"]'), 'the canvas draws the projected Work node');
 };
 
-test('header: the design row has only working controls; three-segment switch, New session after the tabs, and a model chip that draws only what it holds', async () => {
+test('header: the design row has only working controls; three-segment switch, New session after the tabs, and no duplicate model chip', async () => {
   const studio = await mountStudio();
   try {
     const segmented = segmentedControl(studio);
@@ -130,11 +130,7 @@ test('header: the design row has only working controls; three-segment switch, Ne
     assert.ok(tab.parentElement.compareDocumentPosition(fresh) & studio.win.Node.DOCUMENT_POSITION_FOLLOWING, 'after the tabs');
 
     const chip = [...header.querySelectorAll('button')].find(button => button.textContent.includes('Choose a model'));
-    assert.ok(chip, 'the model chip is drawn');
-    assert.equal(/ctx\s*(\u00b7|$)/.test(chip.textContent), false, 'no empty ctx field: ' + chip.textContent);
-    assert.equal(chip.textContent.includes('\u25cf'), false, 'no latency dot without a measured latency: ' + chip.textContent);
-    assert.equal(/\u00b7\s*(\u00b7|\u25be|$)/.test(chip.textContent), false, 'no dangling separator: ' + chip.textContent);
-    assert.match(chip.textContent, /No (provider|model) selected/, 'the vendor line keeps what the chip does hold');
+    assert.equal(chip, undefined, 'the duplicate header model chip is not drawn');
 
     // The conversation menu is drawn only while a Workshop conversation is open, beside the switch, never inside it.
     const jsx = read('nodelang/studio/studio-lm.jsx');
@@ -229,7 +225,7 @@ test('composer: one design row (slash, caret, field, library, Send), no route li
     assert.equal(composer.children.length, 1, 'one row and nothing under it (design studio-lm.jsx:2069-2087): ' + composer.children.length + ' children');
     assert.equal([...composer.querySelectorAll('div')].some(node => node.textContent.startsWith(ARROW + ' ')), false, 'no second route line');
     assert.equal([...row.querySelectorAll('span')].some(node => /no model picked/.test(node.textContent)), false,
-      'the design row names no route: the header model chip names the model that answers');
+      'the design row names no route: the composer model state names the model that answers');
     const [library] = studio.buttons('library', row), [send] = studio.buttons('Send \u21b5', row);
     assert.ok(library && send, 'library and Send stay in the row');
     assert.deepEqual([...row.children].map(child => child.tagName.toLowerCase()), ['span', 'span', 'input', 'button', 'button'],

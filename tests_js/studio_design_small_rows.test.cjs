@@ -106,7 +106,7 @@ const openCanvas = studio => {
   assert.ok(studio.doc.querySelector('.lm-node[data-node-id="work-a"]'), 'the canvas draws the projected Work node');
 };
 const serverStrip = studio => {
-  const server = [...studio.doc.querySelectorAll('button')].find(button => button.textContent.includes('server :53912'));
+  const server = [...studio.doc.querySelectorAll('button,span')].find(node => node.textContent.includes('server :53912'));
   assert.ok(server, 'the status bar is drawn');
   return server.parentElement;
 };
@@ -141,10 +141,10 @@ test('status bar: the design strip with live values; the model slot is the picke
   try {
     const chip = () => [...picked.doc.querySelectorAll('button')].find(button => button.textContent.includes(name) &&
       !serverStrip(picked).contains(button));
-    await picked.settle(() => !!chip(), 'the saved model selection reaches the header model chip');
+    await picked.settle(() => !!chip(), 'the saved model selection reaches the remaining model picker chip');
     const strip = serverStrip(picked);
-    assert.ok(strip.textContent.includes(name.toLowerCase().replace(/\s+/g, '-')),
-      'the status bar names the picked model as the design slug of its catalogue name: ' + strip.textContent);
+    assert.equal(strip.textContent.includes(name.toLowerCase().replace(/\s+/g, '-')), false,
+      'the status bar does not duplicate the picked model slug: ' + strip.textContent);
     assert.equal(/choose[- ]a[- ]model/i.test(strip.textContent), false, 'no placeholder beside the picked model');
   } finally { picked.close(); }
 });

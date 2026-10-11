@@ -155,9 +155,9 @@ test('Chat with no conversation: the design column holds the system prompt card 
     assert.deepEqual([...row.children].map(node => node.textContent.trim()).slice(0, 4),
       ['@ skill', '\uff0b sketch', '\u25c6 workshop', '\u2317 open as nodes'], 'the design chips in the design order');
     assert.equal([...row.children].some(node => node.tagName === 'DIV' && !node.textContent), false,
-      'the model label is the flexible part of the row, so a long live route cannot wrap the chips');
+      'the spacer is the flexible part of the row, so long content cannot wrap the chips');
     const route = row.children[4];
-    assert.equal(route.style.minWidth, '0px', 'the model label can shrink');
+    assert.equal(route.style.minWidth, '0px', 'the spacer can shrink');
     assert.equal(route.style.textOverflow, 'ellipsis', 'and ellipsizes instead');
     assert.equal(route.style.textAlign, 'right', 'it still sits against Send');
   } finally { studio.close(); }

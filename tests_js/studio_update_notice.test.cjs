@@ -112,9 +112,11 @@ async function mountStrip(server) {
   const source = jsx.slice(start, end);
   assert.match(source, /const ServerStrip = /);
   assert.match(source, /<ApplicationUpdateNotice\/>/, 'the status strip carries the notice');
-  // The strip names a picked model through modelRoute and restarts through the shared confirmation.
-  const shared = [
-    'modelRoute', 'useRestartConfirmation', 'useToolHubProjection', 'useWaitingOpenShortcut',
+  const toolHub = jsx.slice(jsx.indexOf('\nconst TOOL_HUB_POLL_MS ='), jsx.indexOf('\nconst firstToolTab ='));
+  assert.match(toolHub, /const useToolHubProjection = /, 'the status strip reads waiting items through the tool hub projection');
+  // The strip restarts through the shared confirmation and keeps the waiting shortcut helpers.
+  const shared = toolHub + '\n' + [
+    'modelRoute', 'useRestartConfirmation',
     'waitingLine', 'waitingMeta', 'WaitingButton', 'smallBtn',
   ].filter(name => jsx.includes('\nconst ' + name + ' = '))
     .map(name => definition(jsx, name)).join('\n');
@@ -195,7 +197,7 @@ test('nothing is shown while up to date; a pushed ready release appears in the s
     assert.ok(strip.gets.length >= 1 && strip.gets.every(url => url === UPDATE));
     assert.equal(strip.notice(), null, 'up to date: no notice');
     assert.equal(strip.button(RESTART), null);
-    assert.ok(strip.button('docs') && strip.button('settings'), 'the shipped status strip rendered');
+    assert.ok(strip.button('docs') && !strip.button('settings'), 'the shipped status strip keeps docs and removes Settings');
     assert.equal(strip.timers.size, 0, 'the strip holds no update poll');
     current = status('ready');
     strip.push(strip.transport);
@@ -207,7 +209,7 @@ test('nothing is shown while up to date; a pushed ready release appears in the s
     const restart = strip.button(RESTART);
     assert.ok(restart && !restart.disabled && notice.contains(restart));
     assert.equal(strip.doc.querySelector('[role="dialog"], [aria-modal="true"]'), null, 'the notice never blocks the window');
-    assert.ok(strip.button('docs') && strip.button('settings'), 'the strip keeps its own controls beside the notice');
+    assert.ok(strip.button('docs') && !strip.button('settings'), 'the strip keeps docs beside the notice without a Settings entry');
   } finally { strip.close(); }
 });
 

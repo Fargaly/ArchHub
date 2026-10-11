@@ -389,6 +389,9 @@ const StudioLM = () => {
   }, []);
   const pickedRoute = modelRoute(model);
   React.useEffect(() => {
+    if (typeof window !== 'undefined') window.ARCHHUB_PICKED_MODEL = model;
+  }, [model]);
+  React.useEffect(() => {
     // A route the held answer already describes is not read twice.
     if (readiness && readiness.route === pickedRoute) return;
     if (!readiness && !pickedRoute) return;
@@ -784,7 +787,6 @@ const StudioLM = () => {
             updateCanvasViewport={updateCanvasViewport}
             openTabs={openTabs} setOpenId={openSession} closeTab={closeTab}
             setPickerOpen={setPickerOpen}
-            setSettingsOpen={openSettings}
             setLibraryOpen={setLibraryOpen}
             focusId={focusId} setFocusId={setFocusId}
             pendingCanvasReveal={pendingCanvasReveal} requestCanvasReveal={requestCanvasReveal}
@@ -837,17 +839,13 @@ const StudioLM = () => {
                   authorization?.subject || '', authorization?.session || ''])});
               setOpenId(result.graph_id);
             }}/>}
-      <ServerStrip session={session} model={model} setSettingsOpen={openSettings} setDocsOpen={openDocs} onOpenWaitingTask={openTool}/>
+      <ServerStrip session={session} setDocsOpen={openDocs} onOpenWaitingTask={openTool}/>
       {pickerOpen && <ModelPicker setModel={m => !session
         ? rememberComposerModel(m).then(picked => { setHomeNative(null); setModel(picked); }) : modelTarget
         ? window.pmPersistValue(modelTarget, 'model', modelRoute(m))
         : window.ARCHHUB_STUDIO_AUTHORITY ? Promise.reject(new Error('Select an AI node on the canvas to set its model.'))
         : rememberComposerModel(m).then(setModel)} onClose={() => setPickerOpen(false)} model={displayedModel}
         onNativeSelect={window.ARCHHUB_EXISTING_WORKSHOP ? (!session ? row => setHomeNative(row) : connectNativeSession) : undefined}/>}
-      {/* Every ask box in the app reads the current choice from here, so a
-          box that was not handed a model still asks the model the founder
-          picked instead of falling through to a server default. */}
-      <ModelInWindow model={model}/>
       {settingsOpen && <Settings onClose={() => openSettings(false)} account={account} setAccount={setAccount} onSignOut={signOut}
         initialTab={settingsTab} onOpenTool={openTool} onOpenToolGraph={openToolGraph}/>}
       {signUpOpen && <SignUp onDone={(rec) => { setAccount(rec); setSignUpOpen(false); }} onCancel={() => setSignUpOpen(false)} plan={account.plan}/>}
@@ -2070,7 +2068,7 @@ const SettingsBaboom = () => {
   </div>;
 };
 
-const ToolMainView = ({ view, account, setAccount, onSignOut, onSettings }) => {
+const ToolMainView = ({ view, account, setAccount, onSignOut }) => {
   const [store, setStore] = React.useState(() => ({forgotten:[], revealed:{}}));
   const patch = (k, v) => setStore(old => Object.assign({}, old, typeof k === 'object' ? k : {[k]:v}));
   const tool = view?.id || 'brain';
@@ -2090,9 +2088,6 @@ const ToolMainView = ({ view, account, setAccount, onSignOut, onSettings }) => {
       <span style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.08em', textTransform:'uppercase'}}>
         {tab}
       </span>
-      <div style={{flex:1}}/>
-      <button type="button" onClick={() => onSettings && onSettings(true, tool === 'brain' ? 'memory' : firstToolTab(tool))}
-        style={smallBtn()}>Settings panel</button>
     </div>
     {offTool ? <ToolOffPanel tool={offTool}/> : <>
     {tool === 'workshop' && <WorkshopToolProjects workshopState={workshopState}/>}
@@ -2141,7 +2136,7 @@ const SessionCard = ({ s, onOpen }) => {
 };
 
 // ──────────────────────── WORKSPACE ────────────────────────
-const Workspace = ({ session, model, readiness = null, onReadinessStale, openTabs, setOpenId, closeTab, setPickerOpen, setSettingsOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, onHome, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
+const Workspace = ({ session, model, readiness = null, onReadinessStale, openTabs, setOpenId, closeTab, setPickerOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, onHome, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
   const authorityState = useStudioProjection();
   const graph = authorityState?.graph || LM_GRAPH;
   const allNodes = [...graph.nodes, ...(userNodes || [])];
@@ -2173,7 +2168,7 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, openTab
         workshopUnavailable={workshopState?.canvas?.unavailable || ''}
         workshopModel={workshopState?.nativeWork?.model}
         setConversationRoot={root => updateView({conversationRoot:root, mode:'chat', target:''})}
-        setPickerOpen={setPickerOpen} setSettingsOpen={setSettingsOpen} onHome={onHome}
+        setPickerOpen={setPickerOpen} onHome={onHome}
         systemAllowed={authorityState?.canvas?.authorization?.system_view === true &&
           graph.nodes.some(node => node.application === true)}/>
       {mode === 'chat' ? (
@@ -2452,9 +2447,7 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
                 background:'transparent', border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
                 color:LM.inkSoft, fontFamily:LM.mono, fontSize:10.5, letterSpacing:'0.04em', cursor:'pointer',
               }}>⌗ open as nodes</button>
-              {/* The design's spacer and model label in one: a long live route takes the free width and
-                  ellipsizes, so the chips beside it keep their one-line size. */}
-              <span title={modelRoute(model) || undefined} style={{ flex:'1 1 0', minWidth:0, textAlign:'right', fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{routed ? model.name.split(' ').slice(0,2).join(' ') : model.name}{model.latency != null ? ' · ~' + model.latency + 'ms' : ''}</span>
+              <span aria-hidden="true" style={{ flex:'1 1 0', minWidth:0, textAlign:'right', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}/>
               {/* While an answer is out Send is disabled: a dashed border, never alpha (DECISIONS.md). */}
               {routed ? <button onClick={send} disabled={busy} style={{
                 padding: busy ? '6px 13px' : '7px 14px', background: busy ? 'transparent' : LM.accent,
@@ -2512,7 +2505,7 @@ const InferenceInspector = ({ model, setPickerOpen }) => {
     {/* model */}
     <div style={{ padding:'14px 16px', borderBottom:`1px solid ${LM.lineSoft}` }}>
       <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:8 }}>MODEL</div>
-      <button onClick={() => setPickerOpen(true)} style={{
+      <button data-model-indicator="" onClick={() => setPickerOpen(true)} style={{
         width:'100%', display:'flex', alignItems:'center', gap:10, padding:'8px 10px',
         background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, cursor:'pointer', color:LM.ink,
       }}>
@@ -2957,7 +2950,7 @@ const chooseWorkshopMode = (key, {mode, conversationRoot = '', workshops = [], s
 };
 
 // Workspace header uses workspace tabs and one compact conversation menu.
-const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode, setPickerOpen, setSettingsOpen, onHome, systemAllowed = false,
+const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode, setPickerOpen, onHome, systemAllowed = false,
   workshops = [], conversationRoot = '', setConversationRoot, workshopModel, conversationNotice = '',
   workshopUnavailable = '' }) => {
   const [workshopRefusal, setWorkshopRefusal] = React.useState('');
@@ -3031,11 +3024,6 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode
     {conversationNotice && <span role="status" title={conversationNotice} style={{fontSize:11,
       color:LM.inkSoft, maxWidth:220, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
       {conversationNotice}</span>}
-    {/* The model chip is drawn in every mode (design studio-lm.jsx:1146-1148).
-        In a Workshop conversation the chip names the conversation's own model when it has one. */}
-    <ModelStrip model={conversationRoot && workshopModel ? {...model, name:workshopModel, route:workshopModel,
-      routed:workshopModel, vendor:'Workshop conversation', tag:'', ctx:'', latency:null} : model}
-      setPickerOpen={setPickerOpen} compact/>
     {/* The update icons stay in the header (founder, 2026-09-18: "just bring the update icons back").
         Settings > About keeps the full controls; the restart still needs the confirming second click. */}
     <ApplicationUpdateControls compact/>
@@ -4737,18 +4725,6 @@ const Socket = ({ side, i, t, label, onUse, half = 110 }) => {
 // ─── per-category body content ───
 // The inline reply is a real ask: it reaches the same agent the main
 // composer does, and reports its answer where it was typed.
-// The model the header picked is the model that answers, wherever the ask
-// box is. Two of the three ask boxes passed no model at all, so they fell
-// through to whatever the server defaulted to: the founder picked a local
-// model and a cloud one answered. When no model is handed in, the picker's
-// current choice on the window is used rather than a silent default.
-const ModelInWindow = ({ model }) => {
-  React.useEffect(() => {
-    if (typeof window !== 'undefined') window.ARCHHUB_PICKED_MODEL = model;
-  }, [model]);
-  return null;
-};
-
 // Three scales, as he drew them: the canvas composer is the largest ask on
 // the screen, the chat reply sits just under it, and the one inside a node
 // is node chrome. Collapsing all three onto the smallest made the composer
@@ -5793,7 +5769,7 @@ const useProviderStatus = () => {
 };
 const providerKeyed = rows => (rows || []).filter(r => r.state === 'keyed').length;
 const providerRunning = rows => (rows || []).filter(r => r.state === 'running').length;
-// The model the composer asks (published once by ModelInWindow); nothing else routes per task.
+// The model the composer asks (published once by StudioLM); nothing else routes per task.
 const pickedModel = () => {
   const m = window.ARCHHUB_PICKED_MODEL;
   return m && (m.routed || m.route) ? m : null;
@@ -8387,7 +8363,7 @@ const ApplicationUpdateNotice = () => {
 };
 
 // ──────────────────────── SERVER STRIP ────────────────────────
-const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen, onOpenWaitingTask }) => {
+const ServerStrip = ({ session, setDocsOpen, onOpenWaitingTask }) => {
   // Live values in the design's slots: this server's port, the connectors that drive a host, and the running build.
   const drives = (window.ARCHHUB_LIVE?.connectors || []).filter(c => c.drive);
   const live = drives.filter(c => c.state === 'connected' || c.state === 'listening').length;
@@ -8400,16 +8376,18 @@ const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen, onOpenWaiti
   React.useEffect(() => transport?.subscribe ? transport.subscribe(() => setBuild(readBuild())) : undefined, [transport]);
   const StripItem = ({ onClick, children, accent }) => {
     const [h, setH] = React.useState(false);
+    const style = {
+      background:'transparent', border:0, padding:'0 4px',
+      cursor: onClick ? 'pointer' : 'default',
+      color: h && onClick ? LM.ink : (accent || LM.inkMuted),
+      fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.05em', whiteSpace:'nowrap',
+      transition:'color .12s',
+    };
+    if (!onClick) return <span style={style}>{children}</span>;
     return (
       <button onClick={onClick}
         onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
-        style={{
-          background:'transparent', border:0, padding:'0 4px',
-          cursor: onClick ? 'pointer' : 'default',
-          color: h && onClick ? LM.ink : (accent || LM.inkMuted),
-          fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.05em', whiteSpace:'nowrap',
-          transition:'color .12s',
-        }}>{children}</button>
+        style={style}>{children}</button>
     );
   };
   return (
@@ -8419,20 +8397,13 @@ const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen, onOpenWaiti
       background:LM.bgPanel, borderTop:`1px solid ${LM.line}`,
       padding:'0 10px', display:'flex', alignItems:'center', gap:LM.sp.xs,
     }}>
-      <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>
+      <StripItem>
         <span style={{ color:LM.ok }}>●</span> server :{port} · {live}/{drives.length} hosts
       </StripItem>
       {session ? (
         <>
           <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
           <StripItem>{session.file}</StripItem>
-          {/* The model slot names the picked model; with nothing picked it is not drawn, never the placeholder's slug. */}
-          {modelRoute(model) && <>
-            <span style={{ color:LM.inkDim, padding:'0 2px' }}>{'\u00b7'}</span>
-            <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>
-              <span style={{ color:LM.inkSoft }}>{String(model.name || modelRoute(model)).toLowerCase().replace(/\s+/g,'-')}</span>
-            </StripItem>
-          </>}
         </>
       ) : (
         <>
@@ -8447,8 +8418,6 @@ const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen, onOpenWaiti
         item.producer === 'workshop_gate' ? {tab:'approvals', root:item.root || item.workshop || '', focus:item.open_target || item.work || item.id} : {})}/>
       {waitingItems.length > 0 && <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>}
       <StripItem onClick={() => setDocsOpen && setDocsOpen(true)}>docs</StripItem>
-      <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
-      <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>settings</StripItem>
       {build && <>
         <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
         <StripItem>{build}</StripItem>

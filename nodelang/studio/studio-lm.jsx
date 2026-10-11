@@ -3519,8 +3519,11 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   const authority = window.ARCHHUB_STUDIO_AUTHORITY;
   const normal = !authority && window.ARCHHUB_EXISTING_WORKSHOP;
   const [wireStart, setWireStart] = React.useState(null);
+  const wireStartRef = React.useRef(null);
+  const setWireStartState = value => { wireStartRef.current = value; setWireStart(value); };
   const [wireError, setWireError] = React.useState('');
-  React.useEffect(() => { setWireStart(null); setWireError(''); }, [authorityState?.canvas?.scope?.current]);
+  const [wirePreview, setWirePreview] = React.useState(null);
+  React.useEffect(() => { setWireStartState(null); setWirePreview(null); setWireError(''); }, [authorityState?.canvas?.scope?.current]);
   const useSocket = async (root, port, side) => {
     if ((!authority && !normal) || authorityState?.pending || saving.current || layoutNeedsRefresh) return;
     setWireError('');
@@ -3533,17 +3536,19 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       if (normal && (!port.connect_control || !port.connect_choices?.length)) {
         setWireError('This output has no current compatible connection choices.'); return;
       }
-      if (!wireStart?.reverse) { setWireStart({root, port}); return; }
+      const waitingStart = wireStartRef.current;
+      if (!waitingStart?.reverse) { setWireStartState({root, port}); return; }
       // An input chosen first: this output completes the wire when that input is one of its choices.
-      const waiting = wireStart.port.owner || wireStart.root;
-      if (normal && !port.connect_choices.some(choice => choice.id === wireStart.port.id && (choice.owner ?? waiting) === waiting)) {
-        setWireError('This output cannot feed ' + wireStart.port.label + '.'); return;
+      const waiting = waitingStart.port.owner || waitingStart.root;
+      if (normal && !port.connect_choices.some(choice => choice.id === waitingStart.port.id && (choice.owner ?? waiting) === waiting)) {
+        setWireError('This output cannot feed ' + waitingStart.port.label + '.'); return;
       }
-      return joinWire(root, port, wireStart.root, wireStart.port);
+      return joinWire(root, port, waitingStart.root, waitingStart.port);
     }
     // Either end may be chosen first: an input with no output waiting waits for its output.
-    if (!wireStart || wireStart.reverse) { setWireStart({root, port, reverse:true}); return; }
-    return joinWire(wireStart.root, wireStart.port, root, port);
+    const waitingStart = wireStartRef.current;
+    if (!waitingStart || waitingStart.reverse) { setWireStartState({root, port, reverse:true}); return; }
+    return joinWire(waitingStart.root, waitingStart.port, root, port);
   };
   // A group's member port wires its member (the port's owner), never the group card itself.
   const joinWire = async (card, output, other, input) => {
@@ -3551,10 +3556,12 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     try {
       if (authority) await authority.connect(source, output.id, target, input.id);
       else await normal.connectTopology(source, output.id, target, input.id);
-      setWireStart(null);
+      setWireStartState(null);
     } catch (error) { setWireError(error.message || 'The connection was refused.'); }
   };
   const allNodes = React.useMemo(() => [...graph.nodes, ...userNodes], [graph.nodes, userNodes]);
+  const wireActionRef = React.useRef({useSocket:null, nodes:[]});
+  wireActionRef.current = {useSocket, nodes:allNodes};
   // Where each card's port band starts (card-local px), reported by the card itself.
   const [portBands, setPortBands] = React.useState({});
   // Each card's drawn height (content + port band): frames and the no-overlap pass use it, never n.h.
@@ -3568,6 +3575,8 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   const alive = React.useRef(true);
   const saving = React.useRef(false);
   const dragRef = React.useRef(null);
+  const wireDragRef = React.useRef(null);
+  const suppressWireClick = React.useRef(false);
   const wrapRef = React.useRef(null);
   const saveRef = React.useRef(null);
   // What a burst of drags holds until the canvas goes still, and whether the chip
@@ -3798,6 +3807,57 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       y: (clientY - rect.top  - pan.y) / zoom,
     };
   };
+  const dragPoint = (d, clientX, clientY) => ({
+    x: (clientX - d.rect.left - d.pan.x) / d.zoom,
+    y: (clientY - d.rect.top - d.pan.y) / d.zoom,
+  });
+
+  const startSocketDrag = (root, port, side, e) => {
+    if ((e.button ?? 0) !== 0 || (!authority && !normal) || authorityState?.pending || saving.current || layoutNeedsRefresh) return;
+    e.stopPropagation();
+    const rect = wrapRef.current?.getBoundingClientRect();
+    const socketRect = e.currentTarget.getBoundingClientRect();
+    if (!rect || !socketRect) return;
+    const start = {
+      x: (socketRect.left + socketRect.width / 2 - rect.left - pan.x) / zoom,
+      y: (socketRect.top + socketRect.height / 2 - rect.top - pan.y) / zoom,
+    };
+    wireDragRef.current = {
+      root, port, side, sx:e.clientX, sy:e.clientY, rect, pan:{...pan}, zoom,
+      x1:start.x, y1:start.y, t:port.t || port.type || 'any', active:false,
+    };
+    try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch (error) { /* pointer capture is best effort */ }
+  };
+
+  const socketFromPoint = (clientX, clientY) => {
+    const element = document.elementFromPoint?.(clientX, clientY);
+    const button = element?.closest?.('[data-studio-socket="true"]');
+    if (!button) return null;
+    const root = button.closest('.lm-node[data-node-id]')?.getAttribute('data-node-id');
+    const side = button.getAttribute('data-socket-side');
+    const portId = button.getAttribute('data-socket-port');
+    const node = wireActionRef.current.nodes.find(item => item.id === root);
+    const port = (side === 'in' ? node?.ins : node?.outs)?.find(item => item.id === portId);
+    return root && port && (side === 'in' || side === 'out') ? {root, port, side} : null;
+  };
+  const wireDragCompletion = (drag, target) => {
+    if (!target || target.side === drag.side) return null;
+    const output = drag.side === 'out' ? {root:drag.root, port:drag.port} :
+      target.side === 'out' ? {root:target.root, port:target.port} : null;
+    const input = drag.side === 'in' ? {root:drag.root, port:drag.port} :
+      target.side === 'in' ? {root:target.root, port:target.port} : null;
+    if (!output || !input) return null;
+    if (normal) {
+      const inputOwner = input.port.owner || input.root;
+      if (!output.port.connect_choices?.some(choice => choice.id === input.port.id && (choice.owner ?? inputOwner) === inputOwner)) {
+        setWireError('This output cannot feed ' + input.port.label + '.');
+        return null;
+      }
+    }
+    return drag.side === 'out'
+      ? {start:{root:output.root, port:output.port}, root:input.root, port:input.port, side:'in'}
+      : {start:{root:input.root, port:input.port, reverse:true}, root:output.root, port:output.port, side:'out'};
+  };
 
   const onCanvasMouseDown = (e) => {
     // Middle-drag pans from anywhere on the canvas, over cards too.
@@ -3950,6 +4010,56 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   };
 
   React.useEffect(() => {
+    const finishWireDrag = (drag, target, event) => {
+      suppressWireClick.current = true;
+      window.setTimeout(() => { suppressWireClick.current = false; }, 250);
+      setWirePreview(null);
+      const completion = wireDragCompletion(drag, target);
+      if (!completion) {
+        setWireStartState(null);
+        return;
+      }
+      setWireStartState(completion.start);
+      Promise.resolve(wireActionRef.current.useSocket?.(completion.root, completion.port, completion.side)).finally(() => {
+        const held = wireStartRef.current;
+        if (held && held.root === completion.start.root && held.port?.id === completion.start.port.id) setWireStartState(null);
+      });
+      event?.preventDefault?.();
+      event?.stopPropagation?.();
+    };
+    const onPointerMove = e => {
+      const d = wireDragRef.current;
+      if (!d) return;
+      const dx = e.clientX - d.sx, dy = e.clientY - d.sy;
+      if (!d.active && Math.hypot(dx, dy) >= 4) {
+        d.active = true;
+        setWireStartState(null);
+      }
+      if (!d.active) return;
+      const at = dragPoint(d, e.clientX, e.clientY);
+      setWirePreview({x1:d.x1, y1:d.y1, x2:at.x, y2:at.y, t:d.t});
+      e.preventDefault(); e.stopPropagation();
+    };
+    const onPointerUp = e => {
+      const d = wireDragRef.current;
+      if (!d) return;
+      wireDragRef.current = null;
+      if (!d.active) return;
+      finishWireDrag(d, socketFromPoint(e.clientX, e.clientY), e);
+    };
+    const onPointerCancel = () => {
+      if (!wireDragRef.current) return;
+      wireDragRef.current = null;
+      setWirePreview(null);
+      setWireStartState(null);
+    };
+    const onKeyDown = e => {
+      if (e.key !== 'Escape' || (!wireDragRef.current && !wireStartRef.current)) return;
+      wireDragRef.current = null;
+      setWirePreview(null);
+      setWireStartState(null);
+      e.preventDefault(); e.stopPropagation();
+    };
     const onMove = (e) => {
       const d = dragRef.current;
       if (!d) return;
@@ -3994,9 +4104,17 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
         armLayoutRef.current({next:drag.last, before:drag.before, revision:drag.revision});
       }
     };
+    document.addEventListener('pointermove', onPointerMove);
+    document.addEventListener('pointerup', onPointerUp);
+    document.addEventListener('pointercancel', onPointerCancel);
+    document.addEventListener('keydown', onKeyDown);
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
     return () => {
+      document.removeEventListener('pointermove', onPointerMove);
+      document.removeEventListener('pointerup', onPointerUp);
+      document.removeEventListener('pointercancel', onPointerCancel);
+      document.removeEventListener('keydown', onKeyDown);
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     };
@@ -4084,7 +4202,12 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     setLayoutError(''); closeContextMenu();
     composer(operation, roots).then(() => setMenuNotice(what)).catch(error => setLayoutError(error?.message || String(error)));
   };
-  latest.current = {toggleExpanded, onNodeDragStart, onNodeFocus, onNodeContextMenu, onNodeKeyDown, useSocket, setPortBand, composeGroup,
+  const consumeSocketClick = () => {
+    if (!suppressWireClick.current) return false;
+    suppressWireClick.current = false;
+    return true;
+  };
+  latest.current = {toggleExpanded, onNodeDragStart, onNodeFocus, onNodeContextMenu, onNodeKeyDown, useSocket, startSocketDrag, consumeSocketClick, setPortBand, composeGroup,
     open:id => authority && authority.open(id).catch(() => {})};
   const handlerCache = React.useRef(new Map());
   const cardHandlers = id => {
@@ -4092,7 +4215,11 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     if (!held) {
       held = {toggle:() => latest.current.toggleExpanded(id), drag:e => latest.current.onNodeDragStart(id)(e),
         focus:e => latest.current.onNodeFocus(id)(e), menu:e => latest.current.onNodeContextMenu(id)(e),
-        key:e => latest.current.onNodeKeyDown(id)(e), socket:(port, side) => latest.current.useSocket(id, port, side),
+        key:e => latest.current.onNodeKeyDown(id)(e), socket:(port, side) => {
+          if (latest.current.consumeSocketClick()) return;
+          return latest.current.useSocket(id, port, side);
+        },
+        socketDrag:(e, port, side) => latest.current.startSocketDrag(id, port, side, e),
         band:(top, height) => latest.current.setPortBand(id, top, height),
         expand:() => latest.current.composeGroup('ungroup', [id], 'Expanded the group.'),
         open:() => latest.current.open(id)};
@@ -4572,6 +4699,13 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
               </g>
             );
           })}
+          {wirePreview && (() => {
+            const dx = Math.max(40, Math.abs(wirePreview.x2 - wirePreview.x1) * 0.5);
+            const d = `M${wirePreview.x1},${wirePreview.y1} C${wirePreview.x1+dx},${wirePreview.y1} ${wirePreview.x2-dx},${wirePreview.y2} ${wirePreview.x2},${wirePreview.y2}`;
+            const color = WIRE[wirePreview.t] || LM.inkSoft;
+            return <path data-pending-wire="" d={d} stroke={color} strokeWidth={2.2} fill="none" opacity={0.9}
+              strokeDasharray="6 7" style={{ pointerEvents:'none' }}/>;
+          })()}
         </svg>
 
         {allNodes.map(n => {
@@ -4593,6 +4727,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
               onContextMenu={on.menu}
               onKeyDown={on.key}
               onSocket={on.socket}
+              onSocketDrag={on.socketDrag}
               onOpen={n.openable && authority ? on.open : undefined}
             />
           );
@@ -4635,7 +4770,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
               Object.keys(unwrittenLayout.next).length + '). Move them again to save them.' :
             (wireStart.reverse ? 'Choose an output for ' : 'Choose an input for ') + wireStart.port.label)}
         </span>
-        {wireStart && <button disabled={blocked} onClick={() => setWireStart(null)} title="Cancel wire" aria-label="Cancel wire" style={toolBtn()}>✕</button>}
+        {wireStart && <button disabled={blocked} onClick={() => setWireStartState(null)} title="Cancel wire" aria-label="Cancel wire" style={toolBtn()}>✕</button>}
         <button disabled={layoutBusy || !!authorityState?.pending || (!authority && !normal)} onClick={refreshCanvas}
           title="Refresh canvas" aria-label="Refresh canvas" style={toolBtn()}>↻</button>
       </div>}
@@ -4773,7 +4908,7 @@ const CanvasMenu = ({ x, y, maxHeight, opener, items, label, onClose }) => {
 };
 
 // ─── nodes dispatcher ───
-const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimmed, expanded, onToggleExpand, onDragStart, onFocus, onSocket, onOpen, onContextMenu, onKeyDown, onPortBand, onExpand }) => {
+const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimmed, expanded, onToggleExpand, onDragStart, onFocus, onSocket, onSocketDrag, onOpen, onContextMenu, onKeyDown, onPortBand, onExpand }) => {
   const n = held.x === x && held.y === y ? held : {...held, x, y};
   if (typeof window !== 'undefined' && window.__archhubCardRenders) window.__archhubCardRenders[held.id] = (window.__archhubCardRenders[held.id] || 0) + 1;
   const cat = studioCategory(n.cat);
@@ -4855,8 +4990,12 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
       {/* Sockets: their own band below the content, one row per port pair */}
       {rows > 0 && <div ref={bandRef} data-port-band="" style={{ position:'relative',
         height:PORT_BAND_PAD * 2 + rows * SOCKET_STEP, borderTop:`1px solid ${LM.lineSoft}` }}>
-        {n.ins?.map((s, i) => <Socket key={'in-'+s.id} side="in" i={i} t={s.t} label={s.label} half={w / 2} onUse={s.connectable && onSocket ? () => onSocket(s, 'in') : undefined}/>)}
-        {n.outs?.map((s, i) => <Socket key={'out-'+s.id} side="out" i={i} t={s.t} label={s.label} half={w / 2} onUse={s.connectable && onSocket ? () => onSocket(s, 'out') : undefined}/>)}
+        {n.ins?.map((s, i) => <Socket key={'in-'+s.id} id={s.id} side="in" i={i} t={s.t} label={s.label} half={w / 2}
+          onUse={s.connectable && onSocket ? () => onSocket(s, 'in') : undefined}
+          onDragStart={s.connectable && onSocket ? e => onSocketDrag?.(e, s, 'in') : undefined}/>)}
+        {n.outs?.map((s, i) => <Socket key={'out-'+s.id} id={s.id} side="out" i={i} t={s.t} label={s.label} half={w / 2}
+          onUse={s.connectable && onSocket ? () => onSocket(s, 'out') : undefined}
+          onDragStart={s.connectable && onSocket ? e => onSocketDrag?.(e, s, 'out') : undefined}/>)}
       </div>}
     </div>
   );
@@ -4880,7 +5019,7 @@ const NodeStateDot = ({ s }) => {
   );
 };
 
-const Socket = ({ side, i, t, label, onUse, half = 110 }) => {
+const Socket = ({ id, side, i, t, label, onUse, onDragStart, half = 110 }) => {
   const col = WIRE[t] || LM.inkSoft;
   // The dot is a button, so a connectable port starts or finishes a wire; a port that cannot be connected stays inert.
   return (
@@ -4892,7 +5031,10 @@ const Socket = ({ side, i, t, label, onUse, half = 110 }) => {
       pointerEvents: onUse ? 'auto' : 'none',
     }}>
       <button type="button" aria-label={(side === 'out' ? 'Connect output ' : 'Connect input ') + label}
-        disabled={!onUse} onMouseDown={e => e.stopPropagation()}
+        data-studio-socket={onUse ? 'true' : undefined}
+        data-socket-side={side}
+        data-socket-port={id}
+        disabled={!onUse} onPointerDown={onDragStart} onMouseDown={e => e.stopPropagation()}
         onClick={e => { e.stopPropagation(); if (onUse) onUse(); }} style={{
         display:'block', padding:0, margin:0, flexShrink:0, cursor: onUse ? 'crosshair' : 'default',
         width: SOCKET_R*2, height: SOCKET_R*2, borderRadius:'50%',

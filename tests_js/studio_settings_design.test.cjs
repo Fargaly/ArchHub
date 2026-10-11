@@ -141,8 +141,8 @@ test('Providers draws the registry in the design rows: masked key, state pill, m
     assert.equal(!!panel.querySelector('input[aria-label="OpenRouter API key"]'), false, 'no key form sits beside the drawn list');
     assert.equal(!!panel.querySelector('details'), false, 'no disclosure widget outside the design affordances');
     const text = panel.textContent;
-    assert.ok(text.includes('Key saved on this machine'), 'a keyed row states the saved key without exposing it');
-    assert.ok(text.includes('Sign in to use ArchHub cloud') && text.includes('Local runtime is running'));
+    assert.ok(text.includes('Connected on this machine'), 'a connected row states the status without exposing raw provider codes');
+    assert.ok(text.includes('Sign in to use ArchHub cloud') && text.includes('LM Studio') && text.includes('Connected'));
     assert.equal(/ARCHHUB_CLOUD_TOKEN|127\.0\.0\.1|:\d{3,5}/.test(text), false, 'provider rows hide env vars and ports');
     assert.deepEqual([...panel.querySelectorAll('button[aria-expanded]')].slice(0, 4).map(button => button.textContent), ['manage', 'connect', 'manage', 'connect']);
     s.flush(() => s.buttons(panel, 'manage')[0].click());

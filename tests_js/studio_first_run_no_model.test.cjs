@@ -101,11 +101,11 @@ test('no route: Chat shows an explicit No model state with Sign in and Choose a 
     assert.ok(signIn, 'Sign in is offered in the state');
     click(studio, signIn);
     await settle(studio.win);
-    const google = buttonIn(studio.doc.querySelector('[data-chat-no-model]'), 'Continue with Google');
-    assert.ok(google, 'Sign in leads straight into the cloud sign-in');
-    click(studio, google);
-    await settle(studio.win);
-    assert.deepEqual(started, ['google']);
+    assert.equal(buttonIn(studio.doc.querySelector('[data-chat-no-model]'), 'Continue with Google'), undefined,
+      'Chat does not render a second account sign-in block');
+    assert.ok([...studio.doc.querySelectorAll('button')].some(button => button.firstElementChild?.textContent === 'Account'),
+      'Sign in opens the existing Account settings surface');
+    assert.deepEqual(started, []);
   } finally { studio.close(); }
 });
 
@@ -147,7 +147,7 @@ test('an unsupported route stays on screen as its own state, never vanishes', as
   } finally { studio.close(); }
 });
 
-test('after sign-in the readiness is read again, so a stale NO KEY state does not stay up', async () => {
+test('sign-in from Chat uses the Account settings surface instead of a duplicate cloud block', async () => {
   const studio = await mountStudio({
     models:reads => ({ok:true, groups:[], selected_route:'cloud/archhub-free', default_route:'',
       readiness:reads === 1 ? answer('no_key', 'cloud/archhub-free', fam()) : answer('ready', 'cloud/archhub-free', fam('no_key', 'ready'))}),
@@ -155,12 +155,11 @@ test('after sign-in the readiness is read again, so a stale NO KEY state does no
   try {
     await settle(studio.win); await settle(studio.win);
     const card = studio.doc.querySelector('[data-chat-no-model]');
-    assert.ok(card, 'NO KEY stands before sign-in');
+    assert.ok(card, 'sign-in-needed state stands before sign-in');
     click(studio, buttonIn(card, 'Sign in'));
     await settle(studio.win);
-    click(studio, buttonIn(studio.doc.querySelector('[data-chat-no-model]'), 'Continue with Google'));
-    await settle(studio.win); await settle(studio.win); await settle(studio.win);
-    assert.equal(studio.doc.querySelector('[data-chat-no-model]'), null, 'signed in: the state is read again and clears');
+    assert.equal(buttonIn(studio.doc.querySelector('[data-chat-no-model]'), 'Continue with Google'), undefined);
+    assert.ok(studio.doc.body.textContent.includes('Account'), 'the existing Account surface is open');
   } finally { studio.close(); }
 });
 

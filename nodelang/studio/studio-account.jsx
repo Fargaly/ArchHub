@@ -371,7 +371,7 @@ function SignUp({ onDone, onCancel, plan }) {
 
           {step === 2 && (
             <div>
-              <SHead title="Hosts on this machine" sub="What the app's own host probe answered. Settings › Hosts reads it again at any time."/>
+              <SHead title="Hosts on this machine" sub="Programs found on this machine. Settings › Hosts checks again at any time."/>
               <div style={{ border: `1px solid ${AC.line}`, borderRadius: AC.rad.md, overflow: 'hidden' }}>
                 {detected.map((h, i) => (
                   <div key={h.name} style={{

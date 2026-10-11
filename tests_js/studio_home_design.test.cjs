@@ -38,7 +38,7 @@ async function mountStudio(options = {}) {
         description:'Desktop companion and approved execution.', stat_line:'Attached signed runtime · 1 runtime session.',
         off_sentence:'Switched off. No companion on the desktop.', wire_summary:'BABOOM ← Studio · Workshop'},
       {id:'connectors', label:'Connectors', state:'running', state_word:'RUNNING',
-        description:'Host bridges and Speckle access.', stat_line:'1/1 hosts running · Speckle connected.',
+        description:'Host bridges and Speckle access.', stat_line:'1/1 hosts connected · Speckle connected.',
         off_sentence:'Switched off. No reads or writes to your programs.', wire_summary:'Connectors → Studio · Workshop · Speckle'},
       {id:'cloud', label:'Cloud', state:'starting', state_word:'STARTING',
         description:'Devices, grants and cloud agents.', stat_line:'Not signed in.',
@@ -345,7 +345,7 @@ test('F2R D1: Settings Hub cards show owner state lines, no placeholders or plum
       description:'Desktop companion and approved execution.', stat_line:'Attached signed runtime · 1 runtime session.',
       off_sentence:'Switched off. No companion on the desktop.', wire_summary:'BABOOM ← Studio · Workshop'},
     {id:'connectors', label:'Connectors', state:'running', state_word:'RUNNING',
-      description:'Host bridges and Speckle access.', stat_line:'1/1 hosts running.',
+      description:'Host bridges and Speckle access.', stat_line:'1/1 hosts connected.',
       off_sentence:'Switched off. No reads or writes to your programs.', wire_summary:'Connectors → Studio · Workshop · Speckle'},
     {id:'cloud', label:'Cloud', state:'starting', state_word:'NOT SIGNED IN',
       description:'Devices, grants and cloud agents.', stat_line:'Not signed in.',
@@ -358,7 +358,7 @@ test('F2R D1: Settings Hub cards show owner state lines, no placeholders or plum
     for (const text of [
       '3 sessions · 0 running.', '1 project · 1 task.', '1 fact in local Brain.',
       'Attached signed runtime · 1 runtime session.', 'Starts with Windows: on',
-      '1/1 hosts running.', 'Not signed in.',
+      '1/1 hosts connected.', 'Not signed in.',
     ]) {
       assert.ok(hub.textContent.includes(text), 'missing owner state line: ' + text);
     }

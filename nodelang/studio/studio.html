@@ -347,7 +347,7 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       const scan = await jget('/api/universal/hosts');
       // The server answers from its background probe; before the first probe
       // lands it says so, and the panel offers "read again" instead of "none".
-      if (scan.probing) throw new Error('the host probe is still running');
+      if (scan.probing) throw new Error('still checking which programs are connected');
       // Per operation: its real court, or the dependency that keeps it unavailable.
       window.ARCHHUB_HOST_OPERATIONS = Array.isArray(scan.operations) ? scan.operations : [];
       // The probe answers one list: the connectors it found. They ARE the hosts the

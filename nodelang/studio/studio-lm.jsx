@@ -838,7 +838,8 @@ const StudioLM = () => {
             clearPendingCanvasReveal={() => setPendingCanvasReveal(null)}
             userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary}
             view={workspaceView} updateView={updateWorkspaceView} wsSel={wsSel} setWsSel={setWsSel}
-            onHome={() => { setToolView(null); setOpenId(null); }}/>
+            onHome={() => { setToolView(null); setOpenId(null); }}
+            onAccount={() => openSettings(true, 'account')}/>
         : <Home onOpen={openSession} sessions={visibleSessions} model={model} native={homeNative} setPickerOpen={setPickerOpen}
             setLibraryOpen={setLibraryOpen} setPanel={setPanel}
             onOpenTool={openTool} onOpenToolGraph={openToolGraph} workshopState={workshopState} account={account}
@@ -1205,6 +1206,37 @@ const useWaitingOpenShortcut = setOpen => {
 // The Workshop opens on its one Tasks tab: Tasks, Board and Projects are folded together (founder 2026-10-11).
 const firstToolTab = tool => tool === 'workshop' ? 'tasks' : tool === 'brain' ? 'facts' :
   tool === 'connectors' ? 'hosts' : tool === 'cloud' ? 'account' : tool === 'baboom' ? 'settings' : 'workspace';
+const HOST_STATE_WORD = {
+  connected:'Connected',
+  listening:'Connected',
+  reachable:'Checking',
+  syncing:'Checking',
+  starting:'Checking',
+  checking:'Checking',
+  installed:'Not running',
+  running:'Not running',
+  absent:'Not running',
+  off:'Not running',
+  unavailable:'Not running',
+  'not running':'Not running',
+  not_running:'Not running',
+  not_installed:'Not installed',
+  'not installed':'Not installed',
+  needs_key:'Not installed',
+  'needs-key':'Not installed',
+};
+const hostStateWord = row => HOST_STATE_WORD[String(row?.state || '').toLowerCase()] || 'Checking';
+const hostStateTone = row => {
+  const word = hostStateWord(row);
+  return word === 'Connected' ? LM.ok : word === 'Checking' ? LM.warn : LM.inkMuted;
+};
+const providerStateWord = p => {
+  const state = String(p?.state || '').toLowerCase();
+  if (state === 'keyed' || state === 'running') return 'Connected';
+  if (state === 'no key' || state === 'missing' || state === 'signed out') return 'Sign in needed';
+  if (state === 'key invalid' || state === 'unavailable' || state === 'not installed') return 'Unavailable';
+  return 'Not connected';
+};
 const toolStateWord = state => ({
   running:'RUNNING', starting:'STARTING', off:'OFF', failed:"DIDN'T START", not_installed:'NOT INSTALLED',
   didnt_start:"DIDN'T START",
@@ -1216,7 +1248,7 @@ const waitingLine = item => {
 };
 const waitingMeta = item => {
   const bits = [
-    'asked by ' + (item?.who || item?.from || 'unknown'),
+    'asked by ' + (item?.who || item?.from || 'someone'),
     'for ' + (item?.for || 'you'),
     item?.time || '',
     item?.plan_hash ? 'plan ' + item.plan_hash : '',
@@ -1342,13 +1374,14 @@ const FRAME_TOOL_DEFAULTS = [
   ['workshop', 'Workshop', 'running', 'Projects, tasks and governed work.', '0 projects · 0 tasks.', 'Switched off. Tasks are paused.', 'Workshop → Studio · Connectors · Brain', 'Workshop is off', 'No agent loop, no tasks run, no router. Chat still works locally.'],
   ['brain', 'Brain', 'off', 'Memory, facts and local classification.', '0 facts in local Brain.', 'Switched off. Nothing is remembered or recalled.', 'Brain → Studio · Workshop · Cloud', 'Brain is off', 'What ArchHub remembers. Everything else keeps running.'],
   ['baboom', 'BABOOM', 'starting', 'Desktop companion and approved execution.', 'No signed runtime attached.', 'Switched off. No companion on the desktop.', 'BABOOM ← Studio · Workshop', 'BABOOM is off', 'The companion is closed. Nothing else changes.'],
-  ['connectors', 'Connectors', 'running', 'Host bridges and Speckle access.', '0/0 hosts running.', 'Switched off. No reads or writes to your programs.', 'Connectors → Studio · Workshop · Speckle', 'Connectors are off', 'No host reads or writes. Pinned host outputs still feed downstream.'],
+  ['connectors', 'Connectors', 'running', 'Host bridges and Speckle access.', '0/0 hosts connected.', 'Switched off. No reads or writes to your programs.', 'Connectors → Studio · Workshop · Speckle', 'Connectors are off', 'No host reads or writes. Pinned host outputs still feed downstream.'],
   ['cloud', 'Cloud', 'starting', 'Devices, grants and cloud agents.', 'Not signed in.', 'Switched off. Works on this machine only.', 'Cloud ← Brain · Workshop', 'Cloud is off', 'No tunnel, heartbeat, or sync. Everything local is unchanged.'],
 ].map(([id, label, state, description, statLine, offSentence, wireSummary, emptyTitle, emptyLine]) => ({
   id, label, state, description, stat_line:statLine, off_sentence:offSentence, wire_summary:wireSummary, emptyTitle, emptyLine,
 }));
 const toolRowsFromOwners = ({workshopState, account, personal, hub}) => {
   const liveHosts = LM_HOSTS.filter(host => hostState(host) === 'connected');
+  const connectorHostWord = hostStateWord(liveHosts[0] || {state:'off'});
   const waiting = workshopWaitingItems(workshopState);
   const graph = window.ARCHHUB_LIVE?.graph || LM_GRAPH;
   const baboom = personal?.configuration?.baboom_startup;
@@ -1362,7 +1395,7 @@ const toolRowsFromOwners = ({workshopState, account, personal, hub}) => {
     workshop:{stat:plural(projects, 'project') + ' · ' + plural(tasks, 'task'), wire:waiting.length ? plural(waiting.length, 'waiting') : 'no waiting work'},
     brain:{stat:plural(LM_MEMORY.length, 'fact'), wire:plural((window.BRAIN_STRATA || []).length, 'stratum', 'strata')},
     baboom:{stat:'Starts with Windows: ' + (baboomOn ? 'on' : 'off'), wire:baboom?.source ? String(baboom.source) : 'Personal Settings'},
-    connectors:{stat:String(liveHosts.length) + '/' + String(LM_HOSTS.length) + ' hosts running', wire:plural((window.ARCHHUB_LIVE?.connectors || []).length, 'connector')},
+    connectors:{stat:String(liveHosts.length) + '/' + String(LM_HOSTS.length) + ' hosts connected', wire:plural((window.ARCHHUB_LIVE?.connectors || []).length, 'connector')},
     cloud:{stat:signedIn ? String(account.email || 'signed in') : 'signed out', wire:window.ARCHHUB_CLOUD_SESSION ? 'cloud session owner' : 'no device list owner'},
   };
   const baboomToggle = {
@@ -1378,7 +1411,8 @@ const toolRowsFromOwners = ({workshopState, account, personal, hub}) => {
     const rawState = String(row.state || 'off');
     const normalizedState = rawState === 'unknown' ? 'starting' : rawState;
     const rowWord = String(row.state_word || '');
-    const stateWord = /unknown/i.test(rowWord) ? toolStateWord(normalizedState) : (rowWord || toolStateWord(normalizedState));
+    const stateWord = row.id === 'connectors' ? connectorHostWord :
+      /unknown/i.test(rowWord) ? toolStateWord(normalizedState) : (rowWord || toolStateWord(normalizedState));
     const ownerLine = toolStatLineIsPlaceholder(row.stat_line) ? stats[row.id]?.stat : (row.stat_line || stats[row.id]?.stat || '');
     const baboomRuntime = ownerLine || 'No signed runtime attached.';
     const statLine = row.id === 'baboom'
@@ -2071,7 +2105,7 @@ const WorkshopToolProjects = ({ workshopState }) => {
   const projects = (workshopState?.workshops || []).map(row => ({
     id:row.root,
     name:row.label || 'Workshop',
-    status:row.status || 'unknown',
+    status:row.status || 'not recorded',
     ...(row.tasks != null ? {tasks:row.tasks} : {}),
     ...(row.blocked != null ? {blocked:row.blocked} : {}),
     ...(row.hosts != null ? {hosts:row.hosts} : {}),
@@ -2182,7 +2216,7 @@ const SessionCard = ({ s, onOpen }) => {
 };
 
 // ──────────────────────── WORKSPACE ────────────────────────
-const Workspace = ({ session, model, readiness = null, onReadinessStale, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, setPickerOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, onHome, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
+const Workspace = ({ session, model, readiness = null, onReadinessStale, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, setPickerOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, onHome, onAccount, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
   const authorityState = useStudioProjection();
   const graph = authorityState?.graph || LM_GRAPH;
   const allNodes = [...graph.nodes, ...(userNodes || [])];
@@ -2225,6 +2259,7 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, openTab
           onLeave={() => updateView({conversationRoot:'', mode:'chat', target:''})}
           sel={wsSel} setSel={setWsSel}/> : <>
           <ChatView key={graphScopeKey} session={session} model={model} setMode={setMode} onPickModel={() => setPickerOpen(true)}
+            onAccount={onAccount}
             readiness={readiness} onReadinessStale={onReadinessStale}
             workshopRoom={workshopModeRoom(workshops, '')} workshopUnavailable={workshopState?.canvas?.unavailable || ''}
             openWorkshop={root => updateView({conversationRoot:root, mode:'chat', target:''})}/>
@@ -2349,9 +2384,8 @@ const chatStages = graph => {
 // Connectors are exactly what answered a probe. Green only for a host the product can DRIVE:
 // seeing a process or a port is not a connection (founder rule: nothing green that is not wired).
 const chatConnectors = () => (window.ARCHHUB_LIVE?.connectors || []).map(c => ({
-  id:c.id, name:c.name, state:c.state, detail:c.detail,
-  col: c.drive && (c.state === 'connected' || c.state === 'listening') ? LM.ok
-    : c.state === 'installed' || c.state === 'reachable' ? LM.warn : LM.inkDim,
+  id:c.id, name:c.name, state:c.state, word:hostStateWord(c), detail:c.detail,
+  col:hostStateTone(c),
 }));
 
 // ─── Calm chat view (default) — restores original Studio's generous rhythm ───
@@ -2383,7 +2417,7 @@ const routeReadiness = (route, held) => {
   const answer = held.families[family];
   return answer && answer.state !== 'ready' ? {...answer, route:text} : null;
 };
-const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, onPickModel, workshopUnavailable = '', readiness = null, onReadinessStale }) => {
+const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, onPickModel, onAccount, workshopUnavailable = '', readiness = null, onReadinessStale }) => {
   // The Workshop is opened from here (it is not a header segment). Without a room the click answers
   // with the owner's reason as visible text, never a silent no-op (founder report 2026-09-23).
   const [workshopRefusal, setWorkshopRefusal] = React.useState('');
@@ -2393,8 +2427,6 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
   // with the ways out that apply to it.
   const blocked = routeReadiness(modelRoute(model), readiness);
   const offers = new Set((blocked && blocked.actions) || []);
-  const [signingIn, setSigningIn] = React.useState(false);
-  const SignInFlow = window.CloudSignIn;
   const conv = LM_GRAPH.nodes.find(n => n.cat === 'ai')
     || LM_GRAPH.nodes.find(n => n.id === 'ai_intent');
   const [messages, setMessages] = React.useState((conv && conv.messages) || []);
@@ -2479,10 +2511,11 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
                 <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.warn, letterSpacing:'0.14em', marginBottom:6 }}>
                   {READINESS_LABELS[blocked.state] || 'NO MODEL'}</div>
                 <div style={{ fontSize:14, lineHeight:1.55, color:LM.ink, marginBottom:10 }}>{blocked.message}</div>
-                {signingIn && typeof SignInFlow === 'function'
-                  ? <SignInFlow email="" onSignedIn={() => { setSigningIn(false); if (typeof onReadinessStale === 'function') onReadinessStale(); }}/>
-                  : <div style={{ display:'flex', gap:8 }}>
-                      {offers.has('sign_in') && <button type="button" onClick={() => setSigningIn(true)} style={{
+                <div style={{ display:'flex', gap:8 }}>
+                      {offers.has('sign_in') && <button type="button" onClick={() => {
+                        if (typeof onAccount === 'function') onAccount();
+                        else if (typeof onReadinessStale === 'function') onReadinessStale();
+                      }} style={{
                         padding:'7px 14px', background:LM.accent, color:(window.AH && window.AH.onFill) || '#180f08', border:0,
                         borderRadius:LM.rad.sm, fontSize:12.5, fontWeight:500, cursor:'pointer',
                       }}>Sign in</button>}
@@ -2490,7 +2523,7 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
                         padding:'6px 13px', background:'transparent', color:LM.ink, border:`1px solid ${LM.line}`,
                         borderRadius:LM.rad.sm, fontSize:12.5, fontWeight:500, cursor:'pointer',
                       }}>Choose a model</button>
-                    </div>}
+                    </div>
               </div>
             )}
           <div style={{ background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, padding:'12px 14px' }}>
@@ -2607,15 +2640,15 @@ const InferenceInspector = ({ model, setPickerOpen }) => {
         <div key={c.id} title={c.detail} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 0', borderBottom:`1px dashed ${LM.lineSoft}` }}>
           <span style={{ width:7, height:7, borderRadius:'50%', background:c.col, boxShadow:`0 0 0 3px ${c.col}22` }}/>
           <span style={{ flex:1, fontSize:12.5, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{c.name}</span>
-          <span style={{ fontFamily:LM.mono, fontSize:9.5, color:c.col, letterSpacing:'0.06em', textTransform:'uppercase' }}>{c.state}</span>
+          <span style={{ fontFamily:LM.mono, fontSize:9.5, color:c.col, letterSpacing:'0.06em' }}>{c.word}</span>
         </div>
       ))}
       {/* A host that cannot connect on this machine says why, in words, not on hover. */}
-      {connectors.filter(c => c.state === 'unavailable' && c.detail).map(c => (
+      {connectors.filter(c => c.word !== 'Connected' && c.detail).map(c => (
         <div key={c.id + ':why'} data-connector-reason={c.id} style={{ fontSize:11, color:LM.inkSoft, lineHeight:1.45, whiteSpace:'normal', overflowWrap:'anywhere', padding:'4px 0 6px 15px' }}>{c.name}: {c.detail}</div>
       ))}
       {window.ARCHHUB_LIVE && !connectors.length &&
-        <div role="status" style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkMuted, lineHeight:1.5 }}>No host has answered a probe yet.</div>}
+        <div role="status" style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkMuted, lineHeight:1.5 }}>No connected program found yet.</div>}
     </div>
   </aside>
   );
@@ -2807,7 +2840,7 @@ const WorkshopStorageReview = ({root, label}) => {
           aria-label={'Review release of editor ' + page.page_id.slice(-8)} title="Review release of cleanup protection">⋯</button>
       </div>
       <div style={{color:LM.inkSoft, marginTop:4}}>{page.state === 'open' ? 'Open record' : 'Closed record'} ·
-        {page.draft_state === 'dirty' ? ' draft pending' : page.draft_state === 'unknown' ? ' draft state unknown' : ' no pending draft'}</div>
+        {page.draft_state === 'dirty' ? ' draft pending' : page.draft_state === 'unknown' ? ' draft state not recorded' : ' no pending draft'}</div>
       <div title={'Session: ' + page.session_root + '\nView: ' + page.view_root} style={{color:LM.inkMuted, fontSize:11, marginTop:4}}>
         Browser {page.session_root.slice(-8)} · editor {page.page_id.slice(-8)}</div>
       <div style={{color:LM.inkMuted, fontSize:11, marginTop:4}}>Last changed {new Date(page.changed_at * 1000).toLocaleString()}</div>
@@ -2820,7 +2853,7 @@ const WorkshopStorageReview = ({root, label}) => {
     </div>)}
     {review && review.pages.length === 0 && <p>No protected editor records in this conversation.</p>}
     {review?.protection.tracking_state === 'unknown' && <div style={{color:LM.inkSoft}}>
-      <p>Earlier draft activity is still unknown. Automatic cleanup remains protected.</p>
+      <p>Earlier draft activity is not recorded yet. Automatic cleanup remains protected.</p>
       {!confirmTracking ? <button disabled={busy} style={control} onClick={() => setConfirmTracking(true)}>Review earlier activity…</button> : <>
         <p>Confirm that you have saved or discarded any earlier unsent drafts in this conversation.
           This starts its inactivity period now. Existing protected editor records stay protected.</p>
@@ -6391,12 +6424,12 @@ const cleanDetail = text => String(text || '')
   .slice(0, 60);
 const providerDetail = p => {
   if (p.id === 'cloud') return 'Sign in to use ArchHub cloud';
-  if (p.state === 'keyed') return 'Key saved on this machine';
-  if (p.state === 'key invalid') return 'Key invalid. Paste a real key in Settings';
-  if (p.state === 'running') return 'Local runtime is running';
-  if (p.state === 'not running') return 'Local runtime is not running';
-  if (p.state === 'not installed') return 'Not installed on this machine';
-  return cleanDetail(p.source || p.state || 'Status unavailable') || 'Status unavailable';
+  if (p.state === 'keyed') return 'Connected on this machine';
+  if (p.state === 'key invalid') return 'Unavailable. Check this provider in its service owner.';
+  if (p.state === 'running') return 'Connected on this machine';
+  if (p.state === 'not running') return 'Not connected on this machine';
+  if (p.state === 'not installed') return 'Unavailable on this machine';
+  return providerStateWord(p);
 };
 const hostDetail = h => {
   const id = String(h.id || '').toLowerCase(), name = String(h.name || '').toLowerCase();
@@ -6406,7 +6439,7 @@ const hostDetail = h => {
   if (name.includes('speckle') || id.includes('speckle')) return h.state === 'absent' ? 'Manager not found' : 'Ready to publish with stored account';
   if (h.detail) return cleanDetail(h.detail);
   if (h.file && h.file !== '\u2014') return cleanDetail(h.file);
-  return h.state === 'connected' ? 'Live on this machine' : 'Not running';
+  return hostStateWord(h);
 };
 const hostStartName = h => {
   const id = String(h?.id || '').toLowerCase(), name = String(h?.name || '').toLowerCase();
@@ -6812,9 +6845,9 @@ const ProviderManage = ({ p, providers, onTab }) => {
     <div style={box}>
       <div style={line}>{p.id === 'cloud'
         ? 'Sign in to use ArchHub cloud.'
-        : p.state === 'running' ? p.name + ' is running. Its models appear in the model picker.'
+        : p.state === 'running' ? p.name + ' is connected. Its models appear in the model picker.'
         : p.state === 'installed' || p.state === 'not installed' ? providerDetail(p) + '.'
-        : p.sets ? 'Sign in or paste a key, then read the status again.'
+        : p.sets ? 'Sign in or connect this provider, then read the status again.'
         : 'Start ' + p.name + ' on this machine (' + p.source + '), then read the status again.'}</div>
       <div style={{ display:'flex', gap:7, marginTop:9, flexWrap:'wrap' }}>
         {p.id === 'cloud' && <button type="button" onClick={() => onTab && onTab('account')} style={{ ...smallBtn(), padding:'3px 9px' }}>Open Account</button>}
@@ -6828,14 +6861,15 @@ const SettingsProviders = ({ providers, onTab }) => {
   const { rows, error, loading, transport } = providers;
   const [managing, setManaging] = React.useState(null);
   const [social, setSocial] = React.useState(false);
-  const tone = (state) => state === 'keyed' ? LM.ok : state === 'running' ? LM.cyan : LM.inkMuted;
+  const tone = (state) => state === 'keyed' ? LM.ok : state === 'running' ? LM.cyan :
+    state === 'key invalid' ? LM.err : LM.inkMuted;
   const off = state => state === 'no key' || state === 'not running' || state === 'not installed';
   const warn = state => state === 'key invalid';
   const keyed = providerKeyed(rows), running = providerRunning(rows);
   return (
   <div>
     <SHead title="Providers" sub={'BYO keys. Local models live in Ollama or LM Studio. ' + (rows
-      ? keyed + ' keyed \u00b7 ' + running + ' local runtime' + (running === 1 ? '' : 's') + ' running.'
+      ? keyed + ' connected key' + (keyed === 1 ? '' : 's') + ' \u00b7 ' + running + ' local provider' + (running === 1 ? '' : 's') + ' connected.'
       : error ? 'Not read.' : 'Reading this machine\u2026')}/>
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
       {(rows || []).map((p, i) => (
@@ -6854,7 +6888,7 @@ const SettingsProviders = ({ providers, onTab }) => {
               fontFamily:LM.mono, fontSize:9, padding:'2px 7px', borderRadius:LM.rad.xs, letterSpacing:'0.1em', textTransform:'uppercase',
               background: off(p.state) ? LM.bgSoft : tone(p.state) + '14',
               color:       warn(p.state) ? LM.err : tone(p.state),
-            }}>{p.state}</span>
+            }}>{providerStateWord(p)}</span>
             <button aria-expanded={managing === p.id} onClick={() => setManaging(managing === p.id ? null : p.id)}
               style={{ ...smallBtn(), padding:'3px 8px' }}>{off(p.state) || warn(p.state) ? 'connect' : 'manage'}</button>
           </div>
@@ -7313,7 +7347,7 @@ const SettingsRetention = () => {
           <div style={{ flex:1, minWidth:0 }}>
             <div title={row.conversation} style={{ fontSize:13, color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{row.title || row.conversation}</div>
             <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2 }}>
-              {row.archived_at ? 'archived on ' + (retentionWhen(row.archived_at) || 'an unknown date') : 'restored'} · {row.removed_messages} in the archive file{row.archive_exists ? '' : ' · file missing'}
+              {row.archived_at ? 'archived on ' + (retentionWhen(row.archived_at) || 'a date not recorded') : 'restored'} · {row.removed_messages} in the archive file{row.archive_exists ? '' : ' · file missing'}
             </div>
           </div>
           <button disabled={!!busy || !row.archive_exists} onClick={() => act('open', row)} style={smallBtn()}>open archive</button>
@@ -7394,7 +7428,7 @@ const SettingsAbout = ({ providers, release }) => {
       <div><span style={{ color:LM.inkMuted }}>license    </span> {'\u2014'}</div>
       <div><span style={{ color:LM.inkMuted }}>server     </span> {window.location.host || window.location.origin} &#xb7; running</div>
       <div><span style={{ color:LM.inkMuted }}>hosts      </span> {LM_HOSTS.length} configured &#xb7; {LM_HOSTS.filter(h=>h.state!=='off').length} live</div>
-      <div><span style={{ color:LM.inkMuted }}>providers  </span> {rows ? (answering.length ? answering.join(', ') : 'none keyed or running') : providers?.error ? 'not read' : 'reading\u2026'}</div>
+      <div><span style={{ color:LM.inkMuted }}>providers  </span> {rows ? (answering.length ? answering.join(', ') : 'none connected') : providers?.error ? 'not read' : 'reading\u2026'}</div>
       <div><span style={{ color:LM.inkMuted }}>updated    </span> {release?.updated_to ? 'to ' + release.updated_to : (label || 'reading\u2026')} &#xb7; <span role="button" tabIndex={0} aria-expanded={updates}
         onClick={toggle} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } }}
         style={{ color:LM.inkSoft, cursor:'pointer' }}>{updates ? 'hide updates' : 'updates →'}</span></div>
@@ -7771,13 +7805,14 @@ const SettingsHosts = () => {
     <div>
       <div style={{ fontFamily:LM.serif, fontSize:22, letterSpacing:'-0.01em' }}>Hosts</div>
       <div style={{ fontFamily:LM.sans, fontSize:13, color:LM.inkSoft, marginTop:3 }}>
-        Local clients the host probe found on this machine. Operations reach a host only through an approved workflow.
+        Programs found on this machine. Operations reach a host only through an approved workflow.
       </div>
     </div>
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
       {visibleHosts.map((h, i) => {
         const state = hostState(h);
-        const col = state==='connected'?LM.ok : state==='syncing'?LM.warn : LM.inkMuted;
+        const word = hostStateWord(h);
+        const col = hostStateTone(h);
         return (
           <div key={h.id} style={{
             padding:'10px 14px', display:'flex', alignItems:'center', gap:LM.sp.md,
@@ -7785,8 +7820,8 @@ const SettingsHosts = () => {
           }}>
             <span style={{
               width:8, height:8, borderRadius:'50%', background: col,
-              boxShadow: state==='connected'?`0 0 0 2px ${LM.ok}22`:'none',
-              animation: state==='syncing'?'lmPulse 1.2s infinite':'none',
+              boxShadow: word === 'Connected' ? `0 0 0 2px ${LM.ok}22`:'none',
+              animation: word === 'Checking' ? 'lmPulse 1.2s infinite':'none',
             }}/>
             <div style={{ flex:1, lineHeight:1.2, minWidth:0 }}>
               <div style={{ fontSize:13, fontWeight:500, color: state==='off' ? LM.inkMuted : LM.ink }}>{h.name}</div>
@@ -7796,8 +7831,8 @@ const SettingsHosts = () => {
             </div>
             <span style={{
               fontFamily:LM.mono, fontSize:9, padding:'2px 7px', borderRadius:LM.rad.xs,
-              background: col + '14', color: col, letterSpacing:'0.1em', textTransform:'uppercase',
-            }}>{state}</span>
+              background: col + '14', color: col, letterSpacing:'0.04em',
+            }}>{word}</span>
             {hostOpenPhrase(h) && (
               <button type="button" onClick={e => startHost(h, e.currentTarget)}
                 style={{ ...smallBtn(), padding:'3px 9px' }}>Start</button>
@@ -7807,7 +7842,7 @@ const SettingsHosts = () => {
       })}
       {!visibleHosts.length && <SettingsEmpty role={catalogue.error ? 'alert' : 'status'}
         action={catalogue.error && !catalogue.loading && <button onClick={catalogue.retry} style={{ ...smallBtn(), padding:'3px 9px', fontStyle:'normal' }}>read again</button>}>
-        {catalogue.loading ? 'Reading the hosts on this machine\u2026' : catalogue.error ? 'The hosts were not read: ' + catalogue.error : 'No host has answered a probe yet.'}</SettingsEmpty>}
+        {catalogue.loading ? 'Reading the hosts on this machine\u2026' : catalogue.error ? 'Connected programs: ' + catalogue.error + '.' : 'No connected program found yet.'}</SettingsEmpty>}
       <BaboomStartupRow first={false}/>
     </div>
     <SettingsAssistants/>

@@ -58,7 +58,7 @@ FORBIDDEN = tuple(re.compile(pattern) for pattern in (
 # borrowed from the code under court.
 INSTALLER = (
     "https://github.com/Fargaly/ArchHub/releases/download/"
-    "build-20261011-2310-dfb054e/ArchHub-Setup-0.exe"
+    "build-20261012-0304-2cc408f/ArchHub-Setup-0.exe"
 )
 REPOSITORY = "https://github.com/Fargaly/ArchHub"
 HOME_DESIGN_TEXT = (

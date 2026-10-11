@@ -24,6 +24,7 @@ import base64
 import hmac
 import http.client
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -50,6 +51,56 @@ CLOUD_CHAT_PATH = "/v1/chat/completions"
 OPENAI_CHAT = "https://api.openai.com/v1/chat/completions"
 GOOGLE_CHAT = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 NVIDIA_CHAT = "https://integrate.api.nvidia.com/v1/chat/completions"
+_OPENROUTER_FREE_MODELS_DEFAULT = (
+    "mistralai/mistral-small-3.2-24b-instruct:free",
+    "deepseek/deepseek-chat-v3-0324:free",
+    "qwen/qwen-2.5-72b-instruct:free",
+    "meta-llama/llama-3.2-3b-instruct:free",
+    "google/gemini-2.0-flash-exp:free",
+)
+_USER_VISIBLE_SECRET_PATTERNS = (
+    (re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{16,}"), False),
+    (re.compile(
+        r"\b(?:sk-[A-Za-z0-9_-]{8,}|sk_live_[A-Za-z0-9_-]{8,}|rk-[A-Za-z0-9_-]{8,})"
+    ), False),
+    (re.compile(
+        r"(?i)\b((?:api[_-]?key|key|token|access[_-]?token|secret|password)\s*[:=]\s*)"
+        r"[^\s&'\";,)]{8,}"
+    ), True),
+    (re.compile(r"\bAIza[A-Za-z0-9_-]{16,}\b"), False),
+    (re.compile(r"\b(?:ghp|gho)_[A-Za-z0-9_]{16,}\b"), False),
+    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{16,}\b"), False),
+    (re.compile(r"\bxox[bpas]-[A-Za-z0-9-]{10,}\b"), False),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"), False),
+    (re.compile(
+        r"(?<![A-Za-z0-9+/_-])"
+        r"(?=[A-Za-z0-9+/_-]{32,}={0,2}(?![A-Za-z0-9+/_-]))"
+        r"(?=[A-Za-z0-9+/_-]*[A-Za-z])"
+        r"(?=[A-Za-z0-9+/_-]*\d)"
+        r"[A-Za-z0-9+/_-]{32,}={0,2}(?![A-Za-z0-9+/_-])"
+    ), False),
+)
+_OPENROUTER_FREE_UNAVAILABLE_MESSAGE = (
+    "This free model is unavailable right now; trying another free model."
+)
+_OPENROUTER_FREE_EXHAUSTED_MESSAGE = (
+    "No free model answered right now. Try again shortly."
+)
+_OPENROUTER_FREE_UNAVAILABLE_MARKERS = (
+    "unavailable for free",
+    "not free",
+    "no endpoints found",
+)
+_PAID_UPGRADE_ADVICE_MARKERS = (
+    "paid version",
+    "use this slug",
+    "use this slug instead",
+)
+_MODEL_SLUG_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9._:/-])"
+    r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9._-]+)?"
+    r"(?![A-Za-z0-9._:/-])"
+)
 
 _FAMILY_PREFIXES = {
     "lmstudio/": "lmstudio",
@@ -277,6 +328,27 @@ class ModelRoute:
     url: str
     provider: str
     needs_key: bool
+
+
+def _redact_user_visible(text: object) -> str:
+    """Provider text can be shown only after obvious credential shapes are gone."""
+    value = str(text or "")
+    for pattern, keep_prefix in _USER_VISIBLE_SECRET_PATTERNS:
+        if keep_prefix:
+            value = pattern.sub(lambda match: match.group(1) + "[redacted]", value)
+        else:
+            value = pattern.sub("[redacted]", value)
+    lowered = value.casefold()
+    if any(marker in lowered for marker in _PAID_UPGRADE_ADVICE_MARKERS):
+        value = re.sub(r"(?i)\bthe\s+paid\s+version\b[^.]*\.?", "", value)
+        value = re.sub(r"(?i)\bpaid\s+version\b[^.]*\.?", "", value)
+        value = re.sub(r"(?i)\buse\s+this\s+slug(?:\s+instead)?\b[^.]*\.?", "", value)
+        value = _MODEL_SLUG_PATTERN.sub(
+            lambda match: match.group(0) if match.group(0).endswith(":free") else "[free model]",
+            value,
+        )
+        value = " ".join(value.split()).strip(" :-")
+    return value
 
 
 def _bare_openrouter_route(route: object) -> bool:
@@ -1122,6 +1194,18 @@ def _body(
 
 def _answer_text(destination: ModelRoute, payload: object) -> str:
     if isinstance(payload, Mapping):
+        error = payload.get("error")
+        if isinstance(error, Mapping):
+            message = _redact_user_visible(error.get("message")).strip()
+            if message:
+                code = error.get("code")
+                if _is_openrouter_free_unavailable(destination, code, message):
+                    raise _openrouter_free_unavailable_refusal()
+                reason = "provider_rate_limited" if code == 429 or "rate" in message.casefold() else "provider_error"
+                raise ModelRouteRefused(
+                    "%s: %s" % (destination.provider, message),
+                    reason_code=reason,
+                )
         if destination.family == "ollama":
             message = payload.get("message")
             if isinstance(message, Mapping) and message.get("content") is not None:
@@ -1137,8 +1221,147 @@ def _answer_text(destination: ModelRoute, payload: object) -> str:
                         and message.get("content") is not None
                     ):
                         return str(message["content"])
+                    if destination.family == "openrouter" and isinstance(message, Mapping):
+                        for name in ("reasoning", "reasoning_content"):
+                            if message.get(name):
+                                raise ModelRouteRefused(
+                                    "OpenRouter returned reasoning without an answer.",
+                                    reason_code="empty_answer",
+                                )
+                    if destination.family == "openrouter":
+                        raise ModelRouteRefused(
+                            "OpenRouter answered without message content.",
+                            reason_code="empty_answer",
+                        )
     raise ModelRouteRefused(
         "%s answered in a shape this app does not read." % destination.provider
+    )
+
+
+def _openrouter_free_defaults(environ: Optional[Mapping[str, str]]) -> tuple[str, ...]:
+    raw = (environ or os.environ).get("OPENROUTER_FREE_MODELS", "").strip()
+    source = raw.split(",") if raw else _OPENROUTER_FREE_MODELS_DEFAULT
+    out: list[str] = []
+    for model in source:
+        model = str(model or "").strip()
+        parts = model.split("/")
+        if (
+            len(parts) == 2
+            and all(parts)
+            and not any(char.isspace() for char in model)
+            and model.endswith(":free")
+            and model not in out
+        ):
+            out.append(model)
+    return tuple(out) if out else _OPENROUTER_FREE_MODELS_DEFAULT
+
+
+def _openrouter_free_attempts(
+    destination: ModelRoute,
+    free_only: bool,
+    environ: Optional[Mapping[str, str]],
+) -> tuple[ModelRoute, ...]:
+    if not free_only or destination.family != "openrouter":
+        return (destination,)
+    models = [destination.model, *_openrouter_free_defaults(environ)]
+    out: list[ModelRoute] = []
+    seen: set[str] = set()
+    for model in models:
+        if not (model == "openrouter/free" or model.endswith(":free")) or model in seen:
+            continue
+        seen.add(model)
+        out.append(ModelRoute(destination.family, model, destination.url,
+                              destination.provider, destination.needs_key))
+    return tuple(out) if out else (destination,)
+
+
+def _next_openrouter_free_allowed(exc: ModelRouteRefused) -> bool:
+    return exc.reason_code in {
+        "empty_answer",
+        "free_model_unavailable",
+        "provider_error",
+        "provider_rate_limited",
+    }
+
+
+def _is_openrouter_free_route(destination: ModelRoute) -> bool:
+    return (
+        destination.family == "openrouter"
+        and (destination.model == "openrouter/free" or destination.model.endswith(":free"))
+    )
+
+
+def _is_openrouter_free_unavailable(
+    destination: ModelRoute,
+    code: object,
+    message: object,
+) -> bool:
+    if not _is_openrouter_free_route(destination):
+        return False
+    try:
+        status = int(code)
+    except (TypeError, ValueError):
+        status = None
+    text = str(message or "").casefold()
+    return status in {400, 404} and any(
+        marker in text for marker in _OPENROUTER_FREE_UNAVAILABLE_MARKERS
+    )
+
+
+def _openrouter_free_unavailable_refusal() -> ModelRouteRefused:
+    return ModelRouteRefused(
+        _OPENROUTER_FREE_UNAVAILABLE_MESSAGE,
+        reason_code="free_model_unavailable",
+    )
+
+
+def _openrouter_free_exhausted_refusal() -> ModelRouteRefused:
+    return ModelRouteRefused(
+        _OPENROUTER_FREE_EXHAUSTED_MESSAGE,
+        reason_code="free_model_exhausted",
+    )
+
+
+def _http_error_refusal(destination: ModelRoute, refused: urllib.error.HTTPError) -> ModelRouteRefused:
+    raw = b""
+    try:
+        raw = refused.read(4097)
+    except Exception:
+        raw = b""
+    finally:
+        refused.close()
+    if len(raw) > 4096:
+        raw = raw[:4096]
+    detail = ""
+    try:
+        payload = json.loads(raw.decode("utf-8")) if raw else None
+    except ValueError:
+        payload = None
+    if isinstance(payload, Mapping):
+        error = payload.get("error")
+        if isinstance(error, Mapping):
+            detail = _redact_user_visible(error.get("message")).strip()
+        elif isinstance(error, str):
+            detail = _redact_user_visible(error).strip()
+    if not detail and raw:
+        detail = _redact_user_visible(raw.decode("utf-8", errors="replace")).strip()[:240]
+    if refused.code == 429:
+        reason = "provider_rate_limited"
+    elif 500 <= refused.code <= 599:
+        reason = "provider_error"
+    else:
+        reason = "response_refused"
+    if _is_openrouter_free_unavailable(destination, refused.code, detail):
+        return _openrouter_free_unavailable_refusal()
+    if detail:
+        return ModelRouteRefused(
+            "%s: %s (HTTP %s)" % (destination.provider, detail, refused.code),
+            reason_code=reason,
+        )
+    return ModelRouteRefused(
+        "%s refused this request: HTTP %s. Check the key or pick another model."
+        % (destination.provider, refused.code),
+        reason_code=reason,
     )
 
 
@@ -1260,10 +1483,14 @@ def _local_cli_chat(destination, messages, *, timeout, before_dispatch):
     if _carries_an_image(rows):
         raise ModelRouteRefused("A local assistant chat carries text only.")
     assistant, _, model = destination.model.partition("/")
+    executable = broker.local_cli_executable(assistant)
+    if not executable:
+        raise ModelRouteRefused(
+            "%s is not installed on this machine. Install it, or choose another model."
+            % destination.provider, reason_code="provider_unavailable")
     if assistant in _CLI_FAIL_CLOSED:
-        executable = broker.local_cli_executable(assistant)
         installed = installed_cli_version(executable) if executable else None
-        if executable and installed != _CLI_VERIFIED_VERSIONS[assistant]:
+        if installed != _CLI_VERIFIED_VERSIONS[assistant]:
             raise ModelRouteRefused(
                 "%s was updated; ArchHub has not verified this version yet (tested on %s, "
                 "installed %s). Choose another model until it is re-verified."
@@ -1353,10 +1580,27 @@ def route_chat(
         or destination.family != "openrouter"
     ):
         raise ModelRouteRefused("This reasoning effort requires a supported OpenRouter route.")
+    dispatched = False
+
+    def before_dispatch_once():
+        nonlocal dispatched
+        if not dispatched:
+            dispatched = True
+            if before_dispatch is not None:
+                before_dispatch()
+
     if destination.family == "local-cli":
-        # No HTTP: one turn through the model broker's host process.
-        return _local_cli_chat(destination, messages, timeout=timeout,
-                               before_dispatch=before_dispatch)
+        if not (free_only and destination.model.startswith("opencode/")):
+            # No HTTP: one turn through the model broker's host process.
+            return _local_cli_chat(destination, messages, timeout=timeout,
+                                   before_dispatch=before_dispatch_once)
+        try:
+            return _local_cli_chat(destination, messages, timeout=timeout,
+                                   before_dispatch=before_dispatch_once)
+        except ModelRouteRefused:
+            if dispatched:
+                raise
+            destination = resolve_model_route("openrouter/free")
     rows = _checked_messages(messages)
     headers = {"Content-Type": "application/json"}
     key_source = "not required"
@@ -1368,114 +1612,109 @@ def route_chat(
             cloud_session=session if isinstance(session, Mapping) else None,
         )
         headers["Authorization"] = "Bearer " + key
-    body = _body(destination, rows, max_tokens, temperature)
-    if reasoning_effort is not None:
-        body["reasoning"] = {"effort": reasoning_effort}
-    if free_only:
-        body["provider"] = {
-            "max_price": {"prompt": 0, "completion": 0, "request": 0, "image": 0},
-            "allow_fallbacks": False,
-        }
-    request = urllib.request.Request(
-        destination.url,
-        data=json.dumps(body).encode("utf-8"),
-        method="POST",
-        headers=headers,
-    )
     send = urllib.request.urlopen if opener is None else opener
-    if before_dispatch is not None:
-        before_dispatch()
-    try:
-        with send(request, timeout=timeout) as answer:
-            raw = answer.read() if response_byte_limit is None else _read_bounded_response(answer, response_byte_limit)
-            headers = getattr(answer, "headers", None)
-            kind = str(headers.get("Content-Type", "") if headers is not None else "")
-            if "text/event-stream" in kind.casefold() or raw.lstrip().startswith(b"data:"):
-                # The founder's cloud always streams (proxy.py: Server-Sent
-                # Events); a reader that expected one JSON document saw the
-                # cloud family as never answering (audit 2026-09-06).
-                payload = _payload_from_event_stream(raw, require_complete=response_byte_limit is not None)
-            else:
-                payload = json.loads(raw.decode("utf-8"))
-    except ModelRouteRefused:
-        raise
-    except urllib.error.HTTPError as refused:
-        if refused.code == 429:
-            # The status is sufficient. Do not expose provider bodies or retry
-            # a user turn merely because a different route might answer.
-            refused.close()
-            raise ModelRouteRefused(
-                "The model provider is rate-limiting requests (HTTP 429). Wait before sending again, or choose another model.",
-                reason_code="provider_rate_limited") from refused
-        if response_byte_limit is not None:
-            # A complete HTTP refusal is known; an oversized/interrupted body
-            # stays uncertain. Never expose provider body text in this path.
-            try:
-                _read_bounded_response(refused, min(response_byte_limit, 4096))
-            finally:
-                refused.close()
-            raise ModelRouteRefused("The provider refused the request: HTTP %s." % refused.code) from refused
-        detail = ""
+    attempts = _openrouter_free_attempts(destination, free_only, environ)
+    before_dispatch_once()
+    for index, attempt in enumerate(attempts):
+        body = _body(attempt, rows, max_tokens, temperature)
+        if reasoning_effort is not None:
+            body["reasoning"] = {"effort": reasoning_effort}
+        if free_only:
+            body["provider"] = {
+                "max_price": {"prompt": 0, "completion": 0, "request": 0, "image": 0},
+                "allow_fallbacks": False,
+            }
+        request = urllib.request.Request(
+            attempt.url,
+            data=json.dumps(body).encode("utf-8"),
+            method="POST",
+            headers=headers,
+        )
         try:
-            detail = refused.read().decode("utf-8", errors="replace").strip()[:240]
-        except Exception:
-            detail = ""
-        raise ModelRouteRefused(
-            "%s refused this request: HTTP %s%s. Check the key or pick another "
-            "model." % (destination.provider, refused.code, (": " + detail) if detail else "")
-        ) from refused
-    except (urllib.error.URLError, OSError) as unreachable:
-        if response_byte_limit is not None:
-            timed_out = isinstance(unreachable, TimeoutError) or isinstance(
-                getattr(unreachable, "reason", None), TimeoutError)
-            raise ModelRouteRefused("The provider request did not return a response.",
-                reason_code="dispatch_timeout" if timed_out else "dispatch_transport_uncertain") from unreachable
-        raise ModelRouteRefused(
-            "%s is not answering at %s. Start it, or pick another model."
-            % (destination.provider, _host_of(destination.url))
-        ) from unreachable
-    except ValueError as unreadable:
-        if response_byte_limit is not None:
-            raise ModelRouteRefused("The response was not complete JSON.", reason_code="response_incomplete") from unreadable
-        raise ModelRouteRefused(
-            "%s did not answer with JSON." % destination.provider
-        ) from unreadable
-    choices = payload.get("choices") if isinstance(payload, Mapping) else None
-    first = choices[0] if isinstance(choices, (list, tuple)) and choices else None
-    if response_byte_limit is not None and (
-        not isinstance(first, Mapping) or type(first.get("finish_reason")) is not str or not first["finish_reason"]
-    ):
-        raise ModelRouteRefused("The response has no completion marker.", reason_code="response_incomplete")
-    message = first.get("message") if isinstance(first, Mapping) else None
-    if (isinstance(message, Mapping) and not message.get("content")
-            and first.get("finish_reason") == "length"):
-        raise ModelRouteRefused(
-            "The model used its output budget before returning an answer.",
-            reason_code="output_truncated")
-    text = _answer_text(destination, payload)
-    if not text.strip():
-        raise ModelRouteRefused("The model returned an empty answer.", reason_code="empty_answer")
-    usage = payload.get("usage") if isinstance(payload, Mapping) else None
-    if not isinstance(usage, Mapping):
-        usage = None
-    if free_only and usage is not None and "cost" in usage:
-        cost = usage["cost"]
-        # Strict type plus equality rejects booleans, NaN and infinities too.
-        if type(cost) not in (int, float) or cost != 0:
-            raise ModelRouteRefused("The free-only request reported an invalid or nonzero cost.",
+            with send(request, timeout=timeout) as answer:
+                raw = answer.read() if response_byte_limit is None else _read_bounded_response(answer, response_byte_limit)
+                answer_headers = getattr(answer, "headers", None)
+                kind = str(answer_headers.get("Content-Type", "") if answer_headers is not None else "")
+                if "text/event-stream" in kind.casefold() or raw.lstrip().startswith(b"data:"):
+                    # The founder's cloud always streams (proxy.py: Server-Sent
+                    # Events); a reader that expected one JSON document saw the
+                    # cloud family as never answering (audit 2026-09-06).
+                    payload = _payload_from_event_stream(raw, require_complete=response_byte_limit is not None)
+                else:
+                    payload = json.loads(raw.decode("utf-8"))
+        except ModelRouteRefused:
+            raise
+        except urllib.error.HTTPError as refused:
+            failure = _http_error_refusal(attempt, refused)
+            if index + 1 < len(attempts) and _next_openrouter_free_allowed(failure):
+                continue
+            if free_only and attempt.family == "openrouter" and _next_openrouter_free_allowed(failure):
+                raise _openrouter_free_exhausted_refusal() from refused
+            raise failure from refused
+        except (urllib.error.URLError, OSError) as unreachable:
+            if response_byte_limit is not None:
+                timed_out = isinstance(unreachable, TimeoutError) or isinstance(
+                    getattr(unreachable, "reason", None), TimeoutError)
+                raise ModelRouteRefused("The provider request did not return a response.",
+                    reason_code="dispatch_timeout" if timed_out else "dispatch_transport_uncertain") from unreachable
+            raise ModelRouteRefused(
+                "%s is not answering at %s. Start it, or pick another model."
+                % (attempt.provider, _host_of(attempt.url))
+            ) from unreachable
+        except ValueError as unreadable:
+            if response_byte_limit is not None:
+                raise ModelRouteRefused("The response was not complete JSON.", reason_code="response_incomplete") from unreadable
+            raise ModelRouteRefused(
+                "%s did not answer with JSON." % attempt.provider
+            ) from unreadable
+        choices = payload.get("choices") if isinstance(payload, Mapping) else None
+        first = choices[0] if isinstance(choices, (list, tuple)) and choices else None
+        if response_byte_limit is not None and (
+            not isinstance(first, Mapping) or type(first.get("finish_reason")) is not str or not first["finish_reason"]
+        ):
+            raise ModelRouteRefused("The response has no completion marker.", reason_code="response_incomplete")
+        message = first.get("message") if isinstance(first, Mapping) else None
+        if (isinstance(message, Mapping) and not message.get("content")
+                and first.get("finish_reason") == "length"):
+            raise ModelRouteRefused(
+                "The model used its output budget before returning an answer.",
+                reason_code="output_truncated")
+        try:
+            text = _answer_text(attempt, payload)
+            if not text.strip():
+                raise ModelRouteRefused("The model returned an empty answer.", reason_code="empty_answer")
+        except ModelRouteRefused as refused:
+            if index + 1 < len(attempts) and _next_openrouter_free_allowed(refused):
+                continue
+            if free_only and attempt.family == "openrouter" and _next_openrouter_free_allowed(refused):
+                raise _openrouter_free_exhausted_refusal() from refused
+            raise
+        usage = payload.get("usage") if isinstance(payload, Mapping) else None
+        if not isinstance(usage, Mapping):
+            usage = None
+        if free_only and usage is not None and "cost" in usage:
+            cost = usage["cost"]
+            # Strict type plus equality rejects booleans, NaN and infinities too.
+            if type(cost) not in (int, float) or cost != 0:
+                raise ModelRouteRefused("The free-only request reported an invalid or nonzero cost.",
+                    reason_code="invalid_cost")
+        actual_model = payload.get("model") if isinstance(payload, Mapping) else None
+        if free_only and isinstance(actual_model, str) and actual_model and not actual_model.endswith(":free"):
+            raise ModelRouteRefused("The free-only request reported a non-free actual model.",
                 reason_code="invalid_cost")
-    return {
-        "ok": True,
-        "text": text,
-        "family": destination.family,
-        "model": destination.model,
-        "actual_model": payload.get("model") if isinstance(payload, Mapping) else None,
-        "url": destination.url,
-        "provider": destination.provider,
-        "key_source": key_source,
-        "usage": usage,
-        "finish_reason": first.get("finish_reason") if isinstance(first, Mapping) else None,
-    }
+        return {
+            "ok": True,
+            "text": text,
+            "family": attempt.family,
+            "model": attempt.model,
+            "actual_model": actual_model,
+            "url": attempt.url,
+            "provider": attempt.provider,
+            "key_source": key_source,
+            "usage": usage,
+            "finish_reason": first.get("finish_reason") if isinstance(first, Mapping) else None,
+        }
+    raise ModelRouteRefused("%s did not return an answer." % destination.provider)
 
 
 __all__ = [

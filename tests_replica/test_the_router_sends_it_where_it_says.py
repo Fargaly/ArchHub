@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from nodelang import model_catalogue
+from nodelang import model_catalogue, model_router
 from nodelang.model_router import (
     LM_STUDIO_CHAT,
     ModelRouteRefused,
@@ -77,6 +77,27 @@ def _openai_answer(text):
 ASK = [{"role": "user", "content": "how many walls"}]
 
 
+class _SequenceWire:
+    """HTTP fake that returns one payload per call."""
+
+    def __init__(self, payloads):
+        self.payloads = list(payloads)
+        self.sent = []
+
+    def __call__(self, request, timeout=None):
+        self.sent.append(request)
+        if not self.payloads:
+            raise AssertionError("unexpected extra provider call")
+        payload = self.payloads.pop(0)
+        if isinstance(payload, BaseException):
+            raise payload
+        return _Answer(json.dumps(payload).encode("utf-8"))
+
+    @property
+    def bodies(self):
+        return [json.loads(request.data.decode("utf-8")) for request in self.sent]
+
+
 def test_a_local_lm_studio_model_reaches_lm_studio_and_nothing_else():
     wire = _Wire(_openai_answer("47 walls"))
     out = route_chat("lmstudio/qwen2.5-coder-7b", ASK, opener=wire,
@@ -127,6 +148,278 @@ def test_an_explicit_openrouter_free_model_keeps_its_vendor_id_and_zero_price_gu
     assert wire.body["provider"]["allow_fallbacks"] is False
     assert wire.body["provider"]["max_price"]["request"] == 0
     assert out["family"] == "openrouter"
+
+
+def test_openrouter_error_object_surfaces_message_without_shape_refusal():
+    wire = _Wire({"error": {"message": "rate limited, try again in 20 s"}})
+    with pytest.raises(ModelRouteRefused, match="OpenRouter: rate limited, try again in 20 s") as failure:
+        route_chat("deepseek/deepseek-r1", ASK, opener=wire,
+                   environ={"OPENROUTER_API_KEY": "or-live-key"},
+                   secrets_loader=NO_SECRETS, cloud_session=None)
+    assert len(wire.sent) == 1
+    assert "shape this app does not read" not in str(failure.value)
+
+
+def test_openrouter_free_http_errors_rotate_until_neutral_exhaustion():
+    wire = _SequenceWire([
+        urllib.error.HTTPError(
+            OPENROUTER_CHAT, 429, "Too Many Requests", {},
+            io.BytesIO(b'{"error":{"message":"first free model is rate limited"}}'),
+        ),
+        urllib.error.HTTPError(
+            OPENROUTER_CHAT, 503, "Service Unavailable", {},
+            io.BytesIO(b'{"error":{"message":"second free model is unavailable"}}'),
+        ),
+        urllib.error.HTTPError(
+            OPENROUTER_CHAT, 503, "Service Unavailable", {},
+            io.BytesIO(b'{"error":{"message":"third free model is unavailable"}}'),
+        ),
+    ])
+    with pytest.raises(ModelRouteRefused) as failure:
+        route_chat("openrouter/free", ASK, opener=wire,
+                   environ={"OPENROUTER_API_KEY": "or-live-key",
+                            "OPENROUTER_FREE_MODELS": "one/free:free,two/free:free"},
+                   secrets_loader=NO_SECRETS, cloud_session=None, free_only=True)
+    assert str(failure.value) == "No free model answered right now. Try again shortly."
+    assert [body["model"] for body in wire.bodies] == ["openrouter/free", "one/free:free", "two/free:free"]
+    assert "first free model" not in str(failure.value)
+
+
+def test_openrouter_free_first_attempt_body_matches_the_head_router_contract():
+    wire = _SequenceWire([{**_openai_answer("router answered"), "model": "some/free:free"}])
+    out = route_chat("openrouter/free", ASK, opener=wire,
+                     environ={"OPENROUTER_API_KEY": "or-live-key",
+                              "OPENROUTER_FREE_MODELS": "one/free:free,two/free:free"},
+                     secrets_loader=NO_SECRETS, cloud_session=None, free_only=True)
+    assert out["text"] == "router answered"
+    assert len(wire.sent) == 1
+    assert wire.bodies[0] == {
+        "model": "openrouter/free",
+        "messages": ASK,
+        "max_tokens": 900,
+        "temperature": 0.0,
+        "provider": {
+            "max_price": {"prompt": 0, "completion": 0, "request": 0, "image": 0},
+            "allow_fallbacks": False,
+        },
+    }
+
+
+def test_openrouter_free_404_unavailable_for_free_rotates_to_next_free_model():
+    wire = _SequenceWire([
+        urllib.error.HTTPError(
+            OPENROUTER_CHAT, 404, "Not Found", {},
+            io.BytesIO(b'{"error":{"message":"This model is unavailable for free."}}'),
+        ),
+        {**_openai_answer("fallback free"), "model": "one/free:free"},
+    ])
+    out = route_chat("openrouter/free", ASK, opener=wire,
+                     environ={"OPENROUTER_API_KEY": "or-live-key",
+                              "OPENROUTER_FREE_MODELS": "one/free:free,two/free:free"},
+                     secrets_loader=NO_SECRETS, cloud_session=None, free_only=True)
+    assert out["text"] == "fallback free"
+    assert [body["model"] for body in wire.bodies] == ["openrouter/free", "one/free:free"]
+
+
+def test_openrouter_free_never_relays_paid_slug_advice():
+    paid_slug = "mistralai/mistral-small-3.2-24b-instruct"
+    wire = _SequenceWire([
+        urllib.error.HTTPError(
+            OPENROUTER_CHAT, 404, "Not Found", {},
+            io.BytesIO(json.dumps({"error": {"message": (
+                "OpenRouter: This model is unavailable for free. The paid version "
+                "is available now - use this slug instead: %s" % paid_slug)}}).encode("utf-8")),
+        ),
+        urllib.error.HTTPError(
+            OPENROUTER_CHAT, 404, "Not Found", {},
+            io.BytesIO(json.dumps({"error": {"message": (
+                "No endpoints found for %s; paid version only." % paid_slug)}}).encode("utf-8")),
+        ),
+    ])
+    with pytest.raises(ModelRouteRefused) as failure:
+        route_chat("openrouter/free", ASK, opener=wire,
+                   environ={"OPENROUTER_API_KEY": "or-live-key",
+                            "OPENROUTER_FREE_MODELS": "one/free:free"},
+                   secrets_loader=NO_SECRETS, cloud_session=None, free_only=True)
+    said = str(failure.value)
+    assert said == "No free model answered right now. Try again shortly."
+    assert "paid version" not in said.casefold()
+    assert "use this slug" not in said.casefold()
+    assert paid_slug not in said
+
+
+def test_openrouter_free_exhaustion_gives_neutral_message():
+    wire = _SequenceWire([
+        urllib.error.HTTPError(
+            OPENROUTER_CHAT, 400, "Bad Request", {},
+            io.BytesIO(b'{"error":{"message":"not free; no endpoints found"}}'),
+        ),
+        urllib.error.HTTPError(
+            OPENROUTER_CHAT, 404, "Not Found", {},
+            io.BytesIO(b'{"error":{"message":"model unavailable for free"}}'),
+        ),
+    ])
+    with pytest.raises(ModelRouteRefused) as failure:
+        route_chat("openrouter/free", ASK, opener=wire,
+                   environ={"OPENROUTER_API_KEY": "or-live-key",
+                            "OPENROUTER_FREE_MODELS": "one/free:free"},
+                   secrets_loader=NO_SECRETS, cloud_session=None, free_only=True)
+    assert str(failure.value) == "No free model answered right now. Try again shortly."
+
+
+def test_opencode_free_post_dispatch_failure_does_not_replay_to_openrouter(monkeypatch):
+    class Broker:
+        def __init__(self):
+            self.calls = []
+
+        def local_cli_executable(self, assistant):
+            return "C:/tools/opencode.exe" if assistant == "opencode" else None
+
+        def chat(self, assistant, model, messages, *, timeout_seconds):
+            self.calls.append((assistant, model, messages, timeout_seconds))
+            return {"ok": False, "error_code": "invalid_model_output"}
+
+    broker = Broker()
+    wire = _SequenceWire([{**_openai_answer("fallback free"), "model": "one/free:free"}])
+    guard_calls = []
+    monkeypatch.setattr(model_router, "installed_cli_version",
+                        lambda executable, **_k: model_router._CLI_VERIFIED_VERSIONS["opencode"])
+    model_router.bind_local_cli_broker(broker)
+    try:
+        with pytest.raises(ModelRouteRefused, match="OpenCode .* did not answer"):
+            route_chat("local-cli/opencode", ASK, opener=wire,
+                       environ={"OPENROUTER_API_KEY": "or-live-key",
+                                "OPENROUTER_FREE_MODELS": "one/free:free,two/free:free"},
+                       secrets_loader=NO_SECRETS, cloud_session=None, free_only=True,
+                       before_dispatch=lambda: guard_calls.append("once"))
+    finally:
+        model_router.bind_local_cli_broker(None)
+    assert len(broker.calls) == 1
+    assert len(wire.sent) == 0
+    assert guard_calls == ["once"]
+
+
+def test_opencode_free_pre_dispatch_failure_falls_through_once_to_openrouter(monkeypatch):
+    class Broker:
+        def __init__(self):
+            self.calls = []
+
+        def local_cli_executable(self, assistant):
+            return None
+
+        def chat(self, assistant, model, messages, *, timeout_seconds):
+            self.calls.append((assistant, model, messages, timeout_seconds))
+            raise AssertionError("pre-dispatch failure must not call the broker chat")
+
+    broker = Broker()
+    wire = _SequenceWire([{**_openai_answer("fallback free"), "model": "one/free:free"}])
+    monkeypatch.setattr(model_router, "installed_cli_version",
+                        lambda executable, **_k: model_router._CLI_VERIFIED_VERSIONS["opencode"])
+    model_router.bind_local_cli_broker(broker)
+    try:
+        out = route_chat("local-cli/opencode", ASK, opener=wire,
+                         environ={"OPENROUTER_API_KEY": "or-live-key",
+                                  "OPENROUTER_FREE_MODELS": "one/free:free,two/free:free"},
+                         secrets_loader=NO_SECRETS, cloud_session=None, free_only=True)
+    finally:
+        model_router.bind_local_cli_broker(None)
+    assert out["text"] == "fallback free"
+    assert out["family"] == "openrouter"
+    assert len(broker.calls) == 0
+    assert len(wire.sent) == 1
+    assert wire.bodies[0]["model"] == "openrouter/free"
+
+
+def test_openrouter_free_rejects_a_paid_actual_model():
+    wire = _Wire({**_openai_answer("paid answer"), "model": "openai/gpt-4o"})
+    with pytest.raises(ModelRouteRefused, match="non-free actual model"):
+        route_chat("openrouter/free", ASK, opener=wire,
+                   environ={"OPENROUTER_API_KEY": "or-live-key",
+                            "OPENROUTER_FREE_MODELS": "one/free:free"},
+                   secrets_loader=NO_SECRETS, cloud_session=None, free_only=True)
+    assert len(wire.sent) == 1
+
+
+def test_provider_error_text_redacts_token_like_values():
+    fake_key = "sk" + "-proj-" + ("A" * 26) + "0123456789"
+    fake_bearer = "Bear" + "er " + ("a" * 26) + ("Z" * 26) + "0123456789"
+    wire = _Wire(raises=urllib.error.HTTPError(
+        OPENROUTER_CHAT, 400, "Bad Request", {},
+        io.BytesIO(json.dumps({"error": {"message": "bad key=%s and %s" % (
+            fake_key, fake_bearer)}}).encode("utf-8")),
+    ))
+    with pytest.raises(ModelRouteRefused) as failure:
+        route_chat("deepseek/deepseek-r1", ASK, opener=wire,
+                   environ={"OPENROUTER_API_KEY": "or-live-key"},
+                   secrets_loader=NO_SECRETS, cloud_session=None)
+    said = str(failure.value)
+    assert fake_key not in said
+    assert fake_bearer not in said
+    assert "[redacted]" in said
+
+
+def test_provider_error_text_keeps_long_words_while_redacting_credentials():
+    long_word = "supercalifragilisticexpialidociouspseudopseudohypoparathyroidism"
+    fake_key = "sk-" + ("A" * 24) + "12345678"
+    wire = _Wire(raises=urllib.error.HTTPError(
+        OPENROUTER_CHAT, 400, "Bad Request", {},
+        io.BytesIO(json.dumps({"error": {"message": "word %s key %s" % (
+            long_word, fake_key)}}).encode("utf-8")),
+    ))
+    with pytest.raises(ModelRouteRefused) as failure:
+        route_chat("deepseek/deepseek-r1", ASK, opener=wire,
+                   environ={"OPENROUTER_API_KEY": "or-live-key"},
+                   secrets_loader=NO_SECRETS, cloud_session=None)
+    said = str(failure.value)
+    assert long_word in said
+    assert fake_key not in said
+    assert "[redacted]" in said
+
+
+def test_openrouter_free_empty_content_falls_to_next_free_default():
+    wire = _SequenceWire([
+        {**_openai_answer(""), "model": "mistralai/mistral-small-3.2-24b-instruct:free"},
+        {**_openai_answer("fallback ok"), "model": "deepseek/deepseek-chat-v3-0324:free"},
+    ])
+    started = []
+    out = route_chat("openrouter/free", ASK, opener=wire,
+                     environ={"OPENROUTER_API_KEY": "or-live-key"},
+                     secrets_loader=NO_SECRETS, cloud_session=None, free_only=True,
+                     before_dispatch=lambda: started.append("once"))
+    assert [body["model"] for body in wire.bodies] == [
+        "openrouter/free",
+        "mistralai/mistral-small-3.2-24b-instruct:free",
+    ]
+    assert out["text"] == "fallback ok"
+    assert out["actual_model"] == "deepseek/deepseek-chat-v3-0324:free"
+    assert started == ["once"]
+
+
+def test_openrouter_free_reasoning_only_falls_to_next_free_default():
+    wire = _SequenceWire([
+        {"choices": [{"message": {"role": "assistant", "reasoning": "hidden chain"},
+                      "finish_reason": "stop"}],
+         "model": "mistralai/mistral-small-3.2-24b-instruct:free"},
+        {**_openai_answer("normal answer"), "model": "deepseek/deepseek-chat-v3-0324:free"},
+    ])
+    out = route_chat("openrouter/free", ASK, opener=wire,
+                     environ={"OPENROUTER_API_KEY": "or-live-key"},
+                     secrets_loader=NO_SECRETS, cloud_session=None, free_only=True)
+    assert len(wire.sent) == 2
+    assert out["text"] == "normal answer"
+
+
+def test_openrouter_free_normal_content_does_not_fallback():
+    wire = _SequenceWire([
+        {**_openai_answer("normal answer"), "model": "mistralai/mistral-small-3.2-24b-instruct:free"},
+        {**_openai_answer("must not be asked"), "model": "deepseek/deepseek-chat-v3-0324:free"},
+    ])
+    out = route_chat("openrouter/free", ASK, opener=wire,
+                     environ={"OPENROUTER_API_KEY": "or-live-key"},
+                     secrets_loader=NO_SECRETS, cloud_session=None, free_only=True)
+    assert len(wire.sent) == 1
+    assert wire.bodies[0]["model"] == "openrouter/free"
+    assert out["text"] == "normal answer"
 
 
 def test_a_cloud_model_reaches_the_founders_cloud_with_his_session():

@@ -4,6 +4,7 @@
   const fail = text => { throw new Error(text); };
   const text = value => typeof value === 'string' && value.length > 0;
   const revision = value => Number.isSafeInteger(value) && value >= 0;
+  const sameJson = (left, right) => JSON.stringify(left) === JSON.stringify(right);
   const storageName = 'archhub.existing-workshop.pending.v1';
   const releaseStorageName = 'archhub.existing-workshop.releases.v1';
   // nodelang/work_proposals.py MARKER: an agent's Work proposal is this line, then its document.
@@ -1477,6 +1478,11 @@
         if (canvas && value.graph_id === canvas.graph_id && value.revision < canvas.revision) {
           fail('The Workshop scope is stale.');
         }
+        const unavailable = typeof value.unavailable === 'string' ? value.unavailable.slice(0, 300) : '';
+        const nextWorkshops = value.workshops.map(row => ({...row}));
+        if (canvas && value.graph_id === canvas.graph_id && value.root === canvas.root &&
+            value.revision === canvas.revision && unavailable === canvas.unavailable &&
+            sameJson(nextWorkshops, workshops)) return;
         const scopeChanged = !canvas || value.graph_id !== canvas.graph_id || value.root !== canvas.root;
         if (workshops.some(row => !value.workshops.some(next => next.root === row.root))) membershipEpoch += 1;
         if (scopeChanged || (conversationCatalogPage && !value.workshops.some(row => row.root === conversationCatalogPage.root)) ||
@@ -1496,9 +1502,8 @@
             ? {...pageTarget} : null;
           pageEpoch += 1;
         }
-        canvas = {graph_id:value.graph_id, root:value.root, revision:value.revision,
-          unavailable:typeof value.unavailable === 'string' ? value.unavailable.slice(0, 300) : ''};
-        workshops = value.workshops.map(row => ({...row}));
+        canvas = {graph_id:value.graph_id, root:value.root, revision:value.revision, unavailable};
+        workshops = nextWorkshops;
         if (workshop && !workshops.some(row => row.root === workshop.root)) { epoch += 1; workshop = null; }
         publish();
       },

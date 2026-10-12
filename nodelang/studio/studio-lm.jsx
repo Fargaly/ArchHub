@@ -1177,6 +1177,7 @@ let toolHubTimer = null;
 let toolHubController = null;
 let toolHubInFlight = false;
 let toolHubListeningVisibility = false;
+let toolHubSnapshotSignature = toolHubSnapshot ? JSON.stringify(toolHubSnapshot) : '';
 const toolHubSubscribers = new Set();
 const getToolHubSnapshot = () => toolHubSnapshot || window.ARCHHUB_TOOL_HUB || null;
 const notifyToolHubSubscribers = () => {
@@ -1224,6 +1225,9 @@ const readToolHubProjection = () => {
       waiting_payload:waiting && typeof waiting === 'object' ? waiting : null,
     };
     if (!Array.isArray(payload.tools)) return null;
+    const signature = JSON.stringify(payload);
+    if (signature === toolHubSnapshotSignature) return toolHubSnapshot;
+    toolHubSnapshotSignature = signature;
     toolHubSnapshot = payload;
     window.ARCHHUB_TOOL_HUB = payload;
     notifyToolHubSubscribers();

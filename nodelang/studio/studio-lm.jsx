@@ -1796,6 +1796,7 @@ const _SEED_SKILLS = [
 ];
 
 const catalogueStates = new Map(), catalogueListeners = new Set();
+const CATALOGUE_TIMEOUT_MS = 15000;
 let catalogueVersion = 0;
 const catalogueChanged = () => {
   catalogueVersion += 1;
@@ -1811,7 +1812,13 @@ const loadCatalogue = (loaderName, items) => {
   if (state?.pending) return state.pending;
   state = {loading:true, error:'', pending:null};
   catalogueStates.set(loaderName, state);
-  state.pending = Promise.resolve().then(load).then(result => {
+  // Wait at most CATALOGUE_TIMEOUT_MS (window.ARCHHUB_CATALOGUE_TIMEOUT_MS overrides it); then say so and offer Retry.
+  const waitMs = Number(window.ARCHHUB_CATALOGUE_TIMEOUT_MS) > 0 ? Number(window.ARCHHUB_CATALOGUE_TIMEOUT_MS) : CATALOGUE_TIMEOUT_MS;
+  let timer = null;
+  const later = typeof window.setTimeout === 'function' ? window.setTimeout.bind(window) : null;
+  const timeout = later ? new Promise((_, reject) => { timer = later(() => reject(new Error(
+    'This list did not answer in ' + Math.round(waitMs / 1000) + ' seconds.')), waitMs); }) : null;
+  state.pending = (timeout ? Promise.race([Promise.resolve().then(load), timeout]) : Promise.resolve().then(load)).then(result => {
     const rows = loaderName === 'ARCHHUB_LOAD_HOSTS' ? result.hosts : result;
     const connectors = loaderName === 'ARCHHUB_LOAD_HOSTS' ? window.ARCHHUB_LIVE?.connectors : null;
     if (!Array.isArray(rows) || (loaderName === 'ARCHHUB_LOAD_HOSTS' &&
@@ -1824,7 +1831,7 @@ const loadCatalogue = (loaderName, items) => {
       connectors.splice(0, connectors.length, ...result.connectors);
     }
   }).catch(error => {state.error = error.message || 'Catalogue unavailable.';})
-    .finally(() => {state.loading = false; state.pending = null; catalogueChanged();});
+    .finally(() => {if (timer !== null && typeof window.clearTimeout === 'function') window.clearTimeout(timer); state.loading = false; state.pending = null; catalogueChanged();});
   catalogueChanged();
   return state.pending;
 };
@@ -1836,11 +1843,11 @@ const withLiveCatalogue = (loaderName, items, View) => props => {
   return <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
     {status.loading && <p role="status" style={{ margin:0, padding:'8px 12px 0', fontFamily:LM.mono, fontSize:10, color:LM.inkMuted }}>Loading catalogue…</p>}
     {status.error && <p role="alert" style={{ margin:0, padding:'8px 12px 0', fontSize:12, color:LM.inkSoft }}>{status.error} <button onClick={() => loadCatalogue(loaderName, items)}>Retry</button></p>}
-    <View {...props}/>
+    <View {...props} catalogue={status}/>
   </div>;
 };
 
-const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, () => (
+const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, ({ catalogue = {} }) => (
   <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
     <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:LM.sp.sm }}>
       <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Skills</span>
@@ -1874,6 +1881,12 @@ const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, ()
           </div>
         </div>
       ))}
+      {!LM_SAVED_SKILLS.length && !catalogue.loading && !catalogue.error && <div data-skills-empty="" role="status" style={{
+        padding:'14px 10px', fontFamily:LM.serif, fontStyle:'italic', fontSize:13.5, color:LM.inkSoft, lineHeight:1.45 }}>
+        No saved skills yet.
+        <div style={{ fontFamily:LM.sans, fontStyle:'normal', fontSize:12, color:LM.inkMuted, marginTop:4 }}>
+          Skills saved from finished work appear here, and Search counts the same list.</div>
+      </div>}
     </div>
   </div>
 ));

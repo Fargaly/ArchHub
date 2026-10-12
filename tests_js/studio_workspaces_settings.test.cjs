@@ -13,12 +13,13 @@ const seedText = read('nodelang/universal_presentation_seed.py').match(/^THEME =
 const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)]
   .map(match => [match[1], match[2]]));
 const PROMISE = 'Removing a workspace only stops ArchHub from governing it. Your files are never deleted.';
+const AGENTS = ['claude','codex','gemini','opencode','antigravity','cursor','windsurf','zed','aider'];
 
 const view = (boot, projection, roots = [], pinned = roots.length > 0) => ({
   ok:true, revision:1, boot, projection, key_pinned:pinned, promise:PROMISE,
   built_in:{id:'archhub', path:'C:\\Users\\fargaly\\00.ARCHUB', removable:false},
   roots:roots.map(id => ({root_id:id, path:'D:\\Clients\\' + id, privacy:'private', profile:'client',
-    writers:['claude'], state:'registered', registered_at:'2026-09-29T00:00:00Z'})),
+    writers:[...AGENTS], state:'registered', registered_at:'2026-09-29T00:00:00Z'})),
 });
 
 async function mount(answers) {
@@ -70,7 +71,13 @@ async function mount(answers) {
     setter.call(input, value);
     win.eval('(el => ReactDOM.flushSync(() => el.dispatchEvent(new Event("input", {bubbles:true}))))')(input);
   };
-  return {win, doc, requests, renewals, click, settle, button, typePath,
+  const typeName = value => {
+    const input = doc.querySelector('[aria-label="Workspace name"]');
+    const setter = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set;
+    setter.call(input, value);
+    win.eval('(el => ReactDOM.flushSync(() => el.dispatchEvent(new Event("input", {bubbles:true}))))')(input);
+  };
+  return {win, doc, requests, renewals, click, settle, button, typePath, typeName,
     close: () => { win.eval('window.__studioRoot.unmount()'); win.close(); }};
 }
 
@@ -209,5 +216,66 @@ test('Browse fills the folder from the Windows dialog and registers nothing', as
     await ui.settle();
     assert.equal(ui.doc.querySelector('[aria-label="Workspace folder"]').value, 'E:\\01.PERSONAL');
     assert.deepEqual(ui.requests.map(item => item.action), ['list', 'browse'], 'Browse sends no register');
+  } finally { ui.close(); }
+});
+
+test('Workspaces page removes permit profile writer and key wording from the visible UI', async () => {
+  const ui = await mount([view('match', 'match', ['alpha'])]);
+  try {
+    await ui.settle();
+    const title = [...ui.doc.querySelectorAll('div')].find(item => item.textContent.trim() === 'Workspaces');
+    assert.ok(title, 'Workspaces title is visible');
+    const panel = title.parentElement.parentElement;
+    const text = panel.textContent;
+    assert.ok(text.includes('Private workspaces are never shared publicly.'));
+    assert.ok(!/permits/i.test(text), 'visible UI must not mention permits');
+    assert.ok(!/Profile:/i.test(text), 'visible UI must not mention profiles');
+    assert.ok(!/writers/i.test(text), 'visible UI must not mention writers');
+    assert.ok(!/key/i.test(text), 'visible UI must not mention keys');
+    assert.equal(ui.button('Grant claude write access'), undefined);
+    assert.equal(ui.button('Revoke'), undefined);
+  } finally { ui.close(); }
+});
+
+test('Add sends a slugged name, private privacy, and all agents without profile or approval wording', async () => {
+  const ui = await mount([view('missing', 'missing'), view('match', 'match', ['bbc4'])]);
+  try {
+    await ui.settle();
+    ui.typePath('E:\\01.PERSONAL\\BBC4');
+    ui.typeName('BBC4');
+    await ui.settle();
+    ui.click(ui.button('Add'));
+    await ui.settle(80);
+    assert.deepEqual(ui.requests[1], {
+      action:'register',
+      id:'BBC4',
+      path:'E:\\01.PERSONAL\\BBC4',
+      privacy:'private',
+      writers:AGENTS,
+    });
+    assert.ok(!ui.doc.body.textContent.includes('Approve the Windows prompt'));
+  } finally { ui.close(); }
+});
+
+test('each workspace row has one immediate writer toggle per agent', async () => {
+  const after = view('match', 'match', ['alpha']);
+  after.roots[0].writers = AGENTS.filter(agent => agent !== 'codex');
+  const ui = await mount([view('match', 'match', ['alpha']), after]);
+  try {
+    await ui.settle();
+    for (const agent of AGENTS) {
+      assert.ok(ui.doc.querySelector(`[aria-label="Allow ${agent} to write alpha"]`),
+        `missing ${agent} writer toggle`);
+    }
+    const codex = ui.doc.querySelector('[aria-label="Allow codex to write alpha"]');
+    assert.equal(codex.checked, true);
+    ui.click(codex);
+    await ui.settle(80);
+    assert.deepEqual(ui.requests[1], {
+      action:'update-writers',
+      id:'alpha',
+      writers:AGENTS.filter(agent => agent !== 'codex'),
+    });
+    assert.equal(ui.doc.querySelector('[aria-label="Allow codex to write alpha"]').checked, false);
   } finally { ui.close(); }
 });

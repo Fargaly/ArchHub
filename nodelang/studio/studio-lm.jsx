@@ -8614,11 +8614,11 @@ const SettingsOperations = () => {
 // is written. The hooks read the signed projection. Nothing here ever deletes a file.
 const WORKSPACE_CHECK_MS = 1500;
 const WORKSPACE_CHECK_READS = 40;
-const WORKSPACE_APPROVE = 'Approve the Windows prompt to continue';
-// The owner declined (or closed) the Windows prompt: nothing was written.
+const WORKSPACE_CHANGE = 'Saving workspace';
 const workspaceRefusal = message => /^the owner did not approve/i.test(String(message || ''))
-  ? 'The Windows prompt was declined or closed. Nothing was changed.' : message;
+  ? 'The workspace change was not saved. Try again from Settings > Workspaces.' : message;
 const WORKSPACE_PROMISE = 'Removing a workspace only stops ArchHub from governing it. Your files are never deleted.';
+const WORKSPACE_AGENTS = ['claude','codex','gemini','opencode','antigravity','cursor','windsurf','zed','aider'];
 const workspaceSlug = path => String(path || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop()
   .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63);
 async function workspaceRoots(body, renewed) {
@@ -8659,7 +8659,6 @@ const SettingsWorkspaces = () => {
   React.useEffect(() => { read(); }, []);
   const registered = (view?.roots || []).filter(r => r.state === 'registered');
   const history = (view?.roots || []).filter(r => r.state !== 'registered');
-  const privateGrants = (view?.private_grants || []).filter(g => !g.revoked);
   const boot = view?.boot;
   const checking = boot === 'checking';
   // Changes are offered only when the start-up check and this read agree the hooks'
@@ -8675,13 +8674,10 @@ const SettingsWorkspaces = () => {
   const add = async () => {
     if (!ready || busy) return;
     const id = rootId || workspaceSlug(path);
-    const done = await run(WORKSPACE_APPROVE, {
-      action:'register', id, path:path.trim(), privacy, profile:'client',
-      writers:['claude','codex','gemini','opencode','antigravity','cursor','windsurf','zed','aider'] });
+    const done = await run(WORKSPACE_CHANGE, {
+      action:'register', id, path:path.trim(), privacy, writers:WORKSPACE_AGENTS });
     if (done) { setPath(''); setRootId(''); setPrivacy('private'); }
   };
-  // Browse: Windows' own folder dialog picks the folder; only the path comes back,
-  // and Add still asks for the owner's key.
   const browse = async () => {
     if (busy) return;
     setBusy('Choose the folder in the Windows dialog'); setError('');
@@ -8689,21 +8685,13 @@ const SettingsWorkspaces = () => {
     catch (e) { setError(e.message); }
     finally { setBusy(''); }
   };
-  const grantWriter = async (root, writer) => {
+  const toggleWriter = async (root, writer) => {
     if (!ready || busy) return;
-    const sessionId = window.prompt('Agent Session root to grant');
-    if (!sessionId) return;
-    await run('Granting private write access', {
-      action:'grant-private-root', id:root.root_id, runtime:writer,
-      session_id:sessionId.trim(), operations:['edit_file','apply_patch','write_file','create'],
-    });
-  };
-  const revokeWriter = async (root, writer) => {
-    if (!ready || busy) return;
-    const sessionId = window.prompt('Agent Session root to revoke');
-    if (!sessionId) return;
-    await run('Revoking private write access', {
-      action:'revoke-private-root', id:root.root_id, runtime:writer, session_id:sessionId.trim(),
+    const current = new Set(root.writers || []);
+    if (current.has(writer)) current.delete(writer); else current.add(writer);
+    await run(WORKSPACE_CHANGE, {
+      action:'update-writers', id:root.root_id,
+      writers:WORKSPACE_AGENTS.filter(agent => current.has(agent)),
     });
   };
   const row = { padding:'10px 14px', display:'flex', alignItems:'center', gap:LM.sp.md };
@@ -8714,7 +8702,7 @@ const SettingsWorkspaces = () => {
     padding:'6px 9px', fontFamily:LM.sans, fontSize:13 };
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
-      <SHead title="Workspaces" sub="Folders ArchHub governs besides its own. Agents write inside a workspace only through ArchHub's permits; a private workspace is never read by a public session."/>
+      <SHead title="Workspaces" sub="Private workspaces are never shared publicly."/>
       {checking && (
         <div role="status" style={{ fontSize:12, color:LM.inkSoft }}>
           Checking the registry the governance hooks read against the graph{'\u2026'} Changes wait for the check.
@@ -8725,7 +8713,7 @@ const SettingsWorkspaces = () => {
           background:LM.warn + '12', display:'flex', alignItems:'center', gap:LM.sp.md, fontSize:13 }}>
           <span style={{ flex:1 }}>The registry the governance hooks read does not match the graph (start-up check: {boot}; now: {view.projection}). Changes are paused until it is republished.</span>
           {view.key_pinned && (
-            <button disabled={!!busy} onClick={() => { if (!busy && mismatch && view.key_pinned) run(WORKSPACE_APPROVE, { action:'republish' }); }}
+            <button disabled={!!busy} onClick={() => { if (!busy && mismatch && view.key_pinned) run(WORKSPACE_CHANGE, { action:'republish' }); }}
               style={{ ...smallBtn(true), padding:'4px 10px' }}>Republish</button>
           )}
         </div>
@@ -8742,18 +8730,21 @@ const SettingsWorkspaces = () => {
           <div key={r.root_id} style={{ ...row, borderTop:`1px solid ${LM.lineSoft}` }}>
             <div style={{ flex:1, minWidth:0 }}>
               <div style={{ fontSize:13, fontWeight:500 }}>{r.root_id}</div>
-              <div style={mono}>{r.path} · {r.profile} · {(r.writers || []).join(', ')}</div>
+              <div style={mono}>{r.path}</div>
               {r.privacy === 'private' && (
-                <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginTop:6 }}>
-                  {(r.writers || []).map(w => {
-                    const active = privateGrants.some(g => g.root_id === r.root_id && g.runtime === w);
+                <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginTop:8 }}>
+                  {WORKSPACE_AGENTS.map(w => {
+                    const active = (r.writers || []).includes(w);
                     return (
-                      <React.Fragment key={w}>
-                        <button disabled={!!busy || !ready} onClick={() => grantWriter(r, w)}
-                          style={{ ...smallBtn(active), padding:'2px 7px' }}>Grant {w} write access</button>
-                        <button disabled={!!busy || !ready || !active} onClick={() => revokeWriter(r, w)}
-                          style={{ ...smallBtn(), padding:'2px 7px' }}>Revoke</button>
-                      </React.Fragment>
+                      <label key={w} style={{ display:'inline-flex', alignItems:'center', gap:5,
+                        padding:'2px 7px', border:`1px solid ${active ? LM.ok : LM.line}`,
+                        borderRadius:LM.rad.xs, fontFamily:LM.mono, fontSize:9,
+                        color:active ? LM.ink : LM.inkMuted, textTransform:'uppercase' }}>
+                        <input type="checkbox" checked={active} disabled={!!busy || !ready}
+                          aria-label={`Allow ${w} to write ${r.root_id}`}
+                          onChange={() => toggleWriter(r, w)}/>
+                        {w}
+                      </label>
                     );
                   })}
                 </div>
@@ -8775,7 +8766,7 @@ const SettingsWorkspaces = () => {
           <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
             <button onClick={() => setConfirming(null)} style={{ ...smallBtn(), padding:'4px 10px' }}>Keep it</button>
             <button disabled={!!busy || !ready} onClick={async () => { if (!ready || busy) return; const r = confirming; setConfirming(null);
-              await run(WORKSPACE_APPROVE, { action:'unregister', id:r.root_id }); }}
+              await run(WORKSPACE_CHANGE, { action:'unregister', id:r.root_id }); }}
               style={{ ...smallBtn(true), padding:'4px 10px' }}>Stop governing</button>
           </div>
         </div>
@@ -8799,9 +8790,6 @@ const SettingsWorkspaces = () => {
           Workspaces are added in Settings > Workspaces after the workspace registry check passes.
         </div>
       )}
-      <div style={{ fontFamily:LM.sans, fontSize:12, color:LM.inkMuted, lineHeight:1.5 }}>
-        Profile: client. Adding or removing asks Windows to confirm with your ArchHub key; nothing changes if you decline. {WORKSPACE_PROMISE}
-      </div>
       {busy && <div role="status" style={{ fontSize:12, color:LM.inkSoft }}>{busy}{'\u2026'}</div>}
       {view && error && <div role="alert" style={{ fontSize:12, color:LM.err || LM.warn }}>{error}</div>}
       {history.length > 0 && (

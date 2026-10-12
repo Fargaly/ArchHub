@@ -99,7 +99,9 @@ SNAPSHOT_VERSION = 3
 PIN_FORMAT = "archhub.workspace-roots-pin"
 KEY_NAME = "ArchHub-workspace-roots-v1"
 KEY_ID = "cng:" + KEY_NAME
+APP_KEY_ID = "app:ArchHub-workspace-roots-v1"
 OWNER_OPENED = "owner-opened"
+APP_WRITTEN = "app-written"
 MAX_ROOTS = 64
 MAX_REMOVED = 256
 PROMISE = (
@@ -262,6 +264,26 @@ def _enrolling_actor(caller) -> str:
     return "approving-window"
 
 
+def _key_record(authority, catalogue, *, caller):
+    governance = _governance(authority, caller)
+    projection = read_contained_scope(
+        authority, governance, scope_root=governance, caller=caller
+    )
+    pins = []
+    for instance_root, instance in projection.instances.items():
+        if instance.get("definition") == catalogue.key_definition:
+            pins.append({"instance": instance_root, **dict(instance.get("values") or {})})
+    if len(pins) > 1:
+        raise InvalidCell("the graph holds more than one workspace-roots signing key")
+    if not pins:
+        return None
+    pin = pins[0]
+    if (pin.get("key_id") not in (KEY_ID, APP_KEY_ID)
+            or not _FINGERPRINT.match(str(pin.get("fingerprint")))):
+        raise InvalidCell("the pinned workspace-roots signing key record is invalid")
+    return pin
+
+
 def read_state(authority, catalogue, *, caller):
     """(revision, roots, pin): every root instance (any state) and the pinned key."""
     governance = _governance(authority, caller)
@@ -275,13 +297,14 @@ def read_state(authority, catalogue, *, caller):
         if definition == catalogue.root_definition:
             roots.append({"instance": instance_root, **dict(values)})
         elif definition == catalogue.key_definition:
-            pins.append(dict(values))
+            pins.append({"instance": instance_root, **dict(values)})
     if len(pins) > 1:
         raise InvalidCell("the graph holds more than one workspace-roots signing key")
     pin = None
     if pins:
         pin = pins[0]
-        if pin.get("key_id") != KEY_ID or not _FINGERPRINT.match(str(pin.get("fingerprint"))):
+        if (pin.get("key_id") not in (KEY_ID, APP_KEY_ID)
+                or not _FINGERPRINT.match(str(pin.get("fingerprint")))):
             raise InvalidCell("the pinned workspace-roots signing key record is invalid")
         pin = pin["fingerprint"]
     roots.sort(key=lambda root: (str(root.get("root_id")), root["instance"]))
@@ -349,16 +372,54 @@ def _nests(first: str, second: str) -> bool:
     return a in _ancestor_identities(second) or b in _ancestor_identities(first)
 
 
+def root_id_from_name(name, path, roots):
+    """A valid, unused root id derived from what the user typed (or the folder name).
+
+    Founder 2026-10-12: typing "BBC4" for E:\\01.PERSONAL\\BBC4 must register, not refuse.
+    """
+    raw = name if type(name) is str and name.strip() else PureWindowsPath(str(path or "")).name
+    slug = re.sub(r"[^a-z0-9]+", "-", str(raw).strip().lower()).strip("-")[:63].strip("-")
+    if not slug:
+        slug = "workspace"
+    if slug == "archhub":
+        slug = "archhub-workspace"
+    used = {root.get("root_id") for root in roots or []}
+    candidate, n = slug, 2
+    while candidate in used:
+        suffix = "-%d" % n
+        candidate = slug[:63 - len(suffix)].strip("-") + suffix
+        n += 1
+    return candidate
+
+
+def _normalize_writers(writers):
+    if type(writers) not in (list, tuple):
+        raise WorkspaceRootRefused(
+            "workspace root writers are invalid; choose agents in Settings > Workspaces")
+    normalized = []
+    for writer in writers:
+        if type(writer) is not str:
+            raise WorkspaceRootRefused(
+                "workspace root writers are invalid; choose agents in Settings > Workspaces")
+        value = writer.strip().lower()
+        if value not in RUNTIMES:
+            raise WorkspaceRootRefused(
+                "workspace root writer '%s' is unknown; choose agents in Settings > Workspaces"
+                % writer)
+        if value in normalized:
+            raise WorkspaceRootRefused(
+                "workspace root writers are duplicated; turn each agent on only once")
+        normalized.append(value)
+    return normalized
+
+
 def admit_folder(path, root_id, privacy, profile, writers, roots, *, built_in=None):
     """The registration values, or WorkspaceRootRefused for anything the hooks refuse."""
     if type(root_id) is not str or not _ID.match(root_id) or root_id == "archhub":
-        raise WorkspaceRootRefused("workspace root id is invalid")
+        root_id = root_id_from_name(root_id, path, roots)
     if privacy not in PRIVACY or profile not in PROFILES:
-        raise WorkspaceRootRefused("workspace root privacy or profile is invalid")
-    if (type(writers) not in (list, tuple) or not writers
-            or len(set(writers)) != len(writers)
-            or not all(writer in RUNTIMES for writer in writers)):
-        raise WorkspaceRootRefused("workspace root writers are invalid")
+        raise WorkspaceRootRefused("workspace root privacy is invalid; choose Private or Public")
+    writers = _normalize_writers(writers)
     if not _local_folder_path(path) or not os.path.isdir(path):
         raise WorkspaceRootRefused(
             "a workspace root must be an existing local folder, not a drive root"
@@ -380,7 +441,7 @@ def admit_folder(path, root_id, privacy, profile, writers, roots, *, built_in=No
         "path": str(PureWindowsPath(path)),
         "privacy": privacy,
         "profile": profile,
-        "writers": list(writers),
+        "writers": writers,
         "identity": list(identity),
         "state": "registered",
         "registered_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -465,7 +526,8 @@ def _ensure_enrollment_schema(authority, catalogue, *, caller, operation_id):
 
 
 def pin_signing_key(authority, catalogue, fingerprint, *, caller, operation_id,
-                    mode=OWNER_OPENED, enrolled_by="", enrolled_at=""):
+                    mode=OWNER_OPENED, enrolled_by="", enrolled_at="",
+                    key_id=KEY_ID, allow_repin=False):
     """Record the key's fingerprint once, with its enrollment attestation.
 
     The pin is written exactly once (a different fingerprint is refused), and it
@@ -476,11 +538,26 @@ def pin_signing_key(authority, catalogue, fingerprint, *, caller, operation_id,
     """
     if type(fingerprint) is not str or not _FINGERPRINT.match(fingerprint):
         raise InvalidCell("workspace-roots key fingerprint is invalid")
-    _revision, _roots, pin = read_state(authority, catalogue, caller=caller)
-    if pin is not None:
-        if pin != fingerprint:
+    if key_id not in (KEY_ID, APP_KEY_ID):
+        raise InvalidCell("workspace-roots key id is invalid; use the app Settings writer")
+    existing = _key_record(authority, catalogue, caller=caller)
+    if existing is not None:
+        if existing["fingerprint"] != fingerprint and not allow_repin:
             raise InvalidCell("a different workspace-roots signing key is already pinned")
-        return pin
+        if existing["fingerprint"] != fingerprint or existing.get("key_id") != key_id:
+            _ensure_enrollment_schema(authority, catalogue, caller=caller, operation_id=operation_id)
+            revise_instance(
+                authority,
+                existing["instance"],
+                {"key_id": key_id, "fingerprint": fingerprint,
+                 "mode": str(mode or APP_WRITTEN),
+                 "enrolled_by": str(enrolled_by or ""),
+                 "enrolled_at": str(enrolled_at or "")},
+                scope_root=_governance(authority, caller),
+                caller=caller,
+                command_id=_subcommand(operation_id, "repin"),
+            )
+        return existing["fingerprint"]
     # First pin: on an old graph the retained key definition may not yet declare
     # the enrollment attestation; make it declare them (key identity unchanged)
     # so the record below is not an undeclared-parameter override.
@@ -488,7 +565,7 @@ def pin_signing_key(authority, catalogue, fingerprint, *, caller, operation_id,
     instantiate_definition(
         authority,
         catalogue.key_definition,
-        {"key_id": KEY_ID, "fingerprint": fingerprint,
+        {"key_id": key_id, "fingerprint": fingerprint,
          "mode": str(mode or OWNER_OPENED),
          "enrolled_by": str(enrolled_by or ""),
          "enrolled_at": str(enrolled_at or "")},
@@ -520,6 +597,25 @@ def read_enrollment(authority, catalogue, *, caller):
                 "enrolled_by": values.get("enrolled_by") or "",
                 "enrolled_at": values.get("enrolled_at") or ""}
     return None
+
+
+def update_root_writers(authority, catalogue, root_id, writers, *, caller, operation_id):
+    """Change who can write inside one registered workspace root."""
+    _revision, roots, _pin = read_state(authority, catalogue, caller=caller)
+    matches = [root for root in roots if root.get("root_id") == root_id]
+    if len(matches) != 1:
+        raise WorkspaceRootRefused("no such workspace root; register it in Settings > Workspaces")
+    if matches[0].get("state") == "unregistered":
+        raise WorkspaceRootRefused("that workspace root is removed; add it again in Settings > Workspaces")
+    normalized = _normalize_writers(writers)
+    return revise_instance(
+        authority,
+        matches[0]["instance"],
+        {"writers": normalized},
+        scope_root=_governance(authority, caller),
+        caller=caller,
+        command_id=_subcommand(operation_id, "writers"),
+    )
 
 
 def register_root(authority, catalogue, values, *, caller, operation_id):
@@ -597,7 +693,7 @@ def removed_folders(roots):
     return removed
 
 
-def snapshot_body(roots, pin) -> dict:
+def snapshot_body(roots, pin, *, key_id=KEY_ID) -> dict:
     """The hooks' view of the graph: registered roots and removed-folder
     tombstones, ordered by id. The order is canonical, so the body signed before
     a commit (from a prediction) equals the body re-derived from the graph after it."""
@@ -615,7 +711,7 @@ def snapshot_body(roots, pin) -> dict:
     return {
         "format": SNAPSHOT_FORMAT,
         "format_version": SNAPSHOT_VERSION,
-        "key_id": KEY_ID,
+        "key_id": key_id,
         "key_version": 1,
         "key_fingerprint": pin,
         "graph_revision": sequence(roots, pin),
@@ -663,11 +759,129 @@ def public_blob_of(text) -> bytes:
     return blob
 
 
-def pin_document(blob) -> dict:
+def _ecdsa_verify_blob(blob, payload, signature) -> bool:
+    try:
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
+        blob = bytes(blob)
+        raw = bytes.fromhex(signature)
+        if len(blob) != 72 or blob[:8] != b"ECS1" + (32).to_bytes(4, "little") or len(raw) != 64:
+            return False
+        x = int.from_bytes(blob[8:40], "big")
+        y = int.from_bytes(blob[40:72], "big")
+        key = ec.EllipticCurvePublicNumbers(x, y, ec.SECP256R1()).public_key()
+        key.verify(encode_dss_signature(int.from_bytes(raw[:32], "big"),
+                                        int.from_bytes(raw[32:], "big")),
+                   payload, ec.ECDSA(hashes.SHA256()))
+        return True
+    except Exception:  # noqa: BLE001 - malformed keys/signatures are simply refused
+        return False
+
+
+def _verify_blob(key_id, blob, version, payload, signature, verifier) -> bool:
+    if key_id == APP_KEY_ID:
+        return version == 1 and _ecdsa_verify_blob(blob, payload, signature)
+    return verifier.verify_blob(blob, key_id, version, payload, signature)
+
+
+def default_app_key_path(snapshot_path=None) -> Path:
+    return Path(snapshot_path or default_snapshot_path()).with_name("workspace-roots.app-key.dpapi")
+
+
+_APP_KEY_PURPOSE = "archhub:workspace-roots:app-signing-key"
+
+
+class AppWorkspaceRootSigner:
+    """Local app-owned ECDSA key for Settings writes; no Windows UI policy.
+
+    Custody (AGENTS T3, Ping review 2026-10-12): the private key is never written in the
+    clear. It is stored DPAPI-protected for this Windows user with purpose separation; the
+    public blob sits beside it so verification never opens the private key. A plaintext
+    key left by an earlier build is migrated into protected custody and removed.
+    """
+
+    def __init__(self, key_path=None):
+        self.key_path = Path(key_path or default_app_key_path())
+        self.public_path = self.key_path.with_suffix(".pub")
+
+    def _store(self, key):
+        from cryptography.hazmat.primitives import serialization
+        from .cell_secret_keys import protect_current_user_data
+        der = key.private_bytes(serialization.Encoding.DER, serialization.PrivateFormat.PKCS8,
+                                serialization.NoEncryption())
+        self.key_path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write(self.key_path, protect_current_user_data(der, purpose=_APP_KEY_PURPOSE))
+        _atomic_write(self.public_path, self._public_blob_of(key).hex().encode("ascii"))
+
+    @staticmethod
+    def _public_blob_of(key):
+        numbers = key.public_key().public_numbers()
+        return (b"ECS1" + (32).to_bytes(4, "little")
+                + numbers.x.to_bytes(32, "big") + numbers.y.to_bytes(32, "big"))
+
+    def _key(self):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from .cell_secret_keys import unprotect_current_user_data
+        try:
+            der = unprotect_current_user_data(self.key_path.read_bytes(), purpose=_APP_KEY_PURPOSE)
+            return serialization.load_der_private_key(der, password=None)
+        except FileNotFoundError:
+            pass
+        legacy = self.key_path.with_name("workspace-roots.app-key.pem")
+        if legacy.exists():
+            key = serialization.load_pem_private_key(legacy.read_bytes(), password=None)
+            self._store(key)
+            legacy.unlink()
+            return key
+        key = ec.generate_private_key(ec.SECP256R1())
+        self._store(key)
+        return key
+
+    def public_blob(self):
+        try:
+            return bytes.fromhex(self.public_path.read_text(encoding="ascii").strip())
+        except (FileNotFoundError, ValueError):
+            return self._public_blob_of(self._key())
+
+    def sign(self, payload):
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+        r, s = decode_dss_signature(self._key().sign(payload, ec.ECDSA(hashes.SHA256())))
+        return (r.to_bytes(32, "big") + s.to_bytes(32, "big")).hex()
+
+
+class AppWorkspaceRootVerifier:
+    def __init__(self, key_path=None):
+        self.signer = AppWorkspaceRootSigner(key_path)
+
+    def public_blob(self):
+        return self.signer.public_blob()
+
+    def verify_blob(self, blob, key_id, version, payload, signature):
+        return _verify_blob(key_id, blob, version, payload, signature, self)
+
+
+def app_signing_components(*, snapshot_path=None):
+    key_path = default_app_key_path(snapshot_path)
+
+    def factory(_pinned):
+        return AppWorkspaceRootSigner(key_path)
+
+    def fingerprint():
+        return hashlib.sha256(AppWorkspaceRootSigner(key_path).public_blob()).hexdigest()
+
+    return factory, fingerprint, AppWorkspaceRootVerifier(key_path)
+
+
+def pin_document(blob, *, key_id=KEY_ID) -> dict:
     """The hooks' trusted identity: the fingerprint AND the public half it hashes, so no
     reader ever opens the key store (a protected key cannot be opened silently)."""
     blob = bytes(blob)
-    return {"format": PIN_FORMAT, "key_id": KEY_ID,
+    return {"format": PIN_FORMAT, "key_id": key_id,
             "fingerprint": hashlib.sha256(blob).hexdigest(), "public_blob": blob.hex()}
 
 
@@ -679,7 +893,7 @@ def read_pin(pin_path=None):
     except (OSError, ValueError):
         return None
     if (type(pin) is not dict or set(pin) != {"format", "key_id", "fingerprint", "public_blob"}
-            or pin["format"] != PIN_FORMAT or pin["key_id"] != KEY_ID
+            or pin["format"] != PIN_FORMAT or pin["key_id"] not in (KEY_ID, APP_KEY_ID)
             or type(pin["fingerprint"]) is not str or not _FINGERPRINT.match(pin["fingerprint"])):
         return None
     try:
@@ -696,7 +910,8 @@ def write_projection(body: dict, signature: str, blob, *, snapshot_path=None, pi
     snapshot. The pin's blob must be the key the snapshot names."""
     if hashlib.sha256(bytes(blob)).hexdigest() != body["key_fingerprint"]:
         raise InvalidCell("the projected pin is not the key the snapshot names")
-    _atomic_write(Path(pin_path or default_pin_path()), canonical(pin_document(blob)))
+    _atomic_write(Path(pin_path or default_pin_path()),
+                  canonical(pin_document(blob, key_id=body.get("key_id", KEY_ID))))
     _atomic_write(Path(snapshot_path or default_snapshot_path()),
                   canonical({**body, "signature": signature}))
 
@@ -720,11 +935,14 @@ def verify_projection(body: dict, verifier, *, snapshot_path=None, pin_path=None
         return "unsigned"
     signed = {key: value for key, value in document.items() if key != "signature"}
     pinned = read_pin(pin_path)
+    key_id = signed.get("key_id")
     if (pinned is None or pinned[0] != body["key_fingerprint"]
-            or signed.get("key_fingerprint") != pinned[0]):
+            or signed.get("key_fingerprint") != pinned[0]
+            or key_id != body.get("key_id")
+            or key_id not in (KEY_ID, APP_KEY_ID)):
         return "unpinned"
-    if not verifier.verify_blob(pinned[1], KEY_ID, 1, canonical(signed),
-                                str(document.get("signature", ""))):
+    if not _verify_blob(key_id, pinned[1], 1, canonical(signed),
+                        str(document.get("signature", "")), verifier):
         return "unsigned"
     return "match" if signed == body else "mismatch"
 
@@ -737,10 +955,13 @@ def boot_check(authority, catalogue, *, caller, verifier=None, snapshot_path=Non
         from .workspace_roots_signing import CngVerifier
 
         if catalogue is None:
-            roots, pin = (), None
+            roots, pin, key_id = (), None, KEY_ID
         else:
             _revision, roots, pin = read_state(authority, catalogue, caller=caller)
-        return verify_projection(snapshot_body(roots, pin), verifier or CngVerifier(KEY_NAME),
+            record = _key_record(authority, catalogue, caller=caller)
+            key_id = (record or {}).get("key_id", KEY_ID)
+        return verify_projection(snapshot_body(roots, pin, key_id=key_id),
+                                 verifier or CngVerifier(KEY_NAME),
                                  snapshot_path=snapshot_path, pin_path=pin_path)
     except Exception as exc:  # noqa: BLE001 - a check that cannot answer is not a match
         return "unverifiable: " + type(exc).__name__
@@ -758,6 +979,14 @@ def _predict(roots, action, values=None, root_id=None):
             raise WorkspaceRootRefused("that workspace root is already unregistered")
         return tuple({**root, "state": "unregistered"} if root is matches[0] else root
                      for root in roots)
+    if action == "update-writers":
+        matches = [root for root in roots if root.get("root_id") == root_id]
+        if len(matches) != 1:
+            raise WorkspaceRootRefused("no such workspace root; register it in Settings > Workspaces")
+        if matches[0].get("state") == "unregistered":
+            raise WorkspaceRootRefused("that workspace root is removed; add it again in Settings > Workspaces")
+        return tuple({**root, "writers": list(values)} if root is matches[0] else root
+                     for root in roots)
     return tuple(roots)
 
 
@@ -770,10 +999,11 @@ _FIELDS = {
     "republish": {"action"},
     "unregister": {"action", "id"},
     "register": {"action", "id", "path", "privacy", "profile", "writers"},
+    "update-writers": {"action", "id", "writers"},
 }
 # A change approved in another (visible) process: "prepare" returns the exact
 # snapshot that change would produce; the change then carries "signature".
-_CHANGES = ("register", "unregister", "republish")
+_CHANGES = ("register", "unregister", "republish", "update-writers")
 KEY_CHECK = b"archhub workspace-roots key check"
 
 
@@ -806,7 +1036,8 @@ _OFFER = {"public_blob", "key_check"}
 
 def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
                  signer_factory=None, fingerprint_of=None, verifier=None,
-                 snapshot_path=None, pin_path=None, built_in=None, admission=None) -> dict:
+                 snapshot_path=None, pin_path=None, built_in=None, admission=None,
+                 signing_key_id=KEY_ID, pin_mode=OWNER_OPENED, allow_key_migration=False) -> dict:
     """List, register, unregister or republish, with the owner's key as the approval.
 
     The snapshot a change will produce is signed BEFORE anything commits: the
@@ -849,7 +1080,7 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
             "nothing was changed")
     if type(request) is not dict or request.get("action") not in _FIELDS:
         raise WorkspaceRootRefused(
-            "workspace-roots action must be list, register, unregister or republish")
+            "workspace-roots action must be list, register, unregister, update-writers or republish")
     action = request["action"]
     approval = request.get("signature")
     allowed = _FIELDS[action] | ({"signature"} if action in _CHANGES else set())
@@ -868,16 +1099,21 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
     paths = {"snapshot_path": snapshot_path, "pin_path": pin_path}
     with lock:
         revision, roots, pin = read_state(authority, catalogue, caller=caller)
+        record = _key_record(authority, catalogue, caller=caller)
+        current_key_id = (record or {}).get("key_id", KEY_ID)
         if action == "list":
-            status = verify_projection(snapshot_body(roots, pin), verifier, **paths)
+            status = verify_projection(snapshot_body(roots, pin, key_id=current_key_id),
+                                       verifier, **paths)
             return roots_view(revision, roots, pin, status, built_in=built_in,
                               enrollment=read_enrollment(authority, catalogue, caller=caller))
         values = None
         if action == "register":
+            writers = request["writers"] if "writers" in request else list(OPEN_AGENT_RUNTIMES)
             values = admit_folder(request.get("path"), request.get("id"),
                                   request.get("privacy"), request.get("profile", "client"),
-                                  request.get("writers") or list(OPEN_AGENT_RUNTIMES), roots,
-                                  built_in=built_in)
+                                  writers, roots, built_in=built_in)
+        elif action == "update-writers":
+            values = _normalize_writers(request.get("writers"))
         predicted = _predict(roots, action, values, request.get("id"))
     if pin is None and action == "republish":
         raise WorkspaceRootRefused("nothing is registered yet")
@@ -890,7 +1126,7 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
         if preparing:
             if not proven:
                 return {"prepared": {"needs_key_check": True}}
-            prepared = {"body": snapshot_body(predicted, new_pin), "pin": new_pin}
+            prepared = {"body": snapshot_body(predicted, new_pin, key_id=KEY_ID), "pin": new_pin}
             if pin is None:
                 # First enrollment: issue the owner's single-use admission bound to the
                 # verified principal, this instance, the offered key, the exact change
@@ -902,9 +1138,9 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
         if not proven:
             raise WorkspaceRootRefused("the first workspace registration needs the key check; "
                                        "nothing was changed")
-        body = snapshot_body(predicted, new_pin)
+        body = snapshot_body(predicted, new_pin, key_id=KEY_ID)
         signature = approval
-        if not verifier.verify_blob(blob, KEY_ID, 1, canonical(body), signature):
+        if not _verify_blob(KEY_ID, blob, 1, canonical(body), signature, verifier):
             raise WorkspaceRootRefused(
                 "the approval does not match this change (the roots may have changed); "
                 "nothing was changed")
@@ -925,15 +1161,19 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
         # production passes no signer_factory and is refused above (NO_WINDOW).
         try:
             new_pin = pin
-            if new_pin is None:
+            if new_pin is None or signing_key_id == APP_KEY_ID:
                 signer_factory(None).sign(KEY_CHECK)
-                new_pin = fingerprint_of() if fingerprint_of is not None else None
-                if type(new_pin) is not str or not _FINGERPRINT.match(new_pin):
+                offered_pin = fingerprint_of() if fingerprint_of is not None else None
+                if type(offered_pin) is not str or not _FINGERPRINT.match(offered_pin):
                     raise WorkspaceRootRefused("the signing key fingerprint is unreadable")
+                if pin is None or allow_key_migration:
+                    new_pin = offered_pin
+                elif offered_pin != pin:
+                    raise WorkspaceRootRefused("the signing key is not the pinned key")
             blob = bytes(verifier.public_blob())
             if hashlib.sha256(blob).hexdigest() != new_pin:
                 raise WorkspaceRootRefused("the signing key is not the pinned key")
-            body = snapshot_body(predicted, new_pin)
+            body = snapshot_body(predicted, new_pin, key_id=signing_key_id)
             signature = signer_factory(new_pin).sign(canonical(body))
         except SigningUnavailable as exc:
             raise WorkspaceRootRefused("the owner did not approve: " + str(exc)) from exc
@@ -942,7 +1182,7 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
         if _comparable(current) != _comparable(roots) or current_pin != pin:
             raise WorkspaceRootRefused(
                 "workspace roots changed while waiting for approval; nothing was changed")
-        if pin is None:
+        if pin is None or current_pin != new_pin or current_key_id != signing_key_id:
             # First enrollment: the approving window opened this owner-protected key
             # once, non-silently (the Windows prompt was the owner's consent) and read
             # its public half; record that attestation explicitly -- mode "owner-opened",
@@ -951,6 +1191,9 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
             # requires the existing key's verify_blob.
             pin_signing_key(authority, catalogue, new_pin, caller=caller,
                             operation_id=operation_id,
+                            key_id=signing_key_id,
+                            mode=pin_mode,
+                            allow_repin=allow_key_migration,
                             enrolled_by=principal,
                             enrolled_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
         if action == "register":
@@ -959,8 +1202,11 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
         elif action == "unregister":
             unregister_root(authority, catalogue, request["id"], caller=caller,
                             operation_id=operation_id)
+        elif action == "update-writers":
+            update_root_writers(authority, catalogue, request["id"], values, caller=caller,
+                                operation_id=operation_id)
         revision, after, after_pin = read_state(authority, catalogue, caller=caller)
-        if snapshot_body(after, after_pin) != body:
+        if snapshot_body(after, after_pin, key_id=signing_key_id) != body:
             raise InvalidCell("the committed workspace roots differ from the approved "
                               "projection; the hooks' files were left unchanged")
         write_projection(body, signature, blob, **paths)
@@ -996,14 +1242,14 @@ def read_registered_roots(verifier=None, *, snapshot_path=None, pin_path=None,
     signed = {key: value for key, value in document.items() if key != "signature"}
     if (signed.get("format") != SNAPSHOT_FORMAT
             or signed.get("format_version") != SNAPSHOT_VERSION
-            or signed.get("key_id") != KEY_ID
+            or signed.get("key_id") not in (KEY_ID, APP_KEY_ID)
             or signed.get("key_fingerprint") != pin["fingerprint"]
             or type(signed.get("roots")) is not list
             or len(signed["roots"]) > MAX_ROOTS
             or type(signed.get("removed")) is not list
             or len(signed["removed"]) > MAX_REMOVED
-            or not verifier.verify_blob(bytes(blob), KEY_ID, 1, canonical(signed),
-                                        document["signature"])):
+            or not _verify_blob(signed.get("key_id"), bytes(blob), 1, canonical(signed),
+                                document["signature"], verifier)):
         raise InvalidCell("the workspace-roots registry does not verify")
     _refuse_rollback(signed, blob, verifier, last_good_path)
     _require_graph_current(signed)
@@ -1355,8 +1601,9 @@ def _refuse_rollback(signed, blob, verifier, last_good_path=None):
         verified = (type(kept.get("signature")) is str
                     and kept_signed.get("key_fingerprint") == signed["key_fingerprint"]
                     and type(kept_signed.get("graph_revision")) is int
-                    and verifier.verify_blob(blob, KEY_ID, 1, canonical(kept_signed),
-                                             kept["signature"]))
+                    and kept_signed.get("key_id") == signed.get("key_id")
+                    and _verify_blob(signed.get("key_id"), blob, 1, canonical(kept_signed),
+                                     kept["signature"], verifier))
     except Exception:  # noqa: BLE001 - doubt is a refusal
         verified = False
     if not verified:
@@ -1380,9 +1627,9 @@ def root_bound_registration(path, *, runtime=None, verifier=None, snapshot_path=
 
     path is "workspace-roots/<id>/<path inside the root>". The root must be in the
     verified registry, its folder must still be the registered folder (identity),
-    and the registered folder identity must still match. The writers list is
-    descriptive compatibility state; a registered workspace is open to every
-    runtime. The digest binds the permit to this exact registration and key, so a
+    and the registered folder identity must still match. The writers list is the
+    Settings source of truth: empty means nobody, otherwise only listed runtimes
+    write. The digest binds the permit to this exact registration and key, so a
     changed root voids a pending permit."""
     parts = str(path).split("/")
     if (len(parts) < 3 or parts[0] + "/" != ROOT_PATH_PREFIX or not _ID.match(parts[1])
@@ -1393,6 +1640,12 @@ def root_bound_registration(path, *, runtime=None, verifier=None, snapshot_path=
     entry = roots.get(parts[1])
     if entry is None:
         raise InvalidCell("%s is not a registered workspace root" % parts[1])
+    runtime = str(runtime or "").strip().lower()
+    writers = entry.get("writers") if type(entry.get("writers")) is list else []
+    if runtime and runtime not in writers:
+        raise InvalidCell(
+            "%s is not enabled for workspace root %s; enable %s in Settings > Workspaces"
+            % (runtime, parts[1], runtime))
     identity = folder_identity(entry.get("path"))
     if identity is None or list(identity) != entry.get("identity"):
         raise InvalidCell("registered workspace root %s is unavailable (moved, swapped "

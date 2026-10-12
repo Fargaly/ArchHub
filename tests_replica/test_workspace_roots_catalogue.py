@@ -187,6 +187,18 @@ def test_the_first_registration_pins_the_key_and_projects_a_matching_snapshot(gr
         "fingerprint": graph["key"].fingerprint(), "public_blob": graph["key"].public_blob().hex()}
 
 
+def test_typed_workspace_name_is_slugged_instead_of_refused(graph, tmp_path):
+    folder = tmp_path / "BBC4"
+    folder.mkdir()
+    view = _register(graph, "BBC4", folder)
+    assert [(r["root_id"], r["path"]) for r in view["roots"]] == [("bbc4", str(folder))]
+    second = tmp_path / "BBC4 copy"
+    second.mkdir()
+    view = _register(graph, "BBC4", second)
+    assert [r["root_id"] for r in view["roots"] if r["state"] == "registered"] == [
+        "bbc4", "bbc4-2"]
+
+
 def test_later_signatures_are_made_only_by_the_graph_pinned_key(graph, tmp_path):
     for name in ("client-a", "client-b"):
         (tmp_path / name).mkdir()
@@ -301,8 +313,8 @@ def test_no_root_is_committed_before_a_key_is_pinned(graph, tmp_path):
                             caller=graph["caller"], operation_id=_op("early"))
 
 
-@pytest.mark.parametrize("case", ["drive-root", "missing", "inside-archhub", "bad-id",
-                                  "archhub-id", "bad-writer", "bad-privacy", "nested"])
+@pytest.mark.parametrize("case", ["drive-root", "missing", "inside-archhub",
+                                  "bad-writer", "bad-privacy", "nested"])
 def test_folders_the_hooks_would_refuse_are_refused_before_any_prompt(graph, tmp_path, case):
     outer = tmp_path / "outer"
     (outer / "inner").mkdir(parents=True)
@@ -313,8 +325,6 @@ def test_folders_the_hooks_would_refuse_are_refused_before_any_prompt(graph, tmp
         "drive-root": ("C:" + chr(92), "x", "private", ["claude"]),
         "missing": (str(tmp_path / "nope"), "x", "private", ["claude"]),
         "inside-archhub": (roots.BUILT_IN_PATH + chr(92) + "20.CLIENTS", "x", "private", ["claude"]),
-        "bad-id": (str(ok), "Bad Id", "private", ["claude"]),
-        "archhub-id": (str(ok), "archhub", "private", ["claude"]),
         "bad-writer": (str(ok), "x", "private", ["someone"]),
         "bad-privacy": (str(ok), "x", "secret", ["claude"]),
         "nested": (str(outer / "inner"), "x", "private", ["claude"]),

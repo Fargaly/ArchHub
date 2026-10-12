@@ -1345,6 +1345,10 @@ class _CleanAuthorityHttpServer:
 
         from .workspace_roots_catalogue import (
             WorkspaceRootRefused,
+            APP_KEY_ID,
+            APP_WRITTEN,
+            KEY_ID,
+            app_signing_components,
             find_workspace_root_catalogue,
             install_workspace_root_catalogue,
             NO_WINDOW,
@@ -1376,9 +1380,9 @@ class _CleanAuthorityHttpServer:
             # The change the desktop window will ask the owner to approve.
             change = request.get("change")
             action = change.get("action") if type(change) is dict else None
-            if action not in ("register", "unregister", "republish"):
+            if action not in ("register", "unregister", "republish", "update-writers"):
                 raise WorkspaceRootRefused("only a change can be prepared for approval")
-        if action in ("register", "unregister") and boot not in ("match", "missing"):
+        if action in ("register", "unregister", "update-writers") and boot not in ("match", "missing"):
             raise WorkspaceRootRefused(
                 "the workspace-roots registry does not match the graph (%s); "
                 "republish it before changing roots" % boot
@@ -1387,7 +1391,7 @@ class _CleanAuthorityHttpServer:
             catalogue = find_workspace_root_catalogue(
                 self.clean_authority, caller=self.clean_caller
             )
-            if catalogue is None and action in ("register", "unregister", "republish"):
+            if catalogue is None and action in ("register", "unregister", "republish", "update-writers"):
                 catalogue = install_workspace_root_catalogue(
                     self.clean_authority,
                     operation_id=str(_uuid.uuid4()),
@@ -1437,6 +1441,18 @@ class _CleanAuthorityHttpServer:
                 request = {"action": "list"}
             if admission is None:
                 admission = {"principal": "archhub-browser-workspace-settings"}
+            signer_factory = fingerprint_of = change_verifier = None
+            signing_key_id = None
+            app_writes_here = (
+                action in ("register", "unregister", "update-writers", "republish")
+                and request.get("action") != "prepare"
+                and request.get("signature") is None
+                and not any(key in request for key in (
+                    "public_blob", "key_check", "admission_ticket"))
+            )
+            if app_writes_here:
+                signer_factory, fingerprint_of, change_verifier = app_signing_components()
+                signing_key_id = APP_KEY_ID
             view = owner_change(
                 self.clean_authority,
                 catalogue,
@@ -1446,6 +1462,12 @@ class _CleanAuthorityHttpServer:
                 operation_id=body.get("command_id") or str(_uuid.uuid4()),
                 lock=self._mutation_lock,
                 built_in=self.clean_workspace_root,
+                signer_factory=signer_factory,
+                fingerprint_of=fingerprint_of,
+                verifier=change_verifier,
+                signing_key_id=signing_key_id or KEY_ID,
+                pin_mode=APP_WRITTEN,
+                allow_key_migration=True,
             )
             if "prepared" in view:
                 return view

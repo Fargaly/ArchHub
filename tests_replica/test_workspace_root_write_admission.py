@@ -122,9 +122,25 @@ def test_an_unregistered_or_malformed_root_path_is_refused(world, path):
                                    **world["files"])
 
 
-def test_a_runtime_that_is_not_a_writer_is_admitted_because_registration_is_open(world):
-    assert roots.root_bound_admission("workspace-roots/client-a/a.md", runtime="codex",
-                                      verifier=_Store(world["key"]), **world["files"])
+def test_a_runtime_in_the_registered_writer_list_is_admitted(world, tmp_path):
+    files = _registry(tmp_path, world["key"],
+                      [_entry(world["folder"], writers=roots.OPEN_AGENT_RUNTIMES)])
+    for runtime in roots.OPEN_AGENT_RUNTIMES:
+        assert roots.root_bound_admission("workspace-roots/client-a/a.md", runtime=runtime,
+                                          verifier=_Store(world["key"]), **files)
+
+
+def test_a_runtime_that_is_not_enabled_in_settings_is_refused(world):
+    with pytest.raises(InvalidCell, match="enable codex in Settings > Workspaces"):
+        roots.root_bound_admission("workspace-roots/client-a/a.md", runtime="codex",
+                                   verifier=_Store(world["key"]), **world["files"])
+
+
+def test_an_empty_writer_list_means_nobody_can_write(world, tmp_path):
+    files = _registry(tmp_path, world["key"], [_entry(world["folder"], writers=())])
+    with pytest.raises(InvalidCell, match="enable claude in Settings > Workspaces"):
+        roots.root_bound_admission("workspace-roots/client-a/a.md", runtime="claude",
+                                   verifier=_Store(world["key"]), **files)
 
 
 def test_a_swapped_folder_is_refused(world):

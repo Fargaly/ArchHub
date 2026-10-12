@@ -211,6 +211,39 @@ def test_register_and_unregister_through_the_route_project_matching_files(runtim
     assert json.loads((home / "workspace-roots.json").read_text(encoding="utf-8"))["roots"] == []
 
 
+def test_settings_register_update_writers_and_unregister_need_no_owner_prompt(runtime):
+    server, built, home, tmp_path = runtime
+    folder = tmp_path / "BBC4"
+    folder.mkdir()
+    status, view = _post(server, {
+        "action": "register",
+        "id": "BBC4",
+        "path": str(folder),
+        "privacy": "private",
+        "writers": list(roots.OPEN_AGENT_RUNTIMES),
+    })
+    assert status == 200, view
+    assert _Owner.prompts == 0, "settings writes must not open the owner-protected key"
+    assert [(r["root_id"], r["writers"]) for r in view["roots"]] == [
+        ("bbc4", list(roots.OPEN_AGENT_RUNTIMES))]
+    assert json.loads((home / "workspace-roots.json").read_text(encoding="utf-8"))["roots"][0]["id"] == "bbc4"
+
+    status, view = _post(server, {
+        "action": "update-writers",
+        "id": "bbc4",
+        "writers": ["codex"],
+    })
+    assert status == 200, view
+    assert _Owner.prompts == 0
+    assert [(r["root_id"], r["writers"]) for r in view["roots"] if r["state"] == "registered"] == [
+        ("bbc4", ["codex"])]
+
+    status, view = _post(server, {"action": "unregister", "id": "bbc4"})
+    assert status == 200, view
+    assert _Owner.prompts == 0
+    assert [(r["root_id"], r["state"]) for r in view["roots"]] == [("bbc4", "unregistered")]
+
+
 def test_a_request_the_owner_declines_changes_nothing(runtime):
     server, built, home, tmp_path = runtime
     folder = tmp_path / "client-a"
@@ -258,28 +291,27 @@ def test_a_substitute_key_is_refused_before_anything_commits(runtime, monkeypatc
     assert roots.read_state(built.location.authority, catalogue, caller=built.caller) == before
 
 
-def test_an_unsigned_change_is_refused_by_the_owner_and_never_prompts(runtime):
-    """The graph's owner has no visible window: it never signs. A change posted to
-    it without the window's approval is refused, in words, and nothing commits."""
+def test_direct_settings_change_is_app_written_and_never_prompts(runtime):
+    """Settings writes are admitted by the browser session and signed by the local
+    app key, not by the retired owner-protected prompt path."""
     server, built, home, tmp_path = runtime
     for name in ("client-a", "client-b"):
         (tmp_path / name).mkdir()
     status, body = _post(server, {"action": "register", "id": "client-a",
                                   "path": str(tmp_path / "client-a"), "privacy": "private",
                                   "profile": "client", "writers": ["claude"]})
-    assert status == 403 and "Open the ArchHub window to approve" in body["error"], body
-    assert _Owner.prompts == 0 and not home.exists()
-    assert _register(server, tmp_path / "client-a")[0] == 200  # the window's way works
+    assert status == 200, body
+    assert _Owner.prompts == 0 and home.exists()
     prompts = _Owner.prompts
     catalogue = roots.find_workspace_root_catalogue(built.location.authority, caller=built.caller)
     before = roots.read_state(built.location.authority, catalogue, caller=built.caller)
-    for unsigned in ({"action": "register", "id": "client-b", "path": str(tmp_path / "client-b"),
-                      "privacy": "private", "profile": "client", "writers": ["claude"]},
-                     {"action": "unregister", "id": "client-a"}, {"action": "republish"}):
-        status, body = _post(server, unsigned)
-        assert status == 403 and "Open the ArchHub window to approve" in body["error"], (unsigned, body)
+    for change in ({"action": "register", "id": "client-b", "path": str(tmp_path / "client-b"),
+                    "privacy": "private", "profile": "client", "writers": ["claude"]},
+                   {"action": "unregister", "id": "client-a"}, {"action": "republish"}):
+        status, body = _post(server, change)
+        assert status == 200, (change, body)
     assert _Owner.prompts == prompts
-    assert roots.read_state(built.location.authority, catalogue, caller=built.caller) == before
+    assert roots.read_state(built.location.authority, catalogue, caller=built.caller) != before
 
 
 def test_unsigned_private_root_grant_and_revoke_are_refused_before_store_mutation(runtime, monkeypatch):

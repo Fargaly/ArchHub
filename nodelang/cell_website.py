@@ -68,7 +68,7 @@ REPOSITORY_URL = "https://github.com/Fargaly/ArchHub"
 # this pinned address and sha256, and offers it; the address on the page is then
 # read back from the graph, never from here. A persisted graph is not changed.
 PUBLIC_RELEASE = MappingProxyType({
-    "revision": "build-20261012-1834-d6fcc6c",
+    "revision": "build-20261012-2111-38784e5",
     "summary": (
         "ArchHub desktop preview for Windows, published on GitHub with the "
         "SHA-256 of its installer."
@@ -76,9 +76,9 @@ PUBLIC_RELEASE = MappingProxyType({
     "state": RELEASED,
     "url": (
         "https://github.com/Fargaly/ArchHub/releases/download/"
-        "build-20261012-1834-d6fcc6c/ArchHub-Setup-0.exe"
+        "build-20261012-2111-38784e5/ArchHub-Setup-0.exe"
     ),
-    "sha256": "1f1c90ee576fa62d3e42c8a2846b49ba17d3e039b6c9b2c6f8b25af61ce51b36",
+    "sha256": "5b9519d716e9b02509602741b6de3bb41573839dbabbf9e9a9a13d3846161a24",
 })
 
 # The public name of each host the operation catalogue can name. A host the

@@ -178,7 +178,7 @@ test("Permissions and Hosts draw no switch that nothing reads", async () => {
     assert.equal(/Cost ceiling per session|Auto-undo window/.test(perms.textContent), false, "no invented ceiling or undo window");
     const hosts = await s.tab("Hosts");
     const switches = [...hosts.querySelectorAll("[role=\"switch\"]")].map(node => node.getAttribute("aria-label") || node.getAttribute("title"));
-    assert.deepEqual(switches, ["Start BABOOM when ArchHub opens"], "the only Hosts switch is the graph-held BABOOM startup");
+    assert.deepEqual(switches, [], "Hosts draws no switch: BABOOM startup lives only in Settings > BABOOM");
     assert.equal(hosts.textContent.includes("Auto-build a new host connector"), false, "no button without a handler");
     assert.equal(hosts.textContent.includes("Toggle off to remove from the graph"), false);
   } finally { s.close(); }

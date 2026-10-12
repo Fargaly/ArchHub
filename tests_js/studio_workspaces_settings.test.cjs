@@ -123,7 +123,7 @@ test('a start-up match with a current mismatch pauses changes and offers Republi
     assert.equal(ui.button('Remove').disabled, true);
     ui.click(ui.button('Remove'));
     await ui.settle();
-    assert.equal(ui.doc.querySelector('[role="dialog"]'), null, 'no confirmation while paused');
+    assert.equal(ui.doc.querySelector('[role="dialog"]:not([aria-label="Settings"])'), null, 'no confirmation while paused');
     ui.click(ui.button('Republish'));
     await ui.settle();
     assert.deepEqual(ui.requests.map(item => item.action), ['list', 'republish']);
@@ -149,7 +149,7 @@ test('removing asks first, states the promise, and sends only the unregister of 
       'the built-in root has no Remove');
     ui.click(ui.button('Remove'));
     await ui.settle();
-    const dialog = ui.doc.querySelector('[role="dialog"]');
+    const dialog = ui.doc.querySelector('[role="dialog"]:not([aria-label="Settings"])');
     assert.ok(dialog && dialog.textContent.includes(PROMISE));
     ui.click(ui.button('Stop governing'));
     await ui.settle();

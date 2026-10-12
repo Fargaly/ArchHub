@@ -444,7 +444,7 @@ async function mountCanvasReveal(options = {}) {
   const context = vm.createContext({React, LM, window:dom.window, document:dom.window.document,
     useStudioProjection:() => snapshot, LM_GRAPH:{nodes:[], wires:[]}, studioCanvasScope:() => 'scope',
     studioCategory:cat => ({col:'token-cat', icon:'+', label:String(cat).toUpperCase()}), WIRE:{},
-    NodeBody:() => null, CanvasToolbar:() => null, FloatingComposer:() => null, MiniMap:() => null, Socket:() => null,
+    NodeBody:() => null, CanvasToolbar:() => null, FloatingComposer:() => null, CanvasAddBox:() => null, MiniMap:() => null, Socket:() => null,
     nodeModelRow:() => null, smallBtn:() => ({}), toolBtn:() => ({}), kbd:() => ({}),
     setTimeout:dom.window.setTimeout.bind(dom.window), clearTimeout:dom.window.clearTimeout.bind(dom.window)});
   vm.runInContext(transformSync(lmSource.slice(shortcutStart, shortcutEnd) + lmSource.slice(start, end) + '\nglobalThis.NodeCanvas = NodeCanvas;',

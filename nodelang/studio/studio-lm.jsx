@@ -717,9 +717,20 @@ const StudioLM = () => {
         return;
       }
     }
-    setWorkspaceSelection(canvasWorkspaceView(viewScope));
     const toolRow = toolRowsFromOwners({workshopState, account, personal:readPersonalThemeSnapshot(), hub:window.ARCHHUB_TOOL_HUB})
       .find(row => row.id === tool);
+    // Settings opens over the current view: the workspace (a Workshop chat, a selection) is left as it is.
+    if (TOOL_SETTINGS_TAB[tool] && toolRow?.state !== 'off') {
+      openSettings(true, TOOL_SETTINGS_TAB[tool]);
+      return;
+    }
+    // Founder 2026-10-12 "did you remove the composer?!": an off tool never replaces the screen (that
+    // closed the session and its right-panel composer). Its state and turn-on are its Settings > Hub card.
+    if (toolRow?.state === 'off' && tool !== 'workshop') {
+      openSettings(true, 'hub');
+      return;
+    }
+    setWorkspaceSelection(canvasWorkspaceView(viewScope));
     if (toolRow?.state === 'off') {
       setOpenId(null);
       setToolView({id:tool, tab:firstToolTab(tool)});
@@ -1016,7 +1027,8 @@ const StudioLM = () => {
       {/* The design's own full-bleed screens: first-run onboarding, a skill's split view, a connector's diagnostic. */}
       <StudioScreens model={model} onPickModel={() => setPickerOpen(true)}/>
       {docsOpen && <Docs onClose={() => setDocsOpen(false)}/>}
-      {libraryOpen && <NodeLibrary onClose={() => setLibraryOpen(false)} addNodeFromLibrary={addNodeFromLibrary}/>}
+      {libraryOpen && <NodeLibrary onClose={() => setLibraryOpen(false)} addNodeFromLibrary={addNodeFromLibrary}
+        initialQuery={typeof libraryOpen === 'string' ? libraryOpen : ''}/>}
       <style>{`
         @keyframes lmPulse { 0%,100% { opacity:.4 } 50% { opacity:1 } }
         @keyframes lmCaret { 50% { opacity: 0 } }
@@ -1325,6 +1337,9 @@ const useWaitingOpenShortcut = setOpen => {
   }, [setOpen]);
 };
 // The Workshop opens on its one Tasks tab: Tasks, Board and Projects are folded together (founder 2026-10-11).
+// Founder 2026-10-12: a tool whose page is settings opens its Settings tab; the rail entry stays.
+// Cloud's page only restated sign-in, which Settings > Account owns (one verdict, one place).
+const TOOL_SETTINGS_TAB = {brain:'memory', connectors:'hosts', baboom:'baboom', cloud:'account'};
 const firstToolTab = tool => tool === 'workshop' ? 'tasks' : tool === 'brain' ? 'facts' :
   tool === 'connectors' ? 'hosts' : tool === 'cloud' ? 'account' : tool === 'baboom' ? 'settings' : 'workspace';
 const HOST_STATE_WORD = {
@@ -1822,11 +1837,12 @@ const withLiveCatalogue = (loaderName, items, View) => props => {
   useCatalogueVersion();
   React.useEffect(() => {loadCatalogue(loaderName, items);}, []);
   const status = catalogueStates.get(loaderName) || {loading:false, error:''};
-  return <>
-    {status.loading && <p role="status">Loading catalogue…</p>}
-    {status.error && <p role="alert">{status.error} <button onClick={() => loadCatalogue(loaderName, items)}>Retry</button></p>}
+  // One element: the Sidebar grid is "44px 1fr", so a loading line beside the panel would push the panel into the rail column.
+  return <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
+    {status.loading && <p role="status" style={{ margin:0, padding:'8px 12px 0', fontFamily:LM.mono, fontSize:10, color:LM.inkMuted }}>Loading catalogue…</p>}
+    {status.error && <p role="alert" style={{ margin:0, padding:'8px 12px 0', fontSize:12, color:LM.inkSoft }}>{status.error} <button onClick={() => loadCatalogue(loaderName, items)}>Retry</button></p>}
     <View {...props}/>
-  </>;
+  </div>;
 };
 
 const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, () => (
@@ -1939,6 +1955,10 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, setPickerOpen, se
   const homeMounted = React.useRef(true);
   const hub = useToolHubProjection();
   const waitingItems = Array.isArray(hub?.waiting) ? hub.waiting : [];
+  // Founder 2026-10-12 (H1): the six tool cards sit on Home AND in Settings > Hub, drawn by the one SettingsHub.
+  const homePersonal = usePersonalTheme();
+  const toolRows = toolRowsFromOwners({workshopState, account, personal:homePersonal, hub});
+  const toolsOn = toolRows.filter(tool => tool.state !== 'off').length;
   React.useEffect(() => {homeMounted.current = true; return () => {homeMounted.current = false;};}, []);
   const liveHosts = LM_HOSTS.filter(host => hostState(host) === 'connected');
   const knownHosts = startableHosts(LM_HOSTS);
@@ -2106,6 +2126,15 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, setPickerOpen, se
       {startError && <p role="alert" style={{color:LM.warn,marginBottom:0}}>{startError}</p>}
       {attachmentError && <p role="alert" style={{color:LM.warn,marginBottom:0}}>{attachmentError}</p>}
     </form>
+    {toolRows.length > 0 && <section aria-label="Tools" data-home-tools style={{ margin:'0 0 22px' }}>
+      <div style={{ display:'flex', alignItems:'baseline', gap:10, marginBottom:14 }}>
+        <h2 style={{ fontFamily:LM.serif, fontSize:26, fontWeight:400, letterSpacing:'-0.015em', margin:0 }}>Tools</h2>
+        <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em' }}>
+          {toolsOn}/{toolRows.length} RUNNING · EACH WORKS ON ITS OWN
+        </span>
+      </div>
+      <SettingsHub toolRows={toolRows} onOpenTool={onOpenTool} onOpenToolGraph={onOpenToolGraph} columns={3}/>
+    </section>}
     <section aria-label="Waiting" style={{ margin:'0 0 18px' }}>
       <WaitingButton variant="home" items={waitingItems} onOpenTask={item => onOpenTool && onOpenTool(
         item.producer === 'workshop_gate' ? 'workshop' : item.producer === 'social_approve' ? 'cloud' : 'workshop',
@@ -4881,6 +4910,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       }} onFit={() => fitIds(selected.size ? [...selected] : allIds)}
         fitLabel={selected.size ? 'Fit selection' : 'Fit all nodes'} setLibraryOpen={setLibraryOpen}/>
       <MiniMap pan={pan} zoom={zoom} positions={positions} allNodes={allNodes}/>
+      <CanvasAddBox setLibraryOpen={setLibraryOpen}/>
       {ctxMenu && <CanvasMenu x={ctxMenu.x} y={ctxMenu.y} maxHeight={ctxMenu.maxHeight}
         opener={ctxMenu.opener} items={ctxMenu.nodeId ? nodeMenuItems : ctxMenu.wireId ? wireMenuItems : canvasMenuItems}
         label={ctxMenu.nodeId ? 'Node actions' : ctxMenu.wireId ? 'Wire actions' : 'Canvas actions'} onClose={closeContextMenu}/>}
@@ -5720,6 +5750,29 @@ const FloatingComposer = ({ setLibraryOpen, model, node }) => {
   );
 };
 
+// ─── add-node box (BOTTOM CENTER) ───
+// Founder 2026-10-12 (C1): the canvas keeps the design's bottom '/' box for adding nodes and opening
+// the library ONLY. It has no model, sends nothing, and is not a chat: the one chat is the right panel.
+const CanvasAddBox = ({ setLibraryOpen }) => {
+  const [q, setQ] = React.useState('');
+  const open = () => { setLibraryOpen(q.replace(/^\/+/, '').trim() || true); setQ(''); };
+  return (
+    <div data-no-pan data-canvas-add style={{
+      position:'absolute', left:'50%', bottom:14, transform:'translateX(-50%)',
+      width:480, maxWidth:'70%', background:LM.bgPanel, border:`1px solid ${LM.line}`,
+      borderRadius:9, boxShadow:'0 10px 24px rgba(0,0,0,.4)', padding:'7px 10px',
+      display:'flex', alignItems:'center', gap:LM.sp.sm,
+    }}>
+      <span aria-hidden="true" style={{ color:LM.accent, fontFamily:LM.mono, fontSize:13 }}>/</span>
+      <input aria-label="Add a node" value={q} placeholder="Type / to add a node…"
+        onChange={e => setQ(e.target.value)}
+        onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); open(); } else if (e.key === 'Escape') setQ(''); }}
+        style={{ flex:1, minWidth:0, background:'transparent', border:0, outline:'none', color:LM.ink, fontFamily:LM.sans, fontSize:13 }}/>
+      <button type="button" onClick={e => { e.stopPropagation(); setLibraryOpen(true); }} style={{ ...smallBtn(), padding:'3px 9px' }}>library</button>
+    </div>
+  );
+};
+
 // ─── mini-map (TOP-RIGHT) ───
 // The map frames the real nodes: their bounds plus a margin. The old fixed 2400 x 1400 box drew
 // larger graphs, and nodes left of or above the origin, off the map. No nodes: nothing to frame.
@@ -5761,10 +5814,10 @@ const MiniMap = ({ pan, zoom, positions, allNodes }) => {
 };
 
 // ──────────────────────── NODE LIBRARY ────────────────────────
-const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
+const NodeLibrary = ({ onClose, addNodeFromLibrary, initialQuery = '' }) => {
   const library = useStudioProjection()?.library || LM_LIBRARY;
   const [filter, setFilter] = React.useState('all');
-  const [q, setQ] = React.useState('');
+  const [q, setQ] = React.useState(initialQuery);
   const groups = filter === 'all' ? library : library.filter(g => g.cat === filter);
   return (
     <div onClick={onClose} style={{
@@ -5908,7 +5961,7 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
         ) : transcript.error ? (
           <p role="alert" style={{ margin:0, fontSize:12, color:LM.warn || LM.accent }}>{transcript.error}</p>
         ) : rows.length === 0 ? (
-          <p role="status" style={{ margin:0, fontSize:12, lineHeight:1.5, color:LM.inkSoft }}>No conversation yet · Continue in the Workshop to start one.</p>
+          <p role="status" style={{ margin:0, fontSize:12, lineHeight:1.5, color:LM.inkSoft }}>No conversation yet · ask below to start one.</p>
         ) : (<>
           {hasOlder ? (
             <p style={{ margin:0, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.04em' }}>Latest messages only · full history in the Workshop</p>
@@ -6435,6 +6488,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
     ['hub',         'Hub',         `${toolsOn}/${toolRows.length} on`],
     ['account',     'Account',     (account || {}).graphTier || null],
     ['memory',      'Brain',       `${(window.BRAIN_STRATA || []).length} strata \u00b7 ${LM_MEMORY.length - (store.forgotten || []).length} facts`],
+    ['baboom',      'BABOOM',      `companion · speaks at most ${baboomMaxSpeaks(personal)} times an hour`],
     ['team',        'Team',        null],
     ['profile',     'Profile',     'Architect'],
     ['permissions', 'Permissions', null],
@@ -6452,7 +6506,8 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
       position:'absolute', inset:0, background:'rgba(0,0,0,.5)', zIndex:60,
       display:'grid', placeItems:'center',
     }}>
-      <div onClick={e => e.stopPropagation()} style={{
+      {/* A modal over a live screen (every settings tool opens here): say so, so nothing behind it is reachable as if open. */}
+      <div role="dialog" aria-modal="true" aria-label="Settings" onClick={e => e.stopPropagation()} style={{
         width:920, maxWidth:'95%', height:580, maxHeight:'90%',
         background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.xl,
         overflow:'hidden', boxShadow:'0 30px 80px rgba(0,0,0,.6)',
@@ -6485,6 +6540,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
           {tab === 'hub'         && <SettingsHub toolRows={toolRows} onClose={onClose} onOpenTool={onOpenTool} onOpenToolGraph={onOpenToolGraph}/>}
           {tab === 'account'     && <SettingsAccount account={account} setAccount={setAccount} onSignOut={onSignOut}/>}
           {tab === 'memory'      && <SettingsMemory store={store} patch={patch}/>}
+          {tab === 'baboom'      && <SettingsBaboom/>}
           {tab === 'team'        && <SettingsTeam account={account} onAccount={() => setTab('account')}/>}
           {tab === 'profile'     && <SettingsProfile/>}
           {tab === 'permissions' && <SettingsPermissions account={account} onTab={setTab}/>}
@@ -6501,7 +6557,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
     </div>
   );
 };
-const SettingsHub = ({ toolRows, onClose, onOpenTool, onOpenToolGraph }) => {
+const SettingsHub = ({ toolRows, onClose, onOpenTool, onOpenToolGraph, columns }) => {
   const [confirmOff, setConfirmOff] = React.useState(null);
   React.useEffect(() => {
     if (!confirmOff) return undefined;
@@ -6524,7 +6580,8 @@ const SettingsHub = ({ toolRows, onClose, onOpenTool, onOpenToolGraph }) => {
     onOpenToolGraph?.(id);
   };
   return <div style={{position:'relative'}}>
-    <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(180px, 1fr))', gap:8 }}>
+    <div data-tool-grid style={{ display:'grid', gap:8,
+      gridTemplateColumns:columns ? `repeat(${columns}, minmax(0, 1fr))` : 'repeat(auto-fill, minmax(180px, 1fr))' }}>
       {toolRows.map(tool => <div key={tool.id}
         onContextMenu={event => { event.preventDefault(); requestOff(tool); }}>
         <ToolCard tool={tool}
@@ -8409,7 +8466,6 @@ const SettingsHosts = () => {
       {!visibleHosts.length && <SettingsEmpty role={catalogue.error ? 'alert' : 'status'}
         action={catalogue.error && !catalogue.loading && <button onClick={catalogue.retry} style={{ ...smallBtn(), padding:'3px 9px', fontStyle:'normal' }}>read again</button>}>
         {catalogue.loading ? 'Reading the hosts on this machine\u2026' : catalogue.error ? 'Connected programs: ' + catalogue.error + '.' : 'No connected program found yet.'}</SettingsEmpty>}
-      <BaboomStartupRow first={false}/>
     </div>
     <SettingsAssistants/>
     <SettingsOperations/>

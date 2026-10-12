@@ -124,7 +124,7 @@ async function mount({refuse = null, hold = null, seedTrace = null, nodes = NODE
   const context = vm.createContext({React, LM, window:dom.window, document:dom.window.document,
     useStudioProjection:() => snapshot, LM_GRAPH:{nodes:[], wires:[]}, studioCanvasScope:() => 'scope',
     studioCategory:cat => ({col:'token-cat', icon:'+', label:String(cat).toUpperCase()}), WIRE:{},
-    NodeBody:() => null, CanvasToolbar:() => null, FloatingComposer:() => null, MiniMap:() => null,
+    NodeBody:() => null, CanvasToolbar:() => null, FloatingComposer:() => null, CanvasAddBox:() => null, MiniMap:() => null,
     nodeModelRow:() => null, smallBtn:() => ({}), toolBtn:() => ({}), kbd:() => ({}),
     setTimeout:dom.window.setTimeout.bind(dom.window), clearTimeout:dom.window.clearTimeout.bind(dom.window)});
   vm.runInContext(transformSync(shortcutSlice() + slice() + '\nglobalThis.NodeCanvas = NodeCanvas;',
@@ -526,7 +526,7 @@ async function mountOnTransport({hold = null} = {}) {
   const context = vm.createContext({React, LM, window:dom.window, document:dom.window.document,
     useStudioProjection:useProjection, LM_GRAPH:{nodes:[], wires:[]}, studioCanvasScope:() => 'scope',
     studioCategory:cat => ({col:'token-cat', icon:'+', label:String(cat).toUpperCase()}), WIRE:{},
-    NodeBody:() => null, CanvasToolbar:() => null, FloatingComposer:() => null, MiniMap:() => null,
+    NodeBody:() => null, CanvasToolbar:() => null, FloatingComposer:() => null, CanvasAddBox:() => null, MiniMap:() => null,
     nodeModelRow:() => null, smallBtn:() => ({}), toolBtn:() => ({}), kbd:() => ({}),
     setTimeout:dom.window.setTimeout.bind(dom.window), clearTimeout:dom.window.clearTimeout.bind(dom.window)});
   vm.runInContext(transformSync(shortcutSlice() + slice() + '\nglobalThis.NodeCanvas = NodeCanvas;',

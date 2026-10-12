@@ -204,6 +204,33 @@ test('canvas chrome: no status chip idle or selected, the minimap at its design 
   } finally { studio.close(); }
 });
 
+test('C1: the canvas bottom / box adds nodes and opens the library only; it is not a chat', async () => {
+  const studio = await mountStudio();
+  try {
+    openCanvas(studio);
+    const box = studio.doc.querySelector('[data-canvas-add]');
+    assert.ok(box, 'the canvas draws the bottom add-node box');
+    const field = box.querySelector('input[aria-label="Add a node"]');
+    assert.ok(field, 'the box has one add-node field');
+    assert.equal(box.querySelector('[data-model-indicator]'), null, 'no model in the box');
+    assert.deepEqual([...box.querySelectorAll('button')].map(b => b.textContent.trim()), ['library'], 'its only button is library');
+    assert.equal(studio.doc.querySelectorAll('input[aria-label="Ask selection"]').length, 1, 'still exactly one chat input');
+    const sent = [];
+    studio.win.fetch = (url, init) => { sent.push([String(url), init && init.method]); return new Promise(() => {}); };
+    const setValue = Object.getOwnPropertyDescriptor(studio.win.HTMLInputElement.prototype, 'value').set;
+    studio.flush(() => { setValue.call(field, '/wall'); field.dispatchEvent(new studio.win.Event('input', {bubbles:true})); });
+    studio.flush(() => field.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true, cancelable:true})));
+    const search = [...studio.doc.querySelectorAll('input')].find(input => /Search… \(e\.g\./.test(input.placeholder));
+    assert.ok(search, 'Enter opens the Node library');
+    assert.equal(search.value, 'wall', 'the library opens on what was typed, without the slash');
+    assert.deepEqual(sent.filter(([, method]) => method && method !== 'GET'), [], 'the box sends nothing');
+    const close = [...studio.doc.querySelectorAll('button')].find(button => button.textContent === '✕' && button.closest('[style*="grid-template-columns: 180px"]'));
+    if (close) studio.flush(() => close.click());
+    studio.flush(() => box.querySelector('button').click());
+    assert.ok([...studio.doc.querySelectorAll('span')].some(node => node.textContent === 'Node library'), 'library opens the Node library');
+  } finally { studio.close(); }
+});
+
 test('composer: the one Studio ask field is scoped in the right selection panel', async () => {
   const studio = await mountStudio();
   try {

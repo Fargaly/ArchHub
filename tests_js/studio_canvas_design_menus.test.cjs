@@ -145,7 +145,7 @@ async function mount({focusId = null, history = null, nodes = NODES(), wires = W
     // The toolbar's Undo / Redo buttons as the real CanvasToolbar draws them from these props.
     CanvasToolbar:({undo, redo}) => React.createElement('div', null, [['Undo', undo], ['Redo', redo]].map(([label, held]) =>
       React.createElement('button', {key:label, 'aria-label':label, disabled:held.disabled, title:held.disabled ? held.why : label,
-        onClick:() => held.run()}, label))), FloatingComposer:() => null, MiniMap:() => null, Socket:() => null,
+        onClick:() => held.run()}, label))), FloatingComposer:() => null, CanvasAddBox:() => null, MiniMap:() => null, Socket:() => null,
     nodeModelRow:() => null, smallBtn:() => ({}), toolBtn:() => ({}), kbd:() => ({}),
     setTimeout:dom.window.setTimeout.bind(dom.window), clearTimeout:dom.window.clearTimeout.bind(dom.window)});
   vm.runInContext(transformSync(shortcutSlice() + slice() + '\nglobalThis.NodeCanvas = NodeCanvas;',

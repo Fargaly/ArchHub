@@ -14,7 +14,8 @@ const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const seedText = read('nodelang/universal_presentation_seed.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
 const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)].map(match => [match[1], match[2]]));
 // Workspaces (274e4f2a) registers the folders the graph governs; it sits after Permissions.
-const DESIGN_TABS = ['Hub', 'Account', 'Brain', 'Team', 'Profile', 'Permissions', 'Workspaces', 'Hosts', 'Providers', 'Models',
+// BABOOM sits after Brain as in the design dialog (ArchHub App Window.html, Settings).
+const DESIGN_TABS = ['Hub', 'Account', 'Brain', 'BABOOM', 'Team', 'Profile', 'Permissions', 'Workspaces', 'Hosts', 'Providers', 'Models',
   'Theme', 'Shortcuts', 'Storage', 'About'];
 // Shaped as model_router.provider_rows() emits them. No row carries a key.
 const PROVIDERS = [
@@ -123,13 +124,28 @@ async function openSettings({account = null, socialAccounts = [], socialApproval
 test('the Settings sidebar is the design tab table, in the design order, and states the live badges', async () => {
   const s = await openSettings();
   try {
+    const dialog = s.sidebar.closest('[role="dialog"]');
+    assert.ok(dialog, 'Settings is a dialog');
+    assert.equal(dialog.getAttribute('aria-modal'), 'true', 'Settings says it is modal');
+    assert.equal(dialog.getAttribute('aria-label'), 'Settings');
     assert.deepEqual([...s.sidebar.children].map(child => child.firstElementChild.textContent), DESIGN_TABS);
     const badge = label => [...s.sidebar.children].find(child => child.firstElementChild.textContent === label).children[1]?.textContent || null;
     assert.equal(badge('Providers'), '1 key', 'the Providers badge counts the keyed registry rows');
     assert.equal(badge('Theme'), 'Dark', 'the Theme badge states the mode the Studio draws');
     assert.equal(badge('Brain'), '4 strata \u00b7 1 facts');
+    assert.equal(badge('BABOOM'), 'companion \u00b7 speaks at most 2 times an hour', 'the BABOOM badge states the budget the companion settings state');
     assert.equal(badge('Hub'), '5/6 on', 'the Hub badge counts the tools that are on');
     assert.ok(s.doc.body.textContent.includes('STUDIO \u00b7 20260916-2130-e733a13'), 'the dialog header states the running build');
+  } finally { s.close(); }
+});
+
+test('BABOOM renders the existing companion settings: startup switch and speech budget', async () => {
+  const s = await openSettings();
+  try {
+    const panel = await s.tab('BABOOM');
+    assert.ok(panel.textContent.includes('Companion settings'), 'the BABOOM tab is the existing companion settings');
+    assert.ok(panel.textContent.includes('Speaks at most 2 times an hour.'), 'the budget states the same value as the badge');
+    assert.ok(panel.querySelector('[role="switch"][aria-label="Start BABOOM when ArchHub opens"]'), 'the startup switch is drawn');
   } finally { s.close(); }
 });
 

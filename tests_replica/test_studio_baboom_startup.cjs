@@ -2,8 +2,9 @@
  *
  * RED-first: on source without api.setBaboomStartup, the 'baboom-startup' kind of
  * changeTheme, BaboomStartupRow and a regenerated compiled Studio, every case fails.
- * The design (archhub/project studio-lm.jsx:2441-2454) has no BABOOM tab, so the startup choice is
- * a row in the design's own Settings > Hosts list; the tab table stays the design's twelve.
+ * The 2026-10-09 design (claude-design-handoff-20261009, ArchHub App Window.html > Settings) adds a
+ * BABOOM tab after Brain. The startup choice lives there and only there (founder: one place); the
+ * Settings > Hosts list no longer carries it.
  */
 'use strict';
 const test = require('node:test');
@@ -217,7 +218,7 @@ function compiledStudioIsCurrent() {
   return manifest;
 }
 
-test('shipped Studio tree carries the BABOOM startup switch as a row of Settings > Hosts, with no BABOOM tab', async () => {
+test('shipped Studio tree carries the BABOOM startup switch in Settings > BABOOM only, never in Hosts', async () => {
   const manifest = compiledStudioIsCurrent();
   assert.ok(read('nodelang/studio/compiled/studio-lm.js').includes('Start BABOOM when ArchHub opens'),
     'compiled Studio was regenerated from studio-lm.jsx');
@@ -238,13 +239,17 @@ test('shipped Studio tree carries the BABOOM startup switch as a row of Settings
     assert.ok(settings, 'actual Studio Settings control exists');
     win.ReactDOM.flushSync(() => settings.click());
     const tabs = [...win.document.querySelectorAll('button')].filter(button => button.firstElementChild?.textContent);
-    assert.equal(tabs.some(button => button.firstElementChild.textContent === 'BABOOM'), false, 'the design draws no BABOOM tab');
+    assert.equal(tabs.some(button => button.firstElementChild.textContent === 'BABOOM'), true, 'the 2026-10-09 design draws a BABOOM tab');
     const hosts = tabs.find(button => button.firstElementChild.textContent === 'Hosts');
     assert.ok(hosts, 'actual Settings Hosts tab exists');
     win.ReactDOM.flushSync(() => hosts.click());
+    assert.equal(win.document.querySelectorAll(SWITCH).length, 0, 'Hosts does not render the BABOOM startup switch');
+    const baboom = [...win.document.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'BABOOM');
+    assert.ok(baboom, 'actual Settings BABOOM tab exists');
+    win.ReactDOM.flushSync(() => baboom.click());
+    assert.equal(win.document.querySelectorAll(SWITCH).length, 1, 'the BABOOM startup switch is drawn once');
     const toggle = win.document.querySelector(SWITCH);
-    assert.ok(toggle, 'actual BABOOM startup switch exists in the Hosts list');
-    assert.equal(toggle.parentElement.querySelector(':scope > div > div').textContent, 'BABOOM', 'the row is named like a host row');
+    assert.equal(toggle.parentElement.querySelector(':scope > div > div').textContent, 'BABOOM', 'the row names BABOOM');
     assert.equal(disabled(toggle), true, 'no Workshop API and no read setting means no write');
     assert.match(win.document.body.textContent, TAKES_EFFECT);
   } finally {

@@ -131,6 +131,7 @@ test('a model node keeps its composer; honest-empty when no rows', async () => {
     await tick(React);
     assert.ok(win.document.querySelector('#root textarea[data-stub="inlineask"]'), 'model node keeps the composer');
     assert.match(win.document.getElementById('root').textContent, /No conversation yet/, 'empty bound transcript is honest');
+    assert.doesNotMatch(win.document.getElementById('root').textContent, /Continue in the Workshop to start one/, 'the empty state points at the one chat input below, not away from it');
   });
 });
 

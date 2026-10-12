@@ -150,6 +150,72 @@ test('first Workshop rail switch stays under the synchronous render budget', asy
   } finally { studio.close(); }
 });
 
+// Ping P2 (ST1 review): a rail entry that opens Settings must leave the Workshop chat as it was.
+test('a Settings rail entry opened from Workshop chat keeps the same chat when Settings closes', async () => {
+  const transcript = {ok:true, graph_id:'graph-a', root:'room-a', scope_root:'scope-a', revision:7,
+    owner:'owner-a', view:'view-a', self:'owner-a', can_send:true, can_join:false,
+    participants:[{root:'owner-a', label:'Owner', attached:true}], messages:[msg('m1', 1, 'Cached transcript row')]};
+  const studio = await mountStudio({workshops:[{root:'room-a', label:'Wall conversion', is_general:false}], workshop:transcript});
+  try {
+    studio.flush(() => studio.segment('Workshop').click());
+    const chat = studio.fullWorkshopTabs().find(tab => tab.getAttribute('aria-label') === 'Chat');
+    studio.flush(() => chat.click());
+    // Wait for the cached row rather than a fixed delay: under suite load 20 ms is not always enough.
+    for (let i = 0; i < 200 && !/Cached transcript row/.test(studio.doc.querySelector('[aria-label="Workshop conversation"]')?.textContent || ''); i += 1) {
+      await new Promise(resolve => studio.win.setTimeout(resolve, 10)); studio.flush(() => {});
+    }
+    const before = studio.doc.querySelector('[aria-label="Workshop conversation"]');
+    assert.match(before.textContent, /Cached transcript row/, 'the Workshop chat is open');
+    // The hub says these tools are on (an off tool takes the off route, which CP1 covers).
+    studio.win.ARCHHUB_TOOL_HUB = {ok:true, waiting:[], tools:['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud']
+      .map(id => ({id, label:id, state:'running', state_word:'RUNNING', description:'', stat_line:''}))};
+    for (const id of ['brain', 'connectors', 'baboom', 'cloud']) {
+      const rail = studio.doc.querySelector(`[data-tool-rail="${id}"]`);
+      assert.ok(rail, id + ' rail entry exists');
+      studio.flush(() => rail.click());
+      await new Promise(resolve => studio.win.setTimeout(resolve, 0)); studio.flush(() => {});
+      assert.ok([...studio.doc.querySelectorAll('button')].some(b => b.firstElementChild?.textContent === 'Theme'), id + ' opened Settings');
+      studio.flush(() => studio.win.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Escape', bubbles:true})));
+      await new Promise(resolve => studio.win.setTimeout(resolve, 0)); studio.flush(() => {});
+      assert.equal([...studio.doc.querySelectorAll('button')].some(b => b.firstElementChild?.textContent === 'Theme'), false, 'Settings closed');
+      const after = studio.doc.querySelector('[aria-label="Workshop conversation"]');
+      assert.ok(after, id + ': the Workshop chat is still the view after Settings closes');
+      assert.match(after.textContent, /Cached transcript row/, id + ': same conversation');
+      assert.equal(studio.fullWorkshopTabs().find(tab => tab.getAttribute('aria-label') === 'Chat')?.getAttribute('aria-selected'), 'true',
+        id + ': Chat is still the selected Workshop tab');
+    }
+  } finally { studio.close(); }
+});
+
+// CP1: an off tool opens Settings > Hub over the view, so the Workshop chat survives it too.
+test('an off tool opened from Workshop chat opens Settings > Hub and keeps the same chat when it closes', async () => {
+  const transcript = {ok:true, graph_id:'graph-a', root:'room-a', scope_root:'scope-a', revision:7,
+    owner:'owner-a', view:'view-a', self:'owner-a', can_send:true, can_join:false,
+    participants:[{root:'owner-a', label:'Owner', attached:true}], messages:[msg('m1', 1, 'Cached transcript row')]};
+  const studio = await mountStudio({workshops:[{root:'room-a', label:'Wall conversion', is_general:false}], workshop:transcript});
+  try {
+    studio.flush(() => studio.segment('Workshop').click());
+    const chat = studio.fullWorkshopTabs().find(tab => tab.getAttribute('aria-label') === 'Chat');
+    studio.flush(() => chat.click());
+    // Wait for the cached row rather than a fixed delay: under suite load 20 ms is not always enough.
+    for (let i = 0; i < 200 && !/Cached transcript row/.test(studio.doc.querySelector('[aria-label="Workshop conversation"]')?.textContent || ''); i += 1) {
+      await new Promise(resolve => studio.win.setTimeout(resolve, 10)); studio.flush(() => {});
+    }
+    studio.win.ARCHHUB_TOOL_HUB = {ok:true, waiting:[], tools:['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud']
+      .map(id => ({id, label:id, state:id === 'brain' ? 'off' : 'running', state_word:id === 'brain' ? 'OFF' : 'RUNNING', description:'', stat_line:''}))};
+    studio.flush(() => studio.doc.querySelector('[data-tool-rail="brain"]').click());
+    await new Promise(resolve => studio.win.setTimeout(resolve, 0)); studio.flush(() => {});
+    const hub = [...studio.doc.querySelectorAll('button')].find(b => b.firstElementChild?.textContent === 'Hub');
+    assert.ok(hub, 'the off Brain opened Settings');
+    assert.equal(studio.doc.querySelector('main[data-tool-view]'), null, 'no full-window off page');
+    studio.flush(() => studio.win.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Escape', bubbles:true})));
+    await new Promise(resolve => studio.win.setTimeout(resolve, 0)); studio.flush(() => {});
+    const after = studio.doc.querySelector('[aria-label="Workshop conversation"]');
+    assert.ok(after, 'the Workshop chat is still the view after Settings closes');
+    assert.match(after.textContent, /Cached transcript row/, 'same conversation');
+  } finally { studio.close(); }
+});
+
 test('Workshop Chat mounts already-read transcript rows from the owner projection', async () => {
   const transcript = {ok:true, graph_id:'graph-a', root:'room-a', scope_root:'scope-a', revision:7,
     owner:'owner-a', view:'view-a', self:'owner-a', can_send:true, can_join:false,

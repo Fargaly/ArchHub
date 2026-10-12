@@ -136,7 +136,7 @@ test('Home composer shows the four design chip buttons and no raw model route ch
   } finally { studio.close(); }
 });
 
-test('F2: Home starts rail-only, moves the six hub tool cards into Settings Hub, and hides waiting at zero', async () => {
+test('F2/H1: Home shows the six hub tool cards, the same cards Settings Hub draws, and hides waiting at zero', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
@@ -144,8 +144,15 @@ test('F2: Home starts rail-only, moves the six hub tool cards into Settings Hub,
       'Home does not render the Nodes library panel');
     assert.equal(studio.doc.querySelectorAll('[data-tool-rail]').length, 6,
       'rail has the six tool icons');
-    assert.equal(studio.doc.querySelectorAll('[data-tool-card]').length, 0,
-      'Home has no tool cards');
+    // Founder 2026-10-12 (H1): tool cards on BOTH Home and Settings > Hub, one component (gate row K expects 6 on Home).
+    const home = studio.doc.querySelector('[data-home-tools]');
+    assert.ok(home, 'Home has its Tools section');
+    assert.deepEqual([...home.querySelectorAll('[data-tool-card]')].map(card => card.getAttribute('data-tool-card')),
+      ['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud'], 'Home has the six tool cards');
+    assert.match(home.textContent, /Tools5\/6 RUNNING · EACH WORKS ON ITS OWN/);
+    const homeStudio = home.querySelector('[data-tool-card="studio"]').textContent;
+    assert.equal(home.querySelector('[data-tool-grid]').style.gridTemplateColumns, 'repeat(3, minmax(0, 1fr))',
+      'Home draws the design 3 x 2 grid, never 5 + 1');
     for (const id of ['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud']) {
       assert.ok(studio.doc.querySelector(`[data-tool-rail="${id}"]`), id + ' rail icon exists');
     }
@@ -155,6 +162,7 @@ test('F2: Home starts rail-only, moves the six hub tool cards into Settings Hub,
       assert.ok(hub.querySelector(`[data-tool-card="${id}"]`), id + ' card exists in Settings Hub');
     }
     assert.match(hub.querySelector('[data-tool-card="studio"]').textContent, /StudioCanvas, chats and graph sessions\. 3 sessions · 0 running/);
+    assert.equal(hub.querySelector('[data-tool-card="studio"]').textContent, homeStudio, 'Home and Hub draw the same card');
   } finally { studio.close(); }
 });
 
@@ -197,31 +205,30 @@ test('F1b: rail tools match the hub order, state tooltips, and 6px dot colours',
   } finally { studio.close(); }
 });
 
-test('F2: clicking an off tool opens the tool view first tab', async () => {
+test('F2/CP1: clicking an off tool opens its Settings > Hub card over the current screen, never a page', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
     studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-tool-rail="brain"]').click());
     await studio.settle();
-    assert.equal(studio.doc.querySelector('[data-tool-view="brain"]')?.getAttribute('data-tool-tab'), 'facts');
-    assert.match(studio.doc.body.textContent, /Brain/);
-    assert.match(studio.doc.body.textContent, /Brain is off/);
+    assert.equal(studio.doc.querySelector('[data-tool-view]'), null, 'no full-window tool page');
+    const hub = [...studio.doc.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Hub');
+    assert.ok(hub, 'Settings is open');
+    const card = hub.parentElement.nextElementSibling.querySelector('[data-tool-card="brain"]');
+    assert.ok(card, 'the Hub shows the Brain card, which states it is off');
   } finally { studio.close(); }
 });
 
-test('F1c: an off rail tool renders its hub empty state in the main area', async () => {
+test('CP1: an off rail tool keeps the screen under it, so its composer stays mounted', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
+    assert.ok(studio.doc.querySelector('textarea[aria-label="Start a new session"]'), 'Home composer before');
     studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-tool-rail="brain"]').click());
     await studio.settle();
-    const main = studio.doc.querySelector('main[data-tool-view="brain"]');
-    assert.ok(main, 'Brain opens in the main area');
-    assert.match(main.textContent, /Brain is off/);
-    assert.match(main.textContent, /What ArchHub remembers\. Everything else keeps running\./);
-    assert.equal([...main.querySelectorAll('button')].some(node => node.textContent.trim() === 'Turn on'), false,
-      'Brain has no fake generic owner toggle');
-    assert.deepEqual(studio.ownerCalls, []);
+    assert.ok(studio.doc.querySelector('textarea[aria-label="Start a new session"]'), 'Home composer still mounted under Settings');
+    assert.equal(studio.doc.querySelector('main[data-tool-view]'), null, 'no page replaced the screen');
+    assert.deepEqual(studio.ownerCalls, [], 'opening never toggles the owner');
   } finally { studio.close(); }
 });
 
@@ -240,17 +247,18 @@ test('F1b: right-click on an on tool shows a six second in-panel off confirm', a
   } finally { studio.close(); }
 });
 
-test('F1: Settings Hub card click closes Settings and opens existing views; Studio rail opens Home', async () => {
+test('F1: Settings Hub card click opens that tool\'s Settings tab; Studio rail opens Home', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
     const hub = await openSettingsHub(studio);
     assert.equal([...hub.querySelectorAll('[data-tool-card] button')].some(node => node.textContent.trim() === 'OPEN'), false,
       'Tool cards have no separate OPEN pill');
-    studio.win.ReactDOM.flushSync(() => hub.querySelector('[data-tool-card="brain"]').click());
+    studio.win.ReactDOM.flushSync(() => hub.querySelector('[data-tool-card="connectors"]').click());
     await studio.settle();
-    assert.equal(studio.doc.body.textContent.includes('SettingsSTUDIO'), false, 'Open closes Settings');
-    assert.equal(studio.doc.querySelector('[data-tool-view="brain"]')?.getAttribute('data-tool-tab'), 'facts');
+    assert.equal(studio.doc.querySelector('[data-tool-view]'), null, 'no full-window tool page');
+    const hosts = [...studio.doc.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Hosts');
+    assert.ok(hosts && hosts.style.background !== 'transparent', 'Connectors opens Settings > Hosts');
     studio.win.ReactDOM.flushSync(() => studio.win.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Escape', bubbles:true})));
     studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-tool-rail="studio"]').click());
     await studio.settle();
@@ -381,15 +389,18 @@ test('F2R D2: Workshop card opens the full Workshop view on its Tasks tab, not S
   } finally { studio.close(); }
 });
 
-test('F2R D3: BABOOM card renders the companion settings body, never the Hosts panel', async () => {
+test('F2R D3: BABOOM card opens Settings > BABOOM with the companion settings body, never the Hosts panel', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
     const hub = await openSettingsHub(studio);
     studio.win.ReactDOM.flushSync(() => hub.querySelector('[data-tool-card="baboom"]').click());
     await studio.settle();
-    const main = studio.doc.querySelector('[data-tool-view="baboom"]');
-    assert.ok(main, 'BABOOM opens its tool view');
+    assert.equal(studio.doc.querySelector('[data-tool-view="baboom"]'), null, 'no full-window BABOOM page (founder 2026-10-12)');
+    const tab = [...studio.doc.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'BABOOM');
+    assert.ok(tab, 'Settings is open with its BABOOM tab');
+    const main = tab.parentElement.nextElementSibling;
+    assert.match(main.textContent, /Companion settings/);
     assert.match(main.textContent, /Start BABOOM when ArchHub opens/);
     assert.equal(main.textContent.includes('Local clients the host probe found on this machine'), false);
   } finally { studio.close(); }
@@ -448,18 +459,17 @@ test('F2U repair: BABOOM card separates Windows startup from runtime state', asy
   } finally { studio.close(); }
 });
 
-test('F2R cloud tool view opens status-only account navigation', async () => {
+test('F2R cloud card opens Settings > Account, the one place that states sign-in', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
     const hub = await openSettingsHub(studio);
     studio.win.ReactDOM.flushSync(() => hub.querySelector('[data-tool-card="cloud"]').click());
     await studio.settle();
-    assert.equal(studio.doc.querySelector('[data-tool-view="cloud"]')?.getAttribute('data-tool-tab'), 'account');
-    const cloudView = studio.doc.querySelector('[data-tool-view="cloud"]');
-    assert.match(cloudView.textContent, /Cloud status/);
-    assert.equal([...cloudView.querySelectorAll('button')]
-      .filter(button => button.textContent.trim() === 'Manage account in Settings › Account').length, 1);
+    assert.equal(studio.doc.querySelector('[data-tool-view="cloud"]'), null, 'no full-window Cloud page (founder 2026-10-12)');
+    const account = [...studio.doc.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Account');
+    assert.ok(account, 'Settings is open');
+    assert.equal(account.parentElement.nextElementSibling.textContent.includes('Cloud status'), false, 'no second sign-in verdict');
     const source = read('nodelang/studio/studio-lm.jsx');
     assert.doesNotMatch(source, /tool === 'cloud' && <SettingsAccount/);
   } finally { studio.close(); }
@@ -473,8 +483,7 @@ test('F2R tool card keyboard open does not invent a tool:* focus root', async ()
     studio.win.ReactDOM.flushSync(() => hub.querySelector('[data-tool-card="brain"]').dispatchEvent(
       new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
     await studio.settle();
-    assert.equal(studio.doc.body.textContent.includes('SettingsSTUDIO'), false, 'Card closes Settings');
-    assert.equal(studio.doc.querySelector('[data-tool-view="brain"]')?.getAttribute('data-tool-tab'), 'facts');
+    assert.equal(studio.doc.querySelector('[data-tool-view]'), null, 'no full-window tool page');
     assert.equal(studio.doc.body.textContent.includes('tool:brain'), false);
   } finally { studio.close(); }
 });

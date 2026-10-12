@@ -70,6 +70,8 @@ async function openSettingsHub(studio) {
   return theme.parentElement.nextElementSibling;
 }
 
+// Founder 2026-10-12: Cloud's page only restated sign-in, so an on Cloud opens Settings > Account
+// (the one place that states sign-in); an off Cloud keeps its off panel in the main area.
 async function openCloudTool(studio) {
   await studio.settle(); await studio.settle();
   const hub = await openSettingsHub(studio);
@@ -77,79 +79,58 @@ async function openCloudTool(studio) {
   assert.ok(card, 'Cloud tool card exists');
   studio.win.ReactDOM.flushSync(() => card.click());
   await studio.settle(); await studio.settle();
-  const cloudView = studio.doc.querySelector('[data-tool-view="cloud"]');
-  assert.ok(cloudView, 'Cloud tool view opened');
-  return cloudView;
+  const page = studio.doc.querySelector('[data-tool-view="cloud"]');
+  if (page) return {page};
+  const account = [...studio.doc.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Account');
+  assert.ok(account, 'Settings is open');
+  return {settings:account.parentElement.nextElementSibling, dialog:account.parentElement.parentElement};
 }
 
-test('Cloud rail page shows status only and opens Account settings for sign-in', async () => {
+test('an on Cloud opens Settings > Account, never a full-window Cloud page', async () => {
   const studio = await mountStudio();
   try {
-    const cloudView = await openCloudTool(studio);
-    assert.match(cloudView.textContent, /Not signed in\./);
-    assert.doesNotMatch(cloudView.textContent, /Continue with Google/);
-    assert.doesNotMatch(cloudView.textContent, /Sign in to ArchHub/);
+    const {page, settings} = await openCloudTool(studio);
+    assert.equal(page, undefined, 'no full-window Cloud page');
+    assert.ok(settings.textContent.includes('Continue with Google'), 'Settings > Account renders the account block');
+    assert.equal(settings.textContent.includes('Cloud status'), false, 'sign-in is stated once, by the Account block');
+  } finally {
+    studio.close();
+  }
+});
 
-    const manage = [...cloudView.querySelectorAll('button')]
-      .filter(button => button.textContent.trim() === 'Manage account in Settings › Account');
-    assert.equal(manage.length, 1, 'Cloud page has one Account settings control');
-    studio.win.ReactDOM.flushSync(() => manage[0].click());
+test('Cloud from the rail opens the same Settings > Account', async () => {
+  const studio = await mountStudio();
+  try {
     await studio.settle(); await studio.settle();
-
-    assert.ok(studio.doc.body.textContent.includes('Settings'), 'Settings dialog opened');
-    assert.ok(studio.doc.body.textContent.includes('Continue with Google'), 'Settings Account still renders the account block');
+    const rail = studio.doc.querySelector('[data-tool-rail="cloud"]');
+    assert.ok(rail, 'the Cloud rail entry stays');
+    studio.win.ReactDOM.flushSync(() => rail.click());
+    await studio.settle(); await studio.settle();
+    assert.equal(studio.doc.querySelector('[data-tool-view="cloud"]'), null, 'no full-window Cloud page');
+    const account = [...studio.doc.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Account');
+    assert.ok(account, 'Settings opened');
+    assert.ok(account.parentElement.nextElementSibling.textContent.includes('Continue with Google'), 'on its Account tab');
   } finally {
     studio.close();
   }
 });
 
-test('Cloud rail page uses the tool row for signed-in status text', async () => {
-  const toolRows = defaultToolRows().map(row => row.id === 'cloud'
-    ? {...row, state:'running', state_word:'SIGNED IN', stat_line:'Signed in as owner@example.com.', wire_summary:'Cloud <- Brain; device linked.'}
-    : row);
-  const studio = await mountStudio({toolRows, account:{signedIn:true, email:'owner@example.com'}});
-  try {
-    const cloudView = await openCloudTool(studio);
-    assert.match(cloudView.textContent, /SIGNED IN/);
-    assert.match(cloudView.textContent, /Signed in as owner@example\.com\./);
-    assert.doesNotMatch(cloudView.textContent, /Cloud <- Brain|←|→|<-|->/, 'no plumbing arrows on the Cloud page (ITEM 3b)');
-  } finally {
-    studio.close();
-  }
-});
-
-test('Cloud rail page does not contradict a signed-in tool row when local account is stale', async () => {
-  const toolRows = defaultToolRows().map(row => row.id === 'cloud'
-    ? {...row, state:'running', state_word:'SIGNED IN', stat_line:'Signed in as owner@example.com.', wire_summary:'Cloud <- Brain; device linked.'}
-    : row);
-  const studio = await mountStudio({toolRows, account:{signedIn:false, email:''}, cloudSession:{ok:true, state:'signed_out', signed_in:false}});
-  try {
-    const cloudView = await openCloudTool(studio);
-    assert.match(cloudView.textContent, /SIGNED IN/);
-    assert.match(cloudView.textContent, /Signed in as owner@example\.com\./);
-    assert.doesNotMatch(cloudView.textContent, /STATUSNot signed in\./);
-    assert.doesNotMatch(cloudView.textContent, /Not signed in\./);
-  } finally {
-    studio.close();
-  }
-});
-
-test('Cloud rail page keeps the off tool panel when Cloud is off', async () => {
+test('an off Cloud opens its Settings > Hub card, never a page', async () => {
   const toolRows = defaultToolRows().map(row => row.id === 'cloud'
     ? {...row, state:'off', state_word:'OFF', empty_title:'Cloud is off', off_sentence:'Switched off. Works on this machine only.'}
     : row);
   const studio = await mountStudio({toolRows});
   try {
-    const cloudView = await openCloudTool(studio);
-    assert.match(cloudView.textContent, /Cloud is off/);
-    assert.match(cloudView.textContent, /Switched off\. Works on this machine only\./);
-    assert.doesNotMatch(cloudView.textContent, /Cloud status/);
+    const {page, dialog} = await openCloudTool(studio);
+    assert.equal(page, undefined, 'no full-window off panel (CP1)');
+    assert.ok(dialog.querySelector('[data-tool-card="cloud"]'), 'the Hub shows the Cloud card');
+    assert.doesNotMatch(dialog.textContent, /Cloud status/);
   } finally {
     studio.close();
   }
 });
 
-test('Cloud rail page does not render internal cloud fields or raw JSON', async () => {
+test('Cloud never renders internal cloud fields or raw JSON in Settings', async () => {
   const toolRows = defaultToolRows().map(row => row.id === 'cloud'
     ? {...row, state:'running', state_word:'SIGNED IN', stat_line:'Signed in as owner@example.com.',
       wire_summary:'Cloud <- Brain', node_id:'cloud-id-7', access_token:'tok-abc', token_path:'C:/sec/tok.txt',
@@ -157,16 +138,11 @@ test('Cloud rail page does not render internal cloud fields or raw JSON', async 
     : row);
   const studio = await mountStudio({toolRows, account:{signedIn:true, email:'owner@example.com'}});
   try {
-    const cloudView = await openCloudTool(studio);
-    const text = cloudView.textContent;
-    assert.doesNotMatch(text, /node_id/);
-    assert.doesNotMatch(text, /cloud-id-7/);
-    assert.doesNotMatch(text, /access_token/);
-    assert.doesNotMatch(text, /tok-abc/);
-    assert.doesNotMatch(text, /token_path/);
-    assert.doesNotMatch(text, /C:\/sec\/tok\.txt/);
-    assert.doesNotMatch(text, /raw_json/);
-    assert.doesNotMatch(text, /\{"ok":true\}/);
+    const {dialog} = await openCloudTool(studio);
+    const text = dialog.textContent;
+    for (const leak of [/node_id/, /cloud-id-7/, /access_token/, /tok-abc/, /token_path/, /C:\/sec\/tok\.txt/, /raw_json/, /\{"ok":true\}/]) {
+      assert.doesNotMatch(text, leak);
+    }
   } finally {
     studio.close();
   }

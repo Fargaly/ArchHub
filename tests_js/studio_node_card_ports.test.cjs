@@ -78,7 +78,7 @@ async function mount() {
   const context = vm.createContext({React, LM, window:dom.window, document:dom.window.document,
     useStudioProjection:() => snapshot, LM_GRAPH:{nodes:[], wires:[]}, studioCanvasScope:() => 'scope',
     studioCategory:cat => ({col:'token-cat', icon:'+', label:String(cat).toUpperCase()}), WIRE:{},
-    NodeBody:() => null, CanvasToolbar:() => null, FloatingComposer:() => null, MiniMap:() => null,
+    NodeBody:() => null, CanvasToolbar:() => null, FloatingComposer:() => null, CanvasAddBox:() => null, MiniMap:() => null,
     nodeModelRow:() => null, smallBtn:() => ({}), toolBtn:() => ({}), kbd:() => ({})});
   vm.runInContext(transformSync(shortcutSlice() + source.slice(start, end) + '\n' + source.slice(socketStart, socketEnd) +
     '\nglobalThis.NodeCanvas = NodeCanvas;', {loader:'jsx', format:'cjs'}).code, context);

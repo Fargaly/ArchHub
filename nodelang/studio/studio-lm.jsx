@@ -7267,7 +7267,7 @@ const cleanDetail = text => String(text || '')
 const providerDetail = p => {
   if (p.id === 'cloud') return 'Sign in to use ArchHub cloud';
   if (p.state === 'keyed') return 'Connected on this machine';
-  if (p.state === 'key invalid') return 'Unavailable. Check this provider in its service owner.';
+  if (p.state === 'key invalid') return 'Not reachable from this machine \u00b7 check the key in Manage';
   if (p.state === 'running') return 'Connected on this machine';
   if (p.state === 'not running') return 'Not connected on this machine';
   if (p.state === 'not installed') return 'Unavailable on this machine';
@@ -8881,7 +8881,7 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
 // Lives INSIDE the app shell — same overlay geometry, nav width and type scale as Settings,
 // so this is the screen the end user actually gets, only the content differs.
 const dCode = window.ArchHubTheme.derive((LM) => ({ fontFamily:LM.mono, fontSize:11.5, lineHeight:1.65, background:LM.bgDeep, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.sm, padding:'11px 13px', color:LM.inkSoft, overflowX:'auto', whiteSpace:'pre', margin:'0 0 14px' }));
-const DP = ({ children }) => <p style={{ fontFamily:LM.sans, fontSize:13.5, lineHeight:1.65, color:LM.inkSoft, margin:'0 0 13px', textWrap:'pretty' }}>{children}</p>;
+const DP = ({ children, ...rest }) => <p {...rest} style={{ fontFamily:LM.sans, fontSize:13.5, lineHeight:1.65, color:LM.inkSoft, margin:'0 0 13px', textWrap:'pretty' }}>{children}</p>;
 const DSub = ({ children }) => <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.18em', margin:'22px 0 10px' }}>{children}</div>;
 const DCode = ({ children }) => <pre style={dCode}>{children}</pre>;
 const DKey = ({ children }) => <span style={{ fontFamily:LM.mono, fontSize:11, background:LM.bgSoft, border:`1px solid ${LM.line}`, borderRadius:4, padding:'1px 5px', color:LM.ink }}>{children}</span>;
@@ -9054,23 +9054,16 @@ const DocsStart = () => (
   <div>
     <SHead title="Getting started" sub="ArchHub runs as a local server next to your CAD/BIM host. Nothing leaves your machine unless a node asks it to."/>
     <DSub>INSTALL</DSub>
-    <DCode>{`# macOS / Linux
-curl -fsSL https://get.archhub.app | sh
-
-# Windows (PowerShell)
-iwr https://get.archhub.app/win | iex
-
-archhub up          # starts the server on :7300
-archhub doctor      # checks hosts, keys, ports`}</DCode>
-    <DP>The server strip at the bottom of Studio shows the same state <code style={{ fontFamily:LM.mono, fontSize:12 }}>archhub doctor</code> reports: port, live hosts, current model, session spend.</DP>
+    <DP data-docs-install="">Download the Windows installer from <code style={{ fontFamily:LM.mono, fontSize:12 }}>archhub.io</code> and run it. ArchHub starts its local server by itself and updates itself when a new release is out; the strip at the bottom offers the restart.</DP>
+    <DP data-docs-strip="">The strip at the bottom of Studio shows the local server, how many hosts are running, and the graph you are in. The model a chat uses is named once, on the chip above the chat box.</DP>
     <DSub>FIRST RUN</DSub>
     <DRows rows={[
       ['1 · Connect a host', 'Studio scans for Revit, Rhino, Blender and a Speckle token. Anything it finds appears in Settings → Hosts.'],
-      ['2 · Add a provider', 'Settings → Providers. Bring your own key, or point at a local Ollama. Keys are stored in the OS keychain, never in a project file.'],
+      ['2 · Pick a model', 'Free models work out of the box. Settings → Providers signs in to a provider, or uses a local LM Studio / Ollama. Keys stay on this machine, never in a project file.'],
       ['3 · Open a session', 'A session is one canvas plus its chat. Sessions are files — commit them, diff them, share them.'],
       ['4 · Place a node', 'Press ⌘L for the library, or drag from the Nodes panel.'],
     ]}/>
-    <DNote>ArchHub is local-first. Sessions, skills and the brain live in <code style={{ fontFamily:LM.mono, fontSize:12 }}>~/.archhub</code>. The only outbound traffic is the model call a node makes, and Settings → Permissions decides whether it needs to ask first.</DNote>
+    <DNote>ArchHub is local-first. Sessions, skills and the brain live on this machine. The only outbound traffic is the model call a node makes; Settings → Permissions shows which agents can act.</DNote>
     <DSub>KEYS</DSub>
     <DP><DKey>⌘K</DKey> command palette · <DKey>⌘L</DKey> node library · <DKey>⌘↵</DKey> run focused node · <DKey>⌘,</DKey> settings · <DKey>⌘/</DKey> these docs</DP>
   </div>

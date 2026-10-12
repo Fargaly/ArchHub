@@ -121,6 +121,13 @@ test('global keydown actions are driven by the exported shortcut table', async (
     send('open-documentation', {key:'/', ctrlKey:true});
     await studio.settle();
     assert.ok(studio.doc.body.textContent.includes('Getting started'), 'Ctrl+/ opens documentation');
+    // UX-DOC1 (installed 2248, 07): Getting started matches the shipped app.
+    const docs = studio.doc.body.textContent;
+    for (const stale of ['get.archhub.app', 'archhub doctor', 'archhub up', ':7300', 'session spend', 'macOS', '~/.archhub', 'OS keychain']) {
+      assert.equal(docs.includes(stale), false, 'Getting started no longer says ' + stale);
+    }
+    assert.match(studio.doc.querySelector('[data-docs-install]').textContent, /Windows installer from archhub\.io/);
+    assert.match(studio.doc.querySelector('[data-docs-strip]').textContent, /local server, how many hosts are running/);
     send('toggle-settings', {key:',', ctrlKey:true});
     await studio.settle();
     assert.ok([...studio.doc.querySelectorAll('button')].some(button => button.firstElementChild?.textContent === 'Hub'), 'Ctrl+, opens Settings');

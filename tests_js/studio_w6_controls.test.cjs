@@ -117,7 +117,7 @@ test("W6d Settings detail strings are product-safe and short", () => {
   assert.equal((account.match(/Not signed in/g) || []).length <= 3, true, "signed-out Account should state sign-in status once in the rendered flow");
   assert.match(account, /Sharing needs approval and never includes client folders\./);
   assert.match(providers, /providerDetail\(p\)/);
-  for (const safe of ["Sign in to use ArchHub cloud", "Unavailable. Check this provider in its service owner.", "Connected on this machine"]) {
+  for (const safe of ["Sign in to use ArchHub cloud", "Not reachable from this machine \\u00b7 check the key in Manage", "Connected on this machine"]) {
     assert.match(providerHelpers, new RegExp(safe.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   assert.equal(/no key \\u00b7 set|ARCHHUB_CLOUD_TOKEN|127\.0\.0\.1|localhost:/.test(providers), false);

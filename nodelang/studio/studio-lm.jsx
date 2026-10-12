@@ -2426,9 +2426,9 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, onModel
   </main>;
   return (
     <main style={{
-      gridColumn:'2', gridRow:'1', minHeight:0, overflow:'hidden',
+      gridColumn:'2', gridRow:'1', minHeight:0, minWidth:0, overflow:'hidden',
       display:'grid',
-      gridTemplateColumns:'1fr 320px',
+      gridTemplateColumns:'minmax(0, 1fr) 320px',
       gridTemplateRows:'36px 1fr',
     }}>
       <WsHeader
@@ -2451,7 +2451,7 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, onModel
           sel={wsSel} setSel={setWsSel}/>
       ) : (
         <>
-          <NodeCanvas key={JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas), effectiveMode === 'system'])} system={effectiveMode === 'system'} focusId={focusId} setFocusId={setFocusId} pendingReveal={pendingCanvasReveal} clearPendingReveal={clearPendingCanvasReveal} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model} onViewportChange={updateCanvasViewport}/>
+          <NodeCanvas key={JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas), effectiveMode === 'system'])} system={effectiveMode === 'system'} focusId={focusId} setFocusId={setFocusId} pendingReveal={pendingCanvasReveal} clearPendingReveal={clearPendingCanvasReveal} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model} onViewportChange={updateCanvasViewport} fitOnOpen/>
           <NodeRail node={focusNode} hiddenWork={!focusNode && authorityState?.canvas?.selection_hidden === true}
             graph={graph} canvas={authorityState?.canvas} session={session} sessionRows={sessionRows}
             model={model} setPickerOpen={setPickerOpen} readiness={readiness}
@@ -3514,22 +3514,24 @@ const canvasConnectedNodeIds = (nodeIds, wires, seeds, whole) => {
   }
   return [...found];
 };
-const canvasFitBounds = (ids, positions, sizes, viewport) => {
-  const width = viewport.width - 48, height = viewport.height - 152;
+// Reserved bands: 24 px each side; top 120 = toolbar + hint row + minimap; bottom 80 = the add box.
+const CANVAS_FIT_TOP = 120, CANVAS_FIT_BOTTOM = 80;
+const canvasFitBounds = (ids, positions, sizes, viewport, maxZoom = 2) => {
+  const width = viewport.width - 48, height = viewport.height - CANVAS_FIT_TOP - CANVAS_FIT_BOTTOM;
   const left = Math.min(...ids.map(id => positions[id].x)), top = Math.min(...ids.map(id => positions[id].y));
   const right = Math.max(...ids.map(id => positions[id].x + sizes[id].w));
   const bottom = Math.max(...ids.map(id => positions[id].y + sizes[id].h));
-  const zoom = Math.min(2, width / Math.max(1, right - left), height / Math.max(1, bottom - top));
+  const zoom = Math.min(maxZoom, width / Math.max(1, right - left), height / Math.max(1, bottom - top));
   if (!ids.length || !Number.isFinite(zoom) || zoom < 0.01 || width < 1 || height < 1) {
     throw new Error('The selected bounds are too large for this view. Fit a smaller selection.');
   }
   return {zoom, pan:{x:24 + width / 2 - (left + right) * zoom / 2,
-    y:72 + height / 2 - (top + bottom) * zoom / 2}, bounds:{left, top, right, bottom}};
+    y:CANVAS_FIT_TOP + height / 2 - (top + bottom) * zoom / 2}, bounds:{left, top, right, bottom}};
 };
 const canvasRevealBounds = (ids, positions, sizes, viewport, currentZoom, currentPan) => {
   const fit = canvasFitBounds(ids, positions, sizes, viewport);
   const targetZoom = canvasClampZoom(Math.min(currentZoom, fit.zoom));
-  const usable = {left:24, right:viewport.width - 24, top:72, bottom:viewport.height - 80};
+  const usable = {left:24, right:viewport.width - 24, top:CANVAS_FIT_TOP, bottom:viewport.height - CANVAS_FIT_BOTTOM};
   const bounds = fit.bounds;
   const pan = {x:currentPan.x, y:currentPan.y};
   const adjust = (low, high, viewLow, viewHigh, held) => {
@@ -3673,7 +3675,7 @@ const writeCanvasLayoutTrace = (scope, burst) => {
   } catch (error) { /* a session with no storage still draws and still saves the canvas */ }
 };
 
-const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingReveal = null, setLibraryOpen, userNodes = [], addNodeFromLibrary, model, system = false, onViewportChange = null }) => {
+const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingReveal = null, setLibraryOpen, userNodes = [], addNodeFromLibrary, model, system = false, onViewportChange = null, fitOnOpen = false }) => {
   const authorityState = useStudioProjection();
   const projectedGraph = authorityState?.graph || LM_GRAPH;
   // The owner marks every top-level card with who placed it (graph shape, not a list of names).
@@ -3945,6 +3947,8 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     };
   }, []);
 
+  // A scope seen for the first time has no stored view: it opens fitted to its cards (below).
+  const openFitPending = React.useRef(fitOnOpen && !CANVAS_VIEWS.has(scopeKey));
   const [pan, setPan] = React.useState(() => readCanvasView(scopeKey).pan);
   const [zoom, setZoom] = React.useState(() => readCanvasView(scopeKey).zoom);
   React.useEffect(() => { CANVAS_VIEWS.set(scopeKey, {pan, zoom}); }, [scopeKey, pan, zoom]);
@@ -4419,12 +4423,12 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     }
     return sizes;
   };
-  const fitIds = (ids, silent = false) => {
+  const fitIds = (ids, silent = false, maxZoom = 2) => {
     if (!scopeStillCurrent() || !ids.length) return false;
     const sizes = measureCards(silent);
     if (!sizes) return false;
     try {
-      const result = canvasFitBounds(ids, positions, sizes, wrapRef.current.getBoundingClientRect());
+      const result = canvasFitBounds(ids, positions, sizes, wrapRef.current.getBoundingClientRect(), maxZoom);
       setZoom(result.zoom); setPan(result.pan); closeContextMenu();
       return true;
     } catch (error) { if (!silent) setLayoutError(error.message); }
@@ -4636,6 +4640,20 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     } catch (error) { if (scopeStillCurrent()) setLayoutError(error.message || 'The canvas could not be refreshed.'); }
   };
   const allIds = allNodes.map(node => node.id);
+  // Open fitted (founder window 2026-10-12: a graph opened at 66% under the toolbar, cut at the left).
+  // Once per scope, after the cards have measured; never above 100%; a stored view is kept as left.
+  React.useEffect(() => {
+    if (!openFitPending.current || !allIds.length) return undefined;
+    let frame = 0, cancelled = false;
+    const raf = window.requestAnimationFrame || (fn => window.setTimeout(fn, 16));
+    const tick = () => {
+      if (cancelled || !openFitPending.current) return;
+      if (fitIds(allIds, true, 1)) { openFitPending.current = false; return; }
+      if (++frame < 20) raf(tick); else openFitPending.current = false;
+    };
+    raf(tick);
+    return () => { cancelled = true; };
+  }, [scopeKey, allIds.length]);
   // The routes the menus call. Each one already exists: the inspector's Delete (ARCHHUB_RETRACT ->
   // /api/universal/retract), its connection Delete (disconnectTopology / authority.remove), Rerun (ARCHHUB_RUN ->
   // /api/universal/run-graph), the library's placement (ARCHHUB_NODE_CREATE -> /api/universal/node-create) and
@@ -6012,10 +6030,10 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
         </>)}
       </div>
     ) : null}
-    {bound ? (
+    {bound && hasOlder ? (
       <div>
         <HoverBtn onClick={() => { if (openConversation) openConversation(node.conversation_root); }} disabled={!openConversation}>
-          Continue in the Workshop</HoverBtn>
+          Full history in the Workshop →</HoverBtn>
       </div>
     ) : null}
     {answer && <p role="status" style={{ margin:0, whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontFamily:LM.serif, fontSize:14, lineHeight:1.55, color:LM.ink, letterSpacing:'-0.003em' }}>{answer}</p>}
@@ -6113,7 +6131,7 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
         ' Your text is still here; sending again will not ask twice.');
     } finally { setAsking(false); }
   };
-  return <div style={{ borderTop:`1px solid ${LM.lineSoft}`, padding:'10px 12px 12px', display:'flex', flexDirection:'column', gap:8 }}>
+  return <div style={{ borderTop:`1px solid ${LM.lineSoft}`, padding:'10px 12px 12px', display:'flex', flexDirection:'column', gap:8, minWidth:0 }}>
     {state && <p role="status" style={{ margin:0, maxHeight:120, overflow:'auto', whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontFamily:LM.serif, fontSize:13, lineHeight:1.45, color:LM.ink }}>
       {stateModel && <span style={{ display:'block', fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.06em', marginBottom:3 }}>{stateModel}</span>}
       <span>{state}</span>
@@ -6140,7 +6158,8 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
       </div>
     </div>}
     <button type="button" data-model-indicator="" onClick={() => setPickerOpen && setPickerOpen(true)}
-      style={{ alignSelf:'flex-start', maxWidth:'100%', display:'flex', alignItems:'center', gap:6, padding:'5px 9px',
+      title={'→ ' + target.name + ' · ' + modelName}
+      style={{ alignSelf:'flex-start', maxWidth:'100%', minWidth:0, display:'flex', alignItems:'center', gap:6, padding:'5px 9px',
         background:LM.bg, border:`1px solid ${LM.accent}66`, borderRadius:LM.rad.sm, color:LM.accent,
         fontFamily:LM.mono, fontSize:10.5, cursor:'pointer' }}>
       <span style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{'→ ' + target.name + ' · ' + modelName}</span>
@@ -6222,10 +6241,12 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
     <aside aria-label="Selection inspector" style={{
       gridColumn:'2', gridRow:'2',
       background:LM.bgPanel, borderLeft:`1px solid ${LM.line}`,
-      overflow:'hidden', minHeight:0,
-      display:'grid', gridTemplateRows:'1fr auto',
+      overflow:'hidden', minHeight:0, minWidth:0,
+      // One column, never wider than the 320px track: a long chip or value ellipsizes instead of
+      // widening the panel past the window edge (founder window, 2026-10-12).
+      display:'grid', gridTemplateRows:'1fr auto', gridTemplateColumns:'minmax(0, 1fr)',
     }}>
-      <div className="ah-scroll" style={{ overflow:'auto', padding:'14px 16px 20px', display:'flex', flexDirection:'column', gap:LM.sp.lg }}>
+      <div className="ah-scroll" style={{ overflowY:'auto', overflowX:'hidden', minWidth:0, padding:'14px 16px 20px', display:'flex', flexDirection:'column', gap:LM.sp.lg }}>
         <div>
           <div style={{ display:'flex', alignItems:'center', gap:7 }}>
             <span style={{ color:cat.col, fontFamily:LM.mono }}>{cat.icon}</span>

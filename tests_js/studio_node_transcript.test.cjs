@@ -112,8 +112,8 @@ test('NodeRail shows the transcript + Continue for a model-less room node', asyn
     assert.match(text, /Here is my proposal\./);
     assert.match(text, /Latest messages only/, 'has_older shows the honest history hint');
     assert.equal(win.document.querySelector('#root textarea'), null, 'a model-less node shows no model composer');
-    const cont = [...win.document.querySelectorAll('button')].find(b => /continue in the workshop/i.test(b.textContent));
-    assert.ok(cont, 'Continue in the Workshop is present');
+    const cont = [...win.document.querySelectorAll('button')].find(b => /full history in the workshop/i.test(b.textContent));
+    assert.ok(cont, 'with older history, a labelled full-history link is present');
     await React.act(async () => cont.click());
     assert.deepEqual(opened, ['app:workshop']);
   });
@@ -129,9 +129,13 @@ test('a model node keeps its composer; honest-empty when no rows', async () => {
     await React.act(async () => root.render(React.createElement(context.Conv,
       {node:modelNode, scope:'scope-a', openConversation:()=>{}})));
     await tick(React);
-    assert.ok(win.document.querySelector('#root textarea[data-stub="inlineask"]'), 'model node keeps the composer');
+    // 2cc408f6: exactly one chat input, the panel's own composer; the conversation section draws none.
+    assert.equal(win.document.querySelector('#root textarea[data-stub="inlineask"]'), null, 'no second composer inside the conversation section');
     assert.match(win.document.getElementById('root').textContent, /No conversation yet/, 'empty bound transcript is honest');
-    assert.doesNotMatch(win.document.getElementById('root').textContent, /Continue in the Workshop to start one/, 'the empty state points at the one chat input below, not away from it');
+    const text = win.document.getElementById('root').textContent;
+    assert.match(text, /No conversation yet · ask below to start one\./, 'the empty state starts the chat here');
+    assert.equal([...win.document.querySelectorAll('button')].some(b => /workshop/i.test(b.textContent)), false,
+      'an empty chat offers no second destination (no Workshop link)');
   });
 });
 

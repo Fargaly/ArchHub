@@ -451,7 +451,7 @@ async function mountCanvasReveal(options = {}) {
     {loader:'jsx', format:'cjs'}).code, context);
   const root = createRoot(dom.window.document.getElementById('root'));
   let props = {focusId:null, setFocusId:() => {}, pendingReveal:null, clearPendingReveal:() => {},
-    setLibraryOpen:() => {}, userNodes:[], addNodeFromLibrary:() => {}, model:null};
+    setLibraryOpen:() => {}, userNodes:[], addNodeFromLibrary:() => {}, model:null, ...(options.fitOnOpen ? {fitOnOpen:true} : {})};
   const render = async change => {
     props = {...props, ...change};
     await React.act(async () => root.render(React.createElement(context.NodeCanvas, {...props, key:studioCanvasScopeMock(snapshot.canvas)})));
@@ -465,6 +465,29 @@ async function mountCanvasReveal(options = {}) {
     dom.window.close(); global.window = oldWindow; global.document = oldDocument; delete global.IS_REACT_ACT_ENVIRONMENT;
   }};
 }
+
+// D-FIX1 (founder window 2026-10-12: a graph opened at 66% under the toolbar and cut at the left edge).
+test('a Workspace canvas opens fitted below the toolbar band, at most 100%; a bare canvas keeps its default view', async () => {
+  const read = view => {
+    const t = view.doc.querySelector('[role="region"][aria-label="Workflow canvas"]').firstElementChild.style.transform;
+    const n = ((t.match(/translate3d\(([^)]*)\)/) || [])[1] || '').split(',').map(part => parseFloat(part));
+    return {t, x:n[0], y:n[1], zoom:Number((t.match(/scale\(([\d.]+)\)/) || [])[1])};
+  };
+  const fitted = await mountCanvasReveal({scope:'scope-fit', fitOnOpen:true});
+  try {
+    for (let i = 0; i < 6; i += 1) await fitted.settle();
+    const v = read(fitted);
+    assert.ok(v.zoom > 0.9 && v.zoom <= 1, 'opens fitted, never above 100%: ' + v.t);
+    assert.ok(v.y + 60 * v.zoom >= 119.5, 'the top card clears the toolbar, hint row and minimap band (120 px): ' + v.t);
+    assert.ok(v.x + 40 * v.zoom >= 23.5, 'no card is cut at the left edge: ' + v.t);
+    assert.ok(v.y + 630 * v.zoom <= 760 - 79.5, 'the bottom card clears the add box band (80 px): ' + v.t);
+  } finally { await fitted.close(); }
+  const bare = await mountCanvasReveal({scope:'scope-bare'});
+  try {
+    for (let i = 0; i < 6; i += 1) await bare.settle();
+    assert.match(read(bare).t, /scale\(0\.66\)/, 'a canvas mounted without fitOnOpen keeps the stored default view');
+  } finally { await bare.close(); }
+});
 
 test('NodeCanvas consumes a pending reveal once; plain focus does not fit', async () => {
   const view = await mountCanvasReveal();

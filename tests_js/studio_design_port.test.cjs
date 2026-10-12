@@ -49,7 +49,7 @@ function projected() {
   return JSON.parse(context.graph);
 }
 
-async function mountStudio({account = null, workshops = [{root:'room-a', label:'Wall conversion', is_general:false}]} = {}) {
+async function mountStudio({account = null, workshops = [{root:'room-a', label:'Wall conversion', is_general:false}], transcript = null} = {}) {
   const manifest = JSON.parse(read('nodelang/studio/compiled/manifest.json'));
   const held = manifest.files.find(file => file.source === 'studio-lm.jsx');
   const live = createHash('sha256').update(fs.readFileSync(path.join(root, 'nodelang/studio/studio-lm.jsx'))).digest('hex');
@@ -58,6 +58,7 @@ async function mountStudio({account = null, workshops = [{root:'room-a', label:'
   const dom = new JSDOM('<div id="root"></div>', {url:'http://127.0.0.1:53912/', runScripts:'outside-only', pretendToBeVisual:true});
   const win = dom.window;
   win.fetch = () => new Promise(() => {}); // court sandbox: the server never answers, so no model is selected
+  if (transcript) win.ARCHHUB_WORKSHOP_TRANSCRIPT = async node => ({ok:true, node, conversation_root:'graph-chat', revision:1, ...transcript});
   win.ARCHHUB_THEME = {...seed};
   win.matchMedia = () => ({matches:false, addEventListener() {}, removeEventListener() {}});
   if (account) win.localStorage.setItem('archhub.account.v1', JSON.stringify(account));
@@ -228,6 +229,42 @@ test('C1: the canvas bottom / box adds nodes and opens the library only; it is n
     if (close) studio.flush(() => close.click());
     studio.flush(() => box.querySelector('button').click());
     assert.ok([...studio.doc.querySelectorAll('span')].some(node => node.textContent === 'Node library'), 'library opens the Node library');
+  } finally { studio.close(); }
+});
+
+// Ping E1 review: an empty chat has ONE destination — the composer right below — and no Workshop link.
+test('E1: an empty graph chat says ask below, offers no Workshop link, and the composer below is usable', async () => {
+  const studio = await mountStudio({transcript:{rows:[], has_older:false, next_before:null}});
+  try {
+    openCanvas(studio);
+    const panel = studio.doc.querySelector('aside[aria-label="Selection inspector"]');
+    const chatTab = [...panel.querySelectorAll('[role="tab"]')].find(tab => tab.textContent.trim() === 'Chat');
+    if (chatTab && chatTab.getAttribute('aria-selected') !== 'true') studio.flush(() => chatTab.click());
+    for (let i = 0; i < 20 && !/ask below to start one/.test(panel.textContent); i += 1) {
+      await new Promise(resolve => studio.win.setTimeout(resolve, 10)); studio.flush(() => {});
+    }
+    assert.match(panel.textContent, /No conversation yet · ask below to start one\./, 'the empty state starts the chat here');
+    assert.equal([...panel.querySelectorAll('button')].some(button => /workshop/i.test(button.textContent)), false,
+      'no Continue / Workshop button competes with the composer');
+    const input = panel.querySelector('input[aria-label="Ask selection"]');
+    assert.ok(input && !input.disabled && !input.readOnly, 'the composer right below is present and usable');
+  } finally { studio.close(); }
+});
+
+test('D-FIX1: the right panel is one 320px column; long chips and rows cannot push it past the window edge', async () => {
+  const studio = await mountStudio();
+  try {
+    openCanvas(studio);
+    const panel = studio.doc.querySelector('aside[aria-label="Selection inspector"]');
+    assert.ok(panel, 'the selection inspector is mounted');
+    assert.equal(panel.style.gridTemplateColumns, 'minmax(0, 1fr)', 'one column that can shrink to the track');
+    assert.equal(panel.style.minWidth, '0px', 'the panel itself may shrink');
+    const main = panel.parentElement;
+    assert.equal(main.style.gridTemplateColumns, 'minmax(0, 1fr) 320px', 'the canvas track shrinks; the panel track is 320px');
+    const chip = panel.querySelector('[data-model-indicator]');
+    assert.ok(chip && chip.style.maxWidth === '100%' && chip.style.minWidth === '0px', 'the model chip ellipsizes inside the panel');
+    assert.ok(chip.getAttribute('title'), 'the full chip text stays readable on hover');
+    assert.equal(panel.firstElementChild.style.overflowX, 'hidden', 'nothing scrolls sideways inside the panel');
   } finally { studio.close(); }
 });
 

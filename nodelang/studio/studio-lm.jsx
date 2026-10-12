@@ -6066,6 +6066,21 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
     turnRows.push({id:turn.requestId + ':a', who:turn.model || 'model', is_me:false, kind:turn.answer === null ? 'waiting' : 'message',
       text:turn.answer === null ? 'Waiting for ' + (turn.model || 'the model') + '\u2026' : turn.answer, time:''});
   }
+  // PM gate 2026-10-13: a new turn scrolls into view (the newest answer must be on screen),
+  // unless the user has scrolled up to read history; then their place is kept.
+  const scrollRef = React.useRef(null);
+  const pinnedRef = React.useRef(true);
+  const lastTurn = turnRows.length ? turnRows[turnRows.length - 1] : null;
+  const tailKey = [rows.length, rows.length ? rows[rows.length - 1].id : '', turnRows.length,
+    lastTurn ? lastTurn.kind + ':' + String(lastTurn.text || '').length : ''].join('|');
+  React.useEffect(() => {
+    const box = scrollRef.current;
+    if (box && pinnedRef.current) box.scrollTop = box.scrollHeight;
+  }, [tailKey]);
+  const onTranscriptScroll = event => {
+    const box = event.currentTarget;
+    pinnedRef.current = box.scrollHeight - box.scrollTop - box.clientHeight < 24;
+  };
   return <section aria-label={'Conversation with ' + node.title} style={{ display:'flex', flexDirection:'column', gap:10, borderTop:`1px solid ${LM.lineSoft}`, paddingTop:12 }}>
     <div style={{ display:'flex', alignItems:'center', gap:7 }}>
       <span style={{ color:cat.col, fontFamily:LM.mono }}>{cat.icon}</span>
@@ -6077,7 +6092,7 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
       ) : null}
     </div>
     {bound ? (
-      <div className="ah-scroll" style={{ maxHeight:260, overflow:'auto', display:'flex', flexDirection:'column', gap:11 }}>
+      <div ref={scrollRef} onScroll={onTranscriptScroll} data-chat-scroll className="ah-scroll" style={{ maxHeight:260, overflow:'auto', display:'flex', flexDirection:'column', gap:11 }}>
         {transcript === null && !turnRows.length ? (
           <p style={{ margin:0, fontFamily:LM.mono, fontSize:10, color:LM.inkMuted }}>Reading the conversation…</p>
         ) : transcript && transcript.error ? (
@@ -6088,8 +6103,8 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
           {hasOlder ? (
             <p style={{ margin:0, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.04em' }}>Latest messages only · full history in the Workshop</p>
           ) : null}
-          {rows.map(row => <NodeTranscriptRow key={row.id} row={row}/>)}
-          {turnRows.map(row => <div key={row.id} data-chat-turn={row.is_me ? 'question' : row.kind}><NodeTranscriptRow row={row}/></div>)}
+          {rows.map(row => <div key={row.id} data-chat-turn={row.is_me ? 'question' : 'answer'}><NodeTranscriptRow row={row}/></div>)}
+          {turnRows.map(row => <div key={row.id} data-chat-local data-chat-turn={row.is_me ? 'question' : row.kind}><NodeTranscriptRow row={row}/></div>)}
         </>)}
       </div>
     ) : null}

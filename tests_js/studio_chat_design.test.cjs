@@ -265,7 +265,8 @@ test('UX-CHAT1 v2: identical prompts keep both turns, a saved question keeps its
     assert.ok(conversation().querySelector('[data-chat-turn="waiting"]'), 'question saved, answer pending: the pending reply stays');
     await reply('m3', 'r3', 'PONG');
     assert.deepEqual([count('ping'), count('PONG')], [3, 3], 'three turns, each read back once');
-    assert.equal(conversation().querySelector('[data-chat-turn]'), null, 'no local copy left once the store holds every turn');
+    assert.equal(conversation().querySelector('[data-chat-local]'), null, 'no local copy left once the store holds every turn');
+    assert.equal(conversation().querySelectorAll('[data-chat-turn="answer"]').length, 3, 'stored answers keep their turn marker (PM gate x)');
     const props = [...panel.querySelectorAll('[role="tab"]')].find(tab => tab.textContent.trim() === 'Properties');
     const chat = () => [...panel.querySelectorAll('[role="tab"]')].find(tab => tab.textContent.trim() === 'Chat');
     // Leave and come back: the answers come from the store, not a component cache.
@@ -308,7 +309,9 @@ test('UX-CHAT1 v3: an ordinary first send reads back one question and one answer
     studio.answer({answer:'Hi there.', delivery:{state:'replied', request_id:'x', message_id:'u-1', reply_message_id:'a-1'}});
     await studio.settle(); await studio.settle();
     assert.deepEqual([count('hello'), count('Hi there.')], [1, 1], 'one question and one answer after the readback');
-    assert.equal(conversation().querySelector('[data-chat-turn]'), null, 'the stored turn replaces the local copy');
+    assert.equal(conversation().querySelector('[data-chat-local]'), null, 'the stored turn replaces the local copy');
+    assert.equal(conversation().querySelectorAll('[data-chat-turn="question"]').length, 1, 'the stored question is a marked turn');
+    assert.equal(conversation().querySelectorAll('[data-chat-turn="answer"]').length, 1, 'the stored answer is a marked turn');
   } finally { studio.close(); }
 });
 
@@ -388,5 +391,52 @@ test('Model picker: the design header, live groups without prices, then native s
     studio.flush(() => clear.click());
     await studio.settle();
     assert.ok(studio.exact('Choose a model').length, 'clearing returns the inspector to Choose a model');
+  } finally { studio.close(); }
+});
+
+// PM gate 2026-10-13: after several sends the newest answer must be on screen (pin to bottom),
+// unless the user scrolled up to read history.
+test('UX-CHAT1 v3b: a new turn scrolls the conversation to the newest answer unless the user scrolled up', async () => {
+  const studio = await mountStudio();
+  try {
+    await studio.settle();
+    const store = [];
+    studio.win.ARCHHUB_WORKSHOP_TRANSCRIPT = async node => ({ok:true, node, conversation_root:'graph-chat', revision:store.length + 1,
+      has_older:false, next_before:null, rows:store.map(row => ({...row}))});
+    const panel = studio.doc.querySelector('aside[aria-label="Selection inspector"]');
+    const box = () => panel.querySelector('[data-chat-scroll]');
+    const input = studio.reply();
+    const send = async text => {
+      studio.type(input, text);
+      studio.flush(() => input.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
+      await studio.settle();
+    };
+    await send('hello');
+    const dialog = studio.doc.querySelector('[role="dialog"][aria-label="Choose a model"]');
+    if (dialog) { studio.flush(() => studio.exact('DeepSeek R1', dialog)[0].closest('[style]').parentElement.click()); await studio.settle(); }
+    const el = box();
+    assert.ok(el, 'the conversation has its scroll box');
+    // JSDOM has no layout: give the scroll box a real geometry so pinning is observable.
+    let top = 0;
+    Object.defineProperty(el, 'clientHeight', {configurable:true, get: () => 100});
+    Object.defineProperty(el, 'scrollHeight', {configurable:true, get: () => 100 + store.length * 60});
+    Object.defineProperty(el, 'scrollTop', {configurable:true, get: () => top, set: v => { top = v; }});
+    for (let i = 1; i <= 5; i += 1) {
+      await send('ping ' + i);
+      store.push({id:'u-' + i, who:'You', is_me:true, text:'ping ' + i, time:'', kind:'message'});
+      store.push({id:'a-' + i, who:'DeepSeek R1', is_me:false, text:'PONG' + i, time:'', kind:'reply'});
+      studio.answer({answer:'PONG' + i, delivery:{state:'replied', request_id:'r' + i, message_id:'u-' + i, reply_message_id:'a-' + i}});
+      await studio.settle(); await studio.settle();
+    }
+    assert.equal(panel.querySelectorAll('[data-chat-turn="answer"]').length, 5, 'five stored answers are marked turns');
+    assert.equal(top, el.scrollHeight, 'pinned to the newest answer after each turn');
+    top = 0;
+    studio.flush(() => el.dispatchEvent(new studio.win.Event('scroll')));
+    await send('ping 6');
+    store.push({id:'u-6', who:'You', is_me:true, text:'ping 6', time:'', kind:'message'});
+    store.push({id:'a-6', who:'DeepSeek R1', is_me:false, text:'PONG6', time:'', kind:'reply'});
+    studio.answer({answer:'PONG6', delivery:{state:'replied', request_id:'r6', message_id:'u-6', reply_message_id:'a-6'}});
+    await studio.settle(); await studio.settle();
+    assert.equal(top, 0, 'a reader who scrolled up keeps their place');
   } finally { studio.close(); }
 });

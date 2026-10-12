@@ -13,9 +13,12 @@ const root = path.resolve(__dirname, '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const seedText = read('nodelang/universal_presentation_seed.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
 const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)].map(m => [m[1], m[2]]));
+const msg = (root, sequence, body) => ({root, message_id:root, sequence, body, sender_root:'owner-a',
+  created_at:'2026-10-12T00:00:00Z', category:'note', state:'sent'});
 
 async function mountStudio({workshops = [], unavailable, models, canvasGraphId = 'graph-a',
-  sessions = [{id:'graph-a', title:'ArchHub', state:'idle', file:'Graph composition'}], currentGraph = 'graph-a'} = {}) {
+  sessions = [{id:'graph-a', title:'ArchHub', state:'idle', file:'Graph composition'}], currentGraph = 'graph-a',
+  workshop = null} = {}) {
   const manifest = JSON.parse(read('nodelang/studio/compiled/manifest.json'));
   const held = manifest.files.find(file => file.source === 'studio-lm.jsx');
   const live = createHash('sha256').update(fs.readFileSync(path.join(root, 'nodelang/studio/studio-lm.jsx'))).digest('hex');
@@ -28,14 +31,17 @@ async function mountStudio({workshops = [], unavailable, models, canvasGraphId =
     ? Promise.resolve({ok:true, json:() => Promise.resolve(models)}) : new Promise(() => {});
   win.ARCHHUB_THEME = {...seed};
   win.matchMedia = () => ({matches:false, addEventListener() {}, removeEventListener() {}});
+  win.requestAnimationFrame = cb => win.setTimeout(() => cb(win.performance.now()), 0);
+  win.cancelAnimationFrame = id => win.clearTimeout(id);
   const authorization = {subject:'owner-a', session:'view-a'};
   const graph = {nodes:[], wires:[]};
   const listeners = new Set();
   const canvas = {root:'scope-a', revision:7, authorization, ...(unavailable === undefined ? {} : {unavailable})};
   if (canvasGraphId) canvas.graph_id = canvasGraphId;
-  const snapshot = {canvas, workshops,
+  let snapshot = {canvas, workshops, ...(workshop ? {workshop} : {}),
     applicationUpdate:{state:'idle', current_build:'20260923-r8'},
     topology:{canvas:{application_root:'graph-a', scope:{current:'scope-a'}, authorization, revision:7}, graph, selected:null}};
+  const notify = () => listeners.forEach(listener => listener());
   const owner = {
     getSnapshot:() => snapshot,
     subscribe:listener => { listeners.add(listener); return () => listeners.delete(listener); },
@@ -59,7 +65,9 @@ async function mountStudio({workshops = [], unavailable, models, canvasGraphId =
     /Workshop projects|No Workshop project/.test(doc.body.textContent);
   const spoken = () => [...doc.querySelectorAll('[role="alert"], [role="status"]')].map(node => node.textContent.trim()).join(' | ');
   const close = () => { try { flush(() => win.__studioRoot.unmount()); } finally { dom.window.close(); } };
-  return {doc, win, flush, segment, spoken, close, inWorkshop, fullWorkshopTabs};
+  const setWorkshop = value => { snapshot = value ? {...snapshot, workshop:value} :
+    Object.fromEntries(Object.entries(snapshot).filter(([key]) => key !== 'workshop')); notify(); };
+  return {doc, win, flush, segment, spoken, close, inWorkshop, fullWorkshopTabs, setWorkshop};
 }
 test('Workshop opens from the rail view, not from a Studio header Chat segment', async () => {
   const reason = 'This account has no read access to the Workshop.';
@@ -139,5 +147,35 @@ test('first Workshop rail switch stays under the synchronous render budget', asy
       'Chat tab selected');
     assert.ok(chatElapsed < 300, 'first Workshop Chat tab switch took ' + chatElapsed.toFixed(1) + ' ms');
     console.log('first Workshop Chat tab switch ms=' + chatElapsed.toFixed(1));
+  } finally { studio.close(); }
+});
+
+test('Workshop Chat mounts already-read transcript rows from the owner projection', async () => {
+  const transcript = {ok:true, graph_id:'graph-a', root:'room-a', scope_root:'scope-a', revision:7,
+    owner:'owner-a', view:'view-a', self:'owner-a', can_send:true, can_join:false,
+    participants:[{root:'owner-a', label:'Owner', attached:true}], messages:[msg('m1', 1, 'Cached transcript row')]};
+  const studio = await mountStudio({workshops:[{root:'room-a', label:'Wall conversion', is_general:false}], workshop:transcript});
+  try {
+    studio.flush(() => studio.segment('Workshop').click());
+    const chat = studio.fullWorkshopTabs().find(tab => tab.getAttribute('aria-label') === 'Chat');
+    studio.flush(() => chat.click());
+    await new Promise(resolve => studio.win.setTimeout(resolve, 20));
+    studio.flush(() => {});
+    const stream = studio.doc.querySelector('[aria-label="Workshop conversation"]');
+    assert.match(stream.textContent, /Cached transcript row/, 'cached row is visible without waiting for fetch');
+    const seen = [];
+    const observer = new studio.win.MutationObserver(records => seen.push(...records));
+    observer.observe(stream, {childList:true, subtree:true});
+    studio.flush(() => studio.setWorkshop({...transcript, messages:[msg('m1', 1, 'Cached transcript row')]}));
+    await Promise.resolve(); studio.flush(() => {});
+    assert.equal(seen.filter(r => r.type === 'childList').length, 0, 'identical projection causes no childList mutations');
+    studio.flush(() => studio.setWorkshop({...transcript, revision:8,
+      messages:[transcript.messages[0], msg('m2', 2, 'Appended transcript row')]}));
+    await Promise.resolve(); studio.flush(() => {});
+    assert.deepEqual([...stream.querySelectorAll('[data-workshop-message]')].map(row => row.getAttribute('data-workshop-message')),
+      ['m1', 'm2']);
+    assert.equal(seen.flatMap(r => [...r.removedNodes]).some(node => node.nodeType === 1 &&
+      node.matches?.('[data-workshop-message]')), false, 'append did not remove an existing message row');
+    observer.disconnect();
   } finally { studio.close(); }
 });

@@ -36,12 +36,14 @@
       uuid = () => global.crypto.randomUUID(),
       hash = async value => Array.from(new Uint8Array(await global.crypto.subtle.digest(
         'SHA-256', new TextEncoder().encode(value))), byte => byte.toString(16).padStart(2, '0')).join('')}) {
-    let canvas = null, workshops = [], workshop = null, workshopNotice = '', epoch = 0, membershipEpoch = 0;
+    let canvas = null, canvasAuthorizationKnown = false, workshops = [], workshop = null, workshopNotice = '', epoch = 0, membershipEpoch = 0;
     let snapshot = null, nativeWork = null, nativeRead = 0;
     let pageTarget = null, pageEpoch = 0;
     let conversationCatalog = null, conversationCatalogPage = null, catalogEpoch = 0;
     let conversationCreation = null, conversationWrite = null;
     const catalogReads = new Map();
+    const workshopCache = new Map();
+    const WORKSHOP_CACHE_LIMIT = 16;
     let applicationUpdate = null, applicationUpdateError = '', applicationUpdatePending = '';
     let updateRead = null, updateWrite = null, updateEpoch = 0, updateWatchers = 0, updateTimer = null, updateReads = 0;
     let topologyCanvas = null, topologyGraph = null, topologyError = '', topologyPending = false;
@@ -66,9 +68,78 @@
     };
     const current = (stamp, root) => epoch === stamp.epoch && membershipEpoch === stamp.membership && canvas?.graph_id === stamp.graph &&
       canvas?.root === stamp.scope && workshops.some(row => row.root === root);
+    const activeAuthorization = () => {
+      if (canvasAuthorizationKnown) return canvas?.authorization || {subject:'', session:''};
+      const authority = topologyCanvas && topologyCanvas.application_root === canvas?.graph_id &&
+        topologyCanvas.scope?.current === canvas?.root ? topologyCanvas.authorization : canvas?.authorization;
+      return text(authority?.subject) && text(authority?.session)
+        ? {subject:authority.subject, session:authority.session} : {subject:'', session:''};
+    };
     const stampFor = root => {
       if (!canvas || !workshops.some(row => row.root === root)) fail('This Workshop is no longer on the canvas.');
-      return {graph:canvas.graph_id, scope:canvas.root, epoch, membership:membershipEpoch};
+      return {graph:canvas.graph_id, scope:canvas.root, ...activeAuthorization(), epoch, membership:membershipEpoch};
+    };
+    const workshopCacheKey = (stamp, root, before, feed) => JSON.stringify([
+      stamp.subject, stamp.session, stamp.graph, stamp.scope, root, before, feed || 'all']);
+    const clearWorkshopCache = () => workshopCache.clear();
+    const pruneWorkshopCache = liveRoots => {
+      const live = new Set(liveRoots);
+      for (const key of workshopCache.keys()) {
+        try { if (!live.has(JSON.parse(key)[4])) workshopCache.delete(key); }
+        catch (_) { workshopCache.delete(key); }
+      }
+    };
+    const cachedWorkshop = key => {
+      const value = workshopCache.get(key) || null;
+      if (value) { workshopCache.delete(key); workshopCache.set(key, value); }
+      return value;
+    };
+    const rememberWorkshop = (stamp, root, before, feed, value) => {
+      if (value && !value.error && value.root === root && value.scope_root === stamp.scope) {
+        const key = workshopCacheKey(stamp, root, before, feed);
+        workshopCache.delete(key); workshopCache.set(key, value);
+        while (workshopCache.size > WORKSHOP_CACHE_LIMIT) workshopCache.delete(workshopCache.keys().next().value);
+      }
+    };
+    const mergeWorkshopMessages = (previous, result) => {
+      if (!previous || previous.root !== result.root || previous.scope_root !== result.scope_root ||
+          previous.storage !== result.storage || previous.page_before !== result.page_before ||
+          (previous.feed || 'all') !== (result.feed || 'all') || !Array.isArray(previous.messages)) return result.messages;
+      const byRoot = new Map(previous.messages.map(row => [row.root, row]));
+      let changed = previous.messages.length !== result.messages.length;
+      const merged = result.messages.map(row => {
+        const held = byRoot.get(row.root);
+        if (held && sameJson(held, row)) return held;
+        changed = true; return row;
+      });
+      return changed ? merged : previous.messages;
+    };
+    const withAcceptedWorkshopMessage = (page, body, result, deliveryRows) => {
+      if (!page || !Array.isArray(page.messages) || !text(result?.root)) return page;
+      const maxSequence = page.messages.reduce((max, row) =>
+        Number.isSafeInteger(row?.sequence) ? Math.max(max, row.sequence) : max, 0);
+      const delivery = deliveryRows.filter(row => row && text(row.state)).map(row => ({
+        recipient:typeof row.recipient === 'string' ? row.recipient : null,
+        state:row.state,
+        ...(typeof row.via === 'string' ? {via:row.via} : {}),
+        ...(typeof row.reply_message_id === 'string' ? {reply_message_id:row.reply_message_id} : {}),
+        ...(typeof row.reason === 'string' ? {reason:row.reason} : {}),
+      }));
+      const state = delivery.some(row => row.state === 'replied') ? 'replied' :
+        delivery.some(row => row.state === 'started') ? 'started' :
+        delivery[0]?.state || 'stored';
+      const accepted = {
+        root:result.root, message_id:result.root, sequence:maxSequence + 1,
+        sender_root:page.self, recipient_roots:[...body.recipients], reference_roots:[...body.refs],
+        body:body.text, category:body.category, state,
+        created_at:text(result.created_at) ? result.created_at : new Date().toISOString(),
+        delivery,
+      };
+      const existing = page.messages.findIndex(row => row?.root === result.root || row?.message_id === result.root);
+      const messages = existing >= 0
+        ? page.messages.map((row, index) => index === existing ? {...row, ...accepted, sequence:row.sequence || accepted.sequence} : row)
+        : [...page.messages, accepted];
+      return {...page, revision:Math.max(page.revision || 0, result.revision), messages, error:''};
     };
     const topologyIdentity = value => JSON.stringify([value?.application_root, value?.authorization?.subject,
       value?.authorization?.session, value?.scope?.current]);
@@ -251,6 +322,7 @@
           value.authorization.session !== topologyCanvas.authorization.session)) {
         epoch += 1; workshop = null; nativeWork = null; pageTarget = null; pageEpoch += 1;
         conversationCatalog = null; conversationCatalogPage = null; catalogEpoch += 1; conversationCreation = null;
+        clearWorkshopCache();
       }
       // A navigation is a change of view IDENTITY (application, auth subject/session, or scope);
       // topologyIdentity carries all four. Leaving and returning to a scope changes it twice. A new
@@ -420,11 +492,15 @@
       const stamp = stampFor(root);
       const contentKnown = (workshop?.root === root && workshop.storage === 'conversation-content') ||
         (pageTarget?.root === root && pageTarget.storage === 'conversation-content');
+      const cacheKey = workshopCacheKey(stamp, root, before, feed);
       if (!pageTarget || pageTarget.root !== root || pageTarget.before !== before || pageTarget.feed !== feed ||
           pageTarget.feedInitialized !== feedInitialized) {
+        const cached = cachedWorkshop(cacheKey);
         pageTarget = {root, before, feed, feedInitialized,
           ...(contentKnown ? {storage:'conversation-content'} : {})}; pageEpoch += 1;
-        workshop = null; publish();
+        workshop = cached || null; publish();
+      } else if ((!workshop || workshop.root !== root || workshop.scope_root !== stamp.scope) && workshopCache.has(cacheKey)) {
+        workshop = cachedWorkshop(cacheKey); publish();
       }
       const pageStamp = pageEpoch;
       const isCurrent = () => current(stamp, root) && pageStamp === pageEpoch &&
@@ -501,11 +577,15 @@
                 (index > 0 && row.sequence <= rows[index - 1].sequence)))) {
             fail('Workshop activity is invalid.');
           }
+          const mergedMessages = mergeWorkshopMessages(previous, result);
+          const next = {...result, messages:mergedMessages, model_agent:modelAgent, error:''};
+          if (previous && sameJson(previous, next)) return previous;
           if (content) pageTarget = {...pageTarget, storage:'conversation-content'};
-          workshop = {...result, model_agent:modelAgent, error:''}; publish(); return workshop;
+          workshop = next; rememberWorkshop(stamp, root, before, feed, workshop); publish(); return workshop;
         } catch (error) {
           if (!isCurrent()) return null;
-          workshop = {root, scope_root:stamp.scope, messages:[], participants:[],
+          const refusedPage = ordinary && /refresh|page|invalid|stale/.test(error.message || String(error));
+          workshop = (previous && !refusedPage) ? previous : {root, graph_id:stamp.graph, scope_root:stamp.scope, messages:[], participants:[],
             ...(ordinary || before !== null || contentKnown ?
               {storage:'conversation-content', page_before:before, feed} : {}),
             error:error.message || String(error)};
@@ -1479,20 +1559,27 @@
           fail('The Workshop scope is stale.');
         }
         const unavailable = typeof value.unavailable === 'string' ? value.unavailable.slice(0, 300) : '';
+        const authorization = text(value.authorization?.subject) && text(value.authorization?.session)
+          ? {subject:value.authorization.subject, session:value.authorization.session} : null;
+        const authorizationKnown = !!authorization || unavailable !== '' || Object.prototype.hasOwnProperty.call(value, 'authorization');
         const nextWorkshops = value.workshops.map(row => ({...row}));
         if (canvas && value.graph_id === canvas.graph_id && value.root === canvas.root &&
             value.revision === canvas.revision && unavailable === canvas.unavailable &&
+            authorizationKnown === canvasAuthorizationKnown && sameJson(authorization, canvas.authorization || null) &&
             sameJson(nextWorkshops, workshops)) return;
         const scopeChanged = !canvas || value.graph_id !== canvas.graph_id || value.root !== canvas.root;
+        const authChanged = canvas && (authorizationKnown !== canvasAuthorizationKnown ||
+          !sameJson(authorization, canvas.authorization || null));
+        if (authChanged) clearWorkshopCache();
         if (workshops.some(row => !value.workshops.some(next => next.root === row.root))) membershipEpoch += 1;
-        if (scopeChanged || (conversationCatalogPage && !value.workshops.some(row => row.root === conversationCatalogPage.root)) ||
+        if (scopeChanged || authChanged || (conversationCatalogPage && !value.workshops.some(row => row.root === conversationCatalogPage.root)) ||
             value.revision > (conversationCatalog?.revision ?? canvas?.revision ?? -1)) {
           conversationCatalog = null; conversationCatalogPage = null; catalogEpoch += 1;
         }
-        if (scopeChanged || (conversationCreation && !value.workshops.some(row => row.root === conversationCreation.anchor_root))) {
+        if (scopeChanged || authChanged || (conversationCreation && !value.workshops.some(row => row.root === conversationCreation.anchor_root))) {
           conversationCreation = null;
         }
-        if (scopeChanged) {
+        if (scopeChanged || authChanged) {
           epoch += 1; workshop = null; nativeWork = null;
           pageTarget = null; pageEpoch += 1;
         } else if ((pageTarget && !value.workshops.some(row => row.root === pageTarget.root)) ||
@@ -1502,8 +1589,11 @@
             ? {...pageTarget} : null;
           pageEpoch += 1;
         }
-        canvas = {graph_id:value.graph_id, root:value.root, revision:value.revision, unavailable};
+        canvas = {graph_id:value.graph_id, root:value.root, revision:value.revision, unavailable,
+          ...(authorization ? {authorization} : {})};
+        canvasAuthorizationKnown = authorizationKnown;
         workshops = nextWorkshops;
+        pruneWorkshopCache(workshops.map(row => row.root));
         if (workshop && !workshops.some(row => row.root === workshop.root)) { epoch += 1; workshop = null; }
         publish();
       },
@@ -2527,10 +2617,15 @@
             [...deliveryCounts].map(([label, count]) => `${count} ${label}`).join('; ') + '.' : '';
           workshopNotice = [warning, deliveryNotice].filter(Boolean).join(' ');
           if (current(stamp, root)) {
-            // Reconcile the accepted send without waiting on an obsolete poll.
-            pageEpoch += 1; pageTarget = {root, before:null, feed:pageTarget?.feed || 'all',
-              feedInitialized:pageTarget?.feedInitialized === true,
-              storage:pageTarget?.storage || workshop?.storage}; workshop = null;
+            // Reconcile the accepted send without letting the cache repaint an older page first.
+            const feed = pageTarget?.feed || 'all';
+            const feedInitialized = pageTarget?.feedInitialized === true;
+            const storage = pageTarget?.storage || workshop?.storage;
+            pageEpoch += 1; pageTarget = {root, before:null, feed,
+              feedInitialized,
+              ...(storage ? {storage} : {})};
+            workshop = withAcceptedWorkshopMessage(held, body, result, deliveryRows);
+            rememberWorkshop(stamp, root, null, feed, workshop);
             publish();
             await api.refreshWorkshop(root).catch(() => {});
           }

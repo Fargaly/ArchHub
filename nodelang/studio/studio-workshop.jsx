@@ -246,7 +246,9 @@ const wsReplyPlanLine = message => {
 };
 const wsTranscript = (state, descriptor) => {
   const held = state?.workshop;
-  return held?.root === descriptor?.root ? held : null;
+  const graphOk = held?.graph_id === undefined || held.graph_id === state?.canvas?.graph_id;
+  const scopeOk = held?.scope_root === undefined || held.scope_root === state?.canvas?.root;
+  return held?.root === descriptor?.root && graphOk && scopeOk ? held : null;
 };
 const wsNative = (state, descriptor) => state?.nativeWork?.root === descriptor?.root &&
   state.nativeWork.scope === state?.canvas?.root ? state.nativeWork : null;

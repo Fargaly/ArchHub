@@ -24,7 +24,7 @@ function projected() {
   return JSON.parse(context.graph);
 }
 
-async function mountStudio() {
+async function mountStudio({models, selectedTitleLeak = '', modelReadTimeoutMs} = {}) {
   const manifest = JSON.parse(read('nodelang/studio/compiled/manifest.json'));
   for (const source of ['studio-lm.jsx', 'studio-suite.jsx']) {
     const held = manifest.files.find(file => file.source === source);
@@ -34,15 +34,24 @@ async function mountStudio() {
   const {JSDOM} = await import('jsdom');
   const dom = new JSDOM('<div id="root"></div>', {url:'http://127.0.0.1:53933/', runScripts:'outside-only', pretendToBeVisual:true});
   const win = dom.window;
-  win.fetch = url => String(url).startsWith('/api/universal/models')
-    ? Promise.resolve({ok:true, status:200, json:async () => ({ok:true, selected_route:'',
+  if (modelReadTimeoutMs) win.__ARCHHUB_MODEL_READ_TIMEOUT_MS = modelReadTimeoutMs;
+  const defaultModels = {ok:true, selected_route:'',
       default_route:ROUTE, default_source:'free · OpenRouter',
       default_model:{name:MODEL, route:ROUTE, routed:ROUTE, vendor:'OpenRouter', tag:'FREE', ctx:'', col:'#3a6acc', latency:null},
       readiness:{state:'ready', route:ROUTE, actions:[], families:{
         openrouter:{state:'ready', message:'', actions:[]}, cloud:{state:'no_key', message:'', actions:[]},
         nvidia:{state:'no_key', message:'', actions:[]}, lmstudio:{state:'ready', message:'', actions:[]},
-        ollama:{state:'ready', message:'', actions:[]}}, messages:{}}, groups:[]})})
-    : new Promise(() => {});
+        ollama:{state:'ready', message:'', actions:[]}}, messages:{}}, groups:[]};
+  win.fetch = url => {
+    if (!String(url).startsWith('/api/universal/models')) return new Promise(() => {});
+    const answer = typeof models === 'function' ? models() : (models || defaultModels);
+    if (answer == null) return Promise.resolve({ok:true, status:200, json:async () => defaultModels});
+    if (answer && answer.never) return new Promise(() => {});
+    return Promise.resolve(answer).then(payload => {
+      if (payload && payload.http) return {ok:payload.ok, status:payload.status || 500, json:async () => payload.body || {}};
+      return {ok:true, status:200, json:async () => payload};
+    });
+  };
   const agentCalls = [];
   win.ARCHHUB_AGENT = async (text, route, context) => {
     agentCalls.push({text, route, context});
@@ -54,9 +63,12 @@ async function mountStudio() {
   const graph = projected();
   const listeners = new Set();
   const authorization = {subject:'owner-a', session:'view-a'};
-  const snapshot = {canvas:{graph_id:'graph-a', root:'scope-a', revision:7, authorization},
+  const canvas = {graph_id:'graph-a', root:'scope-a', revision:7, authorization};
+  if (selectedTitleLeak) canvas.selected_title = selectedTitleLeak;
+  const snapshot = {canvas,
     workshops:[], applicationUpdate:{state:'idle', current_build:'b1'},
-    topology:{canvas:{application_root:'graph-a', scope:{current:'scope-a'}, authorization, revision:7}, graph, selected:null}};
+    topology:{canvas:{application_root:'graph-a', scope:{current:'scope-a'}, selected_title:selectedTitleLeak,
+      authorization, revision:7}, graph, selected:null}};
   win.ARCHHUB_EXISTING_WORKSHOP = {
     getSnapshot:() => snapshot,
     subscribe:listener => { listeners.add(listener); return () => listeners.delete(listener); },
@@ -87,6 +99,89 @@ async function mountStudio() {
 
 const modelIndicators = doc => [...doc.querySelectorAll('[data-model-indicator]')];
 const button = (doc, label) => [...doc.querySelectorAll('button')].find(node => node.textContent.trim() === label);
+const noModelCard = doc => doc.querySelector('[data-chat-no-model]');
+const deferred = () => {
+  let resolve;
+  const promise = new Promise(done => { resolve = done; });
+  return {promise, resolve};
+};
+
+test('first screen bounds a rejected model read as unknown and Retry reads again', async () => {
+  let reads = 0;
+  const studio = await mountStudio({models:() => {
+    reads += 1;
+    if (reads === 1) return Promise.reject(new Error('network down'));
+    return undefined;
+  }});
+  try {
+    await studio.settle(() => noModelCard(studio.doc)?.textContent.includes('Models could not be read. Retry'),
+      'the rejected read is bounded as unknown');
+    const card = noModelCard(studio.doc);
+    assert.match(card.textContent, /Models could not be read\. Retry/);
+    assert.equal(button(card, 'Sign in'), undefined, 'unknown does not show a sign-in warning');
+    assert.equal(button(card, 'Choose a model'), undefined, 'unknown does not offer a stale picker');
+    studio.flush(() => button(card, 'Retry').click());
+    await studio.settle(() => modelIndicators(studio.doc).some(node => node.textContent.includes(MODEL)),
+      'Retry reads the model list again');
+    assert.equal(noModelCard(studio.doc), null);
+  } finally { studio.close(); }
+});
+
+test('first screen bounds a non-OK model read as unknown', async () => {
+  const studio = await mountStudio({models:{http:true, ok:false, status:503, body:{ok:false}}});
+  try {
+    await studio.settle(() => noModelCard(studio.doc)?.textContent.includes('Models could not be read. Retry'),
+      'the non-OK read is bounded as unknown');
+    const card = noModelCard(studio.doc);
+    assert.equal(button(card, 'Retry')?.textContent.trim(), 'Retry');
+    assert.equal(button(card, 'Sign in'), undefined);
+    assert.equal(button(card, 'Choose a model'), undefined);
+  } finally { studio.close(); }
+});
+
+test('first screen bounds a timed-out model read as unknown', async () => {
+  const studio = await mountStudio({models:{never:true}, modelReadTimeoutMs:20});
+  try {
+    await studio.settle(() => noModelCard(studio.doc)?.textContent.includes('Models could not be read. Retry'),
+      'the timed-out read is bounded as unknown');
+    const card = noModelCard(studio.doc);
+    assert.equal(button(card, 'Retry')?.textContent.trim(), 'Retry');
+    assert.equal(button(card, 'Sign in'), undefined);
+    assert.equal(button(card, 'Choose a model'), undefined);
+  } finally { studio.close(); }
+});
+
+test('first screen keeps model and readiness quiet until the first server answer', async () => {
+  const models = deferred();
+  const studio = await mountStudio({models:() => models.promise, selectedTitleLeak:'out \u2192 in'});
+  try {
+    const pendingHadNoCard = studio.doc.querySelector('[data-chat-no-model]') === null;
+    const pendingHadNoChoose = button(studio.doc, 'Choose a model') === undefined;
+    const pendingHadNoLeak = modelIndicators(studio.doc)
+      .every(indicator => !/Choose a model|\bout\b|\bin\b/.test(indicator.textContent));
+    models.resolve({ok:true, selected_route:'', default_route:ROUTE, default_source:'free · OpenRouter',
+      default_model:{name:MODEL, route:ROUTE, routed:ROUTE, vendor:'OpenRouter', tag:'FREE', ctx:'', col:'#3a6acc', latency:null},
+      readiness:{state:'ready', route:ROUTE, actions:[], families:{openrouter:{state:'ready', message:'', actions:[]}}, messages:{}},
+      groups:[]});
+    await studio.settle(() => modelIndicators(studio.doc).some(node => node.textContent.includes(MODEL)),
+      'the default model label appears after the server answer');
+    assert.equal(pendingHadNoCard, true, 'no no-model card is drawn before readiness answers');
+    assert.equal(pendingHadNoChoose, true, 'no model CTA is drawn before readiness answers');
+    assert.equal(pendingHadNoLeak, true, 'the pending chip has no Choose a model or out/in labels');
+    assert.doesNotMatch(modelIndicators(studio.doc)[0].textContent, /\bout\b|\bin\b/);
+  } finally { studio.close(); }
+});
+
+test('first screen shows the no-model line only after a real negative answer', async () => {
+  const studio = await mountStudio({models:{ok:true, groups:[], selected_route:'', default_route:'',
+    readiness:{state:'no_model', route:'', actions:['sign_in', 'choose_model'],
+      message:'No model yet. Sign in to ArchHub, or choose a model.',
+      families:{}, messages:{no_model:'No model yet. Sign in to ArchHub, or choose a model.'}}}});
+  try {
+    await studio.settle(() => studio.doc.querySelector('[data-chat-no-model]'), 'the negative answer is shown');
+    assert.match(studio.doc.querySelector('[data-chat-no-model]').textContent, /No model yet/);
+  } finally { studio.close(); }
+});
 
 test('fresh signed-out first screen preselects the free router with its friendly name', async () => {
   const studio = await mountStudio();

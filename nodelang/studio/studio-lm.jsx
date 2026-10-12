@@ -406,19 +406,31 @@ const StudioLM = () => {
   const [openTabs, setOpenTabs] = React.useState(() => [window.ARCHHUB_LIVE?.currentGraph || LM_SESSIONS[0]?.id].filter(Boolean));
   const [, refreshLiveProjection] = React.useState(0);
   const [sessionOpenError, setSessionOpenError] = React.useState('');
-  const [model, setModel] = React.useState(noModelPicked);
+  const [model, setModel] = React.useState(pendingModelAnswer);
   const [homeNative, setHomeNative] = React.useState(null);
   const [pickerOpen, setPickerOpen] = React.useState(false);
   // The server's answer to "can a Send reach a model": ready, no_model or no_key
   // (model_router.composer_readiness). Chat and the boot Brain line show it.
   const [readiness, setReadiness] = React.useState(null);
-  React.useEffect(() => {
+  const readInitialModel = React.useCallback(() => {
     const controller = new AbortController();
+    let timedOut = false;
+    const timeoutMs = Number(window.__ARCHHUB_MODEL_READ_TIMEOUT_MS) > 0 ? Number(window.__ARCHHUB_MODEL_READ_TIMEOUT_MS) : 8000;
+    let timeoutId = null;
+    const timeout = new Promise((_, reject) => { timeoutId = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      reject(new Error('Model selection timed out'));
+    }, timeoutMs); });
     const session = window.__archhubSession || {};
-    fetch('/api/universal/models', {signal:controller.signal,
-      headers:{'X-ArchHub-Session':session.token || '', 'X-ArchHub-CSRF':session.csrf || ''}})
+    setReadiness(null);
+    setModel(current => modelRoute(current) ? current : pendingModelAnswer());
+    const request = fetch('/api/universal/models', {signal:controller.signal,
+      headers:{'X-ArchHub-Session':session.token || '', 'X-ArchHub-CSRF':session.csrf || ''}});
+    Promise.race([request, timeout])
       .then(response => { if (!response.ok) throw new Error('Model selection unavailable'); return response.json(); })
       .then(result => {
+        if (!result || result.ok === false) throw new Error('Model selection unavailable');
         const saved = typeof result.selected_route === 'string' ? result.selected_route.trim() : '';
         // No saved pick: the server offers the one free route it enforces free at
         // dispatch (openrouter/free) and names its source; with none the Studio keeps
@@ -430,16 +442,29 @@ const StudioLM = () => {
           window.ARCHHUB_MODEL_READINESS = result.readiness;
           setReadiness(result.readiness);
         }
-        if (!route || controller.signal.aborted) return;
+        if (!route || controller.signal.aborted) {
+          if (!controller.signal.aborted) {
+            setModel(current => current.routed || current.route ? current : noModelPicked());
+          }
+          return;
+        }
         const selected = (result.groups || []).flatMap(group => group.items || [])
           .find(item => (item.routed || item.route) === route);
         const serverDefault = defaultModelRowFromPayload(result, route);
         setModel(current => current.routed || current.route ? current :
           selected || (serverDefault && fallback ? {...serverDefault, defaultRouteModel:true} : serverDefault) ||
           defaultModelRow(route, source, fallback));
-      }).catch(() => {});
-    return () => controller.abort();
+      }).catch(() => {
+        if (!controller.signal.aborted || timedOut) {
+          const unknown = modelCatalogueUnknown();
+          window.ARCHHUB_MODEL_READINESS = unknown;
+          setReadiness(unknown);
+          setModel(current => modelRoute(current) ? current : unknownModelAnswer());
+        }
+      }).finally(() => clearTimeout(timeoutId));
+    return () => { clearTimeout(timeoutId); controller.abort(); };
   }, []);
+  React.useEffect(() => readInitialModel(), [readInitialModel]);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [settingsTab, setSettingsTab] = React.useState('hub');
   const [account, setAccount] = React.useState(() => acLoad());
@@ -925,6 +950,7 @@ const StudioLM = () => {
         : session
         ? <Workspace
             session={session} model={displayedModel} readiness={readiness} onReadinessStale={readReadiness}
+            onModelReadRetry={readInitialModel}
             updateCanvasViewport={updateCanvasViewport}
             openTabs={openTabs} sessionRows={visibleSessions} setOpenId={openSession} closeTab={closeTab}
             setPickerOpen={setPickerOpen}
@@ -2340,7 +2366,7 @@ const SessionCard = ({ s, onOpen }) => {
 };
 
 // ──────────────────────── WORKSPACE ────────────────────────
-const Workspace = ({ session, model, readiness = null, onReadinessStale, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, setPickerOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, onHome, onNewSession, onAccount, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
+const Workspace = ({ session, model, readiness = null, onReadinessStale, onModelReadRetry, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, setPickerOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, onHome, onNewSession, onAccount, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
   const authorityState = useStudioProjection();
   const graph = authorityState?.graph || LM_GRAPH;
   const allNodes = [...graph.nodes, ...(userNodes || [])];
@@ -2392,7 +2418,7 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, openTab
           <NodeRail node={focusNode} hiddenWork={!focusNode && authorityState?.canvas?.selection_hidden === true}
             graph={graph} canvas={authorityState?.canvas} session={session} sessionRows={sessionRows}
             model={model} setPickerOpen={setPickerOpen} readiness={readiness}
-            onReadinessStale={onReadinessStale} onAccount={onAccount}
+            onReadinessStale={onReadinessStale} onModelReadRetry={onModelReadRetry} onAccount={onAccount}
             scope={authorityState?.canvas?.root || authorityState?.canvas?.scope?.current || ''}
             openConversation={root => updateView({conversationRoot:root, mode:'chat', target:''})}
             workshopRoom={workshopModeRoom(workshops, workshop?.root || '')}
@@ -2422,6 +2448,8 @@ const defaultModelRow = (route, source, fallback) => {
 // It lived only in this page until a Send reached the server, so a restart or
 // an update came back "Choose a model" (2026-09-17). The signed clean engine
 // has no selection route, so there the pick stays page state as before.
+const pendingModelAnswer = () => ({ name:'Model pending', route:'', routed:'', vendor:'Checking availability', tag:'', ctx:'', col:LM.inkMuted, latency:null, pending:true });
+const unknownModelAnswer = () => ({ name:'Model unknown', route:'', routed:'', vendor:'Models could not be read', tag:'', ctx:'', col:LM.inkMuted, latency:null, unknown:true });
 const noModelPicked = () => ({ name:'Choose a model', route:'', routed:'', vendor:'No model selected', tag:'', ctx:'', col:LM.inkMuted, latency:null });
 const rememberComposerModel = async (m) => {
   const route = modelRoute(m);
@@ -2439,6 +2467,7 @@ const nodeModelRoute = n => {
 };
 const modelDisplayName = m => {
   const name = String((m && m.name) || '').trim();
+  if (m?.pending) return name;
   if (m?.defaultRouteModel && name && name !== 'Choose a model') return name;
   return modelRoute(m) || name;
 };
@@ -2544,6 +2573,8 @@ const chatConnectors = () => (window.ARCHHUB_LIVE?.connectors || []).map(c => ({
 // ─── Calm chat view (default) — restores original Studio's generous rhythm ───
 const NO_MODEL_STATE = {state:'no_model', route:'', actions:['sign_in', 'choose_model'],
   message:'No model yet. Sign in to ArchHub, or choose a model.'};
+const modelCatalogueUnknown = () => ({state:'unknown', route:'', actions:['retry_models'],
+  message:'Models could not be read. Retry'});
 // The route shown is judged here: the composer pick or the selected node's own model
 // (review 2026-09-28). The provider states and the copy are the server's
 // (model_router.composer_readiness families/messages); only the route's family is read here.
@@ -2557,10 +2588,12 @@ const routeFamily = route => {
   const hit = ROUTE_FAMILIES.find(([prefix]) => route.startsWith(prefix) && route.slice(prefix.length).replace(/\//g, '').trim());
   return hit ? hit[1] : '';
 };
-const READINESS_LABELS = {no_model:'NO MODEL', no_key:'NO KEY', invalid:'UNSUPPORTED MODEL', unavailable:'NOT RUNNING'};
-const routeReadiness = (route, held) => {
+const READINESS_LABELS = {unknown:'UNKNOWN', no_model:'NO MODEL', no_key:'NO KEY', invalid:'UNSUPPORTED MODEL', unavailable:'NOT RUNNING'};
+const routeReadiness = (route, held, pending = false) => {
   const text = String(route || '').trim();
   const messages = (held && held.messages) || {};
+  if (!text && !held && pending) return null;
+  if (held?.state === 'unknown') return held;
   if (!text) return {...NO_MODEL_STATE, message:messages.no_model || NO_MODEL_STATE.message};
   if (!held) return null;
   if (!held.families) return held.state && held.state !== 'ready' && held.route === text ? held : null;
@@ -2570,7 +2603,7 @@ const routeReadiness = (route, held) => {
   const answer = held.families[family];
   return answer && answer.state !== 'ready' ? {...answer, route:text} : null;
 };
-const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, onPickModel, onAccount, workshopUnavailable = '', readiness = null, onReadinessStale }) => {
+const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, onPickModel, onAccount, workshopUnavailable = '', readiness = null, onReadinessStale, onModelReadRetry }) => {
   // The Workshop is opened from here (it is not a header segment). Without a room the click answers
   // with the owner's reason as visible text, never a silent no-op (founder report 2026-09-23).
   const [workshopRefusal, setWorkshopRefusal] = React.useState('');
@@ -2578,7 +2611,7 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
   const routed = !!modelRoute(model);
   // Never silent (fresh machine, 2026-09-28): the route shown, whatever its state, is said
   // with the ways out that apply to it.
-  const blocked = routeReadiness(modelRoute(model), readiness);
+  const blocked = routeReadiness(modelRoute(model), readiness, model?.pending === true);
   const offers = new Set((blocked && blocked.actions) || []);
   const conv = LM_GRAPH.nodes.find(n => n.cat === 'ai')
     || LM_GRAPH.nodes.find(n => n.id === 'ai_intent');
@@ -2676,10 +2709,14 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
                         padding:'7px 14px', background:LM.accent, color:(window.AH && window.AH.onFill) || '#180f08', border:0,
                         borderRadius:LM.rad.sm, fontSize:12.5, fontWeight:500, cursor:'pointer',
                       }}>Sign in</button>}
-                      <button type="button" onClick={() => typeof onPickModel === 'function' && onPickModel()} style={{
+                      {offers.has('retry_models') && <button type="button" onClick={() => typeof onModelReadRetry === 'function' && onModelReadRetry()} style={{
                         padding:'6px 13px', background:'transparent', color:LM.ink, border:`1px solid ${LM.line}`,
                         borderRadius:LM.rad.sm, fontSize:12.5, fontWeight:500, cursor:'pointer',
-                      }}>Choose a model</button>
+                      }}>Retry</button>}
+                      {offers.has('choose_model') && <button type="button" onClick={() => typeof onPickModel === 'function' && onPickModel()} style={{
+                        padding:'6px 13px', background:'transparent', color:LM.ink, border:`1px solid ${LM.line}`,
+                        borderRadius:LM.rad.sm, fontSize:12.5, fontWeight:500, cursor:'pointer',
+                      }}>Choose a model</button>}
                     </div>
               </div>
             )}
@@ -5911,7 +5948,7 @@ const NodeTranscriptRow = ({ row }) => (
 const graphInspectorNode = (canvas, graph, session, sessionRows = []) => {
   const scope = canvas?.scope || {};
   const graphId = scope.current || canvas?.root || session?.id || 'current';
-  const name = scope.current_label || canvas?.selected_title || session?.title || 'ArchHub graph';
+  const name = scope.current_label || session?.title || canvas?.graph_title || canvas?.title || 'ArchHub graph';
   const params = [{k:'name', v:name}];
   if (canvas?.authorization?.subject) params.push({k:'owner', v:canvas.authorization.subject});
   if (canvas?.description) params.push({k:'description', v:canvas.description});
@@ -5931,7 +5968,7 @@ const hasRunsPanel = (node, graph) => {
   return !!(node.last_run || node.run || node.status || (graph?.wires || []).some(wire =>
     wire.from?.[0] === node.id || wire.to?.[0] === node.id));
 };
-const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadinessStale, onAccount }) => {
+const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadinessStale, onModelReadRetry, onAccount }) => {
   const [text, setText] = React.useState('');
   const [state, setState] = React.useState('');
   const [stateModel, setStateModel] = React.useState('');
@@ -5939,7 +5976,7 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
   const pendingSend = React.useRef(null);
   const nodeRoute = target?.node && nodeModelRow(target.node) ? nodeModelRoute(target.node) : '';
   const route = nodeRoute || modelRoute(model);
-  const blocked = routeReadiness(route, readiness);
+  const blocked = routeReadiness(route, readiness, model?.pending === true);
   const offers = new Set((blocked && blocked.actions) || []);
   const modelName = nodeRoute || modelDisplayName(model) || route || 'Choose a model';
   const placeholder = target.kind === 'session' ? 'reply in this session · @ agent' :
@@ -5999,9 +6036,12 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
           else if (typeof onReadinessStale === 'function') onReadinessStale();
         }} style={{ padding:'5px 10px', background:LM.accent, color:(window.AH && window.AH.onFill) || '#180f08',
           border:0, borderRadius:LM.rad.sm, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Sign in</button>}
-        <button type="button" onClick={() => typeof setPickerOpen === 'function' && setPickerOpen(true)} style={{
+        {offers.has('retry_models') && <button type="button" onClick={() => typeof onModelReadRetry === 'function' && onModelReadRetry()} style={{
           padding:'4px 9px', background:'transparent', color:LM.ink, border:`1px solid ${LM.line}`,
-          borderRadius:LM.rad.sm, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Choose a model</button>
+          borderRadius:LM.rad.sm, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Retry</button>}
+        {offers.has('choose_model') && <button type="button" onClick={() => typeof setPickerOpen === 'function' && setPickerOpen(true)} style={{
+          padding:'4px 9px', background:'transparent', color:LM.ink, border:`1px solid ${LM.line}`,
+          borderRadius:LM.rad.sm, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Choose a model</button>}
       </div>
     </div>}
     <button type="button" data-model-indicator="" onClick={() => setPickerOpen && setPickerOpen(true)}
@@ -6042,7 +6082,7 @@ const InspectorRuns = ({ node, graph }) => {
 };
 const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop, scope = '', openConversation,
   graph = null, canvas = null, session = null, sessionRows = [], model, setPickerOpen, readiness = null,
-  onReadinessStale, onAccount }) => {
+  onReadinessStale, onModelReadRetry, onAccount }) => {
   // Work lives in the Workshop. A selection the canvas does not draw points there instead of an empty panel.
   if (!node && hiddenWork) return (
     <aside role="status" style={{ gridColumn:'2', gridRow:'2', background:LM.bgPanel, borderLeft:`1px solid ${LM.line}`,
@@ -6095,7 +6135,7 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
         {visibleTab === 'Runs' && <InspectorRuns node={inspectedNode} graph={graph}/>}
       </div>
       <ScopeComposer target={target} model={model} setPickerOpen={setPickerOpen} readiness={readiness}
-        onReadinessStale={onReadinessStale} onAccount={onAccount}/>
+        onReadinessStale={onReadinessStale} onModelReadRetry={onModelReadRetry} onAccount={onAccount}/>
     </aside>
   );
 };

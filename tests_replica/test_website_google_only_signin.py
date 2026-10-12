@@ -31,12 +31,12 @@ ORIGIN = "https://archhub.io"
 OFFER = dict(BETA_OFFER)
 # The GitHub release that is releases/latest on 2026-09-29, with the sha256
 # GitHub publishes for its installer asset.
-REVISION = "build-20261012-0304-2cc408f"
+REVISION = "build-20261012-1647-ec19607"
 DOWNLOAD = (
     "https://github.com/Fargaly/ArchHub/releases/download/"
-    "build-20261012-0304-2cc408f/ArchHub-Setup-0.exe"
+    "build-20261012-1647-ec19607/ArchHub-Setup-0.exe"
 )
-DOWNLOAD_SHA256 = "496a4b1c87f786fbd15a7f847c754d8ef16ab0359402d40d347d69ecd7cb0318"
+DOWNLOAD_SHA256 = "37a531407f3cc97d4cd3d1b65b45347ef105b49729c80680eed19a91c2073c23"
 
 # Wording that offers a sign-in other than Google.
 NOT_GOOGLE = re.compile(

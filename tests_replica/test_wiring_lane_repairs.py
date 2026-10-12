@@ -25,6 +25,7 @@ from nodelang.universal_application import (
     build_universal_application,
     connect_universal_roots,
     project_universal_canvas,
+    set_universal_selection,
     set_universal_scope,
 )
 from nodelang.universal_pipeline import (
@@ -33,6 +34,7 @@ from nodelang.universal_pipeline import (
     _owner_properties,
     create_engine_node,
     run_universal_pipeline,
+    sample_input,
     seed_wall_pipeline,
 )
 
@@ -114,6 +116,56 @@ def test_sketch_lines_seeds_its_max_gap(graph):
     sketch = next(node for node in projection["nodes"] if node["label"] == "Sketch Lines")
     rows = _owner_properties(store.snapshot(), registry)[sketch["id"]]
     assert rows["max_gap"][1] == "8"
+
+
+def test_sketch_lines_seed_uses_a_bundle_relative_sample(graph):
+    store, registry = graph
+    seed_wall_pipeline(store, registry)
+    projection = project_universal_canvas(store, registry)
+    sketch = next(node for node in projection["nodes"] if node["label"] == "Sketch Lines")
+    rows = _owner_properties(store.snapshot(), registry)[sketch["id"]]
+    assert rows["image_path"][1] == sample_input("sample-plan.png")
+    param = next(row for row in sketch["params"] if row["label"] == "image_path")
+    assert ":\\" not in str(param["value"])
+    assert str(param["value"]) == sample_input("sample-plan.png")
+    set_universal_selection(store, registry, [sketch["id"]], focus_root=sketch["id"])
+    selected = project_universal_canvas(store, registry)
+    prop = next(row for row in selected["properties"] if row["label"] == "image_path")
+    assert ":\\" not in str(prop["value"])
+    assert str(prop["value"]) == sample_input("sample-plan.png")
+
+
+def test_reseed_migrates_the_old_bundled_sample_absolute_path_only(graph, tmp_path):
+    from pathlib import Path
+    from nodelang import universal_pipeline as pipeline
+    store, registry = graph
+    old_sample = str(Path(pipeline.__file__).resolve().parent / "samples" / "sample-plan.png")
+    made = create_engine_node(
+        store, registry, title="Sketch Lines", engine="vision.sketch_lines",
+        properties={"seed": "sketch-lines", "image_path": old_sample},
+    )
+    user_path = tmp_path / "user-plan.png"
+    user_path.write_bytes(b"not a real image, but a user-chosen absolute path")
+    seed_wall_pipeline(store, registry, image_path=str(user_path))
+    rows = _owner_properties(store.snapshot(), registry)[made["root"]]
+    assert rows["image_path"][1] == str(user_path)
+
+    seed_wall_pipeline(store, registry)
+    assert _owner_properties(store.snapshot(), registry)[made["root"]]["image_path"][1] == str(user_path)
+
+
+def test_reseed_migrates_an_existing_graph_holding_the_old_sample_path(graph):
+    from pathlib import Path
+    from nodelang import universal_pipeline as pipeline
+    store, registry = graph
+    old_sample = str(Path(pipeline.__file__).resolve().parent / "samples" / "sample-plan.png")
+    made = create_engine_node(
+        store, registry, title="Sketch Lines", engine="vision.sketch_lines",
+        properties={"seed": "sketch-lines", "image_path": old_sample},
+    )
+    seed_wall_pipeline(store, registry)
+    rows = _owner_properties(store.snapshot(), registry)[made["root"]]
+    assert rows["image_path"][1] == sample_input("sample-plan.png")
 
 
 def test_a_blank_model_card_runs_on_the_graph_pick_and_refuses_without_one(graph, monkeypatch):

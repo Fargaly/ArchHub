@@ -51,17 +51,47 @@ _STRUCTURAL = {"engine", "status", "seed"}
 _SEED_MARKER = "seed"
 
 _SAMPLES = _Path(__file__).resolve().parent / "samples"
+_SAMPLE_REF_PREFIX = "samples/"
 
 
 def sample_input(name: str) -> str:
-    """The absolute path of one shipped sample input.
+    """A bundle-relative reference to one shipped sample input.
 
     The flagship chain shipped with empty inputs, so every node of it
     pended at every boot and the founder's first open showed nothing
     working. These samples are read by the same engines a real file goes
     through -- no special case, no fixture mode.
     """
-    return str(_SAMPLES / name)
+    clean = str(name).replace("\\", "/").lstrip("/")
+    if not clean or clean.startswith("../") or "/../" in clean:
+        raise ValueError("sample input must stay inside the shipped samples")
+    return _SAMPLE_REF_PREFIX + clean
+
+
+def resolve_sample_input(value: object) -> str | None:
+    """Resolve a graph-held sample reference to its shipped local file."""
+    text = str(value or "").strip().replace("\\", "/")
+    if not text.startswith(_SAMPLE_REF_PREFIX):
+        return None
+    name = text[len(_SAMPLE_REF_PREFIX):]
+    # Only a file the app actually ships under samples/ is a sample reference;
+    # any other "samples/..." value is the user's own relative path, unchanged.
+    if not name or "/" in name or name in (".", ".."):
+        return None
+    shipped = _SAMPLES / name
+    try:
+        if shipped.resolve().parent != _SAMPLES.resolve() or not shipped.is_file():
+            return None
+    except OSError:
+        return None
+    return str(shipped)
+
+
+def _is_legacy_sample_absolute(value: object, name: str) -> bool:
+    try:
+        return _Path(str(value)).resolve() == (_SAMPLES / name).resolve()
+    except Exception:
+        return False
 
 
 def _owner_properties(snapshot, registry):
@@ -1241,15 +1271,26 @@ def seed_wall_pipeline(
             and str(wire.get("target") or "") in seeded_roots
         ):
             _ensure_wire_parameters(store, registry, str(wire["id"]))
-    if image_path and "Sketch Lines" in placed:
+    if "Sketch Lines" in placed:
         snapshot = store.snapshot()
         rows = _owner_properties(snapshot, registry).get(
             placed["Sketch Lines"]
         ) or {}
         held = rows.get("image_path")
-        if held is not None and held[1] != image_path:
+        target_image_path = None
+        if image_path:
+            target_image_path = image_path
+        elif held is not None and _is_legacy_sample_absolute(
+            held[1], "sample-plan.png"
+        ):
+            target_image_path = sample_input("sample-plan.png")
+        if (
+            held is not None
+            and target_image_path is not None
+            and held[1] != target_image_path
+        ):
             edit_universal_property(
-                store, registry, held[0], image_path,
+                store, registry, held[0], target_image_path,
                 authentication_context=authentication_context,
             )
     # A lens card an earlier seed put on the canvas, a duplicate chain, a

@@ -27,6 +27,8 @@ def _local_input_path(path: str, *, label: str) -> str:
         raise ValueError("no %s; set it or wire a file in" % label)
     if text.startswith(("\\\\", "//")) or text.upper().startswith(("\\\\?\\UNC", "SMB:", "FILE:")):
         raise ValueError("%s must be a local file, not a network share" % label)
+    from .universal_pipeline import resolve_sample_input
+    text = resolve_sample_input(text) or text
     import os as _os
     if not _os.path.isfile(text):
         raise ValueError("%s does not exist: %s" % (label, text))

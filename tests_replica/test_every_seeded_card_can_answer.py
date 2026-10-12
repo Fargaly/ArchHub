@@ -201,6 +201,7 @@ def test_the_seed_reports_what_it_placed_adopted_and_skipped(seeded):
 
 
 def test_the_chain_reads_a_sample_that_is_actually_there():
+    from nodelang.pipeline_engines import _local_input_path
     named = {
         (title, label): str(value)
         for title, _x, _y, properties in _SEED
@@ -210,10 +211,11 @@ def test_the_chain_reads_a_sample_that_is_actually_there():
     assert named, "the chain declares no input file at all"
     for (title, label), path in named.items():
         assert path.strip(), "%s.%s ships blank" % (title, label)
-        assert os.path.isfile(path), "%s.%s: no file at %s" % (
+        resolved = _local_input_path(path, label=label)
+        assert os.path.isfile(resolved), "%s.%s: no file at %s" % (
             title, label, path
         )
-        with open(path, "rb") as handle:
+        with open(resolved, "rb") as handle:
             assert handle.read(1), path
 
 

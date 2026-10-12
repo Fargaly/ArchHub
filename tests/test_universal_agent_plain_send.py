@@ -135,6 +135,9 @@ def test_node_agent_turn_survives_reopen_without_replay(tmp_path, monkeypatch):
             ("message", "remember this node turn"),
             ("reply", "Node answer one."),
         ]
+        assert sent["delivery"]["state"] == "replied"
+        assert (sent["delivery"]["message_id"], sent["delivery"]["reply_message_id"]) == (
+            read["rows"][0]["id"], read["rows"][1]["id"]), "the first send names the rows the transcript holds"
         assert len(calls) == 1
     finally:
         reopened.close()
@@ -189,6 +192,12 @@ def test_graph_agent_turn_survives_reopen_and_retry_without_replay(tmp_path, mon
             "graph": True, "graph_id": scope, "request_id": "g1"}
         sent = request(first, "/api/universal/agent", body)
         assert sent["answer"] == "Graph answer one."
+        # UX-CHAT1 v3: the first send names the question and reply rows it wrote (the UI reconciles by them).
+        first_read = request(first, "/api/universal/workshop-transcript?" + urlencode(
+            {"node": "graph:" + scope, "scope": scope}))
+        assert [row["kind"] for row in first_read["rows"]] == ["message", "reply"]
+        assert sent["delivery"] == {"state": "replied", "request_id": "g1",
+            "message_id": first_read["rows"][0]["id"], "reply_message_id": first_read["rows"][1]["id"]}
     finally:
         first.close()
 
@@ -202,6 +211,7 @@ def test_graph_agent_turn_survives_reopen_and_retry_without_replay(tmp_path, mon
         ]
         repeated = request(reopened, "/api/universal/agent", body)
         assert repeated["answer"] == "Graph answer one."
+        assert repeated["delivery"] == sent["delivery"], "a replayed send names the same rows as the first send"
         assert len(calls) == 1
         read = request(reopened, "/api/universal/workshop-transcript?" + urlencode(
             {"node": "graph:" + scope, "scope": scope}))

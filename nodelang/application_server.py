@@ -8044,13 +8044,14 @@ class ApplicationServer:
                                 if append_turn is not None and user_message is not None:
                                     applied_roots = tuple(row['root'] for row in agent_result.get('applied', ())
                                         if isinstance(row, dict) and row.get('root'))
-                                    append_turn("Model reply from %s:\n%s" % (
+                                    reply_row = append_turn("Model reply from %s:\n%s" % (
                                         str(model or 'selected model'),
                                         str(agent_result.get('answer') or ''),
                                     ), ':reply', refs=tuple(dict.fromkeys((persisted_turn['node'], *applied_roots))),
                                         reply_to=user_message['id'])
                                     agent_result = {**agent_result, "delivery": {"state": "replied",
-                                        "request_id": request_id, "message_id": user_message["id"]}}
+                                        "request_id": request_id, "message_id": user_message["id"],
+                                        "reply_message_id": reply_row["id"]}}
                             except ModelRouteRefused as refused:
                                 self._json(200, {
                                     'ok': False, 'error': str(refused),

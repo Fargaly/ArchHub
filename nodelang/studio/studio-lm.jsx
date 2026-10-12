@@ -5980,6 +5980,31 @@ const LibCatBtn = ({ id, label, icon, col, active, onSelect }) => (
 const NodeModelConversation = ({node, scope = '', openConversation}) => {
   const [answer, setAnswer] = React.useState('');
   const [transcriptTick, setTranscriptTick] = React.useState(0);
+  // Turns sent from the panel composer that the transcript has not read back yet (UX-CHAT1).
+  // Identity: a turn is reconciled with the transcript by the server's message ids (delivery.message_id /
+  // reply_message_id). Before those ids exist, its question may only match a row that is NEW since this
+  // send (baseline = the row ids shown when it was sent), never a row from history (Ping P1).
+  const [turns, setTurns] = React.useState([]);
+  const rowsRef = React.useRef([]);
+  React.useEffect(() => {
+    const onTurn = event => {
+      const d = event && event.detail;
+      if (!d || d.target !== node.id) return;
+      setTurns(held => {
+        const prior = held.find(t => t.requestId === d.requestId);
+        const rest = held.filter(t => t.requestId !== d.requestId);
+        if (d.phase === 'failed') return rest;
+        return [...rest, {requestId:d.requestId, said:d.said, model:d.model,
+          baseline:prior ? prior.baseline : new Set(rowsRef.current.map(row => row.id)),
+          answer:d.phase === 'answer' ? (d.answer || '') : null,
+          messageId:d.messageId || '', replyId:d.replyId || ''}];
+      });
+      // Read the store on send (the question may already be saved) and on the answer.
+      if (d.phase === 'pending' || d.phase === 'answer') setTranscriptTick(tick => tick + 1);
+    };
+    window.addEventListener(CHAT_TURN_EVENT, onTurn);
+    return () => window.removeEventListener(CHAT_TURN_EVENT, onTurn);
+  }, [node.id]);
   // The node's Workshop transcript, read only. null while the first read is in flight.
   const [transcript, setTranscript] = React.useState(null);
   const cat = studioCategory('ai');
@@ -6017,6 +6042,24 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
   }, [bound, node.id, node.conversation_root, scope, transcriptTick]);
   const rows = transcript ? transcript.rows : [];
   const hasOlder = !!(transcript && transcript.has_older);
+  rowsRef.current = rows;
+  const rowIds = new Set(rows.map(row => row.id));
+  const claimed = new Set();
+  const turnRows = [];
+  for (const turn of turns) {
+    // The store holds the whole turn (its reply id): the transcript draws it; the local copy steps aside.
+    if (turn.replyId && rowIds.has(turn.replyId)) continue;
+    // Is the question already in the transcript? By its id when known; otherwise only a new-since-send row.
+    let questionShown = !!(turn.messageId && rowIds.has(turn.messageId));
+    if (!questionShown && !turn.messageId) {
+      const fresh = rows.find(row => row.is_me && !turn.baseline.has(row.id) && !claimed.has(row.id)
+        && String(row.text || '').trim() === turn.said);
+      if (fresh) { claimed.add(fresh.id); questionShown = true; }
+    }
+    if (!questionShown) turnRows.push({id:turn.requestId + ':q', who:'You', is_me:true, text:turn.said, time:''});
+    turnRows.push({id:turn.requestId + ':a', who:turn.model || 'model', is_me:false, kind:turn.answer === null ? 'waiting' : 'message',
+      text:turn.answer === null ? 'Waiting for ' + (turn.model || 'the model') + '\u2026' : turn.answer, time:''});
+  }
   return <section aria-label={'Conversation with ' + node.title} style={{ display:'flex', flexDirection:'column', gap:10, borderTop:`1px solid ${LM.lineSoft}`, paddingTop:12 }}>
     <div style={{ display:'flex', alignItems:'center', gap:7 }}>
       <span style={{ color:cat.col, fontFamily:LM.mono }}>{cat.icon}</span>
@@ -6029,17 +6072,18 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
     </div>
     {bound ? (
       <div className="ah-scroll" style={{ maxHeight:260, overflow:'auto', display:'flex', flexDirection:'column', gap:11 }}>
-        {transcript === null ? (
+        {transcript === null && !turnRows.length ? (
           <p style={{ margin:0, fontFamily:LM.mono, fontSize:10, color:LM.inkMuted }}>Reading the conversation…</p>
-        ) : transcript.error ? (
+        ) : transcript && transcript.error ? (
           <p role="alert" style={{ margin:0, fontSize:12, color:LM.warn || LM.accent }}>{transcript.error}</p>
-        ) : rows.length === 0 ? (
+        ) : rows.length === 0 && !turnRows.length ? (
           <p role="status" style={{ margin:0, fontSize:12, lineHeight:1.5, color:LM.inkSoft }}>No conversation yet · ask below to start one.</p>
         ) : (<>
           {hasOlder ? (
             <p style={{ margin:0, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.04em' }}>Latest messages only · full history in the Workshop</p>
           ) : null}
           {rows.map(row => <NodeTranscriptRow key={row.id} row={row}/>)}
+          {turnRows.map(row => <div key={row.id} data-chat-turn={row.is_me ? 'question' : row.kind}><NodeTranscriptRow row={row}/></div>)}
         </>)}
       </div>
     ) : null}
@@ -6094,6 +6138,11 @@ const hasRunsPanel = (node, graph) => {
   return !!(node.last_run || node.run || node.status || (graph?.wires || []).some(wire =>
     wire.from?.[0] === node.id || wire.to?.[0] === node.id));
 };
+// One chat, two parts of one panel: the composer announces each turn; the target's Conversation section shows it.
+const CHAT_TURN_EVENT = 'archhub:chat-turn';
+const announceChatTurn = detail => {
+  try { window.dispatchEvent(new window.CustomEvent(CHAT_TURN_EVENT, {detail})); } catch (_) {}
+};
 const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadinessStale, onModelReadRetry, onAccount }) => {
   const [text, setText] = React.useState('');
   const [state, setState] = React.useState('');
@@ -6126,6 +6175,7 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
     const requestId = nextRequestId(said);
     pendingSend.current = {raw:text, said, target:target.id, requestId};
     setAsking(true); setState(''); setStateModel('');
+    announceChatTurn({target:target.id, requestId, said, model:modelName, phase:'pending'});
     try {
       const context = target.kind === 'graph'
         ? {graph:true, graph_id:target.graphId, request_id:requestId, generation:generationRequestOptions()}
@@ -6133,13 +6183,23 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
       const result = await window.ARCHHUB_AGENT(said, route, context);
       const answer = agentAnswerText(result);
       const deliveryState = agentDeliveryState(result);
-      setState(answer);
-      setStateModel(modelName);
+      if (!deliveryState || deliveryState === 'replied') {
+        // UX-CHAT1: the answer is a turn in the Conversation section above, never a loose line here.
+        const delivery = (result && typeof result === 'object' && result.delivery) || {};
+        announceChatTurn({target:target.id, requestId, said, model:modelName, phase:'answer', answer,
+          messageId:delivery.message_id || '', replyId:delivery.reply_message_id || ''});
+      } else {
+        // Not confirmed: say so beside the field (the text stays for a safe retry); no half turn above.
+        announceChatTurn({target:target.id, requestId, said, model:modelName, phase:'failed'});
+        setState(answer);
+        setStateModel(modelName);
+      }
       if (!deliveryState || deliveryState === 'replied') {
         pendingSend.current = null;
         setText('');
       }
     } catch (error) {
+      announceChatTurn({target:target.id, requestId, said, model:modelName, phase:'failed'});
       setState('refused: ' + ((error && error.message) || error || 'no reply') +
         ' Your text is still here; sending again will not ask twice.');
     } finally { setAsking(false); }

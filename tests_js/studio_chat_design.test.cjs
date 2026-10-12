@@ -183,6 +183,135 @@ test('Selection-panel composer: no model opens the picker; a picked model sends 
   } finally { studio.close(); }
 });
 
+// UX-CHAT1 (installed 2111, shots 29/35): the answer landed as a loose line above the chip while the
+// Conversation section above still said "No conversation yet". A sent turn is a turn in that section.
+test('UX-CHAT1: a sent question and its answer appear as a turn in the Conversation section, not as a loose line', async () => {
+  const studio = await mountStudio();
+  try {
+    await studio.settle();
+    const input = studio.reply();
+    studio.type(input, 'ping');
+    studio.flush(() => input.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
+    await studio.settle();
+    const dialog = studio.doc.querySelector('[role="dialog"][aria-label="Choose a model"]');
+    studio.flush(() => studio.exact('DeepSeek R1', dialog)[0].closest('[style]').parentElement.click());
+    await studio.settle();
+    studio.type(input, 'ping');
+    studio.flush(() => input.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
+    await studio.settle();
+    const panel = studio.doc.querySelector('aside[aria-label="Selection inspector"]');
+    const conversation = () => panel.querySelector('section[aria-label^="Conversation with"]');
+    assert.ok(conversation(), 'the graph chat shows its Conversation section');
+    assert.ok(conversation().querySelector('[data-chat-turn="question"]')?.textContent.includes('ping'), 'the question shows at once as a turn');
+    assert.match(conversation().querySelector('[data-chat-turn="waiting"]')?.textContent || '', /Waiting for/, 'the answer slot says it is waiting');
+    assert.doesNotMatch(conversation().textContent, /No conversation yet/, 'no "No conversation yet" above a turn');
+    studio.answer({answer:'PONG'});
+    await studio.settle();
+    const answer = conversation().querySelector('[data-chat-turn="message"]');
+    assert.ok(answer && answer.textContent.includes('PONG'), 'the answer is the turn\'s reply inside the Conversation section');
+    const composer = input.closest('div').parentElement;
+    assert.equal(composer.textContent.includes('PONG'), false, 'no loose answer line above the chip');
+    assert.equal(input.value, '', 'the field clears after a delivered answer');
+  } finally { studio.close(); }
+});
+
+// UX-CHAT1 v2 (Ping P1): turns reconcile with the transcript store by message identity, never by text.
+test('UX-CHAT1 v2: identical prompts keep both turns, a saved question keeps its pending reply, readback has no duplicates, and the store survives a re-open', async () => {
+  const studio = await mountStudio();
+  try {
+    await studio.settle();
+    // The transcript store the server keeps (rows carry message ids; the agent reply names them).
+    const store = [];
+    let revision = 1;
+    studio.win.ARCHHUB_WORKSHOP_TRANSCRIPT = async node => ({ok:true, node, conversation_root:'graph-chat', revision:++revision,
+      has_older:false, next_before:null, rows:store.map(row => ({...row}))});
+    const input = studio.reply();
+    const send = async text => {
+      studio.type(input, text);
+      studio.flush(() => input.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
+      await studio.settle();
+    };
+    await send('ping');
+    const dialog = studio.doc.querySelector('[role="dialog"][aria-label="Choose a model"]');
+    studio.flush(() => studio.exact('DeepSeek R1', dialog)[0].closest('[style]').parentElement.click());
+    await studio.settle();
+    const panel = studio.doc.querySelector('aside[aria-label="Selection inspector"]');
+    const conversation = () => panel.querySelector('section[aria-label^="Conversation with"]');
+    const texts = () => [...conversation().querySelectorAll('div[style*="pre-wrap"]')].map(node => node.textContent);
+    const count = text => texts().filter(t => t === text).length;
+    const reply = async (q, r, answer) => {
+      store.push({id:r, who:'DeepSeek R1', is_me:false, text:answer, time:'', kind:'reply'});
+      studio.answer({answer, delivery:{state:'replied', request_id:'x', message_id:q, reply_message_id:r}});
+      await studio.settle(); await studio.settle();
+    };
+    // Turn 1: question saved with the send, answer arrives with its ids, readback replaces the local turn.
+    await send('ping');
+    store.push({id:'m1', who:'You', is_me:true, text:'ping', time:'', kind:'message'});
+    await reply('m1', 'r1', 'PONG');
+    assert.deepEqual([count('ping'), count('PONG')], [1, 1], 'reply then readback: one question, one answer, no duplicates');
+    // Turn 2: the SAME prompt again. The old "ping" row must not swallow the new turn.
+    await send('ping');
+    assert.equal(count('ping'), 2, 'an identical prompt keeps both turns');
+    assert.ok(conversation().querySelector('[data-chat-turn="waiting"]'), 'the new turn waits for its reply');
+    store.push({id:'m2', who:'You', is_me:true, text:'ping', time:'', kind:'message'});
+    await reply('m2', 'r2', 'PONG');
+    assert.deepEqual([count('ping'), count('PONG')], [2, 2], 'both turns read back once each');
+    // Turn 3: the store saves the question with the send (read back before the answer): the pending reply stays.
+    studio.type(input, 'ping');
+    store.push({id:'m3', who:'You', is_me:true, text:'ping', time:'', kind:'message'});
+    studio.flush(() => input.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
+    await studio.settle(); await studio.settle();
+    assert.equal(count('ping'), 3, 'the saved question shows once (from the store), not twice');
+    assert.ok(conversation().querySelector('[data-chat-turn="waiting"]'), 'question saved, answer pending: the pending reply stays');
+    await reply('m3', 'r3', 'PONG');
+    assert.deepEqual([count('ping'), count('PONG')], [3, 3], 'three turns, each read back once');
+    assert.equal(conversation().querySelector('[data-chat-turn]'), null, 'no local copy left once the store holds every turn');
+    const props = [...panel.querySelectorAll('[role="tab"]')].find(tab => tab.textContent.trim() === 'Properties');
+    const chat = () => [...panel.querySelectorAll('[role="tab"]')].find(tab => tab.textContent.trim() === 'Chat');
+    // Leave and come back: the answers come from the store, not a component cache.
+    assert.ok(props && chat(), 'the graph inspector has Properties and Chat tabs');
+    studio.flush(() => props.click()); await studio.settle();
+    assert.equal(conversation(), null, 'the Conversation section unmounted (its local turns are gone)');
+    studio.flush(() => chat().click()); await studio.settle(); await studio.settle();
+    assert.deepEqual([count('ping'), count('PONG')], [3, 3], 'after leaving and returning, the same turns are read from the store');
+  } finally { studio.close(); }
+});
+
+// UX-CHAT1 v3 (Ping): the ordinary first send. The server returns the reply row's id with the answer
+// (tests/test_universal_agent_plain_send.py courts the real handler); the stored answer and the local answer
+// must not both render.
+test('UX-CHAT1 v3: an ordinary first send reads back one question and one answer', async () => {
+  const studio = await mountStudio();
+  try {
+    await studio.settle();
+    const store = [];
+    let revision = 1;
+    studio.win.ARCHHUB_WORKSHOP_TRANSCRIPT = async node => ({ok:true, node, conversation_root:'graph-chat', revision:++revision,
+      has_older:false, next_before:null, rows:store.map(row => ({...row}))});
+    const input = studio.reply();
+    const send = async text => {
+      studio.type(input, text);
+      studio.flush(() => input.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
+      await studio.settle();
+    };
+    await send('hello');
+    const dialog = studio.doc.querySelector('[role="dialog"][aria-label="Choose a model"]');
+    studio.flush(() => studio.exact('DeepSeek R1', dialog)[0].closest('[style]').parentElement.click());
+    await studio.settle();
+    const panel = studio.doc.querySelector('aside[aria-label="Selection inspector"]');
+    const conversation = () => panel.querySelector('section[aria-label^="Conversation with"]');
+    const count = text => [...conversation().querySelectorAll('div[style*="pre-wrap"]')].filter(n => n.textContent === text).length;
+    await send('hello');
+    // The server wrote both rows before it answered (application_server: ordinary admitted delivery).
+    store.push({id:'u-1', who:'You', is_me:true, text:'hello', time:'', kind:'message'});
+    store.push({id:'a-1', who:'DeepSeek R1', is_me:false, text:'Hi there.', time:'', kind:'reply'});
+    studio.answer({answer:'Hi there.', delivery:{state:'replied', request_id:'x', message_id:'u-1', reply_message_id:'a-1'}});
+    await studio.settle(); await studio.settle();
+    assert.deepEqual([count('hello'), count('Hi there.')], [1, 1], 'one question and one answer after the readback');
+    assert.equal(conversation().querySelector('[data-chat-turn]'), null, 'the stored turn replaces the local copy');
+  } finally { studio.close(); }
+});
+
 test('Inspector: empty selection shows the graph as a node with graph properties instead of the old Chat rail chain', async () => {
   const studio = await mountStudio();
   try {

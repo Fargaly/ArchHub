@@ -202,7 +202,7 @@ test('fresh signed-out first screen preselects the free router with its friendly
     studio.flush(() => button(studio.doc, 'Send').click());
     await studio.settle(() => studio.doc.body.textContent.includes('PONG'), 'the chat answer is drawn');
     assert.deepEqual(studio.agentCalls.map(call => [call.text, call.route]), [['ping', ROUTE]]);
-    assert.ok([...studio.doc.querySelectorAll('[role="status"] span')].some(node => node.textContent === MODEL),
-      'the answer turn is signed with the friendly model label');
+    assert.ok([...studio.doc.querySelectorAll('[data-chat-turn="message"] span')].some(node => node.textContent === MODEL),
+      'the answer turn (UX-CHAT1: in the Conversation section) is signed with the friendly model label');
   } finally { studio.close(); }
 });

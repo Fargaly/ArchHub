@@ -20092,18 +20092,28 @@ def _ensure_system_tool_canvas_nodes(
         administrator_root=authorization.subject_root,
     )
     grant_snapshot = store.snapshot()
-    session_patch = prepare_append_relation_members(
-        grant_snapshot,
-        authorization.session.root_id,
-        ((roles["relation"], root) for root in grant_roots),
-        budget=100_000,
-    )
-    if session_patch.create or session_patch.replace:
-        store.commit(
-            grant_snapshot.revision,
-            create=session_patch.create,
-            replace=session_patch.replace,
+    # Zero-idle-growth court: the grants already exist on a restart; linking them to the
+    # session again grew the graph by 13 cells per boot. Link only grants it does not hold.
+    try:
+        held_grants = {member.participant_id for member in read_relation(
+            grant_snapshot, authorization.session.root_id, budget=100_000)
+            if member.role_id == roles["relation"]}
+    except (InvalidCell, MatchBudgetExceeded):
+        held_grants = set()
+    missing_grants = [root for root in dict.fromkeys(grant_roots) if root not in held_grants]
+    if missing_grants:
+        session_patch = prepare_append_relation_members(
+            grant_snapshot,
+            authorization.session.root_id,
+            ((roles["relation"], root) for root in missing_grants),
+            budget=100_000,
         )
+        if session_patch.create or session_patch.replace:
+            store.commit(
+                grant_snapshot.revision,
+                create=session_patch.create,
+                replace=session_patch.replace,
+            )
     return tuple(dict.fromkeys(tool_roots))
 
 

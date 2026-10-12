@@ -20032,34 +20032,37 @@ def _ensure_system_tool_canvas_nodes(
     snapshot_for_patch = _candidate_snapshot_for_atomic_commit(
         snapshot, create=tuple(create.values())
     )
-    patches = (
-        prepare_append_relation_members(
-            snapshot_for_patch,
-            application_root,
-            ((roles["member"], root) for root in audience_tool_roots),
-            budget=100_000,
-        ),
-        prepare_append_relation_members(
-            snapshot_for_patch,
-            canvas_root,
-            (
-                *((roles["member"], root) for root in audience_tool_roots),
-                *((roles["property"], root) for root in new_property_roots),
-            ),
-            budget=100_000,
-        ),
-        prepare_append_relation_members(
-            snapshot_for_patch,
-            visibility_root,
-            ((roles["visible"], root) for root in audience_tool_roots),
-            budget=100_000,
-        ),
-        prepare_append_relation_members(
-            snapshot_for_patch,
-            properties_lens_root,
-            ((roles["scope"], root) for root in new_property_roots),
-            budget=100_000,
-        ),
+
+    # PM gate 2026-10-13: this runs on every boot. Appending the tool roots again duplicated
+    # them in the view-visibility relation, and the next open refused the saved graph
+    # ("view visibility repeats a canvas root"). Append only what a relation does not hold.
+    def missing(relation_root, pairs):
+        try:
+            held = {(member.role_id, member.participant_id)
+                    for member in read_relation(snapshot_for_patch, relation_root, budget=100_000)}
+        except (InvalidCell, MatchBudgetExceeded):
+            held = set()
+        wanted = []
+        for pair in pairs:
+            if pair not in held and pair not in wanted:
+                wanted.append(pair)
+        return wanted
+
+    plans = (
+        (application_root, missing(application_root,
+            [(roles["member"], root) for root in audience_tool_roots])),
+        (canvas_root, missing(canvas_root, [
+            *((roles["member"], root) for root in audience_tool_roots),
+            *((roles["property"], root) for root in new_property_roots),
+        ])),
+        (visibility_root, missing(visibility_root,
+            [(roles["visible"], root) for root in audience_tool_roots])),
+        (properties_lens_root, missing(properties_lens_root,
+            [(roles["scope"], root) for root in new_property_roots])),
+    )
+    patches = tuple(
+        prepare_append_relation_members(snapshot_for_patch, relation_root, pairs, budget=100_000)
+        for relation_root, pairs in plans if pairs
     )
     for patch in patches:
         for cell in patch.create:
@@ -21543,8 +21546,9 @@ def _canvas_scope_for_assigned(
     all_roots, all_relations, all_properties = _canvas_roots(
         snapshot, registry
     )
-    if len(assigned) != len(set(assigned)):
-        raise InvalidCell("view visibility repeats a canvas root")
+    # A graph saved by build 673a1f7d..0d79d86f may hold a tool root twice in its view
+    # visibility; opening it must never refuse the founder's graph over a repeat.
+    assigned = tuple(dict.fromkeys(assigned))
     available = set(all_roots)
     if any(root not in available for root in assigned):
         raise InvalidCell("view visibility references a root outside the canvas")

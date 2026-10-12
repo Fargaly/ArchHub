@@ -670,6 +670,10 @@ def test_top_canvas_is_the_application_scope_and_every_wire_uses_real_interfaces
 		*registry.map.domains.values(),
 		registry.core_values.root_id,
 		registry.governed_work_registry_root,
+		# SYSGRAPH (founder F4): Studio, Workshop and BABOOM are tool nodes on the System canvas.
+		universal_application_module._system_tool_canvas_root("tool_studio"),
+		universal_application_module._system_tool_canvas_root("tool_workshop"),
+		universal_application_module._system_tool_canvas_root("tool_baboom"),
 	}
 	assert registry.application_root not in node_ids
 	assert registry.library_root not in node_ids

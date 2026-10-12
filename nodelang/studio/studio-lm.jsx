@@ -402,6 +402,12 @@ if (typeof window !== 'undefined') window.__archhubRefreshCanvasInPlace = studio
 const StudioLM = () => {
   React.useSyncExternalStore(window.ArchHubTheme.subscribe, window.ArchHubTheme.getEpoch);
   useCatalogueVersion();
+  React.useEffect(() => {
+    const read = () => { if (!window.ARCHHUB_HOSTS_READ) loadCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS); };
+    read();
+    const timer = setInterval(() => { if (window.ARCHHUB_HOSTS_READ) clearInterval(timer); else read(); }, 10000);
+    return () => clearInterval(timer);
+  }, []);
   const [openId, setOpenId] = React.useState(window.ARCHHUB_LIVE?.currentGraph || LM_SESSIONS[0]?.id || null);
   const [openTabs, setOpenTabs] = React.useState(() => [window.ARCHHUB_LIVE?.currentGraph || LM_SESSIONS[0]?.id].filter(Boolean));
   const [, refreshLiveProjection] = React.useState(0);
@@ -1184,6 +1190,15 @@ const TOOL_STATE_COLOR = {
   not_installed:LM.inkMuted,
 };
 const toolColor = state => TOOL_STATE_COLOR[state] || LM.inkMuted;
+// One host count for the Connectors card, the status bar and the Hosts badge: every probe row the
+// Hosts list draws, running when connected or listening (the same rule as tool_hub._apply_connectors).
+const hostTally = () => {
+  // The Hosts list itself (studio.html fills it and ARCHHUB_LIVE.connectors from the same probe rows).
+  // With no host reader at all there is nothing to wait for: the empty list is the answer.
+  const rows = LM_HOSTS;
+  const read = window.ARCHHUB_HOSTS_READ === true || rows.length > 0 || typeof window.ARCHHUB_LOAD_HOSTS !== 'function';
+  return {running:rows.filter(row => row?.state === 'connected' || row?.state === 'listening').length, total:rows.length, read};
+};
 const plural = (n, one, many = one + 's') => String(n) + ' ' + (n === 1 ? one : many);
 const workshopWaitingItems = state => {
   const items = [];
@@ -1373,6 +1388,18 @@ const providerStateWord = p => {
   if (state === 'key invalid' || state === 'unavailable' || state === 'not installed') return 'Unavailable';
   return 'Not connected';
 };
+// Ping F6a review: the Tools count states what the cards say. A card reading NOT RUNNING or NOT
+// SIGNED IN is not running, whatever its owner row's raw state; STARTING / CHECKING is counted apart.
+const toolLiveness = tool => {
+  const word = String(tool?.stateWord || '').toUpperCase();
+  if (tool?.state === 'off' || /^(OFF|NOT\b|DIDN'T|FAILED|STOPPED|DISCONNECTED)/.test(word)) return 'down';
+  if (tool?.state === 'starting' || /STARTING|CHECKING|UNKNOWN|WAITING/.test(word)) return 'pending';
+  return 'live';
+};
+const toolCounts = rows => ({
+  live:rows.filter(tool => toolLiveness(tool) === 'live').length,
+  pending:rows.filter(tool => toolLiveness(tool) === 'pending').length,
+});
 const toolStateWord = state => ({
   running:'RUNNING', starting:'STARTING', off:'OFF', failed:"DIDN'T START", not_installed:'NOT INSTALLED',
   didnt_start:"DIDN'T START",
@@ -1531,7 +1558,7 @@ const toolRowsFromOwners = ({workshopState, account, personal, hub}) => {
     workshop:{stat:plural(projects, 'project') + ' · ' + plural(tasks, 'task'), wire:waiting.length ? plural(waiting.length, 'waiting') : 'no waiting work'},
     brain:{stat:plural(LM_MEMORY.length, 'fact'), wire:plural((window.BRAIN_STRATA || []).length, 'stratum', 'strata')},
     baboom:{stat:'Starts with Windows: ' + (baboomOn ? 'on' : 'off'), wire:baboom?.source ? String(baboom.source) : 'Personal Settings'},
-    connectors:{stat:String(liveHosts.length) + '/' + String(LM_HOSTS.length) + ' hosts connected', wire:plural((window.ARCHHUB_LIVE?.connectors || []).length, 'connector')},
+    connectors:{stat:String(hostTally().running) + '/' + String(hostTally().total) + ' hosts running.', wire:plural((window.ARCHHUB_LIVE?.connectors || []).length, 'connector')},
     cloud:{stat:signedIn ? String(account.email || 'signed in') : 'signed out', wire:window.ARCHHUB_CLOUD_SESSION ? 'cloud session owner' : 'no device list owner'},
   };
   const baboomToggle = {
@@ -1549,7 +1576,9 @@ const toolRowsFromOwners = ({workshopState, account, personal, hub}) => {
     const rowWord = String(row.state_word || '');
     const stateWord = row.id === 'connectors' ? connectorHostWord :
       /unknown/i.test(rowWord) ? toolStateWord(normalizedState) : (rowWord || toolStateWord(normalizedState));
-    const ownerLine = toolStatLineIsPlaceholder(row.stat_line) ? stats[row.id]?.stat : (row.stat_line || stats[row.id]?.stat || '');
+    const tally = row.id === 'connectors' ? hostTally() : null;
+    const ownerLine = tally ? (tally.read ? stats.connectors.stat : 'Checking hosts.')
+      : toolStatLineIsPlaceholder(row.stat_line) ? stats[row.id]?.stat : (row.stat_line || stats[row.id]?.stat || '');
     const baboomRuntime = ownerLine || 'No signed runtime attached.';
     const statLine = row.id === 'baboom'
       ? [baboomRuntime, stats.baboom.stat].filter(Boolean).join(' · ')
@@ -1563,8 +1592,14 @@ const toolRowsFromOwners = ({workshopState, account, personal, hub}) => {
       emptyTitle:row.emptyTitle || row.empty_title || row.label + ' is off',
       emptyLine:row.emptyLine || row.empty_line || row.off_sentence || '',
       statLine,
+      cardStat:row.id === 'baboom' ? baboomRuntime : statLine,
       wireSummary:row.wire_summary || stats[row.id]?.wire || '',
-      color:toolColor(row.id === 'baboom' && baboom?.value === 'off' ? 'off' : normalizedState),
+      // The dot says what the word says, in the designed palette: running green, starting cyan,
+      // off amber, and any other not-running word grey (a NOT RUNNING card is never green).
+      color:(liveness => toolColor(liveness === 'live' ? 'running' : liveness === 'pending' ? 'starting'
+        : (row.id === 'baboom' && baboom?.value === 'off') || normalizedState === 'off' ? 'off' : 'unknown'))(
+        toolLiveness({state:row.id === 'baboom' && baboom?.value === 'off' ? 'off' : normalizedState,
+          stateWord:row.id === 'baboom' && baboom?.value === 'off' ? 'OFF' : stateWord})),
       ...(row.id === 'baboom' ? baboomToggle : {}),
     };
   });
@@ -1826,6 +1861,7 @@ const loadCatalogue = (loaderName, items) => {
     }
     items.splice(0, items.length, ...rows);
     if (loaderName === 'ARCHHUB_LOAD_HOSTS') {
+      window.ARCHHUB_HOSTS_READ = true;
       connectors.splice(0, connectors.length, ...result.connectors);
     }
   }).catch(error => {state.error = error.message || 'Catalogue unavailable.';})
@@ -1958,7 +1994,7 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, setPickerOpen, se
   // Founder 2026-10-12 (H1): the six tool cards sit on Home AND in Settings > Hub, drawn by the one SettingsHub.
   const homePersonal = usePersonalTheme();
   const toolRows = toolRowsFromOwners({workshopState, account, personal:homePersonal, hub});
-  const toolsOn = toolRows.filter(tool => tool.state !== 'off').length;
+  const toolsLive = toolCounts(toolRows);
   React.useEffect(() => {homeMounted.current = true; return () => {homeMounted.current = false;};}, []);
   const liveHosts = LM_HOSTS.filter(host => hostState(host) === 'connected');
   const knownHosts = startableHosts(LM_HOSTS);
@@ -2130,7 +2166,7 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, setPickerOpen, se
       <div style={{ display:'flex', alignItems:'baseline', gap:10, marginBottom:14 }}>
         <h2 style={{ fontFamily:LM.serif, fontSize:26, fontWeight:400, letterSpacing:'-0.015em', margin:0 }}>Tools</h2>
         <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em' }}>
-          {toolsOn}/{toolRows.length} RUNNING · EACH WORKS ON ITS OWN
+          {toolsLive.live}/{toolRows.length} RUNNING{toolsLive.pending ? ` · ${toolsLive.pending} STARTING` : ''} · EACH WORKS ON ITS OWN
         </span>
       </div>
       <SettingsHub toolRows={toolRows} onOpenTool={onOpenTool} onOpenToolGraph={onOpenToolGraph} columns={3}/>
@@ -2243,10 +2279,15 @@ const ToolCard = ({ tool, onOpen }) => (
       <span style={{fontFamily:LM.serif, fontSize:22, lineHeight:1, fontWeight:400, flex:1, minWidth:0,
         overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{tool.label}</span>
     </div>
-    <div style={{fontFamily:LM.sans, fontSize:12.5, color:LM.inkSoft, lineHeight:1.35, minHeight:34}}>
-      <span>{tool.description}</span>{tool.description ? ' ' : ''}<span>{tool.statLine || tool.stat}</span>
+    <div data-tool-description="" title={tool.description || undefined} style={{fontFamily:LM.sans, fontSize:12.5, color:LM.inkSoft,
+      lineHeight:1.35, minHeight:34, overflow:'hidden', display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical'}}>
+      {tool.description}</div>
+    <div data-tool-stat="" title={tool.cardStat ?? tool.statLine ?? tool.stat ?? undefined} style={{fontFamily:LM.mono, fontSize:10.5,
+      color:LM.inkMuted, letterSpacing:'0.03em', minHeight:14, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+      {tool.cardStat ?? tool.statLine ?? tool.stat}</div>
+    <div style={{marginTop:'auto', display:'flex', justifyContent:'flex-end'}}>
+      <span data-tool-open="" aria-hidden="true" style={{fontFamily:LM.mono, fontSize:12, color:LM.inkMuted}}>{'\u2192'}</span>
     </div>
-    <div style={{marginTop:'auto', minHeight:18}}/>
   </div>
 );
 
@@ -6452,7 +6493,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
   const personal = usePersonalTheme();
   const hub = useToolHubProjection();
   const toolRows = toolRowsFromOwners({workshopState, account, personal, hub});
-  const toolsOn = toolRows.filter(tool => tool.state !== 'off').length;
+  const toolsLive = toolCounts(toolRows);
   // The Hosts badge states the cached host probe, read when Settings opens. The brain is
   // another process and may be slow or down, so it is read only when the Brain tab opens
   // (SettingsMemory); the badge states the facts already held (2026-09-24 click-path gate).
@@ -6485,7 +6526,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
   const patch = (k, v) => setStore(st => Object.assign({}, st, typeof k === 'object' ? k : { [k]: v }));
   const keyed = providerKeyed(providers.rows);
   const tabs = [
-    ['hub',         'Hub',         `${toolsOn}/${toolRows.length} on`],
+    ['hub',         'Hub',         `${toolsLive.live}/${toolRows.length} running`],
     ['account',     'Account',     (account || {}).graphTier || null],
     ['memory',      'Brain',       `${(window.BRAIN_STRATA || []).length} strata \u00b7 ${LM_MEMORY.length - (store.forgotten || []).length} facts`],
     ['baboom',      'BABOOM',      `companion · speaks at most ${baboomMaxSpeaks(personal)} times an hour`],
@@ -6493,7 +6534,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
     ['profile',     'Profile',     'Architect'],
     ['permissions', 'Permissions', null],
     ['workspaces',  'Workspaces',  null],
-    ['hosts',       'Hosts',       `${LM_HOSTS.filter(h => hostState(h) !== 'off').length} live`],
+    ['hosts',       'Hosts',       hostTally().read ? `${hostTally().running}/${hostTally().total} running` : null],
     ['providers',   'Providers',   providers.rows ? `${keyed} key${keyed === 1 ? '' : 's'}` : null],
     ['models',      'Models',      pickedModel() ? pickedModel().name : null],
     ['theme',       'Theme',       STUDIO_THEME_MODE],
@@ -9101,8 +9142,6 @@ const ApplicationUpdateNotice = () => {
 // ──────────────────────── SERVER STRIP ────────────────────────
 const ServerStrip = ({ session, setDocsOpen, onOpenWaitingTask }) => {
   // Live values in the design's slots: this server's port, the connectors that drive a host, and the running build.
-  const drives = (window.ARCHHUB_LIVE?.connectors || []).filter(c => c.drive);
-  const live = drives.filter(c => c.state === 'connected' || c.state === 'listening').length;
   const port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
   const transport = window.ARCHHUB_EXISTING_WORKSHOP;
   const hub = useToolHubProjection();
@@ -9134,7 +9173,7 @@ const ServerStrip = ({ session, setDocsOpen, onOpenWaitingTask }) => {
       padding:'0 10px', display:'flex', alignItems:'center', gap:LM.sp.xs,
     }}>
       <StripItem>
-        <span style={{ color:LM.ok }}>●</span> server :{port} · {live}/{drives.length} hosts
+        <span style={{ color:LM.ok }}>●</span> server :{port} · {hostTally().read ? `${hostTally().running}/${hostTally().total} hosts` : 'checking hosts'}
       </StripItem>
       {session ? (
         <>

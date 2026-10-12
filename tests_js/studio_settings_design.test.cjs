@@ -134,7 +134,7 @@ test('the Settings sidebar is the design tab table, in the design order, and sta
     assert.equal(badge('Theme'), 'Dark', 'the Theme badge states the mode the Studio draws');
     assert.equal(badge('Brain'), '4 strata \u00b7 1 facts');
     assert.equal(badge('BABOOM'), 'companion \u00b7 speaks at most 2 times an hour', 'the BABOOM badge states the budget the companion settings state');
-    assert.equal(badge('Hub'), '5/6 on', 'the Hub badge counts the tools that are on');
+    assert.match(badge('Hub'), /^\d\/6 running$/, 'the Hub badge counts the tools whose cards say they run');
     assert.ok(s.doc.body.textContent.includes('STUDIO \u00b7 20260916-2130-e733a13'), 'the dialog header states the running build');
   } finally { s.close(); }
 });

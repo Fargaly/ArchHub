@@ -88,6 +88,7 @@ async function mountStudio(options = {}) {
     ], currentGraph:'graph-a',
     hosts:options.hosts || [{id:'r25', name:'Revit 2025', state:'connected', file:'Tower.rvt'}],
     connectors:[{id:'revit', drive:true}], graph, memory:[{id:'m1', text:'Remember this', src:'test'}], skills:[]};
+  if (options.loadHosts) win.ARCHHUB_LOAD_HOSTS = options.loadHosts;
   Object.defineProperty(win.HTMLInputElement.prototype, 'click', {
     configurable:true,
     value:function click() { if (this.type === 'file') fileClicks.push(this.getAttribute('aria-label') || 'file'); },
@@ -149,7 +150,19 @@ test('F2/H1: Home shows the six hub tool cards, the same cards Settings Hub draw
     assert.ok(home, 'Home has its Tools section');
     assert.deepEqual([...home.querySelectorAll('[data-tool-card]')].map(card => card.getAttribute('data-tool-card')),
       ['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud'], 'Home has the six tool cards');
-    assert.match(home.textContent, /Tools5\/6 RUNNING · EACH WORKS ON ITS OWN/);
+    // The count is what the cards say (Ping F6a): a NOT RUNNING / NOT SIGNED IN / OFF card is not running.
+    const words = [...home.querySelectorAll('[data-tool-card]')].map(card => card.querySelector('[data-tool-dot]').nextElementSibling.textContent.trim().toUpperCase());
+    const live = words.filter(word => !/^(OFF|NOT\b|DIDN'T|FAILED|STOPPED|DISCONNECTED)/.test(word) && !/STARTING|CHECKING|UNKNOWN|WAITING/.test(word)).length;
+    const pending = words.filter(word => /STARTING|CHECKING|UNKNOWN|WAITING/.test(word)).length;
+    const header = home.querySelector('h2').parentElement.textContent;
+    assert.match(header, new RegExp('^Tools' + live + '/6 RUNNING' + (pending ? ' · ' + pending + ' STARTING' : '') + ' · EACH WORKS ON ITS OWN$'),
+      'the header count equals the cards that say they run: ' + words.join(', ') + ' -> ' + header);
+    for (const card of home.querySelectorAll('[data-tool-card]')) {
+      assert.ok(card.querySelector('[data-tool-description]') && card.querySelector('[data-tool-stat]') && card.querySelector('[data-tool-open]'),
+        card.getAttribute('data-tool-card') + ' card has the same rows: description, one stat line, the open mark');
+      assert.equal(card.getAttribute('tabindex'), '0', 'the card is the keyboard-focusable open control');
+      assert.match(card.getAttribute('aria-label'), /^Open /, 'the card has an accessible open name');
+    }
     const homeStudio = home.querySelector('[data-tool-card="studio"]').textContent;
     assert.equal(home.querySelector('[data-tool-grid]').style.gridTemplateColumns, 'repeat(3, minmax(0, 1fr))',
       'Home draws the design 3 x 2 grid, never 5 + 1');
@@ -165,7 +178,7 @@ test('F2/H1: Home shows the six hub tool cards, the same cards Settings Hub draw
     for (const id of ['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud']) {
       assert.ok(hub.querySelector(`[data-tool-card="${id}"]`), id + ' card exists in Settings Hub');
     }
-    assert.match(hub.querySelector('[data-tool-card="studio"]').textContent, /StudioCanvas, chats and graph sessions\. 3 sessions · 0 running/);
+    assert.match(hub.querySelector('[data-tool-card="studio"]').textContent, /StudioCanvas, chats and graph sessions\.\s*3 sessions · 0 running/);
     assert.equal(hub.querySelector('[data-tool-card="studio"]').textContent, homeStudio, 'Home and Hub draw the same card');
   } finally { studio.close(); }
 });
@@ -248,6 +261,66 @@ test('F1b: right-click on an on tool shows a six second in-panel off confirm', a
     studio.win.ReactDOM.flushSync(() => studio.button('Yes').click());
     await studio.settle();
     assert.deepEqual(studio.ownerCalls, [['setBaboomStartup', 'off']]);
+  } finally { studio.close(); }
+});
+
+// Ping F6a: one host count. The Connectors card, the status bar and the Hosts badge read the same
+// Hosts list, counted as the server counts it (connected or listening).
+test('F6a: the host count is one number on the Connectors card, the status bar and the Hosts badge', async () => {
+  const studio = await mountStudio({hosts:[
+    {id:'r25', name:'Revit 2025', state:'connected'}, {id:'acad', name:'AutoCAD', state:'listening'},
+    {id:'rh8', name:'Rhino 8', state:'off'}, {id:'xl', name:'Excel', state:'installed'}]});
+  try {
+    await studio.settle(); await studio.settle();
+    const card = studio.doc.querySelector('[data-home-tools] [data-tool-card="connectors"]');
+    assert.ok(card, 'Home draws the Connectors card');
+    assert.match(card.querySelector('[data-tool-stat]').textContent, /^2\/4 hosts running\.$/, 'card: 2 of the 4 listed hosts run');
+    assert.match(studio.doc.body.textContent, /server :\d+ · 2\/4 hosts/, 'status bar: the same 2/4');
+    const hub = await openSettingsHub(studio);
+    const hosts = [...studio.doc.querySelectorAll('button')].filter(b => b.firstElementChild?.textContent === 'Hosts').find(child => child.firstElementChild?.textContent === 'Hosts');
+    assert.equal(hosts.children[1].textContent, '2/4 running', 'Hosts badge: the same 2/4');
+  } finally { studio.close(); }
+});
+
+// Ping F6a v3 (rig: the mounted strip said 0/0 while the card said 2/27): on the MOUNTED Studio the
+// Hosts list is read at start-up, so Home's card, the status bar and the Hosts badge state one read list.
+test('F6a v3: the mounted Studio reads the Hosts list at start and every reader shows the same count', async () => {
+  const rows = [{id:'r25', name:'Revit 2025', state:'connected'}, {id:'acad', name:'AutoCAD', state:'listening'},
+    {id:'rh8', name:'Rhino 8', state:'off'}, {id:'xl', name:'Excel', state:'installed'}, {id:'wd', name:'Word', state:'installed'}];
+  let release;
+  const answered = new Promise(resolve => { release = resolve; });
+  const studio = await mountStudio({hosts:[], loadHosts:async () => { await answered; return {hosts:rows, connectors:rows}; }});
+  try {
+    await studio.settle();
+    const strip = () => (studio.doc.body.textContent.match(/server :\d+ · [^·]*/) || [''])[0];
+    const card = () => studio.doc.querySelector('[data-home-tools] [data-tool-card="connectors"] [data-tool-stat]')?.textContent;
+    assert.match(strip(), /checking hosts/, 'before the list is read the strip says so, never 0/0: ' + strip());
+    assert.equal(card(), 'Checking hosts.', 'before the list is read the card says so, never another number');
+    release();
+    for (let i = 0; i < 50 && !/2\/5 hosts/.test(strip()); i += 1) await studio.settle();
+    assert.match(strip(), /server :\d+ · 2\/5 hosts/, 'status bar: 2 of the 5 listed hosts');
+    assert.equal(card(), '2/5 hosts running.', 'Connectors card: the same 2/5');
+    const hub = await openSettingsHub(studio);
+    const hosts = [...studio.doc.querySelectorAll('button')].find(b => b.firstElementChild?.textContent === 'Hosts');
+    assert.equal(hosts.children[1].textContent, '2/5 running', 'Hosts badge: the same 2/5');
+    assert.ok(hub, 'Settings opened');
+  } finally { studio.close(); }
+});
+
+// Ping F6a: a card's dot says what its word says.
+test('F6a: each tool dot follows its word: green only when the card says it runs', async () => {
+  const studio = await mountStudio();
+  try {
+    await studio.settle(); await studio.settle();
+    const green = new studio.win.Option().style; green.color = '#2fb86a';
+    for (const card of studio.doc.querySelectorAll('[data-home-tools] [data-tool-card]')) {
+      const dot = card.querySelector('[data-tool-dot]');
+      const word = dot.nextElementSibling.textContent.trim().toUpperCase();
+      const down = /^(OFF|NOT\b|DIDN'T|FAILED|STOPPED|DISCONNECTED)/.test(word);
+      const pending = !down && /STARTING|CHECKING|UNKNOWN|WAITING/.test(word);
+      const isGreen = dot.style.background === green.color;
+      assert.equal(isGreen, !down && !pending, card.getAttribute('data-tool-card') + ' (' + word + ') dot is ' + dot.style.background);
+    }
   } finally { studio.close(); }
 });
 
@@ -369,8 +442,8 @@ test('F2R D1: Settings Hub cards show owner state lines, no placeholders or plum
     assert.equal(hub.querySelectorAll('[data-tool-card]').length, 6);
     for (const text of [
       '3 sessions · 0 running.', '1 project · 1 task.', '1 fact in local Brain.',
-      'Attached signed runtime · 1 runtime session.', 'Starts with Windows: on',
-      '1/1 hosts connected.', 'Not signed in.',
+      'Attached signed runtime · 1 runtime session.',
+      '1/1 hosts running.', 'Not signed in.',
     ]) {
       assert.ok(hub.textContent.includes(text), 'missing owner state line: ' + text);
     }
@@ -450,7 +523,7 @@ test('F2R owner controls: only BABOOM renders an on/off switch and off-confirm w
   } finally { studio.close(); }
 });
 
-test('F2U repair: BABOOM card separates Windows startup from runtime state', async () => {
+test('F2U repair: BABOOM card states its runtime; Windows startup lives in Settings > BABOOM', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
@@ -458,8 +531,8 @@ test('F2U repair: BABOOM card separates Windows startup from runtime state', asy
     const card = hub.querySelector('[data-tool-card="baboom"]');
     assert.doesNotMatch(card.textContent, /UNKNOWN|unknown|…/);
     assert.match(card.textContent, /RUNNING|ATTACHED/);
-    assert.match(card.textContent, /Starts with Windows: on/);
-    assert.match(card.textContent, /Attached signed runtime/);
+    assert.match(card.querySelector('[data-tool-stat]').textContent, /Attached signed runtime/);
+    assert.doesNotMatch(card.textContent, /Starts with Windows/, 'startup detail is not packed into the card (Ping F6a)');
   } finally { studio.close(); }
 });
 

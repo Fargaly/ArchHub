@@ -116,7 +116,7 @@ async function mountStrip(server) {
   assert.match(toolHub, /const useToolHubProjection = /, 'the status strip reads waiting items through the tool hub projection');
   // The strip restarts through the shared confirmation and keeps the waiting shortcut helpers.
   const shared = toolHub + '\n' + [
-    'modelRoute', 'useRestartConfirmation',
+    'LM_HOSTS', 'hostTally', 'modelRoute', 'useRestartConfirmation',
     'waitingLine', 'waitingMeta', 'WaitingButton', 'smallBtn',
   ].filter(name => jsx.includes('\nconst ' + name + ' = '))
     .map(name => definition(jsx, name)).join('\n');

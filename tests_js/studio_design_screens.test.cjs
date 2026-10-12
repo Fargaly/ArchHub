@@ -200,9 +200,12 @@ test('connector diagnostic: the chain is the host scan state, Check now scans ag
     const buttons = buttonsIn(view);
     assert.deepEqual(buttons.filter(button => typeof reactProps(button).onClick !== 'function').map(button => button.textContent), [], 'every drawn control acts');
     const check = buttons.find(button => button.textContent === 'Check now \u21bb');
+    // Studio reads the Hosts list once at start-up (F6a v3); count only the scans Check now asks for.
+    await studio.settle(() => scans >= 1, 'the start-up host read lands');
+    const before = scans;
     studio.flush(() => check.click());
     await studio.settle(() => screen(studio)?.querySelector('h1').textContent === 'Blender connected \u2014 live.', 'Check now reads the scan again');
-    assert.equal(scans, 1, 'one scan per Check now');
+    assert.equal(scans - before, 1, 'one scan per Check now');
     assert.doesNotMatch(screen(studio).textContent, /SUGGESTED FIX|last check \u00b7 \u2014/, 'a live connector draws no fix, and the check time is measured');
     studio.flush(() => buttonsIn(screen(studio)).find(button => button.textContent === 'Close').click());
     assert.equal(screen(studio), null, 'Close returns to the Studio');

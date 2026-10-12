@@ -98,15 +98,19 @@ test('an on Cloud opens Settings > Account, never a full-window Cloud page', asy
   }
 });
 
-test('Cloud from the rail opens the same Settings > Account', async () => {
+test('Cloud is not on the rail; Hub still opens the same Settings > Account', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
     const rail = studio.doc.querySelector('[data-tool-rail="cloud"]');
-    assert.ok(rail, 'the Cloud rail entry stays');
-    studio.win.ReactDOM.flushSync(() => rail.click());
+    assert.equal(rail, null, 'tool icons are not rail entries');
+    const settings = studio.doc.querySelector('[title="Settings"]');
+    studio.win.ReactDOM.flushSync(() => settings.click());
     await studio.settle(); await studio.settle();
-    assert.equal(studio.doc.querySelector('[data-tool-view="cloud"]'), null, 'no full-window Cloud page');
+    const hubCloud = studio.doc.querySelector('[data-tool-card="cloud"]');
+    assert.ok(hubCloud, 'Hub keeps the Cloud card');
+    studio.win.ReactDOM.flushSync(() => hubCloud.click());
+    await studio.settle(); await studio.settle();
     const account = [...studio.doc.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Account');
     assert.ok(account, 'Settings opened');
     assert.ok(account.parentElement.nextElementSibling.textContent.includes('Continue with Google'), 'on its Account tab');

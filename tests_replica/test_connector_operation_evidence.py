@@ -110,3 +110,11 @@ def test_connector_probes_read_this_machine():
     assert rows["out"] and all(row.get("state") for row in rows["out"])
     status, _ = PIPELINE_ENGINES["connector.status"]({"connector": rows["out"][0]["id"]}, {})
     assert status["out"][0]["id"] == rows["out"][0]["id"]
+
+
+def test_tool_nodes_return_their_settings_parameters():
+    for tool in ("studio", "workshop", "brain", "baboom", "connectors", "cloud"):
+        out, said = PIPELINE_ENGINES["tool." + tool]({"tool": tool, "setting": "value"}, {})
+        assert out["out"]["tool"] == tool
+        assert out["out"]["setting"] == "value"
+        assert said == "%s settings node" % tool

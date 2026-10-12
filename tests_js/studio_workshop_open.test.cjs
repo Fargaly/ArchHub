@@ -58,7 +58,20 @@ async function mountStudio({workshops = [], unavailable, models, canvasGraphId =
   win.eval('window.__studioRoot=ReactDOM.createRoot(document.getElementById("root")); ReactDOM.flushSync(()=>window.__studioRoot.render(React.createElement(StudioLM)));');
   const doc = win.document;
   const flush = action => win.ReactDOM.flushSync(action);
-  const segment = label => label === 'Workshop' ? doc.querySelector('button[data-tool-rail="workshop"]') :
+  const openHome = () => {
+    const home = doc.querySelector('[title="All sessions"]');
+    if (home) flush(() => home.click());
+  };
+  const homeTool = id => {
+    let card = doc.querySelector(`[data-home-tools] [data-tool-card="${id}"]`);
+    if (!card) {
+      openHome();
+      card = doc.querySelector(`[data-home-tools] [data-tool-card="${id}"]`);
+    }
+    return card;
+  };
+  const settingsButton = () => doc.querySelector('[title="Settings"]');
+  const segment = label => label === 'Workshop' ? homeTool('workshop') :
     [...doc.querySelectorAll('button[aria-pressed]')].find(button => button.textContent.trim() === label);
   const fullWorkshopTabs = () => [...doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')];
   const inWorkshop = () => fullWorkshopTabs().length > 0 || !!doc.querySelector('main[data-tool-view="workshop"]') ||
@@ -67,26 +80,29 @@ async function mountStudio({workshops = [], unavailable, models, canvasGraphId =
   const close = () => { try { flush(() => win.__studioRoot.unmount()); } finally { dom.window.close(); } };
   const setWorkshop = value => { snapshot = value ? {...snapshot, workshop:value} :
     Object.fromEntries(Object.entries(snapshot).filter(([key]) => key !== 'workshop')); notify(); };
-  return {doc, win, flush, segment, spoken, close, inWorkshop, fullWorkshopTabs, setWorkshop};
+  return {doc, win, flush, segment, homeTool, openHome, settingsButton, spoken, close, inWorkshop, fullWorkshopTabs, setWorkshop};
 }
-test('Workshop opens from the rail view, not from a Studio header Chat segment', async () => {
+test('Workshop opens from the Home tool card, not from a Studio header Chat segment', async () => {
   const reason = 'This account has no read access to the Workshop.';
   const refused = await mountStudio({workshops:[], unavailable:reason});
   try {
     const workshop = refused.segment('Workshop');
-    assert.ok(workshop, 'the rail offers Workshop');
+    assert.ok(workshop, 'Home offers the Workshop tool card');
     assert.equal([...refused.doc.querySelectorAll('main > div button')].some(button => button.textContent.trim() === 'Workshop'), false,
       'the Studio header does not offer a Workshop tab');
     refused.flush(() => workshop.click());
     assert.equal(refused.inWorkshop(), true,
-      'the Workshop rail opens the Workshop view even with no room: ' + refused.doc.body.textContent.slice(0, 240));
+      'the Workshop card opens the Workshop view even with no room: ' + refused.doc.body.textContent.slice(0, 240));
   } finally { refused.close(); }
 
   const silent = await mountStudio({workshops:[], canvasGraphId:''});
   try {
-    silent.flush(() => silent.segment('Workshop').click());
+    silent.flush(() => silent.settingsButton().click());
+    const workshop = silent.doc.querySelector('[data-tool-card="workshop"]');
+    assert.ok(workshop, 'Settings Hub offers Workshop when no canvas graph id is projected');
+    silent.flush(() => workshop.click());
     assert.equal(silent.doc.querySelector('main[data-tool-view="workshop"]'), null,
-      'fresh profile Workshop rail does not fall back to the Studio Home tool page');
+      'fresh profile Workshop card does not fall back to the Studio Home tool page');
     assert.deepEqual(silent.fullWorkshopTabs().map(tab => tab.getAttribute('aria-label')),
       ['Chat', 'Tasks', 'Router', 'Relay', 'Prompts', 'Agents', 'Approvals'],
       'fresh profile with no owner rows still opens the full Workshop tab bar');
@@ -98,13 +114,14 @@ test('Workshop opens from the rail view, not from a Studio header Chat segment',
   const open = await mountStudio({workshops:[{root:'room-a', label:'Wall conversion', is_general:false}]});
   try {
     assert.equal(open.inWorkshop(), false, 'the Studio opens on the canvas, not inside Workshop');
-    open.flush(() => open.segment('Workshop').click());
-    assert.equal(open.inWorkshop(), true, 'the rail opens the Workshop view');
+    const workshop = open.segment('Workshop');
+    open.flush(() => workshop.click());
+    assert.equal(open.inWorkshop(), true, 'the Home card opens the Workshop view');
     assert.deepEqual(open.fullWorkshopTabs().map(tab => tab.getAttribute('aria-label')),
       ['Chat', 'Tasks', 'Router', 'Relay', 'Prompts', 'Agents', 'Approvals'],
-      'rail Workshop opens the full Workshop tab bar');
+      'Home Workshop card opens the full Workshop tab bar');
     assert.equal(open.fullWorkshopTabs().find(tab => tab.getAttribute('aria-label') === 'Tasks')?.getAttribute('aria-selected'), 'true',
-      'rail Workshop lands on the Tasks tab');
+      'Home Workshop card lands on the Tasks tab');
     assert.equal([...open.doc.querySelectorAll('main > div button')].some(button => button.textContent.trim() === 'Workshop'), false,
       'the open Workshop is not represented as a Studio header segment');
     open.flush(() => open.doc.querySelector('button[aria-label^="Leave Workshop"]').click());
@@ -118,26 +135,28 @@ test('Workshop opens from the rail view, not from a Studio header Chat segment',
   } finally { open.close(); }
 });
 
-test('graphless profile Workshop rail opens Workshop content, never Home', async () => {
+test('graphless profile Workshop Home card opens Workshop content, never Home', async () => {
   const studio = await mountStudio({workshops:[], canvasGraphId:'', sessions:[], currentGraph:null});
   try {
-    studio.flush(() => studio.segment('Workshop').click());
+    const workshop = studio.segment('Workshop');
+    studio.flush(() => workshop.click());
     assert.equal(studio.doc.querySelector('main[data-tool-view="workshop"]') !== null || studio.fullWorkshopTabs().length > 0, true,
       'Workshop content is visible with no session and no graph id');
     assert.equal(/New graph|Open a saved graph|Recent sessions/.test(studio.doc.body.textContent), false,
-      'Workshop rail did not fall through to Home');
+      'Workshop card did not fall through to Home');
   } finally { studio.close(); }
 });
 
-test('first Workshop rail switch stays under the synchronous render budget', async () => {
+test('first Workshop Home-card switch stays under the synchronous render budget', async () => {
   const studio = await mountStudio({workshops:[{root:'room-a', label:'Wall conversion', is_general:false}]});
   try {
     const started = studio.win.performance.now();
-    studio.flush(() => studio.segment('Workshop').click());
+    const workshop = studio.segment('Workshop');
+    studio.flush(() => workshop.click());
     const elapsed = studio.win.performance.now() - started;
-    assert.equal(studio.inWorkshop(), true, 'Workshop opened from rail');
+    assert.equal(studio.inWorkshop(), true, 'Workshop opened from Home card');
     assert.ok(elapsed < 300, 'first Workshop switch took ' + elapsed.toFixed(1) + ' ms');
-    console.log('first Workshop rail switch ms=' + elapsed.toFixed(1));
+    console.log('first Workshop Home-card switch ms=' + elapsed.toFixed(1));
     const chat = studio.fullWorkshopTabs().find(tab => tab.getAttribute('aria-label') === 'Chat');
     assert.ok(chat, 'Workshop Chat tab exists');
     const chatStarted = studio.win.performance.now();
@@ -151,13 +170,14 @@ test('first Workshop rail switch stays under the synchronous render budget', asy
 });
 
 // Ping P2 (ST1 review): a rail entry that opens Settings must leave the Workshop chat as it was.
-test('a Settings rail entry opened from Workshop chat keeps the same chat when Settings closes', async () => {
+test('a Settings Hub card opened from Workshop chat keeps the same chat when Settings closes', async () => {
   const transcript = {ok:true, graph_id:'graph-a', root:'room-a', scope_root:'scope-a', revision:7,
     owner:'owner-a', view:'view-a', self:'owner-a', can_send:true, can_join:false,
     participants:[{root:'owner-a', label:'Owner', attached:true}], messages:[msg('m1', 1, 'Cached transcript row')]};
   const studio = await mountStudio({workshops:[{root:'room-a', label:'Wall conversion', is_general:false}], workshop:transcript});
   try {
-    studio.flush(() => studio.segment('Workshop').click());
+    const workshop = studio.segment('Workshop');
+    studio.flush(() => workshop.click());
     const chat = studio.fullWorkshopTabs().find(tab => tab.getAttribute('aria-label') === 'Chat');
     studio.flush(() => chat.click());
     // Wait for the cached row rather than a fixed delay: under suite load 20 ms is not always enough.
@@ -170,9 +190,11 @@ test('a Settings rail entry opened from Workshop chat keeps the same chat when S
     studio.win.ARCHHUB_TOOL_HUB = {ok:true, waiting:[], tools:['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud']
       .map(id => ({id, label:id, state:'running', state_word:'RUNNING', description:'', stat_line:''}))};
     for (const id of ['brain', 'connectors', 'baboom', 'cloud']) {
-      const rail = studio.doc.querySelector(`[data-tool-rail="${id}"]`);
-      assert.ok(rail, id + ' rail entry exists');
-      studio.flush(() => rail.click());
+      studio.flush(() => studio.settingsButton().click());
+      await new Promise(resolve => studio.win.setTimeout(resolve, 0)); studio.flush(() => {});
+      const card = studio.doc.querySelector(`[data-tool-card="${id}"]`);
+      assert.ok(card, id + ' Hub card exists');
+      studio.flush(() => card.click());
       await new Promise(resolve => studio.win.setTimeout(resolve, 0)); studio.flush(() => {});
       assert.ok([...studio.doc.querySelectorAll('button')].some(b => b.firstElementChild?.textContent === 'Theme'), id + ' opened Settings');
       studio.flush(() => studio.win.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Escape', bubbles:true})));
@@ -188,13 +210,14 @@ test('a Settings rail entry opened from Workshop chat keeps the same chat when S
 });
 
 // CP1: an off tool opens Settings > Hub over the view, so the Workshop chat survives it too.
-test('an off tool opened from Workshop chat opens Settings > Hub and keeps the same chat when it closes', async () => {
+test('an off tool opened from Workshop chat through Settings Hub keeps the same chat when it closes', async () => {
   const transcript = {ok:true, graph_id:'graph-a', root:'room-a', scope_root:'scope-a', revision:7,
     owner:'owner-a', view:'view-a', self:'owner-a', can_send:true, can_join:false,
     participants:[{root:'owner-a', label:'Owner', attached:true}], messages:[msg('m1', 1, 'Cached transcript row')]};
   const studio = await mountStudio({workshops:[{root:'room-a', label:'Wall conversion', is_general:false}], workshop:transcript});
   try {
-    studio.flush(() => studio.segment('Workshop').click());
+    const workshop = studio.segment('Workshop');
+    studio.flush(() => workshop.click());
     const chat = studio.fullWorkshopTabs().find(tab => tab.getAttribute('aria-label') === 'Chat');
     studio.flush(() => chat.click());
     // Wait for the cached row rather than a fixed delay: under suite load 20 ms is not always enough.
@@ -203,7 +226,9 @@ test('an off tool opened from Workshop chat opens Settings > Hub and keeps the s
     }
     studio.win.ARCHHUB_TOOL_HUB = {ok:true, waiting:[], tools:['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud']
       .map(id => ({id, label:id, state:id === 'brain' ? 'off' : 'running', state_word:id === 'brain' ? 'OFF' : 'RUNNING', description:'', stat_line:''}))};
-    studio.flush(() => studio.doc.querySelector('[data-tool-rail="brain"]').click());
+    studio.flush(() => studio.settingsButton().click());
+    await new Promise(resolve => studio.win.setTimeout(resolve, 0)); studio.flush(() => {});
+    studio.flush(() => studio.doc.querySelector('[data-tool-card="brain"]').click());
     await new Promise(resolve => studio.win.setTimeout(resolve, 0)); studio.flush(() => {});
     const hub = [...studio.doc.querySelectorAll('button')].find(b => b.firstElementChild?.textContent === 'Hub');
     assert.ok(hub, 'the off Brain opened Settings');
@@ -222,7 +247,8 @@ test('Workshop Chat mounts already-read transcript rows from the owner projectio
     participants:[{root:'owner-a', label:'Owner', attached:true}], messages:[msg('m1', 1, 'Cached transcript row')]};
   const studio = await mountStudio({workshops:[{root:'room-a', label:'Wall conversion', is_general:false}], workshop:transcript});
   try {
-    studio.flush(() => studio.segment('Workshop').click());
+    const workshop = studio.segment('Workshop');
+    studio.flush(() => workshop.click());
     const chat = studio.fullWorkshopTabs().find(tab => tab.getAttribute('aria-label') === 'Chat');
     studio.flush(() => chat.click());
     await new Promise(resolve => studio.win.setTimeout(resolve, 20));

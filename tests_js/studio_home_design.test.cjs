@@ -143,8 +143,9 @@ test('F2/H1: Home shows the six hub tool cards, the same cards Settings Hub draw
     await studio.settle(); await studio.settle();
     assert.equal(studio.doc.body.textContent.includes('Search nodes'), false,
       'Home does not render the Nodes library panel');
-    assert.equal(studio.doc.querySelectorAll('[data-tool-rail]').length, 6,
-      'rail has the six tool icons');
+    assert.equal([...studio.doc.querySelectorAll('[data-tool-rail]')]
+      .some(node => ['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud'].includes(node.getAttribute('data-tool-rail'))),
+      false, 'tools are not icon-rail entries');
     // Founder 2026-10-12 (H1): tool cards on BOTH Home and Settings > Hub, one component (gate row K expects 6 on Home).
     const home = studio.doc.querySelector('[data-home-tools]');
     assert.ok(home, 'Home has its Tools section');
@@ -171,7 +172,7 @@ test('F2/H1: Home shows the six hub tool cards, the same cards Settings Hub draw
       assert.equal(card.parentElement.style.display, 'flex', 'the cell lets the card stretch');
     }
     for (const id of ['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud']) {
-      assert.ok(studio.doc.querySelector(`[data-tool-rail="${id}"]`), id + ' rail icon exists');
+      assert.ok(home.querySelector(`[data-tool-card="${id}"]`), id + ' Home tool card exists');
     }
     assert.equal(studio.doc.body.textContent.includes('Waiting for you'), false);
     const hub = await openSettingsHub(studio);
@@ -183,20 +184,21 @@ test('F2/H1: Home shows the six hub tool cards, the same cards Settings Hub draw
   } finally { studio.close(); }
 });
 
-test('F1b: rail tools match the hub order, state tooltips, and 6px dot colours', async () => {
+test('F1b: Home and Hub tool cards match order, state words, and 6px dot colours', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
-    const tools = [...studio.doc.querySelectorAll('[data-tool-rail]')];
-    assert.deepEqual(tools.map(node => node.getAttribute('data-tool-rail')),
+    const home = studio.doc.querySelector('[data-home-tools]');
+    const tools = [...home.querySelectorAll('[data-tool-card]')];
+    assert.deepEqual(tools.map(node => node.getAttribute('data-tool-card')),
       ['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud']);
-    assert.deepEqual(tools.map(node => node.title), [
-      'Studio \u00b7 running',
-      'Workshop \u00b7 running',
-      'Brain \u00b7 off',
-      'BABOOM \u00b7 running',
-      'Connectors \u00b7 running',
-      'Cloud \u00b7 starting',
+    assert.deepEqual(tools.map(node => node.querySelector('[data-tool-dot]').nextElementSibling.textContent.trim()), [
+      'RUNNING',
+      'RUNNING',
+      'OFF',
+      'RUNNING',
+      'Connected',
+      'STARTING',
     ]);
     const expected = {
       studio:'rgb(47, 184, 106)',
@@ -208,16 +210,16 @@ test('F1b: rail tools match the hub order, state tooltips, and 6px dot colours',
     };
     for (const button of tools) {
       const dot = button.querySelector('[data-tool-dot]');
-      assert.equal(dot.style.width, '6px', button.title + ' dot is 6px');
-      assert.equal(dot.style.height, '6px', button.title + ' dot is 6px');
-      assert.equal(dot.style.background, expected[button.getAttribute('data-tool-rail')]);
+      assert.equal(dot.style.width, '6px', button.getAttribute('data-tool-card') + ' dot is 6px');
+      assert.equal(dot.style.height, '6px', button.getAttribute('data-tool-card') + ' dot is 6px');
+      assert.equal(dot.style.background, expected[button.getAttribute('data-tool-card')]);
     }
     const hub = await openSettingsHub(studio);
     for (const button of tools) {
-      const id = button.getAttribute('data-tool-rail');
-      const railDot = button.querySelector('[data-tool-dot]');
+      const id = button.getAttribute('data-tool-card');
+      const homeDot = button.querySelector('[data-tool-dot]');
       const cardDot = hub.querySelector(`[data-tool-card="${id}"] [data-tool-dot]`);
-      assert.equal(cardDot.style.background, railDot.style.background, id + ' rail dot equals card dot');
+      assert.equal(cardDot.style.background, homeDot.style.background, id + ' Home dot equals Hub card dot');
     }
   } finally { studio.close(); }
 });
@@ -226,7 +228,7 @@ test('F2/CP1: clicking an off tool opens its Settings > Hub card over the curren
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
-    studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-tool-rail="brain"]').click());
+    studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-home-tools] [data-tool-card="brain"]').click());
     await studio.settle();
     assert.equal(studio.doc.querySelector('[data-tool-view]'), null, 'no full-window tool page');
     const hub = [...studio.doc.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Hub');
@@ -236,12 +238,12 @@ test('F2/CP1: clicking an off tool opens its Settings > Hub card over the curren
   } finally { studio.close(); }
 });
 
-test('CP1: an off rail tool keeps the screen under it, so its composer stays mounted', async () => {
+test('CP1: an off Home tool card keeps the screen under it, so its composer stays mounted', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
     assert.ok(studio.doc.querySelector('textarea[aria-label="Start a new session"]'), 'Home composer before');
-    studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-tool-rail="brain"]').click());
+    studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-home-tools] [data-tool-card="brain"]').click());
     await studio.settle();
     assert.ok(studio.doc.querySelector('textarea[aria-label="Start a new session"]'), 'Home composer still mounted under Settings');
     assert.equal(studio.doc.querySelector('main[data-tool-view]'), null, 'no page replaced the screen');
@@ -249,11 +251,11 @@ test('CP1: an off rail tool keeps the screen under it, so its composer stays mou
   } finally { studio.close(); }
 });
 
-test('F1b: right-click on an on tool shows a six second in-panel off confirm', async () => {
+test('F1b: right-click on an on Hub/Home tool card shows a six second in-panel off confirm', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
-    const baboom = studio.doc.querySelector('[data-tool-rail="baboom"]');
+    const baboom = studio.doc.querySelector('[data-home-tools] [data-tool-card="baboom"]').parentElement;
     studio.win.ReactDOM.flushSync(() => baboom.dispatchEvent(new studio.win.MouseEvent('contextmenu', {bubbles:true, cancelable:true})));
     await studio.settle();
     assert.match(studio.doc.body.textContent, /Switch BABOOM off\? Tools asking it will see 'BABOOM is off'\. \u00b7 Yes \u00b7 No/);
@@ -324,7 +326,7 @@ test('F6a: each tool dot follows its word: green only when the card says it runs
   } finally { studio.close(); }
 });
 
-test('F1: Settings Hub card click opens that tool\'s Settings tab; Studio rail opens Home', async () => {
+test('F1: Settings Hub card click opens that tool\'s Settings tab; Studio Home card opens Canvas', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
@@ -337,10 +339,9 @@ test('F1: Settings Hub card click opens that tool\'s Settings tab; Studio rail o
     const hosts = [...studio.doc.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Hosts');
     assert.ok(hosts && hosts.style.background !== 'transparent', 'Connectors opens Settings > Hosts');
     studio.win.ReactDOM.flushSync(() => studio.win.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Escape', bubbles:true})));
-    studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-tool-rail="studio"]').click());
+    studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-home-tools] [data-tool-card="studio"]').click());
     await studio.settle();
-    assert.ok(studio.doc.querySelector('textarea[aria-label="Start a new session"]'), 'Studio rail opens Home');
-    assert.match(studio.doc.body.textContent, /Sessions/);
+    assert.ok(studio.doc.querySelector('[role="region"][aria-label="Workflow canvas"]'), 'Studio card opens the Studio canvas');
   } finally { studio.close(); }
 });
 

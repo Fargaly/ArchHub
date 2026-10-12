@@ -55,6 +55,7 @@ EVIDENCE: dict[str, dict[str, str]] = {
     "office.read": {"unavailable": _OFFICE},
     "outlook.inbox": {"unavailable": _OUTLOOK},
     "notion.search": {"unavailable": "a Notion integration token (Settings > keys > notion)"},
+    "notion.connect": {"unavailable": "a Notion integration token (Settings > keys > notion)"},
     "dropbox.list": {"court": _OWN + "test_dropbox_list_reads_a_real_folder"},
     "connector.rows": {"court": _OWN + "test_connector_probes_read_this_machine"},
     "outlook.graph.inbox": {"unavailable": _GRAPH},
@@ -100,6 +101,12 @@ EVIDENCE: dict[str, dict[str, str]] = {
     "workshop.conversation": {"court": "tests_replica/test_workshop_milestone_one.py::test_workshop_and_agent_definitions_run_from_the_catalogue"},
     "agent.session": {"court": "tests_replica/test_workshop_milestone_one.py::test_workshop_and_agent_definitions_run_from_the_catalogue"},
     "workshop.review": {"court": "tests_replica/test_workshop_milestone_one.py::test_agent_proposed_workflow_is_edited_approved_executed_and_independently_reviewed"},
+    "tool.studio": {"court": _OWN + "test_tool_nodes_return_their_settings_parameters"},
+    "tool.workshop": {"court": _OWN + "test_tool_nodes_return_their_settings_parameters"},
+    "tool.brain": {"court": _OWN + "test_tool_nodes_return_their_settings_parameters"},
+    "tool.baboom": {"court": _OWN + "test_tool_nodes_return_their_settings_parameters"},
+    "tool.connectors": {"court": _OWN + "test_tool_nodes_return_their_settings_parameters"},
+    "tool.cloud": {"court": _OWN + "test_tool_nodes_return_their_settings_parameters"},
 }
 
 # Which connector row (probe_connectors id) an operation needs, when it needs one.

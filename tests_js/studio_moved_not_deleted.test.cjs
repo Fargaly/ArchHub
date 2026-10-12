@@ -182,29 +182,35 @@ test('Chat has no SYSTEM PROMPT card; Settings Profile owns the Standing instruc
   } finally { studio.close(); }
 });
 
-test('Home System follows the old systemAllowed gate, opens in place, and renders the system view', async () => {
+test('Settings System follows the old systemAllowed gate, opens in place, and renders the system view', async () => {
   const studio = await mountStudio({home:true, systemAllowed:true, workshopSystemAllowed:false, signedAuthority:false});
   try {
     await studio.settle();
-    const home = [...studio.doc.querySelectorAll('button')].find(node => node.title === 'All sessions');
-    if (home) { studio.flush(() => home.click()); await studio.settle(); }
-    const system = [...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('System') && node.textContent.includes('Application graph'));
-    assert.ok(system, 'System is a Home session row');
-    studio.flush(() => system.click());
+    studio.flush(() => studio.doc.querySelector('[title="Settings"]').click());
+    await studio.settle();
+    const systemTab = [...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('System'));
+    assert.ok(systemTab, 'System is a Settings tab');
+    studio.flush(() => systemTab.click());
+    await studio.settle();
+    const open = [...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Open the System graph'));
+    assert.ok(open, 'Settings > System has one graph action');
+    studio.flush(() => open.click());
     await studio.settle();
     assert.deepEqual(studio.calls.open, ['app:canvas'], 'System opens the admitted root graph, never the application root');
-    assert.equal(studio.doc.body.textContent.includes('outside the admitted graph list'), false, 'no refusal on the Home card');
+    assert.equal(studio.doc.body.textContent.includes('outside the admitted graph list'), false, 'no refusal on the Settings card');
     assert.equal(studio.navigationErrors.length, 0, 'System opening does not reload the page');
     assert.ok(studio.doc.querySelector('.lm-node[data-node-id="system-registry"]'), 'the System view renders application nodes');
     assert.equal(!!studio.doc.querySelector('.lm-node[data-node-id="ai_intent"]'), false, 'the System view hides user nodes');
   } finally { studio.close(); }
 });
 
-test('Home hides the System session when the old systemAllowed gate is false', async () => {
+test('Settings hides the System tab when the old systemAllowed gate is false', async () => {
   const studio = await mountStudio({home:true, systemAllowed:false});
   try {
     await studio.settle();
+    studio.flush(() => studio.doc.querySelector('[title="Settings"]').click());
+    await studio.settle();
     const system = [...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('System'));
-    assert.equal(!!system, false, 'System is not a Home session row');
+    assert.equal(!!system, false, 'System is not shown when the founder-only system gate is false');
   } finally { studio.close(); }
 });

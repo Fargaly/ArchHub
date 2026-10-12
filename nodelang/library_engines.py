@@ -804,6 +804,22 @@ LIBRARY_ITEM_ENGINES.update({
 for _wired_now in ("i_think", "i_match", "i_embed", "o_email", "o_notify"):
     LIBRARY_ITEMS_WITHOUT_ENGINE.pop(_wired_now, None)
 
+LIBRARY_ITEM_ENGINES.update({
+    "tool_studio": {"engine": "tool.studio",
+                    "params": {"tool": "studio", "default_view": "canvas"}},
+    "tool_workshop": {"engine": "tool.workshop",
+                      "params": {"tool": "workshop", "default_tab": "tasks"}},
+    "tool_brain": {"engine": "tool.brain",
+                   "params": {"tool": "brain", "default_tab": "memory"}},
+    "tool_baboom": {"engine": "tool.baboom",
+                    "params": {"tool": "baboom", "start_with_archhub": True,
+                               "speech_budget_per_hour": 2}},
+    "tool_connectors": {"engine": "tool.connectors",
+                        "params": {"tool": "connectors", "default_tab": "hosts"}},
+    "tool_cloud": {"engine": "tool.cloud",
+                   "params": {"tool": "cloud", "default_tab": "account"}},
+})
+
 
 _IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                 ".webp": "image/webp", ".gif": "image/gif"}
@@ -1398,6 +1414,14 @@ LIBRARY_PRESENTATION = (
         ("w_agent", "Agent session", "one live native session through Session Link"),
         ("w_review", "Independent review", "a different agent reviews the wired artifact"),
     )),
+    ("tools", (
+        ("tool_studio", "Studio", "canvas and session workspace settings"),
+        ("tool_workshop", "Workshop", "projects, tasks and governed work settings"),
+        ("tool_brain", "Brain", "memory, facts and recall settings"),
+        ("tool_baboom", "BABOOM", "desktop companion settings"),
+        ("tool_connectors", "Connectors", "host bridge settings"),
+        ("tool_cloud", "Cloud", "account, devices and relay settings"),
+    )),
     ("output", (
         ("o_skill", "save_skill", "template this run"),
         ("o_pdf", "publish_pdf", "sheets \u2192 PDF files via the live Revit"),
@@ -1464,6 +1488,7 @@ def engine_categories(groups=None) -> dict:
     families = (
         (("vision.", "cad."), "read"), (("lines.",), "annotate"),
         (("revit.",), "host"), (("brain.", "ai.", "baboom."), "ai"),
+        (("tool.",), "tools"),
     )
     for engine in sorted(set(PIPELINE_ENGINES) | {"baboom.status", "baboom.presence"}):
         if engine in held:

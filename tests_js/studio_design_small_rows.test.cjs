@@ -152,18 +152,19 @@ test('status bar: the design strip with live values; the model slot is the picke
   } finally { picked.close(); }
 });
 
-test('icon rail: Studio is the only home entry, opens Home, and no dead Share control', async () => {
+test('icon rail: tools are Home cards, Workshop opens there, and no dead Share control', async () => {
   const studio = await mountStudio();
   try {
     const rail = studio.doc.querySelector('aside').firstElementChild;
     const buttons = [...rail.querySelectorAll('button')];
     assert.deepEqual(buttons.map(button => button.title.split(' \u00b7 ')[0]),
-      ['Chats', 'Nodes', 'Skills', 'Search', 'Studio', 'Workshop', 'Brain', 'BABOOM', 'Connectors', 'Cloud', 'Documentation', 'Settings'],
-      'the rail draws one Studio home entry plus the working controls');
-    studio.flush(() => buttons.find(button => button.title.startsWith('Workshop')).click());
-    assert.equal(studio.doc.querySelector('textarea[aria-label="Start a new session"]'), null, 'opening a tool view leaves Home');
-    studio.flush(() => buttons.find(button => button.title.startsWith('Studio')).click());
-    assert.ok(studio.doc.querySelector('textarea[aria-label="Start a new session"]'), 'Studio opens Home, where a session starts');
+      ['Chats', 'Nodes', 'Skills', 'Search', 'Documentation', 'Settings'],
+      'the rail draws the fixed navigation controls; tools are not rail entries');
+    studio.flush(() => studio.doc.querySelector('[title="All sessions"]').click());
+    studio.flush(() => studio.doc.querySelector('[data-home-tools] [data-tool-card="workshop"]').click());
+    assert.equal(studio.doc.querySelector('textarea[aria-label="Start a new session"]'), null, 'opening Workshop from its Home card leaves Home');
+    studio.flush(() => studio.doc.querySelector('[title="All sessions"]').click());
+    assert.ok(studio.doc.querySelector('textarea[aria-label="Start a new session"]'), 'All sessions opens Home, where a session starts');
     const dead = buttons.filter(button => !button.disabled && typeof reactProps(button).onClick !== 'function').map(button => button.title);
     assert.deepEqual(dead, [], 'enabled rail controls with no action: ' + dead.join(', '));
     assert.equal(buttons.some(button => button.title.startsWith('Share')), false, 'Share is not drawn without a binding');

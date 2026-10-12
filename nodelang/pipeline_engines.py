@@ -35,6 +35,15 @@ def _local_input_path(path: str, *, label: str) -> str:
     return text
 
 
+def tool_settings(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """A tool node is its settings surface as graph parameters."""
+    tool = str(params.get("tool") or "").strip()
+    if not tool:
+        raise ValueError("set the tool parameter")
+    held = {str(key): value for key, value in params.items()}
+    return {"out": held}, "%s settings node" % tool
+
+
 def _lines_of(value: object) -> list:
     if isinstance(value, str):
         value = json.loads(value or "[]")
@@ -537,6 +546,12 @@ PIPELINE_ENGINES = {
     "skills.catalogue": skills_catalogue,
     "skills.read": skill_read,
     "skills.thinking_chain": thinking_chain,
+    "tool.studio": tool_settings,
+    "tool.workshop": tool_settings,
+    "tool.brain": tool_settings,
+    "tool.baboom": tool_settings,
+    "tool.connectors": tool_settings,
+    "tool.cloud": tool_settings,
 }
 
 

@@ -230,6 +230,13 @@ function openHome(studio) {
   studio.click(home);
 }
 
+function openWorkshopFromHome(studio) {
+  openHome(studio);
+  const workshop = studio.doc.querySelector('[data-home-tools] [data-tool-card="workshop"]');
+  assert.ok(workshop, 'Home exposes Workshop tool card');
+  studio.click(workshop);
+}
+
 function showCanvas(studio) {
   const canvas = [...studio.doc.querySelectorAll('button')].find(node => node.textContent.trim() === 'Canvas');
   if (canvas) studio.click(canvas);
@@ -517,7 +524,7 @@ test('ordinary conversation-bound nodes open Properties first while keeping a Ch
   } finally { studio.close(); }
 });
 
-test('Studio header has no Chat Workshop System tabs, selection resets per session, and rail Workshop still opens', async () => {
+test('Studio header has no Chat Workshop System tabs, selection resets per session, and Home Workshop card still opens', async () => {
   const studio = await mountStudio({workshops:[{root:'room-a', label:'Wall room', is_general:false}]});
   try {
     await studio.settle();
@@ -540,31 +547,26 @@ test('Studio header has no Chat Workshop System tabs, selection resets per sessi
     const panelText = studio.doc.querySelector('aside[aria-label="Selection inspector"]').textContent;
     assert.match(panelText, /GRAPH|Graph Beta/);
     assert.equal(/Alpha node/.test(panelText), false, 'node selection from Graph Alpha did not leak into Graph Beta');
-    const workshopRail = studio.doc.querySelector('button[data-tool-rail="workshop"]') || studio.byTitleStarts('Workshop');
-    assert.ok(workshopRail, 'rail still exposes Workshop');
-    studio.click(workshopRail);
+    openWorkshopFromHome(studio);
     await studio.settle();
-    assert.match(studio.doc.body.textContent, /Workshop|Wall room/, 'rail Workshop path still opens');
+    assert.match(studio.doc.body.textContent, /Workshop|Wall room/, 'Home Workshop card path still opens');
   } finally { studio.close(); }
 });
 
-test('leaving rail Workshop through Studio, session reopen, or New session restores canvas selection mode', async () => {
+test('leaving Workshop through Studio, session reopen, or New session restores canvas selection mode', async () => {
   const studio = await mountStudio({workshops:[{root:'room-a', label:'Wall room', is_general:false}]});
   try {
     await studio.settle();
-    const workshopRail = studio.doc.querySelector('button[data-tool-rail="workshop"]') || studio.byTitleStarts('Workshop');
-    assert.ok(workshopRail, 'rail exposes Workshop');
-    studio.click(workshopRail);
+    openWorkshopFromHome(studio);
     await studio.settle();
     assert.ok(studio.doc.querySelector('[role="tablist"][aria-label="Workshop tabs"]'), 'Workshop is open');
 
-    studio.click(studio.doc.querySelector('button[data-tool-rail="studio"]'));
-    await studio.settle();
+    openHome(studio);
     studio.click([...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Graph Alpha')));
     await studio.settle();
-    assertCanvasSelectionOnly(studio, 'Studio rail then same session reopen');
+    assertCanvasSelectionOnly(studio, 'same session reopen from Workshop');
 
-    studio.click(workshopRail);
+    openWorkshopFromHome(studio);
     await studio.settle();
     studio.click(studio.byTitle('New session'));
     await studio.settle();

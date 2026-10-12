@@ -52,8 +52,13 @@ test('the System graph is its own session, not a header tab; the system mode sti
   const headerStart = source.indexOf('const WsHeader =');
   const headerEnd = source.indexOf('const WsTab =', headerStart);
   const header = source.slice(headerStart, headerEnd);
-  assert.doesNotMatch(header, /System|workshopModeSegments|WorkshopConversationMenu/,
-    'System and the old Chat|Workshop|Canvas switch are not header tabs');
+  const tabLoop = header.slice(header.indexOf('openTabs.map'), header.indexOf('New session after the tabs'));
+  assert.doesNotMatch(tabLoop, /System|system:/,
+    'System is not rendered by the Studio session tab loop');
+  assert.doesNotMatch(header, /workshopModeSegments|WorkshopConversationMenu/,
+    'the old Chat|Workshop|Canvas switch is not a header tab');
+  assert.doesNotMatch(source, /sessionRowsWithSystem|systemSessionRow/,
+    'System is opened from Settings as the application node, never injected as a session row');
 });
 
 test('studio-workshop.jsx ships as its own Studio source, loaded after brain-model.jsx and before studio-lm.jsx everywhere', () => {

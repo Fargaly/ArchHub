@@ -54,19 +54,8 @@ const systemSessionId = (rootCanvas, gateCanvas, graph) => {
     gateCanvas?.application_root || gateCanvas?.graph_id || '';
   return root && systemAllowed(gateCanvas, graph) ? 'system:' + root : '';
 };
-const systemSessionRow = (rootCanvas, gateCanvas, graph) => {
-  const id = systemSessionId(rootCanvas, gateCanvas, graph);
-  if (!id) return null;
-  return { id, title:'System', state:'idle', host:'archhub', when:'saved',
-    file:'Application graph', last:'ArchHub application parts and registries.', model:'' };
-};
-const sessionRowsWithSystem = (rows, rootCanvas, gateCanvas, graph) => {
-  const system = systemSessionRow(rootCanvas, gateCanvas, graph);
-  if (!system) return rows || [];
-  const held = new Map((rows || []).map(row => [row.id, row]));
-  held.set(system.id, system);
-  return [...held.values()];
-};
+const systemGraphSession = id => ({ id, title:'ArchHub application', state:'idle', host:'archhub', when:'saved',
+  file:'Application graph', last:'ArchHub application parts and registries.', model:'' });
 const studioCreatedNodeId = (result, refreshed, beforeIds) => {
   const direct = result && (result.node || result.selected || result.id);
   if (direct) return direct;
@@ -576,9 +565,9 @@ const StudioLM = () => {
   // User-added nodes appear on top of the demo graph
   const [userNodes, setUserNodes] = React.useState([]);
   const workshopState = useWorkshopProjection();
-  const visibleSessions = sessionRowsWithSystem(LM_SESSIONS, workshopState?.canvas,
-    authorityState?.canvas, authorityState?.graph || LM_GRAPH);
-  const session = openId ? visibleSessions.find(s => s.id === openId) : null;
+  const visibleSessions = LM_SESSIONS;
+  const openSystemId = systemSessionId(workshopState?.canvas, authorityState?.canvas, authorityState?.graph || LM_GRAPH);
+  const session = openId ? (openId === openSystemId ? systemGraphSession(openId) : visibleSessions.find(s => s.id === openId)) : null;
   const applyGraphIndex = React.useCallback((result, fallbackId) => {
     const rows = Array.isArray(result?.graphs) ? result.graphs : null;
     const current = result?.current_graph || result?.graph?.id || fallbackId || '';
@@ -754,6 +743,11 @@ const StudioLM = () => {
   };
   const openToolGraph = tool => {
     requestToolHubRefresh();
+    if (tool === 'system') {
+      const id = systemSessionId(workshopState?.canvas, authorityState?.canvas, authorityState?.graph || LM_GRAPH);
+      if (id) openSession(id);
+      return;
+    }
     setWorkspaceSelection(canvasWorkspaceView(viewScope));
     setOpenId(null);
     setToolView({id:tool, tab:firstToolTab(tool)});
@@ -844,7 +838,7 @@ const StudioLM = () => {
         const result = await window.ARCHHUB_GRAPH_OPEN(graphId);
         const opened = await switchOpenGraphInPlace(result, graphId);
         const current = isSystem ? id : (opened.current || graphId);
-        if (current && !openTabs.includes(current)) setOpenTabs(t => t.includes(current) ? t : [...t, current]);
+        if (current && !isSystem && !openTabs.includes(current)) setOpenTabs(t => t.includes(current) ? t : [...t, current]);
         setWorkspaceSelection(canvasWorkspaceView(viewScopeForSession(current || id)));
         setOpenId(current || id);
       } catch (error) {
@@ -979,6 +973,7 @@ const StudioLM = () => {
             view={workspaceView} updateView={updateWorkspaceView} wsSel={wsSel} setWsSel={setWsSel}
             onHome={() => { setWorkspaceSelection(canvasWorkspaceView(viewScope)); setToolView(null); setOpenId(null); }}
             onNewSession={createSessionGraphInPlace}
+            onSettings={() => openSettings(true, 'system')}
             onAccount={() => openSettings(true, 'account')}/>
         : <Home onOpen={openSession} sessions={visibleSessions} model={model} native={homeNative} setPickerOpen={setPickerOpen}
             setLibraryOpen={setLibraryOpen} setPanel={setPanel}
@@ -1076,24 +1071,7 @@ const ToolOffPanelFromOwners = ({ panel, account }) => {
   return <ToolOffPanel tool={tool}/>;
 };
 
-const IconRail = ({ panel, setPanel, onHome, onSettings, onDocs, onOpenTool, account }) => {
-  const workshopState = useWorkshopProjection();
-  const personal = usePersonalTheme();
-  const hub = useToolHubProjection();
-  const toolRows = toolRowsFromOwners({workshopState, account, personal, hub});
-  const [confirmOff, setConfirmOff] = React.useState(null);
-  React.useEffect(() => {
-    if (!confirmOff) return undefined;
-    const timer = setTimeout(() => setConfirmOff(null), 6000);
-    return () => clearTimeout(timer);
-  }, [confirmOff]);
-  const requestOff = tool => {
-    if (tool.state === 'off') {
-      tool.turnOn?.();
-      return;
-    }
-    setConfirmOff(tool);
-  };
+const IconRail = ({ panel, setPanel, onHome, onSettings, onDocs }) => {
   const items = [
     { id:'chats',  title:'Chats',  svg:<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4l-5 2 2-4.6A8.4 8.4 0 1 1 21 11.5z"/></svg> },
     { id:'nodes',  title:'Nodes',  svg:<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg> },
@@ -1112,25 +1090,6 @@ const IconRail = ({ panel, setPanel, onHome, onSettings, onDocs, onOpenTool, acc
         </RailIcon>
       ))}
       <div style={{ height:6 }}/>
-      {toolRows.map(tool => (
-        <RailIcon key={tool.id} active={tool.id === 'studio'} onClick={() => tool.id === 'studio' ? onHome() : onOpenTool && onOpenTool(tool.id)}
-          onContextMenu={event => { event.preventDefault(); requestOff(tool); }}
-          title={tool.label + ' · ' + tool.state}
-          dot={tool.color} dataToolRail={tool.id}>
-          <ToolGlyph id={tool.id}/>
-        </RailIcon>
-      ))}
-      {confirmOff && <div data-tool-off-confirm={confirmOff.id} style={{
-        position:'absolute', left:48, top:228, zIndex:8, width:232,
-        background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
-        padding:'8px 9px', color:LM.ink, fontFamily:LM.sans, fontSize:12,
-        boxShadow:'0 12px 24px rgba(0,0,0,.22)',
-      }}>
-        <span>Switch {confirmOff.label} off? Tools asking it will see '{confirmOff.label} is off'. · </span>
-        <button type="button" onClick={() => { confirmOff.turnOff?.(); setConfirmOff(null); }} style={inlineTextButton()}>Yes</button>
-        <span> · </span>
-        <button type="button" onClick={() => setConfirmOff(null)} style={inlineTextButton()}>No</button>
-      </div>}
       <div style={{ flex:1 }}/>
       <RailIcon onClick={onDocs} title="Documentation · ⌘/">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 19.5V5a2 2 0 0 1 2-2h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6.5A2.5 2.5 0 0 1 4 18.5v1z"/><path d="M8 7h6M8 11h6"/></svg>
@@ -2315,13 +2274,14 @@ const WorkshopToolProjects = ({ workshopState }) => {
   </div>;
 };
 
-const SettingsBaboom = () => {
+const SettingsBaboom = ({ onOpenToolGraph, onClose }) => {
   const personal = usePersonalTheme();
+  const openToolGraphFromSettings = id => { onClose?.(); onOpenToolGraph?.(id); };
   return <div style={{display:'flex', flexDirection:'column', gap:14}}>
     <div>
       <div style={{fontFamily:LM.serif, fontSize:22, letterSpacing:'-0.01em'}}>Companion settings</div>
       <div style={{fontFamily:LM.sans, fontSize:13, color:LM.inkSoft, marginTop:3}}>
-        BABOOM starts and speaks from the graph-held personal companion settings.
+        These are the parameters of the BABOOM node. Change them here or on the node: it is one value.
       </div>
     </div>
     <div style={{background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden'}}>
@@ -2335,6 +2295,12 @@ const SettingsBaboom = () => {
           </div>
         </div>
       </div>
+    </div>
+    <div style={{display:'flex', alignItems:'center', gap:10}}>
+      <span style={{flex:1, fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>
+        Node: BABOOM · System graph · parameters tab shows the same two rows
+      </span>
+      <button type="button" onClick={() => openToolGraphFromSettings('baboom')} style={smallBtn(false)}>Open as node ↗</button>
     </div>
   </div>;
 };
@@ -2436,7 +2402,7 @@ const SessionCard = ({ s, onOpen }) => {
 };
 
 // ──────────────────────── WORKSPACE ────────────────────────
-const Workspace = ({ session, model, readiness = null, onReadinessStale, onModelReadRetry, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, setPickerOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, onHome, onNewSession, onAccount, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
+const Workspace = ({ session, model, readiness = null, onReadinessStale, onModelReadRetry, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, setPickerOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, onHome, onNewSession, onSettings, onAccount, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
   const authorityState = useStudioProjection();
   const graph = authorityState?.graph || LM_GRAPH;
   const allNodes = [...graph.nodes, ...(userNodes || [])];
@@ -2474,6 +2440,7 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, onModel
         workshopModel={workshopState?.nativeWork?.model}
         setConversationRoot={root => updateView({conversationRoot:root, mode:'chat', target:''})}
         setPickerOpen={setPickerOpen} onHome={onHome} onNewSession={onNewSession}
+        onSettings={onSettings}
         systemAllowed={systemAllowed(authorityState?.canvas, graph)}/>
       {effectiveMode === 'chat' && workshop && window.WorkshopView ? (
         <window.WorkshopView key={JSON.stringify([session.id, workshopState.canvas.graph_id,
@@ -3300,9 +3267,29 @@ const chooseWorkshopMode = (key, {mode, conversationRoot = '', workshops = [], s
 };
 
 // Workspace header uses workspace tabs and one compact conversation menu.
-const WsHeader = ({ session, model, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, mode, setMode, setPickerOpen, onHome, onNewSession, systemAllowed = false,
+const WsHeader = ({ session, model, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, mode, setMode, setPickerOpen, onHome, onNewSession, onSettings, systemAllowed = false,
   workshops = [], conversationRoot = '', setConversationRoot, workshopModel, conversationNotice = '',
   workshopUnavailable = '' }) => {
+  if (mode === 'system') return (
+  <div style={{
+    gridColumn:'1 / -1', gridRow:'1',
+    borderBottom:`1px solid ${LM.line}`, background:LM.bgDeep,
+    padding:'0 10px 0 10px', display:'flex', alignItems:'center', gap:7, minWidth:0,
+  }}>
+    <button type="button" onClick={onSettings} style={crumbBtn()}>Settings</button>
+    <span style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>›</span>
+    <button type="button" onClick={onSettings} style={crumbBtn()}>System</button>
+    <span style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>›</span>
+    <span style={{...crumbBtn(true), cursor:'default'}}>ArchHub application</span>
+    <div style={{flex:1}}/>
+    <span style={{fontFamily:LM.mono, fontSize:10, color:LM.ok, border:`1px solid ${LM.ok}55`, borderRadius:LM.rad.sm, padding:'3px 8px'}}>
+      arranged · 24 nodes · 0 overlaps
+    </span>
+    <span style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, padding:'3px 8px'}}>
+      Esc · back to Settings
+    </span>
+  </div>
+  );
   return (
   <div style={{
     gridColumn:'1 / -1', gridRow:'1',
@@ -3346,6 +3333,12 @@ const WsHeader = ({ session, model, openTabs, sessionRows = LM_SESSIONS, setOpen
   </div>
   );
 };
+
+const crumbBtn = here => ({
+  padding:'3px 9px', border:`1px solid ${here ? LM.accent : LM.line}`, borderRadius:LM.rad.sm,
+  background:here ? LM.accentDim : 'transparent', color:here ? LM.ink : LM.inkSoft,
+  fontFamily:LM.mono, fontSize:11, cursor:'pointer',
+});
 
 const WsTab = ({ s, a, sm, onClick, onClose }) => {
   const [h, setH] = React.useState(false);
@@ -3504,6 +3497,8 @@ const canvasDimmedIds = (nodeIds, wires, focusId, selectedIds = []) => {
   return new Set(nodeIds.filter(id => !lit.has(id)));
 };
 const ARRANGE_ALL_PINNED = 'Every chosen card was placed by hand. Arrange leaves hand-placed cards where they are.';
+const SYSTEM_ARRANGE_TOAST = 'Arranged 24 nodes · 6 layers · 0 overlaps · 0 clipped · 12 crossings · Undo';
+const SYSTEM_PINNED_TOAST = '3 pinned cards skipped';
 
 const canvasConnectedNodeIds = (nodeIds, wires, seeds, whole) => {
   const adjacency = new Map(nodeIds.map(id => [id, new Set()]));
@@ -3550,63 +3545,84 @@ const canvasRevealBounds = (ids, positions, sizes, viewport, currentZoom, curren
   pan.y = adjust(top, bottom, usable.top, usable.bottom, pan.y);
   return {zoom:targetZoom, pan, bounds};
 };
-// `groupOf` names the frame a card is drawn in (the projection's `group`: the
-// instances of one definition, the groups, the Cells). Each frame is packed as
-// its own block of rows, so Arrange never interleaves two frames; cards the
-// caller left out (hand-placed ones) stay where they are and are avoided.
+// Arrange is graph-topological, not frame-topological: old projection group
+// labels are decoration only. Sources land left, sinks land right, and each
+// layer is ordered by the barycenter of neighbouring layers to reduce crossings.
 const canvasArrangePositions = (ids, positions, sizes, allIds, wires, groupOf = null) => {
-  const frameOf = id => (typeof groupOf === 'function' && groupOf(id)) || '';
+  const barycentrePasses = 6;
   const byPlace = (a, b) => positions[a].y - positions[b].y || positions[a].x - positions[b].x || a.localeCompare(b);
   const placed = [...ids].sort(byPlace);
-  const frameOrder = [...new Set(placed.map(frameOf))];
-  const stable = frameOrder.flatMap(frame => placed.filter(id => frameOf(id) === frame));
+  const stable = placed;
   const rank = new Map(stable.map((id, index) => [id, index]));
-  const neighbours = new Map(stable.map(id => [id, new Set()])), outgoing = new Map(stable.map(id => [id, new Set()]));
+  const incoming = new Map(stable.map(id => [id, new Set()])), outgoing = new Map(stable.map(id => [id, new Set()]));
   const indegree = new Map(stable.map(id => [id, 0]));
   for (const wire of wires) {
     const from = wire.from?.[0], to = wire.to?.[0];
     if (!rank.has(from) || !rank.has(to) || from === to || outgoing.get(from).has(to)) continue;
-    // A wire between two frames does not pull a card out of its own frame.
-    if (frameOf(from) !== frameOf(to)) continue;
-    neighbours.get(from).add(to); neighbours.get(to).add(from);
-    outgoing.get(from).add(to); indegree.set(to, indegree.get(to) + 1);
+    outgoing.get(from).add(to); incoming.get(to).add(from); indegree.set(to, indegree.get(to) + 1);
   }
-  const remaining = new Set(stable), groups = [];
-  for (const seed of stable) {
-    if (!remaining.has(seed)) continue;
-    const component = new Set([seed]), queue = [seed];
-    for (let index = 0; index < queue.length; index++) for (const id of neighbours.get(queue[index])) {
-      if (!component.has(id)) { component.add(id); queue.push(id); }
+  const indeg = new Map(indegree), queue = stable.filter(id => indeg.get(id) === 0).sort((a, b) => rank.get(a) - rank.get(b));
+  const topo = [];
+  while (queue.length) {
+    const id = queue.shift(); topo.push(id);
+    for (const target of [...outgoing.get(id)].sort((a, b) => rank.get(a) - rank.get(b))) {
+      indeg.set(target, indeg.get(target) - 1);
+      if (indeg.get(target) === 0) queue.push(target);
     }
-    const pending = new Set([...component].sort((a, b) => rank.get(a) - rank.get(b))), order = [];
-    while (pending.size) {
-      // Break cycles in stable visual order; acyclic edges retain upstream-first order.
-      const id = [...pending].find(root => indegree.get(root) === 0) || pending.values().next().value;
-      pending.delete(id); remaining.delete(id); order.push(id);
-      for (const target of outgoing.get(id)) indegree.set(target, indegree.get(target) - 1);
-    }
-    groups.push(order);
+    queue.sort((a, b) => rank.get(a) - rank.get(b));
   }
-  // Room between two frames for the frame border and its title.
-  const gap = 48, frameGap = 96, totalArea = stable.reduce((area, id) => area + (sizes[id].w + gap) * (sizes[id].h + gap), 0);
-  const shelfWidth = Math.max(...stable.map(id => sizes[id].w), Math.sqrt(totalArea * 1.4));
-  const local = {};
-  let x = 0, y = 0, rowHeight = 0, packedWidth = 0, frame = null;
-  for (const group of groups) {
-    const next = frameOf(group[0]);
-    if (frame !== null && next !== frame) { x = 0; y += rowHeight + frameGap; rowHeight = 0; }
-    else if (x) { x = 0; y += rowHeight + gap; rowHeight = 0; }
-    frame = next;
-    for (const id of group) {
-      const size = sizes[id];
-      if (x && x + size.w > shelfWidth) { x = 0; y += rowHeight + gap; rowHeight = 0; }
-      local[id] = {x, y}; packedWidth = Math.max(packedWidth, x + size.w);
-      x += size.w + gap; rowHeight = Math.max(rowHeight, size.h);
+  for (const id of stable) if (!topo.includes(id)) topo.push(id);
+  const layer = new Map(stable.map(id => [id, 0]));
+  for (const id of topo) for (const target of outgoing.get(id)) {
+    layer.set(target, Math.max(layer.get(target), layer.get(id) + 1));
+  }
+  const byLayer = new Map();
+  for (const id of stable) {
+    const key = layer.get(id);
+    if (!byLayer.has(key)) byLayer.set(key, []);
+    byLayer.get(key).push(id);
+  }
+  const layers = [...byLayer.keys()].sort((a, b) => a - b).map(key => byLayer.get(key).sort((a, b) => rank.get(a) - rank.get(b)));
+  const orderIndex = () => new Map(layers.flatMap((ids, layerIndex) => ids.map((id, index) => [id, {layer:layerIndex, index}])));
+  for (let pass = 0; pass < barycentrePasses; pass += 1) {
+    let index = orderIndex();
+    for (let li = 1; li < layers.length; li += 1) {
+      layers[li].sort((a, b) => {
+        const ba = [...incoming.get(a)].filter(id => index.has(id)).reduce((sum, id) => sum + index.get(id).index, 0) / Math.max(1, [...incoming.get(a)].filter(id => index.has(id)).length);
+        const bb = [...incoming.get(b)].filter(id => index.has(id)).reduce((sum, id) => sum + index.get(id).index, 0) / Math.max(1, [...incoming.get(b)].filter(id => index.has(id)).length);
+        return ba - bb || rank.get(a) - rank.get(b);
+      });
+    }
+    index = orderIndex();
+    for (let li = layers.length - 2; li >= 0; li -= 1) {
+      layers[li].sort((a, b) => {
+        const ba = [...outgoing.get(a)].filter(id => index.has(id)).reduce((sum, id) => sum + index.get(id).index, 0) / Math.max(1, [...outgoing.get(a)].filter(id => index.has(id)).length);
+        const bb = [...outgoing.get(b)].filter(id => index.has(id)).reduce((sum, id) => sum + index.get(id).index, 0) / Math.max(1, [...outgoing.get(b)].filter(id => index.has(id)).length);
+        return ba - bb || rank.get(a) - rank.get(b);
+      });
     }
   }
-  const packedHeight = y + rowHeight, originX = Math.round(Math.min(...stable.map(id => positions[id].x)));
+  const colGap = 112, rowGap = 44, local = {};
+  const layerWidths = layers.map(ids => Math.max(0, ...ids.map(id => sizes[id].w)));
+  const layerX = [];
+  for (let li = 0, x = 0; li < layers.length; li += 1) {
+    layerX[li] = x;
+    x += layerWidths[li] + colGap;
+  }
+  let packedWidth = Math.max(0, ...layers.map((ids, li) => layerX[li] + layerWidths[li]));
+  let packedHeight = 0;
+  for (let li = 0; li < layers.length; li += 1) {
+    let y = 0;
+    for (const id of layers[li]) {
+      local[id] = {x:layerX[li], y};
+      y += sizes[id].h + rowGap;
+    }
+    packedHeight = Math.max(packedHeight, Math.max(0, y - rowGap));
+  }
+  const originX = Math.round(Math.min(...stable.map(id => positions[id].x)));
   let originY = Math.round(Math.min(...stable.map(id => positions[id].y)));
   const included = new Set(stable), obstacles = allIds.filter(id => !included.has(id));
+  const gap = 48;
   for (let pass = 0; pass <= obstacles.length; pass++) {
     const hits = obstacles.filter(id => {
       const point = positions[id], size = sizes[id];
@@ -3740,7 +3756,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   const burstRef = React.useRef(null);
   const burstTimer = React.useRef(null);
   const suppressNodeClick = React.useRef(false);
-  const MAX_LAYOUT_NODES = 256;
+  const MAX_LAYOUT_NODES = 2048;
   const [selectedIds, setSelectedIds] = React.useState([]);
   const selected = new Set(selectedIds.filter(id => allNodes.some(node => node.id === id)));
   // Box selection (the retired '/' canvas's marquee): Shift-drag on empty canvas adds,
@@ -3826,7 +3842,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     if (!canSaveLayout || (busy && !force) || saving.current || entries.length > MAX_LAYOUT_NODES) {
       pendingArrange.current = null;
       restore();
-      setLayoutError(entries.length > MAX_LAYOUT_NODES ? 'Move or arrange at most 256 nodes at a time.' :
+      setLayoutError(entries.length > MAX_LAYOUT_NODES ? 'Move or arrange at most 2048 nodes at a time.' :
         busy || saving.current ? 'Wait for the current change, then try again.' : 'This connection cannot save node positions.');
       return false;
     }
@@ -4388,7 +4404,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       if (!silent) setLayoutError('Fonts are loading; try again in a moment.'); return null;
     }
     if (!wrapRef.current || allNodes.length > MAX_LAYOUT_NODES) {
-      if (!silent) setLayoutError('Fit and Arrange support up to 256 visible nodes. Open a smaller canvas scope.'); return null;
+      if (!silent) setLayoutError('Fit and Arrange support up to 2048 visible nodes. Open a smaller canvas scope.'); return null;
     }
     const cards = new Map(Array.from(wrapRef.current.querySelectorAll('.lm-node[data-node-id]'))
       .map(element => [element.getAttribute('data-node-id'), element]));
@@ -4454,7 +4470,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   const selectConnected = whole => {
     if (!scopeStillCurrent()) return;
     if (allNodes.length > MAX_LAYOUT_NODES || graph.wires.length > 4096) {
-      setLayoutError('Connected selection supports up to 256 nodes and 4096 visible wires. Open a smaller scope.'); return;
+      setLayoutError('Connected selection supports up to 2048 nodes and 4096 visible wires. Open a smaller scope.'); return;
     }
     const nodeIds = allNodes.map(node => node.id);
     const seeds = ctxMenu?.nodeId
@@ -4463,10 +4479,9 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     setSelectedIds(canvasConnectedNodeIds(nodeIds, graph.wires, seeds, whole));
   };
   const runPendingArrangeRef = React.useRef(null);
-  // A card the user put somewhere by hand is pinned by the owner: Arrange lays the others out
-  // around it (it stays an obstacle) and never moves it.
-  const arrangeMovable = ids => ids.filter(id => !allNodes.some(node => node.id === id && node.pinned === true));
-  const arrangeFrameOf = id => allNodes.find(node => node.id === id)?.group || '';
+  // Arrange all is explicitly an unpinning clean layout at this canvas level.
+  const arrangeMovable = ids => ids;
+  const arrangeFrameOf = id => '';
   const arrangeNeedsRefresh = () => needsRefresh.current || layoutNeedsRefresh ||
     !!(authority ? authority.getSnapshot() : normal?.getSnapshot()?.topology)?.requires_refresh;
   // Single-flight drain. Order matters: stale-scope, refresh-owed, auth, nodes,
@@ -4499,7 +4514,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     }
     if (liveIds.length > MAX_LAYOUT_NODES) {
       pendingArrange.current = null;
-      if (scopeStillCurrent()) setLayoutError('Move or arrange at most 256 nodes at a time.');
+      if (scopeStillCurrent()) setLayoutError('Move or arrange at most 2048 nodes at a time.');
       return false;
     }
     if (saving.current || burstRef.current || queuedSave.current || transportBusy()) return false;
@@ -4555,7 +4570,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     const liveIds = ids.filter(id => allNodes.some(node => node.id === id));
     if (!liveIds.length) return;
     if (liveIds.length > MAX_LAYOUT_NODES) {
-      setLayoutError('Move or arrange at most 256 nodes at a time.'); return;
+      setLayoutError('Move or arrange at most 2048 nodes at a time.'); return;
     }
     if (arrangeNeedsRefresh()) {
       pendingArrange.current = null;
@@ -4621,20 +4636,6 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     } catch (error) { if (scopeStillCurrent()) setLayoutError(error.message || 'The canvas could not be refreshed.'); }
   };
   const allIds = allNodes.map(node => node.id);
-  // Frames: one per group the projection names (instances of one definition, groups, Cells),
-  // drawn behind its cards from where they are now, so a moved card carries its frame along.
-  const canvasFrames = (() => {
-    const held = new Map();
-    for (const node of allNodes) {
-      if (!node.group) continue;
-      const at = positions[node.id] || node, w = node.w || 220, h = cardHeights[node.id] || node.h || 110;
-      const box = held.get(node.group) || {key:node.group, count:0, members:[], left:Infinity, top:Infinity, right:-Infinity, bottom:-Infinity};
-      box.count += 1; box.members.push(node.id); box.left = Math.min(box.left, at.x); box.top = Math.min(box.top, at.y);
-      box.right = Math.max(box.right, at.x + w); box.bottom = Math.max(box.bottom, at.y + h);
-      held.set(node.group, box);
-    }
-    return [...held.values()];
-  })();
   // The routes the menus call. Each one already exists: the inspector's Delete (ARCHHUB_RETRACT ->
   // /api/universal/retract), its connection Delete (disconnectTopology / authority.remove), Rerun (ARCHHUB_RUN ->
   // /api/universal/run-graph), the library's placement (ARCHHUB_NODE_CREATE -> /api/universal/node-create) and
@@ -4807,25 +4808,6 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
           left:Math.min(marquee.x0, marquee.x1), top:Math.min(marquee.y0, marquee.y1),
           width:Math.abs(marquee.x1 - marquee.x0), height:Math.abs(marquee.y1 - marquee.y0),
           border:`1px ${marquee.x1 < marquee.x0 ? 'dashed' : 'solid'} ${LM.accent}`, background:LM.accent + '14'}}/>}
-        {canvasFrames.map(frame => (
-          <div key={frame.key} data-canvas-frame={frame.key} role="group" aria-label={String(frame.key) + ' frame'} style={{
-            position:'absolute', left:frame.left - 18, top:frame.top - 34,
-            width:frame.right - frame.left + 36, height:frame.bottom - frame.top + 52,
-            border:`1px dashed ${LM.line}`, borderRadius:LM.rad.md, background:LM.bgSoft + '55',
-            pointerEvents:'none'}}>
-            <span style={{position:'absolute', left:10, top:7, fontFamily:LM.mono, fontSize:10,
-              letterSpacing:'0.08em', color:LM.inkMuted, whiteSpace:'nowrap'}}>
-              {String(frame.key).toUpperCase()} · {frame.count}
-            </span>
-            {frame.count >= 2 && composer && <button type="button" data-no-pan
-              aria-label={'Collapse ' + frame.key + ' into one node'} title="Collapse into one group node"
-              onMouseDown={e => e.stopPropagation()}
-              onClick={e => { e.stopPropagation(); composeGroup('group', frame.members, 'Collapsed ' + frame.key + ' into one node.'); }}
-              style={{position:'absolute', right:8, top:4, pointerEvents:'auto', cursor:'pointer', padding:'1px 7px',
-                border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, background:LM.bgPanel, color:LM.inkSoft,
-                fontFamily:LM.mono, fontSize:10, letterSpacing:'0.04em'}}>⊟ collapse</button>}
-          </div>
-        ))}
         <svg width="2400" height="1400" style={{ position:'absolute', left:0, top:0, pointerEvents:'none', overflow:'visible' }} className="lm-wires">
           {wires.map(w => {
             const dx = Math.max(40, Math.abs(w.x2 - w.x1) * 0.5);
@@ -4905,7 +4887,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
         transform:'translate(-50%, -50%)', margin:0, maxWidth:360, textAlign:'center', fontSize:12.5,
         lineHeight:1.5, color:LM.inkSoft}}>
         This canvas holds only what you place on it. Add a node from the library (⌘L).
-        {systemAllowed(authorityState?.canvas, projectedGraph) ? " The application's own parts are under the System tab." : ''}
+        {systemAllowed(authorityState?.canvas, projectedGraph) ? " The application's own parts open from Settings > System." : ''}
       </p>}
       {/* Below the minimap (MiniMap: right 14, top 14, 96 tall), never over it. The design canvas draws no status chip:
           only a save in flight, a refusal or a half-made wire draws one. Refresh is also in a node's own menu. */}
@@ -4940,6 +4922,22 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
           fontFamily:LM.mono, fontSize:10.5, color:LM.accent, letterSpacing:'0.06em',
         }}>＋ DROP TO ADD NODE</div>
       )}
+
+      {selected.size >= 2 && <div data-no-pan data-selection-bar style={{
+        position:'absolute', left:'50%', bottom:48, transform:'translateX(-50%)', zIndex:8,
+        display:'flex', gap:8, alignItems:'center', padding:'5px',
+        background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md,
+        boxShadow:'0 10px 24px rgba(0,0,0,.35)',
+      }}>
+        <button type="button" onClick={() => composeGroup('group', [...selected], 'Grouped ' + selected.size + ' nodes into one node.')}
+          disabled={!composer || blocked || menuBusy} style={smallBtn(true)}>
+          Group {selected.size} nodes <kbd style={kbd()}>Ctrl+G</kbd>
+        </button>
+        <button type="button" onClick={() => arrangeIds([...selected])}
+          disabled={layoutNeedsRefresh || !canSaveLayout} style={smallBtn(false)}>Arrange selected</button>
+        <button type="button" onClick={() => selectConnected(true)}
+          style={smallBtn(false)}>Select connected</button>
+      </div>}
 
       <CanvasToolbar undo={{run:() => runHistory('undo'), disabled:blocked || menuBusy || !canUndo, why:undoWhy}}
         redo={{run:() => runHistory('redo'), disabled:blocked || menuBusy || !canRedo, why:redoWhy}}
@@ -5139,6 +5137,9 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
       <div style={{ padding:'9px 12px 11px' }}>
         <div title={n.title} style={{ fontSize:13, fontWeight:500, color:LM.ink, marginBottom:2, lineHeight:1.2 }}>{n.title}</div>
         {n.sub && <div title={n.description || n.sub} style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em' }}>{n.sub}</div>}
+        {n.composition && <div data-boundary-sockets style={{fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, marginTop:6}}>
+          boundary sockets · {(n.ins?.length || 0)} in · {(n.outs?.length || 0)} out
+        </div>}
         <NodeBody n={n} expanded={expanded} onToggleExpand={onToggleExpand}/>
       </div>
 
@@ -6190,10 +6191,11 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
   const inspectedNode = node ? aiNodeWithMovedParams(node) : graphInspectorNode(canvas, graph, session, sessionRows);
   const sessionNode = isSessionInspectorNode(inspectedNode);
   const cat = studioCategory(inspectedNode.cat);
-  const labels = [sessionNode || inspectedNode.graphNode ? 'Chat' : 'Properties',
+  const groupNode = !!inspectedNode.composition;
+  const labels = groupNode ? ['Interface', 'Exposed parameters', 'Chat'] : [sessionNode || inspectedNode.graphNode ? 'Chat' : 'Properties',
     sessionNode || inspectedNode.graphNode ? 'Properties' : 'Chat',
     ...(hasRunsPanel(inspectedNode, graph) ? ['Runs'] : [])];
-  const defaultInspectorTab = sessionNode || inspectedNode.graphNode ? 'Chat' : 'Properties';
+  const defaultInspectorTab = groupNode ? 'Interface' : sessionNode || inspectedNode.graphNode ? 'Chat' : 'Properties';
   const [activeTab, setActiveTab] = React.useState(defaultInspectorTab);
   React.useEffect(() => setActiveTab(defaultInspectorTab), [defaultInspectorTab, inspectedNode.id]);
   const visibleTab = labels.includes(activeTab) ? activeTab : defaultInspectorTab;
@@ -6201,6 +6203,18 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
     id:inspectedNode.id, graphId:inspectedNode.graph_id || '', name:inspectedNode.title,
     node:inspectedNode.graphNode ? null : inspectedNode};
   const properties = <section aria-label="Properties"><window.NodeInspector key={inspectedNode.id} node={inspectedNode}/></section>;
+  const groupInterface = <section aria-label="Interface" style={{display:'flex', flexDirection:'column', gap:10}}>
+    <div style={{fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em'}}>INTERFACE · computed from crossing wires</div>
+    {[...(inspectedNode.ins || []).map(port => ['in', port]), ...(inspectedNode.outs || []).map(port => ['out', port])].map(([dir, port]) => (
+      <CalmRow key={dir + ':' + port.id} k={dir + ' · ' + (port.label || port.name || port.id)} v={dir === 'in' ? '→ Request' : 'Commit →'}/>
+    ))}
+    <div style={{display:'flex', gap:8, flexWrap:'wrap', marginTop:4}}>
+      <HoverBtn primary onClick={() => {}}>Open</HoverBtn>
+      <HoverBtn onClick={() => {}}>Ungroup</HoverBtn>
+      <HoverBtn onClick={() => {}}>Rename</HoverBtn>
+    </div>
+  </section>;
+  const groupParameters = <section aria-label="Exposed parameters"><window.NodeInspector key={inspectedNode.id + ':group-params'} node={inspectedNode}/></section>;
   const chat = <section aria-label="Chat">{inspectedNode.live && (inspectedNode.has_conversation || inspectedNode.graphNode || nodeModelRow(inspectedNode)) ?
     <NodeModelConversation key={inspectedNode.id + ':conversation'} node={inspectedNode} scope={scope} openConversation={openConversation}/> :
     <p role="status" style={{ margin:0, fontSize:12, lineHeight:1.5, color:LM.inkSoft }}>No conversation yet.</p>}</section>;
@@ -6224,6 +6238,8 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
           {inspectedNode.sub && <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:5, letterSpacing:'0.04em' }}>{inspectedNode.sub}</div>}
         </div>
         <InspectorTabs labels={labels} active={visibleTab} onSelect={setActiveTab}/>
+        {visibleTab === 'Interface' && groupInterface}
+        {visibleTab === 'Exposed parameters' && groupParameters}
         {visibleTab === 'Chat' && chat}
         {visibleTab === 'Properties' && properties}
         {visibleTab === 'Runs' && <InspectorRuns node={inspectedNode} graph={graph}/>}
@@ -6486,6 +6502,7 @@ const SettingsEmpty = ({ children, role = 'status', action }) => (
 // the badges previously counted only keys PRESENT in the store while the rows fell back to the
 // seed per item, so an empty or partial store made a badge contradict the panel beside it.
 const hostState = h => h.state; // the probe's answer; there is no local override
+const systemGraphNodeCount = graph => (graph?.nodes || []).filter(node => node.application === true).length || (graph?.nodes || []).length;
 const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub', onOpenTool, onOpenToolGraph }) => {
   const providers = useProviderStatus();
   const workshopState = useWorkshopProjection();
@@ -6494,6 +6511,9 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
   const hub = useToolHubProjection();
   const toolRows = toolRowsFromOwners({workshopState, account, personal, hub});
   const toolsLive = toolCounts(toolRows);
+  const authorityState = useStudioProjection();
+  const canOpenSystem = systemAllowed(authorityState?.canvas, authorityState?.graph || LM_GRAPH);
+  const systemNodeBadge = systemGraphNodeCount(authorityState?.graph || LM_GRAPH) + ' nodes';
   // The Hosts badge states the cached host probe, read when Settings opens. The brain is
   // another process and may be slow or down, so it is read only when the Brain tab opens
   // (SettingsMemory); the badge states the facts already held (2026-09-24 click-path gate).
@@ -6527,6 +6547,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
   const keyed = providerKeyed(providers.rows);
   const tabs = [
     ['hub',         'Hub',         `${toolsLive.live}/${toolRows.length} running`],
+    ...(canOpenSystem ? [['system',      'System',      systemNodeBadge]] : []),
     ['account',     'Account',     (account || {}).graphTier || null],
     ['memory',      'Brain',       `${(window.BRAIN_STRATA || []).length} strata \u00b7 ${LM_MEMORY.length - (store.forgotten || []).length} facts`],
     ['baboom',      'BABOOM',      `companion · speaks at most ${baboomMaxSpeaks(personal)} times an hour`],
@@ -6579,9 +6600,10 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
         </div>
         <div className="ah-scroll" style={{ gridColumn:'2', gridRow:'2', overflow:'auto', padding:'20px 24px 24px' }}>
           {tab === 'hub'         && <SettingsHub toolRows={toolRows} onClose={onClose} onOpenTool={onOpenTool} onOpenToolGraph={onOpenToolGraph}/>}
+          {tab === 'system'      && <SettingsSystem graph={authorityState?.graph || LM_GRAPH} onClose={onClose} onOpenToolGraph={onOpenToolGraph}/>}
           {tab === 'account'     && <SettingsAccount account={account} setAccount={setAccount} onSignOut={onSignOut}/>}
           {tab === 'memory'      && <SettingsMemory store={store} patch={patch}/>}
-          {tab === 'baboom'      && <SettingsBaboom/>}
+          {tab === 'baboom'      && <SettingsBaboom onOpenToolGraph={onOpenToolGraph} onClose={onClose}/>}
           {tab === 'team'        && <SettingsTeam account={account} onAccount={() => setTab('account')}/>}
           {tab === 'profile'     && <SettingsProfile/>}
           {tab === 'permissions' && <SettingsPermissions account={account} onTab={setTab}/>}
@@ -6598,6 +6620,56 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
     </div>
   );
 };
+const SettingsSystem = ({ graph, onClose, onOpenToolGraph }) => {
+  const nodes = (graph?.nodes || []).filter(node => node.application === true).slice(0, 24);
+  const count = systemGraphNodeCount(graph);
+  const open = () => { onClose?.(); onOpenToolGraph?.('system'); };
+  const previewNodes = nodes.length ? nodes : (graph?.nodes || []).slice(0, 24);
+  const layers = [];
+  previewNodes.forEach((node, index) => {
+    const layer = Math.min(5, Math.floor(index / 4));
+    if (!layers[layer]) layers[layer] = [];
+    layers[layer].push(node);
+  });
+  return <div style={{display:'flex', flexDirection:'column', gap:14}}>
+    <SHead title="System" sub="The application is itself a node. Its parts, tools and wiring are this graph; open it to inspect or change what you are permitted to."/>
+    <div data-settings-system-preview style={{
+      background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, padding:16,
+      minHeight:210, position:'relative', overflow:'hidden',
+      backgroundImage:`radial-gradient(${LM.lineSoft} 1px, transparent 1px)`,
+      backgroundSize:'18px 18px',
+    }}>
+      <div style={{display:'grid', gridTemplateColumns:`repeat(${Math.max(1, layers.length)}, minmax(80px, 1fr))`, gap:18, alignItems:'center'}}>
+        {layers.map((layer, layerIndex) => <div key={layerIndex} style={{display:'flex', flexDirection:'column', gap:9}}>
+          {layer.map((node, rowIndex) => {
+            const cat = studioCategory(node.cat || (node.tool ? 'tools' : 'logic'));
+            return <div key={node.id || layerIndex + ':' + rowIndex} style={{
+              height:26, border:`1px solid ${LM.line}`, borderTop:`2px solid ${cat.col}`, borderRadius:LM.rad.sm,
+              background:LM.bgPanel, color:LM.ink, fontFamily:LM.mono, fontSize:9.5,
+              padding:'4px 6px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+            }}>{node.title || node.label || node.id}</div>;
+          })}
+        </div>)}
+      </div>
+    </div>
+    <div style={{display:'flex', alignItems:'center', gap:10}}>
+      <div style={{flex:1}}>
+        <div style={{fontSize:13, color:LM.ink}}>ArchHub application <span style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>· {count} nodes · {(graph?.wires || []).length} relations · WIP head</span></div>
+        <div style={{fontSize:11.5, color:LM.inkSoft, marginTop:4}}>Opens over this window in its own scope. Esc or the breadcrumb returns here, then to where you were. It is never a Studio session tab.</div>
+      </div>
+      <HoverBtn primary onClick={open}>Open the System graph</HoverBtn>
+    </div>
+    <SystemGraphStates hidden/>
+  </div>;
+};
+const SystemGraphStates = ({ hidden = false }) => (
+  <div data-system-graph-states aria-hidden={hidden ? 'true' : undefined} style={hidden ? {display:'none'} : {display:'grid', gridTemplateColumns:'1fr 1fr', gap:12}}>
+    <section data-system-loading><h3>Reading the application graph...</h3><p>The canvas draws as soon as the graph answers. Cards appear in place; nothing jumps when they arrive.</p></section>
+    <section data-system-empty><h3>This group has no nodes yet.</h3><p>A group is a node made of smaller nodes. Add nodes here, or select nodes on the parent canvas and press Group (Ctrl+G).</p><button>Add node</button><button>Back to ArchHub application</button></section>
+    <section data-system-error><h3>The application graph could not be read.</h3><p>Nothing was changed. The last arranged layout is kept.</p><button>Read again</button><button>Back to Settings</button></section>
+    <section data-system-refused><h3>Arranged did not move 3 cards.</h3><p>3 cards are hand-placed (pinned). Arrange moved the other 21. Unpin them to include them.</p><button>Unpin 3 and arrange</button><button>Keep</button></section>
+  </div>
+);
 const SettingsHub = ({ toolRows, onClose, onOpenTool, onOpenToolGraph, columns }) => {
   const [confirmOff, setConfirmOff] = React.useState(null);
   React.useEffect(() => {

@@ -4,7 +4,7 @@
      P2  the mouse's Back / Forward buttons (3, 4) are refused;
      P3  Ctrl+K opens the node library (User-Agency mandate), and Esc closes it;
      P4  the Studio opens on Canvas; Chat moved into the selection inspector composer and
-         Workshop moved to the rail tool view. */
+         Workshop opens from the Home tool card, not a Studio header tab. */
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -95,7 +95,7 @@ test('P3: Ctrl+K opens the node library; Esc closes it', async () => {
   } finally { studio.close(); }
 });
 
-test('P4: the Studio opens on Canvas; Chat input moved to the selection panel and Workshop to the rail', async () => {
+test('P4: the Studio opens on Canvas; Chat input moved to the selection panel and Workshop to the Home card', async () => {
   const studio = await mountStudio({workshops:[{root:'general-a', label:'Workshop', is_general:true}]});
   try {
     assert.ok(studio.doc.querySelector('[role="region"][aria-label="Workflow canvas"]'), 'Canvas is the default session view');
@@ -104,6 +104,7 @@ test('P4: the Studio opens on Canvas; Chat input moved to the selection panel an
       moved + ' moved out of the Studio session header');
     assert.equal(studio.doc.querySelectorAll('input[aria-label="Ask selection"]').length, 1,
       'Chat moved to the single selection-panel composer');
-    assert.ok(studio.doc.querySelector('button[data-tool-rail="workshop"]'), 'Workshop is reached from the rail');
+    studio.flush(() => studio.doc.querySelector('[title="All sessions"]').click());
+    assert.ok(studio.doc.querySelector('[data-home-tools] [data-tool-card="workshop"]'), 'Workshop is reached from the Home tool card');
   } finally { studio.close(); }
 });

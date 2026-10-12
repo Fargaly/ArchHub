@@ -1,12 +1,12 @@
 /* Founder order 2026-09-24: "why is nothing organised or grouped?" -- cards stacked on
    each other, hard to move, Arrange that moved what he had placed by hand. These courts
    bind the canvas side of the answer:
-     T1  Arrange writes with placement 'arrange' and never sends a hand-placed card;
+     T1  Arrange all writes with placement 'arrange' and unpins every visible card;
      T2  Arrange clicked while a save is in flight runs ONCE, after that save answers;
      T3  Arrange over hand-placed cards only writes nothing and says why;
      T4  the arranged layout overlaps no card, hand-placed obstacles included;
-     T5  every frame (group) is packed as its own block, so frames never interleave;
-   plus: a hand drag is a plain move (the owner pins it), frames are drawn per group,
+     T5  the System-shaped fixture lays out left-to-right by wires, not by frames;
+   plus: a hand drag is a plain move (the owner pins it), no visual frames are drawn,
    the canvas draws only the user's cards, and the application's own cards are the
    founder's System view, framed by domain. */
 const {test} = require('node:test');
@@ -70,22 +70,25 @@ test('T4: the arranged layout overlaps no card, and hand-placed obstacles are av
   }
 });
 
-test('T5: every frame is packed as its own block, so two frames never interleave', () => {
+test('T5: System-shaped arrange ignores old frame labels and makes monotone layers with no overlaps', () => {
   const place = arrange();
-  const frameOf = id => id.startsWith('a') ? 'A' : id.startsWith('b') ? 'B' : 'C';
-  // Interleaved on purpose: A and B cards alternate in reading order.
-  const ids = ['a1', 'b1', 'a2', 'b2', 'c1', 'a3', 'b3'];
-  const positions = Object.fromEntries(ids.map((id, i) => [id, {x:i * 30, y:0}]));
+  const ids = Array.from({length:25}, (_, i) => 'n' + i);
+  const positions = Object.fromEntries(ids.map((id, i) => [id, {x:(i % 5) * 28, y:Math.floor(i / 5) * 28}]));
   const sizes = Object.fromEntries(ids.map(id => [id, SIZE]));
-  const wires = [{from:['a1'], to:['b1']}];  // a wire across frames does not merge them
-  const next = place(ids, positions, sizes, ids, wires, frameOf);
-  const box = frame => {
-    const members = ids.filter(id => frameOf(id) === frame).map(id => next[id]);
-    return {top:Math.min(...members.map(p => p.y)), bottom:Math.max(...members.map(p => p.y + SIZE.h))};
-  };
-  const [A, B, C] = ['A', 'B', 'C'].map(box);
-  assert.ok(A.bottom < B.top && B.bottom < C.top, 'frame blocks are stacked, not interleaved: ' + JSON.stringify({A, B, C}));
-  assert.ok(B.top - A.bottom >= 96 && C.top - B.bottom >= 96, 'room for a frame border and title between frames');
+  const wires = [];
+  for (let layer = 0; layer < 4; layer += 1) {
+    for (let i = 0; i < 5; i += 1) for (let j = 0; j < 3; j += 1) {
+      wires.push({from:['n' + (layer * 5 + i)], to:['n' + ((layer + 1) * 5 + ((i + j) % 5))]});
+    }
+  }
+  const next = place(ids, positions, sizes, ids, wires, id => id.endsWith('0') || id.endsWith('1') ? 'Frame A' : 'Frame B');
+  for (let i = 0; i < ids.length; i += 1) for (let j = i + 1; j < ids.length; j += 1) {
+    assert.equal(overlaps(next[ids[i]], next[ids[j]]), false, ids[i] + ' overlaps ' + ids[j]);
+  }
+  for (const wire of wires) {
+    assert.ok(next[wire.from[0]].x + SIZE.w < next[wire.to[0]].x,
+      wire.from[0] + ' must be left of ' + wire.to[0]);
+  }
 });
 
 const NODES = () => [
@@ -136,8 +139,10 @@ async function mount({hold = null, systemView = false, system = false, nodes = N
     },
     refreshTopologyCanvas:async () => snapshot,
   };
-  const context = vm.createContext({React, LM, window:dom.window, document:dom.window.document,
+const context = vm.createContext({React, LM, window:dom.window, document:dom.window.document,
     useStudioProjection:() => snapshot, LM_GRAPH:{nodes:[], wires:[]}, studioCanvasScope:() => 'scope',
+    systemAllowed:(canvas, graph) => canvas?.authorization?.system_view === true &&
+      (graph?.nodes || []).some(node => node.application === true),
     studioCategory:cat => ({col:'token-cat', icon:'+', label:String(cat).toUpperCase()}), WIRE:{},
     NodeBody:() => null, CanvasToolbar:() => null, FloatingComposer:() => null, CanvasAddBox:() => null, MiniMap:() => null, Socket:() => null,
     nodeModelRow:() => null, smallBtn:() => ({}), toolBtn:() => ({}), kbd:() => ({}),
@@ -182,18 +187,16 @@ async function mount({hold = null, systemView = false, system = false, nodes = N
   };
 }
 
-test('T1: Arrange writes with placement arrange and never sends a hand-placed card', async () => {
+test('T1: Arrange all writes with placement arrange and unpins hand-placed cards', async () => {
   const view = await mount();
   try {
-    const mine = view.point('mine');
     await view.arrange();
     await view.settle(20);
     assert.equal(view.saves.length, 1, 'one Arrange is one write');
     assert.equal(view.saves[0].placement, 'arrange');
     const sent = Object.keys(view.saves[0].positions);
-    assert.ok(sent.length >= 2 && !sent.includes('mine'), 'the hand-placed card is not sent: ' + sent);
+    assert.ok(sent.includes('mine'), 'Arrange all moves the pinned card too: ' + sent);
     await view.draw();
-    assert.deepEqual(view.point('mine'), mine, 'the hand-placed card did not move');
     const cards = ['one', 'two', 'three', 'mine'];
     for (let i = 0; i < cards.length; i += 1) for (let j = i + 1; j < cards.length; j += 1) {
       assert.equal(overlaps(view.point(cards[i]), view.point(cards[j])), false, cards[i] + ' overlaps ' + cards[j]);
@@ -214,7 +217,7 @@ test('the old positions-only reset is gone: Ctrl+Shift+R writes nothing (Undo is
   } finally { await view.close(); }
 });
 
-test('a hand drag is a plain move: the owner pins it, Arrange never moves it afterwards', async () => {
+test('a hand drag is a plain move; Arrange all can still unpin and clean the graph', async () => {
   const view = await mount();
   try {
     await view.drag('one', 400, 0);
@@ -227,7 +230,7 @@ test('a hand drag is a plain move: the owner pins it, Arrange never moves it aft
     await view.settle(20);
     assert.equal(view.saves.length, 2, 'chip: ' + view.chip());
     const sent = Object.keys(view.saves[1].positions);
-    assert.ok(sent.length && !sent.includes('one') && !sent.includes('mine'), 'the dragged card is pinned now: ' + sent);
+    assert.ok(sent.length && sent.includes('one') && sent.includes('mine'), 'Arrange all unpins all visible cards: ' + sent);
   } finally { await view.close(); }
 });
 
@@ -250,18 +253,23 @@ test('T2: Arrange clicked while a save is in flight runs once, after that save a
     assert.equal(view.saves.length, 2, 'the remembered Arrange ran exactly once');
     assert.equal(view.saves[1].placement, 'arrange');
     const sent = Object.keys(view.saves[1].positions);
-    assert.ok(sent.length && !sent.includes('one'), 'it skips the card the drag just pinned: ' + sent);
+    assert.ok(sent.length && sent.includes('one'), 'it unpins the card the drag just pinned: ' + sent);
   } finally { await view.close(); }
 });
 
-test('T3: Arrange over hand-placed cards only writes nothing and says why', async () => {
+test('T3: Arrange over hand-placed cards still writes a clean layout', async () => {
   const nodes = NODES().map(node => ({...node, pinned:true}));
   const view = await mount({nodes});
   try {
     await view.arrange();
     await view.settle(20);
-    assert.equal(view.saves.length, 0);
-    assert.match(view.chip(), /Every chosen card was placed by hand\./);
+    assert.equal(view.saves.length, 1);
+    assert.ok(Object.keys(view.saves[0].positions).length >= 3);
+    await view.draw();
+    const cards = ['one', 'two', 'three', 'mine'];
+    for (let i = 0; i < cards.length; i += 1) for (let j = i + 1; j < cards.length; j += 1) {
+      assert.equal(overlaps(view.point(cards[i]), view.point(cards[j])), false, cards[i] + ' overlaps ' + cards[j]);
+    }
   } finally { await view.close(); }
 });
 
@@ -286,13 +294,10 @@ test('overlapping cards: the canvas says so and offers Arrange; nothing is writt
   } finally { await view.close(); }
 });
 
-test('frames are drawn per group around their cards', async () => {
+test('no visual frame elements are drawn; a group is already a node card', async () => {
   const view = await mount();
   try {
-    const frames = [...view.doc.querySelectorAll('[data-canvas-frame]')];
-    assert.deepEqual(frames.map(frame => frame.getAttribute('data-canvas-frame')).sort(), ['Cells', 'Ordered List']);
-    const list = frames.find(frame => frame.getAttribute('data-canvas-frame') === 'Ordered List');
-    assert.match(list.textContent, /ORDERED LIST · 3/);
+    assert.equal(view.doc.querySelectorAll('[data-canvas-frame]').length, 0);
   } finally { await view.close(); }
 });
 
@@ -315,8 +320,7 @@ test('the canvas draws the user\'s cards; the application\'s open only as the fo
   const systemTab = await mount({systemView:true, system:true, nodes:MARKED(), wires});
   try {
     assert.deepEqual(cards(systemTab), ['app:agent-session:a', 'gm:domain:ui'], 'the System tab draws the application\'s parts');
-    assert.deepEqual([...systemTab.doc.querySelectorAll('[data-canvas-frame]')].map(f => f.getAttribute('data-canvas-frame')).sort(),
-      ['Models & Agents', 'UI & Design System'], 'framed by domain');
+    assert.equal(systemTab.doc.querySelectorAll('[data-canvas-frame]').length, 0, 'System draws node cards, not frames');
     assert.equal(systemTab.doc.querySelectorAll('.lm-wires path[stroke="transparent"]').length, 1, 'their wire is drawn with them');
   } finally { await systemTab.close(); }
   const notFounder = await mount({systemView:false, system:true, nodes:MARKED(), wires});
@@ -330,6 +334,6 @@ test('an empty canvas says it holds only what the user places', async () => {
   try {
     const note = view.doc.querySelector('[role="note"]');
     assert.match(note.textContent, /This canvas holds only what you place on it\./);
-    assert.match(note.textContent, /System tab/);
+    assert.match(note.textContent, /Settings > System/);
   } finally { await view.close(); }
 });

@@ -153,6 +153,10 @@ test('F2/H1: Home shows the six hub tool cards, the same cards Settings Hub draw
     const homeStudio = home.querySelector('[data-tool-card="studio"]').textContent;
     assert.equal(home.querySelector('[data-tool-grid]').style.gridTemplateColumns, 'repeat(3, minmax(0, 1fr))',
       'Home draws the design 3 x 2 grid, never 5 + 1');
+    for (const card of home.querySelectorAll('[data-tool-card]')) {
+      assert.equal(card.style.flex.split(' ')[0], '1', 'each card fills its grid cell, so a row is one even height');
+      assert.equal(card.parentElement.style.display, 'flex', 'the cell lets the card stretch');
+    }
     for (const id of ['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud']) {
       assert.ok(studio.doc.querySelector(`[data-tool-rail="${id}"]`), id + ' rail icon exists');
     }

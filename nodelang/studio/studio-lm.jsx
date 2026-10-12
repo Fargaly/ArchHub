@@ -2218,7 +2218,7 @@ const ToolCard = ({ tool, onOpen }) => (
       }
     }}
     style={{
-    minHeight:134, padding:'10px 11px', textAlign:'left', background:LM.bgPanel,
+    flex:1, minHeight:134, padding:'10px 11px', textAlign:'left', background:LM.bgPanel,
     border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, color:LM.ink,
     display:'flex', flexDirection:'column', gap:8, minWidth:0, cursor:'pointer',
   }}>
@@ -6582,7 +6582,7 @@ const SettingsHub = ({ toolRows, onClose, onOpenTool, onOpenToolGraph, columns }
   return <div style={{position:'relative'}}>
     <div data-tool-grid style={{ display:'grid', gap:8,
       gridTemplateColumns:columns ? `repeat(${columns}, minmax(0, 1fr))` : 'repeat(auto-fill, minmax(180px, 1fr))' }}>
-      {toolRows.map(tool => <div key={tool.id}
+      {toolRows.map(tool => <div key={tool.id} style={{display:'flex', minWidth:0}}
         onContextMenu={event => { event.preventDefault(); requestOff(tool); }}>
         <ToolCard tool={tool}
           onOpen={() => openToolFromHub(tool.id)}

@@ -24,7 +24,7 @@ function projected() {
   return JSON.parse(context.graph);
 }
 
-async function mountStudio({models, selectedTitleLeak = '', modelReadTimeoutMs} = {}) {
+async function mountStudio({models, selectedTitleLeak = '', modelReadTimeoutMs, modelRetryDelaysMs} = {}) {
   const manifest = JSON.parse(read('nodelang/studio/compiled/manifest.json'));
   for (const source of ['studio-lm.jsx', 'studio-suite.jsx']) {
     const held = manifest.files.find(file => file.source === source);
@@ -35,6 +35,7 @@ async function mountStudio({models, selectedTitleLeak = '', modelReadTimeoutMs} 
   const dom = new JSDOM('<div id="root"></div>', {url:'http://127.0.0.1:53933/', runScripts:'outside-only', pretendToBeVisual:true});
   const win = dom.window;
   if (modelReadTimeoutMs) win.__ARCHHUB_MODEL_READ_TIMEOUT_MS = modelReadTimeoutMs;
+  if (modelRetryDelaysMs) win.__ARCHHUB_MODEL_RETRY_DELAYS_MS = modelRetryDelaysMs;
   const defaultModels = {ok:true, selected_route:'',
       default_route:ROUTE, default_source:'free · OpenRouter',
       default_model:{name:MODEL, route:ROUTE, routed:ROUTE, vendor:'OpenRouter', tag:'FREE', ctx:'', col:'#3a6acc', latency:null},
@@ -106,33 +107,54 @@ const deferred = () => {
   return {promise, resolve};
 };
 
-test('first screen bounds a rejected model read as unknown and Retry reads again', async () => {
+test('first screen auto-retries a rejected model read and clears without a click', async () => {
   let reads = 0;
   const studio = await mountStudio({models:() => {
     reads += 1;
     if (reads === 1) return Promise.reject(new Error('network down'));
     return undefined;
-  }});
+  }, modelRetryDelaysMs:[10, 20, 30]});
   try {
-    await studio.settle(() => noModelCard(studio.doc)?.textContent.includes('Models could not be read. Retry'),
-      'the rejected read is bounded as unknown');
-    const card = noModelCard(studio.doc);
-    assert.match(card.textContent, /Models could not be read\. Retry/);
-    assert.equal(button(card, 'Sign in'), undefined, 'unknown does not show a sign-in warning');
-    assert.equal(button(card, 'Choose a model'), undefined, 'unknown does not offer a stale picker');
-    studio.flush(() => button(card, 'Retry').click());
+    await studio.settle(() => studio.doc.body.textContent.includes('Models unavailable · retrying…'),
+      'the rejected read is shown as retrying');
     await studio.settle(() => modelIndicators(studio.doc).some(node => node.textContent.includes(MODEL)),
-      'Retry reads the model list again');
+      'the automatic retry reads the model list again');
+    assert.ok(reads >= 2, 'the model read was retried without a click');
     assert.equal(noModelCard(studio.doc), null);
+  } finally { studio.close(); }
+});
+
+test('first screen sends through the free default route while the model read is unknown', async () => {
+  const studio = await mountStudio({models:() => Promise.reject(new Error('network down')), modelRetryDelaysMs:[5000]});
+  try {
+    await studio.settle(() => studio.doc.body.textContent.includes('Models unavailable · retrying…'),
+      'the rejected read is shown as retrying');
+    const input = studio.doc.querySelector('input[aria-label="Ask selection"]');
+    studio.type(input, 'ping while checking');
+    studio.flush(() => button(studio.doc, 'Send').click());
+    await studio.settle(() => studio.agentCalls.length === 1, 'the message is sent while the model read is unknown');
+    assert.deepEqual(studio.agentCalls.map(call => [call.text, call.route]), [['ping while checking', ROUTE]]);
+    assert.equal(studio.doc.querySelector('[data-picker-options]'), null, 'Send does not open the picker while unknown');
+  } finally { studio.close(); }
+});
+
+test('first screen shows one Models unavailable retry line while the model read is unknown', async () => {
+  const studio = await mountStudio({models:() => Promise.reject(new Error('network down')), modelRetryDelaysMs:[5000]});
+  try {
+    await studio.settle(() => studio.doc.body.textContent.includes('Models unavailable · retrying…'),
+      'the rejected read is shown as retrying');
+    const count = (studio.doc.body.textContent.match(/Models unavailable · retrying…/g) || []).length;
+    assert.equal(count, 1);
+    assert.doesNotMatch(studio.doc.body.textContent, /Model unknown|Models could not be read|UNKNOWN/);
   } finally { studio.close(); }
 });
 
 test('first screen bounds a non-OK model read as unknown', async () => {
   const studio = await mountStudio({models:{http:true, ok:false, status:503, body:{ok:false}}});
   try {
-    await studio.settle(() => noModelCard(studio.doc)?.textContent.includes('Models could not be read. Retry'),
+    await studio.settle(() => studio.doc.body.textContent.includes('Models unavailable · retrying…'),
       'the non-OK read is bounded as unknown');
-    const card = noModelCard(studio.doc);
+    const card = studio.doc.querySelector('[data-chat-no-model]');
     assert.equal(button(card, 'Retry')?.textContent.trim(), 'Retry');
     assert.equal(button(card, 'Sign in'), undefined);
     assert.equal(button(card, 'Choose a model'), undefined);
@@ -142,9 +164,9 @@ test('first screen bounds a non-OK model read as unknown', async () => {
 test('first screen bounds a timed-out model read as unknown', async () => {
   const studio = await mountStudio({models:{never:true}, modelReadTimeoutMs:20});
   try {
-    await studio.settle(() => noModelCard(studio.doc)?.textContent.includes('Models could not be read. Retry'),
+    await studio.settle(() => studio.doc.body.textContent.includes('Models unavailable · retrying…'),
       'the timed-out read is bounded as unknown');
-    const card = noModelCard(studio.doc);
+    const card = studio.doc.querySelector('[data-chat-no-model]');
     assert.equal(button(card, 'Retry')?.textContent.trim(), 'Retry');
     assert.equal(button(card, 'Sign in'), undefined);
     assert.equal(button(card, 'Choose a model'), undefined);

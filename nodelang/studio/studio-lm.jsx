@@ -410,10 +410,33 @@ const StudioLM = () => {
   // The server's answer to "can a Send reach a model": ready, no_model or no_key
   // (model_router.composer_readiness). Chat and the boot Brain line show it.
   const [readiness, setReadiness] = React.useState(null);
-  const readInitialModel = React.useCallback(() => {
+  const modelReadRetryTimer = React.useRef(null);
+  const modelReadRetryAttempt = React.useRef(0);
+  const modelReadRetryRead = React.useRef(null);
+  const clearModelReadRetry = React.useCallback(() => {
+    if (modelReadRetryTimer.current != null) window.clearTimeout(modelReadRetryTimer.current);
+    modelReadRetryTimer.current = null;
+  }, []);
+  const scheduleModelReadRetry = React.useCallback(() => {
+    clearModelReadRetry();
+    const configured = Array.isArray(window.__ARCHHUB_MODEL_RETRY_DELAYS_MS)
+      ? window.__ARCHHUB_MODEL_RETRY_DELAYS_MS.map(n => Number(n)).filter(n => n >= 0)
+      : DEFAULT_MODEL_READ_RETRY_DELAYS_MS;
+    const index = modelReadRetryAttempt.current;
+    const delay = index < configured.length ? configured[index] : 30000;
+    modelReadRetryAttempt.current = index + 1;
+    modelReadRetryTimer.current = window.setTimeout(() => {
+      modelReadRetryTimer.current = null;
+      if (document.hidden) { scheduleModelReadRetry(); return; }
+      if (typeof modelReadRetryRead.current === 'function') modelReadRetryRead.current({automatic:true});
+    }, delay);
+  }, [clearModelReadRetry]);
+  const readInitialModel = React.useCallback((options = {}) => {
+    clearModelReadRetry();
+    if (!options.automatic) modelReadRetryAttempt.current = 0;
     const controller = new AbortController();
     let timedOut = false;
-    const timeoutMs = Number(window.__ARCHHUB_MODEL_READ_TIMEOUT_MS) > 0 ? Number(window.__ARCHHUB_MODEL_READ_TIMEOUT_MS) : 8000;
+    const timeoutMs = Number(window.__ARCHHUB_MODEL_READ_TIMEOUT_MS) > 0 ? Number(window.__ARCHHUB_MODEL_READ_TIMEOUT_MS) : 15000;
     let timeoutId = null;
     const timeout = new Promise((_, reject) => { timeoutId = setTimeout(() => {
       timedOut = true;
@@ -421,8 +444,21 @@ const StudioLM = () => {
       reject(new Error('Model selection timed out'));
     }, timeoutMs); });
     const session = window.__archhubSession || {};
+    // Boot diagnostics (PM 2026-10-13: two failing boots left no trace): every model read
+    // attempt is recorded with its outcome and duration, in the console and in
+    // window.ARCHHUB_MODEL_READ_LOG for the rig. No tokens or bodies are logged.
+    const attempt = modelReadRetryAttempt.current + 1;
+    const startedAt = Date.now();
+    const noteRead = (outcome, detail) => {
+      const entry = {attempt, outcome, ms:Date.now() - startedAt, detail:detail ? String(detail).slice(0, 120) : ''};
+      try {
+        (window.ARCHHUB_MODEL_READ_LOG = window.ARCHHUB_MODEL_READ_LOG || []).push(entry);
+        if (window.ARCHHUB_MODEL_READ_LOG.length > 50) window.ARCHHUB_MODEL_READ_LOG.shift();
+        console.info('[models] read attempt ' + attempt + ': ' + outcome + ' in ' + entry.ms + 'ms' + (entry.detail ? ' (' + entry.detail + ')' : ''));
+      } catch (e) {}
+    };
     setReadiness(null);
-    setModel(current => modelRoute(current) ? current : pendingModelAnswer());
+    setModel(current => modelRoute(current) && !current.unknown ? current : pendingModelAnswer());
     const request = fetch('/api/universal/models', {signal:controller.signal,
       headers:{'X-ArchHub-Session':session.token || '', 'X-ArchHub-CSRF':session.csrf || ''}});
     Promise.race([request, timeout])
@@ -436,32 +472,41 @@ const StudioLM = () => {
         const fallback = !saved && typeof result.default_route === 'string' ? result.default_route.trim() : '';
         const source = typeof result.default_source === 'string' ? result.default_source.trim() : '';
         const route = saved || fallback;
+        noteRead('ok', route ? 'route ' + route : 'no route');
+        clearModelReadRetry();
+        modelReadRetryAttempt.current = 0;
         if (!controller.signal.aborted && result.readiness && typeof result.readiness === 'object') {
           window.ARCHHUB_MODEL_READINESS = result.readiness;
           setReadiness(result.readiness);
         }
         if (!route || controller.signal.aborted) {
           if (!controller.signal.aborted) {
-            setModel(current => current.routed || current.route ? current : noModelPicked());
+            setModel(current => modelRoute(current) && !current.unknown ? current : noModelPicked());
           }
           return;
         }
         const selected = (result.groups || []).flatMap(group => group.items || [])
           .find(item => (item.routed || item.route) === route);
         const serverDefault = defaultModelRowFromPayload(result, route);
-        setModel(current => current.routed || current.route ? current :
+        setModel(current => modelRoute(current) && !current.unknown && !current.pending ? current :
           selected || (serverDefault && fallback ? {...serverDefault, defaultRouteModel:true} : serverDefault) ||
           defaultModelRow(route, source, fallback));
-      }).catch(() => {
+      }).catch(error => {
+        noteRead(timedOut ? 'timeout' : controller.signal.aborted ? 'aborted' : 'refused', error && error.message);
         if (!controller.signal.aborted || timedOut) {
           const unknown = modelCatalogueUnknown();
           window.ARCHHUB_MODEL_READINESS = unknown;
           setReadiness(unknown);
           setModel(current => modelRoute(current) ? current : unknownModelAnswer());
+          scheduleModelReadRetry();
         }
       }).finally(() => clearTimeout(timeoutId));
     return () => { clearTimeout(timeoutId); controller.abort(); };
-  }, []);
+  }, [clearModelReadRetry, scheduleModelReadRetry]);
+  React.useEffect(() => { modelReadRetryRead.current = readInitialModel; return () => {
+    if (modelReadRetryRead.current === readInitialModel) modelReadRetryRead.current = null;
+  }; }, [readInitialModel]);
+  React.useEffect(() => () => clearModelReadRetry(), [clearModelReadRetry]);
   React.useEffect(() => readInitialModel(), [readInitialModel]);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [settingsTab, setSettingsTab] = React.useState('hub');
@@ -2505,12 +2550,15 @@ const defaultModelRow = (route, source, fallback) => {
     tag:fallback ? (source || 'default') : 'Availability not verified',
     ctx:'', col:LM.inkMuted, latency:null};
 };
+const DEFAULT_FREE_MODEL_ROUTE = 'openrouter/free';
+const DEFAULT_MODEL_READ_RETRY_DELAYS_MS = [2000, 5000, 10000];
 // A composer pick is the owner's graph-held setting, saved when it is made.
 // It lived only in this page until a Send reached the server, so a restart or
 // an update came back "Choose a model" (2026-09-17). The signed clean engine
 // has no selection route, so there the pick stays page state as before.
 const pendingModelAnswer = () => ({ name:'Model pending', route:'', routed:'', vendor:'Checking availability', tag:'', ctx:'', col:LM.inkMuted, latency:null, pending:true });
-const unknownModelAnswer = () => ({ name:'Model unknown', route:'', routed:'', vendor:'Models could not be read', tag:'', ctx:'', col:LM.inkMuted, latency:null, unknown:true });
+const unknownModelAnswer = () => ({ name:'Checking', route:DEFAULT_FREE_MODEL_ROUTE, routed:DEFAULT_FREE_MODEL_ROUTE,
+  vendor:'Default free route', tag:'', ctx:'', col:LM.inkMuted, latency:null, unknown:true });
 const noModelPicked = () => ({ name:'Choose a model', route:'', routed:'', vendor:'No model selected', tag:'', ctx:'', col:LM.inkMuted, latency:null });
 const rememberComposerModel = async (m) => {
   const route = modelRoute(m);
@@ -2529,6 +2577,7 @@ const nodeModelRoute = n => {
 const modelDisplayName = m => {
   const name = String((m && m.name) || '').trim();
   if (m?.pending) return name;
+  if (m?.unknown) return name || 'checking';
   if (m?.defaultRouteModel && name && name !== 'Choose a model') return name;
   return modelRoute(m) || name;
 };
@@ -2634,8 +2683,8 @@ const chatConnectors = () => (window.ARCHHUB_LIVE?.connectors || []).map(c => ({
 // ─── Calm chat view (default) — restores original Studio's generous rhythm ───
 const NO_MODEL_STATE = {state:'no_model', route:'', actions:['sign_in', 'choose_model'],
   message:'No model yet. Sign in to ArchHub, or choose a model.'};
-const modelCatalogueUnknown = () => ({state:'unknown', route:'', actions:['retry_models'],
-  message:'Models could not be read. Retry'});
+const modelCatalogueUnknown = () => ({state:'unknown', route:DEFAULT_FREE_MODEL_ROUTE, actions:['retry_models'],
+  message:'Models unavailable · retrying…'});
 // The route shown is judged here: the composer pick or the selected node's own model
 // (review 2026-09-28). The provider states and the copy are the server's
 // (model_router.composer_readiness families/messages); only the route's family is read here.
@@ -2649,7 +2698,7 @@ const routeFamily = route => {
   const hit = ROUTE_FAMILIES.find(([prefix]) => route.startsWith(prefix) && route.slice(prefix.length).replace(/\//g, '').trim());
   return hit ? hit[1] : '';
 };
-const READINESS_LABELS = {unknown:'UNKNOWN', no_model:'NO MODEL', no_key:'NO KEY', invalid:'UNSUPPORTED MODEL', unavailable:'NOT RUNNING'};
+const READINESS_LABELS = {unknown:'MODELS', no_model:'NO MODEL', no_key:'NO KEY', invalid:'UNSUPPORTED MODEL', unavailable:'NOT RUNNING'};
 const routeReadiness = (route, held, pending = false) => {
   const text = String(route || '').trim();
   const messages = (held && held.messages) || {};
@@ -2754,7 +2803,7 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
       <div style={{ padding:'12px 0 18px', borderTop:`1px solid ${LM.lineSoft}` }}>
         <div style={{ maxWidth:720, margin:'0 auto', padding:'0 36px' }}>
             {/* Stands above the composer, where Send would be; the conversation column keeps the design. */}
-            {blocked && (
+            {blocked && blocked.state !== 'unknown' && (
               <div data-chat-no-model="" role="status" style={{
                 background:LM.bgPanel, border:`1px solid ${LM.line}`, borderLeft:`3px solid ${LM.warn}`,
                 borderRadius:LM.rad.lg, padding:'12px 16px', marginBottom:10,
@@ -6304,7 +6353,7 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
   const ask = async () => {
     const said = text.trim();
     if (!said || asking || !window.ARCHHUB_AGENT) return;
-    if (blocked || !route) {
+    if ((blocked && blocked.state !== 'unknown') || !route) {
       if (typeof setPickerOpen === 'function') setPickerOpen(true);
       return;
     }

@@ -16,12 +16,13 @@ import uuid
 
 from .cell_secret_keys import SigningKeyProvider
 from .universal_cell import InvalidCell
+from .workspace_roots_catalogue import OPEN_AGENT_RUNTIMES
 
 
 SCHEMA = "archhub.private-root-grants/v1"
 DEFAULT_OPERATIONS = ("edit_file", "apply_patch", "write_file", "create")
 SUPPORTED_OPERATIONS = frozenset(DEFAULT_OPERATIONS)
-_RUNTIMES = {"claude", "codex", "cursor", "gemini", "antigravity", "opencode", "windsurf", "zed", "aider"}
+_RUNTIMES = frozenset(OPEN_AGENT_RUNTIMES)
 _KEY_ID = "archhub.local.private-root-grants"
 
 
@@ -165,9 +166,7 @@ class PrivateRootGrantStore:
             raise InvalidCell("private-root grant is malformed")
         _text(grant["grant_id"], "identity", maximum=128)
         _text(grant["root_id"], "root id", maximum=64)
-        runtime = _text(grant["runtime"], "runtime", maximum=64)
-        if runtime not in _RUNTIMES:
-            raise InvalidCell("private-root grant runtime is invalid")
+        _text(grant["runtime"], "runtime", maximum=64)
         _text(grant["session_id"], "session identity", maximum=512)
         _digest(grant["root_digest"], "root digest")
         _operations(grant["operations"])

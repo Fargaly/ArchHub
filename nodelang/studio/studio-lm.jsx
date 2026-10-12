@@ -8317,7 +8317,8 @@ const SettingsWorkspaces = () => {
     if (!ready || busy) return;
     const id = rootId || workspaceSlug(path);
     const done = await run(WORKSPACE_APPROVE, {
-      action:'register', id, path:path.trim(), privacy, profile:'client', writers:['claude'] });
+      action:'register', id, path:path.trim(), privacy, profile:'client',
+      writers:['claude','codex','gemini','opencode','antigravity','cursor','windsurf','zed','aider'] });
     if (done) { setPath(''); setRootId(''); setPrivacy('private'); }
   };
   // Browse: Windows' own folder dialog picks the folder; only the path comes back,

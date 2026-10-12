@@ -69,25 +69,57 @@ export function createSessionLinkPlugin({stateDirectory}){
  const symbol=Symbol.for('archhub.session-link.opencodeserver');
  if(globalThis[symbol]&&globalThis[symbol].stateDirectory!==stateDirectory)throw new Error('This OpenCode process is attached to another transport state directory');
  if(globalThis[symbol]){globalThis[symbol].clients.set(directory,client);return {};}
- const clients=new Map([[directory,client]]),busy=new Set();
+ const clients=new Map([[directory,client]]),busy=new Set(),queues=new Map(),seen=new Set();
  const peer=new PeerEndpoint({name:'opencode-session-link-'+process.pid,cwd:directory});await peer.start();
  const control='\\\\.\\pipe\\LOCAL\\opencode-session-link-'+crypto.randomUUID();
  const unwrap=r=>{if(r.error)throw new Error('OpenCode SDK rejected request');return r.data??r;};
+ const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+ const idle=async(c,id,directory)=>{
+  const deadline=Date.now()+180000;
+  for(;;){
+   const statuses=unwrap(await c.session.status({query:{directory}}));
+   if(!busy.has(id)&&!(statuses[id]&&statuses[id].type!=='idle'))return;
+   if(Date.now()>=deadline)throw new Error('Session stayed busy; message not sent');
+   await sleep(250);
+  }
+ };
+ const sendTurn=async({id,directory,text,model})=>{
+  if(typeof text!=='string'||!text.trim()||text.length>32000)throw new Error('Invalid text');
+  const c=clients.get(directory);if(!c)throw new Error('Workspace is not attached to this OpenCode process');
+  const session=unwrap(await c.session.get({path:{id},query:{directory}}));if(session.id!==id||session.directory!==directory)throw new Error('Session/workspace mismatch');
+  await idle(c,id,directory);
+  busy.add(id);
+  try{const reply=unwrap(await promptSelectedModel(c,{id,directory,text,model}));
+  return await collectOpenCodeTurn(c,{sessionId:id,directory,reply,model});}finally{busy.delete(id);}
+ };
+ const enqueue=({id,directory,text,model})=>{
+  const key=directory+'\0'+id;
+  const prior=queues.get(key)||Promise.resolve();
+  const run=prior.then(()=>sendTurn({id,directory,text,model}));
+  queues.set(key,run.catch(()=>{}).finally(()=>{if(queues.get(key)===run)queues.delete(key);}));
+  return run;
+ };
+ const onlySession=async()=>{
+  const rows=[];
+  for(const [cwd,c] of clients){const list=unwrap(await c.session.list({query:{directory:cwd}}));for(const s of list)rows.push({id:s.id,directory:s.directory||cwd});}
+  if(rows.length!==1)throw new Error('OpenCode peer inbox requires exactly one attached session');
+  return rows[0];
+ };
+ let peerChain=Promise.resolve();
+ peer.onMessage(record=>{peerChain=peerChain.then(async()=>{try{
+  if(!record.msgId||seen.has(record.msgId))return;if(typeof record.text!=='string'||record.text.length>32000)throw new Error('Message exceeds 32000 characters');
+  seen.add(record.msgId);if(seen.size>2000)seen.delete(seen.values().next().value);
+  const target=await onlySession();
+  await enqueue({id:target.id,directory:target.directory,text:record.text,model:undefined});
+ }catch(e){peer.log('opencode peer delivery failed: '+e.message);}});});
  const server=net.createServer(socket=>{let buffer='',handled=false;socket.setEncoding('utf8');socket.setTimeout(190000,()=>socket.destroy());socket.on('error',()=>{});socket.on('data',async chunk=>{
   if(handled)return;buffer+=chunk;if(buffer.length>70000){socket.destroy();return;}if(!buffer.includes('\n'))return;handled=true;
   try{const r=JSON.parse(buffer.slice(0,buffer.indexOf('\n')));if(r.token!==peer.peerToken)throw new Error('Unauthenticated request');let result;
    if(r.operation==='list'){const rows=[];for(const [cwd,c] of clients){const list=unwrap(await c.session.list({query:{directory:cwd}}));for(const s of list)rows.push({app:'opencode',id:s.id,title:s.title,cwd:s.directory||cwd,runtimeId:process.pid});}result=[...new Map(rows.map(x=>[x.id,x])).values()];}
    else if(r.operation==='capabilities')result={per_request_free_model:1};
    else if(r.operation==='send'){
-    const model=validateModel(r.model);
-    if(typeof r.text!=='string'||!r.text.trim()||r.text.length>32000)throw new Error('Invalid text');
-    const c=clients.get(r.directory);if(!c)throw new Error('Workspace is not attached to this OpenCode process');
-    const session=unwrap(await c.session.get({path:{id:r.id},query:{directory:r.directory}}));if(session.id!==r.id||session.directory!==r.directory)throw new Error('Session/workspace mismatch');
-    const statuses=unwrap(await c.session.status({query:{directory:r.directory}}));
-    if(busy.has(r.id)||(statuses[r.id]&&statuses[r.id].type!=='idle'))throw new Error('Session is busy; message not sent');
-    busy.add(r.id);
-    try{const reply=unwrap(await promptSelectedModel(c,{id:r.id,directory:r.directory,text:r.text,model}));
-    result=await collectOpenCodeTurn(c,{sessionId:r.id,directory:r.directory,reply,model});}finally{busy.delete(r.id);}
+   const model=validateModel(r.model);
+    result=await enqueue({id:r.id,directory:r.directory,text:r.text,model});
    }else throw new Error('Unsupported operation');socket.end(JSON.stringify({ok:true,result})+'\n');
   }catch(e){socket.end(JSON.stringify({ok:false,error:e.message})+'\n');}
  });});

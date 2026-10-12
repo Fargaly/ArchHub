@@ -33,6 +33,7 @@ from .cell_protocols import read_relation
 from .cell_value_graph import build_value_graph, read_value_graph
 from .native_workshop_tools import WORKSHOP_TASK_TOOL_NAMES
 from .universal_cell import InvalidCell, overlay_read_snapshot
+from .workspace_roots_catalogue import OPEN_AGENT_RUNTIMES
 
 
 PROFILE_VERSION = "native-workshop-task-v1"
@@ -61,6 +62,7 @@ _LIMITS = {
 }
 _TIMES = ("startup_timeout_seconds", "turn_timeout_seconds", "lifetime_seconds",
           "stop_timeout_seconds")
+_NATIVE_WORK_RUNTIMES = frozenset(OPEN_AGENT_RUNTIMES)
 
 
 def _require(ok, message):
@@ -411,8 +413,8 @@ def native_material_from_values(inputs, requirements, *, title, description):
     _require(type(inputs) is dict and set(inputs) == {
         "runtime", "model", "data_class", "files", "artifact_name", "limits"
     }, "Native Work input fields are incomplete or undeclared")
-    _require(inputs["runtime"] == "claude" and inputs["data_class"] == "public-text",
-             "Native Work requires explicit Claude and public-text input")
+    _require(inputs["runtime"] in _NATIVE_WORK_RUNTIMES and inputs["data_class"] == "public-text",
+             "Native Work requires an explicit admitted runtime and public-text input")
     _require(_text(inputs["model"], 160) and not inputs["model"].startswith("-")
              and inputs["model"] == inputs["model"].strip()
              and not any(character.isspace() for character in inputs["model"]),
@@ -544,8 +546,8 @@ def _material(server, work_root, session_root, context, *, publication=False):
     registry, store = server.universal_registry, server.universal_store
     snapshot = store.snapshot()
     session, entry, parameters, _ = app._runtime_compliance_subject(snapshot, registry, session_root)
-    _require(entry.runtime == parameters["runtime"] == "claude"
-             and session.subject_root == registry.authorization.subject_root,
+    _require(entry.runtime == parameters["runtime"] and entry.runtime in _NATIVE_WORK_RUNTIMES
+             and session.subject_root == registry.authorization.subject_root and bool(session.body_root),
              "Native Workshop child has a different runtime or owner")
     assignments = [app._read_workshop_assignment(snapshot, registry, root)
                    for root in app._workshop_assignment_roots(snapshot, registry)]
@@ -1087,8 +1089,8 @@ def cancel_native_work(server, *, work_root, session_root, assignment_root, proc
         session = read_agent_session(snapshot, registry.agent_body.protocol,
                                      registry.authorization.protocol, session_root)
         entry = app._agent_body_catalog_entry_for_session(snapshot, registry, session)
-        _require(entry.runtime == process.launch.runtime == "claude"
-                 and session.subject_root == registry.authorization.subject_root,
+        _require(entry.runtime == process.launch.runtime and entry.runtime in _NATIVE_WORK_RUNTIMES
+                 and session.subject_root == registry.authorization.subject_root and bool(session.body_root),
                  "Cancellation child runtime or owner changed")
         properties = app._property_index(snapshot, registry, tuple(
             row.participant_id for row in read_relation(snapshot, registry.canvas_root, budget=100000)

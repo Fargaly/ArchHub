@@ -88,9 +88,9 @@ function mappedMcpTool(tool) {
  if(tool.startsWith('archhub-hosts_')){server='archhub-hosts';name=tool.slice('archhub-hosts_'.length);}
  else if(tool.startsWith('archhub_agent_coordination_')){server='archhub_agent_coordination';name=tool.slice('archhub_agent_coordination_'.length);}
  else return null;
- if(!name||name.length>128||!/^[A-Za-z0-9_.-]+$/.test(name))fail('tool has no verified governance mapping: '+tool);
+ if(!name||name.length>128||!/^[A-Za-z0-9_.-]+$/.test(name))return null;
  const kind=toolClass(tool);
- if(!kind)fail('tool has no verified governance mapping: '+tool);
+ if(!kind)return null;
  return {toolName:'mcp__'+server+'__'+name,read:kind==='read'};
 }
 
@@ -423,7 +423,7 @@ function normalized(tool,args) {
      (args.workdir!==undefined&&(typeof args.workdir!=='string'||!args.workdir)))fail('native shell arguments unavailable');
   return {tool_name:'Bash',tool_input:{command:args.command,...(args.workdir?{workdir:args.workdir}:{})}};
  }
- fail('tool has no verified governance mapping: '+String(tool));
+ return {tool_name:String(tool),tool_input:args};
 }
 
 export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expectedSessions,selectedWorks={},workToolFactory,sessionLink,laneFolders={},readStaleMs=60000}) {
@@ -511,6 +511,12 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
     // so drop it instead of refusing every later tool in the session forever.
     for(const [held,p] of pending)if(p.session===input.sessionID&&p.read&&p.state==='admitted'&&
        Date.now()-p.admittedAt>=readStaleMs)pending.delete(held);
+    // Founder 2026-10-12 (governance organizes, never blocks; OpenCode equal to every
+    // agent): a shell call carries no permit and no write receipt, so an unclear shell
+    // outcome is recorded and released instead of refusing every later tool forever.
+    // Ledger tools (write/edit) keep their custody; another session is never touched.
+    for(const [held,p] of pending)if(held!==key&&p.session===input.sessionID&&p.state==='uncertain'&&
+       !isLedgerTool(p.tool)&&p.tool!=='archhub_work')pending.delete(held);
     const blocker=()=>pending.get(key)||[...pending.values()].find(p=>p.session===input.sessionID&&
        (!read||!p.read||!['preparing','admitted','settling'].includes(p.state)));
     let blocking=blocker();

@@ -49,6 +49,7 @@ assert.equal(prompts[0].path.id,'ses_writer');
 assert.match(prompts[0].body.parts[0].text,/Work W-12 is open/);
 await hooks.event(idle);
 assert.equal(prompts.length,1,'the idle after the reminder passes');
+await hooks.event({event:{type:'assistant.message.completed',properties:{sessionID:'ses_writer',role:'assistant',message:{role:'assistant',content:'done'}}}});
 await hooks.event(idle);
 assert.equal(prompts.length,2,'the next turn is held again');
 verdict=null;await hooks.event({event:{type:'session.idle',properties:{sessionID:'ses_other'}}});

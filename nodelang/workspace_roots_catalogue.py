@@ -63,7 +63,18 @@ KEY_DEFINITION = "Workspace roots signing key"
 COMPOSITION = "Governance"
 PRIVACY = ("private", "public")
 PROFILES = ("client",)
-RUNTIMES = ("claude", "codex", "opencode", "gemini", "antigravity", "cursor")
+OPEN_AGENT_RUNTIMES = (
+    "claude",
+    "codex",
+    "gemini",
+    "opencode",
+    "antigravity",
+    "cursor",
+    "windsurf",
+    "zed",
+    "aider",
+)
+RUNTIMES = OPEN_AGENT_RUNTIMES
 
 
 def built_in_path() -> str:
@@ -177,7 +188,7 @@ def install_workspace_root_catalogue(
             "path": "",
             "privacy": "private",
             "profile": "client",
-            "writers": ["claude"],
+            "writers": list(OPEN_AGENT_RUNTIMES),
             "identity": [],
             "state": "registered",
             "registered_at": "",
@@ -865,7 +876,7 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
         if action == "register":
             values = admit_folder(request.get("path"), request.get("id"),
                                   request.get("privacy"), request.get("profile", "client"),
-                                  request.get("writers") or ["claude"], roots,
+                                  request.get("writers") or list(OPEN_AGENT_RUNTIMES), roots,
                                   built_in=built_in)
         predicted = _predict(roots, action, values, request.get("id"))
     if pin is None and action == "republish":
@@ -1369,8 +1380,10 @@ def root_bound_registration(path, *, runtime=None, verifier=None, snapshot_path=
 
     path is "workspace-roots/<id>/<path inside the root>". The root must be in the
     verified registry, its folder must still be the registered folder (identity),
-    and a given runtime must be one of its writers. The digest binds the permit to
-    this exact registration and key, so a changed root voids a pending permit."""
+    and the registered folder identity must still match. The writers list is
+    descriptive compatibility state; a registered workspace is open to every
+    runtime. The digest binds the permit to this exact registration and key, so a
+    changed root voids a pending permit."""
     parts = str(path).split("/")
     if (len(parts) < 3 or parts[0] + "/" != ROOT_PATH_PREFIX or not _ID.match(parts[1])
             or any(part in ("", ".", "..") for part in parts[2:])):
@@ -1384,8 +1397,6 @@ def root_bound_registration(path, *, runtime=None, verifier=None, snapshot_path=
     if identity is None or list(identity) != entry.get("identity"):
         raise InvalidCell("registered workspace root %s is unavailable (moved, swapped "
                           "or missing)" % parts[1])
-    if runtime is not None and runtime not in (entry.get("writers") or ()):
-        raise InvalidCell("%s is not a writer of workspace root %s" % (runtime, parts[1]))
     digest = hashlib.sha256(canonical({"root": entry, "key": pin})).hexdigest()
     return "workspace-root:" + parts[1], digest, dict(entry)
 
@@ -1422,6 +1433,8 @@ __all__ = [
     "read_registered_roots",
     "read_enrollment",
     "OWNER_OPENED",
+    "OPEN_AGENT_RUNTIMES",
+    "RUNTIMES",
     "registry_digest",
     "root_bound_registration",
     "verified_graph_state",

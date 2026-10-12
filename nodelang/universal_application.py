@@ -33,6 +33,7 @@ from .artifact_verification_court import (
     ARTIFACT_VERIFICATION_CHECKS,
     ArtifactVerificationCourt,
 )
+from .workspace_roots_catalogue import OPEN_AGENT_RUNTIMES
 
 from .cell_adapters import (
     AdapterProtocol,
@@ -9353,11 +9354,19 @@ def _ensure_baboom_application_agent_body(
 # runtime here gets its OWN body, policy and control -- the same constrained
 # shape BABOOM has, never founder authority -- so sessions stay separately
 # auditable and one agent cannot act as another.
-_HARNESS_AGENT_RUNTIMES = (
-    ("codex", "Codex"),
-    ("claude", "Claude"),
-    ("gemini", "Gemini"),
-    ("opencode", "OpenCode"),
+_HARNESS_RUNTIME_LABELS = {
+    "claude": "Claude",
+    "codex": "Codex",
+    "gemini": "Gemini",
+    "opencode": "OpenCode",
+    "antigravity": "Antigravity",
+    "cursor": "Cursor",
+    "windsurf": "Windsurf",
+    "zed": "Zed",
+    "aider": "Aider",
+}
+_HARNESS_AGENT_RUNTIMES = tuple(
+    (runtime, _HARNESS_RUNTIME_LABELS[runtime]) for runtime in OPEN_AGENT_RUNTIMES
 )
 
 
@@ -42234,8 +42243,6 @@ def authorize_universal_cde_write(
             "identity": list(registration.get("identity") or ()),
             "digest": registration_digest,
         }
-        if runtime is not None and str(runtime) not in root_writers:
-            raise AuthorizationDenied("runtime is not a writer for this workspace root")
         if (registration.get("privacy") == "private" and runtime is not None
                 and private_root_grants is not None):
             status = private_root_grants.status(

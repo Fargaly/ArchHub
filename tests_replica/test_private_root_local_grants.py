@@ -187,7 +187,7 @@ def test_private_root_writer_with_local_grant_needs_no_workshop_work(admission_w
     assert calls == []
 
 
-def test_private_root_non_writer_runtime_is_refused_even_with_local_grant(tmp_path, monkeypatch):
+def test_private_root_non_writer_runtime_is_admitted_with_local_grant(tmp_path, monkeypatch):
     store = CellStore()
     store.commit(
         store.revision,
@@ -203,16 +203,16 @@ def test_private_root_non_writer_runtime_is_refused_even_with_local_grant(tmp_pa
         "read_universal_current_claimed_work",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("Workshop Work was read")),
     )
-    with pytest.raises(AuthorizationDenied, match="not a writer"):
-        authorize_universal_cde_write(
-            store,
-            object(),
-            agent_session_root=SESSION,
-            operation="write_file",
-            path=PATH,
-            runtime="codex",
-            private_root_grants=grant_store,
-        )
+    admission = authorize_universal_cde_write(
+        store,
+        object(),
+        agent_session_root=SESSION,
+        operation="write_file",
+        path=PATH,
+        runtime="codex",
+        private_root_grants=grant_store,
+    )
+    assert admission.container_id == "GM.nodes.private-root-grant"
 
 
 def test_public_root_still_needs_workshop_work(tmp_path, monkeypatch):

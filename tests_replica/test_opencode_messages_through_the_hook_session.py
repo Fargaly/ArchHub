@@ -28,7 +28,7 @@ GATE_HOOKS = Path(os.environ.get("ARCHHUB_OPENCODE_GATE_HOOKS")
 
 def test_the_per_app_server_still_refuses_to_guess_an_opencode_identity():
     from nodelang.native_agent_session import resolve_native_agent_identity
-    with pytest.raises(ValueError, match="actual OpenCode hook session identity is required"):
+    with pytest.raises(ValueError, match="coordination session selection requires live owner proof"):
         resolve_native_agent_identity({"ARCHHUB_COORDINATION_VENDOR": "opencode",
                                        "ARCHHUB_COORDINATION_SESSION": "opencode-fargaly"})
     identity = resolve_native_agent_identity({"ARCHHUB_COORDINATION_VENDOR": "opencode",

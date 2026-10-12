@@ -122,10 +122,9 @@ def test_an_unregistered_or_malformed_root_path_is_refused(world, path):
                                    **world["files"])
 
 
-def test_a_runtime_that_is_not_a_writer_is_refused(world):
-    with pytest.raises(InvalidCell, match="not a writer"):
-        roots.root_bound_admission("workspace-roots/client-a/a.md", runtime="codex",
-                                   verifier=_Store(world["key"]), **world["files"])
+def test_a_runtime_that_is_not_a_writer_is_admitted_because_registration_is_open(world):
+    assert roots.root_bound_admission("workspace-roots/client-a/a.md", runtime="codex",
+                                      verifier=_Store(world["key"]), **world["files"])
 
 
 def test_a_swapped_folder_is_refused(world):

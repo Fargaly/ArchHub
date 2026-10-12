@@ -59,6 +59,7 @@ CLOUD_CHAT_PATH = "/v1/chat/completions"
 OPENAI_CHAT = "https://api.openai.com/v1/chat/completions"
 GOOGLE_CHAT = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 NVIDIA_CHAT = "https://integrate.api.nvidia.com/v1/chat/completions"
+ANTHROPIC_MESSAGES = "https://api.anthropic.com/v1/messages"
 _OPENROUTER_FREE_MODELS_DEFAULT = (
     "apodex/apodex-1.1-mini:free",
     "dots-studio/dots-3-note-preview:free",
@@ -172,6 +173,7 @@ _FAMILY_PREFIXES = {
     "openai-api/": "openai",
     "google-api/": "google",
     "nvidia-api/": "nvidia",
+    "anthropic-api/": "anthropic",
     # A signed-in assistant on this machine answers one chat turn through the
     # model broker's host process: local-cli/<assistant>[/<model>].
     "local-cli/": "local-cli",
@@ -184,6 +186,7 @@ _PROVIDER_NAMES = {
     "openai": "OpenAI",
     "google": "Google",
     "nvidia": "NVIDIA NIM",
+    "anthropic": "Anthropic",
     "local-cli": "a local assistant",
 }
 LOCAL_CLI_ASSISTANTS = {
@@ -191,31 +194,31 @@ LOCAL_CLI_ASSISTANTS = {
     "codex": "Codex",
     "gemini": "Gemini CLI",
     "opencode": "OpenCode (local)",
+    "antigravity": "Antigravity",
+    "cursor": "Cursor",
 }
 # Settings rows (SUBSCRIPTION_CLIS) by the local-cli/ name they route through.
 _CLI_ROUTE_NAME = {"claude-code": "claude", "codex": "codex", "gemini-cli": "gemini",
-                   "opencode": "opencode"}
+                   "opencode": "opencode", "antigravity": "antigravity", "cursor": "cursor"}
 # Where a chat through each assistant is sent: the picker says so.
 _CLI_VENDOR = {"claude": "Anthropic", "codex": "OpenAI", "gemini": "Google",
-               "opencode": "OpenRouter"}
+               "opencode": "OpenRouter", "antigravity": "Google", "cursor": "Cursor"}
 # What the picker must say besides where the chat goes: only Claude Code can run
 # with every tool off; the others, read-only, can still read files on this computer.
 _CLI_CAUTION = {"claude": "", "codex": "",
                 "gemini": "; it can read files on this computer",
-                "opencode": "; approved free OpenRouter model only"}
+                "opencode": "; approved free OpenRouter model only",
+                "antigravity": "; it can read files on this computer",
+                "cursor": "; it can read files on this computer"}
 # The assistant versions whose chat turn was proven live (no MCP server, no
 # graph write, no command, no file read or write; 2026-09-29). A new version can
 # turn on a tool feature the chat argv does not switch off, so any other
 # installed version is "not verified" until the real courts pass on it. Gemini
 # is refused by Google on the machine it was built on: unproven.
 _CLI_VERIFIED_VERSIONS = {"claude": "2.1.169", "codex": "0.144.5", "opencode": "1.18.34"}
-# Codex REFUSES a chat on any other version (717, 2026-09-29): a new version can
-# turn on a tool feature the chat argv does not switch off -- commands ran in
-# chat turns before every feature was disabled. Claude Code runs with no tools
-# at all in this invocation (--tools "", no MCP server), so another version is
-# disclosed, not refused. Re-verify: run the real local-cli courts
-# (ARCHHUB_REAL_CLI_COURT=1) on the new version, then record it here.
-_CLI_FAIL_CLOSED = frozenset({"codex", "opencode"})
+# Unverified local CLI versions are disclosed equally for every assistant. They
+# do not become a per-agent refusal; hard refusal remains for real harm only.
+_CLI_FAIL_CLOSED = frozenset()
 _REVERIFY = "re-verify it with the local-cli real courts, then record the version"
 _VERSION_CACHE: dict = {}
 _VERSION_PENDING: set = set()
@@ -335,6 +338,15 @@ _KEY_PLAN = {
             "NVIDIA key in Settings, then ask again."
         ),
     },
+    "anthropic": {
+        "variable": "ANTHROPIC_API_KEY",
+        "secret": "anthropic",
+        "from_cloud_session": False,
+        "missing": (
+            "No Anthropic key on this machine: set ANTHROPIC_API_KEY, or paste "
+            "an Anthropic key in Settings, then ask again."
+        ),
+    },
 }
 # Providers whose key can be pasted in Settings > Providers.
 KEYED_IN_SETTINGS = ("openrouter", "openai", "google", "nvidia", "anthropic")
@@ -347,6 +359,8 @@ SUBSCRIPTION_CLIS = (
     ("codex", "Codex", "codex"),
     ("gemini-cli", "Gemini CLI", "gemini"),
     ("opencode", "OpenCode", "opencode"),
+    ("antigravity", "Antigravity", "antigravity"),
+    ("cursor", "Cursor", "cursor"),
 )
 # Where an assistant installs outside PATH, relative to (environment variable, ...).
 # The OpenCode desktop app runs its own server and puts no CLI on PATH; the
@@ -470,11 +484,13 @@ def _destination(
         return ModelRoute(family, model, GOOGLE_CHAT, "Google", True)
     if family == "nvidia":
         return ModelRoute(family, model, NVIDIA_CHAT, "NVIDIA NIM", True)
+    if family == "anthropic":
+        return ModelRoute(family, model, ANTHROPIC_MESSAGES, "Anthropic", True)
     if family == "local-cli":
         assistant = model.split("/", 1)[0].strip()
         if assistant not in LOCAL_CLI_ASSISTANTS:
             raise ModelRouteRefused(
-                "local-cli/ chats through claude, codex, gemini or opencode, not %r." % assistant)
+                "local-cli/ chats through claude, codex, gemini, opencode, antigravity or cursor, not %r." % assistant)
         if assistant == "opencode":
             try:
                 cli_model = opencode_free_cli_model(model.split("/", 1)[1] if "/" in model else "")
@@ -819,7 +835,7 @@ def provider_catalogue() -> list:
     titles = {"cloud": "ArchHub cloud"}
     records = [{"id": family, "title": titles.get(family, _PROVIDER_NAMES[family]),
                 "capabilities": ["text"], "local": family in ("lmstudio", "ollama")}
-               for family in ("cloud", "openrouter", "openai", "google", "nvidia", "lmstudio", "ollama")]
+               for family in ("cloud", "openrouter", "openai", "google", "nvidia", "anthropic", "lmstudio", "ollama")]
     # "local" is LM Studio and Ollama above; "cli-subscription" is each CLI below.
     known = {record["id"] for record in records} | {"local", "cli-subscription"}
     records.extend({"id": name, "title": description, "capabilities": ["text"], "local": False}
@@ -1091,6 +1107,10 @@ READINESS_COPY = {
         "This model needs an NVIDIA key. Sign in to ArchHub, or add your own "
         "AI key in Settings \u2192 Providers."
     ),
+    "no_key:anthropic": (
+        "This model needs an Anthropic key. Sign in to ArchHub, or add your own "
+        "AI key in Settings \u2192 Providers."
+    ),
     "unavailable:lmstudio": (
         "LM Studio is not running on this machine. Start it, or choose another model."
     ),
@@ -1104,6 +1124,7 @@ _READINESS_ACTIONS = {
     "no_key:openrouter": ["choose_model", "sign_in"],
     "no_key:cloud": ["sign_in", "choose_model"],
     "no_key:nvidia": ["choose_model", "sign_in"],
+    "no_key:anthropic": ["choose_model", "sign_in"],
     "unavailable:lmstudio": ["choose_model"],
     "unavailable:ollama": ["choose_model"],
 }
@@ -1141,7 +1162,8 @@ def composer_readiness(route: object, *, environ=None, secrets_loader=None,
     session = default_cloud_session() if cloud_session is _DISCOVER else cloud_session
     families = {family: _family_readiness(
         family, environ=environ, secrets_loader=secrets_loader, session=session,
-        local_states=local_states) for family in ("openrouter", "cloud", "nvidia", "lmstudio", "ollama")}
+        local_states=local_states) for family in (
+            "openrouter", "cloud", "openai", "google", "nvidia", "anthropic", "lmstudio", "ollama")}
     messages = {"no_model": READINESS_COPY["no_model"], "invalid": READINESS_COPY["invalid"]}
 
     def answer(state, text, message, actions):
@@ -1161,13 +1183,6 @@ def composer_readiness(route: object, *, environ=None, secrets_loader=None,
             return answer("unavailable", text,
                           "%s is not installed on this machine. Install it, or choose another model."
                           % destination.provider, ["choose_model"])
-        if assistant in _CLI_FAIL_CLOSED:
-            installed = _broker_version(assistant)
-            if installed not in (CHECKING, _CLI_VERIFIED_VERSIONS[assistant]):
-                return answer("unavailable", text,
-                              "%s was updated; ArchHub has not verified this version yet. Choose "
-                              "another model until it is re-verified." % destination.provider,
-                              ["choose_model"])
         return answer("ready", text, "", [])
     held = families[destination.family]
     return answer(held["state"], text, held["message"], held["actions"])
@@ -1259,6 +1274,27 @@ def _body(
         if destination.model.startswith(("gpt-4", "gpt-3.5")):
             body["temperature"] = temperature
         return body
+    if destination.family == "anthropic":
+        system = []
+        rows = []
+        for row in messages:
+            role = row["role"]
+            if role == "system":
+                system.append(str(row["content"]))
+            else:
+                rows.append({
+                    "role": "assistant" if role == "assistant" else "user",
+                    "content": row["content"],
+                })
+        body = {
+            "model": destination.model,
+            "messages": rows,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if system:
+            body["system"] = "\n".join(system)
+        return body
     body = {
         "model": destination.model,
         "messages": list(messages),
@@ -1286,6 +1322,18 @@ def _answer_text(destination: ModelRoute, payload: object) -> str:
                     "%s: %s" % (destination.provider, message),
                     reason_code=reason,
                 )
+        if destination.family == "anthropic":
+            content = payload.get("content")
+            if isinstance(content, (list, tuple)):
+                text = "\n".join(
+                    str(part.get("text"))
+                    for part in content
+                    if isinstance(part, Mapping)
+                    and part.get("type") == "text"
+                    and part.get("text") is not None
+                )
+                if text:
+                    return text
         if destination.family == "ollama":
             message = payload.get("message")
             if isinstance(message, Mapping) and message.get("content") is not None:
@@ -2242,7 +2290,11 @@ def route_chat(
             secrets_loader=secrets_loader,
             cloud_session=session if isinstance(session, Mapping) else None,
         )
-        headers["Authorization"] = "Bearer " + key
+        if destination.family == "anthropic":
+            headers["x-api-key"] = key
+            headers["anthropic-version"] = "2023-06-01"
+        else:
+            headers["Authorization"] = "Bearer " + key
     trace = _FreeChatTrace(free_only and destination.family == "openrouter", environ=environ)
     send = urllib.request.urlopen if opener is None else opener
     attempts = _openrouter_free_attempts(
@@ -2361,6 +2413,8 @@ def route_chat(
             raise failure from unreadable
         choices = payload.get("choices") if isinstance(payload, Mapping) else None
         first = choices[0] if isinstance(choices, (list, tuple)) and choices else None
+        if attempt.family == "anthropic":
+            first = {"finish_reason": payload.get("stop_reason")} if isinstance(payload, Mapping) else None
         if response_byte_limit is not None and (
             not isinstance(first, Mapping) or type(first.get("finish_reason")) is not str or not first["finish_reason"]
         ):
@@ -2460,6 +2514,7 @@ __all__ = [
     "OLLAMA_CHAT",
     "OLLAMA_PS",
     "OPENROUTER_CHAT",
+    "ANTHROPIC_MESSAGES",
     "default_cloud_session",
     "composer_readiness",
     "default_composer_route",

@@ -43,19 +43,22 @@ def test_the_route_is_declared_served_and_session_bound():
     app = (ROOT / "nodelang" / "universal_application.py").read_text(encoding="utf-8")
     assert '("GET", "/api/universal/providers", "read"),' in app
     server = (ROOT / "nodelang" / "application_server.py").read_text(encoding="utf-8")
-    assert "if parsed.path == '/api/universal/providers':" in server
-    block = server[server.index("if parsed.path == '/api/universal/providers':"):]
-    block = block[:block.index("if parsed.path == '/api/universal/models':")]
-    assert "self._browser_session_binding()" in block and "provider_rows(" in block
+    assert "path in {'/api/universal/models', '/api/universal/providers'}" in server
+    assert "self._browser_session_binding()" in server
+    assert "provider_rows(" in server
     assert '("GET", "/api/universal/providers"),' in server
 
 
 def test_the_studio_reads_the_route_and_holds_no_invented_key_or_spend():
     raw = (ROOT / "nodelang" / "studio" / "studio-lm.jsx").read_text(encoding="utf-8", errors="replace")
+    transport = (ROOT / "nodelang" / "studio" / "studio-existing-workshop.js").read_text(encoding="utf-8", errors="replace")
     # code only: a comment that names the old fixture is not the old fixture
     jsx = chr(10).join(line for line in raw.split(chr(10)) if not line.lstrip().startswith("//"))
     providers = jsx[jsx.index("const SettingsProviders"):jsx.index("const SettingsProviders") + 6000]
-    assert "/api/universal/providers" in providers
-    for invented in ("$23.84", "$2.14", "ant-", "sk-•", "or-•", "k7Fq2xBn91LmZ0aTvR", "this month"):
+    assert "transport?.readProviders" in jsx
+    assert "transport.readProviders()" in jsx
+    assert "get('/api/universal/providers')" in transport
+    assert "ant-" not in providers
+    for invented in ("$23.84", "$2.14", "sk-•", "or-•", "k7Fq2xBn91LmZ0aTvR", "this month"):
         assert invented not in jsx, invented
     assert "'3 keys'" not in jsx

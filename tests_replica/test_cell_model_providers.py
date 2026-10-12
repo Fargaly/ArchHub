@@ -46,10 +46,10 @@ def test_a_provider_whose_key_was_never_put_in_custody_is_refused():
         register_provider(provider="openai", key_entry_name="openai", store=store)
 
 
-def test_a_provider_that_is_not_admitted_is_refused():
+def test_a_provider_that_is_not_prelisted_is_registered_when_its_key_is_in_custody():
     store = _store()
-    with pytest.raises(InvalidCell):
-        register_provider(store, provider="guesswork", key_entry_name="anthropic")
+    register_provider(store, provider="guesswork", key_entry_name="anthropic")
+    assert "guesswork" in registered(store.snapshot())
     assert "guesswork" not in ADMITTED_PROVIDERS
 
 

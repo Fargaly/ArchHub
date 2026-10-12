@@ -15602,12 +15602,6 @@ class ApplicationServer:
                     raise AuthorizationDenied(
                         "CDE receipt admission revision drifted"
                     )
-                if (admission.path.startswith("workspace-roots/")
-                        and runtime not in admission.root_writers):
-                    # The writers of the registration the admission read and
-                    # bound into the permit; never a second read.
-                    raise AuthorizationDenied(
-                        "%s is not a writer of this workspace root" % runtime)
                 self._record_machine_cde_activity(agent_session_root)
                 receipt, revision = consume_cde_write_permit(
                     self.universal_store,
@@ -16750,12 +16744,6 @@ class ApplicationServer:
                     raise AuthorizationDenied(
                         "CDE permit admission revision drifted"
                     )
-                if (admission.path.startswith("workspace-roots/")
-                        and runtime not in admission.root_writers):
-                    # The writers of the registration the admission read and
-                    # bound into the permit; never a second read.
-                    raise AuthorizationDenied(
-                        "%s is not a writer of this workspace root" % runtime)
                 from .native_inbox_recovery import refuse_reconciled_replay
                 refuse_reconciled_replay(self, agent_session_root, admission.work_root, body["request_id"])
                 now = time.time()

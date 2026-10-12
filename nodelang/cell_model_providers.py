@@ -104,8 +104,6 @@ def classify_failure(kind):
 
 def register_provider(store, *, provider, key_entry_name):
     """Point a provider at a VAULT ENTRY. A key never reaches this graph."""
-    if provider not in ADMITTED_PROVIDERS:
-        raise InvalidCell("provider is not admitted: %s" % provider)
     snapshot = store.snapshot()
     # Raises if the vault does not hold it -- so a provider cannot be
     # registered against a key that was never put into custody.

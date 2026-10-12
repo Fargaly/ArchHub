@@ -153,7 +153,7 @@ def test_route_chat_refuses_rather_than_falls_back(tmp_path, monkeypatch):
     model_router.bind_local_cli_broker(None)
     with pytest.raises(model_router.ModelRouteRefused, match="not available in this process"):
         model_router.route_chat("local-cli/claude", MESSAGES, cloud_session=None)
-    with pytest.raises(model_router.ModelRouteRefused, match="claude, codex, gemini or opencode"):
+    with pytest.raises(model_router.ModelRouteRefused, match="antigravity or cursor"):
         model_router.resolve_model_route("local-cli/notepad")
     host = FakeHost(b"", ok=False)
     model_router.bind_local_cli_broker(_broker(tmp_path, host, codex="C:/tools/codex.exe"))
@@ -169,7 +169,7 @@ def test_the_route_is_recognised_and_garbage_still_refused():
     assert (route.family, route.url, route.provider, route.needs_key) == (
         "local-cli", "local-cli:gemini", "Gemini CLI", False)
     with pytest.raises(model_router.ModelRouteRefused):
-        model_router.resolve_model_route("nowhere/model")
+        model_router.resolve_model_route("not a route")
 
 
 def test_the_picker_row_says_where_the_chat_goes():
@@ -306,7 +306,7 @@ def test_another_assistant_version_is_not_verified():
         local_probe=lambda *_a: False, cli_probe=lambda exe: "C:/tools/%s.exe" % exe,
         version_probe=lambda route: "9.9.9")
     codex = next(row for row in rows if row["id"] == "codex")
-    assert "Codex: updated; ArchHub has not verified this version yet, so chat through it is refused (tested on %s, installed 9.9.9" % (
+    assert "Codex: not verified on this machine (tested on %s, installed 9.9.9)" % (
         model_router._CLI_VERIFIED_VERSIONS["codex"]) in codex["source"]
     claude = next(row for row in rows if row["id"] == "claude-code")
     assert "Claude Code: not verified on this machine (tested on %s, installed 9.9.9)" % (
@@ -376,23 +376,22 @@ def test_a_row_says_checking_while_the_version_is_read():
     assert "Codex: checking its version" in codex["source"]
 
 
-def test_a_codex_chat_on_an_unverified_version_is_refused_before_it_runs(tmp_path, monkeypatch):
-    """717, 2026-09-29: fail closed for Codex -- a new version could run commands
-    in a chat turn again. The turn is refused before Codex is launched."""
+def test_a_codex_chat_on_an_unverified_version_warns_but_still_runs(tmp_path, monkeypatch):
+    """GOV-EQ: unverified CLI versions are warnings for every assistant, not
+    Codex/OpenCode-specific refusals."""
     host = FakeHost(b"About 100 mm.\n")
     order = []
     monkeypatch.setattr(model_router, "installed_cli_version", lambda executable, **_k: "9.9.9")
     model_router.bind_local_cli_broker(_broker(tmp_path, host, codex="C:/tools/codex.exe"))
     try:
-        with pytest.raises(model_router.ModelRouteRefused, match="Codex was updated; ArchHub has not verified this version yet") as refused:
-            model_router.route_chat("local-cli/codex", MESSAGES, before_dispatch=lambda: order.append("guard"),
-                                    cloud_session=None)
-        assert refused.value.reason_code == "unverified_version"
+        answer = model_router.route_chat("local-cli/codex", MESSAGES, before_dispatch=lambda: order.append("guard"),
+                                         cloud_session=None)
+        assert answer["ok"] is True and answer["text"] == "About 100 mm."
         state = model_router.composer_readiness("local-cli/codex", cloud_session=None)
-        assert state["state"] == "unavailable" and "Codex was updated" in state["message"]
+        assert state["state"] == "ready"
     finally:
         model_router.bind_local_cli_broker(None)
-    assert host.calls == [] and order == [], "nothing ran"
+    assert len(host.calls) == 1 and order == ["guard"]
 
 
 def test_a_claude_chat_on_another_version_still_answers(tmp_path, monkeypatch):

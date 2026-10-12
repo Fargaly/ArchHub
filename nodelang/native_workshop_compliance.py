@@ -227,9 +227,11 @@ class NativeWorkshopComplianceRunner:
                      "Native court requires its current accepted pipe peer")
             request, peer = current[1], current[2]
             request_session, binding = server._machine_agent_binding_for_request(request)
-            _require(request_session == session.root_id and entry.runtime == "claude"
+            from .workspace_roots_catalogue import OPEN_AGENT_RUNTIMES
+            allowed_runtimes = frozenset(OPEN_AGENT_RUNTIMES)
+            _require(request_session == session.root_id and entry.runtime in allowed_runtimes
                      and entry.credential_mode == "machine-transport"
-                     and binding.get("runtime") == "claude"
+                     and binding.get("runtime") == entry.runtime
                      and binding.get("external_session_fingerprint") == parameters["sessionFingerprint"]
                      and type(binding.get("expires_at")) in (int, float)
                      and math.isfinite(binding["expires_at"]) and time.time() < binding["expires_at"],

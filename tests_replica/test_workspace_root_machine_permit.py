@@ -286,9 +286,9 @@ def test_an_operation_the_work_does_not_grant_is_refused(runtime):
 
 
 @pytest.mark.parametrize("runtime", [(ROOT_GRANT, ("claude",), True)], indirect=True)
-def test_a_runtime_that_is_not_a_root_writer_is_refused(runtime):
-    with pytest.raises(MachineTransportError, match="not a writer"):
-        _issue(runtime)
+def test_a_runtime_that_is_not_a_root_writer_is_admitted(runtime):
+    issued = _issue(runtime)
+    assert issued["work"] == runtime["work"] and issued["path"] == PATH
 
 
 @pytest.mark.parametrize("runtime", [(ROOT_GRANT, ("codex",), False)], indirect=True)

@@ -26,8 +26,9 @@ import uuid
 
 from .application_machine_transport import MachinePipePeer
 from .cell_authorization import AuthorizationDenied
+from .workspace_roots_catalogue import OPEN_AGENT_RUNTIMES
 
-NATIVE_RUNTIMES = frozenset({"codex", "claude", "gemini", "opencode"})
+NATIVE_RUNTIMES = frozenset(OPEN_AGENT_RUNTIMES)
 IDENTITY_FIELDS = frozenset({"runtime", "external_session_id", "expected_agent_session"})
 SETTLE_FIELDS = IDENTITY_FIELDS | {"permit", "settlement"}
 OWNER_SETTLE_FIELDS = frozenset({"expected_agent_session", "permit", "settlement"})

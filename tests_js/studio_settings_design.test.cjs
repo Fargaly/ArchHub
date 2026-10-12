@@ -26,7 +26,7 @@ const PROVIDERS = [
 ];
 
 async function openSettings({account = null, socialAccounts = [], socialApprovals = [], linkedInAppSaved = false, metaAppSaved = false,
-  linkedInReady = false, metaReady = false} = {}) {
+  linkedInReady = false, metaReady = false, hosts = []} = {}) {
   const manifest = JSON.parse(read('nodelang/studio/compiled/manifest.json'));
   for (const source of ['studio-lm.jsx', 'studio-account.jsx']) {
     const held = manifest.files.find(file => file.source === source);
@@ -91,7 +91,7 @@ async function openSettings({account = null, socialAccounts = [], socialApproval
     refreshTheme:async () => {}, previewThemeToken:async () => {}, restoreThemeRevision:async () => {}, setBaboomStartup:async () => {},
     refreshTopologyCanvas:async () => {}, refreshConversationCatalog:async () => {}, selectTopology:async () => {},
   };
-  win.ARCHHUB_LIVE = {sessions:[], currentGraph:null, hosts:[], connectors:[], graph:{nodes:[], wires:[]},
+  win.ARCHHUB_LIVE = {sessions:[], currentGraph:null, hosts:hosts.map(row => ({...row})), connectors:[], graph:{nodes:[], wires:[]},
     memory:[{id:'m1', text:'Real fact read from the brain.', src:'folder'}], skills:[]};
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
@@ -147,6 +147,32 @@ test('the Settings sidebar is the design tab table, in the design order, and sta
       assert.notEqual(stat.style.whiteSpace, 'nowrap', 'a card stat line wraps instead');
     }
     assert.ok(s.doc.body.textContent.includes('STUDIO \u00b7 20260916-2130-e733a13'), 'the dialog header states the running build');
+  } finally { s.close(); }
+});
+
+// UX-SET2 (installed 2248, 16_Settings_Hosts): the right edge shifted row to row (chip + Start, or the chip
+// alone) and the copy read "open a file and the reads answer" / "no session listening on 48884-48899".
+test('UX-SET2: every Hosts row has the same state and action columns, and plain copy', async () => {
+  const s = await openSettings({hosts:[
+    {id:'revit', name:'Revit', state:'absent', detail:'no session listening on 48884-48899'},
+    {id:'autocad', name:'AutoCAD', state:'absent', detail:'no session listening'},
+    {id:'excel', name:'Excel', state:'installed', detail:'installed \u00b7 open a file and the reads answer'},
+    {id:'outlook', name:'Outlook', state:'installed', detail:'installed \u00b7 open Outlook and the inbox reads answer'},
+    {id:'rhino', name:'Rhino', state:'absent', detail:''},
+  ]});
+  try {
+    const panel = await s.tab('Hosts');
+    const states = [...panel.querySelectorAll('[data-host-state]')];
+    const actions = [...panel.querySelectorAll('[data-host-action]')];
+    assert.equal(states.length, 5, 'one state chip per row');
+    assert.equal(actions.length, 5, 'one action cell per row, empty when there is nothing to start');
+    assert.deepEqual([...new Set(states.map(n => n.style.width))], ['84px'], 'the state chip has one fixed width');
+    assert.deepEqual([...new Set(actions.map(n => n.style.width))], ['62px'], 'the action column has one fixed width');
+    const text = panel.textContent;
+    for (const stale of ['reads answer', '48884', 'no session listening']) assert.equal(text.includes(stale), false, 'no "' + stale + '" on screen');
+    assert.ok(text.includes('installed \u00b7 reads when a file is open'));
+    assert.ok(text.includes('installed \u00b7 reads the inbox when Outlook is open'));
+    assert.ok(text.includes('Not open \u00b7 Start opens it'), 'a startable host says Start opens it');
   } finally { s.close(); }
 });
 

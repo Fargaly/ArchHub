@@ -117,8 +117,9 @@ function wireAsNode(w, i, nodes) {
   const ok = src && dst ? src.t === dst.t || dst.t === 'any' || src.t === 'any' : null;
   return {
     id: w.id || 'wire:' + i, cat: 'wire', isWire: true,
-    title: (src ? src.label || src.id : 'Source unavailable') + ' → ' + (dst ? dst.label || dst.id : 'Target unavailable'),
-    sub: endpointError ? 'connection · endpoint projection unavailable' : 'connection · ' + src.t + (ok ? '' : ' ✕ ' + dst.t),
+    title: (from ? from.title || from.id : 'Source unavailable') + ' → ' + (to ? to.title || to.id : 'Target unavailable'),
+    sub: endpointError ? 'wire · endpoint projection unavailable'
+      : 'wire · ' + (src.label || src.id) + ' → ' + (dst.label || dst.id) + ' · ' + src.t + (ok ? '' : ' ✕ ' + dst.t),
     ins: src ? [{ id:src.id, label:from.title, t:src.t, val:src.label }] : [],
     outs: dst ? [{ id:dst.id, label:to.title, t:dst.t, val:dst.label }] : [],
     sourceRoot:w.from[0], sourceInterface:w.from[1] ?? null,

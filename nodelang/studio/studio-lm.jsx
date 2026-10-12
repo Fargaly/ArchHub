@@ -7294,6 +7294,10 @@ const hostDetail = h => {
   if (name.includes('rhino') || id.includes('rhino')) return 'Start Rhino from ArchHub when needed';
   if (name.includes('blender') || id.includes('blender')) return 'Start Blender from ArchHub when needed';
   if (name.includes('speckle') || id.includes('speckle')) return h.state === 'absent' ? 'Manager not found' : 'Ready to publish with stored account';
+  const said = String(h.detail || '');
+  if (/open a file and the reads answer/i.test(said)) return 'installed \u00b7 reads when a file is open';
+  if (/open Outlook and the inbox reads answer/i.test(said)) return 'installed \u00b7 reads the inbox when Outlook is open';
+  if (/^no session listening\b/i.test(said)) return hostOpenPhrase(h) ? 'Not open \u00b7 Start opens it' : 'Not open';
   if (h.detail) return cleanDetail(h.detail);
   if (h.file && h.file !== '\u2014') return cleanDetail(h.file);
   return hostStateWord(h);
@@ -8683,14 +8687,16 @@ const SettingsHosts = () => {
                 {hostDetail(h)}
               </div>
             </div>
-            <span style={{
+            <span data-host-state="" style={{
               fontFamily:LM.mono, fontSize:9, padding:'2px 7px', borderRadius:LM.rad.xs,
-              background: col + '14', color: col, letterSpacing:'0.04em',
+              background: col + '14', color: col, letterSpacing:'0.04em', width:84, textAlign:'center', flexShrink:0,
             }}>{word}</span>
-            {hostOpenPhrase(h) && (
-              <button type="button" onClick={e => startHost(h, e.currentTarget)}
-                style={{ ...smallBtn(), padding:'3px 9px' }}>Start</button>
-            )}
+            <span data-host-action="" style={{ width:62, display:'flex', justifyContent:'flex-end', flexShrink:0 }}>
+              {hostOpenPhrase(h) && (
+                <button type="button" onClick={e => startHost(h, e.currentTarget)}
+                  style={{ ...smallBtn(), padding:'3px 9px' }}>Start</button>
+              )}
+            </span>
           </div>
         );
       })}

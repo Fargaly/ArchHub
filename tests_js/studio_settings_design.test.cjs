@@ -133,8 +133,19 @@ test('the Settings sidebar is the design tab table, in the design order, and sta
     assert.equal(badge('Providers'), '1 key', 'the Providers badge counts the keyed registry rows');
     assert.equal(badge('Theme'), 'Dark', 'the Theme badge states the mode the Studio draws');
     assert.equal(badge('Brain'), '4 strata \u00b7 1 facts');
-    assert.equal(badge('BABOOM'), 'companion \u00b7 speaks at most 2 times an hour', 'the BABOOM badge states the budget the companion settings state');
+    assert.equal(badge('BABOOM'), '2/h', 'the BABOOM badge is one short fact: the speech budget per hour (UX-SET1)');
+    assert.deepEqual([dialog.style.width, dialog.style.maxWidth, dialog.style.height, dialog.style.maxHeight],
+      ['1200px', '92vw', '780px', '88vh'], 'the dialog grows with the window, within 92vw x 88vh (UX-SET1)');
+    assert.ok(s.sidebar.classList.contains('ah-scroll'), 'the sidebar uses the dark app scrollbar, not the native white one');
     assert.match(badge('Hub'), /^\d\/6 running$/, 'the Hub badge counts the tools whose cards say they run');
+    // UX-SET1 v2 (gate-uxset1-1920x1040, 09_Settings_Hub): 5 + 1 wrap and truncated stat lines.
+    const hub = await s.tab('Hub');
+    assert.equal(hub.querySelector('[data-tool-grid]').style.gridTemplateColumns, 'repeat(3, minmax(0, 1fr))',
+      'the Settings Hub is the same 3 x 2 grid as Home, never 5 + 1');
+    for (const stat of hub.querySelectorAll('[data-tool-stat]')) {
+      assert.notEqual(stat.style.textOverflow, 'ellipsis', 'a card stat line is never cut with an ellipsis');
+      assert.notEqual(stat.style.whiteSpace, 'nowrap', 'a card stat line wraps instead');
+    }
     assert.ok(s.doc.body.textContent.includes('STUDIO \u00b7 20260916-2130-e733a13'), 'the dialog header states the running build');
   } finally { s.close(); }
 });

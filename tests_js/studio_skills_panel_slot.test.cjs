@@ -99,6 +99,48 @@ test('SKILLS-ONE: the Skills panel lists the same skills Search counts, and the 
   } finally { studio.close(); }
 });
 
+// SKILLS-ONE v2 (installed 2248, 05_rail_Skills / 06_rail_Search): the panel opened mid-read and said
+// "0 SAVED" under "Loading catalogue…" while Search counted 83 a moment later. Rows here use the
+// catalogue's real shape (name, source, description, path; no id/args/runs/when).
+const REAL_ROWS = Array.from({length:83}, (_, i) => ({name:'skill-' + i, source:i % 2 ? 'claude' : 'codex',
+  description:'What skill ' + i + ' does.', path:'C:/skills/skill-' + i + '/SKILL.md'}));
+test('SKILLS-ONE v2: saved skills are read at start, so the panel opens on the list Search counts', async () => {
+  let calls = 0;
+  const studio = await mountStudio(async () => { calls += 1; return REAL_ROWS.map(row => ({...row})); });
+  try {
+    for (let i = 0; i < 4; i += 1) await studio.settle();
+    assert.equal(calls, 1, 'Studio reads the saved skills once at start, before the panel opens');
+    await openRail(studio, 'Skills');
+    const panel = studio.doc.querySelector('[title="Skills"]').closest('aside').children[1];
+    assert.equal(calls, 1, 'opening the panel does not read the list again');
+    assert.equal(panel.textContent.includes('Loading catalogue'), false, 'no loading line over a list already read');
+    assert.equal(panel.querySelector('[data-skills-count]').textContent.trim(), '83 SAVED');
+    const rows = panel.querySelectorAll('[data-skill-row]');
+    assert.equal(rows.length, 83, 'every saved skill is listed');
+    assert.ok(rows[0].textContent.includes('skill-0') && rows[0].textContent.includes('What skill 0 does.'), 'a row shows the name and description');
+    assert.equal(panel.textContent.includes('args:'), false, 'no blank seed fields (args/runs/when) on real rows');
+    await openRail(studio, 'Search');
+    const skillsRow = [...studio.doc.querySelectorAll('button')].find(b => b.firstElementChild?.textContent === 'skills');
+    assert.equal(skillsRow.lastElementChild.textContent, '83', 'Search counts the same 83');
+  } finally { studio.close(); }
+});
+
+test('SKILLS-ONE v2: while the list is still being read the header never says 0 SAVED', async () => {
+  let answer;
+  const studio = await mountStudio(() => new Promise(resolve => { answer = resolve; }));
+  try {
+    await openRail(studio, 'Skills');
+    const panel = () => studio.doc.querySelector('[title="Skills"]').closest('aside').children[1];
+    assert.equal(panel().querySelector('[data-skills-count]').textContent.trim(), 'READING\u2026', 'unread is not zero');
+    assert.equal(studio.doc.querySelector('[data-skills-empty]'), null, 'no empty state before the list answers');
+    studio.flush(() => answer(REAL_ROWS.slice(0, 3).map(row => ({...row}))));
+    for (let i = 0; i < 5; i += 1) await studio.settle();
+    assert.equal(panel().querySelector('[data-skills-count]').textContent.trim(), '3 SAVED');
+    assert.equal(panel().querySelectorAll('[data-skill-row]').length, 3);
+    assert.equal(panel().textContent.includes('Loading catalogue'), false, 'the loading line clears');
+  } finally { studio.close(); }
+});
+
 test('SKILLS-ONE: zero saved skills shows a real empty state, not a blank panel', async () => {
   const studio = await mountStudio(async () => []);
   try {

@@ -394,6 +394,9 @@ const StudioLM = () => {
   React.useEffect(() => {
     const read = () => { if (!window.ARCHHUB_HOSTS_READ) loadCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS); };
     read();
+    // SKILLS-ONE v2 (installed 2248): the Skills panel opened mid-read and said "0 SAVED" while Search,
+    // a moment later, counted 83. Read the saved skills once at start; the panel and Search share the list.
+    loadCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS);
     const timer = setInterval(() => { if (window.ARCHHUB_HOSTS_READ) clearInterval(timer); else read(); }, 10000);
     return () => clearInterval(timer);
   }, []);
@@ -1807,7 +1810,8 @@ const useCatalogueVersion = () => React.useSyncExternalStore(
   () => catalogueVersion);
 const loadCatalogue = (loaderName, items) => {
   const load = window[loaderName];
-  if (typeof load !== 'function') return Promise.resolve();
+  // No loader (a hosted page): the list ARCHHUB_LIVE holds is the whole list, so it counts as read.
+  if (typeof load !== 'function') { if (!catalogueStates.has(loaderName)) catalogueStates.set(loaderName, {loading:false, error:'', read:true}); return Promise.resolve(); }
   let state = catalogueStates.get(loaderName);
   if (state?.pending) return state.pending;
   state = {loading:true, error:'', pending:null};
@@ -1826,6 +1830,8 @@ const loadCatalogue = (loaderName, items) => {
       throw new Error('The catalogue response is invalid.');
     }
     items.splice(0, items.length, ...rows);
+    state.read = true;
+    if (loaderName === 'ARCHHUB_LOAD_SKILLS' && window.ARCHHUB_LIVE && window.ARCHHUB_LIVE.skills !== items) window.ARCHHUB_LIVE.skills = items;
     if (loaderName === 'ARCHHUB_LOAD_HOSTS') {
       window.ARCHHUB_HOSTS_READ = true;
       connectors.splice(0, connectors.length, ...result.connectors);
@@ -1837,11 +1843,11 @@ const loadCatalogue = (loaderName, items) => {
 };
 const withLiveCatalogue = (loaderName, items, View) => props => {
   useCatalogueVersion();
-  React.useEffect(() => {loadCatalogue(loaderName, items);}, []);
+  React.useEffect(() => {if (!catalogueStates.get(loaderName)?.read) loadCatalogue(loaderName, items);}, []);
   const status = catalogueStates.get(loaderName) || {loading:false, error:''};
   // One element: the Sidebar grid is "44px 1fr", so a loading line beside the panel would push the panel into the rail column.
   return <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
-    {status.loading && <p role="status" style={{ margin:0, padding:'8px 12px 0', fontFamily:LM.mono, fontSize:10, color:LM.inkMuted }}>Loading catalogue…</p>}
+    {status.loading && !status.read && <p role="status" style={{ margin:0, padding:'8px 12px 0', fontFamily:LM.mono, fontSize:10, color:LM.inkMuted }}>Loading catalogue…</p>}
     {status.error && <p role="alert" style={{ margin:0, padding:'8px 12px 0', fontSize:12, color:LM.inkSoft }}>{status.error} <button onClick={() => loadCatalogue(loaderName, items)}>Retry</button></p>}
     <View {...props} catalogue={status}/>
   </div>;
@@ -1851,7 +1857,8 @@ const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, ({
   <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
     <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:LM.sp.sm }}>
       <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Skills</span>
-      <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>{LM_SAVED_SKILLS.length} SAVED</span>
+      <span data-skills-count="" style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>
+        {catalogue.read ? LM_SAVED_SKILLS.length + ' SAVED' : catalogue.error ? 'NOT READ' : 'READING\u2026'}</span>
       <div style={{ flex:1 }}/>
     </div>
     <div style={{ padding:'0 10px 8px' }}>
@@ -1864,8 +1871,8 @@ const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, ({
       </div>
     </div>
     <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'0 6px 8px' }}>
-      {LM_SAVED_SKILLS.map(s => (
-        <div key={s.id} draggable="true" style={{
+      {LM_SAVED_SKILLS.map((s, index) => (
+        <div key={s.id || s.path || ((s.source || '') + ':' + (s.name || index))} data-skill-row="" title={s.path || undefined} draggable="true" style={{
           padding:'7px 9px', borderRadius:LM.rad.sm, cursor:'grab', marginBottom:1,
           background:'transparent', borderLeft:`2px solid transparent`,
         }}
@@ -1873,15 +1880,14 @@ const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, ({
         onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderLeftColor = 'transparent'; }}>
           <div style={{ display:'flex', alignItems:'center', gap:7 }}>
             <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:11 }}>✦</span>
-            <span style={{ flex:1, fontSize:12.5, color:LM.ink }}>{s.name}</span>
-            <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>{s.runs}</span>
+            <span style={{ flex:1, minWidth:0, fontSize:12.5, color:LM.ink, overflowWrap:'anywhere' }}>{s.name}</span>
+            {s.source && <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>{s.source}</span>}
           </div>
-          <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, paddingLeft:18, marginTop:1, letterSpacing:'0.04em' }}>
-            <span style={{ color:LM.accent+'aa' }}>args:</span> {s.args} <span style={{ color:LM.inkDim, margin:'0 5px' }}>·</span> {s.when}
-          </div>
+          {s.description && <div style={{ fontSize:11, color:LM.inkSoft, paddingLeft:18, marginTop:2, lineHeight:1.4,
+            display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', overflow:'hidden' }}>{s.description}</div>}
         </div>
       ))}
-      {!LM_SAVED_SKILLS.length && !catalogue.loading && !catalogue.error && <div data-skills-empty="" role="status" style={{
+      {!LM_SAVED_SKILLS.length && catalogue.read && <div data-skills-empty="" role="status" style={{
         padding:'14px 10px', fontFamily:LM.serif, fontStyle:'italic', fontSize:13.5, color:LM.inkSoft, lineHeight:1.45 }}>
         No saved skills yet.
         <div style={{ fontFamily:LM.sans, fontStyle:'normal', fontSize:12, color:LM.inkMuted, marginTop:4 }}>
@@ -2255,7 +2261,7 @@ const ToolCard = ({ tool, onOpen }) => (
       lineHeight:1.35, minHeight:34, overflow:'hidden', display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical'}}>
       {tool.description}</div>
     <div data-tool-stat="" title={tool.cardStat ?? tool.statLine ?? tool.stat ?? undefined} style={{fontFamily:LM.mono, fontSize:10.5,
-      color:LM.inkMuted, letterSpacing:'0.03em', minHeight:14, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+      color:LM.inkMuted, letterSpacing:'0.03em', lineHeight:1.4, minHeight:30, whiteSpace:'normal', overflowWrap:'anywhere'}}>
       {tool.cardStat ?? tool.statLine ?? tool.stat}</div>
     <div style={{marginTop:'auto', display:'flex', justifyContent:'flex-end'}}>
       <span data-tool-open="" aria-hidden="true" style={{fontFamily:LM.mono, fontSize:12, color:LM.inkMuted}}>{'\u2192'}</span>
@@ -6644,7 +6650,8 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
     ...(canOpenSystem ? [['system',      'System',      systemNodeBadge]] : []),
     ['account',     'Account',     (account || {}).graphTier || null],
     ['memory',      'Brain',       `${(window.BRAIN_STRATA || []).length} strata \u00b7 ${LM_MEMORY.length - (store.forgotten || []).length} facts`],
-    ['baboom',      'BABOOM',      `companion · speaks at most ${baboomMaxSpeaks(personal)} times an hour`],
+    // A badge is one short fact; the sentence lives in the tab (it wrapped to 3 lines in the sidebar).
+    ['baboom',      'BABOOM',      `${baboomMaxSpeaks(personal)}/h`],
     ['team',        'Team',        null],
     ['profile',     'Profile',     'Architect'],
     ['permissions', 'Permissions', null],
@@ -6664,7 +6671,8 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
     }}>
       {/* A modal over a live screen (every settings tool opens here): say so, so nothing behind it is reachable as if open. */}
       <div role="dialog" aria-modal="true" aria-label="Settings" onClick={e => e.stopPropagation()} style={{
-        width:920, maxWidth:'95%', height:580, maxHeight:'90%',
+        // UX-SET1: the dialog grows with the window (920×580 left a scrolled sidebar and truncated cards at 1920).
+        width:1200, maxWidth:'92vw', height:780, maxHeight:'88vh',
         background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.xl,
         overflow:'hidden', boxShadow:'0 30px 80px rgba(0,0,0,.6)',
         display:'grid', gridTemplateColumns:'208px 1fr', gridTemplateRows:'46px 1fr',
@@ -6678,7 +6686,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
             borderRadius:LM.rad.sm, cursor:'pointer', color:LM.inkSoft, fontSize:12,
           }}>✕</button>
         </div>
-        <div style={{ gridColumn:'1', gridRow:'2', borderRight:`1px solid ${LM.line}`, padding:'10px 8px', overflow:'auto' }}>
+        <div className="ah-scroll" data-settings-nav="" style={{ gridColumn:'1', gridRow:'2', borderRight:`1px solid ${LM.line}`, padding:'10px 8px', overflow:'auto' }}>
           {tabs.map(([id, label, badge]) => (
             <button key={id} onClick={() => setTab(id)} style={{
               width:'100%', padding:'7px 11px', borderRadius:LM.rad.sm, border:0,
@@ -6693,7 +6701,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
           ))}
         </div>
         <div className="ah-scroll" style={{ gridColumn:'2', gridRow:'2', overflow:'auto', padding:'20px 24px 24px' }}>
-          {tab === 'hub'         && <SettingsHub toolRows={toolRows} onClose={onClose} onOpenTool={onOpenTool} onOpenToolGraph={onOpenToolGraph}/>}
+          {tab === 'hub'         && <SettingsHub toolRows={toolRows} onClose={onClose} onOpenTool={onOpenTool} onOpenToolGraph={onOpenToolGraph} columns={3}/>}
           {tab === 'system'      && <SettingsSystem graph={authorityState?.graph || LM_GRAPH} onClose={onClose} onOpenToolGraph={onOpenToolGraph}/>}
           {tab === 'account'     && <SettingsAccount account={account} setAccount={setAccount} onSignOut={onSignOut}/>}
           {tab === 'memory'      && <SettingsMemory store={store} patch={patch}/>}

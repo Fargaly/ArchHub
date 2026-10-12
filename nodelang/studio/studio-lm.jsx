@@ -2433,6 +2433,10 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, onModel
   const {mode, conversationRoot, target} = view;
   const effectiveMode = String(session?.id || '').startsWith('system:') ? 'system' : mode;
   const setMode = mode => updateView({mode});
+  const [systemArrangeSummary, setSystemArrangeSummary] = React.useState(null);
+  React.useEffect(() => {
+    if (effectiveMode !== 'system') setSystemArrangeSummary(null);
+  }, [effectiveMode, session?.id]);
   const workshopState = useWorkshopProjection();
   const workshops = workshopState?.workshops || [];
   const workshop = workshops.find(row => row.root === conversationRoot) ||
@@ -2460,7 +2464,8 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, onModel
         setConversationRoot={root => updateView({conversationRoot:root, mode:'chat', target:''})}
         setPickerOpen={setPickerOpen} onHome={onHome} onNewSession={onNewSession}
         onSettings={onSettings}
-        systemAllowed={systemAllowed(authorityState?.canvas, graph)}/>
+        systemAllowed={systemAllowed(authorityState?.canvas, graph)}
+        systemArrangeSummary={systemArrangeSummary}/>
       {effectiveMode === 'chat' && workshop && window.WorkshopView ? (
         <window.WorkshopView key={JSON.stringify([session.id, workshopState.canvas.graph_id,
           workshopState.canvas.root, workshop.root])} state={workshopState} descriptor={workshop} target={target}
@@ -2470,7 +2475,7 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, onModel
           sel={wsSel} setSel={setWsSel}/>
       ) : (
         <>
-          <NodeCanvas key={JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas), effectiveMode === 'system'])} system={effectiveMode === 'system'} focusId={focusId} setFocusId={setFocusId} pendingReveal={pendingCanvasReveal} clearPendingReveal={clearPendingCanvasReveal} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model} onViewportChange={updateCanvasViewport} fitOnOpen/>
+          <NodeCanvas key={JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas), effectiveMode === 'system'])} system={effectiveMode === 'system'} focusId={focusId} setFocusId={setFocusId} pendingReveal={pendingCanvasReveal} clearPendingReveal={clearPendingCanvasReveal} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model} onViewportChange={updateCanvasViewport} fitOnOpen onSystemArrangeSummary={setSystemArrangeSummary}/>
           <NodeRail node={focusNode} hiddenWork={!focusNode && authorityState?.canvas?.selection_hidden === true}
             graph={graph} canvas={authorityState?.canvas} session={session} sessionRows={sessionRows}
             model={model} setPickerOpen={setPickerOpen} readiness={readiness}
@@ -3287,6 +3292,7 @@ const chooseWorkshopMode = (key, {mode, conversationRoot = '', workshops = [], s
 
 // Workspace header uses workspace tabs and one compact conversation menu.
 const WsHeader = ({ session, model, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, mode, setMode, setPickerOpen, onHome, onNewSession, onSettings, systemAllowed = false,
+  systemArrangeSummary = null,
   workshops = [], conversationRoot = '', setConversationRoot, workshopModel, conversationNotice = '',
   workshopUnavailable = '' }) => {
   if (mode === 'system') return (
@@ -3301,9 +3307,9 @@ const WsHeader = ({ session, model, openTabs, sessionRows = LM_SESSIONS, setOpen
     <span style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>›</span>
     <span style={{...crumbBtn(true), cursor:'default'}}>ArchHub application</span>
     <div style={{flex:1}}/>
-    <span style={{fontFamily:LM.mono, fontSize:10, color:LM.ok, border:`1px solid ${LM.ok}55`, borderRadius:LM.rad.sm, padding:'3px 8px'}}>
-      arranged · 24 nodes · 0 overlaps
-    </span>
+    {systemArrangeSummary && <span style={{fontFamily:LM.mono, fontSize:10, color:LM.ok, border:`1px solid ${LM.ok}55`, borderRadius:LM.rad.sm, padding:'3px 8px'}}>
+      arranged · {systemArrangeSummary.cards} nodes · {systemArrangeSummary.overlaps} overlaps · {systemArrangeSummary.clipped} clipped · {systemArrangeSummary.crossings} ≈ crossings
+    </span>}
     <span style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, padding:'3px 8px'}}>
       Esc · back to Settings
     </span>
@@ -3516,8 +3522,10 @@ const canvasDimmedIds = (nodeIds, wires, focusId, selectedIds = []) => {
   return new Set(nodeIds.filter(id => !lit.has(id)));
 };
 const ARRANGE_ALL_PINNED = 'Every chosen card was placed by hand. Arrange leaves hand-placed cards where they are.';
-const SYSTEM_ARRANGE_TOAST = 'Arranged 24 nodes · 6 layers · 0 overlaps · 0 clipped · 12 crossings · Undo';
-const SYSTEM_PINNED_TOAST = '3 pinned cards skipped';
+const SYSTEM_ARRANGE_TOAST = 'Arranged 24 nodes · 6 layers · 0 overlaps · 0 clipped · ≈ crossings · Undo';
+const pinnedArrangeMessage = (pinnedCount, movedCount = 0) => pinnedCount === 1
+  ? `Arrange kept 1 pinned card in place${movedCount ? ` and moved ${movedCount}.` : '.'}`
+  : `Arrange kept ${pinnedCount} pinned cards in place${movedCount ? ` and moved ${movedCount}.` : '.'}`;
 
 const canvasConnectedNodeIds = (nodeIds, wires, seeds, whole) => {
   const adjacency = new Map(nodeIds.map(id => [id, new Set()]));
@@ -3565,6 +3573,41 @@ const canvasRevealBounds = (ids, positions, sizes, viewport, currentZoom, curren
   pan.x = adjust(left, right, usable.left, usable.right, pan.x);
   pan.y = adjust(top, bottom, usable.top, usable.bottom, pan.y);
   return {zoom:targetZoom, pan, bounds};
+};
+const computeLayoutSummary = (ids, positions, sizes, wires, viewport, zoom, pan) => {
+  const boxes = ids.filter(id => positions[id] && sizes[id]).map(id => ({
+    id, x:positions[id].x, y:positions[id].y, w:sizes[id].w, h:sizes[id].h,
+  }));
+  const overlaps = [];
+  for (let a = 0; a < boxes.length; a += 1) for (let b = a + 1; b < boxes.length; b += 1) {
+    const p = boxes[a], q = boxes[b];
+    if (p.x < q.x + q.w && q.x < p.x + p.w && p.y < q.y + q.h && q.y < p.y + p.h) overlaps.push([p.id, q.id]);
+  }
+  // The viewport is the canvas's own rect (the inspector is already outside it): judge clipping
+  // against the same reserved bands canvasFitBounds fits into, with a 2 px rounding tolerance.
+  const usable = viewport ? {left:24 - 2, top:CANVAS_FIT_TOP - 2,
+    right:viewport.width - 24 + 2, bottom:viewport.height - CANVAS_FIT_BOTTOM + 2} : null;
+  const clipped = usable ? boxes.filter(box => {
+    const left = pan.x + box.x * zoom, top = pan.y + box.y * zoom;
+    const right = pan.x + (box.x + box.w) * zoom, bottom = pan.y + (box.y + box.h) * zoom;
+    return left < usable.left || top < usable.top || right > usable.right || bottom > usable.bottom;
+  }).length : 0;
+  const byId = new Map(boxes.map(box => [box.id, box]));
+  const segments = wires.map(wire => {
+    const from = byId.get(wire.from?.[0]), to = byId.get(wire.to?.[0]);
+    return from && to ? {
+      a:{x:from.x + from.w, y:from.y + from.h / 2},
+      b:{x:to.x, y:to.y + to.h / 2},
+    } : null;
+  }).filter(Boolean);
+  const ccw = (a, b, c) => (c.y - a.y) * (b.x - a.x) > (b.y - a.y) * (c.x - a.x);
+  const crosses = (one, two) => ccw(one.a, two.a, two.b) !== ccw(one.b, two.a, two.b) &&
+    ccw(one.a, one.b, two.a) !== ccw(one.a, one.b, two.b);
+  let crossings = 0;
+  for (let a = 0; a < segments.length; a += 1) for (let b = a + 1; b < segments.length; b += 1) {
+    if (crosses(segments[a], segments[b])) crossings += 1;
+  }
+  return {cards:boxes.length, overlaps:overlaps.length, clipped, crossings};
 };
 // Arrange is graph-topological, not frame-topological: old projection group
 // labels are decoration only. Sources land left, sinks land right, and each
@@ -3623,19 +3666,27 @@ const canvasArrangePositions = (ids, positions, sizes, allIds, wires, groupOf = 
       });
     }
   }
-  const colGap = 112, rowGap = 44, local = {};
-  const layerWidths = layers.map(ids => Math.max(0, ...ids.map(id => sizes[id].w)));
-  const layerX = [];
-  for (let li = 0, x = 0; li < layers.length; li += 1) {
-    layerX[li] = x;
-    x += layerWidths[li] + colGap;
-  }
-  let packedWidth = Math.max(0, ...layers.map((ids, li) => layerX[li] + layerWidths[li]));
-  let packedHeight = 0;
+  const colGap = 76, rowGap = 44, local = {};
+  const visualColumns = [];
   for (let li = 0; li < layers.length; li += 1) {
+    const ids = layers[li];
+    const maxRows = ids.length > 8 ? 5 : ids.length;
+    for (let start = 0; start < ids.length; start += maxRows) {
+      visualColumns.push(ids.slice(start, start + maxRows));
+    }
+  }
+  const columnWidths = visualColumns.map(ids => Math.max(0, ...ids.map(id => sizes[id].w)));
+  const columnX = [];
+  for (let ci = 0, x = 0; ci < visualColumns.length; ci += 1) {
+    columnX[ci] = x;
+    x += columnWidths[ci] + colGap;
+  }
+  let packedWidth = Math.max(0, ...visualColumns.map((ids, ci) => columnX[ci] + columnWidths[ci]));
+  let packedHeight = 0;
+  for (let ci = 0; ci < visualColumns.length; ci += 1) {
     let y = 0;
-    for (const id of layers[li]) {
-      local[id] = {x:layerX[li], y};
+    for (const id of visualColumns[ci]) {
+      local[id] = {x:columnX[ci], y};
       y += sizes[id].h + rowGap;
     }
     packedHeight = Math.max(packedHeight, Math.max(0, y - rowGap));
@@ -3694,9 +3745,10 @@ const writeCanvasLayoutTrace = (scope, burst) => {
   } catch (error) { /* a session with no storage still draws and still saves the canvas */ }
 };
 
-const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingReveal = null, setLibraryOpen, userNodes = [], addNodeFromLibrary, model, system = false, onViewportChange = null, fitOnOpen = false }) => {
+const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingReveal = null, setLibraryOpen, userNodes = [], addNodeFromLibrary, model, system = false, onViewportChange = null, fitOnOpen = false, onSystemArrangeSummary = null }) => {
   const authorityState = useStudioProjection();
   const projectedGraph = authorityState?.graph || LM_GRAPH;
+  const setSystemArrangeSummary = onSystemArrangeSummary;
   // The owner marks every top-level card with who placed it (graph shape, not a list of names).
   // The canvas draws the user's cards; the application's own -- map domains, core values,
   // registries, agent sessions -- are the founder's System view, framed by domain. Only the
@@ -4502,8 +4554,9 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     setSelectedIds(canvasConnectedNodeIds(nodeIds, graph.wires, seeds, whole));
   };
   const runPendingArrangeRef = React.useRef(null);
-  // Arrange all is explicitly an unpinning clean layout at this canvas level.
-  const arrangeMovable = ids => ids;
+  const nodeByRoot = new Map(allNodes.map(node => [node.id, node]));
+  const arrangeMovable = ids => ids.filter(id => !nodeByRoot.get(id)?.pinned);
+  const arrangePinnedCount = ids => ids.filter(id => nodeByRoot.get(id)?.pinned).length;
   const arrangeFrameOf = id => '';
   const arrangeNeedsRefresh = () => needsRefresh.current || layoutNeedsRefresh ||
     !!(authority ? authority.getSnapshot() : normal?.getSnapshot()?.topology)?.requires_refresh;
@@ -4514,12 +4567,10 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     if (!wanted || arrangeRunning.current) return false;
     if (!alive.current || !scopeStillCurrent()) { pendingArrange.current = null; return false; }
     if (arrangeNeedsRefresh()) {
-      pendingArrange.current = null;
       if (scopeStillCurrent()) setLayoutError('Refresh the canvas to reconcile any saved positions.');
       return false;
     }
     if (!canSaveLayout) {
-      pendingArrange.current = null;
       if (scopeStillCurrent()) setLayoutError('This connection cannot save node positions.');
       return false;
     }
@@ -4546,13 +4597,32 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     if (allNodes.some(node => positions[node.id]?.x !== node.x || positions[node.id]?.y !== node.y)) return false;
     pendingArrange.current = null;
     const movable = arrangeMovable(liveIds);
-    if (!movable.length) { setLayoutError(ARRANGE_ALL_PINNED); return false; }
+    const pinnedCount = arrangePinnedCount(liveIds);
+    if (!movable.length) { setLayoutError(pinnedArrangeMessage(pinnedCount)); return false; }
     arrangeRunning.current = true;
     setLayoutError('');
     try {
       const before = Object.fromEntries(movable.map(id => [id, {...positions[id]}]));
       const next = canvasArrangePositions(movable, positions, sizes, allNodes.map(node => node.id), graph.wires, arrangeFrameOf);
+      let summaryZoom = zoom, summaryPan = pan;
+      if (wanted.options?.fitAfter && wrapRef.current) {
+        const fit = canvasFitBounds(allIds, {...positions, ...next}, sizes, wrapRef.current.getBoundingClientRect());
+        summaryZoom = fit.zoom; summaryPan = fit.pan;
+        setZoom(fit.zoom); setPan(fit.pan);
+      }
       await savePositions(next, before, revision, true, false, 'arrange');
+      if (pinnedCount && scopeStillCurrent()) setLayoutError(pinnedArrangeMessage(pinnedCount, movable.length));
+      if (system && setSystemArrangeSummary && wrapRef.current) {
+        setSystemArrangeSummary(computeLayoutSummary(
+          allNodes.map(node => node.id),
+          {...positions, ...next},
+          sizes,
+          graph.wires,
+          wrapRef.current.getBoundingClientRect(),
+          summaryZoom,
+          summaryPan,
+        ));
+      }
       return true;
     } catch (error) {
       if (scopeStillCurrent()) setLayoutError(error.message || 'Arrange could not be confirmed.');
@@ -4575,6 +4645,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     pendingArrange.current = null;
     arrangeRunning.current = false;
   }, [scopeKey]);
+  const allIds = allNodes.map(node => node.id);
   // Cards that intersect by their DRAWN size (content + port band). Nothing moves on its own: the canvas says so
   // and offers Arrange, the one user-initiated write that lays them out by the same measured sizes.
   const overlapCount = (() => {
@@ -4587,40 +4658,76 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     }
     return hit.size;
   })();
-  const arrangeIds = async ids => {
-    if (!alive.current || !scopeStillCurrent() || !ids.length) return;
-    if (!canSaveLayout) { setLayoutError('This connection cannot save node positions.'); return; }
+  const arrangeIds = async (ids, options = {}) => {
+    if (!alive.current || !scopeStillCurrent() || !ids.length) return false;
+    if (!canSaveLayout) { if (!options.silent) setLayoutError('This connection cannot save node positions.'); return false; }
     const liveIds = ids.filter(id => allNodes.some(node => node.id === id));
-    if (!liveIds.length) return;
+    if (!liveIds.length) return false;
     if (liveIds.length > MAX_LAYOUT_NODES) {
-      setLayoutError('Move or arrange at most 2048 nodes at a time.'); return;
+      if (!options.silent) setLayoutError('Move or arrange at most 2048 nodes at a time.'); return false;
     }
     if (arrangeNeedsRefresh()) {
-      pendingArrange.current = null;
-      setLayoutError('Refresh the canvas to reconcile any saved positions.'); return;
+      if (!options.silent) setLayoutError('Refresh the canvas to reconcile any saved positions.'); return false;
     }
     // Foreign-busy (transport held by what is not our save): refuse, never queue.
     if (transportBusy() && !saving.current && !queuedSave.current && !burstRef.current) {
-      setLayoutError('Wait for the current change, then try again.'); return;
+      if (!options.silent) setLayoutError('Wait for the current change, then try again.'); return false;
     }
     // Our-save busy: remember one click (latest intent wins, runs once).
     if (flushLayoutBurst() || saving.current || queuedSave.current || burstRef.current) {
-      pendingArrange.current = {ids: [...liveIds]};
-      setLayoutError('Arrange will run after the current save finishes.');
-      return;
+      pendingArrange.current = {ids: [...liveIds], options};
+      if (!options.silent) setLayoutError('Arrange will run after the current save finishes.');
+      return false;
     }
     if (allNodes.some(node => positions[node.id]?.x !== node.x || positions[node.id]?.y !== node.y)) {
-      setLayoutError('The canvas is receiving new positions. Try Arrange again.'); return;
+      if (!options.silent) setLayoutError('The canvas is receiving new positions. Try Arrange again.'); return false;
     }
-    if (graph.wires.length > 4096) { setLayoutError('Arrange supports up to 4096 visible wires. Open a smaller scope.'); return; }
+    if (graph.wires.length > 4096) { if (!options.silent) setLayoutError('Arrange supports up to 4096 visible wires. Open a smaller scope.'); return false; }
     const movable = arrangeMovable(liveIds);
-    if (!movable.length) { setLayoutError(ARRANGE_ALL_PINNED); return; }
+    const pinnedCount = arrangePinnedCount(liveIds);
+    if (!movable.length) { if (!options.silent) setLayoutError(pinnedArrangeMessage(pinnedCount)); return false; }
     const expectedRevision = revision, sizes = measureCards();
-    if (!sizes) return;
+    if (!sizes) return false;
     const before = Object.fromEntries(movable.map(id => [id, {...positions[id]}]));
     const next = canvasArrangePositions(movable, positions, sizes, allNodes.map(node => node.id), graph.wires, arrangeFrameOf);
-    await savePositions(next, before, expectedRevision, true, false, 'arrange');
+    let summaryZoom = zoom, summaryPan = pan;
+    if (options.fitAfter && wrapRef.current) {
+      try {
+        const fit = canvasFitBounds(allIds, {...positions, ...next}, sizes, wrapRef.current.getBoundingClientRect());
+        summaryZoom = fit.zoom; summaryPan = fit.pan;
+        setZoom(fit.zoom); setPan(fit.pan);
+      } catch (error) { if (!options.silent) setLayoutError(error.message); }
+    }
+    // Ping v4c item 2: success only when the layout write is confirmed; a refused, busy or
+    // stale save restores the confirmed layout, publishes no summary and lets auto-arrange retry.
+    const saved = await savePositions(next, before, expectedRevision, true, false, 'arrange');
+    if (saved === false) return false;
+    if (pinnedCount && !options.silent) setLayoutError(pinnedArrangeMessage(pinnedCount, movable.length));
+    if (system && setSystemArrangeSummary && wrapRef.current) {
+      setSystemArrangeSummary(computeLayoutSummary(
+        allNodes.map(node => node.id),
+        {...positions, ...next},
+        sizes,
+        graph.wires,
+        wrapRef.current.getBoundingClientRect(),
+        summaryZoom,
+        summaryPan,
+      ));
+    }
+    return true;
   };
+  const allIdsKey = allIds.join('|');
+  const systemAutoArrangeKey = React.useMemo(() => (
+    showingSystem && allIdsKey ? JSON.stringify([scopeKey, allIdsKey, graph.wires.length]) : ''
+  ), [showingSystem, scopeKey, allIdsKey, graph.wires.length]);
+  const systemAutoArrangeDone = React.useRef('');
+  React.useEffect(() => {
+    if (!systemAutoArrangeKey || systemAutoArrangeDone.current === systemAutoArrangeKey) return;
+    if (!allIds.length || !allIds.every(id => Number.isFinite(cardHeights[id]))) return;
+    arrangeIds(allIds, {fitAfter:true, silent:true}).then(arranged => {
+      if (arranged) systemAutoArrangeDone.current = systemAutoArrangeKey;
+    });
+  }, [systemAutoArrangeKey, allIdsKey, cardHeights, layoutNeedsRefresh, canSaveLayout]);
   // Undo / Redo are the graph's own history (07a1364), not a positions-only reset: every recorded change on
   // this canvas -- a move, an Arrange, a new card, a wire, a value -- is taken back by the same route.
   const history = authorityState?.canvas?.action_history;
@@ -4658,7 +4765,6 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       if (scopeStillCurrent()) { setLayoutError(''); setWireError(''); setLayoutNeedsRefresh(false); }
     } catch (error) { if (scopeStillCurrent()) setLayoutError(error.message || 'The canvas could not be refreshed.'); }
   };
-  const allIds = allNodes.map(node => node.id);
   // Open fitted (founder window 2026-10-12: a graph opened at 66% under the toolbar, cut at the left).
   // Once per scope, after the cards have measured; never above 100%; a stored view is kept as left.
   React.useEffect(() => {
@@ -4984,6 +5090,9 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
           return canvasClampZoom(next);
         });
       }} onFit={() => fitIds(selected.size ? [...selected] : allIds)}
+        onArrange={() => arrangeIds(allIds, {fitAfter:true})}
+        arrangeDisabled={layoutNeedsRefresh || !canSaveLayout || !allIds.length}
+        arrangeWhy={layoutWhy(noNodesWhy)}
         fitLabel={selected.size ? 'Fit selection' : 'Fit all nodes'} setLibraryOpen={setLibraryOpen}/>
       <MiniMap pan={pan} zoom={zoom} positions={positions} allNodes={allNodes}/>
       <CanvasAddBox setLibraryOpen={setLibraryOpen}/>
@@ -5005,6 +5114,8 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     </div>
   );
 };
+
+const CanvasContextHint = () => null;
 
 // Top-left hint strip (under the toolbar) — reminds the user of the canvas affordances.
 // Lives top-left, NOT bottom-left, so it never collides with the wide bottom-center composer.
@@ -5760,7 +5871,7 @@ const StagePreview = () => (
 );
 
 // ─── canvas toolbar (TOP-LEFT) ───
-const CanvasToolbar = ({ zoom, setZoom, onFit, fitLabel, setLibraryOpen, undo, redo }) => (
+const CanvasToolbar = ({ zoom, setZoom, onFit, fitLabel, onArrange, arrangeDisabled = false, arrangeWhy = 'Arrange', setLibraryOpen, undo, redo }) => (
   <div data-no-pan style={{
     position:'absolute', left:14, top:14, display:'flex', gap:LM.sp.xs,
     background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:7, padding:LM.sp.xs,
@@ -5772,6 +5883,9 @@ const CanvasToolbar = ({ zoom, setZoom, onFit, fitLabel, setLibraryOpen, undo, r
       {Math.round(zoom * 100)}%
     </div>
     <button onClick={(e) => { e.stopPropagation(); onFit(); }} title={fitLabel} aria-label={fitLabel} style={toolBtn()}>{'\u27f2'}</button>
+    <button disabled={arrangeDisabled} onClick={(e) => { e.stopPropagation(); onArrange(); }}
+      title={arrangeDisabled ? arrangeWhy : 'Arrange'} aria-label="Arrange"
+      style={{...toolBtn(), width:62, fontFamily:LM.mono, fontSize:10, color:arrangeDisabled ? LM.inkMuted : LM.accent}}>Arrange</button>
     <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
     {[['Undo', '\u21b6', undo], ['Redo', '\u21b7', redo]].filter(([, , held]) => held).map(([label, icon, held]) => (
       <button key={label} disabled={held.disabled} onClick={(e) => { e.stopPropagation(); held.run(); }}
@@ -6115,6 +6229,7 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
       </div>
     ) : null}
     {answer && <p role="status" style={{ margin:0, whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontFamily:LM.serif, fontSize:14, lineHeight:1.55, color:LM.ink, letterSpacing:'-0.003em' }}>{answer}</p>}
+    {!bound && model ? <InlineAsk placeholder={'Ask ' + node.title + '...'} model={null} node={node} onAnswer={setAnswer} scale="node"/> : null}
   </section>;
 };
 
@@ -6308,7 +6423,9 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
   const labels = groupNode ? ['Interface', 'Exposed parameters', 'Chat'] : [sessionNode || inspectedNode.graphNode ? 'Chat' : 'Properties',
     sessionNode || inspectedNode.graphNode ? 'Properties' : 'Chat',
     ...(hasRunsPanel(inspectedNode, graph) ? ['Runs'] : [])];
-  const defaultInspectorTab = groupNode ? 'Interface' : sessionNode || inspectedNode.graphNode ? 'Chat' : 'Properties';
+  const roomConversationNode = inspectedNode.cat === 'ai' && inspectedNode.has_conversation && !nodeModelRow(inspectedNode);
+  const defaultInspectorTab = groupNode ? 'Interface' :
+    sessionNode || inspectedNode.graphNode || roomConversationNode ? 'Chat' : 'Properties';
   const [activeTab, setActiveTab] = React.useState(defaultInspectorTab);
   React.useEffect(() => setActiveTab(defaultInspectorTab), [defaultInspectorTab, inspectedNode.id]);
   const visibleTab = labels.includes(activeTab) ? activeTab : defaultInspectorTab;
@@ -6717,7 +6834,8 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
         </div>
         <div className="ah-scroll" style={{ gridColumn:'2', gridRow:'2', overflow:'auto', padding:'20px 24px 24px' }}>
           {tab === 'hub'         && <SettingsHub toolRows={toolRows} onClose={onClose} onOpenTool={onOpenTool} onOpenToolGraph={onOpenToolGraph} columns={3}/>}
-          {tab === 'system'      && <SettingsSystem graph={authorityState?.graph || LM_GRAPH} onClose={onClose} onOpenToolGraph={onOpenToolGraph}/>}
+          {tab === 'system'      && <SettingsSystem graph={authorityState?.graph || LM_GRAPH} projection={authorityState}
+            onClose={onClose} onOpenToolGraph={onOpenToolGraph} onBackToSettings={() => setTab('hub')}/>}
           {tab === 'account'     && <SettingsAccount account={account} setAccount={setAccount} onSignOut={onSignOut}/>}
           {tab === 'memory'      && <SettingsMemory store={store} patch={patch}/>}
           {tab === 'baboom'      && <SettingsBaboom onOpenToolGraph={onOpenToolGraph} onClose={onClose}/>}
@@ -6737,38 +6855,84 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
     </div>
   );
 };
-const SettingsSystem = ({ graph, onClose, onOpenToolGraph }) => {
-  const nodes = (graph?.nodes || []).filter(node => node.application === true).slice(0, 24);
-  const count = systemGraphNodeCount(graph);
-  const open = () => { onClose?.(); onOpenToolGraph?.('system'); };
-  const previewNodes = nodes.length ? nodes : (graph?.nodes || []).slice(0, 24);
-  const layers = [];
-  previewNodes.forEach((node, index) => {
-    const layer = Math.min(5, Math.floor(index / 4));
-    if (!layers[layer]) layers[layer] = [];
-    layers[layer].push(node);
-  });
+const SystemMiniGraph = ({ graph }) => {
+  const nodes = (graph?.nodes || []).filter(node => node.application === true);
+  const drawn = nodes.length ? nodes : (graph?.nodes || []);
+  const nodeIds = drawn.map(node => node.id);
+  const idSet = new Set(nodeIds);
+  const wires = (graph?.wires || []).filter(wire => idSet.has(wire.from?.[0]) && idSet.has(wire.to?.[0]));
+  const sizes = Object.fromEntries(drawn.map(node => [node.id, {w:92, h:32}]));
+  const positions = Object.fromEntries(drawn.map((node, index) => [node.id, {
+    x:Number.isFinite(node.x) ? node.x : (index % 6) * 120,
+    y:Number.isFinite(node.y) ? node.y : Math.floor(index / 6) * 56,
+  }]));
+  const arranged = drawn.length ? canvasArrangePositions(nodeIds, positions, sizes, nodeIds, wires) : {};
+  const boxes = drawn.map(node => ({node, ...(arranged[node.id] || positions[node.id]), ...sizes[node.id]}));
+  const left = Math.min(0, ...boxes.map(box => box.x)) - 28;
+  const top = Math.min(0, ...boxes.map(box => box.y)) - 28;
+  const right = Math.max(260, ...boxes.map(box => box.x + box.w)) + 28;
+  const bottom = Math.max(160, ...boxes.map(box => box.y + box.h)) + 28;
+  const groups = new Map();
+  for (const box of boxes) {
+    const key = box.node.group || box.node.domain || '';
+    if (!key) continue;
+    const held = groups.get(key) || {label:key, left:Infinity, top:Infinity, right:-Infinity, bottom:-Infinity};
+    held.left = Math.min(held.left, box.x - 8); held.top = Math.min(held.top, box.y - 8);
+    held.right = Math.max(held.right, box.x + box.w + 8); held.bottom = Math.max(held.bottom, box.y + box.h + 8);
+    groups.set(key, held);
+  }
   return <div style={{display:'flex', flexDirection:'column', gap:14}}>
-    <SHead title="System" sub="The application is itself a node. Its parts, tools and wiring are this graph; open it to inspect or change what you are permitted to."/>
-    <div data-settings-system-preview style={{
+    <div data-settings-system-preview data-system-mini-graph aria-label="Read-only System graph preview" style={{
       background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, padding:16,
       minHeight:210, position:'relative', overflow:'hidden',
       backgroundImage:`radial-gradient(${LM.lineSoft} 1px, transparent 1px)`,
       backgroundSize:'18px 18px',
     }}>
-      <div style={{display:'grid', gridTemplateColumns:`repeat(${Math.max(1, layers.length)}, minmax(80px, 1fr))`, gap:18, alignItems:'center'}}>
-        {layers.map((layer, layerIndex) => <div key={layerIndex} style={{display:'flex', flexDirection:'column', gap:9}}>
-          {layer.map((node, rowIndex) => {
-            const cat = studioCategory(node.cat || (node.tool ? 'tools' : 'logic'));
-            return <div key={node.id || layerIndex + ':' + rowIndex} style={{
-              height:26, border:`1px solid ${LM.line}`, borderTop:`2px solid ${cat.col}`, borderRadius:LM.rad.sm,
-              background:LM.bgPanel, color:LM.ink, fontFamily:LM.mono, fontSize:9.5,
-              padding:'4px 6px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
-            }}>{node.title || node.label || node.id}</div>;
-          })}
-        </div>)}
-      </div>
+      <svg viewBox={`${left} ${top} ${right - left} ${bottom - top}`} preserveAspectRatio="xMidYMid meet"
+        style={{position:'absolute', inset:12, width:'calc(100% - 24px)', height:'calc(100% - 24px)', overflow:'visible'}}>
+        {[...groups.values()].map(group => <g key={group.label} data-system-mini-group-boundary="group boundary">
+          <rect x={group.left} y={group.top} width={group.right - group.left} height={group.bottom - group.top}
+            rx="8" fill={LM.bgSoft + '66'} stroke={LM.lineSoft} strokeDasharray="6 6"/>
+          <text x={group.left + 8} y={group.top + 12} fill={LM.inkMuted} fontFamily="JetBrains Mono" fontSize="9">{group.label}</text>
+        </g>)}
+        {wires.map((wire, index) => {
+          const from = boxes.find(box => box.node.id === wire.from?.[0]);
+          const to = boxes.find(box => box.node.id === wire.to?.[0]);
+          if (!from || !to) return null;
+          const x1 = from.x + from.w, y1 = from.y + from.h / 2, x2 = to.x, y2 = to.y + to.h / 2;
+          const dx = Math.max(24, Math.abs(x2 - x1) * 0.45);
+          return <path key={wire.id || index} data-system-mini-wire d={`M${x1},${y1} C${x1+dx},${y1} ${x2-dx},${y2} ${x2},${y2}`}
+            fill="none" stroke={LM.inkSoft} strokeWidth="1.4" opacity="0.72"/>;
+        })}
+        {boxes.map(({node, x, y, w, h}) => {
+          const cat = studioCategory(node.cat || (node.tool ? 'tools' : 'logic'));
+          return <g key={node.id} data-system-mini-node={node.id}>
+            <rect x={x} y={y} width={w} height={h} rx="5" fill={LM.bgPanel} stroke={LM.line}/>
+            <rect x={x} y={y} width={w} height="3" rx="2" fill={cat.col}/>
+            <text x={x + 8} y={y + 20} fill={LM.ink} fontFamily="JetBrains Mono" fontSize="9">
+              {node.title || node.label || node.id}
+            </text>
+          </g>;
+        })}
+      </svg>
     </div>
+  </div>;
+};
+const SettingsSystem = ({ graph, projection, onClose, onOpenToolGraph, onBackToSettings }) => {
+  const count = systemGraphNodeCount(graph);
+  const nodes = (graph?.nodes || []).filter(node => node.application === true);
+  const pinnedCount = nodes.filter(node => node.pinned).length;
+  const readAgain = async () => {
+    const owner = window.ARCHHUB_STUDIO_AUTHORITY || window.ARCHHUB_EXISTING_WORKSHOP;
+    if (typeof owner?.load === 'function') return owner.load();
+    if (typeof owner?.refreshTopologyCanvas === 'function') return owner.refreshTopologyCanvas();
+    return null;
+  };
+  const open = () => { onClose?.(); onOpenToolGraph?.('system'); };
+  const state = projection?.error ? 'error' : count === 0 ? 'empty' : pinnedCount ? 'refused' : '';
+  return <div style={{display:'flex', flexDirection:'column', gap:14}}>
+    <SHead title="System" sub="The application is itself a node. Its parts, tools and wiring are this graph; open it to inspect or change what you are permitted to."/>
+    <SystemMiniGraph graph={graph}/>
     <div style={{display:'flex', alignItems:'center', gap:10}}>
       <div style={{flex:1}}>
         <div style={{fontSize:13, color:LM.ink}}>ArchHub application <span style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>· {count} nodes · {(graph?.wires || []).length} relations · WIP head</span></div>
@@ -6776,15 +6940,17 @@ const SettingsSystem = ({ graph, onClose, onOpenToolGraph }) => {
       </div>
       <HoverBtn primary onClick={open}>Open the System graph</HoverBtn>
     </div>
-    <SystemGraphStates hidden/>
+    {state && <SystemGraphStates state={state} error={projection?.error || ''} pinnedCount={pinnedCount}
+      movedCount={Math.max(0, count - pinnedCount)} onReadAgain={readAgain} onBackToSettings={onBackToSettings}
+      onAddNode={open} onUnpinAndArrange={open}/>}
   </div>;
 };
-const SystemGraphStates = ({ hidden = false }) => (
-  <div data-system-graph-states aria-hidden={hidden ? 'true' : undefined} style={hidden ? {display:'none'} : {display:'grid', gridTemplateColumns:'1fr 1fr', gap:12}}>
-    <section data-system-loading><h3>Reading the application graph...</h3><p>The canvas draws as soon as the graph answers. Cards appear in place; nothing jumps when they arrive.</p></section>
-    <section data-system-empty><h3>This group has no nodes yet.</h3><p>A group is a node made of smaller nodes. Add nodes here, or select nodes on the parent canvas and press Group (Ctrl+G).</p><button>Add node</button><button>Back to ArchHub application</button></section>
-    <section data-system-error><h3>The application graph could not be read.</h3><p>Nothing was changed. The last arranged layout is kept.</p><button>Read again</button><button>Back to Settings</button></section>
-    <section data-system-refused><h3>Arranged did not move 3 cards.</h3><p>3 cards are hand-placed (pinned). Arrange moved the other 21. Unpin them to include them.</p><button>Unpin 3 and arrange</button><button>Keep</button></section>
+const SystemGraphStates = ({ state, error = '', pinnedCount = 0, movedCount = 0, onReadAgain, onBackToSettings, onAddNode, onUnpinAndArrange }) => (
+  <div data-system-graph-states style={{display:'grid', gridTemplateColumns:'1fr', gap:10}}>
+    {state === 'loading' && <section data-system-loading><h3>Reading the application graph...</h3><p>The canvas draws as soon as the graph answers. Cards appear in place; nothing jumps when they arrive.</p></section>}
+    {state === 'empty' && <section data-system-empty><h3>This group has no nodes yet.</h3><p>A group is a node made of smaller nodes. Add nodes here, or select nodes on the parent canvas and press Group (Ctrl+G).</p><button onClick={onAddNode}>Add node</button><button onClick={onBackToSettings}>Back to ArchHub application</button></section>}
+    {state === 'error' && <section data-system-error><h3>The application graph could not be read.</h3><p>{error || 'Nothing was changed. The last arranged layout is kept.'}</p><button onClick={onReadAgain}>Read again</button><button onClick={onBackToSettings}>Back to Settings</button></section>}
+    {state === 'refused' && <section data-system-refused><h3>Arrange kept {pinnedCount} pinned {pinnedCount === 1 ? 'card' : 'cards'} in place.</h3><p>{pinnedCount} {pinnedCount === 1 ? 'card is' : 'cards are'} hand-placed. Arrange moved {movedCount}.</p><button onClick={onUnpinAndArrange}>Open System graph</button><button onClick={onBackToSettings}>Keep</button></section>}
   </div>
 );
 const SettingsHub = ({ toolRows, onClose, onOpenTool, onOpenToolGraph, columns }) => {

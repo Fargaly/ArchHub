@@ -8,6 +8,7 @@ const sourcePath = process.env.ARCHHUB_PARAMS_TEST_PATH || path.join(__dirname, 
 const source = fs.readFileSync(sourcePath, 'utf8');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function harness(api = {}) {
+  const deps = source.indexOf('const PM_OPTS =');
   const begin = source.indexOf('const PM_EDITS =');
   const end = source.indexOf('// A built-in parameter', begin);
   const inspector = source.indexOf('function NodeInspector(');
@@ -21,7 +22,7 @@ function harness(api = {}) {
     },
   };
   vm.createContext(context);
-  vm.runInContext(source.slice(begin, end) + '\n' + source.slice(inspector, render) + `
+  vm.runInContext(source.slice(deps, begin) + source.slice(begin, end) + '\n' + source.slice(inspector, render) + `
     return { set, rec, applyValues: typeof applyValues === 'function' ? applyValues : null,
       runGraph: typeof runGraph === 'function' ? runGraph : null,
       discardCustom: typeof discardCustom === 'function' ? discardCustom : null };

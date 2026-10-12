@@ -23,7 +23,7 @@ test('S1: Settings has System as the second tab, with badge, mini preview, and o
   assert.ok(settings.indexOf("['hub',") < settings.indexOf("['system',"), 'System follows Hub');
   assert.ok(settings.indexOf("['system',") < settings.indexOf("['account',"), 'System is before Account');
   assert.match(settings, /tab === 'system'\s*&&\s*<SettingsSystem/);
-  const panel = slice('const SettingsSystem =', 'const SettingsHub =');
+  const panel = slice('const SystemMiniGraph =', 'const SettingsHub =');
   assert.match(panel, /data-settings-system-preview/);
   assert.match(panel, /Open the System graph/);
   assert.doesNotMatch(panel, /SettingsHub/);
@@ -47,7 +47,7 @@ test('S2: opened System graph uses Settings breadcrumb and arrange toast contrac
   const arrange = slice('const canvasArrangePositions =', 'const CANVAS_LAYOUT_COALESCE_MS');
   assert.match(arrange, /bary/i);
   assert.match(studio, /Arranged .* nodes .* layers .* 0 overlaps .* 0 clipped .* crossings .* Undo/);
-  assert.match(studio, /pinned .* skipped|skipped .* pinned/i);
+  assert.match(studio, /pinned .* in place|kept .* pinned/i);
 });
 
 test('S3/S4: group cards expose boundary sockets and normal node actions, with no frame UI', () => {
@@ -96,7 +96,7 @@ test('S7: System graph states cover loading, empty scope, error, and refused act
   assert.match(studio, /Reading the application graph/);
   assert.match(studio, /This group has no nodes yet/);
   assert.match(studio, /The application graph could not be read/);
-  assert.match(studio, /Arranged did not move .* cards/);
+  assert.match(studio, /Arrange kept \{pinnedCount\} pinned/);
   assert.match(studio, /Read again/);
   assert.match(studio, /Back to Settings/);
 });

@@ -1,7 +1,7 @@
 /* Founder order 2026-09-24: "why is nothing organised or grouped?" -- cards stacked on
    each other, hard to move, Arrange that moved what he had placed by hand. These courts
    bind the canvas side of the answer:
-     T1  Arrange all writes with placement 'arrange' and unpins every visible card;
+     T1  Arrange all writes with placement 'arrange' for movable cards and keeps pinned cards fixed;
      T2  Arrange clicked while a save is in flight runs ONCE, after that save answers;
      T3  Arrange over hand-placed cards only writes nothing and says why;
      T4  the arranged layout overlaps no card, hand-placed obstacles included;
@@ -187,7 +187,7 @@ const context = vm.createContext({React, LM, window:dom.window, document:dom.win
   };
 }
 
-test('T1: Arrange all writes with placement arrange and unpins hand-placed cards', async () => {
+test('T1: Arrange all writes with placement arrange and keeps pinned cards fixed', async () => {
   const view = await mount();
   try {
     await view.arrange();
@@ -195,7 +195,7 @@ test('T1: Arrange all writes with placement arrange and unpins hand-placed cards
     assert.equal(view.saves.length, 1, 'one Arrange is one write');
     assert.equal(view.saves[0].placement, 'arrange');
     const sent = Object.keys(view.saves[0].positions);
-    assert.ok(sent.includes('mine'), 'Arrange all moves the pinned card too: ' + sent);
+    assert.ok(!sent.includes('mine'), 'Arrange keeps the pinned card fixed: ' + sent);
     await view.draw();
     const cards = ['one', 'two', 'three', 'mine'];
     for (let i = 0; i < cards.length; i += 1) for (let j = i + 1; j < cards.length; j += 1) {
@@ -217,7 +217,7 @@ test('the old positions-only reset is gone: Ctrl+Shift+R writes nothing (Undo is
   } finally { await view.close(); }
 });
 
-test('a hand drag is a plain move; Arrange all can still unpin and clean the graph', async () => {
+test('a hand drag is a plain move; Arrange all keeps hand-placed cards fixed', async () => {
   const view = await mount();
   try {
     await view.drag('one', 400, 0);
@@ -230,7 +230,8 @@ test('a hand drag is a plain move; Arrange all can still unpin and clean the gra
     await view.settle(20);
     assert.equal(view.saves.length, 2, 'chip: ' + view.chip());
     const sent = Object.keys(view.saves[1].positions);
-    assert.ok(sent.length && sent.includes('one') && sent.includes('mine'), 'Arrange all unpins all visible cards: ' + sent);
+    assert.ok(sent.length && !sent.includes('one') && !sent.includes('mine'), 'Arrange skips pinned cards: ' + sent);
+    assert.match(view.chip(), /pinned card/);
   } finally { await view.close(); }
 });
 
@@ -253,23 +254,18 @@ test('T2: Arrange clicked while a save is in flight runs once, after that save a
     assert.equal(view.saves.length, 2, 'the remembered Arrange ran exactly once');
     assert.equal(view.saves[1].placement, 'arrange');
     const sent = Object.keys(view.saves[1].positions);
-    assert.ok(sent.length && sent.includes('one'), 'it unpins the card the drag just pinned: ' + sent);
+    assert.ok(sent.length && !sent.includes('one'), 'it keeps the card the drag just pinned fixed: ' + sent);
   } finally { await view.close(); }
 });
 
-test('T3: Arrange over hand-placed cards still writes a clean layout', async () => {
+test('T3: Arrange over hand-placed cards writes nothing and reports the real pinned count', async () => {
   const nodes = NODES().map(node => ({...node, pinned:true}));
   const view = await mount({nodes});
   try {
     await view.arrange();
     await view.settle(20);
-    assert.equal(view.saves.length, 1);
-    assert.ok(Object.keys(view.saves[0].positions).length >= 3);
-    await view.draw();
-    const cards = ['one', 'two', 'three', 'mine'];
-    for (let i = 0; i < cards.length; i += 1) for (let j = i + 1; j < cards.length; j += 1) {
-      assert.equal(overlaps(view.point(cards[i]), view.point(cards[j])), false, cards[i] + ' overlaps ' + cards[j]);
-    }
+    assert.equal(view.saves.length, 0);
+    assert.match(view.chip(), /4 pinned cards/);
   } finally { await view.close(); }
 });
 

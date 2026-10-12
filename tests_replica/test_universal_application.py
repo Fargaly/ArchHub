@@ -2397,6 +2397,9 @@ def test_projection_reads_all_domain_cards_and_explicit_relation_cells(applicati
 	assert set(registry.visible_roots) == {
 		*registry.map.domains.values(), registry.core_values.root_id,
 		registry.governed_work_registry_root,
+		universal_application_module._system_tool_canvas_root("tool_studio"),
+		universal_application_module._system_tool_canvas_root("tool_workshop"),
+		universal_application_module._system_tool_canvas_root("tool_baboom"),
 	}
 	assert registry.application_root not in {
 		node["id"] for node in projection["nodes"]

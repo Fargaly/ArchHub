@@ -21,16 +21,25 @@ const slice = (from, to) => {
   assert.ok(start > 0 && end > start, from + ' is a slice of the shipped studio-lm.jsx');
   return source.slice(start, end);
 };
-// Everything from the conversation component through NodeRail (so a real NodeRail mount has its deps).
+// Conversation component + transcript row support. Stop before the composer stack; the VM
+// supplies a stub InlineAsk so these tests stay focused on transcript binding.
+const conversationSlice = () => slice('const NodeModelConversation =', '// One chat, two parts of one panel') +
+  "\nconst CHAT_TURN_EVENT = 'archhub:chat-turn';\n";
+// Add the real rail gate and its nearby dependencies when a test mounts NodeRail.
 const railSlice = () => slice('const NodeModelConversation =', '\nconst ConversationRail =');
 
-// The real helpers, so the model gate is exercised, not faked.
-const REAL_HELPERS = `
-const nodeModelRow = n => (n && n.params || []).find(row => row.k === 'model') || null;
-const nodeModelRoute = n => { const r = String((nodeModelRow(n)||{}).v || '').trim(); return r === 'provider-selected' ? '' : r; };
-`;
+// The real helpers this slice actually depends on, so the model gate is exercised without
+// compiling the unrelated generation-default helper block into every VM mount.
+const REAL_HELPERS = [
+  source.match(/const modelRoute = [^\n]+/)[0],
+  source.slice(source.indexOf('const nodeModelRow ='), source.indexOf('const modelDisplayName ='))
+].join('\n');
+const RAIL_HELPERS = [
+  source.match(/const modelRoute = [^\n]+/)[0],
+  source.slice(source.indexOf('const nodeModelRow ='), source.indexOf('// ─── Chat lane data seam ───'))
+].join('\n');
 
-async function mountEnv(fn) {
+async function mountEnv(fn, opts = {}) {
   const {JSDOM} = await import('jsdom');
   const React = require('react');
   const {createRoot} = require('react-dom/client');
@@ -46,9 +55,18 @@ async function mountEnv(fn) {
   win.NodeInspector = () => React.createElement('div', {'data-stub':'inspector'});
   const ConversationRail = () => React.createElement('div', {'data-stub':'convrail'});
   const context = vm.createContext({React, LM, studioCategory, InlineAsk, HoverBtn, ConversationRail,
+    modelRoute: m => String((m && (m.routed || m.route)) || ''),
+    modelDisplayName: m => String((m && (m.name || m.routed || m.route)) || ''),
+    routeReadiness: () => null,
+    generationRequestOptions: () => ({}),
+    agentAnswerText: answer => typeof answer === 'string' ? answer : String(answer?.answer || answer?.text || ''),
+    agentDeliveryState: result => result?.delivery?.state || null,
     window:win, document:win.document, setInterval, clearInterval, setTimeout, clearTimeout});
-  vm.runInContext(transformSync(REAL_HELPERS + railSlice() +
-    '\nglobalThis.Conv = NodeModelConversation; globalThis.Rail = NodeRail;',
+  const componentSlice = opts.withRail ? railSlice() : conversationSlice();
+  const exports = opts.withRail ? '\nglobalThis.Conv = NodeModelConversation; globalThis.Rail = NodeRail;'
+    : '\nglobalThis.Conv = NodeModelConversation;';
+  const helpers = opts.withRail ? RAIL_HELPERS : REAL_HELPERS;
+  vm.runInContext(transformSync(helpers + componentSlice + exports,
     {loader:'jsx', format:'cjs'}).code, context);
   const root = createRoot(win.document.getElementById('root'));
   try { await fn({React, win, root, context}); }
@@ -85,7 +103,7 @@ test('the Workspace threads scope + opener, and NodeRail gates on has_conversati
   assert.match(workspace, /<NodeRail[\s\S]*?openConversation=\{/);
   // The gate must not require a model row — a model-less room node still gets the transcript.
   const rail = slice('const NodeRail =', '\nconst ConversationRail =');
-  assert.match(rail, /node\.live && \(node\.has_conversation \|\| nodeModelRow\(node\)\)/,
+  assert.match(rail, /inspectedNode\.live && \(inspectedNode\.has_conversation \|\| inspectedNode\.graphNode \|\| nodeModelRow\(inspectedNode\)\)/,
     'NodeRail must render the conversation component for any live has_conversation node, not only model nodes');
 });
 
@@ -116,14 +134,19 @@ test('NodeRail shows the transcript + Continue for a model-less room node', asyn
     assert.ok(cont, 'with older history, a labelled full-history link is present');
     await React.act(async () => cont.click());
     assert.deepEqual(opened, ['app:workshop']);
-  });
+  }, {withRail:true});
 });
 
 // ── a model-bearing node keeps the model composer AND can show a transcript ──
 test('a model node keeps its composer; honest-empty when no rows', async () => {
   await mountEnv(async ({React, win, root, context}) => {
-    win.ARCHHUB_WORKSHOP_TRANSCRIPT = async (node) => ({ok:true, node, conversation_root:'conv-a',
-      revision:4, has_older:false, next_before:null, rows:[]});
+    let transcriptReads = 0;
+    win.ARCHHUB_WORKSHOP_TRANSCRIPT = async (node) => {
+      transcriptReads += 1;
+      assert.ok(transcriptReads <= 4, 'transcript read loop: ' + transcriptReads);
+      return {ok:true, node, conversation_root:'conv-a',
+        revision:4, has_older:false, next_before:null, rows:[]};
+    };
     const modelNode = {id:'node-m', title:'Agent', live:true, cat:'ai', has_conversation:true,
       conversation_root:'conv-a', params:[{k:'model', v:'openrouter/model-a'}]};
     await React.act(async () => root.render(React.createElement(context.Conv,
@@ -134,6 +157,7 @@ test('a model node keeps its composer; honest-empty when no rows', async () => {
     assert.match(win.document.getElementById('root').textContent, /No conversation yet/, 'empty bound transcript is honest');
     const text = win.document.getElementById('root').textContent;
     assert.match(text, /No conversation yet · ask below to start one\./, 'the empty state starts the chat here');
+    assert.equal(transcriptReads, 1, 'empty transcript is read once on mount');
     assert.equal([...win.document.querySelectorAll('button')].some(b => /workshop/i.test(b.textContent)), false,
       'an empty chat offers no second destination (no Workshop link)');
   });
@@ -197,7 +221,7 @@ test('an 8s poll does not overlap an in-flight read', async () => {
   win.NodeInspector = () => null; const ConversationRail = () => null;
   const context = vm.createContext({React, LM, studioCategory, InlineAsk, HoverBtn, ConversationRail,
     window:win, document:win.document, setInterval:fakeSetInterval, clearInterval:fakeClearInterval, setTimeout, clearTimeout});
-  vm.runInContext(transformSync(REAL_HELPERS + railSlice() + '\nglobalThis.Conv = NodeModelConversation;',
+  vm.runInContext(transformSync(REAL_HELPERS + conversationSlice() + '\nglobalThis.Conv = NodeModelConversation;',
     {loader:'jsx', format:'cjs'}).code, context);
   const root = createRoot(win.document.getElementById('root'));
   try {
@@ -289,7 +313,7 @@ test('a read that resolves after unmount throws nothing and sets no state', asyn
   win.NodeInspector = () => null; const ConversationRail = () => null;
   const context = vm.createContext({React, LM, studioCategory, InlineAsk, HoverBtn, ConversationRail,
     window:win, document:win.document, setInterval, clearInterval, setTimeout, clearTimeout});
-  vm.runInContext(transformSync(REAL_HELPERS + railSlice() + '\nglobalThis.Conv = NodeModelConversation;',
+  vm.runInContext(transformSync(REAL_HELPERS + conversationSlice() + '\nglobalThis.Conv = NodeModelConversation;',
     {loader:'jsx', format:'cjs'}).code, context);
   const root = createRoot(win.document.getElementById('root'));
   try {

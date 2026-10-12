@@ -13447,6 +13447,19 @@ def build_universal_application(
         owner_root=authorization.subject_root,
         administrator_root=authorization.subject_root,
     )
+    system_tool_roots = _ensure_system_tool_canvas_nodes(
+        store,
+        roles,
+        authorization,
+        standard_library,
+        map_registry,
+        application_root=application_root,
+        canvas_root=canvas_root,
+        visibility_root=visibility_root,
+        properties_lens_root=selection_lens_root,
+        default_color=initial_theme["ink_soft"],
+    )
+    visible_roots = tuple(dict.fromkeys((*visible_roots, *system_tool_roots)))
     founder_projection_grants = _issue_view_projection_grants(
         store,
         authorization,
@@ -16584,6 +16597,19 @@ def restore_universal_application(
         tuple(top_level_roots),
         _text(snapshot, presentation.theme_roots["ink_soft"]),
     )
+    system_tool_roots = _ensure_system_tool_canvas_nodes(
+        store,
+        roles,
+        authorization,
+        standard_library,
+        map_registry,
+        application_root=application_root,
+        canvas_root=canvas_root,
+        visibility_root=authorization.session.root_id + ":visibility",
+        properties_lens_root="app:properties-lens",
+        default_color=_text(snapshot, presentation.theme_roots["ink_soft"]),
+    )
+    top_level_roots = tuple(dict.fromkeys((*top_level_roots, *system_tool_roots)))
     _migrate_canvas_current_level(
         store,
         roles,
@@ -19898,6 +19924,184 @@ _USER_PLACEMENT = "user"
 # Row pitch = the tallest drawn card (canvas_placement.card_size: header + 6 rows + port band = 230) + a gap.
 _CANVAS_CARD_PITCH = (260.0, 280.0)
 _CANVAS_PLACEMENT_COLUMNS = 6
+_SYSTEM_TOOL_CANVAS_NODES = (
+    ("tool_studio", "Studio", "tool.studio", "studio", None,
+     {"default_view": "canvas"}),
+    ("tool_workshop", "Workshop", "tool.workshop", "workshop", None,
+     {"default_tab": "tasks"}),
+    ("tool_brain", "Brain", "tool.brain", "brain", "brain",
+     {"default_tab": "memory"}),
+    ("tool_baboom", "BABOOM", "tool.baboom", "baboom", None,
+     {"start_with_archhub": "True", "speech_budget_per_hour": "2"}),
+    ("tool_connectors", "Connectors", "tool.connectors", "connectors",
+     "connectors", {"default_tab": "hosts"}),
+    ("tool_cloud", "Cloud", "tool.cloud", "cloud", "cloud",
+     {"default_tab": "account"}),
+)
+
+
+def _system_tool_canvas_root(tool_id: str) -> str:
+    return "app:system-tool:%s" % _part(tool_id)
+
+
+def _ensure_system_tool_canvas_nodes(
+    store: CellStore,
+    roles: Mapping[str, str],
+    authorization: ApplicationAuthorization,
+    standard_library: StandardLibraryBuild,
+    map_registry: UniversalMapRegistry,
+    *,
+    application_root: str,
+    canvas_root: str,
+    visibility_root: str,
+    properties_lens_root: str,
+    default_color: str,
+) -> tuple[str, ...]:
+    """Admit graph-held tool nodes into the founder System graph.
+
+    The node library is the source of the tool catalogue. Brain, Connectors
+    and Cloud are already application domains, so they gain tool parameters
+    on their existing roots; Studio, Workshop and BABOOM get application-owned
+    relation roots. No duplicate connector/cloud/brain cards are created.
+    """
+    snapshot = store.snapshot()
+    create: dict[str, Cell] = {}
+    replace: dict[str, Cell] = {}
+    labels: dict[str, str] = {}
+    new_property_roots: list[str] = []
+
+    def label_root(key: str) -> str:
+        root = "app:label:%s" % _part(key)
+        if root not in snapshot.cells and root not in create:
+            create[root] = Cell(root, NULL_CELL_ID, NULL_CELL_ID, _atom(key))
+        labels[key] = root
+        return root
+
+    def stage_property(owner_root: str, namespace: str, key: str, value: object) -> str:
+        token = "%s:%s:%s" % (_part(owner_root), _part(namespace), _part(key))
+        value_root = "app:value:%s" % token
+        relation_root = "app:property:%s" % token
+        if relation_root in snapshot.cells:
+            read_relation(snapshot, relation_root, budget=16)
+            return relation_root
+        if value_root in snapshot.cells:
+            raise InvalidCell("partial System tool property exists")
+        create[value_root] = Cell(value_root, NULL_CELL_ID, NULL_CELL_ID, _atom(value))
+        relation = compose_relation_cells((
+            (roles["owner"], owner_root),
+            (roles["value"], value_root),
+            (roles["label"], label_root(key)),
+        ), relation_id=relation_root)
+        for cell in relation.cells:
+            create[cell.id] = cell
+        new_property_roots.append(relation_root)
+        return relation_root
+
+    tool_roots: list[str] = []
+    audience_tool_roots: list[str] = []
+    property_roots: list[str] = []
+    for index, (tool_id, title, engine, tool_name, domain_key, params) in enumerate(
+        _SYSTEM_TOOL_CANVAS_NODES
+    ):
+        if tool_id in {"tool_connectors", "tool_cloud"}:
+            target_root = map_registry.domains[domain_key]
+        elif domain_key is not None:
+            target_root = map_registry.domains[domain_key]
+        else:
+            target_root = _system_tool_canvas_root(tool_id)
+            audience_tool_roots.append(target_root)
+            if target_root not in snapshot.cells and target_root not in create:
+                relation = compose_relation_cells((
+                    (roles["authority"], "app:node-library"),
+                    (roles["label"], label_root(title)),
+                ), relation_id=target_root)
+                for cell in relation.cells:
+                    create[cell.id] = cell
+        tool_roots.append(target_root)
+        property_roots.extend((
+            stage_property(target_root, "field", "title", title),
+            stage_property(target_root, "field", "engine", engine),
+            stage_property(target_root, "field", "tool", tool_name),
+            stage_property(target_root, "presentation", "color", default_color),
+            stage_property(target_root, "canvas", "position_x", 60 + (index % 6) * 244),
+            stage_property(target_root, "canvas", "position_y", 92 + (index // 6) * 174),
+        ))
+        for key, value in params.items():
+            property_roots.append(stage_property(target_root, "field", key, value))
+
+    snapshot_for_patch = _candidate_snapshot_for_atomic_commit(
+        snapshot, create=tuple(create.values())
+    )
+    patches = (
+        prepare_append_relation_members(
+            snapshot_for_patch,
+            application_root,
+            ((roles["member"], root) for root in audience_tool_roots),
+            budget=100_000,
+        ),
+        prepare_append_relation_members(
+            snapshot_for_patch,
+            canvas_root,
+            (
+                *((roles["member"], root) for root in audience_tool_roots),
+                *((roles["property"], root) for root in new_property_roots),
+            ),
+            budget=100_000,
+        ),
+        prepare_append_relation_members(
+            snapshot_for_patch,
+            visibility_root,
+            ((roles["visible"], root) for root in audience_tool_roots),
+            budget=100_000,
+        ),
+        prepare_append_relation_members(
+            snapshot_for_patch,
+            properties_lens_root,
+            ((roles["scope"], root) for root in new_property_roots),
+            budget=100_000,
+        ),
+    )
+    for patch in patches:
+        for cell in patch.create:
+            create.setdefault(cell.id, cell)
+        for cell in patch.replace:
+            replace[cell.id] = cell
+    if create or replace:
+        store.commit(
+            snapshot.revision,
+            create=tuple(create.values()),
+            replace=tuple(replace.values()),
+        )
+    _issue_resource_audience_bindings(
+        store,
+        authorization,
+        resource_roots=tuple(dict.fromkeys(audience_tool_roots)),
+        lifecycle_root=standard_library.lifecycle_protocol.states["wip"],
+        owner_root=authorization.subject_root,
+        administrator_root=authorization.subject_root,
+    )
+    grant_roots = _issue_view_projection_grants(
+        store,
+        authorization,
+        subject_root=authorization.subject_root,
+        visibility_root=visibility_root,
+        target_roots=tuple(dict.fromkeys(tool_roots)),
+        administrator_root=authorization.subject_root,
+    )
+    grant_snapshot = store.snapshot()
+    session_patch = prepare_append_relation_members(
+        grant_snapshot,
+        authorization.session.root_id,
+        ((roles["relation"], root) for root in grant_roots),
+        budget=100_000,
+    )
+    if session_patch.create or session_patch.replace:
+        store.commit(
+            grant_snapshot.revision,
+            create=session_patch.create,
+            replace=session_patch.replace,
+        )
+    return tuple(dict.fromkeys(tool_roots))
 
 
 def _canvas_node_group(node: Mapping[str, object]) -> str:

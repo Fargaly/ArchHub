@@ -1412,7 +1412,9 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const [preset, setPreset] = React.useState(sel?.tab || 'chat');   // projects · board · chat · agents · approvals · task
   const [ownSel, setOwnSel] = React.useState({ agent:null, task:null });
   const S = sel || ownSel, setS = setSel || setOwnSel;
-  const panelReady = useDeferredWorkshopPanel(preset);
+  const deferredPanelReady = useDeferredWorkshopPanel(preset);
+  const panelReady = preset === 'chat' && Array.isArray(transcript?.messages) && transcript.messages.length
+    ? true : deferredPanelReady;
   const [tidy, setTidy] = React.useState(false);
   const [chain, setChain] = React.useState(false);
   const [controlsOpen, setControlsOpen] = React.useState(false);

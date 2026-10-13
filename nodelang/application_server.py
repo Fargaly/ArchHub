@@ -279,6 +279,7 @@ from .clean_scope_interactions import (
 from .clean_visual_authority import open_clean_visual_system
 from .clean_visual_projection import project_clean_visual_canvas
 from .unified_application_lens import (
+    _catalogue_memo_warmed,
     project_unified_scope,
     scope_lens_payload,
 )
@@ -1282,17 +1283,53 @@ class _CleanAuthorityHttpServer:
         # and is refused where it always was: at the request.
         _w0 = _time.perf_counter()
         try:
-            from .unified_application_lens import _catalogue as _warm_catalogue
-            warmed = len(_warm_catalogue(authority, scope_caller))
-        except Exception:
+            import os as _os
+            from pathlib import Path as _Path
+            from .base_universal_catalogue import base_universal_catalogue_hash
+            from .stability_runtime import (
+                catalogue_refresh_required,
+                write_generation_state,
+            )
+            runtime_root = (
+                _Path(_os.environ.get("LOCALAPPDATA", ""))
+                / "ArchHub" / "unified-authority"
+            )
+            source_hash = base_universal_catalogue_hash()
+            refresh, generation = catalogue_refresh_required(
+                runtime_root,
+                authority,
+                source_hash=source_hash,
+                require_warmed=True,
+            )
+            if not refresh and _catalogue_memo_warmed(authority, scope_caller):
+                warmed = 0
+                warm_verdict = "unchanged skipped"
+            else:
+                from .unified_application_lens import _catalogue as _warm_catalogue
+                warmed = len(_warm_catalogue(authority, scope_caller))
+                write_generation_state(
+                    runtime_root,
+                    source_hash=source_hash,
+                    generation=generation,
+                    warmed=True,
+                )
+                warm_verdict = "changed warmed"
+        except Exception as exc:
             warmed = -1
+            try:
+                from .stability_runtime import root_cause_line
+                warm_verdict = "failed at " + root_cause_line(exc)
+            except Exception:
+                warm_verdict = "failed"
         self._record_gesture_timing(
-            "boot: warm catalogue %.1fs (definitions=%d)"
-            % (_time.perf_counter() - _w0, warmed)
+            "boot: warm catalogue %.1fs (definitions=%d; %s)"
+            % (_time.perf_counter() - _w0, warmed, warm_verdict)
         )
         self.clean_interaction_broker = InteractionProjectionBroker()
         self._clean_projection_handles: dict[str, object] = {}
         self._clean_projection_cache: dict[tuple, tuple] = {}
+        from .stability_runtime import BrokerLatencyBaselines
+        self._broker_latency_baselines = BrokerLatencyBaselines()
         self._session_index = None
         self._live_sign_in = None
         self._mutation_lock = threading.RLock()
@@ -1330,6 +1367,33 @@ class _CleanAuthorityHttpServer:
             )
         except Exception as exc:  # noqa: BLE001 - a failed check is never a match
             self.workspace_roots_boot = "unverifiable: " + type(exc).__name__
+
+    @staticmethod
+    def _probe_hosts() -> list:
+        from .pipeline_engines import probe_connectors
+        return list(probe_connectors())
+
+    def _host_rows_or_none(self):
+        import threading as _threading
+        import time as _time
+        caches = self.__dict__.setdefault("_probe_caches", {})
+        entry = caches.get("hosts")
+        now = _time.time()
+        if entry is None or (now - entry[0] >= 30.0 and not entry[2]):
+            fresh = [entry[0] if entry else 0.0, entry[1] if entry else None, True]
+            caches["hosts"] = fresh
+            def _run():
+                try:
+                    value = self._probe_hosts()
+                except Exception:
+                    value = fresh[1]
+                caches["hosts"] = [_time.time(), value, False]
+            _threading.Thread(target=_run, name="archhub-probe-hosts", daemon=True).start()
+        value = caches["hosts"][1]
+        if not isinstance(value, list):
+            return None
+        from .host_enable import annotate_host_rows
+        return annotate_host_rows(self.clean_authority, value)
 
     def _clean_workspace_roots(self, body, admission=None):
         """The owner's Workspaces settings: list, register, unregister, republish.
@@ -3419,6 +3483,17 @@ class _CleanAuthorityHttpServer:
                 _t3 - _t2, len(payload.get("nodes", ())),
             )
         )
+        decision = self._broker_latency_baselines.observe("canvas", _t0, _t3)
+        if decision.flagged:
+            self._record_gesture_timing(
+                "broker latency %s %.1fms baseline=%.1fms deviation=%.2fx"
+                % (
+                    decision.broker,
+                    decision.latency_ms,
+                    decision.baseline_ms,
+                    decision.deviation_factor,
+                )
+            )
         if len(self._clean_projection_cache) >= 4:
             self._clean_projection_cache.pop(
                 next(iter(self._clean_projection_cache))
@@ -4240,6 +4315,41 @@ class _CleanAuthorityHttpServer:
                         payload = owner._clean_workspace_roots(body)
                         self._json(200, {"ok": True, **payload})
                         return
+                    if self.path == "/api/universal/host-enabled":
+                        with owner._mutation_lock:
+                            binding = owner._resolve_binding(
+                                self._token(),
+                                csrf_token=csrf_token,
+                                require_csrf=True,
+                            )
+                            if binding.subject_root != owner.clean_caller.actor_root:
+                                raise AuthorizationDenied(
+                                    "only this instance owner changes host connectors"
+                                )
+                            if type(body) is not dict or set(body) != {"host_id", "enabled"}:
+                                raise InvalidCell("host enable request names one host and a boolean state")
+                            rows = owner._host_rows_or_none()
+                            if rows is None:
+                                rows = owner._probe_hosts()
+                            from .host_enable import find_annotated_host, set_host_enabled
+                            try:
+                                current = find_annotated_host(
+                                    owner.clean_authority, rows, str(body["host_id"]))
+                            except InvalidCell as exc:
+                                self._json(400, {"ok": False, "error": str(exc)})
+                                return
+                            set_host_enabled(
+                                owner.clean_authority, str(current["id"]),
+                                body["enabled"], name=str(current.get("name") or current["id"]),
+                                caller=owner.clean_caller, command_id=str(uuid.uuid4()))
+                            host = find_annotated_host(
+                                owner.clean_authority, rows, str(current["id"]))
+                        self._json(200, {
+                            "ok": True,
+                            "host": host,
+                            "revision": owner.clean_store.revision,
+                        })
+                        return
                     if self.path == "/api/universal/focus":
                         with owner._mutation_lock:
                             binding = owner._resolve_binding(
@@ -4562,6 +4672,9 @@ def prepare_shared_universal_runtime(
     runtime_compliance_runner=None,
 ) -> PreparedSharedUniversalRuntime:
     """Build or restore one shared Universal Application under its fence."""
+    runtime_compliance_runner = (
+        runtime_compliance_runner or run_physical_runtime_compliance_court
+    )
     if not isinstance(store, CellStore):
         raise TypeError("shared Universal runtime requires one CellStore")
     if not store.is_durable or not store.supports_shared_writers:
@@ -5699,6 +5812,9 @@ class ApplicationServer:
                  session_link_transport=None,
                  social_execution_host=None,
                  social_account_binding_verifier=None):
+        runtime_compliance_runner = (
+            runtime_compliance_runner or run_physical_runtime_compliance_court
+        )
         if social_execution_host is not None and not callable(
             getattr(social_execution_host, "execute", None)
         ):
@@ -7756,6 +7872,30 @@ class ApplicationServer:
                         except (SessionLinkConfigRefused, RegistrationRefused, OSError, ValueError):
                             raise InvalidCell('Assistant settings could not be updated. Review the current settings and try again.') from None
                         self._json(200, {'ok': True, 'result': result})
+                        return
+                    if self.path == '/api/universal/host-enabled':
+                        body = self._body(max_bytes=4096)
+                        if type(body) is not dict or set(body) != {'host_id', 'enabled'}:
+                            raise InvalidCell('host enable request names one host and a boolean state')
+                        if binding.subject_root != owner.universal_registry.authorization.subject_root:
+                            raise AuthorizationDenied('only this instance owner changes host connectors')
+                        host_rows = owner._host_rows_or_none()
+                        if host_rows is None:
+                            host_rows = owner._probe_hosts()
+                        from .host_enable import find_annotated_host, set_host_enabled
+                        current = find_annotated_host(
+                            owner.clean_authority, host_rows, str(body['host_id']))
+                        set_host_enabled(
+                            owner.clean_authority, str(current['id']),
+                            body['enabled'], name=str(current.get('name') or current['id']),
+                            caller=owner.clean_caller, command_id=str(uuid.uuid4()))
+                        updated = find_annotated_host(
+                            owner.clean_authority, host_rows, str(current['id']))
+                        self._json(200, {
+                            'ok': True,
+                            'host': updated,
+                            'revision': owner.universal_store.revision,
+                        })
                         return
                     # A browser POST is a person acting; retention waits for
                     # an idle moment after the last one (reads and polls are GETs).
@@ -12054,12 +12194,18 @@ class ApplicationServer:
     def _host_rows(self) -> list:
         """probe_connectors rows, refreshed every 30 s off the request path."""
         value = self._refresh_in_background("hosts", 30.0, self._probe_hosts)
-        return value if isinstance(value, list) else []
+        if not isinstance(value, list):
+            return []
+        from .host_enable import annotate_host_rows
+        return annotate_host_rows(self.clean_authority, value)
 
     def _host_rows_or_none(self):
         """The same cached rows, or None while the first probe has not answered."""
         value = self._refresh_in_background("hosts", 30.0, self._probe_hosts)
-        return value if isinstance(value, list) else None
+        if not isinstance(value, list):
+            return None
+        from .host_enable import annotate_host_rows
+        return annotate_host_rows(self.clean_authority, value)
 
     def _local_runtime_states(self):
         """{port: running} for LM Studio and Ollama, refreshed every 10 s off the

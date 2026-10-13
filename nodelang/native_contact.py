@@ -5,12 +5,18 @@ The HTTP owner supplies its existing authenticated browser/CSRF guard.
 """
 import hashlib
 import json
+import math
+import time
 from .cell_authorization import AuthorizationDenied
 from .universal_cell import InvalidCell
 
 APPS={'claude','codex','opencode','antigravity','antigravity-ide'}
 LABEL='native contact'
 IDENTITY=('app','id','pid','port','socket','cwd','runtimeId')
+AGENT_LABELS={'claude':'Claude','codex':'Codex','gemini':'Gemini','opencode':'OpenCode',
+    'antigravity':'Antigravity','antigravity-ide':'Antigravity','baboom':'BABOOM'}
+RUNTIME_RETIRE_KIND='native-runtime-retirement'
+DEFAULT_RUNTIME_RETIRE_HOURS=24.0
 
 
 def _endpoint(row):
@@ -37,6 +43,97 @@ def _contact_title(endpoint):
 
 def _digest(value):
     return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+
+
+def _agent_label(app):
+    return AGENT_LABELS.get(app, app.replace('-', ' ').title())
+
+
+def _number(value):
+    return value if type(value) in (int,float) and not isinstance(value,bool) and math.isfinite(value) else None
+
+
+def _runtime_record_root(row):
+    material={key:row.get(key) for key in (*IDENTITY,'session_id') if row.get(key) is not None}
+    return 'native-runtime:' + hashlib.sha256(json.dumps(material,sort_keys=True,
+        separators=(',',':')).encode()).hexdigest()
+
+
+def _runtime_in_flight(row):
+    return row.get('in_flight_effect') is True or row.get('effect_state') in {
+        'queued','executing','running','uncertain','pending'}
+
+
+def _retired_record_roots(owner):
+    records=getattr(owner,'_ownership_record_storage',lambda:None)()
+    if records is None:return set()
+    return {row['record_root'] for row in records.list_records(
+        RUNTIME_RETIRE_KIND, owner_root=owner.universal_registry.application_root,
+        states=('retired',), limit=1000)}
+
+
+def retire_stale_native_runtimes(owner, rows, *, hours=DEFAULT_RUNTIME_RETIRE_HOURS, now=None):
+    if type(hours) not in (int,float) or isinstance(hours,bool) or not math.isfinite(hours) or hours <= 0:
+        raise InvalidCell('Native runtime retirement threshold is invalid')
+    records=getattr(owner,'_ownership_record_storage',lambda:None)()
+    if records is None:return []
+    relay=getattr(owner,'native_recipient_relay',None)
+    pending=set()
+    if relay is not None:
+        with relay._channel_lock:
+            pending={recipient for _sender,recipient in relay._pending_jobs.values()}
+    now=time.time() if now is None else now
+    if _number(now) is None:raise InvalidCell('Native runtime retirement time is invalid')
+    cutoff=now-float(hours)*3600.0
+    retired=[]
+    for row in rows:
+        if type(row) is not dict or row.get('connected') is True or _runtime_in_flight(row):
+            continue
+        if row.get('root') in pending or row.get('session_root') in pending:
+            continue
+        last=_number(row.get('last_seen_at') if row.get('last_seen_at') is not None else row.get('observed_at'))
+        if last is None or last >= cutoff:
+            continue
+        root=_runtime_record_root(row)
+        existing=records.get_record(RUNTIME_RETIRE_KIND,root)
+        if existing is not None and existing.get('state')=='retired':
+            retired.append(root);continue
+        payload={'kind':'native-runtime-retirement','version':1,'app':row.get('app'),
+            'session_id':row.get('id') or row.get('session_id'),'last_seen_at':last,
+            'threshold_hours':float(hours),'retired_at':now}
+        records.put_record(RUNTIME_RETIRE_KIND,root,owner_root=owner.universal_registry.application_root,
+            state='retired',payload=payload,authority_revision=owner.universal_store.revision,
+            updated_at=now,event='retire',retire_states=('restored',))
+        retired.append(root)
+    return retired
+
+
+def project_native_agent_rows(rows, *, retired_roots=frozenset()):
+    by_app={}
+    for raw in rows:
+        if type(raw) is not dict or raw.get('app') not in APPS:
+            continue
+        connected=raw.get('connected') is not False and raw.get('retired') is not True
+        child={'kind':'native-session','app':raw['app'],'session_id':raw.get('id') or raw.get('session_id'),
+            'title':str(raw.get('title') or raw.get('id') or raw.get('session_id') or raw['app'])[:200],
+            'workspace':raw.get('cwd') or raw.get('workspace'),'connected':connected,
+            'selectable':connected and raw.get('selectable') is not False,
+            'reason':raw.get('reason'),'retired':_runtime_record_root(raw) in retired_roots}
+        if not child['session_id'] or child['retired']:
+            continue
+        group=by_app.setdefault(raw['app'],{'children':[]})
+        group['children'].append(child)
+    projected=[]
+    for app in sorted(by_app):
+        children=by_app[app]['children']
+        live=[row for row in children if row['connected'] and row['selectable']]
+        primary=live[0] if len(live)==1 else None
+        projected.append({'kind':'native-agent','app':app,'session_id':primary['session_id'] if primary else '',
+            'title':_agent_label(app),'workspace':primary.get('workspace') if primary else None,
+            'connected':bool(live),'selectable':len(live)==1,
+            'reason':None if len(live)==1 else ('no_live_session' if not live else 'multiple_live_sessions'),
+            'live_session_count':len(live),'session_count':len(children),'children':children})
+    return projected
 
 
 def _discover(owner,apps):
@@ -74,12 +171,16 @@ def discover_native_agents(owner, *, apps=('claude',)):
             'connected':True,'selectable':True,'reason':None,'next_step':'bind_contact',
             'execution_authority':False})
     truncated=result.get('truncated') is True or len(source)>128 or len(rows)>64
+    retire_stale_native_runtimes(owner, source,
+        hours=getattr(owner,'native_runtime_retire_hours',DEFAULT_RUNTIME_RETIRE_HOURS))
+    retired=_retired_record_roots(owner)
     # Claude registry enumeration is complete. Other providers may omit
     # unavailable runtimes or return a bounded task window; absence there is
     # unknown unless their transport explicitly proves completeness.
     complete=result.get('complete_apps',['claude'] if 'claude' in apps else [])
     complete=[app for app in complete if app in apps] if type(complete) is list and not truncated else []
-    return {'status':'ok','rows':rows[:64],'readiness':readiness,'queried_apps':list(apps),
+    return {'status':'ok','rows':project_native_agent_rows(rows,retired_roots=retired)[:64],
+        'sessions':rows[:64],'readiness':readiness,'queried_apps':list(apps),
         'complete_apps':complete,'truncated':truncated,'partial':result.get('partial') is True,
         'reason':'discovery_budget' if result.get('partial') is True else None}
 

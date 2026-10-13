@@ -3464,6 +3464,7 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     # writing one entry after the person presses Connect for it.
     ("GET", "/api/universal/assistant-registration", "read"),
     ("POST", "/api/universal/assistant-registration", "execute"),
+    ("POST", "/api/universal/host-enabled", "edit"),
     # Settings -> Workspaces: answered by the graph's owner (forward_workspace_settings).
     ("POST", "/api/universal/workspace-roots", "manage-policy"),
     ("GET", "/api/universal/models", "read"),

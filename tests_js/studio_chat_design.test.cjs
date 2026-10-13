@@ -42,8 +42,9 @@ const catalogue = {ok:true, count:4, source_errors:{}, groups:[
     {name:'Llama 3.3 70B', route:'meta-llama/llama-3.3-70b-instruct', vendor:'meta-llama', tag:'BYO', ctx:'131k', cost:'$0.12 / $0.30 per M', col:'#3a6acc'}]},
   {name:'LOCAL ' + DOT + ' this machine', items:[{name:'qwen2.5-coder-7b', route:'lmstudio/qwen2.5-coder-7b', vendor:'LM Studio', tag:'LOCAL', ctx:'', cost:'free ' + DOT + ' local', col:'#3fb950'}]},
 ]};
-const native = {status:'ok', revision:4, readiness:[], rows:[{kind:'native-session', app:'codex', session_id:'native-a',
-  title:'Existing session', connected:true, selectable:true}]};
+const native = {status:'ok', revision:4, readiness:[], rows:[{kind:'native-agent', app:'codex', session_id:'native-a',
+  title:'Codex', connected:true, selectable:true, live_session_count:1, session_count:1,
+  children:[{kind:'native-session', app:'codex', session_id:'native-a', title:'Existing session', connected:true, selectable:true}]}]};
 
 function projected(raw) {
   const html = read('nodelang/studio/studio.html');
@@ -349,7 +350,7 @@ test('Chats panel: the design header names New chat, and it still starts a sessi
   } finally { studio.close(); }
 });
 
-test('Model picker: the design header, live groups without prices, then native sessions, Refresh and Clear selection in the same rows', async () => {
+test('Model picker: the design header, live groups without prices, then native agents, Refresh and Clear selection in the same rows', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle();
@@ -361,7 +362,7 @@ test('Model picker: the design header, live groups without prices, then native s
     for (const absent of ['LIVE ' + DOT, 'DISCOVERING', '$']) {
       assert.equal(dialog.textContent.includes(absent), false, 'the picker draws no ' + absent);
     }
-    const labels = ['CLOUD ' + DOT + ' subscription', 'BYO ' + DOT + ' OpenRouter', 'LOCAL ' + DOT + ' this machine', 'NATIVE AGENT SESSIONS', 'OPTIONS']
+    const labels = ['CLOUD ' + DOT + ' subscription', 'BYO ' + DOT + ' OpenRouter', 'LOCAL ' + DOT + ' this machine', 'NATIVE AGENTS', 'OPTIONS']
       .map(text => studio.exact(text, dialog)[0]);
     labels.forEach((node, index) => assert.ok(node, 'group ' + index + ' is drawn'));
     for (let index = 1; index < labels.length; index += 1) {
@@ -370,9 +371,9 @@ test('Model picker: the design header, live groups without prices, then native s
     }
     const [row] = studio.exact('DeepSeek R1', dialog);
     assert.equal(row.nextElementSibling.textContent, 'deepseek ' + DOT + ' ctx 131k', 'a row reads vendor and context, no price');
-    const [session] = studio.exact('Existing session', dialog);
+    const [session] = studio.exact('Codex', dialog);
     const sessionRow = session.closest('button');
-    assert.ok(sessionRow && sessionRow.style.display === 'flex' && sessionRow.style.padding === '8px 10px', 'a native session is a design row');
+    assert.ok(sessionRow && sessionRow.style.display === 'flex' && sessionRow.style.padding === '8px 10px', 'a native agent is a design row');
     const modelsBefore = studio.requests.filter(url => url.startsWith('/api/universal/models')).length;
     const [refresh] = studio.exact('Refresh', dialog);
     studio.flush(() => refresh.closest('button').click());

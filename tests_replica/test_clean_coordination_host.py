@@ -83,7 +83,9 @@ def _host(tmp_path):
     )
     built.location.authority.store.close()
     opened = open_current_authority(root, provider)
-    return opened, key_store, CleanCoordinationHost(opened.authority, key_store)
+    return opened, key_store, CleanCoordinationHost(
+        opened.authority, key_store, runtime_root=root
+    )
 
 
 def _request(key_store, identity, method, parameters=None, label="request"):
@@ -435,7 +437,9 @@ def test_signed_generic_lens_revises_exact_instance_and_reopens_same_graph(
         tmp_path / "runtime", opened.authority.key_provider
     )
     try:
-        reopened_host = CleanCoordinationHost(reopened.authority, keys)
+        reopened_host = CleanCoordinationHost(
+            reopened.authority, keys, runtime_root=tmp_path / "runtime"
+        )
         reopened_lens = reopened_host.dispatch(_request(
             keys,
             identity,

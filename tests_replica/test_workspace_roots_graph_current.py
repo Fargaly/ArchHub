@@ -34,7 +34,7 @@ def graph(tmp_path, monkeypatch):
     built, provider = _provision_clean_runtime(tmp_path, root_name="graph-current")
     authority = built.location.authority
     keys = WindowsDpapiCallerKeyStore(tmp_path / "graph-current" / "callers.dpapi.json")
-    host = CleanCoordinationHost(authority, keys)
+    host = CleanCoordinationHost(authority, keys, runtime_root=tmp_path / "graph-current")
     answers = []
 
     def transport(payload):

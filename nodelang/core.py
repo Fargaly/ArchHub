@@ -87,6 +87,8 @@ Whitelisted non-table state on Store (holds VALUES/counters, never nodes):
     _memo      {node_id -> computed VALUE}   the memo cache
     _computes  {node_id -> int}              compute counters (observability)
     _held      {wire_id -> last conducted VALUE}  gate hold-last (values only)
+    _wire_state {wire_id -> flowing|waiting|blocked} computed wire state labels
+    _wire_last_at {wire_id -> monotonic timestamp} throttle counters
     _seq       int                           id counter
 """
 from __future__ import annotations
@@ -100,6 +102,8 @@ import subprocess
 import sys
 import time
 import urllib.request
+
+from .wire_parameters import WIRE_PARAMETER_DEFAULTS
 
 def _run_probe(kind, spec):
     """Run ONE real check on the real machine. Read-only. Returns
@@ -215,6 +219,92 @@ class _NoValue:
 
 
 NO_VALUE = _NoValue()
+
+
+def _as_list(value):
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    return [value]
+
+
+def _flatten_value(value):
+    flat = []
+    stack = list(reversed(_as_list(value)))
+    while stack:
+        item = stack.pop()
+        if isinstance(item, list):
+            stack.extend(reversed(item))
+        else:
+            flat.append(item)
+    return flat
+
+
+def _simplify_tree(value):
+    if not isinstance(value, list):
+        return value
+    kept = [_simplify_tree(child) for child in value]
+    kept = [child for child in kept if child != []]
+    while len(kept) == 1 and isinstance(kept[0], list):
+        kept = kept[0]
+    return kept
+
+
+def _coerce_literal(text):
+    raw = str(text).strip()
+    if raw.lower() == 'true':
+        return True
+    if raw.lower() == 'false':
+        return False
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    try:
+        return float(raw)
+    except ValueError:
+        return raw
+
+
+def _field(value, name):
+    if isinstance(value, dict):
+        return value.get(name)
+    return getattr(value, name, None)
+
+
+def _condition_holds(rule, value):
+    text = str(rule or '').strip()
+    for operator, test in (
+            ('>=', lambda left, right: left >= right),
+            ('<=', lambda left, right: left <= right),
+            ('!=', lambda left, right: left != right),
+            ('==', lambda left, right: left == right),
+            ('>', lambda left, right: left > right),
+            ('<', lambda left, right: left < right)):
+        if operator not in text:
+            continue
+        left_text, right_text = text.split(operator, 1)
+        name = left_text.strip()
+        wanted = _coerce_literal(right_text.strip().strip("'" + chr(34)))
+        if name == 'count':
+            held = len(_as_list(value))
+        elif name in ('', 'value', 'item'):
+            held = value
+        else:
+            for prefix in ('item.', 'value.'):
+                if name.startswith(prefix):
+                    name = name[len(prefix):]
+            held = _field(value, name)
+        try:
+            return bool(test(held, wanted))
+        except TypeError:
+            return False
+    if text in ('always', 'true'):
+        return True
+    if text in ('never', 'false'):
+        return False
+    return None
 
 
 # ---------------------------------------------------------------- validation
@@ -400,6 +490,8 @@ class Store:
         self._memo = {}       # {node_id -> computed VALUE} -- values, never nodes
         self._computes = {}   # {node_id -> int} compute counters (proves memo/dirty behavior)
         self._held = {}       # {wire_id -> last conducted VALUE} gate hold-last (values, never nodes)
+        self._wire_state = {}  # {wire_id -> flowing|waiting|blocked} runtime labels, never nodes
+        self._wire_last_at = {}  # {wire_id -> monotonic seconds} throttle counters
         self._secret_resolver = secret_resolver  # external capability; secrets never enter the table
         self._dependency_out = None  # disposable id-only index; rebuilt from the table
         self._invalidation_out = None  # disposable reverse-dependency index
@@ -516,6 +608,14 @@ class Store:
                 validate_node(self.nodes, assignment)
                 endpoint_params['stage:%03d' % index] = assignment['id']
                 stage_ids.extend([assignment['id'], stage_id])
+            for key, value in WIRE_PARAMETER_DEFAULTS.items():
+                param = self._blank(
+                    'param', key, None,
+                    {'floor': {'op': 'value', 'value': value}}, False)
+                param['meta'].update({'role': 'wire_parameter', 'wire_parameter': key})
+                self.nodes[param['id']] = param
+                validate_node(self.nodes, param)
+                endpoint_params[key] = param['id']
             wire = self._blank('wire', op.get('title', ''), endpoint_params,
                                {'inner': endpoint_ids + stage_ids}, False)
             wire['meta'].update({'capabilities': ['relation']})
@@ -710,6 +810,9 @@ class Store:
             op['transaction'] = transaction
         return self.apply_op(op)
 
+    def wire_state(self, wire_id):
+        return self._wire_state.get(wire_id, 'waiting')
+
     # -- openability ------------------------------------------------------
     def open(self, nid):
         """EVERY kind answers: inner node ids (group-ish) or the floor primitive."""
@@ -756,23 +859,125 @@ class Store:
             return self.pull(node['params'][raw['$param']], env)
         return raw
 
+    def _wire_param(self, node, key):
+        pid = node['params'].get(key)
+        if not pid:
+            return WIRE_PARAMETER_DEFAULTS[key]
+        param = self.nodes[pid]
+        floor = param.get('body', {}).get('floor', {})
+        if floor.get('op') != 'value':
+            return WIRE_PARAMETER_DEFAULTS[key]
+        return floor.get('value', WIRE_PARAMETER_DEFAULTS[key])
+
+    def _set_wire_state(self, node, state):
+        self._wire_state[node['id']] = state
+        node['meta']['state'] = state
+
+    def _restructure_wire_value(self, tree, value):
+        if tree in ('', 'none'):
+            return value
+        if tree == 'flatten':
+            return _flatten_value(value)
+        if tree == 'graft':
+            return [[item] for item in _as_list(value)]
+        if tree == 'simplify':
+            return _simplify_tree(_as_list(value))
+        raise ValueError('unknown wire data tree %r' % tree)
+
+    def _lace_wire_values(self, lacing, values):
+        if len(values) <= 1:
+            return values[0] if values else NO_VALUE
+        lists = [_as_list(value) for value in values]
+        if lacing == 'shortest':
+            size = min(len(items) for items in lists)
+            return [[items[i] for items in lists] for i in range(size)]
+        if lacing == 'longest':
+            size = max(len(items) for items in lists)
+            out = []
+            for i in range(size):
+                row = []
+                for items in lists:
+                    row.append(items[i] if i < len(items) else (items[-1] if items else None))
+                out.append(row)
+            return out
+        if lacing == 'cross product':
+            out = [[]]
+            for items in lists:
+                out = [prefix + [item] for prefix in out for item in items]
+            return out
+        raise ValueError('unknown wire lacing %r' % lacing)
+
+    def _operate_wire_value(self, operation, value):
+        text = str(operation or 'pass').strip()
+        name, sep, raw_operand = text.partition(':')
+        operand = _coerce_literal(raw_operand) if sep else None
+        if name == 'pass':
+            return value
+        if name == 'first':
+            items = _as_list(value)
+            return items[0] if items else None
+        if name == 'flatten':
+            return _flatten_value(value)
+        if name == 'count':
+            return len(_as_list(value))
+        if name == 'scale':
+            return value * (operand if operand is not None else 1)
+        if name == 'clamp':
+            return min(value, operand) if operand is not None else value
+        if name == 'round':
+            if operand in (None, 0):
+                return round(value)
+            return round(value / operand) * operand
+        raise ValueError('unknown wire operation %r' % operation)
+
     def _compute_relation(self, node, env):
+        if str(self._wire_param(node, 'enabled')).strip().lower() == 'false':
+            self._set_wire_state(node, 'blocked')
+            return NO_VALUE
+        throttle_ms = int(str(self._wire_param(node, 'throttle_ms') or '0').strip() or '0')
+        if throttle_ms > 0:
+            now = time.monotonic()
+            last_at = self._wire_last_at.get(node['id'])
+            if last_at is not None and ((now - last_at) * 1000) < throttle_ms:
+                self._set_wire_state(node, 'waiting')
+                return self._held.get(node['id'], NO_VALUE)
         sources = relation_sources(self.nodes, node)
         values = [self.pull(endpoint['node_id'], env) for endpoint in sources]
         if not values:
             raise RuntimeError('relation node %s has no source endpoints' % node['id'])
-        value = values[0] if len(values) == 1 else values
+        value = self._lace_wire_values(str(self._wire_param(node, 'lacing')).strip(), values)
+        value = self._restructure_wire_value(str(self._wire_param(node, 'tree')).strip(), value)
+        value = self._operate_wire_value(str(self._wire_param(node, 'operation')).strip(), value)
+        condition = str(self._wire_param(node, 'condition') or '').strip()
+        if condition:
+            holds = _condition_holds(condition, value)
+            if holds is None:
+                raise ValueError('wire condition %r is not supported' % condition)
+            if not holds:
+                self._set_wire_state(node, 'waiting')
+                on_fail = str(self._wire_param(node, 'on_fail') or 'block').strip()
+                if on_fail == 'pass empty':
+                    return []
+                if on_fail == 'pass last':
+                    return self._held.get(node['id'], NO_VALUE)
+                if on_fail == 'block':
+                    return NO_VALUE
+                raise ValueError('unknown wire on-block %r' % on_fail)
         for stage in relation_stages(self.nodes, node):
             stage_env = dict(env or {}, item=value)
             stage_value = self.pull(stage['node_id'], stage_env)
             if stage['mode'] == 'guard':
                 if not stage_value:
+                    self._set_wire_state(node, 'waiting')
                     return self._held.get(node['id'], NO_VALUE)
             elif stage['mode'] == 'map':
                 value = stage_value
             elif stage['mode'] == 'tap':
                 pass
         self._held[node['id']] = value
+        if throttle_ms > 0:
+            self._wire_last_at[node['id']] = time.monotonic()
+        self._set_wire_state(node, 'flowing')
         return value
 
     def _compute(self, node, env):

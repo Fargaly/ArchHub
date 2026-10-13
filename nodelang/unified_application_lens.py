@@ -260,6 +260,32 @@ def _catalogue(
     return items
 
 
+def _catalogue_memo_warmed(
+    authority: UnifiedAuthority,
+    caller: CallerCommandCapability,
+) -> bool:
+    revision = authority.store.revision
+    entry = _CATALOGUE_MEMOS.get(authority.store)
+    if entry is None or entry[0] != revision:
+        return False
+    if caller.actor_root not in entry[1]:
+        return False
+    snapshot = authority.store.snapshot()
+    members = relation_members(snapshot, authority.manifest.catalogue_root)
+    roots = sorted(
+        member.participant_id for member in members
+        if member.role_id == authority.role("definition")
+    )
+    memos = _DEFINITION_MEMOS.get(authority.store)
+    if memos is None:
+        return False
+    for root in roots:
+        held = memos.get((root, caller.actor_root))
+        if held is None or not read_set_unchanged(authority.store, held[0], held[2]):
+            return False
+    return True
+
+
 # WHICH definitions the catalogue holds is one cheap relation read; WHAT
 # each of them says is 97 definition projections, and that is where 24.8s
 # of a 51.4s scope entry went. The membership is read every time -- a

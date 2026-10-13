@@ -16,7 +16,7 @@ const approvalBlocked = task => task.state === 'approving' || /waiting for (?:yo
 const agentName = task => task.agent || task.agent_name || task.owner_label || task.ownerName || (task.owner ? null : 'no agent');
 const hostName = task => task.host || task.host_label || task.runtime || task.tools?.host || 'host unknown';
 const mayDo = agent => agent.may || agent.permissions || agent.scope || '';
-const presence = agent => agent.ago || agent.presence || (agent.verified ? 'verified recently' : 'not verified');
+const presence = agent => agent.ago || agent.presence || (agent.verified ? 'verified recently' : 'unverified');
 const activeAgentIds = agents => new Set((agents || []).filter(agent => agent && agent.status !== 'off').map(agent => agent.id || agent.root || agent.name).filter(Boolean));
 
 const labelStyle = {fontFamily:W.mono, fontSize:14, letterSpacing:'0.12em', color:W.inkMuted};

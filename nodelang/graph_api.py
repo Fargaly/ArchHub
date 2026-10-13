@@ -96,6 +96,7 @@ def level_view(store, container_id, pull_values=True):
                     wires.append({
                         'id': projection_id,
                         'relation': wid,
+                        'state': store.wire_state(wid) if hasattr(store, 'wire_state') else w['meta'].get('state'),
                         'from': src,
                         'to': dst,
                         'source_port': source.get('port_id'),

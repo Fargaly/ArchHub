@@ -29,6 +29,7 @@ from .unified_authority import (
     promote_definition,
     published_definition_named,
 )
+from .stability_runtime import stable_json_hash
 
 PROVENANCE = {
     "source": "docs/NODE_GRAMMAR.md (1.4 palette, ✓ rows)",
@@ -153,10 +154,15 @@ def _command_key(name: str, step: str) -> str:
     ))
 
 
+def base_universal_catalogue_hash() -> str:
+    return stable_json_hash(BASE_CATALOGUE)
+
+
 def install_base_universal_catalogue(
     authority: UnifiedAuthority,
     *,
     caller: CallerCommandCapability,
+    reconcile_existing: bool = True,
 ) -> Mapping[str, str]:
     """Publish every base definition the catalogue does not already hold.
 
@@ -185,10 +191,11 @@ def install_base_universal_catalogue(
         held = published_definition_named(authority, name, caller=caller)
         if held is not None:
             roots[name] = held
-            _reconcile_status_parameter(
-                authority, held, name, entry_parameters, entry_rules,
-                entry, caller=caller,
-            )
+            if reconcile_existing:
+                _reconcile_status_parameter(
+                    authority, held, name, entry_parameters, entry_rules,
+                    entry, caller=caller,
+                )
             continue
         defaults = {
             parameter: spec.get("default", "")
@@ -366,5 +373,6 @@ def install_stem_expressions(
     return built
 
 
-__all__ = ["BASE_CATALOGUE", "install_base_universal_catalogue", "install_stem_expressions",
+__all__ = ["BASE_CATALOGUE", "base_universal_catalogue_hash",
+           "install_base_universal_catalogue", "install_stem_expressions",
            "GRAPH_EXPRESSIONS"]

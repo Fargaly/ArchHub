@@ -16,7 +16,7 @@ import json
 import threading
 import sys
 import time
-from typing import Mapping
+from typing import Mapping, Sequence
 import uuid
 
 from cryptography.exceptions import InvalidSignature
@@ -273,17 +273,31 @@ def _message_projection(value: CoordinationMessageProjection) -> dict[str, objec
     return asdict(value)
 
 
-def _boot_note(line: str) -> None:
+def _boot_note(line: str, runtime_root=None) -> None:
     """One measured line into the owner's boot log (stderr is lost under pythonw)."""
     try:
         import os as _os
         from pathlib import Path as _Path
-        root = _Path(_os.environ.get("LOCALAPPDATA", "")) / "ArchHub" / "unified-authority"
+        root = (
+            _Path(runtime_root)
+            if runtime_root
+            else _Path(_os.environ.get("LOCALAPPDATA", "")) / "ArchHub" / "unified-authority"
+        )
         if root.is_dir():
             with (root / "boot-timing.log").open("a", encoding="utf-8") as log:
                 log.write(time.strftime("%Y-%m-%d %H:%M:%S") + "  boot phase: " + line + chr(10))
     except Exception:
         pass
+
+
+def _base_catalogue_reconciliation_decision(
+    runtime_root,
+    state: Mapping[str, object],
+    changed: bool,
+    missing: Sequence[str],
+) -> tuple[bool, bool]:
+    effective_changed = changed if (runtime_root and state) else True
+    return bool(missing or effective_changed), effective_changed
 
 
 class CleanCoordinationHost:
@@ -295,6 +309,7 @@ class CleanCoordinationHost:
         key_store: WindowsDpapiCallerKeyStore,
         *,
         host_invoker=None,
+        runtime_root=None,
     ) -> None:
         if host_invoker is not None and not callable(host_invoker):
             raise InvalidCell("coordination host adapter must be callable")
@@ -312,7 +327,7 @@ class CleanCoordinationHost:
         ] = {}
         _t = time.monotonic()
         self._founder = key_store.bind_bootstrap(authority, "founder.bootstrap")
-        _boot_note("bind_bootstrap %.1fs" % (time.monotonic() - _t))
+        _boot_note("bind_bootstrap %.1fs" % (time.monotonic() - _t), runtime_root)
         _t = time.monotonic()
         self._sessions = install_agent_session_catalogue(
             authority,
@@ -322,7 +337,7 @@ class CleanCoordinationHost:
             )),
             caller=self._founder,
         )
-        _boot_note("agent session catalogue %.1fs" % (time.monotonic() - _t))
+        _boot_note("agent session catalogue %.1fs" % (time.monotonic() - _t), runtime_root)
         _t = time.monotonic()
         self._workshop = install_workshop_catalogue(
             authority,
@@ -332,19 +347,73 @@ class CleanCoordinationHost:
             )),
             caller=self._founder,
         )
-        _boot_note("workshop catalogue %.1fs" % (time.monotonic() - _t))
+        _boot_note("workshop catalogue %.1fs" % (time.monotonic() - _t), runtime_root)
         _t = time.monotonic()
-        from .base_universal_catalogue import install_base_universal_catalogue
-        self._base_catalogue = install_base_universal_catalogue(
-            authority, caller=self._founder,
+        from .base_universal_catalogue import (
+            BASE_CATALOGUE,
+            base_universal_catalogue_hash,
+            install_base_universal_catalogue,
         )
+        from .stability_runtime import (
+            catalogue_refresh_required,
+            read_generation_state,
+            write_generation_state,
+        )
+        source_hash = base_universal_catalogue_hash()
+        changed, generation = catalogue_refresh_required(
+            runtime_root or ".",
+            authority,
+            source_hash=source_hash,
+        )
+        state = read_generation_state(runtime_root) if runtime_root else {}
+        names = tuple(entry["name"] for entry in BASE_CATALOGUE)
+        from .unified_authority import published_definition_named
+        existing = {
+            name: published_definition_named(authority, name, caller=self._founder)
+            for name in names
+        }
+        missing = [name for name, root in existing.items() if root is None]
+        should_install, changed = _base_catalogue_reconciliation_decision(
+            runtime_root, state, changed, missing,
+        )
+        if should_install:
+            self._base_catalogue = install_base_universal_catalogue(
+                authority,
+                caller=self._founder,
+                reconcile_existing=bool(changed),
+            )
+            _, generation = catalogue_refresh_required(
+                runtime_root or ".",
+                authority,
+                source_hash=source_hash,
+            )
+            if runtime_root:
+                write_generation_state(
+                    runtime_root,
+                    source_hash=source_hash,
+                    generation=generation,
+                    warmed=False,
+                )
+            verdict = "installed/reconciled"
+        else:
+            self._base_catalogue = {
+                name: root for name, root in existing.items() if root is not None
+            }
+            if runtime_root and not state:
+                write_generation_state(
+                    runtime_root,
+                    source_hash=source_hash,
+                    generation=generation,
+                    warmed=False,
+                )
+            verdict = "unchanged skipped"
         # An owner does not write to the founder's graph at boot. The
         # expression cells and any visual-system upgrade are migrations
         # someone runs deliberately: a boot that rewrites 24 templates
         # because a vocabulary grew added 136,178 cells in 120 restarts.
-        _boot_note("base universal catalogue %.1fs (%d definitions)" % (
-            time.monotonic() - _t, len(self._base_catalogue),
-        ))
+        _boot_note("base universal catalogue %.1fs (%d definitions; %s)" % (
+            time.monotonic() - _t, len(self._base_catalogue), verdict,
+        ), runtime_root)
 
     def verify_request(self, request: SignedCoordinationRequest) -> None:
         if request.version != _REQUEST_VERSION:

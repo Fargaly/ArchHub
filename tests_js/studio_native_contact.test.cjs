@@ -33,7 +33,10 @@ const selection = {app:'claude', session_id:'native-a'};
 const contact = {root:'contact-a', binding_digest:'a'.repeat(64), connected:true};
 const discovered = () => ({status:'ok', revision:4,
   workshop:{root:'workshop-a', scope:'scope-a', scope_path:['brain-a', 'scope-a']},
-  rows:[{...selection, title:'Existing session', connected:true, selectable:true}], contacts:[contact]});
+  rows:[{kind:'native-agent', app:'claude', session_id:'native-a', title:'Claude', connected:true,
+    selectable:true, live_session_count:1, session_count:1,
+    children:[{kind:'native-session', ...selection, title:'Existing session', connected:true, selectable:true}]}],
+  contacts:[contact]});
 const bound = () => ({ok:true, contact:contact.root, binding_digest:contact.binding_digest,
   ...selection, root:'workshop-a', scope:'scope-a', scope_path:['brain-a', 'scope-a'], revision:5,
   execution_authority:false});
@@ -78,8 +81,8 @@ test('saved-contact discovery checks every supported app rather than marking unq
 
 test('unavailable, duplicate, offline or unselectable native sessions refuse before binding', async () => {
   for (const change of [row => { row.status = 'unavailable'; },
-    row => { row.rows.push({...row.rows[0]}); }, row => { row.rows[0].connected = false; },
-    row => { row.rows[0].selectable = false; }]) {
+    row => { row.rows.push({...row.rows[0]}); }, row => { row.rows[0].children[0].connected = false; },
+    row => { row.rows[0].children[0].selectable = false; }]) {
     const discovery = discovered(); change(discovery);
     const fixture = setup({get:() => discovery});
     await assert.rejects(fixture.api.bindNativeContact(selection), /no longer uniquely available/);

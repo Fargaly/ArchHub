@@ -95,14 +95,30 @@ def ensure_local_coordination_host(endpoint: str = DEFAULT_ENDPOINT) -> None:
                 close_fds=True,
                 creationflags=flags,
             )
+            from .stability_runtime import backoff_delays, root_cause_line
             deadline = time.monotonic() + 90.0
+            attempt = 0
             while time.monotonic() < deadline:
                 if _host_is_healthy(endpoint):
                     return
                 if process.poll() is not None:
                     break
-                time.sleep(0.25)
-            raise RuntimeError("clean coordination host failed to start")
+                delay = backoff_delays(
+                    attempt + 1,
+                    base=0.25,
+                    factor=2.0,
+                    cap=3.0,
+                    jitter=0.25,
+                )[-1]
+                attempt += 1
+                time.sleep(delay)
+            try:
+                process.wait(timeout=0)
+            except Exception as exc:
+                detail = root_cause_line(exc)
+            else:
+                detail = "process exited with %s" % process.returncode
+            raise RuntimeError("clean coordination host failed to start at " + detail)
         finally:
             stream.seek(0)
             msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)

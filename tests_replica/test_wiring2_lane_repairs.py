@@ -456,9 +456,11 @@ def test_f8_a_wire_condition_runs_instead_of_refusing_the_run(graph):
     app.edit_universal_property(store, registry, rows["condition"][0], "count > 5")
     ran = run_universal_pipeline(store, registry, effect_engines=PIPELINE_ENGINES, only_roots=[note, merge])
     assert ran["pending"][merge] == "blocked by wire condition 'count > 5'"
-    create_universal_property(store, registry, wire, "lacing", "longest")
-    with pytest.raises(app.InvalidCell):
-        run_universal_pipeline(store, registry, effect_engines=PIPELINE_ENGINES, only_roots=[note, merge])
+    rows = _owner_properties(store.snapshot(), registry)[wire]
+    app.edit_universal_property(store, registry, rows["lacing"][0], "longest")
+    assert run_universal_pipeline(
+        store, registry, effect_engines=PIPELINE_ENGINES, only_roots=[note, merge]
+    )["pending"][merge] == "blocked by wire condition 'count > 5'"
 
 
 def test_f8_the_wire_rows_have_one_source_the_server_serves(harness):
@@ -469,7 +471,9 @@ def test_f8_the_wire_rows_have_one_source_the_server_serves(harness):
     served = harness.request("/api/universal/node-library")["wire_parameters"]
     assert [row["k"] for row in served] == [key for key, _default in _WIRE_PARAMETERS]
     assert served == [dict(spec) for spec in WIRE_PARAMETER_SPECS]
-    assert {key for key, _default in _WIRE_PARAMETERS} == {"enabled", "tree", "condition", "on_fail"}
+    assert {key for key, _default in _WIRE_PARAMETERS} == {
+        "enabled", "lacing", "tree", "condition", "on_fail", "throttle_ms", "operation"
+    }
     assert "const WIRE_PARAMS = [" not in _read("param-types.jsx")
     assert "window.WIRE_PARAMS = nodeLibrary.wire_parameters" in _read("studio.html")
     assert "window.WIRE_PARAMS = answer.wire_parameters" in _read("cockpit.html")

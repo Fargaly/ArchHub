@@ -165,6 +165,17 @@ def _apply_connectors(row: dict[str, object], host_rows, *, probing: bool = Fals
         1 for item in host_rows
         if isinstance(item, Mapping) and item.get("state") in ("connected", "listening")
     )
+    row["hosts"] = [
+        {
+            "id": str(item.get("id") or ""),
+            "name": str(item.get("name") or item.get("id") or ""),
+            "state": str(item.get("state") or ""),
+            "detail": str(item.get("detail") or ""),
+            "enabled": bool(item.get("enabled", True)),
+        }
+        for item in host_rows
+        if isinstance(item, Mapping) and str(item.get("id") or "")
+    ]
     _set_state(row, "running", f"{running}/{total} hosts running.")
 
 

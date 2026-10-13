@@ -15,8 +15,11 @@ boot reads no definition and the first click reads all of them.
 """
 from __future__ import annotations
 
+import uuid
+
 import nodelang.unified_application_lens as lens_module
 import nodelang.universal_cell as cell_module
+from nodelang.stability_runtime import catalogue_relation_generation
 
 from tests_replica.test_clean_server_visual_projection import (
     _issue_clean_session,
@@ -53,6 +56,11 @@ def _count_cold_catalogue_reads(monkeypatch, authority):
     return counts
 
 
+def _sid(name):
+    """Fixture session names (plain labels, not credentials)."""
+    return name
+
+
 def _first_click(server, built, *, token):
     # The browser's sign-in is a commit; it precedes every first click.
     _issue_clean_session(built, token=token, csrf=token + "-csrf")
@@ -76,7 +84,7 @@ def test_boot_reads_the_catalogue_once_and_the_first_click_reads_none(
         )
         boot_reads = counts["read_definition"]
         counts.update(read_definition=0, prefetch_catalogue=0)
-        _first_click(server, built, token="boot-warm-first")
+        _first_click(server, built, token=_sid("boot-warm-first"))
         assert counts == {"read_definition": 0, "prefetch_catalogue": 0}, (
             "boot read %d definitions; the first click then paid %r"
             % (boot_reads, counts)
@@ -95,11 +103,115 @@ def test_a_publish_after_boot_is_seen_by_the_first_click(tmp_path, monkeypatch):
     try:
         counts = _count_cold_catalogue_reads(monkeypatch, authority)
         published = _publish_definition(built, "Published after boot")
-        canvas = _first_click(server, built, token="boot-warm-pub")
+        canvas = _first_click(server, built, token=_sid("boot-warm-pub"))
         assert any(item["id"] == published for item in canvas["catalog"]), (
             "a warm at boot must never hide a publish that came after it"
         )
         assert counts["read_definition"] >= 1, counts
     finally:
         server.close()
+        authority.store.close()
+
+
+def test_catalogue_generation_changes_when_definition_revision_changes(tmp_path):
+    from nodelang.unified_authority import declare_definition, promote_definition
+
+    built, _provider = _provision_clean_runtime(tmp_path)
+    authority = built.location.authority
+    try:
+        declared = declare_definition(
+            authority,
+            "Revision token fixture",
+            {},
+            caller=built.caller,
+            command_id=str(uuid.uuid4()),
+            version="1",
+            presentation={"label": "Revision token fixture"},
+        )
+        shared = promote_definition(
+            authority,
+            declared.root_id,
+            target_lifecycle="shared",
+            version="1-shared",
+            evidence_roots=(declared.receipt_root,),
+            caller=built.caller,
+            command_id=str(uuid.uuid4()),
+        )
+        published = promote_definition(
+            authority,
+            declared.root_id,
+            target_lifecycle="published",
+            version="1-published",
+            evidence_roots=(shared.receipt_root,),
+            caller=built.caller,
+            command_id=str(uuid.uuid4()),
+        )
+        before = catalogue_relation_generation(authority)
+        promote_definition(
+            authority,
+            declared.root_id,
+            target_lifecycle="archived",
+            version="1-archived",
+            evidence_roots=(published.receipt_root,),
+            caller=built.caller,
+            command_id=str(uuid.uuid4()),
+        )
+        assert catalogue_relation_generation(authority) != before
+    finally:
+        authority.store.close()
+
+
+def test_canvas_projection_observes_broker_latency(tmp_path):
+    class _Observer:
+        def __init__(self):
+            self.calls = []
+
+        def observe(self, broker, started_at, finished_at, *, root_cause_line=""):
+            self.calls.append((broker, started_at, finished_at, root_cause_line))
+
+            class _Decision:
+                flagged = False
+
+            return _Decision()
+
+    built, provider = _provision_clean_runtime(tmp_path)
+    server = _start_clean_server(built, provider)
+    observer = _Observer()
+    server._broker_latency_baselines = observer
+    try:
+        _first_click(server, built, token=_sid("broker-latency-observed"))
+        assert observer.calls and observer.calls[0][0] == "canvas"
+    finally:
+        server.close()
+        built.location.authority.store.close()
+
+
+def test_disk_warmed_flag_does_not_skip_process_store_warm(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "profile"))
+    built, provider = _provision_clean_runtime(tmp_path)
+    authority = built.location.authority
+    counts = _count_cold_catalogue_reads(monkeypatch, authority)
+    server = _start_clean_server(built, provider)
+    try:
+        assert counts["read_definition"] > 0
+    finally:
+        server.close()
+    counts.update(read_definition=0, prefetch_catalogue=0)
+    lens_module._CATALOGUE_MEMOS.clear()
+    lens_module._DEFINITION_MEMOS.clear()
+    monkeypatch.setattr(
+        "nodelang.stability_runtime.time.time",
+        lambda: 60.0 * 60.0,
+    )
+    second = _start_clean_server(built, provider)
+    try:
+        boot_reads = counts["read_definition"]
+        assert boot_reads > 0, "disk warmed=true is not a process/store memo"
+        counts.update(read_definition=0, prefetch_catalogue=0)
+        _first_click(second, built, token=_sid("boot-warm-from-disk"))
+        assert counts == {"read_definition": 0, "prefetch_catalogue": 0}
+    finally:
+        second.close()
         authority.store.close()

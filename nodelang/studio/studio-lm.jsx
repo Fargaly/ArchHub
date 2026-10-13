@@ -2566,7 +2566,7 @@ const defaultModelRowFromPayload = (payload, route) => {
 };
 const defaultModelRow = (route, source, fallback) => {
   return {name:route, route, routed:route, vendor:fallback ? 'Default' : 'Saved selection',
-    tag:fallback ? (source || 'default') : 'Availability not verified',
+    tag:fallback ? (source || 'default') : 'Availability unverified',
     ctx:'', col:LM.inkMuted, latency:null};
 };
 const DEFAULT_FREE_MODEL_ROUTE = 'openrouter/free';
@@ -8882,17 +8882,70 @@ const SettingsWorkspaces = () => {
 };
 // Design #connectors "Never removed": programs without a connector yet stay in the list.
 const CONNECTORS_NOT_BUILT = [['Civil 3D','no connector yet'],['Navisworks','no connector yet'],['SketchUp · Archicad · IFC','no connector yet'],['Bluebeam · Enscape · Power BI','no connector yet'],['Dropbox · SharePoint · Slack · Airtable','no connector yet']];
+const HostEnableSwitch = ({ hostId, enabled, onChange }) => {
+  const pendingState = React.useState(false);
+  const pending = pendingState[0], setPending = pendingState[1];
+  const errorState = React.useState('');
+  const error = errorState[0], setError = errorState[1];
+  const row = (window.ARCHHUB_LIVE?.connectors || LM_HOSTS || []).find(h => h && h.id === hostId) || {id:hostId};
+  const name = hostDisplayName(row);
+  const checked = enabled !== false;
+  const reason = name + ' is turned off in Settings \u203a Connectors.';
+  const refreshRows = () => window.fetch('/tools').then(r => r.ok ? r.json() : null).catch(() => null).then(tools => {
+    if (tools && Array.isArray(tools.tools)) {
+      window.ARCHHUB_TOOL_HUB = {...(window.ARCHHUB_TOOL_HUB || {}), ...tools};
+      toolHubSnapshot = window.ARCHHUB_TOOL_HUB;
+      toolHubSnapshotSignature = JSON.stringify(toolHubSnapshot);
+      notifyToolHubSubscribers();
+    }
+    const state = catalogueStates.get('ARCHHUB_LOAD_HOSTS');
+    if (state) state.read = false;
+    return loadCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS);
+  });
+  const toggle = () => {
+    if (pending || typeof window.fetch !== 'function') return;
+    const session = window.__archhubSession || {};
+    const next = !checked;
+    setPending(true);
+    setError('');
+    window.fetch('/api/universal/host-enabled', {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'X-ArchHub-Session':session.token || '', 'X-ArchHub-CSRF':session.csrf || ''},
+      body:JSON.stringify({host_id:hostId, enabled:next}),
+    }).then(response => response.json().catch(() => ({})).then(payload => {
+      if (!response.ok || payload?.ok === false) throw new Error(payload?.error || 'Host setting was refused.');
+      return payload.host || {id:hostId, enabled:next};
+    })).then(host => refreshRows().then(() => { onChange && onChange(host); }))
+      .catch(exc => setError(exc?.message || 'Host setting was refused.'))
+      .finally(() => setPending(false));
+  };
+  return (
+    <span style={{ display:'inline-flex', alignItems:'center', gap:8, minWidth:0 }}>
+      <button type="button" role="switch" aria-checked={checked ? 'true' : 'false'} aria-label={'Turn ' + name + ' on/off'}
+        disabled={pending} onClick={toggle} style={{
+          width:34, height:18, borderRadius:9, border:`1px solid ${checked ? LM.ok : LM.line}`,
+          background:checked ? LM.ok : LM.bgPanel, padding:2, display:'inline-flex',
+          justifyContent:checked ? 'flex-end' : 'flex-start', alignItems:'center', cursor:pending ? 'wait' : 'pointer',
+        }}>
+        <span aria-hidden="true" style={{ width:12, height:12, borderRadius:'50%', background:checked ? '#fff' : LM.inkMuted, display:'block' }}/>
+      </button>
+      {!checked && <span role="status" style={{ fontSize:10.5, color:LM.inkMuted, lineHeight:1.3, maxWidth:220 }}>{reason}</span>}
+      {error && <span role="alert" style={{ fontSize:10.5, color:LM.err || LM.warn, lineHeight:1.3, maxWidth:220 }}>{error}</span>}
+    </span>
+  );
+};
 const SettingsHosts = () => {
   const catalogue = useLiveCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS);
   const visibleHosts = LM_HOSTS.filter(h => !/no wire in this build/i.test(String(h.detail || '')));
-  const startHost = async (h, button) => {
+  const startHost = (h, button) => {
     const phrase = hostOpenPhrase(h);
     if (!phrase || typeof window.ARCHHUB_AGENT !== 'function') return;
     const before = button.textContent;
     button.textContent = 'Starting...';
-    try { await window.ARCHHUB_AGENT(phrase); button.textContent = 'Started'; }
-    catch (_) { button.textContent = 'Refused'; }
-    setTimeout(() => { button.textContent = before; }, 4000);
+    Promise.resolve(window.ARCHHUB_AGENT(phrase))
+      .then(() => { button.textContent = 'Started'; })
+      .catch(() => { button.textContent = 'Refused'; })
+      .finally(() => { setTimeout(() => { button.textContent = before; }, 4000); });
   };
   // DP-CONNECTORS (design: ArchHub Product.html #connectors). One row per program: state dot,
   // name, what the probe says, then its live state word and Start. Programs ArchHub has no
@@ -8945,6 +8998,8 @@ const SettingsHosts = () => {
               <button type="button" onClick={e => startHost(h, e.currentTarget)}
                 style={{ ...smallBtn(), padding:'5px 10px' }}>Start</button>
             )}
+            <HostEnableSwitch hostId={h.id} enabled={h.enabled !== false}
+              onChange={row => { Object.assign(h, row); catalogueChanged(); }}/>
           </div>
         );
       })}
@@ -9011,10 +9066,12 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
   const [nativeError, setNativeError] = React.useState('');
   const [discovery, setDiscovery] = React.useState(0);
   const chooseNative = async row => {
-    if (saving || row.kind !== 'native-session' || row.connected !== true ||
+    const target = row.kind === 'native-agent' && Array.isArray(row.children)
+      ? row.children.find(child => child.session_id === row.session_id) : row;
+    if (saving || !target || target.kind !== 'native-session' || target.connected !== true ||
         row.selectable === false || row.reason === 'ambiguous_endpoint' || !onNativeSelect) return;
     setSaving(true); setSelectionError('');
-    try { await onNativeSelect(row); onClose(); }
+    try { await onNativeSelect(target); onClose(); }
     catch (error) { setSelectionError(error?.message || 'The native session could not be selected.'); }
     finally { setSaving(false); }
   };
@@ -9050,7 +9107,7 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
   }, [discovery, !!onNativeSelect]);
   const matches = text => !q || String(text).toLowerCase().includes(q.toLowerCase());
   const groups = (live?.groups || []).map(g => ({ ...g, items: (g.items || []).filter(m => matches(m.name + ' ' + m.route + ' ' + (m.vendor||''))).slice(0, q ? 60 : 40) })).filter(g => g.items.length);
-  const sessions = (native?.rows || []).filter(row => row.kind === 'native-session' && matches([row.app,row.title,row.workspace].join(' ')));
+  const sessions = (native?.rows || []).filter(row => row.kind === 'native-agent' && matches([row.app,row.title,row.workspace].join(' ')));
   const selectedRoute = modelRoute(model);
   return (
     <div onClick={onClose} style={{
@@ -9101,7 +9158,7 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
             </div>
           ))}
           {onNativeSelect && <div data-picker-native="" style={{ marginTop:LM.sp.sm }}>
-            <div style={pickerGroupLabel()}>NATIVE AGENT SESSIONS</div>
+            <div style={pickerGroupLabel()}>NATIVE AGENTS</div>
             {nativeError && <p role="status" style={note}>{nativeError}</p>}
             {!native && !nativeError && <p role="status" style={note}>Discovering open agent sessions…</p>}
             {native?.status === 'unavailable' && <p role="status" style={note}>Native session discovery is unavailable. Open your client and refresh.</p>}
@@ -9111,8 +9168,8 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
                 {row.state === 'executable-discovered' && !(native.rows || []).some(session => session.app === row.app && session.connected === true)
                   ? ' No open session was discovered.' : ''}
               </p>)}
-            {native?.status === 'ok' && !(native.rows || []).some(row => row.kind === 'native-session') &&
-              <p role="status" style={note}>No open agent sessions were found. Open a session in your installed client, then refresh.</p>}
+            {native?.status === 'ok' && !(native.rows || []).some(row => row.kind === 'native-agent') &&
+              <p role="status" style={note}>No open agents were found. Open a session in your installed client, then refresh.</p>}
             {sessions.map(row => {
               const enabled = !saving && row.connected === true && row.selectable !== false && row.reason !== 'ambiguous_endpoint';
               return (
@@ -9122,8 +9179,9 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
                   <div style={{ flex:1, lineHeight:1.15, minWidth:0 }}>
                     <div style={{ fontSize:13 }}>{row.title || 'Untitled session'}</div>
                     <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.04em' }}>
-                      {row.reason === 'ambiguous_endpoint' ? 'Multiple endpoints found; select one in the client' :
-                        row.connected === true && row.selectable !== false ? 'Open session · connect to this graph' : 'Session unavailable'}
+                      {row.reason === 'multiple_live_sessions' ? 'Multiple live sessions · open Details to choose one' :
+                        row.reason === 'no_live_session' ? 'No live session' :
+                        row.connected === true && row.selectable !== false ? 'Idle · ' + row.live_session_count + ' live session' : 'Agent unavailable'}
                       {row.workspace ? ' · ' + row.workspace : ''}
                     </div>
                   </div>

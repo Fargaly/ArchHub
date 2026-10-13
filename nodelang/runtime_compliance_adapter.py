@@ -41,6 +41,9 @@ def run_physical_runtime_compliance_court(
             raise RuntimeError(
                 "runtime hook observer returned an invalid observation"
             )
+        failed_checks = tuple(
+            name for name in RUNTIME_COMPLIANCE_CHECKS if not checks[name]
+        )
         return CourtResult(
             passed=all(checks.values()),
             checks=checks,
@@ -49,6 +52,12 @@ def run_physical_runtime_compliance_court(
                 "client": str(observation.get("client") or "unknown"),
                 "status": str(observation.get("status") or "red"),
                 "issueCount": str(observation.get("issue_count") or 0),
+                "reason": (
+                    "ok" if not failed_checks
+                    else "runtime compliance checks failed: %s" % (
+                        ", ".join(failed_checks)
+                    )
+                ),
                 **{"note:" + str(key): str(value)
                    for key, value in dict(observation.get("notes") or {}).items()},
             },
@@ -60,6 +69,7 @@ def run_physical_runtime_compliance_court(
             details={
                 "adapter": "native-hook-observer-v1",
                 "status": "red",
+                "reason": "runtime compliance adapter unavailable",
                 "errorType": type(exc).__name__,
             },
         )

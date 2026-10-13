@@ -22,6 +22,7 @@ from .stem_graph_evaluation import (
     StemWire,
     evaluate_stem_graph,
 )
+from .wire_parameters import WIRE_PARAMETER_DEFAULTS, WIRE_PARAMETER_SPECS
 from .universal_application import (
     _canvas_roots,
     _issue_resource_audience_bindings,
@@ -271,11 +272,8 @@ def _pipeline_port_name(node, interface_root, side, wire_root):
 def _pipeline_wire_rows(wire):
     """The rows the evaluator applies to one wire, or None when it is muted.
 
-    enabled, tree, condition and on_fail are carried by the evaluator
-    (stem_graph_evaluation._carry). Rows an older build persisted and this
-    one does not apply (lacing, throttle_ms, on_fail "pass last") refuse the
-    run when they ask for anything but their default, instead of being
-    silently ignored.
+    The returned rows are the governed wire parameters the stem evaluator
+    carries. Enabled=false mutes the wire before it reaches the evaluator.
     """
     parameters = {row["label"]: str(row.get("value", ""))
                   for row in wire.get("params", ()) if row.get("label")}
@@ -284,18 +282,21 @@ def _pipeline_wire_rows(wire):
         raise InvalidCell("wire %s has an invalid enabled value" % wire["id"])
     if enabled == "false":
         return None
-    for name, default in _HIDDEN_WIRE_PARAMETERS:
-        if parameters.get(name, default).strip() != default:
-            raise InvalidCell("wire %s requests unsupported %s behavior" % (wire["id"], name))
     defaults = dict(_WIRE_PARAMETERS)
     rows = {
         name: parameters.get(name, defaults[name]).strip()
-        for name in ("tree", "condition", "on_fail")
+        for name in ("lacing", "tree", "condition", "on_fail", "throttle_ms", "operation")
     }
-    if rows["tree"] not in _WIRE_CHOICES["tree"]:
-        raise InvalidCell("wire %s requests unsupported tree behavior" % wire["id"])
-    if rows["on_fail"] not in _WIRE_CHOICES["on_fail"]:
-        raise InvalidCell("wire %s requests unsupported on_fail behavior" % wire["id"])
+    for name in ("lacing", "tree", "on_fail"):
+        if rows[name] not in _WIRE_CHOICES[name]:
+            raise InvalidCell("wire %s requests unsupported %s behavior" % (wire["id"], name))
+    if rows["operation"].split(":", 1)[0].strip() not in _WIRE_CHOICES["operation"]:
+        raise InvalidCell("wire %s requests unsupported operation behavior" % wire["id"])
+    try:
+        if int(rows["throttle_ms"] or "0") < 0:
+            raise ValueError
+    except ValueError as exc:
+        raise InvalidCell("wire %s has an invalid throttle value" % wire["id"]) from exc
     return rows
 
 
@@ -679,36 +680,10 @@ def release_pipeline_socket_read_only(store, registry) -> int:
     return released
 
 
-# The parameters a real graph engine gives a connection, with the same
-# defaults the inspector draws. They are ordinary graph rows on the wire's
-# own root, so editing one is the ordinary property write every node
-# parameter already uses -- no second mechanism for "a wire".
-# THE wire parameter list: Studio and the cockpit draw these rows from
-# GET /api/universal/node-library ("wire_parameters"), the run applies them
-# (stem_graph_evaluation._carry) and a new connection is given these rows.
-# Nothing else declares them.
-WIRE_PARAMETER_SPECS = (
-    {"k": "enabled", "label": "Enabled", "type": "toggle", "def": True,
-     "help": "Mute the connection without deleting it — downstream sees nothing."},
-    {"k": "tree", "label": "Data tree", "type": "menu", "def": "none",
-     "opts": ["none", "flatten", "graft", "simplify"],
-     "help": "Restructure on the way through — flatten to one list, graft each item "
-             "into its own branch, simplify removes empty levels."},
-    {"k": "condition", "label": "Condition", "type": "text", "def": "", "page": "Rules",
-     "help": "The wire only carries when this holds, e.g. count > 0 or value >= 10. "
-             "Empty means always."},
-    {"k": "on_fail", "label": "On block", "type": "menu", "def": "block",
-     "opts": ["block", "pass empty"], "page": "Rules",
-     "help": "What downstream receives when the condition blocks: nothing (block) "
-             "or an empty list."},
-)
-
-
-def _row_default(value) -> str:
-    return ("true" if value else "false") if isinstance(value, bool) else str(value)
-
-
-_WIRE_PARAMETERS = tuple((spec["k"], _row_default(spec["def"])) for spec in WIRE_PARAMETER_SPECS)
+# The parameters a real graph engine gives a connection. Studio and the
+# cockpit draw these rows from GET /api/universal/node-library, new
+# connections receive them, and the evaluators apply them.
+_WIRE_PARAMETERS = tuple(WIRE_PARAMETER_DEFAULTS.items())
 _WIRE_CHOICES = {spec["k"]: tuple(spec["opts"]) for spec in WIRE_PARAMETER_SPECS if spec.get("opts")}
 
 
@@ -716,11 +691,6 @@ def wire_parameter_specs() -> list:
     """The wire rows as Studio and the cockpit draw them (a copy)."""
     return [dict(spec, opts=list(spec["opts"])) if spec.get("opts") else dict(spec)
             for spec in WIRE_PARAMETER_SPECS]
-# Persisted by earlier builds, applied by none: a run refuses anything but
-# the default rather than ignoring it.
-_HIDDEN_WIRE_PARAMETERS = (("lacing", "shortest"), ("throttle_ms", "0"))
-
-
 def _ensure_wire_parameters(store, registry, wire_root: str):
     """Give one connection the parameter rows it is drawn with.
 

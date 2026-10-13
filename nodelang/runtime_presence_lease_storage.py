@@ -30,6 +30,7 @@ OPERATIONAL_RECORD_KINDS = frozenset({
     "runtime-ownership",
     "browser-session",
     "runtime-presence",
+    "native-runtime-retirement",
     "steward-signal",
     "authorization-receipt",
     "compliance-event",

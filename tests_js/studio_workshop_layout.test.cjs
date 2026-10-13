@@ -310,10 +310,10 @@ test('the agents rail is the transcript participants with verified connection fa
     // Founder order 2026-09-24: the rail lists the agents that are here now; a disconnected
     // session is one toggle away and is never removed from the graph.
     let rows = [...rail.querySelectorAll('[data-workshop-agent]')];
-    assert.deepEqual(rows.map(r => r.getAttribute('data-workshop-agent')), [ids.codex, ids.claude], 'verified agents first; the owner is not an agent row; disconnected hidden');
+    assert.deepEqual(rows.map(r => r.getAttribute('data-workshop-agent')), ['codex', 'claude'], 'verified agents first; the owner is not an agent row; disconnected hidden');
     assert.deepEqual(rows.map(r => r.getAttribute('aria-pressed')), ['true', 'false']);
-    assert.match(text(rows[0]), /^C Codex · gpt-5\.5 AGENT local · Codex session Idle/);
-    assert.match(text(rows[1]), /^C Claude AGENT local · Claude session Live/);
+    assert.match(text(rows[0]), /^C Codex AGENT local · Codex · 1 live \/ 1 session Idle/);
+    assert.match(text(rows[1]), /^C Claude AGENT local · Claude · 1 live \/ 1 session Live/);
     const toggle = rail.querySelector('button[data-workshop-disconnected-toggle]');
     assert.match(text(rail.querySelector('[data-workshop-disconnected-summary]')), /^1 inactive session Show$/);
     assert.equal(text(toggle), 'Show');
@@ -322,12 +322,12 @@ test('the agents rail is the transcript participants with verified connection fa
     assert.equal(rail.querySelector('button[data-workshop-disconnected-clear]'), null, 'no bulk revoke: a reconnecting session must never be cut');
     await ui.click(toggle);
     rows = [...rail.querySelectorAll('[data-workshop-agent]')];
-    assert.deepEqual(rows.map(r => r.getAttribute('data-workshop-agent')), [ids.codex, ids.claude, ids.gone]);
-    assert.match(text(rows[2]), /^A Antigravity AGENT local · Antigravity session Disconnected · 6m Last seen/);
+    assert.deepEqual(rows.map(r => r.getAttribute('data-workshop-agent')), ['codex', 'claude', 'antigravity-ide']);
+    assert.match(text(rows[2]), /^A Antigravity AGENT local · Antigravity · 0 live \/ 1 session Disconnected · 6m Last seen/);
     assert.equal(text(rail.querySelector('button[data-workshop-disconnected-toggle]')), 'Hide');
     assert.match(text(rail), /SCOPE Recent activity is not a running task\.$/);
     await ui.click(rows[1]);
     await ui.click(rail.querySelector('button[aria-label^="Connect another agent"]'));
-    assert.deepEqual(picked, [[ids.claude, true], ['library']]);
+    assert.deepEqual(picked, [['claude', true], ['library']]);
   } finally { await ui.close(); }
 });

@@ -203,6 +203,10 @@ def execute_host_operation(
     returned -- the result exists and is unreachable.
     """
     operation = _declared_operation(authority, caller, op_id)
+    from .host_enable import disabled_reason
+    reason = disabled_reason(authority, str(operation["host"]))
+    if reason is not None:
+        raise HostOperationRefused(reason)
     checked = _checked_arguments(operation, arguments)
     if operation.get("destructive") and not allow_destructive:
         raise HostOperationRefused(

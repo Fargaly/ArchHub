@@ -847,7 +847,7 @@
         if (stamp && !current(stamp, root)) fail('The conversation changed during discovery.');
         if (!result || !['ok','unavailable'].includes(result.status) || !Array.isArray(result.rows) ||
             result.rows.length > 64 || result.rows.some(row => !allowed.includes(row.app) ||
-              !text(row.session_id) || typeof row.title !== 'string' || typeof row.connected !== 'boolean')) {
+              typeof row.session_id !== 'string' || typeof row.title !== 'string' || typeof row.connected !== 'boolean')) {
           fail('Native agent discovery returned an invalid result.');
         }
         return result;
@@ -860,7 +860,8 @@
           (topologyCanvas || canvas)?.authorization?.subject, (topologyCanvas || canvas)?.authorization?.session]);
         const identity = viewIdentity();
         const fresh = await api.nativeAgents(null, [selection.app]);
-        const matches = fresh.rows.filter(row => row.app === selection.app && row.session_id === selection.session_id);
+        const matches = (fresh.rows || []).flatMap(row => Array.isArray(row.children) ? row.children : [row])
+          .filter(row => row.app === selection.app && row.session_id === selection.session_id);
         if (fresh.status !== 'ok' || matches.length !== 1 || !matches[0].connected || matches[0].selectable === false) {
           fail('That native session is no longer uniquely available. Refresh the agent list.');
         }

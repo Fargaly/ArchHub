@@ -287,34 +287,48 @@ const wsModelLabel = row => {
 };
 const wsAgentName = (row, host, shared) => {
   const vendor = host || String(row.vendor || row.provider || row.runtime || row.label || row.root || 'Agent');
+  if (Array.isArray(row.children)) return vendor;
   const model = wsModelLabel(row);
   if (model) return `${vendor} \u00b7 ${model}`;
   return shared ? `${vendor} \u00b7 ${String(row.root).split(':').pop().slice(0, 6)}` : vendor;
 };
+const wsAgentKey = row => row.agent_app || row.runtime || row.host || row.root;
 // Agents: the transcript's agent participants in the design's rail-row shape.
 const wsAgents = (transcript, cards, clock) => {
-  const rows = (Array.isArray(transcript?.participants) ? transcript.participants : []).filter(row => row.is_agent !== false);
+  const sourceRows = (Array.isArray(transcript?.participants) ? transcript.participants : []).filter(row => row.is_agent !== false);
   const messages = Array.isArray(transcript?.messages) ? transcript.messages : [];
-  // Name = the host the runtime catalog names (design rail "name · role · host"); the session id
-  // is added only when two sessions share a host. A participant without a host keeps its label.
+  const grouped = new Map();
+  sourceRows.forEach(row => {
+    const key = wsAgentKey(row);
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(row);
+  });
+  const rows = [...grouped.entries()].map(([key, children]) => {
+    const live = children.filter(row => row.attached !== false && row.connection_status !== 'disconnected' && row.connection_status !== 'retired');
+    const primary = live[0] || children[0];
+    return {...primary, root:key, children, live_session_count:live.length, session_count:children.length,
+      host:primary.host || primary.label, label:primary.host || primary.label};
+  });
+  // Name = one app/account row. Runtime/session identities stay as child details.
   const hosts = rows.map(row => typeof row.host === 'string' && row.host ? row.host : '');
   const agents = rows.map((row, index) => {
     const host = hosts[index], shared = host && hosts.filter(value => value === host).length > 1;
     const self = row.root === transcript?.self;
     const name = wsAgentName(row, host, shared);
     const tone = workshopAgentTone(row.root, self), verified = wsVerified(row, clock);
-    const owned = cards.filter(card => card.owner === row.root);
-    const latest = [...messages].reverse().find(message => message.sender_root === row.root);
-    const status = row.connection_status === 'disconnected' || row.attached === false ? 'off' :
+    const childRoots = new Set((row.children || [row]).map(child => child.root));
+    const owned = cards.filter(card => childRoots.has(card.owner));
+    const latest = [...messages].reverse().find(message => childRoots.has(message.sender_root));
+    const status = row.live_session_count === 0 || row.connection_status === 'disconnected' || row.attached === false ? 'off' :
       verified ? (owned.some(card => card.state === 'block') ? 'waiting' : owned.some(card => card.state === 'run') ? 'working' : 'available') :
       row.connection_status === 'stale' || (row.connection_status === 'connected' && wsObserved(row)) ? 'stale' : 'unverified';
     const seen = wsObserved(row) ? new Date(row.observed_at * 1000).toLocaleString() : '';
     return {id:row.root, row, self, name, role:self ? 'YOU' : 'AGENT',
       prov:row.attached === false ? 'history participant' :
-        row.runtime ? `local \u00b7 ${host || row.runtime} session` : 'agent session',
+        row.runtime ? `local \u00b7 ${host || row.runtime} · ${row.live_session_count || 0} live / ${row.session_count || 1} session${(row.session_count || 1) === 1 ? '' : 's'}` : 'agent session',
       col:tone.bg, ink:tone.fg, ini:wsInitial(name, '?'), round:self, status,
       ago:status === 'off' && wsObserved(row) ? wsAgo(row.observed_at) : '',
-      doing:status === 'off' ? (seen ? 'Last seen ' + wsClockText(row.observed_at) + '.' : 'No live presence.') :
+      doing:status === 'off' ? (seen ? 'Last seen ' + wsClockText(row.observed_at) + '.' : 'Last seen unavailable.') :
         latest ? (isWorkProposal(latest) ? wsLine('Proposed: ' + wsProposalTask(latest).title, 90) : wsLine(latest.body, 90)) : seen ? 'Last seen ' + wsClockText(row.observed_at) + '.' : 'No message from this agent on this page.',
       model:wsModelLabel(row) || 'model unknown', seen, verified,
       tools:[row.runtime, row.connection_basis, row.session_link && row.session_link !== 'none' ? 'session link \u00b7 ' + row.session_link : '']

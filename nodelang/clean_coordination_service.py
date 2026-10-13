@@ -116,10 +116,14 @@ class CleanCoordinationRequestHandler(BaseHTTPRequestHandler):
         self._write(200, result)
 
 
-def _service_boot_note(line: str) -> None:
+def _service_boot_note(line: str, runtime_root=None) -> None:
     try:
         from pathlib import Path as _Path
-        root = _Path(os.environ.get("LOCALAPPDATA", "")) / "ArchHub" / "unified-authority"
+        root = (
+            _Path(runtime_root)
+            if runtime_root
+            else _Path(os.environ.get("LOCALAPPDATA", "")) / "ArchHub" / "unified-authority"
+        )
         if root.is_dir():
             with (root / "boot-timing.log").open("a", encoding="utf-8") as log:
                 log.write(time.strftime("%Y-%m-%d %H:%M:%S") + "  boot phase: " + line + chr(10))
@@ -156,17 +160,23 @@ def build_service(
     _opening = time.monotonic()
     location = open_current_authority(runtime_root, provider)
     _service_boot_note(
-        "open_current_authority %.1fs" % (time.monotonic() - _opening)
+        "open_current_authority %.1fs" % (time.monotonic() - _opening),
+        runtime_root,
     )
     try:
         _binding = time.monotonic()
         key_store = WindowsDpapiCallerKeyStore(
             WindowsDpapiCallerKeyStore.default_path()
         )
-        graph_host = CleanCoordinationHost(location.authority, key_store)
+        graph_host = CleanCoordinationHost(
+            location.authority,
+            key_store,
+            runtime_root=runtime_root,
+        )
         service = build_bound_service(graph_host, host, port, handler=handler)
         _service_boot_note(
-            "bind coordination %.1fs" % (time.monotonic() - _binding)
+            "bind coordination %.1fs" % (time.monotonic() - _binding),
+            runtime_root,
         )
     except Exception:
         location.authority.store.close()
@@ -369,6 +379,12 @@ def main() -> int:
         action="store_true",
         help="serve coordination only (a graph without canvas subsystems)",
     )
+    parser.add_argument(
+        "--keep-runtime-logs",
+        type=int,
+        default=8,
+        help="rotate stale root runtime logs and keep this many prior files",
+    )
     args = parser.parse_args()
     # A supervisor restarts this unconditionally. Without these two exits a
     # second instance starts, blocks forever on the generation owner lock the
@@ -424,6 +440,20 @@ def main() -> int:
         _say("done %s in %.1fs" % (label, now - since))
         return now
 
+    try:
+        from .stability_runtime import rotate_root_logs
+        rotate_root_logs(
+            Path(args.root) if args.root else default_runtime_root(),
+            keep=args.keep_runtime_logs,
+        )
+    except Exception as exc:
+        from .stability_runtime import root_cause_line
+        print(
+            "runtime log rotation skipped at %s" % root_cause_line(exc),
+            file=sys.stderr,
+            flush=True,
+        )
+
     _say("clean owner starting (pid %d, port %d, canvas %d)" % (
         os.getpid(), args.port, args.canvas_port))
     # A start that shows nothing cannot be told from a start that failed.
@@ -467,6 +497,7 @@ def main() -> int:
     def _open_owning_the_graph():
         deadline = time.monotonic() + max(0.0, args.await_lock_seconds)
         announced = False
+        wait_attempt = 0
         while True:
             try:
                 return build_service(
@@ -488,15 +519,27 @@ def main() -> int:
                     _say("... waiting up to %.0fs for the previous owner to "
                          "release the graph lock" % args.await_lock_seconds)
                     announced = True
-                time.sleep(1.0)
+                from .stability_runtime import backoff_delays
+                delay = backoff_delays(
+                    wait_attempt + 1,
+                    base=0.5,
+                    factor=2.0,
+                    cap=5.0,
+                    jitter=0.3,
+                )[-1]
+                wait_attempt += 1
+                time.sleep(delay)
 
     try:
         service, location = _open_owning_the_graph()
     except DatabaseOwnerConflict as exc:
-        _say("FAILED cannot own the graph: %s" % exc)
+        from .stability_runtime import root_cause_line
+        _say("FAILED cannot own the graph at %s" % root_cause_line(exc))
         return 75
     except OSError as exc:
-        _say("FAILED cannot bind %s:%d: %s" % (args.host, args.port, exc))
+        from .stability_runtime import root_cause_line
+        _say("FAILED cannot bind %s:%d at %s" % (
+            args.host, args.port, root_cause_line(exc)))
         return 76
     # Both surfaces or neither. A half-serving owner holding the lock is
     # worse than no owner: it blocks recovery while delivering nothing, and
@@ -523,7 +566,8 @@ def main() -> int:
             canvas.bind_workshop_owner(service.coordination_host)
             canvas.start()
         except Exception as exc:
-            _say("FAILED cannot stand the canvas surface: %s" % exc)
+            from .stability_runtime import root_cause_line
+            _say("FAILED cannot stand the canvas surface at %s" % root_cause_line(exc))
             _close_owner(service, location, canvas, coordination_started=False, report=_say)
             return 77
         _mark("stand the canvas surface", opened_at)

@@ -41,18 +41,20 @@ class StemWire:
     """One wire between declared interfaces, with its governed rows.
 
     ``condition`` gates what the wire carries (the If/Else rule grammar),
-    ``on_fail`` says what the target receives when it blocks ("block" or
-    "pass empty"), and ``tree`` restructures a list on the way through
-    ("none", "flatten", "graft", "simplify").
+    ``on_fail`` says what the target receives when it blocks, ``tree``
+    restructures a list, and ``operation`` transforms the delivered value.
     """
 
     source: str
     source_interface: str
     target: str
     target_interface: str
+    lacing: str = "shortest"
     condition: str = ""
     on_fail: str = "block"
     tree: str = "none"
+    throttle_ms: str = "0"
+    operation: str = "pass"
 
 
 @dataclass(frozen=True)
@@ -177,9 +179,37 @@ def _restructure(tree: str, value: object) -> object:
     return _Refusal("wire data tree %r is not one this version applies" % tree)
 
 
+def _wire_operation(operation: str, value: object) -> object:
+    text = str(operation or "pass").strip()
+    name, sep, raw_operand = text.partition(":")
+    name = name.strip()
+    operand = _coerce(raw_operand.strip()) if sep else None
+    if name == "pass":
+        return value
+    if name == "first":
+        items = _as_list(value)
+        return items[0] if items else None
+    if name == "flatten":
+        return _restructure("flatten", value)
+    if name == "count":
+        return len(_as_list(value))
+    if name == "scale":
+        return value * (operand if operand is not None else 1)
+    if name == "clamp":
+        return min(value, operand) if operand is not None else value
+    if name == "round":
+        if operand in (None, 0):
+            return round(value)
+        return round(value / operand) * operand
+    return _Refusal("wire operation %r is not one this version applies" % operation)
+
+
 def _carry(wire: StemWire, value: object) -> object:
-    """What one wire delivers: restructured, then gated by its condition."""
+    """What one wire delivers: restructured, transformed, then gated."""
     shaped = _restructure(str(wire.tree or "none").strip(), value)
+    if isinstance(shaped, _Refusal):
+        return shaped
+    shaped = _wire_operation(str(wire.operation or "pass").strip(), shaped)
     if isinstance(shaped, _Refusal):
         return shaped
     condition = str(wire.condition or "").strip()
@@ -195,6 +225,8 @@ def _carry(wire: StemWire, value: object) -> object:
     on_fail = str(wire.on_fail or "block").strip()
     if on_fail == "pass empty":
         return []
+    if on_fail == "pass last":
+        return _Refusal("blocked by wire condition %r" % condition)
     if on_fail == "block":
         return _Refusal("blocked by wire condition %r" % condition)
     return _Refusal("wire on-block %r is not one this version applies" % on_fail)

@@ -17,6 +17,7 @@ from nodelang import (
     NO_VALUE, Store, OneTableViolation, FrozenNode, validate_store,
     set_gate, clear_gate, group, ungroup, promote_param, demote_param,
 )
+from nodelang.wire_parameters import WIRE_PARAMETER_DEFAULTS
 
 
 # ===================================================================== 1. GATES
@@ -58,6 +59,122 @@ def test_wire_opens_into_its_gate():
     assert s.open(ids['gate'])['op'] == 'compare'
     assert s.pull(ids['gate']) is True     # 10 > 5, hand-derived
     validate_store(s)
+
+
+def _set_wire_param(store, wire, key, value):
+    pid = store.nodes[wire]['params'][key]
+    store.edit(pid, ['body', 'floor', 'value'], value)
+
+
+def _value_wire(value):
+    s = Store()
+    src = s.add('value', 'src', floor={'op': 'value', 'value': value})
+    dst = s.add('op', 'copy', floor={'op': 'copy'})
+    wire = s.wire(src, dst)
+    return s, src, dst, wire
+
+
+def test_wire_nodes_carry_the_governed_parameter_rows():
+    s, _src, _dst, wire = _value_wire(7)
+    rows = {
+        key: s.nodes[pid]['body']['floor']['value']
+        for key, pid in s.nodes[wire]['params'].items()
+        if s.nodes[pid]['meta'].get('role') == 'wire_parameter'
+    }
+    assert rows == WIRE_PARAMETER_DEFAULTS
+    validate_store(s)
+
+
+def test_default_wire_still_delivers_the_source_value():
+    s, _src, dst, wire = _value_wire(7)
+    assert s.pull(wire) == 7
+    assert s.pull(dst) == 7
+    assert s.wire_state(wire) == 'flowing'
+    validate_store(s)
+
+
+def test_disabled_and_conditioned_wires_report_state_and_deliver_nothing():
+    s, _src, _dst, wire = _value_wire([1, 2])
+    _set_wire_param(s, wire, 'enabled', 'false')
+    assert s.pull(wire) is NO_VALUE
+    assert s.wire_state(wire) == 'blocked'
+    _set_wire_param(s, wire, 'enabled', 'true')
+    _set_wire_param(s, wire, 'condition', 'count > 5')
+    assert s.pull(wire) is NO_VALUE
+    assert s.wire_state(wire) == 'waiting'
+    _set_wire_param(s, wire, 'condition', 'count == 2')
+    assert s.pull(wire) == [1, 2]
+    assert s.wire_state(wire) == 'flowing'
+    validate_store(s)
+
+
+def test_wire_operations_change_the_delivered_value():
+    cases = [
+        ('pass', [1, [2, 3]], [1, [2, 3]]),
+        ('first', [1, 2, 3], 1),
+        ('flatten', [1, [2, [3]]], [1, 2, 3]),
+        ('count', [1, 2, 3], 3),
+        ('scale:2', 4, 8),
+        ('clamp:5', 9, 5),
+        ('round:5', 13, 15),
+    ]
+    for operation, source, expected in cases:
+        s, _src, _dst, wire = _value_wire(source)
+        _set_wire_param(s, wire, 'operation', operation)
+        assert s.pull(wire) == expected
+        assert s.wire_state(wire) == 'flowing'
+        validate_store(s)
+
+
+def test_data_tree_on_block_lacing_and_throttle_are_real_delivery_rules():
+    s, src, _dst, wire = _value_wire([[1, [2]], [3]])
+    _set_wire_param(s, wire, 'tree', 'flatten')
+    assert s.pull(wire) == [1, 2, 3]
+    _set_wire_param(s, wire, 'condition', 'count > 9')
+    _set_wire_param(s, wire, 'on_fail', 'pass empty')
+    assert s.pull(wire) == []
+    _set_wire_param(s, wire, 'condition', 'count == 3')
+    assert s.pull(wire) == [1, 2, 3]
+    _set_wire_param(s, wire, 'condition', 'count > 9')
+    _set_wire_param(s, wire, 'on_fail', 'pass last')
+    assert s.pull(wire) == [1, 2, 3]
+    assert s.wire_state(wire) == 'waiting'
+
+    s2 = Store()
+    a = s2.add('value', 'a', floor={'op': 'value', 'value': [1, 2]})
+    b = s2.add('value', 'b', floor={'op': 'value', 'value': [10, 20]})
+    target = s2.add('op', 'copy', floor={'op': 'copy'})
+    laced = s2.relation([
+        {'role': 'source', 'direction': 'out', 'node_id': a, 'port_id': 'value', 'cardinality': 'many'},
+        {'role': 'source', 'direction': 'out', 'node_id': b, 'port_id': 'value', 'cardinality': 'many'},
+        {'role': 'target', 'direction': 'in', 'node_id': target, 'port_id': 'value', 'cardinality': 'one'},
+    ])
+    assert s2.pull(laced) == [[1, 10], [2, 20]]
+    _set_wire_param(s2, laced, 'lacing', 'cross product')
+    assert s2.pull(laced) == [[1, 10], [1, 20], [2, 10], [2, 20]]
+
+    s3, src3, _dst3, throttled = _value_wire(1)
+    _set_wire_param(s3, throttled, 'throttle_ms', '1000')
+    assert s3.pull(throttled) == 1
+    s3.edit(src3, ['body', 'floor', 'value'], 2)
+    assert s3.pull(throttled) == 1
+    assert s3.wire_state(throttled) == 'waiting'
+
+
+def test_wire_parameters_survive_save_reopen():
+    s, _src, _dst, wire = _value_wire(7)
+    _set_wire_param(s, wire, 'condition', 'value > 3')
+    _set_wire_param(s, wire, 'operation', 'scale:2')
+    reopened = Store.load(list(s.nodes.values()))
+    assert reopened.pull(wire) == 14
+    rows = {
+        key: reopened.nodes[pid]['body']['floor']['value']
+        for key, pid in reopened.nodes[wire]['params'].items()
+        if key in WIRE_PARAMETER_DEFAULTS
+    }
+    assert rows['condition'] == 'value > 3'
+    assert rows['operation'] == 'scale:2'
+    validate_store(reopened)
 
 
 def test_gate_conducts_then_holds_last_without_touching_the_wire():

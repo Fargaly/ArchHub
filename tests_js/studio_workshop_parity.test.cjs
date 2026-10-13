@@ -116,7 +116,7 @@ const mountView = async (setup = () => {}) => {
   return {...fx, ui, props, sel:() => sel, render:() => ui.render('WorkshopView', props())};
 };
 
-test('rail: an agent is named by its host; two sessions of one host get the session id; the model is not invented', async () => {
+test('rail: an agent is named once by its host; runtime sessions stay child details', async () => {
   const fx = fixture();
   const second = 'app:agent-session:runtime:codexb7f2e1';
   const now = Date.now() / 1000;
@@ -128,9 +128,8 @@ test('rail: an agent is named by its host; two sessions of one host get the sess
     const context = {descriptor:fx.state.workshops[0], graphId:'graph-a', scopeRoot:'scope-a', transcript:fx.state.workshop, state:fx.state};
     await ui.render('WorkshopAgentsRail', {context, sel:null, onSelect:() => {}});
     const rows = [...ui.doc.querySelectorAll('[data-workshop-agent]')].map(text);
-    assert.ok(rows.some(row => /^C Codex · codex- AGENT local · Codex session/.test(row)), rows.join(' | '));
-    assert.ok(rows.some(row => /^C Codex · gpt-5\.4 AGENT local · Codex session/.test(row)), rows.join(' | '));
-    assert.ok(rows.some(row => /^C Claude AGENT local · Claude session/.test(row)), 'a host shared by no other session is the plain name');
+    assert.equal(rows.filter(row => /^C Codex AGENT local · Codex · 2 live \/ 2 sessions/.test(row)).length, 1, rows.join(' | '));
+    assert.ok(rows.some(row => /^C Claude AGENT local · Claude · 1 live \/ 1 session/.test(row)), 'a host shared by no other session is the plain name');
     assert.ok(!rows.some(row => /Runtime-/.test(row)), 'the opaque runtime label is never the name when a host is known');
   } finally { await ui.close(); }
   const view = await mountView();

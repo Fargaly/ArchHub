@@ -87,7 +87,9 @@ def _clean_settings_owner(tmp_path, provider, grant_path):
             operation_id=str(uuid.uuid4()),
             caller=built.caller,
         )
-    host = CleanCoordinationHost(built.location.authority, key_store)
+    host = CleanCoordinationHost(
+        built.location.authority, key_store, runtime_root=root
+    )
     host.bind_workspace_settings(server.clean_authority, server._clean_workspace_roots)
     return server, host, key_store
 

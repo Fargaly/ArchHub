@@ -150,9 +150,10 @@ test('the Settings sidebar is the design tab table, in the design order, and sta
   } finally { s.close(); }
 });
 
-// UX-SET2 (installed 2248, 16_Settings_Hosts): the right edge shifted row to row (chip + Start, or the chip
-// alone) and the copy read "open a file and the reads answer" / "no session listening on 48884-48899".
-test('UX-SET2: every Hosts row has the same state and action columns, and plain copy', async () => {
+// DP-CONNECTORS (design: ArchHub Product.html #connectors, superseding UX-SET2's column chips): one row per
+// live program with plain copy, the four Office programs folded into ONE row, and the programs without a
+// connector kept as "not built yet" rows (design "Never removed").
+test('DP-CONNECTORS: design rows, Office folded, not-built rows kept, plain copy', async () => {
   const s = await openSettings({hosts:[
     {id:'revit', name:'Revit', state:'absent', detail:'no session listening on 48884-48899'},
     {id:'autocad', name:'AutoCAD', state:'absent', detail:'no session listening'},
@@ -162,16 +163,14 @@ test('UX-SET2: every Hosts row has the same state and action columns, and plain 
   ]});
   try {
     const panel = await s.tab('Hosts');
-    const states = [...panel.querySelectorAll('[data-host-state]')];
-    const actions = [...panel.querySelectorAll('[data-host-action]')];
-    assert.equal(states.length, 5, 'one state chip per row');
-    assert.equal(actions.length, 5, 'one action cell per row, empty when there is nothing to start');
-    assert.deepEqual([...new Set(states.map(n => n.style.width))], ['84px'], 'the state chip has one fixed width');
-    assert.deepEqual([...new Set(actions.map(n => n.style.width))], ['62px'], 'the action column has one fixed width');
+    const rows = [...panel.querySelectorAll('[data-connector-row]')];
+    const notBuilt = [...panel.querySelectorAll('[data-not-built]')];
+    assert.equal(notBuilt.length, 5, 'the five programs without a connector stay listed');
+    assert.equal(rows.length - notBuilt.length, 4, 'Revit, AutoCAD, Rhino and ONE Office row');
     const text = panel.textContent;
+    assert.ok(text.includes('Excel \u00b7 Outlook'), 'the Office programs share one row');
     for (const stale of ['reads answer', '48884', 'no session listening']) assert.equal(text.includes(stale), false, 'no "' + stale + '" on screen');
     assert.ok(text.includes('installed \u00b7 reads when a file is open'));
-    assert.ok(text.includes('installed \u00b7 reads the inbox when Outlook is open'));
     assert.ok(text.includes('Not open \u00b7 Start opens it'), 'a startable host says Start opens it');
   } finally { s.close(); }
 });
@@ -382,16 +381,15 @@ test('Storage, Models and About state no seeded measurement; About opens the rel
   } finally { s.close(); }
 });
 
-test('Account: the tier the graph holds is the design current plan card, with no price or plan table', async () => {
+test('DP-CLOUD: the tier the graph holds sits in the identity row, with no price and no plan table', async () => {
   const s = await openSettings({account:{signedIn:true, email:'ana@studio.example', name:'Ana Example', graphTier:'founder'}});
   try {
     const panel = await s.tab('Account');
+    assert.ok(panel.querySelector('[data-cloud-panel]'), 'Account is the design Cloud window');
     const label = [...panel.querySelectorAll('div')].find(node => node.textContent === 'SUBSCRIPTION');
-    assert.ok(label, 'the SUBSCRIPTION block is drawn for a held tier');
-    const grid = label.nextElementSibling;
-    assert.equal(grid.style.gridTemplateColumns, 'repeat(3,1fr)', 'the design plan grid');
-    assert.equal(grid.children.length, 1, 'one card: the plan the account holds, never a plan table');
-    assert.ok(grid.textContent.startsWith('founder \u00b7 current'), grid.textContent);
-    assert.equal(/\$\d/.test(grid.textContent), false, 'no price');
+    assert.equal(label, undefined, 'no separate SUBSCRIPTION plan grid');
+    const identity = panel.querySelector('[data-cloud-identity]');
+    if (identity) assert.equal(/\$\d/.test(identity.textContent), false, 'no price');
+    assert.equal(/\$\d/.test(panel.textContent), false, 'no price anywhere in the Cloud window');
   } finally { s.close(); }
 });

@@ -7510,6 +7510,8 @@ const hostDetail = h => {
   if (name.includes('blender') || id.includes('blender')) return 'Start Blender from ArchHub when needed';
   if (name.includes('speckle') || id.includes('speckle')) return h.state === 'absent' ? 'Manager not found' : 'Ready to publish with stored account';
   const said = String(h.detail || '');
+  const sessions = /^(\d+) session\(s\)$/i.exec(said.trim());
+  if (sessions) return sessions[1] === '1' ? '1 session open' : sessions[1] + ' sessions open';
   if (/open a file and the reads answer/i.test(said)) return 'installed \u00b7 reads when a file is open';
   if (/open Outlook and the inbox reads answer/i.test(said)) return 'installed \u00b7 reads the inbox when Outlook is open';
   if (/^no session listening\b/i.test(said)) return hostOpenPhrase(h) ? 'Not open \u00b7 Start opens it' : 'Not open';
@@ -8859,6 +8861,8 @@ const SettingsWorkspaces = () => {
     </div>
   );
 };
+// Design #connectors "Never removed": programs without a connector yet stay in the list.
+const CONNECTORS_NOT_BUILT = [['Civil 3D','no connector yet'],['Navisworks','no connector yet'],['SketchUp · Archicad · IFC','no connector yet'],['Bluebeam · Enscape · Power BI','no connector yet'],['Dropbox · SharePoint · Slack · Airtable','no connector yet']];
 const SettingsHosts = () => {
   const catalogue = useLiveCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS);
   const visibleHosts = LM_HOSTS.filter(h => !/no wire in this build/i.test(String(h.detail || '')));
@@ -8871,51 +8875,75 @@ const SettingsHosts = () => {
     catch (_) { button.textContent = 'Refused'; }
     setTimeout(() => { button.textContent = before; }, 4000);
   };
+  // DP-CONNECTORS (design: ArchHub Product.html #connectors). One row per program: state dot,
+  // name, what the probe says, then its live state word and Start. Programs ArchHub has no
+  // connector for yet stay listed as "not built yet" (design: "Never removed").
+  // Design CONN: Excel · Word · PowerPoint · Outlook is ONE row (one sub-line, one state).
+  const isOffice = h => /^(excel|word|powerpoint|outlook)$/i.test(String(h.name || h.id || '').trim());
+  const office = visibleHosts.filter(isOffice);
+  const officeOpen = office.find(h => hostStateWord(h) === 'Connected');
+  const officeRow = office.length ? { id:'office', name:office.map(h => h.name).join(' \u00b7 '),
+    state:(officeOpen || office[0]).state,
+    officeDetail: officeOpen ? hostDetail(officeOpen) : 'installed \u00b7 reads when a file is open' } : null;
+  const connectorRows = visibleHosts.flatMap(h => !isOffice(h) ? [h] : h === office[0] ? [officeRow] : []);
+  const speckle = visibleHosts.find(h => /speckle/i.test(String(h.name || h.id || '')));
+  const connected = visibleHosts.filter(h => hostStateWord(h) === 'Connected').length;
+  const dotStyle = (col, dashed) => ({ width:8, height:8, borderRadius:'50%', flex:'none',
+    background: dashed ? 'transparent' : col, border: dashed ? `1px dashed ${LM.inkMuted}` : 0 });
+  const rowStyle = { display:'flex', alignItems:'center', gap:10, padding:'9px 10px', flexWrap:'wrap',
+    border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, background:LM.bgPanel };
+  const tagStyle = col => ({ fontFamily:LM.mono, fontSize:11, fontWeight:500, padding:'2px 8px',
+    borderRadius:4, background:LM.bgHover, color:col, whiteSpace:'nowrap' });
   return (
   <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
-    <div>
-      <div style={{ fontFamily:LM.serif, fontSize:22, letterSpacing:'-0.01em' }}>Hosts</div>
-      <div style={{ fontFamily:LM.sans, fontSize:13, color:LM.inkSoft, marginTop:3 }}>
-        Programs found on this machine. Operations reach a host only through an approved workflow.
-      </div>
-    </div>
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
-      {visibleHosts.map((h, i) => {
-        const state = hostState(h);
+      <div data-connectors-bar="" style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px',
+        background:LM.bgPanel, borderBottom:`1px solid ${LM.line}` }}>
+        <b style={{ fontWeight:600, fontSize:13 }}>Connectors</b>
+        <span style={tagStyle(LM.inkSoft)}>{connected} running</span>
+        <span style={{ flex:1 }}/>
+        {speckle && <span style={tagStyle(LM.inkSoft)}>Speckle {'·'} {hostDetail(speckle)}</span>}
+        {/* a live control on every state: re-read the hosts probe (never an inert action) */}
+        <button type="button" onClick={catalogue.retry} disabled={catalogue.loading}
+          style={{ font:`500 12px ${LM.sans}`, color:LM.ink, background:LM.bgHover, border:`1px ${catalogue.loading ? 'dashed' : 'solid'} ${LM.line}`,
+            borderRadius:6, padding:'5px 10px', cursor: catalogue.loading ? 'default' : 'pointer' }}>{catalogue.loading ? 'Checking\u2026' : 'Check again'}</button>
+      </div>
+      <div style={{ display:'grid', gap:10, padding:14 }}>
+      {connectorRows.map(h => {
         const word = hostStateWord(h);
         const col = hostStateTone(h);
         return (
-          <div key={h.id} style={{
-            padding:'10px 14px', display:'flex', alignItems:'center', gap:LM.sp.md,
-            borderTop: i===0 ? 'none' : `1px solid ${LM.lineSoft}`,
-          }}>
-            <span style={{
-              width:8, height:8, borderRadius:'50%', background: col,
-              boxShadow: word === 'Connected' ? `0 0 0 2px ${LM.ok}22`:'none',
-              animation: word === 'Checking' ? 'lmPulse 1.2s infinite':'none',
-            }}/>
-            <div style={{ flex:1, lineHeight:1.2, minWidth:0 }}>
-              <div style={{ fontSize:13, fontWeight:500, color: state==='off' ? LM.inkMuted : LM.ink }}>{h.name}</div>
-              <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em', marginTop:2 }}>
-                {hostDetail(h)}
-              </div>
+          <div key={h.id} data-connector-row="" style={rowStyle}>
+            <span style={{ ...dotStyle(word === 'Connected' ? LM.ok : word === 'Checking' ? LM.warn : LM.line, false),
+              animation: word === 'Checking' ? 'lmPulse 1.2s infinite' : 'none' }}/>
+            <div style={{ minWidth:0 }}>
+              <div style={{ fontWeight:500, fontSize:13, color:LM.ink }}>{h.name}</div>
+              <div style={{ fontFamily:LM.sans, fontSize:12, color:LM.inkSoft }}>{h.officeDetail || hostDetail(h)}</div>
             </div>
-            <span data-host-state="" style={{
-              fontFamily:LM.mono, fontSize:9, padding:'2px 7px', borderRadius:LM.rad.xs,
-              background: col + '14', color: col, letterSpacing:'0.04em', width:84, textAlign:'center', flexShrink:0,
-            }}>{word}</span>
-            <span data-host-action="" style={{ width:62, display:'flex', justifyContent:'flex-end', flexShrink:0 }}>
-              {hostOpenPhrase(h) && (
-                <button type="button" onClick={e => startHost(h, e.currentTarget)}
-                  style={{ ...smallBtn(), padding:'3px 9px' }}>Start</button>
-              )}
-            </span>
+            <span style={{ flex:1 }}/>
+            <span data-host-state="" style={{ fontFamily:LM.sans, fontSize:12, color:col }}>{word.toLowerCase()}</span>
+            {hostOpenPhrase(h) && word !== 'Connected' && (
+              <button type="button" onClick={e => startHost(h, e.currentTarget)}
+                style={{ ...smallBtn(), padding:'5px 10px' }}>Start</button>
+            )}
           </div>
         );
       })}
       {!visibleHosts.length && <SettingsEmpty role={catalogue.error ? 'alert' : 'status'}
         action={catalogue.error && !catalogue.loading && <button onClick={catalogue.retry} style={{ ...smallBtn(), padding:'3px 9px', fontStyle:'normal' }}>read again</button>}>
-        {catalogue.loading ? 'Reading the hosts on this machine\u2026' : catalogue.error ? 'Connected programs: ' + catalogue.error + '.' : 'No connected program found yet.'}</SettingsEmpty>}
+        {catalogue.loading ? 'Reading the programs on this machine…' : catalogue.error ? 'Connected programs: ' + catalogue.error + '.' : 'No connected program found yet.'}</SettingsEmpty>}
+      {CONNECTORS_NOT_BUILT.map(([name, line]) => (
+        <div key={name} data-connector-row="" data-not-built="" style={rowStyle}>
+          <span style={dotStyle(null, true)}/>
+          <div style={{ minWidth:0 }}>
+            <div style={{ fontWeight:500, fontSize:13, color:LM.inkSoft }}>{name}</div>
+            <div style={{ fontFamily:LM.sans, fontSize:12, color:LM.inkMuted }}>{line}</div>
+          </div>
+          <span style={{ flex:1 }}/>
+          <span style={tagStyle(LM.warn)}>not built yet</span>
+        </div>
+      ))}
+      </div>
     </div>
     <SettingsAssistants/>
     <SettingsOperations/>

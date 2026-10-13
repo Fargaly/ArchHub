@@ -99,7 +99,7 @@ test("W6b Account and Workspaces hide or explain disabled crawl targets", () => 
   assert.match(accountPanel, /!\s*signedOut && \(/);
   const identityBranch = accountPanel.slice(accountPanel.indexOf("{!signedOut && ("), accountPanel.indexOf("{/* the one sign-in", accountPanel.indexOf("{!signedOut && (")));
   assert.equal(identityBranch.includes("Not signed in"), false, "signed-out Account has no duplicate identity card");
-  assert.equal(identityBranch.includes("SINCE"), true, "signed-in identity still carries its since label");
+  assert.equal(identityBranch.includes("Signed in as "), true, "signed-in identity row names the account (design #cloud)");
   const workspaces = slice("const SettingsWorkspaces = ", "const SettingsHosts = ");
   assert.match(workspaces, /\{ready && <button[\s\S]*>Add<\/button>\}/);
   assert.match(workspaces, /Workspaces are added in Settings > Workspaces after the workspace registry check passes/);

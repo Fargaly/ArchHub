@@ -571,7 +571,7 @@ function CloudPublishConsent({ signedIn }) {
   const canShowControl = !!state && (allowed || signedIn);
   if (!canShowControl) return null;
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', border: `1px solid ${AC.line}`, borderRadius: AC.rad.md, marginBottom: 16 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', border: `1px solid ${AC.line}`, borderRadius: AC.rad.md }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 12.5, color: AC.ink }}>Publish this machine map to the cloud</div>
         <div role={error ? 'alert' : 'status'} style={{ fontFamily: AC.mono, fontSize: 10, color: error ? AC.err : AC.inkSoft, marginTop: 3, lineHeight: 1.5 }}>
@@ -612,27 +612,31 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
     : session.state === 'unknown' ? 'Sign-in state unavailable' : 'Not signed in';
   const mail = session && session.email ? session.email : '';
   const signedOut = !!session && session.state === 'signed_out';
+  // DP-CLOUD (design: ArchHub Product.html #cloud): one window, a "Cloud" bar, and rows of name +
+  // status + action. Every row is a live owner: the cloud.json sign-in, the way back in, publish
+  // consent, Brain access. The tier is the graph's answer only (no tier, no claim).
+  const cloudRow = { display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', flexWrap: 'wrap',
+    border: `1px solid ${AC.line}`, borderRadius: AC.rad.md, background: AC.bgPanel };
+  const rowBtn = { font: `500 12px ${AC.sans}`, color: AC.ink, background: AC.bgHover, border: `1px solid ${AC.line}`,
+    borderRadius: 6, padding: '5px 10px', cursor: 'pointer' };
   return (
-    <div>
-      <SHead title="Account" sub="Who is signed in, what the cloud may receive from this machine, and where your brain lives."/>
-
-      {/* identity */}
+    <div data-cloud-panel="" style={{ background: AC.bg, border: `1px solid ${AC.line}`, borderRadius: 10, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: AC.bgPanel, borderBottom: `1px solid ${AC.line}` }}>
+        <b style={{ fontWeight: 600, fontSize: 13 }}>Cloud</b>
+        <span style={{ flex: 1 }}/>
+      </div>
+      <div style={{ display: 'grid', gap: 10, padding: 14 }}>
+      {/* identity: the design's first row, Sign out at its right */}
       {!signedOut && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', border: `1px solid ${AC.line}`, borderRadius: AC.rad.md, marginBottom: 16 }}>
-          <span style={{
-            width: 38, height: 38, borderRadius: '50%', flexShrink: 0, display: 'grid', placeItems: 'center',
-            background: AC.accentSoft, color: AC.accent, fontFamily: AC.serif, fontSize: 17,
-          }}>{(a.name || 'A').slice(0, 1).toUpperCase()}</span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 500 }}>{who}</div>
-            <div style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.inkSoft, marginTop: 2 }}>
-              {mail || '—'}{a.firm ? ' · ' + a.firm : ''}
+        <div data-cloud-identity="" style={cloudRow}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 500, fontSize: 13 }}>{cloudSignedIn ? 'Signed in as ' + (mail || who) : who}</div>
+            <div style={{ fontFamily: AC.sans, fontSize: 12, color: AC.inkSoft }}>
+              {a.graphTier && (<span>{String(a.graphTier)} {'\u00b7'} </span>)}firm: {a.firm || 'none'}
             </div>
           </div>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontFamily: AC.mono, fontSize: 9, color: AC.inkMuted, letterSpacing: '0.12em' }}>SINCE</div>
-            <div style={{ fontFamily: AC.mono, fontSize: 11, color: AC.inkSoft }}>{a.created || '—'}</div>
-          </div>
+          <span style={{ flex: 1 }}/>
+          {cloudSignedIn && <button onClick={onSignOut} style={rowBtn}>Sign out</button>}
         </div>
       )}
 
@@ -652,27 +656,7 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
       {/* cloud publish consent: the record the relay reads, not a preference in this page */}
       <CloudPublishConsent signedIn={cloudSignedIn}/>
 
-      {/* plan — the tier the graph answered with (ARCHHUB_LOGIN above and in CloudSignIn). No
-          tier, no claim: this panel never names a plan the account was not granted, and
-          it carries no price — the offer is a graph record, not a literal in the app. */}
-      {a.graphTier && (
-        <div>
-          <div style={{ fontFamily: AC.mono, fontSize: 9, color: AC.inkMuted, letterSpacing: '0.16em', marginBottom: 9 }}>SUBSCRIPTION</div>
-          {/* The design's plan grid, holding the one plan card the account actually has: the current
-              card's accent border and fill, no price and no plan table beside it. */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, marginBottom: 10 }}>
-            <div style={{
-              textAlign: 'left', padding: '11px 12px', borderRadius: AC.rad.md,
-              border: `1px solid ${AC.accent}`, background: AC.accentSoft, color: AC.ink, fontFamily: AC.sans,
-            }}>
-              <div style={{ fontSize: 12.5, fontWeight: 500 }}>{String(a.graphTier)} · current</div>
-              <div style={{ fontSize: 11, color: AC.inkSoft, marginTop: 3, lineHeight: 1.45 }}>The tier the graph holds for this account.</div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div style={{ padding: '12px 14px', border: `1px solid ${AC.line}`, borderRadius: AC.rad.md }}>
+      <div style={{ padding: '9px 10px', border: `1px solid ${AC.line}`, borderRadius: AC.rad.md, background: AC.bgPanel }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontSize: 13, fontWeight: 500, color: AC.ink, minWidth: 86 }}>Brain access</span>
           <span style={{ padding: '3px 8px', borderRadius: AC.rad.sm, border: `1px solid ${AC.ok}`, color: AC.ok, fontFamily: AC.mono, fontSize: 9, letterSpacing: '0.12em' }}>LOCAL</span>
@@ -686,12 +670,7 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
           <BrainFolderActions/>
         </div>
       </div>
-
-      {cloudSignedIn && (
-        <button onClick={onSignOut} style={Object.assign({}, smallBtn(), { marginTop: 16, color: AC.err, borderColor: AC.lineSoft })}>
-          Sign out
-        </button>
-      )}
+      </div>
     </div>
   );
 }

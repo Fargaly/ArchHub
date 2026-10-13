@@ -307,7 +307,8 @@ test("Account identity follows the one sign-in record, not this page's storage",
   try {
     const panel = await s.tab("Account");
     assert.equal(panel.textContent.includes("Not signed in"), false, panel.textContent.slice(0, 200));
-    assert.match(panel.textContent, /Owner\s*owner@example\.com/);
+    // DP-CLOUD: the design identity row names the account the cloud record holds (page storage has no email).
+    assert.match(panel.textContent, /Signed in as owner@example\.com/);
     assert.ok([...panel.querySelectorAll("button")].some(b => b.textContent.trim() === "Sign out"));
   } finally { s.close(); }
 });

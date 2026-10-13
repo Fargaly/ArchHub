@@ -4,20 +4,37 @@ const W = window.AH;
 const h = React.createElement;
 
 const laneSpec = [
-  ['backlog', 'Backlog', task => ['created', 'queued'].includes(task.state) && !task.owner && !task.agent],
-  ['claimed', 'Claimed', task => ['open', 'claim', 'claimed'].includes(task.state) || (!!task.owner && !['approving', 'run', 'block', 'blocked', 'done', 'review'].includes(task.state))],
-  ['running', 'Running', task => ['run', 'running', 'executing', 'review'].includes(task.state)],
-  ['blocked', 'Blocked', task => ['approving', 'block', 'blocked', 'paused'].includes(task.state) || task.approving],
-  ['done', 'Done', task => task.state === 'done'],
+  ['planned', 'Planned', task => task.boardLane === 'planned'],
+  ['wip', 'WIP', task => task.boardLane === 'wip'],
+  ['review', 'In review', task => task.boardLane === 'review'],
+  ['done', 'Done', task => task.boardLane === 'done'],
+  ['archived', 'Archived', task => task.boardLane === 'archived'],
 ];
 const stop = event => event && typeof event.stopPropagation === 'function' && event.stopPropagation();
 const line = task => task.tools?.t || task.status || task.lead || '';
 const approvalBlocked = task => task.state === 'approving' || /waiting for (?:your|founder) approval/i.test(line(task));
-const agentName = task => task.agent || task.agent_name || task.owner_label || task.ownerName || (task.owner ? null : 'no agent');
-const hostName = task => task.host || task.host_label || task.runtime || task.tools?.host || 'host unknown';
+const toolBlocked = task => ['block', 'blocked', 'paused'].includes(task.state);
+const visibleName = value => {
+  const text = String(value || '').trim();
+  return text && !/^(?:app:|work:|assembly-instance:|mcp-server:)/.test(text) && !/^Runtime-/i.test(text) ? text : '';
+};
+const agentName = task => visibleName(task.agent || task.agent_name || task.owner_label || task.ownerName || task.owner);
+const hostName = task => visibleName(task.host || task.host_label || task.runtime || task.tools?.host);
 const mayDo = agent => agent.may || agent.permissions || agent.scope || '';
 const presence = agent => agent.ago || agent.presence || (agent.verified ? 'verified recently' : 'unverified');
-const activeAgentIds = agents => new Set((agents || []).filter(agent => agent && agent.status !== 'off').map(agent => agent.id || agent.root || agent.name).filter(Boolean));
+const liveAgentIds = agents => {
+  const ids = new Set();
+  (agents || []).forEach(agent => {
+    if (!agent || agent.verified !== true || ['off', 'stale', 'unverified', 'unknown'].includes(agent.status)) return;
+    // Only exact verified SESSION roots count (Ping WS-022 v2): the projected live_roots list is
+    // authoritative; a grouped app/account root or an unverified child never implies WIP.
+    if (Array.isArray(agent.live_roots)) { agent.live_roots.filter(Boolean).forEach(root => ids.add(root)); return; }
+    if (!Array.isArray(agent.children) && agent.root) ids.add(agent.root);
+  });
+  return ids;
+};
+const routeButtons = task => Array.isArray(task.decision) && task.decision.length ? task.decision : [];
+const decisionLabel = choice => /^reject$/i.test(choice?.label || '') ? 'Decline' : (choice?.label || choice?.action);
 
 const labelStyle = {fontFamily:W.mono, fontSize:14, letterSpacing:'0.12em', color:W.inkMuted};
 const chipStyle = {fontFamily:W.mono, fontSize:13, letterSpacing:'0.02em', paddingTop:3, paddingBottom:3,
@@ -35,38 +52,52 @@ const BoardCard = ({task, onSelect, onDecide}) => h('article', {
     gap:8, minWidth:0, cursor:onSelect ? 'pointer' : 'default'},
 }, [
   h('div', {key:'head', style:{display:'flex', alignItems:'center', gap:W.sp?.sm || 8, minWidth:0}}, [
-    h('strong', {key:'title', style:{fontSize:18, lineHeight:1.25, fontWeight:700, color:W.ink, overflowWrap:'anywhere'}}, task.title || task.work),
-    h('span', {key:'agent', style:{...chipStyle, marginLeft:'auto'}}, agentName(task) || 'no agent'),
+    h('strong', {key:'title', style:{fontSize:18, lineHeight:1.25, fontWeight:700, color:W.ink, overflowWrap:'anywhere'}}, task.title || 'Untitled work'),
+    agentName(task) ? h('span', {key:'agent', style:{...chipStyle, marginLeft:'auto'}}, agentName(task)) : null,
   ]),
   h('div', {key:'meta', style:{display:'flex', gap:8, flexWrap:'wrap', fontSize:16, color:W.inkSoft, lineHeight:1.45}}, [
-    h('span', {key:'host', style:chipStyle}, hostName(task)),
+    hostName(task) ? h('span', {key:'host', style:chipStyle}, hostName(task)) : null,
     h('span', {key:'status'}, line(task)),
   ]),
-  approvalBlocked(task)
-    ? h('div', {key:'actions', style:{display:'flex', gap:W.sp?.sm || 8, flexWrap:'wrap'}},
-      (task.decision || [{label:'Approve', action:'approve'}, {label:'Reject', action:'reject'}]).map((choice, index) =>
+  routeButtons(task).length || approvalBlocked(task)
+    ? h('div', {key:'actions', style:{display:'flex', gap:W.sp?.sm || 8, flexWrap:'wrap', alignItems:'center'}},
+      routeButtons(task).length ? routeButtons(task).map((choice, index) =>
         h('button', {key:choice.label || choice.action, type:'button', style:buttonStyle(index === 0),
-          onClick:event => { stop(event); onDecide && onDecide(task.work, choice); }}, choice.label || choice.action)))
+          onClick:event => { stop(event); onDecide && onDecide(task.work, choice); }}, decisionLabel(choice)))
+        : [
+          h('span', {key:'waits', style:{fontSize:13, color:W.inkSoft}}, 'waits for you'),
+          h('button', {key:'review', type:'button', style:buttonStyle(true),
+            onClick:event => { stop(event); onSelect && onSelect(task.work); }}, 'Review'),
+        ])
     : null,
 ]);
 
-const groupTasks = (tasks, agents) => {
-  const live = activeAgentIds(agents);
+const boardLane = (task, live, archiveDays) => {
+  if (['archived', 'cancelled'].includes(task.state)) return 'archived';
+  if (task.state === 'done') return 'done';
+  if (['review', 'submitted'].includes(task.state)) return 'review';
+  const hasLiveAgent = !!task.owner && live.has(task.owner);
+  if ((['run', 'running', 'executing', 'approving'].includes(task.state) || toolBlocked(task) || task.approving) && hasLiveAgent) return 'wip';
+  return 'planned';
+};
+
+const groupTasks = (tasks, agents, archiveDays = 20) => {
+  const live = liveAgentIds(agents);
   const grouped = Object.fromEntries(laneSpec.map(([id]) => [id, []]));
   for (const task of tasks || []) {
-    const current = ['run', 'running', 'executing', 'review'].includes(task.state) && task.owner && !live.has(task.owner)
-      ? {...task, state:'claimed'} : task;
+    const current = {...task, boardLane:boardLane(task, live, archiveDays)};
     const spec = laneSpec.find(([, , admits]) => admits(current)) || laneSpec[0];
-    grouped[spec[0]].push(task);
+    grouped[spec[0]].push(current);
   }
+  Object.values(grouped).forEach(rows => rows.sort((a, b) => (approvalBlocked(b) - approvalBlocked(a)) || (toolBlocked(b) - toolBlocked(a))));
   return grouped;
 };
 
-const WorkshopBoardView = ({tasks, agents, selected, onSelect, onDecide}) => {
-  const grouped = groupTasks(tasks, agents);
+const WorkshopBoardView = ({tasks, agents, selected, onSelect, onDecide, archiveDays = 20, onArchiveDays}) => {
+  const grouped = groupTasks(tasks, agents, archiveDays);
   return h('section', {'aria-label':'Workshop board',
     style:{display:'grid', gridTemplateColumns:'repeat(5,minmax(210px,1fr))', gap:14,
-      alignContent:'start', minWidth:'1050px', height:'100%'}},
+      alignContent:'start', minWidth:'1050px', height:'100%'}}, [
     laneSpec.map(([id, label]) => {
       const all = grouped[id] || [];
       const shown = id === 'done' ? all.slice(0, 7) : all;
@@ -75,13 +106,14 @@ const WorkshopBoardView = ({tasks, agents, selected, onSelect, onDecide}) => {
           padding:12}}, [
         h('header', {key:'h', style:{display:'flex', alignItems:'center', gap:W.sp?.sm || 8,
           paddingBottom:W.sp?.sm || 8, borderBottomWidth:1, borderBottomStyle:'solid', borderBottomColor:W.lineSoft}}, [
-          h('h3', {key:'title', style:{margin:0, fontFamily:W.mono, fontSize:16, lineHeight:1.3, fontWeight:500, color:W.inkMuted, letterSpacing:'0.12em', textTransform:'uppercase'}}, label),
+          h('h3', {key:'title', style:{margin:0, fontFamily:W.sans, fontSize:11, lineHeight:1.3, fontWeight:500, color:W.inkSoft, letterSpacing:0, textTransform:'none'}}, label),
           h('span', {key:'count', style:{...labelStyle, marginLeft:'auto'}}, String(all.length)),
         ]),
         ...shown.map(task => h(BoardCard, {key:task.work, task:{...task, selected:selected === task.work}, onSelect, onDecide})),
         id === 'done' && all.length > shown.length ? h('div', {key:'more', style:{fontSize:16, color:W.inkMuted, padding:'12px 16px'}}, `+${all.length - shown.length} more`) : null,
       ]);
-    }));
+    }),
+  ]);
 };
 
 const WorkshopAgentsView = ({agents}) => {
@@ -134,7 +166,7 @@ const WorkshopApprovalsView = ({tasks, selected, onSelect, onDecide}) => h('sect
   (tasks || []).length ? (tasks || []).map(task => h(BoardCard, {key:task.work, task:{...task, selected:selected === task.work}, onSelect, onDecide}))
     : [h('div', {key:'empty', role:'status', style:{fontSize:12.5, color:W.inkSoft}}, 'No work is waiting for founder approval.')]);
 
-const WorkshopTaskPage = ({task, agent, onDecide}) => {
+const WorkshopTaskPage = ({task, agent, onDecide, details}) => {
   if (!task) return h('div', {role:'status', style:{fontSize:12.5, color:W.inkSoft}}, 'No task selected.');
   const owner = task.owner && agent ? agent(task.owner) : null;
   const thread = Array.isArray(task.thread) ? task.thread : [];
@@ -149,9 +181,9 @@ const WorkshopTaskPage = ({task, agent, onDecide}) => {
     h('article', {key:'linked', style:{background:W.bgPanel, border:`1px solid ${W.line}`, borderRadius:W.rad?.lg || 8, padding:W.sp?.lg || 16}}, [
       h('h3', {key:'h', style:{...labelStyle, marginTop:0}}, 'LINKED'),
       h('div', {key:'links', style:{fontSize:13, lineHeight:1.7, color:W.inkSoft}}, [
-        h('div', {key:'w'}, `Work: ${task.work}`),
-        h('div', {key:'h'}, `Host: ${hostName(task)}`),
-        task.tools?.list ? h('div', {key:'t'}, `Tools: ${task.tools.list}`) : null,
+        h('div', {key:'graph'}, `Graph: ${task.title || 'Workshop task'}`),
+        h('div', {key:'run'}, `Run: ${line(task) || task.state || 'open'}`),
+        hostName(task) ? h('div', {key:'host'}, hostName(task)) : null,
       ]),
     ]),
     h('article', {key:'steps', style:{gridColumn:'1 / -1', background:W.bgPanel, border:`1px solid ${W.line}`, borderRadius:W.rad?.lg || 8, padding:W.sp?.lg || 16}}, [
@@ -160,7 +192,7 @@ const WorkshopTaskPage = ({task, agent, onDecide}) => {
         alignItems:'center', border:`1px solid ${W.lineSoft}`, borderRadius:W.rad?.md || 6, padding:W.sp?.sm || 8, marginTop:W.sp?.sm || 8}}, [
         h('span', {key:'state', style:{...chipStyle, color:index === 0 ? W.ok : approvalBlocked(task) ? W.warn : W.inkMuted}}, index === 0 ? 'done' : approvalBlocked(task) ? 'waiting' : 'next'),
         h('span', {key:'text', style:{fontSize:13, color:W.ink}}, row.text || task.title),
-        approvalBlocked(task) && index === 1 ? h('span', {key:'actions', style:{fontSize:12, color:W.inkSoft}}, 'Approve · Reject') : h('span', {key:'blank'}, ''),
+        h('span', {key:'blank'}, ''),
       ])),
     ]),
     h('article', {key:'thread', style:{gridColumn:'1 / -1', background:W.bgPanel, border:`1px solid ${W.line}`, borderRadius:W.rad?.lg || 8, padding:W.sp?.lg || 16}}, [
@@ -169,8 +201,14 @@ const WorkshopTaskPage = ({task, agent, onDecide}) => {
         h('p', {key:row.root || index, style:{fontSize:12.5, lineHeight:1.6, color:W.inkSoft}}, row.text || row.body || task.title)),
       approvalBlocked(task) && task.decision ? h('div', {key:'actions', style:{display:'flex', gap:W.sp?.sm || 8}}, task.decision.map((choice, index) =>
         h('button', {key:choice.label || choice.action, type:'button', style:buttonStyle(index === 0),
-          onClick:() => onDecide && onDecide(task.work, choice)}, choice.label || choice.action))) : null,
+          onClick:() => onDecide && onDecide(task.work, choice)}, decisionLabel(choice)))) : null,
     ]),
+    details ? h('article', {key:'details', style:{gridColumn:'1 / -1', background:W.bgPanel, border:`1px solid ${W.line}`,
+      borderRadius:W.rad?.lg || 8, padding:W.sp?.lg || 16}}, [
+      h('h3', {key:'h', style:{...labelStyle, marginTop:0}}, 'DETAILS'),
+      h('div', {key:'w', style:{fontFamily:W.mono, fontSize:12, color:W.inkSoft, overflowWrap:'anywhere'}}, `Work: ${task.work}`),
+      task.tools?.list ? h('div', {key:'t', style:{fontFamily:W.mono, fontSize:12, color:W.inkSoft}}, `Tools: ${task.tools.list}`) : null,
+    ]) : null,
   ]);
 };
 

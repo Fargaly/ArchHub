@@ -106,7 +106,7 @@ test('W8 Workshop matches the design tab/header/chat contract from live data', a
 
     const tabs = [...ui.doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')];
     assert.deepEqual(tabs.map(tab => tab.getAttribute('aria-label')),
-      ['Chat', 'Tasks', 'Router', 'Relay', 'Prompts', 'Agents', 'Approvals']);
+      ['Board', 'Chat', 'Agents', 'Approvals', 'Router', 'Relay', 'Prompts']);
     assert.match(text(ui.doc.querySelector('[data-workshop-head]')), /Nile Tower/);
     assert.match(text(ui.doc.querySelector('[aria-label="Workshop header chips"]')), /Sonnet · route auto/);
     assert.match(text(ui.doc.querySelector('[aria-label="Workshop header chips"]')), /Relay Off/);
@@ -116,7 +116,7 @@ test('W8 Workshop matches the design tab/header/chat contract from live data', a
     assert.match(body, /Tag the doors on level 3 and update the door schedule\./);
     assert.match(body, /Here(?:'|’)s the plan: read 46 doors on Level 3, place tags, then rerun Door schedule\./);
     assert.match(body, /Used 2 facts from Brain: door tags use the level prefix .* fire rating before hardware/);
-    assert.match(body, /Tag doors, level 3\s+step 2 of 3 .* Revit write .* 46 doors .* waiting for approval/);
+    assert.match(body, /Tag doors, level 3\s+step 2 of 3 .* Revit write .* 46 doors .* waits for you/);
     assert.match(body, /Approve/);
     assert.match(body, /Open as graph/);
     assert.match(body, /Save as skill/);
@@ -175,12 +175,12 @@ test('W8f unapproved proposals do not render Open as graph', async () => {
     await ui.act(async () => {});
     const proposal = ui.doc.querySelector('[data-workshop-task="proposal:p1"]');
     assert.ok(proposal, 'proposal task card is rendered');
-    assert.deepEqual([...proposal.querySelectorAll('button')].map(button => button.textContent.trim()), ['Approve', 'Reject']);
+    assert.deepEqual([...proposal.querySelectorAll('button')].map(button => button.textContent.trim()), ['Approve', 'Decline']);
     assert.doesNotMatch(text(proposal), /Open as graph/);
   } finally { await ui.close(); }
 });
 
-test('W8f proposal Reject declines the proposal route', async () => {
+test('W8f proposal Decline declines the proposal route', async () => {
   const fx = fixture();
   fx.state.nativeWork = null;
   fx.state.workshop.messages = [{root:'p1', message_id:'p1', sequence:1, sender_root:'app:agent-session:runtime:proposal',
@@ -200,13 +200,13 @@ test('W8f proposal Reject declines the proposal route', async () => {
       sel:{agent:null, task:null}, setSel:() => {}});
     await ui.act(async () => {});
     const proposal = ui.doc.querySelector('[data-workshop-task="proposal:p1"]');
-    await ui.click([...proposal.querySelectorAll('button')].find(button => button.textContent.trim() === 'Reject'));
+    await ui.click([...proposal.querySelectorAll('button')].find(button => button.textContent.trim() === 'Decline'));
     assert.deepEqual(JSON.parse(JSON.stringify(fx.calls.filter(call => call[0] === 'declineWorkProposals'))),
       [['declineWorkProposals', 'room-a', ['p1']]]);
   } finally { await ui.close(); }
 });
 
-test('W8 native task Reject calls stop_native', async () => {
+test('W8 native task Decline calls stop_native', async () => {
   const fx = fixture();
   fx.state.nativeWork = {...fx.state.nativeWork, mode:'agent', selected_work_mode:'agent'};
   fx.authority.nativeWorkAction = async (...args) => { fx.calls.push(['nativeWorkAction', ...args]); return {}; };
@@ -218,9 +218,28 @@ test('W8 native task Reject calls stop_native', async () => {
       sel:{agent:null, task:null}, setSel:() => {}});
     await ui.act(async () => {});
     const taskRow = ui.doc.querySelector('[data-workshop-task]');
-    await ui.click([...taskRow.querySelectorAll('button')].find(button => button.textContent.trim() === 'Reject'));
+    await ui.click([...taskRow.querySelectorAll('button')].find(button => button.textContent.trim() === 'Decline'));
     assert.deepEqual(fx.calls.filter(call => call[0] === 'nativeWorkAction'),
       [['nativeWorkAction', 'room-a', 'stop_native', fx.state.nativeWork.work]]);
+  } finally { await ui.close(); }
+});
+
+test('WS-022 v2 planned approval-waiting Work stays planned, says waits for you, and counts in need you', async () => {
+  const fx = fixture();
+  fx.state.nativeWork = null;
+  fx.state.workshop.messages = [];
+  fx.state.workshop.planned_items = [{id:'work:plannedwait', title:'Planned approval', state:'PLANNED', done_when:'Founder approval waits for you'}];
+  fx.state.topology.graph.nodes = [];
+  const ui = await mountModule();
+  try {
+    ui.win.ARCHHUB_EXISTING_WORKSHOP = fx.authority;
+    await ui.render('WorkshopView', {state:fx.state, descriptor:fx.state.workshops[0], target:'',
+      setTarget:() => {}, setMode:() => {}, setFocusId:() => {}, onLeave:() => {},
+      sel:{agent:null, task:null}, setSel:() => {}});
+    await ui.act(async () => {});
+    const card = ui.doc.querySelector('[data-workshop-task="work:plannedwait"]');
+    assert.match(text(card), /Planned approval .* waits for you/);
+    assert.match(text(ui.doc.querySelector('[data-workshop-summary]')), /one thing needs you: T-planne Planned approval/);
   } finally { await ui.close(); }
 });
 

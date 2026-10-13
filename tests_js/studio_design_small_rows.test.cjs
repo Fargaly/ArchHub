@@ -85,6 +85,7 @@ async function mountStudio({rawCanvas = existingCanvas, update = {state:'idle', 
   };
   win.ARCHHUB_LIVE = {sessions:[{id:'graph-a', title:'ArchHub', state:'idle', file:'Graph composition'}],
     currentGraph:'graph-a', hosts:[], connectors:[], graph, memory:[], skills:[]};
+  win.ARCHHUB_BOOT = {...(win.ARCHHUB_BOOT || {}), open_graph:win.ARCHHUB_LIVE.currentGraph};
   prepare(win);
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));

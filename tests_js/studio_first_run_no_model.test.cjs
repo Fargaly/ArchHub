@@ -25,7 +25,7 @@ function projected(raw) {
   return JSON.parse(context.graph);
 }
 
-async function mountStudio({models, signin, select, raw, selected = null} = {}) {
+async function mountStudio({models, signin, select, raw, selected = null, home = false} = {}) {
   const manifest = JSON.parse(read('nodelang/studio/compiled/manifest.json'));
   for (const source of ['studio-lm.jsx', 'studio-account.jsx']) {
     const held = manifest.files.find(file => file.source === source);
@@ -54,6 +54,7 @@ async function mountStudio({models, signin, select, raw, selected = null} = {}) 
     key === 'then' ? target[key] : () => new Promise(() => {})});
   win.ARCHHUB_LIVE = {sessions:[{id:'graph-a', title:'ArchHub', state:'idle', file:'Graph composition'}],
     currentGraph:'graph-a', hosts:[], connectors:[], graph, memory:[], skills:[]};
+  if (!home) win.ARCHHUB_BOOT = {...(win.ARCHHUB_BOOT || {}), open_graph:win.ARCHHUB_LIVE.currentGraph};
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
   for (const file of manifest.files) {
@@ -67,6 +68,7 @@ async function mountStudio({models, signin, select, raw, selected = null} = {}) 
 }
 const settle = win => new Promise(resolve => win.setTimeout(resolve, 60));
 const buttonIn = (node, label) => [...node.querySelectorAll('button')].find(b => b.textContent.trim() === label);
+const homeText = doc => doc.querySelector('[data-home-page]')?.textContent || '';
 // The server's copy (model_router.composer_readiness); the Studio shows it as it stands.
 const COPY = {
   no_model:'No model yet. Sign in to ArchHub, or choose a model.',
@@ -86,7 +88,23 @@ const NO_MODEL = answer('no_model', '', fam());
 const JARGON = /OPENROUTER_API_KEY|ARCHHUB_CLOUD_TOKEN|secrets store/;
 const click = (studio, node) => studio.flush(() => node.dispatchEvent(new studio.win.MouseEvent('click', {bubbles:true})));
 
-test('no route: Chat shows an explicit No model state with Sign in and Choose a model', async () => {
+test('Home boot with no route shows an explicit No model state and boot detail', async () => {
+  const studio = await mountStudio({home:true,
+    models:{ok:true, groups:[], selected_route:'', default_route:'', readiness:NO_MODEL}});
+  try {
+    await settle(studio.win); await settle(studio.win);
+    assert.ok(studio.doc.querySelector('[data-home-page]'), 'Home is the boot screen');
+    assert.equal(studio.doc.querySelectorAll('[data-node-id]').length, 0, 'no graph canvas is open at boot');
+    assert.match(homeText(studio.doc), /No model yet/);
+    assert.ok(buttonIn(studio.doc.querySelector('[data-home-page]'), 'Choose a model'));
+    const line = studio.win.acBootDetail('brain');
+    assert.match(line, /no model/i);
+    assert.match(line, /sign in/i);
+    assert.doesNotMatch(line, /connecting/);
+  } finally { studio.close(); }
+});
+
+test('graph composer with no route shows an explicit No model state with Sign in and Choose a model', async () => {
   const started = [];
   const studio = await mountStudio({models:{ok:true, groups:[], selected_route:'', default_route:'', readiness:NO_MODEL},
     signin:method => { started.push(method); return Promise.resolve({phase:'waiting'}); }});
@@ -109,7 +127,7 @@ test('no route: Chat shows an explicit No model state with Sign in and Choose a 
   } finally { studio.close(); }
 });
 
-test('no route: the Brain line on the boot screen says no model, never "connecting"', async () => {
+test('graph deep-link with no route makes the Brain boot detail say no model, never "connecting"', async () => {
   const studio = await mountStudio({models:{ok:true, groups:[], selected_route:'', default_route:'', readiness:NO_MODEL}});
   try {
     await settle(studio.win); await settle(studio.win);
@@ -120,7 +138,7 @@ test('no route: the Brain line on the boot screen says no model, never "connecti
   } finally { studio.close(); }
 });
 
-test('a picked route without its key says what to do, in plain words', async () => {
+test('graph composer with a picked route without its key says what to do, in plain words', async () => {
   const studio = await mountStudio({models:{ok:true, groups:[], selected_route:'openrouter/vendor/m', default_route:'',
     readiness:answer('no_key', 'openrouter/vendor/m', fam())}});
   try {
@@ -132,7 +150,7 @@ test('a picked route without its key says what to do, in plain words', async () 
   } finally { studio.close(); }
 });
 
-test('an unsupported route stays on screen as its own state, never vanishes', async () => {
+test('graph composer keeps an unsupported route on screen as its own state, never vanishes', async () => {
   const route = 'anthropic/claude-sonnet-5';
   const studio = await mountStudio({models:{ok:true, groups:[], selected_route:route, default_route:'',
     readiness:answer('invalid', route, fam('ready', 'ready'))}});
@@ -147,7 +165,7 @@ test('an unsupported route stays on screen as its own state, never vanishes', as
   } finally { studio.close(); }
 });
 
-test('sign-in from Chat uses the Account settings surface instead of a duplicate cloud block', async () => {
+test('graph composer sign-in uses the Account settings surface instead of a duplicate cloud block', async () => {
   const studio = await mountStudio({
     models:reads => ({ok:true, groups:[], selected_route:'cloud/archhub-free', default_route:'',
       readiness:reads === 1 ? answer('no_key', 'cloud/archhub-free', fam()) : answer('ready', 'cloud/archhub-free', fam('no_key', 'ready'))}),
@@ -163,7 +181,7 @@ test('sign-in from Chat uses the Account settings surface instead of a duplicate
   } finally { studio.close(); }
 });
 
-test('after a model pick the state is judged for the new route', async () => {
+test('graph composer judges the state for a newly picked route', async () => {
   const ROW = {name:'Model A', route:'vendor/model-a', routed:'openrouter/vendor/model-a', vendor:'vendor', tag:'BYO', ctx:'8k', cost:'$0 / $0 per M', col:'#3a6acc'};
   const studio = await mountStudio({
     models:{ok:true, live:true, count:1, groups:[{name:'BYO', items:[ROW]}], selected_route:'', default_route:'', readiness:NO_MODEL},
@@ -187,7 +205,7 @@ test('after a model pick the state is judged for the new route', async () => {
 const nodeCanvas = route => ({nodes:[{id:'ask-a', label:'Ask', engine:'ai.agent', x:40, y:60, status:'',
   params:[{label:'engine', value:'ai.agent'}, {label:'model', value:route, relation:'rel-model', editable:true}], ports:[]}], wires:[]});
 
-test('a selected node is judged by its own model: a node model without its key warns', async () => {
+test('graph composer judges a selected node by its own model: a node model without its key warns', async () => {
   const studio = await mountStudio({raw:nodeCanvas('openrouter/vendor/node-model'), selected:'ask-a',
     models:{ok:true, groups:[], selected_route:'cloud/archhub-free', default_route:'',
       readiness:answer('ready', 'cloud/archhub-free', fam('no_key', 'ready'))}});
@@ -199,7 +217,7 @@ test('a selected node is judged by its own model: a node model without its key w
   } finally { studio.close(); }
 });
 
-test('a selected node with no model says no model, never the composer route warning', async () => {
+test('graph composer with a selected node with no model says no model, never the composer route warning', async () => {
   const studio = await mountStudio({raw:nodeCanvas(''), selected:'ask-a',
     models:{ok:true, groups:[], selected_route:'cloud/archhub-free', default_route:'',
       readiness:answer('no_key', 'cloud/archhub-free', fam('ready', 'no_key'))}});
@@ -212,7 +230,7 @@ test('a selected node with no model says no model, never the composer route warn
   } finally { studio.close(); }
 });
 
-test('a ready route shows no no-model state', async () => {
+test('graph composer with a ready route shows no no-model state', async () => {
   const studio = await mountStudio({models:{ok:true, groups:[], selected_route:'', default_route:'openrouter/vendor/m',
     default_source:'settings default_model', readiness:answer('ready', 'openrouter/vendor/m', fam('ready', 'no_key'))}});
   try {
@@ -221,7 +239,7 @@ test('a ready route shows no no-model state', async () => {
     assert.doesNotMatch(studio.win.acBootDetail('brain'), /no model/i);
   } finally { studio.close(); }
 });
-test('a :free model is labelled by its own family: lmstudio stays lmstudio, a bare one is OpenRouter', async () => {
+test('graph composer labels a :free model by its own family: lmstudio stays lmstudio, a bare one is OpenRouter', async () => {
   // Verifier 2026-09-28: lmstudio/<model>:free was read as OpenRouter's legacy free form and
   // shown the OpenRouter key state; model_router._legacy_free_route excludes family prefixes.
   const local = 'lmstudio/qwen3-8b:free';

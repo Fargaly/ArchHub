@@ -115,6 +115,7 @@ async function mountStudioWithToolHubPoller(mountOptions = {}) {
     ], currentGraph:'graph-a',
     hosts:[{id:'r25', name:'Revit 2025', state:'connected', file:'Tower.rvt'}],
     connectors:[{id:'revit', drive:true}], graph, memory:[{id:'m1', text:'Remember this', src:'test'}], skills:[]};
+  win.ARCHHUB_BOOT = {...(win.ARCHHUB_BOOT || {}), open_graph:win.ARCHHUB_LIVE.currentGraph};
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
   for (const file of manifest.files) {

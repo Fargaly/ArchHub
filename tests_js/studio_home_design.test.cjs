@@ -453,7 +453,7 @@ test('F2R D1: Settings Hub cards show owner state lines, no placeholders or plum
   } finally { studio.close(); }
 });
 
-test('F2R D2: Workshop card opens the full Workshop view on its Tasks tab, not Studio Chat', async () => {
+test('F2R D2 / WS-022: Workshop card opens the full Workshop view on its Board tab, not Studio Chat', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
@@ -461,8 +461,8 @@ test('F2R D2: Workshop card opens the full Workshop view on its Tasks tab, not S
     studio.win.ReactDOM.flushSync(() => hub.querySelector('[data-tool-card="workshop"]').click());
     await studio.settle();
     const tabs = [...studio.doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')];
-    assert.deepEqual(tabs.map(tab => tab.getAttribute('aria-label')), ['Chat', 'Tasks', 'Router', 'Relay', 'Prompts', 'Agents', 'Approvals']);
-    assert.equal(tabs.find(tab => tab.getAttribute('aria-label') === 'Tasks')?.getAttribute('aria-selected'), 'true');
+    assert.deepEqual(tabs.map(tab => tab.getAttribute('aria-label')), ['Board', 'Chat', 'Agents', 'Approvals', 'Router', 'Relay', 'Prompts']);
+    assert.equal(tabs.find(tab => tab.getAttribute('aria-label') === 'Board')?.getAttribute('aria-selected'), 'true');
     assert.equal(studio.doc.querySelector('textarea[aria-label="Message the model"]'), null);
   } finally { studio.close(); }
 });

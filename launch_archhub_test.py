@@ -707,7 +707,7 @@ def _refuse_boot_without_living(refusal, *, quit_event=None, notice_seconds=45.0
 # painting. A launch used to show nothing at all until the boot had finished.
 _boot_surface = None
 if not os.environ.get("ARCHHUB_TEST_NO_OPEN"):
-    from PyQt6.QtCore import QUrl
+    from PyQt6.QtCore import QAbstractNativeEventFilter, QTimer, QUrl
     from PyQt6.QtWidgets import QApplication, QMainWindow
     from PyQt6.QtWebEngineCore import QWebEngineProfile
     from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -721,25 +721,77 @@ if not os.environ.get("ARCHHUB_TEST_NO_OPEN"):
     profile = QWebEngineProfile.defaultProfile()
     profile.setPersistentStoragePath(str(profile_root))
     profile.setCachePath(str(profile_root / "cache"))
+    _window_quit_started = {"value": False}
+
+    def _quit_from_window(widget=None):
+        if _window_quit_started["value"]:
+            return
+        _window_quit_started["value"] = True
+        import threading as _quit_threading
+        import time as _quit_time
+        _quit_threading.Thread(
+            target=lambda: (_quit_time.sleep(3.0), os._exit(0)), daemon=True
+        ).start()
+        try:
+            app.closeAllWindows()
+            for top in app.topLevelWidgets():
+                top.deleteLater()
+        except Exception:
+            if widget is not None:
+                try:
+                    widget.close()
+                    widget.deleteLater()
+                except Exception:
+                    pass
+        QTimer.singleShot(0, app.quit)
+
+    class _WindowsCloseFilter(QAbstractNativeEventFilter):
+        def nativeEventFilter(self, event_type, message):
+            if sys.platform != "win32" or event_type not in (
+                b"windows_generic_MSG", b"windows_dispatcher_MSG",
+                "windows_generic_MSG", "windows_dispatcher_MSG",
+            ):
+                return False, 0
+            import ctypes as _close_ctypes
+            from ctypes import wintypes as _close_wintypes
+
+            class _MSG(_close_ctypes.Structure):
+                _fields_ = [
+                    ("hwnd", _close_wintypes.HWND), ("message", _close_wintypes.UINT),
+                    ("wParam", _close_wintypes.WPARAM), ("lParam", _close_wintypes.LPARAM),
+                    ("time", _close_wintypes.DWORD), ("pt", _close_wintypes.POINT),
+                ]
+
+            msg = _MSG.from_address(int(message))
+            if msg.message != 0x0010:
+                return False, 0
+            _close_ctypes.windll.user32.GetAncestor.restype = _close_wintypes.HWND
+            _close_ctypes.windll.user32.GetAncestor.argtypes = [
+                _close_wintypes.HWND, _close_wintypes.UINT,
+            ]
+            root = _close_ctypes.windll.user32.GetAncestor(msg.hwnd, 2) or msg.hwnd
+            length = _close_ctypes.windll.user32.GetWindowTextLengthW(root)
+            title = _close_ctypes.create_unicode_buffer(length + 1)
+            _close_ctypes.windll.user32.GetWindowTextW(root, title, length + 1)
+            if title.value.startswith("ArchHub"):
+                _quit_from_window(window if "window" in locals() else None)
+                return True, 0
+            return False, 0
 
     class _ArchHubWindow(QMainWindow):
-        """Closing the window hides it: ArchHub keeps running in the background
-        (the brain, BABOOM, the agents) exactly like Chrome or Claude Desktop, and
-        the tray icon brings it back or quits it for real."""
+        """Closing any ArchHub top-level window quits the desktop process."""
         quitting = False
 
         def closeEvent(self, event):
-            if self.quitting or getattr(self, "_tray", None) is None:
-                return super().closeEvent(event)
-            event.ignore()
-            self.hide()
-            try:
-                self._tray.showMessage("ArchHub keeps running", "Open it again from the tray icon; Quit is there too.")
-            except Exception:
-                pass
+            self.quitting = True
+            event.accept()
+            _quit_from_window(self)
 
 
     window = _ArchHubWindow()
+    _native_close_filter = _WindowsCloseFilter()
+    app.installNativeEventFilter(_native_close_filter)
+    app._archhub_native_close_filter = _native_close_filter
     window.setWindowTitle("ArchHub")
     # The brand icon, and a distinct AppUserModelID so the taskbar shows
     # ArchHub rather than grouping under python's default.
@@ -1367,8 +1419,8 @@ if QSystemTrayIcon.isSystemTrayAvailable():
     _notifier = _Notifier(app)
     _notifier.asked.connect(lambda title, message: _tray.showMessage(title, message))
     set_notify_surface(lambda title, message: _notifier.asked.emit(str(title), str(message)))
-    app.setQuitOnLastWindowClosed(False)
-    print("  tray       : icon shown (close hides to tray; Quit is in the menu)", flush=True)
+    app.setQuitOnLastWindowClosed(True)
+    print("  tray       : icon shown (window close quits; Quit is in the menu)", flush=True)
 else:
     print("  tray       : no system tray on this desktop", flush=True)
 # A window that opens BEHIND the founder's other windows reads as "the

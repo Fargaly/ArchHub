@@ -118,6 +118,7 @@ async function mountStudio() {
   const sessions = [{id:'scope-a', title:'Scope A', state:'idle', host:'archhub', when:'saved', file:'Graph', last:'2 nodes', model:''}];
   win.ARCHHUB_LIVE = {sessions, currentGraph:'scope-a', hosts:[], connectors:[],
     graph:win.ARCHHUB_EXISTING_WORKSHOP.getSnapshot().topology.graph, memory:[], skills:[]};
+  win.ARCHHUB_BOOT = {...(win.ARCHHUB_BOOT || {}), open_graph:win.ARCHHUB_LIVE.currentGraph};
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
   for (const file of manifest.files) {

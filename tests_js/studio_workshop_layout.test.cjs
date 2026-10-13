@@ -79,7 +79,7 @@ test('studio-workshop.jsx ships as its own Studio source, loaded after brain-mod
 
 test('studio-lm.jsx reads the Workshop from the module: the icon rail remains and the Workshop owns the workspace', () => {
   const sidebar = source.slice(source.indexOf('const Sidebar ='), source.indexOf('const IconRail ='));
-  assert.match(source, /gridTemplateColumns: \(\(!session && panel === 'nodes'\) \|\| workshopContext\) \? '44px 1fr' : '292px 1fr'/);
+  assert.match(source, /gridTemplateColumns: \(!panel \|\| workshopContext\) \? '44px 1fr' : '292px 1fr'/);
   assert.match(sidebar, /railOnly \? null : <>/);
   assert.doesNotMatch(sidebar, /WorkshopAgentsRail/);
   const workspace = source.slice(source.indexOf('const Workspace ='), source.indexOf('const modelRoute ='));
@@ -217,19 +217,19 @@ test('the Workshop view draws the design surfaces from the live projections and 
     assert.match(text(main.firstElementChild), /^Workshop L03 wall take-off · Layer selection · hosts not read yet openrouter\/model-a · route auto Relay Off Hub/);
     const strip = [...doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')];
     assert.deepEqual(strip.map(b => b.getAttribute('aria-label')),
-      ['Chat', 'Tasks', 'Router', 'Relay', 'Prompts', 'Agents', 'Approvals']);
-    assert.deepEqual(strip.map(b => b.getAttribute('aria-selected')), ['true', 'false', 'false', 'false', 'false', 'false', 'false']);
+      ['Board', 'Chat', 'Agents', 'Approvals', 'Router', 'Relay', 'Prompts']);
+    assert.deepEqual(strip.map(b => b.getAttribute('aria-selected')), ['false', 'true', 'false', 'false', 'false', 'false', 'false']);
     assert.ok(strip.every(b => b.style.fontFamily === '"Inter", system-ui, sans-serif' && b.style.fontSize === '13px' && b.style.fontWeight === '400'));
     assert.equal(strip[0].style.borderRadius, '5px');
-    assert.equal(strip[0].style.background, 'rgb(58, 32, 24)');
-    assert.equal(strip[1].style.background, 'transparent');
-    assert.equal(text(strip[6]), 'Approvals 1');
+    assert.equal(strip[0].style.background, 'transparent');
+    assert.equal(strip[1].style.background, 'rgb(58, 32, 24)');
+    assert.equal(text(strip[3]), 'Approvals 1');
     // Conversation: the owner's ask, the agent reply metadata, then one row per named Work.
     const stream = doc.querySelector('[aria-label="Workshop conversation"]');
     assert.doesNotMatch(text(stream), /Here is the workflow on this canvas/);
     assert.deepEqual([...stream.querySelectorAll('[data-workshop-task]')].map(card => card.getAttribute('data-workshop-task')), [ids.W1, ids.W2, ids.W3]);
     const first = stream.querySelector('[data-workshop-task]');
-    assert.match(text(first), /^Layer selection .* waiting for approval Approve Open as graph After it runs: "Save as skill" keeps this as a graph you can run again from Studio or Player\./);
+    assert.match(text(first), /^Layer selection .* waits for you Approve Open as graph After it runs: "Save as skill" keeps this as a graph you can run again from Studio or Player\./);
     assert.deepEqual([...first.querySelectorAll('button')].map(text), ['Approve', 'Open as graph']);
     // Send, approve: the live actions.
     const input = doc.querySelector('input[aria-label="Workshop message"]');
@@ -244,18 +244,16 @@ test('the Workshop view draws the design surfaces from the live projections and 
     assert.deepEqual(JSON.parse(JSON.stringify(sel)), {agent:null, task:ids.W1});
     await ui.render('WorkshopView', props());
     assert.ok(doc.querySelector('[aria-label="Workshop task page"] input[aria-label="Workshop message"]'));
-    // Board: the design's five lanes (design 2026-10-06, section 3).
+    // Board: WS-022 release lanes.
     const tabs = () => [...doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')];
-    // Board is a view of the one Tasks tab (founder 2026-10-11: Tasks, Board and Projects repeated each other).
-    await ui.click(tabs()[1]);
-    await ui.click([...doc.querySelectorAll('[role="tablist"][aria-label="Task view"] [role="tab"]')].find(t => text(t) === 'Board'));
-    assert.equal(tabs()[1].getAttribute('aria-selected'), 'true');
+    await ui.click(tabs()[0]);
+    assert.equal(tabs()[0].getAttribute('aria-selected'), 'true');
     const board = doc.querySelector('[aria-label="Workshop board"]');
-    assert.deepEqual([...board.querySelectorAll('[data-workshop-lane] h3')].map(text), ['Backlog', 'Claimed', 'Running', 'Blocked', 'Done']);
+    assert.deepEqual([...board.querySelectorAll('[data-workshop-lane] h3')].map(text), ['Planned', 'WIP', 'In review', 'Done', 'Archived']);
     assert.equal(doc.querySelector('main').style.gridTemplateColumns, 'minmax(0,1fr)');
     assert.equal(doc.querySelector('input[aria-label="Workshop message"]'), null);
     // Chat remains available in the full-width shell.
-    await ui.click(tabs()[0]);
+    await ui.click(tabs()[1]);
     assert.ok(doc.querySelector('[aria-label="Workshop conversation"]'));
     assert.ok(doc.querySelector('input[aria-label="Workshop message"]'));
     await ui.click(doc.querySelector('button[aria-label^="Leave Workshop"]'));
@@ -263,7 +261,7 @@ test('the Workshop view draws the design surfaces from the live projections and 
   } finally { await ui.close(); }
 });
 
-test('Tasks, Board and Projects are one Tasks tab: old board/projects links land in it and the project card opens Board', async () => {
+test('WS-022: Board is the Workshop work tab and Projects remains hidden without a project backend', async () => {
   const {state, authority} = fixture();
   const ui = await mountModule();
   try {
@@ -273,27 +271,16 @@ test('Tasks, Board and Projects are one Tasks tab: old board/projects links land
     const doc = ui.doc;
     const selected = () => [...doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')]
       .filter(t => t.getAttribute('aria-selected') === 'true').map(text);
-    const view = () => [...doc.querySelectorAll('[role="tablist"][aria-label="Task view"] [role="tab"]')]
-      .filter(t => t.getAttribute('aria-selected') === 'true').map(text);
-    // A link that still names the old Board tab opens Tasks on its Board view.
+    // A link that names Board opens the Board tab directly.
     await ui.render('WorkshopView', props({agent:null, task:null, tab:'board'}));
-    assert.deepEqual(selected(), ['Tasks']);
-    assert.deepEqual(view(), ['Board']);
-    assert.ok(doc.querySelector('[aria-label="Workshop task board"]'), 'the board is drawn inside Tasks');
+    assert.deepEqual(selected(), ['Board']);
+    assert.ok(doc.querySelector('[aria-label="Workshop task board"]'), 'the board is drawn');
     assert.equal(doc.querySelector('[aria-label="Workshop tasks"]'), null);
-    // A link that still names the old Projects tab opens Tasks on its list, with the project summary on top.
+    // A stale Projects preset is not a visible tab or surface.
     await ui.render('WorkshopView', props({agent:null, task:null, tab:'projects'}));
-    assert.deepEqual(selected(), ['Tasks']);
-    assert.deepEqual(view(), ['List']);
-    assert.ok(doc.querySelector('[aria-label="Workshop projects"] article'), 'the project summary card is on the Tasks tab');
-    assert.ok(doc.querySelector('[aria-label="Workshop tasks"]'), 'the task list is shown');
-    // The project card still opens the board, now as the Board view of the same Tasks tab.
-    await ui.click(doc.querySelector('[aria-label="Workshop projects"] article'));
-    assert.deepEqual(selected(), ['Tasks']);
-    assert.deepEqual(view(), ['Board']);
-    assert.ok(doc.querySelector('[aria-label="Workshop task board"]'));
-    // No separate Board or Projects tab is offered.
-    assert.ok(![...doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')].some(t => /^(Board|Projects)$/.test(text(t))));
+    assert.deepEqual(selected(), ['Board']);
+    assert.equal(doc.querySelector('[aria-label="Workshop projects"]'), null);
+    assert.ok(![...doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')].some(t => text(t) === 'Projects'));
   } finally { await ui.close(); }
 });
 

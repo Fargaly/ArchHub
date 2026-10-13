@@ -67,6 +67,7 @@ async function mountStudio(agent) {
   win.ARCHHUB_AGENT_SELECT = async route => route;
   win.ARCHHUB_LIVE = {sessions:[{id:'app:archhub', title:'ArchHub', state:'idle', file:'Graph composition'}],
     currentGraph:'app:archhub', hosts:[], connectors:[], graph, memory:[], skills:[]};
+  win.ARCHHUB_BOOT = {...(win.ARCHHUB_BOOT || {}), open_graph:win.ARCHHUB_LIVE.currentGraph};
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
   for (const file of manifest.files) {

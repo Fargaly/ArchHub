@@ -65,49 +65,108 @@ function fixture() {
   const codex = 'app:agent-session:runtime:codex-a1';
   const claude = 'app:agent-session:runtime:claude-b2';
   const mcp = 'mcp-server:brain';
+  const old = Date.now() - 1000 * 60 * 60 * 24 * 25;
   const done = Array.from({length:9}, (_, i) => ({work:'work:done-' + i, id:'T-done' + i, title:'Closed ' + i,
     state:'done', owner:mcp, agent:'Brain MCP', host:'mcp-brain', lead:'settled', tools:{n:1, list:'court', t:'done'}}));
   return {
     tasks:[
-      {work:'work:backlog-a', id:'T-backlo', title:'Collect requirements', state:'created', owner:null, agent:null, host:'Workshop', lead:'created, no claim', tools:{n:0, list:'none', t:'step 1 of 3'}},
-      {work:'work:claimed-a', id:'T-claime', title:'Draft plan', state:'open', owner:claude, agent:'Claude Code', host:'Claude', lead:'claimed', tools:{n:1, list:'plan', t:'step 2 of 3'}},
-      {work:'work:claim-a', id:'T-claim', title:'Claim transfer', state:'claim', owner:null, agent:'Codex', host:'Codex', lead:'claim accepted', tools:{n:1, list:'claim', t:'step 1 of 2'}},
+      {work:'work:planned-a', id:'T-plan', title:'Collect requirements', state:'created', owner:null, agent:null, host:'Workshop', lead:'ready to start', tools:{n:0, list:'none', t:'step 1 of 3'}},
+      {work:'work:released-a', id:'T-release', title:'Draft plan', state:'open', owner:claude, agent:'Claude Code', host:'Claude', lead:'ready to start', tools:{n:1, list:'plan', t:'step 2 of 3'}},
+      {work:'work:review-a', id:'T-review', title:'Review package', state:'review', owner:claude, agent:'Claude Code', host:'Claude', lead:'submitted for review', tools:{n:1, list:'review', t:'ready for review'}},
       {work:'work:running-a', id:'T-runni', title:'Run validation', state:'run', owner:codex, agent:'Codex', host:'Codex', lead:'running', tools:{n:2, list:'pytest', t:'step 2 of 3'}},
       {work:'work:blocked-a', id:'T-block', title:'Approve connector', state:'approving', owner:codex, agent:'Codex', host:'Codex', lead:'waiting for your approval', tools:{n:3, list:'connector', t:'waiting for your approval'}, approving:true,
-        decision:[{label:'Approve', action:'approve'}, {label:'Reject', action:'reject'}]},
+        decision:[{label:'Approve', action:'approve'}, {label:'Decline', action:'stop_native'}]},
+      {work:'work:waiting-a', id:'T-wait', title:'Waiting card', state:'approving', owner:codex, agent:'Codex', host:'Codex', lead:'waiting for your approval', tools:{n:1, list:'review', t:'waiting for your approval'}, approving:true},
       {work:'work:tool-off', id:'T-tool', title:'Connector off', state:'block', owner:codex, agent:'Codex', host:'Codex', lead:'Connectors are off', tools:{n:3, list:'connector', t:'Connectors are off'},
-        decision:[{label:'Approve', action:'approve'}, {label:'Reject', action:'reject'}]},
+        decision:[{label:'Turn on', action:'execute'}, {label:'Retry', action:'execute'}]},
+      {work:'work:old-a', id:'T-old', title:'Dormant task', state:'created', owner:null, agent:null, host:'Workshop', lead:'inactive', updated_at:old, tools:{n:0, list:'none', t:'idle'}},
+      {work:'work:archived-a', id:'T-archive', title:'Archived task', state:'archived', owner:null, agent:null, host:'Workshop', lead:'archived by sweep', updated_at:old, tools:{n:0, list:'none', t:'archived'}},
       ...done,
     ],
     agents:[
-      {id:codex, name:'Codex', runtime:'codex', host:'Codex', kind:'local', status:'working', ago:'verified 30 s ago', doing:'Run validation', may:'read workspace · edit this work folder'},
-      {id:mcp, name:'Brain MCP', runtime:'mcp-brain', host:'mcp-brain', kind:'cloud', status:'available', ago:'verified 12 s ago', doing:'Nothing active', may:'read facts'},
+      {id:codex, root:codex, name:'Codex', runtime:'codex', host:'Codex', kind:'local', status:'working', verified:true, ago:'verified 30 s ago', doing:'Run validation', may:'read workspace · edit this work folder'},
+      {id:claude, root:claude, name:'Claude Code', runtime:'claude', host:'Claude', kind:'local', status:'working', verified:true, ago:'verified 12 s ago', doing:'Review package', may:'read workspace'},
+      {id:mcp, root:mcp, name:'Brain MCP', runtime:'mcp-brain', host:'mcp-brain', kind:'cloud', status:'available', verified:true, ago:'verified 12 s ago', doing:'Nothing active', may:'read facts'},
     ],
   };
 }
 
-test('WorkshopBoardView groups governed Work into the five engine lanes with approval actions and bounded Done', () => {
-  const {window, React, render, clickButton, events} = createHarness();
+test('WS-022 court: board lanes are Planned, WIP, In Review, Done, Archived with live blocked cards in WIP', () => {
+  const {window, React, render, clickButton, events, buttons} = createHarness();
   const fx = fixture();
   const decisions = [];
   const tree = React.createElement(window.WorkshopBoardView, {tasks:fx.tasks, agents:fx.agents,
-    selected:'', onSelect:() => {}, onDecide:(work, choice) => decisions.push([work, choice.action])});
+    selected:'', archiveDays:20, onSelect:() => {}, onDecide:(work, choice) => decisions.push([work, choice.action])});
   const html = render(tree);
-  assert.match(html, /data-workshop-lane="backlog"/);
-  assert.match(html, /data-workshop-lane="claimed"/);
-  assert.match(html, /data-workshop-lane="running"/);
-  assert.match(html, /data-workshop-lane="blocked"/);
+  assert.match(html, /data-workshop-lane="planned"/);
+  assert.match(html, /data-workshop-lane="wip"/);
+  assert.match(html, /data-workshop-lane="review"/);
   assert.match(html, /data-workshop-lane="done"/);
-  assert.match(flat(html), /Backlog 1 .* Claimed 2 .* Running 1 .* Blocked 2 .* Done 9/);
-  assert.match(flat(html), /Collect requirements no agent Workshop step 1 of 3/);
-  assert.match(flat(html), /Claim transfer Codex Codex step 1 of 2/);
-  assert.match(flat(html), /Approve connector Codex Codex waiting for your approval Approve Reject/);
-  assert.doesNotMatch(flat(html), /Connector off Codex Codex Connectors are off Approve Reject/);
+  assert.match(html, /data-workshop-lane="archived"/);
+  assert.doesNotMatch(html, /data-workshop-lane="claimed"|data-workshop-lane="blocked"|Claimed|Blocked|no agent|host unknown|CDE/);
+  assert.match(flat(html), /Planned 3 .* WIP 4 .* In review 1 .* Done 9 .* Archived 1/);
+  assert.doesNotMatch(flat(html), /Archive after|archive_after_idle_days/);
+  assert.match(flat(html), /Collect requirements Workshop step 1 of 3/);
+  assert.match(flat(html), /Approve connector Codex Codex waiting for your approval Approve Decline/);
+  assert.match(flat(html), /Waiting card Codex Codex waiting for your approval waits for you Review/);
+  assert.match(flat(html), /Connector off Codex Codex Connectors are off Turn on Retry/);
   clickButton(tree, 'Approve');
   assert.deepEqual(decisions, [['work:blocked-a', 'approve']]);
   assert.deepEqual(events, ['stopped']);
   assert.match(flat(html), /\+2 more/);
   assert.equal((html.match(/data-workshop-board-card="work:done-/g) || []).length, 7);
+});
+
+test('WS-022 v2 court: approval-blocked card without a decision has one Review action that selects it', () => {
+  const {window, React, render, clickButton, events, buttons} = createHarness();
+  const fx = fixture();
+  const selected = [];
+  const decisions = [];
+  const waiting = fx.tasks.find(task => task.work === 'work:waiting-a');
+  const tree = React.createElement(window.WorkshopBoardView, {tasks:[waiting], agents:fx.agents,
+    selected:'', onSelect:work => selected.push(work), onDecide:(work, choice) => decisions.push([work, choice.action])});
+  const html = render(tree);
+  assert.match(flat(html), /Waiting card Codex Codex waiting for your approval waits for you Review/);
+  assert.deepEqual(buttons(tree).map(button => button.label), ['Review']);
+  clickButton(tree, 'Review');
+  assert.deepEqual(selected, ['work:waiting-a']);
+  assert.deepEqual(decisions, []);
+  assert.deepEqual(events, ['stopped']);
+});
+
+test('WS-022 v2 court: board lanes use stored state, not idle age or unverified/name agent matches', () => {
+  const {window} = createHarness();
+  const old = Date.now() - 45 * 86400000;
+  const live = 'app:agent-session:runtime:live-a';
+  const grouped = window.WorkshopBoard.groupTasks([
+    {work:'work:old-live', title:'Old live', state:'run', owner:live, agent:'Codex', updated_at:old, tools:{t:'running'}},
+    {work:'work:old-review', title:'Old review', state:'review', owner:live, updated_at:old, tools:{t:'submitted'}},
+    {work:'work:old-open', title:'Old open', state:'open', owner:null, updated_at:old, tools:{t:'idle'}},
+    {work:'work:archived', title:'Archived row', state:'archived', restore_state:'open', updated_at:Date.now(), tools:{t:'archived'}},
+    {work:'work:name-only', title:'Name only', state:'run', owner:'Architect Name', agent:'Architect Name', updated_at:Date.now(), tools:{t:'running'}},
+    {work:'work:stale', title:'Stale agent', state:'run', owner:'app:agent-session:runtime:stale', updated_at:Date.now(), tools:{t:'running'}},
+  ], [
+    {id:live, root:live, status:'working', verified:true},
+    {id:'Codex', name:'Codex', status:'working', verified:true},
+    {id:'app:agent-session:runtime:stale', status:'stale', verified:false},
+  ], 20);
+  assert.deepEqual(JSON.parse(JSON.stringify(grouped.wip.map(task => task.work))), ['work:old-live']);
+  assert.deepEqual(JSON.parse(JSON.stringify(grouped.review.map(task => task.work))), ['work:old-review']);
+  assert.deepEqual(JSON.parse(JSON.stringify(grouped.archived.map(task => task.work))), ['work:archived']);
+  assert.ok(grouped.planned.map(task => task.work).includes('work:old-open'));
+  assert.ok(grouped.planned.map(task => task.work).includes('work:name-only'));
+  assert.ok(grouped.planned.map(task => task.work).includes('work:stale'));
+});
+
+test('WS-022 v2 court: archive-days row is hidden while no owner setting drives archiving (F31)', () => {
+  const {window, React, render, buttons} = createHarness();
+  const tree = React.createElement(window.WorkshopBoardView, {tasks:[], agents:[], archiveDays:30, onArchiveDays:() => {
+    throw new Error('dead setter should not be called');
+  }});
+  const html = render(tree);
+  assert.doesNotMatch(flat(html), /Archive after|archive_after_idle_days/);
+  assert.doesNotMatch(html, /type="number"|Archive inactive tasks after days/);
+  assert.deepEqual(buttons(tree).map(button => button.label), []);
 });
 
 test('WorkshopAgentsView renders local and cloud agents with presence and hides engineering detail behind Details', () => {
@@ -129,7 +188,6 @@ test('Workshop views do not expose buttons without click handlers', () => {
   const views = [
     React.createElement(window.WorkshopBoardView, {tasks:fx.tasks, agents:fx.agents, selected:'', onSelect:() => {}, onDecide:() => {}}),
     React.createElement(window.WorkshopAgentsView, {agents:fx.agents}),
-    React.createElement(window.WorkshopProjectsView, {projects:[{id:'p1', name:'Live project'}], onOpen:() => {}}),
     React.createElement(window.WorkshopApprovalsView, {tasks:fx.tasks.filter(task => task.approving), selected:'', onSelect:() => {}, onDecide:() => {}}),
     React.createElement(window.WorkshopTaskPage, {task:fx.tasks.find(task => task.approving), agent:() => ({name:'Codex'}), onDecide:() => {}}),
   ];
@@ -142,10 +200,23 @@ test('WorkshopTaskPage hides decision buttons unless the task is approval-blocke
   const fx = fixture();
   const blocked = render(React.createElement(window.WorkshopTaskPage,
     {task:fx.tasks.find(task => task.approving), agent:() => ({name:'Codex'}), onDecide:() => {}}));
-  assert.match(flat(blocked), /THREAD .* Approve Reject/);
+  assert.match(flat(blocked), /THREAD .* Approve Decline/);
   const notBlocked = render(React.createElement(window.WorkshopTaskPage,
     {task:fx.tasks.find(task => task.work === 'work:tool-off'), agent:() => ({name:'Codex'}), onDecide:() => {}}));
-  assert.doesNotMatch(flat(notBlocked), /THREAD .* Approve Reject/);
+  assert.doesNotMatch(flat(notBlocked), /THREAD .* Approve Decline/);
+});
+
+test('WS-022 court: task page shows task, linked, steps, thread, with raw ids only in details', () => {
+  const {window, React, render} = createHarness();
+  const fx = fixture();
+  const task = fx.tasks.find(row => row.approving);
+  const closed = render(React.createElement(window.WorkshopTaskPage,
+    {task, agent:() => ({name:'Codex'}), details:false, onDecide:() => {}}));
+  assert.match(flat(closed), /TASK .* LINKED .* STEPS .* THREAD/);
+  assert.doesNotMatch(flat(closed), /work:blocked-a|Host:|Tools:|CDE/);
+  const open = render(React.createElement(window.WorkshopTaskPage,
+    {task, agent:() => ({name:'Codex'}), details:true, onDecide:() => {}}));
+  assert.match(flat(open), /DETAILS .* work:blocked-a .* connector/);
 });
 
 test('Workshop approvals list predicate matches the badge count predicate', () => {
@@ -155,13 +226,20 @@ test('Workshop approvals list predicate matches the badge count predicate', () =
   assert.doesNotMatch(source, /WorkshopApprovalsView tasks=\{allTasks\.filter\(t => t\.state === 'block' \|\| t\.approving \|\| t\.proposal\)\}/);
 });
 
-test('Workshop header exposes design-first Chat, Tasks, routed Router, Relay and Prompts tabs', () => {
+test('WS-022 court: header hides Projects and keeps Board, Chat, Agents, Approvals, Router, Relay, Prompts', () => {
   const source = read('nodelang/studio/studio-workshop.jsx');
-  assert.match(source, /WORKSHOP_TABS = \[\['chat', 'Chat'\], \['tasks', 'Tasks'\], \['router', 'Router'\], \['relay', 'Relay'\], \['prompts', 'Prompts'\],\s+\['agents', 'Agents'\], \['approvals', 'Approvals'\]\]/);
-  // Tasks, Board and Projects are one Tasks tab (founder 2026-10-11); the old presets still open it.
-  assert.match(source, /WORKSHOP_TASK_PRESETS = \['tasks', 'board', 'projects'\]/);
+  assert.match(source, /WORKSHOP_TABS = \[\['board', 'Board'\], \['chat', 'Chat'\], \['agents', 'Agents'\], \['approvals', 'Approvals'\], \['router', 'Router'\], \['relay', 'Relay'\], \['prompts', 'Prompts'\]\]/);
+  assert.doesNotMatch(source, /WORKSHOP_TABS[\s\S]*\['projects', 'Projects'\]/);
+  assert.match(source, /WORKSHOP_TASK_PRESETS = \['tasks', 'board'\]/);
   assert.match(source, /readCloudPublishConsent|setCloudPublishConsent|WorkshopRelayTab|Relay on\/off/);
   assert.match(source, /ARCHHUB_LOAD_SKILLS/);
+});
+
+test('WS-022 court: router chip uses the live route value and no cost or price text is rendered', () => {
+  const source = read('nodelang/studio/studio-workshop.jsx');
+  assert.match(source, /liveRoute = routerSelected \|\| routerLive\?\.selected_route \|\| routerLive\?\.default_route/);
+  assert.match(source, /liveRoute \? wsRouteLabel\(liveRoute\)/);
+  assert.doesNotMatch(source, /wsTaskCost|cost:|price/i);
 });
 
 test('gate row l: no agent card or linked panel shows "not projected" or an empty "may:"', async () => {
@@ -169,4 +247,16 @@ test('gate row l: no agent card or linked panel shows "not projected" or an empt
   assert.doesNotMatch(src, /'not projected'/);
   const ws = require('fs').readFileSync(require('path').join(__dirname, '..', 'nodelang', 'studio', 'studio-workshop.jsx'), 'utf8');
   assert.doesNotMatch(ws, /v="not projected"/);
+});
+
+test('WS-022 v3 court: only verified session roots make WIP; group root and stale child do not', () => {
+  const {window, React, render} = createHarness();
+  const task = (work, owner) => ({work, title:work, state:'running', owner});
+  const agents = [{id:'app:codex', root:'app:codex', verified:true, status:'live',
+    live_roots:['session:live'], children:[{root:'session:live'}, {root:'session:stale'}]}];
+  const html = render(React.createElement(window.WorkshopBoardView, {agents,
+    tasks:[task('LiveTask', 'session:live'), task('StaleTask', 'session:stale'), task('GroupTask', 'app:codex')]}));
+  const lane = id => (html.split(`data-workshop-lane="${id}"`)[1] || '').split('data-workshop-lane=')[0];
+  assert.match(lane('wip'), /LiveTask/);
+  assert.doesNotMatch(lane('wip'), /StaleTask|GroupTask/);
 });

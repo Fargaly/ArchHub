@@ -106,11 +106,11 @@ const LM_HOST_META = window.ArchHubTheme.derive((LM) => ({
   autocad:{name:'AutoCAD',col:LM.err},  outlook:{name:'Outlook',col:LM.blue},
 }));
 const LM_STATE_META = window.ArchHubTheme.derive((LM) => ({
-  idle:     { label:'saved',       col:LM.inkMuted },
+  idle:     { label:'saved',       col:LM.inkSoft },
   running:  { label:'running',     col:LM.accent, pulse:true },
   done:     { label:'done',        col:LM.ok },
   review:   { label:'needs review',col:LM.warn },
-  paused:   { label:'paused',      col:LM.inkMuted },
+  paused:   { label:'paused',      col:LM.inkSoft },
   workflow: { label:'workflow',    col:LM.purple },
   scheduled:{ label:'scheduled',   col:LM.cyan },
 }));
@@ -400,7 +400,10 @@ const StudioLM = () => {
     const timer = setInterval(() => { if (window.ARCHHUB_HOSTS_READ) clearInterval(timer); else read(); }, 10000);
     return () => clearInterval(timer);
   }, []);
-  const [openId, setOpenId] = React.useState(window.ARCHHUB_LIVE?.currentGraph || LM_SESSIONS[0]?.id || null);
+  // Founder 2026-10-13: ArchHub opens on the Home page, never inside a graph. The current graph stays
+  // in the tab strip so one click reopens it.
+  // A deep link (ARCHHUB_BOOT.open_graph) is the only way to start inside a graph.
+  const [openId, setOpenId] = React.useState(window.ARCHHUB_BOOT?.open_graph || null);
   const [openTabs, setOpenTabs] = React.useState(() => [window.ARCHHUB_LIVE?.currentGraph || LM_SESSIONS[0]?.id].filter(Boolean));
   const [, refreshLiveProjection] = React.useState(0);
   const [sessionOpenError, setSessionOpenError] = React.useState('');
@@ -581,7 +584,9 @@ const StudioLM = () => {
   };
   const [docsOpen, setDocsOpen] = React.useState(false);
   const [libraryOpen, setLibraryOpen] = React.useState(false);
-  const [panel, setPanel] = React.useState('nodes'); // chats | nodes | skills | search
+  const navGeneration = React.useRef(0);
+  // Home opens with no panel; a rail click opens one over Home. A deep link keeps Nodes beside its graph.
+  const [panel, setPanel] = React.useState(() => (window.ARCHHUB_BOOT?.open_graph ? 'nodes' : null)); // chats | nodes | skills | search
   const [toolView, setToolView] = React.useState(null);
   const [pendingCanvasReveal, setPendingCanvasReveal] = React.useState(null);
   const requestCanvasReveal = ids => setPendingCanvasReveal({ids:[...new Set((ids || []).filter(Boolean))], at:Date.now()});
@@ -609,7 +614,7 @@ const StudioLM = () => {
     n.id === focusId && n.live && nodeModelRow(n)?.editable === true) || null;
   const targetRoute = modelTarget ? nodeModelRoute(modelTarget) : '';
   const displayedModel = modelTarget ? {name:targetRoute || 'Choose a model', route:targetRoute,
-    routed:targetRoute, vendor:modelTarget.title, col:LM.inkMuted, latency:null} : model;
+    routed:targetRoute, vendor:modelTarget.title, col:LM.inkSoft, latency:null} : model;
   // User-added nodes appear on top of the demo graph
   const [userNodes, setUserNodes] = React.useState([]);
   const workshopState = useWorkshopProjection();
@@ -870,6 +875,7 @@ const StudioLM = () => {
 
   // open a session — also pin as a tab if not already open
   const openSession = async (id) => {
+    const generation = ++navGeneration.current;
     setLocalFocusId(null);
     const systemId = systemSessionId(workshopState?.canvas, authorityState?.canvas, authorityState?.graph || LM_GRAPH);
     const isSystem = id && id === systemId;
@@ -885,6 +891,8 @@ const StudioLM = () => {
       try {
         const result = await window.ARCHHUB_GRAPH_OPEN(graphId);
         const opened = await switchOpenGraphInPlace(result, graphId);
+        // Home (or another open) was chosen while this graph was opening: it wins.
+        if (generation !== navGeneration.current) return;
         const current = isSystem ? id : (opened.current || graphId);
         if (current && !isSystem && !openTabs.includes(current)) setOpenTabs(t => t.includes(current) ? t : [...t, current]);
         setWorkspaceSelection(canvasWorkspaceView(viewScopeForSession(current || id)));
@@ -952,7 +960,29 @@ const StudioLM = () => {
   // Docs and Settings are mutually exclusive — they share a z-index, so opening one closes the other.
   // A named tab (the account chip opens Account) lasts one opening; every other way in opens the Hub.
   const openSettings = (v, tab) => { if (v) setDocsOpen(false); setSettingsTab(v && tab ? tab : 'hub'); setSettingsOpen(v); };
-  const openDocs = (v) => { if (v) openSettings(false); setDocsOpen(v); };
+  const openDocs = (v) => {
+    if (v) {
+      openSettings(false);
+      setPanel(null);
+      setToolView(null);
+      setOpenTabs(t => t.filter(id => !String(id || '').startsWith('system:')));
+      setOpenId(null);
+      setLibraryOpen(false);
+      setWorkspaceSelection(canvasWorkspaceView(viewScope));
+    }
+    setDocsOpen(v);
+  };
+  const goHome = () => {
+    navGeneration.current += 1;
+    setWorkspaceSelection(canvasWorkspaceView(viewScope));
+    setToolView(null);
+    setPanel(null);
+    setSettingsOpen(false);
+    setOpenTabs(t => t.filter(id => !String(id || '').startsWith('system:')));
+    setOpenId(null);
+    setDocsOpen(false);
+    setLibraryOpen(false);
+  };
 
   // The Settings shortcut sheet and this handler read the same binding table.
   React.useEffect(() => {
@@ -988,16 +1018,16 @@ const StudioLM = () => {
       width:'100%', height:'100%', background:LM.bg, color:LM.ink,
       fontFamily:LM.sans, fontSize:13, lineHeight:1.5,
       display:'grid',
-      gridTemplateColumns: ((!session && panel === 'nodes') || workshopContext) ? '44px 1fr' : '292px 1fr',
+      gridTemplateColumns: (!panel || workshopContext) ? '44px 1fr' : '292px 1fr',
       gridTemplateRows:'1fr 22px',
       overflow:'hidden', position:'relative',
     }}>
       <Sidebar
         panel={panel} setPanel={setPanel}
         openId={openId} onOpen={openSession}
-        onHome={() => { setWorkspaceSelection(canvasWorkspaceView(viewScope)); setToolView(null); setOpenId(null); }} onSettings={() => openSettings(true)} onAccount={() => openSettings(true, 'account')} onDocs={() => openDocs(true)}
+        onHome={goHome} onSettings={() => openSettings(true)} onAccount={() => openSettings(true, 'account')} onDocs={() => openDocs(true)}
         onOpenTool={openTool}
-        addNodeFromLibrary={addNodeFromLibrary} workshopContext={workshopContext} railOnly={(!session && panel === 'nodes') || !!workshopContext} account={account}
+        addNodeFromLibrary={addNodeFromLibrary} workshopContext={workshopContext} railOnly={!panel || !!workshopContext} account={account}
         wsSel={wsSel} setWsSel={setWsSel} onAddAgent={() => setLibraryOpen(true)}
         onWorkshopTarget={target => updateWorkspaceView({target})}/>
       {session && sessionOpenError && <div role="alert" style={{position:'absolute', top:56, left:'50%', transform:'translateX(-50%)',
@@ -1019,11 +1049,12 @@ const StudioLM = () => {
             clearPendingCanvasReveal={() => setPendingCanvasReveal(null)}
             userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary}
             view={workspaceView} updateView={updateWorkspaceView} wsSel={wsSel} setWsSel={setWsSel}
-            onHome={() => { setWorkspaceSelection(canvasWorkspaceView(viewScope)); setToolView(null); setOpenId(null); }}
+            onHome={goHome}
             onNewSession={createSessionGraphInPlace}
             onSettings={() => openSettings(true, 'system')}
             onAccount={() => openSettings(true, 'account')}/>
-        : <Home onOpen={openSession} sessions={visibleSessions} model={model} native={homeNative} setPickerOpen={setPickerOpen}
+        : <Home onOpen={openSession} sessions={visibleSessions} model={model} native={homeNative}
+            readiness={readiness} onModelReadRetry={readInitialModel} setPickerOpen={setPickerOpen}
             setLibraryOpen={setLibraryOpen} setPanel={setPanel}
             onOpenTool={openTool} onOpenToolGraph={openToolGraph} workshopState={workshopState} account={account}
             sessionError={sessionOpenError}
@@ -1076,7 +1107,7 @@ const StudioLM = () => {
       {/* The design's own full-bleed screens: first-run onboarding, a skill's split view, a connector's diagnostic. */}
       <StudioScreens model={model} onPickModel={() => setPickerOpen(true)}
         onAddSkillToCanvas={skill => addNodeFromLibrary(studioSkillLibraryItem(skill))}/>
-      {docsOpen && <Docs onClose={() => setDocsOpen(false)}/>}
+      {docsOpen && <Docs onClose={() => setDocsOpen(false)} onHome={goHome}/>}
       {libraryOpen && <NodeLibrary onClose={() => setLibraryOpen(false)} addNodeFromLibrary={addNodeFromLibrary}
         initialQuery={typeof libraryOpen === 'string' ? libraryOpen : ''}/>}
       <style>{`
@@ -1103,13 +1134,21 @@ const Sidebar = ({ panel, setPanel, openId, onOpen, onHome, onSettings, onAccoun
     <IconRail panel={panel} setPanel={setPanel} onHome={onHome} onSettings={onSettings} onDocs={onDocs}
       onOpenTool={onOpenTool} account={account}/>
     {railOnly ? null : <>
-    {panel === 'chats'  && <ChatsPanel openId={openId} onOpen={onOpen} onNew={onHome} account={account} onAccount={onAccount || onSettings}/>}
-    {panel === 'nodes'  && <NodesPanel addNodeFromLibrary={addNodeFromLibrary} account={account} onAccount={onAccount || onSettings}/>}
-    {panel === 'skills' && <SkillsPanel addNodeFromLibrary={addNodeFromLibrary}/>}
-    {panel === 'search' && <SearchPanel/>}
+    {panel === 'chats'  && <ChatsPanel openId={openId} onOpen={onOpen} onNew={onHome} onHome={onHome} account={account} onAccount={onAccount || onSettings}/>}
+    {panel === 'nodes'  && <NodesPanel addNodeFromLibrary={addNodeFromLibrary} onHome={onHome} account={account} onAccount={onAccount || onSettings}/>}
+    {panel === 'skills' && <SkillsPanel addNodeFromLibrary={addNodeFromLibrary} onHome={onHome}/>}
+    {panel === 'search' && <SearchPanel onHome={onHome}/>}
     {String(panel || '').startsWith('tool:') && <ToolOffPanelFromOwners panel={panel} account={account}/>}
       </>}
   </aside>
+);
+
+const PanelHomeButton = ({ onHome }) => (
+  <button onClick={onHome} aria-label="Home" data-home-button style={{
+    height:26, padding:'0 9px', border:`1px solid ${LM.line}`,
+    background:LM.bg, color:LM.inkSoft, borderRadius:LM.rad.sm,
+    fontFamily:LM.sans, fontSize:12, fontWeight:500, cursor:'pointer',
+  }}>Home</button>
 );
 
 const ToolOffPanelFromOwners = ({ panel, account }) => {
@@ -1155,7 +1194,9 @@ const IconRail = ({ panel, setPanel, onHome, onSettings, onDocs }) => {
 
 const RailIcon = ({ active, onClick, onContextMenu, title, children, disabled, dot, dataToolRail }) => (
   <button onClick={onClick} onContextMenu={onContextMenu} title={title} disabled={disabled}
-    data-tool-rail={dataToolRail || undefined} style={{
+    data-tool-rail={dataToolRail || undefined}
+    data-rail-panel={title}
+    aria-current={active ? 'true' : undefined} style={{
     width:30, height:30, padding:0, border:0, borderRadius:LM.rad.md,
     background: active ? LM.accentDim : 'transparent',
     color: active ? LM.accent : LM.inkSoft,
@@ -1194,10 +1235,10 @@ const TOOL_STATE_COLOR = {
   starting:'#27c2e6',
   off:'#d48e2a',
   failed:'#d94a4a',
-  unknown:LM.inkMuted,
-  not_installed:LM.inkMuted,
+  unknown:LM.inkSoft,
+  not_installed:LM.inkSoft,
 };
-const toolColor = state => TOOL_STATE_COLOR[state] || LM.inkMuted;
+const toolColor = state => TOOL_STATE_COLOR[state] || LM.inkSoft;
 // One host count for the Connectors card, the status bar and the Hosts badge: every probe row the
 // Hosts list draws, running when connected or listening (the same rule as tool_hub._apply_connectors).
 const hostTally = () => {
@@ -1387,7 +1428,7 @@ const HOST_STATE_WORD = {
 const hostStateWord = row => HOST_STATE_WORD[String(row?.state || '').toLowerCase()] || 'Checking';
 const hostStateTone = row => {
   const word = hostStateWord(row);
-  return word === 'Connected' ? LM.ok : word === 'Checking' ? LM.warn : LM.inkMuted;
+  return word === 'Connected' ? LM.ok : word === 'Checking' ? LM.warn : LM.inkSoft;
 };
 const providerStateWord = p => {
   const state = String(p?.state || '').toLowerCase();
@@ -1508,13 +1549,13 @@ const WaitingButton = ({ items = [], variant = 'strip', onOpenTask }) => {
       background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
       boxShadow:'0 18px 44px rgba(0,0,0,.32)', padding:10,
     }}>
-      {liveItems.length === 0 ? <div style={{fontSize:13, color:LM.inkMuted}}>Nothing waiting.</div> :
+      {liveItems.length === 0 ? <div style={{fontSize:13, color:LM.inkSoft}}>Nothing waiting.</div> :
         liveItems.map(item => <div key={item.id} data-waiting-item={item.id} style={{
           border:`1px solid ${item.second_approval ? '#8b5cf6' : LM.lineSoft}`,
           borderRadius:LM.rad.sm, padding:'9px 10px', marginBottom:8,
         }}>
           <div style={{fontSize:13, fontWeight:500, color:LM.ink}}>{waitingLine(item)}</div>
-          <div style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:3}}>{waitingMeta(item)}</div>
+          <div style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:3}}>{waitingMeta(item)}</div>
           <div style={{display:'flex', gap:6, alignItems:'center', marginTop:8, flexWrap:'wrap'}}>
             {item.producer === 'workshop_gate' ? (
               <button type="button" onClick={() => onOpenTask ? onOpenTask(item) :
@@ -1526,15 +1567,15 @@ const WaitingButton = ({ items = [], variant = 'strip', onOpenTask }) => {
                 {status[item.id] === 'pending' ? 'pending' : 'Approve'}
               </button>}
             {item.producer !== 'workshop_gate' && (confirmReject === item.id ? <>
-              <span style={{fontFamily:LM.mono, fontSize:10, color:LM.warn}}>Reject?</span>
+              <span style={{fontFamily:LM.mono, fontSize:11, color:LM.warn}}>Reject?</span>
               <button type="button" onClick={() => { setConfirmReject(''); decide(item, 'reject'); }} style={smallBtn()}>Yes</button>
               <button type="button" onClick={() => setConfirmReject('')} style={smallBtn()}>No</button>
             </> : <button type="button" onClick={() => setConfirmReject(item.id)} style={smallBtn()}>Reject</button>)}
             {(item.host_ids || item.ids || []).length > 0 && window.ARCHHUB_CONNECTORS?.highlight &&
               <button type="button" onClick={() => showHost(item)} style={smallBtn()}>Show in host</button>}
             {onOpenTask && item.producer !== 'workshop_gate' && <button type="button" onClick={() => onOpenTask(item)} style={smallBtn()}>Open task</button>}
-            {item.second_approval && <span style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>Needs {item.ask_member || 'member'}</span>}
-            {status[item.id] && status[item.id] !== 'pending' && <span style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>{status[item.id]}</span>}
+            {item.second_approval && <span style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft}}>Needs {item.ask_member || 'member'}</span>}
+            {status[item.id] && status[item.id] !== 'pending' && <span style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft}}>{status[item.id]}</span>}
           </div>
         </div>)}
     </div>}
@@ -1632,12 +1673,13 @@ const ToolOffPanel = ({ tool }) => {
   </div>;
 };
 
-const ChatsPanel = ({ openId, onOpen, onNew, account, onAccount }) => (
+const ChatsPanel = ({ openId, onOpen, onNew, onHome, account, onAccount }) => (
   <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
     {/* Panel header */}
     <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:LM.sp.sm }}>
       <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, letterSpacing:'-0.005em', color:LM.ink }}>Chats</span>
       <div style={{ flex:1 }}/>
+      <PanelHomeButton onHome={onHome || onNew}/>
       <button title="New chat" onClick={onNew} style={panelIconBtn()}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
       </button>
@@ -1648,7 +1690,7 @@ const ChatsPanel = ({ openId, onOpen, onNew, account, onAccount }) => (
       <div style={{
         display:'flex', alignItems:'center', gap:LM.sp.sm, padding:'6px 10px',
         background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md,
-        color:LM.inkMuted, fontSize:12.5,
+        color:LM.inkSoft, fontSize:12.5,
       }}>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
         <span style={{ flex:1 }}>Search chats…</span>
@@ -1676,7 +1718,7 @@ const ChatsPanel = ({ openId, onOpen, onNew, account, onAccount }) => (
               animation: sm.pulse ? 'lmPulse 1.2s infinite' : 'none',
             }}/>
             <span style={{ flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontWeight: a ? 500 : 400 }}>{s.title}</span>
-            {a && <span style={{ fontFamily:LM.sans, fontSize:14, color:LM.inkMuted, lineHeight:0.5 }}>···</span>}
+            {a && <span style={{ fontFamily:LM.sans, fontSize:14, color:LM.inkSoft, lineHeight:0.5 }}>···</span>}
           </button>
         );
       })}
@@ -1704,7 +1746,7 @@ const AccountChip = ({ account, onOpen }) => {
       {name && <div style={{ width:22, height:22, borderRadius:'50%', background:LM.userAv, display:'grid', placeItems:'center', fontSize:11, color:LM.onUserAv, fontWeight:700, flexShrink:0 }}>{name[0].toUpperCase()}</div>}
       <div style={{ flex:1, lineHeight:1.1, minWidth:0 }}>
         <div style={{ fontSize:12, fontWeight:500, color:name ? LM.ink : LM.accent, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{name || 'Sign in'}</div>
-        {tier && <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>{tier}</div>}
+        {tier && <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.08em' }}>{tier}</div>}
       </div>
     </button>
   );
@@ -1717,7 +1759,7 @@ const panelIconBtn = () => ({
 });
 
 // ─── Nodes panel — primary drag source ───
-const NodesPanel = ({ addNodeFromLibrary, account, onAccount }) => {
+const NodesPanel = ({ addNodeFromLibrary, onHome, account, onAccount }) => {
   const library = useStudioProjection()?.library || LM_LIBRARY;
   const [q, setQ] = React.useState('');
   const [openCats, setOpenCats] = React.useState(() => Object.fromEntries(library.map(group => [group.cat, true])));
@@ -1729,10 +1771,11 @@ const NodesPanel = ({ addNodeFromLibrary, account, onAccount }) => {
     <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
       <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:LM.sp.sm }}>
         <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Nodes</span>
-        <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>
+        <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.08em' }}>
           drag · or 2× click
         </span>
         <div style={{ flex:1 }}/>
+        <PanelHomeButton onHome={onHome}/>
         <button title="Collapse all" style={panelIconBtn()} onClick={() => setOpenCats({})}>
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14"/></svg>
         </button>
@@ -1743,7 +1786,7 @@ const NodesPanel = ({ addNodeFromLibrary, account, onAccount }) => {
           display:'flex', alignItems:'center', gap:LM.sp.sm, padding:'6px 10px',
           background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md,
         }}>
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={LM.inkMuted} strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={LM.inkSoft} strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
           <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search nodes…" style={{
             flex:1, border:0, background:'transparent', color:LM.ink, fontSize:12, outline:'none', fontFamily:LM.sans,
           }}/>
@@ -1752,7 +1795,7 @@ const NodesPanel = ({ addNodeFromLibrary, account, onAccount }) => {
 
       <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'0 6px 8px', minHeight:0 }}>
         {!library.length && window.AH_LIBRARY_ERROR && (
-          <div role="alert" style={{ padding:'8px 12px', fontFamily:LM.mono, fontSize:10.5, color:LM.err, lineHeight:1.5 }}>
+          <div role="alert" style={{ padding:'8px 12px', fontFamily:LM.mono, fontSize:11, color:LM.err, lineHeight:1.5 }}>
             {'The node library could not be loaded: ' + window.AH_LIBRARY_ERROR}
           </div>
         )}
@@ -1778,15 +1821,15 @@ const NodeLibraryGroups = React.memo(({ library, q, openCats, onToggle, onAdd })
               <button onClick={() => onToggle(group.cat)} style={{
                 width:'100%', display:'flex', alignItems:'center', gap:7, padding:'5px 7px',
                 background:'transparent', border:0, borderRadius:4, cursor:'pointer',
-                color:LM.inkSoft, fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.14em',
+                color:LM.inkSoft, fontFamily:LM.mono, fontSize:11, letterSpacing:'0.14em',
                 textAlign:'left',
               }}
               onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
               onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                <span style={{ width:9, color:LM.inkMuted, transition:'transform .12s', display:'inline-block', transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}>▸</span>
-                <span style={{ color: c.col, fontSize:10 }}>{c.icon}</span>
+                <span style={{ width:9, color:LM.inkSoft, transition:'transform .12s', display:'inline-block', transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}>▸</span>
+                <span style={{ color: c.col, fontSize:11 }}>{c.icon}</span>
                 <span style={{ flex:1, color:c.col }}>{c.label}</span>
-                <span style={{ color:LM.inkMuted, fontSize:9 }}>{items.length}</span>
+                <span style={{ color:LM.inkSoft, fontSize:11 }}>{items.length}</span>
               </button>
               {open && (
                 <div style={{ display:'flex', flexDirection:'column', gap:1, paddingLeft:6 }}>
@@ -1824,10 +1867,10 @@ const NodeLibItem = ({ it, cat, onAdd }) => {
       <span style={{ width:5, height:5, borderRadius:'50%', background:cat.col, flexShrink:0, opacity:0.8 }}/>
       <div style={{ flex:1, minWidth:0, lineHeight:1.2 }}>
         <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{it.title}</div>
-        <div style={{ fontFamily:LM.sans, fontSize:10, color:LM.inkMuted, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{it.sub}</div>
+        <div style={{ fontFamily:LM.sans, fontSize:11, color:LM.inkSoft, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{it.sub}</div>
       </div>
       {h && (
-        <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.04em', flexShrink:0 }}>+</span>
+        <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em', flexShrink:0 }}>+</span>
       )}
     </div>
   );
@@ -1893,7 +1936,7 @@ const withLiveCatalogue = (loaderName, items, View) => props => {
   const status = catalogueStates.get(loaderName) || {loading:false, error:''};
   // One element: the Sidebar grid is "44px 1fr", so a loading line beside the panel would push the panel into the rail column.
   return <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
-    {status.loading && !status.read && <p role="status" style={{ margin:0, padding:'8px 12px 0', fontFamily:LM.mono, fontSize:10, color:LM.inkMuted }}>Loading catalogue…</p>}
+    {status.loading && !status.read && <p role="status" style={{ margin:0, padding:'8px 12px 0', fontFamily:LM.mono, fontSize:11, color:LM.inkSoft }}>Loading catalogue…</p>}
     {status.error && <p role="alert" style={{ margin:0, padding:'8px 12px 0', fontSize:12, color:LM.inkSoft }}>{status.error} <button onClick={() => loadCatalogue(loaderName, items)}>Retry</button></p>}
     <View {...props} catalogue={status}/>
   </div>;
@@ -1913,18 +1956,19 @@ const studioSkillLibraryItem = skill => ({
   }},
 });
 
-const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, ({ catalogue = {}, addNodeFromLibrary }) => (
+const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, ({ catalogue = {}, addNodeFromLibrary, onHome }) => (
   <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
     <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:LM.sp.sm }}>
       <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Skills</span>
-      <span data-skills-count="" style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>
+      <span data-skills-count="" style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.08em' }}>
         {catalogue.read ? LM_SAVED_SKILLS.length + ' SAVED' : catalogue.error ? 'NOT READ' : 'READING\u2026'}</span>
       <div style={{ flex:1 }}/>
+      <PanelHomeButton onHome={onHome}/>
     </div>
     <div style={{ padding:'0 10px 8px' }}>
       <div style={{
         display:'flex', alignItems:'center', gap:LM.sp.sm, padding:'6px 10px',
-        background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, color:LM.inkMuted, fontSize:12,
+        background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, color:LM.inkSoft, fontSize:12,
       }}>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
         <span style={{ flex:1 }}>Search saved skills…</span>
@@ -1945,7 +1989,7 @@ const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, ({
           <div style={{ display:'flex', alignItems:'center', gap:7 }}>
             <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:11 }}>✦</span>
             <span style={{ flex:1, minWidth:0, fontSize:12.5, color:LM.ink, overflowWrap:'anywhere' }}>{s.name}</span>
-            {s.source && <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>{s.source}</span>}
+            {s.source && <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft }}>{s.source}</span>}
           </div>
           {s.description && <div style={{ fontSize:11, color:LM.inkSoft, paddingLeft:18, marginTop:2, lineHeight:1.4,
             display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', overflow:'hidden' }}>{s.description}</div>}
@@ -1954,7 +1998,7 @@ const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, ({
       {!LM_SAVED_SKILLS.length && catalogue.read && <div data-skills-empty="" role="status" style={{
         padding:'14px 10px', fontFamily:LM.serif, fontStyle:'italic', fontSize:13.5, color:LM.inkSoft, lineHeight:1.45 }}>
         No saved skills yet.
-        <div style={{ fontFamily:LM.sans, fontStyle:'normal', fontSize:12, color:LM.inkMuted, marginTop:4 }}>
+        <div style={{ fontFamily:LM.sans, fontStyle:'normal', fontSize:12, color:LM.inkSoft, marginTop:4 }}>
           Skills saved from finished work appear here, and Search counts the same list.</div>
       </div>}
     </div>
@@ -1962,7 +2006,7 @@ const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, ({
 ));
 
 // ─── Global search panel ───
-const SearchPanel = () => {
+const SearchPanel = ({ onHome }) => {
   // Scope counts are read from what this Studio holds; a scope nothing counts draws no number.
   const projected = useStudioProjection();
   const live = window.ARCHHUB_LIVE || {};
@@ -1972,6 +2016,7 @@ const SearchPanel = () => {
     <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:LM.sp.sm }}>
       <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Search</span>
       <div style={{ flex:1 }}/>
+      <PanelHomeButton onHome={onHome}/>
       <kbd style={kbd()}>⌘K</kbd>
     </div>
     <div style={{ padding:'0 10px 10px' }}>
@@ -1981,12 +2026,12 @@ const SearchPanel = () => {
         boxShadow:`0 0 0 3px ${LM.accentDim}`,
       }}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={LM.accent} strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-        <span style={{ flex:1, color:LM.inkMuted, fontStyle:'italic', fontFamily:LM.serif, fontSize:13 }}>
+        <span style={{ flex:1, color:LM.inkSoft, fontStyle:'italic', fontFamily:LM.serif, fontSize:13 }}>
           everything in studio…
         </span>
       </div>
     </div>
-    <div style={{ padding:'4px 10px', fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.14em' }}>SCOPES</div>
+    <div style={{ padding:'4px 10px', fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em' }}>SCOPES</div>
     <div style={{ padding:'0 6px', display:'flex', flexDirection:'column', gap:1 }}>
       {[
         ['chats',  'sessions + messages',  count(LM_SESSIONS)],
@@ -2005,7 +2050,7 @@ const SearchPanel = () => {
         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
           <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.ink, width:54 }}>{k}</span>
           <span style={{ flex:1, fontSize:11, color:LM.inkSoft }}>{sub}</span>
-          {n != null && <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted }}>{n}</span>}
+          {n != null && <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft }}>{n}</span>}
         </button>
       ))}
     </div>
@@ -2014,12 +2059,12 @@ const SearchPanel = () => {
 };
 
 const kbd = () => ({
-  fontFamily:LM.mono, fontSize:9, padding:'1px 5px', background:LM.bgSoft,
-  border:`1px solid ${LM.lineHair}`, borderRadius:LM.rad.xs, color:LM.inkMuted, letterSpacing:'0.06em',
+  fontFamily:LM.mono, fontSize:11, padding:'1px 5px', background:LM.bgSoft,
+  border:`1px solid ${LM.lineHair}`, borderRadius:LM.rad.xs, color:LM.inkSoft, letterSpacing:'0.06em',
 });
 
 // ──────────────────────── HOME ────────────────────────
-const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, setPickerOpen, setLibraryOpen, setPanel, onOpenTool, onOpenToolGraph, workshopState, account,
+const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null, onModelReadRetry, setPickerOpen, setLibraryOpen, setPanel, onOpenTool, onOpenToolGraph, workshopState, account,
   onStarted, sessionError = '', onCreateGraph }) => {
   const [filter, onFilter] = React.useState('all');
   const [draft, setDraft] = React.useState('');
@@ -2037,6 +2082,8 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, setPickerOpen, se
   const homePersonal = usePersonalTheme();
   const toolRows = toolRowsFromOwners({workshopState, account, personal:homePersonal, hub});
   const toolsLive = toolCounts(toolRows);
+  const blocked = !native ? routeReadiness(modelRoute(model), readiness, model?.pending === true) : null;
+  const offers = new Set((blocked && blocked.actions) || []);
   React.useEffect(() => {homeMounted.current = true; return () => {homeMounted.current = false;};}, []);
   const liveHosts = LM_HOSTS.filter(host => hostState(host) === 'connected');
   const knownHosts = startableHosts(LM_HOSTS);
@@ -2146,11 +2193,25 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, setPickerOpen, se
     ? sessions
     : sessions.filter(s => (s.state || 'idle') === filter);
   return (
-  <main className="ah-scroll" style={{
+  <main className="ah-scroll" data-home-page="" style={{
     gridColumn:'2', gridRow:'1', overflow:'auto', minHeight:0,
     padding:'30px 44px 36px', display:'flex', flexDirection:'column',
   }}>
     <ModelStrip model={native ? {...model,name:native.title || native.app,vendor:native.app} : model} setPickerOpen={setPickerOpen}/>
+    {blocked && <div data-home-model-state="" role="status" style={{
+      background:LM.bgPanel, border:`1px solid ${LM.line}`, borderLeft:`3px solid ${LM.warn}`,
+      borderRadius:LM.rad.md, padding:'9px 10px', marginTop:12, display:'flex', alignItems:'center', gap:10, flexWrap:'wrap',
+    }}>
+      <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.warn, letterSpacing:'0.14em' }}>
+        {READINESS_LABELS[blocked.state] || 'NO MODEL'}</span>
+      <span style={{ fontSize:12.5, lineHeight:1.45, color:LM.ink, flex:'1 1 240px' }}>{blocked.message}</span>
+      {offers.has('retry_models') && <button type="button" onClick={() => typeof onModelReadRetry === 'function' && onModelReadRetry()} style={{
+        padding:'4px 9px', background:'transparent', color:LM.ink, border:`1px solid ${LM.line}`,
+        borderRadius:LM.rad.sm, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Retry</button>}
+      {offers.has('choose_model') && <button type="button" onClick={() => typeof setPickerOpen === 'function' && setPickerOpen(true)} style={{
+        padding:'4px 9px', background:'transparent', color:LM.ink, border:`1px solid ${LM.line}`,
+        borderRadius:LM.rad.sm, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Choose a model</button>}
+    </div>}
     <form onSubmit={startSession} style={{
       background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.xl,
       padding:'16px 18px', marginBottom:16, marginTop:14,
@@ -2186,7 +2247,7 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, setPickerOpen, se
                     textAlign:'left', padding:'5px 8px', background:'transparent', border:0,
                     color:LM.ink, fontFamily:LM.sans, fontSize:12, cursor:'pointer'}}>
                   <span>{hostDisplayName(host)}</span>
-                  <span style={{fontFamily:LM.mono, fontSize:9, color:LM.accent, letterSpacing:'0.06em', textTransform:'uppercase'}}>Start</span>
+                  <span style={{fontFamily:LM.mono, fontSize:11, color:LM.accent, letterSpacing:'0.06em', textTransform:'uppercase'}}>Start</span>
                 </button>)}
             </div>}
             {attachments.map(file => <Chip key={file.name + ':' + file.size} mono>{file.name}</Chip>)}
@@ -2207,7 +2268,7 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, setPickerOpen, se
     {toolRows.length > 0 && <section aria-label="Tools" data-home-tools style={{ margin:'0 0 22px' }}>
       <div style={{ display:'flex', alignItems:'baseline', gap:10, marginBottom:14 }}>
         <h2 style={{ fontFamily:LM.serif, fontSize:26, fontWeight:400, letterSpacing:'-0.015em', margin:0 }}>Tools</h2>
-        <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em' }}>
+        <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em' }}>
           {toolsLive.live}/{toolRows.length} RUNNING{toolsLive.pending ? ` · ${toolsLive.pending} STARTING` : ''} · EACH WORKS ON ITS OWN
         </span>
       </div>
@@ -2220,7 +2281,7 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, setPickerOpen, se
     </section>
     <div style={{ display:'flex', alignItems:'baseline', gap:10, marginBottom:14 }}>
       <h2 style={{ fontFamily:LM.serif, fontSize:26, fontWeight:400, letterSpacing:'-0.015em', margin:0 }}>Sessions</h2>
-      <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em' }}>
+      <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em' }}>
         {shown.length} · CLICK TO OPEN
       </span>
       <div style={{ flex:1 }}/>
@@ -2252,7 +2313,7 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, setPickerOpen, se
     </form>}
     <div style={{ display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:LM.sp.md }}>
       {shown.length === 0 ? (
-        <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkMuted }}>no {filter} session on this machine</div>
+        <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft }}>no {filter} session on this machine</div>
       ) : shown.map(s => <SessionCard key={s.id} s={s} onOpen={() => onOpen(s.id)}/>)}
     </div>
   </main>
@@ -2263,7 +2324,7 @@ const chipBtn = (active) => ({
   padding:'4px 11px', borderRadius:999,
   background: active ? LM.ink : 'transparent',
   border:`1px solid ${active ? LM.ink : LM.line}`,
-  color: active ? LM.bg : LM.inkSoft, fontFamily:LM.mono, fontSize:10,
+  color: active ? LM.bg : LM.inkSoft, fontFamily:LM.mono, fontSize:11,
   letterSpacing:'0.06em', cursor:'pointer',
 });
 
@@ -2302,7 +2363,7 @@ const ToolCard = ({ tool, onOpen }) => (
   }}>
     <div style={{display:'flex', alignItems:'center', gap:7, minWidth:0}}>
       <span data-tool-dot="" style={{width:6, height:6, borderRadius:'50%', background:tool.color, flexShrink:0}}/>
-      <span style={{fontFamily:LM.mono, fontSize:10, color:tool.color, letterSpacing:'0.08em', textTransform:'uppercase'}}>
+      <span style={{fontFamily:LM.mono, fontSize:11, color:tool.color, letterSpacing:'0.08em', textTransform:'uppercase'}}>
         {tool.stateWord || toolStateWord(tool.state)}
       </span>
       <span style={{flex:1}}/>
@@ -2324,11 +2385,11 @@ const ToolCard = ({ tool, onOpen }) => (
     <div data-tool-description="" title={tool.description || undefined} style={{fontFamily:LM.sans, fontSize:12.5, color:LM.inkSoft,
       lineHeight:1.35, minHeight:34, overflow:'hidden', display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical'}}>
       {tool.description}</div>
-    <div data-tool-stat="" title={tool.cardStat ?? tool.statLine ?? tool.stat ?? undefined} style={{fontFamily:LM.mono, fontSize:10.5,
-      color:LM.inkMuted, letterSpacing:'0.03em', lineHeight:1.4, minHeight:30, whiteSpace:'normal', overflowWrap:'anywhere'}}>
+    <div data-tool-stat="" title={tool.cardStat ?? tool.statLine ?? tool.stat ?? undefined} style={{fontFamily:LM.mono, fontSize:11,
+      color:LM.inkSoft, letterSpacing:'0.03em', lineHeight:1.4, minHeight:30, whiteSpace:'normal', overflowWrap:'anywhere'}}>
       {tool.cardStat ?? tool.statLine ?? tool.stat}</div>
     <div style={{marginTop:'auto', display:'flex', justifyContent:'flex-end'}}>
-      <span data-tool-open="" aria-hidden="true" style={{fontFamily:LM.mono, fontSize:12, color:LM.inkMuted}}>{'\u2192'}</span>
+      <span data-tool-open="" aria-hidden="true" style={{fontFamily:LM.mono, fontSize:12, color:LM.inkSoft}}>{'\u2192'}</span>
     </div>
   </div>
 );
@@ -2373,14 +2434,14 @@ const SettingsBaboom = ({ onOpenToolGraph, onClose }) => {
         <span style={{width:8, height:8, borderRadius:'50%', background:LM.warn}}/>
         <div style={{flex:1, lineHeight:1.2, minWidth:0}}>
           <div style={{fontSize:13, fontWeight:500, color:LM.ink}}>Speech budget</div>
-          <div style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em', marginTop:2}}>
+          <div style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em', marginTop:2}}>
             Speaks at most {baboomMaxSpeaks(personal)} times an hour.
           </div>
         </div>
       </div>
     </div>
     <div style={{display:'flex', alignItems:'center', gap:10}}>
-      <span style={{flex:1, fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>
+      <span style={{flex:1, fontFamily:LM.mono, fontSize:11, color:LM.inkSoft}}>
         Node: BABOOM · System graph · parameters tab shows the same two rows
       </span>
       <button type="button" onClick={() => openToolGraphFromSettings('baboom')} style={smallBtn(false)}>Open as node ↗</button>
@@ -2405,7 +2466,7 @@ const SettingsCloudStatus = ({ toolRow, account, onSettings }) => {
     <div style={{background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden'}}>
       {rows.map((row, i) => (
         <div key={row[0]} style={{padding:'10px 14px', display:'flex', gap:LM.sp.md, borderTop:i ? `1px solid ${LM.lineSoft}` : 'none', alignItems:'baseline'}}>
-          <span style={{fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.12em', width:58, flexShrink:0}}>{row[0]}</span>
+          <span style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.12em', width:58, flexShrink:0}}>{row[0]}</span>
           <span style={{fontSize:13, color:LM.ink, minWidth:0, overflowWrap:'anywhere'}}>{row[1]}</span>
         </div>
       ))}
@@ -2434,7 +2495,7 @@ const ToolMainView = ({ view, account, setAccount, onSignOut, onSettings }) => {
   }}>
     <div style={{display:'flex', alignItems:'baseline', gap:10, marginBottom:18}}>
       <h1 style={{fontFamily:LM.serif, fontSize:30, fontWeight:400, margin:0}}>{title}</h1>
-      <span style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.08em', textTransform:'uppercase'}}>
+      <span style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.08em', textTransform:'uppercase'}}>
         {tab}
       </span>
     </div>
@@ -2444,7 +2505,7 @@ const ToolMainView = ({ view, account, setAccount, onSignOut, onSettings }) => {
     {tool === 'connectors' && <SettingsHosts/>}
     {tool === 'cloud' && <SettingsCloudStatus toolRow={toolRow} account={account} onSettings={onSettings}/>}
     {tool === 'baboom' && <SettingsBaboom/>}
-    {!['workshop','brain','connectors','cloud','baboom'].includes(tool) && <ToolOffPanel tool={{id:tool,label:title,state:'off',color:LM.inkMuted,
+    {!['workshop','brain','connectors','cloud','baboom'].includes(tool) && <ToolOffPanel tool={{id:tool,label:title,state:'off',color:LM.inkSoft,
       emptyTitle:title + ' is off', emptyLine:'This tool has no active view.'}}/>}
     </>}
   </main>;
@@ -2464,20 +2525,20 @@ const SessionCard = ({ s, onOpen }) => {
     onMouseLeave={e => { e.currentTarget.style.borderColor = LM.line; e.currentTarget.style.transform='none'; }}>
       <div style={{ display:'flex', alignItems:'center', gap:7 }}>
         <span style={{ width:6, height:6, borderRadius:'50%', background: sm.col, boxShadow: sm.pulse ? `0 0 0 2px ${sm.col}22` : 'none', animation: sm.pulse ? 'lmPulse 1.2s infinite' : 'none' }}/>
-        <span style={{ fontFamily:LM.mono, fontSize:9.5, color:sm.col, letterSpacing:'0.12em', textTransform:'uppercase' }}>{sm.label}</span>
+        <span style={{ fontFamily:LM.mono, fontSize:11, color:sm.col, letterSpacing:'0.12em', textTransform:'uppercase' }}>{sm.label}</span>
         <div style={{ flex:1 }}/>
-        <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.04em' }}>{s.when}</span>
+        <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>{s.when}</span>
       </div>
       <div style={{ fontFamily:LM.serif, fontSize:22, letterSpacing:'-0.015em', lineHeight:1.1 }}>{s.title}</div>
       <div style={{ fontSize:12.5, color:LM.inkSoft, lineHeight:1.5, minHeight:36 }}>{s.last}</div>
       <div style={{
         display:'flex', alignItems:'center', gap:7, paddingTop:9,
-        borderTop:`1px solid ${LM.lineSoft}`, fontFamily:LM.mono, fontSize:10,
-        color:LM.inkMuted, letterSpacing:'0.04em',
+        borderTop:`1px solid ${LM.lineSoft}`, fontFamily:LM.mono, fontSize:11,
+        color:LM.inkSoft, letterSpacing:'0.04em',
       }}>
         <span style={{ flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{s.file}</span>
         {hosts.map(h => (
-          <span key={h.name} style={{ padding:'1px 6px', borderRadius:LM.rad.xs, fontSize:9.5, background: h.col + '14', color: h.col, letterSpacing:'0.06em' }}>{h.name}</span>
+          <span key={h.name} style={{ padding:'1px 6px', borderRadius:LM.rad.xs, fontSize:11, background: h.col + '14', color: h.col, letterSpacing:'0.06em' }}>{h.name}</span>
         ))}
       </div>
     </button>
@@ -2567,7 +2628,7 @@ const defaultModelRowFromPayload = (payload, route) => {
 const defaultModelRow = (route, source, fallback) => {
   return {name:route, route, routed:route, vendor:fallback ? 'Default' : 'Saved selection',
     tag:fallback ? (source || 'default') : 'Availability unverified',
-    ctx:'', col:LM.inkMuted, latency:null};
+    ctx:'', col:LM.inkSoft, latency:null};
 };
 const DEFAULT_FREE_MODEL_ROUTE = 'openrouter/free';
 const DEFAULT_MODEL_READ_RETRY_DELAYS_MS = [2000, 5000, 10000];
@@ -2575,10 +2636,10 @@ const DEFAULT_MODEL_READ_RETRY_DELAYS_MS = [2000, 5000, 10000];
 // It lived only in this page until a Send reached the server, so a restart or
 // an update came back "Choose a model" (2026-09-17). The signed clean engine
 // has no selection route, so there the pick stays page state as before.
-const pendingModelAnswer = () => ({ name:'Model pending', route:'', routed:'', vendor:'Checking availability', tag:'', ctx:'', col:LM.inkMuted, latency:null, pending:true });
+const pendingModelAnswer = () => ({ name:'Model pending', route:'', routed:'', vendor:'Checking availability', tag:'', ctx:'', col:LM.inkSoft, latency:null, pending:true });
 const unknownModelAnswer = () => ({ name:'Checking', route:DEFAULT_FREE_MODEL_ROUTE, routed:DEFAULT_FREE_MODEL_ROUTE,
-  vendor:'Default free route', tag:'', ctx:'', col:LM.inkMuted, latency:null, unknown:true });
-const noModelPicked = () => ({ name:'Choose a model', route:'', routed:'', vendor:'No model selected', tag:'', ctx:'', col:LM.inkMuted, latency:null });
+  vendor:'Default free route', tag:'', ctx:'', col:LM.inkSoft, latency:null, unknown:true });
+const noModelPicked = () => ({ name:'Choose a model', route:'', routed:'', vendor:'No model selected', tag:'', ctx:'', col:LM.inkSoft, latency:null });
 const rememberComposerModel = async (m) => {
   const route = modelRoute(m);
   if (typeof window.ARCHHUB_AGENT_SELECT !== 'function') {
@@ -2784,8 +2845,8 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
       gridColumn:'1', gridRow:'2', minHeight:0, display:'flex', flexDirection:'column',
       background:LM.bg, overflow:'hidden',
     }}>
-      {/* The design draws the reply prompt in inkMuted; a real field has to be told. */}
-      <style>{`.lm-chat-draft::placeholder { color: ${LM.inkMuted}; opacity: 1 }`}</style>
+      {/* The design draws the reply prompt softly; a real field has to be told. */}
+      <style>{`.lm-chat-draft::placeholder { color: ${LM.inkSoft}; opacity: 1 }`}</style>
       <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'24px 0 12px' }}>
         <div style={{ maxWidth:720, margin:'0 auto', padding:'0 36px' }}>
           {/* Conversation — calm, generous, serif for Claude */}
@@ -2800,7 +2861,7 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ display:'flex', alignItems:'baseline', gap:8, marginBottom:4 }}>
                   <span style={{ fontSize:13, fontWeight:500, color:LM.ink }}>{m.me ? me : answerer}</span>
-                  <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em' }}>{m.time}</span>
+                  <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>{m.time}</span>
                 </div>
                 <div style={{
                   fontSize: m.me ? 14 : 15,
@@ -2810,7 +2871,7 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
                 }}>{m.text}</div>
                 {!m.me && m.via && <div data-chat-via="" style={{
                   marginTop:6, fontFamily:LM.sans, fontSize:11, lineHeight:1.35,
-                  color:LM.inkMuted, letterSpacing:0,
+                  color:LM.inkSoft, letterSpacing:0,
                 }}>{agentViaLabel(m.via)}</div>}
               </div>
             </div>
@@ -2827,7 +2888,7 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
                 background:LM.bgPanel, border:`1px solid ${LM.line}`, borderLeft:`3px solid ${LM.warn}`,
                 borderRadius:LM.rad.lg, padding:'12px 16px', marginBottom:10,
               }}>
-                <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.warn, letterSpacing:'0.14em', marginBottom:6 }}>
+                <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.warn, letterSpacing:'0.14em', marginBottom:6 }}>
                   {READINESS_LABELS[blocked.state] || 'NO MODEL'}</div>
                 <div style={{ fontSize:14, lineHeight:1.55, color:LM.ink, marginBottom:10 }}>{blocked.message}</div>
                 <div style={{ display:'flex', gap:8 }}>
@@ -2869,7 +2930,7 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
                 display:'inline-flex', alignItems:'center', gap:5, padding:'3px 9px',
                 background: workshopRoom ? LM.accentDim : 'transparent',
                 border: workshopRoom ? `1px solid ${LM.accentSoft}` : `1px dashed ${LM.line}`, borderRadius:LM.rad.sm,
-                color: workshopRoom ? LM.accent : LM.inkMuted, fontFamily:LM.mono, fontSize:10.5, letterSpacing:'0.04em',
+                color: workshopRoom ? LM.accent : LM.inkSoft, fontFamily:LM.mono, fontSize:11, letterSpacing:'0.04em',
                 cursor: workshopRoom ? 'pointer' : 'default',
               }}>◆ workshop</button>
               {workshopRefusal && <span role="alert" style={{fontSize:11, color:LM.ink, maxWidth:260, overflow:'hidden',
@@ -2877,13 +2938,13 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
               <button onClick={() => setMode('canvas')} style={{
                 display:'inline-flex', alignItems:'center', gap:5, padding:'3px 9px',
                 background:'transparent', border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
-                color:LM.inkSoft, fontFamily:LM.mono, fontSize:10.5, letterSpacing:'0.04em', cursor:'pointer',
+                color:LM.inkSoft, fontFamily:LM.mono, fontSize:11, letterSpacing:'0.04em', cursor:'pointer',
               }}>⌗ open as nodes</button>
               <span aria-hidden="true" style={{ flex:'1 1 0', minWidth:0, textAlign:'right', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}/>
               {/* While an answer is out Send is disabled: a dashed border, never alpha (DECISIONS.md). */}
               {routed ? <button onClick={send} disabled={busy} style={{
                 padding: busy ? '6px 13px' : '7px 14px', background: busy ? 'transparent' : LM.accent,
-                color: busy ? LM.inkMuted : onFill, border: busy ? `1px dashed ${LM.line}` : 0,
+                color: busy ? LM.inkSoft : onFill, border: busy ? `1px dashed ${LM.line}` : 0,
                 borderRadius:LM.rad.sm, fontSize:12.5, fontWeight:500, cursor: busy ? 'default' : 'pointer',
               }}>Send ↵</button> : <button type="button" onClick={() => typeof onPickModel === 'function' && onPickModel()}
                 title="No model is picked: choose one to send" style={{
@@ -2912,11 +2973,11 @@ const LiveChain = () => {
     ({key:n.id + '|' + p.k, node:'stage ' + (i + 1) + ' · ' + n.title, k:p.k, v:String(p.v)}))));
   return (
     <div data-chat-chain="" style={{ padding:'14px 16px', borderBottom:`1px solid ${LM.lineSoft}` }}>
-      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:10 }}>PARAMETRIC CHAIN · {stages.length} STAGE{stages.length === 1 ? '' : 'S'}</div>
+      <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em', marginBottom:10 }}>PARAMETRIC CHAIN · {stages.length} STAGE{stages.length === 1 ? '' : 'S'}</div>
       {stages.length > 0 && <div style={{ display:'flex', alignItems:'center', gap:0, marginBottom:10 }}>
         {stages.map((_, i) => (
           <React.Fragment key={i}>
-            <div style={{ width:18, height:18, borderRadius:'50%', border:`2px solid ${LM.accent}`, background:LM.bg, color:LM.accent, display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:9, fontWeight:600 }}>{i + 1}</div>
+            <div style={{ width:18, height:18, borderRadius:'50%', border:`2px solid ${LM.accent}`, background:LM.bg, color:LM.accent, display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:11, fontWeight:600 }}>{i + 1}</div>
             {i < stages.length - 1 && <div style={{ flex:1, height:2, background:LM.accent }}/>}
           </React.Fragment>
         ))}
@@ -2939,7 +3000,7 @@ const InferenceInspector = ({ model, setPickerOpen }) => {
   }} className="ah-scroll">
     {/* model */}
     <div style={{ padding:'14px 16px', borderBottom:`1px solid ${LM.lineSoft}` }}>
-      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:8 }}>MODEL</div>
+      <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em', marginBottom:8 }}>MODEL</div>
       <button data-model-indicator="" onClick={() => setPickerOpen(true)} style={{
         width:'100%', display:'flex', alignItems:'center', gap:10, padding:'8px 10px',
         background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, cursor:'pointer', color:LM.ink,
@@ -2947,7 +3008,7 @@ const InferenceInspector = ({ model, setPickerOpen }) => {
         <span style={{ width:22, height:22, borderRadius:LM.rad.sm, background:model.col, color:((window.AH && window.AH.onFill) || '#180f08'), display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:11, fontWeight:700 }}>{model.name[0]}</span>
         <div style={{ flex:1, textAlign:'left', lineHeight:1.15 }}>
           <div style={{ fontSize:13, fontWeight:500 }}>{model.name}</div>
-          <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted }}>{model.vendor}{model.ctx ? ' · ctx ' + model.ctx : ''}</div>
+          <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft }}>{model.vendor}{model.ctx ? ' · ctx ' + model.ctx : ''}</div>
         </div>
         <span style={{ color:LM.inkSoft, fontSize:11 }}>▾</span>
       </button>
@@ -2958,12 +3019,12 @@ const InferenceInspector = ({ model, setPickerOpen }) => {
 
     {/* connectors -- exactly what answered a probe, nothing invented */}
     <div data-chat-connectors="" style={{ padding:'14px 16px' }}>
-      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:10 }}>CONNECTORS · {connectors.length}</div>
+      <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em', marginBottom:10 }}>CONNECTORS · {connectors.length}</div>
       {connectors.map(c => (
         <div key={c.id} title={c.detail} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 0', borderBottom:`1px dashed ${LM.lineSoft}` }}>
           <span style={{ width:7, height:7, borderRadius:'50%', background:c.col, boxShadow:`0 0 0 3px ${c.col}22` }}/>
           <span style={{ flex:1, fontSize:12.5, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{c.name}</span>
-          <span style={{ fontFamily:LM.mono, fontSize:9.5, color:c.col, letterSpacing:'0.06em' }}>{c.word}</span>
+          <span style={{ fontFamily:LM.mono, fontSize:11, color:c.col, letterSpacing:'0.06em' }}>{c.word}</span>
         </div>
       ))}
       {/* A host that cannot connect on this machine says why, in words, not on hover. */}
@@ -2971,7 +3032,7 @@ const InferenceInspector = ({ model, setPickerOpen }) => {
         <div key={c.id + ':why'} data-connector-reason={c.id} style={{ fontSize:11, color:LM.inkSoft, lineHeight:1.45, whiteSpace:'normal', overflowWrap:'anywhere', padding:'4px 0 6px 15px' }}>{c.name}: {c.detail}</div>
       ))}
       {window.ARCHHUB_LIVE && !connectors.length &&
-        <div role="status" style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkMuted, lineHeight:1.5 }}>No connected program found yet.</div>}
+        <div role="status" style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, lineHeight:1.5 }}>No connected program found yet.</div>}
     </div>
   </aside>
   );
@@ -2980,15 +3041,15 @@ const InferenceInspector = ({ model, setPickerOpen }) => {
 const CalmSlider = ({ k, v, min, max, step, int, unit }) => (
   <div style={{ marginBottom:9 }}>
     <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
-      <span style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkSoft, flex:1 }}>{k}</span>
-      <span style={{ fontFamily:LM.mono, fontSize:11.5, color:LM.ink, fontWeight:500 }}>{int ? v : v.toFixed(2)}{unit && <span style={{ color:LM.inkMuted, marginLeft:2, fontSize:10 }}> {unit}</span>}</span>
+      <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, flex:1 }}>{k}</span>
+      <span style={{ fontFamily:LM.mono, fontSize:11.5, color:LM.ink, fontWeight:500 }}>{int ? v : v.toFixed(2)}{unit && <span style={{ color:LM.inkSoft, marginLeft:2, fontSize:11 }}> {unit}</span>}</span>
     </div>
     <input type="range" defaultValue={v} min={min} max={max} step={step} style={{ width:'100%', accentColor:LM.accent, marginTop:3 }}/>
   </div>
 );
 const CalmRow = ({ k, v }) => (
   <div style={{ display:'flex', alignItems:'center', gap:8, padding:'3px 0' }}>
-    <span style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkSoft, flex:1 }}>{k}</span>
+    <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, flex:1 }}>{k}</span>
     <span style={{ fontFamily:LM.mono, fontSize:11.5, color:LM.ink }}>{v}</span>
   </div>
 );
@@ -3164,9 +3225,9 @@ const WorkshopStorageReview = ({root, label}) => {
       </div>
       <div style={{color:LM.inkSoft, marginTop:4}}>{page.state === 'open' ? 'Open record' : 'Closed record'} ·
         {page.draft_state === 'dirty' ? ' draft pending' : page.draft_state === 'unknown' ? ' draft state not recorded' : ' no pending draft'}</div>
-      <div title={'Session: ' + page.session_root + '\nView: ' + page.view_root} style={{color:LM.inkMuted, fontSize:11, marginTop:4}}>
+      <div title={'Session: ' + page.session_root + '\nView: ' + page.view_root} style={{color:LM.inkSoft, fontSize:11, marginTop:4}}>
         Browser {page.session_root.slice(-8)} · editor {page.page_id.slice(-8)}</div>
-      <div style={{color:LM.inkMuted, fontSize:11, marginTop:4}}>Last changed {new Date(page.changed_at * 1000).toLocaleString()}</div>
+      <div style={{color:LM.inkSoft, fontSize:11, marginTop:4}}>Last changed {new Date(page.changed_at * 1000).toLocaleString()}</div>
       {confirmPage === page && <div style={{marginTop:8}}>
         <p style={{lineHeight:1.5}}>Release this editor’s protection only after saving or discarding its unsent work.
           Unsent text is not stored in this record. This action does not delete conversation messages or graph nodes.</p>
@@ -3364,21 +3425,31 @@ const WsHeader = ({ session, model, openTabs, sessionRows = LM_SESSIONS, setOpen
   workshops = [], conversationRoot = '', setConversationRoot, workshopModel, conversationNotice = '',
   workshopUnavailable = '' }) => {
   if (mode === 'system') return (
-  <div style={{
+  <div data-system-graph="" data-system-header="" style={{
     gridColumn:'1 / -1', gridRow:'1',
     borderBottom:`1px solid ${LM.line}`, background:LM.bgDeep,
-    padding:'0 10px 0 10px', display:'flex', alignItems:'center', gap:7, minWidth:0,
+    padding:'0 10px 0 6px', display:'flex', alignItems:'center', gap:7, minWidth:0,
   }}>
+    <button onClick={onHome} title="All sessions" aria-label="Home" data-home-button style={{
+      height:26, padding:'0 8px 0 6px', border:0, borderRadius:LM.rad.sm,
+      background:'transparent', color:LM.inkSoft, cursor:'pointer',
+      display:'flex', alignItems:'center', gap:6, flexShrink:0,
+      fontFamily:LM.sans, fontSize:12, fontWeight:500,
+    }}>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      <span>Home</span>
+    </button>
+    <span style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft}}>›</span>
     <button type="button" onClick={onSettings} style={crumbBtn()}>Settings</button>
-    <span style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>›</span>
+    <span style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft}}>›</span>
     <button type="button" onClick={onSettings} style={crumbBtn()}>System</button>
-    <span style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>›</span>
+    <span style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft}}>›</span>
     <span style={{...crumbBtn(true), cursor:'default'}}>ArchHub application</span>
     <div style={{flex:1}}/>
-    {systemArrangeSummary && <span style={{fontFamily:LM.mono, fontSize:10, color:LM.ok, border:`1px solid ${LM.ok}55`, borderRadius:LM.rad.sm, padding:'3px 8px'}}>
+    {systemArrangeSummary && <span style={{fontFamily:LM.mono, fontSize:11, color:LM.ok, border:`1px solid ${LM.ok}55`, borderRadius:LM.rad.sm, padding:'3px 8px'}}>
       arranged · {systemArrangeSummary.cards} nodes · {systemArrangeSummary.overlaps} overlaps · {systemArrangeSummary.clipped} clipped · {systemArrangeSummary.crossings} ≈ crossings
     </span>}
-    <span style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, padding:'3px 8px'}}>
+    <span style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, padding:'3px 8px'}}>
       Esc · back to Settings
     </span>
   </div>
@@ -3389,14 +3460,16 @@ const WsHeader = ({ session, model, openTabs, sessionRows = LM_SESSIONS, setOpen
     borderBottom:`1px solid ${LM.line}`, background:LM.bgDeep,
     padding:'0 10px 0 6px', display:'flex', alignItems:'center', gap:6, minWidth:0,
   }}>
-    <button onClick={onHome} title="All sessions" style={{
-      width:26, height:26, padding:0, border:0, borderRadius:LM.rad.sm,
-      background:'transparent', color:LM.inkMuted, cursor:'pointer',
-      display:'grid', placeItems:'center', flexShrink:0,
+    <button onClick={onHome} title="All sessions" aria-label="Home" data-home-button style={{
+      height:26, padding:'0 8px 0 6px', border:0, borderRadius:LM.rad.sm,
+      background:'transparent', color:LM.inkSoft, cursor:'pointer',
+      display:'flex', alignItems:'center', gap:6, flexShrink:0,
+      fontFamily:LM.sans, fontSize:12, fontWeight:500,
     }}
     onMouseEnter={e => e.currentTarget.style.background = LM.bgSoft}
     onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      <span>Home</span>
     </button>
 
     <div style={{ flex:1, minWidth:0, display:'flex', alignItems:'center', gap:2, overflow:'hidden' }}>
@@ -3410,7 +3483,7 @@ const WsHeader = ({ session, model, openTabs, sessionRows = LM_SESSIONS, setOpen
       {/* New session after the tabs (design studio-lm.jsx:1123-1129). */}
       <button type="button" onClick={onNewSession || onHome} title="New session" aria-label="New session" style={{
         width:26, height:26, padding:0, border:0, borderRadius:LM.rad.sm,
-        background:'transparent', color:LM.inkMuted, cursor:'pointer', flexShrink:0,
+        background:'transparent', color:LM.inkSoft, cursor:'pointer', flexShrink:0,
         display:'grid', placeItems:'center', fontSize:14,
       }}
       onMouseEnter={e => e.currentTarget.style.background = LM.bgSoft}
@@ -3440,6 +3513,9 @@ const WsTab = ({ s, a, sm, onClick, onClose }) => {
       onClick={onClick}
       onMouseEnter={() => setH(true)}
       onMouseLeave={() => setH(false)}
+      data-ws-tab={s.id}
+      aria-current={a ? 'page' : undefined}
+      className={a ? 'active' : undefined}
       style={{
         display:'flex', alignItems:'center', gap:7,
         padding:'0 8px 0 9px', height:28, borderRadius:LM.rad.sm,
@@ -3461,12 +3537,12 @@ const WsTab = ({ s, a, sm, onClick, onClose }) => {
       }}>{s.title}</span>
       <button onClick={onClose} title="Close tab" style={{
         width:14, height:14, padding:0, border:0, borderRadius:LM.rad.xs,
-        background:'transparent', color:LM.inkMuted, cursor:'pointer',
+        background:'transparent', color:LM.inkSoft, cursor:'pointer',
         display: a || h ? 'grid' : 'none', placeItems:'center',
         opacity: a ? 1 : 0.7, fontSize:11, lineHeight:1,
       }}
       onMouseEnter={e => { e.currentTarget.style.background = LM.bgHover; e.currentTarget.style.color = LM.ink; }}
-      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = LM.inkMuted; }}>×</button>
+      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = LM.inkSoft; }}>×</button>
     </div>
   );
 };
@@ -3522,12 +3598,12 @@ const ModelStrip = ({ model, setPickerOpen, compact }) => {
     }}>{model.name[0]}</span>
     <div style={{ flex:1, textAlign:'left', lineHeight:1.15 }}>
       <div style={{ fontSize: compact ? 12.5 : 13.5, fontWeight:500 }}>{model.name}</div>
-      <div style={{ fontFamily:LM.mono, fontSize: compact ? 9 : 10, color:LM.inkMuted, letterSpacing:'0.05em' }}>
+      <div style={{ fontFamily:LM.mono, fontSize: compact ? 9 : 10, color:LM.inkSoft, letterSpacing:'0.05em' }}>
         {[model.vendor, model.ctx ? 'ctx ' + model.ctx : '', model.tag].filter(Boolean).join(' \u00b7 ')}
       </div>
     </div>
     {/* Draw or omit: no latency dot until a latency was measured. */}
-    {model.latency != null && <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.ok, letterSpacing:'0.08em' }}>{'\u25cf ' + model.latency + 'ms'}</span>}
+    {model.latency != null && <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.ok, letterSpacing:'0.08em' }}>{'\u25cf ' + model.latency + 'ms'}</span>}
     <span style={{ color:LM.inkSoft, fontSize:11, marginLeft:2 }}>▾</span>
   </button>
   );
@@ -5144,7 +5220,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
           width:180, height:48, pointerEvents:'none',
           background:LM.accent + '14', border:`1.5px dashed ${LM.accent}`,
           borderRadius:LM.rad.md, display:'grid', placeItems:'center',
-          fontFamily:LM.mono, fontSize:10.5, color:LM.accent, letterSpacing:'0.06em',
+          fontFamily:LM.mono, fontSize:11, color:LM.accent, letterSpacing:'0.06em',
         }}>＋ DROP TO ADD NODE</div>
       )}
 
@@ -5206,7 +5282,7 @@ const CanvasHint = () => (
     position:'absolute', left:14, top:52, display:'flex', alignItems:'center', gap:LM.sp.sm,
     background:LM.bgPanel+'cc', backdropFilter:'blur(6px)',
     border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.sm, padding:'4px 9px',
-    fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.04em',
+    fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em',
   }}>
     <span>scroll → zoom</span>
     <span style={{ color:LM.inkDim }}>·</span>
@@ -5273,7 +5349,7 @@ const CanvasMenu = ({ x, y, maxHeight, opener, items, label, onClose }) => {
         }}
         onMouseEnter={e => { if (!it.disabled) e.currentTarget.style.background = LM.bgHover; }}
         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-          <span style={{ width:14, color: it.danger ? LM.err : LM.inkMuted, fontFamily:LM.mono, fontSize:11, textAlign:'center' }}>{it.i}</span>
+          <span style={{ width:14, color: it.danger ? LM.err : LM.inkSoft, fontFamily:LM.mono, fontSize:11, textAlign:'center' }}>{it.i}</span>
           <span style={{ flex:1 }}>{it.t}</span>
           {it.toggle && (
             <span style={{
@@ -5340,24 +5416,24 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
           borderTopLeftRadius:7, borderTopRightRadius:7,
         }}>
         <span style={{ width:14, height:14, display:'grid', placeItems:'center', color:cat.col, fontFamily:LM.mono, fontSize:11 }}>{cat.icon}</span>
-        <span style={{ fontFamily:LM.mono, fontSize:8.5, color:cat.col, letterSpacing:'0.18em' }}>{cat.label}</span>
+        <span style={{ fontFamily:LM.mono, fontSize:11, color:cat.col, letterSpacing:'0.18em' }}>{cat.label}</span>
         <div style={{ flex:1 }}/>
         {n.composition && Number.isSafeInteger(n.memberCount) && <span data-member-count={n.memberCount} style={{
-          fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, whiteSpace:'nowrap'}}>{n.memberCount} {n.memberCount === 1 ? 'node' : 'nodes'}</span>}
+          fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, whiteSpace:'nowrap'}}>{n.memberCount} {n.memberCount === 1 ? 'node' : 'nodes'}</span>}
         {onExpand && <button type="button" aria-label={'Expand ' + (n.title || 'group')} title="Expand the group back into its nodes"
           onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onExpand(); }} style={{
           padding:'0 6px', border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, background:'transparent',
-          color:LM.inkSoft, fontFamily:LM.mono, fontSize:9.5, cursor:'pointer'}}>⊞ expand</button>}
+          color:LM.inkSoft, fontFamily:LM.mono, fontSize:11, cursor:'pointer'}}>⊞ expand</button>}
         {n.state && <NodeStateDot s={n.state}/>}
-        {n.ms && !n.state && <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>{n.ms}</span>}
+        {n.ms && !n.state && <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft }}>{n.ms}</span>}
         {isAi && (
           <button onClick={(e) => { e.stopPropagation(); onToggleExpand(); }} title={expanded ? 'Collapse' : 'Expand & search'} style={{
             width:18, height:18, padding:0, border:0, borderRadius:LM.rad.xs,
-            background:'transparent', color:LM.inkMuted, cursor:'pointer',
-            display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:10, marginLeft:2,
+            background:'transparent', color:LM.inkSoft, cursor:'pointer',
+            display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:11, marginLeft:2,
           }}
           onMouseEnter={e => { e.currentTarget.style.background = LM.bgHover; e.currentTarget.style.color = LM.ink; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = LM.inkMuted; }}>
+          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = LM.inkSoft; }}>
             {expanded ? '↖' : '⤢'}
           </button>
         )}
@@ -5366,8 +5442,8 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
       {/* Body */}
       <div style={{ padding:'9px 12px 11px' }}>
         <div title={n.title} style={{ fontSize:13, fontWeight:500, color:LM.ink, marginBottom:2, lineHeight:1.2 }}>{n.title}</div>
-        {n.sub && <div title={n.description || n.sub} style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em' }}>{n.sub}</div>}
-        {n.composition && <div data-boundary-sockets style={{fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, marginTop:6}}>
+        {n.sub && <div title={n.description || n.sub} style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>{n.sub}</div>}
+        {n.composition && <div data-boundary-sockets style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:6}}>
           boundary sockets · {(n.ins?.length || 0)} in · {(n.outs?.length || 0)} out
         </div>}
         <NodeBody n={n} expanded={expanded} onToggleExpand={onToggleExpand}/>
@@ -5392,7 +5468,7 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
 const MemoNodeRenderer = React.memo(NodeRenderer, (a, b) => a.n === b.n && a.x === b.x && a.y === b.y &&
   a.focused === b.focused && a.selected === b.selected && a.dimmed === b.dimmed && a.expanded === b.expanded && !!a.onOpen === !!b.onOpen && !!a.onExpand === !!b.onExpand);
 const NodeStateDot = ({ s }) => {
-  const col = s === 'running' ? LM.accent : s === 'queued' ? LM.inkMuted : LM.ok;
+  const col = s === 'running' ? LM.accent : s === 'queued' ? LM.inkSoft : LM.ok;
   return (
     <span style={{ display:'flex', alignItems:'center', gap:5 }}>
       <span style={{
@@ -5400,7 +5476,7 @@ const NodeStateDot = ({ s }) => {
         boxShadow: s === 'running' ? `0 0 0 2px ${col}22` : 'none',
         animation: s === 'running' ? 'lmPulse 1.2s infinite' : 'none',
       }}/>
-      <span style={{ fontFamily:LM.mono, fontSize:9, color:col, letterSpacing:'0.1em', textTransform:'uppercase' }}>{s}</span>
+      <span style={{ fontFamily:LM.mono, fontSize:11, color:col, letterSpacing:'0.1em', textTransform:'uppercase' }}>{s}</span>
     </span>
   );
 };
@@ -5429,7 +5505,7 @@ const Socket = ({ id, side, i, t, label, onUse, onDragStart, half = 110 }) => {
       }}/>
       {/* An input's and an output's label share one row: each gets half the card, never the other's half. */}
       <span title={label || undefined} style={{
-        fontFamily:LM.mono, fontSize:8.5, color:LM.inkMuted, letterSpacing:'0.04em',
+        fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em',
         whiteSpace:'nowrap', padding:'0 4px', pointerEvents:'none',
         maxWidth:Math.max(24, half - SOCKET_R * 2 - 10), overflow:'hidden', textOverflow:'ellipsis',
         opacity: label ? 0.85 : 0,
@@ -5539,24 +5615,24 @@ const NodeBody = ({ n, expanded, onToggleExpand }) => {
 const LiveBody = ({ n }) => (
   <div style={{ marginTop:9, display:'flex', flexDirection:'column', gap:LM.sp.xs }}>
     {(n.params || []).slice(0, 4).map(row => (
-      <div key={row.k} style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:10 }}>
-        <span style={{ color:LM.inkMuted, letterSpacing:'0.04em' }}>{row.k}</span>
+      <div key={row.k} style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:11 }}>
+        <span style={{ color:LM.inkSoft, letterSpacing:'0.04em' }}>{row.k}</span>
         <div style={{ flex:1, borderBottom:`1px dashed ${LM.lineSoft}`, marginBottom:2 }}/>
         <span style={{ color:LM.ink, maxWidth:110, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{String(row.v)}</span>
       </div>
     ))}
     {n.status ? (
-      <div style={{ marginTop:2, fontFamily:LM.mono, fontSize:9.5, color:LM.accent, letterSpacing:'0.03em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{n.status}</div>
+      <div style={{ marginTop:2, fontFamily:LM.mono, fontSize:11, color:LM.accent, letterSpacing:'0.03em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{n.status}</div>
     ) : null}
     {n.result ? (
-      <div style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:10, marginTop:2 }}>
-        <span style={{ color:LM.inkMuted, letterSpacing:'0.04em' }}>result</span>
+      <div style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:11, marginTop:2 }}>
+        <span style={{ color:LM.inkSoft, letterSpacing:'0.04em' }}>result</span>
         <div style={{ flex:1, borderBottom:`1px dashed ${LM.lineSoft}`, marginBottom:2 }}/>
         <span title={n.result} style={{ color:LM.ink, maxWidth:150, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{n.result}</span>
       </div>
     ) : null}
     {n.mutates ? (
-      <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:4, fontFamily:LM.mono, fontSize:9.5, color:LM.warn || LM.accent }}>
+      <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:4, fontFamily:LM.mono, fontSize:11, color:LM.warn || LM.accent }}>
         <span aria-hidden="true">⚠</span><span>mutates model · requires approval</span>
       </div>
     ) : null}
@@ -5588,8 +5664,8 @@ const LinePreview = ({ id }) => {
 const HostBody = ({ n }) => (
   <div style={{ marginTop:9, display:'flex', flexDirection:'column', gap:LM.sp.xs }}>
     {n.outs.map(o => (
-      <div key={o.id} style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:10 }}>
-        <span style={{ color:LM.inkMuted, letterSpacing:'0.04em' }}>{o.label}</span>
+      <div key={o.id} style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:11 }}>
+        <span style={{ color:LM.inkSoft, letterSpacing:'0.04em' }}>{o.label}</span>
         <div style={{ flex:1, borderBottom:`1px dashed ${LM.lineSoft}`, marginBottom:2 }}/>
         <span style={{ color:LM.ink }}>{o.val}</span>
       </div>
@@ -5612,15 +5688,15 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
           display:'flex', alignItems:'center', gap:6, padding:'5px 9px',
           background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
         }}>
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={LM.inkMuted} strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={LM.inkSoft} strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
           <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search this conversation…" style={{
             flex:1, border:0, background:'transparent', color:LM.ink, fontSize:12, outline:'none', fontFamily:LM.sans,
           }}/>
-          <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>{filtered.length}/{total}</span>
+          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft }}>{filtered.length}/{total}</span>
           {q && (
             <button onClick={() => setQ('')} style={{
               width:14, height:14, padding:0, border:0, background:'transparent',
-              color:LM.inkMuted, cursor:'pointer', fontSize:11, lineHeight:1,
+              color:LM.inkSoft, cursor:'pointer', fontSize:11, lineHeight:1,
             }}>×</button>
           )}
         </div>
@@ -5632,7 +5708,7 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
           padding:'9px 11px', display:'flex', flexDirection:'column', gap:10,
         }}>
           {filtered.length === 0 && (
-            <div style={{ padding:'12px 4px', fontSize:11, color:LM.inkMuted, textAlign:'center' }}>No matches for “{q}”.</div>
+            <div style={{ padding:'12px 4px', fontSize:11, color:LM.inkSoft, textAlign:'center' }}>No matches for “{q}”.</div>
           )}
           {filtered.map((m, i) => (
             <div key={i} style={{ display:'flex', gap:7 }}>
@@ -5640,11 +5716,11 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
                 width:18, height:18, borderRadius: m.me ? '50%' : 4, flexShrink:0,
                 background: m.me ? LM.userAv : LM.accent,
                 color: m.me ? LM.onUserAv : ((window.AH && window.AH.onFill) || '#180f08'),
-                display:'grid', placeItems:'center', fontSize:10, fontWeight:700,
+                display:'grid', placeItems:'center', fontSize:11, fontWeight:700,
               }}>{m.who}</div>
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ display:'flex', alignItems:'baseline', gap:7, marginBottom:1 }}>
-                  <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.04em' }}>{m.time || ''}</span>
+                  <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>{m.time || ''}</span>
                 </div>
                 <div style={{ fontSize:11.5, lineHeight:1.5, color: m.me ? LM.ink : LM.inkSoft }}>
                   {q ? highlight(m.text, q) : m.text}
@@ -5672,7 +5748,7 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
     <div style={{ marginTop:9, display:'flex', flexDirection:'column', gap:9 }}>
       {total > 2 && (
         <button onClick={(e) => { e.stopPropagation(); onToggleExpand && onToggleExpand(); }} style={{
-          fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.08em',
+          fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.08em',
           padding:'4px 9px', background:LM.bgDeep, border:`1px solid ${LM.lineSoft}`, borderRadius:4,
           display:'flex', alignItems:'center', gap:6, cursor:'pointer', textAlign:'left',
         }}
@@ -5693,7 +5769,7 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
               width:18, height:18, borderRadius: m.me ? '50%' : 4,
               background: m.me ? LM.userAv : LM.accent,
               color: m.me ? LM.onUserAv : ((window.AH && window.AH.onFill) || '#180f08'),
-              display:'grid', placeItems:'center', fontSize:10, fontWeight:700, flexShrink:0,
+              display:'grid', placeItems:'center', fontSize:11, fontWeight:700, flexShrink:0,
             }}>{m.who}</div>
             <div style={{ flex:1, minWidth:0 }}>
               <div style={{ fontSize:12, color: m.me ? LM.ink : LM.inkSoft, lineHeight:1.45 }}>
@@ -5704,8 +5780,8 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
               </div>
               {isAssistant && isLast && (
                 <button onClick={(e) => { e.stopPropagation(); setShowReasoning(s => !s); }} style={{
-                  background:'transparent', border:0, padding:'3px 0', color:LM.inkMuted,
-                  fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.06em', cursor:'pointer',
+                  background:'transparent', border:0, padding:'3px 0', color:LM.inkSoft,
+                  fontFamily:LM.mono, fontSize:11, letterSpacing:'0.06em', cursor:'pointer',
                   display:'flex', alignItems:'center', gap:LM.sp.xs, marginTop:3,
                 }}>
                   <span>{showReasoning ? '▾' : '▸'}</span> reasoning · 4 steps
@@ -5715,7 +5791,7 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
                 <div style={{
                   marginTop:3, padding:'5px 8px', background:LM.bgDeep,
                   border:`1px solid ${LM.lineSoft}`, borderLeft:`2px solid ${LM.purple}`, borderRadius:LM.rad.xs,
-                  fontFamily:LM.mono, fontSize:9.5, color:LM.inkSoft, lineHeight:1.6,
+                  fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, lineHeight:1.6,
                 }}>
                   <div>1. match-skill = "Dimension walls"</div>
                   <div>2. exterior is the noisier baseline → start there</div>
@@ -5742,25 +5818,25 @@ const highlight = (text, q) => {
 };
 
 const ReadBody = ({ n }) => (
-  <div style={{ marginTop:7, fontFamily:LM.mono, fontSize:10.5, lineHeight:1.55 }}>
+  <div style={{ marginTop:7, fontFamily:LM.mono, fontSize:11, lineHeight:1.55 }}>
     <div style={{ display:'flex', alignItems:'center', gap:6 }}>
       <span style={{ color:LM.ok }}>✓</span>
       <span style={{ color:LM.ink, flex:1 }}>{n.result}</span>
-      <span style={{ color:LM.inkMuted, fontSize:9.5 }}>{n.ms}</span>
+      <span style={{ color:LM.inkSoft, fontSize:11 }}>{n.ms}</span>
     </div>
   </div>
 );
 
 const FilterBody = ({ n }) => (
   <div style={{ marginTop:7 }}>
-    <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginBottom:LM.sp.xs }}>predicate</div>
-    <div style={{ background:LM.bgDeep, border:`1px solid ${LM.lineSoft}`, borderRadius:4, padding:'5px 8px', fontFamily:LM.mono, fontSize:10.5, color:LM.cyan }}>
+    <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginBottom:LM.sp.xs }}>predicate</div>
+    <div style={{ background:LM.bgDeep, border:`1px solid ${LM.lineSoft}`, borderRadius:4, padding:'5px 8px', fontFamily:LM.mono, fontSize:11, color:LM.cyan }}>
       {n.sub.replace(/^.*?·\s*/, '')}
     </div>
-    <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:6, fontFamily:LM.mono, fontSize:10.5 }}>
+    <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:6, fontFamily:LM.mono, fontSize:11 }}>
       <span style={{ color:LM.ok }}>→</span>
       <span style={{ color:LM.ink, flex:1 }}>{n.result}</span>
-      <span style={{ color:LM.inkMuted, fontSize:9.5 }}>{n.ms}</span>
+      <span style={{ color:LM.inkSoft, fontSize:11 }}>{n.ms}</span>
     </div>
   </div>
 );
@@ -5769,14 +5845,14 @@ const FilterBody = ({ n }) => (
 const TransformBody = ({ n }) => (
   <div style={{ marginTop:LM.sp.sm, display:'flex', flexDirection:'column', gap:6 }}>
     {n.params?.map(p => (
-      <div key={p.k} style={{ display:'flex', alignItems:'center', gap:6, fontFamily:LM.mono, fontSize:10 }}>
-        <span style={{ color:LM.inkMuted, letterSpacing:'0.04em' }}>{p.k}</span>
+      <div key={p.k} style={{ display:'flex', alignItems:'center', gap:6, fontFamily:LM.mono, fontSize:11 }}>
+        <span style={{ color:LM.inkSoft, letterSpacing:'0.04em' }}>{p.k}</span>
         <div style={{ flex:1, borderBottom:`1px dashed ${LM.lineSoft}`, marginBottom:2 }}/>
         <span style={{ color:LM.ink, padding:'1px 6px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.xs }}>{p.v}</span>
       </div>
     ))}
     <div style={{
-      marginTop:2, fontFamily:LM.mono, fontSize:10, color:LM.warn,
+      marginTop:2, fontFamily:LM.mono, fontSize:11, color:LM.warn,
       padding:'4px 8px', background:LM.warn+'14', borderRadius:LM.rad.xs,
       display:'flex', alignItems:'center', gap:6,
     }}>
@@ -5788,15 +5864,15 @@ const TransformBody = ({ n }) => (
 // Logic body — predicate with branch indicators
 const LogicBody = ({ n }) => (
   <div style={{ marginTop:LM.sp.sm }}>
-    <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginBottom:LM.sp.xs }}>predicate</div>
-    <div style={{ background:LM.bgDeep, border:`1px solid ${LM.lineSoft}`, borderRadius:4, padding:'5px 8px', fontFamily:LM.mono, fontSize:10.5, color:LM.purple }}>
+    <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginBottom:LM.sp.xs }}>predicate</div>
+    <div style={{ background:LM.bgDeep, border:`1px solid ${LM.lineSoft}`, borderRadius:4, padding:'5px 8px', fontFamily:LM.mono, fontSize:11, color:LM.purple }}>
       {n.sub.replace(/^.*?·\s*/, '')}
     </div>
     {n.result && (
-      <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:6, fontFamily:LM.mono, fontSize:10.5 }}>
+      <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:6, fontFamily:LM.mono, fontSize:11 }}>
         <span style={{ color:LM.purple }}>→</span>
         <span style={{ color:LM.ink, flex:1 }}>{n.result}</span>
-        <span style={{ color:LM.inkMuted, fontSize:9.5 }}>{n.ms}</span>
+        <span style={{ color:LM.inkSoft, fontSize:11 }}>{n.ms}</span>
       </div>
     )}
   </div>
@@ -5807,10 +5883,10 @@ const ComposeBody = ({ n }) => (
   <div style={{ marginTop:LM.sp.sm }}>
     <div style={{
       background:LM.bgInk, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.sm, overflow:'hidden',
-      fontFamily:LM.mono, fontSize:9.5,
+      fontFamily:LM.mono, fontSize:11,
     }}>
       {/* header */}
-      <div style={{ display:'grid', gridTemplateColumns:'1.4fr 1fr 1fr', padding:'4px 8px', background:LM.bgDeep, color:LM.inkMuted, letterSpacing:'0.08em' }}>
+      <div style={{ display:'grid', gridTemplateColumns:'1.4fr 1fr 1fr', padding:'4px 8px', background:LM.bgDeep, color:LM.inkSoft, letterSpacing:'0.08em' }}>
         <span>TYPE</span><span>LEN</span><span style={{ textAlign:'right' }}>QTY</span>
       </div>
       {[
@@ -5828,10 +5904,10 @@ const ComposeBody = ({ n }) => (
       ))}
     </div>
     {n.result && (
-      <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:6, fontFamily:LM.mono, fontSize:10.5 }}>
+      <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:6, fontFamily:LM.mono, fontSize:11 }}>
         <span style={{ color:LM.ok }}>→</span>
         <span style={{ color:LM.ink, flex:1 }}>{n.result}</span>
-        <span style={{ color:LM.inkMuted, fontSize:9.5 }}>{n.ms}</span>
+        <span style={{ color:LM.inkSoft, fontSize:11 }}>{n.ms}</span>
       </div>
     )}
   </div>
@@ -5842,9 +5918,9 @@ const AnnotateBody = ({ n }) => (
     {n.runtime && (
       <>
         <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:6 }}>
-          <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.accent, letterSpacing:'0.06em' }}>{n.runtime}</span>
+          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.accent, letterSpacing:'0.06em' }}>{n.runtime}</span>
           <div style={{ flex:1 }}/>
-          <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted }}>{Math.round(n.progress*100)}%</span>
+          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft }}>{Math.round(n.progress*100)}%</span>
         </div>
         <div style={{ height:3, background:LM.bgDeep, borderRadius:2, overflow:'hidden', marginBottom:10 }}>
           <div style={{ width:`${n.progress*100}%`, height:'100%', background:LM.accent }}/>
@@ -5858,7 +5934,7 @@ const AnnotateBody = ({ n }) => (
     )}
     {n.runtime && (
       <>
-        <div style={{ marginTop:10, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:5 }}>PREVIEW</div>
+        <div style={{ marginTop:10, fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em', marginBottom:5 }}>PREVIEW</div>
         <StagePreview/>
       </>
     )}
@@ -5869,8 +5945,8 @@ const OutputBody = ({ n }) => (
   <div style={{ marginTop:LM.sp.sm, display:'flex', flexDirection:'column', gap:7 }}>
     {n.params?.slice(0, 2).map(p => (
       <div key={p.k} style={{ display:'flex', flexDirection:'column', gap:2 }}>
-        <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em' }}>{p.k}</span>
-        <div style={{ background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:4, padding:'4px 8px', fontFamily:LM.mono, fontSize:10.5, color:LM.ink }}>
+        <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>{p.k}</span>
+        <div style={{ background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:4, padding:'4px 8px', fontFamily:LM.mono, fontSize:11, color:LM.ink }}>
           {p.v}
         </div>
       </div>
@@ -5906,8 +5982,8 @@ const CompactParam = ({ p }) => {
     return (
       <div>
         <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
-          <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkSoft, flex:1, letterSpacing:'0.04em' }}>{p.k}</span>
-          <span style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.ink, fontWeight:500 }}>{p.v}</span>
+          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, flex:1, letterSpacing:'0.04em' }}>{p.k}</span>
+          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.ink, fontWeight:500 }}>{p.v}</span>
         </div>
         <div style={{ height:3, background:LM.bgDeep, borderRadius:2, marginTop:LM.sp.xs, position:'relative' }}>
           <div style={{ width:`${pct}%`, height:'100%', background:LM.accent, borderRadius:2 }}/>
@@ -5918,9 +5994,9 @@ const CompactParam = ({ p }) => {
   }
   return (
     <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-      <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkSoft, flex:1, letterSpacing:'0.04em' }}>{p.k}</span>
-      <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.ink, padding:'1px 6px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.xs }}>
-        {p.v} <span style={{ color:LM.inkMuted, marginLeft:2 }}>▾</span>
+      <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, flex:1, letterSpacing:'0.04em' }}>{p.k}</span>
+      <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.ink, padding:'1px 6px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.xs }}>
+        {p.v} <span style={{ color:LM.inkSoft, marginLeft:2 }}>▾</span>
       </span>
     </div>
   );
@@ -5946,7 +6022,7 @@ const StagePreview = () => (
       <text x="140" y="86" textAnchor="middle" fontFamily="JetBrains Mono" fontSize="4" fill={LM.accent}>10 400</text>
     </svg>
     <div style={{
-      position:'absolute', top:5, right:6, fontFamily:LM.mono, fontSize:8,
+      position:'absolute', top:5, right:6, fontFamily:LM.mono, fontSize:11,
       color:LM.accent, letterSpacing:'0.06em', background:LM.bgDeep+'cc', padding:'1px 5px', borderRadius:2,
     }}>17 / 23 placed</div>
   </div>
@@ -5961,23 +6037,23 @@ const CanvasToolbar = ({ zoom, setZoom, onFit, fitLabel, onArrange, arrangeDisab
   }}>
     <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.min(2, +(z + 0.1).toFixed(2))); }} title="Zoom in" aria-label="Zoom in" style={toolBtn()}>+</button>
     <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.max(0.3, +(z - 0.1).toFixed(2))); }} title="Zoom out" aria-label="Zoom out" style={toolBtn()}>−</button>
-    <div style={{ ...toolBtn(), width:48, color:LM.ink, background:LM.bg, fontFamily:LM.mono, fontSize:10, cursor:'default' }}>
+    <div style={{ ...toolBtn(), width:48, color:LM.ink, background:LM.bg, fontFamily:LM.mono, fontSize:11, cursor:'default' }}>
       {Math.round(zoom * 100)}%
     </div>
     <button onClick={(e) => { e.stopPropagation(); onFit(); }} title={fitLabel} aria-label={fitLabel} style={toolBtn()}>{'\u27f2'}</button>
     <button disabled={arrangeDisabled} onClick={(e) => { e.stopPropagation(); onArrange(); }}
       title={arrangeDisabled ? arrangeWhy : 'Arrange'} aria-label="Arrange"
-      style={{...toolBtn(), width:62, fontFamily:LM.mono, fontSize:10, color:arrangeDisabled ? LM.inkMuted : LM.accent}}>Arrange</button>
+      style={{...toolBtn(), width:62, fontFamily:LM.mono, fontSize:11, color:arrangeDisabled ? LM.inkSoft : LM.accent}}>Arrange</button>
     <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
     {[['Undo', '\u21b6', undo], ['Redo', '\u21b7', redo]].filter(([, , held]) => held).map(([label, icon, held]) => (
       <button key={label} disabled={held.disabled} onClick={(e) => { e.stopPropagation(); held.run(); }}
         title={held.disabled ? held.why : label} aria-label={label}
-        style={{...toolBtn(), cursor:held.disabled ? 'default' : 'pointer', color:held.disabled ? LM.inkMuted : LM.inkSoft}}>{icon}</button>
+        style={{...toolBtn(), cursor:held.disabled ? 'default' : 'pointer', color:held.disabled ? LM.inkSoft : LM.inkSoft}}>{icon}</button>
     ))}
     <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
     <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} title="Add node" aria-label="Add node" style={{
       padding:'0 10px', height:22, border:0, background:'transparent', cursor:'pointer',
-      color:LM.accent, fontFamily:LM.mono, fontSize:10, letterSpacing:'0.06em',
+      color:LM.accent, fontFamily:LM.mono, fontSize:11, letterSpacing:'0.06em',
       display:'flex', alignItems:'center', gap:LM.sp.xs,
     }}>{'\uff0b add node'}</button>
   </div>
@@ -6081,8 +6157,8 @@ const MiniMap = ({ pan, zoom, positions, allNodes }) => {
         })}
       </svg>
       <div style={{
-        position:'absolute', left:6, top:5, fontFamily:LM.mono, fontSize:8,
-        color:LM.inkMuted, letterSpacing:'0.14em', background:LM.bgDeep+'cc', padding:'1px 5px', borderRadius:2,
+        position:'absolute', left:6, top:5, fontFamily:LM.mono, fontSize:11,
+        color:LM.inkSoft, letterSpacing:'0.14em', background:LM.bgDeep+'cc', padding:'1px 5px', borderRadius:2,
       }}>MAP</div>
     </div>
   );
@@ -6107,7 +6183,7 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary, initialQuery = '' }) => {
       }}>
         <div style={{ gridColumn:'1 / -1', gridRow:'1', borderBottom:`1px solid ${LM.line}`, padding:'0 14px', display:'flex', alignItems:'center', gap:10 }}>
           <span style={{ fontFamily:LM.serif, fontSize:18, letterSpacing:'-0.01em' }}>Node library</span>
-          <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.1em' }}>
+          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.1em' }}>
             {library.reduce((n, g) => n + g.items.length, 0)} NODES · CLICK TO ADD
           </span>
           <div style={{ flex:1 }}/>
@@ -6138,8 +6214,8 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary, initialQuery = '' }) => {
               <div key={g.cat} style={{ marginBottom:18 }}>
                 <div style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, marginBottom:LM.sp.sm }}>
                   <span style={{ color:c.col }}>{c.icon}</span>
-                  <span style={{ fontFamily:LM.mono, fontSize:10, color:c.col, letterSpacing:'0.18em' }}>{c.label}</span>
-                  <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.06em' }}>{c.role}</span>
+                  <span style={{ fontFamily:LM.mono, fontSize:11, color:c.col, letterSpacing:'0.18em' }}>{c.label}</span>
+                  <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.06em' }}>{c.role}</span>
                 </div>
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
                   {items.map(i => (
@@ -6280,24 +6356,24 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
   return <section aria-label={'Conversation with ' + node.title} style={{ display:'flex', flexDirection:'column', gap:10, borderTop:`1px solid ${LM.lineSoft}`, paddingTop:12 }}>
     <div style={{ display:'flex', alignItems:'center', gap:7 }}>
       <span style={{ color:cat.col, fontFamily:LM.mono }}>{cat.icon}</span>
-      <span style={{ fontFamily:LM.mono, fontSize:9, color:cat.col, letterSpacing:'0.18em' }}>CONVERSATION</span>
+      <span style={{ fontFamily:LM.mono, fontSize:11, color:cat.col, letterSpacing:'0.18em' }}>CONVERSATION</span>
       <div style={{ flex:1 }}/>
       {model ? (
-        <p title={route || undefined} style={{ margin:0, maxWidth:170, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.06em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+        <p title={route || undefined} style={{ margin:0, maxWidth:170, fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.06em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
           {route || 'Choose a model for this node'}</p>
       ) : null}
     </div>
     {bound ? (
       <div ref={scrollRef} onScroll={onTranscriptScroll} data-chat-scroll className="ah-scroll" style={{ maxHeight:260, overflow:'auto', display:'flex', flexDirection:'column', gap:11 }}>
         {transcript === null && !turnRows.length ? (
-          <p style={{ margin:0, fontFamily:LM.mono, fontSize:10, color:LM.inkMuted }}>Reading the conversation…</p>
+          <p style={{ margin:0, fontFamily:LM.mono, fontSize:11, color:LM.inkSoft }}>Reading the conversation…</p>
         ) : transcript && transcript.error ? (
           <p role="alert" style={{ margin:0, fontSize:12, color:LM.warn || LM.accent }}>{transcript.error}</p>
         ) : rows.length === 0 && !turnRows.length ? (
           <p role="status" style={{ margin:0, fontSize:12, lineHeight:1.5, color:LM.inkSoft }}>No conversation yet · ask below to start one.</p>
         ) : (<>
           {hasOlder ? (
-            <p style={{ margin:0, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.04em' }}>Latest messages only · full history in the Workshop</p>
+            <p style={{ margin:0, fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>Latest messages only · full history in the Workshop</p>
           ) : null}
           {rows.map(row => <div key={row.id} data-chat-turn={row.is_me ? 'question' : 'answer'}><NodeTranscriptRow row={row}/></div>)}
           {turnRows.map(row => <div key={row.id} data-chat-local data-chat-turn={row.is_me ? 'question' : row.kind}><NodeTranscriptRow row={row}/></div>)}
@@ -6323,12 +6399,12 @@ const formatNodeConversationTime = iso => {
 const NodeTranscriptRow = ({ row }) => (
   <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
     <div style={{ display:'flex', alignItems:'baseline', gap:7 }}>
-      <span style={{ fontFamily:LM.mono, fontSize:9, letterSpacing:'0.08em', color: row.is_me ? LM.accent : LM.inkSoft }}>{row.who}</span>
+      <span style={{ fontFamily:LM.mono, fontSize:11, letterSpacing:'0.08em', color: row.is_me ? LM.accent : LM.inkSoft }}>{row.who}</span>
       {row.kind && row.kind !== 'message' ? (
-        <span style={{ fontFamily:LM.mono, fontSize:8.5, color:LM.inkMuted, letterSpacing:'0.1em', textTransform:'uppercase' }}>{row.kind}</span>
+        <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.1em', textTransform:'uppercase' }}>{row.kind}</span>
       ) : null}
       <div style={{ flex:1 }}/>
-      <time dateTime={row.time} style={{ fontFamily:LM.mono, fontSize:8.5, color:LM.inkMuted }}>{formatNodeConversationTime(row.time)}</time>
+      <time dateTime={row.time} style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft }}>{formatNodeConversationTime(row.time)}</time>
     </div>
     <div style={{ fontFamily:LM.serif, fontSize:13, lineHeight:1.5, color:LM.ink, whiteSpace:'pre-wrap', overflowWrap:'anywhere', maxHeight:150, overflow:'auto' }}>{row.text}</div>
   </div>
@@ -6424,14 +6500,14 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
   };
   return <div style={{ borderTop:`1px solid ${LM.lineSoft}`, padding:'10px 12px 12px', display:'flex', flexDirection:'column', gap:8, minWidth:0 }}>
     {state && <p role="status" style={{ margin:0, maxHeight:120, overflow:'auto', whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontFamily:LM.serif, fontSize:13, lineHeight:1.45, color:LM.ink }}>
-      {stateModel && <span style={{ display:'block', fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.06em', marginBottom:3 }}>{stateModel}</span>}
+      {stateModel && <span style={{ display:'block', fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.06em', marginBottom:3 }}>{stateModel}</span>}
       <span>{state}</span>
     </p>}
     {blocked && <div data-chat-no-model="" role="status" style={{
       background:LM.bgPanel, border:`1px solid ${LM.line}`, borderLeft:`3px solid ${LM.warn}`,
       borderRadius:LM.rad.md, padding:'9px 10px', display:'flex', flexDirection:'column', gap:7,
     }}>
-      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.warn, letterSpacing:'0.14em' }}>
+      <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.warn, letterSpacing:'0.14em' }}>
         {READINESS_LABELS[blocked.state] || 'NO MODEL'}</div>
       <div style={{ fontSize:12.5, lineHeight:1.45, color:LM.ink }}>{blocked.message}</div>
       <div style={{ display:'flex', gap:7, flexWrap:'wrap' }}>
@@ -6452,7 +6528,7 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
       title={'→ ' + target.name + ' · ' + modelName}
       style={{ alignSelf:'flex-start', maxWidth:'100%', minWidth:0, display:'flex', alignItems:'center', gap:6, padding:'5px 9px',
         background:LM.bg, border:`1px solid ${LM.accent}66`, borderRadius:LM.rad.sm, color:LM.accent,
-        fontFamily:LM.mono, fontSize:10.5, cursor:'pointer' }}>
+        fontFamily:LM.mono, fontSize:11, cursor:'pointer' }}>
       <span style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{'→ ' + target.name + ' · ' + modelName}</span>
       <span aria-hidden="true">▾</span>
     </button>
@@ -6521,7 +6597,7 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
     node:inspectedNode.graphNode ? null : inspectedNode};
   const properties = <section aria-label="Properties"><window.NodeInspector key={inspectedNode.id} node={inspectedNode} onFork={forkThroughCanvas}/></section>;
   const groupInterface = <section aria-label="Interface" style={{display:'flex', flexDirection:'column', gap:10}}>
-    <div style={{fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em'}}>INTERFACE · computed from crossing wires</div>
+    <div style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em'}}>INTERFACE · computed from crossing wires</div>
     {[...(inspectedNode.ins || []).map(port => ['in', port]), ...(inspectedNode.outs || []).map(port => ['out', port])].map(([dir, port]) => (
       <CalmRow key={dir + ':' + port.id} k={dir + ' · ' + (port.label || port.name || port.id)} v={dir === 'in' ? '→ Request' : 'Commit →'}/>
     ))}
@@ -6548,13 +6624,13 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
         <div>
           <div style={{ display:'flex', alignItems:'center', gap:7 }}>
             <span style={{ color:cat.col, fontFamily:LM.mono }}>{cat.icon}</span>
-            <span style={{ fontFamily:LM.mono, fontSize:9, color:cat.col, letterSpacing:'0.18em' }}>
+            <span style={{ fontFamily:LM.mono, fontSize:11, color:cat.col, letterSpacing:'0.18em' }}>
               {inspectedNode.graphNode ? 'GRAPH' : cat.label}</span>
           </div>
           <div style={{ fontFamily:LM.serif, fontSize:21, letterSpacing:'-0.015em', marginTop:5, lineHeight:1.05 }}>
             {inspectedNode.title}
           </div>
-          {inspectedNode.sub && <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:5, letterSpacing:'0.04em' }}>{inspectedNode.sub}</div>}
+          {inspectedNode.sub && <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:5, letterSpacing:'0.04em' }}>{inspectedNode.sub}</div>}
         </div>
         <InspectorTabs labels={labels} active={visibleTab} onSelect={setActiveTab}/>
         {visibleTab === 'Interface' && groupInterface}
@@ -6590,16 +6666,16 @@ const ConversationRail = ({ node }) => {
       <div style={{ padding:'12px 16px 10px', borderBottom:`1px solid ${LM.lineSoft}` }}>
         <div style={{ display:'flex', alignItems:'center', gap:7 }}>
           <span style={{ color:cat.col, fontFamily:LM.mono }}>{cat.icon}</span>
-          <span style={{ fontFamily:LM.mono, fontSize:9, color:cat.col, letterSpacing:'0.18em' }}>CONVERSATION</span>
+          <span style={{ fontFamily:LM.mono, fontSize:11, color:cat.col, letterSpacing:'0.18em' }}>CONVERSATION</span>
           <div style={{ flex:1 }}/>
-          <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.06em' }}>
+          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.06em' }}>
             {node.messages.length} msgs
           </span>
         </div>
         <div style={{ fontFamily:LM.serif, fontSize:18, letterSpacing:'-0.01em', marginTop:5, lineHeight:1.1 }}>
           {node.title}
         </div>
-        <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:3, letterSpacing:'0.04em' }}>
+        <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:3, letterSpacing:'0.04em' }}>
           {node.sub}
         </div>
       </div>
@@ -6612,7 +6688,7 @@ const ConversationRail = ({ node }) => {
         <window.NodeInspector key={node.id + ':params'} node={node} onFork={forkThroughCanvas}/>
 
         {/* Date breakpoint */}
-        <div style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.14em' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em' }}>
           <span style={{ flex:1, height:1, background:LM.lineHair }}/>
           <span>WEDNESDAY · MAY 13</span>
           <span style={{ flex:1, height:1, background:LM.lineHair }}/>
@@ -6624,9 +6700,9 @@ const ConversationRail = ({ node }) => {
         <div style={{
           padding:'9px 12px', background:LM.bgDeep, border:`1px solid ${LM.lineSoft}`,
           borderLeft:`2px solid ${LM.cyan}`, borderRadius:LM.rad.sm,
-          fontFamily:LM.mono, fontSize:10.5, color:LM.inkSoft, lineHeight:1.7,
+          fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, lineHeight:1.7,
         }}>
-          <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.cyan, letterSpacing:'0.14em', marginBottom:LM.sp.xs }}>
+          <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.cyan, letterSpacing:'0.14em', marginBottom:LM.sp.xs }}>
             FROM THIS CONVERSATION
           </div>
           <div>→ list_walls(view) · 47 walls · 120ms</div>
@@ -6645,7 +6721,7 @@ const ConversationRail = ({ node }) => {
           <div style={{ display:'flex', alignItems:'center', gap:6, minHeight:22, fontSize:13, color:LM.inkSoft }}>
             <InlineAsk scale="reply" placeholder="Reply to this conversation…"/>
           </div>
-          <div style={{ display:'flex', alignItems:'center', gap:5, marginTop:5, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>
+          <div style={{ display:'flex', alignItems:'center', gap:5, marginTop:5, fontFamily:LM.mono, fontSize:11, color:LM.inkSoft }}>
             <ChatAction>@ skill</ChatAction>
             <ChatAction># host</ChatAction>
             <ChatAction>+ attach</ChatAction>
@@ -6654,7 +6730,7 @@ const ConversationRail = ({ node }) => {
             <span>sonnet 4.5 · ~412ms</span>
           </div>
         </div>
-        <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, marginTop:6, letterSpacing:'0.04em', display:'flex', gap:10 }}>
+        <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:6, letterSpacing:'0.04em', display:'flex', gap:10 }}>
           <span>↵ send</span>
           <span>⇧↵ newline</span>
           <span>⌘↑ edit last</span>
@@ -6680,7 +6756,7 @@ const ChatTurn = ({ m, isLast }) => {
       <div style={{ flex:1, minWidth:0 }}>
         <div style={{ display:'flex', alignItems:'baseline', gap:LM.sp.sm, marginBottom:3 }}>
           <span style={{ fontSize:12, fontWeight:500, color:LM.ink }}>{m.me ? 'You' : 'Claude'}</span>
-          <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.04em' }}>{m.time}</span>
+          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>{m.time}</span>
         </div>
         <div style={{ fontSize:13, lineHeight:1.55, color:LM.ink }}>
           {m.text}
@@ -6691,8 +6767,8 @@ const ChatTurn = ({ m, isLast }) => {
         {isAssistant && (
           <>
             <button onClick={() => setShowReasoning(s => !s)} style={{
-              background:'transparent', border:0, padding:'3px 0', color:LM.inkMuted,
-              fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.06em', cursor:'pointer',
+              background:'transparent', border:0, padding:'3px 0', color:LM.inkSoft,
+              fontFamily:LM.mono, fontSize:11, letterSpacing:'0.06em', cursor:'pointer',
               display:'flex', alignItems:'center', gap:LM.sp.xs, marginTop:3,
             }}>
               <span>{showReasoning ? '▾' : '▸'}</span> reasoning
@@ -6701,14 +6777,14 @@ const ChatTurn = ({ m, isLast }) => {
               <div style={{
                 marginTop:3, padding:'5px 8px', background:LM.bgDeep,
                 border:`1px solid ${LM.lineSoft}`, borderLeft:`2px solid ${LM.purple}`, borderRadius:LM.rad.xs,
-                fontFamily:LM.mono, fontSize:9.5, color:LM.inkSoft, lineHeight:1.6,
+                fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, lineHeight:1.6,
               }}>
                 1. parse intent · 2. plan stages · 3. confirm units · 4. queue tools
               </div>
             )}
             <div style={{
               display:'flex', alignItems:'center', gap:5, marginTop:5,
-              fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.04em',
+              fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em',
             }}>
               <ChatAction>↻ regen</ChatAction>
               <ChatAction>⎘ branch</ChatAction>
@@ -6727,7 +6803,7 @@ const ChatTurn = ({ m, isLast }) => {
 const ChatAction = ({ children }) => (
   <button onClick={e => e.stopPropagation()} style={{
     padding:'1px 5px', background:'transparent', border:`1px solid ${LM.lineSoft}`,
-    borderRadius:LM.rad.xs, color:LM.inkMuted, fontFamily:LM.mono, fontSize:9, cursor:'pointer',
+    borderRadius:LM.rad.xs, color:LM.inkSoft, fontFamily:LM.mono, fontSize:11, cursor:'pointer',
   }}>{children}</button>
 );
 
@@ -6898,9 +6974,14 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
       }}>
         <div style={{ gridColumn:'1 / -1', gridRow:'1', borderBottom:`1px solid ${LM.line}`, display:'flex', alignItems:'center', gap:10, padding:'0 16px' }}>
           <span style={{ fontFamily:LM.serif, fontSize:18, letterSpacing:'-0.01em' }}>Settings</span>
-          <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.1em' }}>STUDIO{release?.current_build ? ' \u00b7 ' + release.current_build : ''}</span>
+          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.1em' }}>STUDIO{release?.current_build ? ' \u00b7 ' + release.current_build : ''}</span>
           <div style={{ flex:1 }}/>
-          <button onClick={onClose} style={{
+          <button onClick={onClose} aria-label="Close" data-close-button style={{
+            height:28, padding:'0 10px', border:`1px solid ${LM.line}`, background:'transparent',
+            borderRadius:LM.rad.sm, cursor:'pointer', color:LM.inkSoft, fontSize:12,
+            fontFamily:LM.sans, fontWeight:500, marginRight:8,
+          }}>Close</button>
+          <button onClick={onClose} aria-label="Close" style={{
             width:24, height:24, padding:0, border:`1px solid ${LM.line}`, background:'transparent',
             borderRadius:LM.rad.sm, cursor:'pointer', color:LM.inkSoft, fontSize:12,
           }}>✕</button>
@@ -6915,7 +6996,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
               display:'flex', alignItems:'center', gap:LM.sp.sm, marginBottom:1,
             }}>
               <span style={{ flex:1 }}>{label}</span>
-              {badge && <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.04em' }}>{badge}</span>}
+              {badge && <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>{badge}</span>}
             </button>
           ))}
         </div>
@@ -6980,7 +7061,7 @@ const SystemMiniGraph = ({ graph }) => {
         {[...groups.values()].map(group => <g key={group.label} data-system-mini-group-boundary="group boundary">
           <rect x={group.left} y={group.top} width={group.right - group.left} height={group.bottom - group.top}
             rx="8" fill={LM.bgSoft + '66'} stroke={LM.lineSoft} strokeDasharray="6 6"/>
-          <text x={group.left + 8} y={group.top + 12} fill={LM.inkMuted} fontFamily="JetBrains Mono" fontSize="9">{group.label}</text>
+          <text x={group.left + 8} y={group.top + 12} fill={LM.inkSoft} fontFamily="JetBrains Mono" fontSize="9">{group.label}</text>
         </g>)}
         {wires.map((wire, index) => {
           const from = boxes.find(box => box.node.id === wire.from?.[0]);
@@ -7022,7 +7103,7 @@ const SettingsSystem = ({ graph, projection, onClose, onOpenToolGraph, onBackToS
     <SystemMiniGraph graph={graph}/>
     <div style={{display:'flex', alignItems:'center', gap:10}}>
       <div style={{flex:1}}>
-        <div style={{fontSize:13, color:LM.ink}}>ArchHub application <span style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>· {count} nodes · {(graph?.wires || []).length} relations · WIP head</span></div>
+        <div style={{fontSize:13, color:LM.ink}}>ArchHub application <span style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft}}>· {count} nodes · {(graph?.wires || []).length} relations · WIP head</span></div>
         <div style={{fontSize:11.5, color:LM.inkSoft, marginTop:4}}>Opens over this window in its own scope. Esc or the breadcrumb returns here, then to where you were. It is never a Studio session tab.</div>
       </div>
       <HoverBtn primary onClick={open}>Open the System graph</HoverBtn>
@@ -7086,9 +7167,16 @@ const SettingsHub = ({ toolRows, onClose, onOpenTool, onOpenToolGraph, columns }
   </div>;
 };
 // ── Settings section header
-const SHead = ({ title, sub }) => (
+const SHead = ({ title, sub, onClose, showClose = false }) => (
   <div style={{ marginBottom:14 }}>
-    <div style={{ fontFamily:LM.serif, fontSize:22, letterSpacing:'-0.01em' }}>{title}</div>
+    <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+      <div style={{ fontFamily:LM.serif, fontSize:22, letterSpacing:'-0.01em', flex:1 }}>{title}</div>
+      {showClose && <button onClick={onClose} aria-label="Close" data-close-button style={{
+        height:28, padding:'0 10px', border:`1px solid ${LM.line}`,
+        background:'transparent', borderRadius:LM.rad.sm, cursor:'pointer',
+        color:LM.inkSoft, fontFamily:LM.sans, fontSize:12, fontWeight:500,
+      }}>Close</button>}
+    </div>
     {sub && <div style={{ fontFamily:LM.sans, fontSize:13, color:LM.inkSoft, marginTop:3, lineHeight:1.5 }}>{sub}</div>}
   </div>
 );
@@ -7178,16 +7266,16 @@ const SettingsMemory = ({ store, patch }) => {
               <span style={{ width:7, height:7, borderRadius:2, background:s.col, flexShrink:0 }}/>
               <div style={{ minWidth:0, flex:1 }}>
                 <div style={{ fontSize:13.5, color:LM.ink }}>{s.n}
-                  <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.05em', marginLeft:8 }}>{s.one}</span>
+                  <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.05em', marginLeft:8 }}>{s.one}</span>
                 </div>
                 {on && <div style={{ fontSize:12, color:LM.inkSoft, lineHeight:1.5, marginTop:5 }}>{s.holds}</div>}
               </div>
-              <span style={{ fontFamily:LM.mono, fontSize:9, letterSpacing:'0.1em', padding:'2px 7px', borderRadius:3,
+              <span style={{ fontFamily:LM.mono, fontSize:11, letterSpacing:'0.1em', padding:'2px 7px', borderRadius:3,
                 background: s.id === 'instances' ? LM.err + '1f' : s.col + '1c', color: s.id === 'instances' ? LM.err : s.col }}>
                 {s.travels === 'freely' ? 'TRAVELS' : s.travels === 'on opt-in' ? 'OPT-IN' : 'STAYS'}
               </span>
-              <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, minWidth:18, textAlign:'right' }}>{mine.length}</span>
-              <span style={{ color:LM.inkMuted, fontSize:10 }}>{on ? '\u25be' : '\u25b8'}</span>
+              <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, minWidth:18, textAlign:'right' }}>{mine.length}</span>
+              <span style={{ color:LM.inkSoft, fontSize:11 }}>{on ? '\u25be' : '\u25b8'}</span>
             </div>
             {on && (
               <div>
@@ -7199,12 +7287,12 @@ const SettingsMemory = ({ store, patch }) => {
                         <div onClick={() => edit(f)} title="Rewrite this memory"
                           style={{ fontSize:13, color: f.sealed ? LM.inkSoft : LM.ink, lineHeight:1.4, cursor:'text' }}>{f.text}</div>
                         <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:4, flexWrap:'wrap' }}>
-                          <span style={{ fontFamily:LM.mono, fontSize:9, letterSpacing:'0.1em', padding:'1px 6px', borderRadius:3, background:c.col + '1c', color:c.col }}>{c.label}</span>
-                          <span role={said[f.id] ? 'status' : undefined} style={{ fontFamily:LM.mono, fontSize:9.5, color: said[f.id] === 'refused' ? LM.err : LM.inkMuted, letterSpacing:'0.04em' }}>{said[f.id] || f.src}</span>
+                          <span style={{ fontFamily:LM.mono, fontSize:11, letterSpacing:'0.1em', padding:'1px 6px', borderRadius:3, background:c.col + '1c', color:c.col }}>{c.label}</span>
+                          <span role={said[f.id] ? 'status' : undefined} style={{ fontFamily:LM.mono, fontSize:11, color: said[f.id] === 'refused' ? LM.err : LM.inkSoft, letterSpacing:'0.04em' }}>{said[f.id] || f.src}</span>
                         </div>
                       </div>
                       <span title="The ontology could not place this, so it defaults to sealed &#x2014; there is no release path at all."
-                        style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.err, letterSpacing:'0.08em' }}>&#x2298; sealed</span>
+                        style={{ fontFamily:LM.mono, fontSize:11, color:LM.err, letterSpacing:'0.08em' }}>&#x2298; sealed</span>
                       {window.ARCHHUB_BRAIN_PUBLISH && (
                         <button title="Share this with the ArchHub community. It is reviewed before other members see it; a fact that names the client folder or a project code is refused."
                           onClick={() => share(f)}
@@ -7238,7 +7326,7 @@ const SettingsMemory = ({ store, patch }) => {
     {/* No "restore all": the brain has already forgotten these facts (ARCHHUB_BRAIN_FORGET), so
         un-hiding them here would show facts the brain no longer holds. */}
     {forgotten.length > 0 && (
-      <div role="status" style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkSoft, letterSpacing:'0.06em', marginBottom:LM.sp.md }}>
+      <div role="status" style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.06em', marginBottom:LM.sp.md }}>
         {forgotten.length} forgotten this session
       </div>
     )}
@@ -7246,13 +7334,13 @@ const SettingsMemory = ({ store, patch }) => {
     {/* gates */}
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden', marginBottom:LM.sp.md }}>
       <div onClick={() => setShowGates(!showGates)} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', cursor:'pointer' }}>
-        <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.12em' }}>GATES</span>
+        <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.12em' }}>GATES</span>
         <span style={{ flex:1, fontSize:12, color:LM.inkSoft }}>Four crossings, each with a decider and a way back. Nothing flows by default.</span>
-        <span style={{ color:LM.inkMuted, fontSize:10 }}>{showGates ? '\u25be' : '\u25b8'}</span>
+        <span style={{ color:LM.inkSoft, fontSize:11 }}>{showGates ? '\u25be' : '\u25b8'}</span>
       </div>
       {showGates && gates.map(g => (
         <div key={g.id} style={{ padding:'10px 14px', borderTop:`1px solid ${LM.lineSoft}`, display:'flex', gap:LM.sp.md, alignItems:'flex-start' }}>
-          <span style={{ fontFamily:LM.mono, fontSize:9, letterSpacing:'0.1em', color:LM.accent, minWidth:126 }}>{g.label}</span>
+          <span style={{ fontFamily:LM.mono, fontSize:11, letterSpacing:'0.1em', color:LM.accent, minWidth:126 }}>{g.label}</span>
           <div style={{ flex:1, minWidth:0, fontSize:12, lineHeight:1.55, color:LM.inkSoft }}>
             <div>Decided by <b style={{ color:LM.ink, fontWeight:500 }}>{g.decider}</b> &#xb7; default {g.def} &#xb7; {g.revocable}</div>
             <div style={{ marginTop:3 }}>Passes: {g.passes}</div>
@@ -7265,20 +7353,20 @@ const SettingsMemory = ({ store, patch }) => {
     {/* consent record -- the audit the gates are only real because of */}
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden', marginBottom:LM.sp.sm }}>
       <div onClick={() => setShowLog(!showLog)} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', cursor:'pointer' }}>
-        <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.12em' }}>CONSENT RECORD</span>
+        <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.12em' }}>CONSENT RECORD</span>
         <span style={{ flex:1, fontSize:12, color:LM.inkSoft }}>
           {log.length ? `${log.length} crossing${log.length === 1 ? '' : 's'} this session \u00b7 append-only` : 'Nothing has crossed a gate yet.'}
         </span>
-        <span style={{ color:LM.inkMuted, fontSize:10 }}>{showLog ? '\u25be' : '\u25b8'}</span>
+        <span style={{ color:LM.inkSoft, fontSize:11 }}>{showLog ? '\u25be' : '\u25b8'}</span>
       </div>
       {showLog && (log.length
         ? log.map((e, i) => (
             <div key={i} style={{ padding:'8px 14px', borderTop:`1px solid ${LM.lineSoft}`, display:'flex', gap:10, alignItems:'baseline', fontSize:12 }}>
-              <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, minWidth:34 }}>{e.t}</span>
-              <span style={{ fontFamily:LM.mono, fontSize:9, letterSpacing:'0.08em', minWidth:58,
+              <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, minWidth:34 }}>{e.t}</span>
+              <span style={{ fontFamily:LM.mono, fontSize:11, letterSpacing:'0.08em', minWidth:58,
                 color: e.act === 'shared' ? LM.ok : e.act === 'withdrew' ? LM.warn : LM.err }}>{e.act.toUpperCase()}</span>
               <span style={{ flex:1, minWidth:0, color:LM.inkSoft, lineHeight:1.45 }}>{e.fact}</span>
-              <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.06em' }}>{e.gate}</span>
+              <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.06em' }}>{e.gate}</span>
             </div>
           ))
         : <div style={{ padding:'12px 14px', borderTop:`1px solid ${LM.lineSoft}`, fontFamily:LM.serif, fontStyle:'italic', fontSize:13.5, color:LM.inkSoft }}>
@@ -7288,19 +7376,19 @@ const SettingsMemory = ({ store, patch }) => {
 
     {/* keys + export */}
     <div style={{ padding:'11px 13px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.md, marginBottom:LM.sp.sm }}>
-      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.12em', marginBottom:7 }}>KEY</div>
+      <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.12em', marginBottom:7 }}>KEY</div>
       <div style={{ fontSize:12, color:LM.inkSoft, lineHeight:1.6 }}>{keys.how}</div>
       <div style={{ fontSize:12, color:LM.inkSoft, lineHeight:1.6, marginTop:7 }}>{keys.cost}</div>
 
       {/* The login-wrapped key is proposed, not shipped: no recovery kit or rotation control is
           drawn until one exists (the old buttons only toggled this sentence). */}
-      <div role="status" style={{ marginTop:9, fontSize:12, color:LM.inkMuted, lineHeight:1.6 }}>
+      <div role="status" style={{ marginTop:9, fontSize:12, color:LM.inkSoft, lineHeight:1.6 }}>
         No recovery kit or wrapped login key exists in this build.
       </div>
     </div>
     <div style={{ padding:'10px 12px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.md }}>
       <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
-        <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.12em' }}>EXPORT</span>
+        <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.12em' }}>EXPORT</span>
         <span style={{ flex:1, fontSize:12, color:LM.inkSoft, minWidth:180 }}>Take the whole brain with you &#x2014; strata, facts, consent record.</span>
         <button onClick={async (e) => {
           const b = e.currentTarget;
@@ -7352,9 +7440,9 @@ const SettingsTeam = ({ account, onAccount }) => {
       {signedIn && <div style={{ padding:'12px 14px', display:'grid', gridTemplateColumns:'minmax(0,1fr) auto', gap:12, alignItems:'center' }}>
         <div style={{ minWidth:0 }}>
           <div style={{ fontSize:13.5, color:LM.ink, fontWeight:500 }}>{name || email}</div>
-          <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:3, overflowWrap:'anywhere' }}>{email}</div>
+          <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:3, overflowWrap:'anywhere' }}>{email}</div>
         </div>
-        <span style={{ fontFamily:LM.mono, fontSize:9, padding:'2px 7px', borderRadius:LM.rad.xs, background:LM.accentSoft, color:LM.accent, letterSpacing:'0.08em', textTransform:'uppercase' }}>Owner</span>
+        <span style={{ fontFamily:LM.mono, fontSize:11, padding:'2px 7px', borderRadius:LM.rad.xs, background:LM.accentSoft, color:LM.accent, letterSpacing:'0.08em', textTransform:'uppercase' }}>Owner</span>
       </div>}
     </div>
     <div style={{ marginTop:LM.sp.md, padding:'10px 12px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.md }}>
@@ -7378,7 +7466,7 @@ const SettingsProfile = () => (
       <SField label="Studio / firm" value={(() => { const a = (typeof acLoad === 'function' && acLoad()) || {}; return a.firm || (window.ARCHHUB_LIVE && window.ARCHHUB_LIVE.firm) || '—'; })()}/>
     </div>
     <div style={{ marginTop:LM.sp.lg }}>
-      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:6 }}>STANDING INSTRUCTION</div>
+      <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em', marginBottom:6 }}>STANDING INSTRUCTION</div>
       <div style={{ fontSize:12, color:LM.inkSoft, lineHeight:1.55 }}>
         Saved as a brain fact that begins with SYSTEM PROMPT. Preview asks the current session which instruction it is working under.
       </div>
@@ -7411,7 +7499,7 @@ const SettingsProfile = () => (
 
 const SField = ({ label, value }) => (
   <div>
-    <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.1em', marginBottom:LM.sp.xs }}>{label.toUpperCase()}</div>
+    <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.1em', marginBottom:LM.sp.xs }}>{label.toUpperCase()}</div>
     <div style={{
       padding:'7px 10px', background:LM.bg, border:`1px solid ${LM.line}`,
       borderRadius:LM.rad.sm, fontSize:12.5, color:LM.ink, display:'flex', alignItems:'center', gap:6,
@@ -7421,7 +7509,7 @@ const SField = ({ label, value }) => (
   </div>
 );
 
-const accessCell = text => <span style={{ fontFamily:LM.mono, fontSize:10, color:text === 'yes' ? LM.ok : LM.inkSoft }}>{text}</span>;
+const accessCell = text => <span style={{ fontFamily:LM.mono, fontSize:11, color:text === 'yes' ? LM.ok : LM.inkSoft }}>{text}</span>;
 const accessButton = { ...smallBtn(), padding:'3px 8px', whiteSpace:'nowrap' };
 const SettingsPermissions = ({ account, onTab }) => {
   const transport = window.ARCHHUB_EXISTING_WORKSHOP;
@@ -7499,7 +7587,7 @@ const SettingsPermissions = ({ account, onTab }) => {
     <SHead title="Permissions" sub="The Access matrix shows only actors with a store or endpoint this build can read."/>
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
       <div style={{ display:'grid', gridTemplateColumns:'1.35fr .55fr .65fr .9fr .8fr auto', gap:10, padding:'8px 12px',
-        borderBottom:`1px solid ${LM.lineSoft}`, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em', textTransform:'uppercase' }}>
+        borderBottom:`1px solid ${LM.lineSoft}`, fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.08em', textTransform:'uppercase' }}>
         <span>What can act</span><span>Read</span><span>Write</span><span>Publish/send</span><span>Needs approval</span><span>Control</span>
       </div>
       {rows.map((row, index) => <div key={row.key} style={{ display:'grid', gridTemplateColumns:'1.35fr .55fr .65fr .9fr .8fr auto',
@@ -7619,7 +7707,7 @@ const SettingsSocialApprovals = ({transport}) => {
   return <div style={{padding:'12px 14px', background:LM.bg, border:`1px solid ${LM.accent || LM.line}`, borderRadius:LM.rad.lg, marginBottom:10}}>
     <div style={{fontSize:13, fontWeight:500}}>Posts waiting for your approval</div>
     {items.map(item => <div key={item.delegation} style={{marginTop:10}}>
-      <div style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>{item.operation} · {item.account_id} · {
+      <div style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft}}>{item.operation} · {item.account_id} · {
         item.account_binding === 'provider-verified' ? 'account confirmed by ' + providerName(item)
           : item.account_binding === 'operator-declared' ? 'account typed in, not confirmed' : 'account not checked'}</div>
       <pre style={{whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontFamily:LM.mono, fontSize:11, maxHeight:220, overflow:'auto',
@@ -7676,10 +7764,10 @@ const SettingsConnectedSocialAccounts = ({transport}) => {
         return <div key={key} style={{display:'grid', gridTemplateColumns:'auto minmax(0,1fr) auto', gap:10, alignItems:'center',
           padding:'8px 10px', border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.md}}>
           <span aria-hidden="true" style={{width:24, height:24, borderRadius:'50%', display:'inline-flex', alignItems:'center', justifyContent:'center',
-            background:LM.lineSoft, color:LM.ink, fontFamily:LM.mono, fontSize:10, textTransform:'uppercase'}}>{view.icon}</span>
+            background:LM.lineSoft, color:LM.ink, fontFamily:LM.mono, fontSize:11, textTransform:'uppercase'}}>{view.icon}</span>
           <span style={{minWidth:0}}>
             <span style={{display:'block', fontSize:12.5, fontWeight:500}}>{view.name}</span>
-            <span style={{display:'block', fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, overflowWrap:'anywhere'}}>{display || account.vault_entry}</span>
+            <span style={{display:'block', fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, overflowWrap:'anywhere'}}>{display || account.vault_entry}</span>
           </span>
           <button type="button" disabled={!!busy || !transport?.removeLocalSocialAccount} onClick={() => disconnect(account)} style={smallBtn()}>
             Disconnect
@@ -7738,7 +7826,7 @@ const SettingsLinkedInSignIn = ({transport, compact = false}) => {
     onClick={signIn} note={needsSignIn ? 'This connection goes through your ArchHub account. Sign in under Settings › Account, then connect here.' : 'Open Settings › Account before connecting LinkedIn.'} message={message} failed={failed}/>;
   return <div style={{padding:'12px 14px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, marginBottom:10}}>
     <div style={{fontSize:13, fontWeight:500}}>Sign in with LinkedIn</div>
-    <div style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, marginBottom:12, letterSpacing:'0.04em'}}>Posts go to your personal LinkedIn profile, and only after you approve each one.</div>
+    <div style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:2, marginBottom:12, letterSpacing:'0.04em'}}>Posts go to your personal LinkedIn profile, and only after you approve each one.</div>
     <div>
       <button type="button" disabled={!available || busy} onClick={signIn} style={smallBtn(available)}>{busy ? 'Waiting for LinkedIn...' : (available ? 'Connect LinkedIn' : (needsSignIn ? 'Sign in to ArchHub to connect' : 'Connect from Account'))}</button>
       {needsSignIn && <p role="status" style={{fontSize:12, color:LM.inkSoft}}>This connection goes through your ArchHub account. Sign in under Settings › Account, then connect here.</p>}
@@ -7868,7 +7956,7 @@ const SettingsSocialEnrollment = ({transport, onAccount}) => {
   const [message, setMessage] = React.useState('');
   return <div style={{padding:'12px 14px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg}}>
     <div style={{fontSize:13, fontWeight:500}}>Connections</div>
-    <div style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, marginBottom:4, letterSpacing:'0.04em'}}>Connect through each provider's sign-in.</div>
+    <div style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:2, marginBottom:4, letterSpacing:'0.04em'}}>Connect through each provider's sign-in.</div>
     <SocialConnectionRow icon="in" name="LinkedIn" detail="Draft posts you approve."
       control={<SettingsLinkedInSignIn transport={transport} compact/>}/>
     <SocialConnectionRow icon="f" name="Facebook and Instagram" detail="Post to your page and business account."
@@ -7978,7 +8066,7 @@ const SettingsProviders = ({ providers, onTab }) => {
   const [managing, setManaging] = React.useState(null);
   const [social, setSocial] = React.useState(false);
   const tone = (state) => state === 'keyed' ? LM.ok : state === 'running' ? LM.cyan :
-    state === 'key invalid' ? LM.err : LM.inkMuted;
+    state === 'key invalid' ? LM.err : LM.inkSoft;
   const off = state => state === 'no key' || state === 'not running' || state === 'not installed';
   const warn = state => state === 'key invalid';
   const keyed = providerKeyed(rows), running = providerRunning(rows);
@@ -7993,15 +8081,15 @@ const SettingsProviders = ({ providers, onTab }) => {
           <div style={{ padding:'12px 14px', display:'flex', alignItems:'center', gap:LM.sp.md }}>
             <span style={{ width:24, height:24, borderRadius:LM.rad.sm, background:BRAND[p.id] || tone(p.state), color: (window.AH && window.AH.onFill) || '#180f08', display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:12, fontWeight:700 }}>{p.name[0]}</span>
             <div style={{ flex:1, minWidth:0, lineHeight:1.2 }}>
-              <div style={{ fontSize:13, fontWeight:500, color: off(p.state) ? LM.inkMuted : LM.ink }}>{p.name}</div>
-              <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, letterSpacing:'0.04em' }}>
+              <div style={{ fontSize:13, fontWeight:500, color: off(p.state) ? LM.inkSoft : LM.ink }}>{p.name}</div>
+              <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:2, letterSpacing:'0.04em' }}>
                 <span title={p.state === 'keyed' ? 'Stored keys are never shown' : undefined} style={{ color:LM.inkSoft }}>
                   {providerDetail(p)}
                 </span>
               </div>
             </div>
             <span style={{
-              fontFamily:LM.mono, fontSize:9, padding:'2px 7px', borderRadius:LM.rad.xs, letterSpacing:'0.1em', textTransform:'uppercase',
+              fontFamily:LM.mono, fontSize:11, padding:'2px 7px', borderRadius:LM.rad.xs, letterSpacing:'0.1em', textTransform:'uppercase',
               background: off(p.state) ? LM.bgSoft : tone(p.state) + '14',
               color:       warn(p.state) ? LM.err : tone(p.state),
             }}>{providerStateWord(p)}</span>
@@ -8046,7 +8134,7 @@ const SettingsGenerationControl = ({ spec, value, disabled, onChange }) => (
       min={spec.min} max={spec.max} step={spec.step} disabled={disabled}
       onChange={event => onChange(spec.k, Number(event.target.value))}
       style={{ width:80, boxSizing:'border-box', padding:'4px 6px', borderRadius:LM.rad.sm,
-        border:`1px solid ${LM.line}`, background:LM.bgDeep, color:LM.ink, fontFamily:LM.mono, fontSize:10.5 }}/>
+        border:`1px solid ${LM.line}`, background:LM.bgDeep, color:LM.ink, fontFamily:LM.mono, fontSize:11 }}/>
   </div>
 );
 
@@ -8113,7 +8201,7 @@ const SettingsModels = () => {
     <div style={rowStyle}>
         <div>
           <div style={{ fontSize:13, fontWeight:500 }}>Reasoning · planning</div>
-          <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, letterSpacing:'0.04em' }}>
+          <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:2, letterSpacing:'0.04em' }}>
             {selectedItem ? ([selectedItem.vendor, selectedItem.tag].filter(Boolean).join(' · ') || modelRoute(selectedItem)) : 'Choose a free model'}
           </div>
         </div>
@@ -8126,23 +8214,23 @@ const SettingsModels = () => {
     {localOptions.length > 0 && <div style={rowStyle}>
       <div>
         <div style={{ fontSize:13, fontWeight:500 }}>Local fallback (offline)</div>
-        <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, letterSpacing:'0.04em' }}>Available local model routes</div>
+        <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:2, letterSpacing:'0.04em' }}>Available local model routes</div>
       </div>
-      <div style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkSoft, overflowWrap:'anywhere' }}>
+      <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, overflowWrap:'anywhere' }}>
         {localOptions.map(item => modelRoute(item)).join(' · ')}
       </div>
     </div>}
     <div style={rowStyle}>
       <div>
         <div style={{ fontSize:13, fontWeight:500 }}>Generation defaults</div>
-        <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, letterSpacing:'0.04em' }}>
+        <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:2, letterSpacing:'0.04em' }}>
           saved with model settings
         </div>
       </div>
       <div>
         {GENERATION_SPECS.map(spec => <SettingsGenerationControl key={spec.k} spec={spec}
           value={defaults[spec.k]} disabled={saving} onChange={saveDefault}/>)}
-        {defaultsStatus && <div role="status" style={{ fontFamily:LM.mono, fontSize:10, color:defaultsStatus === 'not saved' ? LM.err : LM.inkMuted }}>
+        {defaultsStatus && <div role="status" style={{ fontFamily:LM.mono, fontSize:11, color:defaultsStatus === 'not saved' ? LM.err : LM.inkSoft }}>
           {defaultsStatus}
         </div>}
       </div>
@@ -8177,27 +8265,27 @@ const BaboomStartupRow = ({ first }) => {
     setting.source === 'default' ? 'Default (on)' :
     [on ? 'On' : 'Off', setting.source === 'graph' ? 'Saved' : String(setting.source),
       setting.revision ? 'revision ' + String(setting.revision).slice(-10) : ''].filter(Boolean).join(' · ');
-  const col = on && !unreadable ? LM.ok : LM.inkMuted;
+  const col = on && !unreadable ? LM.ok : LM.inkSoft;
   return (
     <div style={{ padding:'10px 14px', display:'flex', alignItems:'center', gap:LM.sp.md,
       borderTop: first ? 'none' : `1px solid ${LM.lineSoft}` }}>
       <span style={{ width:8, height:8, borderRadius:'50%', background:col, flexShrink:0,
         boxShadow: on && !unreadable ? `0 0 0 2px ${LM.ok}22` : 'none' }}/>
       <div style={{ flex:1, lineHeight:1.2, minWidth:0 }}>
-        <div style={{ fontSize:13, fontWeight:500, color: on ? LM.ink : LM.inkMuted }}>BABOOM</div>
-        <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em', marginTop:2, lineHeight:1.45 }}>
+        <div style={{ fontSize:13, fontWeight:500, color: on ? LM.ink : LM.inkSoft }}>BABOOM</div>
+        <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em', marginTop:2, lineHeight:1.45 }}>
           Start BABOOM when ArchHub opens · {status} · Takes effect next time ArchHub opens.
         </div>
-        {unreadable && <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.warn, marginTop:3, lineHeight:1.45 }}>
+        {unreadable && <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.warn, marginTop:3, lineHeight:1.45 }}>
           Setting unreadable - BABOOM will not start until this is fixed{setting.error ? ' (' + setting.error + ')' : ''}
         </div>}
-        {setting && !unreadable && setting.available !== true && <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkSoft, marginTop:3 }}>
+        {setting && !unreadable && setting.available !== true && <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:3 }}>
           Only the owner of this ArchHub can change this.
         </div>}
-        {error && <div role="alert" style={{ fontFamily:LM.mono, fontSize:10, color:LM.warn, marginTop:3, lineHeight:1.45 }}>{error}</div>}
+        {error && <div role="alert" style={{ fontFamily:LM.mono, fontSize:11, color:LM.warn, marginTop:3, lineHeight:1.45 }}>{error}</div>}
       </div>
       <span style={{
-        fontFamily:LM.mono, fontSize:9, padding:'2px 7px', borderRadius:LM.rad.xs,
+        fontFamily:LM.mono, fontSize:11, padding:'2px 7px', borderRadius:LM.rad.xs,
         background: col + '14', color: col, letterSpacing:'0.1em', textTransform:'uppercase',
       }}>{!setting || unreadable ? 'unread' : on ? 'on start' : 'off'}</span>
       <button type="button" role="switch" aria-checked={on} aria-label="Start BABOOM when ArchHub opens"
@@ -8267,7 +8355,7 @@ const SettingsTheme = () => {
     <div key={label} style={{ display:'grid', gridTemplateColumns:'minmax(0,1fr) 190px', alignItems:'center', gap:10, padding:'8px 12px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md }}>
       <div style={{ minWidth:0 }}>
         <div style={{ fontSize:12.5 }}>{label}</div>
-        <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:1, letterSpacing:'0.04em' }}>{value} · saved in Personal Settings</div>
+        <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:1, letterSpacing:'0.04em' }}>{value} · saved in Personal Settings</div>
       </div>
       {children}
     </div>
@@ -8287,10 +8375,10 @@ const SettingsTheme = () => {
             <div style={{ flex:1, height:36, background:active ? LM.bg : LM.bgSoft, borderRadius:4, border:`1px solid ${LM.lineSoft}` }}/>
           </div>
           <div style={{ fontSize:13, fontWeight:500, textTransform:'capitalize' }}>{name}</div>
-          <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2 }}>{label}{active ? ' · active' : ''}</div>
+          <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:2 }}>{label}{active ? ' · active' : ''}</div>
         </div>;
       })}
-      {!config?.design_system?.themes && <div style={{ gridColumn:'1 / -1', fontSize:11.5, color:LM.inkMuted }}>Personal Settings not read</div>}
+      {!config?.design_system?.themes && <div style={{ gridColumn:'1 / -1', fontSize:11.5, color:LM.inkSoft }}>Personal Settings not read</div>}
     </div>
     <div style={{ marginTop:LM.sp.lg, display:'flex', flexDirection:'column', gap:10 }}>
       <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, overflow:'hidden' }}>
@@ -8298,14 +8386,14 @@ const SettingsTheme = () => {
           <span title="Current graph accent" style={{ width:16, height:16, borderRadius:4, background:saved, border:`1px solid ${LM.lineSoft}` }}/>
           <div style={{ flex:1 }}>
             <div style={{ fontSize:12.5 }}>Accent colour</div>
-            <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:1, letterSpacing:'0.04em' }}>{saved} &#xb7; {config ? 'saved in Personal Settings' : 'Personal Settings not read'}</div>
+            <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:1, letterSpacing:'0.04em' }}>{saved} &#xb7; {config ? 'saved in Personal Settings' : 'Personal Settings not read'}</div>
           </div>
           <span role="button" tabIndex={0} aria-expanded={editAccent} onClick={toggle}
             onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } }}
-            style={{ color:LM.inkMuted, fontSize:11, cursor:'pointer' }}>{editAccent ? 'close' : 'change'}</span>
+            style={{ color:LM.inkSoft, fontSize:11, cursor:'pointer' }}>{editAccent ? 'close' : 'change'}</span>
         </div>
         {editAccent && <div style={{ padding:'10px 12px 12px', borderTop:`1px solid ${LM.lineSoft}`, background:LM.bgDeep }}>
-          <div style={{display:'flex', alignItems:'center', gap:8, fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em'}}>
+          <div style={{display:'flex', alignItems:'center', gap:8, fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em'}}>
             <span style={{flex:1}}>{config ? `${config.binding_mode} · ${config.state}` :
               !api && window.ArchHubTheme?.source === 'graph' ? 'Graph theme · read-only in this view' : 'Personal Settings not read'}</span>
             <button title="Refresh Personal Settings" aria-label="Refresh Personal Settings" disabled={!api || state?.pending}
@@ -8328,10 +8416,10 @@ const SettingsTheme = () => {
             {config.personal_wip_heads.length > 1 ? 'Multiple theme drafts exist; merging is not linked yet.' : 'No personal theme draft is available.'}
           </div>}
           {!!history.length && <div style={{marginTop:12}}>
-            <div style={{fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.12em', marginBottom:4}}>VERSIONS &#xb7; SHOWING {Math.min(10,history.length)} OF {history.length}</div>
+            <div style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.12em', marginBottom:4}}>VERSIONS &#xb7; SHOWING {Math.min(10,history.length)} OF {history.length}</div>
             {versions.map(entry => <div key={entry.revision} style={{display:'flex', gap:8, alignItems:'center', padding:'7px 0', borderBottom:`1px solid ${LM.lineSoft}`}}>
               <span style={{flex:1, fontSize:11.5, color:LM.inkSoft}}>{entry.reason || entry.state} {entry.current ? '· current' : ''}
-                <small style={{display:'block', fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted}}>{entry.timestamp || 'Time unavailable'} · {entry.state} · {entry.digest ? entry.digest.slice(0,10) : String(entry.revision).slice(-10)}</small></span>
+                <small style={{display:'block', fontFamily:LM.mono, fontSize:11, color:LM.inkSoft}}>{entry.timestamp || 'Time unavailable'} · {entry.state} · {entry.digest ? entry.digest.slice(0,10) : String(entry.revision).slice(-10)}</small></span>
               {!entry.current && entry.restore_control && <button style={{ ...smallBtn(), padding:'3px 9px' }} disabled={unavailable}
                 onClick={() => run(() => api.restoreThemeRevision(entry.revision))}>Restore</button>}
             </div>)}
@@ -8367,7 +8455,7 @@ const SettingsShortcuts = () => {
       <SHead title="Shortcuts" sub="Keyboard bindings handled by this Studio build."/>
       <div style={{display:'flex', alignItems:'center', gap:LM.sp.sm, padding:'7px 10px', margin:'0 0 14px',
         background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md}}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={LM.inkMuted} strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={LM.inkSoft} strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
         <input aria-label="Filter shortcuts" value={q} onChange={e => setQ(e.target.value)} placeholder="Filter shortcuts..." style={{
           flex:1, border:0, background:'transparent', color:LM.ink, fontSize:12.5, outline:'none', fontFamily:LM.sans,
         }}/>
@@ -8376,8 +8464,8 @@ const SettingsShortcuts = () => {
         {rows.map(binding => (
           <div key={binding.id} data-shortcut-id={binding.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'7px 0', borderBottom:`1px solid ${LM.lineSoft}` }}>
             <span style={{ flex:1, fontSize:12.5, color:LM.ink }}>{binding.label}</span>
-            <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.08em', textTransform:'uppercase' }}>{studioShortcutScopeLabel(binding.scope)}</span>
-            <kbd style={{ ...kbd(), fontSize:10.5, padding:'2px 7px' }}>{binding.display}</kbd>
+            <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.08em', textTransform:'uppercase' }}>{studioShortcutScopeLabel(binding.scope)}</span>
+            <kbd style={{ ...kbd(), fontSize:11, padding:'2px 7px' }}>{binding.display}</kbd>
           </div>
         ))}
       </div>
@@ -8430,7 +8518,7 @@ const SettingsRetention = () => {
   const change = data && data.last_change;
   return (
     <div style={{ marginBottom:18 }}>
-      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:6 }}>CONVERSATION RETENTION</div>
+      <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em', marginBottom:6 }}>CONVERSATION RETENTION</div>
       {state.loading && !data && <SettingsEmpty>Reading the retention policy…</SettingsEmpty>}
       {/* retry only where a read exists to retry: never an inert action */}
       {state.error && <SettingsEmpty role="alert" action={window.ARCHHUB_CONVERSATION_RETENTION
@@ -8443,11 +8531,11 @@ const SettingsRetention = () => {
           </div>
           <div style={{ marginTop:4 }}>{policy.preserved}</div>
           {data.reason && <div style={{ marginTop:4, color:LM.ink }}>{data.reason}</div>}
-          <div style={{ fontFamily:LM.mono, fontSize:10.5, marginTop:6, wordBreak:'break-all' }}>{policy.archive_folder || 'No archive folder: conversation content is not enabled.'}</div>
-          <div style={{ fontFamily:LM.mono, fontSize:10.5, marginTop:6 }}>
+          <div style={{ fontFamily:LM.mono, fontSize:11, marginTop:6, wordBreak:'break-all' }}>{policy.archive_folder || 'No archive folder: conversation content is not enabled.'}</div>
+          <div style={{ fontFamily:LM.mono, fontSize:11, marginTop:6 }}>
             Last pass: {retentionPass(data.last_run) || 'none since ArchHub started'}
           </div>
-          {change && <div style={{ fontFamily:LM.mono, fontSize:10.5, marginTop:2 }}>
+          {change && <div style={{ fontFamily:LM.mono, fontSize:11, marginTop:2 }}>
             Last removal: {retentionWhen(change.at)} · {change.purged} messages moved · {change.exported} written to the archive
           </div>}
         </div>
@@ -8458,7 +8546,7 @@ const SettingsRetention = () => {
           background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md }}>
           <div style={{ flex:1, minWidth:0 }}>
             <div title={row.conversation} style={{ fontSize:13, color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{row.title || row.conversation}</div>
-            <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2 }}>
+            <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:2 }}>
               {row.archived_at ? 'archived on ' + (retentionWhen(row.archived_at) || 'a date not recorded') : 'restored'} · {row.removed_messages} in the archive file{row.archive_exists ? '' : ' · file missing'}
             </div>
           </div>
@@ -8485,9 +8573,9 @@ const SettingsStorage = () => (
         ['Model cache', '\u2014', 'not measured'],
       ].map(([k, n, sz]) => (
         <div key={k} style={{ padding:'12px 14px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:7 }}>
-          <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em' }}>{k.toUpperCase()}</div>
-          <div style={{ fontFamily:LM.serif, fontSize:26, letterSpacing:'-0.02em', marginTop:2, color: n === '\u2014' ? LM.inkMuted : LM.ink }}>{n}</div>
-          <div style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkSoft, marginTop:1 }}>{sz}</div>
+          <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em' }}>{k.toUpperCase()}</div>
+          <div style={{ fontFamily:LM.serif, fontSize:26, letterSpacing:'-0.02em', marginTop:2, color: n === '\u2014' ? LM.inkSoft : LM.ink }}>{n}</div>
+          <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:1 }}>{sz}</div>
         </div>
       ))}
     </div>
@@ -8502,7 +8590,7 @@ const SettingsStorage = () => (
         <div key={t} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md }}>
           <div style={{ flex:1 }}>
             <div style={{ fontSize:13, color:LM.ink }}>{t}</div>
-            <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2 }}>{sub}</div>
+            <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:2 }}>{sub}</div>
           </div>
           <button onClick={async (e) => {
             const b = e.currentTarget;
@@ -8536,12 +8624,12 @@ const SettingsAbout = ({ providers, release }) => {
   <div>
     <SHead title="About" sub="ArchHub Studio · the AEC stack with one foot in your model and one in the LLM."/>
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, padding:'14px 16px', fontFamily:LM.mono, fontSize:11.5, color:LM.inkSoft, lineHeight:1.85 }}>
-      <div><span style={{ color:LM.inkMuted }}>version    </span> {release?.current_build || 'reading\u2026'}</div>
-      <div><span style={{ color:LM.inkMuted }}>license    </span> {'\u2014'}</div>
-      <div><span style={{ color:LM.inkMuted }}>server     </span> {window.location.host || window.location.origin} &#xb7; running</div>
-      <div><span style={{ color:LM.inkMuted }}>hosts      </span> {LM_HOSTS.length} configured &#xb7; {LM_HOSTS.filter(h=>h.state!=='off').length} live</div>
-      <div><span style={{ color:LM.inkMuted }}>providers  </span> {rows ? (answering.length ? answering.join(', ') : 'none connected') : providers?.error ? 'not read' : 'reading\u2026'}</div>
-      <div><span style={{ color:LM.inkMuted }}>updated    </span> {release?.updated_to ? 'to ' + release.updated_to : (label || 'reading\u2026')} &#xb7; <span role="button" tabIndex={0} aria-expanded={updates}
+      <div><span style={{ color:LM.inkSoft }}>version    </span> {release?.current_build || 'reading\u2026'}</div>
+      <div><span style={{ color:LM.inkSoft }}>license    </span> {'\u2014'}</div>
+      <div><span style={{ color:LM.inkSoft }}>server     </span> {window.location.host || window.location.origin} &#xb7; running</div>
+      <div><span style={{ color:LM.inkSoft }}>hosts      </span> {LM_HOSTS.length} configured &#xb7; {LM_HOSTS.filter(h=>h.state!=='off').length} live</div>
+      <div><span style={{ color:LM.inkSoft }}>providers  </span> {rows ? (answering.length ? answering.join(', ') : 'none connected') : providers?.error ? 'not read' : 'reading\u2026'}</div>
+      <div><span style={{ color:LM.inkSoft }}>updated    </span> {release?.updated_to ? 'to ' + release.updated_to : (label || 'reading\u2026')} &#xb7; <span role="button" tabIndex={0} aria-expanded={updates}
         onClick={toggle} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } }}
         style={{ color:LM.inkSoft, cursor:'pointer' }}>{updates ? 'hide updates' : 'updates →'}</span></div>
     </div>
@@ -8615,22 +8703,22 @@ const SettingsAssistants = () => {
 
   return (
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
-      <div style={{ padding:'10px 14px', fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.12em' }}>
+      <div style={{ padding:'10px 14px', fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.12em' }}>
         ASSISTANTS · CONNECTIONS AND SAFETY
       </div>
-      <div style={{padding:'0 14px 10px', fontSize:11.5, color:LM.inkMuted}}>
+      <div style={{padding:'0 14px 10px', fontSize:11.5, color:LM.inkSoft}}>
         Saved settings do not prove a live connection. Actions require an assigned task and your approval.
       </div>
       {(held.clients || []).map(c => (
         <div key={c.client} style={{ padding:'10px 14px', display:'flex', alignItems:'center', gap:LM.sp.md, borderTop:`1px solid ${LM.lineSoft}` }}>
           <div style={{ flex:1, minWidth:0, lineHeight:1.3 }}>
             <div style={{ fontSize:13, fontWeight:500, color:LM.ink }}>{ASSISTANT_NAMES[c.client] || 'Assistant'}</div>
-            <div style={{ fontSize:11.5, color:LM.inkMuted }}>{((c.client === 'claude-code' && CLAUDE_CODE_SAID[c.state]) || ASSISTANT_SAID[c.state]) || 'Connection status unavailable'}</div>
+            <div style={{ fontSize:11.5, color:LM.inkSoft }}>{((c.client === 'claude-code' && CLAUDE_CODE_SAID[c.state]) || ASSISTANT_SAID[c.state]) || 'Connection status unavailable'}</div>
             {c.hooks && (c.hooks.events || []).map(e => (
-              <div key={e.event} style={{fontSize:11.5, color:LM.inkMuted}}>{e.said || 'Status unavailable'}</div>
+              <div key={e.event} style={{fontSize:11.5, color:LM.inkSoft}}>{e.said || 'Status unavailable'}</div>
             ))}
-            {c.hooks && c.hooks.approval && <div style={{fontSize:11.5, color:LM.inkMuted}}>{c.hooks.approval}</div>}
-            {c.hooks && !c.hooks.available && <div style={{fontSize:11.5, color:LM.inkMuted}}>{c.hooks.state === 'per_session' ? 'Connects when you open a session' : c.hooks.state === 'unsupported' ? 'Not supported yet' : c.hooks.state === 'not_installed' ? 'Not installed' : c.hooks.state === 'install_required' ? 'Open the installed ArchHub to connect this assistant.' : 'Settings could not be read. Repair the assistant installation first.'}</div>}
+            {c.hooks && c.hooks.approval && <div style={{fontSize:11.5, color:LM.inkSoft}}>{c.hooks.approval}</div>}
+            {c.hooks && !c.hooks.available && <div style={{fontSize:11.5, color:LM.inkSoft}}>{c.hooks.state === 'per_session' ? 'Connects when you open a session' : c.hooks.state === 'unsupported' ? 'Not supported yet' : c.hooks.state === 'not_installed' ? 'Not installed' : c.hooks.state === 'install_required' ? 'Open the installed ArchHub to connect this assistant.' : 'Settings could not be read. Repair the assistant installation first.'}</div>}
           </div>
           {c.hooks && c.hooks.available && (
             <button onClick={() => previewHooks(c.client)} disabled={!!busy}
@@ -8682,14 +8770,14 @@ const SettingsOperations = () => {
   };
   return (
     <details style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
-      <summary style={{ padding:'10px 14px', cursor:'pointer', fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.12em' }}>
+      <summary style={{ padding:'10px 14px', cursor:'pointer', fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.12em' }}>
         OPERATIONS · {proven} READY · {rows.length - proven} NEED SETUP
       </summary>
       {rows.map(r => (
         <div key={r.op} style={{ padding:'7px 14px', display:'flex', gap:LM.sp.md, borderTop:`1px solid ${LM.lineSoft}`, alignItems:'baseline' }}>
           <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.ink, width:190, flexShrink:0 }}>{r.op}</span>
-          <span style={{ fontFamily:LM.mono, fontSize:9, padding:'1px 6px', borderRadius:LM.rad.xs, flexShrink:0,
-            background:(r.evidence === 'court' ? LM.ok : LM.inkMuted) + '1f', color:r.evidence === 'court' ? LM.ok : LM.inkMuted }}>
+          <span style={{ fontFamily:LM.mono, fontSize:11, padding:'1px 6px', borderRadius:LM.rad.xs, flexShrink:0,
+            background:(r.evidence === 'court' ? LM.ok : LM.inkSoft) + '1f', color:r.evidence === 'court' ? LM.ok : LM.inkSoft }}>
             {statusLabel(r)}</span>
           <span style={{ fontSize:11.5, color:LM.inkSoft, minWidth:0, overflowWrap:'anywhere' }}>
             {publicDetail(r)}{r.connector_state ? ' · ' + r.connector_state : ''}</span>
@@ -8793,8 +8881,8 @@ const SettingsWorkspaces = () => {
     });
   };
   const row = { padding:'10px 14px', display:'flex', alignItems:'center', gap:LM.sp.md };
-  const mono = { fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em', marginTop:2 };
-  const chip = col => ({ fontFamily:LM.mono, fontSize:9, padding:'2px 7px', borderRadius:LM.rad.xs,
+  const mono = { fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em', marginTop:2 };
+  const chip = col => ({ fontFamily:LM.mono, fontSize:11, padding:'2px 7px', borderRadius:LM.rad.xs,
     background:col + '14', color:col, letterSpacing:'0.1em', textTransform:'uppercase' });
   const field = { background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, color:LM.ink,
     padding:'6px 9px', fontFamily:LM.sans, fontSize:13 };
@@ -8822,7 +8910,7 @@ const SettingsWorkspaces = () => {
             <div style={{ fontSize:13, fontWeight:500 }}>00.ARCHUB</div>
             <div style={mono}>{view?.built_in?.path || 'C:\\Users\\fargaly\\00.ARCHUB'}</div>
           </div>
-          <span style={chip(LM.inkMuted)}>built in</span>
+          <span style={chip(LM.inkSoft)}>built in</span>
         </div>
         {registered.map(r => (
           <div key={r.root_id} style={{ ...row, borderTop:`1px solid ${LM.lineSoft}` }}>
@@ -8836,8 +8924,8 @@ const SettingsWorkspaces = () => {
                     return (
                       <label key={w} style={{ display:'inline-flex', alignItems:'center', gap:5,
                         padding:'2px 7px', border:`1px solid ${active ? LM.ok : LM.line}`,
-                        borderRadius:LM.rad.xs, fontFamily:LM.mono, fontSize:9,
-                        color:active ? LM.ink : LM.inkMuted, textTransform:'uppercase' }}>
+                        borderRadius:LM.rad.xs, fontFamily:LM.mono, fontSize:11,
+                        color:active ? LM.ink : LM.inkSoft, textTransform:'uppercase' }}>
                         <input type="checkbox" checked={active} disabled={!!busy || !ready}
                           aria-label={`Allow ${w} to write ${r.root_id}`}
                           onChange={() => toggleWriter(r, w)}/>
@@ -8885,14 +8973,14 @@ const SettingsWorkspaces = () => {
           onClick={add} style={{ ...smallBtn(true), padding:'6px 12px' }}>Add</button>}
       </div>
       {!ready && (
-        <div style={{ fontFamily:LM.sans, fontSize:12, color:LM.inkMuted, lineHeight:1.5 }}>
+        <div style={{ fontFamily:LM.sans, fontSize:12, color:LM.inkSoft, lineHeight:1.5 }}>
           Workspaces are added in Settings > Workspaces after the workspace registry check passes.
         </div>
       )}
       {busy && <div role="status" style={{ fontSize:12, color:LM.inkSoft }}>{busy}{'\u2026'}</div>}
       {view && error && <div role="alert" style={{ fontSize:12, color:LM.err || LM.warn }}>{error}</div>}
       {history.length > 0 && (
-        <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em' }}>
+        <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>
           NO LONGER GOVERNED: {history.map(r => r.root_id).join(', ')}
         </div>
       )}
@@ -8951,11 +9039,11 @@ const HostEnableSwitch = ({ hostId, enabled, enabledState, enabledFreshness, dis
           background:confirmedOn ? LM.ok : LM.bgPanel, padding:2, display:'inline-flex',
           justifyContent:checked ? 'flex-end' : 'flex-start', alignItems:'center', cursor:pending ? 'wait' : writeDisabledReason ? 'not-allowed' : 'pointer',
         }}>
-        <span aria-hidden="true" style={{ width:12, height:12, borderRadius:'50%', background:checked ? '#fff' : LM.inkMuted, display:'block' }}/>
+        <span aria-hidden="true" style={{ width:12, height:12, borderRadius:'50%', background:checked ? '#fff' : LM.inkSoft, display:'block' }}/>
       </button>
-      {writeDisabledReason && <span role="status" style={{ fontSize:10.5, color:LM.inkMuted, lineHeight:1.3, maxWidth:220 }}>{writeDisabledReason}</span>}
-      {!checked && <span role="status" style={{ fontSize:10.5, color:LM.inkMuted, lineHeight:1.3, maxWidth:220 }}>{reason}</span>}
-      {error && <span role="alert" style={{ fontSize:10.5, color:LM.err || LM.warn, lineHeight:1.3, maxWidth:220 }}>{error}</span>}
+      {writeDisabledReason && <span role="status" style={{ fontSize:11, color:LM.inkSoft, lineHeight:1.3, maxWidth:220 }}>{writeDisabledReason}</span>}
+      {!checked && <span role="status" style={{ fontSize:11, color:LM.inkSoft, lineHeight:1.3, maxWidth:220 }}>{reason}</span>}
+      {error && <span role="alert" style={{ fontSize:11, color:LM.err || LM.warn, lineHeight:1.3, maxWidth:220 }}>{error}</span>}
     </span>
   );
 };
@@ -8986,7 +9074,7 @@ const SettingsHosts = () => {
   const speckle = visibleHosts.find(h => /speckle/i.test(String(h.name || h.id || '')));
   const connected = visibleHosts.filter(h => hostStateWord(h) === 'Connected').length;
   const dotStyle = (col, dashed) => ({ width:8, height:8, borderRadius:'50%', flex:'none',
-    background: dashed ? 'transparent' : col, border: dashed ? `1px dashed ${LM.inkMuted}` : 0 });
+    background: dashed ? 'transparent' : col, border: dashed ? `1px dashed ${LM.inkSoft}` : 0 });
   const rowStyle = { display:'flex', alignItems:'center', gap:10, padding:'9px 10px', flexWrap:'wrap',
     border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, background:LM.bgPanel };
   const tagStyle = col => ({ fontFamily:LM.mono, fontSize:11, fontWeight:500, padding:'2px 8px',
@@ -9038,7 +9126,7 @@ const SettingsHosts = () => {
           <span style={dotStyle(null, true)}/>
           <div style={{ minWidth:0 }}>
             <div style={{ fontWeight:500, fontSize:13, color:LM.inkSoft }}>{name}</div>
-            <div style={{ fontFamily:LM.sans, fontSize:12, color:LM.inkMuted }}>{line}</div>
+            <div style={{ fontFamily:LM.sans, fontSize:12, color:LM.inkSoft }}>{line}</div>
           </div>
           <span style={{ flex:1 }}/>
           <span style={tagStyle(LM.warn)}>not built yet</span>
@@ -9068,9 +9156,9 @@ const pickerHover = enabled => enabled ? {
   onMouseEnter:e => { e.currentTarget.style.background = LM.bgHover; },
   onMouseLeave:e => { e.currentTarget.style.background = 'transparent'; },
 } : {};
-const pickerGroupLabel = () => ({ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.18em', padding:'4px 10px' });
+const pickerGroupLabel = () => ({ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.18em', padding:'4px 10px' });
 const pickerTag = tag => ({
-  fontFamily:LM.mono, fontSize:9, padding:'2px 7px', borderRadius:LM.rad.xs, letterSpacing:'0.08em',
+  fontFamily:LM.mono, fontSize:11, padding:'2px 7px', borderRadius:LM.rad.xs, letterSpacing:'0.08em',
   background: tag==='CLOUD'?LM.accentDim : tag==='LOCAL'?LM.ok+'22' : LM.cyan+'22',
   color:       tag==='CLOUD'?LM.accent    : tag==='LOCAL'?LM.ok      : LM.cyan,
 });
@@ -9082,7 +9170,7 @@ const DISCOVERY_DEADLINE_MS = 8000;
 // collected, without clearing the rows already on screen.
 const STALE_REDRAW_MS = 2500;
 const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
-  const note = { margin:0, padding:'6px 10px', fontFamily:LM.mono, fontSize:10.5, color:LM.inkMuted, lineHeight:1.5, letterSpacing:'0.02em' };
+  const note = { margin:0, padding:'6px 10px', fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, lineHeight:1.5, letterSpacing:'0.02em' };
   const onFill = (window.AH && window.AH.onFill) || '#180f08';
   const [live, setLive] = React.useState(null);
   const [catalogueError, setCatalogueError] = React.useState('');
@@ -9169,9 +9257,9 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
                     <span style={pickerSwatch(m.col, onFill)}>{m.name[0]}</span>
                     <div style={{ flex:1, lineHeight:1.15, minWidth:0 }}>
                       <div style={{ fontSize:13 }}>{m.name}</div>
-                      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.04em' }}>{m.vendor}{m.ctx ? ' · ctx ' + m.ctx : ''}</div>
+                      <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>{m.vendor}{m.ctx ? ' · ctx ' + m.ctx : ''}</div>
                     </div>
-                    {m.latency != null && <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.ok }}>{m.latency}ms</span>}
+                    {m.latency != null && <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.ok }}>{m.latency}ms</span>}
                     <span style={pickerTag(m.tag)}>{m.tag}</span>
                   </div>
                 );
@@ -9205,7 +9293,7 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
                   <span style={pickerSwatch(LM.inkSoft, onFill)}>{String(row.app || '?')[0].toUpperCase()}</span>
                   <div style={{ flex:1, lineHeight:1.15, minWidth:0 }}>
                     <div style={{ fontSize:13 }}>{row.title || 'Untitled session'}</div>
-                    <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.04em' }}>
+                    <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>
                       {row.reason === 'multiple_live_sessions' ? 'Multiple live sessions · open Details to choose one' :
                         row.reason === 'no_live_session' ? 'No live session' :
                         row.connected === true && row.selectable !== false ? 'Selectable · ' + row.live_session_count + ' live session' : 'Agent unavailable'}
@@ -9224,7 +9312,7 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
               <span style={pickerSwatch(LM.bgSoft, LM.inkSoft)}>↻</span>
               <div style={{ flex:1, lineHeight:1.15, minWidth:0 }}>
                 <div style={{ fontSize:13 }}>Refresh</div>
-                <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.04em' }}>Discover models and open agent sessions again</div>
+                <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>Discover models and open agent sessions again</div>
               </div>
             </button>
             {selectedRoute && <button type="button" disabled={saving} aria-label="Clear this model selection"
@@ -9233,7 +9321,7 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
               <span style={pickerSwatch(LM.bgSoft, LM.inkSoft)}>×</span>
               <div style={{ flex:1, lineHeight:1.15, minWidth:0 }}>
                 <div style={{ fontSize:13 }}>Clear selection</div>
-                <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.04em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{selectedRoute}</div>
+                <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{selectedRoute}</div>
               </div>
             </button>}
           </div>
@@ -9248,12 +9336,12 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
 // so this is the screen the end user actually gets, only the content differs.
 const dCode = window.ArchHubTheme.derive((LM) => ({ fontFamily:LM.mono, fontSize:11.5, lineHeight:1.65, background:LM.bgDeep, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.sm, padding:'11px 13px', color:LM.inkSoft, overflowX:'auto', whiteSpace:'pre', margin:'0 0 14px' }));
 const DP = ({ children, ...rest }) => <p {...rest} style={{ fontFamily:LM.sans, fontSize:13.5, lineHeight:1.65, color:LM.inkSoft, margin:'0 0 13px', textWrap:'pretty' }}>{children}</p>;
-const DSub = ({ children }) => <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.18em', margin:'22px 0 10px' }}>{children}</div>;
+const DSub = ({ children }) => <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.18em', margin:'22px 0 10px' }}>{children}</div>;
 const DCode = ({ children }) => <pre style={dCode}>{children}</pre>;
 const DKey = ({ children }) => <span style={{ fontFamily:LM.mono, fontSize:11, background:LM.bgSoft, border:`1px solid ${LM.line}`, borderRadius:4, padding:'1px 5px', color:LM.ink }}>{children}</span>;
 const DNote = ({ children }) => (
   <div style={{ display:'flex', gap:9, background:LM.bgSoft, border:`1px solid ${LM.line}`, borderLeft:`2px solid ${LM.accent}`, borderRadius:LM.rad.sm, padding:'10px 12px', margin:'0 0 14px' }}>
-    <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.accent, letterSpacing:'0.14em', flexShrink:0, marginTop:2 }}>NOTE</span>
+    <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.accent, letterSpacing:'0.14em', flexShrink:0, marginTop:2 }}>NOTE</span>
     <span style={{ fontFamily:LM.sans, fontSize:12.5, lineHeight:1.55, color:LM.inkSoft }}>{children}</span>
   </div>
 );
@@ -9300,7 +9388,7 @@ const docsBuild = () => {
   return typeof build === 'string' && build && build !== 'Unversioned build' ? build : '';
 };
 
-const Docs = ({ onClose }) => {
+const Docs = ({ onClose, onHome }) => {
   const [sec, setSec] = React.useState('start');
   const build = docsBuild();
   // SEARCH — docs without search get painful the moment they grow. DOC_INDEX is generated
@@ -9343,8 +9431,13 @@ const Docs = ({ onClose }) => {
       }}>
         <div style={{ gridColumn:'1 / -1', gridRow:'1', borderBottom:`1px solid ${LM.line}`, display:'flex', alignItems:'center', gap:10, padding:'0 16px' }}>
           <span style={{ fontFamily:LM.serif, fontSize:18, letterSpacing:'-0.01em' }}>Documentation</span>
-          <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.1em' }}>STUDIO{build ? ' · ' + build : ''}</span>
+          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.1em' }}>STUDIO{build ? ' · ' + build : ''}</span>
           <div style={{ flex:1 }}/>
+          <button onClick={onHome} aria-label="Home" data-home-button style={{
+            height:28, padding:'0 10px', border:`1px solid ${LM.line}`,
+            background:'transparent', borderRadius:LM.rad.sm, cursor:'pointer',
+            color:LM.inkSoft, fontFamily:LM.sans, fontSize:12, fontWeight:500,
+          }}>Home</button>
           <div style={{ position:'relative', width:260 }}>
             <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={onKey}
               placeholder="Search the docs…" style={{
@@ -9352,7 +9445,7 @@ const Docs = ({ onClose }) => {
                 border:`1px solid ${q ? LM.accent : LM.line}`, background:LM.bg, color:LM.ink,
                 fontFamily:LM.sans, fontSize:12.5, outline:'none',
               }}/>
-            <span style={{ position:'absolute', left:9, top:6, fontSize:11, color:LM.inkMuted, pointerEvents:'none' }}>⌕</span>
+            <span style={{ position:'absolute', left:9, top:6, fontSize:11, color:LM.inkSoft, pointerEvents:'none' }}>⌕</span>
             {q && (
               <div className="ah-scroll" style={{
                 position:'absolute', top:32, left:0, width:'100%', maxHeight:250, overflow:'auto', zIndex:5,
@@ -9370,23 +9463,23 @@ const Docs = ({ onClose }) => {
                         background: i === cur ? LM.bgSoft : 'transparent', cursor:'pointer', textAlign:'left',
                       }}>
                         <span style={{
-                          fontFamily:LM.mono, fontSize:8, letterSpacing:'0.1em', flexShrink:0, width:52,
-                          color: h.k === 'key' || h.k === 'cli' ? LM.accent : LM.inkMuted,
+                          fontFamily:LM.mono, fontSize:11, letterSpacing:'0.1em', flexShrink:0, width:52,
+                          color: h.k === 'key' || h.k === 'cli' ? LM.accent : LM.inkSoft,
                         }}>{DOC_KIND[h.k]}</span>
                         <span style={{ flex:1, minWidth:0, fontFamily: h.k === 'cli' || h.k === 'key' ? LM.mono : LM.sans,
                           fontSize:12.5, color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{h.t}</span>
-                        <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkSoft, flexShrink:0 }}>{h.d}</span>
+                        <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, flexShrink:0 }}>{h.d}</span>
                       </button>
                     ))}
                 {hits.length > 0 && (
-                  <div style={{ padding:'6px 10px', borderTop:`1px solid ${LM.lineSoft}`, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>
+                  <div style={{ padding:'6px 10px', borderTop:`1px solid ${LM.lineSoft}`, fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.08em' }}>
                     ↑↓ MOVE · ↵ OPEN · ESC CLEAR · {hits.length} OF {DOC_INDEX.length} ENTRIES
                   </div>
                 )}
               </div>
             )}
           </div>
-          <button onClick={onClose} style={{ width:24, height:24, padding:0, border:`1px solid ${LM.line}`, background:'transparent', borderRadius:LM.rad.sm, cursor:'pointer', color:LM.inkSoft, fontSize:12 }}>✕</button>
+          <button onClick={onClose} aria-label="Close" style={{ width:24, height:24, padding:0, border:`1px solid ${LM.line}`, background:'transparent', borderRadius:LM.rad.sm, cursor:'pointer', color:LM.inkSoft, fontSize:12 }}>✕</button>
         </div>
         <div style={{ gridColumn:'1', gridRow:'2', borderRight:`1px solid ${LM.line}`, padding:'10px 8px', overflow:'auto' }}>
           {DOC_SECTIONS.map(([id, label, badge]) => (
@@ -9398,7 +9491,7 @@ const Docs = ({ onClose }) => {
               display:'flex', alignItems:'center', gap:LM.sp.sm, marginBottom:1,
             }}>
               <span style={{ flex:1 }}>{label}</span>
-              {badge && <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.04em' }}>{badge}</span>}
+              {badge && <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>{badge}</span>}
             </button>
           ))}
         </div>
@@ -9652,11 +9745,11 @@ const ApplicationUpdateNotice = () => {
   const title = message || (offered ? label :
     updatedFrom ? 'Updated from build ' + updatedFrom + ' to build ' + updatedTo : label);
   const action = {height:16, padding:'0 7px', borderRadius:LM.rad.xs, border:`1px solid ${LM.accent}`,
-    background:LM.accentDim, color:LM.accent, fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.05em',
+    background:LM.accentDim, color:LM.accent, fontFamily:LM.mono, fontSize:11, letterSpacing:'0.05em',
     lineHeight:'14px', flexShrink:0, cursor:pending ? 'default' : 'pointer', opacity:pending ? .6 : 1};
   return <div role={message ? 'alert' : 'status'} aria-label="Application update" title={title}
     style={{display:'flex', alignItems:'center', gap:6, minWidth:0, padding:'0 4px', whiteSpace:'nowrap',
-      fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.05em', color:message ? LM.err : LM.accent}}>
+      fontFamily:LM.mono, fontSize:11, letterSpacing:'0.05em', color:message ? LM.err : LM.accent}}>
     <span aria-hidden="true">{'\u25cf'}</span>
     <span style={{minWidth:0, overflow:'hidden', textOverflow:'ellipsis'}}>{message || label}</span>
     {state === 'ready' && offered && !message && restartSupported && <button type="button" disabled={!!pending}
@@ -9688,8 +9781,8 @@ const ServerStrip = ({ session, setDocsOpen, onOpenWaitingTask }) => {
     const style = {
       background:'transparent', border:0, padding:'0 4px',
       cursor: onClick ? 'pointer' : 'default',
-      color: h && onClick ? LM.ink : (accent || LM.inkMuted),
-      fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.05em', whiteSpace:'nowrap',
+      color: h && onClick ? LM.ink : (accent || LM.inkSoft),
+      fontFamily:LM.mono, fontSize:11, letterSpacing:'0.05em', whiteSpace:'nowrap',
       transition:'color .12s',
     };
     if (!onClick) return <span style={style}>{children}</span>;

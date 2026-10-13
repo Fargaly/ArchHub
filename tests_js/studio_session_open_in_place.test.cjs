@@ -201,6 +201,7 @@ async function mountStudio(options = {}) {
   win.AH_LIBRARY = [{cat:'logic', items:[{id:'test-node', title:'Test node', sub:'Noop node', engine:'engine:noop'}]}];
   win.ARCHHUB_LIVE = {sessions, currentGraph:current, hosts:[], connectors:[],
     graph:win.ARCHHUB_EXISTING_WORKSHOP.getSnapshot().topology.graph, memory:[], skills:[]};
+  win.ARCHHUB_BOOT = {...(win.ARCHHUB_BOOT || {}), open_graph:win.ARCHHUB_LIVE.currentGraph};
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
   for (const file of manifest.files) {

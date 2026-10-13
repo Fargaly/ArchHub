@@ -164,7 +164,7 @@ test('title and summary sit in the card body as drawn, never clamped to one line
       assert.ok(title.parentElement === sub.parentElement, 'title and summary share the body');
       assert.equal(title.parentElement.style.padding, '9px 12px 11px', 'the design body padding');
       assert.equal(title.style.fontSize, '13px');
-      assert.equal(sub.style.fontSize, '10px');
+      assert.equal(sub.style.fontSize, '11px');
       for (const [element, what] of [[title, 'title'], [sub, 'summary']]) {
         assert.notEqual(element.style.whiteSpace, 'nowrap', 'the ' + what + ' of ' + node.id + ' is not clamped');
         assert.equal(element.style.textOverflow, '', 'the ' + what + ' of ' + node.id + ' is not ellipsized');
@@ -180,7 +180,7 @@ test('socket labels keep the design type; a connectable port wires through the t
     const doc = await view.draw();
     const label = socket(doc, 'work', 'Connect input required-capabilities').nextElementSibling;
     assert.equal(label.textContent, 'required-capabilities');
-    assert.equal(label.style.fontSize, '8.5px');
+    assert.equal(label.style.fontSize, '11px');
     assert.equal(label.style.whiteSpace, 'nowrap');
     assert.equal(label.style.padding, '0px 4px');
     // An input's and an output's label share one row: each is held to half the card, ellipsized, whole in its tooltip.

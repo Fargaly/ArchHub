@@ -175,13 +175,13 @@ test('a proposal is a NEEDS YOU card; selecting it shows the permissions it asks
     await view.render();
     await openChatTab(view);
     const card = view.ui.doc.querySelector('[data-workshop-task="proposal:p1"]');
-    assert.match(text(card), /^Tighten the CDE check proposed by an agent · block Approve Reject$/);
+    assert.match(text(card), /^Tighten the CDE check proposed by an agent · block Approve Decline$/);
     assert.equal(card.style.borderStyle, 'solid');
     await view.ui.click(card);
     assert.equal(view.sel().task, 'proposal:p1');
     await view.render();
     assert.equal(view.ui.doc.querySelector('[aria-label="Workshop context"]'), null);
-    assert.match(text(card), /^Tighten the CDE check proposed by an agent · block Approve Reject$/);
+    assert.match(text(card), /^Tighten the CDE check proposed by an agent · block Approve Decline$/);
   } finally { await view.ui.close(); }
 });
 

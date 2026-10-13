@@ -104,11 +104,11 @@ test('Workshop opens from the Home tool card, not from a Studio header Chat segm
     assert.equal(silent.doc.querySelector('main[data-tool-view="workshop"]'), null,
       'fresh profile Workshop card does not fall back to the Studio Home tool page');
     assert.deepEqual(silent.fullWorkshopTabs().map(tab => tab.getAttribute('aria-label')),
-      ['Chat', 'Tasks', 'Router', 'Relay', 'Prompts', 'Agents', 'Approvals'],
+      ['Board', 'Chat', 'Agents', 'Approvals', 'Router', 'Relay', 'Prompts'],
       'fresh profile with no owner rows still opens the full Workshop tab bar');
     assert.ok(silent.fullWorkshopTabs().some(tab => tab.getAttribute('aria-label') === 'Router'));
     assert.ok(silent.fullWorkshopTabs().some(tab => tab.getAttribute('aria-label') === 'Relay'));
-    assert.ok(silent.fullWorkshopTabs().some(tab => tab.getAttribute('aria-label') === 'Tasks'));
+    assert.ok(silent.fullWorkshopTabs().some(tab => tab.getAttribute('aria-label') === 'Board'));
   } finally { silent.close(); }
 
   const open = await mountStudio({workshops:[{root:'room-a', label:'Wall conversion', is_general:false}]});
@@ -118,10 +118,10 @@ test('Workshop opens from the Home tool card, not from a Studio header Chat segm
     open.flush(() => workshop.click());
     assert.equal(open.inWorkshop(), true, 'the Home card opens the Workshop view');
     assert.deepEqual(open.fullWorkshopTabs().map(tab => tab.getAttribute('aria-label')),
-      ['Chat', 'Tasks', 'Router', 'Relay', 'Prompts', 'Agents', 'Approvals'],
+      ['Board', 'Chat', 'Agents', 'Approvals', 'Router', 'Relay', 'Prompts'],
       'Home Workshop card opens the full Workshop tab bar');
-    assert.equal(open.fullWorkshopTabs().find(tab => tab.getAttribute('aria-label') === 'Tasks')?.getAttribute('aria-selected'), 'true',
-      'Home Workshop card lands on the Tasks tab');
+    assert.equal(open.fullWorkshopTabs().find(tab => tab.getAttribute('aria-label') === 'Board')?.getAttribute('aria-selected'), 'true',
+      'Home Workshop card lands on the Board tab');
     assert.equal([...open.doc.querySelectorAll('main > div button')].some(button => button.textContent.trim() === 'Workshop'), false,
       'the open Workshop is not represented as a Studio header segment');
     open.flush(() => open.doc.querySelector('button[aria-label^="Leave Workshop"]').click());

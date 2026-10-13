@@ -24,7 +24,8 @@ function projected() {
   return JSON.parse(context.graph);
 }
 
-async function mountStudio({models, selectedTitleLeak = '', modelReadTimeoutMs, modelRetryDelaysMs} = {}) {
+async function mountStudio({models, selectedTitleLeak = '', modelReadTimeoutMs, modelRetryDelaysMs,
+  home = false, graphOpen = null, systemView = false} = {}) {
   const manifest = JSON.parse(read('nodelang/studio/compiled/manifest.json'));
   for (const source of ['studio-lm.jsx', 'studio-suite.jsx']) {
     const held = manifest.files.find(file => file.source === source);
@@ -54,6 +55,7 @@ async function mountStudio({models, selectedTitleLeak = '', modelReadTimeoutMs, 
     });
   };
   const agentCalls = [];
+  const startCalls = [];
   win.ARCHHUB_AGENT = async (text, route, context) => {
     agentCalls.push({text, route, context});
     return {answer:'PONG'};
@@ -62,8 +64,11 @@ async function mountStudio({models, selectedTitleLeak = '', modelReadTimeoutMs, 
   win.ARCHHUB_THEME = {...seed};
   win.matchMedia = () => ({matches:false, addEventListener() {}, removeEventListener() {}});
   const graph = projected();
+  if (systemView && graph.nodes[0]) graph.nodes = graph.nodes.concat({
+    ...graph.nodes[0], id:'app-node', title:'Application node', application:true, x:320, y:60,
+  });
   const listeners = new Set();
-  const authorization = {subject:'owner-a', session:'view-a'};
+  const authorization = {subject:'owner-a', session:'view-a', ...(systemView ? {system_view:true} : {})};
   const canvas = {graph_id:'graph-a', root:'scope-a', revision:7, authorization};
   if (selectedTitleLeak) canvas.selected_title = selectedTitleLeak;
   const snapshot = {canvas,
@@ -75,10 +80,21 @@ async function mountStudio({models, selectedTitleLeak = '', modelReadTimeoutMs, 
     subscribe:listener => { listeners.add(listener); return () => listeners.delete(listener); },
     selectTopology:async id => { snapshot.topology.selected = id; listeners.forEach(listener => listener()); },
     refreshTopologyCanvas:async () => {}, refreshConversationCatalog:async () => {},
+    startSession:async details => {
+      startCalls.push(details);
+      snapshot.workshops = [{root:'root-a', label:'Started session'}];
+      snapshot.canvas = {...snapshot.canvas, graph_id:'graph-a', root:'root-a'};
+      snapshot.topology.canvas = {...snapshot.topology.canvas, root:'root-a', scope:{current:'root-a'}};
+      listeners.forEach(listener => listener());
+      return {graph_id:'graph-a', root:'root-a', scope_path:'scope-a'};
+    },
     watchApplicationUpdate:() => () => {}, refreshApplicationUpdate:async () => {},
   };
+  win.ARCHHUB_SCOPE_OPEN = async () => {};
+  if (graphOpen) win.ARCHHUB_GRAPH_OPEN = graphOpen;
   win.ARCHHUB_LIVE = {sessions:[{id:'graph-a', title:'ArchHub', state:'idle', file:'Graph composition'}],
     currentGraph:'graph-a', hosts:[], connectors:[], graph, memory:[], skills:[]};
+  if (!home) win.ARCHHUB_BOOT = {...(win.ARCHHUB_BOOT || {}), open_graph:win.ARCHHUB_LIVE.currentGraph};
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
   for (const file of manifest.files) {
@@ -91,23 +107,199 @@ async function mountStudio({models, selectedTitleLeak = '', modelReadTimeoutMs, 
   };
   const flush = action => win.ReactDOM.flushSync(action);
   const type = (input, text) => flush(() => {
-    Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set.call(input, text);
+    const proto = input instanceof win.HTMLTextAreaElement ? win.HTMLTextAreaElement.prototype : win.HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(input, text);
     input.dispatchEvent(new win.Event('input', {bubbles:true}));
   });
-  return {win, doc:win.document, settle, flush, type, agentCalls,
+  return {win, doc:win.document, settle, flush, type, agentCalls, startCalls,
     close:() => { try { flush(() => win.__studioRoot.unmount()); } finally { dom.window.close(); } }};
 }
 
 const modelIndicators = doc => [...doc.querySelectorAll('[data-model-indicator]')];
 const button = (doc, label) => [...doc.querySelectorAll('button')].find(node => node.textContent.trim() === label);
 const noModelCard = doc => doc.querySelector('[data-chat-no-model]');
+const homeComposer = doc => doc.querySelector('textarea[aria-label="Start a new session"]');
+const homeText = doc => doc.querySelector('[data-home-page]')?.textContent || '';
+const rail = (doc, title) => doc.querySelector(`[data-rail-panel="${title}"]`);
+const homeButtons = doc => [...doc.querySelectorAll('[data-home-button], button[aria-label="Home"]')];
 const deferred = () => {
   let resolve;
   const promise = new Promise(done => { resolve = done; });
   return {promise, resolve};
 };
 
-test('first screen auto-retries a rejected model read and clears without a click', async () => {
+test('ArchHub opens on the Home page, not inside the current graph', async () => {
+  const studio = await mountStudio({home:true});
+  try {
+    await studio.settle(() => studio.doc.querySelector('[data-home-page]'), 'the first screen is the Home page');
+    assert.equal(studio.doc.querySelectorAll('[data-node-id]').length, 0, 'no graph canvas is open at boot');
+    const tab = [...studio.doc.querySelectorAll('button, [role="tab"]')].find(node => /ArchHub/.test(node.textContent));
+    assert.ok(tab, 'the current graph stays one click away');
+    studio.flush(() => tab.click());
+    await studio.settle(() => studio.doc.querySelector('[data-node-id]'), 'the retained graph opens from Home');
+    assert.ok(studio.doc.querySelector('[data-ws-tab="graph-a"]'), 'the graph session header is shown');
+  } finally { studio.close(); }
+});
+
+test('Home boot shows the default free router with its friendly name', async () => {
+  const studio = await mountStudio({home:true});
+  try {
+    await studio.settle(() => studio.doc.querySelector('[data-home-page]') && homeText(studio.doc).includes(MODEL),
+      'Home shows the default free router label');
+    assert.ok(homeComposer(studio.doc), 'the real Home composer is mounted');
+    assert.equal(studio.doc.querySelector('[data-chat-no-model]'), null, 'Home is not in the no-model state');
+    assert.doesNotMatch(homeText(studio.doc), /openrouter\/free/);
+  } finally { studio.close(); }
+});
+
+test('Home rail panels open beside Home and their Home button closes the panel', async () => {
+  const studio = await mountStudio({home:true});
+  try {
+    await studio.settle(() => studio.doc.querySelector('[data-home-page]'), 'Home is visible');
+    for (const [title, visible] of [
+      ['Nodes', () => studio.doc.querySelector('input[placeholder="Search nodes…"]')],
+      ['Skills', () => studio.doc.body.textContent.includes('Search saved skills')],
+      ['Search', () => studio.doc.body.textContent.includes('everything in studio')],
+    ]) {
+      studio.flush(() => rail(studio.doc, title).click());
+      await studio.settle(() => studio.doc.querySelector('[data-home-page]') &&
+        visible(), title + ' panel opens beside Home');
+      assert.equal(studio.doc.querySelectorAll('[data-node-id]').length, 0, title + ' does not open a graph');
+      const panelHome = homeButtons(studio.doc).find(node => node.textContent.trim() === 'Home');
+      assert.ok(panelHome, title + ' panel exposes Home');
+      studio.flush(() => panelHome.click());
+      await studio.settle(() => studio.doc.querySelector('[data-home-page]') &&
+        !visible(), title + ' panel closes back to Home');
+    }
+  } finally { studio.close(); }
+});
+
+test('Home wins over a deferred graph open started from the Home session list', async () => {
+  const graphOpen = deferred();
+  const studio = await mountStudio({home:true, graphOpen:async () => graphOpen.promise});
+  try {
+    await studio.settle(() => studio.doc.querySelector('[data-home-page]'), 'Home is visible');
+    const tab = [...studio.doc.querySelectorAll('button, [role="tab"]')].find(node => /ArchHub/.test(node.textContent));
+    studio.flush(() => tab.click());
+    studio.flush(() => rail(studio.doc, 'Nodes').click());
+    await studio.settle(() => studio.doc.querySelector('input[placeholder="Search nodes…"]'),
+      'Nodes panel opens while graph waits');
+    const panelHome = homeButtons(studio.doc).find(node => node.textContent.trim() === 'Home');
+    studio.flush(() => panelHome.click());
+    graphOpen.resolve({ok:true, current_graph:'graph-a'});
+    await new Promise(resolve => studio.win.setTimeout(resolve, 0));
+    await studio.settle(() => studio.doc.querySelector('[data-home-page]'), 'Home remains visible after graph-open resolves');
+    assert.notEqual(studio.doc.querySelector('[data-ws-tab="graph-a"]')?.getAttribute('aria-current'), 'true',
+      'the graph session tab is not active');
+    assert.equal(studio.doc.querySelectorAll('[data-node-id]').length, 0, 'no graph nodes render');
+  } finally { studio.close(); }
+});
+
+test('Settings System open respects a labelled Home click while graph open is pending', async () => {
+  const graphOpen = deferred();
+  const studio = await mountStudio({systemView:true});
+  try {
+    await studio.settle(() => studio.doc.querySelector('[data-node-id]'), 'graph starts open');
+    studio.win.ARCHHUB_GRAPH_OPEN = async () => graphOpen.promise;
+    studio.flush(() => rail(studio.doc, 'Settings').click());
+    await studio.settle(() => studio.doc.querySelector('[aria-label="Settings"]'), 'Settings opens');
+    const systemTab = [...studio.doc.querySelectorAll('[data-settings-nav] button')]
+      .find(node => node.textContent.trim().startsWith('System'));
+    assert.ok(systemTab, 'System settings tab is listed');
+    studio.flush(() => systemTab.click());
+    await studio.settle(() => button(studio.doc, 'Open the System graph'), 'System tab opens');
+    studio.flush(() => button(studio.doc, 'Open the System graph').click());
+    await studio.settle(() => !studio.doc.querySelector('[aria-label="Settings"]') &&
+      homeButtons(studio.doc).some(node => node.textContent.trim() === 'Home'), 'labelled Home is reachable');
+    const labelledHome = homeButtons(studio.doc).find(node => node.textContent.trim() === 'Home');
+    studio.flush(() => labelledHome.click());
+    graphOpen.resolve({ok:true, current_graph:'graph-a'});
+    await new Promise(resolve => studio.win.setTimeout(resolve, 0));
+    await studio.settle(() => studio.doc.querySelector('[data-home-page]'), 'Home remains visible');
+    assert.notEqual(studio.doc.querySelector('[data-ws-tab="graph-a"]')?.getAttribute('aria-current'), 'true',
+      'no session tab is active after Home wins');
+    assert.equal(studio.doc.querySelectorAll('[data-node-id]').length, 0, 'the graph canvas stays closed');
+  } finally { studio.close(); }
+});
+
+test('Home boot auto-retries a rejected model read and clears without a click', async () => {
+  let reads = 0;
+  const studio = await mountStudio({home:true, models:() => {
+    reads += 1;
+    if (reads === 1) return Promise.reject(new Error('network down'));
+    return undefined;
+  }, modelRetryDelaysMs:[10, 20, 30]});
+  try {
+    await studio.settle(() => homeText(studio.doc).includes('Models unavailable · retrying…'),
+      'Home shows the rejected read as retrying');
+    await studio.settle(() => homeText(studio.doc).includes(MODEL),
+      'Home automatic retry reads the model list again');
+    assert.ok(reads >= 2, 'the model read was retried without a click');
+    assert.doesNotMatch(homeText(studio.doc), /Models unavailable · retrying…/);
+  } finally { studio.close(); }
+});
+
+test('Home boot sends through the free default route while the model read is unknown', async () => {
+  const studio = await mountStudio({home:true, models:() => Promise.reject(new Error('network down')), modelRetryDelaysMs:[5000]});
+  try {
+    await studio.settle(() => homeText(studio.doc).includes('Models unavailable · retrying…'),
+      'Home shows the rejected read as retrying');
+    const input = homeComposer(studio.doc);
+    studio.type(input, 'ping while checking');
+    studio.flush(() => button(studio.doc, 'Send').click());
+    await studio.settle(() => studio.startCalls.length === 1, 'Home sends while the model read is unknown');
+    assert.deepEqual(studio.startCalls.map(call => [call.prompt, call.model]), [['ping while checking', ROUTE]]);
+    assert.equal(studio.doc.querySelector('[data-picker-options]'), null, 'Send does not open the picker while unknown');
+  } finally { studio.close(); }
+});
+
+test('Home boot shows one Models unavailable retry line while the model read is unknown', async () => {
+  const studio = await mountStudio({home:true, models:() => Promise.reject(new Error('network down')), modelRetryDelaysMs:[5000]});
+  try {
+    await studio.settle(() => homeText(studio.doc).includes('Models unavailable · retrying…'),
+      'Home shows the rejected read as retrying');
+    const count = (homeText(studio.doc).match(/Models unavailable · retrying…/g) || []).length;
+    assert.equal(count, 1);
+    assert.equal(button(studio.doc, 'Retry')?.textContent.trim(), 'Retry');
+    assert.doesNotMatch(homeText(studio.doc), /Model unknown|Models could not be read|UNKNOWN/);
+  } finally { studio.close(); }
+});
+
+test('Home boot bounds a non-OK model read as unknown', async () => {
+  const studio = await mountStudio({home:true, models:{http:true, ok:false, status:503, body:{ok:false}}});
+  try {
+    await studio.settle(() => homeText(studio.doc).includes('Models unavailable · retrying…'),
+      'Home bounds the non-OK read as unknown');
+    assert.equal(button(studio.doc, 'Retry')?.textContent.trim(), 'Retry');
+    assert.equal(button(studio.doc, 'Sign in'), undefined);
+    assert.equal(button(studio.doc, 'Choose a model'), undefined);
+  } finally { studio.close(); }
+});
+
+test('Home boot bounds a timed-out model read as unknown', async () => {
+  const studio = await mountStudio({home:true, models:{never:true}, modelReadTimeoutMs:20});
+  try {
+    await studio.settle(() => homeText(studio.doc).includes('Models unavailable · retrying…'),
+      'Home bounds the timed-out read as unknown');
+    assert.equal(button(studio.doc, 'Retry')?.textContent.trim(), 'Retry');
+    assert.equal(button(studio.doc, 'Sign in'), undefined);
+    assert.equal(button(studio.doc, 'Choose a model'), undefined);
+  } finally { studio.close(); }
+});
+
+test('Home boot shows Choose a model only after a real negative answer', async () => {
+  const studio = await mountStudio({home:true, models:{ok:true, groups:[], selected_route:'', default_route:'',
+    readiness:{state:'no_model', route:'', actions:['sign_in', 'choose_model'],
+      message:'No model yet. Sign in to ArchHub, or choose a model.',
+      families:{}, messages:{no_model:'No model yet. Sign in to ArchHub, or choose a model.'}}}});
+  try {
+    await studio.settle(() => homeText(studio.doc).includes('Choose a model'), 'Home shows the no-model answer');
+    assert.match(homeText(studio.doc), /No model yet/);
+    assert.ok(homeComposer(studio.doc), 'the real Home composer remains mounted');
+  } finally { studio.close(); }
+});
+
+test('graph composer auto-retries a rejected model read and clears without a click', async () => {
   let reads = 0;
   const studio = await mountStudio({models:() => {
     reads += 1;
@@ -124,7 +316,7 @@ test('first screen auto-retries a rejected model read and clears without a click
   } finally { studio.close(); }
 });
 
-test('first screen sends through the free default route while the model read is unknown', async () => {
+test('graph composer sends through the free default route while the model read is unknown', async () => {
   const studio = await mountStudio({models:() => Promise.reject(new Error('network down')), modelRetryDelaysMs:[5000]});
   try {
     await studio.settle(() => studio.doc.body.textContent.includes('Models unavailable · retrying…'),
@@ -138,7 +330,7 @@ test('first screen sends through the free default route while the model read is 
   } finally { studio.close(); }
 });
 
-test('first screen shows one Models unavailable retry line while the model read is unknown', async () => {
+test('graph composer shows one Models unavailable retry line while the model read is unknown', async () => {
   const studio = await mountStudio({models:() => Promise.reject(new Error('network down')), modelRetryDelaysMs:[5000]});
   try {
     await studio.settle(() => studio.doc.body.textContent.includes('Models unavailable · retrying…'),
@@ -149,7 +341,7 @@ test('first screen shows one Models unavailable retry line while the model read 
   } finally { studio.close(); }
 });
 
-test('first screen bounds a non-OK model read as unknown', async () => {
+test('graph composer bounds a non-OK model read as unknown', async () => {
   const studio = await mountStudio({models:{http:true, ok:false, status:503, body:{ok:false}}});
   try {
     await studio.settle(() => studio.doc.body.textContent.includes('Models unavailable · retrying…'),
@@ -161,7 +353,7 @@ test('first screen bounds a non-OK model read as unknown', async () => {
   } finally { studio.close(); }
 });
 
-test('first screen bounds a timed-out model read as unknown', async () => {
+test('graph composer bounds a timed-out model read as unknown', async () => {
   const studio = await mountStudio({models:{never:true}, modelReadTimeoutMs:20});
   try {
     await studio.settle(() => studio.doc.body.textContent.includes('Models unavailable · retrying…'),
@@ -173,7 +365,7 @@ test('first screen bounds a timed-out model read as unknown', async () => {
   } finally { studio.close(); }
 });
 
-test('first screen keeps model and readiness quiet until the first server answer', async () => {
+test('graph composer keeps model and readiness quiet until the first server answer', async () => {
   const models = deferred();
   const studio = await mountStudio({models:() => models.promise, selectedTitleLeak:'out \u2192 in'});
   try {
@@ -194,7 +386,7 @@ test('first screen keeps model and readiness quiet until the first server answer
   } finally { studio.close(); }
 });
 
-test('first screen shows the no-model line only after a real negative answer', async () => {
+test('graph composer shows the no-model line only after a real negative answer', async () => {
   const studio = await mountStudio({models:{ok:true, groups:[], selected_route:'', default_route:'',
     readiness:{state:'no_model', route:'', actions:['sign_in', 'choose_model'],
       message:'No model yet. Sign in to ArchHub, or choose a model.',
@@ -205,7 +397,7 @@ test('first screen shows the no-model line only after a real negative answer', a
   } finally { studio.close(); }
 });
 
-test('fresh signed-out first screen preselects the free router with its friendly name', async () => {
+test('graph composer preselects the free router with its friendly name', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(() => modelIndicators(studio.doc).some(node => node.textContent.includes(MODEL)),

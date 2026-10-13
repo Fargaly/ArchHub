@@ -409,6 +409,8 @@ function normalized(tool,args) {
  if(tool==='write')return {tool_name:'Write',tool_input:{file_path:args.filePath,content:args.content}};
  if(tool==='edit')return {tool_name:'Edit',tool_input:{file_path:args.filePath,old_string:args.oldString,new_string:args.newString,replace_all:args.replaceAll===true}};
  if(nativeTools.has(tool)){
+  // Founder 2026-10-13: never block agent messaging on argument shape. Missing `arguments` = the other top-level keys.
+  if(args.arguments===undefined){const {operation,...rest}=args;args={operation,arguments:rest};}
   if(Object.keys(args).sort().join(',')!=='arguments,operation'||typeof args.operation!=='string'||!object(args.arguments))fail((tool==='archhub_work'?'selected Work':'agent message')+' arguments unavailable');
   return {tool_name:tool,tool_input:args};
  }

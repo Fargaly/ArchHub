@@ -428,19 +428,28 @@ class DesktopRuntime:
         return self
 
     def close(self):
+        # Founder 2026-10-13: the window X must end the app. A request still in flight
+        # (a long poll) never holds the process: the drain is brief, and a watchdog ends
+        # the process if shutdown stalls after that.
+        import threading
+        import time as _time
+        threading.Thread(
+            target=lambda: (_time.sleep(3.0), os._exit(0)), daemon=True
+        ).start()
         if self.server is not None:
             backend = self.gateway.gate.backend if self.gateway is not None else None
             if backend is not None:
-                self.gateway.gate.begin_drain(
-                    backend.generation, timeout=60.0
-                )
+                try:
+                    self.gateway.gate.begin_drain(backend.generation, timeout=2.0)
+                except GatewayError:
+                    pass
             self.server.close()
         if self.gateway is not None:
             self.gateway.close()
 
 
 def main():
-    from PyQt6.QtCore import QLockFile, Qt, QTimer, QUrl
+    from PyQt6.QtCore import QAbstractNativeEventFilter, QLockFile, Qt, QTimer, QUrl
     from PyQt6.QtWidgets import QApplication, QMainWindow, QStackedWidget
     from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
     from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -467,7 +476,71 @@ def main():
     profile.setCachePath(str(profile_root / 'cache'))
 
     runtime = DesktopRuntime().start()
-    window = QMainWindow()
+    close_started = {'value': False}
+
+    def quit_from_window(widget=None):
+        if close_started['value']:
+            return
+        close_started['value'] = True
+        import threading
+        import time as _time
+        threading.Thread(
+            target=lambda: (_time.sleep(3.0), os._exit(0)), daemon=True
+        ).start()
+        try:
+            app.closeAllWindows()
+            for top in app.topLevelWidgets():
+                top.deleteLater()
+        except Exception:
+            if widget is not None:
+                try:
+                    widget.close()
+                    widget.deleteLater()
+                except Exception:
+                    pass
+        QTimer.singleShot(0, app.quit)
+
+    class _WindowsCloseFilter(QAbstractNativeEventFilter):
+        def nativeEventFilter(self, event_type, message):
+            if sys.platform != 'win32' or event_type not in (
+                b'windows_generic_MSG', b'windows_dispatcher_MSG',
+                'windows_generic_MSG', 'windows_dispatcher_MSG',
+            ):
+                return False, 0
+            import ctypes
+            from ctypes import wintypes
+            class MSG(ctypes.Structure):
+                _fields_ = [
+                    ('hwnd', wintypes.HWND), ('message', wintypes.UINT),
+                    ('wParam', wintypes.WPARAM), ('lParam', wintypes.LPARAM),
+                    ('time', wintypes.DWORD), ('pt', wintypes.POINT),
+                ]
+            msg = MSG.from_address(int(message))
+            if msg.message != 0x0010:
+                return False, 0
+            ctypes.windll.user32.GetAncestor.restype = wintypes.HWND
+            ctypes.windll.user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+            root = ctypes.windll.user32.GetAncestor(msg.hwnd, 2) or msg.hwnd
+            length = ctypes.windll.user32.GetWindowTextLengthW(root)
+            title = ctypes.create_unicode_buffer(length + 1)
+            ctypes.windll.user32.GetWindowTextW(root, title, length + 1)
+            if title.value.startswith('ArchHub'):
+                quit_from_window(window if 'window' in locals() else None)
+                return True, 0
+            return False, 0
+
+    class _ArchHubWindow(QMainWindow):
+        """The window X ends the app (founder 2026-10-13): hide at once, quit the
+        loop, and let a 3 s watchdog end the process if shutdown stalls."""
+
+        def closeEvent(self, event):
+            event.accept()
+            quit_from_window(self)
+
+    window = _ArchHubWindow()
+    close_filter = _WindowsCloseFilter()
+    app.installNativeEventFilter(close_filter)
+    app._archhub_native_close_filter = close_filter
     window.setWindowTitle('ArchHub')
     window.resize(1480, 920)
     window.setMinimumSize(960, 640)

@@ -25,13 +25,14 @@ function harness(api = {}) {
   vm.runInContext(source.slice(deps, begin) + source.slice(begin, end) + '\n' + source.slice(inspector, render) + `
     return { set, rec, applyValues: typeof applyValues === 'function' ? applyValues : null,
       runGraph: typeof runGraph === 'function' ? runGraph : null,
+      forkNode: typeof forkNode === 'function' ? forkNode : null,
       discardCustom: typeof discardCustom === 'function' ? discardCustom : null };
   }
   globalThis.make = NodeInspector;
   globalThis.records = PM_EDITS;
   `, context);
   const node = {id: 'node-a', live: true, params: [{k: 'value', v: 'old', rel: 'relation-a'}]};
-  const make = n => context.make({node: n});
+  const make = (n, props = {}) => context.make({node: n, ...props});
   const panel = make(node);
   return {panel, node, make, context};
 }
@@ -70,6 +71,23 @@ test('the installed inspector action calls execution rather than incrementing a 
   }
   assert.equal(runs, 1, 'button never executed the graph');
   assert.equal(panel.rec.ran, 1);
+});
+
+test('the inspector fork action uses the duplicate path and reports placement', async () => {
+  const writes = [], forked = [];
+  const {make} = harness({ARCHHUB_SET_PROP: async (relation, value) => {
+    writes.push([relation, value]); return {ok: true};
+  }});
+  const panel = make({id:'node-fork', title:'Alpha', engine:'calc', live:true, x:50, y:70,
+    params:[{k:'value', v:'old', rel:'r-value'}, {k:'seed', v:'s'}]}, {
+    onFork: async node => forked.push(node),
+  });
+  panel.set('value', 'current');
+  await panel.forkNode();
+  assert.deepEqual(writes, [['r-value', 'current']]);
+  assert.equal(forked.length, 1);
+  assert.equal(forked[0].params.find(row => row.k === 'value').v, 'current');
+  assert.equal(panel.rec.persistence.result, 'Fork placed.');
 });
 
 test('a refused save retains the draft, blocks execution, and can be retried', async () => {

@@ -4883,6 +4883,8 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       x:at.x + 40, y:at.y + 40, params});
     if (created && created.ok === false) throw new Error(created.error || 'The copy was refused.');
     await studioRefreshCanvasInPlace();
+    const createdId = created?.node?.id || created?.id || created?.node_id || created?.root;
+    if (createdId) setSelectedIds([createdId]);
     return 'Copy placed.';
   });
   const menuOpenInside = node => menuTask(async () => {
@@ -6500,7 +6502,7 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
   const target = {kind:inspectedNode.graphNode ? 'graph' : sessionNode ? 'session' : 'node',
     id:inspectedNode.id, graphId:inspectedNode.graph_id || '', name:inspectedNode.title,
     node:inspectedNode.graphNode ? null : inspectedNode};
-  const properties = <section aria-label="Properties"><window.NodeInspector key={inspectedNode.id} node={inspectedNode}/></section>;
+  const properties = <section aria-label="Properties"><window.NodeInspector key={inspectedNode.id} node={inspectedNode} onFork={node => menuDuplicate(node)}/></section>;
   const groupInterface = <section aria-label="Interface" style={{display:'flex', flexDirection:'column', gap:10}}>
     <div style={{fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em'}}>INTERFACE · computed from crossing wires</div>
     {[...(inspectedNode.ins || []).map(port => ['in', port]), ...(inspectedNode.outs || []).map(port => ['out', port])].map(([dir, port]) => (
@@ -6512,7 +6514,7 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
       <HoverBtn onClick={() => {}}>Rename</HoverBtn>
     </div>
   </section>;
-  const groupParameters = <section aria-label="Exposed parameters"><window.NodeInspector key={inspectedNode.id + ':group-params'} node={inspectedNode}/></section>;
+  const groupParameters = <section aria-label="Exposed parameters"><window.NodeInspector key={inspectedNode.id + ':group-params'} node={inspectedNode} onFork={node => menuDuplicate(node)}/></section>;
   const chat = <section aria-label="Chat">{inspectedNode.live && (inspectedNode.has_conversation || inspectedNode.graphNode || nodeModelRow(inspectedNode)) ?
     <NodeModelConversation key={inspectedNode.id + ':conversation'} node={inspectedNode} scope={scope} openConversation={openConversation}/> :
     <p role="status" style={{ margin:0, fontSize:12, lineHeight:1.5, color:LM.inkSoft }}>No conversation yet.</p>}</section>;
@@ -6590,7 +6592,7 @@ const ConversationRail = ({ node }) => {
         overflow:'auto', padding:'14px 16px',
         display:'flex', flexDirection:'column', gap:14,
       }}>
-        <window.NodeInspector key={node.id + ':params'} node={node}/>
+        <window.NodeInspector key={node.id + ':params'} node={node} onFork={node => menuDuplicate(node)}/>
 
         {/* Date breakpoint */}
         <div style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.14em' }}>
@@ -9181,7 +9183,7 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
                     <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.04em' }}>
                       {row.reason === 'multiple_live_sessions' ? 'Multiple live sessions · open Details to choose one' :
                         row.reason === 'no_live_session' ? 'No live session' :
-                        row.connected === true && row.selectable !== false ? 'Idle · ' + row.live_session_count + ' live session' : 'Agent unavailable'}
+                        row.connected === true && row.selectable !== false ? 'Selectable · ' + row.live_session_count + ' live session' : 'Agent unavailable'}
                       {row.workspace ? ' · ' + row.workspace : ''}
                     </div>
                   </div>

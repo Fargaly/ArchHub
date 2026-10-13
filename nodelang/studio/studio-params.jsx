@@ -576,7 +576,7 @@ function TerminalPanel({ node }) {
   );
 }
 
-function NodeInspector({ node }) {
+function NodeInspector({ node, onFork }) {
   const visibleParams = React.useMemo(() => (node.params || []).filter(row =>
     !INTERNAL_PARAM_KEYS.has(String(row.k || row.label || '').toLowerCase())), [node.id]);
   const builtins = React.useMemo(() => visibleParams.map(pmNorm2), [node.id]);
@@ -659,6 +659,34 @@ function NodeInspector({ node }) {
       persistence.running = false;
       pmGraphRunning = false;
       pmNotifyAll();
+    }
+  };
+  const forkNode = async () => {
+    if (node.isWire) {
+      persistence.runError = 'Fork is available for nodes, not connections.';
+      persistence.result = '';
+      pmNotify(persistence);
+      return;
+    }
+    try {
+      await pmFlushParameters();
+      const forkSource = {...node, params:(node.params || []).map(row =>
+        row && row.k && Object.prototype.hasOwnProperty.call(rec.vals, row.k) ? {...row, v:rec.vals[row.k]} : row)};
+      if (typeof onFork === 'function') await onFork(forkSource);
+      else if (typeof window.ARCHHUB_NODE_CREATE === 'function') {
+        const params = Object.fromEntries((forkSource.params || []).filter(row => row.k && row.k !== 'seed').map(row => [row.k, row.v ?? '']));
+        const created = await window.ARCHHUB_NODE_CREATE({title:(node.title || node.engine || node.id) + ' copy', engine:node.engine, x:(node.x || 200) + 40, y:(node.y || 200) + 40, params});
+        if (created && created.ok === false) throw new Error(created.error || 'The fork was refused.');
+      } else {
+        throw new Error('Fork is unavailable in this view.');
+      }
+      persistence.runError = '';
+      persistence.result = 'Fork placed.';
+      pmNotify(persistence);
+    } catch (error) {
+      persistence.runError = error?.message || 'Fork failed.';
+      persistence.result = '';
+      pmNotify(persistence);
     }
   };
   const discardCustom = key => {
@@ -875,7 +903,7 @@ function NodeInspector({ node }) {
               fontFamily: PM.sans, fontSize: 12.5, fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap',
             }}>{pmGraphRunning ? '↻ Running…' : '↻ Rerun' + (dirty.length ? ' · ' + dirty.length : '')}</button>
             <button style={pmIcon()} title={node.isWire ? 'Save this connection\u2019s rules as a reusable skill' : 'Save these parameters as a reusable skill'}>◈</button>
-            <button style={pmIcon()} title="Fork the graph from here, keeping everything upstream">⑂</button>
+            <button onClick={forkNode} style={pmIcon()} title="Fork this node onto the canvas">⑂</button>
             <button onClick={() => setConfirmDel(true)} style={pmIcon()} title={node.isWire ? 'Delete this connection…' : 'Delete node…'}>⌫</button>
           </div>
         )}

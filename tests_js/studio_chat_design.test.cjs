@@ -374,6 +374,8 @@ test('Model picker: the design header, live groups without prices, then native a
     const [session] = studio.exact('Codex', dialog);
     const sessionRow = session.closest('button');
     assert.ok(sessionRow && sessionRow.style.display === 'flex' && sessionRow.style.padding === '8px 10px', 'a native agent is a design row');
+    assert.match(sessionRow.textContent, /Selectable · 1 live session/, 'the native row label names selectable sessions, not idle state');
+    assert.equal(sessionRow.textContent.includes('Idle ·'), false, 'selectable discovery is not labelled idle');
     const modelsBefore = studio.requests.filter(url => url.startsWith('/api/universal/models')).length;
     const [refresh] = studio.exact('Refresh', dialog);
     studio.flush(() => refresh.closest('button').click());

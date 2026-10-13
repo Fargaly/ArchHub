@@ -140,3 +140,49 @@ test('Settings Connectors switch posts the toggle and re-reads host/tool state',
   assert.equal(mounted.context.loadCatalogueCalls, 1);
   assert.equal(hosts[1].enabled, true);
 });
+
+test('Settings Connectors renders unknown authority state as neutral and disabled', async () => {
+  const reason = "Can't change this right now: ArchHub's graph service is unavailable.";
+  const calls = [];
+  const hosts = [
+    {id: 'revit', name: 'Revit', state: 'connected', detail: 'fake session', enabled: false, enabled_state: 'unknown', enable_disabled_reason: reason},
+    {id: 'autocad', name: 'AutoCAD', state: 'connected', detail: 'fake session', enabled: false, enabled_state: 'unknown', enable_disabled_reason: reason},
+  ];
+  await mountSettings(async url => {
+    calls.push(String(url));
+    return {ok: true, json: async () => ({ok: true})};
+  }, hosts);
+  const rows = [...document.querySelectorAll('[data-connector-row]:not([data-not-built])')];
+  const switches = [...document.querySelectorAll('[role="switch"]')];
+  assert.equal(rows.length, 2);
+  assert.equal(switches.length, 2);
+  assert.equal(switches.filter(sw => sw.disabled).length, 2);
+  assert.deepEqual(switches.map(sw => sw.getAttribute('aria-checked')), ['false', 'false']);
+  assert.match(document.body.textContent, /ArchHub's graph service is unavailable\./);
+  await React.act(async () => {
+    switches[0].click();
+    await new Promise(resolve => setTimeout(resolve, 20));
+  });
+  assert.deepEqual(calls, []);
+});
+
+test('Settings Connectors refused mutation leaves the displayed state unchanged', async () => {
+  const calls = [];
+  const hosts = [
+    {id: 'revit', name: 'Revit', state: 'connected', detail: 'fake session', enabled: true, enabled_state: 'confirmed'},
+  ];
+  await mountSettings(async url => {
+    calls.push(String(url));
+    return {ok: false, json: async () => ({ok: false, error: 'owner refused'})};
+  }, hosts);
+  const sw = document.querySelector('[role="switch"]');
+  assert.equal(sw.getAttribute('aria-checked'), 'true');
+  await React.act(async () => {
+    sw.click();
+    await new Promise(resolve => setTimeout(resolve, 80));
+  });
+  assert.deepEqual(calls, ['/api/universal/host-enabled']);
+  assert.equal(hosts[0].enabled, true);
+  assert.equal(document.querySelector('[role="switch"]').getAttribute('aria-checked'), 'true');
+  assert.match(document.body.textContent, /owner refused/);
+});

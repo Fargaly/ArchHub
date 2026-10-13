@@ -93,6 +93,71 @@ def _host_rows():
     ]
 
 
+def test_host_rows_survive_owner_starting():
+    from nodelang.host_enable import OWNER_STARTING_REASON, annotate_host_rows
+
+    class StartingAuthority:
+        @property
+        def store(self):
+            raise RuntimeError("graph service is starting")
+
+    rows = annotate_host_rows(StartingAuthority(), _host_rows(), owner_deadline=0.05)
+    assert [row["id"] for row in rows] == ["revit", "blender"]
+    assert rows[0]["enabled"] is False
+    assert rows[0]["enabled_state"] == "unknown"
+    assert rows[0]["enable_disabled_reason"] == OWNER_STARTING_REASON
+
+
+def test_host_rows_return_under_deadline_when_owner_blocks():
+    from nodelang.host_enable import OWNER_TIMED_OUT_REASON, annotate_host_rows
+
+    class BlockedAuthority:
+        calls = 0
+
+        @property
+        def store(self):
+            self.calls += 1
+            threading.Event().wait()
+
+    rows = [{"id": "host-%02d", "name": "Host %02d" % i} for i in range(22)]
+    authority = BlockedAuthority()
+    started = time.monotonic()
+    annotated = annotate_host_rows(authority, rows, owner_deadline=0.05)
+    elapsed = time.monotonic() - started
+    assert elapsed < 0.5
+    assert len(annotated) == 22
+    assert authority.calls == 1
+    assert {row["enabled_state"] for row in annotated} == {"unknown"}
+    assert {row["enable_disabled_reason"] for row in annotated} == {OWNER_TIMED_OUT_REASON}
+
+
+def test_host_rows_recover_authoritative_state_after_owner_unavailable(tmp_path):
+    from nodelang.host_enable import (
+        OWNER_UNAVAILABLE_REASON,
+        annotate_host_rows,
+        set_host_enabled,
+    )
+
+    class UnavailableAuthority:
+        @property
+        def store(self):
+            raise ConnectionRefusedError("owner refused")
+
+    built, _provider = _provision_clean_runtime(tmp_path, root_name="host-enable-recover")
+    authority = built.location.authority
+    broken = annotate_host_rows(UnavailableAuthority(), _host_rows(), owner_deadline=0.05)
+    assert broken[0]["enabled"] is False
+    assert broken[0]["enabled_state"] == "unknown"
+    assert broken[0]["enable_disabled_reason"] == OWNER_UNAVAILABLE_REASON
+
+    set_host_enabled(authority, "revit", False, name="Revit",
+                     caller=built.caller, command_id=str(uuid.uuid4()))
+    restored = annotate_host_rows(authority, _host_rows(), owner_deadline=0.05)
+    assert restored[0]["enabled"] is False
+    assert restored[0]["enabled_state"] == "confirmed"
+    assert "enable_disabled_reason" not in restored[0]
+
+
 def test_disabled_host_refuses_before_transport_and_reenabled_calls_transport(tmp_path):
     from nodelang.clean_host_execution import (
         HostOperationRefused,

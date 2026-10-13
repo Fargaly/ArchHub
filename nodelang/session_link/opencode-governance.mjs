@@ -155,7 +155,7 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
  if(!object(expectedSessions)||Object.keys(expectedSessions).length>128||Object.entries(expectedSessions).some(([session,actor])=>
     !/^ses_[A-Za-z0-9]+$/.test(session)||typeof actor!=='string'||!/^app:agent-session:runtime:[a-f0-9]{32}$/.test(actor)))fail('exact recovery session identities required');
  // Quarantine keeps the exact actor, delivery state and any release ack. A
- // fresh owner is allowed only after positive no-enrollment evidence, once.
+ // fresh owner is allowed only after positive no-enrollment evidence.
  const workers=new Map(),lineages=new Map(),queues=new Map(),quarantined=new Map(),probes=new Map(),reenrolls=new Map();
  if(!object(laneFolders)||Object.keys(laneFolders).length>128||Object.entries(laneFolders).some(([session,lane])=>
     !/^ses_[A-Za-z0-9]+$/.test(session)||typeof lane!=='string'||!path.isAbsolute(lane)||lane.length>1024||lane.includes('\0')))fail('trusted lane folders required');
@@ -192,6 +192,7 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
   // An idle check asks a live owner only; it never spawns, enrolls or renews one.
   if(!state&&event.hook_event_name==='Stop')notDelivered('no live native owner for the idle check');
   if(!state){
+   if((reenrolls.get(event.session_id)||0)>=128)notDelivered('native session quarantined; no duplicate enrollment; reconcile no recorded graph actor; coordinator: '+coordinator(event.session_id,null));
    if(workers.size>=4)notDelivered('native owner capacity reached');
    if(!lineages.has(event.session_id)&&lineages.size>=128)notDelivered('native identity retention capacity reached');
    if(!lineages.has(event.session_id))lineages.set(event.session_id,null);
@@ -221,18 +222,18 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
      if(state.notDelivered){clearTimeout(state.notDelivered.timer);state.notDelivered.resolve({allow:false,notDelivered:true});state.notDelivered=null;}
      state.closed?.resolve();
     }else{
-     abort('native owner closed without confirmed release');
      const provenNeverEnrolled = state.neverBound===true&&!state.actor&&!lineages.get(event.session_id)&&
       (state.preAdmissionRefused||state.inputUndelivered)&&!state.pending&&!state.notDelivered&&!state.deliveryUncertain;
-     const usedReenrolls = reenrolls.get(event.session_id)||0;
-     if(provenNeverEnrolled&&usedReenrolls<1){
-      reenrolls.set(event.session_id,usedReenrolls+1);
+     if(!provenNeverEnrolled)abort('native owner closed without confirmed release');
+     if(provenNeverEnrolled){
+      reenrolls.set(event.session_id,(reenrolls.get(event.session_id)||0)+1);
       probes.delete(event.session_id);
      }else quarantined.set(event.session_id,{actor:state.actor||lineages.get(event.session_id)||null,cwd:state.cwd,
       delivered:!!(state.actor||state.lastCompleted||state.released||state.deliveryUncertain||provenNeverEnrolled),
       ack:state.released?.released===true&&!state.notDelivered?state.released:null});
      workers.delete(event.session_id);
-     state.closed?.reject(new Error('native release uncertain'));
+     if(provenNeverEnrolled)state.closed?.resolve();
+     else state.closed?.reject(new Error('native release uncertain'));
     }
    });
    child.stderr.on('data',data=>{if(state.failed)return;state.stderrBytes+=data.length;if(state.stderrBytes>65536)abort('native diagnostics byte limit');});
@@ -264,20 +265,17 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
     if(reply.agent_session!==undefined&&(!state.actor?lineages.get(event.session_id)&&reply.agent_session!==lineages.get(event.session_id)
        :reply.agent_session!==state.actor)){abort('native graph identity changed');return;}
      if(reply.request_id===held.id&&reply.session_id===event.session_id&&reply.tool_use_id===held.call&&
-       reply.admitted===false&&reply.decision==='deny'&&(reply.never_bound===true||lineages.get(event.session_id))&&
-       typeof reply.error==='string'&&!state.actor&&reply.agent_session===undefined){
-     // Only a never-bound owner proves this frame was not admitted: no permit can
-     // exist, so this is a clean denial with its reason. Every other error keeps
-     // custody (abort) below; an invalid or missing decision is a protocol failure.
+       reply.admitted===false&&['allow','deny'].includes(reply.decision)&&reply.never_bound===true&&
+       (!lineages.get(event.session_id)||reply.decision==='deny')&&!state.actor&&reply.agent_session===undefined){
+     // A never-bound owner proves this frame was not admitted: no permit can
+     // exist, so the native hard-harm decision is local and the worker may exit
+     // without a release handshake. Every other error keeps custody below.
      const why=[reply.error,reply.reason].filter(v=>typeof v==='string'&&v).join(': ');
       clearTimeout(held.timer);state.pending=null;state.lastCompleted=held.id;state.deliveryUncertain=false;state.preAdmissionRefused=true;
       state.neverBound=reply.never_bound===true;
-     if(lineages.get(event.session_id)){
-      // A continuation that never bound is not retried by this worker. Retire it:
-      // its exit is reconciled against the owner's custody before a fresh worker.
-      state.retiring=true;try{state.child.stdin.end();}catch(_){}
-     }
-     held.resolve({allow:false,reason:('native owner could not decide: '+why).slice(0,1024)});return;
+     held.resolve({allow:reply.decision==='allow'||event.hook_event_name!=='PreToolUse',
+      ...(reply.tool_output!==undefined?{toolOutput:reply.tool_output}:{}),
+      ...(reply.decision==='deny'&&typeof why==='string'&&why?{reason:('native owner could not decide: '+why).slice(0,1024)}:{})});return;
     }
     if(reply.request_id!==held.id||reply.session_id!==event.session_id||reply.tool_use_id!==held.call||
        reply.error||!['allow','deny'].includes(reply.decision)){abort('native reply identity or outcome unavailable');return;}

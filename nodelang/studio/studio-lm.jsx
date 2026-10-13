@@ -4913,17 +4913,29 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     for (const root of roots.filter(Boolean)) { await cutWire(root); cut += 1; }
     return cut === 1 ? 'The wire was removed.' : cut + ' wires were removed.';
   });
-  const menuDuplicate = node => menuTask(async () => {
+  const duplicateNode = React.useCallback(async node => {
+    if (!node) throw new Error('Fork is unavailable in this view.');
+    if (typeof window.ARCHHUB_NODE_CREATE !== 'function') throw new Error('Fork is unavailable in this view.');
     const params = Object.fromEntries((node.params || []).filter(row => row.k && row.k !== 'seed').map(row => [row.k, row.v ?? '']));
     const at = positions[node.id] || node;
     const created = await window.ARCHHUB_NODE_CREATE({title:(node.title || node.engine) + ' copy', engine:node.engine,
       x:at.x + 40, y:at.y + 40, params});
-    if (created && created.ok === false) throw new Error(created.error || 'The copy was refused.');
-    await studioRefreshCanvasInPlace();
+    if (created && created.ok === false) throw new Error(String(created.error || 'The fork was refused.').split(/\r?\n/)[0]);
     const createdId = created?.node?.id || created?.id || created?.node_id || created?.root;
+    if (!createdId) throw new Error('Fork not confirmed');
+    await studioRefreshCanvasInPlace();
     if (createdId) setSelectedIds([createdId]);
-    return 'Copy placed.';
-  });
+    return 'Fork placed.';
+  }, [positions]);
+  React.useEffect(() => {
+    window.__archhubDuplicateNode = duplicateNode;
+    window.__archhubSelectNodeById = nodeId => { if (nodeId) setSelectedIds([nodeId]); };
+    return () => {
+      if (window.__archhubDuplicateNode === duplicateNode) delete window.__archhubDuplicateNode;
+      delete window.__archhubSelectNodeById;
+    };
+  }, [duplicateNode]);
+  const menuDuplicate = node => menuTask(() => duplicateNode(node));
   const menuOpenInside = node => menuTask(async () => {
     if (authority) { await authority.open(node.id); return ''; }
     await window.ARCHHUB_SCOPE_OPEN([...openScope.trail.map(step => step.root).filter(Boolean), node.id]);
@@ -6514,6 +6526,11 @@ const InspectorRuns = ({ node, graph }) => {
       v={wire.id || [wire.from?.[0], wire.to?.[0]].filter(Boolean).join(' → ')}/>)}
   </section>;
 };
+const forkThroughCanvas = node => {
+  const duplicate = window.__archhubDuplicateNode;
+  if (typeof duplicate !== 'function') throw new Error('Fork is unavailable in this view.');
+  return duplicate(node);
+};
 const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop, scope = '', openConversation,
   graph = null, canvas = null, session = null, sessionRows = [], model, setPickerOpen, readiness = null,
   onReadinessStale, onModelReadRetry, onAccount }) => {
@@ -6543,7 +6560,7 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
   const target = {kind:inspectedNode.graphNode ? 'graph' : sessionNode ? 'session' : 'node',
     id:inspectedNode.id, graphId:inspectedNode.graph_id || '', name:inspectedNode.title,
     node:inspectedNode.graphNode ? null : inspectedNode};
-  const properties = <section aria-label="Properties"><window.NodeInspector key={inspectedNode.id} node={inspectedNode} onFork={node => menuDuplicate(node)}/></section>;
+  const properties = <section aria-label="Properties"><window.NodeInspector key={inspectedNode.id} node={inspectedNode} onFork={forkThroughCanvas}/></section>;
   const groupInterface = <section aria-label="Interface" style={{display:'flex', flexDirection:'column', gap:10}}>
     <div style={{fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em'}}>INTERFACE · computed from crossing wires</div>
     {[...(inspectedNode.ins || []).map(port => ['in', port]), ...(inspectedNode.outs || []).map(port => ['out', port])].map(([dir, port]) => (
@@ -6555,7 +6572,7 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
       <HoverBtn onClick={() => {}}>Rename</HoverBtn>
     </div>
   </section>;
-  const groupParameters = <section aria-label="Exposed parameters"><window.NodeInspector key={inspectedNode.id + ':group-params'} node={inspectedNode} onFork={node => menuDuplicate(node)}/></section>;
+  const groupParameters = <section aria-label="Exposed parameters"><window.NodeInspector key={inspectedNode.id + ':group-params'} node={inspectedNode} onFork={forkThroughCanvas}/></section>;
   const chat = <section aria-label="Chat">{inspectedNode.live && (inspectedNode.has_conversation || inspectedNode.graphNode || nodeModelRow(inspectedNode)) ?
     <NodeModelConversation key={inspectedNode.id + ':conversation'} node={inspectedNode} scope={scope} openConversation={openConversation}/> :
     <p role="status" style={{ margin:0, fontSize:12, lineHeight:1.5, color:LM.inkSoft }}>No conversation yet.</p>}</section>;
@@ -6633,7 +6650,7 @@ const ConversationRail = ({ node }) => {
         overflow:'auto', padding:'14px 16px',
         display:'flex', flexDirection:'column', gap:14,
       }}>
-        <window.NodeInspector key={node.id + ':params'} node={node} onFork={node => menuDuplicate(node)}/>
+        <window.NodeInspector key={node.id + ':params'} node={node} onFork={forkThroughCanvas}/>
 
         {/* Date breakpoint */}
         <div style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.14em' }}>
@@ -8925,15 +8942,20 @@ const SettingsWorkspaces = () => {
 };
 // Design #connectors "Never removed": programs without a connector yet stay in the list.
 const CONNECTORS_NOT_BUILT = [['Civil 3D','no connector yet'],['Navisworks','no connector yet'],['SketchUp · Archicad · IFC','no connector yet'],['Bluebeam · Enscape · Power BI','no connector yet'],['Dropbox · SharePoint · Slack · Airtable','no connector yet']];
-const HostEnableSwitch = ({ hostId, enabled, onChange }) => {
+const HostEnableSwitch = ({ hostId, enabled, enabledState, enabledFreshness, disabledReason, onChange }) => {
   const pendingState = React.useState(false);
   const pending = pendingState[0], setPending = pendingState[1];
   const errorState = React.useState('');
   const error = errorState[0], setError = errorState[1];
   const row = (window.ARCHHUB_LIVE?.connectors || LM_HOSTS || []).find(h => h && h.id === hostId) || {id:hostId};
   const name = hostDisplayName(row);
-  const checked = enabled !== false;
+  const state = enabledState || 'confirmed';
+  const checked = enabled === true;
+  const confirmedOn = checked && state === 'confirmed';
   const reason = name + ' is turned off in Settings \u203a Connectors.';
+  const freshness = Number.isFinite(Number(enabledFreshness)) ? Math.max(0, Math.floor(Number(enabledFreshness))) : null;
+  const freshnessText = state === 'last_confirmed' && freshness !== null ? ' Last confirmed ' + freshness + 's ago.' : '';
+  const writeDisabledReason = (disabledReason || row.enable_disabled_reason || row.write_disabled_reason || '') + freshnessText;
   const refreshRows = () => window.fetch('/tools').then(r => r.ok ? r.json() : null).catch(() => null).then(tools => {
     if (tools && Array.isArray(tools.tools)) {
       window.ARCHHUB_TOOL_HUB = {...(window.ARCHHUB_TOOL_HUB || {}), ...tools};
@@ -8946,7 +8968,7 @@ const HostEnableSwitch = ({ hostId, enabled, onChange }) => {
     return loadCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS);
   });
   const toggle = () => {
-    if (pending || typeof window.fetch !== 'function') return;
+    if (pending || writeDisabledReason || typeof window.fetch !== 'function') return;
     const session = window.__archhubSession || {};
     const next = !checked;
     setPending(true);
@@ -8965,13 +8987,14 @@ const HostEnableSwitch = ({ hostId, enabled, onChange }) => {
   return (
     <span style={{ display:'inline-flex', alignItems:'center', gap:8, minWidth:0 }}>
       <button type="button" role="switch" aria-checked={checked ? 'true' : 'false'} aria-label={'Turn ' + name + ' on/off'}
-        disabled={pending} onClick={toggle} style={{
-          width:34, height:18, borderRadius:9, border:`1px solid ${checked ? LM.ok : LM.line}`,
-          background:checked ? LM.ok : LM.bgPanel, padding:2, display:'inline-flex',
-          justifyContent:checked ? 'flex-end' : 'flex-start', alignItems:'center', cursor:pending ? 'wait' : 'pointer',
+        disabled={pending || !!writeDisabledReason} onClick={toggle} style={{
+          width:34, height:18, borderRadius:9, border:`1px solid ${confirmedOn ? LM.ok : LM.line}`,
+          background:confirmedOn ? LM.ok : LM.bgPanel, padding:2, display:'inline-flex',
+          justifyContent:checked ? 'flex-end' : 'flex-start', alignItems:'center', cursor:pending ? 'wait' : writeDisabledReason ? 'not-allowed' : 'pointer',
         }}>
         <span aria-hidden="true" style={{ width:12, height:12, borderRadius:'50%', background:checked ? '#fff' : LM.inkMuted, display:'block' }}/>
       </button>
+      {writeDisabledReason && <span role="status" style={{ fontSize:10.5, color:LM.inkMuted, lineHeight:1.3, maxWidth:220 }}>{writeDisabledReason}</span>}
       {!checked && <span role="status" style={{ fontSize:10.5, color:LM.inkMuted, lineHeight:1.3, maxWidth:220 }}>{reason}</span>}
       {error && <span role="alert" style={{ fontSize:10.5, color:LM.err || LM.warn, lineHeight:1.3, maxWidth:220 }}>{error}</span>}
     </span>
@@ -9041,7 +9064,9 @@ const SettingsHosts = () => {
               <button type="button" onClick={e => startHost(h, e.currentTarget)}
                 style={{ ...smallBtn(), padding:'5px 10px' }}>Start</button>
             )}
-            <HostEnableSwitch hostId={h.id} enabled={h.enabled !== false}
+            <HostEnableSwitch hostId={h.id} enabled={h.enabled === true}
+              enabledState={h.enabled_state} enabledFreshness={h.enabled_freshness_seconds}
+              disabledReason={h.enable_disabled_reason || h.write_disabled_reason || ''}
               onChange={row => { Object.assign(h, row); catalogueChanged(); }}/>
           </div>
         );

@@ -672,19 +672,26 @@ function NodeInspector({ node, onFork }) {
       await pmFlushParameters();
       const forkSource = {...node, params:(node.params || []).map(row =>
         row && row.k && Object.prototype.hasOwnProperty.call(rec.vals, row.k) ? {...row, v:rec.vals[row.k]} : row)};
-      if (typeof onFork === 'function') await onFork(forkSource);
+      let forkResult = '';
+      if (typeof onFork === 'function') forkResult = await onFork(forkSource);
+      else if (typeof window.__archhubDuplicateNode === 'function') forkResult = await window.__archhubDuplicateNode(forkSource);
       else if (typeof window.ARCHHUB_NODE_CREATE === 'function') {
         const params = Object.fromEntries((forkSource.params || []).filter(row => row.k && row.k !== 'seed').map(row => [row.k, row.v ?? '']));
         const created = await window.ARCHHUB_NODE_CREATE({title:(node.title || node.engine || node.id) + ' copy', engine:node.engine, x:(node.x || 200) + 40, y:(node.y || 200) + 40, params});
-        if (created && created.ok === false) throw new Error(created.error || 'The fork was refused.');
+        if (created && created.ok === false) throw new Error(String(created.error || 'The fork was refused.').split(/\r?\n/)[0]);
+        const createdId = created?.node?.id || created?.id || created?.node_id || created?.root;
+        if (!createdId) throw new Error('Fork not confirmed');
+        if (typeof window.__archhubRefreshCanvasInPlace === 'function') await window.__archhubRefreshCanvasInPlace();
+        if (typeof window.__archhubSelectNodeById === 'function') window.__archhubSelectNodeById(createdId);
+        forkResult = 'Fork placed.';
       } else {
         throw new Error('Fork is unavailable in this view.');
       }
       persistence.runError = '';
-      persistence.result = 'Fork placed.';
+      persistence.result = forkResult || 'Fork placed.';
       pmNotify(persistence);
     } catch (error) {
-      persistence.runError = error?.message || 'Fork failed.';
+      persistence.runError = String(error?.message || 'Fork failed.').split(/\r?\n/)[0];
       persistence.result = '';
       pmNotify(persistence);
     }

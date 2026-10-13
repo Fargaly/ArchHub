@@ -137,7 +137,7 @@ async function mount({focusId = null, history = null, nodes = NODES(), wires = W
   };
   dom.window.ARCHHUB_RETRACT = async rootId => { calls.push(['retract', rootId]); return {ok:true}; };
   dom.window.ARCHHUB_RUN = async () => { calls.push(['run']); return {ok:true, display:{}, pending:{}}; };
-  dom.window.ARCHHUB_NODE_CREATE = async spec => { calls.push(['create', JSON.parse(JSON.stringify(spec))]); return {ok:true}; };
+  dom.window.ARCHHUB_NODE_CREATE = async spec => { calls.push(['create', JSON.parse(JSON.stringify(spec))]); return {ok:true, id:'created-node'}; };
   const context = vm.createContext({React, LM, window:dom.window, document:dom.window.document,
     useStudioProjection:() => snapshot, LM_GRAPH:{nodes:[], wires:[]}, studioCanvasScope:() => 'scope',
     studioCategory:cat => ({col:'token-cat', icon:'+', label:String(cat).toUpperCase()}), WIRE:{},
@@ -311,6 +311,18 @@ test('M4: Duplicate places the same engine card with its rows beside it', async 
     await view.rightClick(view.card('d'));
     assert.equal(view.row('Duplicate').disabled, true, 'a card with no engine cannot be copied');
     assert.match(view.row('Duplicate').title, /no engine/);
+  } finally { await view.close(); }
+});
+
+test('M4b: Duplicate refuses an unconfirmed create without retrying', async () => {
+  const view = await mount();
+  try {
+    view.win.ARCHHUB_NODE_CREATE = async spec => { view.calls.push(['create-null', JSON.parse(JSON.stringify(spec))]); return null; };
+    await view.rightClick(view.card('a'));
+    await view.click(view.row('Duplicate'));
+    await view.settle(5);
+    assert.equal(view.calls.filter(call => call[0] === 'create-null').length, 1);
+    assert.match(view.toast(), /Fork not confirmed/);
   } finally { await view.close(); }
 });
 

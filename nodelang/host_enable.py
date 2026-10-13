@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import re
+import queue
+import threading
+import time
 from collections.abc import Iterable, Mapping
 
 from .cell_protocols import compose_relation_cells, read_relation
@@ -12,6 +15,14 @@ from .unified_authority import (
     validate_command_participants,
 )
 from .universal_cell import Cell, InvalidCell, NULL_CELL_ID
+
+
+OWNER_STARTING_REASON = "Can't change this right now: ArchHub's graph service is starting."
+OWNER_UNAVAILABLE_REASON = "Can't change this right now: ArchHub's graph service is unavailable."
+OWNER_TIMED_OUT_REASON = "Can't change this right now: ArchHub's graph service timed out."
+HOST_ENABLE_OWNER_DEADLINE_SECONDS = 1.5
+_HOST_ENABLE_CACHE_LOCK = threading.Lock()
+_HOST_ENABLE_CACHE: dict[int, dict[str, dict[str, object]]] = {}
 
 
 def _part(value: str) -> str:
@@ -148,6 +159,60 @@ def authority_host_enabled(authority, host_id: str, *, name: str | None = None) 
     return True if value is None else _decode_bool(snapshot.cells[value].atom)
 
 
+def _owner_error_reason(exc: BaseException) -> str:
+    if isinstance(exc, TimeoutError):
+        return OWNER_TIMED_OUT_REASON
+    text = str(exc).lower()
+    if "starting" in text:
+        return OWNER_STARTING_REASON
+    if isinstance(exc, (ConnectionError, OSError)) or any(
+        token in text for token in ("unavailable", "refused", "connect", "offline")
+    ):
+        return OWNER_UNAVAILABLE_REASON
+    return OWNER_UNAVAILABLE_REASON
+
+
+def _read_enabled_states(authority, host_ids: Iterable[str],
+                         deadline: float) -> tuple[dict[str, bool] | None, str | None]:
+    host_ids = [canonical_host_id(host_id) for host_id in host_ids]
+    results: queue.Queue[tuple[str, object]] = queue.Queue(maxsize=1)
+
+    def worker() -> None:
+        try:
+            snapshot = authority.store.snapshot()
+            states: dict[str, bool] = {}
+            for host_id in host_ids:
+                value = _enabled_value_cell(snapshot, authority, host_id)
+                states[host_id] = True if value is None else _decode_bool(snapshot.cells[value].atom)
+            results.put(("ok", states))
+        except BaseException as exc:  # noqa: BLE001
+            results.put(("error", exc))
+
+    thread = threading.Thread(target=worker, name="host-enable-owner-read", daemon=True)
+    thread.start()
+    try:
+        kind, payload = results.get(timeout=max(0.0, float(deadline)))
+    except queue.Empty:
+        return None, OWNER_TIMED_OUT_REASON
+    if kind == "ok":
+        return payload, None
+    return None, _owner_error_reason(payload)
+
+
+def _cached_state(authority, host_id: str) -> dict[str, object] | None:
+    with _HOST_ENABLE_CACHE_LOCK:
+        value = _HOST_ENABLE_CACHE.get(id(authority), {}).get(canonical_host_id(host_id))
+        return dict(value) if value else None
+
+
+def _remember_states(authority, states: Mapping[str, bool]) -> None:
+    now = time.time()
+    with _HOST_ENABLE_CACHE_LOCK:
+        cache = _HOST_ENABLE_CACHE.setdefault(id(authority), {})
+        for host_id, enabled in states.items():
+            cache[canonical_host_id(host_id)] = {"enabled": bool(enabled), "confirmed_at": now}
+
+
 def _host_enable_patch(authority, snapshot, host_id: str, enabled: bool, name: str):
     create: dict[str, Cell] = {}
     replace: dict[str, Cell] = {}
@@ -232,8 +297,10 @@ def disabled_reason(authority, host_id: str, *, name: str | None = None) -> str 
     return "%s is turned off in Settings \u203a Connectors." % (name or display_host_name(host_id))
 
 
-def annotate_host_rows(authority, rows: Iterable[Mapping[str, object]] | None) -> list[dict[str, object]]:
+def annotate_host_rows(authority, rows: Iterable[Mapping[str, object]] | None, *,
+                       owner_deadline: float = HOST_ENABLE_OWNER_DEADLINE_SECONDS) -> list[dict[str, object]]:
     annotated = []
+    pending: list[tuple[str, str, dict[str, object]]] = []
     for row in rows or ():
         if not isinstance(row, Mapping):
             continue
@@ -242,8 +309,28 @@ def annotate_host_rows(authority, rows: Iterable[Mapping[str, object]] | None) -
             continue
         name = str(row.get("name") or display_host_name(host_id))
         item = dict(row)
-        item["enabled"] = authority_host_enabled(authority, canonical_host_id(host_id), name=name)
+        pending.append((canonical_host_id(host_id), name, item))
         annotated.append(item)
+    states, reason = _read_enabled_states(authority, [host_id for host_id, _name, _item in pending], owner_deadline)
+    if states is not None:
+        _remember_states(authority, states)
+    now = time.time()
+    for host_id, _name, item in pending:
+        if states is not None:
+            item["enabled"] = bool(states.get(host_id, True))
+            item["enabled_state"] = "confirmed"
+            item["enabled_freshness_seconds"] = 0
+            item.pop("enable_disabled_reason", None)
+            continue
+        cached = _cached_state(authority, host_id)
+        if cached is not None:
+            item["enabled"] = bool(cached["enabled"])
+            item["enabled_state"] = "last_confirmed"
+            item["enabled_freshness_seconds"] = max(0, int(now - float(cached["confirmed_at"])))
+        else:
+            item["enabled"] = False
+            item["enabled_state"] = "unknown"
+        item["enable_disabled_reason"] = reason or OWNER_UNAVAILABLE_REASON
     return annotated
 
 
@@ -256,6 +343,9 @@ def find_annotated_host(authority, rows: Iterable[Mapping[str, object]], host_id
 
 
 __all__ = [
+    "OWNER_STARTING_REASON",
+    "OWNER_TIMED_OUT_REASON",
+    "OWNER_UNAVAILABLE_REASON",
     "annotate_host_rows",
     "authority_host_enabled",
     "canonical_host_id",

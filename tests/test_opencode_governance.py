@@ -161,19 +161,36 @@ def test_real_opencode_identity_required_not_runtime_alias():
 
 
 def test_custody_retains_exact_native_parent_and_checks_session(tmp_path):
-    expected=tmp_path / "Programs/@opencode-aidesktop/OpenCode.exe"
+    desktop=tmp_path / "Programs/@opencode-aidesktop/OpenCode.exe"
+    desktop.parent.mkdir(parents=True)
+    desktop.write_bytes(b"MZ")
+    appdata=tmp_path / "roaming"
+    cli=appdata / "npm/node_modules/opencode-ai/bin/opencode.exe"
+    cli.parent.mkdir(parents=True)
+    cli.write_bytes(b"MZ")
+    (cli.parent.parent / "package.json").write_text('{"name":"opencode-ai"}',encoding="utf-8")
+    env={"LOCALAPPDATA":str(tmp_path),"APPDATA":str(appdata),"USERPROFILE":str(tmp_path/"home"),
+         "PATH":str(appdata/"npm")}
+    for expected in (desktop,cli):
+        own=Process(os.getpid(),1,987,str(tmp_path/"python.exe"),str(tmp_path),"ses_real123")
+        parent=Process(987,2,986,str(expected.resolve()),str(tmp_path),"")
+        rows={own.pid:own,parent.pid:parent};seen=[]
+        custody=OpenCodeProcessCustody("ses_real123", environment=env,
+            process_reader=rows.__getitem__, session_reader=lambda *args:seen.append(args))
+        assert seen==[(parent,"ses_real123",str(tmp_path))]
+        rows[parent.pid]=replace(parent,created=3)
+        with pytest.raises(RuntimeError,match="custody changed"):custody.check()
     own=Process(os.getpid(),1,987,str(tmp_path/"python.exe"),str(tmp_path),"ses_real123")
-    parent=Process(987,2,986,str(expected.resolve()),str(tmp_path),"")
-    rows={own.pid:own,parent.pid:parent};seen=[]
-    custody=OpenCodeProcessCustody("ses_real123", environment={"LOCALAPPDATA":str(tmp_path)},
-        process_reader=rows.__getitem__, session_reader=lambda *args:seen.append(args))
-    assert seen==[(parent,"ses_real123",str(tmp_path))]
-    rows[parent.pid]=replace(parent,created=3)
-    with pytest.raises(RuntimeError,match="custody changed"):custody.check()
-    rows[parent.pid]=replace(parent,executable=str(tmp_path/"foreign.exe"))
+    parent=Process(987,2,986,str(tmp_path/"foreign.exe"),str(tmp_path),"")
+    rows={own.pid:own,parent.pid:parent}
     with pytest.raises(RuntimeError,match="observed installed parent"):
-        OpenCodeProcessCustody("ses_real123", environment={"LOCALAPPDATA":str(tmp_path)},
+        OpenCodeProcessCustody("ses_real123", environment=env,
             process_reader=rows.__getitem__,session_reader=lambda *args:pytest.fail("foreign parent reached session read"))
+    parent=Process(987,2,986,str(cli.resolve()),str(tmp_path),"")
+    rows={own.pid:replace(own,session_id="ses_other"),parent.pid:parent}
+    with pytest.raises(RuntimeError,match="observed installed parent"):
+        OpenCodeProcessCustody("ses_real123", environment=env,
+            process_reader=rows.__getitem__,session_reader=lambda *args:pytest.fail("session mismatch reached session read"))
 
 
 @pytest.mark.parametrize("case",["success","deny","uncertain","receipt-deny","mismatch","unknown-tool"])
@@ -383,7 +400,7 @@ await run.close().catch(()=>{});
     assert result.returncode==0,result.stderr
 
 
-def test_never_bound_pre_admission_refusal_can_reenroll_only_once(tmp_path):
+def test_never_bound_pre_admission_refusal_can_reenroll_until_owner_accepts(tmp_path):
     module=(Path(__file__).resolve().parents[1]/"nodelang/session_link/opencode-governance.mjs").as_uri()
     worker=tmp_path/'refuse-twice-worker.mjs'
     marker=tmp_path/'count.txt'
@@ -403,12 +420,12 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
 });'''.replace('MARKER',json.dumps(str(marker))),encoding='utf-8')
     code='''import assert from 'node:assert/strict';import {createNativeGateRunner} from MODULE;
 const run=createNativeGateRunner(process.execPath,[WORKER]);
-const event={session_id:'ses_once',cwd:process.cwd(),tool_use_id:'a'};
+const event={session_id:'ses_once',cwd:process.cwd(),tool_use_id:'a',hook_event_name:'PreToolUse'};
 assert.equal((await run(event)).allow,false);
 await new Promise(resolve=>setTimeout(resolve,80));
 assert.equal((await run({...event,tool_use_id:'b'})).allow,false);
 await new Promise(resolve=>setTimeout(resolve,80));
-assert.throws(()=>run({...event,tool_use_id:'c'}),/quarantined; no duplicate enrollment/);
+assert.equal((await run({...event,tool_use_id:'c'})).allow,true);
 await run.close().catch(()=>{});
 '''.replace('MODULE',json.dumps(module)).replace('WORKER',json.dumps(str(worker)))
     result=subprocess.run([shutil.which('node'),'--input-type=module'],input=code,text=True,capture_output=True,timeout=10)
@@ -430,12 +447,12 @@ if(process.argv.includes('--reconcile')){
 readline.createInterface({input:process.stdin}).on('line',line=>{
  const r=JSON.parse(line),e=r.event;
  console.log(JSON.stringify({request_id:r.request_id,session_id:e.session_id,tool_use_id:e.tool_use_id,
-  admitted:false,decision:'deny',error:'active persistent installed owner is required (stopped)'}));
+  admitted:false,decision:'deny',never_bound:true,error:'active persistent installed owner is required (stopped)'}));
  setTimeout(()=>process.exit(3),20);
 });'''.replace('LOG',json.dumps(str(log))),encoding='utf-8')
     code='''import assert from 'node:assert/strict';import {createNativeGateRunner} from MODULE;
 const run=createNativeGateRunner(process.execPath,[WORKER],{expectedSessions:{ses_existing:ACTOR}});
-const event={session_id:'ses_existing',cwd:process.cwd(),tool_use_id:'a'};
+const event={session_id:'ses_existing',cwd:process.cwd(),tool_use_id:'a',hook_event_name:'PreToolUse'};
 assert.equal((await run(event)).allow,false);
 await new Promise(resolve=>setTimeout(resolve,100));
 await assert.rejects(run({...event,tool_use_id:'fresh'}),/native session quarantined; no duplicate enrollment; reconcile owner binding still retained/);

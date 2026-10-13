@@ -22,12 +22,19 @@ const args=process.argv.slice(2).filter(a=>a!=='--reconcile');
 const [scriptPath,counter]=args;
 const actor='app:agent-session:runtime:'+'a'.repeat(32);
 if(process.argv.includes('--reconcile')){
+ const raw=JSON.parse(fs.readFileSync(scriptPath,'utf8'));
+ if(raw.reconcile==='unknown'){
+  process.stdout.write(JSON.stringify({kind:'reconciled',session_id:process.env.OPENCODE_SESSION_ID,
+   agent_session:process.env.ARCHHUB_EXPECTED_AGENT_SESSION,outcome:'unknown',reason:'retained actor still requires owner probe'})+'\n');
+  process.exit(0);
+ }
  process.stdout.write(JSON.stringify({kind:'reconciled',session_id:process.env.OPENCODE_SESSION_ID,
   agent_session:process.env.ARCHHUB_EXPECTED_AGENT_SESSION,outcome:'released',reason:'owner holds no binding'})+'\n');
  process.exit(0);
 }
 const spawn=fs.existsSync(counter)?Number(fs.readFileSync(counter,'utf8')):0;fs.writeFileSync(counter,String(spawn+1));
-const plan=JSON.parse(fs.readFileSync(scriptPath,'utf8'))[spawn]||[];
+const raw=JSON.parse(fs.readFileSync(scriptPath,'utf8'));
+const plan=(Array.isArray(raw)?raw:raw.frames)[spawn]||[];
 let frame=0;
 readline.createInterface({input:process.stdin}).on('line',line=>{
  const f=JSON.parse(line),event=f.event,kind=plan[frame++]||'allow';
@@ -36,14 +43,16 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
  const error={decision:'deny',error:'native admission or receipt unavailable; no retry',
   reason:'MachineTransportError: an active persistent installed owner is required'};
  const other='app:agent-session:runtime:'+'b'.repeat(32);
-  const reply={allow:{...base,decision:'allow',...bound},
+ const reply={allow:{...base,decision:'allow',...bound},
    neverbound:{...base,...error,admitted:false,never_bound:true},
+   neverboundexit:{...base,...error,admitted:false,never_bound:true},
    unbound:{...base,...error,admitted:false},
   error:{...base,...error},
   nodecision:{...base,admitted:false,error:'x'},
   wrongactor:{...base,decision:'allow',agent_session:other,continued:true},
   unboundwrongactor:{...base,...error,admitted:false,agent_session:other}}[kind];
  process.stdout.write(JSON.stringify(reply)+'\n');
+ if(kind==='neverboundexit')process.exit(0);
 }).on('close',()=>process.exit(0));
 """
 
@@ -70,13 +79,24 @@ def _run(tmp_path, spawns, lineage, body):
     assert result.returncode == 0, result.stderr[-3000:]
 
 
-def test_a_proven_unbound_refusal_denies_with_its_reason_and_the_continuation_recovers(tmp_path):
-    _run(tmp_path, [["neverbound"], ["allow"]], True, r"""
+def test_a_proven_unbound_refusal_without_retained_lineage_denies_and_recovers(tmp_path):
+    _run(tmp_path, [["neverbound"], ["allow"]], False, r"""
 const first=await call('c-1');
 assert.equal(first.allow,false);
 assert.match(first.reason,/native owner could not decide: .*active persistent installed owner is required/);
 await settle();
 assert.equal((await call('c-2')).allow,true,'custody reconciled, then a fresh worker continues the actor');
+""")
+
+
+def test_a_never_bound_refusal_with_retained_lineage_keeps_custody_and_does_not_replay(tmp_path):
+    _run(tmp_path, {"frames": [["neverboundexit"], ["allow"]], "reconcile": "unknown"}, True, r"""
+const first=await call('c-1');
+assert.equal(first.allow,false);
+assert.match(first.reason,/native owner could not decide: .*active persistent installed owner is required/);
+await settle();
+await assert.rejects(call('c-2'),/native session quarantined; no duplicate enrollment; reconcile retained actor still requires owner probe/);
+assert.equal(Number(await import('node:fs').then(fs=>fs.readFileSync(COUNTER,'utf8'))),1,'no replacement worker spawned');
 """)
 
 

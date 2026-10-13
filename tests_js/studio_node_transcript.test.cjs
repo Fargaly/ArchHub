@@ -13,6 +13,7 @@ const lmPath = process.env.ARCHHUB_WORKSPACE_TEST_PATH ||
   path.join(__dirname, '../nodelang/studio/studio-lm.jsx');
 const dir = path.dirname(lmPath);
 const source = fs.readFileSync(lmPath, 'utf8');
+const paramsSource = fs.readFileSync(path.join(dir, 'studio-params.jsx'), 'utf8');
 const html = fs.readFileSync(path.join(dir, 'studio.html'), 'utf8');
 const authority = fs.readFileSync(path.join(dir, 'studio-authority.js'), 'utf8');
 
@@ -27,6 +28,9 @@ const conversationSlice = () => slice('const NodeModelConversation =', '// One c
   "\nconst CHAT_TURN_EVENT = 'archhub:chat-turn';\n";
 // Add the real rail gate and its nearby dependencies when a test mounts NodeRail.
 const railSlice = () => slice('const NodeModelConversation =', '\nconst ConversationRail =');
+const canvasSlice = () => slice('const SOCKET_TOP =', '\nconst NodeStateDot =');
+const refreshSlice = () => slice('const studioRefreshCanvasInPlace =', '\nconst StudioLM =');
+const shortcutSlice = () => slice('const studioShortcut =', '\n// An ordinary canvas edit');
 
 // The real helpers this slice actually depends on, so the model gate is exercised without
 // compiling the unrelated generation-default helper block into every VM mount.
@@ -77,6 +81,145 @@ async function mountEnv(fn, opts = {}) {
   }
 }
 const tick = async React => { await React.act(async () => { await new Promise(r => setTimeout(r, 0)); }); };
+
+async function mountForkRail(kind, createResult) {
+  const {JSDOM} = await import('jsdom');
+  const React = require('react');
+  const {createRoot} = require('react-dom/client');
+  const {transformSync} = require('esbuild');
+  const dom = new JSDOM('<div id="root"></div>', {url:'http://127.0.0.1:53915/'});
+  for (const [name, value] of [['offsetWidth', 210], ['offsetHeight', 110]]) {
+    Object.defineProperty(dom.window.HTMLElement.prototype, name, {configurable:true, get() { return value; }});
+  }
+  dom.window.HTMLElement.prototype.getBoundingClientRect = () => ({left:0, top:0, width:1200, height:800, right:1200, bottom:800});
+  const oldWindow = global.window, oldDocument = global.document;
+  const win = dom.window; global.window = win; global.document = win.document; global.IS_REACT_ACT_ENVIRONMENT = true;
+  const created = []; let refreshes = 0;
+  const node = {id:'node-a', title:'Alpha', engine:'calc', live:true, cat:'ai', x:50, y:70, w:210, h:110, sub:'', ins:[], outs:[], messages:[],
+    has_conversation:true, conversation_root:'conv-a', params:[{k:'value', v:'7'}, {k:'seed', v:'skip'}]};
+  let snapshot = {graph:{nodes:[node], wires:[]}, canvas:{revision:3,
+    scope:{current:'scope-a', trail:[{root:'scope-a'}]}, authorization:{subject:'founder', session:'s'}}};
+  win.ARCHHUB_NODE_CREATE = async spec => {
+    created.push(JSON.parse(JSON.stringify(spec)));
+    const result = typeof createResult === 'function' ? createResult(spec) : createResult;
+    if (result && result.ok !== false) {
+      const createdId = result?.node?.id || result?.id || result?.node_id || result?.root;
+      if (createdId) snapshot = {...snapshot, graph:{...snapshot.graph,
+        nodes:[...snapshot.graph.nodes.filter(held => held.id !== createdId), {...node, id:createdId, title:spec.title, x:spec.x, y:spec.y}]}};
+    }
+    return result;
+  };
+  win.ARCHHUB_EXISTING_WORKSHOP = {
+    getSnapshot:() => ({topology:snapshot}),
+    refreshTopologyCanvas:async () => { refreshes += 1; return snapshot; },
+  };
+  win.PM_TYPES = {text:{label:'Text', wire:false}, number:{label:'Number', wire:false}};
+  win.pmType = type => win.PM_TYPES[type] || win.PM_TYPES.text;
+  win.PM_WIRE = {};
+  win.Socket = () => React.createElement('span', {'data-stub':'socket'});
+  const LM = new Proxy({}, {get:(_, k) => k === 'sp' || k === 'rad' ? new Proxy({}, {get:()=>4}) : 'token-' + String(k)});
+  const InlineAsk = () => React.createElement('textarea', {'data-stub':'inlineask'});
+  const HoverBtn = ({onClick, disabled, children}) => React.createElement('button', {onClick, disabled}, children);
+  const PM = new Proxy({}, {get:(_, k) => k === 'rad' ? new Proxy({}, {get:()=>4}) : 'pm-' + String(k)});
+  win.PM = PM; win.AH = PM;
+  const context = vm.createContext({React, LM, PM, InlineAsk, HoverBtn, window:win, document:win.document,
+    useStudioProjection:() => snapshot, LM_GRAPH:{nodes:[], wires:[]}, WIRE:{}, CANVAS_VIEWS:new Map(), LM_SESSIONS:[],
+    CAT:{ai:{col:'#E0794A', icon:'A', label:'AI'}},
+    studioCategory:() => ({col:'#E0794A', icon:'A', label:'AI', role:''}),
+    modelRoute: m => String((m && (m.routed || m.route)) || ''),
+    modelDisplayName: m => String((m && (m.name || m.routed || m.route)) || ''),
+    routeReadiness: () => null, generationRequestOptions: () => ({}),
+    agentAnswerText: answer => typeof answer === 'string' ? answer : String(answer?.answer || answer?.text || ''),
+    agentDeliveryState: result => result?.delivery?.state || null,
+    NodeBody:() => null,
+    CanvasToolbar:() => null, FloatingComposer:() => null, CanvasAddBox:() => null, MiniMap:() => null,
+    smallBtn:() => ({}), toolBtn:() => ({}), kbd:() => ({}), studioCanvasScope:() => 'scope-a',
+    setInterval, clearInterval, setTimeout:win.setTimeout.bind(win), clearTimeout:win.clearTimeout.bind(win),
+    ResizeObserver:undefined});
+  const inspectorStart = paramsSource.indexOf('function NodeInspector(');
+  const paramDeps = paramsSource.slice(0, inspectorStart);
+  const inspector = paramsSource.slice(inspectorStart, paramsSource.indexOf('Object.assign(window', inspectorStart));
+  const rails = slice('const NodeModelConversation =', '// ──────────────────────── SETTINGS');
+  vm.runInContext(transformSync(paramDeps + inspector + '\nglobalThis.NodeInspector = NodeInspector;',
+    {loader:'jsx', format:'cjs'}).code, context);
+  win.NodeInspector = context.NodeInspector;
+  vm.runInContext(transformSync(refreshSlice() + shortcutSlice() + canvasSlice() + '\nglobalThis.NodeCanvas = NodeCanvas;',
+    {loader:'jsx', format:'cjs'}).code, context);
+  vm.runInContext(transformSync(RAIL_HELPERS + rails + '\nglobalThis.NodeRail = NodeRail; globalThis.ConversationRail = ConversationRail;',
+    {loader:'jsx', format:'cjs'}).code, context);
+  const root = createRoot(win.document.getElementById('root'));
+  const Component = kind === 'conversation' ? context.ConversationRail : context.NodeRail;
+  const render = async ({canvas = true} = {}) => React.act(async () => root.render(React.createElement(React.Fragment, null,
+    canvas && React.createElement(context.NodeCanvas, {focusId:'node-a', setFocusId:() => {}, setLibraryOpen:() => {},
+      userNodes:[], addNodeFromLibrary:() => {}, model:null}),
+    React.createElement(Component, {node, scope:'scope-a', openConversation:()=>{}}))));
+  await render();
+  const clickFork = async () => {
+    let button = [...win.document.querySelectorAll('button')].find(b => b.getAttribute('title') === 'Fork this node onto the canvas' || b.textContent === '⑂');
+    if (!button) {
+      const properties = [...win.document.querySelectorAll('button')].find(b => b.textContent === 'Properties');
+      if (properties) await React.act(async () => { properties.click(); await new Promise(r => setTimeout(r, 0)); });
+      button = [...win.document.querySelectorAll('button')].find(b => b.getAttribute('title') === 'Fork this node onto the canvas' || b.textContent === '⑂');
+    }
+    assert.ok(button, kind + ' renders the real Fork control: ' + [...win.document.querySelectorAll('button')].map(b => (b.getAttribute('title') || '') + ':' + b.textContent).join('|'));
+    await React.act(async () => { button.click(); await new Promise(r => setTimeout(r, 0)); });
+  };
+  const close = async () => {
+    await React.act(async () => root.unmount());
+    win.close(); global.window = oldWindow; global.document = oldDocument; delete global.IS_REACT_ACT_ENVIRONMENT;
+  };
+  return {win, created, get refreshes() { return refreshes; }, clickFork, render, close,
+    selectedCard:id => win.document.querySelector('.lm-node[data-node-id="' + id + '"][data-selected="true"]')};
+}
+
+test('NodeRail and ConversationRail Fork use the canvas duplicate operation and select the confirmed node', async () => {
+  for (const kind of ['node', 'conversation']) {
+    const view = await mountForkRail(kind, {ok:true, id:'node-copy'});
+    try {
+      await view.clickFork();
+      assert.equal(view.created.length, 1, kind + ' creates once');
+      assert.equal(view.refreshes, 1, kind + ' refreshes the canvas once');
+      assert.ok(view.selectedCard('node-copy'), kind + ' selects the confirmed node');
+      assert.match(view.win.document.body.textContent, /Fork placed\./);
+    } finally { await view.close(); }
+  }
+});
+
+test('NodeRail Fork refusal shows one-line error and selects nothing', async () => {
+  const view = await mountForkRail('node', {ok:false, error:'refused by policy\nstack'});
+  try {
+    await view.clickFork();
+    assert.equal(view.created.length, 1);
+    assert.equal(view.refreshes, 0);
+    assert.equal(view.selectedCard('node-copy'), null);
+    assert.match(view.win.document.body.textContent, /refused by policy/);
+    assert.doesNotMatch(view.win.document.body.textContent, /stack/);
+  } finally { await view.close(); }
+});
+
+test('ConversationRail Fork treats a null create as unconfirmed without retry', async () => {
+  const view = await mountForkRail('conversation', null);
+  try {
+    await view.clickFork();
+    assert.equal(view.created.length, 1);
+    assert.equal(view.refreshes, 0);
+    assert.equal(view.selectedCard('node-copy'), null);
+    assert.match(view.win.document.body.textContent, /Fork not confirmed/);
+  } finally { await view.close(); }
+});
+
+test('NodeRail Fork reports unavailable after NodeCanvas unmounts', async () => {
+  const view = await mountForkRail('node', {ok:true, id:'node-copy'});
+  try {
+    assert.equal(typeof view.win.__archhubDuplicateNode, 'function');
+    await view.render({canvas:false});
+    assert.equal(view.win.__archhubDuplicateNode, undefined);
+    await view.clickFork();
+    assert.equal(view.created.length, 0);
+    assert.equal(view.refreshes, 0);
+    assert.match(view.win.document.body.textContent, /Fork is unavailable in this view\./);
+  } finally { await view.close(); }
+});
 
 // ── projection fields reach the client node (studio-authority.js map) ──
 test('the clean canvas node carries conversation_root and has_conversation', () => {

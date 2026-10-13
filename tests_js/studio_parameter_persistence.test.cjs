@@ -80,7 +80,7 @@ test('the inspector fork action uses the duplicate path and reports placement', 
   }});
   const panel = make({id:'node-fork', title:'Alpha', engine:'calc', live:true, x:50, y:70,
     params:[{k:'value', v:'old', rel:'r-value'}, {k:'seed', v:'s'}]}, {
-    onFork: async node => forked.push(node),
+    onFork: async node => { forked.push(node); return 'Fork placed.'; },
   });
   panel.set('value', 'current');
   await panel.forkNode();

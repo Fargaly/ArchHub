@@ -7,23 +7,18 @@ to "unregistered"; no file is ever touched and the history stays in the graph.
 
 The signing key's identity is graph-authoritative: the first registration records
 the SHA-256 of the key's public half as the one "Workspace roots signing key"
-instance, and every later signature is made only by the key with that fingerprint
-(CngSigner(pinned_fingerprint=...)). The governance hooks read a signed snapshot
-projected from these records, plus a pin file carrying the same fingerprint; they
-activate no root unless the snapshot verifies under the key the pin names.
+instance, and later writes sign the projected snapshot before it commits. The
+default writer is an app-held ECDSA P-256 key stored DPAPI current-user under
+ArchHub's app state; its public half is pinned beside the registry so verifiers
+never open a private key.
 
-Owner approval: the owner route can be reached by any local process, so the
-browser session alone never proves the owner asked. Every change signs the
-snapshot it will produce BEFORE it commits (owner_change); the Windows prompt of
-the protected key is the approval, and a declined prompt changes nothing.
+Legacy registries signed by the old CNG key remain valid because the pin carries
+the public blob needed to verify them. The next app write signs with the DPAPI key
+and updates the graph pin; it never opens the old CNG key.
 
 Limits (stated, not hidden):
 * Before the first registration nothing is pinned: a same-user process could
-  replace the named key then. Once pinned, a substitute key is refused.
-* An owner who approves a prompt they did not start approves that change.
-* The owner prompt is proven for key creation (silent finalize is refused); a
-  per-signature prompt for an existing key is checked from its UI policy, not
-  exercised.
+  replace the app key then. Once pinned, a substitute key is refused.
 * Only the state of a root is revised here. Other values are fixed at
   registration because no path in this module or its route revises them; the
   definition itself does not forbid it.
@@ -781,13 +776,16 @@ def _ecdsa_verify_blob(blob, payload, signature) -> bool:
 
 
 def _verify_blob(key_id, blob, version, payload, signature, verifier) -> bool:
-    if key_id == APP_KEY_ID:
+    if key_id in (KEY_ID, APP_KEY_ID):
         return version == 1 and _ecdsa_verify_blob(blob, payload, signature)
     return verifier.verify_blob(blob, key_id, version, payload, signature)
 
 
 def default_app_key_path(snapshot_path=None) -> Path:
-    return Path(snapshot_path or default_snapshot_path()).with_name("workspace-roots.app-key.dpapi")
+    if snapshot_path is not None:
+        return Path(snapshot_path).with_name("workspace-roots.app-key.dpapi")
+    base = os.environ.get("LOCALAPPDATA") or str(Path.home())
+    return Path(base) / "ArchHub" / "governance" / "workspace-roots.app-key.dpapi"
 
 
 _APP_KEY_PURPOSE = "archhub:workspace-roots:app-signing-key"
@@ -952,8 +950,6 @@ def boot_check(authority, catalogue, *, caller, verifier=None, snapshot_path=Non
     """Re-derive the projection from the graph and compare it with the hooks' files.
     A graph that never published the catalogue holds no roots (catalogue None)."""
     try:
-        from .workspace_roots_signing import CngVerifier
-
         if catalogue is None:
             roots, pin, key_id = (), None, KEY_ID
         else:
@@ -961,7 +957,7 @@ def boot_check(authority, catalogue, *, caller, verifier=None, snapshot_path=Non
             record = _key_record(authority, catalogue, caller=caller)
             key_id = (record or {}).get("key_id", KEY_ID)
         return verify_projection(snapshot_body(roots, pin, key_id=key_id),
-                                 verifier or CngVerifier(KEY_NAME),
+                                 verifier or AppWorkspaceRootVerifier(),
                                  snapshot_path=snapshot_path, pin_path=pin_path)
     except Exception as exc:  # noqa: BLE001 - a check that cannot answer is not a match
         return "unverifiable: " + type(exc).__name__
@@ -1038,18 +1034,14 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
                  signer_factory=None, fingerprint_of=None, verifier=None,
                  snapshot_path=None, pin_path=None, built_in=None, admission=None,
                  signing_key_id=KEY_ID, pin_mode=OWNER_OPENED, allow_key_migration=False) -> dict:
-    """List, register, unregister or republish, with the owner's key as the approval.
+    """List, register, unregister or republish, with a signed projection.
 
-    The snapshot a change will produce is signed BEFORE anything commits: the
-    Windows owner prompt is the approval, so a request the owner did not make
-    (any local process can reach a loopback route) changes nothing when it is
-    declined. This process never opens the key: the approving window offers its
-    public half (public_blob, plus a KEY_CHECK signature before the first pin) and
-    every check here is verify_blob over that blob. Signing happens outside `lock`;
-    the graph is re-read under it and the change is refused if it moved meanwhile.
+    The normal Settings route injects the app DPAPI signer, so a user picks a
+    folder and the app signs silently. Legacy prepared requests may still arrive
+    with a public blob and signature; those are verified from the carried blob and
+    never require opening a private key. Signing happens outside `lock`; the graph
+    is re-read under it and the change is refused if it moved meanwhile.
     """
-    from .workspace_roots_signing import CngVerifier, SigningUnavailable
-
     preparing = type(request) is dict and request.get("action") == "prepare"
     offer = {}
     ticket_in = None
@@ -1090,12 +1082,9 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
             or ((preparing or approval is not None) and "public_blob" not in offer)):
         raise WorkspaceRootRefused("unexpected workspace-roots fields")
     if action in _CHANGES and not preparing and approval is None and signer_factory is None:
-        # This process (the graph's owner) has no visible window: a key prompt it
-        # raised would never be seen and the change would hang. A change is approved
-        # in the ArchHub window (approve_in_this_window) and arrives signed. Only a
-        # court injects signer_factory to sign here.
+        # Direct owner calls without the app-injected signer are not Settings writes.
         raise WorkspaceRootRefused(NO_WINDOW)
-    verifier = verifier or CngVerifier(KEY_NAME)  # verify_blob only: never opens the key
+    verifier = verifier or AppWorkspaceRootVerifier()
     paths = {"snapshot_path": snapshot_path, "pin_path": pin_path}
     with lock:
         revision, roots, pin = read_state(authority, catalogue, caller=caller)
@@ -1118,10 +1107,7 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
     if pin is None and action == "republish":
         raise WorkspaceRootRefused("nothing is registered yet")
     if preparing or approval is not None:
-        # Approved in the visible desktop process. This process only verifies: the
-        # offered key must be the pinned one (or, before the first pin, prove itself
-        # with a KEY_CHECK signature), and the approval must verify under exactly that
-        # blob over the snapshot derived here from the graph as it is now.
+        # Legacy prepared request: verify only from the offered public blob.
         blob, new_pin, proven = _offered_key(offer, pin, verifier)
         if preparing:
             if not proven:
@@ -1175,7 +1161,7 @@ def owner_change(authority, catalogue, request, *, caller, operation_id, lock,
                 raise WorkspaceRootRefused("the signing key is not the pinned key")
             body = snapshot_body(predicted, new_pin, key_id=signing_key_id)
             signature = signer_factory(new_pin).sign(canonical(body))
-        except SigningUnavailable as exc:
+        except Exception as exc:  # noqa: BLE001 - signer factories normalize refusal here
             raise WorkspaceRootRefused("the owner did not approve: " + str(exc)) from exc
     with lock:
         _now, current, current_pin = read_state(authority, catalogue, caller=caller)
@@ -1225,9 +1211,7 @@ def read_registered_roots(verifier=None, *, snapshot_path=None, pin_path=None,
     The same trust as the hooks: the pin file names the key and carries its public
     half (which must hash to the pin), and the snapshot must name that fingerprint
     and verify under exactly that blob. The key store is never opened."""
-    from .workspace_roots_signing import CngVerifier
-
-    verifier = verifier or CngVerifier(KEY_NAME)
+    verifier = verifier or AppWorkspaceRootVerifier()
     try:
         document = json.loads(Path(snapshot_path or default_snapshot_path()).read_text(
             encoding="utf-8"))
@@ -1474,51 +1458,16 @@ def _reflects(request, body) -> bool:
 
 
 def approve_in_this_window(body, *, window_handle, forward=None, signer_factory=None) -> dict:
-    """Settings -> Workspaces Add/Remove/Republish from the desktop. THIS process (the
-    visible window) opens the owner's protected key -- never silently -- checks it is
-    non-exportable and owner-protected, and offers its public half; the graph's owner
-    prepares the exact snapshot for that key, this process signs it (the Windows
-    prompt is shown in front of `window_handle`), and the owner verifies the
-    signature under the offered blob before it commits. The owner never opens the
-    key. No window, no signature."""
-    from .workspace_roots_signing import CngSigner, SigningUnavailable
+    """Settings -> Workspaces Add/Remove/Republish from the desktop.
+
+    The app server owns the silent DPAPI app key and signs direct changes in
+    owner_change. This compatibility entry point therefore forwards the request
+    unchanged; it never opens the legacy CNG workspace key and never needs a
+    Windows credential prompt.
+    """
     forward = forward or forward_workspace_settings
-    if type(body) is not dict or body.get("action") not in _CHANGES or "signature" in body:
-        return forward(body)
-    if not window_handle:
-        raise WorkspaceRootRefused(NO_WINDOW)
-    if signer_factory is None:
-        def signer_factory(pinned):
-            return CngSigner(KEY_NAME, protect=True, pinned_fingerprint=pinned,
-                             window_handle=window_handle)
-    change = {key: value for key, value in body.items() if key != "command_id"}
-    try:
-        signer = signer_factory(None)
-        blob, offer = signer.public_blob(), {}
-        if blob is None:
-            offer["key_check"] = signer.sign(KEY_CHECK)  # creates the key: the owner prompt
-            blob = signer.public_blob()
-            if blob is None:
-                raise WorkspaceRootRefused("the workspace-roots signing key was not created")
-        offer["public_blob"] = bytes(blob).hex()
-        prepared = forward({"action": "prepare", "change": change, **offer}).get("prepared") or {}
-        if prepared.get("needs_key_check") and "key_check" not in offer:
-            # First registration with a key that already exists: prove it once.
-            offer["key_check"] = signer.sign(KEY_CHECK)
-            prepared = forward({"action": "prepare", "change": change, **offer}).get("prepared") or {}
-        pin, snapshot = prepared.get("pin"), prepared.get("body")
-        if (type(pin) is not str or pin != hashlib.sha256(bytes(blob)).hexdigest()
-                or type(snapshot) is not dict or snapshot.get("key_fingerprint") != pin
-                or not _reflects(change, snapshot)):
-            raise WorkspaceRootRefused("the graph owner prepared a different change; nothing was signed")
-        signature = signer_factory(pin).sign(canonical(snapshot))
-    except SigningUnavailable as exc:
-        raise WorkspaceRootRefused("the owner did not approve: " + str(exc)) from exc
-    commit = {**body, "signature": signature, **offer}
-    if prepared.get("admission_ticket") is not None:
-        # First enrollment: carry the owner's single-use admission back for the commit.
-        commit["admission_ticket"] = prepared["admission_ticket"]
-    return forward(commit)
+    _ = window_handle, signer_factory
+    return forward(body)
 
 
 def verified_graph_state() -> dict:

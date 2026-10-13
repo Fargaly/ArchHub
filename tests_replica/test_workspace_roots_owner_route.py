@@ -116,6 +116,7 @@ def _post(server, payload, *, token="roots-token", csrf="roots-csrf"):
 @pytest.fixture()
 def runtime(tmp_path, monkeypatch):
     home = tmp_path / "home"
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
     monkeypatch.setattr(roots, "default_snapshot_path", lambda: home / "workspace-roots.json")
     monkeypatch.setattr(roots, "default_pin_path", lambda: home / "workspace-roots.pin")
     monkeypatch.setattr(roots, "default_last_good_path", lambda: home / "workspace-roots.last-good.json",
@@ -144,8 +145,8 @@ class _Refused(Exception):
 
 
 def _change(server, body, **auth):
-    """A change exactly as the desktop makes it: the owner route prepares it, the
-    window's signer approves it, the owner route verifies and commits it."""
+    """A change exactly as the desktop makes it: the app route signs silently with
+    its DPAPI app key and commits it."""
     def forward(payload):
         status, answer = _post(server, payload, **auth)
         if status != 200:
@@ -201,14 +202,46 @@ def test_register_and_unregister_through_the_route_project_matching_files(runtim
     assert status == 200, view
     assert view["projection"] == "match" and view["boot"] == "match" and view["key_pinned"]
     assert [(r["root_id"], r["state"]) for r in view["roots"]] == [("client-a", "registered")]
-    assert _Owner.prompts == 2  # key creation check, then the approval signature
+    assert _Owner.prompts == 0
     document = json.loads((home / "workspace-roots.json").read_text(encoding="utf-8"))
+    assert document["key_id"] == roots.APP_KEY_ID
     assert [entry["id"] for entry in document["roots"]] == ["client-a"]
     status, view = _change(server, {"action": "unregister", "id": "client-a"})
     assert status == 200 and view["projection"] == "match"
     assert [(r["root_id"], r["state"]) for r in view["roots"]] == [("client-a", "unregistered")]
     assert (folder / "drawing.dwg").read_bytes() == b"client drawing", "a file was touched"
     assert json.loads((home / "workspace-roots.json").read_text(encoding="utf-8"))["roots"] == []
+
+
+def test_next_settings_write_migrates_legacy_cng_pin_without_opening_cng(runtime):
+    server, _built, home, tmp_path = runtime
+    catalogue = roots.find_workspace_root_catalogue(server.clean_authority, caller=server.clean_caller)
+    if catalogue is None:
+        catalogue = roots.install_workspace_root_catalogue(
+            server.clean_authority, operation_id=str(uuid.uuid4()), caller=server.clean_caller)
+    old_pin = hashlib.sha256(_blob()).hexdigest()
+    roots.pin_signing_key(server.clean_authority, catalogue, old_pin,
+                          caller=server.clean_caller, operation_id=str(uuid.uuid4()),
+                          key_id=roots.KEY_ID)
+    old_body = roots.snapshot_body([], old_pin, key_id=roots.KEY_ID)
+    old_signature = _Signer(roots.KEY_NAME).sign(roots.canonical(old_body))
+    _Owner.prompts = 0
+    roots.write_projection(old_body, old_signature, _blob(),
+                           snapshot_path=home / "workspace-roots.json",
+                           pin_path=home / "workspace-roots.pin")
+
+    folder = tmp_path / "client-a"
+    folder.mkdir()
+    status, view = _post(server, {"action": "register", "id": "client-a", "path": str(folder),
+                                  "privacy": "private", "profile": "client",
+                                  "writers": ["claude"]})
+    assert status == 200, view
+    assert _Owner.prompts == 0
+    document = json.loads((home / "workspace-roots.json").read_text(encoding="utf-8"))
+    pin = json.loads((home / "workspace-roots.pin").read_text(encoding="utf-8"))
+    assert document["key_id"] == roots.APP_KEY_ID
+    assert pin["key_id"] == roots.APP_KEY_ID
+    assert document["key_fingerprint"] != old_pin
 
 
 def test_settings_register_update_writers_and_unregister_need_no_owner_prompt(runtime):
@@ -244,20 +277,17 @@ def test_settings_register_update_writers_and_unregister_need_no_owner_prompt(ru
     assert [(r["root_id"], r["state"]) for r in view["roots"]] == [("bbc4", "unregistered")]
 
 
-def test_a_request_the_owner_declines_changes_nothing(runtime):
+def test_legacy_owner_decline_flag_is_not_used_by_silent_app_write(runtime):
     server, built, home, tmp_path = runtime
     folder = tmp_path / "client-a"
     folder.mkdir()
     _Owner.approve = False
-    before = built.location.authority.store.revision
     status, body = _register(server, folder)
-    assert status == 403 and "did not approve" in body["error"]
+    assert status == 200, body
+    assert _Owner.prompts == 0
     catalogue = roots.find_workspace_root_catalogue(built.location.authority, caller=built.caller)
-    # The key prompt is the window's first step now: a declined one never reaches the owner.
-    assert catalogue is None or roots.read_state(
-        built.location.authority, catalogue, caller=built.caller)[1:] == ((), None)
-    assert not (home / "workspace-roots.json").exists() and not (home / "workspace-roots.pin").exists()
-    assert built.location.authority.store.revision >= before
+    assert roots.read_state(built.location.authority, catalogue, caller=built.caller)[1]
+    assert (home / "workspace-roots.json").exists() and (home / "workspace-roots.pin").exists()
 
 
 def test_a_mismatched_registry_refuses_changes_until_republished(runtime):
@@ -277,7 +307,7 @@ def test_a_mismatched_registry_refuses_changes_until_republished(runtime):
     assert _register(server, tmp_path / "client-b", root_id="client-b")[0] == 200
 
 
-def test_a_substitute_key_is_refused_before_anything_commits(runtime, monkeypatch):
+def test_legacy_cng_substitute_key_is_not_consulted_by_app_write(runtime, monkeypatch):
     server, built, home, tmp_path = runtime
     for name in ("client-a", "client-b"):
         (tmp_path / name).mkdir()
@@ -287,8 +317,9 @@ def test_a_substitute_key_is_refused_before_anything_commits(runtime, monkeypatc
     catalogue = roots.find_workspace_root_catalogue(built.location.authority, caller=built.caller)
     before = roots.read_state(built.location.authority, catalogue, caller=built.caller)
     status, body = _register(server, tmp_path / "client-b", root_id="client-b")
-    assert status == 403 and "not the pinned key" in body["error"]
-    assert roots.read_state(built.location.authority, catalogue, caller=built.caller) == before
+    assert status == 200, body
+    assert _Owner.prompts == 0
+    assert roots.read_state(built.location.authority, catalogue, caller=built.caller) != before
 
 
 def test_direct_settings_change_is_app_written_and_never_prompts(runtime):

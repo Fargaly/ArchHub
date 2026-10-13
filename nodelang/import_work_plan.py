@@ -31,11 +31,13 @@ def _default_container(plan_path: Path) -> dict[str, object]:
 
 
 def _default_grants(path: Path) -> list[dict[str, object]]:
-    workspace = Path(os.environ.get("ARCHHUB_WORKSPACE_ROOT", r"C:\Users\fargaly\00.ARCHUB"))
-    try:
-        root = path.parent.resolve().relative_to(workspace.resolve()).as_posix()
-    except ValueError:
-        root = path.parent.as_posix()
+    configured = os.environ.get("ARCHHUB_WORKSPACE_ROOT")
+    root = path.parent.as_posix()
+    if configured:
+        try:
+            root = path.parent.resolve().relative_to(Path(configured).resolve()).as_posix()
+        except ValueError:
+            pass
     return [{"path": root, "scope": "descendants", "operations": ["apply_patch"]}]
 
 

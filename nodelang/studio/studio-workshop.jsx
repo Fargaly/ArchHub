@@ -548,11 +548,11 @@ const Mini = ({ children, acc, onClick, title, disabled }) => (
     fontFamily:W.mono, fontSize:10, letterSpacing:'0.04em', cursor: onClick && !disabled ? 'pointer' : 'default' }}>{children}</span>
 );
 // Disabled controls use a dashed border, never alpha (design DECISIONS.md).
-const Btn = ({ children, pri, sm, onClick, disabled, title }) => (
-  <button type="button" onClick={onClick} disabled={disabled} title={title} style={{ padding: sm ? '3px 9px' : '5px 12px', borderRadius:5, cursor: disabled ? 'default' : 'pointer', margin:0,
-    fontFamily: sm ? W.mono : W.sans, fontSize: sm ? 10.5 : 11.5, fontWeight: pri ? 500 : 400, letterSpacing: sm ? '0.04em' : 0,
-    background: pri && !disabled ? W.accent : 'transparent', border:`1px ${disabled ? 'dashed' : 'solid'} ${pri && !disabled ? W.accent : W.line}`,
-    color: pri && !disabled ? W.onFill : W.inkSoft }}>{children}</button>
+const Btn = ({ children, pri, sm, onClick, disabled, title, ...rest }) => (
+  <button type="button" {...rest} onClick={onClick} disabled={disabled} title={title} style={{ padding: sm ? '3px 9px' : '5px 10px', borderRadius:sm ? 5 : 6, cursor: disabled ? 'default' : 'pointer', margin:0,
+    fontFamily: sm ? W.mono : W.sans, fontSize: sm ? 10.5 : 12, fontWeight: pri || !sm ? 500 : 400, letterSpacing: sm ? '0.04em' : 0,
+    background: pri && !disabled ? W.accent : sm ? 'transparent' : W.bgHover, border:`1px ${disabled ? 'dashed' : 'solid'} ${pri && !disabled ? W.accent : W.line}`,
+    color: pri && !disabled ? W.onFill : sm ? W.inkSoft : W.ink }}>{children}</button>
 );
 // Compact icon button — glyph + tooltip. Icons carry the repeated actions so the surface
 // does not fill with labelled buttons; words stay for decisions only.
@@ -593,10 +593,12 @@ const TaskCard = ({ t, sel, onSelect, onDecide, onOpen, compact, agent, busy, ro
     root => /^(assembly-instance|work|app|gm|fact|node):[A-Za-z0-9_.:@-]{3,}$/.test(String(root || '')) &&
       !String(root || '').startsWith('proposal:');
   const graphRoot = realGraphRoot(t.graphRoot || t.work) ? (t.graphRoot || t.work) : '';
+  const saveSkill = typeof window !== 'undefined' && typeof window.ARCHHUB_WORKSHOP_SAVE_SKILL === 'function'
+    ? window.ARCHHUB_WORKSHOP_SAVE_SKILL : null;
   if (rowDesign) {
-    const decisions = (t.decision || []).filter(row => !row.disabled);
+    const decisions = t.decision || [];
     const approve = decisions.find(row => /^approve\b/i.test(row.label));
-    const reject = decisions.find(row => /^reject\b/i.test(row.label));
+    const reject = decisions.find(row => /^reject\b/i.test(row.label) && ['stop_native', 'decline-proposal'].includes(row.action));
     return (
       <div data-workshop-task={t.work} data-workshop-message={t.latest ? t.latest.root : undefined}
         aria-current={sel ? 'true' : undefined}
@@ -613,11 +615,20 @@ const TaskCard = ({ t, sel, onSelect, onDecide, onOpen, compact, agent, busy, ro
             </div>
           </div>
           <div style={{ display:'flex', gap:7, flexWrap:'wrap', marginLeft:'auto' }}>
-            {approve && <Btn sm pri disabled={busy} onClick={e => { e.stopPropagation(); onDecide(t.work, approve); }}>Approve</Btn>}
-            {reject && <Btn sm disabled={busy} onClick={e => { e.stopPropagation(); onDecide(t.work, reject); }}>{reject.label}</Btn>}
-            {onOpen && graphRoot && <Btn sm disabled={busy} onClick={e => { e.stopPropagation(); onOpen(graphRoot); }}>Open as graph</Btn>}
+            {approve && <Btn pri disabled={busy || approve.disabled} title={approve.reason}
+              onClick={e => { e.stopPropagation(); onDecide(t.work, approve); }}>Approve</Btn>}
+            {reject && <Btn disabled={busy || reject.disabled} title={reject.reason}
+              onClick={e => { e.stopPropagation(); onDecide(t.work, reject); }}>{reject.label}</Btn>}
+            {onOpen && graphRoot && <Btn disabled={busy} onClick={e => { e.stopPropagation(); onOpen(graphRoot); }}>Open as graph</Btn>}
           </div>
         </div>
+        {graphRoot && <div style={{ borderTop:`1px solid ${W.lineSoft}`, padding:'8px 12px', display:'flex', justifyContent:'space-between', alignItems:'center', gap:10, background:W.bgSoft }}>
+          <div style={{ fontFamily:W.sans, fontSize:12, color:W.inkSoft }}>
+            After it runs: "Save as skill" keeps this as a graph you can run again from Studio or Player.
+          </div>
+          {saveSkill && <Btn data-workshop-save-skill="" title="Save this Workshop step as a skill."
+            onClick={e => { e.stopPropagation(); saveSkill(t); }}>Save as skill</Btn>}
+        </div>}
       </div>
     );
   }
@@ -2215,6 +2226,8 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
         disabled:busy || !editorsReady || (artifactReview && (artifactReviewExpired || native.approved === true || !native.review_text || !native.input_digest))},
       {label:artifactReview ? 'Generate repair artifact' : 'Run approved review', action:'execute',
         disabled:busy || !editorsReady || (artifactReview && (artifactReviewExpired || native.approved !== true))},
+      ...(native?.mode === 'agent' ? [{label:'Reject', action:'stop_native',
+        disabled:busy || !editorsReady, reason:'Stop this retained native operation.'}] : []),
     ] : null;
     const held = native?.artifact && native.work === t.work && native.artifact.outcome !== 'failed' ? native.artifact : null;
     const artifact = held ? {name:held.name, bytes:held.bytes, digest:held.digest, summary:held.summary,
@@ -2847,7 +2860,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
           <span style={{ fontSize:12.5, fontWeight:500 }}>{proposer.name}</span>
           <span style={{ fontFamily:W.mono, fontSize:9, color:W.inkMuted, border:`1px solid ${W.line}`, borderRadius:3, padding:'1px 5px' }}>proposed</span>
         </div>
-        <div style={{ fontFamily:W.serif, fontSize:15, lineHeight:1.6, marginBottom:11 }}>
+        <div data-workshop-plan-card-copy="" style={{ fontFamily:W.sans, fontSize:15, lineHeight:1.6, letterSpacing:0, marginBottom:11 }}>
           {`Here is the workflow ${proposer.name} proposes: ${shownWorkflow.title}. ${wfSteps.length} step${wfSteps.length === 1 ? '' : 's'}; ` +
             (wfState === 'approved' ? 'you approved exactly these.' : 'nothing runs until you approve.')}
         </div>
@@ -3028,7 +3041,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
           <span title="Read from this page's tasks and workflow; not a message anyone sent" style={{ fontFamily:W.mono, fontSize:9.5, color:W.inkMuted,
             border:`1px solid ${W.line}`, borderRadius:3, padding:'1px 5px' }}>summary</span>
         </div>
-        <div style={{ fontSize:messageTextSize, lineHeight:1.6, fontFamily:W.serif, letterSpacing:'-0.003em' }}>{summaryText}</div>
+        <div style={{ fontSize:messageTextSize, lineHeight:1.6, fontFamily:W.sans, letterSpacing:0 }}>{summaryText}</div>
       </div>
     </div>
   );
@@ -3055,7 +3068,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
         <Av a={a} s={28}/>
         <div style={{ flex:1, minWidth:0, background:W.bgPanel, border:`1px solid ${W.lineSoft}`,
           borderRadius:7, padding:'10px 12px' }}>
-          {plan && <div style={{ fontSize:messageTextSize, lineHeight:1.6, fontFamily:W.serif, letterSpacing:'-0.003em',
+          {plan && <div data-workshop-plan-copy="" style={{ fontSize:messageTextSize, lineHeight:1.6, fontFamily:W.sans, letterSpacing:0,
             overflowWrap:'anywhere' }}>{plan}</div>}
           <BrainFacts facts={facts}/>
         </div>
@@ -3104,7 +3117,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
             <span title={[message.state === 'acted' ? 'Acted on \u00b7 verification separate' : message.state, message.category, message.reply_to_root ? 'Reply' : ''].filter(Boolean).join(' \u00b7 ')}
               style={{ fontFamily:W.mono, fontSize:9.5, color:W.inkMuted, border:`1px solid ${W.line}`, borderRadius:3, padding:'1px 5px', overflowWrap:'anywhere' }}>to {to}</span>
           </div>
-          <div style={{ fontSize:messageTextSize, lineHeight:1.6, fontFamily: isUser ? W.sans : W.serif, letterSpacing: isUser ? 0 : '-0.003em', whiteSpace:'pre-wrap', overflowWrap:'anywhere' }}>
+          <div style={{ fontSize:messageTextSize, lineHeight:1.6, fontFamily:W.sans, letterSpacing:0, whiteSpace:'pre-wrap', overflowWrap:'anywhere' }}>
             {plan ? <>
                 {plan.prose && <div>{plan.prose}</div>}
                 <div data-workshop-plan="" style={{ marginTop:8, background:W.bg, border:`1px solid ${W.lineSoft}`, borderRadius:7, padding:'10px 12px',
@@ -3342,8 +3355,8 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
               </div>
               <div style={{ fontSize:12, color:W.inkSoft, overflowWrap:'anywhere' }}>{result}</div>
               <div style={{ display:'flex', gap:7, alignItems:'center', justifyContent:'flex-end', flexWrap:'wrap' }}>
-                {approve && <Btn sm pri disabled={busy} onClick={() => decide(task.work, approve)}>Approve</Btn>}
-                {reject && <Btn sm disabled={busy} onClick={() => decide(task.work, reject)}>Reject</Btn>}
+                {approve && <Btn pri disabled={busy} onClick={() => decide(task.work, approve)}>Approve</Btn>}
+                {['stop_native', 'decline-proposal'].includes(reject?.action) && <Btn disabled={busy} onClick={() => decide(task.work, reject)}>Reject</Btn>}
                 {canStopTask(task) && <Btn sm disabled={stoppingNative} onClick={stopNative}>Stop</Btn>}
                 <details style={{ fontSize:11, color:W.inkSoft }}>
                   <summary>Details</summary>

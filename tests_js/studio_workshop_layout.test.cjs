@@ -229,7 +229,7 @@ test('the Workshop view draws the design surfaces from the live projections and 
     assert.doesNotMatch(text(stream), /Here is the workflow on this canvas/);
     assert.deepEqual([...stream.querySelectorAll('[data-workshop-task]')].map(card => card.getAttribute('data-workshop-task')), [ids.W1, ids.W2, ids.W3]);
     const first = stream.querySelector('[data-workshop-task]');
-    assert.match(text(first), /^Layer selection .* waiting for approval Approve Open as graph/);
+    assert.match(text(first), /^Layer selection .* waiting for approval Approve Open as graph After it runs: "Save as skill" keeps this as a graph you can run again from Studio or Player\./);
     assert.deepEqual([...first.querySelectorAll('button')].map(text), ['Approve', 'Open as graph']);
     // Send, approve: the live actions.
     const input = doc.querySelector('input[aria-label="Workshop message"]');

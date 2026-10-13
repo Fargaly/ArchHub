@@ -119,12 +119,14 @@ test('W8 Workshop matches the design tab/header/chat contract from live data', a
     assert.match(body, /Tag doors, level 3\s+step 2 of 3 .* Revit write .* 46 doors .* waiting for approval/);
     assert.match(body, /Approve/);
     assert.match(body, /Open as graph/);
-    assert.doesNotMatch(body, /Save as skill/);
+    assert.match(body, /Save as skill/);
     assert.doesNotMatch(body, /Here is the workflow on this canvas/);
     assert.doesNotMatch(body, /\b12 nodes\b/);
 
     const taskRow = ui.doc.querySelector('[data-workshop-task]');
     assert.ok(taskRow, 'task row is rendered');
+    assert.deepEqual([...taskRow.querySelectorAll('button')].map(button => button.textContent.trim()).filter(Boolean),
+      ['Approve', 'Open as graph']);
     await ui.click([...taskRow.querySelectorAll('button')].find(button => button.textContent.trim() === 'Approve'));
     assert.deepEqual(fx.calls[0], ['approveNativeWork', 'room-a', 'a'.repeat(64)]);
 
@@ -140,7 +142,7 @@ test('W8 Workshop matches the design tab/header/chat contract from live data', a
   }
 });
 
-test('W8g completed task does not offer unsafe Save as skill without governed graph capture', async () => {
+test('W8g completed task shows Save as skill hint without a route', async () => {
   const fx = fixture();
   const ui = await mountModule();
   try {
@@ -153,7 +155,8 @@ test('W8g completed task does not offer unsafe Save as skill without governed gr
       .find(card => /Door tagging complete/.test(text(card)));
     assert.ok(completed, 'completed task is rendered');
     const save = [...completed.querySelectorAll('button')].find(button => button.textContent.trim() === 'Save as skill');
-    assert.equal(save, undefined, 'Save as skill is absent until a governed graph-capture route exists');
+    assert.equal(save, undefined, 'Save as skill button is absent without a route');
+    assert.match(text(completed), /After it runs: "Save as skill" keeps this as a graph you can run again from Studio or Player\./);
   } finally { await ui.close(); }
 });
 
@@ -174,6 +177,50 @@ test('W8f unapproved proposals do not render Open as graph', async () => {
     assert.ok(proposal, 'proposal task card is rendered');
     assert.deepEqual([...proposal.querySelectorAll('button')].map(button => button.textContent.trim()), ['Approve', 'Reject']);
     assert.doesNotMatch(text(proposal), /Open as graph/);
+  } finally { await ui.close(); }
+});
+
+test('W8f proposal Reject declines the proposal route', async () => {
+  const fx = fixture();
+  fx.state.nativeWork = null;
+  fx.state.workshop.messages = [{root:'p1', message_id:'p1', sequence:1, sender_root:'app:agent-session:runtime:proposal',
+    recipient_roots:[], body:proposalBody('Draft the tag workflow'), category:'note', state:'recorded', created_at:Date.now() / 1000}];
+  fx.state.topology.graph.nodes = [];
+  const proposalRow = {message_id:'p1', title:'Draft the tag workflow', problem:null};
+  fx.authority.readWorkProposals = async root => { fx.calls.push(['readWorkProposals', root]); return {rows:[proposalRow]}; };
+  fx.authority.declineWorkProposals = async (root, rows) => {
+    fx.calls.push(['declineWorkProposals', root, rows.map(row => row.message_id)]);
+    return {declined:[{message_id:rows[0].message_id}]};
+  };
+  const ui = await mountModule();
+  try {
+    ui.win.ARCHHUB_EXISTING_WORKSHOP = fx.authority;
+    await ui.render('WorkshopView', {state:fx.state, descriptor:fx.state.workshops[0], target:'',
+      setTarget:() => {}, setMode:() => {}, setFocusId:() => {}, onLeave:() => {},
+      sel:{agent:null, task:null}, setSel:() => {}});
+    await ui.act(async () => {});
+    const proposal = ui.doc.querySelector('[data-workshop-task="proposal:p1"]');
+    await ui.click([...proposal.querySelectorAll('button')].find(button => button.textContent.trim() === 'Reject'));
+    assert.deepEqual(JSON.parse(JSON.stringify(fx.calls.filter(call => call[0] === 'declineWorkProposals'))),
+      [['declineWorkProposals', 'room-a', ['p1']]]);
+  } finally { await ui.close(); }
+});
+
+test('W8 native task Reject calls stop_native', async () => {
+  const fx = fixture();
+  fx.state.nativeWork = {...fx.state.nativeWork, mode:'agent', selected_work_mode:'agent'};
+  fx.authority.nativeWorkAction = async (...args) => { fx.calls.push(['nativeWorkAction', ...args]); return {}; };
+  const ui = await mountModule();
+  try {
+    ui.win.ARCHHUB_EXISTING_WORKSHOP = fx.authority;
+    await ui.render('WorkshopView', {state:fx.state, descriptor:fx.state.workshops[0], target:'',
+      setTarget:() => {}, setMode:() => {}, setFocusId:() => {}, onLeave:() => {},
+      sel:{agent:null, task:null}, setSel:() => {}});
+    await ui.act(async () => {});
+    const taskRow = ui.doc.querySelector('[data-workshop-task]');
+    await ui.click([...taskRow.querySelectorAll('button')].find(button => button.textContent.trim() === 'Reject'));
+    assert.deepEqual(fx.calls.filter(call => call[0] === 'nativeWorkAction'),
+      [['nativeWorkAction', 'room-a', 'stop_native', fx.state.nativeWork.work]]);
   } finally { await ui.close(); }
 });
 

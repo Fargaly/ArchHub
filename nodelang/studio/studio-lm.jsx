@@ -1282,6 +1282,7 @@ const readToolHubProjection = () => {
     if (controller?.signal.aborted || toolHubSubscribers.size === 0) return null;
     const payload = {
       ...(tools && Array.isArray(tools.tools) ? tools : {}),
+      stopped: Boolean(tools?.stopped),
       waiting:Array.isArray(waiting?.items) ? waiting.items : [],
       waiting_payload:waiting && typeof waiting === 'object' ? waiting : null,
     };
@@ -2662,6 +2663,18 @@ const agentAnswerText = answer => {
   if (answer && typeof answer === 'object' && !Array.isArray(answer)) return String(answer.answer || answer.text || '');
   return String(answer || '');
 };
+const agentAnswerSteps = answer => {
+  if (!answer || typeof answer !== 'object' || Array.isArray(answer) || !Array.isArray(answer.steps)) return [];
+  return answer.steps.filter(step => step && typeof step === 'object').map((step, index) => ({
+    id:String(step.id || step.call_id || index),
+    tool:String(step.tool || step.name || 'tool'),
+    status:String(step.status || (step.ok === false ? 'refused' : 'ok')),
+    ok:step.ok !== false && String(step.status || '').toLowerCase() !== 'refused',
+    args:step.args || step.arguments || {},
+    summary:String(step.summary || step.result_summary || step.error || ''),
+    readback:step.readback ? String(step.readback) : '',
+  }));
+};
 const agentAnswerVia = answer => {
   if (!answer || typeof answer !== 'object' || Array.isArray(answer)) return null;
   const via = answer.via;
@@ -2672,6 +2685,28 @@ const agentAnswerVia = answer => {
   return {provider, model};
 };
 const agentViaLabel = via => via ? ('via ' + (via.provider || 'model') + (via.model ? ' · ' + via.model : '')) : '';
+const BaboomToolSteps = ({steps}) => {
+  const rows = Array.isArray(steps) ? steps : [];
+  if (!rows.length) return null;
+  return <div data-baboom-steps="" style={{display:'flex', flexDirection:'column', gap:5, marginTop:8}}>
+    {rows.map((step, index) => (
+      <details key={step.id || index} data-baboom-step="" data-status={step.status} style={{
+        border:`1px solid ${LM.lineSoft}`, borderRadius:5, background:LM.bg, padding:'5px 7px',
+      }}>
+        <summary style={{cursor:'pointer', display:'flex', alignItems:'center', gap:7,
+          fontFamily:LM.mono, fontSize:10, color:step.ok ? LM.ok : LM.warn, letterSpacing:0}}>
+          <span style={{color:LM.ink}}>{step.tool}</span>
+          <span>{step.status}</span>
+          {step.summary ? <span style={{color:LM.inkMuted, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{step.summary}</span> : null}
+        </summary>
+        <pre style={{margin:'6px 0 0', whiteSpace:'pre-wrap', overflowWrap:'anywhere',
+          fontFamily:LM.mono, fontSize:9.5, lineHeight:1.45, color:LM.inkSoft}}>
+          {JSON.stringify({args:step.args, readback:step.readback || undefined}, null, 2)}
+        </pre>
+      </details>
+    ))}
+  </div>;
+};
 // The wired pipeline in topological stages (at most eight), read from the projected graph.
 const chatStages = graph => {
   if (!graph) return [];
@@ -2772,7 +2807,8 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
     try {
       const answer = await window.ARCHHUB_AGENT(text, modelRoute(model),
         {generation:generationRequestOptions(), returnResult:true});
-      setMessages(m => [...m, { me:false, time:stamp(), text:agentAnswerText(answer), via:agentAnswerVia(answer) }]);
+      setMessages(m => [...m, { me:false, time:stamp(), text:agentAnswerText(answer),
+        via:agentAnswerVia(answer), steps:agentAnswerSteps(answer) }]);
     } catch (error) {
       setMessages(m => [...m, { me:false, time:stamp(),
         text:'refused: ' + (error?.message || error) }]);
@@ -2808,6 +2844,7 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
                   fontStyle: m.me ? 'normal' : 'normal',
                   lineHeight:1.6, color: m.me ? LM.ink : LM.ink, letterSpacing: m.me ? '0' : '-0.003em',
                 }}>{m.text}</div>
+                {!m.me && <BaboomToolSteps steps={m.steps}/>}
                 {!m.me && m.via && <div data-chat-via="" style={{
                   marginTop:6, fontFamily:LM.sans, fontSize:11, lineHeight:1.35,
                   color:LM.inkMuted, letterSpacing:0,
@@ -6187,6 +6224,7 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
         return [...rest, {requestId:d.requestId, said:d.said, model:d.model,
           baseline:prior ? prior.baseline : new Set(rowsRef.current.map(row => row.id)),
           answer:d.phase === 'answer' ? (d.answer || '') : null,
+          steps:Array.isArray(d.steps) ? d.steps : (prior ? prior.steps || [] : []),
           messageId:d.messageId || '', replyId:d.replyId || ''}];
       });
       // Read the store on send (the question may already be saved) and on the answer.
@@ -6248,7 +6286,8 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
     }
     if (!questionShown) turnRows.push({id:turn.requestId + ':q', who:'You', is_me:true, text:turn.said, time:''});
     turnRows.push({id:turn.requestId + ':a', who:turn.model || 'model', is_me:false, kind:turn.answer === null ? 'waiting' : 'message',
-      text:turn.answer === null ? 'Waiting for ' + (turn.model || 'the model') + '\u2026' : turn.answer, time:''});
+      text:turn.answer === null ? 'Waiting for ' + (turn.model || 'the model') + '\u2026' : turn.answer, time:'',
+      steps:turn.steps || []});
   }
   // PM gate 2026-10-13: a new turn scrolls into view (the newest answer must be on screen),
   // unless the user has scrolled up to read history; then their place is kept.
@@ -6319,6 +6358,7 @@ const NodeTranscriptRow = ({ row }) => (
       <time dateTime={row.time} style={{ fontFamily:LM.mono, fontSize:8.5, color:LM.inkMuted }}>{formatNodeConversationTime(row.time)}</time>
     </div>
     <div style={{ fontFamily:LM.serif, fontSize:13, lineHeight:1.5, color:LM.ink, whiteSpace:'pre-wrap', overflowWrap:'anywhere', maxHeight:150, overflow:'auto' }}>{row.text}</div>
+    {typeof BaboomToolSteps === 'function' ? <BaboomToolSteps steps={row.steps}/> : null}
   </div>
 );
 const graphInspectorNode = (canvas, graph, session, sessionRows = []) => {
@@ -6393,6 +6433,7 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
         // UX-CHAT1: the answer is a turn in the Conversation section above, never a loose line here.
         const delivery = (result && typeof result === 'object' && result.delivery) || {};
         announceChatTurn({target:target.id, requestId, said, model:modelName, phase:'answer', answer,
+          steps:agentAnswerSteps(result),
           messageId:delivery.message_id || '', replyId:delivery.reply_message_id || ''});
       } else {
         // Not confirmed: say so beside the field (the text stays for a safe retry); no half turn above.
@@ -9658,6 +9699,34 @@ const ServerStrip = ({ session, setDocsOpen, onOpenWaitingTask }) => {
   const readBuild = () => String(transport?.getSnapshot?.()?.applicationUpdate?.current_build || '');
   const [build, setBuild] = React.useState(readBuild);
   React.useEffect(() => transport?.subscribe ? transport.subscribe(() => setBuild(readBuild())) : undefined, [transport]);
+  const handleStop = () => {
+    const session = window.__archhubSession || {};
+    const fetcher = typeof window.fetch === 'function' ? window.fetch.bind(window) : (typeof fetch === 'function' ? fetch : null);
+    if (!fetcher) return;
+    fetcher('/stop-all', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-ArchHub-Session': session.token || '',
+        'X-ArchHub-CSRF': session.csrf || '',
+      },
+      body: JSON.stringify({}),
+    }).catch(() => null).finally(() => requestToolHubRefresh());
+  };
+  const handleResume = () => {
+    const session = window.__archhubSession || {};
+    const fetcher = typeof window.fetch === 'function' ? window.fetch.bind(window) : (typeof fetch === 'function' ? fetch : null);
+    if (!fetcher) return;
+    fetcher('/resume', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-ArchHub-Session': session.token || '',
+        'X-ArchHub-CSRF': session.csrf || '',
+      },
+      body: JSON.stringify({}),
+    }).catch(() => null).finally(() => requestToolHubRefresh());
+  };
   const StripItem = ({ onClick, children, accent }) => {
     const [h, setH] = React.useState(false);
     const style = {
@@ -9701,6 +9770,16 @@ const ServerStrip = ({ session, setDocsOpen, onOpenWaitingTask }) => {
         item.producer === 'social_approve' ? 'cloud' : 'workshop',
         item.producer === 'workshop_gate' ? {tab:'approvals', root:item.root || item.workshop || '', focus:item.open_target || item.work || item.id} : {})}/>
       {waitingItems.length > 0 && <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>}
+      {hub?.stopped ? (
+        <>
+          <StripItem accent={LM.err}>Stopped</StripItem>
+          <span style={{ color:LM.inkDim, padding:'0 2px' }}> · </span>
+          <StripItem onClick={handleResume}>Resume</StripItem>
+        </>
+      ) : (
+        <StripItem onClick={handleStop} accent={LM.err}>Stop</StripItem>
+      )}
+      <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
       <StripItem onClick={() => setDocsOpen && setDocsOpen(true)}>docs</StripItem>
       {build && <>
         <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>

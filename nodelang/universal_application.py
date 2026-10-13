@@ -29,6 +29,21 @@ import uuid
 import weakref
 from weakref import WeakKeyDictionary
 
+_APPLICATION_HALTED = threading.Event()
+
+
+def set_application_halted(halted: bool = True) -> None:
+    if halted:
+        _APPLICATION_HALTED.set()
+    else:
+        _APPLICATION_HALTED.clear()
+    clear_canvas_accelerator()
+
+
+def is_application_halted() -> bool:
+    return _APPLICATION_HALTED.is_set()
+
+
 from .artifact_verification_court import (
     ARTIFACT_VERIFICATION_CHECKS,
     ArtifactVerificationCourt,
@@ -24257,7 +24272,17 @@ def _project_universal_canvas_interpreter(
                     "evidence_ref", "last_verified", "authority_source",
                     "bim_phase", "standard", "placed",
                 }
-            ],
+            ] + (
+                [
+                    {
+                        "label": "halted",
+                        "value": str(bool(is_application_halted())).lower(),
+                        "relation": "",
+                    }
+                ]
+                if root_id == getattr(registry, "application_root", "app:archhub")
+                else []
+            ),
             # The run wire reads which effect a node declares; the card's
             # display cap must not hide it, and status carries the last run
             # answer for surfaces that draw it on the card.
@@ -24321,6 +24346,13 @@ def _project_universal_canvas_interpreter(
             node["group"] = (
                 system_groups.get(node["id"]) or _canvas_node_group(node)
             )
+            if node.get("application"):
+                if not any(p.get("label") == "halted" for p in node.get("params", [])):
+                    node.setdefault("params", []).append({
+                        "label": "halted",
+                        "value": str(bool(is_application_halted())).lower(),
+                        "relation": "",
+                    })
         # Cards with no stored position are drawn in free space by frame.
         _place_unplaced_canvas_nodes(nodes)
     node_index = {node["id"]: node for node in nodes}

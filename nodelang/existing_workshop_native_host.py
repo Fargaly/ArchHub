@@ -10,6 +10,7 @@ from .baboom_attach import prepare_workshop_execution_client
 from .cell_authorization import AuthorizationDenied
 from .existing_workshop_conversation import _admit, read_browser_workshop_model_approval
 from .existing_workshop_model_worker import ExistingWorkshopModelWorker, SettledModelWork
+from .native_agentic_loop import run_agentic_tool_loop
 from .universal_cell import InvalidCell
 
 
@@ -280,7 +281,7 @@ class ExistingWorkshopNativeHost:
 
     def _native_stop_requested(self):
         held = self._native
-        return held is not None and held['stop_requested'].is_set()
+        return (held is not None and held['stop_requested'].is_set()) or (hasattr(self.server, 'is_halted') and self.server.is_halted())
 
     def _request_native_stop(self, binding, *, root, scope, work, request_id):
         """Signal the retained operation without contending with its execution lock."""

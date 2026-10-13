@@ -6522,6 +6522,8 @@ class ApplicationServer:
         self._snapshot_stop = threading.Event()
         self._snapshot_thread = None
         self._snapshot_revision = 0
+        self._application_halted = threading.Event()
+        self._halted_sent_writes = []
         if store is not None and self.state_path is not None:
             if built or fresh or not self.state_path.exists():
                 save_snapshot(store, self.state_path)
@@ -6779,6 +6781,7 @@ class ApplicationServer:
                             host_rows=host_rows,
                             hosts_probing=host_rows is None,
                             cloud_state=sign_in_state(),
+                            stopped=owner.is_halted(),
                         ))
                     elif parsed.path == '/wires':
                         self._json(200, project_wires())
@@ -7813,6 +7816,23 @@ class ApplicationServer:
                         self._json(403, {
                             'ok': False,
                             'error': str(exc),
+                        })
+                        return
+                    if self.path == '/stop-all':
+                        self._discard_admitted_body()
+                        owner.halt_all()
+                        self._json(200, {'ok': True, 'stopped': True})
+                        return
+                    if self.path == '/resume':
+                        self._discard_admitted_body()
+                        owner.resume_all()
+                        self._json(200, {'ok': True, 'stopped': False})
+                        return
+                    if owner.is_halted():
+                        self._discard_admitted_body()
+                        self._json(403, {
+                            'ok': False,
+                            'error': 'Stopped by you. Press Resume to continue.',
                         })
                         return
                     if self.path.startswith('/api/universal/'):
@@ -9913,6 +9933,61 @@ class ApplicationServer:
             self._live_thread = threading.Thread(
                 target=self._live_loop, name='archhub-live-watcher', daemon=True)
             self._live_thread.start()
+
+    def is_halted(self) -> bool:
+        return self._application_halted.is_set()
+
+    def halt_all(self):
+        self._application_halted.set()
+        from .universal_application import set_application_halted
+        set_application_halted(True)
+        # 1. Halt existing workshop native host if present
+        host = getattr(self, '_existing_workshop_native_host', None)
+        if host is not None:
+            try:
+                held = getattr(host, '_native', None)
+                if held is not None:
+                    held.get('stop_requested', threading.Event()).set()
+                    proc = held.get('process')
+                    if proc is not None and hasattr(proc, 'stop'):
+                        proc.stop(timeout_seconds=0.5)
+            except Exception:
+                pass
+        # 2. Cancel and clean up active native workshop reservations
+        reservations = getattr(self, '_native_workshop_reservations', None)
+        if reservations:
+            for res in list(reservations.values()):
+                try:
+                    res._token = b""
+                    res._settled = {"cancelled": "stopped_by_user"}
+                except Exception:
+                    pass
+            reservations.clear()
+        # 3. Model execution closing/active flag
+        with self.mutation_lock:
+            self._model_execution_active = False
+            self._model_execution_idle.set()
+
+    def resume_all(self):
+        self._application_halted.clear()
+        from .universal_application import set_application_halted
+        set_application_halted(False)
+
+    def record_halted_sent_write(self, write_identifier: str, details: dict | None = None) -> dict:
+        record = {
+            "write": write_identifier,
+            "status": "stopped after send, check result",
+            "time": time.time(),
+            "details": details or {},
+        }
+        self._halted_sent_writes.append(record)
+        return record
+
+    def check_halted_write(self, write_identifier: str) -> dict | None:
+        for record in self._halted_sent_writes:
+            if record.get("write") == write_identifier:
+                return record
+        return None
 
     @staticmethod
     def _browser_token_digest(token: str) -> str:
@@ -13509,6 +13584,8 @@ class ApplicationServer:
     def _execute_universal_model_request(self, request, body, direct, context):
         """Wait on the provider outside the graph lock; drain through settlement."""
         with self.mutation_lock:
+            if self.is_halted():
+                raise AuthorizationDenied("Stopped by you. Press Resume to continue.")
             if self._model_execution_closing or self._model_execution_active:
                 raise AuthorizationDenied("model execution is busy or shutting down")
             if self.universal_checkpoint_guard is not None:

@@ -39,6 +39,7 @@ async function mount(answers) {
     const answer = answers.shift();
     if (!answer) return new Promise(() => {});
     if (answer === 'fail') return Promise.resolve({ok:false, json:async () => ({ok:false, error:'registry unreachable'})});
+    if (answer === 'owner-down') return Promise.resolve({ok:false, json:async () => ({ok:false, error:"the ArchHub graph owner is not answering (connection refused); start ArchHub's graph service"})});
     if (answer.refused) return Promise.resolve({ok:false, status:403, json:async () => ({ok:false, error:answer.refused})});
     return Promise.resolve({ok:true, status:200, json:async () => answer});
   };
@@ -118,6 +119,21 @@ test('a failed first read offers Read again and no change until it succeeds', as
   } finally { ui.close(); }
 });
 
+test('an owner-down registry read shows starting status and auto-retries until rows load', async () => {
+  const ui = await mount(['owner-down', view('missing', 'missing', ['client-a'])]);
+  try {
+    await ui.settle();
+    assert.match(ui.doc.body.textContent, /Starting ArchHub's graph service/);
+    assert.ok(ui.button('Retry'), 'manual Retry remains available during service startup');
+    assert.equal(ui.doc.querySelector('[role="alert"]'), null, 'owner-down read is not rendered as a red refusal');
+    assert.equal(ui.doc.body.textContent.includes('The workspace registry was not read'), false);
+    await ui.settle(2100);
+    assert.deepEqual(ui.requests.map(item => item.action), ['list', 'list']);
+    assert.ok(ui.button('Remove'), 'the registered root is listed after automatic retry');
+    assert.equal(ui.doc.body.textContent.includes('Starting ArchHub'), false);
+  } finally { ui.close(); }
+});
+
 test('a start-up match with a current mismatch pauses changes and offers Republish', async () => {
   const ui = await mount([view('match', 'mismatch', ['alpha']), view('match', 'match', ['alpha'])]);
   try {
@@ -189,6 +205,8 @@ test('a refused session renews once but does not replay a workspace write', asyn
     assert.equal(ui.renewals.length, 1, 'one fresh sign-in prepares the next user attempt');
     assert.deepEqual(ui.requests.map(item => item.action), ['list', 'register']);
     assert.ok(ui.doc.body.textContent.includes('browser CSRF digest drifted'), 'the refused write is shown once');
+    await ui.settle(2200);
+    assert.deepEqual(ui.requests.map(item => item.action), ['list', 'register'], 'failed writes are not auto-retried');
     ui.click(ui.button('Add'));
     await ui.settle(80);
     assert.deepEqual(ui.requests.map(item => item.action), ['list', 'register', 'register']);

@@ -8663,9 +8663,11 @@ const SettingsOperations = () => {
 // is written. The hooks read the signed projection. Nothing here ever deletes a file.
 const WORKSPACE_CHECK_MS = 1500;
 const WORKSPACE_CHECK_READS = 40;
+const WORKSPACE_OWNER_RETRY_MS = [2000, 5000, 10000];
 const WORKSPACE_CHANGE = 'Saving workspace';
 const workspaceRefusal = message => /^the owner did not approve/i.test(String(message || ''))
   ? 'The workspace change was not saved. Try again from Settings > Workspaces.' : message;
+const workspaceGraphOwnerDown = message => /graph owner is not answering/i.test(String(message || ''));
 const WORKSPACE_PROMISE = 'Removing a workspace only stops ArchHub from governing it. Your files are never deleted.';
 const WORKSPACE_AGENTS = ['claude','codex','gemini','opencode','antigravity','cursor','windsurf','zed','aider'];
 const workspaceSlug = path => String(path || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop()
@@ -8704,6 +8706,7 @@ const SettingsWorkspaces = () => {
     finally { setBusy(''); }
   };
   const [reads, setReads] = React.useState(0);
+  const [ownerReadRetries, setOwnerReadRetries] = React.useState(0);
   const read = () => run('Reading', { action:'list' });
   React.useEffect(() => { read(); }, []);
   const registered = (view?.roots || []).filter(r => r.state === 'registered');
@@ -8720,6 +8723,12 @@ const SettingsWorkspaces = () => {
     const timer = setTimeout(() => { setReads(n => n + 1); read(); }, WORKSPACE_CHECK_MS);
     return () => clearTimeout(timer);
   }, [checking, reads, view]);
+  React.useEffect(() => {
+    if (view || busy || !workspaceGraphOwnerDown(error)) return undefined;
+    const delay = WORKSPACE_OWNER_RETRY_MS[ownerReadRetries] || 30000;
+    const timer = setTimeout(() => { setOwnerReadRetries(n => n + 1); read(); }, delay);
+    return () => clearTimeout(timer);
+  }, [view, busy, error, ownerReadRetries]);
   const add = async () => {
     if (!ready || busy) return;
     const id = rootId || workspaceSlug(path);
@@ -8806,7 +8815,8 @@ const SettingsWorkspaces = () => {
         ))}
         {view && !registered.length && <SettingsEmpty>No workspace is registered yet.</SettingsEmpty>}
         {!view && !error && <SettingsEmpty>Reading the workspace registry{'\u2026'}</SettingsEmpty>}
-        {!view && error && <SettingsEmpty role="alert" action={<button disabled={!!busy} onClick={read} style={{ ...smallBtn(), padding:'3px 9px' }}>Read again</button>}>The workspace registry was not read: {error}</SettingsEmpty>}
+        {!view && error && workspaceGraphOwnerDown(error) && <SettingsEmpty action={<button disabled={!!busy} onClick={() => { setOwnerReadRetries(0); read(); }} style={{ ...smallBtn(), padding:'3px 9px' }}>Retry</button>}>Starting ArchHub's graph service{'\u2026'} {'\u00b7'}</SettingsEmpty>}
+        {!view && error && !workspaceGraphOwnerDown(error) && <SettingsEmpty role="alert" action={<button disabled={!!busy} onClick={read} style={{ ...smallBtn(), padding:'3px 9px' }}>Read again</button>}>The workspace registry was not read: {error}</SettingsEmpty>}
       </div>
       {confirming && (
         <div role="dialog" style={{ padding:'12px 14px', border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, background:LM.bgSoft, fontSize:13, display:'flex', flexDirection:'column', gap:8 }}>

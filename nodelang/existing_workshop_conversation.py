@@ -441,6 +441,10 @@ def _read_ordinary_browser_workshop(owner, binding, *, root, scope, expected_rev
                                 ][-WORKSHOP_ACTIVITY_ROWS:]
                 extras = project_workshop_extras(owner, binding, root=root, rows=[*page["messages"], *replies, *nested],
                     history=history, principal=principal, read_all=founder, states=states, relayed=relayed)
+                from . import work_proposals as _work_proposals
+                planned_items = (_work_proposals.project_planned_items(
+                    page["messages"], bound=_work_proposals._bound_keys(snapshot, registry),
+                    declined=_work_proposals._declined_proposals(snapshot, registry)) if founder else [])
 
                 def delivery_fields(row):
                     held = states.get(row["id"])
@@ -459,6 +463,7 @@ def _read_ordinary_browser_workshop(owner, binding, *, root, scope, expected_rev
                         if page["has_older"] else None),
                     "reviews": extras["reviews"], "workflows": extras["workflows"],
                     **({"activity": activity} if activity is not None else {}),
+                    "planned_items": planned_items,
                     "messages": [{"root": row["id"], "message_id": row["id"], "sequence": row["sequence"],
                         "sender_root": row["author"],
                         "recipient_root": ", ".join(row["recipients"]) or "Everyone",

@@ -74,6 +74,30 @@ _METHODS = frozenset({
     "workspace_roots_state",
     "workspace_roots_settings",
 })
+_METHOD_ALIASES = {
+    "coordination.register_session": "register_session",
+    "coordination.list_agents": "list_agents",
+    "coordination.scope_lens": "scope_lens",
+    "coordination.workshop_lens": "workshop_lens",
+    "coordination.revise_instance": "revise_instance",
+    "coordination.send_message": "send_message",
+    "coordination.followup_task": "followup_task",
+    "coordination.interrupt_agent": "interrupt_agent",
+    "coordination.mark_message_read": "mark_message_read",
+    "coordination.claim_workshop_message": "claim_workshop_message",
+    "coordination.attach_agent": "attach_agent",
+    "coordination.detach_agent": "detach_agent",
+    "coordination.execute_workshop_task": "execute_workshop_task",
+    "coordination.run_workshop_task": "run_workshop_task",
+    "coordination.publish_workshop_result": "publish_workshop_result",
+    "coordination.private_root_grant_status": "private_root_grant_status",
+    "coordination.wait_agent": "wait_agent",
+}
+
+
+def _coordination_method(value: object) -> str:
+    method = _bounded_text(value, "coordination method", 64)
+    return _METHOD_ALIASES.get(method, method)
 
 
 def _canonical(value: object) -> bytes:
@@ -229,7 +253,7 @@ def sign_coordination_request(
     request_id: str | None = None,
 ) -> SignedCoordinationRequest:
     normalized = identity.normalized()
-    admitted_method = _bounded_text(method, "coordination method", 64)
+    admitted_method = _coordination_method(method)
     if admitted_method not in _METHODS:
         raise InvalidCell("coordination method is not admitted")
     admitted_request = _uuid(
@@ -422,7 +446,7 @@ class CleanCoordinationHost:
         identity = request.identity.normalized()
         if request.key_id != identity.key_id:
             raise InvalidCell("coordination key is not bound to its session")
-        if request.method not in _METHODS:
+        if _coordination_method(request.method) not in _METHODS:
             raise InvalidCell("coordination method is not admitted")
         try:
             signature = base64.b64decode(request.signature, validate=True)
@@ -525,22 +549,23 @@ class CleanCoordinationHost:
 
     def _dispatch_admitted(self, request: SignedCoordinationRequest) -> dict[str, object]:
         self.verify_request(request)
+        method = _coordination_method(request.method)
         from .workspace_roots_catalogue import (
             ISSUER_IDENTITY,
             SETTINGS_IDENTITY,
             current_registry_statement,
         )
         issuer = CoordinationIdentity(*ISSUER_IDENTITY).normalized().key_id
-        if (request.method == "workspace_roots_state") != (request.key_id == issuer):
+        if (method == "workspace_roots_state") != (request.key_id == issuer):
             # The permit issuer's key reads the workspace-roots state and nothing
             # else; no other key reads it. No Work, write or session binding.
             raise InvalidCell("coordination method is not admitted for this key")
         settings = CoordinationIdentity(*SETTINGS_IDENTITY).normalized().key_id
-        if (request.method == "workspace_roots_settings") != (request.key_id == settings):
+        if (method == "workspace_roots_settings") != (request.key_id == settings):
             # Settings -> Workspaces from the desktop: that key asks this owner's
             # own workspace-roots route and nothing else.
             raise InvalidCell("coordination method is not admitted for this key")
-        if request.method == "workspace_roots_settings":
+        if method == "workspace_roots_settings":
             handler = self._workspace_settings
             if handler is None:
                 raise InvalidCell("this graph owner serves no workspace settings")
@@ -554,12 +579,12 @@ class CleanCoordinationHost:
             # and Browse for his folder dialog; the route takes its own locks.
             answer = handler(request.parameters.get("body"), admission=admission)
             return {"ok": True, **answer}
-        if request.method == "workspace_roots_state":
+        if method == "workspace_roots_state":
             with self._changed:
                 return {"ok": True, **current_registry_statement(
                     self.authority, caller=self._founder,
                     request_id=request.request_id, parameters=request.parameters)}
-        if request.method in {"execute_workshop_task", "run_workshop_task"}:
+        if method in {"execute_workshop_task", "run_workshop_task"}:
             from .clean_host_execution import HostOperationFailed, HostOperationUncertain
             message_root = _bounded_text(request.parameters.get("message_root"),
                 "coordination message root", 256)
@@ -568,7 +593,7 @@ class CleanCoordinationHost:
             # Do not hold the coordinator lock during a physical host call:
             # other agents must still be able to read messages or disconnect.
             try:
-                if request.method == "run_workshop_task":
+                if method == "run_workshop_task":
                     command = _uuid(request.parameters.get("idempotency_key"),
                         "coordination idempotency key")
                     result = coordinator.run_workshop_task(message_root,
@@ -589,7 +614,7 @@ class CleanCoordinationHost:
             finally:
                 with self._changed:
                     self._changed.notify_all()
-        if request.method == "wait_agent":
+        if method == "wait_agent":
             parameters = dict(request.parameters)
             return self.wait_for_inbox(
                 request,
@@ -600,7 +625,6 @@ class CleanCoordinationHost:
         with self._changed:
             bundle, coordinator = self._binding(request.identity)
             params = dict(request.parameters)
-            method = request.method
             if method == "register_session":
                 own = tuple(
                     item for item in coordinator.list_agents()

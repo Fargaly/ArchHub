@@ -17832,6 +17832,8 @@ class ApplicationServer:
                     "workshop": self.universal_registry.workshop_root,
                     **workshop_message_identity(entry),
                     "sequence": entry.sequence,
+                    "created": entry.created,
+                    "existing": not entry.created,
                     "actor": entry.actor_root,
                     "kind": category_names.get(
                         entry.category_root, entry.category_root

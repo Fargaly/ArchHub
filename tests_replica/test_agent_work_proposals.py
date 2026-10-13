@@ -20,7 +20,9 @@ from nodelang import native_agent_mcp as mcp
 from nodelang import universal_application as app
 from nodelang import work_proposals
 from nodelang.application_machine_transport import MachineTransportError
+from nodelang.application_server import ApplicationServer
 from nodelang.baboom_native_companion import baboom_face_line
+from nodelang.cell_secret_keys import MemorySigningKeyProvider
 from nodelang.existing_workshop_native_host import ExistingWorkshopNativeHost
 from nodelang.native_agent_session import NativeAgentSession
 from nodelang.universal_cell import InvalidCell
@@ -68,6 +70,12 @@ def _propose(tools, title, *, purpose="general", reviewers=None):
         purpose=purpose, inputs=inputs, requirements=requirements, container=CONTAINER, write_grants=GRANTS)
 
 
+def _propose_planned(tools, title):
+    return tools["native.work_propose"](title=title, description="planned proposal", priority=100,
+        purpose="general", inputs={}, requirements={}, container=CONTAINER, write_grants=GRANTS,
+        done_when="Founder sees it under PLANNED", depends_on=["BOARD-5"])
+
+
 def _as_browser(browser):
     """The authenticated browser request's own intent (_resolve_browser_session admits it)."""
     return commit_intent.declare(commit_intent.USER_ACTION, actor=browser.subject_root, reason="court browser request")
@@ -102,6 +110,28 @@ def _bind_now(server, browser, proposals, tamper):
 def _proposal_works(server):
     snapshot, registry = server.universal_store.snapshot(), server.universal_registry
     return work_proposals._bound_keys(snapshot, registry)
+
+
+def _workshop_entries(server, browser):
+    registry = server.universal_registry
+    page = server.conversation_content.page_for_workshop_browser(
+        server.browser_session_token, binding=browser, space_root=registry.workshop_root, limit=50)
+    return page["messages"]
+
+
+def _prepare_browser(server):
+    browser = server._resolve_browser_session(server.browser_session_token)
+    with _as_browser(browser):
+        app.set_universal_scope(server.universal_store, server.universal_registry,
+                                server.universal_registry.map.domains["brain"],
+                                authentication_context=browser.context)
+        app.set_universal_scope(server.universal_store, server.universal_registry,
+                                server.universal_registry.workshop_workbench_root,
+                                authentication_context=browser.context)
+    if getattr(server, "_existing_workshop_native_host", None) is None:
+        server._existing_workshop_native_host = ExistingWorkshopNativeHost(
+            server, state_dir=None, descriptor_path=None, key_provider=None)
+    return browser
 
 
 def test_an_agent_proposes_and_only_the_founders_one_action_binds(world):
@@ -295,6 +325,124 @@ def test_baboom_context_counts_unbound_work_proposals_waiting_for_founder(world)
     assert line.startswith("1 thing needs your approval in Workshop.")
     assert offer == "open Workshop approvals"
     assert work_proposals.KEY_PREFIX + second["message_id"] not in _proposal_works(server)
+
+
+def test_a_work_proposal_projects_as_an_unowned_planned_workshop_item(world):
+    server, descriptor, provider, browser = world
+    proposer, session = _tools(descriptor, provider, "court-planned-proposal")
+    proposal = _propose_planned(proposer, "Founder-visible planned card")
+
+    projection = work_proposals.project_planned_items(
+        _workshop_entries(server, browser), bound=_proposal_works(server), declined={})
+    planned = [item for item in projection if item["message_id"] == proposal["message_id"]]
+    assert planned == [{
+        "id": "proposal:" + proposal["message_id"],
+        "message_id": proposal["message_id"],
+        "sequence": proposal["sequence"],
+        "state": "PLANNED",
+        "owner": None,
+        "claimed": False,
+        "running": False,
+        "title": "Founder-visible planned card",
+        "done_when": "Founder sees it under PLANNED",
+        "depends_on": ["BOARD-5"],
+        "proposer": session,
+        "digest": proposal["digest"],
+    }]
+    assert _proposal_works(server) == set()
+    bound = _bind(server, browser, proposal)["bound"][0]
+    assert bound["work_root"]
+    projection = work_proposals.project_planned_items(
+        _workshop_entries(server, browser), bound=_proposal_works(server), declined={})
+    assert [item for item in projection if item["message_id"] == proposal["message_id"]] == []
+
+
+def test_importing_a_plan_fixture_is_idempotent_on_item_and_task_no(world):
+    server, descriptor, provider, browser = world
+    proposer, _session = _tools(descriptor, provider, "court-plan-import")
+    rows = [
+        {"item": "OPEN-1", "task_no": 1, "title": "First", "done_when": "First done",
+         "depends_on": [], "owner": ""},
+        {"item": "OPEN-1", "task_no": 2, "title": "Second", "done_when": "Second done",
+         "depends_on": ["OPEN-1.1"], "owner": "Claude"},
+        {"item": "OPEN-2", "task_no": 1, "title": "Third", "done_when": "Third done",
+         "depends_on": ["OPEN-1.2"], "owner": None},
+    ]
+
+    imported = proposer["native.work_plan_import"](rows=rows, container=CONTAINER, write_grants=GRANTS)
+    repeated = proposer["native.work_plan_import"](rows=rows, container=CONTAINER, write_grants=GRANTS)
+    assert imported["created"] == 3
+    assert repeated["created"] == 0
+    assert imported["existing"] == 0
+    assert repeated["existing"] == 3
+    projection = work_proposals.project_planned_items(
+        _workshop_entries(server, browser), bound=_proposal_works(server), declined={})
+    assert [(item["plan_item"], item["task_no"], item["title"], item["state"]) for item in projection] == [
+        ("OPEN-1", 1, "First", "PLANNED"),
+        ("OPEN-1", 2, "Second", "PLANNED"),
+        ("OPEN-2", 1, "Third", "PLANNED"),
+    ]
+
+
+def test_browser_workshop_projection_contains_planned_proposal_row(world):
+    server, descriptor, provider, browser = world
+    proposer, session = _tools(descriptor, provider, "court-product-planned")
+    _prepare_browser(server)
+    proposal = _propose_planned(proposer, "Product planned card")
+
+    from nodelang.existing_workshop_conversation import read_browser_workshop
+    page = read_browser_workshop(server, browser, root=server.universal_registry.workshop_root,
+        scope=server.universal_registry.workshop_workbench_root,
+        session_token=server.browser_session_token, feed="messages")
+
+    rows = [item for item in page["planned_items"] if item["message_id"] == proposal["message_id"]]
+    assert rows == [{
+        "id": "proposal:" + proposal["message_id"],
+        "message_id": proposal["message_id"],
+        "sequence": proposal["sequence"],
+        "state": "PLANNED",
+        "owner": None,
+        "claimed": False,
+        "running": False,
+        "title": "Product planned card",
+        "done_when": "Founder sees it under PLANNED",
+        "depends_on": ["BOARD-5"],
+        "proposer": session,
+        "digest": proposal["digest"],
+    }]
+
+
+def test_planned_proposals_survive_close_and_reopen(tmp_path, monkeypatch):
+    from tests_replica.test_application_machine_transport import _green_runtime_compliance as green
+
+    descriptor = tmp_path / "planned-reopen-runtime.json"
+    provider = MemorySigningKeyProvider("archhub.local.universal-runtime-pipe", b"g" * 32)
+    keys = MemorySigningKeyProvider("archhub.local.relationship-authority", b"p" * 32)
+    keys.add_key("archhub.local.court-attestation", b"e" * 32)
+    kwargs = dict(universal_state_path=tmp_path / "graph.sqlite3", universal_key_provider=keys,
+                  universal_workspace_root=tmp_path, enable_machine_transport=True,
+                  machine_descriptor_path=descriptor, machine_key_provider=provider,
+                  runtime_compliance_runner=green, enable_universal_cloud_gateway=False,
+                  enable_machine_projection_prewarm=False, live_watch=False)
+    server = ApplicationServer(**kwargs).start()
+    try:
+        browser = _prepare_browser(server)
+        proposer, _session = _tools(descriptor, provider, "court-plan-reopen")
+        proposal = _propose_planned(proposer, "Reopen planned card")
+        before = work_proposals.project_planned_items(
+            _workshop_entries(server, browser), bound=_proposal_works(server), declined={})
+        assert [item["message_id"] for item in before] == [proposal["message_id"]]
+    finally:
+        server.close()
+
+    reopened = ApplicationServer(**kwargs).start()
+    try:
+        browser = _prepare_browser(reopened)
+        after = work_proposals.project_planned_items(
+            _workshop_entries(reopened, browser), bound=_proposal_works(reopened), declined={})
+        assert after == before
+    finally:
+        reopened.close()
 
 
 def test_baboom_native_frame_reads_cached_pending_approvals_without_frame_count(world, monkeypatch):

@@ -17,6 +17,7 @@ evidence. Each Work is its own commit; the result names every Work created.
 import hashlib
 import json
 import re
+from collections.abc import Iterable
 from datetime import datetime, timezone
 
 from .cell_authorization import AuthorizationDenied
@@ -32,6 +33,7 @@ _MESSAGE_ID = re.compile(r"[A-Za-z0-9:._-]{1,256}\Z")
 KEY_PREFIX = "proposal:"
 DECLINE_PREFIX = "app:work-proposal-decline:"
 _AFTER_PROPOSAL_VALIDATION_HOOK = None
+_PLAN_KEY_PREFIX = "work-plan-proposal:"
 
 
 def _refuse(message):
@@ -110,6 +112,124 @@ def parse(text):
     if canonical(payload) != document:
         _refuse("This Work proposal is not in its canonical form")
     return validate(payload), hashlib.sha256(document.encode("utf-8")).hexdigest()
+
+
+def planned_payload(title, description, priority, purpose, inputs, requirements, container, write_grants,
+                    *, done_when=None, depends_on=None, plan_item=None, task_no=None, owner=None):
+    """Build the existing Work proposal shape with optional board metadata in inputs.
+
+    The bind path still validates and creates the same governed Work payload. The
+    board reads these input fields only while the proposal is unbound.
+    """
+    metadata = dict(inputs or {})
+    if done_when is not None:
+        metadata["done_when"] = _text_field(done_when, "done_when", 4000)
+    if depends_on is not None:
+        metadata["depends_on"] = _depends_on(depends_on)
+    if plan_item is not None:
+        metadata["item"] = _text_field(plan_item, "item", 200)
+    if task_no is not None:
+        if type(task_no) is not int or task_no < 0:
+            _refuse("Plan task_no must be a non-negative integer")
+        metadata["task_no"] = task_no
+    if owner is not None:
+        metadata["owner"] = _text_field(owner, "owner", 200) if str(owner).strip() else ""
+    return {"title": title, "description": description, "priority": priority, "purpose": purpose,
+            "inputs": metadata, "requirements": dict(requirements or {}),
+            "container": container, "write_grants": write_grants}
+
+
+def plan_idempotency_key(item, task_no):
+    item = _text_field(item, "item", 200)
+    if type(task_no) is not int or task_no < 0:
+        _refuse("Plan task_no must be a non-negative integer")
+    digest = hashlib.sha256(("%s\0%s" % (item, task_no)).encode("utf-8")).hexdigest()
+    return _PLAN_KEY_PREFIX + digest[:40]
+
+
+def plan_row_payload(row, *, container, write_grants):
+    fields = {"item", "task_no", "title", "done_when", "depends_on", "owner"}
+    if type(row) is not dict or set(row) != fields:
+        _refuse("A plan row names exactly: " + ", ".join(sorted(fields)))
+    task_no = row["task_no"]
+    if type(task_no) is not int or task_no < 0:
+        _refuse("Plan task_no must be a non-negative integer")
+    item = _text_field(row["item"], "item", 200)
+    title = _text_field(row["title"], "title", 200)
+    done_when = _text_field(row["done_when"], "done_when", 4000)
+    depends_on = _depends_on(row["depends_on"])
+    owner = row["owner"]
+    if owner is None:
+        owner = ""
+    if type(owner) is not str:
+        _refuse("Plan owner must be a string or null")
+    return planned_payload(title, "Imported plan item %s.%s" % (item, task_no), 100,
+        "general", {}, {}, container, write_grants, done_when=done_when,
+        depends_on=depends_on, plan_item=item, task_no=task_no, owner=owner)
+
+
+def project_planned_items(entries, *, bound, declined):
+    """Founder-visible PLANNED cards from unbound Work proposal messages."""
+    bound_keys = set(bound or ())
+    declined_ids = set((declined or {}).keys() if isinstance(declined, dict) else (declined or ()))
+    rows = []
+    for entry in entries or ():
+        if type(entry) is not dict:
+            continue
+        message_id = entry.get("message_id") or entry.get("id") or entry.get("root")
+        sequence = entry.get("sequence")
+        if type(message_id) is not str or type(sequence) is not int:
+            continue
+        if KEY_PREFIX + message_id in bound_keys or message_id in declined_ids:
+            continue
+        text = entry.get("content")
+        if type(text) is not str:
+            text = entry.get("body")
+        if type(text) is not str:
+            text = entry.get("summary")
+        if type(text) is not str or not text.startswith(MARKER + "\n"):
+            continue
+        try:
+            payload, digest = parse(text)
+        except InvalidCell:
+            continue
+        inputs = payload["inputs"]
+        depends = _depends_on(inputs.get("depends_on", []))
+        item = {"id": KEY_PREFIX + message_id, "message_id": message_id, "sequence": sequence,
+                "state": "PLANNED", "owner": None, "claimed": False, "running": False,
+                "title": payload["title"], "done_when": _string_or_empty(inputs.get("done_when")),
+                "depends_on": depends, "proposer": entry.get("author") or entry.get("actor")
+                or entry.get("sender_root"), "digest": digest}
+        if "item" in inputs:
+            item["plan_item"] = inputs["item"]
+        if "task_no" in inputs:
+            item["task_no"] = inputs["task_no"]
+        rows.append(item)
+    return sorted(rows, key=lambda item: item["sequence"])
+
+
+def _text_field(value, label, maximum):
+    if type(value) is not str or not value.strip() or len(value) > maximum:
+        _refuse("Plan %s must be a non-empty string up to %d characters" % (label, maximum))
+    return value.strip()
+
+
+def _string_or_empty(value):
+    return value.strip() if type(value) is str else ""
+
+
+def _depends_on(value):
+    if value is None:
+        return []
+    if not isinstance(value, Iterable) or type(value) in (str, bytes):
+        _refuse("Plan depends_on must be a list of strings")
+    result = []
+    for item in value:
+        if type(item) is not str or len(item) > 200:
+            _refuse("Plan depends_on entries must be strings up to 200 characters")
+        if item.strip():
+            result.append(item.strip())
+    return result
 
 
 def _bound_works(snapshot, registry):

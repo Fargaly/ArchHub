@@ -514,6 +514,90 @@ def test_stdio_identity_has_no_random_fallback_and_schema_has_no_sender():
         assert "session_id" not in properties
 
 
+def test_coordination_catalogue_names_are_dispatchable_by_the_names_clients_call(tmp_path):
+    opened, keys, host = _host(tmp_path)
+    identity = CoordinationIdentity("codex", "thread-catalogue-parity", "gpt")
+    try:
+        server = build_server(type("Client", (), {"call": lambda self, method, parameters=None, **_kw: {"ok": True}})())
+        tools = asyncio.run(server.list_tools())
+        aliases = {
+            "coordination.register_session": "register_session",
+            "coordination.list_agents": "list_agents",
+            "coordination.workshop_lens": "workshop_lens",
+            "coordination.scope_lens": "scope_lens",
+        }
+        for listed, host_method in aliases.items():
+            assert listed in {tool.name for tool in tools}
+            params = {"scope_root": opened.authority.manifest.application_root} if host_method == "scope_lens" else {}
+            assert host.dispatch(_request(keys, identity, host_method, params, "plain:" + host_method))["ok"] is True
+            assert host.dispatch(_request(keys, identity, listed, params, "dotted:" + host_method))["ok"] is True
+    finally:
+        opened.authority.store.close()
+
+
+def test_raw_dotted_signed_execute_run_and_wait_use_canonical_handlers(tmp_path, monkeypatch):
+    opened, keys, host = _host(tmp_path)
+    identity = CoordinationIdentity("codex", "thread-dotted-execute", "gpt")
+    try:
+        host.dispatch(_request(keys, identity, "register_session"))
+        with host._changed:
+            _bundle, coordinator = host._binding(identity)
+        calls = []
+
+        def execute(message_root, *, invoker):
+            calls.append(("execute", message_root))
+            return type("Result", (), {
+                "root_id": "app:effect:execute",
+                "receipt_root": "app:receipt:execute",
+                "revision": opened.authority.store.revision,
+                "replayed": False,
+            })()
+
+        def run(message_root, *, command_id, invoker):
+            calls.append(("run", message_root, str(command_id)))
+            return {"message_root": message_root, "effect": "app:effect:run",
+                    "receipt": "app:receipt:run", "accepted_revision": opened.authority.store.revision,
+                    "replayed": False}
+
+        monkeypatch.setattr(coordinator, "execute_claimed_task", execute)
+        monkeypatch.setattr(coordinator, "run_workshop_task", run)
+        monkeypatch.setattr(host, "wait_for_inbox", lambda request, **kwargs: {
+            "ok": True, "method": request.method, "after_revision": kwargs["after_revision"]})
+
+        assert host.dispatch(_request(keys, identity, "coordination.execute_workshop_task",
+            {"message_root": "app:message:execute"}, "dotted-execute"))["effect"] == "app:effect:execute"
+        assert host.dispatch(_request(keys, identity, "coordination.run_workshop_task",
+            {"message_root": "app:message:run", "idempotency_key": str(uuid.uuid4())}, "dotted-run"))["effect"] == "app:effect:run"
+        assert host.dispatch(_request(keys, identity, "coordination.wait_agent",
+            {"after_revision": 7, "timeout_seconds": 0.0}, "dotted-wait"))["after_revision"] == 7
+        assert calls[0][:2] == ("execute", "app:message:execute")
+        assert calls[1][:2] == ("run", "app:message:run")
+    finally:
+        opened.authority.store.close()
+
+
+def test_dotted_and_bare_denials_are_equivalent(tmp_path):
+    opened, keys, host = _host(tmp_path)
+    identity = CoordinationIdentity("codex", "thread-denial-equivalence", "gpt")
+    outsider = CoordinationIdentity("codex", "thread-denial-outsider", "gpt")
+
+    def refusal(request):
+        with pytest.raises(InvalidCell) as exc:
+            host.dispatch(request)
+        return str(exc.value)
+
+    try:
+        bare = _request(keys, identity, "workshop_lens", label="bad-signature-bare")
+        dotted = _request(keys, identity, "coordination.workshop_lens", label="bad-signature-dotted")
+        assert refusal(replace(bare, signature="AAAA")) == refusal(replace(dotted, signature="AAAA"))
+        assert refusal(replace(bare, identity=outsider)) == refusal(replace(dotted, identity=outsider))
+        host.dispatch(_request(keys, identity, "register_session"))
+        assert refusal(_request(keys, identity, "send_message", {}, "refused-bare")) == refusal(
+            _request(keys, identity, "coordination.send_message", {}, "refused-dotted"))
+    finally:
+        opened.authority.store.close()
+
+
 def test_workshop_lens_rejects_wrong_session_signature_and_no_founder_substitute(
     tmp_path,
 ):

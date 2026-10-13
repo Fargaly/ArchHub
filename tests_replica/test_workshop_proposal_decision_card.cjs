@@ -94,6 +94,14 @@ const helpers = () => {
   return context.out;
 };
 
+const taskHelpers = () => {
+  const {transformSync} = require('esbuild');
+  const context = vm.createContext({});
+  vm.runInContext(transformSync(slice('const WORKSHOP_WORK_REF = ', '// Flow:') +
+    '\nglobalThis.out={workshopTaskItems, wsTasks};', {loader:'jsx', format:'cjs'}).code, context);
+  return context.out;
+};
+
 test('a proposal message becomes a queued task card with [Approve, Reject] and the design leads', () => {
   const {isWorkProposal, wsProposalTask} = helpers();
   assert.equal(isWorkProposal(MESSAGES[2]), true);
@@ -127,6 +135,20 @@ test('a proposal message becomes a queued task card with [Approve, Reject] and t
   const unreadable = plain(wsProposalTask({root:'m-9', message_id:'m-9', sender_root:PROPOSER, body:MARKER + '\n{not json'}));
   assert.equal(unreadable.decision, null);
   assert.equal(unreadable.lead, 'This proposal cannot be read; it cannot be approved.');
+});
+
+test('planned proposal rows become unowned PLANNED task cards', () => {
+  const {workshopTaskItems, wsTasks} = taskHelpers();
+  const planned = [{id:'proposal:m-9', message_id:'m-9', title:'Planned import row',
+    state:'PLANNED', done_when:'Court can see the proposal', depends_on:['OPEN-1.2']}];
+  const items = workshopTaskItems([], [], planned);
+  const tasks = wsTasks(items, [], [], null, new Map());
+  assert.equal(tasks.length, 1);
+  assert.equal(tasks[0].title, 'Planned import row');
+  assert.equal(tasks[0].owner, null);
+  assert.equal(tasks[0].status, 'PLANNED');
+  assert.equal(tasks[0].done_when, 'Court can see the proposal');
+  assert.deepEqual(tasks[0].depends_on, ['OPEN-1.2']);
 });
 
 // Ping review 2026-10-01: an agent's malformed proposal (operations:'apply_patch' or {}) threw a

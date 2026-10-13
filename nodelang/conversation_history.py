@@ -750,11 +750,12 @@ class ConversationHistoryStore(ConversationPageProtection):
         with self._transaction(write=True, before_commit=before_commit):
             previous_head = self._head(conversation_id)
             message = self._append_in_transaction(validated, reply_access=reply_access)
+            created = message["sequence"] > previous_head
             if require_new and message["sequence"] <= previous_head:
                 raise ValueError("idempotency conflict")
-            if message["sequence"] > previous_head and self._retention_active():
+            if created and self._retention_active():
                 self._record_activity(conversation_id)
-            return message
+            return {**message, "created": created}
 
     def _append_in_transaction(self, validated, *, reply_access=None):
         """Insert validated fields within an already owned write transaction.

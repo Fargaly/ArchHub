@@ -396,7 +396,8 @@ def build_server(*, session=None, workshop_task: str | None = None):
 
     @server.tool(name='native.work_propose')
     def work_propose(title: str, description: str, priority: int, purpose: str, inputs: dict,
-                     requirements: dict, container: dict, write_grants: list[dict]) -> dict[str, object]:
+                     requirements: dict, container: dict, write_grants: list[dict],
+                     done_when: str | None = None, depends_on: list[str] | None = None) -> dict[str, object]:
         """Propose one governed Work to the founder. Nothing is created, granted or admitted.
 
         The proposal is a Workshop message from this session: the Work, its inputs,
@@ -405,10 +406,9 @@ def build_server(*, session=None, workshop_task: str | None = None):
         one per governed root. The founder binds it, with any others he checks, in
         one action; only then does the Work exist and its grants apply.
         """
-        from .work_proposals import parse, render
-        text = render({'title': title, 'description': description, 'priority': priority,
-                       'purpose': purpose, 'inputs': inputs, 'requirements': requirements,
-                       'container': container, 'write_grants': write_grants})
+        from .work_proposals import parse, planned_payload, render
+        text = render(planned_payload(title, description, priority, purpose, inputs, requirements,
+                      container, write_grants, done_when=done_when, depends_on=depends_on))
         _payload, digest = parse(text)
         with control.bound_client() as client:
             if client.agent_session_root in (requirements.get('artifact_reviewers') or ()):
@@ -421,6 +421,42 @@ def build_server(*, session=None, workshop_task: str | None = None):
             raise MachineTransportError('The Workshop did not confirm the proposal; read it before proposing again')
         return {'message_id': sent['message_id'], 'sequence': sent.get('sequence'), 'digest': digest,
                 'state': 'proposed', 'work_created': False, 'grants_admitted': False}
+
+    @server.tool(name='native.work_plan_import')
+    def work_plan_import(rows: list[dict], container: dict, write_grants: list[dict]) -> dict[str, object]:
+        """Import plan JSON rows as idempotent unbound Work proposals.
+
+        Rows are keyed by (item, task_no). Re-running the same plan posts no new
+        proposals. Nothing is granted and no Work is created until the founder binds.
+        """
+        from .work_proposals import parse, plan_idempotency_key, plan_row_payload, render
+        if type(rows) is not list or len(rows) > 500:
+            raise MachineTransportError('Plan import expects a list of at most 500 rows')
+        created, existing, proposals = 0, 0, []
+        with control.bound_client() as client:
+            for row in rows:
+                payload = plan_row_payload(row, container=container, write_grants=write_grants)
+                text = render(payload)
+                _payload, digest = parse(text)
+                sent = client.request('POST', '/api/universal/workshop', {
+                    'category': 'note', 'text': text, 'refs': [], 'evidence': [], 'recipients': [],
+                    'reply_to': None,
+                    'idempotency_key': plan_idempotency_key(payload['inputs']['item'], payload['inputs']['task_no']),
+                    'created_at': None})
+                if type(sent) is not dict or type(sent.get('message_id')) is not str:
+                    raise MachineTransportError('The Workshop did not confirm imported plan row')
+                if type(sent.get('created')) is not bool or type(sent.get('existing')) is not bool:
+                    raise MachineTransportError('The Workshop did not report imported plan idempotency')
+                item = {'message_id': sent['message_id'], 'sequence': sent.get('sequence'), 'digest': digest,
+                        'item': payload['inputs']['item'], 'task_no': payload['inputs']['task_no'],
+                        'title': payload['title'], 'created': sent['created'], 'existing': sent['existing']}
+                proposals.append(item)
+                if sent['existing']:
+                    existing += 1
+                else:
+                    created += 1
+        return {'ok': True, 'created': created, 'existing': existing, 'count': len(proposals),
+                'proposals': proposals, 'work_created': False, 'grants_admitted': False}
 
     @server.tool(name='native.work_proposals')
     def work_proposals() -> dict[str, object]:

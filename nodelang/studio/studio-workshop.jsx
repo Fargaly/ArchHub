@@ -156,7 +156,7 @@ const wsPlanReply = text => {
   const prose = (String(text).slice(0, found.index) + String(text).slice(found.index + found[0].length)).trim();
   return {prose, steps, title:typeof plan.title === 'string' ? plan.title : '', raw:found[1]};
 };
-const workshopTaskItems = (messages, nodes) => {
+const workshopTaskItems = (messages, nodes, plannedItems) => {
   const byId = new Map((Array.isArray(nodes) ? nodes : []).map(node => [node.id, node]));
   const cards = new Map(), items = [];
   (Array.isArray(messages) ? messages : []).forEach(message => {
@@ -172,6 +172,15 @@ const workshopTaskItems = (messages, nodes) => {
     const [kind, id] = card.work.split(':');
     card.title = card.node?.title || `${kind} · ${id.slice(0, 8)}`;
     card.owner = wsSender(card.events[card.events.length - 1]);
+  });
+  (Array.isArray(plannedItems) ? plannedItems : []).forEach(row => {
+    if (!row || typeof row.id !== 'string' || !row.id || typeof row.title !== 'string' || !row.title.trim() || cards.has(row.id)) return;
+    const depends = Array.isArray(row.depends_on) ? row.depends_on.filter(item => typeof item === 'string' && item.trim()) : [];
+    const card = {kind:'task', work:row.id, node:null, events:[], state:'open', owner:null, title:row.title,
+      status:String(row.state || 'PLANNED'), planned:true, done_when:String(row.done_when || ''),
+      depends_on:depends, blocks:depends.length ? depends.join(' \u00b7 ') : '\u2014',
+      lead:row.done_when ? 'Done when: ' + String(row.done_when) : 'Unowned planned proposal.'};
+    cards.set(row.id, card); items.push(card);
   });
   return items;
 };
@@ -477,11 +486,13 @@ const wsTasks = (items, nodes, wires, native, names) => {
     // The design's task id slot ("T-01"): derived from the Work id, stable across pages; never a counter.
     return {id:'T-' + (short || card.work).slice(0, 6), work:card.work, graphRoot:card.work, title:card.title, owner:card.owner, state,
       node:card.node ? card.node.id : null, latest,
-      nodeStatus:card.node?.status || card.node?.sub || '',
+      nodeStatus:card.node?.status || card.node?.sub || card.status || '',
+      status:card.status || '',
+      planned:card.planned === true, done_when:card.done_when || '', depends_on:Array.isArray(card.depends_on) ? card.depends_on : [],
       intent:wsParam(card.node, /^(description|intent|summary)$/i) || card.title,
-      criteria:wsParam(card.node, /criteri/i) || '\u2014',
-      blocks:blocks.length ? blocks.join(' \u00b7 ') : '\u2014',
-      lead:latest ? wsText(latest) : native?.work === card.work ? 'Native Work status: ' + String(native.state || 'unknown').replaceAll('_', ' ') + '.' : '',
+      criteria:card.done_when || wsParam(card.node, /criteri/i) || '\u2014',
+      blocks:card.blocks || (blocks.length ? blocks.join(' \u00b7 ') : '\u2014'),
+      lead:latest ? wsText(latest) : native?.work === card.work ? 'Native Work status: ' + String(native.state || 'unknown').replaceAll('_', ' ') + '.' : card.lead || '',
       thread:events.slice(0, -1).map(event => ({root:event.root, from:wsSender(event),
         toRoots:Array.isArray(event.recipient_roots) ? event.recipient_roots : [],
         to:Array.isArray(event.recipient_roots) && event.recipient_roots.length ? event.recipient_roots.map(root => names.get(root) || root).join(', ') : 'Workshop',
@@ -2233,7 +2244,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     .map(m => [m.relayed_from, m.relayed_label]));
   relayLabels.forEach((label, root) => { if (!names.has(root)) names.set(root, label); });
   // THE LIVE SCENE: every design surface below reads these, never a seed.
-  const taskItems = workshopTaskItems(messages, projectedWorkNodes);
+  const taskItems = workshopTaskItems(messages, projectedWorkNodes, transcript?.planned_items);
   const tasks = wsTasks(taskItems, projectedWorkNodes, workshopProjectedWires(state), native, names).map(t => {
     const decision = t.approving ? [
       {label:artifactReview ? 'Approve this repair' : 'Approve this input', action:'approve',

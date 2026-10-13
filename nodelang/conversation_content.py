@@ -176,6 +176,7 @@ class ConversationMessageProjection:
     reference_roots: tuple[str, ...]
     evidence_roots: tuple[str, ...]
     reply_to_root: str | None
+    created: bool
 
     @classmethod
     def from_result(cls, result):
@@ -183,7 +184,8 @@ class ConversationMessageProjection:
         return cls(message["id"], message["conversation_id"], result["graph_revision"],
             message["sequence"], message["author"], message["category"], message["content"],
             message["created_at"], message["idempotency_key"], tuple(message["recipients"]),
-            tuple(message["refs"]), tuple(message["evidence"]), message["reply_to"])
+            tuple(message["refs"]), tuple(message["evidence"]), message["reply_to"],
+            message.get("created") is True)
 
 
 def workshop_message_identity(entry):

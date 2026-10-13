@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import hashlib
 import time
 from types import MappingProxyType
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Mapping
 import uuid
 
 from .cell_protocols import (
@@ -603,6 +603,7 @@ def transition_machine_with_new_evidence(
     evidence_issuer_root: str,
     trusted_issuer_roots: Iterable[str],
     context_roots: Iterable[str] = (),
+    commit_guard: Callable[[Snapshot], None] | None = None,
 ) -> tuple[str, str, int]:
     """Create one proof and consume it in the transition atomically."""
     snapshot = store.snapshot()
@@ -627,6 +628,8 @@ def transition_machine_with_new_evidence(
         trusted_issuer_roots=trusted_issuer_roots,
         context_roots=context_roots,
     )
+    if commit_guard is not None:
+        commit_guard(snapshot)
     revision = store.commit(
         snapshot.revision,
         create=(*evidence_cells, *transition_create),

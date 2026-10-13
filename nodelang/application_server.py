@@ -164,6 +164,11 @@ from .universal_application import (
     project_universal_baboom_context,
     project_universal_baboom_companion_directive,
     founder_release_stale_governed_work_claim,
+    release_dead_workshop_board_claims,
+    archive_idle_workshop_board_tasks,
+    restore_archived_workshop_board_task,
+    sweep_workshop_board_tasks,
+    dry_run_workshop_board_sweep,
     BaboomActRefused,
     BaboomConfirmations,
     baboom_confirmation_nonce,
@@ -14008,6 +14013,11 @@ class ApplicationServer:
             ("POST", "/api/universal/mcp-tool-delegation"),
             ("POST", "/api/universal/work-transition"),
             ("POST", "/api/universal/work-stale-claim-release"),
+            ("POST", "/api/universal/workshop-board/release-dead-claims"),
+            ("POST", "/api/universal/workshop-board/archive-idle"),
+            ("POST", "/api/universal/workshop-board/restore-archived"),
+            ("POST", "/api/universal/workshop-board/sweep"),
+            ("POST", "/api/universal/workshop-board/tick"),
             ("POST", "/api/universal/work-configuration"),
             ("POST", "/api/universal/work-court"),
             ("POST", "/api/universal/work-court-recover"),
@@ -17981,6 +17991,86 @@ class ApplicationServer:
                     self.universal_store,
                     self.universal_registry,
                     body["root"],
+                    authentication_context=context,
+                )
+            if path == "/api/universal/workshop-board/release-dead-claims":
+                if not direct:
+                    raise AuthorizationDenied("Workshop board release requires the founder")
+                if set(body) not in (set(), {"stale_claim_after_idle_minutes"}):
+                    raise InvalidCell("Workshop board release request shape is invalid")
+                minutes = body.get("stale_claim_after_idle_minutes")
+                if minutes is not None and type(minutes) is not int:
+                    raise InvalidCell("Workshop board release minutes is invalid")
+                return release_dead_workshop_board_claims(
+                    self.universal_store,
+                    self.universal_registry,
+                    stale_claim_after_idle_minutes=minutes,
+                    authentication_context=context,
+                )
+            if path == "/api/universal/workshop-board/archive-idle":
+                if not direct:
+                    raise AuthorizationDenied("Workshop board archive requires the founder")
+                if set(body) not in (set(), {"archive_after_idle_days"}):
+                    raise InvalidCell("Workshop board archive request shape is invalid")
+                days = body.get("archive_after_idle_days")
+                if days is not None and type(days) is not int:
+                    raise InvalidCell("Workshop board archive days is invalid")
+                return archive_idle_workshop_board_tasks(
+                    self.universal_store,
+                    self.universal_registry,
+                    archive_after_idle_days=days,
+                    authentication_context=context,
+                )
+            if path == "/api/universal/workshop-board/restore-archived":
+                if not direct:
+                    raise AuthorizationDenied("Workshop board restore requires the founder")
+                if set(body) != {"root"} or type(body.get("root")) is not str:
+                    raise InvalidCell("Workshop board restore request shape is invalid")
+                return restore_archived_workshop_board_task(
+                    self.universal_store,
+                    self.universal_registry,
+                    body["root"],
+                    authentication_context=context,
+                )
+            if path == "/api/universal/workshop-board/sweep":
+                if not direct:
+                    raise AuthorizationDenied("Workshop board sweep requires the founder")
+                allowed = {
+                    "dry_run",
+                    "archive_after_idle_days",
+                    "stale_claim_after_idle_minutes",
+                }
+                if set(body) - allowed:
+                    raise InvalidCell("Workshop board sweep request shape is invalid")
+                days = body.get("archive_after_idle_days")
+                minutes = body.get("stale_claim_after_idle_minutes")
+                if days is not None and type(days) is not int:
+                    raise InvalidCell("Workshop board sweep archive days is invalid")
+                if minutes is not None and type(minutes) is not int:
+                    raise InvalidCell("Workshop board sweep minutes is invalid")
+                if bool(body.get("dry_run", False)):
+                    return dry_run_workshop_board_sweep(
+                        self.universal_store,
+                        self.universal_registry,
+                        archive_after_idle_days=days,
+                        stale_claim_after_idle_minutes=minutes,
+                        authentication_context=context,
+                    )
+                return sweep_workshop_board_tasks(
+                    self.universal_store,
+                    self.universal_registry,
+                    archive_after_idle_days=days,
+                    stale_claim_after_idle_minutes=minutes,
+                    authentication_context=context,
+                )
+            if path == "/api/universal/workshop-board/tick":
+                if not direct:
+                    raise AuthorizationDenied("Workshop board tick requires the app owner")
+                if set(body):
+                    raise InvalidCell("Workshop board tick request shape is invalid")
+                return sweep_workshop_board_tasks(
+                    self.universal_store,
+                    self.universal_registry,
                     authentication_context=context,
                 )
             allowed_transition_shape = {"root", "event", "evidence"}

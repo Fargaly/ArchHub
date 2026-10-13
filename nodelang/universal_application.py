@@ -598,6 +598,7 @@ from .cell_registry_projection import (
 )
 from .cell_state_machine import (
     ROLE_NAMES as STATE_MACHINE_ROLE_NAMES,
+    build_transition,
     machine_history,
     read_evidence,
     read_evidence_admission,
@@ -3586,6 +3587,11 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/cde-write-receipt", "execute"),
     ("POST", "/api/universal/work-transition", "execute"),
     ("POST", "/api/universal/work-stale-claim-release", "execute"),
+    ("POST", "/api/universal/workshop-board/release-dead-claims", "execute"),
+    ("POST", "/api/universal/workshop-board/archive-idle", "execute"),
+    ("POST", "/api/universal/workshop-board/restore-archived", "execute"),
+    ("POST", "/api/universal/workshop-board/sweep", "execute"),
+    ("POST", "/api/universal/workshop-board/tick", "execute"),
     ("POST", "/api/universal/work-configuration", "edit"),
     ("POST", "/api/universal/work-court", "execute"),
     ("POST", "/api/universal/work-court-recover", "execute"),
@@ -3672,6 +3678,10 @@ _BABOOM_CAPABILITY_ROUTE_KEYS = frozenset({
     ("POST", "/api/universal/work-plan-read"),
     ("POST", "/api/universal/work-transition"),
     ("POST", "/api/universal/work-stale-claim-release"),
+    ("POST", "/api/universal/workshop-board/release-dead-claims"),
+    ("POST", "/api/universal/workshop-board/archive-idle"),
+    ("POST", "/api/universal/workshop-board/restore-archived"),
+    ("POST", "/api/universal/workshop-board/sweep"),
 })
 _RETIRED_APPLICATION_HTTP_ROUTE_KEYS = frozenset({
     "POST /api/universal/group",
@@ -19944,7 +19954,8 @@ _SYSTEM_TOOL_CANVAS_NODES = (
     ("tool_studio", "Studio", "tool.studio", "studio", None,
      {"default_view": "canvas"}),
     ("tool_workshop", "Workshop", "tool.workshop", "workshop", None,
-     {"default_tab": "tasks"}),
+     {"default_tab": "tasks", "stale_claim_after_idle_minutes": "30",
+      "archive_after_idle_days": "20", "tick_cadence_minutes": "5"}),
     ("tool_brain", "Brain", "tool.brain", "brain", "brain",
      {"default_tab": "memory"}),
     ("tool_baboom", "BABOOM", "tool.baboom", "baboom", None,
@@ -36448,6 +36459,713 @@ def founder_release_stale_governed_work_claim(
         "stale_claimant_session": stale_session_root,
         "stale_claimant_agent_body": stale_body_root,
         "stale_claim_binding": stale_binding_root,
+    }
+
+
+_WORKSHOP_BOARD_DEFAULT_STALE_CLAIM_MINUTES = 30
+_WORKSHOP_BOARD_DEFAULT_ARCHIVE_DAYS = 20
+_WORKSHOP_BOARD_DEFAULT_TICK_CADENCE_MINUTES = 5
+_WORKSHOP_BOARD_WIP_STATES = frozenset({"claimed", "blocked", "review"})
+_WORKSHOP_BOARD_ARCHIVABLE_STATES = frozenset({
+    "open", "claimed", "blocked", "review", "complete",
+})
+
+
+def _workshop_board_property_root(owner_root: str, key: str) -> tuple[str, str]:
+    token = "%s:%s:%s" % (_part(owner_root), _part("field"), _part(key))
+    return "app:property:%s" % token, "app:value:%s" % token
+
+
+def _workshop_board_int_param(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    key: str,
+    *,
+    default: int,
+    lower: int,
+    upper: int,
+) -> int:
+    owner_root = _system_tool_canvas_root("tool_workshop")
+    relation_root, _value_root = _workshop_board_property_root(owner_root, key)
+    if relation_root not in snapshot.cells:
+        return default
+    members = read_relation(snapshot, relation_root, budget=16)
+    value_root = _one_for_role(members, registry.roles["value"])
+    if value_root is None:
+        raise InvalidCell("Workshop board parameter is incomplete")
+    try:
+        value = int(_text(snapshot, value_root).strip())
+    except ValueError as exc:
+        raise InvalidCell("Workshop board parameter must be an integer") from exc
+    if not lower <= value <= upper:
+        raise InvalidCell("Workshop board parameter is outside its bound")
+    return value
+
+
+def _set_workshop_board_int_param(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    key: str,
+    value: int,
+    *,
+    lower: int,
+    upper: int,
+) -> None:
+    if type(value) is not int or not lower <= value <= upper:
+        raise InvalidCell("Workshop board parameter is invalid")
+    snapshot = store.snapshot()
+    owner_root = _system_tool_canvas_root("tool_workshop")
+    relation_root, value_root = _workshop_board_property_root(owner_root, key)
+    if relation_root in snapshot.cells:
+        set_property_atom(
+            store,
+            relation_root,
+            value_role=registry.roles["value"],
+            atom=_atom(value),
+        )
+        return
+    label_root = "app:label:%s" % _part(key)
+    create = [
+        Cell(value_root, NULL_CELL_ID, NULL_CELL_ID, _atom(value)),
+    ]
+    if label_root not in snapshot.cells:
+        create.append(Cell(label_root, NULL_CELL_ID, NULL_CELL_ID, _atom(key)))
+    relation = compose_relation_cells((
+        (registry.roles["owner"], owner_root),
+        (registry.roles["value"], value_root),
+        (registry.roles["label"], label_root),
+    ), relation_id=relation_root)
+    create.extend(relation.cells)
+    patch = prepare_append_relation_members(
+        snapshot,
+        registry.canvas_root,
+        ((registry.roles["property"], relation_root),),
+        budget=100_000,
+    )
+    store.commit(
+        snapshot.revision,
+        create=(*create, *patch.create),
+        replace=patch.replace,
+    )
+
+
+def _workshop_board_stale_claim_after_idle_minutes(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+) -> int:
+    return _workshop_board_int_param(
+        snapshot,
+        registry,
+        "stale_claim_after_idle_minutes",
+        default=_WORKSHOP_BOARD_DEFAULT_STALE_CLAIM_MINUTES,
+        lower=1,
+        upper=24 * 60,
+    )
+
+
+def _workshop_board_archive_after_idle_days(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+) -> int:
+    return _workshop_board_int_param(
+        snapshot,
+        registry,
+        "archive_after_idle_days",
+        default=_WORKSHOP_BOARD_DEFAULT_ARCHIVE_DAYS,
+        lower=1,
+        upper=3650,
+    )
+
+
+def _workshop_board_tick_cadence_minutes(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+) -> int:
+    return _workshop_board_int_param(
+        snapshot,
+        registry,
+        "tick_cadence_minutes",
+        default=_WORKSHOP_BOARD_DEFAULT_TICK_CADENCE_MINUTES,
+        lower=1,
+        upper=24 * 60,
+    )
+
+
+def _require_workshop_board_edit_admission(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    authentication_context: object | None,
+) -> object:
+    identity = registry.authorization.broker.resolve(authentication_context)
+    if identity.subject_root != registry.authorization.subject_root:
+        raise AuthorizationDenied("Workshop board write requires the founder")
+    _require_application_authorization(
+        snapshot,
+        registry,
+        "execute",
+        _system_tool_canvas_root("tool_workshop"),
+        authentication_context=authentication_context,
+    )
+    return identity
+
+
+def _set_workshop_board_int_param_governed(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    key: str,
+    value: int,
+    *,
+    lower: int,
+    upper: int,
+    authentication_context: object | None,
+) -> None:
+    if type(value) is not int or not lower <= value <= upper:
+        raise InvalidCell("Workshop board parameter is invalid")
+    _require_workshop_board_edit_admission(
+        store.snapshot(), registry, authentication_context
+    )
+    _set_workshop_board_int_param(
+        store,
+        registry,
+        key,
+        value,
+        lower=lower,
+        upper=upper,
+    )
+
+
+def _governed_work_last_activity_at(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    work_root: str,
+) -> float | None:
+    machine = read_instance_state_machine(
+        snapshot,
+        registry.assembly_protocol,
+        registry.standard_library.state_machine_protocol,
+        work_root,
+    )
+    history = machine_history(
+        snapshot, registry.standard_library.state_machine_protocol, machine.root_id
+    )
+    if not history:
+        return None
+    values = []
+    for event in history:
+        try:
+            values.append(float(_text(snapshot, event.timestamp_root)))
+        except ValueError as exc:
+            raise InvalidCell("governed Work history timestamp is invalid") from exc
+    return max(values) if values else None
+
+
+def _workshop_board_archive_effect_is_still_admitted(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    work_root: str,
+    expected_previous_state: str,
+    *,
+    archive_seconds: float,
+    now: float,
+) -> bool:
+    operational = registry.standard_library.state_machine_protocol
+    machine = read_instance_state_machine(
+        snapshot, registry.assembly_protocol, operational, work_root
+    )
+    state = _text(snapshot, machine.current_state_root).casefold()
+    if state != expected_previous_state or state not in _WORKSHOP_BOARD_ARCHIVABLE_STATES:
+        return False
+    claimant = _governed_work_claimant_session(snapshot, registry, work_root)
+    if claimant:
+        active_sessions = frozenset(
+            lease.agent_session_root for lease in list_active_runtime_presences(
+                snapshot, registry.runtime_presence_protocol, now=now
+            )
+        )
+        if claimant in active_sessions:
+            return False
+    last_activity = _governed_work_last_activity_at(snapshot, registry, work_root)
+    return last_activity is not None and now - last_activity >= archive_seconds
+
+
+def _ensure_workshop_board_lifecycle_transition(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    work_root: str,
+    event: str,
+) -> None:
+    operational = registry.standard_library.state_machine_protocol
+    snapshot = store.snapshot()
+    machine = read_instance_state_machine(
+        snapshot, registry.assembly_protocol, operational, work_root
+    )
+    current_label = _text(snapshot, machine.current_state_root).casefold()
+    for transition_root in machine.transition_roots:
+        transition = read_transition(snapshot, operational, transition_root)
+        if (
+            transition.from_state_root == machine.current_state_root
+            and _text(snapshot, transition.event_root).casefold() == event
+        ):
+            return
+    state_roots = {
+        _text(snapshot, state_root).casefold(): state_root
+        for state_root in machine.state_roots
+    }
+    if event == "cancel" and current_label == "complete":
+        to_state = state_roots.get("cancelled")
+        evidence_label = "cancellation-decision"
+    elif event == "restore" and current_label == "cancelled":
+        to_state = state_roots.get("open")
+        evidence_label = "restore-decision"
+    elif event == "restore-complete" and current_label == "cancelled":
+        to_state = state_roots.get("complete")
+        evidence_label = "restore-decision"
+    else:
+        return
+    if to_state is None:
+        raise InvalidCell("Workshop board lifecycle state is missing")
+
+    event_root = None
+    evidence_root = None
+    for transition_root in machine.transition_roots:
+        transition = read_transition(snapshot, operational, transition_root)
+        if _text(snapshot, transition.event_root).casefold() == event:
+            event_root = transition.event_root
+        for root in transition.required_evidence_type_roots:
+            if _text(snapshot, root).casefold() == evidence_label:
+                evidence_root = root
+    create = []
+    if event_root is None:
+        event_root = "app:workshop-board:event:%s" % _part(event)
+        if event_root not in snapshot.cells:
+            create.append(Cell(event_root, NULL_CELL_ID, NULL_CELL_ID, _atom(event)))
+    if evidence_root is None:
+        evidence_root = "app:workshop-board:evidence:%s" % _part(evidence_label)
+        if evidence_root not in snapshot.cells:
+            create.append(Cell(
+                evidence_root, NULL_CELL_ID, NULL_CELL_ID, _atom(evidence_label)
+            ))
+    if create:
+        store.commit(snapshot.revision, create=tuple(create))
+    transition_root = "%s:workshop-board:%s" % (machine.root_id, _part(event))
+    if transition_root not in store.snapshot().cells:
+        build_transition(
+            store,
+            operational,
+            transition_id=transition_root,
+            from_state_root=machine.current_state_root,
+            to_state_root=to_state,
+            event_root=event_root,
+            required_evidence_type_roots=(evidence_root,),
+        )
+    snapshot = store.snapshot()
+    patch = prepare_append_relation_members(
+        snapshot,
+        machine.root_id,
+        ((operational.role("transition"), transition_root),),
+        budget=100_000,
+    )
+    if patch.create or patch.replace:
+        store.commit(snapshot.revision, create=patch.create, replace=patch.replace)
+
+
+def _founder_governed_work_evidence_transition(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    work_root: str,
+    event: str,
+    evidence_payload: Mapping[str, object],
+    *,
+    authentication_context: object | None,
+    commit_guard: Callable[[Snapshot], None] | None = None,
+) -> tuple[str, int, str]:
+    snapshot = store.snapshot()
+    identity = registry.authorization.broker.resolve(authentication_context)
+    if identity.subject_root != registry.authorization.subject_root:
+        raise AuthorizationDenied("Workshop board lifecycle write requires the founder")
+    _require_application_authorization(
+        snapshot,
+        registry,
+        "execute",
+        work_root,
+        authentication_context=authentication_context,
+    )
+    operational = registry.standard_library.state_machine_protocol
+    _ensure_workshop_board_lifecycle_transition(store, registry, work_root, event)
+    snapshot = store.snapshot()
+    machine = read_instance_state_machine(
+        snapshot, registry.assembly_protocol, operational, work_root
+    )
+    event = event.casefold()
+    candidates = []
+    for transition_root in machine.transition_roots:
+        transition = read_transition(snapshot, operational, transition_root)
+        if (
+            transition.from_state_root == machine.current_state_root
+            and _text(snapshot, transition.event_root).casefold() == event
+        ):
+            candidates.append(transition)
+    if len(candidates) != 1:
+        raise InvalidCell("Workshop board lifecycle transition is missing or ambiguous")
+    transition = candidates[0]
+    if len(transition.required_evidence_type_roots) != 1:
+        raise InvalidCell("Workshop board lifecycle transition requires one evidence type")
+    payload = json.dumps(
+        evidence_payload, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    _evidence_root, history_root, revision = transition_machine_with_new_evidence(
+        store,
+        operational,
+        machine.root_id,
+        event_root=transition.event_root,
+        expected_state_root=machine.current_state_root,
+        actor_root=identity.subject_root,
+        evidence_id="app:workshop-board-evidence:%s" % uuid.uuid4().hex,
+        evidence_type_root=transition.required_evidence_type_roots[0],
+        evidence_payload=payload,
+        evidence_issuer_root=identity.subject_root,
+        trusted_issuer_roots=(identity.subject_root,),
+        context_roots=(work_root, identity.subject_root),
+        commit_guard=commit_guard,
+    )
+    changed_snapshot = store.snapshot()
+    state = _text(
+        changed_snapshot,
+        read_instance_state_machine(
+            changed_snapshot,
+            registry.assembly_protocol,
+            operational,
+            work_root,
+        ).current_state_root,
+    ).casefold()
+    return history_root, revision, state
+
+
+def _workshop_board_archive_source_state(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    work_root: str,
+) -> str:
+    operational = registry.standard_library.state_machine_protocol
+    machine = read_instance_state_machine(
+        snapshot, registry.assembly_protocol, operational, work_root
+    )
+    for event in reversed(machine_history(snapshot, operational, machine.root_id)):
+        if _text(snapshot, event.event_root).casefold() != "cancel":
+            continue
+        for evidence_root in event.evidence_roots:
+            evidence = read_evidence(snapshot, operational, evidence_root)
+            try:
+                payload = json.loads(evidence.payload.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise InvalidCell("Workshop board archive evidence is invalid") from exc
+            if (
+                isinstance(payload, Mapping)
+                and payload.get("source") == "workshop-board-sweep"
+                and payload.get("work_root") == work_root
+                and payload.get("previous_state") in _WORKSHOP_BOARD_ARCHIVABLE_STATES
+            ):
+                return str(payload["previous_state"])
+    raise InvalidCell("Workshop board archive source state is missing")
+
+
+def _workshop_board_plan(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    *,
+    stale_claim_after_idle_minutes: int | None = None,
+    archive_after_idle_days: int | None = None,
+    authentication_context: object | None = None,
+) -> dict[str, object]:
+    snapshot = store.snapshot()
+    stale_minutes = (
+        _workshop_board_stale_claim_after_idle_minutes(snapshot, registry)
+        if stale_claim_after_idle_minutes is None
+        else stale_claim_after_idle_minutes
+    )
+    archive_days = (
+        _workshop_board_archive_after_idle_days(snapshot, registry)
+        if archive_after_idle_days is None
+        else archive_after_idle_days
+    )
+    tick_minutes = _workshop_board_tick_cadence_minutes(snapshot, registry)
+    if type(stale_minutes) is not int or not 1 <= stale_minutes <= 24 * 60:
+        raise InvalidCell("Workshop board stale claim minutes is invalid")
+    if type(archive_days) is not int or not 1 <= archive_days <= 3650:
+        raise InvalidCell("Workshop board archive idle days is invalid")
+    now = time.time()
+    idle_seconds = stale_minutes * 60
+    archive_seconds = archive_days * 86400
+    active_sessions = frozenset(
+        lease.agent_session_root for lease in list_active_runtime_presences(
+            snapshot, registry.runtime_presence_protocol, now=now
+        )
+    )
+    counts = {
+        "wip_dead": 0,
+        "wip_idle": 0,
+        "planned": 0,
+        "done_old": 0,
+        "would_release": 0,
+        "would_archive": 0,
+    }
+    release: list[str] = []
+    archive: list[dict[str, object]] = []
+    for item in project_universal_governed_work_index(
+        store, registry, authentication_context=authentication_context
+    )["items"]:
+        state = str(item["operational"]["current_state_label"]).casefold()
+        work_root = str(item["root"])
+        claimant = item.get("claimant_session")
+        live = bool(claimant and claimant in active_sessions)
+        last_activity = _governed_work_last_activity_at(snapshot, registry, work_root)
+        idle_for = None if last_activity is None else now - last_activity
+        if state == "open":
+            counts["planned"] += 1
+        if state in _WORKSHOP_BOARD_WIP_STATES and claimant and not live:
+            counts["wip_dead"] += 1
+            if idle_for is not None and idle_for >= idle_seconds:
+                counts["wip_idle"] += 1
+        old = idle_for is not None and idle_for >= archive_seconds
+        if state == "complete" and old:
+            counts["done_old"] += 1
+        if state in _WORKSHOP_BOARD_ARCHIVABLE_STATES and old and not live:
+            archive.append({"root": work_root, "previous_state": state})
+            continue
+        if state == "claimed" and claimant and not live and idle_for is not None and idle_for >= idle_seconds:
+            release.append(work_root)
+    counts["would_release"] = len(release)
+    counts["would_archive"] = len(archive)
+    return {
+        **counts,
+        "stale_claim_after_idle_minutes": stale_minutes,
+        "archive_after_idle_days": archive_days,
+        "tick_cadence_minutes": tick_minutes,
+        "release": tuple(release),
+        "archive": tuple(archive),
+        "revision": snapshot.revision,
+    }
+
+
+def dry_run_workshop_board_sweep(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    *,
+    stale_claim_after_idle_minutes: int | None = None,
+    archive_after_idle_days: int | None = None,
+    authentication_context: object | None = None,
+) -> dict[str, object]:
+    """Read-only Workshop board sweep report for founder graph coordination."""
+    plan = _workshop_board_plan(
+        store,
+        registry,
+        stale_claim_after_idle_minutes=stale_claim_after_idle_minutes,
+        archive_after_idle_days=archive_after_idle_days,
+        authentication_context=authentication_context,
+    )
+    return {
+        key: plan[key]
+        for key in (
+            "wip_dead", "wip_idle", "planned", "done_old",
+            "would_release", "would_archive", "revision",
+            "stale_claim_after_idle_minutes", "archive_after_idle_days",
+            "tick_cadence_minutes",
+        )
+    }
+
+
+def sweep_workshop_board_tasks(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    *,
+    stale_claim_after_idle_minutes: int | None = None,
+    archive_after_idle_days: int | None = None,
+    authentication_context: object | None = None,
+) -> dict[str, object]:
+    """Release stale WIP claims and archive abandoned Workshop board tasks."""
+    if archive_after_idle_days is not None:
+        _set_workshop_board_int_param_governed(
+            store,
+            registry,
+            "archive_after_idle_days",
+            archive_after_idle_days,
+            lower=1,
+            upper=3650,
+            authentication_context=authentication_context,
+        )
+    if stale_claim_after_idle_minutes is not None:
+        _set_workshop_board_int_param_governed(
+            store,
+            registry,
+            "stale_claim_after_idle_minutes",
+            stale_claim_after_idle_minutes,
+            lower=1,
+            upper=24 * 60,
+            authentication_context=authentication_context,
+        )
+    plan = _workshop_board_plan(
+        store,
+        registry,
+        stale_claim_after_idle_minutes=stale_claim_after_idle_minutes,
+        archive_after_idle_days=archive_after_idle_days,
+        authentication_context=authentication_context,
+    )
+    archived = []
+    for row in plan["archive"]:
+        work_root = str(row["root"])
+        previous_state = str(row["previous_state"])
+        now = time.time()
+        snapshot = store.snapshot()
+        if not _workshop_board_archive_effect_is_still_admitted(
+            snapshot,
+            registry,
+            work_root,
+            previous_state,
+            archive_seconds=int(plan["archive_after_idle_days"]) * 86400,
+            now=now,
+        ):
+            continue
+        expected_revision = snapshot.revision
+
+        def archive_commit_guard(guard_snapshot: Snapshot) -> None:
+            if guard_snapshot.revision != expected_revision:
+                raise Conflict("Workshop board archive target changed before commit")
+            if not _workshop_board_archive_effect_is_still_admitted(
+                guard_snapshot,
+                registry,
+                work_root,
+                previous_state,
+                archive_seconds=int(plan["archive_after_idle_days"]) * 86400,
+                now=time.time(),
+            ):
+                raise InvalidCell("Workshop board archive is no longer admitted")
+
+        try:
+            history_root, _revision, state = _founder_governed_work_evidence_transition(
+                store,
+                registry,
+                work_root,
+                "cancel",
+                {
+                    "source": "workshop-board-sweep",
+                    "work_root": work_root,
+                    "previous_state": previous_state,
+                    "archive_after_idle_days": plan["archive_after_idle_days"],
+                },
+                authentication_context=authentication_context,
+                commit_guard=archive_commit_guard,
+            )
+        except (Conflict, InvalidCell) as exc:
+            if str(exc) in {
+                "Workshop board archive target changed before commit",
+                "Workshop board archive is no longer admitted",
+            }:
+                continue
+            raise
+        if state != "cancelled":
+            raise InvalidCell("Workshop board archive did not persist")
+        archived.append({"root": work_root, "history_root": history_root})
+    released = []
+    for work_root in plan["release"]:
+        result = founder_release_stale_governed_work_claim(
+            store,
+            registry,
+            str(work_root),
+            authentication_context=authentication_context,
+        )
+        released.append(result["work_root"])
+    return {
+        "projection": "workshop-board-sweep-v1",
+        "stale_claim_after_idle_minutes": plan["stale_claim_after_idle_minutes"],
+        "archive_after_idle_days": plan["archive_after_idle_days"],
+        "tick_cadence_minutes": plan["tick_cadence_minutes"],
+        "released": tuple(released),
+        "archived": tuple(row["root"] for row in archived),
+        "archive_history": tuple(archived),
+        "dry_run": dry_run_workshop_board_sweep(
+            store,
+            registry,
+            authentication_context=authentication_context,
+        ),
+        "revision": store.revision,
+    }
+
+
+def release_dead_workshop_board_claims(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    *,
+    stale_claim_after_idle_minutes: int | None = None,
+    authentication_context: object | None = None,
+) -> dict[str, object]:
+    result = sweep_workshop_board_tasks(
+        store,
+        registry,
+        stale_claim_after_idle_minutes=stale_claim_after_idle_minutes,
+        authentication_context=authentication_context,
+    )
+    return {
+        "projection": "workshop-board-dead-claim-release-v1",
+        "stale_claim_after_idle_minutes": result["stale_claim_after_idle_minutes"],
+        "released": result["released"],
+        "revision": result["revision"],
+    }
+
+
+def archive_idle_workshop_board_tasks(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    *,
+    archive_after_idle_days: int | None = None,
+    authentication_context: object | None = None,
+) -> dict[str, object]:
+    result = sweep_workshop_board_tasks(
+        store,
+        registry,
+        archive_after_idle_days=archive_after_idle_days,
+        authentication_context=authentication_context,
+    )
+    return {
+        "projection": "workshop-board-idle-archive-v1",
+        "archive_after_idle_days": result["archive_after_idle_days"],
+        "archived": result["archived"],
+        "revision": result["revision"],
+    }
+
+
+def restore_archived_workshop_board_task(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    work_root: str,
+    *,
+    authentication_context: object | None = None,
+) -> dict[str, object]:
+    if type(work_root) is not str or not work_root:
+        raise InvalidCell("Workshop board restore requires one Work root")
+    previous_state = _workshop_board_archive_source_state(
+        store.snapshot(), registry, work_root
+    )
+    event = "restore-complete" if previous_state == "complete" else "restore"
+    history_root, revision, state = _founder_governed_work_evidence_transition(
+        store,
+        registry,
+        work_root,
+        event,
+        {
+            "source": "workshop-board-restore",
+            "work_root": work_root,
+            "previous_state": previous_state,
+        },
+        authentication_context=authentication_context,
+    )
+    if state != previous_state:
+        raise InvalidCell("Workshop board restore did not persist")
+    return {
+        "projection": "workshop-board-restore-v1",
+        "work_root": work_root,
+        "history_root": history_root,
+        "revision": revision,
+        "state": state,
     }
 
 
@@ -55063,6 +55781,11 @@ __all__ = [
     "project_universal_baboom_context",
     "project_universal_baboom_companion_directive",
     "founder_release_stale_governed_work_claim",
+    "release_dead_workshop_board_claims",
+    "archive_idle_workshop_board_tasks",
+    "restore_archived_workshop_board_task",
+    "sweep_workshop_board_tasks",
+    "dry_run_workshop_board_sweep",
     "project_universal_founder_baboom_capability_report",
     "project_universal_mcp_broker",
     "project_universal_founder_baboom_steward_briefing",

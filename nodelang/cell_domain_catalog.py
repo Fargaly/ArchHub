@@ -200,6 +200,7 @@ DOMAIN_SPECS = (
         "evidence": (
             "block-reason", "resume-decision", "artifact-proof",
             "independent-court-receipt", "cancellation-decision",
+            "restore-decision",
         ),
         "transitions": (
             ("claim", "open", "claimed", ()),
@@ -230,6 +231,18 @@ DOMAIN_SPECS = (
             (
                 "cancel", "review", "cancelled",
                 ("cancellation-decision",),
+            ),
+            (
+                "cancel", "complete", "cancelled",
+                ("cancellation-decision",),
+            ),
+            (
+                "restore", "cancelled", "open",
+                ("restore-decision",),
+            ),
+            (
+                "restore-complete", "cancelled", "complete",
+                ("restore-decision",),
             ),
         ),
     },

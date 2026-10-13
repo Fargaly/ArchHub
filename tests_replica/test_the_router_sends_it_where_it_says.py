@@ -113,6 +113,26 @@ class _SequenceWire:
         return [json.loads(request.data.decode("utf-8")) for request in self.sent]
 
 
+class _OpenRouterCatalogueThenChat:
+    def __init__(self, catalogue_rows, chat_payload=None):
+        self.catalogue_rows = catalogue_rows
+        self.chat_payload = chat_payload or {**_openai_answer("ling answered"), "model": "inclusionai/ling-3.1-flash",
+                                             "usage": {"cost": 0}}
+        self.sent = []
+
+    def __call__(self, request, timeout=None):
+        self.sent.append(request)
+        if request.get_method() == "GET" and "openrouter.ai/api/v1/models" in request.full_url:
+            return _Answer(json.dumps({"data": self.catalogue_rows}).encode("utf-8"))
+        if request.full_url == OPENROUTER_CHAT:
+            return _Answer(json.dumps(self.chat_payload).encode("utf-8"))
+        raise AssertionError("unexpected provider call %s" % request.full_url)
+
+    @property
+    def bodies(self):
+        return [json.loads(request.data.decode("utf-8")) for request in self.sent if getattr(request, "data", None)]
+
+
 class _FreeFallbackWire:
     """HTTP fake for OpenRouter exhaustion, local model catalogues, and local chat."""
 
@@ -1745,6 +1765,41 @@ def test_a_message_with_an_image_part_reaches_openrouter_whole():
     sent = wire.body["messages"][0]["content"]
     assert isinstance(sent, list) and sent[0] == {"type": "text", "text": "what is this"}
     assert sent[1]["type"] == "image_url" and sent[1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_zero_priced_openrouter_pick_without_free_suffix_routes_in_free_only_mode():
+    model_id = "inclusionai/ling-3.1-flash"
+    wire = _OpenRouterCatalogueThenChat([
+        {"id": model_id, "name": "Ling 3.1 Flash", "pricing": {"prompt": "0", "completion": "0"},
+         "architecture": {"output_modalities": ["text"]}},
+    ], {**_openai_answer("ling answered"), "model": model_id, "usage": {"cost": 0}})
+
+    out = route_chat("openrouter/" + model_id, ASK, opener=wire,
+                     environ={"OPENROUTER_API_KEY": "or-live"},
+                     secrets_loader=lambda name: "", free_only=True)
+
+    assert out["text"] == "ling answered"
+    assert wire.bodies[-1]["model"] == model_id
+
+
+def test_priced_openrouter_pick_is_refused_before_dispatch_in_free_only_mode():
+    called = False
+
+    def before_dispatch():
+        nonlocal called
+        called = True
+
+    wire = _OpenRouterCatalogueThenChat([
+        {"id": "deepseek/deepseek-r1", "name": "DeepSeek R1",
+         "pricing": {"prompt": "0.00000055", "completion": "0.0000022"}},
+    ])
+
+    with pytest.raises(ModelRouteRefused):
+        route_chat("openrouter/deepseek/deepseek-r1", ASK, opener=wire,
+                   environ={"OPENROUTER_API_KEY": "or-live"},
+                   secrets_loader=lambda name: "", free_only=True,
+                   before_dispatch=before_dispatch)
+    assert called is False and wire.bodies == []
 
 
 def test_an_ollama_route_refuses_an_image_by_name():

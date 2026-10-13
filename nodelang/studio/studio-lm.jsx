@@ -1074,7 +1074,8 @@ const StudioLM = () => {
       {signUpOpen && <SignUp onDone={(rec) => { setAccount(rec); setSignUpOpen(false); }} onCancel={() => setSignUpOpen(false)} plan={account.plan}/>}
       {booting && <AppBoot account={account} onDone={() => setBooting(false)}/>}
       {/* The design's own full-bleed screens: first-run onboarding, a skill's split view, a connector's diagnostic. */}
-      <StudioScreens model={model} onPickModel={() => setPickerOpen(true)}/>
+      <StudioScreens model={model} onPickModel={() => setPickerOpen(true)}
+        onAddSkillToCanvas={skill => addNodeFromLibrary(studioSkillLibraryItem(skill))}/>
       {docsOpen && <Docs onClose={() => setDocsOpen(false)}/>}
       {libraryOpen && <NodeLibrary onClose={() => setLibraryOpen(false)} addNodeFromLibrary={addNodeFromLibrary}
         initialQuery={typeof libraryOpen === 'string' ? libraryOpen : ''}/>}
@@ -1104,7 +1105,7 @@ const Sidebar = ({ panel, setPanel, openId, onOpen, onHome, onSettings, onAccoun
     {railOnly ? null : <>
     {panel === 'chats'  && <ChatsPanel openId={openId} onOpen={onOpen} onNew={onHome} account={account} onAccount={onAccount || onSettings}/>}
     {panel === 'nodes'  && <NodesPanel addNodeFromLibrary={addNodeFromLibrary} account={account} onAccount={onAccount || onSettings}/>}
-    {panel === 'skills' && <SkillsPanel/>}
+    {panel === 'skills' && <SkillsPanel addNodeFromLibrary={addNodeFromLibrary}/>}
     {panel === 'search' && <SearchPanel/>}
     {String(panel || '').startsWith('tool:') && <ToolOffPanelFromOwners panel={panel} account={account}/>}
       </>}
@@ -1898,7 +1899,21 @@ const withLiveCatalogue = (loaderName, items, View) => props => {
   </div>;
 };
 
-const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, ({ catalogue = {} }) => (
+const studioSkillLibraryItem = skill => ({
+  id:'skill:' + (skill.id || skill.name || skill.path),
+  title:skill.name || 'Skill',
+  cat:'skill',
+  engine:'skill',
+  params:{skill:{
+    id:skill.id || '',
+    name:skill.name || '',
+    source:skill.source || '',
+    path:skill.path || '',
+    description:skill.description || '',
+  }},
+});
+
+const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, ({ catalogue = {}, addNodeFromLibrary }) => (
   <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
     <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:LM.sp.sm }}>
       <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Skills</span>
@@ -1917,10 +1932,14 @@ const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, ({
     </div>
     <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'0 6px 8px' }}>
       {LM_SAVED_SKILLS.map((s, index) => (
-        <div key={s.id || s.path || ((s.source || '') + ':' + (s.name || index))} data-skill-row="" title={s.path || undefined} draggable="true" style={{
-          padding:'7px 9px', borderRadius:LM.rad.sm, cursor:'grab', marginBottom:1,
-          background:'transparent', borderLeft:`2px solid transparent`,
+        <button key={s.id || s.path || ((s.source || '') + ':' + (s.name || index))} type="button"
+        data-skill-row="" aria-label={'Open skill ' + (s.name || 'Skill')} title={s.path || undefined} draggable="true" style={{
+          display:'block', width:'100%', padding:'7px 9px', borderRadius:LM.rad.sm, cursor:'pointer', marginBottom:1,
+          background:'transparent', border:'0', borderLeft:`2px solid transparent`, textAlign:'left', fontFamily:LM.sans,
         }}
+        onClick={() => window.ArchHubStudioScreens && window.ArchHubStudioScreens.open('skill', s)}
+        onKeyDown={e => { if ((e.key === 'Enter' || e.key === ' ') && window.ArchHubStudioScreens) { e.preventDefault(); window.ArchHubStudioScreens.open('skill', s); } }}
+        onDragStart={e => e.dataTransfer.setData('application/x-lm-node', JSON.stringify(studioSkillLibraryItem(s)))}
         onMouseEnter={e => { e.currentTarget.style.background = LM.bgHover; e.currentTarget.style.borderLeftColor = LM.accent; }}
         onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderLeftColor = 'transparent'; }}>
           <div style={{ display:'flex', alignItems:'center', gap:7 }}>
@@ -1930,7 +1949,7 @@ const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, ({
           </div>
           {s.description && <div style={{ fontSize:11, color:LM.inkSoft, paddingLeft:18, marginTop:2, lineHeight:1.4,
             display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', overflow:'hidden' }}>{s.description}</div>}
-        </div>
+        </button>
       ))}
       {!LM_SAVED_SKILLS.length && catalogue.read && <div data-skills-empty="" role="status" style={{
         padding:'14px 10px', fontFamily:LM.serif, fontStyle:'italic', fontSize:13.5, color:LM.inkSoft, lineHeight:1.45 }}>

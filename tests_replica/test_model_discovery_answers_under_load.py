@@ -21,7 +21,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from nodelang import cloud_relay, model_catalogue as catalogue, model_router
+from nodelang import model_catalogue as catalogue, model_router
 from nodelang.application_server import _CleanAuthorityHttpServer
 from nodelang.http_server import QuietThreadingHTTPServer
 from nodelang.runtime_activity import RuntimeActivity
@@ -31,9 +31,7 @@ SESSION = {"token": "fixture-" + "cloud-session", "base_url": "https://cloud.exa
 OTHER = {"token": "fixture-" + "other-session", "base_url": "https://cloud.example"}
 ROWS = [{"name": "Model A", "route": "vendor/model-a", "vendor": "vendor", "tag": "BYO",
          "ctx": "8k", "cost": "free", "col": "#3a6acc"}]
-REFUSED = ("The cloud refused this machine's sign-in: it expired or was revoked. "
-           "Sign in again under Settings, Account.")
-CLOUD = "CLOUD · subscription"
+FREE = "Free cloud (OpenRouter)"
 # The projection stands in for the founder's measured 4.3s, and the bar is what the
 # picker is allowed to wait for it. His graph is not on this machine.
 PROJECTION_SECONDS = 3.0
@@ -50,9 +48,9 @@ def _raise(error):
 def sources(monkeypatch):
     """Three named sources under the court's hand, and a cloud session that exists."""
     monkeypatch.setattr(model_router, "default_cloud_session", lambda: SESSION)
-    monkeypatch.setattr(catalogue, "cloud_models", lambda *args, **kwargs: [])
     monkeypatch.setattr(catalogue, "openrouter_models", lambda **kwargs: [dict(row) for row in ROWS])
     monkeypatch.setattr(catalogue, "local_models", lambda **kwargs: [])
+    monkeypatch.setattr(catalogue, "subscription_cli_models", lambda: [])
     catalogue.reset_cache()
     yield monkeypatch
     catalogue.reset_cache()
@@ -119,28 +117,27 @@ def test_the_recheck_still_refuses_a_scope_that_moved_during_discovery(served, s
 
 
 def test_a_source_that_gave_nothing_says_so_where_its_rows_would_have_been(served, sources):
-    sources.setattr(catalogue, "cloud_models",
-                    _raise(OSError("getaddrinfo failed for cloud.example")))
+    sources.setattr(catalogue, "openrouter_models",
+                    _raise(OSError("getaddrinfo failed for openrouter.example")))
     _, status, payload = served.get()
-    assert status == 200 and payload["count"] == 1
-    assert payload["source_notes"] == {CLOUD: CLOUD + " did not answer. Refresh to ask again."}
+    assert status == 200 and payload["count"] == 0
+    assert payload["source_notes"] == {FREE: FREE + " did not answer. Refresh to ask again."}
     # Exception text can carry an authenticated URL, so none of it is forwarded.
-    assert payload["source_errors"] == {CLOUD: "Provider catalogue unavailable"}
+    assert payload["source_errors"] == {FREE: "Provider catalogue unavailable"}
 
 
-def test_an_expired_cloud_session_produces_the_sign_in_line(served, sources):
-    sources.setattr(catalogue, "cloud_models", _raise(urllib.error.HTTPError(
-        SESSION["base_url"] + "/v1/models", 401, "Unauthorized", {}, None)))
+def test_an_openrouter_http_error_produces_the_fixed_source_line(served, sources):
+    sources.setattr(catalogue, "openrouter_models", _raise(urllib.error.HTTPError(
+        "https://openrouter.ai/api/v1/models", 401, "Unauthorized", {}, None)))
     _, status, payload = served.get()
     assert status == 200
-    assert payload["source_notes"][CLOUD] == REFUSED
-    assert cloud_relay.SIGN_IN_AGAIN in payload["source_notes"][CLOUD]
+    assert payload["source_notes"][FREE] == FREE + " did not answer. Refresh to ask again."
 
 
-def test_a_machine_with_no_cloud_session_is_told_the_same_thing(sources):
+def test_a_machine_with_no_local_or_subscription_runtime_keeps_only_free_cloud_rows(sources):
     groups = catalogue.live_model_groups(None, now=0.0)
-    assert groups["source_notes"][CLOUD] == (
-        "No ArchHub cloud session on this machine. " + cloud_relay.SIGN_IN_AGAIN)
+    assert groups["source_notes"] == {}
+    assert [group["name"] for group in groups["groups"]] == [FREE]
 
 
 def test_the_held_answer_is_served_at_once_and_refreshed_behind_it(sources):

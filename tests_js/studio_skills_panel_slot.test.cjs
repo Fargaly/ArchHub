@@ -9,7 +9,7 @@ const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const seedText = read('nodelang/universal_presentation_seed.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
 const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)].map(m => [m[1], m[2]]));
 
-async function mountStudio(loadSkills, {timeoutMs = 0} = {}) {
+async function mountStudio(loadSkills, {timeoutMs = 0, prepare = null} = {}) {
   const manifest = JSON.parse(read('nodelang/studio/compiled/manifest.json'));
   const held = manifest.files.find(file => file.source === 'studio-lm.jsx');
   const live = createHash('sha256').update(fs.readFileSync(path.join(root, 'nodelang/studio/studio-lm.jsx'))).digest('hex');
@@ -29,6 +29,7 @@ async function mountStudio(loadSkills, {timeoutMs = 0} = {}) {
   win.ARCHHUB_LOAD_SKILLS = loadSkills;
   if (timeoutMs) win.ARCHHUB_CATALOGUE_TIMEOUT_MS = timeoutMs;
   win.ARCHHUB_LIVE = {sessions:[], currentGraph:null, hosts:[], connectors:[], graph:{nodes:[], wires:[]}, memory:[], skills:[]};
+  if (typeof prepare === 'function') prepare(win);
   win.matchMedia = () => ({matches:false, addEventListener() {}, removeEventListener() {}});
   win.ARCHHUB_EXISTING_WORKSHOP = {
     getSnapshot:() => ({canvas:null, workshops:[], applicationUpdate:{state:'idle', current_build:'20261012-k1'},
@@ -82,6 +83,16 @@ const openRail = async (studio, title) => {
   assert.ok(button, title + ' rail button exists');
   studio.flush(() => button.click());
   await studio.settle();
+};
+
+const key = (studio, target, init) => studio.flush(() => target.dispatchEvent(new studio.win.KeyboardEvent('keydown', {bubbles:true, ...init})));
+const reactProps = element => element[Object.keys(element).find(key => key.startsWith('__reactProps'))] || {};
+const waitFor = async (studio, predicate, note) => {
+  for (let i = 0; i < 12; i += 1) {
+    await studio.settle();
+    if (predicate()) return;
+  }
+  assert.ok(predicate(), note);
 };
 test('SKILLS-ONE: the Skills panel lists the same skills Search counts, and the loading line clears', async () => {
   const studio = await mountStudio(async () => SKILL_ROWS.map(row => ({...row})));
@@ -164,5 +175,48 @@ test('SKILLS-ONE: a list that never answers stops loading and offers Retry', asy
     assert.ok(alert && /did not answer/.test(alert.textContent), 'says the list did not answer');
     assert.ok([...alert.querySelectorAll('button')].some(b => b.textContent === 'Retry'), 'offers Retry');
     assert.equal(studio.doc.querySelector('[data-skills-empty]'), null, 'an unanswered list is not shown as empty');
+  } finally { studio.close(); }
+});
+
+test('SKILL-ROW: rows are controls, open real skill files, return, and add to canvas', async () => {
+  const row = {id:'door-qa', name:'Door schedule QA', source:'codex',
+    description:'Checks door schedules against room data.', path:'C:\\skills\\door-qa\\SKILL.md'};
+  const skillText = '---\nname: Door schedule QA\ndescription: Checks door schedules.\n---\n\n# Door schedule QA\n\n## Verify\nRead the real file.\n';
+  const reads = [], created = [];
+  const studio = await mountStudio(async () => [{...row}], {prepare:win => {
+    win.ARCHHUB_READ_SKILL = async target => { reads.push(target); return skillText; };
+    win.ARCHHUB_NODE_CREATE = async payload => { created.push(payload); return {ok:true, id:'node-door-qa'}; };
+  }});
+  try {
+    await openRail(studio, 'Skills');
+    await waitFor(studio, () => studio.doc.querySelectorAll('[data-skill-row]').length === 1, 'skill row appears');
+    const skillRow = studio.doc.querySelector('[data-skill-row]');
+    assert.equal(skillRow.tagName, 'BUTTON', 'skill row is a button control');
+    assert.equal(skillRow.getAttribute('aria-label'), 'Open skill Door schedule QA');
+    assert.equal(skillRow.textContent.includes(row.source), true, 'row shows the source');
+    assert.equal(skillRow.textContent.includes(row.description), true, 'row shows the description');
+    studio.flush(() => skillRow.click());
+    await waitFor(studio, () => studio.doc.querySelector('[data-studio-screen="skill"]')?.textContent.includes('Read the real file.'), 'click opens skill content');
+    assert.deepEqual(reads, [row.path], 'the split view reads the row path');
+    const view = studio.doc.querySelector('[data-studio-screen="skill"]');
+    assert.equal(view.querySelector('h1').textContent, row.name);
+    assert.equal(view.textContent.includes(row.path), true, 'the split view shows the skill path');
+    const add = [...view.querySelectorAll('button')].find(button => button.textContent.includes('Add to canvas'));
+    assert.ok(add, 'Add to canvas is drawn');
+    assert.equal(add.disabled, false, 'Add to canvas is live when the add-node path exists');
+    assert.equal(typeof reactProps(add).onClick, 'function', 'Add to canvas has a React action');
+    studio.flush(() => add.click());
+    await waitFor(studio, () => created.length === 1, 'Add to canvas calls node create');
+    assert.equal(created[0].item, 'skill:door-qa');
+    assert.equal(created[0].engine, 'skill');
+    assert.equal(created[0].params.skill.id, row.id);
+    assert.equal(created[0].params.skill.name, row.name);
+    assert.equal(created[0].params.skill.source, row.source);
+    assert.equal(created[0].params.skill.path, row.path);
+    assert.equal(created[0].params.skill.description, row.description);
+    key(studio, studio.win, {key:'Escape'});
+    await waitFor(studio, () => !studio.doc.querySelector('[data-studio-screen="skill"]'), 'Escape returns to list');
+    key(studio, skillRow, {key:'Enter'});
+    await waitFor(studio, () => studio.doc.querySelector('[data-studio-screen="skill"]'), 'Enter opens the skill');
   } finally { studio.close(); }
 });

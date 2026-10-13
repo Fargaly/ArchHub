@@ -390,8 +390,8 @@ const suiteLive = {
     ? window.ARCHHUB_EXISTING_WORKSHOP.readProviders()
     : Promise.reject(new Error('Provider status requires the application connection.')),
   // /api/universal/skills want:read: the skill's own file text.
-  skill: name => typeof window.ARCHHUB_READ_SKILL === 'function'
-    ? Promise.resolve().then(() => window.ARCHHUB_READ_SKILL(name))
+  skill: skill => typeof window.ARCHHUB_READ_SKILL === 'function'
+    ? Promise.resolve().then(() => window.ARCHHUB_READ_SKILL((skill && (skill.path || skill.name)) || skill))
     : Promise.reject(new Error('Reading a skill requires the application connection.')),
   // The projected canvas the Studio opened on, and the graph index's title for it.
   graph: () => {
@@ -716,8 +716,8 @@ const suiteFrontmatter = text => {
   }
   return out;
 };
-const StudioSkillJson = ({ skill, onClose }) => {
-  const read = useSuiteRead(() => suiteLive.skill(skill.name), 'skill:' + skill.name);
+const StudioSkillJson = ({ skill, onClose, onAddSkillToCanvas }) => {
+  const read = useSuiteRead(() => suiteLive.skill(skill), 'skill:' + (skill.path || skill.name));
   const json = typeof read.value === 'string' ? read.value.replace(/\r\n/g, '\n') : '';
   const meta = suiteFrontmatter(json);
   const file = String(skill.path || '').split(/[\\/]/).pop() || 'SKILL.md';
@@ -727,6 +727,9 @@ const StudioSkillJson = ({ skill, onClose }) => {
   const version = meta.version ? (/^v/i.test(meta.version) ? meta.version : 'v' + meta.version) : '';
   const [copied, setCopied] = React.useState('');
   const copy = () => navigator.clipboard.writeText(json).then(() => setCopied('Copied'), error => setCopied((error && error.message) || 'Copy refused'));
+  const addDisabled = typeof onAddSkillToCanvas !== 'function';
+  const addReason = 'No skill add-node path is installed in this Studio.';
+  const addToCanvas = () => { if (addDisabled) return; onAddSkillToCanvas(skill); };
   const waiting = !json;
   return (
     <div style={{ background:ST.bg, color:ST.ink, fontFamily:ST.sans, height:'100%', overflow:'auto' }} className="ah-scroll">
@@ -739,6 +742,8 @@ const StudioSkillJson = ({ skill, onClose }) => {
           </div>
         </div>
         <div style={{ display:'flex', gap:ST.sp.sm }}>
+          <button onClick={addToCanvas} disabled={addDisabled} title={addDisabled ? addReason : 'Add this skill to the current canvas'}
+            style={suiteDisabled(btnSecondary(), addDisabled)}>Add to canvas</button>
           <button onClick={copy} disabled={waiting} title={waiting ? 'The skill file has not been read yet.' : copied || 'Copy ' + file}
             style={suiteDisabled(btnSecondary(), waiting)}>📋 {copied || 'Copy ' + file}</button>
           <button onClick={onClose} title="Back to the Studio (Esc)" style={btnPrimary()}>Close</button>
@@ -953,7 +958,7 @@ const studioScreens = (() => {
 })();
 window.ArchHubStudioScreens = studioScreens;
 const ONBOARDING_CLOSED = 'archhub.onboarding.closed.v1';
-const StudioScreens = ({ model, onPickModel }) => {
+const StudioScreens = ({ model, onPickModel, onAddSkillToCanvas }) => {
   const view = React.useSyncExternalStore(studioScreens.subscribe, studioScreens.getSnapshot);
   const [closed, setClosed] = React.useState(() => { try { return window.sessionStorage.getItem(ONBOARDING_CLOSED) === '1'; } catch (_) { return false; } });
   const firstRun = !!(window.ARCHHUB_BOOT && window.ARCHHUB_BOOT.first_run === true) && !closed;
@@ -968,7 +973,7 @@ const StudioScreens = ({ model, onPickModel }) => {
   return (
     // 16px / normal line height: the artboard's own type context, not the Studio shell's 13px / 1.5.
     <div data-studio-screen={view ? view.kind : 'onboarding'} style={{ position:'absolute', inset:0, zIndex:45, fontSize:16, lineHeight:'normal' }}>
-      {view && view.kind === 'skill' ? <StudioSkillJson key={view.subject.name} skill={view.subject} onClose={studioScreens.close}/>
+      {view && view.kind === 'skill' ? <StudioSkillJson key={view.subject.name} skill={view.subject} onClose={studioScreens.close} onAddSkillToCanvas={onAddSkillToCanvas}/>
         : view && view.kind === 'connector' ? <StudioSelfHeal key={view.subject.id || view.subject.name} connector={view.subject} onClose={studioScreens.close}/>
         : <StudioOnboarding model={model} onPickModel={onPickModel} onDone={finish}/>}
     </div>

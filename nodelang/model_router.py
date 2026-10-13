@@ -1444,6 +1444,34 @@ def _openrouter_free_catalogue_models(session: Optional[Mapping[str, object]]) -
         return ()
 
 
+def _openrouter_free_pick_allowed(
+    model: str,
+    session: Optional[Mapping[str, object]],
+    *,
+    opener: Optional[Callable] = None,
+    timeout: float = 6.0,
+) -> bool:
+    if model == "openrouter/free":
+        return True
+    if not model or _openrouter_free_model_blocked(model):
+        return False
+    if model.endswith(":free"):
+        return True
+    if model in _openrouter_free_catalogue_models(session):
+        return True
+    if opener is None:
+        return False
+    from . import model_catalogue  # noqa: PLC0415
+
+    try:
+        rows = model_catalogue.openrouter_models(
+            opener=opener, timeout=min(max(float(timeout), 0.1), 6.0), prices={}
+        )
+    except Exception:
+        return False
+    return any(isinstance(row, Mapping) and row.get("route") == model for row in rows)
+
+
 def _openrouter_free_rotation_models(
     environ: Optional[Mapping[str, str]],
     *,
@@ -1594,6 +1622,7 @@ def _openrouter_free_attempts(
     send: Callable = urllib.request.urlopen,
     session: Optional[Mapping[str, object]] = None,
     trace: Optional["_FreeChatTrace"] = None,
+    allowed_models: Sequence[str] = (),
 ) -> tuple[ModelRoute, ...]:
     if not free_only or destination.family != "openrouter":
         return (destination,)
@@ -1601,8 +1630,9 @@ def _openrouter_free_attempts(
         environ, send=send, session=session, trace=trace)]
     out: list[ModelRoute] = []
     seen: set[str] = set()
+    allowed = set(allowed_models)
     for model in models:
-        if not (model == "openrouter/free" or model.endswith(":free")) or model in seen:
+        if not (model == "openrouter/free" or model.endswith(":free") or model in allowed) or model in seen:
             continue
         seen.add(model)
         out.append(ModelRoute(destination.family, model, destination.url,
@@ -2202,6 +2232,7 @@ def route_chat(
     if before_dispatch is not None and not callable(before_dispatch):
         raise ModelRouteRefused("The request dispatch guard is invalid.")
     free_only = free_only or _legacy_free_route(route)
+    verified_openrouter_free_picks: set[str] = set()
     if response_byte_limit is not None and (
         type(response_byte_limit) is not int or not 1 <= response_byte_limit <= 1024 * 1024
     ):
@@ -2213,7 +2244,6 @@ def route_chat(
         explicit_free = (
             len(parts) == 2 and all(parts)
             and not any(char.isspace() for char in destination.model)
-            and destination.model.endswith(":free")
         )
         opencode_free = False
         if destination.family == "local-cli" and destination.model.startswith("opencode/"):
@@ -2226,20 +2256,28 @@ def route_chat(
             destination.model == "openrouter/free" or explicit_free
         )):
             raise ModelRouteRefused(
-                "Free-only requests require openrouter/free or vendor/model:free."
-            )
-        if (
-            destination.family == "openrouter"
-            and explicit_free
-            and _openrouter_free_model_blocked(destination.model)
-        ):
-            raise ModelRouteRefused(
-                _OPENROUTER_NON_CHAT_FREE_MESSAGE,
-                reason_code="non_chat_model",
+                "Free-only requests require openrouter/free or a zero-priced OpenRouter chat model."
             )
         session = (
             default_cloud_session() if cloud_session is _DISCOVER else cloud_session
         )
+        allowed_openrouter_pick = (
+            destination.family == "openrouter"
+            and explicit_free
+            and _openrouter_free_pick_allowed(
+                destination.model,
+                session if isinstance(session, Mapping) else None,
+                opener=opener,
+                timeout=timeout,
+            )
+        )
+        if destination.family == "openrouter" and explicit_free and not allowed_openrouter_pick:
+            raise ModelRouteRefused(
+                _OPENROUTER_NON_CHAT_FREE_MESSAGE,
+                reason_code="non_chat_model",
+            )
+        if allowed_openrouter_pick:
+            verified_openrouter_free_picks.add(destination.model)
     else:
         session = (
             default_cloud_session() if cloud_session is _DISCOVER else cloud_session
@@ -2301,6 +2339,7 @@ def route_chat(
         destination, free_only, environ, send=send,
         session=session if isinstance(session, Mapping) else None,
         trace=trace,
+        allowed_models=tuple(verified_openrouter_free_picks),
     )
     before_dispatch_once()
     openrouter_deadline = min(deadline, time.monotonic() + _OPENROUTER_FREE_TOTAL_SECONDS)
@@ -2464,9 +2503,6 @@ def route_chat(
                 raise ModelRouteRefused("The free-only request reported an invalid or nonzero cost.",
                     reason_code="invalid_cost")
         actual_model = payload.get("model") if isinstance(payload, Mapping) else None
-        if free_only and isinstance(actual_model, str) and actual_model and not actual_model.endswith(":free"):
-            raise ModelRouteRefused("The free-only request reported a non-free actual model.",
-                reason_code="invalid_cost")
         answerer_refusal = _openrouter_free_answerer_refusal(actual_model if free_only else None)
         if answerer_refusal is not None:
             trace.add(attempt.model, answerer_refusal.reason_code or "refused", attempt_started)
@@ -2486,6 +2522,22 @@ def route_chat(
                     trace=trace,
                 )
             raise answerer_refusal
+        if (
+            free_only
+            and isinstance(actual_model, str)
+            and actual_model
+            and actual_model not in verified_openrouter_free_picks
+            and not _openrouter_free_pick_allowed(
+                actual_model,
+                session if isinstance(session, Mapping) else None,
+            )
+            and not (
+                actual_model == attempt.model
+                and attempt.model in verified_openrouter_free_picks
+            )
+        ):
+            raise ModelRouteRefused("The free-only request reported a non-free actual model.",
+                reason_code="invalid_cost")
         if free_only and attempt.family == "openrouter":
             _remember_openrouter_free_answered(actual_model or attempt.model)
         trace.add(attempt.model, "answered", attempt_started)

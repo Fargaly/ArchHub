@@ -33,38 +33,45 @@ def _opener(routes):
     return open_
 
 
-def test_groups_come_from_the_three_live_sources_with_real_prices():
+def test_groups_come_from_the_free_live_sources_with_real_state(monkeypatch):
     mc.reset_cache()
+    monkeypatch.setattr(mc, "subscription_cli_models", lambda: [
+        {"name": "Codex", "route": "local-cli/codex", "vendor": "Codex",
+         "tag": "SUBSCRIPTION", "ctx": "", "cost": "subscription app",
+         "state": "installed", "readiness": "installed and signed in", "col": "#3fb950"}
+    ])
     opener = _opener({
         "api.archhub.io/v1/models": {"data": [{"id": "anthropic/claude-sonnet-5", "owned_by": "anthropic", "context_length": 200000}]},
         "openrouter.ai": {"data": [
+            {"id": "inclusionai/ling-3.1-flash", "name": "Ling 3.1 Flash", "context_length": 131072, "pricing": {"prompt": "0", "completion": "0"}},
+            {"id": "google/lyria-3-clip-preview", "name": "Lyria", "pricing": {"prompt": "0", "completion": "0"}, "architecture": {"output_modalities": ["audio"]}},
+            {"id": "nvidia/nemotron-3.5-content-safety", "name": "Safety", "pricing": {"prompt": "0", "completion": "0"}},
             {"id": "deepseek/deepseek-r1", "name": "DeepSeek R1", "context_length": 131072, "pricing": {"prompt": "0.00000055", "completion": "0.0000022"}},
-            {"id": "meta-llama/llama-3.3-70b-instruct", "name": "Llama 3.3 70B", "context_length": 131072, "pricing": {"prompt": "0.00000012", "completion": "0.0000003"}},
         ]},
         "127.0.0.1:1234": {"data": [{"id": "qwen2.5-coder-7b"}]},
         "127.0.0.1:11434": OSError("no ollama"),
     })
     out = mc.live_model_groups({"token": "t", "base_url": "https://api.archhub.io"}, opener=opener, now=1000.0)
     names = [g["name"] for g in out["groups"]]
-    assert names == ["CLOUD · subscription", "BYO · OpenRouter", "LOCAL · this machine"]
-    cloud, byo, local = out["groups"]
-    assert cloud["items"][0] == {"name": "anthropic/claude-sonnet-5", "route": "anthropic/claude-sonnet-5", "vendor": "anthropic",
-                                 "tag": "CLOUD", "ctx": "200k", "cost": "subscription", "col": "#cc785c"}
-    r1 = next(i for i in byo["items"] if i["route"] == "deepseek/deepseek-r1")
-    assert r1["cost"] == "$0.55 / $2.20 per M" and r1["ctx"] == "131k" and r1["tag"] == "BYO"
+    assert names == ["Free cloud (OpenRouter)", "This machine (LM Studio / Ollama)", "Your apps (subscription)"]
+    byo, local, apps = out["groups"]
+    assert [i["route"] for i in byo["items"]] == ["inclusionai/ling-3.1-flash"]
+    assert byo["items"][0]["cost"] == "free" and byo["items"][0]["ctx"] == "131k"
     assert local["items"] == [{"name": "qwen2.5-coder-7b", "route": "lmstudio/qwen2.5-coder-7b", "vendor": "LM Studio",
                                "tag": "LOCAL", "ctx": "", "cost": "free · local", "col": "#3fb950"}]
-    assert out["count"] == 4 and out["source_errors"] == {}
+    assert apps["items"][0]["route"] == "local-cli/codex" and apps["items"][0]["state"] == "installed"
+    assert out["count"] == 3 and out["source_errors"] == {}
     # cached: a second read inside ten minutes does not touch the network
     again = mc.live_model_groups({"token": "t", "base_url": "https://api.archhub.io"}, opener=_opener({}), now=1100.0)
     assert again == out and again is not out
 
 
-def test_a_silent_source_is_named_never_invented():
+def test_a_silent_source_is_named_never_invented(monkeypatch):
     mc.reset_cache()
+    monkeypatch.setattr(mc, "subscription_cli_models", lambda: [])
     out = mc.live_model_groups(None, opener=_opener({}), now=5000.0)
     assert out["groups"] == [] and out["count"] == 0
-    assert "BYO · OpenRouter" in out["source_errors"]
+    assert "Free cloud (OpenRouter)" in out["source_errors"]
 
 
 def test_openrouter_free_routes_require_numeric_zero_pricing_fields():
@@ -83,7 +90,7 @@ def test_openrouter_free_routes_require_numeric_zero_pricing_fields():
          "completion_price_per_m": 0.0, "all_prices_zero": False},
     ]}]}
     assert mc.openrouter_free_chat_routes(payload) == (
-        "vendor/strict-free:free", "vendor/no-request-image:free")
+        "vendor/display-only:free", "vendor/strict-free:free", "vendor/no-request-image:free")
 
 
 def test_default_route_display_row_uses_catalogue_then_server_fallback():
@@ -121,8 +128,23 @@ def test_every_openrouter_pricing_field_must_be_zero_for_all_prices_zero():
 
     items = mc.openrouter_models(opener=lambda req, timeout=None: _Ans(_json.dumps(rows).encode()), timeout=1)
     flags = {item["route"]: item["all_prices_zero"] for item in items}
-    assert flags == {"a/strict:free": True, "b/search-cost:free": False, "c/no-pricing:free": False,
+    assert flags == {"a/strict:free": True, "c/no-pricing:free": False,
                      "d/boolean-price:free": False}
+
+
+def test_subscription_cli_rows_show_only_installed_apps_with_state():
+    rows = mc.subscription_cli_models(cli_rows=[
+        {"id": "claude-code", "name": "Claude Code", "state": "installed",
+         "source": "installed on this machine; signed in"},
+        {"id": "codex", "name": "Codex", "state": "not installed",
+         "source": "not found on PATH"},
+    ])
+    assert rows == [{
+        "name": "Claude Code", "route": "local-cli/claude", "vendor": "Claude Code",
+        "tag": "SUBSCRIPTION", "ctx": "", "cost": "subscription app",
+        "state": "installed", "readiness": "installed on this machine; signed in",
+        "col": "#3fb950",
+    }]
 
 
 def test_the_route_and_the_picker_are_wired():

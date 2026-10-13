@@ -39,10 +39,12 @@ _NOT_CHAT = ("image", "audio", "tts", "transcribe", "realtime", "live", "embed",
              "babbage", "davinci")
 # OpenAI serves these only on its Responses API, not chat completions.
 _OPENAI_RESPONSES_ONLY = ("codex", "-pro")
-_OPENROUTER_NOT_CHAT = ("safety", "guard", "moderation", "embed", "rerank", "whisper", "tts", "audio")
+_OPENROUTER_NOT_CHAT = ("safety", "guard", "moderation", "embed", "rerank", "whisper", "tts", "audio",
+                        "lyria")
 CLOUD_GROUP = "CLOUD · subscription"
-BYO_GROUP = "BYO · OpenRouter"
-LOCAL_GROUP = "LOCAL · this machine"
+BYO_GROUP = "Free cloud (OpenRouter)"
+LOCAL_GROUP = "This machine (LM Studio / Ollama)"
+SUBSCRIPTION_GROUP = "Your apps (subscription)"
 _CACHE_SECONDS = 600.0
 # How long a held answer still counts as new. Past this it is handed over all
 # the same -- marked stale, with a refresh running behind it -- because reading
@@ -79,6 +81,8 @@ def _vendor(route: str) -> str:
 
 
 def _per_million(value: object) -> Optional[float]:
+    if isinstance(value, bool):
+        return None
     try:
         return float(value) * 1_000_000.0
     except (TypeError, ValueError):
@@ -86,6 +90,8 @@ def _per_million(value: object) -> Optional[float]:
 
 
 def _price_number(value: object) -> Optional[float]:
+    if isinstance(value, bool):
+        return None
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -158,17 +164,17 @@ def openrouter_models(*, opener: Callable, timeout: float, prices: Optional[dict
         image_price = _price_number(pricing.get("image"))
         # Every pricing field OpenRouter sends must be a number equal to zero.
         all_prices_zero = bool(pricing) and all(
-            not isinstance(value, bool) and _price_number(value) == 0 for value in pricing.values()
+            _price_number(value) == 0 for value in pricing.values()
         )
         if prices is not None and prompt is not None and completion is not None:
             prices[route] = (prompt, completion)
         vendor = _vendor(route)
-        if not _openrouter_chat_row(row, route):
+        if not _openrouter_chat_row(row, route) or not _openrouter_free_row(route, pricing):
             continue
         items.append({
             "name": str(row.get("name") or route), "route": route, "vendor": vendor, "tag": "BYO",
             "ctx": _ctx(row.get("context_length")),
-            "cost": "%s / %s per M" % (_money(prompt), _money(completion)),
+            "cost": "free",
             "prompt_price_per_m": prompt,
             "completion_price_per_m": completion,
             "request_price": request_price,
@@ -202,6 +208,35 @@ def local_models(*, opener: Callable, timeout: float) -> list[dict]:
     return items
 
 
+def subscription_cli_models(*, cli_rows: Optional[list[dict]] = None) -> list[dict]:
+    if cli_rows is None:
+        from .model_router import provider_rows  # noqa: PLC0415
+        cli_rows = provider_rows()
+    route_names = {
+        "claude-code": "claude", "codex": "codex", "gemini-cli": "gemini",
+        "opencode": "opencode", "antigravity": "antigravity", "cursor": "cursor",
+    }
+    items = []
+    for row in cli_rows or []:
+        if not isinstance(row, Mapping):
+            continue
+        state = str(row.get("state") or "").strip()
+        if state in ("", "not installed"):
+            continue
+        row_id = str(row.get("id") or "").strip()
+        route_name = route_names.get(row_id)
+        if not route_name:
+            continue
+        name = str(row.get("name") or row_id)
+        items.append({
+            "name": name, "route": "local-cli/" + route_name, "vendor": name,
+            "tag": "SUBSCRIPTION", "ctx": "", "cost": "subscription app",
+            "state": state, "readiness": str(row.get("source") or state),
+            "col": _VENDOR_COLOURS["local"],
+        })
+    return items
+
+
 def _text_chat_id(vendor: str, model_id: str) -> bool:
     if vendor == "openai" and any(word in model_id for word in _OPENAI_RESPONSES_ONLY):
         return False
@@ -228,6 +263,20 @@ def _openrouter_chat_row(row: Mapping[str, object], route: str) -> bool:
     return not values or any(value in {"text", "chat"} for value in values)
 
 
+def _openrouter_free_row(route: str, pricing: Mapping[str, object]) -> bool:
+    prompt = _price_number(pricing.get("prompt"))
+    completion = _price_number(pricing.get("completion"))
+    prompt_completion_zero = prompt == 0 and completion == 0
+    suffix_free = route.endswith(":free")
+    if not (suffix_free or prompt_completion_zero):
+        return False
+    for value in pricing.values():
+        number = _price_number(value)
+        if number is not None and number != 0:
+            return False
+    return True
+
+
 def openrouter_free_chat_routes(payload: Mapping[str, object]) -> tuple[str, ...]:
     """Free OpenRouter chat ids already present in the picker catalogue."""
     out: list[str] = []
@@ -240,7 +289,7 @@ def openrouter_free_chat_routes(payload: Mapping[str, object]) -> tuple[str, ...
             route = str(item.get("route") or "").strip()
             if route.startswith("openrouter/"):
                 route = route.split("/", 1)[1]
-            if not route.endswith(":free") or "/" not in route:
+            if "/" not in route:
                 continue
             prompt = item.get("prompt_price_per_m")
             completion = item.get("completion_price_per_m")
@@ -248,6 +297,9 @@ def openrouter_free_chat_routes(payload: Mapping[str, object]) -> tuple[str, ...
                 type(prompt) in (int, float) and prompt == 0
                 and type(completion) in (int, float) and completion == 0
             )
+            suffix_free = route.endswith(":free")
+            if suffix_free:
+                zero = True
             request_price = item.get("request_price")
             image_price = item.get("image_price")
             if request_price is not None and (
@@ -258,7 +310,9 @@ def openrouter_free_chat_routes(payload: Mapping[str, object]) -> tuple[str, ...
                 type(image_price) not in (int, float) or image_price != 0
             ):
                 zero = False
-            if item.get("all_prices_zero") is not True:
+            if item.get("all_prices_zero") is False:
+                zero = False
+            if not suffix_free and item.get("all_prices_zero") is not True:
                 zero = False
             modalities = item.get("output_modalities")
             if isinstance(modalities, (list, tuple, set)) and modalities:
@@ -327,10 +381,9 @@ def live_model_groups(session: Optional[Mapping[str, str]] = None, *, opener: Op
     notes: dict[str, str] = {}
     groups = []
     prices: dict = {}
-    for name, fn in ((CLOUD_GROUP, lambda: cloud_models(session, opener=opener, timeout=timeout)),
-                     (BYO_GROUP, lambda: openrouter_models(opener=opener, timeout=timeout, prices=prices)),
-                     (DIRECT_GROUP, lambda: direct_models(opener=opener, timeout=timeout, prices=prices)),
-                     (LOCAL_GROUP, lambda: local_models(opener=opener, timeout=timeout))):
+    for name, fn in ((BYO_GROUP, lambda: openrouter_models(opener=opener, timeout=timeout, prices=prices)),
+                     (LOCAL_GROUP, lambda: local_models(opener=opener, timeout=timeout)),
+                     (SUBSCRIPTION_GROUP, lambda: subscription_cli_models())):
         failure = None
         try:
             items = fn()
@@ -345,8 +398,6 @@ def live_model_groups(session: Optional[Mapping[str, str]] = None, *, opener: Op
             # sign-in looked exactly like a cloud with no models -- and the
             # one thing to do about it was never on screen.
             notes[name] = _source_note(name, failure)
-        elif name == CLOUD_GROUP and not (session and session.get("token")):
-            notes[name] = CLOUD_ABSENT_NOTE
     result = {"ok": True, "live": True, "groups": groups, "count": sum(len(g["items"]) for g in groups),
               "source_errors": errors, "source_notes": notes, "stale": False, "read_at": moment}
     with _lock:
@@ -495,6 +546,6 @@ def reset_cache() -> None:
 
 
 __all__ = ["live_model_groups", "held_model_groups", "held_model_groups_read_only",
-           "cloud_models", "openrouter_models", "direct_models",
+           "cloud_models", "openrouter_models", "direct_models", "subscription_cli_models",
            "local_models", "routable_route", "groups_with_routes",
            "default_route_display_row", "reset_cache"]

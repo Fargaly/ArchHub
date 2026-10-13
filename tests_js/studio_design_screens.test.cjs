@@ -163,7 +163,7 @@ test('skill split view: a catalogue row opens its own file, measured, with no se
     await studio.settle(() => screen(studio)?.textContent.includes(bytes + ' bytes \u00b7 ' + lines + ' lines'), 'the source pane measures the file it read');
     const view = screen(studio);
     assert.equal(view.getAttribute('data-studio-screen'), 'skill');
-    assert.deepEqual(asked, ['ship-discipline'], 'the view reads the row it was opened with');
+    assert.deepEqual(asked, [SKILL.path], 'the view reads the row path it was opened with');
     assert.equal(view.querySelector('h1').textContent, SKILL.name);
     for (const text of ['SKILL \u00b7 OPEN', 'WHAT IT DOES', SKILL.description, 'SOURCE \u00b7 SKILL.md', 'YOU OWN THIS', 'Prior art', 'Ship']) {
       assert.ok(view.textContent.includes(text), 'the split view draws ' + text);

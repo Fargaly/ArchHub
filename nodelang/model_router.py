@@ -1207,11 +1207,11 @@ def _checked_messages(messages: object) -> list:
         raise ModelRouteRefused("There was nothing to send to the model.")
     checked = []
     for row in rows:
-        if not isinstance(row, Mapping):
+        if not isinstance(row, Mapping) or not row.get("content"):
             raise ModelRouteRefused(
                 "A message for the model must carry a role and content."
             )
-        content = row.get("content", "")
+        content = row["content"]
         if isinstance(content, (list, tuple)):
             # A message with parts: text and images, the OpenAI shape every
             # non-ollama family here speaks. Each part must say what it is.
@@ -1227,35 +1227,10 @@ def _checked_messages(messages: object) -> list:
             content = parts
         else:
             content = str(content)
-        checked_row = {
+        checked.append({
             "role": str(row.get("role") or "user"),
             "content": content,
-        }
-        if isinstance(row.get("tool_calls"), (list, tuple)):
-            checked_row["tool_calls"] = list(row["tool_calls"])
-        if isinstance(row.get("tool_call_id"), str):
-            checked_row["tool_call_id"] = row["tool_call_id"]
-        checked.append(checked_row)
-    return checked
-
-
-def _checked_tools(tools: object) -> list:
-    if tools is None:
-        return []
-    rows = list(tools or ())
-    if len(rows) > 32:
-        raise ModelRouteRefused("The tool list is too large.")
-    checked = []
-    for row in rows:
-        if not isinstance(row, Mapping):
-            raise ModelRouteRefused("A model tool declaration is invalid.")
-        fn = row.get("function")
-        if row.get("type") != "function" or not isinstance(fn, Mapping):
-            raise ModelRouteRefused("A model tool must be an OpenAI function tool.")
-        name = fn.get("name")
-        if type(name) is not str or not name or len(name) > 100:
-            raise ModelRouteRefused("A model tool has an invalid name.")
-        checked.append(dict(row))
+        })
     return checked
 
 
@@ -1275,7 +1250,6 @@ def _body(
     max_tokens: int,
     temperature: float,
     top_p: float,
-    tools: Sequence | None = None,
 ) -> dict:
     if destination.family == "ollama":
         if _carries_an_image(messages):
@@ -1283,15 +1257,12 @@ def _body(
                 "An ollama route cannot carry an image in this build; pick a "
                 "vision model on openrouter or the cloud."
             )
-        body = {
+        return {
             "model": destination.model,
             "messages": list(messages),
             "stream": False,
             "options": {"temperature": temperature, "top_p": top_p, "num_predict": max_tokens},
         }
-        if tools:
-            body["tools"] = list(tools)
-        return body
     if destination.family == "openai":
         # Current OpenAI chat models take max_completion_tokens, and the
         # reasoning families accept only their default temperature.
@@ -1302,8 +1273,6 @@ def _body(
         }
         if destination.model.startswith(("gpt-4", "gpt-3.5")):
             body["temperature"] = temperature
-        if tools:
-            body["tools"] = list(tools)
         return body
     if destination.family == "anthropic":
         system = []
@@ -1336,9 +1305,6 @@ def _body(
     # top_p is sent only when the owner changed it.
     if top_p is not None and top_p != 1.0:
         body["top_p"] = top_p
-    if tools:
-        body["tools"] = list(tools)
-        body["tool_choice"] = "auto"
     return body
 
 
@@ -1378,8 +1344,6 @@ def _answer_text(destination: ModelRoute, payload: object) -> str:
                 first = choices[0]
                 if isinstance(first, Mapping):
                     message = first.get("message")
-                    if isinstance(message, Mapping) and isinstance(message.get("tool_calls"), (list, tuple)):
-                        return str(message.get("content") or "")
                     if (
                         isinstance(message, Mapping)
                         and message.get("content") is not None
@@ -1400,33 +1364,6 @@ def _answer_text(destination: ModelRoute, payload: object) -> str:
     raise ModelRouteRefused(
         "%s answered in a shape this app does not read." % destination.provider
     )
-
-
-def _answer_tool_calls(_destination: ModelRoute, payload: object) -> list:
-    if not isinstance(payload, Mapping):
-        return []
-    choices = payload.get("choices")
-    first = choices[0] if isinstance(choices, (list, tuple)) and choices else None
-    message = first.get("message") if isinstance(first, Mapping) else None
-    calls = message.get("tool_calls") if isinstance(message, Mapping) else None
-    if not isinstance(calls, (list, tuple)):
-        return []
-    result = []
-    for index, call in enumerate(calls):
-        if not isinstance(call, Mapping):
-            continue
-        fn = call.get("function")
-        if not isinstance(fn, Mapping):
-            continue
-        name = fn.get("name")
-        if type(name) is not str or not name:
-            continue
-        result.append({
-            "id": str(call.get("id") or "call_%d" % index),
-            "name": name,
-            "arguments": fn.get("arguments") if isinstance(fn.get("arguments"), str) else (fn.get("arguments") or {}),
-        })
-    return result
 
 
 def _remember_unavailable(kind: str, model: object, trace: Optional["_FreeChatTrace"] = None) -> None:
@@ -2087,9 +2024,8 @@ def _http_chat_once(
     headers: Optional[Mapping[str, str]] = None,
     free_only: bool = False,
     reasoning_effort: Optional[str] = None,
-    tools: Sequence | None = None,
 ) -> dict:
-    body = _body(destination, rows, max_tokens, temperature, top_p, tools=tools)
+    body = _body(destination, rows, max_tokens, temperature, top_p)
     if reasoning_effort is not None:
         body["reasoning"] = {"effort": reasoning_effort}
     if free_only:
@@ -2119,8 +2055,7 @@ def _http_chat_once(
             reason_code="provider_error",
         ) from refused
     text = _answer_text(destination, payload)
-    tool_calls = _answer_tool_calls(destination, payload)
-    if not text.strip() and not tool_calls:
+    if not text.strip():
         raise ModelRouteRefused("The model returned an empty answer.", reason_code="empty_answer")
     usage = payload.get("usage") if isinstance(payload, Mapping) else None
     if not isinstance(usage, Mapping):
@@ -2148,7 +2083,6 @@ def _http_chat_once(
         "key_source": "not required",
         "usage": usage,
         "finish_reason": None,
-        "tool_calls": tool_calls,
     }
 
 
@@ -2287,7 +2221,6 @@ def route_chat(
     reasoning_effort: Optional[str] = None,
     response_byte_limit: Optional[int] = None,
     before_dispatch: Optional[Callable] = None,
-    tools: object = None,
 ) -> dict:
     """Send these messages to the provider this route names, and read its answer.
 
@@ -2386,7 +2319,6 @@ def route_chat(
                 raise
             destination = resolve_model_route("openrouter/free")
     rows = _checked_messages(messages)
-    tool_rows = _checked_tools(tools)
     headers = {"Content-Type": "application/json"}
     key_source = "not required"
     if destination.needs_key:
@@ -2420,7 +2352,7 @@ def route_chat(
         if attempt_timeout <= 0 and free_only and attempt.family == "openrouter":
             trace.close("free_model_exhausted")
             raise _openrouter_free_exhausted_refusal()
-        body = _body(attempt, rows, max_tokens, temperature, top_p, tools=tool_rows)
+        body = _body(attempt, rows, max_tokens, temperature, top_p)
         if reasoning_effort is not None:
             body["reasoning"] = {"effort": reasoning_effort}
         if free_only:
@@ -2534,8 +2466,7 @@ def route_chat(
                 reason_code="output_truncated")
         try:
             text = _answer_text(attempt, payload)
-            tool_calls = _answer_tool_calls(attempt, payload)
-            if not text.strip() and not tool_calls:
+            if not text.strip():
                 raise ModelRouteRefused("The model returned an empty answer.", reason_code="empty_answer")
         except ModelRouteRefused as refused:
             trace.add(attempt.model, refused.reason_code or "refused", attempt_started)
@@ -2614,7 +2545,6 @@ def route_chat(
         return {
             "ok": True,
             "text": text,
-            "tool_calls": tool_calls,
             "family": attempt.family,
             "model": attempt.model,
             "actual_model": actual_model,

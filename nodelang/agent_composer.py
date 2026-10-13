@@ -14,8 +14,6 @@ from typing import Mapping
 
 from .model_router import ModelRouteRefused, route_chat
 from .cell_authorization import AuthorizationDenied
-from .native_agentic_loop import ToolSpec, run_agentic_tool_loop
-from .native_workshop_tools import WORKSHOP_TASK_TOOL_NAMES
 from .universal_cell import InvalidCell
 
 # There is no built-in default model. One was hidden here for months
@@ -25,20 +23,6 @@ from .universal_cell import InvalidCell
 # a pick, the composer says what to pick instead of guessing.
 _DEFAULT_MODEL = os.environ.get("ARCHHUB_AGENT_MODEL", "").strip()
 _NO_AGENT_NODE = object()
-_BABOOM_AGENTIC_STEP_CAP = 12
-_OPENROUTER_FREE_TOOL_MODELS = frozenset({
-    "nvidia/nemotron-3-super-120b-a12b:free",
-    "google/gemma-4-31b-it:free",
-    "poolside/laguna-s-2.1:free",
-    "apodex/apodex-1.1-mini:free",
-    "cohere/north-mini-code:free",
-})
-_BABOOM_LOCAL_TOOL_NAMES = frozenset({
-    "brain.context",
-    "graph.read",
-    "host.ping",
-    "host.read",
-})
 NO_MODEL_CHOSEN = (
     "No model chosen. Pick one in the studio header (the picker), or set "
     "ARCHHUB_AGENT_MODEL to a route such as openrouter/free."
@@ -208,29 +192,6 @@ def _answer_via(answer: Mapping[str, object]) -> dict[str, str]:
     return {"family": family, "model": model, "provider": provider}
 
 
-def _model_supports_tools(model: str) -> bool:
-    route = str(model or "").strip()
-    if route == "openrouter/free":
-        return True
-    if route.startswith(("lmstudio/", "ollama/")):
-        return True
-    if route.startswith("openrouter/"):
-        route = route[len("openrouter/"):]
-    return route in _OPENROUTER_FREE_TOOL_MODELS
-
-
-def _baboom_tool_specs() -> dict[str, ToolSpec]:
-    def run(name, arguments):
-        if name == "host.ping":
-            return {"pong": True}
-        if name == "graph.read":
-            return {"status": "available", "note": "graph context is already in the prompt"}
-        raise InvalidCell("%s is not wired in this BABOOM chat context" % name)
-
-    names = set(WORKSHOP_TASK_TOOL_NAMES) | set(_BABOOM_LOCAL_TOOL_NAMES)
-    return {name: ToolSpec(name, run, mutates=False) for name in names}
-
-
 def _chat(prompt: str, context_block: str, model: str, *, before_dispatch=None, generation=None) -> dict[str, object]:
     """The chosen route decides the endpoint, the payload and the key.
 
@@ -241,35 +202,18 @@ def _chat(prompt: str, context_block: str, model: str, *, before_dispatch=None, 
     try:
         generation_options = {"max_tokens": 900, "temperature": 0}
         generation_options.update(_generation_options(generation))
-        messages = [
+        answer = route_chat(
+            model,
+            [
                 {"role": "system", "content": _SYSTEM},
                 {"role": "user",
                  "content": context_block + chr(10) + chr(10) + "FOUNDER: " + prompt},
-            ]
-        tools = _baboom_tool_specs()
-
-        last_answer = {}
-
-        def turn(rows, tool_schemas):
-            nonlocal last_answer
-            last_answer = route_chat(
-                model,
-                rows,
-                free_only=model == "openrouter/free" or model.endswith(":free"),
-                tools=tool_schemas,
-                **generation_options,
-                **({"before_dispatch":before_dispatch} if before_dispatch is not None else {}),
-            )
-            return last_answer
-
-        loop = run_agentic_tool_loop(
-            turn, tools, messages,
-            max_steps=_BABOOM_AGENTIC_STEP_CAP,
-            model_supports_tools=_model_supports_tools(model),
+            ],
+            free_only=model == "openrouter/free" or model.endswith(":free"),
+            **generation_options,
+            **({"before_dispatch":before_dispatch} if before_dispatch is not None else {}),
         )
-        via = _answer_via(last_answer if isinstance(last_answer, Mapping) else
-                          {"family": "", "model": model, "provider": ""})
-        return {"text": str(loop["answer"]), "steps": list(loop.get("steps") or ()), "via": via}
+        return {"text": str(answer["text"]), "via": _answer_via(answer)}
     except (InvalidCell, AuthorizationDenied):
         raise
     except Exception:
@@ -447,7 +391,6 @@ def run_agent_composer(
         chat_kwargs["before_dispatch"] = before_dispatch
     routed_answer = _chat(prompt.strip(), context_block, chosen, **chat_kwargs)
     via = routed_answer.get("via") if isinstance(routed_answer, Mapping) else None
-    steps = list(routed_answer.get("steps") or ()) if isinstance(routed_answer, Mapping) else []
     raw = str(routed_answer.get("text") if isinstance(routed_answer, Mapping) else routed_answer)
     try:
         text = raw.strip()
@@ -480,8 +423,6 @@ def run_agent_composer(
         }
         if isinstance(via, Mapping):
             refused["via"] = dict(via)
-        if steps:
-            refused["steps"] = steps
         return refused
     with lock:
         if revalidate is not None:
@@ -500,8 +441,6 @@ def run_agent_composer(
         )
         if isinstance(via, Mapping):
             result["via"] = dict(via)
-        if steps:
-            result["steps"] = steps
         return result
 
 

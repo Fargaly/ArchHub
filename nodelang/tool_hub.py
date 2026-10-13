@@ -194,7 +194,7 @@ def _apply_cloud(row: dict[str, object], state: Mapping[str, object] | None) -> 
 
 def project_tools(*, sessions=(), workshop_state=None, brain_state=None,
                   baboom_presence=None, host_rows=None, hosts_probing=False,
-                  cloud_state=None, stopped: bool = False) -> dict[str, object]:
+                  cloud_state=None) -> dict[str, object]:
     rows = [dict(row) for row in TOOL_ROWS]
     if isinstance(sessions, Sequence) and not isinstance(sessions, (str, bytes)):
         session_rows = [row for row in sessions if isinstance(row, Mapping)]
@@ -217,7 +217,6 @@ def project_tools(*, sessions=(), workshop_state=None, brain_state=None,
         "ok": True,
         "tools": rows,
         "owned_files": list(HUB_OWNED_FILES),
-        "stopped": bool(stopped),
     }
 
 

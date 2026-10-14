@@ -206,12 +206,6 @@ CONTROL_BINDING_SPECS = (
         )),
     ),
     ControlBindingSpec(
-        "app:control:canvas:remove-member",
-        "composition",
-        (("operation", "remove-member"),),
-        ALWAYS,
-    ),
-    ControlBindingSpec(
         "app:control:canvas:run",
         "execute",
         (),
@@ -235,6 +229,12 @@ CONTROL_BINDING_SPECS = (
         "app:control:inspector:add-interface",
         "relation-form",
         (("form", "app:relation-form:interface:v3"),),
+        ALWAYS,
+    ),
+    ControlBindingSpec(
+        "app:control:canvas:remove-member",
+        "composition",
+        (("operation", "remove-member"),),
         ALWAYS,
     ),
 )

@@ -206,6 +206,12 @@ CONTROL_BINDING_SPECS = (
         )),
     ),
     ControlBindingSpec(
+        "app:control:canvas:remove-member",
+        "composition",
+        (("operation", "remove-member"),),
+        ALWAYS,
+    ),
+    ControlBindingSpec(
         "app:control:canvas:run",
         "execute",
         (),

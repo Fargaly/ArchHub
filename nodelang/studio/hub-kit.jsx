@@ -30,7 +30,10 @@ const HB = {
   // fonts + radii straight from the app
   serif: AHX.serif, sans: AHX.sans, mono: AHX.mono, arch: AHX.arch,
   rad: AHX.rad,
+  fs: AHX.fs || {},
 };
+HB.fs.label = HB.fs.label || {sz:11, ln:14, wt:500, letter:'.04em'};
+HB.fs.dataSm = HB.fs.dataSm || {sz:11, ln:14, wt:400};
 
 const HSTAT = {
   green: HB.green, amber: HB.amber, red: HB.red,
@@ -75,7 +78,7 @@ const HIconBtn = ({ name, onClick, title, active, size = 15, color }) => (
 
 const HPill = ({ children, k, color }) => {
   const c = color || hsc(k);
-  return <span style={{ fontFamily: HB.mono, fontSize: 9.5, letterSpacing: '0.1em', textTransform: 'uppercase',
+  return <span style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, letterSpacing: '0.1em', textTransform: 'uppercase',
     color: c, background: c + '18', border: `1px solid ${c}3a`, padding: '2px 8px', borderRadius: 3,
     display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap' }}>{children}</span>;
 };
@@ -92,7 +95,7 @@ const HAvatar = ({ name, size = 26 }) => {
 
 const HField = ({ label, value, onChange, placeholder, type = 'text', full, area }) => (
   <label style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: full ? 1 : 'none' }}>
-    {label && <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute, letterSpacing: '0.12em', textTransform: 'uppercase' }}>{label}</span>}
+    {label && <span style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.inkMute, letterSpacing: '0.12em', textTransform: 'uppercase' }}>{label}</span>}
     {area
       ? <textarea value={value ?? ''} rows={3} onChange={e => onChange && onChange(e.target.value)} placeholder={placeholder} style={hInput()}/>
       : <input value={value ?? ''} type={type} onChange={e => onChange && onChange(e.target.value)} placeholder={placeholder} style={hInput()}/>}
@@ -102,7 +105,7 @@ const hInput = () => ({ padding: '9px 11px', borderRadius: HB.rad.sm, border: `1
 
 const HSelect = ({ label, value, onChange, options, full }) => (
   <label style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: full ? 1 : 'none' }}>
-    {label && <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute, letterSpacing: '0.12em', textTransform: 'uppercase' }}>{label}</span>}
+    {label && <span style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.inkMute, letterSpacing: '0.12em', textTransform: 'uppercase' }}>{label}</span>}
     <select value={value} onChange={e => onChange && onChange(e.target.value)} style={{ ...hInput(), cursor: 'pointer' }}>
       {options.map(o => { const [v, l] = Array.isArray(o) ? o : [o, o]; return <option key={v} value={v}>{l}</option>; })}
     </select>
@@ -122,7 +125,7 @@ const HModal = ({ title, sub, onClose, children, w = 480 }) => (
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, padding: '18px 20px', borderBottom: `1px solid ${HB.line}` }}>
         <div>
           <div style={{ fontFamily: HB.serif, fontSize: 24, letterSpacing: '-0.02em', color: HB.ink }}>{title}</div>
-          {sub && <div style={{ fontFamily: HB.mono, fontSize: 10.5, color: HB.inkMute, marginTop: 3, letterSpacing: '0.04em' }}>{sub}</div>}
+          {sub && <div style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.inkMute, marginTop: 3, letterSpacing: '0.04em' }}>{sub}</div>}
         </div>
         <HIconBtn name="x" onClick={onClose}/>
       </div>
@@ -138,7 +141,7 @@ const HHead = ({ kicker, title, sub, right }) => (
       <div style={{ minWidth: 0 }}>
         {kicker && <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 10 }}>
           <span style={{ width: 22, height: 1, background: HB.accent }}/>
-          <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.accent, letterSpacing: '0.26em', textTransform: 'uppercase' }}>{kicker}</span>
+          <span style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.accent, letterSpacing: '0.26em', textTransform: 'uppercase' }}>{kicker}</span>
         </div>}
         <h1 style={{ fontFamily: HB.serif, fontSize: 46, fontWeight: 400, letterSpacing: '-0.03em', margin: 0, lineHeight: 0.95, color: HB.ink }}>{title}</h1>
         {sub && <div style={{ fontFamily: HB.sans, fontSize: 14, color: HB.inkSoft, marginTop: 10, maxWidth: 560, lineHeight: 1.5 }}>{sub}</div>}

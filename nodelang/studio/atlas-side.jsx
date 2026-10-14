@@ -8,9 +8,9 @@ const { HB } = window;
 
 // Matches the left rail's chrome spec (see ltab / secStyle / PanelLabel) so the two
 // panels framing the map align row-for-row.
-const tabBtn = (on) => ({ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 0', border: 'none', borderBottom: `2px solid ${on ? HB.accent : 'transparent'}`, background: 'transparent', cursor: 'pointer', fontFamily: HB.mono, fontSize: 10.5, letterSpacing: '0.06em', color: on ? HB.ink : HB.inkMute });
+const tabBtn = (on) => ({ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 0', border: 'none', borderBottom: `2px solid ${on ? HB.accent : 'transparent'}`, background: 'transparent', cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.label.sz, letterSpacing: '0.06em', color: on ? HB.ink : HB.inkMute });
 const sideSec = { padding: '15px 16px', borderBottom: `1px solid ${HB.lineSoft}` };
-const sideLabel = { fontFamily: HB.mono, fontSize: 8.5, color: HB.inkMute, letterSpacing: '0.16em', marginBottom: 9 };
+const sideLabel = { fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.inkMute, letterSpacing: '0.16em', marginBottom: 9 };
 
 function ago(t) { const s = Math.floor((Date.now() - t) / 1000); if (s < 60) return s + 's'; const m = Math.floor(s / 60); if (m < 60) return m + 'm'; const h = Math.floor(m / 60); if (h < 24) return h + 'h'; return Math.floor(h / 24) + 'd'; }
 
@@ -56,7 +56,7 @@ function SessionComposer({ onRelay, onReloadTasks, flash }) {
       <button onClick={send} disabled={busy || !draft.trim()} style={{ border: '1px solid ' + HB.line,
         background: draft.trim() && !busy ? HB.accent : 'transparent',
         color: draft.trim() && !busy ? '#fff' : HB.inkMute, borderRadius: 8, padding: '0 12px',
-        cursor: draft.trim() && !busy ? 'pointer' : 'default', fontFamily: HB.mono, fontSize: 10 }}>send</button>
+        cursor: draft.trim() && !busy ? 'pointer' : 'default', fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz }}>send</button>
     </div>
   );
 }
@@ -91,10 +91,10 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
             <div style={{ ...sideSec, background: HB.paper2 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4 }}>
                 <span style={{ width: 7, height: 7, borderRadius: '50%', background: HB.accent, boxShadow: `0 0 0 3px ${HB.accent}22` }}/>
-                <div style={{ fontFamily: HB.mono, fontSize: 9, color: HB.accent, letterSpacing: '0.16em', flex: 1 }}>WHAT MATTERS NOW</div>
-                <button onClick={onTuneAttention} title="Open the Attention node to tune its weights" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: `1px solid ${HB.line}`, background: HB.card, color: HB.inkSoft, borderRadius: 6, padding: '3px 8px', cursor: 'pointer', fontFamily: HB.mono, fontSize: 9 }}><CKIcon name="gear" size={10}/>tune</button>
+                <div style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.accent, letterSpacing: '0.16em', flex: 1 }}>WHAT MATTERS NOW</div>
+                <button onClick={onTuneAttention} title="Open the Attention node to tune its weights" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: `1px solid ${HB.line}`, background: HB.card, color: HB.inkSoft, borderRadius: 6, padding: '3px 8px', cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz }}><CKIcon name="gear" size={10}/>tune</button>
               </div>
-              <div style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkMute, marginBottom: 10, lineHeight: 1.4 }}>ranked by the <b style={{ color: HB.inkSoft }}>Attention</b> node — a parametric node you control, not a fixed rule.</div>
+              <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute, marginBottom: 10, lineHeight: 1.4 }}>ranked by the <b style={{ color: HB.inkSoft }}>Attention</b> node — a parametric node you control, not a fixed rule.</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {attention.length === 0 && <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 13, color: HB.inkMute }}>Nothing flagged. The graph is calm.</div>}
                 {attention.map((it, i) => { const c = { red: HB.red, accent: HB.accent, blue: HB.blue, green: HB.green }[it.tone]; const ic = { blocked: 'x', gap: 'eye', agent: 'agent' }[it.kind]; return (
@@ -102,7 +102,7 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
                     <span style={{ width: 22, height: 22, borderRadius: 6, display: 'grid', placeItems: 'center', background: c + '1c', color: c, flexShrink: 0 }}><CKIcon name={ic} size={12}/></span>
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ fontSize: 12.5, fontWeight: 600, color: HB.ink, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.label}</span>
-                      <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>{it.sub}{it.score != null ? ` · ${it.score}` : ''}</span>
+                      <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute }}>{it.sub}{it.score != null ? ` · ${it.score}` : ''}</span>
                     </span>
                     <CKIcon name="eye" size={13} color={HB.inkMute}/>
                   </button>
@@ -117,10 +117,10 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
               <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                 {stream.map((r, i) => { const ags = agentsByNode(r.node.id); return (
                   <button key={r.id} onClick={() => onGoto({ nodeId: r.node.id, dom: r.node.dom })} className="hb-rowh" style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '8px', borderRadius: 8, cursor: 'pointer', textAlign: 'left', border: 'none', background: 'transparent' }}>
-                    <span style={{ width: 18, height: 18, borderRadius: 5, marginTop: 1, display: 'grid', placeItems: 'center', background: (r.ok ? HB.green : HB.red) + '1e', color: r.ok ? HB.green : HB.red, flexShrink: 0, fontSize: 10 }}>{r.ok ? '✓' : '✗'}</span>
+                    <span style={{ width: 18, height: 18, borderRadius: 5, marginTop: 1, display: 'grid', placeItems: 'center', background: (r.ok ? HB.green : HB.red) + '1e', color: r.ok ? HB.green : HB.red, flexShrink: 0, fontSize: HB.fs.dataSm.sz }}>{r.ok ? '✓' : '✗'}</span>
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ fontSize: 12, color: HB.ink, display: 'block' }}><b style={{ fontWeight: 600 }}>{ags[0] ? ags[0].name : r.app ? 'Your app' : 'System'}</b> ran <span style={{ color: HB.inkSoft }}>{r.node.title}</span></span>
-                      <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>{r.result}{r.ms ? ' · ' + r.ms + 'ms' : ''} · {ago(r.t)} ago</span>
+                      <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute }}>{r.result}{r.ms ? ' · ' + r.ms + 'ms' : ''} · {ago(r.t)} ago</span>
                     </span>
                   </button>
                 ); })}
@@ -175,7 +175,7 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
                       <div key={m.name + ':' + i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 9px', borderRadius: 7, background: HB.paper2, border: '1px solid ' + HB.lineSoft }}>
                         <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: m.available ? HB.green : HB.inkMute }}/>
                         <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: HB.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.name}</span>
-                        <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>{m.provider}{m.available ? '' : ' \u00b7 unavailable'}</span>
+                        <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute }}>{m.provider}{m.available ? '' : ' \u00b7 unavailable'}</span>
                       </div>
                     ))}
                   </div>
@@ -184,13 +184,13 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 10 }}>
                     {routes.map(r => (
                       <div key={r.task} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.ink, width: 62, flexShrink: 0 }}>{r.task}</span>
-                        <span style={{ flex: 1, minWidth: 0, fontFamily: HB.mono, fontSize: 10, color: HB.inkSoft, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.model}</span>
+                        <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.ink, width: 62, flexShrink: 0 }}>{r.task}</span>
+                        <span style={{ flex: 1, minWidth: 0, fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkSoft, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.model}</span>
                       </div>
                     ))}
                   </div>
                 )}
-                {published && <div style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkSoft, marginTop: 9, lineHeight: 1.5 }}>
+                {published && <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkSoft, marginTop: 9, lineHeight: 1.5 }}>
                   {routes.length ? 'Routing as your app reported it. Change it in the app.' : 'Your app did not report which model serves each task.'}
                 </div>}
               </div>
@@ -215,12 +215,12 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <span style={{ width: 6, height: 6, borderRadius: '50%', background: HB.red, flexShrink: 0 }}/>
                         <span style={{ fontFamily: HB.sans, fontSize: 12, color: HB.ink, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.title}</span>
-                        <span style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkSoft }}>{'\u00d7' + it.count}</span>
+                        <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkSoft }}>{'\u00d7' + it.count}</span>
                       </div>
-                      <div style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute, marginTop: 5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.source}{it.t ? ' \u00b7 ' + ago(it.t) + ' ago' : ''}{it.detail ? ' \u00b7 ' + it.detail : ''}</div>
+                      <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute, marginTop: 5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.source}{it.t ? ' \u00b7 ' + ago(it.t) + ' ago' : ''}{it.detail ? ' \u00b7 ' + it.detail : ''}</div>
                     </div>
                   ))}
-                  {incidents.length > 8 && <div style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>{incidents.length - 8} more not shown</div>}
+                  {incidents.length > 8 && <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute }}>{incidents.length - 8} more not shown</div>}
                 </div>
               </div>
             </div>
@@ -232,9 +232,9 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
             <div style={{ ...sideSec, borderBottom: `1px solid ${HB.line}` }}>
               <div style={{ ...sideLabel, display: 'flex', justifyContent: 'space-between' }}>
                 <span>CONVERSATIONS WITH YOUR AGENTS</span>
-                <button onClick={() => onReloadTasks && onReloadTasks()} style={{ border: `1px solid ${HB.line}`, background: 'transparent', color: HB.inkSoft, borderRadius: 5, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: 9 }}>refresh</button>
+                <button onClick={() => onReloadTasks && onReloadTasks()} style={{ border: `1px solid ${HB.line}`, background: 'transparent', color: HB.inkSoft, borderRadius: 5, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz }}>refresh</button>
               </div>
-              <div style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkMute, marginBottom: 10, lineHeight: 1.5 }}>
+              <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute, marginBottom: 10, lineHeight: 1.5 }}>
                 What you said to your app, and what it said back. Type below to say something new.
               </div>
               {rows.length === 0 && <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 13, color: HB.inkMute }}>No instructions yet. Ask the cockpit something and the exchange lands here.</div>}
@@ -253,7 +253,7 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
                         <span style={{ width: 26, height: 26, borderRadius: 7, display: 'grid', placeItems: 'center', background: HB.accentSoft, color: HB.accentHi, flexShrink: 0 }}><CKIcon name="agent" size={13}/></span>
                         <span style={{ flex: 1, minWidth: 0 }}>
                           <span style={{ fontSize: 12.5, fontWeight: 600, color: HB.ink, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.directive}</span>
-                          <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>{r.claimed_by || 'your app'}{at ? ' \u00b7 ' + ago(at) + ' ago' : ''}</span>
+                          <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute }}>{r.claimed_by || 'your app'}{at ? ' \u00b7 ' + ago(at) + ' ago' : ''}</span>
                         </span>
                         <span title={r.status} style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: tone }}/>
                         <span style={{ fontFamily: HB.mono, fontSize: 15, color: HB.inkMute, width: 14, textAlign: 'center' }}>{open ? '\u25be' : '\u25b8'}</span>
@@ -267,7 +267,7 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
                             <span style={{ maxWidth: '82%', padding: '7px 10px', borderRadius: 10, fontSize: 12, lineHeight: 1.45, background: HB.accent, color: '#fff' }}>{r.directive}</span>
                           </div>
                           <div style={{ display: 'flex', flexDirection: 'row-reverse', gap: 8 }}>
-                            <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: tone }}>{r.status}</span>
+                            <span style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: tone }}>{r.status}</span>
                           </div>
                           <div style={{ display: 'flex', flexDirection: 'row', gap: 8 }}>
                             <span style={{ maxWidth: '82%', padding: '7px 10px', borderRadius: 10, fontSize: 12, lineHeight: 1.5, background: HB.card, color: r.result ? HB.ink : HB.inkMute, border: `1px solid ${HB.line}`, whiteSpace: 'pre-wrap', fontFamily: r.result ? HB.sans : HB.serif, fontStyle: r.result ? 'normal' : 'italic' }}>
@@ -290,7 +290,7 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
                     <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 9px', borderRadius: 7, background: HB.paper2, border: `1px solid ${HB.lineSoft}` }}>
                       <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: a.status === 'online' ? HB.green : HB.inkMute }}/>
                       <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: HB.ink }}>{a.provider || a.runtime || 'agent'}</span>
-                      <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>{String(a.session || '').slice(0, 8)}</span>
+                      <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute }}>{String(a.session || '').slice(0, 8)}</span>
                     </div>
                   ))}
                 </div>
@@ -316,13 +316,13 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
                     </div>
                     <div style={{ flex: 1, paddingBottom: 14 }}>
                       <div style={{ fontSize: 12.5, fontWeight: 600, color: HB.ink }}>{g.node.title}</div>
-                      <div style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkMute, marginBottom: 5 }}>{(M.domains.find(d => d.key === g.node.dom) || {}).title}</div>
+                      <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute, marginBottom: 5 }}>{(M.domains.find(d => d.key === g.node.dom) || {}).title}</div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 3, borderLeft: `1.5px solid ${HB.lineSoft}`, paddingLeft: 9 }}>
                         {g.runs.slice(0, 5).map(r => (
                           <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                             <span style={{ width: 7, height: 7, borderRadius: '50%', background: r.ok ? HB.green : HB.red, flexShrink: 0 }}/>
-                            <span style={{ fontFamily: HB.mono, fontSize: 10.5, color: HB.inkSoft }}>{r.variantOf ? '⌥ variant' : 'run'} #{r.n}</span>
-                            <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute, marginLeft: 'auto' }}>{ago(r.t)} ago</span>
+                            <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkSoft }}>{r.variantOf ? '⌥ variant' : 'run'} #{r.n}</span>
+                            <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute, marginLeft: 'auto' }}>{ago(r.t)} ago</span>
                           </div>
                         ))}
                       </div>
@@ -410,7 +410,7 @@ function LibraryPanel({ onCreateNode, onAddDomain, flash }) {
       <div style={{ padding: '11px 12px 9px', borderBottom: `1px solid ${HB.lineSoft}`, flexShrink: 0 }}>
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="search the library…"
           style={{ width: '100%', padding: '7px 9px', borderRadius: 7, border: `1px solid ${HB.line}`, background: HB.paper, color: HB.ink, fontFamily: HB.mono, fontSize: 11, outline: 'none' }}/>
-        <button onClick={onAddDomain} style={{ marginTop: 8, width: '100%', padding: '8px 0', borderRadius: 7, border: `1px dashed ${HB.accent}`, background: 'transparent', color: HB.accent, cursor: 'pointer', fontFamily: HB.mono, fontSize: 10.5, letterSpacing: '0.08em' }}>＋ NEW DOMAIN</button>
+        <button onClick={onAddDomain} style={{ marginTop: 8, width: '100%', padding: '8px 0', borderRadius: 7, border: `1px dashed ${HB.accent}`, background: 'transparent', color: HB.accent, cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.label.sz, letterSpacing: '0.08em' }}>＋ NEW DOMAIN</button>
       </div>
       {ghost && (
         <div style={{ position: 'fixed', left: ghost.x + 12, top: ghost.y + 10, zIndex: 9999, pointerEvents: 'none',
@@ -429,7 +429,7 @@ function LibraryPanel({ onCreateNode, onAddDomain, flash }) {
           return (
             <div key={g.cat} style={{ marginBottom: 6 }}>
               <button onClick={() => setOpen(o => ({ ...o, [g.cat]: !o[g.cat] }))}
-                style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 7, padding: '6px 5px', background: 'transparent', border: 0, cursor: 'pointer', color: HB.inkSoft, fontFamily: HB.mono, fontSize: 9, letterSpacing: '0.14em', textAlign: 'left' }}>
+                style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 7, padding: '6px 5px', background: 'transparent', border: 0, cursor: 'pointer', color: HB.inkSoft, fontFamily: HB.mono, fontSize: HB.fs.label.sz, letterSpacing: '0.14em', textAlign: 'left' }}>
                 <span style={{ width: 7, height: 7, borderRadius: 2, background: col, flexShrink: 0 }}/>
                 <span style={{ flex: 1 }}>{g.label}</span>
                 <span style={{ color: HB.inkSoft }}>{items.length} {isOpen ? '▾' : '▸'}</span>
@@ -445,7 +445,7 @@ function LibraryPanel({ onCreateNode, onAddDomain, flash }) {
                       onMouseEnter={e => { e.currentTarget.style.background = HB.paper2; e.currentTarget.style.borderLeftColor = col; }}
                       onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderLeftColor = 'transparent'; }}>
                       <div style={{ fontFamily: HB.sans, fontSize: 12, color: HB.ink }}>{title}</div>
-                      <div style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkMute, marginTop: 1 }}>{sub}</div>
+                      <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute, marginTop: 1 }}>{sub}</div>
                     </div>
                   ))}
                 </div>

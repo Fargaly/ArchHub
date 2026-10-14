@@ -553,25 +553,25 @@ const CHIP = derive(W => ({
 // ── atoms ──
 const Av = ({ a, s=22 }) => (
   <span aria-hidden="true" title={a.name} style={{ width:s, height:s, borderRadius: a.round ? '50%' : Math.round(s/4), background:a.col,
-    color: a.round ? W.onUserAv : (a.status==='off' ? W.inkMuted : (a.ink || W.onFill)),
+    color: a.round ? W.onUserAv : (a.status==='off' ? W.inkSoft : (a.ink || W.onFill)),
     display:'grid', placeItems:'center', fontSize:Math.round(s*0.45), fontWeight:600, flex:'none',
     fontFamily:W.sans, opacity: a.status==='off' ? .6 : 1 }}>{a.ini}</span>
 );
 const Dot = ({ c, pulse }) => <span style={{ width:6, height:6, borderRadius:'50%', background:c, flex:'none', animation: pulse ? 'lmPulse 1.3s infinite' : 'none' }}/>;
-const Lbl = ({ children, c }) => <span style={{ fontFamily:W.mono, fontSize:9, letterSpacing:'0.18em', color: c || W.inkMuted }}>{children}</span>;
-const Chip = ({ s }) => { const k = CHIP[s] || CHIP.open; return <span style={{ fontFamily:W.mono, fontSize:9, letterSpacing:'0.1em', padding:'2px 6px', borderRadius:3, background:k.bg, color:k.c }}>{k.l}</span>; };
+const Lbl = ({ children, c }) => <span style={{ fontFamily:W.sans, fontSize:W.fs.label.sz, fontWeight:W.fs.label.wt, letterSpacing:W.fs.label.letter, color: c || W.inkSoft }}>{children}</span>;
+const Chip = ({ s }) => { const k = CHIP[s] || CHIP.open; return <span style={{ fontFamily:W.sans, fontSize:W.fs.label.sz, fontWeight:W.fs.label.wt, letterSpacing:W.fs.label.letter, padding:`2px ${W.sp.sm}px`, borderRadius:W.rad.chip, background:k.bg, color:k.c }}>{k.l}</span>; };
 const Mini = ({ children, acc, onClick, title, disabled }) => (
   <span role={onClick ? 'button' : undefined} tabIndex={onClick && !disabled ? 0 : undefined} title={title} aria-pressed={onClick ? !!acc : undefined}
     aria-disabled={onClick && disabled ? 'true' : undefined}
     onClick={disabled ? undefined : onClick} onKeyDown={onClick && !disabled ? e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(e); } } : undefined}
-    style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'3px 9px', borderRadius:5,
+    style={{ display:'inline-flex', alignItems:'center', gap:W.sp.xs, padding:`${W.sp.xs}px ${W.sp.md}px`, borderRadius:W.rad.control,
     background: acc ? W.accentDim : W.bg, border:`1px ${disabled ? 'dashed' : 'solid'} ${acc ? W.accentSoft : W.line}`, color: acc ? W.accent : W.inkSoft,
-    fontFamily:W.mono, fontSize:10, letterSpacing:'0.04em', cursor: onClick && !disabled ? 'pointer' : 'default' }}>{children}</span>
+    fontFamily:W.sans, fontSize:W.fs.label.sz, fontWeight:W.fs.label.wt, letterSpacing:W.fs.label.letter, cursor: onClick && !disabled ? 'pointer' : 'default' }}>{children}</span>
 );
 // Disabled controls use a dashed border, never alpha (design DECISIONS.md).
 const Btn = ({ children, pri, sm, onClick, disabled, title, ...rest }) => (
-  <button type="button" {...rest} onClick={onClick} disabled={disabled} title={title} style={{ padding: sm ? '3px 9px' : '5px 10px', borderRadius:sm ? 5 : 6, cursor: disabled ? 'default' : 'pointer', margin:0,
-    fontFamily: sm ? W.mono : W.sans, fontSize: sm ? 10.5 : 12, fontWeight: pri || !sm ? 500 : 400, letterSpacing: sm ? '0.04em' : 0,
+  <button type="button" {...rest} onClick={onClick} disabled={disabled} title={title} style={{ padding: sm ? `${W.sp.xs}px ${W.sp.md}px` : `${W.sp.sm}px ${W.sp.md}px`, borderRadius:W.rad.control, cursor: disabled ? 'default' : 'pointer', margin:0,
+    fontFamily:W.sans, fontSize: sm ? W.fs.label.sz : W.fs.bodySm.sz, fontWeight: pri || !sm ? 500 : 400, letterSpacing: sm ? W.fs.label.letter : 0,
     background: pri && !disabled ? W.accent : sm ? 'transparent' : W.bgHover, border:`1px ${disabled ? 'dashed' : 'solid'} ${pri && !disabled ? W.accent : W.line}`,
     color: pri && !disabled ? W.onFill : sm ? W.inkSoft : W.ink }}>{children}</button>
 );
@@ -580,12 +580,12 @@ const Btn = ({ children, pri, sm, onClick, disabled, title, ...rest }) => (
 const IBtn = ({ g, title, acc, on, onClick, s = 24, disabled }) => (
   <button type="button" title={title} aria-label={title} aria-pressed={on === undefined ? undefined : !!on} disabled={disabled}
     onClick={e => { e.stopPropagation(); onClick && onClick(e); }} style={{ width:s, height:s, display:'grid', placeItems:'center', padding:0, margin:0, cursor: disabled ? 'default' : 'pointer',
-    borderRadius:5, background: on ? W.accentDim : 'transparent', border:`1px ${disabled ? 'dashed' : 'solid'} ${on ? W.accentSoft : W.line}`,
-    color: on || acc ? W.accent : W.inkSoft, fontFamily:W.mono, fontSize:12, lineHeight:1 }}>{g}</button>
+    borderRadius:W.rad.control, background: on ? W.accentDim : 'transparent', border:`1px ${disabled ? 'dashed' : 'solid'} ${on ? W.accentSoft : W.line}`,
+    color: on || acc ? W.accent : W.inkSoft, fontFamily:W.sans, fontSize:W.icon.ui.size, lineHeight:1 }}>{g}</button>
 );
 const PRow = ({ k, v, c, last }) => (
-  <div style={{ display:'flex', justifyContent:'space-between', gap:10, padding:'5px 0', borderBottom: last ? 0 : `1px solid ${W.lineSoft}`, fontSize:11.5 }}>
-    <span style={{ fontFamily:W.mono, fontSize:10, letterSpacing:'0.04em', color:W.inkMuted }}>{k}</span>
+  <div style={{ display:'flex', justifyContent:'space-between', gap:W.sp.sm, padding:`${W.sp.xs}px 0`, borderBottom: last ? 0 : `1px solid ${W.lineSoft}`, fontSize:W.fs.caption.sz }}>
+    <span style={{ fontFamily:W.sans, fontSize:W.fs.label.sz, letterSpacing:W.fs.label.letter, color:W.inkSoft }}>{k}</span>
     <span style={{ color: c || W.ink, textAlign:'right', overflowWrap:'anywhere' }}>{v}</span>
   </div>
 );
@@ -631,7 +631,7 @@ const TaskCard = ({ t, sel, onSelect, onDecide, onOpen, compact, agent, busy, ro
           <div style={{ flex:'1 1 260px', minWidth:180, cursor:'pointer' }}>
             <div style={{ fontSize:12.5, fontWeight:500, color:W.ink, overflowWrap:'anywhere' }}>{t.title}</div>
             {' '}
-            <div style={{ marginTop:2, fontFamily:W.mono, fontSize:10, color:W.inkMuted, letterSpacing:'0.04em', overflowWrap:'anywhere' }}>
+            <div style={{ marginTop:2, fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, letterSpacing:'0.04em', overflowWrap:'anywhere' }}>
               {taskRowMeta(t)}
             </div>
           </div>
@@ -660,7 +660,7 @@ const TaskCard = ({ t, sel, onSelect, onDecide, onOpen, compact, agent, busy, ro
       opacity: t.state==='queued' ? .75 : 1, boxShadow: sel ? `0 0 0 3px ${W.accent}1a` : 'none', overflow:'hidden' }}>
       <div style={{ display:'flex', alignItems:'center', gap:9, padding:'10px 13px', borderBottom:`1px solid ${W.lineSoft}`, flexWrap:'wrap' }}>
         <Dot c={(CHIP[t.state] || CHIP.open).c} pulse={t.state==='run'}/>
-        <span title={t.work} style={{ fontFamily:W.mono, fontSize:9.5, letterSpacing:'0.1em', color:W.inkMuted }}>{t.id}</span>
+        <span title={t.work} style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.1em', color:W.inkSoft }}>{t.id}</span>
         <span style={{ fontSize:13, fontWeight:500, letterSpacing:'-0.005em', overflowWrap:'anywhere' }}>{t.title}</span>
         {t.owner && <Av a={o} s={18}/>}
         <div style={{ flex:1 }}/>
@@ -671,7 +671,7 @@ const TaskCard = ({ t, sel, onSelect, onDecide, onOpen, compact, agent, busy, ro
           <div style={{ display:'flex', gap:11, flexWrap:'wrap' }}>
             <div style={{ width: compact ? '100%' : 150, height:88, borderRadius:6, border:`1px solid ${W.lineSoft}`, display:'grid', placeItems:'center', flex:'none',
               background:`repeating-linear-gradient(135deg,${W.bgInk} 0 6px,${W.bgSoft} 6px 12px)` }}>
-              <span style={{ fontFamily:W.mono, fontSize:9.5, letterSpacing:'0.1em', color:W.inkMuted }}>DRAFT PATCH</span>
+              <span style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.1em', color:W.inkSoft }}>DRAFT PATCH</span>
             </div>
             <div style={{ flex:'1 1 170px', minWidth:170, fontSize:12.5, lineHeight:1.55, color:W.inkSoft, overflowWrap:'anywhere' }}>{t.artifact.name}
               <div style={{ display:'flex', gap:6, marginTop:10, flexWrap:'wrap' }}>
@@ -680,7 +680,7 @@ const TaskCard = ({ t, sel, onSelect, onDecide, onOpen, compact, agent, busy, ro
                 <IBtn g="↓" title="Download patch" disabled={busy || !t.artifact.download} onClick={() => t.artifact.download && t.artifact.download()}/>
               </div>
               {detail === 'diff' && (
-                <div style={{ marginTop:9, fontFamily:W.mono, fontSize:10.5, lineHeight:1.8, color:W.inkMuted, overflowWrap:'anywhere' }}>
+                <div style={{ marginTop:9, fontFamily:W.mono, fontSize:W.fs.dataSm.sz, lineHeight:1.8, color:W.inkSoft, overflowWrap:'anywhere' }}>
                   + {t.artifact.bytes} bytes<br/>SHA-256 {t.artifact.digest}<br/>Draft only · review and verify before applying
                 </div>
               )}
@@ -701,7 +701,7 @@ const TaskCard = ({ t, sel, onSelect, onDecide, onOpen, compact, agent, busy, ro
                 <div><b style={{ color:W.ink, fontWeight:500 }}>{f.name} → {m.toRoots && m.toRoots.length ? m.toRoots.map(root => agent(root).name).join(', ') : m.to}</b> · {m.text}</div>
               </div> ); })}
             {t.thread.length > 2 && (
-              <span role="button" tabIndex={0} onClick={e => { e.stopPropagation(); setAll(!all); }} style={{ fontFamily:W.mono, fontSize:10, color:W.accent, cursor:'pointer' }}>
+              <span role="button" tabIndex={0} onClick={e => { e.stopPropagation(); setAll(!all); }} style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.accent, cursor:'pointer' }}>
                 {all ? '▴ collapse thread' : `▾ ${t.thread.length - 2} more in this thread`}
               </span>
             )}
@@ -714,7 +714,7 @@ const TaskCard = ({ t, sel, onSelect, onDecide, onOpen, compact, agent, busy, ro
         )}
       </div>
       <div style={{ display:'flex', alignItems:'center', gap:9, padding:'8px 13px', borderTop:`1px solid ${W.lineSoft}`, background:W.bgSoft, flexWrap:'wrap',
-        fontFamily:W.mono, fontSize:10, letterSpacing:'0.04em', color:W.inkMuted }}>
+        fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.04em', color:W.inkSoft }}>
         <span onClick={e => { e.stopPropagation(); setOpen(!open); }} title="Events on this Work" style={{ color:W.inkSoft, cursor:'pointer' }}>{open ? '▾' : '▸'} ⇄ {t.tools.n}</span>
         <span>{open ? t.tools.list : t.tools.list.split(' · ')[0] + ' …'}</span>
         <div style={{ flex:1 }}/><span>{t.tools.t}</span>
@@ -774,11 +774,11 @@ const AgentsRail = ({ context, sel, onSelect, onAddAgent, compact }) => {
         <div style={{ minWidth:0, flex:1 }}>
           <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
             <span style={{ fontSize:12.5, fontWeight:500, letterSpacing:'-0.005em', overflowWrap:'anywhere' }}>{a.name}</span>
-            <span style={{ fontFamily:W.mono, fontSize:8.5, letterSpacing:'0.12em', padding:'1px 5px', borderRadius:3, border:`1px solid ${W.line}`, color:W.inkMuted }}>{a.role}</span>
+            <span style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.12em', padding:'1px 5px', borderRadius:3, border:`1px solid ${W.line}`, color:W.inkSoft }}>{a.role}</span>
           </div>
-          <div role={store.pending[a.id] || store.outcomes[a.id] ? 'status' : undefined} style={{ fontFamily:W.mono, fontSize:9.5, color:W.inkMuted, letterSpacing:'0.03em', marginTop:2, overflowWrap:'anywhere' }}>{a.prov}</div>
+          <div role={store.pending[a.id] || store.outcomes[a.id] ? 'status' : undefined} style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, letterSpacing:'0.03em', marginTop:2, overflowWrap:'anywhere' }}>{a.prov}</div>
           {!compact && <>
-            <div style={{ display:'flex', alignItems:'center', gap:5, marginTop:5, fontFamily:W.mono, fontSize:9, letterSpacing:'0.1em', color:s.col }}>
+            <div style={{ display:'flex', alignItems:'center', gap:5, marginTop:5, fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.1em', color:s.col }}>
               <Dot c={s.col} pulse={s.pulse}/>{wsStatusLabel(a.status)}{a.ago ? ` · ${a.ago}` : ''}
             </div>
             <div style={{ fontSize:11.5, color:W.inkSoft, lineHeight:1.4, marginTop:5, overflowWrap:'anywhere' }}>{a.doing}</div>
@@ -787,12 +787,12 @@ const AgentsRail = ({ context, sel, onSelect, onAddAgent, compact }) => {
         </div>
       </div> ); })}
     {offCount > 0 && <div data-workshop-disconnected-summary="" style={{ margin:'8px 14px', display:'flex', alignItems:'center', gap:8, flexWrap:'wrap',
-      fontFamily:W.mono, fontSize:10, letterSpacing:'0.06em', color:W.inkMuted }}>
+      fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.06em', color:W.inkSoft }}>
       <span>{offCount} inactive session{offCount === 1 ? '' : 's'}</span>
       <button type="button" data-workshop-disconnected-toggle="" aria-pressed={showOff}
         onClick={() => setShowOff(value => !value)}
-        style={{ fontFamily:W.mono, fontSize:10, letterSpacing:'0.06em',
-          color:W.inkMuted, background:'transparent', border:`1px solid ${W.line}`, borderRadius:4, padding:'3px 8px', cursor:'pointer' }}>
+        style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.06em',
+          color:W.inkSoft, background:'transparent', border:`1px solid ${W.line}`, borderRadius:4, padding:'3px 8px', cursor:'pointer' }}>
         {showOff ? 'Hide' : 'Show'}
       </button>
     </div>}
@@ -861,11 +861,11 @@ const GraphPane = ({ flow, selTask, tidy, chain, onArrange, onChain, onOpen }) =
         <Mini acc>live</Mini>
       </div>
       {nodes.map(n => { const s = n.state; return (
-        <div key={n.id} data-node={n.id} aria-current={lit(n.id) ? 'true' : undefined} style={{ position:'absolute', left:`${COL_L(n.col)}%`, top:Y(n), width:'24%', maxWidth:170, padding:'8px 10px', borderRadius:7, transition:'top .18s',
+        <div key={n.id} data-node={n.id} aria-current={lit(n.id) ? 'true' : undefined} style={{ position:'absolute', left:`${COL_L(n.col)}%`, top:Y(n), width:'24%', maxWidth:170, padding:'8px 10px', borderRadius:7, transition:`top ${W.dur.med}ms`,
           background:W.bgPanel, border:`1px solid ${lit(n.id) ? W.accent : (s==='block' ? CHIP.BLOCK_EDGE : W.line)}`,
           boxShadow: lit(n.id) ? `0 0 0 3px ${W.accent}1a` : 'none', overflowWrap:'anywhere' }}>
           <div style={{ fontSize:11.5, fontWeight:500, letterSpacing:'-0.005em' }}>{n.t}</div>
-          <div style={{ fontFamily:W.mono, fontSize:9, letterSpacing:'0.04em', marginTop:3, color: s==='idle' ? W.inkMuted : col(s) }}>{n.p}</div>
+          <div style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.04em', marginTop:3, color: s==='idle' ? W.inkSoft : col(s) }}>{n.p}</div>
         </div> ); })}
       <div role={nodes.length ? undefined : 'status'} style={{ position:'absolute', bottom:12, left:12, right:12, zIndex:3, background:W.bgPanel + 'eb',
         border:`1px solid ${W.line}`, borderRadius:7, padding:'9px 11px', fontSize:11.5, lineHeight:1.5, color:W.inkSoft }}>
@@ -958,7 +958,7 @@ const AssignSection = ({ task, room, agents, assign, assignments = [] }) => {
         <div style={{ display:'flex', gap:8, alignItems:'center', marginTop:8, padding:'7px 8px', border:`1px solid ${W.line}`, borderRadius:8 }}>
           <Av a={owner} s={22}/>
           <div style={{ minWidth:0 }}><div style={{ fontSize:12.5, overflowWrap:'anywhere' }}>{owner.name}</div>
-            <div style={{ fontFamily:W.mono, fontSize:9.5, color:W.inkMuted }}>assigned · it claims the Work itself</div></div>
+            <div style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft }}>assigned · it claims the Work itself</div></div>
         </div>
         <div style={{ fontSize:11.5, lineHeight:1.5, color:W.inkSoft, marginTop:8 }}>One agent at a time: this Work cannot take another assignee while this one holds it.</div>
       </div>);
@@ -991,10 +991,10 @@ const AssignSection = ({ task, room, agents, assign, assignments = [] }) => {
                 opacity:a.verified ? 1 : 0.55, cursor:a.verified ? 'pointer' : 'not-allowed' }}>
               <Av a={a} s={20}/>
               <span style={{ flex:1, minWidth:0 }}><span style={{ display:'block', fontSize:12 }}>{a.name}</span>
-                <span style={{ display:'block', fontFamily:W.mono, fontSize:9.5, color:W.inkMuted }}>
+                <span style={{ display:'block', fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft }}>
                   {a.verified ? (a.seen ? 'renewed · ' + a.seen : 'connection verified') :
                    a.status === 'off' ? 'disconnected from this app' : a.status === 'stale' ? 'connection not renewed' : 'connection unverified'}</span></span>
-              <span style={{ fontFamily:W.mono, fontSize:9, color:W.inkMuted }}>{wsStatusText[a.status] || ''}</span>
+              <span style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft }}>{wsStatusText[a.status] || ''}</span>
             </button>)) :
             <div style={{ fontSize:11.5, color:W.inkSoft }}>No agent is attached to this Workshop.</div>}
         </div>
@@ -1013,7 +1013,7 @@ const AssignSection = ({ task, room, agents, assign, assignments = [] }) => {
           <div><b style={{ color:W.ok }}>Does</b><br/>records the assignment · adds it to the agent's Work list · raises an attention item</div>
           <div><b style={{ color:W.err }}>Does not</b><br/>claim the Work · grant any file writes · start or enrol a session</div>
         </div>
-        <div style={{ fontFamily:W.mono, fontSize:9.5, color:W.inkMuted, marginTop:8 }}>connection re-checked at commit · assignment id reused on retry</div>
+        <div style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, marginTop:8 }}>connection re-checked at commit · assignment id reused on retry</div>
         <div style={{ display:'flex', gap:6, marginTop:10 }}>
           <button type="button" disabled={shownPhase === 'sending' || !(chosen || pendingNow)} onClick={send}>
             {pendingNow && shownNotice?.kind === 'uncertain' ? 'Retry the same assignment' : shownPhase === 'sending' ? 'Assigning…' : 'Assign · founder'}</button>
@@ -1141,7 +1141,7 @@ const ContextPanel = ({ selAgent, selTask, tasks, agent, descriptor, activity, a
       <div style={{ padding:'13px 16px', borderBottom:`1px solid ${W.lineSoft}`, display:'flex', gap:10, alignItems:'flex-start' }}>
         <Av a={who} s={28}/>
         <div style={{ minWidth:0 }}><div style={{ fontSize:14, fontWeight:500, overflowWrap:'anywhere' }}>{showTask ? t.title : a ? a.name : descriptor.label}</div>
-          <div style={{ fontFamily:W.mono, fontSize:9.5, color:W.inkMuted, marginTop:2, overflowWrap:'anywhere' }}>{showTask ? `owner: ${o ? o.name : 'not named on this page'}` : a ? `${a.role.toLowerCase()} · ${a.model}` : `${listening} listening`}</div></div>
+          <div style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, marginTop:2, overflowWrap:'anywhere' }}>{showTask ? `owner: ${o ? o.name : 'not named on this page'}` : a ? `${a.role.toLowerCase()} · ${a.model}` : `${listening} listening`}</div></div>
       </div>
       <div style={{ padding:'12px 16px', borderBottom:`1px solid ${W.lineSoft}`, fontSize:12, lineHeight:1.55, color:W.inkSoft, overflowWrap:'anywhere' }}>
         {showTask ? (t.lead || 'No event names this Work on this page.') : a ? a.doing : 'Select an agent in the rail or a task card to see it here.'}
@@ -1184,7 +1184,7 @@ const ContextPanel = ({ selAgent, selTask, tasks, agent, descriptor, activity, a
       </div>
       <div style={{ padding:'12px 16px' }}>
         <Lbl>ACTIVITY · TOOL RECORDS</Lbl>
-        {activity.length ? <div style={{ fontFamily:W.mono, fontSize:10, lineHeight:1.9, color:W.inkMuted, marginTop:8, overflowWrap:'anywhere' }}>
+        {activity.length ? <div style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, lineHeight:1.9, color:W.inkSoft, marginTop:8, overflowWrap:'anywhere' }}>
           {activity.map((row, i) => <React.Fragment key={row.root || i}>{i > 0 && <br/>}{row.at ? row.at + ' ' : ''}{row.dir} {row.text}</React.Fragment>)}
         </div> : <div style={{ fontSize:11.5, lineHeight:1.5, color:W.inkSoft, marginTop:8 }}>{activityNote}</div>}
       </div>
@@ -1303,7 +1303,7 @@ const WorkshopRouterTab = ({ live, error, loading, saving, selected, onSave, tas
           alignItems:'center', padding:'11px 13px' }}>
           <div>
             <div style={{ fontSize:13, color:W.ink, fontWeight:500 }}>Workshop model</div>
-            <div style={{ fontFamily:W.mono, fontSize:10, color:W.inkMuted, marginTop:2 }}>
+            <div style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, marginTop:2 }}>
               {selected ? wsRouteLabel(selected) : loading ? 'Reading model routes' : 'No saved free/local route'}
             </div>
           </div>
@@ -1320,7 +1320,7 @@ const WorkshopRouterTab = ({ live, error, loading, saving, selected, onSave, tas
           <div key={task.work || index} style={{ display:'grid', gridTemplateColumns:'minmax(180px,1fr) minmax(180px,1fr)', gap:12,
             padding:'10px 13px', alignItems:'center', borderTop:index ? `1px solid ${W.lineSoft}` : 0 }}>
             <div style={{ minWidth:0, fontSize:12.5, color:W.ink, overflowWrap:'anywhere' }}>{task.title || 'Untitled work'}</div>
-            <div style={{ minWidth:0, fontFamily:W.mono, fontSize:10.5, color:W.inkSoft, overflowWrap:'anywhere' }}>{task.model || 'model not recorded'}</div>
+            <div style={{ minWidth:0, fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, overflowWrap:'anywhere' }}>{task.model || 'model not recorded'}</div>
           </div>
         )) : <div role="status" style={{ padding:'12px 13px', fontSize:12.5, color:W.inkSoft }}>No recent tasks in this Workshop.</div>}
       </div>
@@ -1343,7 +1343,7 @@ const WorkshopRelayTab = ({ consent, session, error, busy, onToggle, onSignIn })
           display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
           <div style={{ flex:'1 1 240px', minWidth:180 }}>
             <div style={{ fontSize:13.5, color:W.ink, fontWeight:500 }}>Sign in to use the cloud relay</div>
-            <div style={{ marginTop:3, fontFamily:W.mono, fontSize:10.5, color:W.inkSoft }}>State: Off</div>
+            <div style={{ marginTop:3, fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft }}>State: Off</div>
           </div>
           <Btn sm pri onClick={onSignIn}>Sign in</Btn>
         </div>
@@ -1352,7 +1352,7 @@ const WorkshopRelayTab = ({ consent, session, error, busy, onToggle, onSignIn })
           display:'flex', alignItems:'center', gap:12 }}>
           <div style={{ flex:1, minWidth:0 }}>
             <div style={{ fontSize:13.5, color:W.ink, fontWeight:500 }}>State: {allowed ? 'On' : 'Off'}</div>
-            <div role={error ? 'alert' : 'status'} style={{ marginTop:3, fontFamily:W.mono, fontSize:10.5,
+            <div role={error ? 'alert' : 'status'} style={{ marginTop:3, fontFamily:W.mono, fontSize:W.fs.dataSm.sz,
               color:error ? W.err : W.inkSoft, overflowWrap:'anywhere' }}>
               {error || (allowed ? 'Cockpit instructions and the map are allowed for ' + (consent?.account || session.email || 'this account') + '.'
                 : 'The cockpit cannot instruct this app and cannot see the map.')}
@@ -1383,7 +1383,7 @@ const PromptCard = ({ prompt, values, onValue, onUse, canShare, onShare }) => {
         {body || prompt.description || 'No prompt text recorded.'}
       </div>
       {blanks.length > 0 && <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(160px, 1fr))', gap:8, marginTop:10 }}>
-        {blanks.map(name => <label key={name} style={{ fontFamily:W.mono, fontSize:10, color:W.inkMuted }}>{name}
+        {blanks.map(name => <label key={name} style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft }}>{name}
           <input aria-label={name} value={values?.[name] || ''} onChange={e => onValue(name, e.target.value)}
             style={{ display:'block', width:'100%', marginTop:4, boxSizing:'border-box', padding:'6px 8px',
               border:`1px solid ${W.line}`, borderRadius:5, background:W.bg, color:W.ink, fontFamily:W.sans, fontSize:12 }}/>
@@ -1424,7 +1424,7 @@ const WorkshopPromptsTab = ({ prompts, loading, error, values, onValue, onUse, c
             background:W.bg, color:W.ink, resize:'vertical' }}/>
         <div style={{ marginTop:8 }}><button type="submit" disabled={!title.trim() || !text.trim()} style={{ padding:'3px 9px',
           borderRadius:5, cursor:(!title.trim() || !text.trim()) ? 'default' : 'pointer', margin:0,
-          fontFamily:W.mono, fontSize:10.5, fontWeight:500, letterSpacing:'0.04em',
+          fontFamily:W.mono, fontSize:W.fs.dataSm.sz, fontWeight:500, letterSpacing:'0.04em',
           background:(!title.trim() || !text.trim()) ? 'transparent' : W.accent,
           border:`1px ${(!title.trim() || !text.trim()) ? 'dashed' : 'solid'} ${(!title.trim() || !text.trim()) ? W.line : W.accent}`,
           color:(!title.trim() || !text.trim()) ? W.inkSoft : W.onFill }}>New prompt</button></div>
@@ -2432,7 +2432,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const controls = <>
     <div style={{ padding:'12px 16px', borderBottom:`1px solid ${W.lineSoft}` }}>
       <Lbl>HISTORY</Lbl>
-      <div role={transcript?.error ? 'alert' : 'status'} style={{ fontFamily:W.mono, fontSize:10, lineHeight:1.6, color:transcript?.error ? W.err : W.inkMuted, marginTop:8, overflowWrap:'anywhere' }}>
+      <div role={transcript?.error ? 'alert' : 'status'} style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, lineHeight:1.6, color:transcript?.error ? W.err : W.inkSoft, marginTop:8, overflowWrap:'anywhere' }}>
         {transcript?.error || (paging ? 'Loading message page\u2026' : refreshing ? 'Updating messages\u2026' :
           transcript ? (olderPage ? 'Earlier messages synchronized' : 'Messages synchronized') : 'Loading messages\u2026')}
         {transcript && !transcript.error ? ` \u00b7 ${messages.length} displayed \u00b7 ${listening} listening` : ''}
@@ -2878,7 +2878,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
       <div style={{ flex:1, minWidth:0 }}>
         <div style={{ display:'flex', alignItems:'baseline', gap:8, marginBottom:4 }}>
           <span style={{ fontSize:12.5, fontWeight:500 }}>{proposer.name}</span>
-          <span style={{ fontFamily:W.mono, fontSize:9, color:W.inkMuted, border:`1px solid ${W.line}`, borderRadius:3, padding:'1px 5px' }}>proposed</span>
+          <span style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, border:`1px solid ${W.line}`, borderRadius:3, padding:'1px 5px' }}>proposed</span>
         </div>
         <div data-workshop-plan-card-copy="" style={{ fontFamily:W.sans, fontSize:15, lineHeight:1.6, letterSpacing:0, marginBottom:11 }}>
           {`Here is the workflow ${proposer.name} proposes: ${shownWorkflow.title}. ${wfSteps.length} step${wfSteps.length === 1 ? '' : 's'}; ` +
@@ -2888,14 +2888,14 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
           {wfSteps.map((n, i, arr) => (
             <React.Fragment key={n.id}>
               <div style={{ border:`1px solid ${wfState === 'awaiting' ? W.accent : W.line}`, background:W.bgPanel, borderRadius:5, padding:'6px 9px', fontSize:11, lineHeight:1.25, maxWidth:220, overflowWrap:'anywhere' }}>
-                {n.t}<div style={{ fontFamily:W.mono, fontSize:8.5, color:W.inkMuted, letterSpacing:'0.06em', marginTop:2 }}>{n.p}</div>
+                {n.t}<div style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, letterSpacing:'0.06em', marginTop:2 }}>{n.p}</div>
               </div>
               {i < arr.length - 1 && <span style={{ width:22, height:1, background:W.line, flex:'none' }}/>}
             </React.Fragment>
           ))}
           <div style={{ flexBasis:'100%', height:11 }}/>
           <div style={{ display:'flex', alignItems:'center', gap:7, width:'100%' }}>
-            <span data-workshop-workflow-chip="" style={{ fontFamily:W.mono, fontSize:9, letterSpacing:'0.1em', padding:'2px 6px', borderRadius:3,
+            <span data-workshop-workflow-chip="" style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.1em', padding:'2px 6px', borderRadius:3,
               background:wfChip.bg, color:wfChip.c, overflowWrap:'anywhere' }}>{wfChip.l}</span>
             <div style={{ flex:1 }}/>
             <IBtn g="⌗" title="Open as nodes" onClick={() => openShownWorkflowAsNodes(shownWorkflow,
@@ -2931,7 +2931,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   // Delivery state, relayed replies, agent-proposed workflows and independent review
   // (workshop_workflow.py). Every state shown here is read from the Workshop's own
   // receipts; a stored message is only stored until a receipt says otherwise.
-  const DELIVERY_TONE = {replied:W.ok, started:W.cyan, unavailable:W.err, uncertain:W.warn, stored:W.inkMuted};
+  const DELIVERY_TONE = {replied:W.ok, started:W.cyan, unavailable:W.err, uncertain:W.warn, stored:W.inkSoft};
   const contactLabel = root => (nativeContacts.find(row => row.root === root) || {}).label || relayLabels.get(root) || names.get(root) || String(root || 'agent');
   const workflowApi = authority && typeof authority.workshopWorkflow === 'function' ? authority : null;
   const wfAct = async (action, fields) => {
@@ -2954,14 +2954,14 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     catch (error) { setActionError(error.message || 'The parameter was not saved.'); }
     finally { busyRef.current = false; if (mounted.current) setBusy(false); }
   };
-  const chip = (label, tone, title, key) => <span key={key} title={title} style={{ fontFamily:W.mono, fontSize:9.5, letterSpacing:'0.04em',
+  const chip = (label, tone, title, key) => <span key={key} title={title} style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.04em',
     color:tone, border:`1px solid ${tone}`, borderRadius:3, padding:'1px 5px', overflowWrap:'anywhere' }}>{label}</span>;
   const deliveryChips = message => {
     if (!Array.isArray(message.delivery)) return null;
     const rows = message.delivery.length ? message.delivery : [{recipient:null, state:message.state}];
     return <div aria-label="Delivery state" style={{ display:'flex', gap:6, flexWrap:'wrap', marginTop:6 }}>
       {rows.map((row, index) => chip((row.recipient ? contactLabel(row.recipient) + ' · ' : '') + String(row.state).toUpperCase(),
-        DELIVERY_TONE[row.state] || W.inkMuted, row.reason || (row.state === 'uncertain' ? 'Delivery may have happened; it is never resent automatically.' : ''),
+        DELIVERY_TONE[row.state] || W.inkSoft, row.reason || (row.state === 'uncertain' ? 'Delivery may have happened; it is never resent automatically.' : ''),
         (row.recipient || 'stored') + ':' + index))}
     </div>;
   };
@@ -2971,7 +2971,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     const proposal = !drafted && /"actions"\s*:/.test(message.agent_text);
     if (!proposal && !reviewers.length) return null;
     return <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center', marginTop:8 }}>
-      {chip('sha256 ' + String(message.artifact_digest || '').slice(0, 12), W.inkMuted, 'Artifact digest of this reply', 'digest')}
+      {chip('sha256 ' + String(message.artifact_digest || '').slice(0, 12), W.inkSoft, 'Artifact digest of this reply', 'digest')}
       {proposal && <Btn sm disabled={busy} onClick={() => wfAct('workflow-draft', {message:message.root})}>Draft as workflow</Btn>}
       {reviewers.map(row => <Btn sm key={row.root} disabled={busy} title="A different agent reviews this reply; its verdict is evidence, not a court pass."
         onClick={() => wfAct('artifact-review', {artifact:message.root, reviewer:row.root})}>{'Review with ' + row.label}</Btn>)}
@@ -2994,17 +2994,17 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
         return <div key={wf.root} style={{ background:W.bgPanel, border:`1px solid ${W.line}`, borderRadius:7, padding:'12px 13px' }}>
           <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap', marginBottom:8 }}>
             <span style={{ fontSize:12.5, fontWeight:500 }}>{wf.title}</span>
-            {chip('proposed by ' + contactLabel(wf.proposed_by), W.inkMuted, wf.proposed_by, 'p')}
+            {chip('proposed by ' + contactLabel(wf.proposed_by), W.inkSoft, wf.proposed_by, 'p')}
             {status}
           </div>
           {wf.reason && <div role="status" style={{ fontSize:11.5, color:W.warn, marginBottom:8 }}>{wf.reason}</div>}
           <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
             {(wf.nodes || []).map(node => <div key={node.root} style={{ border:`1px solid ${W.lineSoft}`, borderRadius:5, padding:'7px 9px' }}>
-              <div style={{ fontSize:11.5, marginBottom:4 }}>{node.title} <span style={{ fontFamily:W.mono, fontSize:9, color:W.inkMuted }}>{node.engine}</span></div>
+              <div style={{ fontSize:11.5, marginBottom:4 }}>{node.title} <span style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft }}>{node.engine}</span></div>
               {Object.entries(node.params || {}).filter(([label]) => !HIDDEN_PARAMS.has(label)).map(([label, param]) =>
                 <form key={param.relation + ':' + param.value} onSubmit={e => { e.preventDefault(); if (param.editable) saveParam(param.relation, e.currentTarget.elements.value.value); }}
                   style={{ display:'flex', alignItems:'center', gap:6, margin:'3px 0' }}>
-                  <span style={{ fontFamily:W.mono, fontSize:9.5, color:W.inkMuted, minWidth:88 }}>{label}</span>
+                  <span style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, minWidth:88 }}>{label}</span>
                   {param.editable && (label === 'agent' || label === 'reviewer')
                     ? <><select name="value" aria-label={label} defaultValue={param.value} disabled={busy} title={param.value}
                         style={{ flex:1, minWidth:0, border:`1px solid ${W.line}`, borderRadius:4, background:W.bg, color:W.ink, fontSize:11.5, padding:'3px 6px' }}>
@@ -3021,7 +3021,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
             </div>)}
           </div>
           <div style={{ display:'flex', gap:8, marginTop:10, alignItems:'center' }}>
-            <span style={{ fontFamily:W.mono, fontSize:9, color:W.inkMuted }}>{wf.digest ? 'behavior ' + wf.digest.slice(0, 12) : ''}</span>
+            <span style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft }}>{wf.digest ? 'behavior ' + wf.digest.slice(0, 12) : ''}</span>
             <div style={{ flex:1 }}/>
             {wf.root === shownWorkflow?.root
               ? <span style={{ fontSize:11, color:W.inkSoft }}>Approve, revoke and run it on the workflow card.</span>
@@ -3033,8 +3033,8 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
       {artifactReviews.map(review => <div key={review.review} style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center', fontSize:11.5 }}>
         <span>Independent review of {String(review.artifact_digest).slice(0, 12)}</span>
         {chip('judged by ' + contactLabel(review.judged_by), W.cyan, review.judged_by, 'j')}
-        {chip('produced by ' + contactLabel(review.claimed_by), W.inkMuted, review.claimed_by, 'c')}
-        {chip(String(review.state).toUpperCase(), DELIVERY_TONE[review.state] || W.inkMuted, '', 'st')}
+        {chip('produced by ' + contactLabel(review.claimed_by), W.inkSoft, review.claimed_by, 'c')}
+        {chip(String(review.state).toUpperCase(), DELIVERY_TONE[review.state] || W.inkSoft, '', 'st')}
         {review.verdict && chip('VERDICT ' + String(review.verdict).toUpperCase(), review.verdict === 'pass' ? W.ok : review.verdict === 'fail' ? W.err : W.warn,
           'Review evidence from the reviewer; not a court pass.', 'v')}
       </div>)}
@@ -3058,7 +3058,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
       <div style={{ flex:1, minWidth:0 }}>
         <div style={{ display:'flex', alignItems:'baseline', gap:8, marginBottom:4 }}>
           <span style={{ fontSize:12.5, fontWeight:500 }}>{baboomAgent.name}</span>
-          <span title="Read from this page's tasks and workflow; not a message anyone sent" style={{ fontFamily:W.mono, fontSize:9.5, color:W.inkMuted,
+          <span title="Read from this page's tasks and workflow; not a message anyone sent" style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft,
             border:`1px solid ${W.line}`, borderRadius:3, padding:'1px 5px' }}>summary</span>
         </div>
         <div style={{ fontSize:messageTextSize, lineHeight:1.6, fontFamily:W.sans, letterSpacing:0 }}>{summaryText}</div>
@@ -3066,13 +3066,13 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     </div>
   );
   const BrainFacts = ({ facts }) => facts.length ? (
-    <div style={{ marginTop:6, fontFamily:W.mono, fontSize:10.5, color:W.inkMuted, letterSpacing:'0.03em' }}>
+    <div style={{ marginTop:6, fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, letterSpacing:'0.03em' }}>
       Used {facts.length} fact{facts.length === 1 ? '' : 's'} from Brain:{' '}
       {facts.map((fact, index) => <React.Fragment key={fact.root}>
         {index > 0 && ' · '}
         <button type="button" onClick={() => openRootAsNodes(fact.root)} title={fact.root}
           style={{ padding:0, margin:0, border:0, background:'transparent', color:W.inkSoft,
-            textDecoration:'underline', cursor:'pointer', fontFamily:W.mono, fontSize:10.5 }}>
+            textDecoration:'underline', cursor:'pointer', fontFamily:W.mono, fontSize:W.fs.dataSm.sz }}>
           {fact.label}
         </button>
       </React.Fragment>)}
@@ -3102,7 +3102,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
         {workflowProposalCard}
         <div style={{ marginLeft:40 }}>{relayedActions(message, true)}</div>
         <details style={{ marginLeft:40, fontSize:11.5, color:W.inkSoft }}>
-          <summary style={{ cursor:'pointer', fontFamily:W.mono, fontSize:10, color:W.inkMuted }}>show the agent's text</summary>
+          <summary style={{ cursor:'pointer', fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft }}>show the agent's text</summary>
           <div style={{ whiteSpace:'pre-wrap', overflowWrap:'anywhere', marginTop:6 }}>{message.agent_text}</div>
         </details>
       </div>;
@@ -3135,7 +3135,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
           <div style={{ display:'flex', alignItems:'baseline', gap:8, marginBottom:4, flexWrap:'wrap' }}>
             <span title={message.sender_root} style={{ fontSize:12.5, fontWeight:500, overflowWrap:'anywhere' }}>{a.name}</span>
             <span title={[message.state === 'acted' ? 'Acted on \u00b7 verification separate' : message.state, message.category, message.reply_to_root ? 'Reply' : ''].filter(Boolean).join(' \u00b7 ')}
-              style={{ fontFamily:W.mono, fontSize:9.5, color:W.inkMuted, border:`1px solid ${W.line}`, borderRadius:3, padding:'1px 5px', overflowWrap:'anywhere' }}>to {to}</span>
+              style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, border:`1px solid ${W.line}`, borderRadius:3, padding:'1px 5px', overflowWrap:'anywhere' }}>to {to}</span>
           </div>
           <div style={{ fontSize:messageTextSize, lineHeight:1.6, fontFamily:W.sans, letterSpacing:0, whiteSpace:'pre-wrap', overflowWrap:'anywhere' }}>
             {plan ? <>
@@ -3144,15 +3144,15 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
                   display:'flex', flexWrap:'wrap', alignItems:'center', rowGap:8, fontFamily:W.sans, whiteSpace:'normal' }}>
                   {plan.steps.map((n, i, arr) => <React.Fragment key={i}>
                     <div style={{ border:`1px solid ${W.line}`, background:W.bgPanel, borderRadius:5, padding:'6px 9px', fontSize:11, lineHeight:1.25 }}>
-                      {n.t}<div style={{ fontFamily:W.mono, fontSize:8.5, color:W.inkMuted, letterSpacing:'0.06em', marginTop:2 }}>{n.p}</div></div>
+                      {n.t}<div style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, letterSpacing:'0.06em', marginTop:2 }}>{n.p}</div></div>
                     {i < arr.length - 1 && <span style={{ width:22, height:1, background:W.line, flex:'none' }}/>}
                   </React.Fragment>)}
-                  <div style={{ flexBasis:'100%', fontFamily:W.mono, fontSize:9, letterSpacing:'0.1em', color:W.inkMuted }}>
+                  <div style={{ flexBasis:'100%', fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.1em', color:W.inkSoft }}>
                     {`PROPOSED WORKFLOW${plan.title ? ' · ' + plan.title.toUpperCase() : ''} · ${plan.steps.length} STEP${plan.steps.length === 1 ? '' : 'S'} · NOT A WORKFLOW UNTIL DRAFTED`}</div>
                 </div>
                 <details style={{ marginTop:6, fontFamily:W.sans }}>
-                  <summary style={{ cursor:'pointer', fontFamily:W.mono, fontSize:10, color:W.inkMuted }}>show the plan's JSON</summary>
-                  <pre style={{ fontFamily:W.mono, fontSize:10.5, whiteSpace:'pre-wrap', overflowWrap:'anywhere', margin:'6px 0 0' }}>{plan.raw}</pre>
+                  <summary style={{ cursor:'pointer', fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft }}>show the plan's JSON</summary>
+                  <pre style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, whiteSpace:'pre-wrap', overflowWrap:'anywhere', margin:'6px 0 0' }}>{plan.raw}</pre>
                 </details>
               </> : relayed ? message.agent_text :
               String(message.body || '').startsWith('Model review evidence. Independent review is still required.\n') ?
@@ -3186,7 +3186,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
             <select aria-label="Recipient" value={target} disabled={busy || !joined} onChange={e => {
               if (e.target.value === WS_SHOW_OFFLINE) setShowOfflineContacts(value => !value); else setTarget(e.target.value);
             }} style={{ padding:'3px 8px', borderRadius:5, background:W.accentDim,
-              border:`1px solid ${W.accentSoft}`, color:W.accent, fontFamily:W.mono, fontSize:10, letterSpacing:'0.04em', cursor:'pointer', maxWidth:'min(100%, 240px)' }}>
+              border:`1px solid ${W.accentSoft}`, color:W.accent, fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.04em', cursor:'pointer', maxWidth:'min(100%, 240px)' }}>
               <option value="">to: Workshop (everyone)</option>
               {modelAgent && <option value={'model:' + modelAgent.root}>{`to: @Agent · ${modelAgent.model}`}</option>}
               {pickerContacts.length > 0 && <optgroup label="Connected agent environments">
@@ -3201,12 +3201,12 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
             <IBtn g="@" title="Address one agent" acc={!!target} disabled={busy || !joined || (!target && !firstRecipient)} onClick={() => setTarget(target ? '' : firstRecipient)}/>
             <IBtn g="⌗" title="Open as nodes" onClick={openAsNodes}/>
             {!existing && transcript && <select aria-label="Connected task node" value={execution} disabled={busy} onChange={e => setExecution(e.target.value)} style={{ padding:'3px 8px', borderRadius:5, background:W.bg,
-              border:`1px solid ${W.line}`, color:W.inkSoft, fontFamily:W.mono, fontSize:10, letterSpacing:'0.04em', cursor:'pointer', maxWidth:'100%' }}>
+              border:`1px solid ${W.line}`, color:W.inkSoft, fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.04em', cursor:'pointer', maxWidth:'100%' }}>
               <option value="">Message only</option>
               {(transcript.execution_nodes || []).map(row => <option key={row.root} value={row.root}>{row.label}</option>)}
             </select>}
             <div style={{ flex:1 }}/>
-            <span style={{ fontFamily:W.mono, fontSize:10, color:W.inkMuted }}>{agents.filter(a => a.status !== 'off').length} agents listening</span>
+            <span style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft }}>{agents.filter(a => a.status !== 'off').length} agents listening</span>
             <Btn pri disabled={sendDisabled} onClick={send}>{busy ? 'Sending\u2026' : execution ? 'Assign task' : 'Send ↵'}</Btn>
           </div>
           </>}
@@ -3342,7 +3342,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     <section aria-label="Workshop tasks" style={{ flex:1, display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
       <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:14 }}>
         <div style={{ display:'grid', gridTemplateColumns:'minmax(180px,1.25fr) minmax(120px,.75fr) minmax(130px,.75fr) minmax(180px,1fr) auto',
-          gap:10, alignItems:'center', fontFamily:W.mono, fontSize:10.5, color:W.inkMuted, padding:'0 10px 8px' }}>
+          gap:10, alignItems:'center', fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, padding:'0 10px 8px' }}>
           <div>task</div><div>agent</div><div>status</div><div>result</div><div></div>
         </div>
         {allTasks.length ? allTasks.map((task, index) => {
@@ -3359,7 +3359,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
                 {task.title || 'Untitled work'}
               </button>
               <div style={{ fontSize:12, color:W.inkSoft, overflowWrap:'anywhere' }}>{agent(task.owner).name}</div>
-              <div style={{ fontFamily:W.mono, fontSize:10.5, color:(CHIP[task.state] || CHIP.open).c, overflowWrap:'anywhere' }}>
+              <div style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:(CHIP[task.state] || CHIP.open).c, overflowWrap:'anywhere' }}>
                 {taskRowMeta(task) || task.state}
               </div>
               <div style={{ fontSize:12, color:W.inkSoft, overflowWrap:'anywhere' }}>{result}</div>
@@ -3438,8 +3438,8 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
           border-radius:5px; padding:5px 9px; font-family:${W.sans}; font-size:11.5px; max-width:100%; box-sizing:border-box;
         }
         [aria-label="Native Workshop review"] button {margin:4px 4px 4px 0; cursor:pointer; background:transparent; color:${W.inkSoft}; padding:5px 12px;}
-        [aria-label="Native Workshop review"] summary {font-family:${W.mono}; font-size:10px; letter-spacing:0.04em; color:${W.inkSoft}; cursor:pointer;}
-        [aria-label="Native Workshop review"] h3, [aria-label="Native Workshop review"] h4 {font-family:${W.mono}; font-size:9px; font-weight:400; letter-spacing:0.18em; text-transform:uppercase; color:${W.inkMuted};}
+        [aria-label="Native Workshop review"] summary {font-family:${W.mono}; font-size:${W.fs.label.sz}px; letter-spacing:0.04em; color:${W.inkSoft}; cursor:pointer;}
+        [aria-label="Native Workshop review"] h3, [aria-label="Native Workshop review"] h4 {font-family:${W.mono}; font-size:${W.fs.label.sz}px; font-weight:400; letter-spacing:0.18em; text-transform:uppercase; color:${W.inkSoft};}
         [aria-label="Native Workshop review"] button:disabled {border-style:dashed; cursor:default;}
       `}</style>
     </main>

@@ -6,19 +6,22 @@
 // screens that open inside the Studio follow the graph's saved palette like every other Studio surface.
 const ST = window.ArchHubTheme ? window.ArchHubTheme.derive(AH => ({ ...AH, accent2:AH.warn, selBg:'#241914' }))
   : { ...window.AH, accent2:window.AH.warn, selBg:'#241914' };
+ST.fs = ST.fs || {};
+ST.fs.label = ST.fs.label || {sz:11, ln:14, wt:500, letter:'.04em'};
+ST.fs.dataSm = ST.fs.dataSm || {sz:11, ln:14, wt:400};
 
 // ─────────────────────── shared atoms ───────────────────────
 const SBox = ({ children, style }) => (
   <div style={{ background:ST.bgPanel, border:`1px solid ${ST.line}`, borderRadius:ST.rad.lg, padding:14, ...style }}>{children}</div>
 );
 const SLabel = ({ children, color }) => (
-  <div style={{ fontFamily:ST.mono, fontSize:9.5, color:color||ST.inkMuted, letterSpacing:'0.14em', marginBottom:ST.sp.sm }}>{children}</div>
+  <div style={{ fontFamily:ST.mono, fontSize: ST.fs.label.sz, color:color||ST.inkSoft, letterSpacing:'0.14em', marginBottom:ST.sp.sm }}>{children}</div>
 );
 const SH = ({ num, title, sub }) => (
   <div style={{ display:'flex', alignItems:'baseline', gap:14, margin:'40px 48px 16px' }}>
     <span style={{ fontFamily:ST.mono, fontSize:11, color:ST.accent, letterSpacing:'0.16em' }}>{num}</span>
     <h2 style={{ fontFamily:ST.serif, fontSize:32, fontWeight:400, letterSpacing:'-0.02em', margin:0, color:ST.ink }}>{title}</h2>
-    {sub && <span style={{ fontFamily:ST.mono, fontSize:11, color:ST.inkMuted, letterSpacing:'0.06em' }}>· {sub}</span>}
+    {sub && <span style={{ fontFamily:ST.mono, fontSize:11, color:ST.inkSoft, letterSpacing:'0.06em' }}>· {sub}</span>}
     <div style={{ flex:1, height:1, background:ST.lineSoft, marginLeft:6 }}/>
   </div>
 );
@@ -45,7 +48,7 @@ const StudioUIKit = () => (
     {/* Masthead */}
     <div style={{ padding:'40px 48px 28px', borderBottom:`1px solid ${ST.line}`, display:'flex', alignItems:'flex-end', gap:ST.sp.xl }}>
       <div style={{ flex:1 }}>
-        <div style={{ fontFamily:ST.mono, fontSize:11, color:ST.inkMuted, letterSpacing:'0.16em' }}>STUDIO · UI KIT · v0.1</div>
+        <div style={{ fontFamily:ST.mono, fontSize:11, color:ST.inkSoft, letterSpacing:'0.16em' }}>STUDIO · UI KIT · v0.1</div>
         <h1 style={{ fontFamily:ST.serif, fontSize:72, fontWeight:400, letterSpacing:'-0.03em', lineHeight:0.95, margin:'10px 0 4px' }}>
           Components.
         </h1>
@@ -59,7 +62,7 @@ const StudioUIKit = () => (
     <Grid cols={4}>
       <SBox><SLabel>PRIMARY</SLabel>
         <div style={{ display:'flex', flexDirection:'column', gap:ST.sp.sm }}>
-          <button style={btnPrimary()}>Send <span style={{ fontFamily:ST.mono, fontSize:10, opacity:.7 }}>↵</span></button>
+          <button style={btnPrimary()}>Send <span style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, opacity:.7 }}>↵</span></button>
           <button style={{...btnPrimary(), opacity:.55, cursor:'not-allowed'}}>Disabled</button>
           <button style={{...btnPrimary(), background:ST.accentSoft, color:ST.accent}}>Loading…</button>
         </div>
@@ -102,7 +105,7 @@ const StudioUIKit = () => (
         <div style={{ position:'relative' }}>
           <span style={{ position:'absolute', left:9, top:8, color:ST.inkMuted, fontSize:13 }}>⌕</span>
           <input placeholder="Search skills, hosts, params…" style={{...txt(), paddingLeft:28}}/>
-          <span style={{ position:'absolute', right:8, top:7, fontFamily:ST.mono, fontSize:10, color:ST.inkMuted, padding:'1px 5px', border:`1px solid ${ST.line}`, borderRadius:ST.rad.xs }}>⌘K</span>
+          <span style={{ position:'absolute', right:8, top:7, fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.inkSoft, padding:'1px 5px', border:`1px solid ${ST.line}`, borderRadius:ST.rad.xs }}>⌘K</span>
         </div>
         <div style={{ height:10 }}/>
         <SLabel>SELECT</SLabel>
@@ -124,7 +127,7 @@ const StudioUIKit = () => (
           <div style={{ display:'flex', gap:10 }}>
             <Avatar/>
             <div style={{ flex:1 }}>
-              <div style={{ fontFamily:ST.mono, fontSize:9.5, color:ST.inkMuted, letterSpacing:'0.06em', marginBottom:3 }}>YOU · 12:42</div>
+              <div style={{ fontFamily:ST.mono, fontSize: ST.fs.label.sz, color:ST.inkSoft, letterSpacing:'0.06em', marginBottom:3 }}>YOU · 12:42</div>
               <div style={{ fontSize:14, lineHeight:1.55, color:ST.ink }}>Build this sketch as a 6m gabled mass, then push to Revit.</div>
             </div>
           </div>
@@ -132,7 +135,7 @@ const StudioUIKit = () => (
           <div style={{ display:'flex', gap:10 }}>
             <Mark size={28}/>
             <div style={{ flex:1 }}>
-              <div style={{ fontFamily:ST.mono, fontSize:9.5, color:ST.accent, letterSpacing:'0.08em', marginBottom:3 }}>CLAUDE · sonnet 4.5</div>
+              <div style={{ fontFamily:ST.mono, fontSize: ST.fs.label.sz, color:ST.accent, letterSpacing:'0.08em', marginBottom:3 }}>CLAUDE · sonnet 4.5</div>
               <div style={{ fontSize:14, lineHeight:1.55, color:ST.ink }}>
                 Reading the sketch. Detected a 9-storey rectangular massing with setback at level 6.
                 Creating parameters: <code style={{ color:ST.accent, fontFamily:ST.mono, fontSize:12 }}>width=6m</code>, <code style={{ color:ST.accent, fontFamily:ST.mono, fontSize:12 }}>roof_pitch=30°</code>.
@@ -149,7 +152,7 @@ const StudioUIKit = () => (
             <div style={{ display:'flex', gap:6, alignItems:'center' }}>
               <Chip>📎 Sketch</Chip><Chip>+ Stage</Chip><Chip>@ Skill</Chip>
               <div style={{ flex:1 }}/>
-              <span style={{ fontFamily:ST.mono, fontSize:10, color:ST.inkMuted }}>~420ms</span>
+              <span style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.inkSoft }}>~420ms</span>
               <button style={btnPrimary()}>Send</button>
             </div>
           </div>
@@ -172,7 +175,7 @@ const StudioUIKit = () => (
           <div key={n} style={{ display:'flex', alignItems:'center', gap:ST.sp.sm, padding:'5px 0' }}>
             <span style={{ width:8, height:8, borderRadius:'50%', background:c, boxShadow:`0 0 0 3px ${c}22` }}/>
             <span style={{ flex:1, fontSize:13 }}>{n}</span>
-            <span style={{ fontFamily:ST.mono, fontSize:10, color:ST.inkMuted }}>:78{Math.floor(Math.random()*900)+100}</span>
+            <span style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.inkSoft }}>:78{Math.floor(Math.random()*900)+100}</span>
           </div>
         ))}
       </SBox>
@@ -184,9 +187,9 @@ const StudioUIKit = () => (
       <SBox><SLabel>LLM PROVIDERS</SLabel>
         {[['Claude 4.5','sonnet','#cc785c'],['GPT-5','reasoning','#10a37f'],['Gemini Pro','2.0','#4285f4'],['Llama 3.3','local','#9333ea'],['OpenRouter','auto','#737373']].map(([n,t,c])=>(
           <div key={n} style={{ display:'flex', alignItems:'center', gap:ST.sp.sm, padding:'4px 0', fontSize:13 }}>
-            <span style={{ width:14, height:14, borderRadius:ST.rad.xs, background:c, color: (window.AH && window.AH.onFill) || '#180f08', display:'grid', placeItems:'center', fontFamily:ST.mono, fontSize:8, fontWeight:700 }}>{n[0]}</span>
+            <span style={{ width:14, height:14, borderRadius:ST.rad.xs, background:c, color: (window.AH && window.AH.onFill) || '#180f08', display:'grid', placeItems:'center', fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, fontWeight:700 }}>{n[0]}</span>
             <span style={{ flex:1 }}>{n}</span>
-            <span style={{ fontFamily:ST.mono, fontSize:9.5, color:ST.inkMuted, letterSpacing:'0.04em' }}>{t}</span>
+            <span style={{ fontFamily:ST.mono, fontSize: ST.fs.label.sz, color:ST.inkSoft, letterSpacing:'0.04em' }}>{t}</span>
           </div>
         ))}
       </SBox>
@@ -194,15 +197,15 @@ const StudioUIKit = () => (
         <svg width="100%" height="120" viewBox="0 0 240 120">
           {/* node */}
           <rect x="40" y="20" width="160" height="80" rx="6" fill={ST.bg} stroke={ST.line} strokeWidth="1.2"/>
-          <text x="120" y="40" textAnchor="middle" fontFamily={ST.mono} fontSize="10" fill={ST.inkMuted} letterSpacing="2">REVIT · WALLS</text>
+          <text x="120" y="40" textAnchor="middle" fontFamily={ST.mono} fontSize={ST.fs.dataSm.sz} fill={ST.inkMuted} letterSpacing="2">REVIT · WALLS</text>
           {/* in sockets */}
           <circle cx="40" cy="55" r="5" fill={ST.bg} stroke={ST.cyan} strokeWidth="2"/>
           <circle cx="40" cy="80" r="5" fill={ST.bg} stroke={ST.accent2} strokeWidth="2"/>
-          <text x="50" y="58" fontFamily={ST.mono} fontSize="9" fill={ST.inkSoft}>mass</text>
-          <text x="50" y="83" fontFamily={ST.mono} fontSize="9" fill={ST.inkSoft}>wall_type</text>
+          <text x="50" y="58" fontFamily={ST.mono} fontSize={ST.fs.dataSm.sz} fill={ST.inkSoft}>mass</text>
+          <text x="50" y="83" fontFamily={ST.mono} fontSize={ST.fs.dataSm.sz} fill={ST.inkSoft}>wall_type</text>
           {/* out */}
           <circle cx="200" cy="60" r="5" fill={ST.accent} stroke={ST.accent} strokeWidth="2"/>
-          <text x="190" y="63" textAnchor="end" fontFamily={ST.mono} fontSize="9" fill={ST.inkSoft}>walls</text>
+          <text x="190" y="63" textAnchor="end" fontFamily={ST.mono} fontSize={ST.fs.dataSm.sz} fill={ST.inkSoft}>walls</text>
         </svg>
       </SBox>
     </Grid>
@@ -216,8 +219,8 @@ const StudioUIKit = () => (
         </div>
         <div style={{ padding:14 }}>
           <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:6 }}>
-            <span style={{ fontFamily:ST.mono, fontSize:9, padding:'1px 5px', borderRadius:ST.rad.xs, background:ST.accent, color:((window.AH && window.AH.onFill) || '#180f08'), letterSpacing:'0.08em' }}>SKILL</span>
-            <span style={{ fontFamily:ST.mono, fontSize:9.5, color:ST.inkMuted }}>★ 4.8 · 1.2k installs</span>
+            <span style={{ fontFamily:ST.mono, fontSize: ST.fs.label.sz, padding:'1px 5px', borderRadius:ST.rad.xs, background:ST.accent, color:((window.AH && window.AH.onFill) || '#180f08'), letterSpacing:'0.08em' }}>SKILL</span>
+            <span style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.inkSoft }}>★ 4.8 · 1.2k installs</span>
           </div>
           <div style={{ fontFamily:ST.serif, fontSize:18, letterSpacing:'-0.01em' }}>Sketch to production</div>
           <div style={{ fontSize:12.5, color:ST.inkSoft, lineHeight:1.5, marginTop:ST.sp.xs }}>Six-stage pipeline: extract mass → Speckle → Revit → walls → fenestration → sheets.</div>
@@ -228,19 +231,19 @@ const StudioUIKit = () => (
           <div style={{ width:36, height:36, borderRadius:ST.rad.md, background:'#5fb3b3', display:'grid', placeItems:'center', color:'#0a0a0d', fontFamily:ST.serif, fontSize:18 }}>R</div>
           <div style={{ flex:1 }}>
             <div style={{ fontWeight:500 }}>Revit 2025</div>
-            <div style={{ fontFamily:ST.mono, fontSize:10, color:ST.inkMuted }}>:48884 · 14 tools · 2.3MB/s</div>
+            <div style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.inkSoft }}>:48884 · 14 tools · 2.3MB/s</div>
           </div>
           <Freshness state="fresh" mini/>
         </div>
         <div style={{ height:10, background:ST.lineSoft, borderRadius:ST.rad.sm, marginTop:10, overflow:'hidden' }}>
           <div style={{ width:'72%', height:'100%', background:ST.ok }}/>
         </div>
-        <div style={{ fontFamily:ST.mono, fontSize:10, color:ST.inkMuted, marginTop:ST.sp.xs }}>uptime 99.4% · 7d</div>
+        <div style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.inkSoft, marginTop:ST.sp.xs }}>uptime 99.4% · 7d</div>
       </SBox>
       <SBox><SLabel>ALERT · HEALING</SLabel>
         <div style={{ background:`${ST.warn}11`, border:`1px solid ${ST.warn}33`, borderRadius:ST.rad.md, padding:10 }}>
-          <div style={{ fontFamily:ST.mono, fontSize:10.5, color:ST.warn, letterSpacing:'0.06em', fontWeight:600 }}>BLENDER · SELF-HEALING</div>
-          <div style={{ fontFamily:ST.mono, fontSize:10.5, color:ST.inkSoft, marginTop:5, lineHeight:1.7 }}>
+          <div style={{ fontFamily:ST.mono, fontSize: ST.fs.label.sz, color:ST.warn, letterSpacing:'0.06em', fontWeight:600 }}>BLENDER · SELF-HEALING</div>
+          <div style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.inkSoft, marginTop:5, lineHeight:1.7 }}>
             <div>retry 2/3 · backoff 1.2s</div>
             <div>DLL load OK</div>
             <div style={{ color:ST.warn }}>… awaiting handshake</div>
@@ -255,17 +258,17 @@ const StudioUIKit = () => (
       <SBox><SLabel>TYPE SCALE</SLabel>
         {[['D1',48,ST.serif],['H1',24,ST.serif],['B',14,ST.sans],['S',12,ST.sans],['M',11,ST.mono]].map(([n,s,f])=>(
           <div key={n} style={{ display:'flex', alignItems:'baseline', gap:10, padding:'3px 0', borderBottom:`1px dashed ${ST.lineSoft}` }}>
-            <span style={{ fontFamily:ST.mono, fontSize:9.5, color:ST.inkMuted, width:24 }}>{n}</span>
+            <span style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.inkSoft, width:24 }}>{n}</span>
             <span style={{ fontFamily:f, fontSize:s, lineHeight:1, color:ST.ink, letterSpacing:s>30?'-0.02em':'0' }}>Aa</span>
             <span style={{ flex:1 }}/>
-            <span style={{ fontFamily:ST.mono, fontSize:9.5, color:ST.inkMuted }}>{s}</span>
+            <span style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.inkSoft }}>{s}</span>
           </div>
         ))}
       </SBox>
       <SBox><SLabel>SPACING · 4PT</SLabel>
         {[2,4,8,12,16,24,32,48].map(s=>(
           <div key={s} style={{ display:'flex', alignItems:'center', gap:ST.sp.sm, padding:'3px 0' }}>
-            <span style={{ fontFamily:ST.mono, fontSize:10, color:ST.inkMuted, width:24 }}>{s}</span>
+            <span style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.inkSoft, width:24 }}>{s}</span>
             <div style={{ width:s, height:10, background:ST.accent, borderRadius:2 }}/>
           </div>
         ))}
@@ -274,7 +277,7 @@ const StudioUIKit = () => (
         {[3,5,8,12,'full'].map(r=>(
           <div key={r} style={{ display:'flex', alignItems:'center', gap:10, padding:'4px 0' }}>
             <div style={{ width:32, height:32, background:ST.accentSoft, border:`1px solid ${ST.accent}`, borderRadius:r==='full'?999:r }}/>
-            <span style={{ fontFamily:ST.mono, fontSize:10.5, color:ST.inkSoft }}>{r}</span>
+            <span style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.inkSoft }}>{r}</span>
           </div>
         ))}
       </SBox>
@@ -287,7 +290,7 @@ const StudioUIKit = () => (
             ['modal','0 24px 60px rgba(0,0,0,.55)'],
           ].map(([n,sh])=>(
             <div key={n} style={{ background:ST.bg, padding:'8px 12px', borderRadius:ST.rad.md, boxShadow:sh, fontSize:12, color:ST.inkSoft, border:`1px solid ${ST.lineSoft}` }}>
-              <span style={{ fontFamily:ST.mono, fontSize:10, color:ST.inkMuted, letterSpacing:'0.06em', marginRight:6 }}>{n.toUpperCase()}</span> {sh}
+              <span style={{ fontFamily:ST.mono, fontSize: ST.fs.label.sz, color:ST.inkSoft, letterSpacing:'0.06em', marginRight:6 }}>{n.toUpperCase()}</span> {sh}
             </div>
           ))}
         </div>
@@ -335,7 +338,7 @@ const ParamDemo = ({ k, v, unit, kind }) => {
     <div style={{ padding:'5px 0', borderBottom:`1px dashed ${ST.lineSoft}` }}>
       <div style={{ display:'flex', alignItems:'baseline', gap:6, marginBottom:2 }}>
         <span style={{ fontFamily:ST.mono, fontSize:11, color:ST.inkSoft, flex:1 }}>{k}</span>
-        <span style={{ fontFamily:ST.mono, fontSize:12, color:ST.ink, fontWeight:500 }}>{v}<span style={{ color:ST.inkMuted, marginLeft:2, fontSize:10 }}> {unit}</span></span>
+        <span style={{ fontFamily:ST.mono, fontSize:12, color:ST.ink, fontWeight:500 }}>{v}<span style={{ color:ST.inkSoft, marginLeft:2, fontSize: ST.fs.dataSm.sz }}> {unit}</span></span>
       </div>
       <input type="range" defaultValue={v*100} style={{ width:'100%', accentColor:ST.accent }}/>
     </div>
@@ -360,9 +363,9 @@ const StageCard = ({ idx, label, host, state }) => {
   const c = state === 'fresh' ? ST.ok : state === 'running' ? ST.accent : ST.warn;
   return (
     <div style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 10px', background:ST.bg, border:`1px solid ${ST.lineSoft}`, borderRadius:ST.rad.md }}>
-      <span style={{ width:22, height:22, borderRadius:'50%', border:`2px solid ${c}`, background:ST.bgPanel, display:'grid', placeItems:'center', fontFamily:ST.mono, fontSize:9, color:c, fontWeight:600 }}>{idx}</span>
+      <span style={{ width:22, height:22, borderRadius:'50%', border:`2px solid ${c}`, background:ST.bgPanel, display:'grid', placeItems:'center', fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:c, fontWeight:600 }}>{idx}</span>
       <span style={{ flex:1, fontSize:13.5, color:ST.ink }}>{label}</span>
-      <span style={{ fontFamily:ST.mono, fontSize:9.5, padding:'1px 5px', borderRadius:ST.rad.xs, background:'#5fb3b314', color:'#5fb3b3', letterSpacing:'0.04em' }}>{host}</span>
+      <span style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, padding:'1px 5px', borderRadius:ST.rad.xs, background:'#5fb3b314', color:'#5fb3b3', letterSpacing:'0.04em' }}>{host}</span>
       <Freshness state={state} mini/>
     </div>
   );
@@ -452,11 +455,11 @@ const StudioOnboarding = ({ model, onPickModel, onDone }) => {
   const current = done.indexOf(false);
   const openHost = row => window.ArchHubStudioScreens.open('connector', row);
   const hostLine = row => row.state === 'connected' ? [ST.ok, '✓'] : row.state === 'listening' || row.state === 'running' ? [ST.warn, '↻'] : [ST.inkMuted, '·'];
-  const note = (text, color) => <div style={{ fontFamily:ST.mono, fontSize:10, color:color || ST.inkMuted, marginBottom:5 }}>{text}</div>;
+  const note = (text, color) => <div style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:color || ST.inkSoft, marginBottom:5 }}>{text}</div>;
   return (
   <div style={{ background:ST.bg, color:ST.ink, fontFamily:ST.sans, height:'100%', overflow:'auto', padding:'40px 48px' }} className="ah-scroll">
     <div style={{ marginBottom:28 }}>
-      <div style={{ fontFamily:ST.mono, fontSize:11, color:ST.inkMuted, letterSpacing:'0.16em' }}>FIRST RUN · 60 SECONDS · 4 STEPS</div>
+      <div style={{ fontFamily:ST.mono, fontSize:11, color:ST.inkSoft, letterSpacing:'0.16em' }}>FIRST RUN · 60 SECONDS · 4 STEPS</div>
       <h1 style={{ fontFamily:ST.serif, fontSize:56, fontWeight:400, letterSpacing:'-0.03em', margin:'8px 0 4px' }}>Welcome.</h1>
       <div style={{ fontFamily:ST.serif, fontStyle:'italic', fontSize:18, color:ST.inkSoft }}>The four screens between download and "drag the slider".</div>
     </div>
@@ -469,7 +472,7 @@ const StudioOnboarding = ({ model, onPickModel, onDone }) => {
           <div style={{ marginTop:14 }}><Word size={28}/></div>
           <div style={{ fontFamily:ST.serif, fontStyle:'italic', fontSize:15, color:ST.inkSoft, marginTop:6 }}>Talk to your AEC stack.</div>
         </div>
-        <div style={{ fontFamily:ST.mono, fontSize:10.5, color:ST.inkMuted, lineHeight:1.7, padding:'10px 0', borderTop:`1px solid ${ST.lineSoft}` }}>
+        <div style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.inkSoft, lineHeight:1.7, padding:'10px 0', borderTop:`1px solid ${ST.lineSoft}` }}>
           <div>· detected: {hosts.value ? suiteNames(detected) : '—'}</div>
           <div>· not detected: {hosts.value ? suiteNames(missing) : '—'}</div>
           {hosts.error ? <div style={{ color:ST.err }}>! {hosts.error}</div> : <div style={{ color:ST.ok }}>✓ ready in {readyIn}s</div>}
@@ -486,22 +489,22 @@ const StudioOnboarding = ({ model, onPickModel, onDone }) => {
           <div key={row.id} onClick={onPickModel} style={pickRow()}>
             <span style={{ width:14, height:14, borderRadius:ST.rad.xs, background:SUITE_PROVIDER_COL[row.id] }}/>
             <span style={{ flex:1, fontSize:12.5 }}>{row.name}</span>
-            <span style={{ fontFamily:ST.mono, fontSize:10, color:ST.inkMuted }}>{row.state === 'keyed' ? row.source || 'keyed' : 'no key'}</span>
+            <span style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.inkSoft }}>{row.state === 'keyed' ? row.source || 'keyed' : 'no key'}</span>
           </div>
         ))}
         {(relays.length > 0 || locals.length > 0) && <SLabel>OR</SLabel>}
         {relays.map(row => (
-          <div key={row.id} onClick={onPickModel} style={pickRow()}><span style={{ width:14, height:14, borderRadius:ST.rad.xs, background:ST.accent }}/><span style={{ flex:1, fontSize:12.5 }}>{row.name}</span><span style={{ fontFamily:ST.mono, fontSize:10, color:ST.accent }}>{String(row.state).toUpperCase()}</span></div>
+          <div key={row.id} onClick={onPickModel} style={pickRow()}><span style={{ width:14, height:14, borderRadius:ST.rad.xs, background:ST.accent }}/><span style={{ flex:1, fontSize:12.5 }}>{row.name}</span><span style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.accent }}>{String(row.state).toUpperCase()}</span></div>
         ))}
         {locals.map(row => (
-          <div key={row.id} onClick={onPickModel} style={pickRow()}><span style={{ width:14, height:14, borderRadius:ST.rad.xs, background:'#9333ea' }}/><span style={{ flex:1, fontSize:12.5 }}>Local {row.name}</span><span style={{ fontFamily:ST.mono, fontSize:10, color:row.state === 'running' ? ST.ok : ST.inkMuted }}>{String(row.state).toUpperCase()}</span></div>
+          <div key={row.id} onClick={onPickModel} style={pickRow()}><span style={{ width:14, height:14, borderRadius:ST.rad.xs, background:'#9333ea' }}/><span style={{ flex:1, fontSize:12.5 }}>Local {row.name}</span><span style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:row.state === 'running' ? ST.ok : ST.inkSoft }}>{String(row.state).toUpperCase()}</span></div>
         ))}
         <button onClick={onPickModel} style={{...btnPrimary(), width:'100%', justifyContent:'center', marginTop:10}}>{keyed ? 'Use ' + keyed.name : 'Choose a model'}</button>
       </OnbStep>
 
       {/* 3 · Connector birth */}
       <OnbStep n="03" title="Birth a connector" sub="Claude writes the bridge">
-        <div style={{ background:ST.bgDeep, border:`1px solid ${ST.line}`, borderRadius:ST.rad.md, padding:10, fontFamily:ST.mono, fontSize:10.5, color:ST.inkSoft, lineHeight:1.7 }}>
+        <div style={{ background:ST.bgDeep, border:`1px solid ${ST.line}`, borderRadius:ST.rad.md, padding:10, fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.inkSoft, lineHeight:1.7 }}>
           {hosts.error && <div style={{ color:ST.err }}>! {hosts.error}</div>}
           {!hosts.value && !hosts.error && <div style={{ color:ST.inkMuted }}>· —</div>}
           {hosts.value && rows.length === 0 && <div style={{ color:ST.inkMuted }}>· no host answered the scan</div>}
@@ -512,7 +515,7 @@ const StudioOnboarding = ({ model, onPickModel, onDone }) => {
           })}
         </div>
         <div style={{ marginTop:10, padding:'8px 10px', background:`${ST.accent}11`, border:`1px solid ${ST.accent}33`, borderRadius:ST.rad.md }}>
-          <div style={{ fontFamily:ST.mono, fontSize:9.5, color:ST.accent, letterSpacing:'0.08em' }}>WHY THIS MATTERS</div>
+          <div style={{ fontFamily:ST.mono, fontSize: ST.fs.label.sz, color:ST.accent, letterSpacing:'0.08em' }}>WHY THIS MATTERS</div>
           <div style={{ fontSize:12, color:ST.inkSoft, marginTop:3, lineHeight:1.45 }}>No DLLs to ship per host per version. Claude regenerates on demand.</div>
         </div>
       </OnbStep>
@@ -521,7 +524,7 @@ const StudioOnboarding = ({ model, onPickModel, onDone }) => {
       <OnbStep n="04" title="Your first skill" sub="drag a slider">
         <div style={{ background:ST.bgDeep, border:`1px solid ${ST.line}`, borderRadius:ST.rad.md, padding:'10px 12px' }}>
           <div style={{ fontFamily:ST.serif, fontSize:14, color:ST.ink }}>{suiteLive.graphTitle() || '—'}</div>
-          <div style={{ fontFamily:ST.mono, fontSize:9.5, color:ST.inkMuted, marginTop:2, letterSpacing:'0.04em' }}>{nodes.length} stages · {params} params</div>
+          <div style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.inkSoft, marginTop:2, letterSpacing:'0.04em' }}>{nodes.length} stages · {params} params</div>
           <div style={{ display:'flex', gap:3, marginTop:ST.sp.sm }}>
             {nodes.slice(0, 12).map(node => <span key={node.id} title={node.title} style={{ flex:1, height:3, borderRadius:2, background:node.status ? ST.ok : ST.lineSoft }}/>)}
           </div>
@@ -566,8 +569,8 @@ const OnbParam = ({ node, param }) => {
           disabled={write.state === 'pending'} onChange={e => setV(Number(e.target.value))} onMouseUp={end} onTouchEnd={end} onKeyUp={end}
           style={{ width:'100%', accentColor:ST.accent }}/>
       </div>
-      <div role={write.state === 'error' ? 'alert' : 'status'} style={{ fontFamily:ST.mono, fontSize:10, textAlign:'center', marginTop:ST.sp.xs,
-        color:write.state === 'error' ? ST.err : write.state === 'saved' ? ST.ok : write.state === 'pending' ? ST.accent : ST.inkMuted }}>
+      <div role={write.state === 'error' ? 'alert' : 'status'} style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, textAlign:'center', marginTop:ST.sp.xs,
+        color:write.state === 'error' ? ST.err : write.state === 'saved' ? ST.ok : write.state === 'pending' ? ST.accent : ST.inkSoft }}>
         {write.state === 'pending' ? '↻ saving to the graph…' : write.state === 'saved' ? '✓ saved · ' + node.title : write.error || 'drives ' + node.title}
       </div>
     </>
@@ -576,9 +579,9 @@ const OnbParam = ({ node, param }) => {
 const OnbStep = ({ n, title, sub, children }) => (
   <div style={{ background:ST.bgPanel, border:`1px solid ${ST.line}`, borderRadius:ST.rad.lg, padding:14, display:'flex', flexDirection:'column', gap:ST.sp.sm }}>
     <div>
-      <div style={{ fontFamily:ST.mono, fontSize:9.5, color:ST.accent, letterSpacing:'0.16em' }}>STEP {n}</div>
+      <div style={{ fontFamily:ST.mono, fontSize: ST.fs.label.sz, color:ST.accent, letterSpacing:'0.16em' }}>STEP {n}</div>
       <div style={{ fontFamily:ST.serif, fontSize:22, letterSpacing:'-0.01em', marginTop:2 }}>{title}</div>
-      <div style={{ fontFamily:ST.mono, fontSize:10, color:ST.inkMuted, letterSpacing:'0.04em' }}>{sub}</div>
+      <div style={{ fontFamily:ST.mono, fontSize: ST.fs.label.sz, color:ST.inkSoft, letterSpacing:'0.04em' }}>{sub}</div>
     </div>
     <div style={{ flex:1, display:'flex', flexDirection:'column', gap:6 }}>{children}</div>
   </div>
@@ -601,7 +604,7 @@ const StudioLanding = () => (
           <span key={n} style={{ fontSize:13, color:ST.inkSoft, cursor:'pointer' }}>{n}</span>
         ))}
       </div>
-      <span style={{ fontFamily:ST.mono, fontSize:10.5, color:ST.inkMuted, letterSpacing:'0.06em' }}>MIT</span>
+      <span style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.inkSoft, letterSpacing:'0.06em' }}>MIT</span>
       <button style={btnSecondary()}>Sign in</button>
       <button style={btnPrimary()}>Download</button>
     </div>
@@ -621,7 +624,7 @@ const StudioLanding = () => (
           <button style={{...btnPrimary(), padding:'10px 18px', fontSize:14}}>Download for Windows ↓</button>
           <button style={{...btnSecondary(), padding:'10px 18px', fontSize:14}}>Watch the 90s demo →</button>
         </div>
-        <div style={{ fontFamily:ST.mono, fontSize:11, color:ST.inkMuted, marginTop:ST.sp.lg, letterSpacing:'0.04em' }}>
+        <div style={{ fontFamily:ST.mono, fontSize:11, color:ST.inkSoft, marginTop:ST.sp.lg, letterSpacing:'0.04em' }}>
           MIT · BYO key · no credit card · Mac/Linux from source
         </div>
       </div>
@@ -631,13 +634,13 @@ const StudioLanding = () => (
           <span style={{ width:10, height:10, borderRadius:'50%', background:'#666' }}/>
           <span style={{ width:10, height:10, borderRadius:'50%', background:'#666' }}/>
           <span style={{ width:10, height:10, borderRadius:'50%', background:'#666' }}/>
-          <span style={{ flex:1, textAlign:'center', fontFamily:ST.mono, fontSize:10, color:ST.inkMuted }}>archhub.app · Tower A · /studio</span>
+          <span style={{ flex:1, textAlign:'center', fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.inkSoft }}>archhub.app · Tower A · /studio</span>
         </div>
         <div style={{ padding:18 }}>
           <div style={{ display:'flex', gap:9, marginBottom:14 }}>
             <Mark size={22}/>
             <div style={{ flex:1 }}>
-              <div style={{ fontFamily:ST.mono, fontSize:9.5, color:ST.accent, letterSpacing:'0.08em' }}>CLAUDE</div>
+              <div style={{ fontFamily:ST.mono, fontSize: ST.fs.label.sz, color:ST.accent, letterSpacing:'0.08em' }}>CLAUDE</div>
               <div style={{ fontSize:13, color:ST.ink, lineHeight:1.5, marginTop:2 }}>Mass extracted at 9 storeys. Pushing to Speckle…</div>
             </div>
           </div>
@@ -645,20 +648,20 @@ const StudioLanding = () => (
           <div style={{ display:'flex', alignItems:'center', gap:0, marginBottom:14 }}>
             {[1,2,3,4,5].map(i => (
               <React.Fragment key={i}>
-                <div style={{ width:24, height:24, borderRadius:'50%', border:`2px solid ${i<=3?ST.ok:i===4?ST.accent:ST.lineSoft}`, background:ST.bg, display:'grid', placeItems:'center', fontFamily:ST.mono, fontSize:10, color:i<=3?ST.ok:i===4?ST.accent:ST.inkMuted, fontWeight:600 }}>{i}</div>
+                <div style={{ width:24, height:24, borderRadius:'50%', border:`2px solid ${i<=3?ST.ok:i===4?ST.accent:ST.lineSoft}`, background:ST.bg, display:'grid', placeItems:'center', fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:i<=3?ST.ok:i===4?ST.accent:ST.inkSoft, fontWeight:600 }}>{i}</div>
                 {i<5 && <div style={{ flex:1, height:2, background:i<3?ST.ok:i===3?ST.accent:ST.lineSoft }}/>}
               </React.Fragment>
             ))}
           </div>
           <ParamDemo k="mass_height" v={32} unit="m"/>
           <ParamDemo k="wwr" v={0.42} unit="ratio"/>
-          <div style={{ fontFamily:ST.mono, fontSize:10, color:ST.accent, textAlign:'right', marginTop:6 }}>↻ stages 4-5 re-running</div>
+          <div style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.accent, textAlign:'right', marginTop:6 }}>↻ stages 4-5 re-running</div>
         </div>
       </div>
     </div>
 
     {/* Logos / trust */}
-    <div style={{ padding:'24px 64px', display:'flex', alignItems:'center', gap:ST.sp['2xl'], borderBottom:`1px solid ${ST.lineSoft}`, fontFamily:ST.mono, fontSize:11, color:ST.inkMuted, letterSpacing:'0.08em' }}>
+    <div style={{ padding:'24px 64px', display:'flex', alignItems:'center', gap:ST.sp['2xl'], borderBottom:`1px solid ${ST.lineSoft}`, fontFamily:ST.mono, fontSize:11, color:ST.inkSoft, letterSpacing:'0.08em' }}>
       <span>DRIVES</span>
       {['REVIT','BLENDER','AUTOCAD','3DS MAX','SPECKLE','RHINO','ARCHICAD','FORMA'].map(n=>(
         <span key={n} style={{ fontFamily:ST.serif, fontSize:18, color:ST.inkSoft, letterSpacing:'-0.005em' }}>{n}</span>
@@ -695,7 +698,7 @@ const StudioLanding = () => (
       </div>
       {[['Product',['Studio','Skills','Connectors','Changelog']], ['Company',['About','Blog','Press','Contact']], ['Open',['GitHub','Discord','Roadmap','License']]].map(([t,xs])=>(
         <div key={t}>
-          <div style={{ fontFamily:ST.mono, fontSize:10, color:ST.inkMuted, letterSpacing:'0.14em', marginBottom:10 }}>{t.toUpperCase()}</div>
+          <div style={{ fontFamily:ST.mono, fontSize: ST.fs.label.sz, color:ST.inkSoft, letterSpacing:'0.14em', marginBottom:10 }}>{t.toUpperCase()}</div>
           {xs.map(x => <div key={x} style={{ fontSize:13, color:ST.inkSoft, padding:'3px 0' }}>{x}</div>)}
         </div>
       ))}
@@ -735,10 +738,10 @@ const StudioSkillJson = ({ skill, onClose, onAddSkillToCanvas }) => {
     <div style={{ background:ST.bg, color:ST.ink, fontFamily:ST.sans, height:'100%', overflow:'auto' }} className="ah-scroll">
       <div style={{ padding:'32px 48px 24px', borderBottom:`1px solid ${ST.line}`, display:'flex', alignItems:'flex-end', gap:18 }}>
         <div style={{ flex:1 }}>
-          <div style={{ fontFamily:ST.mono, fontSize:11, color:ST.inkMuted, letterSpacing:'0.16em' }}>SKILL · OPEN</div>
+          <div style={{ fontFamily:ST.mono, fontSize:11, color:ST.inkSoft, letterSpacing:'0.16em' }}>SKILL · OPEN</div>
           <h1 style={{ fontFamily:ST.serif, fontSize:48, letterSpacing:'-0.02em', margin:'4px 0 4px', fontWeight:400 }}>{skill.name}</h1>
           <div style={{ display:'flex', gap:ST.sp.sm, alignItems:'center' }}>
-            <span style={{ fontFamily:ST.mono, fontSize:10.5, color:ST.inkMuted }}>{[version, skill.source, meta.license].filter(Boolean).join(' · ') || '—'}</span>
+            <span style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.inkSoft }}>{[version, skill.source, meta.license].filter(Boolean).join(' · ') || '—'}</span>
           </div>
         </div>
         <div style={{ display:'flex', gap:ST.sp.sm }}>
@@ -763,16 +766,16 @@ const StudioSkillJson = ({ skill, onClose, onAddSkillToCanvas }) => {
           <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
             {stages.map((t, i)=>(
               <div key={i} style={{ display:'flex', gap:ST.sp.sm, alignItems:'center', padding:'6px 0', borderBottom:`1px dashed ${ST.lineSoft}` }}>
-                <span style={{ width:18, height:18, borderRadius:'50%', border:`1.5px solid ${ST.ok}`, color:ST.ok, fontFamily:ST.mono, fontSize:9, display:'grid', placeItems:'center' }}>{i + 1}</span>
+                <span style={{ width:18, height:18, borderRadius:'50%', border:`1.5px solid ${ST.ok}`, color:ST.ok, fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, display:'grid', placeItems:'center' }}>{i + 1}</span>
                 <span style={{ flex:1, fontSize:13.5 }}>{t}</span>
-                <span style={{ fontFamily:ST.mono, fontSize:10, color:ST.inkMuted, letterSpacing:'0.04em' }}>{String(skill.source || '').toUpperCase()}</span>
+                <span style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.inkSoft, letterSpacing:'0.04em' }}>{String(skill.source || '').toUpperCase()}</span>
               </div>
             ))}
           </div>
           </>}
           <div style={{ height:18 }}/>
           <div style={{ background:ST.bgPanel, border:`1px solid ${ST.line}`, borderRadius:ST.rad.lg, padding:14 }}>
-            <div style={{ fontFamily:ST.mono, fontSize:9.5, color:ST.inkMuted, letterSpacing:'0.14em' }}>YOU OWN THIS</div>
+            <div style={{ fontFamily:ST.mono, fontSize: ST.fs.label.sz, color:ST.inkSoft, letterSpacing:'0.14em' }}>YOU OWN THIS</div>
             <div style={{ fontFamily:ST.serif, fontSize:15, color:ST.inkSoft, marginTop:6, fontStyle:'italic' }}>
               This skill is a plain file on this machine{skill.path ? ' — ' + skill.path : ''}. Edit it, version it, share it, take it with you. ArchHub is the runner — never the registry.
             </div>
@@ -784,7 +787,7 @@ const StudioSkillJson = ({ skill, onClose, onAddSkillToCanvas }) => {
           <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:10 }}>
             <SLabel>SOURCE · {file}</SLabel>
             <div style={{ flex:1 }}/>
-            <span role={read.error ? 'alert' : undefined} style={{ fontFamily:ST.mono, fontSize:10, color:read.error ? ST.err : ST.inkMuted }}>
+            <span role={read.error ? 'alert' : undefined} style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:read.error ? ST.err : ST.inkSoft }}>
               {read.error || (json ? bytes + ' bytes · ' + lines.length + ' lines' : '—')}
             </span>
           </div>
@@ -859,7 +862,7 @@ const StudioSelfHeal = ({ connector, onClose }) => {
   return (
     <div style={{ background:ST.bg, color:ST.ink, fontFamily:ST.sans, height:'100%', overflow:'auto', padding:'40px 48px' }} className="ah-scroll">
       <div style={{ marginBottom:ST.sp.xl }}>
-        <div style={{ fontFamily:ST.mono, fontSize:11, color:ST.inkMuted, letterSpacing:'0.16em' }}>CONNECTOR · DIAGNOSTIC</div>
+        <div style={{ fontFamily:ST.mono, fontSize:11, color:ST.inkSoft, letterSpacing:'0.16em' }}>CONNECTOR · DIAGNOSTIC</div>
         <h1 style={{ fontFamily:ST.serif, fontSize:48, letterSpacing:'-0.03em', margin:'8px 0 4px', fontWeight:400 }}>
           {row.name} {word} — <span style={{ color:ST.accent, fontStyle:'italic' }}>{probe.pending ? 'checking.' : live ? 'live.' : 'not live.'}</span>
         </h1>
@@ -873,7 +876,7 @@ const StudioSelfHeal = ({ connector, onClose }) => {
             <span style={{ width:36, height:36, borderRadius:7, background:'#5fb3b3', color:'#0a0a0d', display:'grid', placeItems:'center', fontFamily:ST.serif, fontSize:18 }}>{String(row.name || '?').charAt(0).toUpperCase()}</span>
             <div style={{ flex:1 }}>
               <div style={{ fontFamily:ST.serif, fontSize:18 }}>{row.name}</div>
-              <div style={{ fontFamily:ST.mono, fontSize:10, color:ST.inkMuted }}>{row.id} · {row.drive || 'no wire'} · {row.state}</div>
+              <div style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.inkSoft }}>{row.id} · {row.drive || 'no wire'} · {row.state}</div>
             </div>
             <Freshness state={fresh}/>
           </div>
@@ -885,20 +888,20 @@ const StudioSelfHeal = ({ connector, onClose }) => {
                   background: c.ok ? ST.ok : c.warn ? ST.warn : 'transparent',
                   border: c.pending ? `1.5px dashed ${ST.lineSoft}` : 0,
                   color: (window.AH && window.AH.onFill) || '#180f08', display:'grid', placeItems:'center',
-                  fontFamily:ST.mono, fontSize:10, fontWeight:600,
+                  fontFamily:ST.mono, fontSize: ST.fs.label.sz, fontWeight:600,
                   boxShadow: c.warn ? `0 0 0 4px ${ST.warn}22` : 'none',
                   animation: c.warn ? 'studPulse 1.1s infinite' : 'none',
                 }}>{c.ok ? '✓' : c.warn ? '↻' : ''}</span>
                 <div style={{ flex:1 }}>
                   <div style={{ fontSize:13.5 }}>{c.t}</div>
-                  <div style={{ fontFamily:ST.mono, fontSize:10.5, color:ST.inkMuted, marginTop:1 }}>{c.sub}</div>
+                  <div style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.inkSoft, marginTop:1 }}>{c.sub}</div>
                 </div>
-                <span style={{ fontFamily:ST.mono, fontSize:10, color:c.warn?ST.warn:ST.inkMuted, letterSpacing:'0.04em' }}>{c.d}</span>
+                <span style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:c.warn?ST.warn:ST.inkSoft, letterSpacing:'0.04em' }}>{c.d}</span>
               </div>
             ))}
           </div>
           <div style={{ padding:'12px 18px', borderTop:`1px solid ${ST.line}`, display:'flex', alignItems:'center', gap:10 }}>
-            <span role={probe.error ? 'alert' : undefined} style={{ fontFamily:ST.mono, fontSize:10.5, color:probe.error ? ST.err : ST.inkMuted, flex:1 }}>
+            <span role={probe.error ? 'alert' : undefined} style={{ fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:probe.error ? ST.err : ST.inkSoft, flex:1 }}>
               {probe.error || 'last check · ' + suiteTime(probe.at)}
             </span>
             <button onClick={onClose} title="Back to the Studio (Esc)" style={btnSecondary()}>Close</button>
@@ -915,7 +918,7 @@ const StudioSelfHeal = ({ connector, onClose }) => {
             </div>
           </SBox>}
           <SBox><SLabel>CONTEXT</SLabel>
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:ST.sp.sm, fontFamily:ST.mono, fontSize:10.5, color:ST.inkSoft, letterSpacing:'0.04em' }}>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:ST.sp.sm, fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz, color:ST.inkSoft, letterSpacing:'0.04em' }}>
               <div><div style={{ color:ST.inkMuted }}>UPTIME</div><div style={{ color:ST.ink }}>—</div></div>
               <div><div style={{ color:ST.inkMuted }}>LAST OK</div><div style={{ color:ST.ink }}>{suiteTime(probe.lastOk)}</div></div>
               <div><div style={{ color:ST.inkMuted }}>FAILURES 7d</div><div style={{ color:ST.ink }}>—</div></div>
@@ -923,7 +926,7 @@ const StudioSelfHeal = ({ connector, onClose }) => {
             </div>
           </SBox>
           <SBox><SLabel>RECENT HEALS</SLabel>
-            <div style={{ display:'flex', alignItems:'center', gap:ST.sp.sm, padding:'5px 0', borderBottom:`1px dashed ${ST.lineSoft}`, fontFamily:ST.mono, fontSize:10.5 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:ST.sp.sm, padding:'5px 0', borderBottom:`1px dashed ${ST.lineSoft}`, fontFamily:ST.mono, fontSize: ST.fs.dataSm.sz }}>
               <span style={{ color:ST.inkMuted }}>·</span>
               <span style={{ flex:1, color:ST.inkSoft }}>no heal is recorded in this build</span>
               <span style={{ color:ST.inkMuted }}>—</span>

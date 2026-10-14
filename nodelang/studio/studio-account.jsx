@@ -4,6 +4,9 @@
 // website's "create account" and the app's Settings are one continuous experience.
 
 const AC = window.AH;
+AC.fs = AC.fs || {};
+AC.fs.label = AC.fs.label || {sz:11, ln:14, wt:500, letter:'.04em'};
+AC.fs.dataSm = AC.fs.dataSm || {sz:11, ln:14, wt:400};
 const ACLS = 'archhub.account.v1';
 
 // Local atoms — studio-lm.jsx is IIFE-scoped, so its SHead/smallBtn can't be borrowed.
@@ -155,7 +158,7 @@ function AppBoot({ onDone, account }) {
           </div>
           {/* one light line — what is connecting, right now. Fixed height so it never jumps. */}
           <div style={{
-            height: 15, marginTop: 9, fontFamily: AC.mono, fontSize: 10.5, color: AC.inkSoft,
+            height: 15, marginTop: 9, fontFamily: AC.mono, fontSize: AC.fs.dataSm.sz, color: AC.inkSoft,
             letterSpacing: '0.1em', marginRight: '-0.1em', whiteSpace: 'nowrap',
           }}>{line}</div>
         </div>
@@ -163,7 +166,7 @@ function AppBoot({ onDone, account }) {
 
       {failed && (
         <div style={{ position: 'absolute', bottom: 54, left: '50%', transform: 'translateX(-50%)', width: 380, maxWidth: '86vw', padding: '10px 12px', borderRadius: AC.rad.md, border: `1px solid ${AC.warn}`, background: AC.bgPanel }}>
-          <div style={{ fontFamily: AC.mono, fontSize: 9, color: AC.warn, letterSpacing: '0.14em' }}>IF A HOST IS SLOW</div>
+          <div style={{ fontFamily: AC.mono, fontSize: AC.fs.label.sz, color: AC.warn, letterSpacing: '0.14em' }}>IF A HOST IS SLOW</div>
           <div style={{ fontSize: 12.5, color: AC.inkSoft, marginTop: 5, lineHeight: 1.5 }}>
             The canvas opens without it and the connector reconnects in the background — your
             graph is never blocked on a host. Skip straight in and watch it heal.
@@ -175,7 +178,7 @@ function AppBoot({ onDone, account }) {
       {!failed && (
         <button onClick={() => setFailed(true)} style={{
           position: 'absolute', bottom: 16, right: 18, background: 'none', border: 0, padding: 0, cursor: 'pointer',
-          fontFamily: AC.mono, fontSize: 9.5, color: AC.inkSoft, letterSpacing: '0.1em', textDecoration: 'underline dotted',
+          fontFamily: AC.mono, fontSize: AC.fs.label.sz, color: AC.inkSoft, letterSpacing: '0.1em', textDecoration: 'underline dotted',
         }}>TAKING TOO LONG?</button>
       )}
 
@@ -248,7 +251,7 @@ function CloudSignIn({ email, onSignedIn }) {
   );
   return (
     <div style={{ marginBottom: 12 }}>
-      <span style={{ display: 'block', fontFamily: AC.mono, fontSize: 9, color: AC.inkMuted, letterSpacing: '0.14em', marginBottom: 5 }}>ACCOUNT</span>
+      <span style={{ display: 'block', fontFamily: AC.mono, fontSize: AC.fs.label.sz, color: AC.inkSoft, letterSpacing: '0.14em', marginBottom: 5 }}>ACCOUNT</span>
       {phase === 'done' && (
         <div style={{ padding: '9px 11px', borderRadius: AC.rad.sm, border: `1px solid ${AC.line}`, background: AC.bg, fontFamily: AC.mono, fontSize: 12, color: AC.ink }}>
           <span style={{ color: AC.ok }}>signed in</span> · {email}
@@ -264,7 +267,7 @@ function CloudSignIn({ email, onSignedIn }) {
           {button('Continue with Google', 'google', true)}
         </div>
       )}
-      {err && <div style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.err, marginTop: 6 }}>{err}</div>}
+      {err && <div style={{ fontFamily: AC.mono, fontSize: AC.fs.dataSm.sz, color: AC.err, marginTop: 6 }}>{err}</div>}
     </div>
   );
 }
@@ -311,7 +314,7 @@ function SignUp({ onDone, onCancel, plan }) {
 
   const field = (label, val, on, ph, type) => (
     <label style={{ display: 'block', marginBottom: 12 }}>
-      <span style={{ display: 'block', fontFamily: AC.mono, fontSize: 9, color: AC.inkMuted, letterSpacing: '0.14em', marginBottom: 5 }}>{label}</span>
+      <span style={{ display: 'block', fontFamily: AC.mono, fontSize: AC.fs.label.sz, color: AC.inkSoft, letterSpacing: '0.14em', marginBottom: 5 }}>{label}</span>
       <input value={val} onChange={e => on(e.target.value)} placeholder={ph} type={type || 'text'} style={{
         width: '100%', padding: '9px 11px', borderRadius: AC.rad.sm, border: `1px solid ${AC.line}`,
         background: AC.bg, color: AC.ink, fontFamily: AC.sans, fontSize: 13.5, outline: 'none',
@@ -331,8 +334,8 @@ function SignUp({ onDone, onCancel, plan }) {
           {steps.map((s, i) => (
             <div key={s} style={{
               flex: 1, padding: '11px 0', textAlign: 'center',
-              fontFamily: AC.mono, fontSize: 9.5, letterSpacing: '0.12em',
-              color: i === step ? AC.ink : i < step ? AC.ok : AC.inkMuted,
+              fontFamily: AC.mono, fontSize: AC.fs.dataSm.sz, letterSpacing: '0.12em',
+              color: i === step ? AC.ink : i < step ? AC.ok : AC.inkSoft,
               borderBottom: `2px solid ${i === step ? AC.accent : 'transparent'}`,
             }}>{i < step ? '✓ ' : ''}{s.toUpperCase()}</div>
           ))}
@@ -344,7 +347,7 @@ function SignUp({ onDone, onCancel, plan }) {
               <SHead title="Sign in to ArchHub" sub="Your account is an email, signed in through the cloud in your browser. Your keys and your brain stay on this machine."/>
               {field('YOUR NAME', a.name, v => set('name', v), 'Amina Habib')}
               <CloudSignIn email={a.email} onSignedIn={mail => set('email', mail)}/>
-              <div style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.inkSoft, marginTop: 4, lineHeight: 1.6 }}>
+              <div style={{ fontFamily: AC.mono, fontSize: AC.fs.dataSm.sz, color: AC.inkSoft, marginTop: 4, lineHeight: 1.6 }}>
                 No credit card until you publish your first sheet set.
               </div>
             </div>
@@ -354,7 +357,7 @@ function SignUp({ onDone, onCancel, plan }) {
             <div>
               <SHead title="Your practice" sub="This seeds the brain — it becomes the context Claude carries into every session, and you can edit or forget any of it later."/>
               {field('PRACTICE', a.firm, v => set('firm', v), 'Habib Studio')}
-              <span style={{ display: 'block', fontFamily: AC.mono, fontSize: 9, color: AC.inkMuted, letterSpacing: '0.14em', marginBottom: 6 }}>DISCIPLINE</span>
+              <span style={{ display: 'block', fontFamily: AC.mono, fontSize: AC.fs.label.sz, color: AC.inkSoft, letterSpacing: '0.14em', marginBottom: 6 }}>DISCIPLINE</span>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
                 {AC_DISCIPLINES.map(d => (
                   <button key={d} onClick={() => set('discipline', d)} style={{
@@ -379,7 +382,7 @@ function SignUp({ onDone, onCancel, plan }) {
                     borderTop: i === 0 ? 'none' : `1px solid ${AC.lineSoft}`,
                   }}>
                     <span style={{ flex: 1, fontSize: 13 }}>{h.name}</span>
-                    <span style={{ fontFamily: AC.mono, fontSize: 9, letterSpacing: '0.12em', color: h.found ? AC.ok : AC.inkMuted }}>
+                    <span style={{ fontFamily: AC.mono, fontSize: AC.fs.dataSm.sz, letterSpacing: '0.12em', color: h.found ? AC.ok : AC.inkSoft }}>
                       {h.state.toUpperCase()}
                     </span>
                   </div>
@@ -397,7 +400,7 @@ function SignUp({ onDone, onCancel, plan }) {
             <div>
               <SHead title="Your brain" sub="It lives on your disk. Project and client facts never leave this machine; a fact you choose to share goes to the ArchHub community after review."/>
               <div style={{ padding: '13px 14px', borderRadius: AC.rad.md, border: `1px solid ${AC.line}`, background: AC.bg }}>
-                <div style={{ fontFamily: AC.mono, fontSize: 9, color: AC.accent, letterSpacing: '0.14em' }}>SEEDED FROM THIS SIGN-UP</div>
+                <div style={{ fontFamily: AC.mono, fontSize: AC.fs.label.sz, color: AC.accent, letterSpacing: '0.14em' }}>SEEDED FROM THIS SIGN-UP</div>
                 <div style={{ marginTop: 8 }}>
                   {acSeedFacts(a, hosts).map((f, i) => (
                     <div key={i} style={{ display: 'flex', gap: 8, padding: '4px 0', fontSize: 12.5, color: AC.inkSoft, lineHeight: 1.5 }}>
@@ -406,8 +409,8 @@ function SignUp({ onDone, onCancel, plan }) {
                   ))}
                 </div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12, fontFamily: AC.mono, fontSize: 10.5, color: AC.inkSoft }}>
-                <span style={{ padding: '3px 8px', borderRadius: AC.rad.sm, border: `1px solid ${AC.ok}`, color: AC.ok, fontSize: 9, letterSpacing: '0.12em' }}>LOCAL</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12, fontFamily: AC.mono, fontSize: AC.fs.dataSm.sz, color: AC.inkSoft }}>
+                <span style={{ padding: '3px 8px', borderRadius: AC.rad.sm, border: `1px solid ${AC.ok}`, color: AC.ok, fontSize: AC.fs.label.sz, letterSpacing: '0.12em' }}>LOCAL</span>
                 <span>the brain folder on this machine</span>
               </div>
             </div>
@@ -419,7 +422,7 @@ function SignUp({ onDone, onCancel, plan }) {
           <button onClick={step === 0 ? onCancel : () => setStep(s => s - 1)} style={smallBtn()}>
             {step === 0 ? 'Cancel' : '← Back'}
           </button>
-          <span style={{ flex: 1, fontFamily: AC.mono, fontSize: 9.5, color: AC.inkMuted, letterSpacing: '0.1em' }}>
+          <span style={{ flex: 1, fontFamily: AC.mono, fontSize: AC.fs.dataSm.sz, color: AC.inkSoft, letterSpacing: '0.1em' }}>
             STEP {step + 1} / 4
           </span>
           <button disabled={!canNext} onClick={step === 3 ? finish : () => setStep(s => s + 1)}
@@ -471,7 +474,7 @@ function BrainFolderActions() {
     <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
       <button onClick={reveal} style={smallBtn()}>Reveal in explorer</button>
       <button onClick={exportJson} style={smallBtn()}>Export as JSON</button>
-      {said ? <span style={{ fontFamily: AC.mono, fontSize: 10, color: AC.inkSoft }}>{said}</span> : null}
+      {said ? <span style={{ fontFamily: AC.mono, fontSize: AC.fs.dataSm.sz, color: AC.inkSoft }}>{said}</span> : null}
     </div>
   );
 }
@@ -524,13 +527,13 @@ function CloudSessionCard({ onSession }) {
         <button onClick={() => mint(false)} disabled={cockpit.busy} style={smallBtn()}>Link for another device</button>
       </div>}
       {cockpit.link && (
-        <div style={{ marginTop: 8, fontFamily: AC.mono, fontSize: 10.5, color: AC.inkSoft, lineHeight: 1.5 }}>
+        <div style={{ marginTop: 8, fontFamily: AC.mono, fontSize: AC.fs.dataSm.sz, color: AC.inkSoft, lineHeight: 1.5 }}>
           <div style={{ wordBreak: 'break-all', color: AC.ink }}>{cockpit.link}</div>
           <button onClick={copy} style={Object.assign({}, smallBtn(), { marginTop: 6 })}>{cockpit.copied ? 'Copied' : 'Copy link'}</button>
           <div style={{ marginTop: 4 }}>Opens once, within five minutes, on this account.</div>
         </div>
       )}
-      {cockpit.err && <div style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.err, marginTop: 6 }}>{cockpit.err}</div>}
+      {cockpit.err && <div style={{ fontFamily: AC.mono, fontSize: AC.fs.dataSm.sz, color: AC.err, marginTop: 6 }}>{cockpit.err}</div>}
     </div>
   );
   return (
@@ -574,7 +577,7 @@ function CloudPublishConsent({ signedIn }) {
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', border: `1px solid ${AC.line}`, borderRadius: AC.rad.md }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 12.5, color: AC.ink }}>Publish this machine map to the cloud</div>
-        <div role={error ? 'alert' : 'status'} style={{ fontFamily: AC.mono, fontSize: 10, color: error ? AC.err : AC.inkSoft, marginTop: 3, lineHeight: 1.5 }}>
+        <div role={error ? 'alert' : 'status'} style={{ fontFamily: AC.mono, fontSize: AC.fs.dataSm.sz, color: error ? AC.err : AC.inkSoft, marginTop: 3, lineHeight: 1.5 }}>
           {error || (!state ? 'reading the consent record'
             : allowed ? 'Allowed' + (state.account ? ' for ' + state.account : '') + '. The cloud relay starts with ArchHub; withdrawing stops it.'
             : signedIn ? 'Not allowed. Nothing leaves this machine; allowing starts the relay at the next launch.'
@@ -659,9 +662,9 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
       <div style={{ padding: '9px 10px', border: `1px solid ${AC.line}`, borderRadius: AC.rad.md, background: AC.bgPanel }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontSize: 13, fontWeight: 500, color: AC.ink, minWidth: 86 }}>Brain access</span>
-          <span style={{ padding: '3px 8px', borderRadius: AC.rad.sm, border: `1px solid ${AC.ok}`, color: AC.ok, fontFamily: AC.mono, fontSize: 9, letterSpacing: '0.12em' }}>LOCAL</span>
+          <span style={{ padding: '3px 8px', borderRadius: AC.rad.sm, border: `1px solid ${AC.ok}`, color: AC.ok, fontFamily: AC.mono, fontSize: AC.fs.label.sz, letterSpacing: '0.12em' }}>LOCAL</span>
           <span style={{ fontFamily: AC.mono, fontSize: 11.5, color: AC.ink, flex: 1, minWidth: 0 }}>Private on this machine</span>
-          <span style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.inkSoft }}>{facts ? facts + ' facts read' : 'facts not read yet'}</span>
+          <span style={{ fontFamily: AC.mono, fontSize: AC.fs.dataSm.sz, color: AC.inkSoft }}>{facts ? facts + ' facts read' : 'facts not read yet'}</span>
         </div>
         <div style={{ fontSize: 12, color: AC.inkSoft, marginTop: 9, lineHeight: 1.55 }}>
           Sharing needs approval and never includes client folders.

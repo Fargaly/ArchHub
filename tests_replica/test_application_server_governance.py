@@ -494,7 +494,7 @@ def test_browser_routes_group_open_and_ungroup_the_live_governed_canvas():
 
         domain_root = next(
             node["id"] for node in before["nodes"]
-            if node["label"] == "Brain & Memory"
+            if node.get("openable")
         )
         scope_binding = next(
             item for item in before["interaction_projection"]["bindings"]
@@ -558,6 +558,83 @@ def test_browser_routes_group_open_and_ungroup_the_live_governed_canvas():
         )
         assert group["composition"] is True
         assert group["member_count"] == 2
+
+        remove_request = _interaction_request(
+            grouped,
+            "app:control:canvas:remove-member",
+            projection_mode="topology-delta-v1",
+        )
+        remove_request["membership"] = {
+            "member": selected[0],
+            "from_group": composition_root,
+            "to_group": "",
+            "position": {"x": 123, "y": 456},
+        }
+        remove_request["expected_scope"] = grouped["scope"]["current"]
+        remove_request["command_id"] = str(uuid.uuid4())
+        status, advanced = _json(
+            server.url,
+            "/api/universal/gesture",
+            {
+                "viewport": {
+                    "pan_x": grouped["viewport"]["pan_x"] + 1.0,
+                    "pan_y": grouped["viewport"]["pan_y"],
+                    "zoom": grouped["viewport"]["zoom"],
+                },
+                "projection": False,
+            },
+            token=token,
+        )
+        assert status == 200
+        advanced_revision = server.universal_store.revision
+        assert advanced["touched"] == advanced_revision
+        status, removed_delta = _json(
+            server.url,
+            "/api/universal/interaction",
+            remove_request,
+            token=token,
+        )
+        assert status == 200, removed_delta
+        assert removed_delta["ok"] is True
+        assert removed_delta["revision"] > advanced_revision
+        removed = _merge_canvas_delta(grouped, removed_delta)
+        removed_group = next(
+            node for node in removed["nodes"]
+            if node["id"] == composition_root
+        )
+        removed_member = next(
+            node for node in removed["nodes"]
+            if node["id"] == selected[0]
+        )
+        assert removed_group["member_count"] == 1
+        assert removed_member.get("group", "") == ""
+        status, undone_delta = _json(
+            server.url,
+            "/api/universal/interaction",
+            _interaction_request(
+                removed,
+                "app:control:canvas:undo",
+                projection_mode="topology-delta-v1",
+            ),
+            token=token,
+        )
+        assert status == 200
+        undone = _merge_canvas_delta(removed, undone_delta)
+        undone_group = next(
+            node for node in undone["nodes"]
+            if node["id"] == composition_root
+        )
+        assert undone_group["member_count"] == 2
+        status, unchanged = _json(
+            server.url, "/api/universal/canvas", token=token
+        )
+        assert status == 200
+        unchanged_group = next(
+            node for node in unchanged["nodes"]
+            if node["id"] == composition_root
+        )
+        assert unchanged_group["member_count"] == 2
+        grouped = unchanged
 
         status, nested_delta = _json(
             server.url,
@@ -778,7 +855,7 @@ def test_expired_interaction_lease_is_typed_and_retryable_before_execution():
             },
             token=token,
         )
-        assert status == 400
+        assert status == 409
         assert rejected == {
             "ok": False,
             "error": "projection lease expired",

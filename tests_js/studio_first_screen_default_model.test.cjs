@@ -25,7 +25,7 @@ function projected() {
 }
 
 async function mountStudio({models, selectedTitleLeak = '', modelReadTimeoutMs, modelRetryDelaysMs,
-  home = false, graphOpen = null, systemView = false} = {}) {
+  home = false, graphOpen = null, systemView = false, selectionTransport = null} = {}) {
   const manifest = JSON.parse(read('nodelang/studio/compiled/manifest.json'));
   for (const source of ['studio-lm.jsx', 'studio-suite.jsx']) {
     const held = manifest.files.find(file => file.source === source);
@@ -64,6 +64,7 @@ async function mountStudio({models, selectedTitleLeak = '', modelReadTimeoutMs, 
   win.ARCHHUB_THEME = {...seed};
   win.matchMedia = () => ({matches:false, addEventListener() {}, removeEventListener() {}});
   const graph = projected();
+  if (selectionTransport) graph.nodes.push({...graph.nodes[0], id:'work-b', title:'Second task', x:420});
   if (systemView && graph.nodes[0]) graph.nodes = graph.nodes.concat({
     ...graph.nodes[0], id:'app-node', title:'Application node', application:true, x:320, y:60,
   });
@@ -90,6 +91,26 @@ async function mountStudio({models, selectedTitleLeak = '', modelReadTimeoutMs, 
     },
     watchApplicationUpdate:() => () => {}, refreshApplicationUpdate:async () => {},
   };
+  const selectionPosts = [];
+  if (selectionTransport) {
+    win.eval(read('nodelang/studio/studio-existing-workshop.js'));
+    let durable = {ok:true, application_root:'graph-a', root:'scope-a', scope:{current:'scope-a'},
+      authorization, revision:7, nodes:graph.nodes, wires:graph.wires,
+      workshop_scope:{graph_id:'graph-a', root:'scope-a', revision:7, authorization, workshops:[]},
+      interaction_projection:{revision:7, bindings:[]}};
+    const real = win.ArchHubExistingWorkshop.create({get:async () => structuredClone(durable),
+      post:async (url, body) => {
+        selectionPosts.push({url, body:JSON.parse(JSON.stringify(body))});
+        if (selectionTransport.beforeReply) await selectionTransport.beforeReply(selectionPosts.length);
+        durable = {...durable, revision:durable.revision + 1, selected:body.focus, selection:[...body.roots],
+          interaction_projection:{revision:durable.revision + 1, bindings:[]},
+          workshop_scope:{...durable.workshop_scope, revision:durable.revision + 1},
+          nodes:durable.nodes.map(node => ({...node, selected:body.roots.includes(node.id)}))};
+        return structuredClone(durable);
+      }, projectCanvas:value => ({nodes:value.nodes, wires:value.wires})});
+    real.setTopologyCanvas(durable);
+    win.ARCHHUB_EXISTING_WORKSHOP = real;
+  }
   win.ARCHHUB_SCOPE_OPEN = async () => {};
   if (graphOpen) win.ARCHHUB_GRAPH_OPEN = graphOpen;
   win.ARCHHUB_LIVE = {sessions:[{id:'graph-a', title:'ArchHub', state:'idle', file:'Graph composition'}],
@@ -111,13 +132,44 @@ async function mountStudio({models, selectedTitleLeak = '', modelReadTimeoutMs, 
     Object.getOwnPropertyDescriptor(proto, 'value').set.call(input, text);
     input.dispatchEvent(new win.Event('input', {bubbles:true}));
   });
-  return {win, doc:win.document, settle, flush, type, agentCalls, startCalls,
+  return {win, doc:win.document, settle, flush, type, agentCalls, startCalls, selectionPosts,
     close:() => { try { flush(() => win.__studioRoot.unmount()); } finally { dom.window.close(); } }};
 }
 
 const modelIndicators = doc => [...doc.querySelectorAll('[data-model-indicator]')];
 const button = (doc, label) => [...doc.querySelectorAll('button')].find(node => node.textContent.trim() === label);
 const noModelCard = doc => doc.querySelector('[data-chat-no-model]');
+
+for (const pending of [false, true]) {
+  test('UPD2 p9 full Studio: click A then Shift B preserves the selected pair and Group ' +
+      (pending ? 'while A is pending' : 'after A commits'), async () => {
+    let releaseFirst;
+    const firstReply = new Promise(resolve => { releaseFirst = resolve; });
+    const studio = await mountStudio({selectionTransport:{
+      beforeReply:count => pending && count === 1 ? firstReply : undefined,
+    }});
+    const card = id => studio.doc.querySelector('.lm-node[data-node-id="' + id + '"]');
+    const selected = () => [...studio.doc.querySelectorAll('.lm-node[data-selected="true"]')].map(node => node.dataset.nodeId).sort();
+    try {
+      await studio.settle(() => card('work-a') && card('work-b'), 'both cards drawn');
+      const click = (id, shiftKey = false) => studio.flush(() => card(id).dispatchEvent(
+        new studio.win.MouseEvent('click', {bubbles:true, shiftKey})));
+      click('work-a');
+      await studio.settle(() => studio.selectionPosts.length === 1, 'first selection submitted');
+      if (!pending) await studio.settle(() => !studio.win.ARCHHUB_EXISTING_WORKSHOP.getSnapshot().topology.pending, 'first selection committed');
+      assert.deepEqual(selected(), ['work-a']);
+      click('work-b', true);
+      if (pending) releaseFirst();
+      await studio.settle(() => studio.selectionPosts.length === 2 &&
+        !studio.win.ARCHHUB_EXISTING_WORKSHOP.getSnapshot().topology.pending, 'second selection committed');
+      assert.deepEqual(studio.selectionPosts.map(row => row.body.roots), [['work-a'], ['work-a','work-b']]);
+      assert.deepEqual(selected(), ['work-a','work-b']);
+      assert.match(studio.doc.querySelector('[data-selection-bar] button')?.textContent || '', /Group 2 nodes/);
+      assert.equal(studio.doc.querySelector('[data-selection-bar] button').disabled, false);
+      assert.equal(studio.win.ARCHHUB_EXISTING_WORKSHOP.getSnapshot().topology.requires_refresh, false);
+    } finally { releaseFirst(); studio.close(); }
+  });
+}
 const homeComposer = doc => doc.querySelector('textarea[aria-label="Start a new session"]');
 const homeText = doc => doc.querySelector('[data-home-page]')?.textContent || '';
 const rail = (doc, title) => doc.querySelector(`[data-rail-panel="${title}"]`);
@@ -209,8 +261,8 @@ test('Settings System open respects a labelled Home click while graph open is pe
     studio.flush(() => systemTab.click());
     await studio.settle(() => button(studio.doc, 'Open the System graph'), 'System tab opens');
     studio.flush(() => button(studio.doc, 'Open the System graph').click());
-    await studio.settle(() => !studio.doc.querySelector('[aria-label="Settings"]') &&
-      homeButtons(studio.doc).some(node => node.textContent.trim() === 'Home'), 'labelled Home is reachable');
+    await studio.settle(() => studio.doc.querySelector('[aria-label="Settings"]') &&
+      homeButtons(studio.doc).some(node => node.textContent.trim() === 'Home'), 'Settings stays open while pending and labelled Home is reachable');
     const labelledHome = homeButtons(studio.doc).find(node => node.textContent.trim() === 'Home');
     studio.flush(() => labelledHome.click());
     graphOpen.resolve({ok:true, current_graph:'graph-a'});
@@ -219,6 +271,29 @@ test('Settings System open respects a labelled Home click while graph open is pe
     assert.notEqual(studio.doc.querySelector('[data-ws-tab="graph-a"]')?.getAttribute('aria-current'), 'true',
       'no session tab is active after Home wins');
     assert.equal(studio.doc.querySelectorAll('[data-node-id]').length, 0, 'the graph canvas stays closed');
+  } finally { studio.close(); }
+});
+
+test('Settings System labelled Home lands on Home with no active session tab', async () => {
+  const studio = await mountStudio({systemView:true});
+  try {
+    await studio.settle(() => studio.doc.querySelector('[data-node-id]'), 'graph starts open');
+    studio.flush(() => rail(studio.doc, 'Settings').click());
+    await studio.settle(() => studio.doc.querySelector('[aria-label="Settings"]'), 'Settings opens');
+    const systemTab = [...studio.doc.querySelectorAll('[data-settings-nav] button')]
+      .find(node => node.textContent.trim().startsWith('System'));
+    assert.ok(systemTab, 'System settings tab is listed');
+    studio.flush(() => systemTab.click());
+    await studio.settle(() => button(studio.doc, 'Open the System graph'), 'System tab opens');
+    studio.flush(() => button(studio.doc, 'Open the System graph').click());
+    await studio.settle(() => studio.doc.querySelector('[data-system-header]'), 'System graph header is visible');
+    const labelledHome = [...studio.doc.querySelectorAll('[data-system-header] button')]
+      .find(node => node.getAttribute('aria-label') === 'Home' && node.textContent.trim() === 'Home');
+    assert.ok(labelledHome, 'System graph exposes the labelled Home control');
+    studio.flush(() => labelledHome.click());
+    await studio.settle(() => studio.doc.querySelector('[data-home-page]'), 'Home page is visible');
+    assert.equal(studio.doc.querySelector('[data-ws-tab][aria-current="true"]'), null, 'no session tab is active');
+    assert.equal(studio.doc.querySelector('[data-system-header]'), null, 'System graph is closed');
   } finally { studio.close(); }
 });
 

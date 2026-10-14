@@ -64,6 +64,90 @@ def test_universal_agent_post_without_node_reaches_router_with_generation(monkey
     assert application_server._agent_node_request_kwargs({**body, "node": ""}) == {}
 
 
+def test_baboom_tool_turn_is_not_replaced_by_canvas_gate(monkeypatch):
+    from nodelang import agent_composer, universal_application
+
+    class Store:
+        revision = 7
+
+    monkeypatch.setattr(
+        universal_application,
+        "project_universal_canvas",
+        lambda *args, **kwargs: {"scope": {"current": "scope-a"}, "nodes": [], "catalog": [], "properties": []},
+    )
+
+    calls = []
+
+    def fake_route_chat(model, rows, **kwargs):
+        calls.append({"rows": rows, "kwargs": kwargs})
+        if not any(row.get("role") == "tool" for row in rows):
+            return {
+                "text": "Checking host visibility.",
+                "tool_calls": [{"id": "call_1", "name": "host.ping", "arguments": {}}],
+                "family": "fake",
+                "model": "fake-tools",
+                "provider": "Fake",
+            }
+        return {
+            "text": json.dumps({
+                "actions": [{
+                    "op": "node", "engine": "debug.echo", "ref": "probe",
+                    "title": "Probe", "params": {}, "x": 12, "y": 34,
+                }],
+                "answer": "Checked with host.ping.",
+            }),
+            "family": "fake",
+            "model": "fake-tools",
+            "provider": "Fake",
+        }
+
+    monkeypatch.setattr(agent_composer, "route_chat", fake_route_chat)
+
+    result = agent_composer.run_agent_composer(
+        Store(),
+        object(),
+        "Use a tool to check which programs ArchHub can see, then tell me in one line.",
+        model="openrouter/free",
+    )
+
+    assert result["answer"] == "Checked with host.ping."
+    assert result["applied"] == []
+    assert result["steps"][0]["tool"] == "host.ping"
+    assert result["steps"][0]["status"] == "ok"
+    assert len(calls) == 2
+    system_text = "\n".join(row["content"] for row in calls[0]["rows"] if row.get("role") == "system")
+    assert "Available tools: graph.read, host.ping" in system_text
+    assert '{"tool":"<name>","arguments":{}}' in system_text
+    assert "answer normally when no tool is needed" in system_text
+
+
+def test_plain_baboom_answer_does_not_invent_tool_steps(monkeypatch):
+    from nodelang import agent_composer, universal_application
+
+    class Store:
+        revision = 7
+
+    monkeypatch.setattr(
+        universal_application,
+        "project_universal_canvas",
+        lambda *args, **kwargs: {"scope": {"current": "scope-a"}, "nodes": [], "catalog": [], "properties": []},
+    )
+    monkeypatch.setattr(agent_composer, "route_chat", lambda *args, **kwargs: {
+        "text": "PONG", "family": "fake", "model": "fake-chat", "provider": "Fake",
+    })
+
+    result = agent_composer.run_agent_composer(
+        Store(),
+        object(),
+        "Reply with the single word PONG.",
+        model="openrouter/free",
+    )
+
+    assert result["answer"] == "PONG"
+    assert result["applied"] == []
+    assert result.get("steps", []) == []
+
+
 def test_node_agent_turn_survives_reopen_without_replay(tmp_path, monkeypatch):
     from nodelang import (
         agent_composer, application_server, commit_intent, pipeline_engines,
@@ -511,11 +595,8 @@ def test_two_concurrent_node_sends_create_one_conversation(tmp_path, monkeypatch
         assert len({read["conversation_root"]}) == 1
     finally:
         server.close()
-def test_universal_agent_free_route_uses_running_lmstudio_after_openrouter_refusal(monkeypatch, tmp_path):
-    from nodelang import agent_composer, application_server, model_router, universal_application
-
-    class Store:
-        revision = 7
+def test_openrouter_free_plain_text_turn_can_fall_back_to_loaded_local_model(monkeypatch, tmp_path):
+    from nodelang import model_router
 
     sent = []
     timeouts = []
@@ -544,8 +625,60 @@ def test_universal_agent_free_route_uses_running_lmstudio_after_openrouter_refus
         if request.full_url == model_router.LM_STUDIO_CHAT:
             return _Answer(json.dumps({
                 "model": "qwen2.5-coder-7b-instruct",
-                "choices": [{"message": {"role": "assistant", "content": '{"actions":[],"answer":"LOCAL"}'}}],
+                "choices": [{"message": {"role": "assistant", "content": "LOCAL"}}],
             }).encode("utf-8"))
+        raise AssertionError("unexpected provider call %s" % request.full_url)
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-live-key")
+    monkeypatch.setenv("OPENROUTER_FREE_MODELS", "x")
+    monkeypatch.setattr(model_router.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(model_router, "probe_local_runtimes", lambda: {1234: True, 11434: False})
+    model_router.bind_local_cli_broker(None)
+    try:
+        out = model_router.route_chat(
+            "openrouter/free",
+            [{"role": "user", "content": "Reply with LOCAL."}],
+            environ={"OPENROUTER_API_KEY": "or-live-key", "OPENROUTER_FREE_MODELS": "x"},
+            secrets_loader=lambda _: "",
+            cloud_session=None,
+            free_only=True,
+            timeout=20,
+        )
+    finally:
+        model_router.bind_local_cli_broker(None)
+
+    assert out["text"] == "LOCAL"
+    assert out["family"] == "lmstudio"
+    assert [request.full_url for request in sent] == [
+        model_router.OPENROUTER_CHAT,
+        "http://127.0.0.1:1234/api/v0/models",
+        model_router.LM_STUDIO_CHAT,
+    ]
+    assert timeouts[0] <= 20.0
+    assert all(timeout <= 20.0 for timeout in timeouts)
+
+
+def test_universal_agent_free_tool_route_empty_catalogue_refuses_without_dispatch(monkeypatch, tmp_path):
+    from nodelang import agent_composer, application_server, model_router, universal_application
+
+    class Store:
+        revision = 7
+
+    sent = []
+    timeouts = []
+
+    def fake_urlopen(request, timeout=None):
+        sent.append(request)
+        timeouts.append(timeout)
+        if request.get_method() == "GET" and "openrouter.ai/api/v1/models" in request.full_url:
+            return _Answer(json.dumps({"data": []}).encode("utf-8"))
+        if request.full_url == model_router.OPENROUTER_CHAT:
+            raise AssertionError("tool turn must not dispatch openrouter/free")
+        if request.full_url in {
+            "http://127.0.0.1:1234/api/v0/models",
+            model_router.LM_STUDIO_CHAT,
+        }:
+            raise AssertionError("tool turn must not fall back to local text models")
         raise AssertionError("unexpected provider call %s" % request.full_url)
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-live-key")
@@ -558,27 +691,29 @@ def test_universal_agent_free_route_uses_running_lmstudio_after_openrouter_refus
         "project_universal_canvas",
         lambda *args, **kwargs: {"scope": {"current": "scope-a"}, "nodes": [], "catalog": [], "properties": []},
     )
+    model_router._reset_openrouter_free_tool_catalogue_cache()
     model_router.bind_local_cli_broker(None)
-    result = agent_composer.run_agent_composer(
-        Store(),
-        object(),
-        "Reply with LOCAL.",
-        model="openrouter/free",
-        generation={"max_tokens": 16},
-        **application_server._agent_node_request_kwargs({"prompt": "Reply with LOCAL.", "model": "openrouter/free"}),
-    )
+    try:
+        agent_composer.run_agent_composer(
+            Store(),
+            object(),
+            "Reply with LOCAL.",
+            model="openrouter/free",
+            generation={"max_tokens": 16},
+            **application_server._agent_node_request_kwargs({"prompt": "Reply with LOCAL.", "model": "openrouter/free"}),
+        )
+    except model_router.ModelRouteRefused as exc:
+        failure = exc
+    else:
+        raise AssertionError("expected exhausted OpenRouter free tool route")
+    finally:
+        model_router.bind_local_cli_broker(None)
+        model_router._reset_openrouter_free_tool_catalogue_cache()
 
-    assert result["answer"] == "LOCAL"
-    assert result["via"] == {
-        "family": "lmstudio",
-        "model": "qwen2.5-coder-7b-instruct",
-        "provider": "LM Studio",
-    }
+    assert str(failure) == "No free model answered right now. Try again shortly."
     assert [request.full_url for request in sent] == [
-        model_router.OPENROUTER_CHAT,
-        "http://127.0.0.1:1234/api/v0/models",
-        model_router.LM_STUDIO_CHAT,
+        "https://openrouter.ai/api/v1/models",
     ]
     assert timeouts[0] <= 20.0
-    assert timeouts[-1] >= 29.0
+    assert all(timeout <= 20.0 for timeout in timeouts)
     assert (tmp_path / "free-chat-trace.jsonl").is_file()

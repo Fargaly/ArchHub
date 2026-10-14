@@ -7,6 +7,9 @@
 // The control surface is editable at runtime; what it SHOWS comes from the app.
 
 const CK = window.AH;
+CK.fs = CK.fs || {};
+CK.fs.label = CK.fs.label || {sz:11, ln:14, wt:500, letter:'.04em'};
+CK.fs.dataSm = CK.fs.dataSm || {sz:11, ln:14, wt:400};
 const CKLS = 'archhub.cockpit.v1';
 
 /* ════════════════ persistence ════════════════ */
@@ -109,7 +112,7 @@ const IconBtn = ({ name, onClick, color, title, active, size = 14 }) => (
 const Pill = ({ children, k, color }) => {
   const c = color || sc(k);
   return <span style={{
-    fontFamily: CK.mono, fontSize: 9.5, letterSpacing: '0.08em', textTransform: 'uppercase',
+    fontFamily: CK.mono, fontSize: CK.fs.label.sz, letterSpacing: '0.08em', textTransform: 'uppercase',
     color: c, background: c + '1a', border: `1px solid ${c}33`, padding: '2px 7px', borderRadius: 4,
     display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap',
   }}>{children}</span>;
@@ -135,7 +138,7 @@ const Avatar = ({ name, size = 24, ring }) => {
 
 const Field = ({ label, value, onChange, placeholder, type = 'text', full, mono, style }) => (
   <label style={{ display: 'flex', flexDirection: 'column', gap: 5, flex: full ? 1 : 'none', ...style }}>
-    {label && <span style={{ fontFamily: CK.mono, fontSize: 9.5, color: CK.inkMuted, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{label}</span>}
+    {label && <span style={{ fontFamily: CK.mono, fontSize: CK.fs.label.sz, color: CK.inkSoft, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{label}</span>}
     <input value={value ?? ''} type={type} onChange={e => onChange && onChange(e.target.value)} placeholder={placeholder} style={{
       padding: '7px 10px', borderRadius: CK.rad.sm, border: `1px solid ${CK.line}`, background: CK.bgDeep,
       color: CK.ink, fontSize: 13, fontFamily: mono ? CK.mono : CK.sans, outline: 'none', width: full ? '100%' : 'auto',
@@ -147,7 +150,7 @@ const Field = ({ label, value, onChange, placeholder, type = 'text', full, mono,
 
 const Select = ({ label, value, onChange, options, full }) => (
   <label style={{ display: 'flex', flexDirection: 'column', gap: 5, flex: full ? 1 : 'none' }}>
-    {label && <span style={{ fontFamily: CK.mono, fontSize: 9.5, color: CK.inkMuted, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{label}</span>}
+    {label && <span style={{ fontFamily: CK.mono, fontSize: CK.fs.label.sz, color: CK.inkSoft, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{label}</span>}
     <select value={value} onChange={e => onChange && onChange(e.target.value)} style={{
       padding: '7px 10px', borderRadius: CK.rad.sm, border: `1px solid ${CK.line}`, background: CK.bgDeep,
       color: CK.ink, fontSize: 13, fontFamily: CK.sans, outline: 'none', cursor: 'pointer', width: full ? '100%' : 'auto',
@@ -177,7 +180,7 @@ const Modal = ({ title, sub, onClose, children, w = 460 }) => (
         padding: '16px 18px', borderBottom: `1px solid ${CK.line}` }}>
         <div>
           <div style={{ fontFamily: CK.serif, fontSize: 22, letterSpacing: '-0.02em' }}>{title}</div>
-          {sub && <div style={{ fontFamily: CK.mono, fontSize: 10.5, color: CK.inkMuted, marginTop: 2, letterSpacing: '0.04em' }}>{sub}</div>}
+          {sub && <div style={{ fontFamily: CK.mono, fontSize: CK.fs.label.sz, color: CK.inkSoft, marginTop: 2, letterSpacing: '0.04em' }}>{sub}</div>}
         </div>
         <IconBtn name="x" onClick={onClose}/>
       </div>
@@ -193,7 +196,7 @@ const SecHead = ({ icon, title, sub, right }) => (
       <div style={{ display: 'flex', alignItems: 'stretch', gap: 13 }}>
         <span style={{ width: 3, background: CK.accent, borderRadius: 2, flexShrink: 0 }}/>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: CK.mono, fontSize: 9.5, color: CK.accent, letterSpacing: '0.24em', textTransform: 'uppercase', marginBottom: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: CK.mono, fontSize: CK.fs.label.sz, color: CK.accent, letterSpacing: '0.24em', textTransform: 'uppercase', marginBottom: 6 }}>
             {icon && <CKIcon name={icon} size={12}/>}<span>cockpit · {title}</span>
           </div>
           <h2 style={{ fontFamily: CK.serif, fontSize: 36, fontWeight: 400, letterSpacing: '-0.03em', margin: 0, lineHeight: 0.92 }}>{title}</h2>
@@ -225,19 +228,19 @@ const StatCard = ({ label, value, unit, delta, deltaGood, spark, sparkColor, foo
   <div style={{ background: CK.bgPanel, border: `1px solid ${CK.line}`, borderRadius: CK.rad.lg, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 9, minWidth: 0, position: 'relative', overflow: 'hidden' }}>
     <span style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: `linear-gradient(90deg, ${sparkColor || CK.accent}, transparent 70%)` }}/>
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-      <span style={{ fontFamily: CK.mono, fontSize: 9.5, color: CK.inkSoft, letterSpacing: '0.16em', textTransform: 'uppercase' }}>{label}</span>
+      <span style={{ fontFamily: CK.mono, fontSize: CK.fs.label.sz, color: CK.inkSoft, letterSpacing: '0.16em', textTransform: 'uppercase' }}>{label}</span>
       {delta != null && (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontFamily: CK.mono, fontSize: 10.5, fontWeight: 600, color: deltaGood ? CK.ok : CK.err }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontFamily: CK.mono, fontSize: CK.fs.dataSm.sz, fontWeight: 600, color: deltaGood ? CK.ok : CK.err }}>
           <CKIcon name={deltaGood ? 'arrowUp' : 'arrowDn'} size={11}/>{delta}
         </span>
       )}
     </div>
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
       <span style={{ fontFamily: CK.serif, fontSize: 46, letterSpacing: '-0.035em', lineHeight: 0.85, color: CK.ink, fontVariantNumeric: 'tabular-nums' }}>{value}</span>
-      {unit && <span style={{ fontFamily: CK.mono, fontSize: 12, color: CK.inkMuted }}>{unit}</span>}
+      {unit && <span style={{ fontFamily: CK.mono, fontSize: 12, color: CK.inkSoft }}>{unit}</span>}
     </div>
     {spark && <Spark data={spark} w={200} h={28} color={sparkColor || CK.accent}/>}
-    {foot && <div style={{ fontFamily: CK.mono, fontSize: 10, color: CK.inkMuted, letterSpacing: '0.04em', borderTop: `1px solid ${CK.lineSoft}`, paddingTop: 7 }}>{foot}</div>}
+    {foot && <div style={{ fontFamily: CK.mono, fontSize: CK.fs.label.sz, color: CK.inkSoft, letterSpacing: '0.04em', borderTop: `1px solid ${CK.lineSoft}`, paddingTop: 7 }}>{foot}</div>}
   </div>
 );
 

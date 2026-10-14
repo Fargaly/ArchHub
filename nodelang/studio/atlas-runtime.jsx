@@ -61,7 +61,7 @@ if (typeof document !== 'undefined' && !document.getElementById('rt-anim')) {
 // a small runtime chip for inspectors
 function RTChip({ state }) {
   const c = RT_COL[state] || HB.inkMute;
-  return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px', borderRadius: 999, background: c + '1e', border: `1px solid ${c}`, color: c, fontFamily: HB.mono, fontSize: 9.5, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+  return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px', borderRadius: 999, background: c + '1e', border: `1px solid ${c}`, color: c, fontFamily: HB.mono, fontSize: HB.fs.label.sz, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
     <span style={{ width: 6, height: 6, borderRadius: '50%', background: c, animation: state === 'running' ? 'rtRing 1.2s infinite' : 'none' }}/>{state}
   </span>;
 }
@@ -73,7 +73,7 @@ function RunsBody({ node, onRun, onVariant }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <RTChip state={rtState(node)}/>
-        <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.inkMute }}>{runs.length} runs</span>
+        <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute }}>{runs.length} runs</span>
         <div style={{ flex: 1 }}/>
         <button onClick={onRun} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 7, border: 'none', background: HB.accent, color: '#fff', cursor: 'pointer', fontFamily: HB.mono, fontSize: 11, fontWeight: 600 }}>▸ Run</button>
       </div>
@@ -88,9 +88,9 @@ function RunsBody({ node, onRun, onVariant }) {
             <div style={{ flex: 1, paddingBottom: 12 }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
                 <span style={{ fontFamily: HB.mono, fontSize: 11.5, color: HB.ink }}>{r.variantOf ? '⌥ variant' : 'run'} #{r.n}</span>
-                <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: r.ok ? HB.green : HB.red }}>{r.ok ? '✓' : '✗ failed'}</span>
-                <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>{r.ms}ms</span>
-                <button onClick={() => onVariant(r)} title="Branch a variant from this run" style={{ marginLeft: 'auto', border: `1px solid ${HB.line}`, background: HB.paper2, color: HB.inkSoft, borderRadius: 6, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: 9 }}>⌥ variant</button>
+                <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: r.ok ? HB.green : HB.red }}>{r.ok ? '✓' : '✗ failed'}</span>
+                <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute }}>{r.ms}ms</span>
+                <button onClick={() => onVariant(r)} title="Branch a variant from this run" style={{ marginLeft: 'auto', border: `1px solid ${HB.line}`, background: HB.paper2, color: HB.inkSoft, borderRadius: 6, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz }}>⌥ variant</button>
               </div>
               <div style={{ fontFamily: HB.mono, fontSize: 11, color: HB.inkSoft, marginTop: 3 }}>{r.result}</div>
             </div>

@@ -29,6 +29,21 @@ import uuid
 import weakref
 from weakref import WeakKeyDictionary
 
+_APPLICATION_HALTED = threading.Event()
+
+
+def set_application_halted(halted: bool = True) -> None:
+    if halted:
+        _APPLICATION_HALTED.set()
+    else:
+        _APPLICATION_HALTED.clear()
+    clear_canvas_accelerator()
+
+
+def is_application_halted() -> bool:
+    return _APPLICATION_HALTED.is_set()
+
+
 from .artifact_verification_court import (
     ARTIFACT_VERIFICATION_CHECKS,
     ArtifactVerificationCourt,
@@ -19956,6 +19971,10 @@ def _system_tool_canvas_root(tool_id: str) -> str:
     return "app:system-tool:%s" % _part(tool_id)
 
 
+def _is_system_tool_canvas_root(root_id: str) -> bool:
+    return str(root_id).startswith("app:system-tool:")
+
+
 def _ensure_system_tool_canvas_nodes(
     store: CellStore,
     roles: Mapping[str, str],
@@ -21661,6 +21680,54 @@ def _view_scope_exposures(
             raise InvalidCell("scope exposure visible roots are invalid")
         entries[parent] = (member.participant_id, visible)
     return entries
+
+
+def _released_scope_member_roots(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    view_session: ApplicationViewSession,
+    parent_root: str,
+) -> frozenset[str]:
+    """Only remove-member releases change a card's overlay presentation.
+
+    An exposure is a partition of the whole scope, not authorship evidence.
+    Its remove-member history records exactly which root was added to that
+    partition. Read that graph fact so refresh and Undo use the same rule.
+    """
+    exposure = _view_scope_exposures(
+        snapshot, registry, view_session
+    ).get(parent_root)
+    if exposure is None:
+        return frozenset()
+    released: set[str] = set()
+    for entry in read_relation(
+        snapshot, view_session.composition_history_root, budget=100_000
+    ):
+        if entry.role_id != registry.roles["relation"]:
+            continue
+        members = read_relation(snapshot, entry.participant_id, budget=100_000)
+        operation = _one_for_role(members, registry.roles["why"])
+        if (
+            operation is None or snapshot.cells[operation].atom != b"remove-member"
+            or _one_for_role(members, registry.roles["scope"]) != parent_root
+        ):
+            continue
+        before = _one_for_role(members, registry.roles["source"])
+        after = _one_for_role(members, registry.roles["target"])
+        if before is None or after is None:
+            continue
+        before_roots = {
+            item.participant_id
+            for item in read_relation(snapshot, before, budget=_SCOPE_MEMBER_LIMIT)
+            if item.role_id == registry.roles["visible"]
+        }
+        released.update(
+            item.participant_id
+            for item in read_relation(snapshot, after, budget=_SCOPE_MEMBER_LIMIT)
+            if item.role_id == registry.roles["visible"]
+            and item.participant_id not in before_roots
+        )
+    return frozenset(released.intersection(exposure[1]))
 
 
 def _is_universal_composition(
@@ -24188,6 +24255,14 @@ def _project_universal_canvas_interpreter(
             read_relation(snapshot, root_id, budget=_SCOPE_MEMBER_LIMIT)
             if composition else ()
         )
+        composition_member_cards = [
+            {
+                "id": member.participant_id,
+                "title": _scope_label(snapshot, registry, member.participant_id),
+            }
+            for member in composition_members
+            if member.role_id == registry.roles["member"]
+        ]
         composition_ports = []
         for member in composition_members:
             if (
@@ -24268,7 +24343,17 @@ def _project_universal_canvas_interpreter(
                     "evidence_ref", "last_verified", "authority_source",
                     "bim_phase", "standard", "placed",
                 }
-            ],
+            ] + (
+                [
+                    {
+                        "label": "halted",
+                        "value": str(bool(is_application_halted())).lower(),
+                        "relation": "",
+                    }
+                ]
+                if root_id == getattr(registry, "application_root", "app:archhub")
+                else []
+            ),
             # The run wire reads which effect a node declares; the card's
             # display cap must not hide it, and status carries the last run
             # answer for surfaces that draw it on the card.
@@ -24300,15 +24385,13 @@ def _project_universal_canvas_interpreter(
                 for interface in (assembly["interfaces"] if assembly else [])
             ] + declared_ports + composition_ports,
             "member_count": (
-                sum(
-                    member.role_id == registry.roles["member"]
-                    for member in composition_members
-                )
+                len(composition_member_cards)
                 if composition else (
                     len(_relation_members_or_none(snapshot, root_id) or ())
                     if assembly is None else assembly["part_count"]
                 )
             ),
+            "members": composition_member_cards if composition else [],
         })
 
     if reusable_nodes is None:
@@ -24316,12 +24399,20 @@ def _project_universal_canvas_interpreter(
         # level of the application canvas the Studio draws the user's cards
         # and keeps the application's own (map domains, core values,
         # registries, agent sessions) for the founder's System view, framed
-        # by domain. Below the top level every card belongs to the level
-        # entered, so nothing is marked there.
+        # by domain. Only an explicitly released member is a free overlay
+        # card; the rest of an exposure retains the normal System projection.
+        # Below the top level every card belongs to the level entered.
         top_level = tuple(scope_trail)[-1:] == (registry.canvas_root,)
+        released_roots = (
+            _released_scope_member_roots(
+                snapshot, registry, view_session, registry.canvas_root
+            )
+            if top_level else frozenset()
+        )
         application_roots = tuple(
             node["id"] for node in nodes
             if top_level and not _user_canvas_root(snapshot, registry, node["id"])
+            and node["id"] not in released_roots
         )
         system_groups = _system_view_groups(
             snapshot, registry, application_roots
@@ -24329,9 +24420,19 @@ def _project_universal_canvas_interpreter(
         for node in nodes:
             if top_level:
                 node["application"] = node["id"] in system_groups
-            node["group"] = (
-                system_groups.get(node["id"]) or _canvas_node_group(node)
-            )
+            if node["id"] in released_roots and not node.get("composition"):
+                node["group"] = ""
+            else:
+                node["group"] = (
+                    system_groups.get(node["id"]) or _canvas_node_group(node)
+                )
+            if node.get("application"):
+                if not any(p.get("label") == "halted" for p in node.get("params", [])):
+                    node.setdefault("params", []).append({
+                        "label": "halted",
+                        "value": str(bool(is_application_halted())).lower(),
+                        "relation": "",
+                    })
         # Cards with no stored position are drawn in free space by frame.
         _place_unplaced_canvas_nodes(nodes)
     node_index = {node["id"]: node for node in nodes}
@@ -27671,6 +27772,19 @@ def project_universal_canvas(
     projection = _project_universal_canvas_answer(
         store, registry, authentication_context=authentication_context
     )
+    selection = projection.get("selection")
+    if isinstance(selection, list):
+        filtered_selection = [
+            root for root in selection
+            if isinstance(root, str) and not _is_system_tool_canvas_root(root)
+        ]
+        if filtered_selection != selection:
+            projection["selection"] = filtered_selection
+            if _is_system_tool_canvas_root(str(projection.get("selected") or "")):
+                projection["selected"] = filtered_selection[-1] if filtered_selection else None
+            for node in projection.get("nodes") or ():
+                if isinstance(node, dict) and _is_system_tool_canvas_root(str(node.get("id") or "")):
+                    node["selected"] = False
     nodes = projection.get("nodes")
     if isinstance(nodes, list):
         judged = [
@@ -43708,6 +43822,7 @@ def project_universal_machine_canvas(
         member.participant_id
         for member in selection_members
         if member.role_id == registry.roles["selected"]
+        and not _is_system_tool_canvas_root(member.participant_id)
     )
     visible_limited = tuple(visible_roots[:max(0, node_limit)])
     node_index: dict[str, dict[str, object]] = {}
@@ -47318,6 +47433,323 @@ def ungroup_universal_composition(
     return revision
 
 
+@_with_canvas_interface_projection_scope
+@with_relation_projection_scope
+@with_catalog_verification_scope
+def remove_universal_composition_member(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    composition_root: str,
+    member_root: str,
+    *,
+    projected_canvas: Mapping[str, object] | None = None,
+    authentication_context: object | None = None,
+) -> int:
+    """Expose one composition member on the parent scope, keeping the group."""
+    if type(composition_root) is not str or not composition_root:
+        raise InvalidCell("remove-member group is invalid")
+    if type(member_root) is not str or not member_root:
+        raise InvalidCell("remove-member member is invalid")
+    snapshot = store.dense_snapshot()
+    view_session, context = _view_session_for_context(
+        registry, authentication_context
+    )
+    projection = _interaction_canvas_at_revision(
+        store, registry, context, snapshot.revision, projected_canvas
+    )
+    visible_roots = tuple(
+        str(node["id"])
+        for node in projection.get("nodes", ())
+        if isinstance(node, Mapping) and type(node.get("id")) is str
+    )
+    if composition_root not in visible_roots or not _is_universal_composition(
+        snapshot, registry, composition_root
+    ):
+        raise InvalidCell("remove-member target is not a visible WIP composition")
+    _authorize(
+        snapshot,
+        registry,
+        "catalog.configure",
+        object_root=composition_root,
+        authentication_context=context,
+    )
+    composition_members = read_relation(
+        snapshot, composition_root, budget=100_000
+    )
+    child_members = tuple(
+        member for member in composition_members
+        if member.role_id == registry.roles["member"]
+    )
+    children = tuple(member.participant_id for member in child_members)
+    if member_root not in children:
+        raise InvalidCell("composition is not a member of this scope")
+    remaining_children = tuple(child for child in children if child != member_root)
+    projected_scope = projection.get("scope")
+    if not isinstance(projected_scope, Mapping):
+        raise InvalidCell("remove-member projection scope is missing")
+    parent_root = projected_scope.get("current")
+    structural_trail = _read_view_scope_trail_structure(
+        snapshot, registry, view_session
+    )
+    if type(parent_root) is not str or structural_trail[-1] != parent_root:
+        raise InvalidCell("remove-member projection scope drifted")
+
+    token = uuid.uuid4().hex
+    entry_root = "app:scope-exposure:%s" % token
+    after_roots = []
+    inserted_member = False
+    for root_id in visible_roots:
+        if root_id == composition_root:
+            after_roots.append(member_root)
+            inserted_member = True
+            after_roots.append(composition_root)
+        elif root_id != member_root:
+            after_roots.append(root_id)
+    if not inserted_member:
+        after_roots.append(member_root)
+        after_roots.append(composition_root)
+    if len(after_roots) != len(set(after_roots)):
+        raise InvalidCell("remove-member would duplicate a visible root")
+
+    scope_relation_root = (
+        view_session.visibility_root
+        if parent_root == registry.canvas_root
+        else parent_root
+    )
+    member_incidence_ids = tuple(
+        member.incidence_id for member in child_members
+        if member.participant_id == member_root
+    )
+    if len(member_incidence_ids) != 1:
+        raise InvalidCell("composition member incidence is ambiguous")
+    group_patch = prepare_remove_relation_members(
+        snapshot, composition_root, member_incidence_ids, budget=100_000
+    )
+    staged = overlay_read_snapshot(snapshot, replace=group_patch.replace)
+
+    if parent_root == registry.canvas_root:
+        interface_role = registry.assembly_protocol.role("interface")
+        member_set = frozenset((member_root,))
+        returning_interfaces = tuple(
+            member.participant_id
+            for member in read_relation(
+                snapshot, registry.application_root, budget=100_000
+            )
+            if member.role_id == interface_role
+            and _canvas_interface_owner_in(
+                snapshot, registry, member.participant_id, member_set
+            )
+        )
+        returning_properties = tuple(
+            member.participant_id
+            for member in read_relation(
+                snapshot, registry.canvas_root, budget=100_000
+            )
+            if member.role_id == registry.roles["property"]
+            and _property_owner_in(
+                snapshot, registry, member.participant_id, member_set
+            )
+        )
+        held = {
+            (member.role_id, member.participant_id)
+            for member in read_relation(
+                staged, scope_relation_root, budget=100_000
+            )
+        }
+        visibility_additions = tuple(
+            pair for pair in (
+                (registry.roles["visible"], member_root),
+                *((interface_role, root) for root in returning_interfaces),
+                *((registry.roles["property"], root)
+                  for root in returning_properties),
+            ) if pair not in held
+        )
+    else:
+        held = {
+            (member.role_id, member.participant_id)
+            for member in read_relation(
+                staged, scope_relation_root, budget=100_000
+            )
+        }
+        pair = (registry.roles["member"], member_root)
+        visibility_additions = () if pair in held else (pair,)
+    visibility_patch = prepare_append_relation_members(
+        staged, scope_relation_root, visibility_additions, budget=100_000
+    )
+    exposure = _composition_exposure_cells(
+        registry, parent_root, tuple(after_roots), entry_root=entry_root
+    )
+    actor_root = registry.authorization.broker.resolve(context).subject_root
+    previous_entry, exposure_create, exposure_replace = (
+        _prepare_exposure_activation(
+            snapshot,
+            registry,
+            view_session,
+            parent_root,
+            entry_root,
+        )
+    )
+    history_root = "app:composition-history:%s" % token
+    history_cells = _composition_history_cells(
+        registry,
+        history_entry_root=history_root,
+        operation="remove-member",
+        actor_root=actor_root,
+        parent_root=parent_root,
+        composition_root=composition_root,
+        before_exposure_root=previous_entry,
+        after_exposure_root=entry_root,
+    )
+    history_patch = prepare_append_relation_members(
+        snapshot,
+        view_session.composition_history_root,
+        ((registry.roles["relation"], history_root),),
+        budget=100_000,
+    )
+    base_create = (
+        *exposure.cells,
+        *exposure_create,
+        *history_cells,
+        *history_patch.create,
+        *visibility_patch.create,
+    )
+    base_ids = tuple(cell.id for cell in base_create)
+    if (
+        len(base_ids) != len(set(base_ids))
+        or any(root_id in snapshot.cells for root_id in base_ids)
+    ):
+        raise InvalidCell("atomic remove-member has invalid pending identities")
+
+    authority = registry.authorization
+    identity = authority.identity_protocol
+    relationship_broker = authority.relationship_broker
+    read_root = authority.protocol.actions["read"]
+    projection_grants = _prepare_exposed_group_grants(
+        snapshot,
+        registry,
+        view_session,
+        entry_root,
+        tuple(after_roots),
+        pending_roots=base_ids,
+    )
+    canvas_grants: tuple[object, ...] = ()
+    if parent_root == registry.canvas_root:
+        authority_staged = overlay_read_snapshot(
+            snapshot,
+            create=(
+                *base_create,
+                *(cell for grant in projection_grants for cell in grant.cells),
+            ),
+        )
+        grant_root = _projection_grant_root(
+            view_session.subject_root,
+            member_root,
+            view_session.visibility_root,
+        )
+        if not _relationship_is_active(snapshot, authority, grant_root):
+            grant = prepare_authority_relationship_grant(
+                authority_staged,
+                identity,
+                relationship_broker,
+                relationship_broker.mint_from_trusted_administrator(
+                    actor_root
+                ),
+                relationship_id=_fresh_relationship_id(
+                    authority_staged, grant_root
+                ),
+                source_root=authority.resource_reader_principal_root,
+                target_root=view_session.subject_root,
+                kind="delegation",
+                tenant_root=authority.tenant_root,
+                administrator_root=actor_root,
+                scope_root=member_root,
+                action_roots=(read_root,),
+                reason=(
+                    "subject receives this resource through the authorized "
+                    "view"
+                ),
+                evidence_roots=(view_session.visibility_root,),
+                pending_roots=base_ids,
+            )
+            canvas_grants = (grant,)
+    identity_patch = prepare_append_relation_members(
+        snapshot,
+        identity.root_id,
+        (
+            (identity.role("relationship-member"), grant.root_id)
+            for grant in (*projection_grants, *canvas_grants)
+        ),
+        budget=100_000,
+    )
+    session_patch = prepare_append_relation_members(
+        snapshot,
+        view_session.root_id,
+        ((registry.roles["relation"], grant.root_id)
+         for grant in (*projection_grants, *canvas_grants)),
+        budget=100_000,
+    )
+    pending_roots = (
+        *base_ids,
+        *(cell.id for grant in projection_grants for cell in grant.cells),
+        *(cell.id for grant in canvas_grants for cell in grant.cells),
+        *(cell.id for cell in identity_patch.create),
+        *(cell.id for cell in session_patch.create),
+    )
+    selection_roots = (
+        (member_root, composition_root)
+        if remaining_children else (member_root,)
+    )
+    selection_transition = _prepare_selection_transition(
+        snapshot,
+        registry,
+        view_session,
+        selection_roots,
+        member_root,
+        reason_root=_FOCUS_REASON_COMPOSITION,
+        pending_roots=pending_roots,
+        scope_root=parent_root,
+    )
+    replacements = {cell.id: cell for cell in group_patch.replace}
+    for cell in (
+        *visibility_patch.replace,
+        *exposure_replace,
+        *history_patch.replace,
+        *identity_patch.replace,
+        *session_patch.replace,
+        *selection_transition.replace,
+    ):
+        if cell.id in replacements and replacements[cell.id] != cell:
+            raise InvalidCell("atomic remove-member has conflicting patches")
+        replacements[cell.id] = cell
+    create_cells = (
+        *base_create,
+        *(cell for grant in projection_grants for cell in grant.cells),
+        *(cell for grant in canvas_grants for cell in grant.cells),
+        *identity_patch.create,
+        *session_patch.create,
+        *selection_transition.create,
+    )
+    if parent_root == registry.canvas_root:
+        create_cells, replacements = _reconcile_top_visibility_index(
+            snapshot, registry, view_session, create_cells, replacements
+        )
+    revision = _commit_universal_user_change(
+        store,
+        registry,
+        view_session,
+        context,
+        snapshot,
+        route="/api/universal/interaction",
+        command_name="catalog.configure",
+        authorization_scope_root=composition_root,
+        create=create_cells,
+        replace=tuple(replacements.values()),
+    )
+    for grant in (*projection_grants, *canvas_grants):
+        relationship_broker.record_generation(grant.root_id, grant.generation)
+    return revision
+
+
 @with_relation_projection_scope
 @with_catalog_verification_scope
 def _set_universal_scope_execution(
@@ -48850,7 +49282,7 @@ def _ensure_universal_toolbar_capability_interactions(
             raise InvalidCell("%s interaction control is invalid" % family)
         activation = control.get("activation")
         if (
-            control.get("zone") == "canvas-toolbar"
+            control.get("zone") in {"canvas-toolbar", "canvas-internal"}
             and control.get("applicable") is True
             and isinstance(activation, Mapping)
             and activation.get("capability") == capability_root
@@ -55773,6 +56205,7 @@ __all__ = [
     "merge_universal_lifecycle_content",
     "promote_universal_resource_lifecycle",
     "connect_universal_roots",
+    "remove_universal_composition_member",
     "edit_universal_interface_value",
     "edit_universal_interface_collection",
     "transition_universal_operational_state",

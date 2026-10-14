@@ -26,8 +26,12 @@ const tokens = fs.readFileSync(path.join(root, 'nodelang/studio/tokens.jsx'), 'u
 const palette = tokens.slice(tokens.indexOf('window.AH = {'), tokens.indexOf('window.ArchHubTheme ='));
 const LM = new Proxy(Object.fromEntries([...palette.matchAll(/^ {2}(\w+):/gm)].map(m => [m[1], 'token-' + m[1]])), {
   get:(held, key) => {
-    if (key === 'rad') return {xs:3, sm:5, md:6, lg:8, xl:10, pill:999};
+    if (key === 'rad') return {chip:3, xs:3, control:5, sm:5, node:6, md:6, panel:8, lg:8, dialog:10, xl:10, pill:999};
     if (key === 'sp') return {xs:4, sm:8, md:12, lg:16, xl:24};
+    if (key === 'fs') return {bodySm:{sz:13, ln:18, wt:400}, bodySmStrong:{sz:13, ln:18, wt:500}, caption:{sz:12, ln:16}, label:{sz:11, ln:14, wt:500, letter:'.04em'}, data:{sz:12, ln:16, wt:400}, dataSm:{sz:11, ln:14, wt:400}};
+    if (key === 'icon') return {ui:{size:16, box:20}, category:{size:12, box:20}};
+    if (key === 'shadow') return {flat:'none'};
+    if (key === 'dur') return {fast:120, med:180};
     if (typeof key === 'string' && !(key in held)) throw new Error('studio-lm.jsx reads an undefined token: ' + key);
     return held[key];
   }});
@@ -49,6 +53,10 @@ const helpers = () => {
     '\nglobalThis.h = {canvasWheelZoom: typeof canvasWheelZoom === "function" ? canvasWheelZoom : null,' +
     ' canvasDimmedIds: typeof canvasDimmedIds === "function" ? canvasDimmedIds : null};', context);
   return context.h;
+};
+const parseCanvasTransform = value => {
+  const match = String(value || '').match(/translate3d\(([-0-9.]+)px,\s*([-0-9.]+)px,\s*0\)\s*scale\(([-0-9.]+)\)/);
+  return match ? {x:+match[1], y:+match[2], zoom:+match[3]} : null;
 };
 
 const createdNodeIdHelper = () => {
@@ -96,7 +104,7 @@ test('library create reveal uses the created node id from the projection, not th
     'created-node');
 });
 
-async function mount({focusId = null, history = null, nodes = NODES(), wires = WIRES()} = {}) {
+async function mount({focusId = null, history = null, nodes = NODES(), wires = WIRES(), authority = false, lateMoveMember = false, selectionTransport = null, topologyTransport = null} = {}) {
   const {JSDOM} = await import('jsdom');
   const React = require('react');
   const {createRoot} = require('react-dom/client');
@@ -116,7 +124,7 @@ async function mount({focusId = null, history = null, nodes = NODES(), wires = W
   if (history) {
     dom.window.ARCHHUB_HISTORY = async operation => { calls.push(['history', operation]); history.pending = operation; return {ok:true}; };
   }
-  dom.window.ARCHHUB_EXISTING_WORKSHOP = {
+  const topologyApi = {
     getSnapshot:() => ({topology:snapshot}),
     moveTopologyNodes:async (positions, expectedRevision, expectedPositions, placement) => {
       calls.push(['move', JSON.parse(JSON.stringify(positions))]);
@@ -135,6 +143,89 @@ async function mount({focusId = null, history = null, nodes = NODES(), wires = W
       return snapshot;
     },
   };
+  if (authority) {
+    const moveMember = async (member, fromGroup, toGroup, position) => {
+      calls.push(['member', member, fromGroup, toGroup, JSON.parse(JSON.stringify(position))]);
+      return snapshot;
+    };
+    dom.window.ARCHHUB_STUDIO_AUTHORITY = {
+      getSnapshot:() => snapshot,
+      moveMany:topologyApi.moveTopologyNodes,
+      load:async () => snapshot,
+      open:async root => { calls.push(['open', root]); return {ok:true}; },
+      composition:async (operation, roots) => {
+        calls.push(['gesture', [...roots]]);
+        calls.push(['interaction', operation]);
+        snapshot = {...snapshot, canvas:{...snapshot.canvas, revision:snapshot.canvas.revision + 1}, selected:'group-node'};
+        return snapshot;
+      },
+    };
+    if (!lateMoveMember) dom.window.ARCHHUB_STUDIO_AUTHORITY.moveMember = moveMember;
+    else dom.window.__attachMoveMember = () => { dom.window.ARCHHUB_STUDIO_AUTHORITY.moveMember = moveMember; };
+  } else {
+    dom.window.ARCHHUB_EXISTING_WORKSHOP = topologyApi;
+  }
+  let selectionApi = null;
+  if (selectionTransport || topologyTransport) {
+    const adapterContext = vm.createContext({URLSearchParams});
+    vm.runInContext(fs.readFileSync(path.join(root, 'nodelang/studio/studio-authority.js'), 'utf8'), adapterContext);
+    vm.runInContext(fs.readFileSync(path.join(root, 'nodelang/studio/studio-existing-workshop.js'), 'utf8'), adapterContext);
+    let durable = {ok:true, application_root:'app', revision:3,
+      authorization:{subject:'founder', session:'s'}, scope:{current:'scope', trail:[{root:'scope'}]},
+      nodes, wires, interaction_projection:{revision:3, bindings:[]}};
+    const controls = () => {
+      durable.configuration = {design_system:{control_catalog:{controls:[{owner:'group-control', applicable:true,
+        activation:{arguments:{operation:'group'}}}]}}};
+      durable.interaction_projection = {revision:durable.revision, bindings:[
+        {control:'group-control', interaction:'group-action', event:'activate', acknowledgement_mode:'receipt-v1'},
+        {control:'app:control:canvas:remove-member', interaction:'remove-action', event:'activate', acknowledgement_mode:'receipt-v1'},
+      ]};
+    };
+    if (topologyTransport) controls();
+    selectionApi = adapterContext.ArchHubExistingWorkshop.create({
+      uuid:() => 'member-command',
+      get:async () => structuredClone(durable),
+      post:async (url, body) => {
+        calls.push(['post', url, JSON.parse(JSON.stringify(body))]);
+        if (selectionTransport?.beforeReply) await selectionTransport.beforeReply(calls.filter(call => call[0] === 'post').length);
+        if (topologyTransport?.beforeReply) await topologyTransport.beforeReply(url, body);
+        if (topologyTransport?.refuse) {
+          const error = topologyTransport.refuse(url, body);
+          if (error) return {ok:false, error};
+        }
+        if (topologyTransport && url === '/api/universal/interaction') {
+          const base = durable.revision;
+          if (body.membership) {
+            const {member, from_group, to_group} = body.membership;
+            assert.equal(to_group, '');
+            const group = {...durable.nodes.find(node => node.id === from_group)};
+            group.members = group.members.filter(row => (typeof row === 'string' ? row : row.id) !== member);
+            group.member_count = group.members.length;
+            const released = {...NODES().find(node => node.id === member), group:'', ...body.membership.position};
+            durable.nodes = durable.nodes.map(node => node.id === from_group ? {...group} : node);
+            if (!durable.nodes.some(node => node.id === member)) durable.nodes.push(released);
+          } else if (!topologyTransport.missingGroup) {
+            const members = durable.selection.map(id => ({id, title:durable.nodes.find(node => node.id === id).title}));
+            const group = {id:'group-node', cat:'logic', live:true, composition:true, title:'Group',
+              sub:'', x:40, y:60, w:300, h:160, params:[], ins:[], outs:[], group:'', members, member_count:members.length};
+            durable.nodes = [...durable.nodes.filter(node => !durable.selection.includes(node.id)), group];
+            durable.selection = ['group-node']; durable.selected = 'group-node';
+          }
+          durable.revision += 1; controls();
+          return {ok:true, projection_mode:'receipt-v1', base_revision:base, committed_revision:durable.revision,
+            created_root:body.membership ? undefined : 'group-node'};
+        }
+        durable = {...durable, selected:body.focus, revision:durable.revision + 1,
+          interaction_projection:{revision:durable.revision + 1, bindings:[]},
+          nodes:durable.nodes.map(node => ({...node, selected:body.roots.includes(node.id)})),
+          selection:[...body.roots]};
+        if (topologyTransport) controls();
+        return structuredClone(durable);
+      }, projectCanvas:value => ({nodes:value.nodes, wires:value.wires}),
+    });
+    selectionApi.setTopologyCanvas(structuredClone(durable));
+    dom.window.ARCHHUB_EXISTING_WORKSHOP = selectionApi;
+  }
   dom.window.ARCHHUB_RETRACT = async rootId => { calls.push(['retract', rootId]); return {ok:true}; };
   dom.window.ARCHHUB_RUN = async () => { calls.push(['run']); return {ok:true, display:{}, pending:{}}; };
   dom.window.ARCHHUB_NODE_CREATE = async spec => { calls.push(['create', JSON.parse(JSON.stringify(spec))]); return {ok:true, id:'created-node'}; };
@@ -148,10 +239,18 @@ async function mount({focusId = null, history = null, nodes = NODES(), wires = W
         onClick:() => held.run()}, label))), FloatingComposer:() => null, CanvasAddBox:() => null, MiniMap:() => null, Socket:() => null,
     nodeModelRow:() => null, smallBtn:() => ({}), toolBtn:() => ({}), kbd:() => ({}),
     setTimeout:dom.window.setTimeout.bind(dom.window), clearTimeout:dom.window.clearTimeout.bind(dom.window)});
+  if (selectionApi) {
+    const start = source.indexOf('const useStudioProjection =');
+    const end = source.indexOf('// ─', start);
+    vm.runInContext(source.slice(start, end), context);
+  }
   vm.runInContext(transformSync(shortcutSlice() + slice() + '\nglobalThis.NodeCanvas = NodeCanvas;',
     {loader:'jsx', format:'cjs'}).code, context);
   const reactRoot = createRoot(dom.window.document.getElementById('root'));
-  const props = {focusId, setFocusId:() => {}, setLibraryOpen:() => {}, userNodes:[], addNodeFromLibrary:() => {}, model:null};
+  const props = {focusId, setFocusId:selectionApi ? (id, roots) => {
+    calls.push(['focus', id, [...roots]]);
+    selectionApi.selectTopology(id, roots).catch(() => {});
+  } : () => {}, setLibraryOpen:() => {}, userNodes:[], addNodeFromLibrary:() => {}, model:null};
   const act = fn => React.act(async () => { await fn(); });
   const draw = () => act(() => reactRoot.render(React.createElement(context.NodeCanvas, props)));
   await draw();
@@ -165,14 +264,16 @@ async function mount({focusId = null, history = null, nodes = NODES(), wires = W
   const row = label => rows().find(button => button.getAttribute('aria-label') === label.replace(/…$/, ''));
   const transform = () => region().children[0].style.transform;
   return {
-    doc, calls, draw, act, region, card, menu, rows, row, transform, win:dom.window,
+    doc, calls, draw, act, region, card, menu, rows, row, transform, win:dom.window, selectionApi,
     rightClick:async el => act(() => { mouse(el, 'contextmenu', {clientX:100, clientY:100}); }),
     click:async el => act(() => { el.dispatchEvent(new dom.window.MouseEvent('click', {bubbles:true})); }),
     mouse:async (el, type, init) => act(() => { mouse(el, type, init); }),
     key:async (el, init) => { let e; await act(() => { e = key(el, init); }); return e; },
     wheel:async deltaY => act(() => { region().dispatchEvent(new dom.window.WheelEvent('wheel', {deltaY, clientX:300, clientY:300, bubbles:true, cancelable:true})); }),
+    wheelAt:async (deltaY, clientX, clientY) => act(() => { region().dispatchEvent(new dom.window.WheelEvent('wheel', {deltaY, clientX, clientY, bubbles:true, cancelable:true})); }),
     settle:async ms => act(() => new Promise(done => dom.window.setTimeout(done, ms))),
     toast:() => [...dom.window.document.querySelectorAll('[role="status"],[role="alert"]')].map(n => n.textContent).join(' | '),
+    groupButton:() => doc.querySelector('[data-selection-bar] button'),
     remount:async () => { await act(() => reactRoot.render(null)); await draw(); },
     close:async () => {
       await act(() => reactRoot.unmount());
@@ -296,6 +397,139 @@ test('M3c: with two or more cards selected the node menu leads with the design G
     await view.settle(5);
     assert.deepEqual(view.calls.filter(call => call[0] === 'compose'), [['compose', 'group', ['a', 'b']]]);
     assert.match(view.toast(), /Grouped 2 nodes into one node/);
+  } finally { await view.close(); }
+});
+
+test('M3e: the visible Group button sends the current two-card selection after a re-render', async () => {
+  const view = await mount({authority:true});
+  try {
+    await view.click(view.card('a'));
+    await view.mouse(view.card('b'), 'click', {shiftKey:true});
+    await view.draw();
+    assert.equal(view.groupButton().textContent.includes('Group 2 nodes'), true);
+    await view.click(view.groupButton());
+    assert.deepEqual(view.calls.filter(call => call[0] === 'gesture'), [['gesture', ['a', 'b']]]);
+  } finally { await view.close(); }
+});
+
+test('UPD2 p9: click A then Shift B keeps two drawn selections and Group with the real gesture selection response', async () => {
+    const view = await mount({selectionTransport:{}});
+    try {
+      await view.mouse(view.card('a'), 'mousedown', {clientX:60, clientY:70});
+      await view.mouse(view.card('a'), 'mouseup', {clientX:60, clientY:70});
+      await view.click(view.card('a'));
+      await view.settle(5);
+      assert.equal(view.card('a').getAttribute('data-selected'), 'true');
+      await view.mouse(view.card('b'), 'mousedown', {shiftKey:true, clientX:420, clientY:70});
+      await view.mouse(view.card('b'), 'mouseup', {shiftKey:true, clientX:420, clientY:70});
+      await view.mouse(view.card('b'), 'click', {shiftKey:true});
+      await view.settle(5);
+      assert.deepEqual(view.calls.filter(call => call[0] === 'focus'),
+        [['focus', 'a', ['a']], ['focus', 'b', ['a', 'b']]]);
+      assert.deepEqual(view.calls.filter(call => call[0] === 'post').map(call => call[2].roots), [['a'], ['a','b']]);
+      assert.deepEqual(['a','b'].map(id => view.card(id).getAttribute('data-selected')), ['true','true']);
+      assert.match(view.groupButton()?.textContent || '', /Group 2 nodes/);
+      assert.equal(view.groupButton().disabled, false);
+      assert.equal(view.selectionApi.getSnapshot().topology.requires_refresh, false);
+    } finally { await view.close(); }
+});
+
+test('UPD2 p9: Shift B while click A is pending sends and renders the two-root gesture', async () => {
+  let releaseFirst;
+  const firstReply = new Promise(resolve => { releaseFirst = resolve; });
+  const view = await mount({selectionTransport:{beforeReply:count => count === 1 ? firstReply : undefined}});
+  try {
+    await view.click(view.card('a'));
+    await view.settle(0);
+    await view.mouse(view.card('b'), 'click', {shiftKey:true});
+    await view.act(() => { releaseFirst(); });
+    await view.settle(5);
+    assert.deepEqual(view.calls.filter(call => call[0] === 'focus'),
+      [['focus', 'a', ['a']], ['focus', 'b', ['a', 'b']]]);
+    assert.deepEqual(view.calls.filter(call => call[0] === 'post').map(call => call[2].roots), [['a'], ['a','b']]);
+    assert.deepEqual(['a','b'].map(id => view.card(id).getAttribute('data-selected')), ['true','true']);
+    assert.match(view.groupButton()?.textContent || '', /Group 2 nodes/);
+    assert.equal(view.groupButton().disabled, false);
+    assert.equal(view.selectionApi.getSnapshot().topology.requires_refresh, false);
+  } finally { releaseFirst(); await view.close(); }
+});
+
+test('UPD2 p9: click A and Shift B in one React batch preserve the immediate selection intent', async () => {
+  const view = await mount({selectionTransport:{}});
+  try {
+    await view.act(() => {
+      view.card('a').dispatchEvent(new view.win.MouseEvent('click', {bubbles:true}));
+      view.card('b').dispatchEvent(new view.win.MouseEvent('click', {bubbles:true, shiftKey:true}));
+    });
+    await view.settle(5);
+    assert.deepEqual(view.calls.filter(call => call[0] === 'focus'),
+      [['focus', 'a', ['a']], ['focus', 'b', ['a','b']]]);
+    assert.deepEqual(view.calls.filter(call => call[0] === 'post').map(call => call[2].roots), [['a'], ['a','b']]);
+    assert.deepEqual(['a','b'].map(id => view.card(id).getAttribute('data-selected')), ['true','true']);
+    assert.match(view.groupButton()?.textContent || '', /Group 2 nodes/);
+    assert.equal(view.groupButton().disabled, false);
+  } finally { await view.close(); }
+});
+
+test('M3f: member drag-out posts the inverse-transformed canvas point under pan and 150% zoom', async () => {
+  const nodes = [
+    {id:'group-node', cat:'logic', live:true, x:200, y:200, w:300, h:160, title:'Group', sub:'',
+      params:[], ins:[], outs:[], group:'', pinned:false, application:false, composition:true,
+      memberCount:2, members:[{id:'a', title:'Sketch Lines'}, {id:'b', title:'Line Watcher'}]},
+    {id:'a', cat:'logic', live:true, x:220, y:220, w:210, h:110, title:'Sketch Lines', sub:'',
+      params:[], ins:[], outs:[], group:'group-node', pinned:false, application:false},
+    {id:'b', cat:'logic', live:true, x:440, y:220, w:210, h:110, title:'Line Watcher', sub:'',
+      params:[], ins:[], outs:[], group:'group-node', pinned:false, application:false},
+  ];
+  const view = await mount({authority:true, nodes, wires:[]});
+  try {
+    await view.wheelAt(-Math.log(1.5 / 0.66) / 0.001, 0, 0);
+    await view.mouse(view.card('group-node'), 'mousedown', {button:1, clientX:0, clientY:0});
+    await view.mouse(view.doc, 'mousemove', {clientX:120, clientY:80});
+    await view.mouse(view.doc, 'mouseup', {});
+    const transform = parseCanvasTransform(view.transform());
+    assert.equal(transform.zoom, 1.5);
+    view.card('group-node').getBoundingClientRect = () => ({left:420, top:380, right:720, bottom:600, width:300, height:220});
+    const chip = view.doc.querySelector('[data-member-chip="a"]');
+    await view.mouse(chip, 'mousedown', {button:0, clientX:450, clientY:410});
+    await view.mouse(view.doc, 'mousemove', {clientX:795, clientY:635});
+    await view.mouse(view.doc, 'mouseup', {clientX:795, clientY:635});
+    const posted = view.calls.filter(call => call[0] === 'member');
+    assert.equal(posted.length, 1);
+    assert.equal(posted[0][1], 'a');
+    assert.equal(posted[0][2], 'group-node');
+    assert.equal(posted[0][3], '');
+    assert.equal(Math.round(posted[0][4].x * 1000) / 1000, Math.round(((795 - transform.x) / transform.zoom) * 1000) / 1000);
+    assert.equal(Math.round(posted[0][4].y * 1000) / 1000, Math.round(((635 - transform.y) / transform.zoom) * 1000) / 1000);
+  } finally { await view.close(); }
+});
+
+test('M3g: member drag-out works with window pointer events and a late moveMember authority', async () => {
+  const nodes = [
+    {id:'group-node', cat:'logic', live:true, x:200, y:200, w:300, h:160, title:'Group', sub:'',
+      params:[], ins:[], outs:[], group:'', pinned:false, application:false, composition:true,
+      memberCount:2, members:[{id:'a', title:'Sketch Lines'}, {id:'b', title:'Line Watcher'}]},
+    {id:'a', cat:'logic', live:true, x:220, y:220, w:210, h:110, title:'Sketch Lines', sub:'',
+      params:[], ins:[], outs:[], group:'group-node', pinned:false, application:false},
+    {id:'b', cat:'logic', live:true, x:440, y:220, w:210, h:110, title:'Line Watcher', sub:'',
+      params:[], ins:[], outs:[], group:'group-node', pinned:false, application:false},
+  ];
+  const view = await mount({authority:true, lateMoveMember:true, nodes, wires:[]});
+  try {
+    view.win.__attachMoveMember();
+    view.card('group-node').getBoundingClientRect = () => ({left:420, top:380, right:720, bottom:600, width:300, height:220});
+    const chip = view.doc.querySelector('[data-member-chip="a"]');
+    await view.mouse(chip, 'pointerdown', {button:0, clientX:450, clientY:410});
+    assert.equal(chip.getAttribute('data-member-drag'), 'armed');
+    await view.mouse(view.win, 'pointermove', {clientX:795, clientY:635});
+    assert.equal(chip.getAttribute('data-member-drag'), 'left');
+    await view.mouse(view.region(), 'pointerup', {clientX:795, clientY:635});
+    assert.equal(chip.getAttribute('data-member-drag'), 'posted');
+    const posted = view.calls.filter(call => call[0] === 'member');
+    assert.equal(posted.length, 1);
+    assert.equal(posted[0][1], 'a');
+    assert.equal(posted[0][2], 'group-node');
+    assert.equal(posted[0][3], '');
   } finally { await view.close(); }
 });
 
@@ -486,5 +720,137 @@ test('R1: pan and zoom are one layer transform, the grid is fixed, and a drag re
     for (const still of ['a', 'c', 'd']) assert.equal(renders[still] || 0, 0, still + ' did not move and did not re-render: ' + JSON.stringify(renders));
     assert.ok(renders.b > 0 && renders.b <= 45, 'the moving card re-renders once per move at most: ' + renders.b);
     assert.equal(view.doc.querySelector('#lm-wire-glow'), null, 'no wire glow filter');
+  } finally { await view.close(); }
+});
+
+const P10_GROUP_NODES = () => [{id:'group-node', cat:'logic', live:true, composition:true, title:'Group',
+  sub:'', x:40, y:60, w:300, h:160, params:[], ins:[], outs:[], group:'',
+  members:[{id:'a', title:'Sketch Lines'}, {id:'b', title:'Line Watcher'}], member_count:2}];
+async function p10Drop(view, member = 'a') {
+  view.card('group-node').getBoundingClientRect = () => ({left:40, top:60, right:340, bottom:220, width:300, height:160});
+  const chip = view.doc.querySelector('[data-member-chip="' + member + '"]');
+  assert.equal(!!chip, true);
+  await view.mouse(chip, 'pointerdown', {clientX:100, clientY:100});
+  await view.mouse(view.win, 'pointermove', {clientX:800, clientY:400});
+  await view.mouse(view.win, 'pointerup', {clientX:800, clientY:400});
+  await view.settle(5);
+  return chip;
+}
+
+test('UPD2 p10 GR: ordinary installed topology drag-off sends exactly one membership POST and re-renders 2 to 1', async () => {
+  const view = await mount({nodes:P10_GROUP_NODES(), wires:[], topologyTransport:{}});
+  try {
+    const revision = view.selectionApi.getSnapshot().topology.canvas.revision;
+    const chip = await p10Drop(view);
+    const posts = view.calls.filter(call => call[0] === 'post');
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0][1], '/api/universal/interaction');
+    assert.equal(posts[0][2].membership.member, 'a');
+    assert.equal(posts[0][2].membership.from_group, 'group-node');
+    assert.equal(posts[0][2].membership.to_group, '');
+    assert.equal(view.selectionApi.getSnapshot().topology.canvas.revision, revision + 1);
+    assert.equal(view.card('group-node').querySelectorAll('[data-member-chip]').length, 1);
+    assert.equal(view.card('group-node').querySelector('[data-member-chip="b"]') !== null, true);
+    assert.equal(view.card('a') !== null, true);
+    assert.equal(chip.getAttribute('data-member-drag'), 'posted');
+  } finally { await view.close(); }
+});
+
+test('UPD2 p10 Group: two selected cards create a real card in five mounts, including a held selection reply', async () => {
+  for (let round = 0; round < 5; round += 1) {
+    let release;
+    const held = new Promise(resolve => { release = resolve; });
+    let gesture = 0;
+    const view = await mount({nodes:NODES().slice(0,2), wires:[], topologyTransport:{
+      beforeReply:(url) => url.endsWith('/gesture') && ++gesture === 2 ? held : undefined,
+    }});
+    try {
+      await view.click(view.card('a'));
+      await view.mouse(view.card('b'), 'click', {shiftKey:true});
+      assert.deepEqual(['a','b'].map(id => view.card(id).getAttribute('data-selected')), ['true','true']);
+      assert.equal(view.selectionApi.getSnapshot().topology.pending, true);
+      assert.equal(view.groupButton().disabled, false, 'an in-flight selection must not silently discard the Group click');
+      await view.click(view.groupButton());
+      assert.equal(view.calls.filter(call => call[0] === 'post' && call[1].endsWith('/interaction')).length, 0);
+      await view.act(() => release());
+      await view.settle(120);
+      const interactions = view.calls.filter(call => call[0] === 'post' && call[1].endsWith('/interaction'));
+      assert.equal(interactions.length, 1, 'round ' + round + ': exactly one admitted Group action');
+      assert.equal(view.card('group-node') !== null, true, 'round ' + round + ': created card renders');
+      assert.equal(view.card('group-node').querySelectorAll('[data-member-chip]').length, 2);
+      assert.match(view.toast(), /Grouped 2 nodes/);
+      // The new card mounted while menuBusy=true; its later drop must use current admission.
+      const beforeDrop = view.selectionApi.getSnapshot().topology.canvas.revision;
+      await p10Drop(view);
+      const removes = view.calls.filter(call => call[0] === 'post' && call[2].membership);
+      assert.equal(removes.length, 1, 'round ' + round + ': drag after Group still posts');
+      assert.equal(view.selectionApi.getSnapshot().topology.canvas.revision, beforeDrop + 1);
+      assert.equal(view.card('group-node').querySelectorAll('[data-member-chip]').length, 1);
+    } finally { release(); await view.close(); }
+  }
+});
+
+test('UPD2 p10 refusals: no remove transport is visible and never traced as posted', async () => {
+  const view = await mount({nodes:P10_GROUP_NODES(), wires:[]});
+  try {
+    const chip = await p10Drop(view);
+    assert.match(chip.getAttribute('data-member-drag'), /^refused: .*unavailable/);
+    assert.match(view.toast(), /Removing a member is unavailable/);
+    assert.equal(view.card('group-node').querySelectorAll('[data-member-chip]').length, 2);
+    assert.equal(view.calls.filter(call => call[0] === 'post').length, 0);
+  } finally { await view.close(); }
+});
+
+test('UPD2 p10 refusals: Group ok:false and drag server refusal are visible without a success notice', async () => {
+  const group = await mount({nodes:NODES().slice(0,2), wires:[], topologyTransport:{
+    refuse:url => url.endsWith('/interaction') ? 'Group owner refused these nodes.' : '',
+  }});
+  try {
+    await group.click(group.card('a'));
+    await group.mouse(group.card('b'), 'click', {shiftKey:true});
+    await group.click(group.groupButton()); await group.settle(5);
+    assert.equal(group.card('group-node'), null);
+    assert.match(group.toast(), /Group owner refused these nodes/);
+    assert.doesNotMatch(group.toast(), /Grouped 2 nodes/);
+  } finally { await group.close(); }
+  const drag = await mount({nodes:P10_GROUP_NODES(), wires:[], topologyTransport:{
+    refuse:url => url.endsWith('/interaction') ? 'Member owner refused this drop.' : '',
+  }});
+  try {
+    const chip = await p10Drop(drag);
+    assert.match(chip.getAttribute('data-member-drag'), /^refused: .*Member owner refused/);
+    assert.match(drag.toast(), /Member owner refused this drop/);
+    assert.equal(drag.card('group-node').querySelectorAll('[data-member-chip]').length, 2);
+    assert.equal(drag.calls.filter(call => call[0] === 'post').length, 1);
+  } finally { await drag.close(); }
+});
+
+test('UPD2 p10 trace: pending drop is never posted before the transport answers; a second busy drop is visibly refused', async () => {
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  const view = await mount({nodes:P10_GROUP_NODES(), wires:[], topologyTransport:{beforeReply:() => held}});
+  try {
+    const first = await p10Drop(view, 'a');
+    assert.equal(first.getAttribute('data-member-drag'), 'pending');
+    const second = await p10Drop(view, 'b');
+    assert.match(second.getAttribute('data-member-drag'), /^refused: .*current action/);
+    assert.match(view.toast(), /Wait for the current action/);
+    assert.equal(view.calls.filter(call => call[0] === 'post').length, 1);
+    await view.act(() => release()); await view.settle(5);
+    assert.equal(first.getAttribute('data-member-drag'), 'posted');
+    assert.equal(view.card('group-node').querySelectorAll('[data-member-chip]').length, 1);
+  } finally { release(); await view.close(); }
+});
+
+test('UPD2 p10 refusals: a Group receipt without its refreshed card is visibly refused', async () => {
+  const view = await mount({nodes:NODES().slice(0,2), wires:[], topologyTransport:{missingGroup:true}});
+  try {
+    await view.click(view.card('a'));
+    await view.mouse(view.card('b'), 'click', {shiftKey:true});
+    await view.click(view.groupButton()); await view.settle(5);
+    assert.equal(view.calls.filter(call => call[0] === 'post' && call[1].endsWith('/interaction')).length, 1);
+    assert.equal(view.card('group-node'), null);
+    assert.match(view.toast(), /created group card is not visible/);
+    assert.doesNotMatch(view.toast(), /Grouped 2 nodes/);
   } finally { await view.close(); }
 });

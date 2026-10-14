@@ -21,8 +21,12 @@ const tokens = fs.readFileSync(path.join(root, 'nodelang/studio/tokens.jsx'), 'u
 const palette = tokens.slice(tokens.indexOf('window.AH = {'), tokens.indexOf('window.ArchHubTheme ='));
 const LM = new Proxy(Object.fromEntries([...palette.matchAll(/^ {2}(\w+):/gm)].map(m => [m[1], 'token-' + m[1]])), {
   get:(held, key) => {
-    if (key === 'rad') return {xs:3, sm:5, md:6, lg:8, xl:10, pill:999};
+    if (key === 'rad') return {chip:3, xs:3, control:5, sm:5, node:6, md:6, panel:8, lg:8, dialog:10, xl:10, pill:999};
     if (key === 'sp') return {xs:4, sm:8, md:12, lg:16, xl:24};
+    if (key === 'fs') return {bodySm:{sz:13, ln:18, wt:400}, bodySmStrong:{sz:13, ln:18, wt:500}, caption:{sz:12, ln:16}, label:{sz:11, ln:14, wt:500, letter:'.04em'}, data:{sz:12, ln:16, wt:400}, dataSm:{sz:11, ln:14, wt:400}};
+    if (key === 'icon') return {ui:{size:16, box:20}, category:{size:12, box:20}};
+    if (key === 'shadow') return {flat:'none'};
+    if (key === 'dur') return {fast:120, med:180};
     if (typeof key === 'string' && !(key in held)) throw new Error('studio-lm.jsx reads an undefined token: ' + key);
     return held[key];
   }});

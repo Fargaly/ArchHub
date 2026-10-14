@@ -89,7 +89,8 @@ test('authorization changes during request prohibit opening its saved result',as
 });
 function homeFixture() {
   const start=jsx.indexOf('  const startSession = async event =>',jsx.indexOf('const Home ='));
-  const end=jsx.indexOf('\n\n  const [title',start);assert.ok(start>0&&end>start);
+  const endRel=jsx.slice(start).search(/\r?\n\r?\n  const \[title/);
+  const end=endRel<0?-1:start+endRel;assert.ok(start>0&&end>start);
   const held=deferred(),opened=[],refs={startBusy:{current:false},acceptedSession:{current:null},homeMounted:{current:true}};
   let session='session-a',calls=0;
   const ctx=vm.createContext({...refs,draft:'Real prompt',native:null,model:{},modelRoute:()=>details.model,

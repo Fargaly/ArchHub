@@ -17,8 +17,9 @@ const body = (start, end) => {
 };
 
 test('the in-place refresh re-reads the canvas and never reloads the page under the user', () => {
-  const helper = body('const studioRefreshCanvasInPlace = async () => {', '\n};');
+  const helper = body('const studioRefreshCanvasInPlace = async (options = {}) => {', '\n};');
   assert.match(helper, /refreshTopologyCanvas\(\)/);
+  assert.match(helper, /applyLiveGraph/);
   assert.doesNotMatch(helper, /location\.reload\(/, 'no full-page reload fallback');
 });
 

@@ -4,6 +4,9 @@
 // state — every control changes something and the workstation strip reflects it.
 
 const MB = window.AH;
+MB.fs = MB.fs || {};
+MB.fs.label = MB.fs.label || {sz:11, ln:14, wt:500, letter:'.04em'};
+MB.fs.dataSm = MB.fs.dataSm || {sz:11, ln:14, wt:400};
 
 const MB_DEVICES = [
   { id: 'pc',  icon: '🖥', name: 'STUDIO-PC',  meta: 'Revit 2025 · awake',  state: 'awake' },
@@ -90,7 +93,7 @@ function StudioMobile() {
     }}>
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={{ display: 'block', fontSize: 13, fontFamily: MB.sans }}>{label}</span>
-        {sub && <span style={{ display: 'block', fontFamily: MB.mono, fontSize: 9.5, color: MB.inkSoft, marginTop: 2 }}>{sub}</span>}
+        {sub && <span style={{ display: 'block', fontFamily: MB.mono, fontSize: MB.fs.dataSm.sz, color: MB.inkSoft, marginTop: 2 }}>{sub}</span>}
       </span>
       {right}
     </button>
@@ -99,7 +102,7 @@ function StudioMobile() {
   return (
     <div className="ah-scroll" style={{ background: MB.bg, color: MB.ink, fontFamily: MB.sans, height: '100%', overflow: 'auto', padding: '34px 44px' }}>
       <div style={{ marginBottom: 22 }}>
-        <div style={{ fontFamily: MB.mono, fontSize: 11, color: MB.inkMuted, letterSpacing: '0.16em' }}>MOBILE COMPANION · iOS</div>
+        <div style={{ fontFamily: MB.mono, fontSize: 11, color: MB.inkSoft, letterSpacing: '0.16em' }}>MOBILE COMPANION · iOS</div>
         <h1 style={{ fontFamily: MB.serif, fontSize: 44, letterSpacing: '-0.03em', margin: '8px 0 4px', fontWeight: 400 }}>
           Approve from the scaffold.
         </h1>
@@ -113,7 +116,7 @@ function StudioMobile() {
         {shell(
           <>
             {/* status bar + paired device */}
-            <div style={{ padding: '9px 16px 0', display: 'flex', alignItems: 'center', fontFamily: MB.mono, fontSize: 10, color: MB.inkSoft }}>
+            <div style={{ padding: '9px 16px 0', display: 'flex', alignItems: 'center', fontFamily: MB.mono, fontSize: MB.fs.dataSm.sz, color: MB.inkSoft }}>
               <span>9:41</span><span style={{ flex: 1 }}/>
               <span style={{ color: dev.state === 'awake' ? MB.ok : MB.warn }}>●</span>
               <span style={{ marginLeft: 5 }}>{dev.name}</span>
@@ -123,7 +126,7 @@ function StudioMobile() {
                 <span style={{ fontFamily: MB.serif, fontSize: 26, color: pend ? MB.accent : MB.ok, lineHeight: 1 }}>{pend}</span>
                 <span style={{ fontSize: 13 }}>{pend === 1 ? 'request waiting' : 'requests waiting'}</span>
                 <span style={{ flex: 1 }}/>
-                <span style={{ fontFamily: MB.mono, fontSize: 9.5, color: MB.inkSoft }}>{live} running</span>
+                <span style={{ fontFamily: MB.mono, fontSize: MB.fs.dataSm.sz, color: MB.inkSoft }}>{live} running</span>
               </div>
             </div>
 
@@ -132,7 +135,7 @@ function StudioMobile() {
               {tab === 'approve' && (pend === 0
                 ? <div style={{ padding: '30px 8px', textAlign: 'center' }}>
                     <div style={{ fontFamily: MB.serif, fontSize: 19 }}>Nothing waiting.</div>
-                    <div style={{ fontFamily: MB.mono, fontSize: 10.5, color: MB.inkSoft, marginTop: 6, lineHeight: 1.6 }}>
+                    <div style={{ fontFamily: MB.mono, fontSize: MB.fs.dataSm.sz, color: MB.inkSoft, marginTop: 6, lineHeight: 1.6 }}>
                       The desktop is running unattended.<br/>You’ll get a push when it needs you.
                     </div>
                     <button onClick={() => { setGates(MB_GATES_SEED); say('Reset · 3 requests restored'); }}
@@ -141,10 +144,10 @@ function StudioMobile() {
                 : gates.map(g => (
                     <div key={g.id} style={{ padding: '11px 12px', border: `1px solid ${g.risk === 'high' ? MB.warn : MB.line}`, borderRadius: MB.rad.md, background: MB.bgPanel, marginBottom: 9 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                        <span style={{ fontFamily: MB.mono, fontSize: 8.5, letterSpacing: '0.12em', padding: '2px 6px', borderRadius: 3, border: `1px solid ${g.risk === 'high' ? MB.warn : MB.inkMuted}`, color: g.risk === 'high' ? MB.warn : MB.inkSoft }}>
+                        <span style={{ fontFamily: MB.mono, fontSize: MB.fs.label.sz, letterSpacing: '0.12em', padding: '2px 6px', borderRadius: 3, border: `1px solid ${g.risk === 'high' ? MB.warn : MB.inkMuted}`, color: g.risk === 'high' ? MB.warn : MB.inkSoft }}>
                           {g.risk === 'high' ? 'NEEDS CARE' : 'ROUTINE'}
                         </span>
-                        <span style={{ fontFamily: MB.mono, fontSize: 9.5, color: MB.inkSoft, flex: 1, textAlign: 'right' }}>{g.node}</span>
+                        <span style={{ fontFamily: MB.mono, fontSize: MB.fs.dataSm.sz, color: MB.inkSoft, flex: 1, textAlign: 'right' }}>{g.node}</span>
                       </div>
                       <div style={{ fontSize: 13.5, marginTop: 7, lineHeight: 1.35 }}>{g.cap}</div>
                       <div style={{ fontSize: 12, color: MB.inkSoft, marginTop: 3, lineHeight: 1.45 }}>{g.detail}</div>
@@ -160,29 +163,29 @@ function StudioMobile() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                     <span style={{ width: 7, height: 7, borderRadius: '50%', background: r.state === 'running' ? MB.accent : r.state === 'done' ? MB.ok : MB.inkMuted, flexShrink: 0 }}/>
                     <span style={{ fontSize: 13, flex: 1, minWidth: 0 }}>{r.title}</span>
-                    <span style={{ fontFamily: MB.mono, fontSize: 9.5, color: MB.inkSoft }}>{r.ms}</span>
+                    <span style={{ fontFamily: MB.mono, fontSize: MB.fs.dataSm.sz, color: MB.inkSoft }}>{r.ms}</span>
                   </div>
                   <div style={{ height: 3, background: MB.lineSoft, borderRadius: 2, margin: '8px 0 5px', overflow: 'hidden' }}>
                     <div style={{ width: (r.pct * 100) + '%', height: '100%', background: r.state === 'done' ? MB.ok : MB.accent, transition: 'width .5s' }}/>
                   </div>
-                  <div style={{ fontFamily: MB.mono, fontSize: 9.5, color: MB.inkSoft }}>{r.note}</div>
+                  <div style={{ fontFamily: MB.mono, fontSize: MB.fs.dataSm.sz, color: MB.inkSoft }}>{r.note}</div>
                 </div>
               ))}
 
               {tab === 'params' && (
                 <div>
-                  <div style={{ fontFamily: MB.mono, fontSize: 9, color: MB.inkMuted, letterSpacing: '0.14em', marginBottom: 9 }}>LIVE ON {dev.name}</div>
+                  <div style={{ fontFamily: MB.mono, fontSize: MB.fs.label.sz, color: MB.inkSoft, letterSpacing: '0.14em', marginBottom: 9 }}>LIVE ON {dev.name}</div>
                   {params.map(p => (
                     <div key={p.id} style={{ padding: '11px 12px', border: `1px solid ${MB.lineSoft}`, borderRadius: MB.rad.md, background: MB.bgPanel, marginBottom: 9 }}>
                       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                         <span style={{ fontSize: 13, flex: 1 }}>{p.k}</span>
                         <span style={{ fontFamily: MB.serif, fontSize: 19, color: MB.accent, lineHeight: 1 }}>{p.v}</span>
-                        <span style={{ fontFamily: MB.mono, fontSize: 10, color: MB.inkSoft }}>{p.unit}</span>
+                        <span style={{ fontFamily: MB.mono, fontSize: MB.fs.dataSm.sz, color: MB.inkSoft }}>{p.unit}</span>
                       </div>
                       <input type="range" min={p.min} max={p.max} step={p.step} value={p.v}
                         onChange={e => { const v = +e.target.value; setParams(ps => ps.map(x => x.id === p.id ? Object.assign({}, x, { v }) : x)); setPushed(false); }}
                         style={{ width: '100%', marginTop: 9, accentColor: MB.accent, height: 22 }}/>
-                      <div style={{ fontFamily: MB.mono, fontSize: 9.5, color: MB.inkMuted, marginTop: 2 }}>{p.node}</div>
+                      <div style={{ fontFamily: MB.mono, fontSize: MB.fs.dataSm.sz, color: MB.inkSoft, marginTop: 2 }}>{p.node}</div>
                     </div>
                   ))}
                   <button onClick={() => { setPushed(true); say('Pushed 3 params → ' + dev.name); }}
@@ -200,12 +203,12 @@ function StudioMobile() {
                       <line x1="30" y1="170" x2="170" y2="170" stroke="#3a2418" strokeWidth="0.8"/>
                       <rect x="60" y="188" width="22" height="37" fill="none" stroke="#3a2418" strokeWidth="0.8"/>
                       <rect x="118" y="188" width="22" height="37" fill="none" stroke="#3a2418" strokeWidth="0.8"/>
-                      <text x="100" y="248" textAnchor="middle" fontFamily="JetBrains Mono" fontSize="7" fill="#7a7064">~6m wide · gabled · 2 storey</text>
+                      <text x="100" y="248" textAnchor="middle" fontFamily="JetBrains Mono" fontSize={MB.fs.dataSm.sz} fill="#7a7064">~6m wide · gabled · 2 storey</text>
                     </svg>
                   </div>
-                  <div style={{ fontFamily: MB.mono, fontSize: 9, color: MB.inkMuted, letterSpacing: '0.14em', margin: '14px 0 7px' }}>SEND TO</div>
+                  <div style={{ fontFamily: MB.mono, fontSize: MB.fs.label.sz, color: MB.inkSoft, letterSpacing: '0.14em', margin: '14px 0 7px' }}>SEND TO</div>
                   {MB_DEVICES.map(d => row(d.name,
-                    <span style={{ fontFamily: MB.mono, fontSize: 9, color: d.state === 'awake' ? MB.ok : MB.inkMuted, letterSpacing: '0.1em' }}>
+                    <span style={{ fontFamily: MB.mono, fontSize: MB.fs.label.sz, color: d.state === 'awake' ? MB.ok : MB.inkSoft, letterSpacing: '0.1em' }}>
                       {d.state === 'awake' ? 'AWAKE' : d.state === 'sleep' ? 'WAKE' : 'OFFLINE'}
                     </span>,
                     device === d.id, d.state === 'off' ? null : () => { setDevice(d.id); setSent(false); }, d.meta))}
@@ -222,12 +225,12 @@ function StudioMobile() {
               {mbTabs.map(([id, label]) => (
                 <button key={id} onClick={() => setTab(id)} style={{
                   flex: 1, minHeight: 52, border: 0, background: 'transparent', cursor: 'pointer',
-                  color: tab === id ? MB.accent : MB.inkMuted, fontFamily: MB.mono, fontSize: 10,
+                  color: tab === id ? MB.accent : MB.inkSoft, fontFamily: MB.mono, fontSize: MB.fs.dataSm.sz,
                   letterSpacing: '0.06em', position: 'relative',
                 }}>
                   {label.toUpperCase()}
                   {id === 'approve' && pend > 0 && (
-                    <span style={{ position: 'absolute', top: 9, right: 12, minWidth: 15, height: 15, borderRadius: 999, background: MB.accent, color: '#180f08', fontSize: 9, fontWeight: 700, display: 'grid', placeItems: 'center' }}>{pend}</span>
+                    <span style={{ position: 'absolute', top: 9, right: 12, minWidth: 15, height: 15, borderRadius: 999, background: MB.accent, color: '#180f08', fontSize: MB.fs.dataSm.sz, fontWeight: 700, display: 'grid', placeItems: 'center' }}>{pend}</span>
                   )}
                   {tab === id && <span style={{ position: 'absolute', top: 0, left: '25%', width: '50%', height: 2, background: MB.accent }}/>}
                 </button>
@@ -238,9 +241,9 @@ function StudioMobile() {
 
         {/* what the workstation sees — the phone is only credible if the other end reacts */}
         <div style={{ minWidth: 300, flex: 1, maxWidth: 460 }}>
-          <div style={{ fontFamily: MB.mono, fontSize: 9, color: MB.inkMuted, letterSpacing: '0.16em', marginBottom: 10 }}>WHAT {dev.name} SEES</div>
+          <div style={{ fontFamily: MB.mono, fontSize: MB.fs.label.sz, color: MB.inkSoft, letterSpacing: '0.16em', marginBottom: 10 }}>WHAT {dev.name} SEES</div>
           <div style={{ border: `1px solid ${MB.line}`, borderRadius: MB.rad.md, background: MB.bgPanel, overflow: 'hidden' }}>
-            <div style={{ padding: '10px 13px', borderBottom: `1px solid ${MB.lineSoft}`, display: 'flex', alignItems: 'center', gap: 8, fontFamily: MB.mono, fontSize: 10.5 }}>
+            <div style={{ padding: '10px 13px', borderBottom: `1px solid ${MB.lineSoft}`, display: 'flex', alignItems: 'center', gap: 8, fontFamily: MB.mono, fontSize: MB.fs.dataSm.sz }}>
               <span style={{ color: MB.ok }}>●</span>
               <span style={{ color: MB.inkSoft }}>server :7300</span>
               <span style={{ flex: 1 }}/>
@@ -257,7 +260,7 @@ function StudioMobile() {
                   </div>
                 ))}
           </div>
-          <div style={{ fontFamily: MB.mono, fontSize: 9.5, color: MB.inkMuted, marginTop: 10, lineHeight: 1.7, letterSpacing: '0.04em' }}>
+          <div style={{ fontFamily: MB.mono, fontSize: MB.fs.label.sz, color: MB.inkSoft, marginTop: 10, lineHeight: 1.7, letterSpacing: '0.04em' }}>
             GATES COME FROM SETTINGS → PERMISSIONS.<br/>
             ANYTHING SET TO <span style={{ color: MB.warn }}>ASK</span> ARRIVES HERE INSTEAD OF BLOCKING THE RUN.
           </div>

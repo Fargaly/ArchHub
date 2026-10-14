@@ -5,6 +5,51 @@
   const fail = message => { throw new Error(message); };
   const text = value => typeof value === 'string' && value.length > 0;
   const revision = value => Number.isSafeInteger(value) && value >= 0;
+  // Both Studio boot paths use this one admitted remove-member command. A
+  // collapsed member belongs to the group's projection, not canvas.nodes.
+  async function removeMember({canvas, post, uuid, member, from_group, position = null, receipt = false}) {
+    const group = canvas?.nodes?.find(row => row.id === from_group);
+    if (!text(member) || !text(from_group) || !group ||
+        !(group.members || []).some(row => row.id === member)) {
+      fail('This member is no longer in the displayed group. Refresh the canvas.');
+    }
+    if (position && (!Number.isFinite(position.x) || !Number.isFinite(position.y))) {
+      fail('The canvas position is invalid.');
+    }
+    const matches = (canvas.interaction_projection?.bindings || [])
+      .filter(row => row.control === 'app:control:canvas:remove-member');
+    if (matches.length !== 1 || !text(matches[0].interaction) || !text(matches[0].event) ||
+        (receipt && matches[0].acknowledgement_mode !== 'receipt-v1')) {
+      fail('Remove member has no current graph interaction. Refresh the canvas.');
+    }
+    const held = matches[0];
+    const result = await post('/api/universal/interaction', {
+      interaction:held.interaction, control:held.control, event:held.event,
+      expected_scope:canvas.scope?.current || canvas.root, revision:canvas.revision, command_id:uuid(),
+      ...(receipt ? {projection_mode:'receipt-v1'} : {}),
+      membership:{member, from_group, to_group:'', ...(position ? {position} : {})},
+    });
+    if (!result || result.ok === false) fail(result?.error || 'The graph refused to remove this member.');
+    const committed = receipt ? result.committed_revision : result.revision;
+    if (!revision(committed) || committed <= canvas.revision) fail('The member removal needs reconciliation. Refresh the canvas.');
+    if (!receipt) confirmMemberRemoved(canvas, result, member, from_group);
+    return result;
+  }
+  function confirmMemberRemoved(before, after, member, from_group) {
+    const oldGroup = before.nodes.find(row => row.id === from_group);
+    const newGroup = after.nodes?.find(row => row.id === from_group);
+    const oldCount = Number.isSafeInteger(oldGroup?.member_count) ? oldGroup.member_count : oldGroup?.members?.length;
+    const remaining = (oldGroup?.members || []).filter(row => row.id !== member);
+    const detached = after.nodes?.find(row => row.id === member);
+    if (!detached || detached.group === from_group ||
+        (newGroup && ((newGroup.members || []).some(row => row.id === member) ||
+          newGroup.member_count !== oldCount - 1 || newGroup.members?.length !== oldCount - 1 ||
+          remaining.some(row => !newGroup.members.some(saved => saved.id === row.id)))) ||
+        (!newGroup && oldCount > 1)) {
+      fail('The removed member is not visible in the refreshed graph. Refresh the canvas before trying again.');
+    }
+    return after;
+  }
   // The clean canvas sends a wire's properties as an object ({connection, reason,
   // relation_kind}); labelled rows are still read as before. Both render.
   const wireParameters = properties => Array.isArray(properties)
@@ -13,6 +58,19 @@
       ? Object.entries(properties).map(([label, value]) =>
         ({k: label, v: typeof value === 'string' ? value : JSON.stringify(value)}))
       : [];
+  const sessionSettingsFor = canvas => ({
+      id: canvas.root,
+      name: canvas.scope?.current_label || 'Workspace',
+      model: canvas.configuration?.composer_model?.value ||
+        canvas.configuration?.default_model?.route || canvas.configuration?.default_model || '',
+      relay_mode: canvas.configuration?.relay_mode || canvas.configuration?.cloud_relay?.mode || 'local',
+    });
+  const sessionParamRows = settings => [
+    {k:'name', v:settings.name, rel:'session-setting', editable:false, owner:settings.id, source:settings},
+    {k:'model', get v() { return settings.model; }, set v(value) { settings.model = String(value || ''); },
+      rel:'session-setting', editable:true, owner:settings.id, source:settings},
+    {k:'relay mode', v:settings.relay_mode, rel:'session-setting', editable:false, owner:settings.id, source:settings},
+  ];
 
   function create({get, post, uuid = () => global.crypto.randomUUID(), pendingStorage,
       hash = async value => Array.from(new Uint8Array(await global.crypto.subtle.digest('SHA-256',
@@ -27,7 +85,7 @@
 
     function project() {
       if (!canvas) return;
-      const nodes = canvas.nodes.map(node => {
+      const baseNodes = canvas.nodes.map(node => {
         const ports = (node.ports || []).map(port => ({
           id: port.id, label: port.name, t: port.value_type || '',
           name: port.name, connectable: port.connectable === true,
@@ -52,11 +110,12 @@
           outs: ports.filter(port => port.side === 'source'),
           params: parameters.filter(row => row.k !== 'status'),
           openable: node.openable === true, composition: node.composition === true, memberCount: Number.isSafeInteger(node.member_count) ? node.member_count : null,
+          members: Array.isArray(node.members) ? node.members.map(member => typeof member === 'string' ? {id:member, title:member} : member).filter(Boolean) : [],
           group: typeof node.group === 'string' ? node.group : '', pinned: node.pinned === true,
           ...(typeof node.application === 'boolean' ? {application: node.application} : {}),
         };
       });
-      const nodeIds = new Set(nodes.map(node => node.id));
+      const nodeIds = new Set(baseNodes.map(node => node.id));
       const wires = (canvas.wires || []).filter(wire =>
         nodeIds.has(wire.source) && nodeIds.has(wire.target)).map(wire => ({
           id: wire.id, from: [wire.source, wire.source_interface],
@@ -76,12 +135,29 @@
       }
       const workshops = (canvas.workshops || []).filter(row =>
         row.root === canvas.root || nodeIds.has(row.root));
+      const sessionSettings = sessionSettingsFor(canvas);
+      const sessionNode = {
+        id: sessionSettings.id, cat:'session', title:sessionSettings.name,
+        sub:'Session container', assembly:'session', kind:'session',
+        x:Number.isFinite(canvas.session_x) ? canvas.session_x : -280,
+        y:Number.isFinite(canvas.session_y) ? canvas.session_y : -180,
+        w:260, h:150, live:true, color:'#7dd3fc', status:'idle',
+        result:baseNodes.length + ' nodes', ins:[], outs:[], params:sessionParamRows(sessionSettings),
+        openable:true, composition:false, memberCount:baseNodes.length,
+        contains:[...new Set([...workshops.map(row => row.root), ...baseNodes.map(row => row.id)])],
+        session_settings:sessionSettings,
+      };
+      const nodes = [sessionNode, ...baseNodes];
       if (pageTarget && !workshops.some(row => row.root === pageTarget.root)) {
         pageEpoch += 1; pageTarget = null; workshop = null;
       }
       if (workshop && (workshop.scope_root !== canvas.root ||
           !workshops.some(row => row.root === workshop.root))) workshop = null;
-      snapshot = {canvas, graph: {nodes, wires}, library: [...groups.values()], workshops, workshop,
+      const sessions = [{id:sessionSettings.id, title:sessionSettings.name, state:'idle',
+        file:'Revision ' + canvas.revision, last:baseNodes.length + ' nodes',
+        model:sessionSettings.model, relay_mode:sessionSettings.relay_mode, settings:sessionSettings,
+        node:sessionNode.id, contains:sessionNode.contains}];
+      snapshot = {canvas, graph: {nodes, wires}, library: [...groups.values()], workshops, workshop, sessions,
         workshopPage:pageTarget, workshopNotice,
         selected: wantedFocus === undefined ? canvas.selected : wantedFocus,
         pending, error};
@@ -308,25 +384,55 @@
           return result;
         });
       },
-      select(root) {
+      select(root, roots = null) {
         const intent = ++focusIntent;
-        if (canvas?.selected === root && pending === 0) {
+        const clearing = root === null && Array.isArray(roots) && roots.length === 0;
+        const held = [...new Set((Array.isArray(roots) ? roots : [root]).filter(text))];
+        if (!clearing && canvas?.selected === root && held.length === 1 && pending === 0) {
           wantedFocus = root;
           project();
           return Promise.resolve(canvas);
         }
-        wantedFocus = root;
+        // Clearing the selected roots leaves the graph-held primary intact.
+        wantedFocus = clearing ? undefined : root;
         project();
-        return enqueue(() => {
+        return enqueue(async () => {
+          if (clearing) {
+            const result = await post('/api/universal/gesture', {expected_scope:canvas.root, roots:[], focus:null});
+            if (!Array.isArray(result?.selection) || result.selection.length !== 0) {
+              fail('The empty canvas selection needs reconciliation. Refresh the canvas.');
+            }
+            return result;
+          }
           if (!canvas.nodes.some(row => row.id === root) && !(canvas.wires || []).some(row => row.id === root)) fail('This selection is no longer in the current scope.');
+          if (held.some(heldRoot => !canvas.nodes.some(row => row.id === heldRoot) && !(canvas.wires || []).some(row => row.id === heldRoot))) fail('This selection is no longer in the current scope.');
           return post('/api/universal/focus', {expected_scope: canvas.root, scope_root: canvas.root,
-            selected_roots: [root], primary_root: root, revision: canvas.revision, command_id: uuid()});
+            selected_roots: held.length ? held : [root], primary_root: root, revision: canvas.revision, command_id: uuid()});
         }).catch(reason => {
           if (intent === focusIntent) { wantedFocus = canvas.selected; project(); }
           throw reason;
         });
       },
       setProperty(root, label, value) {
+        if (root === canvas.root && ['name', 'model', 'relay mode'].includes(label)) {
+          if (label !== 'model') fail('This session setting is owned elsewhere and is read-only here.');
+          const saveModel = global.ARCHHUB_AGENT_SELECT;
+          const next = String(value || '');
+          return enqueue(async () => {
+            if (typeof saveModel === 'function') {
+              const saved = await saveModel(next);
+              if (saved !== next) fail('The model selection could not be confirmed. Refresh before editing again.');
+            } else {
+              const setting = canvas.configuration?.composer_model;
+              if (!setting || setting.available !== true || !text(setting.control) || !text(setting.event_fact_input)) {
+                fail('This connection cannot save a model selection.');
+              }
+              await post('/api/universal/interaction', {...binding(setting.control),
+                event_facts:[{input:setting.event_fact_input, value:next}]});
+            }
+            return get('/api/universal/canvas');
+          });
+        }
         return enqueue(() => {
           const row = (node(root).properties || []).find(row => row.label === label);
           if (!row || row.editable !== true) fail('This parameter is not editable in the current scope.');
@@ -386,6 +492,29 @@
             target_interface: endpoint(target, targetPort, 'target')});
         });
       },
+      moveMember(member, from_group, to_group, position = null) {
+        return enqueue(async () => {
+          if (from_group && !to_group) {
+            const before = canvas;
+            const receipt = (canvas.interaction_projection?.bindings || []).some(row =>
+              row.control === 'app:control:canvas:remove-member' && row.acknowledgement_mode === 'receipt-v1');
+            const result = await removeMember({canvas:before, post, uuid, member, from_group, position, receipt});
+            if (!receipt) return result;
+            const latest = await get('/api/universal/canvas');
+            if (!revision(latest?.revision) || latest.revision < result.committed_revision) {
+              fail('The member change is not visible in the refreshed graph.');
+            }
+            return confirmMemberRemoved(before, latest, member, from_group);
+          }
+          node(member);
+          if (from_group) node(from_group);
+          if (to_group) node(to_group);
+          const result = await post('/api/universal/gesture', {expected_scope: canvas.root,
+            membership: {member, from_group:from_group || '', to_group:to_group || '',
+              ...(position ? {position} : {})}});
+          return result;
+        });
+      },
       run() {
         let runKey;
         return enqueue(() => {
@@ -429,8 +558,8 @@
         project();
         return enqueue(() => {
           held.forEach(root => node(root));
-          return post('/api/universal/focus', {expected_scope: canvas.root, scope_root: canvas.root,
-            selected_roots: held, primary_root: held[0], revision: canvas.revision, command_id: uuid()});
+          return post('/api/universal/gesture', {expected_scope: canvas.root,
+            roots: held, focus: held[0], command_id: uuid()});
         }).then(() => enqueue(() => {
           const controls = canvas.configuration?.design_system?.control_catalog?.controls || [];
           const matches = controls.filter(control => control.applicable && control.activation?.arguments?.operation === operation);
@@ -517,6 +646,7 @@
       const probe = await rawFetch('/api/universal/canvas', {headers: headers()});
       if (!probe.ok) session = null;
     }
+    if (session) global.__archhubSession = session;
     async function signIn() {
       const response = await rawFetch('/api/universal/session', {method: 'POST',
         headers: {'Content-Type': 'application/json', 'X-ArchHub-Sign-In': '1',
@@ -591,11 +721,10 @@
     };
     const state = api.getSnapshot();
     global.ARCHHUB_LIVE = {graph: state.graph, library: state.library, hosts: [], connectors: [], memory: [], skills: [],
-      sessions: [{id: state.canvas.root, title: state.canvas.scope?.current_label || 'Workspace',
-        // A state the Chats panel knows (LM_STATE_META): 'ready' is not one, and
-        // opening Chats blanked the hosted Studio. A held workspace reads as saved.
+      // Session tabs and the session node share the same settings object from the projection.
+      sessions: state.sessions || [{id: state.canvas.root, title: state.canvas.scope?.current_label || 'Workspace',
         file: 'Revision ' + state.canvas.revision, last: state.graph.nodes.length + ' nodes', state: 'idle'}]};
     return api;
   }
-  global.ArchHubStudioAuthority = {create, boot};
+  global.ArchHubStudioAuthority = {create, boot, removeMember, confirmMemberRemoved};
 })(typeof window === 'undefined' ? globalThis : window);

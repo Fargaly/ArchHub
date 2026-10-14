@@ -1021,6 +1021,66 @@ def test_group_and_ungroup_toolbar_bindings_preserve_selected_root_identities():
         server.close()
 
 
+def test_group_member_drag_out_persists_reload_and_authority_undo_restores():
+    server = ApplicationServer().start()
+    try:
+        status, before = _json(server, "/api/universal/canvas")
+        assert status == 200
+        roots = [node["id"] for node in before["nodes"][:2]]
+        status, selected = _json(server, "/api/universal/gesture", {
+            "roots": roots,
+            "focus": roots[-1],
+        })
+        assert status == 200
+
+        status, grouped = _activate_control(
+            server, selected, "app:control:canvas:group"
+        )
+        assert status == 200
+        group_root = grouped["created_root"]
+
+        status, moved = _json(server, "/api/universal/gesture", {
+            "expected_scope": grouped["scope"]["current"],
+            "membership": {
+                "member": roots[0],
+                "from_group": group_root,
+                "to_group": "",
+            },
+        })
+        assert status == 200
+        moved_group = next(node for node in moved["nodes"] if node["id"] == group_root)
+        assert roots[0] not in {
+            member["id"] if isinstance(member, dict) else member
+            for member in moved_group.get("members", [])
+        }
+
+        status, reloaded = _json(server, "/api/universal/canvas")
+        assert status == 200
+        reloaded_group = next(node for node in reloaded["nodes"] if node["id"] == group_root)
+        assert roots[0] not in {
+            member["id"] if isinstance(member, dict) else member
+            for member in reloaded_group.get("members", [])
+        }
+
+        status, undone = _json(server, "/api/universal/gesture", {
+            "expected_scope": reloaded["scope"]["current"],
+            "undo": True,
+        })
+        assert status == 200
+        from nodelang.cell_protocols import read_relation
+        members = {
+            member.participant_id
+            for member in read_relation(
+                server.universal_store.snapshot(),
+                group_root,
+                budget=10_000,
+            )
+        }
+        assert roots[0] in members
+    finally:
+        server.close()
+
+
 def test_scope_up_toolbar_binding_returns_to_the_exact_graph_parent():
     server = ApplicationServer().start()
     try:

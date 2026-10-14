@@ -3,7 +3,7 @@
 
 const { HB, hsc, HBtn, HIconBtn, HPill, HDot, HAvatar, STC, catCol } = window;
 
-const insLabel = { fontFamily: HB.mono, fontSize: 8.5, color: HB.accent, fontWeight: 700, letterSpacing: '0.14em', marginBottom: 7 };
+const insLabel = { fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.accent, fontWeight: 700, letterSpacing: '0.14em', marginBottom: 7 };
 const insInput = (mono) => ({ width: '100%', background: HB.paper2, border: `1px solid ${HB.line}`, color: HB.ink, borderRadius: 7, padding: '8px 10px', fontSize: 12.5, fontFamily: mono ? HB.mono : HB.sans, outline: 'none', resize: 'vertical' });
 const secStyle = { padding: '15px 16px', borderBottom: `1px solid ${HB.lineSoft}` };
 
@@ -24,7 +24,7 @@ function SystemPanel({ M, counts, total, STATUS, attention, onGoto, onAddDomain,
         <div style={{ ...secStyle, borderBottom: `1px solid ${HB.line}`, background: HB.paper2 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
             <span style={{ width: 7, height: 7, borderRadius: '50%', background: HB.accent, boxShadow: `0 0 0 3px ${HB.accent}22` }}/>
-            <div style={{ fontFamily: HB.mono, fontSize: 9, color: HB.accent, letterSpacing: '0.18em' }}>WHAT MATTERS NOW</div>
+            <div style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.accent, letterSpacing: '0.18em' }}>WHAT MATTERS NOW</div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {attention.map((it, i) => { const c = toneCol[it.tone]; return (
@@ -32,7 +32,7 @@ function SystemPanel({ M, counts, total, STATUS, attention, onGoto, onAddDomain,
                 <span style={{ width: 22, height: 22, borderRadius: 6, display: 'grid', placeItems: 'center', background: c + '1c', color: c, flexShrink: 0 }}><CKIcon name={toneIcon[it.kind]} size={12}/></span>
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ fontSize: 12.5, fontWeight: 600, color: HB.ink, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.label}</span>
-                  <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>{it.sub}</span>
+                  <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute }}>{it.sub}</span>
                 </span>
                 <CKIcon name="eye" size={13} color={HB.inkMute}/>
               </button>
@@ -41,7 +41,7 @@ function SystemPanel({ M, counts, total, STATUS, attention, onGoto, onAddDomain,
         </div>
       )}
       <div style={{ ...secStyle, borderBottom: `1px solid ${HB.line}` }}>
-        <div style={{ fontFamily: HB.mono, fontSize: 8.5, color: HB.accent, letterSpacing: '0.2em' }}>MACRO · THE WHOLE SYSTEM</div>
+        <div style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.accent, letterSpacing: '0.2em' }}>MACRO · THE WHOLE SYSTEM</div>
         <div style={{ fontFamily: HB.serif, fontSize: 24, letterSpacing: '-0.02em', marginTop: 2 }}>{M.domains.length} domains, wired</div>
         <div style={{ fontFamily: HB.mono, fontSize: 11, color: HB.inkSoft, marginTop: 6, lineHeight: 1.5 }}>{total} capabilities · {M.wires.length} wires · {cross} cross-domain links. Hover a domain to trace its links; double-click to open.</div>
       </div>
@@ -52,7 +52,7 @@ function SystemPanel({ M, counts, total, STATUS, attention, onGoto, onAddDomain,
             <span style={{ width: 9, height: 9, borderRadius: 2, background: STC[s] }}/>
             <span style={{ fontSize: 12.5, textTransform: 'capitalize', flex: 1 }}>{s}</span>
             <span style={{ flex: 2, height: 6, borderRadius: 3, background: HB.paper2, overflow: 'hidden' }}><span style={{ display: 'block', height: '100%', width: `${counts[s] / total * 100}%`, background: STC[s] }}/></span>
-            <span style={{ fontFamily: HB.mono, fontSize: 10.5, color: HB.inkMute, width: 26, textAlign: 'right' }}>{counts[s]}</span>
+            <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute, width: 26, textAlign: 'right' }}>{counts[s]}</span>
           </div>
         ))}
       </div>
@@ -95,9 +95,9 @@ function LiveDomainControl({ M, d, members, onRelay }) {
   };
   const runAll = async () => { for (const n of engines) { await say('run engine ' + n.engine, true); } };
   const pill = (state) => { const c = state === 'connected' ? HB.green : state === 'running' ? HB.blue : state === 'installed' ? HB.amber : HB.inkMute;
-    return <span style={{ fontFamily: HB.mono, fontSize: 8.5, letterSpacing: '0.12em', color: c, border: `1px solid ${c}55`, borderRadius: 999, padding: '2px 7px' }}>{String(state || '').toUpperCase()}</span>; };
+    return <span style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, letterSpacing: '0.12em', color: c, border: `1px solid ${c}55`, borderRadius: 999, padding: '2px 7px' }}>{String(state || '').toUpperCase()}</span>; };
   const row = { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: `1px solid ${HB.line}` };
-  const small = { fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute };
+  const small = { fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute };
   return (
     <div style={secStyle}>
       <div style={insLabel}>IN YOUR APP · LIVE {ctl ? '' : '· waiting for the app push'}</div>
@@ -162,7 +162,7 @@ function DomainPanel({ M, domKey, DB, counts, STATUS, CATS, macro, patchDomain, 
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
           <span style={{ width: 32, height: 32, borderRadius: 8, display: 'grid', placeItems: 'center', background: d.col + '22', color: d.col, flexShrink: 0, marginTop: 2 }}><CKIcon name="grid" size={16}/></span>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontFamily: HB.mono, fontSize: 8.5, color: d.col, letterSpacing: '0.16em' }}>{d.grouped ? '⊞ GRAND NODE · GROUPED' : 'SUPER-NODE · DOMAIN'} · {members.length} INSIDE</div>
+            <div style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: d.col, letterSpacing: '0.16em' }}>{d.grouped ? '⊞ GRAND NODE · GROUPED' : 'SUPER-NODE · DOMAIN'} · {members.length} INSIDE</div>
             <input value={d.title || ''} onChange={e => patchDomain(domKey, { title: e.target.value })} style={{ width: '100%', border: 'none', background: 'transparent', fontFamily: HB.serif, fontSize: 23, letterSpacing: '-0.02em', color: HB.ink, outline: 'none', padding: 0, marginTop: 2 }}/>
           </div>
           <HIconBtn name="x" onClick={onClose}/>
@@ -174,7 +174,7 @@ function DomainPanel({ M, domKey, DB, counts, STATUS, CATS, macro, patchDomain, 
         </div>
         <div style={{ display: 'flex', gap: 4, marginTop: 11 }}>
           {[['control', 'Control'], ['live', M.control ? 'Live ●' : 'Live'], ['params', `Params ${params.length}`], ['links', `Interface ${ifaceCount}`]].map(([k, l]) => (
-            <button key={k} onClick={() => setTab(k)} style={{ flex: 1, padding: '6px 0', borderRadius: 7, cursor: 'pointer', fontFamily: HB.mono, fontSize: 10.5, border: `1px solid ${tab === k ? HB.accent : HB.line}`, background: tab === k ? HB.accentSoft : 'transparent', color: tab === k ? HB.accentHi : HB.inkSoft }}>{l}</button>
+            <button key={k} onClick={() => setTab(k)} style={{ flex: 1, padding: '6px 0', borderRadius: 7, cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, border: `1px solid ${tab === k ? HB.accent : HB.line}`, background: tab === k ? HB.accentSoft : 'transparent', color: tab === k ? HB.accentHi : HB.inkSoft }}>{l}</button>
           ))}
         </div>
       </div>
@@ -190,12 +190,12 @@ function DomainPanel({ M, domKey, DB, counts, STATUS, CATS, macro, patchDomain, 
             <div style={secStyle}>
               <div style={insLabel}>DOMAIN STATUS · ROLLS UP TO ROADMAP</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                {STATUS.map(s => <button key={s} onClick={() => patchDomain(domKey, { status: s })} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 999, cursor: 'pointer', fontFamily: HB.mono, fontSize: 10.5, textTransform: 'capitalize', border: `1px solid ${d.status === s ? STC[s] : HB.line}`, background: d.status === s ? STC[s] + '20' : 'transparent', color: d.status === s ? STC[s] : HB.inkSoft }}><span style={{ width: 7, height: 7, borderRadius: 2, background: STC[s] }}/>{s}</button>)}
+                {STATUS.map(s => <button key={s} onClick={() => patchDomain(domKey, { status: s })} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 999, cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.label.sz, textTransform: 'capitalize', border: `1px solid ${d.status === s ? STC[s] : HB.line}`, background: d.status === s ? STC[s] + '20' : 'transparent', color: d.status === s ? STC[s] : HB.inkSoft }}><span style={{ width: 7, height: 7, borderRadius: 2, background: STC[s] }}/>{s}</button>)}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 10, height: 8 }}>
                 {STATUS.filter(s => st[s]).map(s => <span key={s} title={`${s}: ${st[s]}`} style={{ flex: st[s], background: STC[s], height: 8, borderRadius: 2 }}/>)}
               </div>
-              <div style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute, marginTop: 6 }}>composition of {members.length} nodes · {intra} internal wires</div>
+              <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute, marginTop: 6 }}>composition of {members.length} nodes · {intra} internal wires</div>
             </div>
             <div style={secStyle}>
               <div style={insLabel}>OWNED BY AGENTS · WHOLE DOMAIN</div>
@@ -204,12 +204,12 @@ function DomainPanel({ M, domKey, DB, counts, STATUS, CATS, macro, patchDomain, 
                 {DB.agents.map(a => { const on = myAgents.includes(a.id); return (
                   <button key={a.id} onClick={() => toggleAgent(domKey, a.id)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px', borderRadius: 8, cursor: 'pointer', textAlign: 'left', border: `1px solid ${on ? HB.accent : HB.line}`, background: on ? HB.accentSoft : HB.paper2 }}>
                     <span style={{ position: 'relative', flexShrink: 0, display: 'grid', placeItems: 'center' }}><HAvatar name={a.name} size={26}/>{on && <span style={{ position: 'absolute', inset: -2, borderRadius: '50%', border: `2px solid ${HB.accent}` }}/>}</span>
-                    <span style={{ flex: 1, minWidth: 0 }}><span style={{ fontSize: 12.5, fontWeight: 500, display: 'block' }}>{a.name}</span><span style={{ fontFamily: HB.mono, fontSize: 9.5, color: a.status === 'online' ? HB.green : HB.inkMute }}>{[a.runtime, a.status].filter(Boolean).join(' · ') || 'reported by your app'}</span></span>
-                    {on ? <span style={{ color: HB.accent }}><CKIcon name="check" size={15}/></span> : <span style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkMute, letterSpacing: '0.1em' }}>ASSIGN</span>}
+                    <span style={{ flex: 1, minWidth: 0 }}><span style={{ fontSize: 12.5, fontWeight: 500, display: 'block' }}>{a.name}</span><span style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: a.status === 'online' ? HB.green : HB.inkMute }}>{[a.runtime, a.status].filter(Boolean).join(' · ') || 'reported by your app'}</span></span>
+                    {on ? <span style={{ color: HB.accent }}><CKIcon name="check" size={15}/></span> : <span style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.inkMute, letterSpacing: '0.1em' }}>ASSIGN</span>}
                   </button>
                 ); })}
               </div>
-              {agentCount > 0 && <div style={{ fontFamily: HB.mono, fontSize: 10, color: HB.accent, marginTop: 8 }}>◇ plus {agentCount} member nodes individually owned</div>}
+              {agentCount > 0 && <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.accent, marginTop: 8 }}>◇ plus {agentCount} member nodes individually owned</div>}
             </div>
             <div style={secStyle}>
               <div style={insLabel}>QUICK SELECT INSIDE</div>
@@ -236,7 +236,7 @@ function DomainPanel({ M, domKey, DB, counts, STATUS, CATS, macro, patchDomain, 
         )}
         {tab === 'links' && (
           <div style={secStyle}>
-            <div style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute, marginBottom: 12, lineHeight: 1.5 }}>The domain's interface — ports reflected up from its {members.length} member nodes' cross-domain wiring.</div>
+            <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute, marginBottom: 12, lineHeight: 1.5 }}>The domain's interface — ports reflected up from its {members.length} member nodes' cross-domain wiring.</div>
             <div style={{ ...insLabel, color: HB.blue }}>▸ INBOUND PORTS · fed by ({Object.keys(inbound).length})</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 16 }}>
               {Object.entries(inbound).sort((a, b) => b[1] - a[1]).map(([k, ct]) => { const dd = M.domains.find(x => x.key === k); return (
@@ -275,7 +275,7 @@ function BulkPanel({ sel, selNodes, M, DB, STATUS, bulkStatus, bulkDomain, bulkA
       <div style={{ ...secStyle, borderBottom: `1px solid ${HB.line}`, display: 'flex', alignItems: 'center', gap: 10 }}>
         <span style={{ width: 34, height: 34, borderRadius: 9, display: 'grid', placeItems: 'center', background: HB.accent, color: (window.AH && window.AH.onFill) || '#180f08', flexShrink: 0, fontFamily: HB.serif, fontSize: 16 }}>{sel.size}</span>
         <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: HB.mono, fontSize: 8.5, color: HB.accent, letterSpacing: '0.2em' }}>BULK · MACRO CONTROL</div>
+          <div style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.accent, letterSpacing: '0.2em' }}>BULK · MACRO CONTROL</div>
           <div style={{ fontFamily: HB.serif, fontSize: 21, letterSpacing: '-0.01em' }}>{sel.size} nodes selected</div>
         </div>
         <HIconBtn name="x" onClick={clearSel}/>
@@ -304,7 +304,7 @@ function BulkPanel({ sel, selNodes, M, DB, STATUS, bulkStatus, bulkDomain, bulkA
             <button key={a.id} onClick={() => bulkAgent(a.id)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px', borderRadius: 8, cursor: 'pointer', textAlign: 'left', border: `1px solid ${HB.line}`, background: HB.paper2, color: HB.ink }}>
               <span style={{ width: 22, height: 22, borderRadius: 6, display: 'grid', placeItems: 'center', background: HB.accentSoft, color: HB.accent, flexShrink: 0 }}><CKIcon name="agent" size={12}/></span>
               <span style={{ flex: 1, minWidth: 0, fontSize: 12.5 }}>{a.name}</span>
-              <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: a.status === 'online' ? HB.green : HB.inkMute }}>{[a.runtime, a.status].filter(Boolean).join(' · ') || 'reported by your app'}</span>
+              <span style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: a.status === 'online' ? HB.green : HB.inkMute }}>{[a.runtime, a.status].filter(Boolean).join(' · ') || 'reported by your app'}</span>
             </button>
           ))}
         </div>
@@ -390,9 +390,9 @@ function StemParams({ node, patchNode }) {
     borderLeft: `2px solid ${on ? HB.accent : 'transparent'}`, borderBottom: `1px solid ${HB.lineSoft}` });
   const keyInput = { flex: 1, minWidth: 0, border: 'none', background: 'transparent', color: HB.ink, fontFamily: HB.sans, fontSize: 12.5, outline: 'none', padding: 0 };
   const fieldStyle = { width: 104, boxSizing: 'border-box', flexShrink: 0, padding: '4px 7px', background: HB.paper, border: `1px solid ${HB.line}`, borderRadius: 4, color: HB.ink, fontFamily: HB.mono, fontSize: 11, outline: 'none' };
-  const tag = (t) => ({ fontFamily: HB.mono, fontSize: 8.5, color: ptypeCol(t), padding: '1px 6px', borderRadius: 999, border: `1px solid ${ptypeCol(t)}`, flexShrink: 0, textTransform: 'lowercase' });
-  const promoteBtn = (on) => ({ width: 16, height: 16, flexShrink: 0, borderRadius: on ? 3 : '50%', cursor: 'pointer', background: on ? HB.accent : 'transparent', border: `1.5px solid ${on ? HB.accent : HB.inkMute}`, color: on ? '#fff' : HB.inkMute, fontSize: 9, lineHeight: 1, padding: 0, display: 'grid', placeItems: 'center' });
-  const addBtn = { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '5px 9px', borderRadius: 6, cursor: 'pointer', fontFamily: HB.mono, fontSize: 10, border: `1px dashed ${HB.line}`, background: HB.card, color: HB.inkSoft };
+  const tag = (t) => ({ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: ptypeCol(t), padding: '1px 6px', borderRadius: 999, border: `1px solid ${ptypeCol(t)}`, flexShrink: 0, textTransform: 'lowercase' });
+  const promoteBtn = (on) => ({ width: 16, height: 16, flexShrink: 0, borderRadius: on ? 3 : '50%', cursor: 'pointer', background: on ? HB.accent : 'transparent', border: `1.5px solid ${on ? HB.accent : HB.inkMute}`, color: on ? '#fff' : HB.inkMute, fontSize: HB.fs.dataSm.sz, lineHeight: 1, padding: 0, display: 'grid', placeItems: 'center' });
+  const addBtn = { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '5px 9px', borderRadius: 6, cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, border: `1px dashed ${HB.line}`, background: HB.card, color: HB.inkSoft };
 
   const widget = (p, i, t) => {
     if (t === 'boolean') { const on = p.v === true || p.v === 'true'; return (
@@ -412,7 +412,7 @@ function StemParams({ node, patchNode }) {
 
   return (
     <div style={wrap}>
-      {writeError && <div role="alert" style={{ fontFamily: HB.mono, fontSize: 10.5, color: HB.red, padding: '6px 8px' }}>{writeError}</div>}
+      {writeError && <div role="alert" style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.red, padding: '6px 8px' }}>{writeError}</div>}
       {params.length === 0 && <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 12.5, color: HB.inkMute }}>No parameters yet — add a field, toggle, or trigger below to grow this node.</div>}
       {params.map((p, i) => { const t = ptypeOf(p); const on = promoted.has(p.k); return (
         <div key={i} style={card(on)} title={p.k + ' · ' + t + (on ? ' · exposed as an input port, wireable on the map' : '')}>
@@ -427,7 +427,7 @@ function StemParams({ node, patchNode }) {
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
         {[['field', '＋ Field'], ['number', '＋ Number'], ['boolean', '＋ Toggle'], ['color', '＋ Color'], ['trigger', '＋ Trigger']].map(([t, l]) => <button key={t} onClick={() => addParam(t)} style={addBtn}>{l}</button>)}
       </div>
-      {(ports.ins || []).length > 0 && <div style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute, paddingTop: 2 }}><b style={{ color: HB.accent }}>{ports.ins.length}</b> port{ports.ins.length > 1 ? 's' : ''} promoted — now wireable knobs on the node</div>}
+      {(ports.ins || []).length > 0 && <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute, paddingTop: 2 }}><b style={{ color: HB.accent }}>{ports.ins.length}</b> port{ports.ins.length > 1 ? 's' : ''} promoted — now wireable knobs on the node</div>}
     </div>
   );
 }
@@ -453,7 +453,7 @@ function NodeInspector({ M, node, DB, assign, STATUS, CATS, patchNode, delNode, 
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
           <span style={{ width: 30, height: 30, borderRadius: 7, display: 'grid', placeItems: 'center', background: catCol(node.cat) + '1e', color: catCol(node.cat), flexShrink: 0, marginTop: 2 }}><CKIcon name="bolt" size={15}/></span>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontFamily: HB.mono, fontSize: 8.5, color: dom ? dom.col : HB.accent, letterSpacing: '0.14em' }}>{(node.cat || '').toUpperCase()} · {dom ? dom.title : node.dom}</div>
+            <div style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: dom ? dom.col : HB.accent, letterSpacing: '0.14em' }}>{(node.cat || '').toUpperCase()} · {dom ? dom.title : node.dom}</div>
             <input value={node.title} onChange={e => patchNode(node.id, { title: e.target.value })} style={{ width: '100%', border: 'none', background: 'transparent', fontFamily: HB.serif, fontSize: 21, letterSpacing: '-0.01em', color: HB.ink, outline: 'none', padding: 0, marginTop: 2 }}/>
           </div>
           <HIconBtn name="x" onClick={onClose}/>
@@ -464,11 +464,11 @@ function NodeInspector({ M, node, DB, assign, STATUS, CATS, patchNode, delNode, 
             {RT && RT.rtState(node) === 'running' ? '◴ running…' : '▸ Run'}
           </button>
           {RT && <RT.RTChip state={RT.rtState(node)}/>}
-          <button onClick={() => onWatch && onWatch(node.id)} title="Drop a watcher node wired to this — shows its live result on the map" style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5, padding: '7px 11px', borderRadius: 8, border: `1px solid ${HB.line}`, background: HB.paper2, color: HB.inkSoft, cursor: 'pointer', fontFamily: HB.mono, fontSize: 10.5 }}>◉ Watch</button>
+          <button onClick={() => onWatch && onWatch(node.id)} title="Drop a watcher node wired to this — shows its live result on the map" style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5, padding: '7px 11px', borderRadius: 8, border: `1px solid ${HB.line}`, background: HB.paper2, color: HB.inkSoft, cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz }}>◉ Watch</button>
         </div>
         <div style={{ display: 'flex', gap: 4, marginTop: 11 }}>
           {[['control', 'Control'], ['pipeline', `Pipeline ${pipe.length}`], ['runs', `Runs ${RT ? RT.rtRuns(node).length : 0}`], ['wires', `Ports ${outs.length + ins.length}`]].map(([k, l]) => (
-            <button key={k} onClick={() => setTab(k)} style={{ flex: 1, padding: '6px 0', borderRadius: 7, cursor: 'pointer', fontFamily: HB.mono, fontSize: 9.5, border: `1px solid ${tab === k ? HB.accent : HB.line}`, background: tab === k ? HB.accentSoft : 'transparent', color: tab === k ? HB.accentHi : HB.inkSoft }}>{l}</button>
+            <button key={k} onClick={() => setTab(k)} style={{ flex: 1, padding: '6px 0', borderRadius: 7, cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, border: `1px solid ${tab === k ? HB.accent : HB.line}`, background: tab === k ? HB.accentSoft : 'transparent', color: tab === k ? HB.accentHi : HB.inkSoft }}>{l}</button>
           ))}
         </div>
       </div>
@@ -478,7 +478,7 @@ function NodeInspector({ M, node, DB, assign, STATUS, CATS, patchNode, delNode, 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div><div style={insLabel}>INTENT</div><textarea value={node.sub} onChange={e => patchNode(node.id, { sub: e.target.value })} rows={2} style={insInput()}/></div>
             <div>
-              <div style={{ ...insLabel, display: 'flex', alignItems: 'center', gap: 6 }}>PARAMETERS · FIELDS · TRIGGERS<span style={{ fontFamily: HB.mono, fontSize: 8, color: HB.accent, letterSpacing: '0.04em', textTransform: 'none' }}>— the stem: grow & wire this node</span></div>
+              <div style={{ ...insLabel, display: 'flex', alignItems: 'center', gap: 6 }}>PARAMETERS · FIELDS · TRIGGERS<span style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.accent, letterSpacing: '0.04em', textTransform: 'none' }}>— the stem: grow & wire this node</span></div>
               <StemParams node={node} patchNode={patchNode}/>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
@@ -486,10 +486,10 @@ function NodeInspector({ M, node, DB, assign, STATUS, CATS, patchNode, delNode, 
               <div><div style={insLabel}>CATEGORY</div><select value={node.cat} onChange={e => patchNode(node.id, { cat: e.target.value })} style={insInput()}>{CATS.map(c => <option key={c}>{c}</option>)}</select></div>
             </div>
             <div>
-              {node.status_text ? <div style={{ fontFamily: HB.mono, fontSize: 10.5, color: HB.inkSoft, marginBottom: 6, whiteSpace: 'pre-wrap' }} title="What the last Run answered">LAST RUN · {node.status_text}</div> : null}
+              {node.status_text ? <div style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.inkSoft, marginBottom: 6, whiteSpace: 'pre-wrap' }} title="What the last Run answered">LAST RUN · {node.status_text}</div> : null}
               <div style={insLabel}>STATUS · THE LIVE ROADMAP</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                {STATUS.map(s => <button key={s} onClick={() => patchNode(node.id, { status: s })} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 999, cursor: 'pointer', fontFamily: HB.mono, fontSize: 10.5, textTransform: 'capitalize', border: `1px solid ${node.status === s ? STC[s] : HB.line}`, background: node.status === s ? STC[s] + '20' : 'transparent', color: node.status === s ? STC[s] : HB.inkSoft }}><span style={{ width: 7, height: 7, borderRadius: 2, background: STC[s] }}/>{s}</button>)}
+                {STATUS.map(s => <button key={s} onClick={() => patchNode(node.id, { status: s })} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 999, cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.label.sz, textTransform: 'capitalize', border: `1px solid ${node.status === s ? STC[s] : HB.line}`, background: node.status === s ? STC[s] + '20' : 'transparent', color: node.status === s ? STC[s] : HB.inkSoft }}><span style={{ width: 7, height: 7, borderRadius: 2, background: STC[s] }}/>{s}</button>)}
               </div>
             </div>
             <div>
@@ -499,8 +499,8 @@ function NodeInspector({ M, node, DB, assign, STATUS, CATS, patchNode, delNode, 
                 {DB.agents.map(a => { const on = myAgents.includes(a.id); return (
                   <button key={a.id} onClick={() => toggleAgent(node.id, a.id)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px', borderRadius: 8, cursor: 'pointer', textAlign: 'left', border: `1px solid ${on ? HB.accent : HB.line}`, background: on ? HB.accentSoft : HB.paper2 }}>
                     <span style={{ position: 'relative', flexShrink: 0, display: 'grid', placeItems: 'center' }}><HAvatar name={a.name} size={26}/>{on && <span style={{ position: 'absolute', inset: -2, borderRadius: '50%', border: `2px solid ${HB.accent}` }}/>}</span>
-                    <span style={{ flex: 1, minWidth: 0 }}><span style={{ fontSize: 12.5, fontWeight: 500, display: 'block' }}>{a.name}</span><span style={{ fontFamily: HB.mono, fontSize: 9.5, color: a.status === 'online' ? HB.green : HB.inkMute }}>{[a.runtime, a.status].filter(Boolean).join(' · ') || 'reported by your app'}</span></span>
-                    {on ? <span style={{ color: HB.accent }}><CKIcon name="check" size={15}/></span> : <span style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkMute, letterSpacing: '0.1em' }}>ASSIGN</span>}
+                    <span style={{ flex: 1, minWidth: 0 }}><span style={{ fontSize: 12.5, fontWeight: 500, display: 'block' }}>{a.name}</span><span style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: a.status === 'online' ? HB.green : HB.inkMute }}>{[a.runtime, a.status].filter(Boolean).join(' · ') || 'reported by your app'}</span></span>
+                    {on ? <span style={{ color: HB.accent }}><CKIcon name="check" size={15}/></span> : <span style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.inkMute, letterSpacing: '0.1em' }}>ASSIGN</span>}
                   </button>
                 ); })}
               </div>
@@ -511,12 +511,12 @@ function NodeInspector({ M, node, DB, assign, STATUS, CATS, patchNode, delNode, 
         {tab === 'pipeline' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={insLabel}>INTERNAL PIPELINE · THIS NODE IS A MICRO-DOMAIN</div>
-            <div style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute, marginBottom: 2 }}>double-click the node on the map to expand its pipeline in place</div>
+            <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute, marginBottom: 2 }}>double-click the node on the map to expand its pipeline in place</div>
             {pipe.map((s, i) => { const col = { in: HB.blue, process: HB.purple, out: HB.green }[s.role] || HB.purple; return (
               <div key={s.id || i} style={{ display: 'flex', alignItems: 'center', gap: 7, border: `1px solid ${HB.line}`, borderRadius: 8, padding: '7px 9px', background: HB.paper2 }}>
                 <span style={{ width: 8, height: 8, borderRadius: 2, background: STC[s.status] || col, flexShrink: 0 }}/>
                 <input value={s.t} onChange={e => setStage(i, 't', e.target.value)} style={{ flex: 1, border: 'none', background: 'transparent', color: HB.ink, fontSize: 12, outline: 'none', fontFamily: HB.sans }}/>
-                <select value={s.role} onChange={e => setStage(i, 'role', e.target.value)} style={{ border: `1px solid ${HB.line}`, background: HB.card, color: col, borderRadius: 5, fontFamily: HB.mono, fontSize: 9.5, padding: '2px 4px' }}>{['in', 'process', 'out'].map(r => <option key={r}>{r}</option>)}</select>
+                <select value={s.role} onChange={e => setStage(i, 'role', e.target.value)} style={{ border: `1px solid ${HB.line}`, background: HB.card, color: col, borderRadius: 5, fontFamily: HB.mono, fontSize: HB.fs.label.sz, padding: '2px 4px' }}>{['in', 'process', 'out'].map(r => <option key={r}>{r}</option>)}</select>
                 <button onClick={() => delStage(i)} style={{ border: 'none', background: 'transparent', color: HB.inkMute, cursor: 'pointer' }}><CKIcon name="x" size={12}/></button>
               </div>
             ); })}
@@ -527,9 +527,9 @@ function NodeInspector({ M, node, DB, assign, STATUS, CATS, patchNode, delNode, 
         {tab === 'wires' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 11px', borderRadius: 8, background: HB.paper2, border: `1px solid ${HB.lineSoft}` }}>
-              <span style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkMute, letterSpacing: '0.1em' }}>EMITS</span>
-              <span style={{ fontFamily: HB.mono, fontSize: 10.5, color: catCol(node.cat), padding: '2px 8px', borderRadius: 999, border: `1px solid ${catCol(node.cat)}`, textTransform: 'lowercase' }}>{sigSelf}</span>
-              <span style={{ marginLeft: 'auto', fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>{ins.length} in · {outs.length} out</span>
+              <span style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.inkMute, letterSpacing: '0.1em' }}>EMITS</span>
+              <span style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: catCol(node.cat), padding: '2px 8px', borderRadius: 999, border: `1px solid ${catCol(node.cat)}`, textTransform: 'lowercase' }}>{sigSelf}</span>
+              <span style={{ marginLeft: 'auto', fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute }}>{ins.length} in · {outs.length} out</span>
             </div>
             <div><div style={{ ...insLabel, color: HB.green }}>OUT PORTS → ({outs.length})</div>{outs.length === 0 && <Empty>Drives nothing yet.</Empty>}{outs.map((w, i) => { const t = M.nodes.find(n => n.id === w.b); return <WireRow key={i} dir="→" node={t} why={w.why} sig={sigSelf} sigCol={catCol(node.cat)} onClick={() => t && focusNode(t.id)}/>; })}</div>
             <div><div style={{ ...insLabel, color: HB.blue }}>IN PORTS ← ({ins.length})</div>{ins.length === 0 && <Empty>Nothing feeds it.</Empty>}{ins.map((w, i) => { const s = M.nodes.find(n => n.id === w.a); const sg = window.sigOf ? window.sigOf(s) : 'value'; return <WireRow key={i} dir="←" node={s} why={w.why} sig={sg} sigCol={s ? catCol(s.cat) : HB.inkMute} onClick={() => s && focusNode(s.id)}/>; })}</div>
@@ -550,7 +550,7 @@ function NodeInspector({ M, node, DB, assign, STATUS, CATS, patchNode, delNode, 
   );
 }
 
-const WireRow = ({ dir, node, why, sig, sigCol, onClick }) => <div className="hb-rowh" onClick={onClick} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 9px', borderRadius: 7, cursor: 'pointer', marginBottom: 2 }}><span style={{ color: dir === '→' ? HB.green : HB.blue, fontFamily: HB.mono, fontSize: 13, marginTop: 1 }}>{dir}</span><div style={{ flex: 1, minWidth: 0 }}><div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ fontSize: 12.5, fontWeight: 500 }}>{node ? node.title : '—'}</span>{sig && <span style={{ fontFamily: HB.mono, fontSize: 8.5, color: sigCol || HB.inkMute, padding: '1px 6px', borderRadius: 999, border: `1px solid ${sigCol || HB.line}`, flexShrink: 0 }}>{sig}</span>}</div>{why && <div style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute, marginTop: 2, lineHeight: 1.4 }}>{why}</div>}</div>{node && <HPill k={node.status}>{node.status}</HPill>}</div>;
+const WireRow = ({ dir, node, why, sig, sigCol, onClick }) => <div className="hb-rowh" onClick={onClick} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 9px', borderRadius: 7, cursor: 'pointer', marginBottom: 2 }}><span style={{ color: dir === '→' ? HB.green : HB.blue, fontFamily: HB.mono, fontSize: 13, marginTop: 1 }}>{dir}</span><div style={{ flex: 1, minWidth: 0 }}><div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ fontSize: 12.5, fontWeight: 500 }}>{node ? node.title : '—'}</span>{sig && <span style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: sigCol || HB.inkMute, padding: '1px 6px', borderRadius: 999, border: `1px solid ${sigCol || HB.line}`, flexShrink: 0 }}>{sig}</span>}</div>{why && <div style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.inkMute, marginTop: 2, lineHeight: 1.4 }}>{why}</div>}</div>{node && <HPill k={node.status}>{node.status}</HPill>}</div>;
 // The run history, drawn here rather than delegated, so an unmeasured field is simply not
 // printed. A run relayed to the app comes back with an outcome and the text the app gave;
 // it carries no duration, and a "0ms" beside it would be a number nobody measured.
@@ -562,11 +562,11 @@ const RunsList = ({ node, onRun, onVariant }) => {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         {RT && <RT.RTChip state={state}/>}
-        <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.inkMute }}>{runs.length} run{runs.length === 1 ? '' : 's'}</span>
+        <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute }}>{runs.length} run{runs.length === 1 ? '' : 's'}</span>
         <div style={{ flex: 1 }}/>
         <button onClick={onRun} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 7, border: 'none', background: HB.accent, color: (window.AH && window.AH.onFill) || '#180f08', cursor: 'pointer', fontFamily: HB.mono, fontSize: 11, fontWeight: 600 }}>▸ Run</button>
       </div>
-      {!node.engine && <div style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkSoft, lineHeight: 1.5 }}>This node has no engine, so there is nothing here to run.</div>}
+      {!node.engine && <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkSoft, lineHeight: 1.5 }}>This node has no engine, so there is nothing here to run.</div>}
       {runs.length === 0 && <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 13, color: HB.inkMute }}>No runs yet.</div>}
       <div style={{ display: 'flex', flexDirection: 'column' }}>
         {runs.map((r, i) => (
@@ -578,10 +578,10 @@ const RunsList = ({ node, onRun, onVariant }) => {
             <div style={{ flex: 1, paddingBottom: 12, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
                 <span style={{ fontFamily: HB.mono, fontSize: 11.5, color: HB.ink }}>run #{r.n}</span>
-                <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: r.ok ? HB.green : HB.red }}>{r.ok ? '✓' : '✗ failed'}</span>
-                {r.ms ? <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>{r.ms}ms</span> : null}
-                {r.app && <span style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkMute }}>in your app</span>}
-                <button onClick={() => onVariant(r)} title="Run it again" style={{ marginLeft: 'auto', border: `1px solid ${HB.line}`, background: HB.paper2, color: HB.inkSoft, borderRadius: 6, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: 9 }}>run again</button>
+                <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: r.ok ? HB.green : HB.red }}>{r.ok ? '✓' : '✗ failed'}</span>
+                {r.ms ? <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute }}>{r.ms}ms</span> : null}
+                {r.app && <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute }}>in your app</span>}
+                <button onClick={() => onVariant(r)} title="Run it again" style={{ marginLeft: 'auto', border: `1px solid ${HB.line}`, background: HB.paper2, color: HB.inkSoft, borderRadius: 6, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz }}>run again</button>
               </div>
               <div style={{ fontFamily: HB.mono, fontSize: 11, color: HB.inkSoft, marginTop: 3, whiteSpace: 'pre-wrap' }}>{r.result}</div>
             </div>
@@ -591,10 +591,10 @@ const RunsList = ({ node, onRun, onVariant }) => {
     </div>
   );
 };
-const Stat = ({ label, value }) => <div style={{ padding: '8px 10px', borderRadius: 7, background: HB.paper2, border: `1px solid ${HB.lineSoft}` }}><div style={{ fontFamily: HB.mono, fontSize: 8, color: HB.inkMute, letterSpacing: '0.12em' }}>{label}</div><div style={{ fontFamily: HB.mono, fontSize: 11.5, color: HB.ink, marginTop: 3, wordBreak: 'break-word' }}>{value}</div></div>;
+const Stat = ({ label, value }) => <div style={{ padding: '8px 10px', borderRadius: 7, background: HB.paper2, border: `1px solid ${HB.lineSoft}` }}><div style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.inkMute, letterSpacing: '0.12em' }}>{label}</div><div style={{ fontFamily: HB.mono, fontSize: 11.5, color: HB.ink, marginTop: 3, wordBreak: 'break-word' }}>{value}</div></div>;
 const Empty = ({ children }) => <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 13, color: HB.inkMute }}>{children}</div>;
-const chip = (col) => ({ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 999, cursor: 'pointer', fontFamily: HB.mono, fontSize: 10.5, textTransform: 'capitalize', border: `1px solid ${HB.line}`, background: 'transparent', color: HB.inkSoft });
-const miniAct = (col, fill) => ({ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 9px', borderRadius: 6, cursor: 'pointer', fontFamily: HB.mono, fontSize: 10, border: `1px solid ${col}`, background: fill ? col : 'transparent', color: fill ? '#fff' : HB.inkSoft });
+const chip = (col) => ({ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 999, cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.label.sz, textTransform: 'capitalize', border: `1px solid ${HB.line}`, background: 'transparent', color: HB.inkSoft });
+const miniAct = (col, fill) => ({ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 9px', borderRadius: 6, cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, border: `1px solid ${col}`, background: fill ? col : 'transparent', color: fill ? '#fff' : HB.inkSoft });
 
 /* ════ name modal (group / domain) ════ */
 function NameModal({ title, placeholder, colors, onSave, onClose }) {
@@ -628,12 +628,12 @@ function FieldPanel({ M, fieldId, patchField, onUngroup, onEnterDomain, onClose 
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
           <span style={{ width: 32, height: 32, borderRadius: 8, display: 'grid', placeItems: 'center', background: (f.col || HB.blue) + '22', color: f.col || HB.blue, flexShrink: 0, marginTop: 2, fontSize: 16 }}>⬡</span>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontFamily: HB.mono, fontSize: 8.5, color: f.col || HB.blue, letterSpacing: '0.16em' }}>FIELD · SUPER GRAND NODE · {doms.length} DOMAINS</div>
+            <div style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: f.col || HB.blue, letterSpacing: '0.16em' }}>FIELD · SUPER GRAND NODE · {doms.length} DOMAINS</div>
             <input value={f.title || ''} onChange={e => patchField(fieldId, { title: e.target.value })} style={{ width: '100%', border: 'none', background: 'transparent', fontFamily: HB.serif, fontSize: 23, letterSpacing: '-0.02em', color: HB.ink, outline: 'none', padding: 0, marginTop: 2 }}/>
           </div>
           <HIconBtn name="x" onClick={onClose}/>
         </div>
-        <div style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute, marginTop: 8 }}>{doms.length} grand nodes · {nodeCount} capabilities inside</div>
+        <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute, marginTop: 8 }}>{doms.length} grand nodes · {nodeCount} capabilities inside</div>
       </div>
       <div style={secStyle}>
         <div style={insLabel}>MEMBER DOMAINS</div>
@@ -642,7 +642,7 @@ function FieldPanel({ M, fieldId, patchField, onUngroup, onEnterDomain, onClose 
             <button key={d.key} onClick={() => onEnterDomain(d.key)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px', borderRadius: 8, cursor: 'pointer', textAlign: 'left', border: `1px solid ${HB.line}`, background: HB.paper2, color: HB.ink }}>
               <span style={{ width: 9, height: 9, borderRadius: 3, background: d.col, flexShrink: 0 }}/>
               <span style={{ flex: 1, fontSize: 12.5 }}>{d.title}</span>
-              <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.inkMute }}>{M.nodes.filter(n => n.dom === d.key).length}</span>
+              <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute }}>{M.nodes.filter(n => n.dom === d.key).length}</span>
             </button>
           ))}
         </div>
@@ -663,7 +663,7 @@ function MultiPanel({ selDomains, selNodes, M, onGroupField, clearSel }) {
       <div style={{ ...secStyle, borderBottom: `1px solid ${HB.line}`, display: 'flex', alignItems: 'center', gap: 10 }}>
         <span style={{ width: 34, height: 34, borderRadius: 9, display: 'grid', placeItems: 'center', background: HB.blue, color: '#fff', flexShrink: 0, fontFamily: HB.serif, fontSize: 16 }}>{total}</span>
         <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: HB.mono, fontSize: 8.5, color: HB.blue, letterSpacing: '0.2em' }}>MIXED SELECTION</div>
+          <div style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.blue, letterSpacing: '0.2em' }}>MIXED SELECTION</div>
           <div style={{ fontFamily: HB.serif, fontSize: 21, letterSpacing: '-0.01em' }}>{selDomains.length} domain{selDomains.length !== 1 ? 's' : ''}{selNodes.size ? ` + ${selNodes.size} node${selNodes.size !== 1 ? 's' : ''}` : ''}</div>
         </div>
         <HIconBtn name="x" onClick={clearSel}/>
@@ -672,12 +672,12 @@ function MultiPanel({ selDomains, selNodes, M, onGroupField, clearSel }) {
         <div style={insLabel}>SELECTED DOMAINS</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           {doms.map(d => <div key={d.key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: HB.mono, fontSize: 11.5, color: HB.inkSoft, padding: '3px 0' }}><span style={{ width: 8, height: 8, borderRadius: 2, background: d.col }}/>{d.title}</div>)}
-          {selNodes.size > 0 && <div style={{ fontFamily: HB.mono, fontSize: 10.5, color: HB.inkMute, marginTop: 4 }}>+ {selNodes.size} loose node{selNodes.size !== 1 ? 's' : ''} → wrapped into a grand node</div>}
+          {selNodes.size > 0 && <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute, marginTop: 4 }}>+ {selNodes.size} loose node{selNodes.size !== 1 ? 's' : ''} → wrapped into a grand node</div>}
         </div>
       </div>
       <div style={{ padding: 16 }}>
         <HBtn primary onClick={onGroupField} style={{ width: '100%', justifyContent: 'center' }}><CKIcon name="grid" size={13}/>Group</HBtn>
-        <div style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute, marginTop: 9, textAlign: 'center', lineHeight: 1.5 }}>Grouping makes one node out of what you picked. The same node primitive, one tier up.</div>
+        <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute, marginTop: 9, textAlign: 'center', lineHeight: 1.5 }}>Grouping makes one node out of what you picked. The same node primitive, one tier up.</div>
       </div>
     </div>
   );
@@ -699,7 +699,7 @@ function MultiFieldPanel({ M, ids, onGroup, clearSel }) {
       <div style={secStyle}>
         <div style={insLabel}>MULTI SELECTION</div>
         <div style={{ fontFamily: HB.serif, fontSize: 21, color: HB.ink, marginTop: 4 }}>{picked.length} fields</div>
-        <div style={{ fontFamily: HB.mono, fontSize: 10.5, color: HB.inkSoft, marginTop: 6, lineHeight: 1.6 }}>
+        <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkSoft, marginTop: 6, lineHeight: 1.6 }}>
           Group these into one field a tier up. Depth is unbounded — the result can be grouped again.
         </div>
       </div>
@@ -710,7 +710,7 @@ function MultiFieldPanel({ M, ids, onGroup, clearSel }) {
             <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 9px', borderRadius: 6, background: HB.paper2 }}>
               <span style={{ width: 8, height: 8, borderRadius: 2, background: f.col || HB.blue, flexShrink: 0 }}/>
               <span style={{ flex: 1, fontFamily: HB.sans, fontSize: 12, color: HB.ink }}>{f.title}</span>
-              <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>tier {depthOf(f.id)} · {(f.domKeys || []).length + (f.fieldIds || []).length}</span>
+              <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute }}>tier {depthOf(f.id)} · {(f.domKeys || []).length + (f.fieldIds || []).length}</span>
             </div>
           ))}
         </div>
@@ -762,14 +762,14 @@ function WirePanel({ M, w, onDelete, onGoto, onClose, patchWire }) {
       <div style={secStyle}>
         <div style={{ ...insLabel, display: 'flex', alignItems: 'center', gap: 6 }}>
           WIRE PARAMETERS
-          <span style={{ fontFamily: HB.mono, fontSize: 8, color: HB.accent, letterSpacing: '0.1em' }}>A WIRE IS A NODE</span>
+          <span style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.accent, letterSpacing: '0.1em' }}>A WIRE IS A NODE</span>
         </div>
-        <div style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkSoft, lineHeight: 1.55, marginBottom: 9 }}>
+        <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkSoft, lineHeight: 1.55, marginBottom: 9 }}>
           Applies to all {members.length} underlying wire{members.length === 1 ? '' : 's'}.
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', borderTop: `1px solid ${HB.lineSoft}` }}>
           {WIRE_PARAM_DEFS().length === 0 && (
-            <div role="alert" style={{ fontFamily: HB.mono, fontSize: 10.5, color: HB.red, padding: '8px 2px' }}>
+            <div role="alert" style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.red, padding: '8px 2px' }}>
               {'Wire parameters could not be loaded: ' + (window.WIRE_PARAMS_ERROR || 'the list has not arrived from the server')}
             </div>
           )}
@@ -804,7 +804,7 @@ function WirePanel({ M, w, onDelete, onGoto, onClose, patchWire }) {
                     title={p.unit && p.max != null ? (p.min || 0) + '–' + p.max + ' ' + p.unit : undefined}
                     style={{ width: p.unit ? 80 : 104, boxSizing: 'border-box', padding: '4px 7px', borderRadius: 4, border: `1px solid ${HB.line}`, background: HB.paper, color: HB.ink, fontFamily: HB.mono, fontSize: 11, outline: 'none' }}/>
                 )}
-                {p.unit && <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.inkMute, width: 18 }}>{p.unit}</span>}
+                {p.unit && <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute, width: 18 }}>{p.unit}</span>}
               </div>
             );
           })}
@@ -823,13 +823,13 @@ function WirePanel({ M, w, onDelete, onGoto, onClose, patchWire }) {
                   <span style={{ color: HB.accent, flexShrink: 0 }}>→</span>
                   <button onClick={() => bb && onGoto(bb.id)} style={{ border: 0, background: 'transparent', padding: 0, color: HB.ink, cursor: bb ? 'pointer' : 'default', fontSize: 12, textAlign: 'left' }}>{bb ? bb.title : x.b}</button>
                 </div>
-                <div style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkMute, marginTop: 2 }}>
+                <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute, marginTop: 2 }}>
                   {sig(x.a)} → {sig(x.b)}{x.why ? ' · ' + x.why : ''}
                 </div>
               </div>
             );
           })}
-          {members.length > 24 && <div style={{ fontFamily: HB.mono, fontSize: 10, color: HB.inkDim, padding: '6px 8px' }}>+{members.length - 24} more</div>}
+          {members.length > 24 && <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkDim, padding: '6px 8px' }}>+{members.length - 24} more</div>}
         </div>
       </div>
       <div style={{ ...secStyle, borderBottom: 'none', display: 'flex', gap: 8 }}>

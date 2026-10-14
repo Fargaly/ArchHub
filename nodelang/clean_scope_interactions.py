@@ -64,6 +64,7 @@ from .universal_cell import NULL_CELL_ID, Cell, InvalidCell, Snapshot
 CONTROL_RUN = "app:control:canvas:run"
 CONTROL_GROUP = "app:control:canvas:group"
 CONTROL_UNGROUP = "app:control:canvas:ungroup"
+CONTROL_REMOVE_MEMBER = "app:control:canvas:remove-member"
 CLEAN_SCOPE_INTERACTIONS_LABEL = "ArchHub clean scope interactions"
 CLEAN_SCOPE_INTERACTIONS_VERSION = "clean-scope-interactions/v1"
 _SOURCE_PREFIX = "source:clean-scope-interactions"
@@ -322,6 +323,10 @@ def _binding_specs(
         ))
         specs.append((
             current, CONTROL_UNGROUP, CONTROL_UNGROUP, CAPABILITY_COMPOSITION,
+        ))
+        specs.append((
+            current, CONTROL_REMOVE_MEMBER, CONTROL_REMOVE_MEMBER,
+            CAPABILITY_COMPOSITION,
         ))
         # Placing a definition from the library is a third thing a scope
         # affords, and the client will not activate a place control that
@@ -587,6 +592,7 @@ def revise_clean_scope_interactions(
         (CONTROL_RUN, b"run"),
         (CONTROL_GROUP, b"group"),
         (CONTROL_UNGROUP, b"ungroup"),
+        (CONTROL_REMOVE_MEMBER, b"remove-member"),
         (CAPABILITY_INSTANTIATE, b"instantiate"),
         (CAPABILITY_COMPOSITION, b"composition"),
     ):
@@ -815,6 +821,7 @@ def install_clean_scope_interactions(
         (CONTROL_RUN, b"run"),
         (CONTROL_GROUP, b"group"),
         (CONTROL_UNGROUP, b"ungroup"),
+        (CONTROL_REMOVE_MEMBER, b"remove-member"),
         (CAPABILITY_INSTANTIATE, b"instantiate"),
         (CAPABILITY_COMPOSITION, b"composition"),
     ):
@@ -1021,6 +1028,7 @@ def derive_clean_scope_interactions(
         (CONTROL_RUN, b"run"),
         (CONTROL_GROUP, b"group"),
         (CONTROL_UNGROUP, b"ungroup"),
+        (CONTROL_REMOVE_MEMBER, b"remove-member"),
         (CAPABILITY_INSTANTIATE, b"instantiate"),
         (CAPABILITY_COMPOSITION, b"composition"),
     ):

@@ -11,6 +11,7 @@ from typing import Mapping
 from .model_router import ModelRouteRefused, route_chat
 from .unified_authority import read_instance, read_instance_definition, read_scope_level
 from .universal_cell import InvalidCell
+from .universal_application import is_application_halted
 
 
 _SYSTEM = (
@@ -81,6 +82,8 @@ def resolve_clean_node_model_route(authority, caller, projection, node_root, *, 
 
 def run_clean_agent_conversation(owner, binding, body, *, revalidate):
     """Resolve under the owner lock, call the provider outside it, re-admit reply."""
+    if is_application_halted():
+        raise InvalidCell("Stopped by you. Press Resume to continue.")
     if type(body) is not dict or set(body) - {"node", "prompt", "model", "expected_scope", "generation"}:
         raise InvalidCell("agent conversation fields are invalid")
     prompt = body.get("prompt")
@@ -104,14 +107,18 @@ def run_clean_agent_conversation(owner, binding, body, *, revalidate):
     try:
         generation_options = {"max_tokens": 900, "temperature": 0}
         generation_options.update(_generation_options(body.get("generation")))
+        if is_application_halted():
+            raise InvalidCell("Stopped by you. Press Resume to continue.")
         routed = route_chat(admitted["model"], [
             {"role": "system", "content": _SYSTEM},
             {"role": "user", "content": (instruction + "\n\n" if instruction else "") + prompt.strip()},
         ], response_byte_limit=262144,
             **generation_options,
             free_only=admitted["model"] == "openrouter/free" or admitted["model"].endswith(":free"))
-    except ModelRouteRefused:
-        raise
+    except ModelRouteRefused as exc:
+        return {"ok": False, "error": str(exc),
+            "error_code": getattr(exc, "reason_code", "model_reply_unavailable"),
+            "node": admitted["node"], "applied": []}
     except Exception:
         return {"ok": False, "error": "The model provider did not answer.",
             "error_code": "provider_unavailable", "node": admitted["node"], "applied": []}
@@ -121,6 +128,8 @@ def run_clean_agent_conversation(owner, binding, body, *, revalidate):
         "scope_root": admitted["scope"], "source_revision": admitted["revision"],
         "applied": [], "execution_requested": False}
     with owner._mutation_lock:
+        if is_application_halted():
+            raise InvalidCell("Stopped by you. Press Resume to continue.")
         revalidate()
         try:
             current = resolve()

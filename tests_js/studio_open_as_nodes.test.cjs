@@ -11,6 +11,16 @@ const vm = require('node:vm');
 const file = process.env.ARCHHUB_WORKSHOP_TEST_PATH ||
   path.join(__dirname, '../nodelang/studio/studio-workshop.jsx');
 const source = fs.readFileSync(file, 'utf8');
+const ahFixture = () => new Proxy({
+  onFill:'#000',
+  rad:{chip:3, xs:3, control:5, sm:5, node:6, md:6, panel:8, lg:8},
+  sp:{xs:4, sm:8, md:12, lg:16},
+  fs:{bodySm:{sz:13, ln:18}, bodySmStrong:{wt:500}, caption:{sz:12, ln:16}, label:{sz:11, ln:14, wt:500, letter:'.04em'}, data:{sz:12, ln:16, wt:400}, dataSm:{sz:11, ln:14, wt:400}},
+  icon:{ui:{size:16, box:20}, category:{size:12, box:20}},
+  shadow:{flat:'none'},
+  selection:{outline:'2px solid token-accent', outlineOffset:2},
+  dur:{fast:120, med:180},
+}, {get:(t,k)=> k in t ? t[k] : 'token-' + String(k)});
 
 function loadHelper() {
   const from = 'async function openWorkflowAsNodes', to = '\nconst WorkshopUtilityPanel =';
@@ -208,7 +218,7 @@ async function mountWorkshop(sel) {
   const win = dom.window;
   global.window = win; global.document = win.document; global.IS_REACT_ACT_ENVIRONMENT = true;
   const openCalls = [], modes = [], focuses = [], reveals = [];
-  win.AH = new Proxy({onFill:'#000'}, {get:(t,k)=> k in t ? t[k] : 'token-' + String(k)});
+  win.AH = ahFixture();
   win.ArchHubTheme = undefined;
   // The fresh topology snapshot the card verifies after the scope walk: the workflow member
   // drawn at the workflow's own scope.
@@ -366,7 +376,7 @@ async function mountForApprove() {
   const win = dom.window;
   global.window = win; global.document = win.document; global.IS_REACT_ACT_ENVIRONMENT = true;
   const posts = []; const errors = [];
-  win.AH = new Proxy({onFill:'#000'}, {get:(t,k)=> k in t ? t[k] : 'token-' + String(k)});
+  win.AH = ahFixture();
   win.ArchHubTheme = undefined; win.ARCHHUB_LOAD_HOSTS = async () => ({hosts:[]});
   win.ARCHHUB_CONVERSATION_RETENTION = async () => ({});
   win.ARCHHUB_STUDIO_AUTHORITY = new Proxy({
@@ -438,8 +448,13 @@ async function mountCanvasReveal(options = {}) {
     {id:'m2', cat:'logic', live:true, x:40, y:520, w:220, h:110, title:'Two', sub:'node', params:[], ins:[], outs:[], group:'G'},
   ];
   const snapshot = {graph:{nodes, wires:[]}, canvas:{revision:1, scope:{current:options.scope || 'scope'}, authorization:{subject:'owner', session:'s'}}};
-  const LM = new Proxy({}, {get:(_, key) => key === 'rad' ? {xs:3, sm:5, md:6, lg:8} :
-    key === 'sp' ? {xs:4, sm:8, md:12, lg:16} : 'token-' + String(key)});
+  const LM = new Proxy({}, {get:(_, key) => key === 'rad' ? {chip:3, xs:3, control:5, sm:5, node:6, md:6, panel:8, lg:8} :
+    key === 'sp' ? {xs:4, sm:8, md:12, lg:16} :
+    key === 'fs' ? {bodySm:{sz:13, ln:18}, bodySmStrong:{wt:500}, caption:{sz:12, ln:16}, label:{sz:11, ln:14, wt:500, letter:'.04em'}, data:{sz:12, ln:16, wt:400}, dataSm:{sz:11, ln:14, wt:400}} :
+    key === 'icon' ? {ui:{size:16, box:20}, category:{size:12, box:20}} :
+    key === 'shadow' ? {flat:'none'} :
+    key === 'selection' ? {outline:'2px solid token-accent', outlineOffset:2} :
+    key === 'dur' ? {fast:120, med:180} : 'token-' + String(key)});
   const studioCanvasScopeMock = canvas => canvas?.scope?.current || 'scope';
   const context = vm.createContext({React, LM, window:dom.window, document:dom.window.document,
     useStudioProjection:() => snapshot, LM_GRAPH:{nodes:[], wires:[]}, studioCanvasScope:() => 'scope',

@@ -36,7 +36,8 @@ test('the hosted Studio boots on the fresh clean canvas and shows its wire prope
   const [wire] = captured.wires;
   assert.equal(Array.isArray(wire.properties), false);          // the shape the server sends
   const snapshot = await load(captured);
-  assert.equal(snapshot.graph.nodes.length, captured.nodes.length);
+  assert.equal(snapshot.graph.nodes.length, captured.nodes.length + 1);
+  assert.equal(snapshot.graph.nodes.filter(node => node.kind === 'session').length, 1);
   const [shown] = snapshot.graph.wires;
   assert.equal(shown.id, wire.id);
   assert.deepEqual(shown.params.map(row => [row.k, row.v]), Object.entries(wire.properties));
@@ -89,6 +90,97 @@ test('the hosted workspace is ready: its own browser session is the Studio sessi
   const context = vm.createContext({session: {id: snapshot.canvas.root}, workshopState: snapshot});
   vm.runInContext(jsx.slice(begin, end) + '\nglobalThis.ready = workspaceReady;', context);
   assert.equal(context.ready, true);
+});
+
+test('authority composition sends one multi-root gesture before the group interaction', async () => {
+  const context = vm.createContext({URLSearchParams,
+    crypto:{randomUUID:() => 'cmd-group', subtle:{digest:async () => new Uint8Array([1])}},
+    TextEncoder});
+  vm.runInContext(source, context);
+  let canvas = {ok:true, graph_id:'graph-root', root:'scope-root', revision:1,
+    scope:{current:'scope-root'}, authorization:{subject:'owner-a', session:'browser-a'},
+    configuration:{design_system:{control_catalog:{controls:[{
+      owner:'app:control:canvas:group', applicable:true,
+      activation:{arguments:{operation:'group'}},
+    }]}}},
+    interaction_projection:{bindings:[{
+      control:'app:control:canvas:group', interaction:'i-group', event:'e-activate',
+    }]},
+    nodes:[
+      {id:'node-a', label:'A', x:0, y:0, ports:[], properties:[]},
+      {id:'node-b', label:'B', x:220, y:0, ports:[], properties:[]},
+    ],
+    wires:[], catalog:[], workshops:[]};
+  const posts = [];
+  const api = context.ArchHubStudioAuthority.create({
+    get:async () => canvas,
+    post:async (url, body) => {
+      posts.push({url, body:JSON.parse(JSON.stringify(body))});
+      if (url === '/api/universal/gesture') {
+        canvas = {...canvas, revision:canvas.revision + 1, selected:'node-a', selection:['node-a', 'node-b']};
+        return canvas;
+      }
+      if (url === '/api/universal/interaction') {
+        canvas = {...canvas, revision:canvas.revision + 1, selected:'group-node'};
+        return canvas;
+      }
+      throw new Error('unexpected post ' + url);
+    },
+  });
+  await api.load();
+  await api.composition('group', ['node-a', 'node-b']);
+  assert.deepEqual(posts.map(row => row.url), ['/api/universal/gesture', '/api/universal/interaction']);
+  assert.deepEqual(posts[0].body.roots, ['node-a', 'node-b']);
+  assert.equal(posts[0].body.focus, 'node-a');
+  assert.equal(posts[1].body.control, 'app:control:canvas:group');
+});
+
+test('authority member leave posts the remove-member interaction and refreshes the projection', async () => {
+  const context = vm.createContext({URLSearchParams,
+    crypto:{randomUUID:() => 'cmd-remove', subtle:{digest:async () => new Uint8Array([1])}},
+    TextEncoder});
+  vm.runInContext(source, context);
+  let canvas = {ok:true, graph_id:'graph-root', root:'scope-root', revision:1,
+    scope:{current:'scope-root'}, authorization:{subject:'owner-a', session:'browser-a'},
+    configuration:{design_system:{control_catalog:{controls:[{
+      owner:'app:control:canvas:remove-member', applicable:true,
+      activation:{arguments:{operation:'remove-member'}},
+    }]}}},
+    interaction_projection:{bindings:[{
+      control:'app:control:canvas:remove-member', interaction:'i-remove-member', event:'e-drop',
+    }]},
+    nodes:[
+      {id:'group-node', label:'Group', x:0, y:0, ports:[], properties:[], composition:true,
+        member_count:2, members:[{id:'node-a', title:'Sketch Lines'}, {id:'node-b', title:'CAD Lines'}]},
+      {id:'node-a', label:'Sketch Lines', x:20, y:20, ports:[], properties:[], group:'group-node'},
+      {id:'node-b', label:'CAD Lines', x:40, y:40, ports:[], properties:[], group:'group-node'},
+    ],
+    wires:[], catalog:[], workshops:[]};
+  const posts = [];
+  const api = context.ArchHubStudioAuthority.create({
+    get:async () => canvas,
+    post:async (url, body) => {
+      posts.push({url, body:JSON.parse(JSON.stringify(body))});
+      if (url === '/api/universal/interaction') {
+        assert.equal(body.control, 'app:control:canvas:remove-member');
+        canvas = {...canvas, revision:canvas.revision + 1,
+          nodes:canvas.nodes.map(node => {
+            if (node.id === 'group-node') return {...node, member_count:1, members:[{id:'node-b', title:'CAD Lines'}]};
+            if (node.id === 'node-a') return {...node, group:''};
+            return node;
+          })};
+        return canvas;
+      }
+      throw new Error('unexpected post ' + url);
+    },
+  });
+  await api.load();
+  await api.moveMember('node-a', 'group-node', '', {x:252, y:556});
+  assert.deepEqual(posts.map(row => row.url), ['/api/universal/interaction']);
+  assert.deepEqual(posts[0].body.membership, {member:'node-a', from_group:'group-node', to_group:'', position:{x:252, y:556}});
+  const snapshot = api.getSnapshot();
+  assert.equal(snapshot.graph.nodes.find(node => node.id === 'group-node').memberCount, 1);
+  assert.equal(snapshot.graph.nodes.find(node => node.id === 'node-a').group, '');
 });
 
 test('the hosted session is filled only from exactly one listed session, and never over one already present', async () => {

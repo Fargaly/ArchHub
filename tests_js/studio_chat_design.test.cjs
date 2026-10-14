@@ -57,7 +57,7 @@ function projected(raw) {
   return JSON.parse(context.graph);
 }
 
-async function mountStudio({raw = wiredCanvas, account = {signedIn:true, email:'ana@studio.example', name:'Ana', graphTier:'founder'}} = {}) {
+async function mountStudio({raw = wiredCanvas, account = {signedIn:true, email:'ana@studio.example', name:'Ana', graphTier:'founder'}, reducedMotion = false, beforeRender = null} = {}) {
   const manifest = JSON.parse(read('nodelang/studio/compiled/manifest.json'));
   const held = manifest.files.find(file => file.source === 'studio-lm.jsx');
   const live = createHash('sha256').update(fs.readFileSync(path.join(root, 'nodelang/studio/studio-lm.jsx'))).digest('hex');
@@ -77,7 +77,15 @@ async function mountStudio({raw = wiredCanvas, account = {signedIn:true, email:'
   // studio.html's graph-held composer pick bridge: the save is confirmed with the route it was given.
   win.ARCHHUB_AGENT_SELECT = async model => model;
   win.ARCHHUB_THEME = {...seed};
-  win.matchMedia = () => ({matches:false, addEventListener() {}, removeEventListener() {}});
+  const mediaListeners = new Set();
+  const reducedMedia = {
+    matches:!!reducedMotion,
+    media:'(prefers-reduced-motion: reduce)',
+    addEventListener(type, listener) { if (type === 'change') mediaListeners.add(listener); },
+    removeEventListener(type, listener) { if (type === 'change') mediaListeners.delete(listener); },
+  };
+  win.matchMedia = query => query === '(prefers-reduced-motion: reduce)' ? reducedMedia :
+    ({matches:false, addEventListener() {}, removeEventListener() {}});
   if (account) win.localStorage.setItem('archhub.account.v1', JSON.stringify(account));
   const graph = projected(raw);
   const listeners = new Set();
@@ -97,6 +105,7 @@ async function mountStudio({raw = wiredCanvas, account = {signedIn:true, email:'
   win.ARCHHUB_LIVE = {sessions:[{id:'graph-a', title:'ArchHub', state:'idle', file:'Graph composition'}],
     currentGraph:'graph-a', hosts:[], connectors:[], graph, memory:[], skills:[]};
   win.ARCHHUB_BOOT = {...(win.ARCHHUB_BOOT || {}), open_graph:win.ARCHHUB_LIVE.currentGraph};
+  if (beforeRender) beforeRender({win, getSnapshot:() => snapshot});
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
   for (const file of manifest.files) {
@@ -123,7 +132,11 @@ async function mountStudio({raw = wiredCanvas, account = {signedIn:true, email:'
     assert.ok(search, 'the picker opens with its search field');
     return search;
   };
-  return {win, doc, flush, settle, buttons, exact, close, type, reply, requests, agent, openPicker, answer:text => answer(text)};
+  const setReducedMotion = matches => {
+    reducedMedia.matches = !!matches;
+    for (const listener of [...mediaListeners]) listener({matches:reducedMedia.matches, media:reducedMedia.media});
+  };
+  return {win, doc, flush, settle, buttons, exact, close, type, reply, requests, agent, openPicker, setReducedMotion, answer:text => answer(text)};
 }
 
 test('Chat with no conversation: the moved selection panel has no system prompt card or generation controls, and one ask field', async () => {
@@ -317,6 +330,380 @@ test('UX-CHAT1 v3: an ordinary first send reads back one question and one answer
   } finally { studio.close(); }
 });
 
+test('UPD2 p9: a provider refusal is a visible error turn and retains the graph-chat text', async () => {
+  const studio = await mountStudio();
+  try {
+    await studio.settle();
+    const input = studio.reply();
+    const send = async () => {
+      studio.type(input, 'p9 chat probe');
+      studio.flush(() => input.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
+      await studio.settle();
+    };
+    await send();
+    const dialog = studio.doc.querySelector('[role="dialog"][aria-label="Choose a model"]');
+    studio.flush(() => studio.exact('DeepSeek R1', dialog)[0].closest('[style]').parentElement.click());
+    await studio.settle();
+    await send();
+    assert.equal(studio.agent.length, 1, 'the main graph composer actually dispatched the turn');
+    studio.answer({ok:false, error:'p9 fake provider unavailable'});
+    await studio.settle();
+    const panel = studio.doc.querySelector('aside[aria-label="Selection inspector"]');
+    const errors = [...panel.querySelectorAll('[data-chat-turn="error"]')];
+    assert.ok(errors.some(row => row.textContent.includes('p9 fake provider unavailable')),
+      'provider refusal is visible beside the composer as an error turn');
+    assert.equal(input.value, 'p9 chat probe', 'the refused text remains for retry');
+    assert.equal(!!panel.querySelector('button:disabled')?.textContent.includes('Waiting'), false,
+      'the refusal ends the waiting state');
+  } finally { studio.close(); }
+});
+
+test('UPD2 p9: send from graph Properties reveals Chat and preserves a reply through tab changes', async () => {
+  const studio = await mountStudio();
+  try {
+    await studio.settle();
+    const input = studio.reply();
+    await studio.openPicker();
+    const dialog = studio.doc.querySelector('[role="dialog"][aria-label="Choose a model"]');
+    studio.flush(() => studio.exact('DeepSeek R1', dialog)[0].closest('[style]').parentElement.click());
+    await studio.settle();
+    const panel = studio.doc.querySelector('aside[aria-label="Selection inspector"]');
+    const tab = label => [...panel.querySelectorAll('[role="tab"]')].find(row => row.textContent === label);
+    studio.flush(() => tab('Properties').click());
+    await studio.settle();
+    studio.type(input, 'p9 reply while inspecting properties');
+    studio.flush(() => input.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
+    await studio.settle();
+    assert.equal(studio.agent.length, 1, 'the main graph composer dispatched the turn from Properties');
+    studio.answer({answer:'p9 visible reply'});
+    await studio.settle();
+    assert.equal(tab('Chat').getAttribute('aria-selected'), 'true', 'Send opens the reply surface');
+    assert.ok(studio.exact('p9 visible reply', panel).length, 'the successful reply is a visible turn');
+    studio.flush(() => tab('Properties').click());
+    await studio.settle();
+    studio.flush(() => tab('Chat').click());
+    await studio.settle();
+    assert.ok(studio.exact('p9 visible reply', panel).length, 'tab changes retain the admitted reply');
+  } finally { studio.close(); }
+});
+
+test('UPD2 p10 G3: saved empty-selection graph turns survive actual graph reopen and a fresh component mount', async () => {
+  // This is the installed existing-workshop topology shape: the raw canvas has
+  // scope.current, not root. Durable rows live outside React and are keyed by
+  // the graph-as-node identity the server uses, never by a component cache.
+  const stored = new Map();
+  const reads = [], opens = [], selectionWrites = [];
+  // /gesture's primary focus is retained when roots are cleared. Selection,
+  // not the old primary, decides whether the inspector targets the graph.
+  let savedPrimary = 'sketch-a', savedSelection = [];
+  const beforeRender = ({win, getSnapshot}) => {
+    getSnapshot().topology.selected = savedPrimary;
+    getSnapshot().topology.canvas.selected = savedPrimary;
+    getSnapshot().topology.canvas.selection = [...savedSelection];
+    const select = win.ARCHHUB_EXISTING_WORKSHOP.selectTopology;
+    win.ARCHHUB_EXISTING_WORKSHOP.selectTopology = async (id, roots) => {
+      const requested = Array.isArray(roots) ? Array.from(roots) : id ? [id] : [];
+      selectionWrites.push({id, roots:requested});
+      if (id) savedPrimary = id;
+      savedSelection = requested;
+      getSnapshot().topology.canvas.selected = savedPrimary;
+      getSnapshot().topology.canvas.selection = [...savedSelection];
+      // Publish through the original owner callback, preserving its listeners.
+      return select(savedPrimary);
+    };
+    win.ARCHHUB_WORKSHOP_TRANSCRIPT = async (node, scope) => {
+      reads.push({node, scope});
+      const current = getSnapshot().topology.canvas.scope.current;
+      if (scope !== current || node !== 'graph:' + current) {
+        return {ok:false, error:'That graph is not the current canvas'};
+      }
+      return {ok:true, node, conversation_root:'durable-graph-conversation:' + current,
+        revision:7, has_older:false, next_before:null,
+        rows:(stored.get(current) || []).map(row => ({...row}))};
+    };
+    win.ARCHHUB_GRAPH_OPEN = async root => {
+      opens.push(root);
+      return {ok:true, current_graph:root, graphs:[{id:root, title:'ArchHub', state:'idle', file:'Graph composition'}]};
+    };
+  };
+  let studio = await mountStudio({beforeRender});
+  try {
+    await studio.settle();
+    assert.ok(reads.length, 'the initial graph panel reads the durable transcript');
+    assert.deepEqual(reads[0], {node:'graph:scope-a', scope:'scope-a'}, 'the read names the current graph identity and scope');
+    await studio.openPicker();
+    const picker = studio.doc.querySelector('[role="dialog"][aria-label="Choose a model"]');
+    studio.flush(() => studio.exact('DeepSeek R1', picker)[0].closest('[style]').parentElement.click());
+    await studio.settle();
+    const input = studio.reply();
+    studio.type(input, 'p10 saved graph message');
+    studio.flush(() => input.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
+    await studio.settle();
+    assert.equal(studio.agent.length, 1, 'the empty-selection panel sends exactly one turn');
+    assert.equal(studio.agent[0][2].graph, true);
+    assert.equal(studio.agent[0][2].graph_id, 'scope-a', 'send and transcript target the same graph root');
+    stored.set('scope-a', [
+      {id:'p10-graph-question', who:'You', is_me:true, text:'p10 saved graph message', time:'', kind:'message'},
+      {id:'p10-graph-answer', who:'DeepSeek R1', is_me:false, text:'p10 durable graph answer', time:'', kind:'reply'},
+    ]);
+    // Simulate the save receipt after the durable store has committed both rows.
+    studio.answer({answer:'p10 durable graph answer', delivery:{state:'replied',
+      message_id:'p10-graph-question', reply_message_id:'p10-graph-answer'}});
+    await studio.settle(); await studio.settle();
+    const assertStoredTurn = () => {
+      const panel = studio.doc.querySelector('aside[aria-label="Selection inspector"]');
+      assert.ok(panel, 'empty selection opens the graph panel');
+      assert.equal(panel.querySelector('[data-chat-local]'), null, 'every visible row comes from durable transcript readback');
+      assert.equal(studio.exact('p10 saved graph message', panel).length, 1, 'saved graph question renders once');
+      assert.equal(studio.exact('p10 durable graph answer', panel).length, 1, 'saved graph answer renders once');
+      assert.equal(panel.querySelectorAll('[data-chat-turn="question"]').length, 1, 'question turn marker survives reopen');
+      assert.equal(panel.querySelectorAll('[data-chat-turn="answer"]').length, 1, 'p9 x answer turn marker survives reopen');
+    };
+    assertStoredTurn();
+    studio.flush(() => studio.doc.querySelector('button[title="Chats"]').click());
+    const home = studio.doc.querySelector('button[aria-label="Home"]');
+    assert.ok(home, 'Chats offers Home to leave the current graph');
+    studio.flush(() => home.click()); await studio.settle();
+    assert.equal(studio.doc.querySelector('aside[aria-label="Selection inspector"]'), null, 'Home unmounts the graph panel and all local turns');
+    const row = studio.exact('ArchHub').map(node => node.closest('button')).find(Boolean);
+    assert.ok(row, 'the saved graph remains in the Chats list');
+    studio.flush(() => row.click()); await studio.settle(); await studio.settle();
+    assert.deepEqual(opens, ['graph-a'], 'reopen uses the graph-open owner callback once');
+    assertStoredTurn();
+    // PM's reopened graph had been reselected. Exercise node -> empty graph
+    // selection as well: the inspector must reread the graph history after the
+    // node's conversation component has replaced its old graph component.
+    const card = studio.doc.querySelector('.lm-node[data-node-id="sketch-a"]');
+    assert.ok(card, 'the reopened canvas has an ordinary node to reselect');
+    studio.flush(() => card.dispatchEvent(new studio.win.MouseEvent('click', {bubbles:true, cancelable:true})));
+    await studio.settle();
+    assert.match(studio.doc.querySelector('aside[aria-label="Selection inspector"]').textContent, /Sketch Lines/, 'reselection actually switches the inspector to the node');
+    const canvas = studio.doc.querySelector('[role="region"][aria-label="Workflow canvas"]');
+    studio.flush(() => canvas.dispatchEvent(new studio.win.MouseEvent('mousedown', {button:0, bubbles:true, cancelable:true})));
+    studio.flush(() => studio.win.dispatchEvent(new studio.win.MouseEvent('mouseup', {button:0, bubbles:true})));
+    await studio.settle(); await studio.settle();
+    assert.ok(selectionWrites.some(write => write.id === null && write.roots.length === 0),
+      'clearing the canvas sends an explicit empty selection through the owner');
+    assert.equal(savedPrimary, 'sketch-a', 'the server retains the selected node as primary focus');
+    assert.deepEqual(savedSelection, [], 'the server durably holds an explicit empty selection');
+    assert.equal(studio.win.ARCHHUB_EXISTING_WORKSHOP.getSnapshot().topology.selected, 'sketch-a',
+      'the mounted inspector receives the retained primary and must still draw the graph');
+    assertStoredTurn();
+    assert.equal(studio.agent.length, 1, 'reopening or reselection never resends the saved message');
+    const readCount = reads.length;
+    studio.close();
+    studio = await mountStudio({beforeRender});
+    await studio.settle(); await studio.settle();
+    assert.ok(reads.length > readCount, 'a fresh Studio mount rereads the durable graph transcript');
+    const restored = studio.win.ARCHHUB_EXISTING_WORKSHOP.getSnapshot().topology;
+    assert.equal(restored.selected, 'sketch-a', 'fresh mount restores the retained primary from the server');
+    assert.deepEqual(Array.from(restored.canvas.selection), [], 'fresh mount restores the durable empty selection');
+    assertStoredTurn();
+    assert.equal(studio.agent.length, 0, 'fresh mount reads history without any send');
+    assert.ok(reads.every(read => read.node === 'graph:scope-a' && read.scope === 'scope-a'), 'every reopened read preserves the graph root identity');
+  } finally { studio.close(); }
+});
+
+for (const gesture of ['empty canvas click', 'Esc']) {
+  test(`UPD2 p11 G3: wire -> reopen -> ${gesture} restores GRAPH and its saved message`, async () => {
+    let primary = 'wire-a', selection = [];
+    const writes = [], opens = [], reads = [];
+    const beforeRender = ({win, getSnapshot}) => {
+      const canvas = getSnapshot().topology.canvas;
+      canvas.selected = primary; canvas.selection = [...selection];
+      getSnapshot().topology.selected = primary;
+      const publish = win.ARCHHUB_EXISTING_WORKSHOP.selectTopology;
+      win.ARCHHUB_EXISTING_WORKSHOP.selectTopology = async (id, roots) => {
+        selection = Array.isArray(roots) ? Array.from(roots) : id ? [id] : [];
+        writes.push({id, roots:[...selection]});
+        if (id) primary = id; // The real owner retains primary after an explicit clear.
+        canvas.selected = primary; canvas.selection = [...selection];
+        return publish(primary);
+      };
+      win.ARCHHUB_EXISTING_WORKSHOP.refreshTopologyCanvas = async () => publish(primary);
+      win.ARCHHUB_GRAPH_OPEN = async id => {
+        opens.push(id);
+        return {ok:true, current_graph:id, graphs:[{id, title:'ArchHub', state:'idle', file:'Graph composition'}]};
+      };
+      win.ARCHHUB_WORKSHOP_TRANSCRIPT = async (node, scope) => {
+        reads.push({node, scope});
+        return {ok:true, node, conversation_root:'saved:' + node, has_older:false,
+          rows:node === 'graph:scope-a' ? [{id:'p11-saved', who:'You', is_me:true,
+            text:'p11 saved graph message', kind:'message'}] : []};
+      };
+    };
+    let studio = await mountStudio({beforeRender});
+    const panel = () => studio.doc.querySelector('aside[aria-label="Selection inspector"]');
+    const assertGraph = (expectedPrimary = 'wire-a') => {
+      assert.equal(studio.exact('GRAPH', panel()).length, 1, 'the inspector targets GRAPH');
+      assert.equal(studio.exact('p11 saved graph message', panel()).length, 1, 'saved graph history is visible');
+      assert.equal(panel().querySelector('[data-chat-local]'), null, 'history is owner readback');
+      assert.deepEqual(selection, [], 'the owner holds an empty selection');
+      assert.equal(primary, expectedPrimary, 'retained primary cannot override empty selection');
+      assert.equal(studio.agent.length, 0, 'history readback sends no message');
+    };
+    const selectWire = async () => {
+      const wire = studio.doc.querySelector('[data-wire-id="wire-a"]');
+      assert.ok(wire, 'the actual wire hit target is mounted');
+      studio.flush(() => wire.dispatchEvent(new studio.win.MouseEvent('click', {bubbles:true, cancelable:true})));
+      await studio.settle();
+      assert.match(panel().textContent, /CONNECTION/, 'explicit wire reselection still opens CONNECTION');
+      assert.deepEqual(selection, ['wire-a'], 'explicit reselection reaches the owner');
+    };
+    const clear = async (expectedPrimary = 'wire-a') => {
+      const canvas = studio.doc.querySelector('[role="region"][aria-label="Workflow canvas"]');
+      assert.ok(canvas, 'the reopened canvas is mounted');
+      const before = writes.length;
+      if (gesture === 'Esc') {
+        studio.flush(() => canvas.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Escape', bubbles:true, cancelable:true})));
+      } else {
+        studio.flush(() => canvas.dispatchEvent(new studio.win.MouseEvent('mousedown', {button:0, bubbles:true, cancelable:true})));
+        studio.flush(() => studio.win.dispatchEvent(new studio.win.MouseEvent('mouseup', {button:0, bubbles:true})));
+        studio.flush(() => canvas.dispatchEvent(new studio.win.MouseEvent('click', {button:0, bubbles:true, cancelable:true})));
+      }
+      await studio.settle(); await studio.settle();
+      assert.equal(writes.length, before + 1, 'the clear posts exactly once');
+      assert.deepEqual(writes.at(-1), {id:null, roots:[]}, 'the gesture explicitly clears the owner selection');
+      assertGraph(expectedPrimary);
+    };
+    try {
+      await studio.settle();
+      assertGraph(); // Fresh restore of an empty selection with retained WIRE primary.
+      await selectWire();
+      studio.flush(() => studio.doc.querySelector('button[title="Chats"]').click());
+      studio.flush(() => studio.doc.querySelector('button[aria-label="Home"]').click());
+      await studio.settle();
+      assert.equal(panel(), null, 'Home unmounts the inspector');
+      const row = studio.exact('ArchHub').map(node => node.closest('button')).find(Boolean);
+      assert.ok(row, 'the saved graph can be reopened');
+      studio.flush(() => row.click());
+      await studio.settle(); await studio.settle();
+      assert.deepEqual(opens, ['graph-a'], 'the graph is actually reopened through its owner');
+      assertGraph(); // The retained nonempty relation selection is cleared on reopen.
+      await clear();
+      await selectWire(); // Explicit reselection after reopen must remain available.
+      await clear(); // Clear the wire, not just the already-empty reopened canvas.
+      const card = studio.doc.querySelector('.lm-node[data-node-id="sketch-a"]');
+      studio.flush(() => card.dispatchEvent(new studio.win.MouseEvent('click', {bubbles:true, cancelable:true})));
+      await studio.settle();
+      assert.match(panel().textContent, /Sketch Lines/, 'ordinary node selection still opens its inspector');
+      await clear('sketch-a');
+      await selectWire();
+      await clear();
+      const beforeMount = reads.length;
+      studio.close();
+      studio = await mountStudio({beforeRender});
+      await studio.settle(); await studio.settle();
+      assertGraph();
+      assert.ok(reads.length > beforeMount, 'a fresh mount rereads the saved graph message');
+      selection = ['wire-a']; // Simulate closing the app while the relation was selected.
+      studio.close();
+      const beforeRestore = writes.length;
+      studio = await mountStudio({beforeRender});
+      await studio.settle(); await studio.settle();
+      assertGraph();
+      assert.deepEqual(writes.slice(beforeRestore), [{id:null, roots:[]}],
+        'fresh mount clears a persisted nonempty relation selection through the owner');
+      await selectWire();
+      await clear();
+    } finally { studio.close(); }
+  });
+}
+
+test('UPD2 p10 G3: a mixed projection reads saved graph history using scope.current before application root, including a fresh reopen', async () => {
+  // Canonical raw topology has no root. This separate supported-shape regression
+  // holds both identities so graphInspectorNode's scope.current target cannot
+  // be paired with a transcript read authorized against a different root.
+  const stored = [
+    {id:'mixed-question', who:'You', is_me:true, text:'Saved graph question', kind:'message'},
+    {id:'mixed-answer', who:'DeepSeek R1', is_me:false, text:'Saved graph answer', kind:'reply'},
+  ];
+  const reads = [];
+  const beforeRender = ({win, getSnapshot}) => {
+    getSnapshot().topology.canvas.root = 'application-root';
+    win.ARCHHUB_WORKSHOP_TRANSCRIPT = async (node, scope) => {
+      reads.push({node, scope});
+      if (node !== 'graph:scope-a' || scope !== 'scope-a') {
+        return {ok:false, error:'Canvas scope changed; refresh the canvas'};
+      }
+      return {ok:true, node, conversation_root:'durable-scope-a', has_older:false,
+        rows:stored.map(row => ({...row}))};
+    };
+  };
+  let studio = await mountStudio({beforeRender});
+  const assertStored = () => {
+    const panel = studio.doc.querySelector('aside[aria-label="Selection inspector"]');
+    assert.ok(panel, 'the empty-selection graph inspector mounts');
+    assert.equal(panel.querySelector('[role="alert"]'), null, 'matching scope.current authorizes the transcript');
+    assert.equal(panel.querySelector('[data-chat-local]'), null, 'history came from the durable transcript only');
+    assert.equal(studio.exact('Saved graph question', panel).length, 1, 'the saved graph question renders');
+    assert.equal(studio.exact('Saved graph answer', panel).length, 1, 'the saved graph answer renders');
+    assert.equal(panel.querySelectorAll('[data-chat-turn="answer"]').length, 1, 'the p9 answer marker remains intact');
+    assert.equal(studio.agent.length, 0, 'reading saved history never sends a turn');
+  };
+  try {
+    await studio.settle();
+    assertStored();
+    assert.ok(reads.length, 'the first mount reads the transcript');
+    const beforeReopen = reads.length;
+    studio.close();
+    studio = await mountStudio({beforeRender});
+    await studio.settle();
+    assertStored();
+    assert.ok(reads.length > beforeReopen, 'a fresh reopen rereads the durable history');
+    assert.ok(reads.every(read => read.node === 'graph:scope-a' && read.scope === 'scope-a'),
+      'both mounts use the scope.current graph identity despite a different application root');
+  } finally { studio.close(); }
+});
+
+test('UPD2 p10 G3: transcript identity refusal is visible and never leaves another graph history or an endless reading state', async () => {
+  const studio = await mountStudio({beforeRender:({win}) => {
+    win.ARCHHUB_WORKSHOP_TRANSCRIPT = async node => ({ok:true, node:'graph:other-scope',
+      conversation_root:'other-history', rows:[{id:'foreign', who:'You', is_me:true,
+        text:'Foreign graph message', kind:'message'}], has_older:false});
+  }});
+  try {
+    await studio.settle();
+    const panel = studio.doc.querySelector('aside[aria-label="Selection inspector"]');
+    const alert = panel.querySelector('[role="alert"]');
+    assert.ok(alert, 'a mismatched graph transcript gives a visible refusal');
+    assert.match(alert.textContent, /changed|match|another|refus|refresh/i, 'the refusal explains the wrong transcript binding');
+    assert.doesNotMatch(panel.textContent, /Foreign graph message/, 'another graph history is never rendered');
+    assert.doesNotMatch(panel.textContent, /Reading the conversation/, 'a refused read cannot remain pending forever');
+  } finally { studio.close(); }
+});
+
+test('UPD2 p9: a live model node without model in its summary still shows its accepted first reply', async () => {
+  // The server resolves model from the complete property lens, not this
+  // four-row canvas summary (agent_composer._resolve_node_model_route).
+  const raw = {nodes:[{id:'think-a', label:'Think', engine:'library.think', x:40, y:60,
+    params:[{label:'engine', value:'library.think'}, {label:'prompt', value:'summarize'}], ports:[]}], wires:[]};
+  const studio = await mountStudio({raw});
+  try {
+    await studio.settle();
+    await studio.openPicker();
+    const dialog = studio.doc.querySelector('[role="dialog"][aria-label="Choose a model"]');
+    studio.flush(() => studio.exact('DeepSeek R1', dialog)[0].closest('[style]').parentElement.click());
+    await studio.settle();
+    const card = studio.doc.querySelector('.lm-node[data-node-id="think-a"]');
+    studio.flush(() => card.dispatchEvent(new studio.win.MouseEvent('click', {bubbles:true, cancelable:true})));
+    await studio.settle();
+    const input = studio.reply();
+    studio.type(input, 'p9 first node reply');
+    studio.flush(() => input.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
+    await studio.settle();
+    assert.equal(studio.agent.length, 1, 'the selected live node dispatched the turn');
+    assert.equal(studio.agent[0][2].node, 'think-a', 'the accepted turn belongs to the selected node');
+    studio.answer({answer:'p9 visible first node reply', delivery:{state:'replied'}});
+    await studio.settle();
+    const panel = studio.doc.querySelector('aside[aria-label="Selection inspector"]');
+    assert.ok(studio.exact('p9 visible first node reply', panel).length,
+      'an accepted first reply renders before a conversation binding appears in the canvas');
+    assert.equal([...panel.querySelectorAll('[role="tab"]')].find(row => row.textContent === 'Chat')?.getAttribute('aria-selected'),
+      'true', 'the successful node send reveals Chat');
+  } finally { studio.close(); }
+});
+
 test('Inspector: empty selection shows the graph as a node with graph properties instead of the old Chat rail chain', async () => {
   const studio = await mountStudio();
   try {
@@ -374,7 +761,7 @@ test('Model picker: the design header, live groups without prices, then native a
     assert.equal(row.nextElementSibling.textContent, 'deepseek ' + DOT + ' ctx 131k', 'a row reads vendor and context, no price');
     const [session] = studio.exact('Codex', dialog);
     const sessionRow = session.closest('button');
-    assert.ok(sessionRow && sessionRow.style.display === 'flex' && sessionRow.style.padding === '8px 10px', 'a native agent is a design row');
+    assert.ok(sessionRow && sessionRow.style.display === 'flex' && sessionRow.style.padding === '8px 12px', 'a native agent is a tokenized design row');
     assert.match(sessionRow.textContent, /Selectable · 1 live session/, 'the native row label names selectable sessions, not idle state');
     assert.equal(sessionRow.textContent.includes('Idle ·'), false, 'selectable discovery is not labelled idle');
     const modelsBefore = studio.requests.filter(url => url.startsWith('/api/universal/models')).length;
@@ -395,6 +782,42 @@ test('Model picker: the design header, live groups without prices, then native a
     studio.flush(() => clear.click());
     await studio.settle();
     assert.ok(studio.exact('Choose a model').length, 'clearing returns the inspector to Choose a model');
+  } finally { studio.close(); }
+});
+
+test('Theme update redraws focused node outline from the live accent', async () => {
+  const studio = await mountStudio();
+  try {
+    await studio.settle();
+    const card = studio.doc.querySelector('.lm-node[data-node-id="sketch-a"]');
+    assert.ok(card, 'a canvas node is mounted');
+    studio.flush(() => card.dispatchEvent(new studio.win.MouseEvent('click', {bubbles:true, cancelable:true})));
+    await studio.settle();
+    assert.equal(studio.doc.querySelector('.lm-node[data-focused="true"]')?.getAttribute('data-node-id'), 'sketch-a',
+      'the rendered node is focused before testing outline colour');
+    const next = Object.fromEntries(studio.win.ArchHubTheme.keys.map(key => [key, seed[key]]));
+    next.accent = '#55aaee';
+    studio.flush(() => studio.win.ArchHubTheme.apply(next));
+    await studio.settle();
+    const updated = studio.doc.querySelector('.lm-node[data-node-id="sketch-a"]');
+    assert.equal(studio.win.getComputedStyle(updated).outlineColor, 'rgb(85, 170, 238)',
+      'the focused node outline follows the updated accent');
+  } finally { studio.close(); }
+});
+
+test('Reduced-motion preference zeroes transitions and live changes redraw', async () => {
+  const studio = await mountStudio({reducedMotion:true});
+  try {
+    await studio.settle();
+    const card = studio.doc.querySelector('.lm-node[data-node-id="sketch-a"]');
+    assert.ok(card, 'a canvas node is mounted');
+    assert.doesNotMatch(card.style.transition, /[1-9]\d*ms/, 'reduced motion starts with zero transition durations');
+    studio.flush(() => studio.setReducedMotion(false));
+    await studio.settle();
+    assert.match(card.style.transition, /120ms/, 'leaving reduced motion restores token durations');
+    studio.flush(() => studio.setReducedMotion(true));
+    await studio.settle();
+    assert.doesNotMatch(card.style.transition, /[1-9]\d*ms/, 'returning to reduced motion redraws zero durations');
   } finally { studio.close(); }
 });
 

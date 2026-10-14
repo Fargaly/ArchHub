@@ -29,6 +29,9 @@
 //  7. Edits are pending until run, and survive switching nodes.
 
 const PM = window.AH;
+const PM_FS = (PM.fs && typeof PM.fs === 'object') ? PM.fs : {};
+PM_FS.label = PM_FS.label || {sz:11, ln:14, wt:500, letter:'.04em'};
+PM_FS.dataSm = PM_FS.dataSm || {sz:11, ln:14, wt:400};
 
 // ── TYPE REGISTRY ───────────────────────────────────────────────────────────
 // One place that decides a type's colour, glyph, socket shape and whether it can be edited
@@ -312,14 +315,14 @@ function ScrubValue({ value, step, unit, hard, min, max, onChange, disabled }) {
       }}>
       {pct != null && <span style={{ position: 'absolute', left: 0, bottom: 0, height: 2, width: pct + '%', background: dragging ? PM.accent : PM.accentHi, opacity: dragging ? 1 : 0.7 }}/>}
       <b style={{ position: 'relative', fontFamily: PM.mono, fontSize: 12.5, fontWeight: 500, color: PM.ink }}>{String(value)}</b>
-      {unit && <span style={{ position: 'relative', fontFamily: PM.mono, fontSize: 9, color: PM.inkSoft }}>{unit}</span>}
+      {unit && <span style={{ position: 'relative', fontFamily: PM.mono, fontSize: PM_FS.dataSm.sz, color: PM.inkSoft }}>{unit}</span>}
     </span>
   );
 }
 
 const pmChip = (on) => ({
   padding: '5px 9px', borderRadius: PM.rad.sm, cursor: 'pointer', fontFamily: PM.mono,
-  fontSize: 10.5, lineHeight: 1.2, whiteSpace: 'nowrap',
+  fontSize: PM_FS.label.sz, lineHeight: 1.2, whiteSpace: 'nowrap',
   border: `1px solid ${on ? PM.accent : PM.line}`,
   background: on ? PM.accent : 'transparent',
   color: on ? (PM.onFill || '#180f08') : PM.inkSoft,
@@ -349,12 +352,12 @@ function ParamRow({ spec, labels, val, def, wired, onChange, onRevert, onPromote
   const pick = (v) => { onChange(v); setOpen(false); };
 
   const control = wired ? (
-    <span title={'Driven by ' + wired} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, maxWidth: 118, fontFamily: PM.mono, fontSize: 10.5, color: wired === 'unconnected' ? PM.warn : T.col, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+    <span title={'Driven by ' + wired} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, maxWidth: 118, fontFamily: PM.mono, fontSize: PM_FS.dataSm.sz, color: wired === 'unconnected' ? PM.warn : T.col, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
       ← {wired}
     </span>
   ) : dataOnly ? (
     <button onClick={onPromote} title={T.label + ' can only arrive on a wire — expose a socket'}
-      style={{ padding: '3px 8px', borderRadius: 4, border: `1px dashed ${PM.line}`, background: 'transparent', color: PM.inkSoft, cursor: 'pointer', fontFamily: PM.mono, fontSize: 10 }}>expose</button>
+      style={{ padding: '3px 8px', borderRadius: 4, border: `1px dashed ${PM.line}`, background: 'transparent', color: PM.inkSoft, cursor: 'pointer', fontFamily: PM.mono, fontSize: PM_FS.label.sz }}>expose</button>
   ) : isNum ? (
     <ScrubValue value={val} step={spec.step} unit={spec.unit} hard={spec.hard} min={spec.min} max={spec.max} onChange={onChange}/>
   ) : spec.type === 'toggle' ? (
@@ -376,7 +379,7 @@ function ParamRow({ spec, labels, val, def, wired, onChange, onRevert, onPromote
     <button onClick={() => setOpen(o => !o)} title={label + ' — ' + spec.opts.length + ' options'}
       style={{ width: 104, boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, padding: '4px 7px', borderRadius: 4, cursor: 'pointer', border: `1px solid ${open ? PM.accent : PM.line}`, background: PM.bg, color: PM.ink, fontFamily: PM.mono, fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden' }}>
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{String(val)}</span>
-      <span style={{ color: PM.inkSoft, fontSize: 9 }}>{open ? '▴' : '▾'}</span>
+      <span style={{ color: PM.inkSoft, fontSize: PM_FS.dataSm.sz }}>{open ? '▴' : '▾'}</span>
     </button>
   ) : (
     <input value={val == null ? '' : val} onChange={e => onChange(e.target.value)} placeholder="value…"
@@ -426,7 +429,7 @@ function ParamRow({ spec, labels, val, def, wired, onChange, onRevert, onPromote
           {!dataOnly && <button onClick={() => { onRevert(); setMenu(false); }} style={pmChip(false)}>↺ reset</button>}
           {!wired && <button onClick={() => { onPromote(); setMenu(false); }} style={pmChip(false)}>⇄ expose</button>}
           {!spec.builtin && <button onClick={() => { onDelete(); setMenu(false); }} style={Object.assign({}, pmChip(false), { color: PM.err, borderColor: PM.err })}>⌫ remove</button>}
-          <span style={{ flexBasis: '100%', fontFamily: PM.mono, fontSize: 9, color: PM.inkSoft, lineHeight: 1.5 }}>
+          <span style={{ flexBasis: '100%', fontFamily: PM.mono, fontSize: PM_FS.label.sz, color: PM.inkSoft, lineHeight: 1.5 }}>
             <b style={{ color: PM.ink }}>{spec.k}</b> · {T.label.toLowerCase()}{spec.list ? '[]' : ''}{isNum ? ' · ' + spec.min + '–' + spec.max : ''} · key is fixed, the skill JSON references it
           </span>
         </div>
@@ -448,18 +451,18 @@ function AddParam({ page, taken, onAdd, onCancel }) {
 
   return (
     <div style={{ padding: 11, borderRadius: PM.rad.md, border: `1px solid ${PM.accent}`, background: PM.bg, display: 'flex', flexDirection: 'column', gap: 9 }}>
-      <div style={{ fontFamily: PM.mono, fontSize: 9, color: PM.accent, letterSpacing: '0.16em' }}>NEW PARAMETER · {page.toUpperCase()}</div>
+      <div style={{ fontFamily: PM.mono, fontSize: PM_FS.label.sz, color: PM.accent, letterSpacing: '0.16em' }}>NEW PARAMETER · {page.toUpperCase()}</div>
 
       <div>
         <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="Label — e.g. Max span"
           style={{ width: '100%', padding: '7px 9px', borderRadius: PM.rad.sm, border: `1px solid ${clash ? PM.err : PM.line}`, background: PM.bgPanel, color: PM.ink, fontFamily: PM.sans, fontSize: 12.5, outline: 'none' }}/>
-        <div style={{ marginTop: 4, fontFamily: PM.mono, fontSize: 9, color: clash ? PM.err : PM.inkSoft }}>
+        <div style={{ marginTop: 4, fontFamily: PM.mono, fontSize: PM_FS.label.sz, color: clash ? PM.err : PM.inkSoft }}>
           key <b style={{ color: clash ? PM.err : PM.ink }}>{key}</b>{clash ? ' · already used on this node' : ' · fixed once created'}
         </div>
       </div>
 
       <div>
-        <div style={{ fontFamily: PM.mono, fontSize: 9, color: PM.inkSoft, letterSpacing: '0.14em', marginBottom: 5 }}>TYPE</div>
+        <div style={{ fontFamily: PM.mono, fontSize: PM_FS.label.sz, color: PM.inkSoft, letterSpacing: '0.14em', marginBottom: 5 }}>TYPE</div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
           {Object.keys(PM_TYPES).map(t => {
             const d = PM_TYPES[t], on = type === t;
@@ -474,7 +477,7 @@ function AddParam({ page, taken, onAdd, onCancel }) {
             );
           })}
         </div>
-        <div style={{ marginTop: 6, fontFamily: PM.mono, fontSize: 9.5, color: PM.inkSoft, lineHeight: 1.5 }}>
+        <div style={{ marginTop: 6, fontFamily: PM.mono, fontSize: PM_FS.label.sz, color: PM.inkSoft, lineHeight: 1.5 }}>
           {T.wire ? T.label + ' arrives on a wire — it gets a socket and no inline control.'
                   : T.label + ' is edited here, and can still be exposed as a socket later.'}
         </div>
@@ -500,14 +503,14 @@ const pmPin = (s, side, tint) => (
   <div key={side + (s.id || s.label)} style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 26, borderBottom: `1px solid ${PM.lineHair}`, paddingLeft: 2 }}>
     <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: side === 'out' ? (PM_WIRE[s.t] || PM.inkSoft) : 'transparent', border: `1.5px solid ${PM_WIRE[s.t] || PM.inkSoft}` }}/>
     <span style={{ flex: 1, minWidth: 0, fontFamily: PM.sans, fontSize: 12, color: PM.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.label || s.id}</span>
-    <span style={{ fontFamily: PM.mono, fontSize: 10, color: tint || PM.inkSoft, whiteSpace: 'nowrap' }}>{s.val || s.t}</span>
+    <span style={{ fontFamily: PM.mono, fontSize: PM_FS.dataSm.sz, color: tint || PM.inkSoft, whiteSpace: 'nowrap' }}>{s.val || s.t}</span>
   </div>
 );
 
 const pmHead = (glyph, text, right) => (
   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-    <span style={{ fontFamily: PM.mono, fontSize: 10, color: PM.inkSoft }}>{glyph}</span>
-    <span style={{ fontFamily: PM.mono, fontSize: 9, color: PM.inkSoft, letterSpacing: '0.18em' }}>{text}</span>
+    <span style={{ fontFamily: PM.mono, fontSize: PM_FS.dataSm.sz, color: PM.inkSoft }}>{glyph}</span>
+    <span style={{ fontFamily: PM.mono, fontSize: PM_FS.label.sz, color: PM.inkSoft, letterSpacing: '0.18em' }}>{text}</span>
     <span style={{ flex: 1 }}/>
     {right}
   </div>
@@ -557,21 +560,21 @@ function TerminalPanel({ node }) {
   return (
     <section aria-label="Terminal" style={{ margin: '8px 0 10px', border: '1px solid ' + PM.line, borderRadius: PM.rad.md, overflow: 'hidden' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', borderBottom: '1px solid ' + PM.lineHair }}>
-        <span style={{ flex: 1, minWidth: 0, fontFamily: PM.mono, fontSize: 10, color: PM.inkSoft, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ flex: 1, minWidth: 0, fontFamily: PM.mono, fontSize: PM_FS.dataSm.sz, color: PM.inkSoft, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {term ? term.cwd + ' · ' + (running ? 'running' : term.state + (term.exit_code == null ? '' : ' ' + term.exit_code)) : (cwd || 'terminal folder')}
         </span>
         {running
           ? <button onClick={stop} style={Object.assign({}, pmBtn(), { color: PM.err, borderColor: PM.err })}>Stop</button>
           : <button onClick={start} style={pmBtn()}>{term ? 'Start again' : 'Start'}</button>}
       </div>
-      {!term && <div style={{ padding: '6px 8px', fontFamily: PM.mono, fontSize: 10.5, color: PM.inkSoft }}>
+      {!term && <div style={{ padding: '6px 8px', fontFamily: PM.mono, fontSize: PM_FS.dataSm.sz, color: PM.inkSoft }}>
         Starts in this folder only. Not a sandbox: the shell can reach anything your Windows account can.
       </div>}
       {term && <pre ref={out} role="log" style={{ margin: 0, padding: '8px', maxHeight: 220, overflow: 'auto', background: PM.bg, color: PM.ink, fontFamily: PM.mono, fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{text}</pre>}
       {running && <input aria-label="Terminal input" value={line} onChange={e => setLine(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter' && line.trim()) send(); }} placeholder="command, then Enter"
         style={{ width: '100%', border: 0, borderTop: '1px solid ' + PM.lineHair, padding: '6px 8px', background: PM.bg, color: PM.ink, fontFamily: PM.mono, fontSize: 11, outline: 'none' }}/>}
-      {error && <div role="alert" style={{ padding: '6px 8px', fontFamily: PM.mono, fontSize: 10.5, color: PM.err }}>{error}</div>}
+      {error && <div role="alert" style={{ padding: '6px 8px', fontFamily: PM.mono, fontSize: PM_FS.dataSm.sz, color: PM.err }}>{error}</div>}
     </section>
   );
 }
@@ -760,14 +763,14 @@ function NodeInspector({ node, onFork }) {
           <div style={{ borderTop: `1px solid ${PM.lineHair}` }}>
             {((node.ins || []).length > 0 || promoted.length > 0) && (
               <div>
-                <div style={{ fontFamily: PM.mono, fontSize: 8.5, color: PM.inkSoft, letterSpacing: '0.14em', padding: '7px 0 3px' }}>RECEIVES</div>
+                <div style={{ fontFamily: PM.mono, fontSize: PM_FS.label.sz, color: PM.inkSoft, letterSpacing: '0.14em', padding: '7px 0 3px' }}>RECEIVES</div>
                 {(node.ins || []).map(s => pmPin(s, 'in'))}
                 {promoted.map(s => pmPin(s, 'in', s.val === 'unconnected' ? PM.warn : PM.cyan))}
               </div>
             )}
             {(node.outs || []).length > 0 && (
               <div>
-                <div style={{ fontFamily: PM.mono, fontSize: 8.5, color: PM.inkSoft, letterSpacing: '0.14em', padding: '7px 0 3px' }}>SENDS</div>
+                <div style={{ fontFamily: PM.mono, fontSize: PM_FS.label.sz, color: PM.inkSoft, letterSpacing: '0.14em', padding: '7px 0 3px' }}>SENDS</div>
                 {node.outs.map(s => pmPin(s, 'out'))}
               </div>
             )}
@@ -777,7 +780,7 @@ function NodeInspector({ node, onFork }) {
 
       <div>
         {pmHead('⌗', 'PARAMETERS', overridden > 0 && (
-          <button onClick={() => applyValues(allDefs)} style={{ border: 0, background: 'transparent', color: PM.inkSoft, cursor: 'pointer', fontFamily: PM.mono, fontSize: 9.5, letterSpacing: '0.06em' }}>↺ REVERT ALL</button>
+          <button onClick={() => applyValues(allDefs)} style={{ border: 0, background: 'transparent', color: PM.inkSoft, cursor: 'pointer', fontFamily: PM.mono, fontSize: PM_FS.label.sz, letterSpacing: '0.06em' }}>↺ REVERT ALL</button>
         ))}
 
         {/* PAGES — Houdini folders / TouchDesigner pages. A long interface is a navigation
@@ -789,14 +792,14 @@ function NodeInspector({ node, onFork }) {
                 display: 'flex', alignItems: 'center', gap: 5, padding: '4px 9px', borderRadius: PM.rad.sm, cursor: 'pointer',
                 border: 0, borderBottom: `2px solid ${page === pg ? PM.accent : 'transparent'}`,
                 background: 'transparent', color: page === pg ? PM.ink : PM.inkSoft, fontFamily: PM.sans, fontSize: 12,
-              }}>{pg}<span style={{ fontFamily: PM.mono, fontSize: 9, color: PM.inkSoft }}>{countOn(pg)}</span></button>
+              }}>{pg}<span style={{ fontFamily: PM.mono, fontSize: PM_FS.dataSm.sz, color: PM.inkSoft }}>{countOn(pg)}</span></button>
             ))}
           </div>
         )}
 
         {presets.length > 0 && all.length > 0 && page === 'Main' && (
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4, marginBottom: 10 }}>
-            <span style={{ flexBasis: '100%', fontFamily: PM.mono, fontSize: 8.5, color: PM.inkSoft, letterSpacing: '0.14em' }}>PRACTICE STANDARDS</span>
+            <span style={{ flexBasis: '100%', fontFamily: PM.mono, fontSize: PM_FS.label.sz, color: PM.inkSoft, letterSpacing: '0.14em' }}>PRACTICE STANDARDS</span>
             {presets.map(pr => (
               <button key={pr.id} onClick={() => applyValues(pr.vals)} style={{
                 padding: '4px 9px', borderRadius: PM.rad.pill, cursor: 'pointer', fontFamily: PM.sans, fontSize: 11, whiteSpace: 'nowrap',
@@ -861,7 +864,7 @@ function NodeInspector({ node, onFork }) {
         )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0 9px' }}>
           <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: dirty.length || !ran || persistence.runError || persistence.errors.size || persistence.pending.size ? PM.warn : PM.ok }}/>
-          <span style={{ flex: 1, fontFamily: PM.mono, fontSize: 10, color: dirty.length ? PM.warn : PM.inkSoft, lineHeight: 1.5 }}>
+          <span style={{ flex: 1, fontFamily: PM.mono, fontSize: PM_FS.dataSm.sz, color: dirty.length ? PM.warn : PM.inkSoft, lineHeight: 1.5 }}>
             {dirty.length
               ? 'Output is stale · ' + dirty.join(', ') + ' changed since the last run'
               : (ran && !persistence.runError && !persistence.errors.size && !persistence.pending.size ? 'Output current · ran ' + ran + (ran === 1 ? ' time' : ' times') + ' this session' : 'Output not run yet this session')
@@ -871,7 +874,7 @@ function NodeInspector({ node, onFork }) {
 
         {confirmDel ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ flex: 1, fontFamily: PM.mono, fontSize: 10, color: PM.err, lineHeight: 1.45 }}>
+            <span style={{ flex: 1, fontFamily: PM.mono, fontSize: PM_FS.dataSm.sz, color: PM.err, lineHeight: 1.45 }}>
               Delete {node.isWire ? 'this connection' : 'node and its ' + (node.outs || []).length + ' outgoing wire' + ((node.outs || []).length === 1 ? '' : 's')}?
             </span>
             <button onClick={() => setConfirmDel(false)} style={pmBtn()}>Cancel</button>
@@ -910,7 +913,7 @@ function NodeInspector({ node, onFork }) {
               fontFamily: PM.sans, fontSize: 12.5, fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap',
             }}>{pmGraphRunning ? '↻ Running…' : '↻ Rerun' + (dirty.length ? ' · ' + dirty.length : '')}</button>
             <button style={pmIcon()} title={node.isWire ? 'Save this connection\u2019s rules as a reusable skill' : 'Save these parameters as a reusable skill'}>◈</button>
-            <button onClick={forkNode} style={pmIcon()} title="Fork this node onto the canvas">⑂</button>
+            <button onClick={forkNode} aria-label="Fork" data-fork-button style={{...pmIcon(), width:'auto', padding:'0 8px', gap:4, fontFamily:PM.sans, fontSize:12.5, fontWeight:500}} title="Fork this node onto the canvas">⑂ Fork</button>
             <button onClick={() => setConfirmDel(true)} style={pmIcon()} title={node.isWire ? 'Delete this connection…' : 'Delete node…'}>⌫</button>
           </div>
         )}

@@ -190,6 +190,7 @@ def test_design_system_projects_the_cell_native_icon_catalog(application):
 		"app:control:rail:search",
 		"app:control:rail:share",
 		"app:control:rail:settings",
+		"app:control:canvas:remove-member",
 		"app:control:canvas:scope-up",
 		"app:control:canvas:zoom-out",
 		"app:control:canvas:zoom-in",
@@ -215,7 +216,7 @@ def test_visible_controls_project_cell_native_activation_and_applicability(appli
 	controls = projection["configuration"]["design_system"]["control_catalog"][
 		"controls"
 	]
-	assert len(controls) == 16  # 15 original controls + the Run control
+	assert len(controls) == 17  # 15 original controls + Remove member + Run
 	for control in controls:
 		assert control["activation"]["root"]
 		assert control["activation"]["capability"]
@@ -227,6 +228,7 @@ def test_visible_controls_project_cell_native_activation_and_applicability(appli
 	assert by_owner["app:control:canvas:redo"]["applicable"] is False
 	assert by_owner["app:control:canvas:group"]["applicable"] is False
 	assert by_owner["app:control:canvas:ungroup"]["applicable"] is False
+	assert by_owner["app:control:canvas:remove-member"]["applicable"] is True
 
 
 class _ClassParentParser(HTMLParser):
@@ -4979,6 +4981,8 @@ def test_group_and_ungroup_are_lossless_personal_wip_compositions():
 	)
 	assert group["composition"] is True
 	assert group["member_count"] == 2
+	assert [member["id"] for member in group["members"]] == list(selected)
+	assert all(member["title"] for member in group["members"])
 	assert group["selected"] is True
 	grouped_controls = {
 		control["owner"]: control

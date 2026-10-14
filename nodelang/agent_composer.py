@@ -10,10 +10,12 @@ import math
 import os
 import re
 from contextlib import nullcontext
-from typing import Mapping
+from typing import Callable, Mapping
 
 from .model_router import ModelRouteRefused, route_chat
 from .cell_authorization import AuthorizationDenied
+from .native_agentic_loop import ToolSpec, run_agentic_tool_loop
+from .native_workshop_tools import WORKSHOP_TASK_TOOL_NAMES
 from .universal_cell import InvalidCell
 
 # There is no built-in default model. One was hidden here for months
@@ -23,6 +25,22 @@ from .universal_cell import InvalidCell
 # a pick, the composer says what to pick instead of guessing.
 _DEFAULT_MODEL = os.environ.get("ARCHHUB_AGENT_MODEL", "").strip()
 _NO_AGENT_NODE = object()
+_BABOOM_AGENTIC_STEP_CAP = 12
+_OPENROUTER_FREE_TOOL_MODELS = frozenset({
+    "dots-studio/dots-3-note-preview:free",
+    "cohere/north-mini-code:free",
+    "nvidia/nemotron-3.5-lightning:free",
+})
+_BABOOM_LOCAL_TOOL_NAMES = frozenset({
+    "brain.context",
+    "graph.read",
+    "host.ping",
+    "host.read",
+})
+_BABOOM_HIDDEN_TOOL_NAMES = frozenset(WORKSHOP_TASK_TOOL_NAMES) | (_BABOOM_LOCAL_TOOL_NAMES - {
+    "graph.read",
+    "host.ping",
+})
 NO_MODEL_CHOSEN = (
     "No model chosen. Pick one in the studio header (the picker), or set "
     "ARCHHUB_AGENT_MODEL to a route such as openrouter/free."
@@ -55,6 +73,12 @@ If the request needs no canvas change, return
 Return at most 12 actions. These actions prepare an editable workflow; they do
 not execute it. Never claim that effects ran. Execution follows user review and
 approval through the separate execution controls."""
+
+_SYSTEM += """
+If the founder asks to use a tool, check what ArchHub can see, inspect the graph,
+or verify host/program visibility, call an admitted tool before answering. Do not
+turn a tool request into a canvas draft.
+"""
 
 _SYSTEM += """
 For a requested text review, analysis or planning task, use work: it creates
@@ -192,7 +216,54 @@ def _answer_via(answer: Mapping[str, object]) -> dict[str, str]:
     return {"family": family, "model": model, "provider": provider}
 
 
-def _chat(prompt: str, context_block: str, model: str, *, before_dispatch=None, generation=None) -> dict[str, object]:
+def _model_supports_tools(model: str) -> bool:
+    route = str(model or "").strip()
+    if route == "openrouter/free":
+        return True
+    if route.startswith(("lmstudio/", "ollama/")):
+        return True
+    if route.startswith("openrouter/"):
+        route = route[len("openrouter/"):]
+    return route in _OPENROUTER_FREE_TOOL_MODELS
+
+
+def baboom_hidden_tool_names() -> tuple[str, ...]:
+    return tuple(sorted(_BABOOM_HIDDEN_TOOL_NAMES))
+
+
+def _baboom_tool_specs(*, context_block: str = "", host_reader=None) -> dict[str, ToolSpec]:
+    def run(name, arguments):
+        if name == "host.ping":
+            if host_reader is not None:
+                return host_reader("ping", arguments)
+            return {"ok": True, "pong": True}
+        if name == "graph.read":
+            prefix = "CANVAS CONTEXT\n"
+            if not context_block.startswith(prefix):
+                return {"ok": False, "status": "failed", "error": "graph context is unavailable"}
+            return {"ok": True, "graph": json.loads(context_block[len(prefix):].split("\nRecent conversation content", 1)[0])}
+        raise InvalidCell("%s is not wired in this BABOOM chat context" % name)
+
+    return {
+        "graph.read": ToolSpec("graph.read", run, mutates=False),
+        "host.ping": ToolSpec("host.ping", run, mutates=False),
+    }
+
+
+def run_baboom_tool_loop(model_turn, tools, messages, **options) -> dict[str, object]:
+    return run_agentic_tool_loop(model_turn, tools, messages, **options)
+
+
+def _chat(
+    prompt: str,
+    context_block: str,
+    model: str,
+    *,
+    before_dispatch=None,
+    generation=None,
+    is_halted: Callable[[], bool] | None = None,
+    halt_generation: Callable[[], object] | None = None,
+) -> dict[str, object]:
     """The chosen route decides the endpoint, the payload and the key.
 
     This used to be one hardcoded OpenRouter URL, so a local or cloud model
@@ -202,22 +273,54 @@ def _chat(prompt: str, context_block: str, model: str, *, before_dispatch=None, 
     try:
         generation_options = {"max_tokens": 900, "temperature": 0}
         generation_options.update(_generation_options(generation))
-        answer = route_chat(
-            model,
-            [
+        messages = [
                 {"role": "system", "content": _SYSTEM},
                 {"role": "user",
                  "content": context_block + chr(10) + chr(10) + "FOUNDER: " + prompt},
-            ],
-            free_only=model == "openrouter/free" or model.endswith(":free"),
-            **generation_options,
-            **({"before_dispatch":before_dispatch} if before_dispatch is not None else {}),
+            ]
+        tools = _baboom_tool_specs(context_block=context_block)
+
+        last_answer = {}
+
+        def turn(rows, tool_schemas):
+            nonlocal last_answer
+            last_answer = route_chat(
+                model,
+                rows,
+                free_only=model == "openrouter/free" or model.endswith(":free"),
+                tools=tool_schemas,
+                **generation_options,
+                **({"before_dispatch":before_dispatch} if before_dispatch is not None else {}),
+            )
+            return last_answer
+
+        loop = run_baboom_tool_loop(
+            turn, tools, messages,
+            max_steps=_BABOOM_AGENTIC_STEP_CAP,
+            model_supports_tools=_model_supports_tools(model),
+            is_halted=is_halted,
+            halt_generation=halt_generation,
         )
-        return {"text": str(answer["text"]), "via": _answer_via(answer)}
+        via = _answer_via(last_answer if isinstance(last_answer, Mapping) else
+                          {"family": "", "model": model, "provider": ""})
+        return {"text": str(loop["answer"]), "steps": list(loop.get("steps") or ()), "via": via}
     except (InvalidCell, AuthorizationDenied):
         raise
     except Exception:
         raise ModelRouteRefused("The model provider did not answer. Try again when it is available.") from None
+
+
+def _baboom_loop_answer_text(raw: str) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return text
+    if isinstance(parsed, Mapping) and isinstance(parsed.get("answer"), str):
+        return parsed["answer"].strip()
+    return text
 
 
 def _canvas_context(projection: Mapping[str, object]) -> str:
@@ -351,6 +454,8 @@ def run_agent_composer(
     before_dispatch=None,
     conversation_context=None,
     generation=None,
+    is_halted: Callable[[], bool] | None = None,
+    halt_generation: Callable[[], object] | None = None,
 ) -> dict[str, object]:
     """Read and edit under the caller's lock; wait for the model outside it.
 
@@ -389,9 +494,19 @@ def run_agent_composer(
         chat_kwargs["generation"] = generation
     if before_dispatch is not None:
         chat_kwargs["before_dispatch"] = before_dispatch
+    if is_halted is not None:
+        chat_kwargs["is_halted"] = is_halted
+    if halt_generation is not None:
+        chat_kwargs["halt_generation"] = halt_generation
     routed_answer = _chat(prompt.strip(), context_block, chosen, **chat_kwargs)
     via = routed_answer.get("via") if isinstance(routed_answer, Mapping) else None
+    steps = list(routed_answer.get("steps") or ()) if isinstance(routed_answer, Mapping) else []
     raw = str(routed_answer.get("text") if isinstance(routed_answer, Mapping) else routed_answer)
+    if steps:
+        result = {"answer": _baboom_loop_answer_text(raw), "applied": [], "steps": steps}
+        if isinstance(via, Mapping):
+            result["via"] = dict(via)
+        return result
     try:
         text = raw.strip()
         if text.startswith("```"):
@@ -423,6 +538,8 @@ def run_agent_composer(
         }
         if isinstance(via, Mapping):
             refused["via"] = dict(via)
+        if steps:
+            refused["steps"] = steps
         return refused
     with lock:
         if revalidate is not None:
@@ -441,6 +558,8 @@ def run_agent_composer(
         )
         if isinstance(via, Mapping):
             result["via"] = dict(via)
+        if steps:
+            result["steps"] = steps
         return result
 
 

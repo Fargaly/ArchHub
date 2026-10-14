@@ -93,16 +93,16 @@ function ScaleLadder({ level, onClimb, depth }) {
   }
   return (
     <div style={{ position: 'absolute', top: 54, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', padding: '4px 6px', background: HB.card, border: `1px solid ${HB.line}`, borderRadius: 10, boxShadow: '0 3px 12px rgba(0,0,0,.08)', fontFamily: HB.mono, zIndex: 6 }}>
-      <span style={{ fontSize: 7.5, color: HB.inkMute, letterSpacing: '0.18em', padding: '0 9px 0 5px' }}>SCALE</span>
+      <span style={{ fontSize: HB.fs.label.sz, color: HB.inkMute, letterSpacing: '0.18em', padding: '0 9px 0 5px' }}>SCALE</span>
       {rungs.map(([k, l, sub], i) => {
         const on = level === k;
         return (
           <React.Fragment key={k}>
-            {i > 0 && <span style={{ color: HB.inkMute, fontSize: 9, padding: '0 1px', opacity: 0.6 }}>⊂</span>}
+            {i > 0 && <span style={{ color: HB.inkMute, fontSize: HB.fs.dataSm.sz, padding: '0 1px', opacity: 0.6 }}>⊂</span>}
             <button onClick={() => onClimb(k)} title={'climb to ' + sub} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, padding: '4px 10px', borderRadius: 7, border: `1px solid ${on ? HB.accent : 'transparent'}`, background: on ? HB.accentSoft : 'transparent', cursor: 'pointer', color: on ? HB.accentHi : HB.inkSoft }}
               onMouseEnter={e => { if (!on) e.currentTarget.style.background = HB.paper2; }} onMouseLeave={e => { if (!on) e.currentTarget.style.background = 'transparent'; }}>
-              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em' }}>{l}</span>
-              <span style={{ fontSize: 6.5, color: on ? HB.accent : HB.inkMute, letterSpacing: '0.02em' }}>{sub}</span>
+              <span style={{ fontSize: HB.fs.label.sz, fontWeight: 700, letterSpacing: '0.08em' }}>{l}</span>
+              <span style={{ fontSize: HB.fs.label.sz, color: on ? HB.accent : HB.inkMute, letterSpacing: '0.02em' }}>{sub}</span>
             </button>
           </React.Fragment>
         );
@@ -869,13 +869,13 @@ function AtlasCockpit() {
         <svg width="22" height="22" viewBox="0 0 64 64" fill="none"><path d="M10 56 V32 a22 22 0 0 1 44 0 V56" stroke={HB.accent} strokeWidth="4.5" strokeLinecap="square"/><circle cx="32" cy="22" r="5.2" fill={HB.card} stroke={HB.accent} strokeWidth="2.4"/><circle cx="32" cy="22" r="1.8" fill={HB.accent}/></svg>
         <div style={{ flexShrink: 0 }}>
           <div style={{ fontFamily: HB.arch, fontSize: 15, textTransform: 'uppercase', letterSpacing: '0.02em', lineHeight: '22px', whiteSpace: 'nowrap' }}>Arch<span style={{ color: HB.accent }}>Hub</span> <span style={{ fontFamily: HB.serif, textTransform: 'none', fontSize: 14, color: HB.inkSoft }}>· Founder Cockpit</span></div>
-          <div style={{ fontFamily: HB.mono, fontSize: 7.5, color: HB.inkMute, letterSpacing: '0.2em', lineHeight: 1.4 }}>THE GRAND MAP</div>
+          <div style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.inkMute, letterSpacing: '0.2em', lineHeight: 1.4 }}>THE GRAND MAP</div>
         </div>
         <div style={{ marginLeft: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{ width: 200, height: 8, borderRadius: 4, overflow: 'hidden', display: 'flex', border: `1px solid ${HB.line}` }}>
             {STATUS_ORDER.filter(s => counts[s]).map(s => <span key={s} title={`${s}: ${counts[s]}`} style={{ width: `${counts[s] / total * 100}%`, background: STC[s] }}/>)}
           </div>
-          <span style={{ fontFamily: HB.mono, fontSize: 10.5, color: HB.inkSoft }}><b style={{ color: HB.green }}>{counts.live}</b>L · <b style={{ color: HB.amber }}>{counts.partial}</b>P · <b style={{ color: HB.accent }}>{counts.vision}</b>V</span>
+          <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkSoft }}><b style={{ color: HB.green }}>{counts.live}</b>L · <b style={{ color: HB.amber }}>{counts.partial}</b>P · <b style={{ color: HB.accent }}>{counts.vision}</b>V</span>
         </div>
         {/* WHERE THIS MAP CAME FROM, AND WHAT ARCHHUB IS OFFERED AS. His map corner holds only the
             model chip and find, with the scale ladder under them; these two chips carry what the
@@ -889,45 +889,45 @@ function AtlasCockpit() {
               : 'Your app has not pushed a projection, so there is no map to draw. Open ArchHub and it will appear here.'}
           style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 10px', borderRadius: 8, background: HB.card, border: `1px solid ${mapMeta.live ? HB.line : HB.amber}`, flexShrink: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' }}>
           <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: mapMeta.live ? HB.green : HB.amber }}/>
-          <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.ink }}>{mapMeta.live ? 'LIVE PUSH' : 'NO LIVE PUSH'}</span>
-          <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.inkMute , overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
+          <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.ink }}>{mapMeta.live ? 'LIVE PUSH' : 'NO LIVE PUSH'}</span>
+          <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute , overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
             {'· taken ' + new Date(mapMeta.at).toLocaleTimeString()}
           </span>
-          <span style={{ fontFamily: HB.mono, fontSize: 10, color: appSeen.at ? HB.inkSoft : HB.inkMute , overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
+          <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: appSeen.at ? HB.inkSoft : HB.inkMute , overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
             {!appSeen.loaded ? '· checking the app…'
               : appSeen.at ? '· app answered ' + agoText(appSeen.at)
               : '· app has not answered yet'}
           </span>
           <button onClick={reloadMap} title="Fetch the projection again from the cloud"
-            style={{ border: `1px solid ${HB.line}`, background: 'transparent', color: HB.inkSoft, borderRadius: 5, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: 9.5, flexShrink: 0 }}>refresh</button>
+            style={{ border: `1px solid ${HB.line}`, background: 'transparent', color: HB.inkSoft, borderRadius: 5, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, flexShrink: 0 }}>refresh</button>
         </div>
         {/* WHAT ARCHHUB IS OFFERED AS. One record in the app travels with the push;
             the cockpit states it and edits it through the same door the ask bar uses.
             No declared offer is drawn as absent, never as a price. */}
         <div title={M.offer ? 'The offer record your app published with this map.' : 'Your app has not published an offer record.'}
           style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 10px', borderRadius: 8, background: HB.card, border: `1px solid ${HB.line}`, flexShrink: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' }}>
-          <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute, letterSpacing: '0.12em' }}>OFFER</span>
+          <span style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.inkMute, letterSpacing: '0.12em' }}>OFFER</span>
           <span style={{ fontFamily: HB.mono, fontSize: 11, color: M.offer ? HB.ink : HB.inkMute , overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
             {M.offer ? M.offer.public_label : 'not declared'}
           </span>
-          {M.offer && <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute , overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
+          {M.offer && <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute , overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
             {M.offer.pricing_visible ? '· pricing shown' : '· pricing hidden'}
           </span>}
           {offerEdit === null
             ? <button onClick={() => setOfferEdit(M.offer ? M.offer.public_label : '')} title="Change what the product is offered as"
-                style={{ border: `1px solid ${HB.line}`, background: 'transparent', color: HB.inkSoft, borderRadius: 5, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: 9.5, flexShrink: 0 }}>edit</button>
+                style={{ border: `1px solid ${HB.line}`, background: 'transparent', color: HB.inkSoft, borderRadius: 5, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, flexShrink: 0 }}>edit</button>
             : <React.Fragment>
                 <input autoFocus value={offerEdit} onChange={e => setOfferEdit(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') saveOffer(); if (e.key === 'Escape') setOfferEdit(null); }}
                   style={{ width: 150, border: `1px solid ${HB.line}`, background: HB.paper2, color: HB.ink, borderRadius: 5, padding: '2px 6px', fontFamily: HB.mono, fontSize: 11, outline: 'none' }}/>
-                <button onClick={saveOffer} style={{ border: `1px solid ${HB.accent}`, background: 'transparent', color: HB.accent, borderRadius: 5, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: 9.5, flexShrink: 0 }}>save</button>
+                <button onClick={saveOffer} style={{ border: `1px solid ${HB.accent}`, background: 'transparent', color: HB.accent, borderRadius: 5, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, flexShrink: 0 }}>save</button>
               </React.Fragment>}
         </div>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'stretch', border: `1px solid ${HB.line}`, borderRadius: 6, overflow: 'hidden', fontFamily: HB.mono }}>
           {[['NODES', total], ['DOMAINS', M.domains.length], ['WIRES', M.wires.length], ['SHEET', 'GA-01'], ['DRAWN', 'FOUNDER']].map(([k, v], i) => (
             <div key={k} style={{ padding: '4px 11px', borderLeft: i ? `1px solid ${HB.line}` : 'none', textAlign: 'center' }}>
-              <div style={{ fontSize: 7, color: HB.inkMute, letterSpacing: '0.1em' }}>{k}</div><div style={{ fontSize: 11, color: HB.ink, marginTop: 1 }}>{v}</div>
+              <div style={{ fontSize: HB.fs.label.sz, color: HB.inkMute, letterSpacing: '0.1em' }}>{k}</div><div style={{ fontSize: 11, color: HB.ink, marginTop: 1 }}>{v}</div>
             </div>
           ))}
         </div>
@@ -940,7 +940,7 @@ function AtlasCockpit() {
           <AtlasIconRail panel={leftTab} setPanel={setLeftTab} onFrameAll={fitAll} onTidy={autoOrganize}/>
           <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
             <div style={{ padding: '12px 14px 10px', borderBottom: `1px solid ${HB.line}`, flexShrink: 0 }}>
-              <div style={{ fontFamily: HB.mono, fontSize: 10.5, letterSpacing: '0.08em', color: HB.ink }}>{({ library: 'LIBRARY', agents: 'AGENTS', index: 'INDEX', view: 'VIEW' })[leftTab]}</div>
+              <div style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, letterSpacing: '0.08em', color: HB.ink }}>{({ library: 'LIBRARY', agents: 'AGENTS', index: 'INDEX', view: 'VIEW' })[leftTab]}</div>
             </div>
           <div className="hb-scroll" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', minHeight: 0 }}>
             {leftTab === 'library' && <LibraryPanel onCreateNode={createFromLibrary} onAddDomain={() => setDomModal(true)} flash={flash}/>}
@@ -951,17 +951,17 @@ function AtlasCockpit() {
             <button onClick={collapseAll} title="Show every domain as a single volume" style={segBtn(allCollapsed)}>◻ Volumes</button>
             <button onClick={expandAll} title="Resolve every domain into its nodes" style={segBtn(allExpanded)}>⊞ Nodes</button>
           </div>
-          <div style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkMute, padding: '5px 4px 0', lineHeight: 1.4 }}>{allExpanded ? 'all domains open to their nodes' : allCollapsed ? 'all domains shown as volumes' : 'mixed — zoom in to resolve more'}</div>
+          <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute, padding: '5px 4px 0', lineHeight: 1.4 }}>{allExpanded ? 'all domains open to their nodes' : allCollapsed ? 'all domains shown as volumes' : 'mixed — zoom in to resolve more'}</div>
 
           <PanelLabel>VIEW</PanelLabel>
           <div style={{ display: 'flex', gap: 6 }}>
             <MiniBtn onClick={() => { collapseAll(); setTimeout(fitAll, 40); }} icon="search">Frame all</MiniBtn>
             <MiniBtn onClick={autoOrganize} icon="grid">Tidy up</MiniBtn>
           </div>
-          <button onClick={() => setSelMode(s => !s)} title="Drag a box on the map to select many at once — collapsed domains, or nodes inside open domains — then Group" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, width: '100%', marginTop: 6, padding: '8px 0', borderRadius: 7, cursor: 'pointer', fontFamily: HB.mono, fontSize: 10.5, border: `1px solid ${selMode ? HB.accent : HB.line}`, background: selMode ? HB.accentSoft : HB.card, color: selMode ? HB.accentHi : HB.inkSoft }}>
+          <button onClick={() => setSelMode(s => !s)} title="Drag a box on the map to select many at once — collapsed domains, or nodes inside open domains — then Group" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, width: '100%', marginTop: 6, padding: '8px 0', borderRadius: 7, cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, border: `1px solid ${selMode ? HB.accent : HB.line}`, background: selMode ? HB.accentSoft : HB.card, color: selMode ? HB.accentHi : HB.inkSoft }}>
             <CKIcon name="grid" size={12}/>{selMode ? 'Multi-select: ON — drag a box' : 'Multi-select (box)'}
           </button>
-          <div style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkMute, padding: '5px 4px 0', lineHeight: 1.45 }}>Drag a box to grab many · or <b style={{ color: HB.inkSoft }}>⇧-click</b> domains / nodes to add · then <b style={{ color: HB.inkSoft }}>Group</b></div>
+          <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute, padding: '5px 4px 0', lineHeight: 1.45 }}>Drag a box to grab many · or <b style={{ color: HB.inkSoft }}>⇧-click</b> domains / nodes to add · then <b style={{ color: HB.inkSoft }}>Group</b></div>
 
           <PanelLabel>LAYERS</PanelLabel>
           {[['wires', 'Wires'], ['params', 'Parameters'], ['labels', 'Category labels']].map(([k, l]) => <ToggleRow key={k} label={l} on={vis[k]} onClick={() => setVis(v => ({ ...v, [k]: !v[k] }))}/>)}
@@ -971,7 +971,7 @@ function AtlasCockpit() {
             <button key={s} onClick={() => toggleVisStatus(s)} style={visRow(vis.status.has(s))}>
               <span style={{ width: 9, height: 9, borderRadius: 2, background: STC[s], opacity: vis.status.has(s) ? 1 : 0.3 }}/>
               <span style={{ textTransform: 'capitalize', flex: 1 }}>{s}</span>
-              <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.inkMute }}>{counts[s]}</span>
+              <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute }}>{counts[s]}</span>
               <CKIcon name={vis.status.has(s) ? 'eye' : 'x'} size={12}/>
             </button>
           ))}
@@ -982,13 +982,13 @@ function AtlasCockpit() {
             <div key={d.key} style={visRow(on)}>
               <span onClick={() => toggleVisDomain(d.key)} style={{ width: 9, height: 9, borderRadius: '50%', background: d.col, opacity: on ? 1 : 0.3, cursor: 'pointer', flexShrink: 0 }}/>
               <span onClick={() => focusDomain(d.key)} title="Open + zoom" style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer', color: expanded.open.has(d.key) ? HB.accent : 'inherit' }}>{d.title}</span>
-              <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.inkMute }}>{n}</span>
+              <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute }}>{n}</span>
               <span onClick={() => toggleVisDomain(d.key)} style={{ cursor: 'pointer', display: 'grid', placeItems: 'center' }}><CKIcon name={on ? 'eye' : 'x'} size={12}/></span>
             </div>
           ); })}
 
           <PanelLabel>STEM · DROP NODES</PanelLabel>
-          <div style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkMute, padding: '0 4px 6px', lineHeight: 1.4 }}>same grammar as the app canvas — wire them, type-check, translate</div>
+          <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute, padding: '0 4px 6px', lineHeight: 1.4 }}>same grammar as the app canvas — wire them, type-check, translate</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, padding: '0 4px' }}>
             {STEM_KINDS.map(s => (
               <button key={s.kind} onClick={() => addConnective(s)} title={s.sub} style={{ display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left', padding: '7px 9px', borderRadius: 7, border: `1px solid ${HB.line}`, background: HB.paper2, cursor: 'pointer', color: HB.ink }}
@@ -1000,9 +1000,9 @@ function AtlasCockpit() {
           </div>
 
           <PanelLabel>AGENTS · DROP AS NODES</PanelLabel>
-          <div style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkMute, padding: '0 4px 6px', lineHeight: 1.4 }}>attaches into the open/selected domain & wires to its nodes</div>
+          <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute, padding: '0 4px 6px', lineHeight: 1.4 }}>attaches into the open/selected domain & wires to its nodes</div>
           {DB.agents.length === 0 && (
-            <div style={{ fontFamily: HB.mono, fontSize: 10, color: HB.inkMute, padding: '2px 4px 6px', lineHeight: 1.5 }}>
+            <div style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute, padding: '2px 4px 6px', lineHeight: 1.5 }}>
               No agents reported — nothing to drop until your running app pushes them.
             </div>
           )}
@@ -1037,12 +1037,12 @@ function AtlasCockpit() {
               so the canvas says why it is empty and offers the same refresh as the chip. */}
           {M.domains.length === 0 && (
             <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 5, width: 380, maxWidth: '80%', boxSizing: 'border-box', padding: '18px 20px', borderRadius: 12, background: HB.card, border: `1px solid ${HB.line}`, boxShadow: '0 14px 40px rgba(0,0,0,.3)' }}>
-              <div style={{ fontFamily: HB.mono, fontSize: 9, color: HB.amber, letterSpacing: '0.16em' }}>{mapMeta.live ? 'EMPTY PUSH' : 'NO LIVE PUSH'}</div>
+              <div style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.amber, letterSpacing: '0.16em' }}>{mapMeta.live ? 'EMPTY PUSH' : 'NO LIVE PUSH'}</div>
               <div style={{ fontFamily: HB.serif, fontSize: 21, letterSpacing: '-0.01em', color: HB.ink, marginTop: 4 }}>{mapMeta.live ? 'Your app pushed a map with no domains.' : 'No map yet.'}</div>
               <div style={{ fontSize: 12.5, color: HB.inkSoft, lineHeight: 1.55, marginTop: 6 }}>{mapMeta.live
                 ? 'The projection arrived but holds nothing to draw. Refresh after your app pushes again.'
                 : 'Your app has not pushed a projection, so there is no map to draw. Open ArchHub on your machine and it will appear here.'}</div>
-              <button onClick={reloadMap} style={{ marginTop: 12, border: `1px solid ${HB.accent}`, background: 'transparent', color: HB.accent, borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontFamily: HB.mono, fontSize: 10 }}>refresh</button>
+              <button onClick={reloadMap} style={{ marginTop: 12, border: `1px solid ${HB.accent}`, background: 'transparent', color: HB.accent, borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz }}>refresh</button>
             </div>
           )}
 
@@ -1051,11 +1051,11 @@ function AtlasCockpit() {
               so, offer Tidy up, and let the founder dismiss and keep the placement. */}
           {offGrid.length > 0 && !offGridDismissed && (
             <div style={{ position: 'absolute', bottom: 78, left: '50%', transform: 'translateX(-50%)', zIndex: 6, display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 9, background: HB.paper2, border: `1px solid ${HB.amber}`, boxShadow: '0 8px 24px rgba(0,0,0,.5)', whiteSpace: 'nowrap' }}>
-              <span style={{ fontFamily: HB.mono, fontSize: 9, color: HB.amber, letterSpacing: '0.14em' }}>OFF GRID</span>
+              <span style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.amber, letterSpacing: '0.14em' }}>OFF GRID</span>
               <span style={{ fontFamily: HB.sans, fontSize: 12, color: HB.inkSoft }}>
                 {offGrid.length === 1 ? '1 domain is' : offGrid.length + ' domains are'} off the layout grid — left out of “frame all” so the map keeps its scale.
               </span>
-              <button onClick={autoOrganize} style={{ fontFamily: HB.mono, fontSize: 10, letterSpacing: '0.06em', padding: '4px 9px', borderRadius: 6, border: `1px solid ${HB.accent}`, background: 'transparent', color: HB.accent, cursor: 'pointer' }}>TIDY UP</button>
+              <button onClick={autoOrganize} style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, letterSpacing: '0.06em', padding: '4px 9px', borderRadius: 6, border: `1px solid ${HB.accent}`, background: 'transparent', color: HB.accent, cursor: 'pointer' }}>TIDY UP</button>
               <button onClick={() => setOffGridDismissed(true)} title="Keep the placement" style={{ fontFamily: HB.mono, fontSize: 11, padding: '3px 7px', borderRadius: 6, border: `1px solid ${HB.line}`, background: 'transparent', color: HB.inkMute, cursor: 'pointer' }}>✕</button>
             </div>
           )}
@@ -1065,7 +1065,7 @@ function AtlasCockpit() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 11px', borderRadius: 8, background: HB.card, border: `1px solid ${HB.line}`, boxShadow: '0 3px 12px rgba(0,0,0,.08)', flexShrink: 0, pointerEvents: 'auto' }}>
               <CKIcon name="map" size={13} color={HB.accent}/>
               <span style={{ fontFamily: HB.mono, fontSize: 11.5, color: HB.ink, whiteSpace: 'nowrap', flexShrink: 0 }}>Federated model</span>
-              <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.inkMute, whiteSpace: 'nowrap' }}>· {M.domains.length} domains</span>
+              <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkMute, whiteSpace: 'nowrap' }}>· {M.domains.length} domains</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 8, background: HB.card, border: `1px solid ${HB.line}`, flex: '0 1 160px', minWidth: 92, boxSizing: 'border-box', pointerEvents: 'auto' }}>
               <CKIcon name="search" size={12} color={HB.inkMute} style={{ flexShrink: 0 }}/>
@@ -1077,7 +1077,7 @@ function AtlasCockpit() {
           <ScaleLadder level={scaleLevel} onClimb={climbTo} depth={modelDepth}/>
 
           {/* LOD hint */}
-          <div style={{ position: 'absolute', top: 12, right: 14, fontFamily: HB.mono, fontSize: 9.5, color: HB.inkSoft, letterSpacing: '0.1em', whiteSpace: 'nowrap', padding: '6px 11px', background: HB.card, border: `1px solid ${HB.line}`, borderRadius: 8 }}>
+          <div style={{ position: 'absolute', top: 12, right: 14, fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.inkSoft, letterSpacing: '0.1em', whiteSpace: 'nowrap', padding: '6px 11px', background: HB.card, border: `1px solid ${HB.line}`, borderRadius: 8 }}>
             ZOOM TO RESOLVE · click a domain header to open/collapse
           </div>
 
@@ -1121,7 +1121,7 @@ function AtlasCockpit() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 14px', height: 46, background: HB.cardHi, border: `1.5px solid ${HB.line}`, borderRadius: 999, boxShadow: '0 12px 34px rgba(0,0,0,.16)' }}>
               <span style={{ color: HB.accent }}><CKIcon name="brain" size={17}/></span>
               <input value={cmd} onChange={e => setCmd(e.target.value)} onKeyDown={e => e.key === 'Enter' && runCmd()} placeholder="Command — “enter brain”, “operate models”, “macro”, “health”…" style={{ flex: 1, border: 'none', background: 'transparent', color: HB.ink, fontSize: 13, outline: 'none', fontFamily: HB.sans }}/>
-              <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.inkSoft }}>↵</span>
+              <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkSoft }}>↵</span>
             </div>
           </div>
         </div>
@@ -1130,10 +1130,10 @@ function AtlasCockpit() {
         <div style={{ width: rightW, flexShrink: 1, minWidth: 216, borderLeft: `1px solid ${HB.line}`, background: HB.card, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           <div style={{ padding: '11px 14px 10px', borderBottom: `1px solid ${HB.line}`, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
             <CKIcon name="sliders" size={12}/>
-            <span style={{ fontFamily: HB.mono, fontSize: 10.5, letterSpacing: '0.08em', color: HB.ink, flex: 1 }}>PARAMETERS</span>
+            <span style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, letterSpacing: '0.08em', color: HB.ink, flex: 1 }}>PARAMETERS</span>
             {(sel.nodes.size || sel.domain || sel.field || (sel.domains || new Set()).size) ?
-              <button onClick={clearSel} title="Clear selection" style={{ fontFamily: HB.mono, fontSize: 10, padding: '3px 7px', borderRadius: 5, border: `1px solid ${HB.line}`, background: 'transparent', color: HB.inkMute, cursor: 'pointer' }}>clear</button>
-              : <span style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkSoft }}>nothing selected</span>}
+              <button onClick={clearSel} title="Clear selection" style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, padding: '3px 7px', borderRadius: 5, border: `1px solid ${HB.line}`, background: 'transparent', color: HB.inkMute, cursor: 'pointer' }}>clear</button>
+              : <span style={{ fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, color: HB.inkSoft }}>nothing selected</span>}
           </div>
           <div className="hb-scroll" style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>{inspectPanel}</div>
         </div>
@@ -1226,14 +1226,14 @@ const AtlasIconRail = ({ panel, setPanel, onFrameAll, onTidy }) => (
   </div>
 );
 
-const PanelLabel = ({ children, right }) =><div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontFamily: HB.mono, fontSize: 8.5, color: HB.inkMute, letterSpacing: '0.16em', padding: '15px 6px 8px' }}><span>{children}</span>{right}</div>;
-const miniLink = { border: 'none', background: 'transparent', color: HB.accent, cursor: 'pointer', fontFamily: HB.mono, fontSize: 9, letterSpacing: '0.1em' };
+const PanelLabel = ({ children, right }) =><div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.inkMute, letterSpacing: '0.16em', padding: '15px 6px 8px' }}><span>{children}</span>{right}</div>;
+const miniLink = { border: 'none', background: 'transparent', color: HB.accent, cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.label.sz, letterSpacing: '0.1em' };
 // PANEL CHROME — one spec, shared by the left (Inspect/View/Index) and right (Agentic) rails
 // so both sides of the map line up: same tab height, same section padding, same label.
-const ltab = (on) => ({ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 0', border: 'none', borderBottom: `2px solid ${on ? HB.accent : 'transparent'}`, background: 'transparent', cursor: 'pointer', fontFamily: HB.mono, fontSize: 10.5, letterSpacing: '0.06em', color: on ? HB.ink : HB.inkMute });
-const segBtn = (on) => ({ flex: 1, padding: '6px 0', borderRadius: 6, border: 'none', cursor: 'pointer', fontFamily: HB.mono, fontSize: 10.5, background: on ? HB.card : 'transparent', color: on ? HB.accentHi : HB.inkSoft, boxShadow: on ? '0 1px 4px rgba(0,0,0,.08)' : 'none' });
+const ltab = (on) => ({ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px 0', border: 'none', borderBottom: `2px solid ${on ? HB.accent : 'transparent'}`, background: 'transparent', cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.label.sz, letterSpacing: '0.06em', color: on ? HB.ink : HB.inkMute });
+const segBtn = (on) => ({ flex: 1, padding: '6px 0', borderRadius: 6, border: 'none', cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, background: on ? HB.card : 'transparent', color: on ? HB.accentHi : HB.inkSoft, boxShadow: on ? '0 1px 4px rgba(0,0,0,.08)' : 'none' });
 const visRow = (on) => ({ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 8px', borderRadius: 7, border: 'none', background: 'transparent', cursor: 'default', color: on ? HB.ink : HB.inkMute, fontSize: 12, opacity: on ? 1 : 0.7 });
-const MiniBtn = ({ children, onClick, on, icon }) => <button onClick={onClick} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '7px 0', borderRadius: 7, cursor: 'pointer', fontFamily: HB.mono, fontSize: 10.5, border: `1px solid ${on ? HB.accent : HB.line}`, background: on ? HB.accentSoft : HB.card, color: on ? HB.accentHi : HB.inkSoft }}><CKIcon name={icon} size={12}/>{children}</button>;
+const MiniBtn = ({ children, onClick, on, icon }) => <button onClick={onClick} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '7px 0', borderRadius: 7, cursor: 'pointer', fontFamily: HB.mono, fontSize: HB.fs.dataSm.sz, border: `1px solid ${on ? HB.accent : HB.line}`, background: on ? HB.accentSoft : HB.card, color: on ? HB.accentHi : HB.inkSoft }}><CKIcon name={icon} size={12}/>{children}</button>;
 const ToggleRow = ({ label, on, onClick }) => <button onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '7px 8px', borderRadius: 7, border: 'none', background: 'transparent', cursor: 'pointer', color: HB.ink, fontSize: 12 }}><span style={{ width: 30, height: 17, borderRadius: 99, background: on ? HB.accent : HB.line, position: 'relative', flexShrink: 0 }}><span style={{ position: 'absolute', top: 2, left: on ? 15 : 2, width: 13, height: 13, borderRadius: '50%', background: '#fff', transition: 'left .15s' }}/></span>{label}</button>;
 const DarkBtn = ({ children, onClick, icon }) => <button onClick={onClick} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 7, border: '1px solid #ffffff22', background: '#ffffff10', color: HB.ink, cursor: 'pointer', fontFamily: HB.mono, fontSize: 11 }}><CKIcon name={icon} size={12}/>{children}</button>;
 
@@ -1275,7 +1275,7 @@ function ContextMenu({ ctx, node, domain, field, openNodes, selCount, nodeDomGro
     : ctx.type === 'field' && field ? { tag: 'FIELD · GROUP OF DOMAINS', title: field.title } : null;
   return (
     <div onClick={e => e.stopPropagation()} onContextMenu={e => { e.preventDefault(); e.stopPropagation(); }} style={{ position: 'fixed', left: x, top: y, width: W, zIndex: 200, background: HB.card, border: `1px solid ${HB.line}`, borderRadius: 10, boxShadow: '0 16px 50px rgba(0,0,0,.3)', padding: 5, fontFamily: HB.sans }}>
-      {head && <div style={{ padding: '7px 9px 8px', borderBottom: `1px solid ${HB.lineSoft}`, marginBottom: 4 }}><div style={{ fontFamily: HB.mono, fontSize: 8, color: HB.inkMute, letterSpacing: '0.14em' }}>{head.tag}</div><div style={{ fontSize: 13, fontWeight: 600, color: HB.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{head.title}</div></div>}
+      {head && <div style={{ padding: '7px 9px 8px', borderBottom: `1px solid ${HB.lineSoft}`, marginBottom: 4 }}><div style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.inkMute, letterSpacing: '0.14em' }}>{head.tag}</div><div style={{ fontSize: 13, fontWeight: 600, color: HB.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{head.title}</div></div>}
       {items.map((it, i) => it.sep ? <div key={i} style={{ height: 1, background: HB.lineSoft, margin: '4px 6px' }}/> : (
         <button key={i} onClick={() => { it.fn(); onClose(); }} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left', padding: '8px 9px', borderRadius: 7, border: 'none', background: it.on ? HB.accentSoft : 'transparent', cursor: 'pointer', color: it.danger ? HB.red : it.accent ? HB.accentHi : it.dim ? HB.inkMute : HB.ink, fontSize: 12.5, fontWeight: it.accent ? 700 : 400, opacity: it.dim ? 0.6 : 1 }}
           onMouseEnter={e => e.currentTarget.style.background = it.danger ? HB.red + '14' : HB.paper2} onMouseLeave={e => e.currentTarget.style.background = it.on ? HB.accentSoft : 'transparent'}>

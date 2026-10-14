@@ -11,7 +11,12 @@ const vm = require('node:vm');
 const jsx = fs.readFileSync(path.join(__dirname, '../nodelang/studio/studio-lm.jsx'), 'utf8');
 const html = fs.readFileSync(path.join(__dirname, '../nodelang/studio/studio.html'), 'utf8');
 const workshopSource = fs.readFileSync(path.join(__dirname, '../nodelang/studio/studio-existing-workshop.js'), 'utf8');
-const LM = new Proxy({rad:{xs:3, sm:5, md:6, lg:8, xl:10}, sp:{xs:4, sm:8, md:12}}, {get:(held, key) => key in held ? held[key] : 'token'});
+const foundation = {
+  fs:{bodySm:{sz:13}, bodySmStrong:{wt:500}, caption:{sz:12, ln:16}, label:{sz:11, ln:14, wt:500, letter:'.04em'}, data:{sz:12, ln:16, wt:400}, dataSm:{sz:11, ln:14, wt:400}},
+  icon:{ui:{size:16, box:20}, category:{size:12, box:20}},
+  shadow:{flat:'none'}, selection:{outline:'2px solid token-accent', outlineOffset:2}, dur:{fast:120, med:180},
+};
+const LM = new Proxy({rad:{chip:3, xs:3, control:5, sm:5, node:6, md:6, panel:8, lg:8, dialog:10, xl:10}, sp:{xs:4, sm:8, md:12}, ...foundation}, {get:(held, key) => key in held ? held[key] : 'token'});
 const ROW = {name:'Model A', route:'vendor/model-a', routed:'openrouter/vendor/model-a', vendor:'vendor', tag:'BYO', ctx:'8k', cost:'$0 / $0 per M', col:'#3a6acc'};
 const DOCS = '// ' + '\u2500'.repeat(24) + ' DOCS';
 

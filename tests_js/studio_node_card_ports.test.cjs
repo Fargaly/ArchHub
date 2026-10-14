@@ -17,8 +17,13 @@ const tokens = fs.readFileSync(path.join(__dirname, '../nodelang/studio/tokens.j
 const palette = tokens.slice(tokens.indexOf('window.AH = {'), tokens.indexOf('window.ArchHubTheme ='));
 const LM = new Proxy(Object.fromEntries([...palette.matchAll(/^ {2}(\w+):/gm)].map(match => [match[1], 'token-' + match[1]])), {
   get:(held, key) => {
-    if (key === 'rad') return {xs:3, sm:5, md:6, lg:8, xl:10, pill:999};
+    if (key === 'rad') return {chip:3, xs:3, control:5, sm:5, node:6, md:6, panel:8, lg:8, dialog:10, xl:10, pill:999};
     if (key === 'sp') return {xs:4, sm:8, md:12, lg:16, xl:24};
+    if (key === 'fs') return {bodySm:{sz:13, ln:18}, bodySmStrong:{wt:500}, caption:{sz:12, ln:16}, label:{sz:11, ln:14, wt:500, letter:'.04em'}, data:{sz:12, ln:16, wt:400}, dataSm:{sz:11, ln:14, wt:400}};
+    if (key === 'icon') return {ui:{size:16, box:20}, category:{size:12, box:20}};
+    if (key === 'shadow') return {flat:'none'};
+    if (key === 'selection') return {outline:'2px solid token-accent', outlineOffset:2};
+    if (key === 'dur') return {fast:120, med:180};
     if (typeof key === 'string' && !(key in held)) throw new Error('studio-lm.jsx reads an undefined token: ' + key);
     return held[key];
   }});
@@ -162,9 +167,9 @@ test('title and summary sit in the card body as drawn, never clamped to one line
       const sub = rows.find(row => row.textContent === node.sub && !row.children.length);
       assert.ok(title && sub, 'the card draws its title and summary: ' + node.id);
       assert.ok(title.parentElement === sub.parentElement, 'title and summary share the body');
-      assert.equal(title.parentElement.style.padding, '9px 12px 11px', 'the design body padding');
+      assert.equal(title.parentElement.style.padding, '12px', 'the foundation body padding');
       assert.equal(title.style.fontSize, '13px');
-      assert.equal(sub.style.fontSize, '11px');
+      assert.equal(sub.style.fontSize, '12px');
       for (const [element, what] of [[title, 'title'], [sub, 'summary']]) {
         assert.notEqual(element.style.whiteSpace, 'nowrap', 'the ' + what + ' of ' + node.id + ' is not clamped');
         assert.equal(element.style.textOverflow, '', 'the ' + what + ' of ' + node.id + ' is not ellipsized');

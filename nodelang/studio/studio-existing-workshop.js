@@ -1321,25 +1321,33 @@
         return result;
       },
       setTopologyCanvas: acceptTopology,
-      selectTopology(root) {
-        return runTopology(JSON.stringify(['select', root]), async (identity, command) => {
+      selectTopology(root, roots = null) {
+        const clearing = root === null && Array.isArray(roots) && roots.length === 0;
+        const heldRoots = [...new Set((Array.isArray(roots) ? roots : [root]).filter(text))];
+        const runSelection = () => runTopology(JSON.stringify(['select', root, heldRoots]), async (identity, command) => {
           const value = await readTopology(identity);
           // Work the canvas does not draw is still selectable for its Workshop review.
           const hiddenWork = Array.isArray(value.hidden_work) ? value.hidden_work : [];
-          if (!text(root) || ![...value.nodes, ...value.wires, ...hiddenWork].some(row => row?.id === root)) {
+          const visible = [...value.nodes, ...value.wires, ...hiddenWork];
+          if (!clearing && (!text(root) || !visible.some(row => row?.id === root) ||
+              heldRoots.some(held => !visible.some(row => row?.id === held)))) {
             fail('Choose a node in the current canvas scope.');
           }
-          if (value.selected === root) return value;
+          if (!clearing && value.selected === root && heldRoots.length === 1) return value;
           const result = await command('/api/universal/gesture', {
-            roots:[root], focus:root, expected_scope:value.scope.current,
+            roots:clearing ? [] : heldRoots.length ? heldRoots : [root], focus:root, expected_scope:value.scope.current,
           });
-          if (!result || topologyIdentity(result) !== identity || result.selected !== root ||
+          const projectedRoots = Array.isArray(result?.selection) ? result.selection : [result?.selected].filter(text);
+          if (!result || topologyIdentity(result) !== identity ||
+              (clearing ? !Array.isArray(result.selection) || result.selection.length !== 0 : result.selected !== root) ||
+              heldRoots.some(held => !projectedRoots.includes(held)) ||
               !revision(result.revision) || result.revision < value.revision ||
               topologyIdentity(topologyCanvas) !== identity) {
             fail('The selected node needs reconciliation in its original canvas.');
           }
           return acceptTopology(result);
         });
+        return topologyWrite ? topologyWrite.promise.catch(() => {}).then(runSelection) : runSelection();
       },
       moveTopologyNodes(positions, expectedRevision = topologyCanvas?.revision, expectedPositions = null, placement = null) {
         const arrange = placement === 'arrange';
@@ -1422,6 +1430,20 @@
       },
       // Group the roots into one composition node, or ungroup one composition, through the graph's own
       // toolbar control: the roots become the selection, then the one applicable control runs.
+      moveMember(member, from_group, to_group, position = null) {
+        return runTopology(JSON.stringify(['remove-member', member, from_group, to_group, position]), async (identity, command) => {
+          if (!from_group || to_group) fail('Only dragging a member out of its displayed group is available here.');
+          const shared = global.ArchHubStudioAuthority;
+          if (typeof shared?.removeMember !== 'function') fail('The member transport is unavailable. Reload Studio.');
+          const value = topologyCanvas;
+          const result = await shared.removeMember({canvas:value, post:command, uuid,
+            member, from_group, position, receipt:true});
+          const latest = await readTopology(identity);
+          if (latest.revision < result.committed_revision) fail('The member change is not visible in the refreshed graph.');
+          shared.confirmMemberRemoved(value, latest, member, from_group);
+          return result;
+        });
+      },
       composeTopology(operation, roots) {
         const held = [...new Set((roots || []).filter(text))];
         return runTopology(JSON.stringify(['compose', operation, held]), async (identity, command) => {
@@ -1441,10 +1463,14 @@
           const result = await command('/api/universal/interaction', {interaction:bindings[0].interaction, control:controls[0].owner,
             event:bindings[0].event, revision:selected.revision, projection_mode:bindings[0].acknowledgement_mode});
           if (!result || result.ok === false || !revision(result.committed_revision) || result.committed_revision <= selected.revision) {
-            fail('The group change needs reconciliation.');
+            fail(result?.error || 'The group change needs reconciliation.');
           }
           const latest = await readTopology(identity);
           if (latest.revision < result.committed_revision) fail('The group change is not visible in the refreshed graph.');
+          if (operation === 'group' && !latest.nodes.some(node => node.composition === true &&
+              held.every(root => (node.members || []).some(member => member.id === root)))) {
+            fail('The created group card is not visible in the refreshed graph. Refresh before grouping again.');
+          }
           return result;
         });
       },

@@ -134,6 +134,30 @@ test('shared node selection commits only selection and restores through a fresh 
   assert.equal(fresh.posts.length,0);
 });
 
+test('shift-add selection carries pending client roots while an earlier selection is in flight', async()=>{
+  let releaseFirst;
+  const firstReply = new Promise(resolve => { releaseFirst = resolve; });
+  let durable = fixture();
+  const {api,posts}=setup({get:()=>durable,post:async(_url,body)=>{
+    if (posts.length === 1) {
+      await firstReply;
+      durable=fixture({selected:'a',selection:['a'],revision:5,interaction_projection:{revision:5,bindings:[]}});
+      return durable;
+    }
+    assert.deepEqual(plain(body),{roots:['a','b'],focus:'b',expected_scope:'scope'});
+    durable=fixture({selected:'b',selection:['a','b'],revision:6,interaction_projection:{revision:6,bindings:[]}});
+    return durable;
+  }});
+  const first = api.selectTopology('a');
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const second = api.selectTopology('b', ['a','b']);
+  assert.deepEqual(posts[0].body,{roots:['a'],focus:'a',expected_scope:'scope'});
+  releaseFirst();
+  await first;
+  await second;
+  assert.equal(posts.length,2);
+});
+
 test('selection refuses hidden nodes and foreign or unconfirmed responses',async()=>{
   const hidden=setup();
   await assert.rejects(hidden.api.selectTopology('hidden'),/current canvas/);

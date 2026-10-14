@@ -43,6 +43,16 @@ const RAIL_HELPERS = [
   source.slice(source.indexOf('const nodeModelRow ='), source.indexOf('// ─── Chat lane data seam ───'))
 ].join('\n');
 
+const testTokens = () => new Proxy({}, {get:(_, k) => {
+  if (k === 'rad') return {chip:3, xs:3, control:5, sm:5, node:6, md:6, panel:8, lg:8, dialog:10, xl:10, pill:999};
+  if (k === 'sp') return {xs:4, sm:8, md:12, lg:16, xl:24};
+  if (k === 'fs') return {bodySm:{sz:13, ln:18, wt:400}, bodySmStrong:{sz:13, ln:18, wt:500}, caption:{sz:12, ln:16}, label:{sz:11, ln:14, wt:500, letter:'.04em'}, data:{sz:12, ln:16, wt:400}, dataSm:{sz:11, ln:14, wt:400}};
+  if (k === 'icon') return {ui:{size:16, box:20}, category:{size:12, box:20}};
+  if (k === 'shadow') return {flat:'none'};
+  if (k === 'dur') return {fast:120, med:180};
+  return 'token-' + String(k);
+}});
+
 async function mountEnv(fn, opts = {}) {
   const {JSDOM} = await import('jsdom');
   const React = require('react');
@@ -52,7 +62,7 @@ async function mountEnv(fn, opts = {}) {
   const oldWindow = global.window, oldDocument = global.document;
   const win = dom.window;
   global.window = win; global.document = win.document; global.IS_REACT_ACT_ENVIRONMENT = true;
-  const LM = new Proxy({}, {get:(_, k) => 'token-' + String(k)});
+  const LM = testTokens();
   const studioCategory = () => ({col:'#E0794A', icon:'A', label:'AI', role:''});
   const InlineAsk = () => React.createElement('textarea', {'data-stub':'inlineask'});
   const HoverBtn = ({onClick, disabled, children}) => React.createElement('button', {onClick, disabled}, children);
@@ -117,7 +127,7 @@ async function mountForkRail(kind, createResult) {
   win.pmType = type => win.PM_TYPES[type] || win.PM_TYPES.text;
   win.PM_WIRE = {};
   win.Socket = () => React.createElement('span', {'data-stub':'socket'});
-  const LM = new Proxy({}, {get:(_, k) => k === 'sp' || k === 'rad' ? new Proxy({}, {get:()=>4}) : 'token-' + String(k)});
+  const LM = testTokens();
   const InlineAsk = () => React.createElement('textarea', {'data-stub':'inlineask'});
   const HoverBtn = ({onClick, disabled, children}) => React.createElement('button', {onClick, disabled}, children);
   const PM = new Proxy({}, {get:(_, k) => k === 'rad' ? new Proxy({}, {get:()=>4}) : 'pm-' + String(k)});
@@ -240,14 +250,15 @@ test('studio.html exposes a read-only node-transcript reader on the agreed route
 });
 
 // ── the rail is wired with the scope and a continue-in-Workshop opener, gated for ANY bound node ──
-test('the Workspace threads scope + opener, and NodeRail gates on has_conversation too', () => {
+test('the Workspace threads scope + opener, and NodeRail admits every live conversation target', () => {
   const workspace = slice('const Workspace =', '// The string the server');
   assert.match(workspace, /<NodeRail[\s\S]*?scope=\{/);
   assert.match(workspace, /<NodeRail[\s\S]*?openConversation=\{/);
-  // The gate must not require a model row — a model-less room node still gets the transcript.
+  // Every live target can receive a composer turn, including model-less rooms
+  // and model nodes whose short canvas summary omits their model parameter.
   const rail = slice('const NodeRail =', '\nconst ConversationRail =');
-  assert.match(rail, /inspectedNode\.live && \(inspectedNode\.has_conversation \|\| inspectedNode\.graphNode \|\| nodeModelRow\(inspectedNode\)\)/,
-    'NodeRail must render the conversation component for any live has_conversation node, not only model nodes');
+  assert.match(rail, /\{inspectedNode\.live \?\s*<NodeModelConversation/,
+    'NodeRail must render the conversation component for every live target, including model-less rooms');
 });
 
 // ── FINDING 1: a real NodeRail mount with a model-less Workshop room node ──
@@ -358,7 +369,7 @@ test('an 8s poll does not overlap an in-flight read', async () => {
   let calls = 0, release = null;
   win.ARCHHUB_WORKSHOP_TRANSCRIPT = (node) => { calls += 1; return new Promise(res => { release = () => res({ok:true, node,
     conversation_root:'conv-a', revision:4, has_older:false, next_before:null, rows:[]}); }); };
-  const LM = new Proxy({}, {get:(_, k) => 'token-' + String(k)});
+  const LM = testTokens();
   const studioCategory = () => ({col:'#E0794A', icon:'A', label:'AI'});
   const InlineAsk = () => React.createElement('textarea', {}); const HoverBtn = ({children}) => React.createElement('button', {}, children);
   win.NodeInspector = () => null; const ConversationRail = () => null;
@@ -449,7 +460,7 @@ test('a read that resolves after unmount throws nothing and sets no state', asyn
   let release;
   win.ARCHHUB_WORKSHOP_TRANSCRIPT = (node) => new Promise(res => { release = () => res({ok:true, node,
     conversation_root:'conv-a', revision:4, has_older:false, next_before:null, rows:[{id:'m', who:'You', is_me:true, time:'2026-10-01T18:51:32Z', text:'late', kind:'message'}]}); });
-  const LM = new Proxy({}, {get:(_, k) => 'token-' + String(k)});
+  const LM = testTokens();
   const studioCategory = () => ({col:'#E0794A', icon:'A', label:'AI'});
   const InlineAsk = () => React.createElement('textarea', {});
   const HoverBtn = ({onClick, disabled, children}) => React.createElement('button', {onClick, disabled}, children);

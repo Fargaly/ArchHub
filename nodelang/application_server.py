@@ -122,6 +122,7 @@ from .universal_application import (
     attach_universal_assembly_structured_fields,
     draft_universal_baboom_work_plan,
     submit_universal_composition_interaction,
+    remove_universal_composition_member,
     submit_universal_history_interaction,
     submit_universal_edit_value_interaction,
     submit_universal_transition_interaction,
@@ -2168,6 +2169,10 @@ class _CleanAuthorityHttpServer:
             # ended on it go with it, because a wire to nothing is not
             # a wire.
             "delete",
+            # Moving one visible member across a group boundary is the same
+            # signed member-leave/member-join path used by Ungroup, never a
+            # browser overlay.
+            "membership",
             # A field edit in the rail is a sparse instance override --
             # the same signed revise-instance the stem runner uses. The
             # gesture only carries WHICH declared parameter of WHICH held
@@ -2304,6 +2309,109 @@ class _CleanAuthorityHttpServer:
                     caller=self.clean_caller,
                     command_id=str(_uuid.uuid4()),
                 )
+            self._refresh_scope_interactions()
+            return self._gesture_answer(binding, body)
+        membership = body.get("membership")
+        if isinstance(membership, dict):
+            import uuid as _uuid
+
+            from .clean_browser_authority import revise_clean_browser_focus
+            from .unified_authority import (
+                add_composition_member,
+                place_composition,
+                read_scope_level,
+                remove_composition_member,
+            )
+
+            member_root = membership.get("member")
+            from_group = membership.get("from_group") or ""
+            to_group = membership.get("to_group") or ""
+            if (
+                type(member_root) is not str or not member_root
+                or type(from_group) is not str
+                or type(to_group) is not str
+                or from_group == to_group
+                or (not from_group and not to_group)
+            ):
+                raise CleanGestureRefused("membership move is invalid")
+            standing = self._standing_scope(
+                binding, expected_scope=body.get("expected_scope")
+            )
+            level = read_scope_level(
+                self.clean_authority,
+                standing,
+                scope_root=standing,
+                caller=self.clean_caller,
+            )
+            visible_members = set(level.composition_roots)
+            for group_root in (from_group, to_group):
+                if group_root and group_root not in visible_members:
+                    raise CleanGestureRefused(
+                        "membership group is not held by this scope"
+                    )
+            destination = to_group or standing
+            source = from_group or standing
+            position = membership.get("position")
+            try:
+                add_composition_member(
+                    self.clean_authority,
+                    destination,
+                    member_root,
+                    caller=self.clean_caller,
+                    command_id=str(_uuid.uuid4()),
+                )
+            except InvalidCell as error:
+                if "already a member" not in str(error):
+                    raise
+            if destination == standing:
+                if not isinstance(position, dict):
+                    position = {"x": 120, "y": 120}
+                x, y = position.get("x"), position.get("y")
+                if type(x) not in (int, float) or type(y) not in (int, float):
+                    raise CleanGestureRefused(
+                        "membership parent position is invalid"
+                    )
+                place_composition(
+                    self.clean_authority,
+                    standing,
+                    member_root,
+                    {"x": int(x), "y": int(y)},
+                    caller=self.clean_caller,
+                    command_id=str(_uuid.uuid4()),
+                )
+            try:
+                remove_composition_member(
+                    self.clean_authority,
+                    source,
+                    member_root,
+                    caller=self.clean_caller,
+                    command_id=str(_uuid.uuid4()),
+                )
+            except InvalidCell as error:
+                if "not a member" not in str(error):
+                    raise
+            selection_root = (
+                member_root if destination == standing else destination
+            )
+            revise_clean_browser_focus(
+                self.clean_authority,
+                self.clean_browser_authority,
+                binding.session_root,
+                scope_root=standing,
+                selected_roots=[selection_root],
+                primary_root=selection_root,
+                caller=self.clean_caller,
+                command_id=str(_uuid.uuid4()),
+            )
+            undo_selection_root = member_root if source == standing else source
+            self._undo_entry = {
+                "kind": "membership",
+                "scope": standing,
+                "member": member_root,
+                "from": source,
+                "to": destination,
+                "selection": (undo_selection_root,),
+            }
             self._refresh_scope_interactions()
             return self._gesture_answer(binding, body)
         edit = body.get("property")
@@ -2722,13 +2830,55 @@ class _CleanAuthorityHttpServer:
         """
         import uuid as _uuid
 
-        from .unified_authority import add_composition_member
+        from .unified_authority import (
+            add_composition_member,
+            remove_composition_member,
+        )
 
         entry = getattr(self, "_undo_entry", None)
         if entry is None:
             raise InvalidCell("there is nothing on this canvas to undo")
-        if entry["kind"] not in ("restore-members", "restore-group"):
+        if entry["kind"] not in ("restore-members", "restore-group", "membership"):
             raise InvalidCell("this act cannot be taken back yet")
+        if entry["kind"] == "membership":
+            try:
+                add_composition_member(
+                    self.clean_authority,
+                    entry["from"],
+                    entry["member"],
+                    caller=self.clean_caller,
+                    command_id=str(_uuid.uuid4()),
+                )
+            except InvalidCell as error:
+                if "already a member" not in str(error):
+                    raise
+            try:
+                remove_composition_member(
+                    self.clean_authority,
+                    entry["to"],
+                    entry["member"],
+                    caller=self.clean_caller,
+                    command_id=str(_uuid.uuid4()),
+                )
+            except InvalidCell as error:
+                if "not a member" not in str(error):
+                    raise
+            held = [root for root in entry["selection"] if root]
+            if held:
+                from .clean_browser_authority import revise_clean_browser_focus
+                revise_clean_browser_focus(
+                    self.clean_authority,
+                    self.clean_browser_authority,
+                    binding.session_root,
+                    scope_root=entry["scope"],
+                    selected_roots=held,
+                    primary_root=held[-1],
+                    caller=self.clean_caller,
+                    command_id=str(_uuid.uuid4()),
+                )
+            self._undo_entry = None
+            self._refresh_scope_interactions()
+            return self._canvas(binding)
         # Policy proves an act on a root REACHABLE within the claimed
         # scope, and a released root belongs nowhere -- which is why
         # ungroup adopts before it releases. Undo cannot reorder history,
@@ -4241,6 +4391,11 @@ class _CleanAuthorityHttpServer:
             def do_POST(self):
                 if not self._admit_local_request():
                     return
+                from .universal_application import is_application_halted
+                if is_application_halted():
+                    self._body()
+                    self._json(403, {"ok": False, "error": "Stopped by you. Press Resume to continue."})
+                    return
                 try:
                     body = self._body()
                     csrf_token = self._csrf()
@@ -4473,6 +4628,11 @@ class _CleanAuthorityHttpServer:
                             # its own rebase ("expected 916, projected 917").
                             snapshot = owner.authority.store.snapshot()
                             current = snapshot.revision
+                            is_remove_member = (
+                                isinstance(body.get("membership"), dict)
+                                and body.get("control")
+                                == "app:control:canvas:remove-member"
+                            )
                             if revision != current:
                                 # The client's revision is the head it last
                                 # SAW. Refusing every click because the graph
@@ -4531,6 +4691,49 @@ class _CleanAuthorityHttpServer:
                                 snapshot,
                                 scope_root,
                             )
+                            if is_remove_member:
+                                lease = owner.clean_interaction_broker.resolve(
+                                    owner._projection_handle(binding, snapshot),
+                                    snapshot,
+                                    expected_revision=revision,
+                                    control_root=control_root,
+                                    interaction_root=interaction_root,
+                                )
+                                interaction = read_interaction(
+                                    owner._interaction_snapshot(snapshot),
+                                    owner.clean_scope_interactions.protocol,
+                                    interaction_root,
+                                )
+                                if lease.session_root != binding.session_root:
+                                    raise InvalidCell(
+                                        "interaction session drifted"
+                                    )
+                                if interaction.control_root != control_root:
+                                    raise InvalidCell(
+                                        "interaction control drifted"
+                                    )
+                                if interaction.event_root != event_root:
+                                    raise InvalidCell(
+                                        "interaction event drifted"
+                                    )
+                                if interaction.subject_root != owner.clean_caller.actor_root:
+                                    raise AuthorizationDenied(
+                                        "interaction subject does not match identity"
+                                    )
+                                payload = owner._clean_gesture(
+                                    binding,
+                                    {
+                                        "membership": body["membership"],
+                                        "expected_scope": body.get(
+                                            "expected_scope"
+                                        ),
+                                        "projection": body.get(
+                                            "projection", True
+                                        ),
+                                    },
+                                )
+                                self._json(200, {"ok": True, **payload})
+                                return
                             result = submit_clean_scope_interaction(
                                 owner.clean_authority,
                                 owner.clean_browser_authority,
@@ -5951,6 +6154,8 @@ class ApplicationServer:
         self._model_execution_idle.set()
         self._model_execution_active = False
         self._model_execution_closing = False
+        self._model_execution_generation = 0
+        self._model_execution_halted_generations = set()
         self._connector_execution_capabilities = {}
         self._connector_execution_capability_lock = threading.RLock()
         self.machine_transport = None
@@ -6527,6 +6732,8 @@ class ApplicationServer:
         self._snapshot_stop = threading.Event()
         self._snapshot_thread = None
         self._snapshot_revision = 0
+        self._application_halted = threading.Event()
+        self._halted_sent_writes = []
         if store is not None and self.state_path is not None:
             if built or fresh or not self.state_path.exists():
                 save_snapshot(store, self.state_path)
@@ -6784,6 +6991,7 @@ class ApplicationServer:
                             host_rows=host_rows,
                             hosts_probing=host_rows is None,
                             cloud_state=sign_in_state(),
+                            stopped=owner.is_halted(),
                         ))
                     elif parsed.path == '/wires':
                         self._json(200, project_wires())
@@ -7820,6 +8028,23 @@ class ApplicationServer:
                             'error': str(exc),
                         })
                         return
+                    if self.path == '/stop-all':
+                        self._discard_admitted_body()
+                        owner.halt_all()
+                        self._json(200, {'ok': True, 'stopped': True})
+                        return
+                    if self.path == '/resume':
+                        self._discard_admitted_body()
+                        owner.resume_all()
+                        self._json(200, {'ok': True, 'stopped': False})
+                        return
+                    if owner.is_halted():
+                        self._discard_admitted_body()
+                        self._json(403, {
+                            'ok': False,
+                            'error': 'Stopped by you. Press Resume to continue.',
+                        })
+                        return
                     if self.path.startswith('/api/universal/'):
                         self._universal_integrity()
                         if not self._universal_route(
@@ -8661,10 +8886,19 @@ class ApplicationServer:
                         self._json(200, payload)
                         return
                     if self.path == '/api/universal/interaction':
+                        is_remove_member_request = (
+                            body.get('control')
+                            == 'app:control:canvas:remove-member'
+                            and isinstance(body.get('membership'), dict)
+                        )
                         admitted = {
                             'interaction', 'control', 'event', 'revision',
                             'projection_mode', 'event_facts',
                         }
+                        if is_remove_member_request:
+                            admitted.add('membership')
+                            admitted.add('expected_scope')
+                            admitted.add('command_id')
                         if set(body) - admitted:
                             raise InvalidCell(
                                 'interaction request contains undeclared facts'
@@ -8701,6 +8935,7 @@ class ApplicationServer:
                                 )
                                 and body['revision']
                                 != owner.universal_store.revision
+                                and not is_remove_member_request
                             ):
                                 raise Conflict(
                                     "expected revision %s, current revision is %s"
@@ -8887,21 +9122,75 @@ class ApplicationServer:
                                 )
                                 touched = execution.revision
                             elif interaction.action_root == CAPABILITY_COMPOSITION:
-                                execution = submit_universal_composition_interaction(
-                                    owner.universal_store,
-                                    owner.universal_registry,
-                                    owner.interaction_projection_broker,
-                                    binding.interaction_projection_handle,
-                                    interaction_root=body['interaction'],
-                                    control_root=body['control'],
-                                    event_root=body['event'],
-                                    event_facts=body.get('event_facts'),
-                                    expected_revision=body['revision'],
-                                    projected_canvas=previous_projection,
-                                    authentication_context=binding.context,
-                                )
-                                touched = execution.revision
-                                created_root = execution.created_root
+                                if is_remove_member_request:
+                                    current = owner.universal_store.revision
+                                    expected_revision = body['revision']
+                                    member = body["membership"].get("member")
+                                    from_group = body["membership"].get("from_group")
+                                    if expected_revision != current:
+                                        previous = previous_projection or {}
+                                        held_group = next((
+                                            node for node in previous.get("nodes", [])
+                                            if node.get("id") == from_group
+                                        ), None)
+                                        held_members = held_group.get("members") if isinstance(held_group, dict) else None
+                                        held_member_ids = {
+                                            row.get("id") for row in held_members
+                                            if isinstance(row, dict)
+                                        } if isinstance(held_members, list) else set()
+                                        if member not in held_member_ids:
+                                            self._json(409, {
+                                                "ok": False,
+                                                "error": (
+                                                    "expected revision %s, current revision is %s"
+                                                    % (body['revision'], current)
+                                                ),
+                                                "code": "projection_lease_expired",
+                                            })
+                                            return
+                                    if expected_revision == current:
+                                        owner.interaction_projection_broker.resolve(
+                                            binding.interaction_projection_handle,
+                                            owner.universal_store.snapshot(),
+                                            expected_revision=expected_revision,
+                                            control_root=body['control'],
+                                            interaction_root=body['interaction'],
+                                        )
+                                    to_group = (
+                                        body["membership"].get("to_group") or ""
+                                    )
+                                    if (
+                                        type(member) is not str or not member
+                                        or type(from_group) is not str
+                                        or type(to_group) is not str
+                                        or to_group
+                                    ):
+                                        raise InvalidCell(
+                                            "membership move is invalid"
+                                        )
+                                    touched = remove_universal_composition_member(
+                                        owner.universal_store,
+                                        owner.universal_registry,
+                                        from_group,
+                                        member,
+                                        authentication_context=binding.context,
+                                    )
+                                else:
+                                    execution = submit_universal_composition_interaction(
+                                        owner.universal_store,
+                                        owner.universal_registry,
+                                        owner.interaction_projection_broker,
+                                        binding.interaction_projection_handle,
+                                        interaction_root=body['interaction'],
+                                        control_root=body['control'],
+                                        event_root=body['event'],
+                                        event_facts=body.get('event_facts'),
+                                        expected_revision=body['revision'],
+                                        projected_canvas=previous_projection,
+                                        authentication_context=binding.context,
+                                    )
+                                    touched = execution.revision
+                                    created_root = execution.created_root
                             else:
                                 if 'event_facts' in body:
                                     raise InvalidCell(
@@ -9918,6 +10207,66 @@ class ApplicationServer:
             self._live_thread = threading.Thread(
                 target=self._live_loop, name='archhub-live-watcher', daemon=True)
             self._live_thread.start()
+
+    def is_halted(self) -> bool:
+        return self._application_halted.is_set()
+
+    def halt_generation(self) -> int:
+        return self._model_execution_generation
+
+    def halt_all(self):
+        self._application_halted.set()
+        from .universal_application import set_application_halted
+        set_application_halted(True)
+        # 1. Halt existing workshop native host if present
+        host = getattr(self, '_existing_workshop_native_host', None)
+        if host is not None:
+            try:
+                held = getattr(host, '_native', None)
+                if held is not None:
+                    held.get('stop_requested', threading.Event()).set()
+                    proc = held.get('process')
+                    if proc is not None and hasattr(proc, 'stop'):
+                        proc.stop(timeout_seconds=0.5)
+            except Exception:
+                pass
+        # 2. Cancel and clean up active native workshop reservations
+        reservations = getattr(self, '_native_workshop_reservations', None)
+        if reservations:
+            for res in list(reservations.values()):
+                try:
+                    res._token = b""
+                    res._settled = {"cancelled": "stopped_by_user"}
+                except Exception:
+                    pass
+            reservations.clear()
+        # 3. Fence model execution results already in flight; the active
+        # reservation stays held until provider settlement actually drains.
+        with self.mutation_lock:
+            if self._model_execution_active:
+                self._model_execution_halted_generations.add(self._model_execution_generation)
+            self._model_execution_generation += 1
+
+    def resume_all(self):
+        self._application_halted.clear()
+        from .universal_application import set_application_halted
+        set_application_halted(False)
+
+    def record_halted_sent_write(self, write_identifier: str, details: dict | None = None) -> dict:
+        record = {
+            "write": write_identifier,
+            "status": "stopped after send, check result",
+            "time": time.time(),
+            "details": details or {},
+        }
+        self._halted_sent_writes.append(record)
+        return record
+
+    def check_halted_write(self, write_identifier: str) -> dict | None:
+        for record in self._halted_sent_writes:
+            if record.get("write") == write_identifier:
+                return record
+        return None
 
     @staticmethod
     def _browser_token_digest(token: str) -> str:
@@ -13514,6 +13863,8 @@ class ApplicationServer:
     def _execute_universal_model_request(self, request, body, direct, context):
         """Wait on the provider outside the graph lock; drain through settlement."""
         with self.mutation_lock:
+            if self.is_halted():
+                raise AuthorizationDenied("Stopped by you. Press Resume to continue.")
             if self._model_execution_closing or self._model_execution_active:
                 raise AuthorizationDenied("model execution is busy or shutting down")
             if self.universal_checkpoint_guard is not None:
@@ -13575,6 +13926,7 @@ class ApplicationServer:
                 )
             self._model_execution_active = True
             self._model_execution_idle.clear()
+            execution_generation = self._model_execution_generation
         try:
             try:
                 execution = self.model_execution_broker.execute(
@@ -13597,6 +13949,21 @@ class ApplicationServer:
                 error_code = "broker_fault"
                 proposal_payload = None
             with self.mutation_lock:
+                if (
+                    execution_generation != self._model_execution_generation
+                    or execution_generation in self._model_execution_halted_generations
+                ):
+                    self._model_execution_halted_generations.discard(execution_generation)
+                    self.record_halted_sent_write(str(capability["delegation"]), {
+                        "grant": body["grant"],
+                        "status": "uncertain",
+                        "reason": "stopped_after_send",
+                    })
+                    outcome = "failed"
+                    output_digest = hashlib.sha256(b"").hexdigest()
+                    output_bytes = 0
+                    error_code = "stopped_after_send_uncertain"
+                    proposal_payload = None
                 if (
                     outcome not in {"succeeded", "failed"}
                     or type(output_digest) is not str

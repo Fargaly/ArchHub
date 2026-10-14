@@ -157,12 +157,26 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       const graphId = options && typeof options === 'object' && !Array.isArray(options) ? options.graph_id : undefined;
       const generation = options && typeof options === 'object' && !Array.isArray(options) ? options.generation : undefined;
       const requestId = options && typeof options === 'object' && !Array.isArray(options) ? options.request_id : undefined;
-      const result = await jpost('/api/universal/agent', {prompt, model,
+      const globalTimeout = Number(window.ARCHHUB_AGENT_TURN_TIMEOUT_MS);
+      const timeoutMs = options && typeof options === 'object' && Number.isFinite(options.turn_timeout_ms)
+        ? Math.max(1, Math.min(45000, Number(options.turn_timeout_ms)))
+        : Number.isFinite(globalTimeout) ? Math.max(1, Math.min(45000, globalTimeout)) : 45000;
+      const result = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('The model did not answer within 45 seconds. Retry when ready.')), timeoutMs);
+        jpost('/api/universal/agent', {prompt, model,
         ...(generation !== undefined ? {generation} : {}),
         ...(((typeof node === 'string' && node.trim()) || graph === true) && typeof requestId === 'string' && requestId.trim() ? {request_id:requestId} : {}),
         ...(graph === true ? {graph:true} : {}),
         ...(graph === true && typeof graphId === 'string' && graphId.trim() ? {graph_id:graphId} : {}),
-        ...(typeof node === 'string' && node.trim() ? {node} : {})});
+        ...(typeof node === 'string' && node.trim() ? {node} : {})})
+          .then(resolve, reject)
+          .finally(() => clearTimeout(timer));
+      });
+      if (result && result.ok === false) {
+        const error = new Error(result.error || 'The model provider did not answer.');
+        error.response = result;
+        throw error;
+      }
       return {...(result && typeof result === 'object' ? result : {}), answer:(result && result.answer) || 'done'};
     };
     // The composer pick is the owner's graph-held setting
@@ -445,6 +459,10 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
         id:n.id, cat:CATS(engine), title:n.label || n.id, sub:engine || 'Graph node',
         // The engine lets the node menu's Duplicate place the same card; openable lets it open the node.
         engine, openable: n.openable === true, composition: n.composition === true, memberCount: Number.isSafeInteger(n.member_count) ? n.member_count : null,
+        members:Array.isArray(n.members) ? n.members.map(member => ({
+          id:String(member?.id || member?.root || member?.title || ''),
+          title:String(member?.title || member?.label || member?.id || member?.root || ''),
+        })).filter(member => member.id || member.title) : [],
         x:Number.isFinite(n.x) ? n.x : 200, y:Number.isFinite(n.y) ? n.y : 200,
         w:210, h:Math.max(110, 54 + Math.max(ins.length, outs.length) * 19),
         ins, outs, messages:[], live:true,

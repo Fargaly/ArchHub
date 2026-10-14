@@ -51,3 +51,15 @@ def test_a_graph_already_holding_a_repeated_visible_root_still_opens():
     assigned = (root, root)
     roots, _relations, _properties = ua._canvas_scope_for_assigned(store.snapshot(), registry, assigned)
     assert list(roots).count(root) == 1
+
+
+def test_system_tool_root_is_not_projected_as_user_selection():
+    store, registry = build_universal_application(resolve_map_path())
+    root = ua._system_tool_canvas_root("tool_studio")
+
+    ua.set_universal_selection(store, registry, [root], focus_root=root)
+    projection = project_universal_canvas(store, registry)
+
+    assert root in {node["id"] for node in projection["nodes"]}
+    assert root not in projection["selection"]
+    assert all(node["selected"] is False for node in projection["nodes"] if node["id"] == root)

@@ -58,6 +58,9 @@ async function mountStudioWithToolHubPoller(mountOptions = {}) {
   const {JSDOM} = await import('jsdom');
   const dom = new JSDOM('<div id="root"></div>', {url:'http://127.0.0.1:53916/', runScripts:'outside-only', pretendToBeVisual:true});
   const win = dom.window;
+  if (mountOptions.storedSession) {
+    win.sessionStorage.setItem('archhub.studio.session', JSON.stringify(mountOptions.storedSession));
+  }
   const clock = installIntervalClock(win);
   let hidden = false;
   Object.defineProperty(win.document, 'hidden', {configurable:true, get:() => hidden});
@@ -75,7 +78,8 @@ async function mountStudioWithToolHubPoller(mountOptions = {}) {
     {id:'cloud', label:'Cloud', state:'starting', state_word:'STARTING', description:'Devices and cloud agents.', stat_line:'Not signed in.', off_sentence:'Switched off.', wire_summary:'Cloud ← Brain'},
   ];
   win.fetch = (url, options = {}) => {
-    calls.push({url:String(url), at:clock.now(), signal:options.signal || null});
+    calls.push({url:String(url), at:clock.now(), signal:options.signal || null,
+      headers:JSON.parse(JSON.stringify(options.headers || {}))});
     if (String(url).includes('/api/universal/models')) {
       return Promise.resolve({ok:true, json:() => Promise.resolve({ok:true, groups:[], selected_route:'openrouter/free'})});
     }
@@ -152,6 +156,17 @@ function assertNoDuplicateEndpointInTick(calls, endpoint) {
     assert.equal(count, 1, `${endpoint} has no duplicate fetches at tick ${tick}`);
   }
 }
+
+test('tool hub polls carry the stored Studio session headers the server checks', async () => {
+  const studio = await mountStudioWithToolHubPoller({storedSession:{token:'held-token', csrf:'held-csrf'}});
+  try {
+    await studio.clock.advance(5000);
+    const tools = studio.calls.find(call => call.url === '/tools');
+    assert.ok(tools, 'the visible Studio reads /tools');
+    assert.equal(tools.headers['X-ArchHub-Session'], 'held-token');
+    assert.equal(tools.headers['X-ArchHub-CSRF'], 'held-csrf');
+  } finally { studio.close(); }
+});
 
 test('tool hub poller shares one idle 5s cadence across Home, Settings Hub and the rail', async () => {
   const studio = await mountStudioWithToolHubPoller();

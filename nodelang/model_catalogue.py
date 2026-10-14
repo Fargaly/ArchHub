@@ -180,7 +180,9 @@ def openrouter_models(*, opener: Callable, timeout: float, prices: Optional[dict
             "request_price": request_price,
             "image_price": image_price,
             "all_prices_zero": all_prices_zero,
+            "input_modalities": _input_modalities(row),
             "output_modalities": _output_modalities(row),
+            "supported_parameters": _supported_parameters(row),
             "col": _VENDOR_COLOURS.get(vendor, "#3a6acc"),
         })
     items.sort(key=lambda item: item["name"].lower())
@@ -255,6 +257,31 @@ def _output_modalities(row: Mapping[str, object]) -> list[str]:
     return values
 
 
+def _input_modalities(row: Mapping[str, object]) -> list[str]:
+    values = []
+    for source in (row, row.get("architecture") if isinstance(row.get("architecture"), Mapping) else {}):
+        for key in ("input_modalities", "input_modality", "modalities", "input"):
+            value = source.get(key) if isinstance(source, Mapping) else None
+            if isinstance(value, str):
+                values.append(value.casefold())
+            elif isinstance(value, (list, tuple, set)):
+                values.extend(str(item).casefold() for item in value)
+    return values
+
+
+def _supported_parameters(row: Mapping[str, object]) -> list[str]:
+    value = row.get("supported_parameters")
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    return [str(item).casefold() for item in value]
+
+
+def _modalities_include_text(values: object) -> bool:
+    if not isinstance(values, (list, tuple, set)) or not values:
+        return False
+    return any(str(value).casefold() in {"text", "chat"} for value in values)
+
+
 def _openrouter_chat_row(row: Mapping[str, object], route: str) -> bool:
     text = route.casefold()
     if any(word in text for word in _OPENROUTER_NOT_CHAT):
@@ -277,7 +304,7 @@ def _openrouter_free_row(route: str, pricing: Mapping[str, object]) -> bool:
     return True
 
 
-def openrouter_free_chat_routes(payload: Mapping[str, object]) -> tuple[str, ...]:
+def openrouter_free_chat_routes(payload: Mapping[str, object], *, require_tools: bool = False) -> tuple[str, ...]:
     """Free OpenRouter chat ids already present in the picker catalogue."""
     out: list[str] = []
     for group in payload.get("groups") or ():
@@ -317,6 +344,13 @@ def openrouter_free_chat_routes(payload: Mapping[str, object]) -> tuple[str, ...
             modalities = item.get("output_modalities")
             if isinstance(modalities, (list, tuple, set)) and modalities:
                 if not any(str(value).casefold() in {"text", "chat"} for value in modalities):
+                    continue
+            if require_tools:
+                if "tools" not in _supported_parameters(item):
+                    continue
+                if not _modalities_include_text(item.get("input_modalities")):
+                    continue
+                if not _modalities_include_text(item.get("output_modalities")):
                     continue
             if zero and _openrouter_chat_row({}, route) and route not in out:
                 out.append(route)

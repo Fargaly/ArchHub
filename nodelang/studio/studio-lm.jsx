@@ -11,6 +11,12 @@
 (() => {
 
 const LM = window.AH;  // tokens.jsx — single source of truth
+LM.fs = LM.fs || {};
+LM.fs.label = LM.fs.label || {sz:11, ln:14, wt:500, letter:'.04em'};
+LM.fs.dataSm = LM.fs.dataSm || {sz:11, ln:14, wt:400};
+LM.fs.caption = LM.fs.caption || {sz:12, ln:16, wt:400};
+LM.icon = LM.icon || {};
+LM.icon.category = LM.icon.category || {size:12, box:20};
 const WORKSHOP_UNAVAILABLE_ROOT = 'studio:workshop-unavailable';
 
 // Categories and signal colours come from node-registry.jsx - one definition, read by the
@@ -19,6 +25,14 @@ const CAT = window.AH_CAT;
 const WIRE = window.AH_WIRE;
 
 const studioCategory = name => CAT[name] || {col:LM.accent, icon:'○', label:name, role:''};
+// A cleared selection retains the server's primary focus for navigation. That
+// retained card or wire is not the empty-selection graph inspector's target.
+const studioInspectorFocus = state => {
+  const root = state?.selected || null, canvas = state?.canvas;
+  if (!root || !Array.isArray(canvas?.selection) || canvas.selection.length ||
+      canvas.selection_hidden === true) return root;
+  return [...(state.graph?.nodes || []), ...(state.graph?.wires || [])].some(item => item.id === root) ? null : root;
+};
 const useStudioProjection = () => {
   const signed = window.ARCHHUB_STUDIO_AUTHORITY;
   const authority = signed || window.ARCHHUB_EXISTING_WORKSHOP;
@@ -369,7 +383,8 @@ const studioFreeSlot = (nodes, originOrSize = null, size = {w:210, h:230}, gap =
   return {x:x0, y:(rects.length ? Math.max(...rects.map(r => r.y + r.h)) + gap : y0)};
 };
 
-const studioRefreshCanvasInPlace = async () => {
+const studioRefreshCanvasInPlace = async (options = {}) => {
+  const applyLiveGraph = options.applyLiveGraph !== false;
   const authority = window.ARCHHUB_STUDIO_AUTHORITY;
   let refreshed = null;
   if (typeof authority?.load === 'function') refreshed = await authority.load();
@@ -381,7 +396,7 @@ const studioRefreshCanvasInPlace = async () => {
   const graph = authority?.getSnapshot?.()?.graph ||
     window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot?.()?.topology?.graph ||
     window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot?.()?.graph;
-  if (graph && window.ARCHHUB_LIVE) {
+  if (applyLiveGraph && graph && window.ARCHHUB_LIVE) {
     LM_GRAPH = graph;
     window.ARCHHUB_LIVE.graph = graph;
   }
@@ -389,7 +404,7 @@ const studioRefreshCanvasInPlace = async () => {
 };
 if (typeof window !== 'undefined') window.__archhubRefreshCanvasInPlace = studioRefreshCanvasInPlace;
 const StudioLM = () => {
-  React.useSyncExternalStore(window.ArchHubTheme.subscribe, window.ArchHubTheme.getEpoch);
+  const themeEpoch = React.useSyncExternalStore(window.ArchHubTheme.subscribe, window.ArchHubTheme.getEpoch);
   useCatalogueVersion();
   React.useEffect(() => {
     const read = () => { if (!window.ARCHHUB_HOSTS_READ) loadCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS); };
@@ -600,16 +615,30 @@ const StudioLM = () => {
   };
   const authorityState = useStudioProjection();
   const [focusId, setLocalFocusId] = React.useState(() =>
-    window.ARCHHUB_STUDIO_AUTHORITY?.getSnapshot()?.selected || null);
-  const setFocusId = root => {
+    studioInspectorFocus(window.ARCHHUB_STUDIO_AUTHORITY?.getSnapshot()));
+  const restoringSelection = React.useRef(true);
+  const setFocusId = (root, roots = null) => {
     const signed = window.ARCHHUB_STUDIO_AUTHORITY, existing = window.ARCHHUB_EXISTING_WORKSHOP;
+    restoringSelection.current = false;
     setLocalFocusId(root || null);
-    if (root && signed) signed.select(root).catch(() => {});
-    else if (root && existing?.selectTopology) existing.selectTopology(root).catch(() => {});
+    const heldRoots = root ? roots : [];
+    if (signed) signed.select(root || null, heldRoots).catch(() => {});
+    else if (existing?.selectTopology) existing.selectTopology(root || null, heldRoots).catch(() => {});
   };
   React.useEffect(() => {
-    if (authorityState) setLocalFocusId(authorityState.selected);
-  }, [authorityState?.selected]);
+    if (authorityState && !authorityState.pending && !authorityState.error && !authorityState.requires_refresh) {
+      const restoring = restoringSelection.current;
+      restoringSelection.current = false;
+      if (restoring && Array.isArray(authorityState.canvas?.selection) && authorityState.canvas.selection.length &&
+          authorityState.graph?.wires?.some(wire => wire.id === authorityState.selected)) {
+        setFocusId(null, []); return;
+      }
+      setLocalFocusId(studioInspectorFocus(authorityState));
+    }
+  }, [authorityState?.selected, authorityState?.pending, authorityState?.error, authorityState?.requires_refresh,
+    JSON.stringify(authorityState?.canvas?.selection),
+    authorityState?.canvas?.selection_hidden, studioCanvasScope(authorityState?.canvas),
+    !!authorityState?.graph?.wires?.some(wire => wire.id === authorityState?.selected)]);
   const modelTarget = (authorityState?.graph?.nodes || LM_GRAPH.nodes).find(n =>
     n.id === focusId && n.live && nodeModelRow(n)?.editable === true) || null;
   const targetRoute = modelTarget ? nodeModelRoute(modelTarget) : '';
@@ -621,7 +650,8 @@ const StudioLM = () => {
   const visibleSessions = LM_SESSIONS;
   const openSystemId = systemSessionId(workshopState?.canvas, authorityState?.canvas, authorityState?.graph || LM_GRAPH);
   const session = openId ? (openId === openSystemId ? systemGraphSession(openId) : visibleSessions.find(s => s.id === openId)) : null;
-  const applyGraphIndex = React.useCallback((result, fallbackId) => {
+  const applyGraphIndex = React.useCallback((result, fallbackId, options = {}) => {
+    const activate = options.activate !== false;
     const rows = Array.isArray(result?.graphs) ? result.graphs : null;
     const current = result?.current_graph || result?.graph?.id || fallbackId || '';
     if (rows) {
@@ -639,37 +669,54 @@ const StudioLM = () => {
     }
     if (window.ARCHHUB_LIVE) {
       window.ARCHHUB_LIVE.sessions = LM_SESSIONS;
-      window.ARCHHUB_LIVE.currentGraph = current || window.ARCHHUB_LIVE.currentGraph;
+      if (activate) window.ARCHHUB_LIVE.currentGraph = current || window.ARCHHUB_LIVE.currentGraph;
     }
     refreshLiveProjection(value => value + 1);
     return current;
   }, []);
-  const switchOpenGraphInPlace = React.useCallback(async (result, fallbackId) => {
+  const switchOpenGraphInPlace = React.useCallback(async (result, fallbackId, options = {}) => {
     // The installed app refused the graph-open/create receipt's canvas as the topology
     // canvas ("current graph interaction authority", rig nav-g1-final 2026-10-10), so the same
     // page re-reads its canvas once: no navigation, no new connection, no re-post.
-    const refreshed = await studioRefreshCanvasInPlace();
-    const current = applyGraphIndex(result, fallbackId);
+    const guard = typeof options.guard === 'function' ? options.guard : null;
+    const refreshed = await studioRefreshCanvasInPlace({applyLiveGraph: !guard});
+    const active = !guard || guard();
+    const current = applyGraphIndex(result, fallbackId, {activate:active});
+    const known = current ? (Array.isArray(result?.graphs) && result.graphs.find(row => row?.id === current)) ||
+      (result?.graph?.id === current ? result.graph : null) : null;
     const graph = window.ARCHHUB_STUDIO_AUTHORITY?.getSnapshot?.()?.graph ||
       window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot?.()?.topology?.graph ||
       window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot?.()?.graph;
-    if (graph && window.ARCHHUB_LIVE) {
+    if (active && current && known) {
+      setOpenTabs(tabs => tabs.includes(current) ? tabs : [...tabs, current]);
+      setOpenId(current);
+    }
+    if (active && graph && window.ARCHHUB_LIVE) {
       LM_GRAPH = graph;
       window.ARCHHUB_LIVE.graph = graph;
     }
-    return {current, refreshed};
+    return {current, refreshed, stale:!active};
   }, [applyGraphIndex]);
   const graphCreateBusy = React.useRef(false);
-  const openCreatedGraphInPlace = React.useCallback(async result => {
-    const opened = await switchOpenGraphInPlace(result, result?.graph?.id || result?.current_graph);
+  // A navigation intent is a generation: the latest one (Home, an open, a tool) decides what is shown.
+  const beginNavigation = React.useCallback(() => ++navGeneration.current, []);
+  const openCreatedGraphInPlace = React.useCallback(async (result, generation = beginNavigation()) => {
+    const fallbackId = result?.graph?.id || result?.current_graph;
+    if (generation !== navGeneration.current) {
+      const current = applyGraphIndex(result, fallbackId, {activate:false}) || fallbackId;
+      setSessionOpenError('');
+      return current;
+    }
+    const opened = await switchOpenGraphInPlace(result, fallbackId, {guard:() => generation === navGeneration.current});
     const current = opened.current || result?.graph?.id || result?.current_graph;
-    if (current) {
+    // The graph was created either way (never re-posted); it is only shown if no later choice was made.
+    if (current && !opened.stale) {
       setOpenTabs(tabs => tabs.includes(current) ? tabs : [...tabs, current]);
       setOpenId(current);
     }
     setSessionOpenError('');
     return current;
-  }, [switchOpenGraphInPlace]);
+  }, [switchOpenGraphInPlace, beginNavigation, applyGraphIndex]);
   const createSessionGraphInPlace = React.useCallback(async () => {
     if (graphCreateBusy.current) return;
     if (!window.ARCHHUB_GRAPH_CREATE) {
@@ -680,16 +727,18 @@ const StudioLM = () => {
     setToolView(null);
     setWorkspaceSelection(canvasWorkspaceView(''));
     setSessionOpenError('');
+    const generation = beginNavigation();
     try {
-      await openCreatedGraphInPlace(await window.ARCHHUB_GRAPH_CREATE('New session'));
+      await openCreatedGraphInPlace(await window.ARCHHUB_GRAPH_CREATE('New session'), generation);
       graphCreateBusy.current = false;
     } catch (error) {
+      if (generation !== navGeneration.current) return;
       // A lost receipt may follow a successful create: never post it again from here.
       // The guard stays held until the graph list is refreshed (the Refresh graphs control).
       setSessionOpenError((error?.message || 'Graph creation was not confirmed.') +
         ' Refresh the graph list before creating again.');
     }
-  }, [openCreatedGraphInPlace]);
+  }, [openCreatedGraphInPlace, beginNavigation]);
   const viewScope = JSON.stringify([session?.id || '', workshopState?.canvas?.graph_id || '',
     workshopState?.canvas?.root || '',
     (workshopState?.topology?.canvas || workshopState?.canvas)?.authorization?.subject || '',
@@ -744,6 +793,7 @@ const StudioLM = () => {
     setWorkspaceSelection({...view, notice:'', scope:viewScopeForSession(id), pending:false});
   };
   const openTool = (tool, options = {}) => {
+    beginNavigation();
     requestToolHubRefresh();
     if (tool === 'workshop') {
       const workshopRows = Array.isArray(workshopState?.workshops) ? workshopState.workshops : [];
@@ -794,16 +844,20 @@ const StudioLM = () => {
     setOpenId(null);
     setToolView({id:tool, tab:options.tab || firstToolTab(tool), focus:options.focus || ''});
   };
-  const openToolGraph = tool => {
+  const openToolGraph = async tool => {
     requestToolHubRefresh();
     if (tool === 'system') {
       const id = systemSessionId(workshopState?.canvas, authorityState?.canvas, authorityState?.graph || LM_GRAPH);
-      if (id) openSession(id);
-      return;
+      if (!id) {
+        setSessionOpenError('System graph is not admitted in this workspace.');
+        return {ok:false, error:'System graph is not admitted in this workspace.'};
+      }
+      return await openSession(id);
     }
     setWorkspaceSelection(canvasWorkspaceView(viewScope));
     setOpenId(null);
     setToolView({id:tool, tab:firstToolTab(tool)});
+    return {ok:true};
   };
   // A Conversations row that first walked to the Workshop canvas (WorkshopConversationMenu) names
   // its room here: the menu itself unmounts when the scope changes, and a selection made under the
@@ -884,28 +938,43 @@ const StudioLM = () => {
     // is not an admitted graph, so it is never posted to graph-open.
     const rootGraphId = (LM_SESSIONS.find(row => row && row.id && !String(row.id).startsWith('system:')) || {}).id || '';
     const graphId = isSystem ? rootGraphId : id;
+    const viewFor = targetId => isSystem ? {...canvasWorkspaceView(viewScopeForSession(targetId || id)), mode:'system'} :
+      canvasWorkspaceView(viewScopeForSession(targetId || id));
     setToolView(null);
-    setWorkspaceSelection(canvasWorkspaceView(viewScopeForSession(id)));
+    setWorkspaceSelection(viewFor(id));
     setSessionOpenError('');
     if (graphId && window.ARCHHUB_GRAPH_OPEN) {
       try {
         const result = await window.ARCHHUB_GRAPH_OPEN(graphId);
-        const opened = await switchOpenGraphInPlace(result, graphId);
+        if (generation !== navGeneration.current) {
+          applyGraphIndex(result, graphId, {activate:false});
+          return {ok:false, stale:true};
+        }
+        const opened = await switchOpenGraphInPlace(result, graphId, {guard:() => generation === navGeneration.current});
         // Home (or another open) was chosen while this graph was opening: it wins.
-        if (generation !== navGeneration.current) return;
+        if (opened.stale) return {ok:false, stale:true};
+        // Reopening does not count as explicitly selecting the retained relation.
+        const restored = window.ARCHHUB_STUDIO_AUTHORITY?.getSnapshot?.() ||
+          window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot?.()?.topology;
+        if (restored?.graph?.wires?.some(wire => wire.id === restored.selected)) setFocusId(null, []);
         const current = isSystem ? id : (opened.current || graphId);
         if (current && !isSystem && !openTabs.includes(current)) setOpenTabs(t => t.includes(current) ? t : [...t, current]);
-        setWorkspaceSelection(canvasWorkspaceView(viewScopeForSession(current || id)));
+        setWorkspaceSelection(viewFor(current || id));
         setOpenId(current || id);
+        return {ok:true, current:current || id};
       } catch (error) {
-        setSessionOpenError(error?.message || 'Graph opening was refused.');
+        if (generation !== navGeneration.current) return {ok:false, stale:true};
+        const message = error?.message || 'Graph opening was refused.';
+        setSessionOpenError(message);
         setOpenId(null);
+        return {ok:false, error:message};
       }
-      return;
+      return {ok:false};
     }
-    setWorkspaceSelection(canvasWorkspaceView(viewScopeForSession(id)));
+    setWorkspaceSelection(viewFor(id));
     if (id && !openTabs.includes(id)) setOpenTabs(t => [...t, id]);
     setOpenId(id);
+    return {ok:true, current:id};
   };
   const closeTab = (id) => {
     setOpenTabs(t => {
@@ -1048,6 +1117,7 @@ const StudioLM = () => {
             pendingCanvasReveal={pendingCanvasReveal} requestCanvasReveal={requestCanvasReveal}
             clearPendingCanvasReveal={() => setPendingCanvasReveal(null)}
             userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary}
+            themeEpoch={themeEpoch}
             view={workspaceView} updateView={updateWorkspaceView} wsSel={wsSel} setWsSel={setWsSel}
             onHome={goHome}
             onNewSession={createSessionGraphInPlace}
@@ -1058,8 +1128,10 @@ const StudioLM = () => {
             setLibraryOpen={setLibraryOpen} setPanel={setPanel}
             onOpenTool={openTool} onOpenToolGraph={openToolGraph} workshopState={workshopState} account={account}
             sessionError={sessionOpenError}
-            onCreateGraph={async result => {
-              await openCreatedGraphInPlace(result);
+            beginNavigation={beginNavigation}
+            isNavigationCurrent={generation => generation === navGeneration.current}
+            onCreateGraph={async (result, generation) => {
+              await openCreatedGraphInPlace(result, generation);
             }}
             onStarted={async (result, continueInView = () => true) => {
               const owner = window.ARCHHUB_EXISTING_WORKSHOP;
@@ -1285,6 +1357,21 @@ const getToolHubSnapshot = () => toolHubSnapshot || window.ARCHHUB_TOOL_HUB || n
 const notifyToolHubSubscribers = () => {
   for (const subscriber of [...toolHubSubscribers]) subscriber();
 };
+const currentArchHubSession = () => {
+  const direct = window.__archhubSession || {};
+  if (direct.token) return direct;
+  try {
+    const stored = JSON.parse(window.sessionStorage?.getItem('archhub.studio.session') || 'null') || {};
+    if (stored.token) return stored;
+  } catch (_) {}
+  const boot = window.ARCHHUB_BOOT || {};
+  return boot.token ? boot : {};
+};
+const toolHubFetchOptions = controller => {
+  const session = currentArchHubSession();
+  const headers = session.token ? {'X-ArchHub-Session':session.token, 'X-ArchHub-CSRF':session.csrf || ''} : null;
+  return {...(controller ? {signal:controller.signal} : {}), ...(headers ? {headers} : {})};
+};
 const stopToolHubTimer = () => {
   if (toolHubTimer != null) window.clearInterval(toolHubTimer);
   toolHubTimer = null;
@@ -1315,14 +1402,18 @@ const readToolHubProjection = () => {
     toolHubWatchdog = null;
   }, TOOL_HUB_READ_TIMEOUT_MS);
   toolHubWatchdog = watchdog;
-  const options = controller ? {signal:controller.signal} : undefined;
+  const options = toolHubFetchOptions(controller);
   return Promise.all([
     request('/tools', options).then(response => response.ok ? response.json() : null).catch(() => null),
     request('/waiting', options).then(response => response.ok ? response.json() : null).catch(() => null),
   ]).then(([tools, waiting]) => {
     if (controller?.signal.aborted || toolHubSubscribers.size === 0) return null;
+    const confirmedStopped = typeof tools?.stopped === 'boolean'
+      ? tools.stopped
+      : Boolean(toolHubSnapshot?.stopped);
     const payload = {
       ...(tools && Array.isArray(tools.tools) ? tools : {}),
+      stopped: confirmedStopped,
       waiting:Array.isArray(waiting?.items) ? waiting.items : [],
       waiting_payload:waiting && typeof waiting === 'object' ? waiting : null,
     };
@@ -1382,6 +1473,23 @@ const subscribeToolHubProjection = subscriber => {
   };
 };
 const requestToolHubRefresh = () => readToolHubProjection();
+const publishToolHubStopState = (stopped, error = '') => {
+  const base = toolHubSnapshot || window.ARCHHUB_TOOL_HUB || {};
+  const payload = {
+    ...base,
+    stopped: stopped === true,
+    stop_error: String(error || ''),
+    tools: Array.isArray(base.tools) ? base.tools : [],
+    waiting: Array.isArray(base.waiting) ? base.waiting : [],
+  };
+  const signature = JSON.stringify(payload);
+  if (signature === toolHubSnapshotSignature) return payload;
+  toolHubSnapshotSignature = signature;
+  toolHubSnapshot = payload;
+  window.ARCHHUB_TOOL_HUB = payload;
+  notifyToolHubSubscribers();
+  return payload;
+};
 const refreshToolHubAfter = action => Promise.resolve(action).catch(() => null).finally(() => requestToolHubRefresh());
 const useToolHubProjection = () => React.useSyncExternalStore(
   subscribeToolHubProjection,
@@ -1555,7 +1663,7 @@ const WaitingButton = ({ items = [], variant = 'strip', onOpenTask }) => {
           borderRadius:LM.rad.sm, padding:'9px 10px', marginBottom:8,
         }}>
           <div style={{fontSize:13, fontWeight:500, color:LM.ink}}>{waitingLine(item)}</div>
-          <div style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:3}}>{waitingMeta(item)}</div>
+          <div style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, marginTop:3}}>{waitingMeta(item)}</div>
           <div style={{display:'flex', gap:6, alignItems:'center', marginTop:8, flexWrap:'wrap'}}>
             {item.producer === 'workshop_gate' ? (
               <button type="button" onClick={() => onOpenTask ? onOpenTask(item) :
@@ -1567,15 +1675,15 @@ const WaitingButton = ({ items = [], variant = 'strip', onOpenTask }) => {
                 {status[item.id] === 'pending' ? 'pending' : 'Approve'}
               </button>}
             {item.producer !== 'workshop_gate' && (confirmReject === item.id ? <>
-              <span style={{fontFamily:LM.mono, fontSize:11, color:LM.warn}}>Reject?</span>
+              <span style={{fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, letterSpacing:LM.fs.label.letter, color:LM.warn}}>Decline?</span>
               <button type="button" onClick={() => { setConfirmReject(''); decide(item, 'reject'); }} style={smallBtn()}>Yes</button>
               <button type="button" onClick={() => setConfirmReject('')} style={smallBtn()}>No</button>
-            </> : <button type="button" onClick={() => setConfirmReject(item.id)} style={smallBtn()}>Reject</button>)}
+            </> : <button type="button" onClick={() => setConfirmReject(item.id)} style={smallBtn()}>Decline</button>)}
             {(item.host_ids || item.ids || []).length > 0 && window.ARCHHUB_CONNECTORS?.highlight &&
               <button type="button" onClick={() => showHost(item)} style={smallBtn()}>Show in host</button>}
             {onOpenTask && item.producer !== 'workshop_gate' && <button type="button" onClick={() => onOpenTask(item)} style={smallBtn()}>Open task</button>}
-            {item.second_approval && <span style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft}}>Needs {item.ask_member || 'member'}</span>}
-            {status[item.id] && status[item.id] !== 'pending' && <span style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft}}>{status[item.id]}</span>}
+            {item.second_approval && <span style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft}}>Needs {item.ask_member || 'member'}</span>}
+            {status[item.id] && status[item.id] !== 'pending' && <span style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft}}>{status[item.id]}</span>}
           </div>
         </div>)}
     </div>}
@@ -1746,7 +1854,7 @@ const AccountChip = ({ account, onOpen }) => {
       {name && <div style={{ width:22, height:22, borderRadius:'50%', background:LM.userAv, display:'grid', placeItems:'center', fontSize:11, color:LM.onUserAv, fontWeight:700, flexShrink:0 }}>{name[0].toUpperCase()}</div>}
       <div style={{ flex:1, lineHeight:1.1, minWidth:0 }}>
         <div style={{ fontSize:12, fontWeight:500, color:name ? LM.ink : LM.accent, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{name || 'Sign in'}</div>
-        {tier && <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.08em' }}>{tier}</div>}
+        {tier && <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.08em' }}>{tier}</div>}
       </div>
     </button>
   );
@@ -1771,7 +1879,7 @@ const NodesPanel = ({ addNodeFromLibrary, onHome, account, onAccount }) => {
     <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
       <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:LM.sp.sm }}>
         <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Nodes</span>
-        <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.08em' }}>
+        <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.08em' }}>
           drag · or 2× click
         </span>
         <div style={{ flex:1 }}/>
@@ -1795,7 +1903,7 @@ const NodesPanel = ({ addNodeFromLibrary, onHome, account, onAccount }) => {
 
       <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'0 6px 8px', minHeight:0 }}>
         {!library.length && window.AH_LIBRARY_ERROR && (
-          <div role="alert" style={{ padding:'8px 12px', fontFamily:LM.mono, fontSize:11, color:LM.err, lineHeight:1.5 }}>
+          <div role="alert" style={{ padding:'8px 12px', fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.err, lineHeight:1.5 }}>
             {'The node library could not be loaded: ' + window.AH_LIBRARY_ERROR}
           </div>
         )}
@@ -1821,15 +1929,15 @@ const NodeLibraryGroups = React.memo(({ library, q, openCats, onToggle, onAdd })
               <button onClick={() => onToggle(group.cat)} style={{
                 width:'100%', display:'flex', alignItems:'center', gap:7, padding:'5px 7px',
                 background:'transparent', border:0, borderRadius:4, cursor:'pointer',
-                color:LM.inkSoft, fontFamily:LM.mono, fontSize:11, letterSpacing:'0.14em',
+                color:LM.inkSoft, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, letterSpacing:'0.14em',
                 textAlign:'left',
               }}
               onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
               onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                <span style={{ width:9, color:LM.inkSoft, transition:'transform .12s', display:'inline-block', transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}>▸</span>
-                <span style={{ color: c.col, fontSize:11 }}>{c.icon}</span>
+                <span style={{ width:9, color:LM.inkSoft, transition:`transform ${LM.dur.fast}ms`, display:'inline-block', transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}>▸</span>
+                <span style={{ color: c.col, fontSize:LM.fs.label.sz }}>{c.icon}</span>
                 <span style={{ flex:1, color:c.col }}>{c.label}</span>
-                <span style={{ color:LM.inkSoft, fontSize:11 }}>{items.length}</span>
+                <span style={{ color:LM.inkSoft, fontSize:LM.fs.label.sz }}>{items.length}</span>
               </button>
               {open && (
                 <div style={{ display:'flex', flexDirection:'column', gap:1, paddingLeft:6 }}>
@@ -1862,15 +1970,15 @@ const NodeLibItem = ({ it, cat, onAdd }) => {
         borderRadius:4, cursor:'grab', userSelect:'none',
         background: h ? LM.bgHover : 'transparent',
         borderLeft:`2px solid ${h ? cat.col : 'transparent'}`,
-        transition:'background .1s, border-color .1s',
+        transition:`background ${LM.dur.fast}ms, border-color ${LM.dur.fast}ms`,
       }}>
       <span style={{ width:5, height:5, borderRadius:'50%', background:cat.col, flexShrink:0, opacity:0.8 }}/>
       <div style={{ flex:1, minWidth:0, lineHeight:1.2 }}>
         <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{it.title}</div>
-        <div style={{ fontFamily:LM.sans, fontSize:11, color:LM.inkSoft, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{it.sub}</div>
+        <div style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, color:LM.inkSoft, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{it.sub}</div>
       </div>
       {h && (
-        <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em', flexShrink:0 }}>+</span>
+        <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.04em', flexShrink:0 }}>+</span>
       )}
     </div>
   );
@@ -1936,7 +2044,7 @@ const withLiveCatalogue = (loaderName, items, View) => props => {
   const status = catalogueStates.get(loaderName) || {loading:false, error:''};
   // One element: the Sidebar grid is "44px 1fr", so a loading line beside the panel would push the panel into the rail column.
   return <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
-    {status.loading && !status.read && <p role="status" style={{ margin:0, padding:'8px 12px 0', fontFamily:LM.mono, fontSize:11, color:LM.inkSoft }}>Loading catalogue…</p>}
+    {status.loading && !status.read && <p role="status" style={{ margin:0, padding:'8px 12px 0', fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft }}>Loading catalogue…</p>}
     {status.error && <p role="alert" style={{ margin:0, padding:'8px 12px 0', fontSize:12, color:LM.inkSoft }}>{status.error} <button onClick={() => loadCatalogue(loaderName, items)}>Retry</button></p>}
     <View {...props} catalogue={status}/>
   </div>;
@@ -1960,7 +2068,7 @@ const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, ({
   <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
     <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:LM.sp.sm }}>
       <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Skills</span>
-      <span data-skills-count="" style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.08em' }}>
+      <span data-skills-count="" style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.08em' }}>
         {catalogue.read ? LM_SAVED_SKILLS.length + ' SAVED' : catalogue.error ? 'NOT READ' : 'READING\u2026'}</span>
       <div style={{ flex:1 }}/>
       <PanelHomeButton onHome={onHome}/>
@@ -1989,7 +2097,7 @@ const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, ({
           <div style={{ display:'flex', alignItems:'center', gap:7 }}>
             <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:11 }}>✦</span>
             <span style={{ flex:1, minWidth:0, fontSize:12.5, color:LM.ink, overflowWrap:'anywhere' }}>{s.name}</span>
-            {s.source && <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft }}>{s.source}</span>}
+            {s.source && <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft }}>{s.source}</span>}
           </div>
           {s.description && <div style={{ fontSize:11, color:LM.inkSoft, paddingLeft:18, marginTop:2, lineHeight:1.4,
             display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', overflow:'hidden' }}>{s.description}</div>}
@@ -2031,7 +2139,7 @@ const SearchPanel = ({ onHome }) => {
         </span>
       </div>
     </div>
-    <div style={{ padding:'4px 10px', fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em' }}>SCOPES</div>
+    <div style={{ padding:'4px 10px', fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.14em' }}>SCOPES</div>
     <div style={{ padding:'0 6px', display:'flex', flexDirection:'column', gap:1 }}>
       {[
         ['chats',  'sessions + messages',  count(LM_SESSIONS)],
@@ -2050,7 +2158,7 @@ const SearchPanel = ({ onHome }) => {
         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
           <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.ink, width:54 }}>{k}</span>
           <span style={{ flex:1, fontSize:11, color:LM.inkSoft }}>{sub}</span>
-          {n != null && <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft }}>{n}</span>}
+          {n != null && <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft }}>{n}</span>}
         </button>
       ))}
     </div>
@@ -2059,13 +2167,13 @@ const SearchPanel = ({ onHome }) => {
 };
 
 const kbd = () => ({
-  fontFamily:LM.mono, fontSize:11, padding:'1px 5px', background:LM.bgSoft,
+  fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, padding:'1px 5px', background:LM.bgSoft,
   border:`1px solid ${LM.lineHair}`, borderRadius:LM.rad.xs, color:LM.inkSoft, letterSpacing:'0.06em',
 });
 
 // ──────────────────────── HOME ────────────────────────
 const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null, onModelReadRetry, setPickerOpen, setLibraryOpen, setPanel, onOpenTool, onOpenToolGraph, workshopState, account,
-  onStarted, sessionError = '', onCreateGraph }) => {
+  onStarted, sessionError = '', onCreateGraph, beginNavigation, isNavigationCurrent }) => {
   const [filter, onFilter] = React.useState('all');
   const [draft, setDraft] = React.useState('');
   const [attachments, setAttachments] = React.useState([]);
@@ -2176,12 +2284,15 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null,
     if (submitted.current || !title.trim()) return;
     submitted.current = true;
     setCreating(true); setCreateError('');
+    let generation;
     try {
       if (!window.ARCHHUB_GRAPH_CREATE) throw new Error('Graph creation is unavailable in this view.');
+      generation = typeof beginNavigation === 'function' ? beginNavigation() : undefined;
       const result = await window.ARCHHUB_GRAPH_CREATE(title.trim());
-      if (typeof onCreateGraph === 'function') await onCreateGraph(result);
+      if (typeof onCreateGraph === 'function') await onCreateGraph(result, generation);
       else window.location.reload();
     } catch (error) {
+      if (typeof isNavigationCurrent === 'function' && isNavigationCurrent(generation) === false) return;
       // A lost receipt may follow a successful write. Re-open the saved
       // graph list before another creation; never automatically replay it.
       setCreateError((error?.message || 'Graph creation was not confirmed.') +
@@ -2247,7 +2358,7 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null,
                     textAlign:'left', padding:'5px 8px', background:'transparent', border:0,
                     color:LM.ink, fontFamily:LM.sans, fontSize:12, cursor:'pointer'}}>
                   <span>{hostDisplayName(host)}</span>
-                  <span style={{fontFamily:LM.mono, fontSize:11, color:LM.accent, letterSpacing:'0.06em', textTransform:'uppercase'}}>Start</span>
+                  <span style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.accent, letterSpacing:'0.06em', textTransform:'uppercase'}}>Start</span>
                 </button>)}
             </div>}
             {attachments.map(file => <Chip key={file.name + ':' + file.size} mono>{file.name}</Chip>)}
@@ -2268,7 +2379,7 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null,
     {toolRows.length > 0 && <section aria-label="Tools" data-home-tools style={{ margin:'0 0 22px' }}>
       <div style={{ display:'flex', alignItems:'baseline', gap:10, marginBottom:14 }}>
         <h2 style={{ fontFamily:LM.serif, fontSize:26, fontWeight:400, letterSpacing:'-0.015em', margin:0 }}>Tools</h2>
-        <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em' }}>
+        <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.14em' }}>
           {toolsLive.live}/{toolRows.length} RUNNING{toolsLive.pending ? ` · ${toolsLive.pending} STARTING` : ''} · EACH WORKS ON ITS OWN
         </span>
       </div>
@@ -2324,7 +2435,7 @@ const chipBtn = (active) => ({
   padding:'4px 11px', borderRadius:999,
   background: active ? LM.ink : 'transparent',
   border:`1px solid ${active ? LM.ink : LM.line}`,
-  color: active ? LM.bg : LM.inkSoft, fontFamily:LM.mono, fontSize:11,
+  color: active ? LM.bg : LM.inkSoft, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz,
   letterSpacing:'0.06em', cursor:'pointer',
 });
 
@@ -2363,7 +2474,7 @@ const ToolCard = ({ tool, onOpen }) => (
   }}>
     <div style={{display:'flex', alignItems:'center', gap:7, minWidth:0}}>
       <span data-tool-dot="" style={{width:6, height:6, borderRadius:'50%', background:tool.color, flexShrink:0}}/>
-      <span style={{fontFamily:LM.mono, fontSize:11, color:tool.color, letterSpacing:'0.08em', textTransform:'uppercase'}}>
+      <span style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:tool.color, letterSpacing:'0.08em', textTransform:'uppercase'}}>
         {tool.stateWord || toolStateWord(tool.state)}
       </span>
       <span style={{flex:1}}/>
@@ -2385,7 +2496,7 @@ const ToolCard = ({ tool, onOpen }) => (
     <div data-tool-description="" title={tool.description || undefined} style={{fontFamily:LM.sans, fontSize:12.5, color:LM.inkSoft,
       lineHeight:1.35, minHeight:34, overflow:'hidden', display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical'}}>
       {tool.description}</div>
-    <div data-tool-stat="" title={tool.cardStat ?? tool.statLine ?? tool.stat ?? undefined} style={{fontFamily:LM.mono, fontSize:11,
+    <div data-tool-stat="" title={tool.cardStat ?? tool.statLine ?? tool.stat ?? undefined} style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz,
       color:LM.inkSoft, letterSpacing:'0.03em', lineHeight:1.4, minHeight:30, whiteSpace:'normal', overflowWrap:'anywhere'}}>
       {tool.cardStat ?? tool.statLine ?? tool.stat}</div>
     <div style={{marginTop:'auto', display:'flex', justifyContent:'flex-end'}}>
@@ -2434,14 +2545,14 @@ const SettingsBaboom = ({ onOpenToolGraph, onClose }) => {
         <span style={{width:8, height:8, borderRadius:'50%', background:LM.warn}}/>
         <div style={{flex:1, lineHeight:1.2, minWidth:0}}>
           <div style={{fontSize:13, fontWeight:500, color:LM.ink}}>Speech budget</div>
-          <div style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em', marginTop:2}}>
+          <div style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.04em', marginTop:2}}>
             Speaks at most {baboomMaxSpeaks(personal)} times an hour.
           </div>
         </div>
       </div>
     </div>
     <div style={{display:'flex', alignItems:'center', gap:10}}>
-      <span style={{flex:1, fontFamily:LM.mono, fontSize:11, color:LM.inkSoft}}>
+      <span style={{flex:1, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft}}>
         Node: BABOOM · System graph · parameters tab shows the same two rows
       </span>
       <button type="button" onClick={() => openToolGraphFromSettings('baboom')} style={smallBtn(false)}>Open as node ↗</button>
@@ -2466,7 +2577,7 @@ const SettingsCloudStatus = ({ toolRow, account, onSettings }) => {
     <div style={{background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden'}}>
       {rows.map((row, i) => (
         <div key={row[0]} style={{padding:'10px 14px', display:'flex', gap:LM.sp.md, borderTop:i ? `1px solid ${LM.lineSoft}` : 'none', alignItems:'baseline'}}>
-          <span style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.12em', width:58, flexShrink:0}}>{row[0]}</span>
+          <span style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.12em', width:58, flexShrink:0}}>{row[0]}</span>
           <span style={{fontSize:13, color:LM.ink, minWidth:0, overflowWrap:'anywhere'}}>{row[1]}</span>
         </div>
       ))}
@@ -2495,7 +2606,7 @@ const ToolMainView = ({ view, account, setAccount, onSignOut, onSettings }) => {
   }}>
     <div style={{display:'flex', alignItems:'baseline', gap:10, marginBottom:18}}>
       <h1 style={{fontFamily:LM.serif, fontSize:30, fontWeight:400, margin:0}}>{title}</h1>
-      <span style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.08em', textTransform:'uppercase'}}>
+      <span style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.08em', textTransform:'uppercase'}}>
         {tab}
       </span>
     </div>
@@ -2519,26 +2630,26 @@ const SessionCard = ({ s, onOpen }) => {
       background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:9,
       padding:'14px 16px', display:'flex', flexDirection:'column', gap:11,
       cursor:'pointer', textAlign:'left', color:LM.ink, fontFamily:LM.sans,
-      transition:'border-color .12s, transform .12s',
+      transition:`border-color ${LM.dur.fast}ms, transform ${LM.dur.fast}ms`,
     }}
     onMouseEnter={e => { e.currentTarget.style.borderColor = LM.accent+'66'; e.currentTarget.style.transform='translateY(-1px)'; }}
     onMouseLeave={e => { e.currentTarget.style.borderColor = LM.line; e.currentTarget.style.transform='none'; }}>
       <div style={{ display:'flex', alignItems:'center', gap:7 }}>
         <span style={{ width:6, height:6, borderRadius:'50%', background: sm.col, boxShadow: sm.pulse ? `0 0 0 2px ${sm.col}22` : 'none', animation: sm.pulse ? 'lmPulse 1.2s infinite' : 'none' }}/>
-        <span style={{ fontFamily:LM.mono, fontSize:11, color:sm.col, letterSpacing:'0.12em', textTransform:'uppercase' }}>{sm.label}</span>
+        <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:sm.col, letterSpacing:'0.12em', textTransform:'uppercase' }}>{sm.label}</span>
         <div style={{ flex:1 }}/>
-        <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>{s.when}</span>
+        <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.04em' }}>{s.when}</span>
       </div>
       <div style={{ fontFamily:LM.serif, fontSize:22, letterSpacing:'-0.015em', lineHeight:1.1 }}>{s.title}</div>
       <div style={{ fontSize:12.5, color:LM.inkSoft, lineHeight:1.5, minHeight:36 }}>{s.last}</div>
       <div style={{
         display:'flex', alignItems:'center', gap:7, paddingTop:9,
-        borderTop:`1px solid ${LM.lineSoft}`, fontFamily:LM.mono, fontSize:11,
+        borderTop:`1px solid ${LM.lineSoft}`, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz,
         color:LM.inkSoft, letterSpacing:'0.04em',
       }}>
         <span style={{ flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{s.file}</span>
         {hosts.map(h => (
-          <span key={h.name} style={{ padding:'1px 6px', borderRadius:LM.rad.xs, fontSize:11, background: h.col + '14', color: h.col, letterSpacing:'0.06em' }}>{h.name}</span>
+          <span key={h.name} style={{ padding:'1px 6px', borderRadius:LM.rad.xs, fontSize:LM.fs.label.sz, background: h.col + '14', color: h.col, letterSpacing:'0.06em' }}>{h.name}</span>
         ))}
       </div>
     </button>
@@ -2546,7 +2657,7 @@ const SessionCard = ({ s, onOpen }) => {
 };
 
 // ──────────────────────── WORKSPACE ────────────────────────
-const Workspace = ({ session, model, readiness = null, onReadinessStale, onModelReadRetry, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, setPickerOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, onHome, onNewSession, onSettings, onAccount, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
+const Workspace = ({ session, model, readiness = null, onReadinessStale, onModelReadRetry, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, setPickerOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, themeEpoch = 0, onHome, onNewSession, onSettings, onAccount, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
   const authorityState = useStudioProjection();
   const graph = authorityState?.graph || LM_GRAPH;
   const allNodes = [...graph.nodes, ...(userNodes || [])];
@@ -2600,12 +2711,12 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, onModel
           sel={wsSel} setSel={setWsSel}/>
       ) : (
         <>
-          <NodeCanvas key={JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas), effectiveMode === 'system'])} system={effectiveMode === 'system'} focusId={focusId} setFocusId={setFocusId} pendingReveal={pendingCanvasReveal} clearPendingReveal={clearPendingCanvasReveal} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model} onViewportChange={updateCanvasViewport} fitOnOpen onSystemArrangeSummary={setSystemArrangeSummary}/>
+          <NodeCanvas key={JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas), effectiveMode === 'system'])} system={effectiveMode === 'system'} focusId={focusId} setFocusId={setFocusId} pendingReveal={pendingCanvasReveal} clearPendingReveal={clearPendingCanvasReveal} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model} onViewportChange={updateCanvasViewport} fitOnOpen onSystemArrangeSummary={setSystemArrangeSummary} themeEpoch={themeEpoch}/>
           <NodeRail node={focusNode} hiddenWork={!focusNode && authorityState?.canvas?.selection_hidden === true}
             graph={graph} canvas={authorityState?.canvas} session={session} sessionRows={sessionRows}
             model={model} setPickerOpen={setPickerOpen} readiness={readiness}
             onReadinessStale={onReadinessStale} onModelReadRetry={onModelReadRetry} onAccount={onAccount}
-            scope={authorityState?.canvas?.root || authorityState?.canvas?.scope?.current || ''}
+            scope={authorityState?.canvas?.scope?.current || authorityState?.canvas?.root || ''}
             openConversation={root => updateView({conversationRoot:root, mode:'chat', target:''})}
             workshopRoom={workshopModeRoom(workshops, workshop?.root || '')}
             onOpenWorkshop={() => chooseWorkshopMode('workshop', {mode, conversationRoot:workshop?.root || '', workshops, setMode,
@@ -2720,8 +2831,20 @@ const chatPeople = model => {
   return {me, answerer};
 };
 const agentAnswerText = answer => {
-  if (answer && typeof answer === 'object' && !Array.isArray(answer)) return String(answer.answer || answer.text || '');
+  if (answer && typeof answer === 'object' && !Array.isArray(answer)) return String(answer.answer || answer.text || answer.error || '');
   return String(answer || '');
+};
+const agentAnswerSteps = answer => {
+  if (!answer || typeof answer !== 'object' || Array.isArray(answer) || !Array.isArray(answer.steps)) return [];
+  return answer.steps.filter(step => step && typeof step === 'object').map((step, index) => ({
+    id:String(step.id || step.call_id || index),
+    tool:String(step.tool || step.name || 'tool'),
+    status:String(step.status || (step.ok === false ? 'refused' : 'ok')),
+    ok:step.ok !== false && String(step.status || '').toLowerCase() !== 'refused',
+    args:step.args || step.arguments || {},
+    summary:String(step.summary || step.result_summary || step.error || ''),
+    readback:step.readback ? String(step.readback) : '',
+  }));
 };
 const agentAnswerVia = answer => {
   if (!answer || typeof answer !== 'object' || Array.isArray(answer)) return null;
@@ -2733,6 +2856,40 @@ const agentAnswerVia = answer => {
   return {provider, model};
 };
 const agentViaLabel = via => via ? ('via ' + (via.provider || 'model') + (via.model ? ' · ' + via.model : '')) : '';
+const formatBaboomStepDetail = step => {
+  if (!step || typeof step !== 'object') return '';
+  const parts = [];
+  const args = step.args && typeof step.args === 'object' && !Array.isArray(step.args) ? step.args : {};
+  Object.keys(args).sort().forEach(key => {
+    const value = args[key];
+    const text = value && typeof value === 'object' ? String(value.label || value.name || value.status || 'set') : String(value);
+    parts.push(`${key}: ${text}`);
+  });
+  if (step.readback) parts.push(`readback: ${step.readback}`);
+  return parts.join('\n');
+};
+const BaboomToolSteps = ({steps}) => {
+  const rows = Array.isArray(steps) ? steps : [];
+  if (!rows.length) return null;
+  return <div data-baboom-steps="" style={{display:'flex', flexDirection:'column', gap:5, marginTop:8}}>
+    {rows.map((step, index) => (
+      <details key={step.id || index} data-baboom-step="" data-status={step.status} style={{
+        border:`1px solid ${LM.lineSoft}`, borderRadius:5, background:LM.bg, padding:'5px 7px',
+      }}>
+        <summary style={{cursor:'pointer', display:'flex', alignItems:'center', gap:7,
+          fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:step.ok ? LM.ok : LM.warn, letterSpacing:0}}>
+          <span style={{color:LM.ink}}>{step.tool}</span>
+          <span>{step.status}</span>
+          {step.summary ? <span style={{color:LM.inkSoft, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{step.summary}</span> : null}
+        </summary>
+        <pre style={{margin:'6px 0 0', whiteSpace:'pre-wrap', overflowWrap:'anywhere',
+          fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', color:LM.inkSoft}}>
+          {formatBaboomStepDetail(step)}
+        </pre>
+      </details>
+    ))}
+  </div>;
+};
 // The wired pipeline in topological stages (at most eight), read from the projected graph.
 const chatStages = graph => {
   if (!graph) return [];
@@ -2833,7 +2990,8 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
     try {
       const answer = await window.ARCHHUB_AGENT(text, modelRoute(model),
         {generation:generationRequestOptions(), returnResult:true});
-      setMessages(m => [...m, { me:false, time:stamp(), text:agentAnswerText(answer), via:agentAnswerVia(answer) }]);
+      setMessages(m => [...m, { me:false, time:stamp(), text:agentAnswerText(answer),
+        via:agentAnswerVia(answer), steps:agentAnswerSteps(answer) }]);
     } catch (error) {
       setMessages(m => [...m, { me:false, time:stamp(),
         text:'refused: ' + (error?.message || error) }]);
@@ -2861,7 +3019,7 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ display:'flex', alignItems:'baseline', gap:8, marginBottom:4 }}>
                   <span style={{ fontSize:13, fontWeight:500, color:LM.ink }}>{m.me ? me : answerer}</span>
-                  <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>{m.time}</span>
+                  <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.04em' }}>{m.time}</span>
                 </div>
                 <div style={{
                   fontSize: m.me ? 14 : 15,
@@ -2869,6 +3027,7 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
                   fontStyle: m.me ? 'normal' : 'normal',
                   lineHeight:1.6, color: m.me ? LM.ink : LM.ink, letterSpacing: m.me ? '0' : '-0.003em',
                 }}>{m.text}</div>
+                {!m.me && <BaboomToolSteps steps={m.steps}/>}
                 {!m.me && m.via && <div data-chat-via="" style={{
                   marginTop:6, fontFamily:LM.sans, fontSize:11, lineHeight:1.35,
                   color:LM.inkSoft, letterSpacing:0,
@@ -2888,7 +3047,7 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
                 background:LM.bgPanel, border:`1px solid ${LM.line}`, borderLeft:`3px solid ${LM.warn}`,
                 borderRadius:LM.rad.lg, padding:'12px 16px', marginBottom:10,
               }}>
-                <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.warn, letterSpacing:'0.14em', marginBottom:6 }}>
+                <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.warn, letterSpacing:'0.14em', marginBottom:6 }}>
                   {READINESS_LABELS[blocked.state] || 'NO MODEL'}</div>
                 <div style={{ fontSize:14, lineHeight:1.55, color:LM.ink, marginBottom:10 }}>{blocked.message}</div>
                 <div style={{ display:'flex', gap:8 }}>
@@ -2930,7 +3089,7 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
                 display:'inline-flex', alignItems:'center', gap:5, padding:'3px 9px',
                 background: workshopRoom ? LM.accentDim : 'transparent',
                 border: workshopRoom ? `1px solid ${LM.accentSoft}` : `1px dashed ${LM.line}`, borderRadius:LM.rad.sm,
-                color: workshopRoom ? LM.accent : LM.inkSoft, fontFamily:LM.mono, fontSize:11, letterSpacing:'0.04em',
+                color: workshopRoom ? LM.accent : LM.inkSoft, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, letterSpacing:'0.04em',
                 cursor: workshopRoom ? 'pointer' : 'default',
               }}>◆ workshop</button>
               {workshopRefusal && <span role="alert" style={{fontSize:11, color:LM.ink, maxWidth:260, overflow:'hidden',
@@ -2938,7 +3097,7 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
               <button onClick={() => setMode('canvas')} style={{
                 display:'inline-flex', alignItems:'center', gap:5, padding:'3px 9px',
                 background:'transparent', border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
-                color:LM.inkSoft, fontFamily:LM.mono, fontSize:11, letterSpacing:'0.04em', cursor:'pointer',
+                color:LM.inkSoft, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, letterSpacing:'0.04em', cursor:'pointer',
               }}>⌗ open as nodes</button>
               <span aria-hidden="true" style={{ flex:'1 1 0', minWidth:0, textAlign:'right', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}/>
               {/* While an answer is out Send is disabled: a dashed border, never alpha (DECISIONS.md). */}
@@ -2973,11 +3132,11 @@ const LiveChain = () => {
     ({key:n.id + '|' + p.k, node:'stage ' + (i + 1) + ' · ' + n.title, k:p.k, v:String(p.v)}))));
   return (
     <div data-chat-chain="" style={{ padding:'14px 16px', borderBottom:`1px solid ${LM.lineSoft}` }}>
-      <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em', marginBottom:10 }}>PARAMETRIC CHAIN · {stages.length} STAGE{stages.length === 1 ? '' : 'S'}</div>
+      <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.14em', marginBottom:10 }}>PARAMETRIC CHAIN · {stages.length} STAGE{stages.length === 1 ? '' : 'S'}</div>
       {stages.length > 0 && <div style={{ display:'flex', alignItems:'center', gap:0, marginBottom:10 }}>
         {stages.map((_, i) => (
           <React.Fragment key={i}>
-            <div style={{ width:18, height:18, borderRadius:'50%', border:`2px solid ${LM.accent}`, background:LM.bg, color:LM.accent, display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:11, fontWeight:600 }}>{i + 1}</div>
+            <div style={{ width:18, height:18, borderRadius:'50%', border:`2px solid ${LM.accent}`, background:LM.bg, color:LM.accent, display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, fontWeight:600 }}>{i + 1}</div>
             {i < stages.length - 1 && <div style={{ flex:1, height:2, background:LM.accent }}/>}
           </React.Fragment>
         ))}
@@ -3000,7 +3159,7 @@ const InferenceInspector = ({ model, setPickerOpen }) => {
   }} className="ah-scroll">
     {/* model */}
     <div style={{ padding:'14px 16px', borderBottom:`1px solid ${LM.lineSoft}` }}>
-      <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em', marginBottom:8 }}>MODEL</div>
+      <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.14em', marginBottom:8 }}>MODEL</div>
       <button data-model-indicator="" onClick={() => setPickerOpen(true)} style={{
         width:'100%', display:'flex', alignItems:'center', gap:10, padding:'8px 10px',
         background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, cursor:'pointer', color:LM.ink,
@@ -3008,7 +3167,7 @@ const InferenceInspector = ({ model, setPickerOpen }) => {
         <span style={{ width:22, height:22, borderRadius:LM.rad.sm, background:model.col, color:((window.AH && window.AH.onFill) || '#180f08'), display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:11, fontWeight:700 }}>{model.name[0]}</span>
         <div style={{ flex:1, textAlign:'left', lineHeight:1.15 }}>
           <div style={{ fontSize:13, fontWeight:500 }}>{model.name}</div>
-          <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft }}>{model.vendor}{model.ctx ? ' · ctx ' + model.ctx : ''}</div>
+          <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft }}>{model.vendor}{model.ctx ? ' · ctx ' + model.ctx : ''}</div>
         </div>
         <span style={{ color:LM.inkSoft, fontSize:11 }}>▾</span>
       </button>
@@ -3019,12 +3178,12 @@ const InferenceInspector = ({ model, setPickerOpen }) => {
 
     {/* connectors -- exactly what answered a probe, nothing invented */}
     <div data-chat-connectors="" style={{ padding:'14px 16px' }}>
-      <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em', marginBottom:10 }}>CONNECTORS · {connectors.length}</div>
+      <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.14em', marginBottom:10 }}>CONNECTORS · {connectors.length}</div>
       {connectors.map(c => (
         <div key={c.id} title={c.detail} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 0', borderBottom:`1px dashed ${LM.lineSoft}` }}>
           <span style={{ width:7, height:7, borderRadius:'50%', background:c.col, boxShadow:`0 0 0 3px ${c.col}22` }}/>
           <span style={{ flex:1, fontSize:12.5, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{c.name}</span>
-          <span style={{ fontFamily:LM.mono, fontSize:11, color:c.col, letterSpacing:'0.06em' }}>{c.word}</span>
+          <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:c.col, letterSpacing:'0.06em' }}>{c.word}</span>
         </div>
       ))}
       {/* A host that cannot connect on this machine says why, in words, not on hover. */}
@@ -3032,7 +3191,7 @@ const InferenceInspector = ({ model, setPickerOpen }) => {
         <div key={c.id + ':why'} data-connector-reason={c.id} style={{ fontSize:11, color:LM.inkSoft, lineHeight:1.45, whiteSpace:'normal', overflowWrap:'anywhere', padding:'4px 0 6px 15px' }}>{c.name}: {c.detail}</div>
       ))}
       {window.ARCHHUB_LIVE && !connectors.length &&
-        <div role="status" style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, lineHeight:1.5 }}>No connected program found yet.</div>}
+        <div role="status" style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, lineHeight:1.5 }}>No connected program found yet.</div>}
     </div>
   </aside>
   );
@@ -3041,8 +3200,8 @@ const InferenceInspector = ({ model, setPickerOpen }) => {
 const CalmSlider = ({ k, v, min, max, step, int, unit }) => (
   <div style={{ marginBottom:9 }}>
     <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
-      <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, flex:1 }}>{k}</span>
-      <span style={{ fontFamily:LM.mono, fontSize:11.5, color:LM.ink, fontWeight:500 }}>{int ? v : v.toFixed(2)}{unit && <span style={{ color:LM.inkSoft, marginLeft:2, fontSize:11 }}> {unit}</span>}</span>
+      <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, flex:1 }}>{k}</span>
+      <span style={{ fontFamily:LM.mono, fontSize:11.5, color:LM.ink, fontWeight:500 }}>{int ? v : v.toFixed(2)}{unit && <span style={{ color:LM.inkSoft, marginLeft:2, fontSize:LM.fs.label.sz }}> {unit}</span>}</span>
     </div>
     <input type="range" defaultValue={v} min={min} max={max} step={step} style={{ width:'100%', accentColor:LM.accent, marginTop:3 }}/>
   </div>
@@ -3050,7 +3209,7 @@ const CalmSlider = ({ k, v, min, max, step, int, unit }) => (
 const CalmRow = ({ k, v }) => (
   <div style={{ display:'flex', alignItems:'center', gap:8, padding:'3px 0' }}>
     <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, flex:1 }}>{k}</span>
-    <span style={{ fontFamily:LM.mono, fontSize:11.5, color:LM.ink }}>{v}</span>
+    <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.ink }}>{v}</span>
   </div>
 );
 
@@ -3120,7 +3279,7 @@ const ApplicationUpdateControls = ({compact = false}) => {
   // The dashed border replaces the whole border shorthand: a borderStyle longhand beside smallBtn's border
   // would be removed on re-enable and leave the browser's outset button border behind.
   const waiting = 'Waiting for the current update request to finish';
-  const buttonStyle = disabled => ({...smallBtn(), fontSize:compact ? 10.5 : 12, flexShrink:0,
+  const buttonStyle = disabled => ({...smallBtn(), fontSize:compact ? 11 : 12, flexShrink:0,
     ...(compact ? {width:28, height:28, padding:0, display:'grid', placeItems:'center'} : {}),
     ...(disabled ? {background:'transparent', border:`1px dashed ${LM.line}`, color:LM.inkSoft, cursor:'default'} : {})});
   return <section aria-label="Application release updates" style={compact ? {
@@ -3135,7 +3294,7 @@ const ApplicationUpdateControls = ({compact = false}) => {
     <span role={error || status?.state === 'failed' ? 'alert' : 'status'}
       title={[label, status?.current_build, status?.available_build, error || status?.detail].filter(Boolean).join(' · ')}
       aria-label={compact ? error || label : undefined} tabIndex={compact ? 0 : undefined}
-      style={{display:compact ? 'inline-block' : 'block', fontSize:compact ? 10.5 : 12,
+      style={{display:compact ? 'inline-block' : 'block', fontSize:compact ? 11 : 12,
         color:error || status?.state === 'failed' ? LM.err : LM.inkSoft,
         ...(compact ? {width:24, height:28, display:'grid', placeItems:'center', position:'relative'} :
           {margin:'10px 0', overflowWrap:'anywhere', whiteSpace:'pre-wrap'})}}>
@@ -3439,17 +3598,17 @@ const WsHeader = ({ session, model, openTabs, sessionRows = LM_SESSIONS, setOpen
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
       <span>Home</span>
     </button>
-    <span style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft}}>›</span>
+    <span style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft}}>›</span>
     <button type="button" onClick={onSettings} style={crumbBtn()}>Settings</button>
     <span style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft}}>›</span>
     <button type="button" onClick={onSettings} style={crumbBtn()}>System</button>
     <span style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft}}>›</span>
     <span style={{...crumbBtn(true), cursor:'default'}}>ArchHub application</span>
     <div style={{flex:1}}/>
-    {systemArrangeSummary && <span style={{fontFamily:LM.mono, fontSize:11, color:LM.ok, border:`1px solid ${LM.ok}55`, borderRadius:LM.rad.sm, padding:'3px 8px'}}>
+    {systemArrangeSummary && <span style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.ok, border:`1px solid ${LM.ok}55`, borderRadius:LM.rad.sm, padding:'3px 8px'}}>
       arranged · {systemArrangeSummary.cards} nodes · {systemArrangeSummary.overlaps} overlaps · {systemArrangeSummary.clipped} clipped · {systemArrangeSummary.crossings} ≈ crossings
     </span>}
-    <span style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, padding:'3px 8px'}}>
+    <span style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, padding:'3px 8px'}}>
       Esc · back to Settings
     </span>
   </div>
@@ -3548,11 +3707,11 @@ const WsTab = ({ s, a, sm, onClick, onClose }) => {
 };
 
 const smallBtn = (primary) => ({
-  padding:'5px 11px', borderRadius:LM.rad.sm, fontFamily:LM.sans, fontSize:11.5,
+  padding:`${LM.sp.xs}px ${LM.sp.md}px`, borderRadius:LM.rad.control, fontFamily:LM.sans, fontSize:LM.fs.bodySm.sz,
   border:`1px solid ${primary ? LM.accent : LM.line}`,
   background: primary ? LM.accent : 'transparent',
-  color: primary ? ((window.AH && window.AH.onFill) || '#180f08') : LM.inkSoft, cursor:'pointer', fontWeight: primary ? 500 : 400,
-  transition:'filter .12s, background .12s, border-color .12s',
+  color: primary ? ((window.AH && window.AH.onFill) || '#180f08') : LM.inkSoft, cursor:'pointer', fontWeight: primary ? LM.fs.bodySmStrong.wt : LM.fs.bodySm.wt,
+  transition:`filter ${LM.dur.fast}ms, background ${LM.dur.fast}ms, border-color ${LM.dur.fast}ms`,
 });
 
 // Hoverable button wrappers (cards style — actually responsive)
@@ -3589,7 +3748,7 @@ const ModelStrip = ({ model, setPickerOpen, compact }) => {
     background: hover ? LM.bgSoft : LM.bg,
     border:`1px solid ${hover ? LM.accent+'66' : LM.line}`, borderRadius:7,
     color:LM.ink, cursor:'pointer', fontFamily:LM.sans, minWidth: compact ? 280 : 380,
-    transition:'background .12s, border-color .12s',
+    transition:`background ${LM.dur.fast}ms, border-color ${LM.dur.fast}ms`,
   }}>
     <span style={{
       width: compact ? 22 : 28, height: compact ? 22 : 28, borderRadius:LM.rad.sm,
@@ -3598,12 +3757,12 @@ const ModelStrip = ({ model, setPickerOpen, compact }) => {
     }}>{model.name[0]}</span>
     <div style={{ flex:1, textAlign:'left', lineHeight:1.15 }}>
       <div style={{ fontSize: compact ? 12.5 : 13.5, fontWeight:500 }}>{model.name}</div>
-      <div style={{ fontFamily:LM.mono, fontSize: compact ? 9 : 10, color:LM.inkSoft, letterSpacing:'0.05em' }}>
+      <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.05em' }}>
         {[model.vendor, model.ctx ? 'ctx ' + model.ctx : '', model.tag].filter(Boolean).join(' \u00b7 ')}
       </div>
     </div>
     {/* Draw or omit: no latency dot until a latency was measured. */}
-    {model.latency != null && <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.ok, letterSpacing:'0.08em' }}>{'\u25cf ' + model.latency + 'ms'}</span>}
+    {model.latency != null && <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.ok, letterSpacing:'0.08em' }}>{'\u25cf ' + model.latency + 'ms'}</span>}
     <span style={{ color:LM.inkSoft, fontSize:11, marginLeft:2 }}>▾</span>
   </button>
   );
@@ -3613,6 +3772,14 @@ const ModelStrip = ({ model, setPickerOpen, compact }) => {
 const SOCKET_TOP = 42;
 const SOCKET_STEP = 19;
 const SOCKET_R = 5;
+const LM_CANVAS_TOKENS = typeof LM !== 'undefined' ? LM : {};
+const LM_CATEGORY_ICON = (LM_CANVAS_TOKENS.icon && typeof LM_CANVAS_TOKENS.icon === 'object' && LM_CANVAS_TOKENS.icon.category) || {size:12, box:20};
+const LM_FS_SOURCE = LM_CANVAS_TOKENS.fs && typeof LM_CANVAS_TOKENS.fs === 'object' ? LM_CANVAS_TOKENS.fs : {};
+const LM_FS_LABEL = LM_FS_SOURCE.label || {sz:11, ln:14, wt:500, letter:'.04em'};
+const LM_FS_DATASM = LM_FS_SOURCE.dataSm || {sz:11, ln:14, wt:400};
+const LM_FS_CAPTION = LM_FS_SOURCE.caption || {sz:12, ln:16, wt:400};
+const LM_FS_BODYSM = LM_FS_SOURCE.bodySm || {sz:13, ln:18, wt:400};
+const LM_FS_BODYSM_STRONG = LM_FS_SOURCE.bodySmStrong || {sz:13, ln:18, wt:500};
 
 // Ports sit in a band BELOW the card's content (never over its title, summary or
 // parameters): one row per port pair. Each card reports where its band starts, and a
@@ -3870,6 +4037,49 @@ const mergeCanvasLayoutBurst = (pending, drag) => {
 // Nothing is written for a node the burst put back where it started.
 const canvasLayoutBurstMoves = burst => Object.entries(burst?.next || {})
   .filter(([id, point]) => burst.before[id]?.x !== point.x || burst.before[id]?.y !== point.y);
+const canvasNodeBox = (node, positions, heights = {}) => {
+  const p = positions[node.id] || node;
+  const w = Number.isFinite(node.w) ? node.w : 220;
+  const h = Number.isFinite(heights[node.id]) ? heights[node.id] : Number.isFinite(node.h) ? node.h : 110;
+  return {id:node.id, x:p.x, y:p.y, w, h, group:node.group || ''};
+};
+const isSessionNodeShape = node => /^session$/i.test(String(node?.kind || node?.assembly || node?.cat || ''));
+const canvasGroupBounds = (nodes, positions, heights, group, exclude = new Set()) => {
+  const boxes = nodes.filter(node => ((node.group || '') === group ||
+      (node.id === group && node.composition && !isSessionNodeShape(node))) && !exclude.has(node.id))
+    .map(node => canvasNodeBox(node, positions, heights))
+    .filter(box => [box.x, box.y, box.w, box.h].every(Number.isFinite));
+  if (!boxes.length) return null;
+  const left = Math.min(...boxes.map(box => box.x)) - 18;
+  const top = Math.min(...boxes.map(box => box.y)) - 18;
+  const right = Math.max(...boxes.map(box => box.x + box.w)) + 18;
+  const bottom = Math.max(...boxes.map(box => box.y + box.h)) + 18;
+  return {group, left, top, right, bottom};
+};
+const canvasPointInBounds = (point, bounds) => !!bounds &&
+  point.x >= bounds.left && point.x <= bounds.right && point.y >= bounds.top && point.y <= bounds.bottom;
+const canvasGroupMembershipDelta = (nodes, positions, heights, movedIds) => {
+  const moved = new Set(movedIds || []);
+  const groups = [...new Set(nodes.flatMap(node => [
+    node.group || '',
+    node.composition && !isSessionNodeShape(node) ? node.id : '',
+  ]).filter(Boolean))];
+  const before = {}, after = {};
+  for (const node of nodes) {
+    if (!moved.has(node.id)) continue;
+    const box = canvasNodeBox(node, positions, heights);
+    const center = {x:box.x + box.w / 2, y:box.y + box.h / 2};
+    let next = node.group || '';
+    if (next && !canvasPointInBounds(center, canvasGroupBounds(nodes, positions, heights, next, new Set([node.id])))) next = '';
+    if (!next) {
+      const hit = groups.map(group => canvasGroupBounds(nodes, positions, heights, group, new Set([node.id])))
+        .filter(Boolean).find(bounds => canvasPointInBounds(center, bounds));
+      next = hit?.group || '';
+    }
+    if ((node.group || '') !== next) { before[node.id] = node.group || ''; after[node.id] = next; }
+  }
+  return Object.keys(after).length ? {before, after} : null;
+};
 // A burst is movement the store has not been told about yet. That is cheap to leave a
 // trace of: the merged burst is mirrored into sessionStorage on every arm and removed
 // only when a write is confirmed, so a canvas that comes back after a crash, a kill or a
@@ -3889,9 +4099,10 @@ const writeCanvasLayoutTrace = (scope, burst) => {
   } catch (error) { /* a session with no storage still draws and still saves the canvas */ }
 };
 
-const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingReveal = null, setLibraryOpen, userNodes = [], addNodeFromLibrary, model, system = false, onViewportChange = null, fitOnOpen = false, onSystemArrangeSummary = null }) => {
+const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingReveal = null, setLibraryOpen, userNodes = [], addNodeFromLibrary, model, system = false, onViewportChange = null, fitOnOpen = false, onSystemArrangeSummary = null, themeEpoch = 0 }) => {
   const authorityState = useStudioProjection();
   const projectedGraph = authorityState?.graph || LM_GRAPH;
+  const [draggingNode, setDraggingNode] = React.useState(false);
   const setSystemArrangeSummary = onSystemArrangeSummary;
   // The owner marks every top-level card with who placed it (graph shape, not a list of names).
   // The canvas draws the user's cards; the application's own -- map domains, core values,
@@ -3949,6 +4160,9 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     } catch (error) { setWireError(error.message || 'The connection was refused.'); }
   };
   const allNodes = React.useMemo(() => [...graph.nodes, ...userNodes], [graph.nodes, userNodes]);
+  const selectableNodeIds = React.useMemo(() => new Set(allNodes
+    .filter(node => !String(node.id || '').startsWith('app:system-tool:'))
+    .map(node => node.id)), [allNodes]);
   const wireActionRef = React.useRef({useSocket:null, nodes:[]});
   wireActionRef.current = {useSocket, nodes:allNodes};
   // Where each card's port band starts (card-local px), reported by the card itself.
@@ -3974,8 +4188,48 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   const burstTimer = React.useRef(null);
   const suppressNodeClick = React.useRef(false);
   const MAX_LAYOUT_NODES = 2048;
-  const [selectedIds, setSelectedIds] = React.useState([]);
-  const selected = new Set(selectedIds.filter(id => allNodes.some(node => node.id === id)));
+  const [selectedIds, commitSelectedIds] = React.useState([]);
+  const selectedIdsRef = React.useRef(selectedIds);
+  const setCanvasSelectedIds = React.useCallback(updater => {
+    // A second click can arrive before React applies the first queued update.
+    // Keep the current gesture intent synchronously; state updaters may defer or replay.
+    const next = typeof updater === 'function' ? updater(selectedIdsRef.current) : updater;
+    selectedIdsRef.current = Array.isArray(next) ? next : [];
+    commitSelectedIds(selectedIdsRef.current);
+  }, []);
+  const selected = new Set(selectedIds.filter(id => selectableNodeIds.has(id)));
+  const membershipDragRef = React.useRef(null);
+  membershipDragRef.current = drag => {
+    if (!authority?.moveMember) return false;
+    const ids = Object.keys(drag?.last || {});
+    if (!ids.length) return false;
+    const nextPositions = {...positions, ...drag.last};
+    const delta = canvasGroupMembershipDelta(allNodes, nextPositions, cardHeights, ids);
+    if (!delta) return false;
+    const moves = Object.keys(delta.after).filter(id => delta.before[id] !== delta.after[id]);
+    if (!moves.length) return false;
+    menuTask(async () => {
+      for (const memberId of moves) await authority.moveMember(memberId, delta.before[memberId] || '', delta.after[memberId] || '', drag.last?.[memberId] || null);
+      setMenuNotice('Membership saved by the graph owner.');
+      return 'Membership saved by the graph owner.';
+    });
+    return true;
+  };
+  // Memoized card handlers must use today's action admission, never a captured busy state.
+  const menuTaskRef = React.useRef(null);
+  const leaveGroupMember = React.useCallback((memberId, groupId, position = null) => {
+    const owner = window.ARCHHUB_STUDIO_AUTHORITY || authority || normal;
+    return menuTaskRef.current(async () => {
+      if (!memberId) throw new Error('Choose a group member to move.');
+      if (!owner?.moveMember) throw new Error('Removing a member is unavailable in this connection.');
+    const node = allNodes.find(item => item.id === memberId);
+    const beforeGroup = node?.group || groupId || '';
+      if (!beforeGroup) throw new Error('The member has no group to leave. Refresh the canvas.');
+      const result = await owner.moveMember(memberId, beforeGroup, '', position);
+      if (!result || result.ok === false) throw new Error(result?.error || 'Membership was not confirmed by the graph owner.');
+      return 'Membership saved by the graph owner.';
+    });
+  }, [allNodes, authority, normal]);
   // Box selection (the retired '/' canvas's marquee): Shift-drag on empty canvas adds,
   // Alt-drag removes; left-to-right takes whole cards, right-to-left takes touched ones.
   const [marquee, setMarquee] = React.useState(null);
@@ -4020,8 +4274,8 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       });
       return changed ? next : p;
     });
-    setSelectedIds(ids => ids.filter(id => allNodes.some(node => node.id === id)));
-  }, [allNodes, layoutBusy]);
+    setCanvasSelectedIds(ids => ids.filter(id => selectableNodeIds.has(id)));
+  }, [allNodes, layoutBusy, selectableNodeIds]);
   React.useEffect(() => {
     alive.current = true;
     return () => { flushRef.current(true); alive.current = false; pendingArrange.current = null; dragRef.current = null; };
@@ -4166,6 +4420,8 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   const openFitPending = React.useRef(fitOnOpen && !CANVAS_VIEWS.has(scopeKey));
   const [pan, setPan] = React.useState(() => readCanvasView(scopeKey).pan);
   const [zoom, setZoom] = React.useState(() => readCanvasView(scopeKey).zoom);
+  const viewportTransformRef = React.useRef({pan, zoom});
+  viewportTransformRef.current = {pan, zoom};
   React.useEffect(() => { CANVAS_VIEWS.set(scopeKey, {pan, zoom}); }, [scopeKey, pan, zoom]);
   React.useEffect(() => {
     if (typeof onViewportChange !== 'function' || !wrapRef.current) return;
@@ -4178,6 +4434,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   const [pickedId, setPickedId] = React.useState(null);
   const [confirming, setConfirming] = React.useState(null); // {kind:'node'|'clear', ids, title, wires}
   const [menuBusy, setMenuBusy] = React.useState(false);
+  const menuBusyRef = React.useRef(false);
   const [ctxMenu, setCtxMenu] = React.useState(null);
   const closeContextMenu = () => {
     setCtxMenu(null);
@@ -4193,11 +4450,13 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   // Convert client coords → canvas coords (the world space the nodes live in)
   const toCanvasCoords = (clientX, clientY) => {
     const rect = wrapRef.current.getBoundingClientRect();
+    const view = viewportTransformRef.current;
     return {
-      x: (clientX - rect.left - pan.x) / zoom,
-      y: (clientY - rect.top  - pan.y) / zoom,
+      x: (clientX - rect.left - view.pan.x) / view.zoom,
+      y: (clientY - rect.top  - view.pan.y) / view.zoom,
     };
   };
+  const screenToCanvasPoint = React.useCallback((clientX, clientY) => toCanvasCoords(clientX, clientY), []);
   const dragPoint = (d, clientX, clientY) => ({
     x: (clientX - d.rect.left - d.pan.x) / d.zoom,
     y: (clientY - d.rect.top - d.pan.y) / d.zoom,
@@ -4271,7 +4530,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       setMarquee({x0:at.x, y0:at.y, x1:at.x, y1:at.y});
       return;
     }
-    setSelectedIds([]); setPickedId(null); setFocusId(null);
+    setCanvasSelectedIds([]); setPickedId(null); setFocusId(null);
     dragRef.current = { mode:'pan', sx:e.clientX, sy:e.clientY, px:pan.x, py:pan.y };
   };
   // Which cards a box takes, read from the drawn cards (their real size) at their current places.
@@ -4280,7 +4539,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     const top = Math.min(box.y0, box.y1), bottom = Math.max(box.y0, box.y1);
     return [...(wrapRef.current?.querySelectorAll('.lm-node[data-node-id]') || [])].filter(card => {
       const id = card.getAttribute('data-node-id'), at = positions[id];
-      if (!at) return false;
+      if (!at || !selectableNodeIds.has(id)) return false;
       const x0 = at.x, y0 = at.y, x1 = at.x + card.offsetWidth, y1 = at.y + card.offsetHeight;
       return crossing ? x0 < right && x1 > left && y0 < bottom && y1 > top
         : x0 >= left && x1 <= right && y0 >= top && y1 <= bottom;
@@ -4310,7 +4569,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   };
   const onNodeContextMenu = id => e => {
     if (e.target.isContentEditable || e.target.closest('input,textarea,select,[role="textbox"]')) return;
-    if (!selected.has(id)) setSelectedIds([id]);
+    if (!selected.has(id)) setCanvasSelectedIds([id]);
     setPickedId(id); setFocusId(id); openContextMenu(e, id);
   };
   const isContextKey = e => e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey);
@@ -4357,7 +4616,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     }
     // The shortcuts the canvas menu names (design CanvasMenu), while focus is on the canvas and not in a field.
     if (!(e.metaKey || e.ctrlKey) || e.altKey || e.target.closest('input,textarea,select,[contenteditable="true"]')) return;
-    if (shortcut?.action === 'select-all-nodes') { e.preventDefault(); setSelectedIds(allNodes.map(node => node.id)); return; }
+    if (shortcut?.action === 'select-all-nodes') { e.preventDefault(); setCanvasSelectedIds(allNodes.map(node => node.id).filter(id => selectableNodeIds.has(id))); return; }
     const item = canvasMenuItems.find(row => row.shortcutId && studioShortcutById(row.shortcutId)?.action === shortcut?.action);
     if (!item) return;
     e.preventDefault();
@@ -4369,9 +4628,11 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   const onNodeFocus = id => e => {
     if (suppressNodeClick.current) { suppressNodeClick.current = false; return; }
     if (e?.target.closest('button,input,textarea,select,a,[contenteditable="true"]')) return;
-    if (e?.shiftKey) setSelectedIds(ids => ids.includes(id) ? ids.filter(root => root !== id) : [...ids, id]);
-    else if (!selected.has(id)) setSelectedIds([id]);
-    setPickedId(id); setFocusId(id);
+    let roots = selectedIdsRef.current.filter(root => selectableNodeIds.has(root));
+    if (e?.shiftKey) roots = roots.includes(id) ? roots.filter(root => root !== id) : [...roots, id];
+    else if (!roots.includes(id)) roots = [id];
+    setCanvasSelectedIds(roots);
+    setPickedId(roots.length ? id : null); setFocusId(roots.length ? id : null, roots);
   };
 
   const onNodeDragStart = (id) => (e) => {
@@ -4379,9 +4640,10 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     e.stopPropagation();
     if (e.shiftKey) return;
     e.preventDefault();
+    setDraggingNode(true);
     suppressNodeClick.current = false;
     const ids = selected.has(id) ? [...selected] : [id];
-    setSelectedIds(ids); closeContextMenu();
+    setCanvasSelectedIds(ids); closeContextMenu();
     // A save in flight no longer swallows the next drag: the preview keeps the held
     // positions while it runs and the drag is queued behind it (see savePositions).
     if (!scopeStillCurrent() || layoutNeedsRefresh || !!authorityState?.pending || !!authorityState?.requires_refresh) return;
@@ -4445,10 +4707,12 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       setWireStartState(null);
     };
     const onKeyDown = e => {
-      if (e.key !== 'Escape' || (!wireDragRef.current && !wireStartRef.current)) return;
+      if (e.key !== 'Escape') return;
+      if (!wireDragRef.current && !wireStartRef.current && document.querySelector('[role="dialog"],[role="menu"]')) return;
       wireDragRef.current = null;
       setWirePreview(null);
       setWireStartState(null);
+      setCanvasSelectedIds([]); setPickedId(null); setFocusId(null, []);
       e.preventDefault(); e.stopPropagation();
     };
     const onMove = (e) => {
@@ -4484,15 +4748,20 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     const onUp = () => {
       const drag = dragRef.current;
       dragRef.current = null;
+      setDraggingNode(false);
       if (drag?.mode === 'marquee') {
         setMarquee(null);
         if (drag.x1 === undefined) return;
         const hits = marqueeHits.current({x0:drag.x0, y0:drag.y0, x1:drag.x1, y1:drag.y1}, drag.x1 < drag.x0);
-        setSelectedIds(drag.remove ? drag.base.filter(id => !hits.includes(id)) : [...new Set([...drag.base, ...hits])]);
+        const roots = drag.remove ? drag.base.filter(id => !hits.includes(id)) : [...new Set([...drag.base, ...hits])];
+        setCanvasSelectedIds(roots);
+        if (!roots.length) { setPickedId(null); setFocusId(null, []); }
         return;
       }
       if (drag?.mode === 'nodes' && drag.last) {
-        armLayoutRef.current({next:drag.last, before:drag.before, revision:drag.revision});
+        if (!(membershipDragRef.current && membershipDragRef.current(drag))) {
+          armLayoutRef.current({next:drag.last, before:drag.before, revision:drag.revision});
+        }
       }
     };
     document.addEventListener('pointermove', onPointerMove);
@@ -4588,10 +4857,25 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   // A frame collapses into ONE graph group node (the composition owner's own Group); a group expands back.
   const composer = typeof authority?.composition === 'function' ? (op, roots) => authority.composition(op, roots)
     : typeof normal?.composeTopology === 'function' ? (op, roots) => normal.composeTopology(op, roots) : null;
+  const selectedCardIds = () => Array.from(wrapRef.current?.querySelectorAll('.lm-node[data-node-id][data-selected="true"]') || [])
+    .map(card => card.getAttribute('data-node-id'))
+    .filter(id => id && selectableNodeIds.has(id));
+  const currentSelectionIds = () => {
+    const fromCards = selectedCardIds();
+    return fromCards.length ? fromCards : [...selected];
+  };
+  const composeCurrentSelection = () => {
+    const roots = currentSelectionIds();
+    composeGroup('group', roots, 'Grouped ' + roots.length + ' nodes into one node.');
+  };
   const composeGroup = (operation, roots, what) => {
-    if (!composer) { setLayoutError('Grouping needs the live graph.'); return; }
-    setLayoutError(''); closeContextMenu();
-    composer(operation, roots).then(() => setMenuNotice(what)).catch(error => setLayoutError(error?.message || String(error)));
+    closeContextMenu();
+    return menuTaskRef.current(async () => {
+      if (!composer) throw new Error('Grouping needs the live graph.');
+      const result = await composer(operation, roots);
+      if (!result || result.ok === false) throw new Error(result?.error || 'The group change was not confirmed.');
+      return what;
+    });
   };
   const consumeSocketClick = () => {
     if (!suppressWireClick.current) return false;
@@ -4599,7 +4883,13 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     return true;
   };
   latest.current = {toggleExpanded, onNodeDragStart, onNodeFocus, onNodeContextMenu, onNodeKeyDown, useSocket, startSocketDrag, consumeSocketClick, setPortBand, composeGroup,
-    open:id => authority && authority.open(id).catch(() => {})};
+    open:id => {
+      if (authority) { authority.open(id).catch(() => {}); return; }
+      const trail = authorityState?.canvas?.scope?.trail || normal?.getSnapshot?.()?.topology?.canvas?.scope?.trail || [];
+      if (typeof window.ARCHHUB_SCOPE_OPEN === 'function' && Array.isArray(trail)) {
+        window.ARCHHUB_SCOPE_OPEN([...trail.map(step => step.root).filter(Boolean), id]);
+      }
+    }};
   const handlerCache = React.useRef(new Map());
   const cardHandlers = id => {
     let held = handlerCache.current.get(id);
@@ -4695,7 +4985,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     const seeds = ctxMenu?.nodeId
       ? (selected.has(ctxMenu.nodeId) ? [...selected] : [ctxMenu.nodeId])
       : selected.size ? [...selected] : nodeIds.includes(focusId) ? [focusId] : [];
-    setSelectedIds(canvasConnectedNodeIds(nodeIds, graph.wires, seeds, whole));
+    setCanvasSelectedIds(canvasConnectedNodeIds(nodeIds, graph.wires, seeds, whole));
   };
   const runPendingArrangeRef = React.useRef(null);
   const nodeByRoot = new Map(allNodes.map(node => [node.id, node]));
@@ -4930,17 +5220,33 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   const cutWire = authority ? root => authority.remove(root) : normal?.disconnectTopology ? root => normal.disconnectTopology(root) : null;
   const removeNode = typeof window.ARCHHUB_RETRACT === 'function' ? root => window.ARCHHUB_RETRACT(root) : null;
   const menuTask = async (task, done) => {
-    if (menuBusy) return;
+    const refuse = error => {
+      if (scopeStillCurrent()) setLayoutError(error);
+      return {ok:false, error};
+    };
+    if (menuBusyRef.current) return refuse('Wait for the current action to finish, then try again.');
+    menuBusyRef.current = true;
     setMenuBusy(true); setMenuNotice(''); setLayoutError('');
     try {
-      // The right-click that opened the menu also told the owner what was picked. The transport refuses a
-      // second write while that one is out, so the action waits for it (at most ten seconds) instead.
-      for (let i = 0; i < 100 && transportBusy(); i += 1) await new Promise(done => setTimeout(done, 100));
-      const said = await task(); if (scopeStillCurrent()) setMenuNotice(said || done || '');
+      // Selection may still be in flight when Group is clicked. Keep the click's roots,
+      // then wait for the transport's current state before asking for the group control.
+      for (let i = 0; i < 100 && transportBusy(); i += 1) {
+        if (!scopeStillCurrent()) throw new Error('The canvas scope changed. Choose the nodes again.');
+        const held = authority ? authority.getSnapshot() : normal?.getSnapshot()?.topology;
+        if (needsRefresh.current || held?.requires_refresh) throw new Error('Refresh the canvas before trying this action again.');
+        await new Promise(done => setTimeout(done, 100));
+      }
+      if (!scopeStillCurrent()) throw new Error('The canvas scope changed. Choose the nodes again.');
+      if (transportBusy()) throw new Error('The current canvas change did not finish. Try again after it finishes.');
+      const said = await task();
+      if (said?.ok === false) throw new Error(said.error || 'The action was refused.');
+      if (scopeStillCurrent()) setMenuNotice(typeof said === 'string' ? said : done || '');
+      return {ok:true};
     }
-    catch (error) { if (scopeStillCurrent()) setLayoutError(error?.message || 'The action was refused.'); }
-    finally { if (alive.current) setMenuBusy(false); }
+    catch (error) { return refuse(error?.message || 'The action was refused.'); }
+    finally { menuBusyRef.current = false; if (alive.current) setMenuBusy(false); }
   };
+  menuTaskRef.current = menuTask;
   const menuRun = () => menuTask(async () => {
     const result = await window.ARCHHUB_RUN();
     if (!result || result.ok === false) throw new Error(result?.error || 'The graph run failed.');
@@ -4963,12 +5269,12 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     const createdId = created?.node?.id || created?.id || created?.node_id || created?.root;
     if (!createdId) throw new Error('Fork not confirmed');
     await studioRefreshCanvasInPlace();
-    if (createdId) setSelectedIds([createdId]);
+    if (createdId) setCanvasSelectedIds([createdId]);
     return 'Fork placed.';
   }, [positions]);
   React.useEffect(() => {
     window.__archhubDuplicateNode = duplicateNode;
-    window.__archhubSelectNodeById = nodeId => { if (nodeId) setSelectedIds([nodeId]); };
+    window.__archhubSelectNodeById = nodeId => { if (nodeId) setCanvasSelectedIds([nodeId]); };
     return () => {
       if (window.__archhubDuplicateNode === duplicateNode) delete window.__archhubDuplicateNode;
       delete window.__archhubSelectNodeById;
@@ -5060,8 +5366,8 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     {sep:true},
     {i:'⇄', t:'Select direct neighbours', action:() => selectConnected(false), disabled:!menuHasSeed, why:noSeedWhy},
     {i:'⧉', t:'Select connected group', action:() => selectConnected(true), disabled:!menuHasSeed, why:noSeedWhy},
-    {i:'▣', t:'Select all nodes', k:studioShortcutMenu('canvas-select-all'), action:() => setSelectedIds(allIds), disabled:!allIds.length, why:noNodesWhy},
-    {i:'✕', t:'Clear selection', action:() => setSelectedIds([]), disabled:!selected.size, why:noSelectionWhy},
+    {i:'▣', t:'Select all nodes', k:studioShortcutMenu('canvas-select-all'), action:() => setCanvasSelectedIds(allIds), disabled:!allIds.length, why:noNodesWhy},
+    {i:'✕', t:'Clear selection', action:() => { setCanvasSelectedIds([]); setPickedId(null); setFocusId(null, []); }, disabled:!selected.size, why:noSelectionWhy},
     {sep:true},
     {i:'⌴', t:'Fit selection', action:() => fitIds([...selected]), disabled:!selected.size, why:noSelectionWhy},
     {i:'⧉', t:'Auto-layout selection', action:() => arrangeIds([...selected]),
@@ -5109,6 +5415,13 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
           left:Math.min(marquee.x0, marquee.x1), top:Math.min(marquee.y0, marquee.y1),
           width:Math.abs(marquee.x1 - marquee.x0), height:Math.abs(marquee.y1 - marquee.y0),
           border:`1px ${marquee.x1 < marquee.x0 ? 'dashed' : 'solid'} ${LM.accent}`, background:LM.accent + '14'}}/>}
+        {draggingNode && Array.isArray(openScope?.trail) && openScope.trail.length > 1 && <div data-group-drop-band role="note"
+          aria-label={'Move out to ' + (openScope.trail[openScope.trail.length - 2]?.label || 'parent')} style={{
+          position:'absolute', left:0, right:0, top:0, height:34, zIndex:7, pointerEvents:'none',
+          display:'grid', placeItems:'center', background:LM.accentDim,
+          borderBottom:`1.5px dashed ${LM.accent}`, color:LM.accent, fontSize:12, fontWeight:600}}>
+          {'Move out to ' + (openScope.trail[openScope.trail.length - 2]?.label || 'parent')}
+        </div>}
         <svg width="2400" height="1400" style={{ position:'absolute', left:0, top:0, pointerEvents:'none', overflow:'visible' }} className="lm-wires">
           {wires.map(w => {
             const dx = Math.max(40, Math.abs(w.x2 - w.x1) * 0.5);
@@ -5154,6 +5467,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
             <MemoNodeRenderer
               key={n.id}
               n={n} x={pos.x} y={pos.y}
+              themeEpoch={themeEpoch}
               selected={selected.has(n.id)}
               focused={n.id === focusId}
               onPortBand={on.band}
@@ -5167,7 +5481,9 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
               onKeyDown={on.key}
               onSocket={on.socket}
               onSocketDrag={on.socketDrag}
-              onOpen={n.openable && authority ? on.open : undefined}
+              onOpen={n.openable && (authority || typeof window.ARCHHUB_SCOPE_OPEN === 'function') ? on.open : undefined}
+              onMemberLeave={leaveGroupMember}
+              screenToCanvasPoint={screenToCanvasPoint}
             />
           );
         })}
@@ -5220,7 +5536,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
           width:180, height:48, pointerEvents:'none',
           background:LM.accent + '14', border:`1.5px dashed ${LM.accent}`,
           borderRadius:LM.rad.md, display:'grid', placeItems:'center',
-          fontFamily:LM.mono, fontSize:11, color:LM.accent, letterSpacing:'0.06em',
+          fontFamily:LM.mono, fontSize:LM_FS_DATASM.sz, color:LM.accent, letterSpacing:'0.06em',
         }}>＋ DROP TO ADD NODE</div>
       )}
 
@@ -5230,8 +5546,8 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
         background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md,
         boxShadow:'0 10px 24px rgba(0,0,0,.35)',
       }}>
-        <button type="button" onClick={() => composeGroup('group', [...selected], 'Grouped ' + selected.size + ' nodes into one node.')}
-          disabled={!composer || blocked || menuBusy} style={smallBtn(true)}>
+        <button type="button" onClick={composeCurrentSelection}
+          disabled={!composer || layoutBusy || layoutNeedsRefresh || authorityState?.requires_refresh || menuBusy} style={smallBtn(true)}>
           Group {selected.size} nodes <kbd style={kbd()}>Ctrl+G</kbd>
         </button>
         <button type="button" onClick={() => arrangeIds([...selected])}
@@ -5282,7 +5598,7 @@ const CanvasHint = () => (
     position:'absolute', left:14, top:52, display:'flex', alignItems:'center', gap:LM.sp.sm,
     background:LM.bgPanel+'cc', backdropFilter:'blur(6px)',
     border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.sm, padding:'4px 9px',
-    fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em',
+    fontFamily:LM.mono, fontSize:LM_FS_DATASM.sz, color:LM.inkSoft, letterSpacing:'0.04em',
   }}>
     <span>scroll → zoom</span>
     <span style={{ color:LM.inkDim }}>·</span>
@@ -5367,7 +5683,7 @@ const CanvasMenu = ({ x, y, maxHeight, opener, items, label, onClose }) => {
 };
 
 // ─── nodes dispatcher ───
-const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimmed, expanded, onToggleExpand, onDragStart, onFocus, onSocket, onSocketDrag, onOpen, onContextMenu, onKeyDown, onPortBand, onExpand }) => {
+const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimmed, expanded, onToggleExpand, onDragStart, onFocus, onSocket, onSocketDrag, onOpen, onContextMenu, onKeyDown, onPortBand, onExpand, onMemberLeave, screenToCanvasPoint }) => {
   const n = held.x === x && held.y === y ? held : {...held, x, y};
   if (typeof window !== 'undefined' && window.__archhubCardRenders) window.__archhubCardRenders[held.id] = (window.__archhubCardRenders[held.id] || 0) + 1;
   const cat = studioCategory(n.cat);
@@ -5377,6 +5693,91 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
   const lit = selected || focused;
   const cardRef = React.useRef(null), bandRef = React.useRef(null);
   const rows = Math.max(n.ins?.length || 0, n.outs?.length || 0);
+  const sessionCard = isSessionNodeShape(n);
+  const groupCard = !!n.composition && !sessionCard;
+  const groupMembers = Array.isArray(n.members) ? n.members : [];
+  const handleClick = e => {
+    onFocus && onFocus(e);
+  };
+  const handleKeyDown = e => {
+    if ((e.key === 'Enter' || e.key === ' ') && onOpen && (sessionCard || groupCard)) {
+      e.preventDefault(); onOpen(e); return;
+    }
+    onKeyDown && onKeyDown(e);
+  };
+  const [memberDragTrace, setMemberDragTrace] = React.useState({});
+  const memberDragActive = React.useRef(null);
+  const memberDragCleanup = React.useRef(null);
+  React.useEffect(() => () => {
+    memberDragCleanup.current?.();
+  }, []);
+  const startMemberDrag = (member, e) => {
+    const memberId = typeof member === 'string' ? member : member.id || member.root || member.title || member.label;
+    if (!memberId || !onMemberLeave) return;
+    if ((e.button ?? 0) !== 0) return;
+    if (memberDragActive.current) return;
+    e.preventDefault(); e.stopPropagation();
+    const chip = e.currentTarget;
+    const setDragState = state => {
+      chip?.setAttribute?.('data-member-drag', state);
+      setMemberDragTrace(trace => trace[memberId] === state ? trace : {...trace, [memberId]:state});
+    };
+    const bounds = cardRef.current?.getBoundingClientRect?.();
+    const sx = e.clientX, sy = e.clientY;
+    let moved = false, last = {x:sx, y:sy};
+    const outside = point => !bounds || point.x < bounds.left || point.x > bounds.right || point.y < bounds.top || point.y > bounds.bottom;
+    memberDragActive.current = memberId;
+    setDragState('armed');
+    try { chip?.setPointerCapture?.(e.pointerId); } catch (error) { /* best effort; window listeners are the fallback */ }
+    let finished = false;
+    const move = ev => {
+      ev.preventDefault?.(); ev.stopPropagation?.();
+      last = {x:ev.clientX, y:ev.clientY};
+      if (Math.hypot(last.x - sx, last.y - sy) >= 8) moved = true;
+      if (moved && outside(last)) setDragState('left');
+    };
+    const finish = (ev, commit, quiet = false) => {
+      if (finished) return;
+      finished = true;
+      ev?.preventDefault?.(); ev?.stopPropagation?.();
+      if (Number.isFinite(ev?.clientX) && Number.isFinite(ev?.clientY)) last = {x:ev.clientX, y:ev.clientY};
+      for (const target of [document, window]) {
+        target.removeEventListener('mousemove', move, true);
+        target.removeEventListener('mouseup', up, true);
+        target.removeEventListener('pointermove', move, true);
+        target.removeEventListener('pointerup', up, true);
+        target.removeEventListener('pointercancel', cancel, true);
+      }
+      try { chip?.releasePointerCapture?.(e.pointerId); } catch (error) { /* best effort */ }
+      memberDragActive.current = null;
+      memberDragCleanup.current = null;
+      if (!commit) {
+        if (!quiet) setDragState('cancelled');
+        return;
+      }
+      if (moved && outside(last)) {
+        const point = typeof screenToCanvasPoint === 'function'
+          ? screenToCanvasPoint(last.x, last.y)
+          : {x:last.x, y:last.y};
+        setDragState('pending');
+        // A trace is evidence of the transport result, not of a pointer release.
+        Promise.resolve().then(() => onMemberLeave(memberId, n.id, point)).then(result => {
+          if (!result || result.ok === false) setDragState('refused: ' + (result?.error || 'Membership was not sent.'));
+          else setDragState('posted');
+        }).catch(error => setDragState('refused: ' + (error?.message || 'Membership was not sent.')));
+      }
+    };
+    const up = ev => finish(ev, true);
+    const cancel = ev => finish(ev, false);
+    memberDragCleanup.current = () => finish(null, false, true);
+    for (const target of [document, window]) {
+      target.addEventListener('mousemove', move, true);
+      target.addEventListener('mouseup', up, true);
+      target.addEventListener('pointermove', move, true);
+      target.addEventListener('pointerup', up, true);
+      target.addEventListener('pointercancel', cancel, true);
+    }
+  };
   // The band follows the content: report its card-local top whenever the card resizes.
   React.useLayoutEffect(() => {
     const card = cardRef.current, band = bandRef.current;
@@ -5388,9 +5789,11 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
     return () => watch.disconnect();
   }, [rows, onPortBand]);
   return (
-    <div ref={cardRef} className="lm-node" data-node-id={n.id} data-selected={selected ? 'true' : undefined}
-      data-focused={focused ? 'true' : undefined} onClick={onFocus} onDoubleClick={onOpen} onContextMenu={onContextMenu}
-      tabIndex={0} role="group" aria-label={(n.title || n.id) + ' node'} aria-haspopup="menu" aria-keyshortcuts="Shift+F10" onKeyDown={onKeyDown}
+    <div ref={cardRef} className="lm-node" data-node-id={n.id} data-group={n.group || undefined}
+      data-session-card={sessionCard ? 'true' : undefined} data-group-card={groupCard ? 'true' : undefined}
+      data-selected={selected ? 'true' : undefined}
+      data-focused={focused ? 'true' : undefined} onClick={handleClick} onDoubleClick={onOpen} onContextMenu={onContextMenu}
+      tabIndex={0} role="group" aria-label={(n.title || n.id) + ' node'} aria-haspopup="menu" aria-keyshortcuts="Shift+F10" onKeyDown={handleKeyDown}
       style={{
         position:'absolute', left:n.x, top:n.y, width:w, minHeight:n.h,
         background:LM.bgPanel,
@@ -5398,39 +5801,45 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
         borderWidth:'2px 1px 1px 1px',
         // Selected and focused cards use the one accent; focus adds a 2px ring. No hover motion.
         borderColor: `${cat.col} ${lit ? LM.accent : LM.line} ${lit ? LM.accent : LM.line} ${lit ? LM.accent : LM.line}`,
-        borderRadius:9, color:LM.ink, fontFamily:LM.sans,
-        boxShadow: focused
-          ? `0 0 0 2px ${LM.accent}, 0 8px 24px rgba(0,0,0,.4)`
-          : '0 2px 8px rgba(0,0,0,.35)',
-        cursor: 'default', outline:'none',
+        borderRadius:LM.rad.node, color:LM.ink, fontFamily:LM.sans,
+        boxShadow:LM.shadow.flat,
+        cursor: 'default', outline:focused ? LM.selection.outline : 'none',
+        outlineColor:focused ? LM.accent : 'transparent', outlineOffset:focused ? LM.selection.outlineOffset : 0,
         opacity: dimmed ? 0.42 : 1,
-        transition:'border-color .12s, box-shadow .12s, opacity .15s, width .15s',
+        transition:`border-color ${LM.dur.fast}ms, outline-color ${LM.dur.fast}ms, opacity ${LM.dur.med}ms, width ${LM.dur.med}ms`,
+        zIndex: lit ? 3 : 2,
       }}>
+      {groupCard && <>
+        <div data-stacked-edge="1" style={{position:'absolute', inset:0, transform:'translate(5px, 5px)', border:`1px solid ${LM.line}`,
+          borderRadius:LM.rad.node, background:LM.bgPanel, opacity:1, zIndex:-1, pointerEvents:'none'}}/>
+        <div data-stacked-edge="2" style={{position:'absolute', inset:0, transform:'translate(10px, 10px)', border:`1px solid ${LM.line}`,
+          borderRadius:LM.rad.node, background:LM.bgPanel, opacity:.6, zIndex:-2, pointerEvents:'none'}}/>
+      </>}
       {/* Title bar — drag handle */}
       <div onMouseDown={onDragStart}
         style={{
-          padding:'7px 11px', display:'flex', alignItems:'center', gap:LM.sp.sm,
+          padding:`${LM.sp.sm}px ${LM.sp.md}px`, display:'flex', alignItems:'center', gap:LM.sp.sm,
           borderBottom:`1px solid ${LM.lineSoft}`,
           background: lit ? LM.bgSoft : 'transparent',
           cursor:'move',
-          borderTopLeftRadius:7, borderTopRightRadius:7,
+          borderTopLeftRadius:LM.rad.node, borderTopRightRadius:LM.rad.node,
         }}>
-        <span style={{ width:14, height:14, display:'grid', placeItems:'center', color:cat.col, fontFamily:LM.mono, fontSize:11 }}>{cat.icon}</span>
-        <span style={{ fontFamily:LM.mono, fontSize:11, color:cat.col, letterSpacing:'0.18em' }}>{cat.label}</span>
+        <span style={{ width:LM_CATEGORY_ICON.box, height:LM_CATEGORY_ICON.box, display:'grid', placeItems:'center', color:cat.col, fontFamily:LM.sans, fontSize:LM_CATEGORY_ICON.size }}>{cat.icon}</span>
+        <span style={{ fontFamily:LM.sans, fontSize:LM_FS_LABEL.sz, fontWeight:LM_FS_LABEL.wt, color:cat.col, letterSpacing:LM_FS_LABEL.letter }}>{cat.label}</span>
         <div style={{ flex:1 }}/>
-        {n.composition && Number.isSafeInteger(n.memberCount) && <span data-member-count={n.memberCount} style={{
-          fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, whiteSpace:'nowrap'}}>{n.memberCount} {n.memberCount === 1 ? 'node' : 'nodes'}</span>}
-        {onExpand && <button type="button" aria-label={'Expand ' + (n.title || 'group')} title="Expand the group back into its nodes"
+        {groupCard && Number.isSafeInteger(n.memberCount) && <span data-member-count={n.memberCount} style={{
+          fontFamily:LM.sans, fontSize:LM_FS_LABEL.sz, fontWeight:LM_FS_LABEL.wt, color:LM.inkSoft, whiteSpace:'nowrap'}}>{n.memberCount} {n.memberCount === 1 ? 'node' : 'nodes'}</span>}
+        {onExpand && groupCard && <button type="button" aria-label={'Expand ' + (n.title || 'group')} title="Expand the group back into its nodes"
           onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onExpand(); }} style={{
-          padding:'0 6px', border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, background:'transparent',
-          color:LM.inkSoft, fontFamily:LM.mono, fontSize:11, cursor:'pointer'}}>⊞ expand</button>}
+          padding:`0 ${LM.sp.sm}px`, border:`1px solid ${LM.line}`, borderRadius:LM.rad.control, background:'transparent',
+          color:LM.inkSoft, fontFamily:LM.sans, fontSize:LM_FS_LABEL.sz, cursor:'pointer'}}>⊞ expand</button>}
         {n.state && <NodeStateDot s={n.state}/>}
-        {n.ms && !n.state && <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft }}>{n.ms}</span>}
+        {n.ms && !n.state && <span style={{ fontFamily:LM.sans, fontSize:LM_FS_LABEL.sz, color:LM.inkSoft }}>{n.ms}</span>}
         {isAi && (
           <button onClick={(e) => { e.stopPropagation(); onToggleExpand(); }} title={expanded ? 'Collapse' : 'Expand & search'} style={{
             width:18, height:18, padding:0, border:0, borderRadius:LM.rad.xs,
             background:'transparent', color:LM.inkSoft, cursor:'pointer',
-            display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:11, marginLeft:2,
+            display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:LM_FS_DATASM.sz, marginLeft:2,
           }}
           onMouseEnter={e => { e.currentTarget.style.background = LM.bgHover; e.currentTarget.style.color = LM.ink; }}
           onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = LM.inkSoft; }}>
@@ -5440,11 +5849,31 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
       </div>
 
       {/* Body */}
-      <div style={{ padding:'9px 12px 11px' }}>
-        <div title={n.title} style={{ fontSize:13, fontWeight:500, color:LM.ink, marginBottom:2, lineHeight:1.2 }}>{n.title}</div>
-        {n.sub && <div title={n.description || n.sub} style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>{n.sub}</div>}
-        {n.composition && <div data-boundary-sockets style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:6}}>
+      <div style={{ padding:LM.sp.md }}>
+        <div title={n.title} style={{ fontSize:LM_FS_BODYSM.sz, fontWeight:LM_FS_BODYSM_STRONG.wt, color:LM.ink, marginBottom:2, lineHeight:LM_FS_BODYSM.ln + 'px' }}>{n.title}</div>
+        {n.sub && <div title={n.description || n.sub} style={{ fontFamily:LM.sans, fontSize:LM_FS_CAPTION.sz, color:LM.inkSoft, lineHeight:LM_FS_CAPTION.ln + 'px' }}>{n.sub}</div>}
+        {sessionCard && <div data-session-ports style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:8,
+          fontSize:11, color:LM.inkSoft}}>
+          <div><strong style={{fontSize:LM_FS_LABEL.sz, color:LM.inkSoft, textTransform:'uppercase'}}>Accepts</strong><br/>{(n.ins || []).length || 0} sockets</div>
+          <div><strong style={{fontSize:LM_FS_LABEL.sz, color:LM.inkSoft, textTransform:'uppercase'}}>Emits</strong><br/>{(n.outs || []).length || 0} sockets</div>
+        </div>}
+        {groupCard && <div data-boundary-sockets style={{fontFamily:LM.mono, fontSize:LM_FS_DATASM.sz, color:LM.inkSoft, marginTop:6}}>
           boundary sockets · {(n.ins?.length || 0)} in · {(n.outs?.length || 0)} out
+        </div>}
+        {groupCard && groupMembers.length > 0 && <div data-member-chips style={{display:'flex', flexWrap:'wrap', gap:6, marginTop:8}}>
+          {groupMembers.map(member => {
+            const id = typeof member === 'string' ? member : member.id || member.title || member.label;
+            const name = typeof member === 'string' ? member : member.title || member.label || member.id;
+            return <span key={id || name} data-member-chip={id || name} data-member-drag={memberDragTrace[id || name] || undefined} draggable={false} onDragStart={e => e.preventDefault()}
+              onPointerDown={onMemberLeave ? e => startMemberDrag(member, e) : undefined}
+              onMouseDown={onMemberLeave ? e => startMemberDrag(member, e) : undefined} style={{height:24, display:'inline-flex',
+              alignItems:'center', gap:5, padding:'0 7px', border:`1px solid ${LM.line}`, borderRadius:6, background:LM.bgSoft,
+              fontSize:12, color:LM.ink, cursor:onMemberLeave ? 'grab' : 'default'}}>
+              <span aria-hidden="true" style={{width:16, height:16, borderRadius:4, display:'grid', placeItems:'center',
+                background:cat.col + '22', color:cat.col, fontSize:LM_FS_LABEL.sz}}>{String(name || '?').slice(0, 1).toUpperCase()}</span>
+              {name}
+            </span>;
+          })}
         </div>}
         <NodeBody n={n} expanded={expanded} onToggleExpand={onToggleExpand}/>
       </div>
@@ -5466,7 +5895,8 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
 // A card re-renders only when what it draws changed: its node record, its place, or its focus, dim and
 // expansion. Its handlers are stable (NodeCanvas cardHandlers), so a drag re-renders the moving card only.
 const MemoNodeRenderer = React.memo(NodeRenderer, (a, b) => a.n === b.n && a.x === b.x && a.y === b.y &&
-  a.focused === b.focused && a.selected === b.selected && a.dimmed === b.dimmed && a.expanded === b.expanded && !!a.onOpen === !!b.onOpen && !!a.onExpand === !!b.onExpand);
+  a.themeEpoch === b.themeEpoch &&
+  a.focused === b.focused && a.selected === b.selected && a.dimmed === b.dimmed && a.expanded === b.expanded && !!a.onOpen === !!b.onOpen && !!a.onExpand === !!b.onExpand && a.onMemberLeave === b.onMemberLeave);
 const NodeStateDot = ({ s }) => {
   const col = s === 'running' ? LM.accent : s === 'queued' ? LM.inkSoft : LM.ok;
   return (
@@ -5476,7 +5906,7 @@ const NodeStateDot = ({ s }) => {
         boxShadow: s === 'running' ? `0 0 0 2px ${col}22` : 'none',
         animation: s === 'running' ? 'lmPulse 1.2s infinite' : 'none',
       }}/>
-      <span style={{ fontFamily:LM.mono, fontSize:11, color:col, letterSpacing:'0.1em', textTransform:'uppercase' }}>{s}</span>
+      <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:col, letterSpacing:'0.1em', textTransform:'uppercase' }}>{s}</span>
     </span>
   );
 };
@@ -5505,7 +5935,7 @@ const Socket = ({ id, side, i, t, label, onUse, onDragStart, half = 110 }) => {
       }}/>
       {/* An input's and an output's label share one row: each gets half the card, never the other's half. */}
       <span title={label || undefined} style={{
-        fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em',
+          fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.08em',
         whiteSpace:'nowrap', padding:'0 4px', pointerEvents:'none',
         maxWidth:Math.max(24, half - SOCKET_R * 2 - 10), overflow:'hidden', textOverflow:'ellipsis',
         opacity: label ? 0.85 : 0,
@@ -5529,6 +5959,17 @@ const ASK_SCALE = {
 // agentAnswerText (above, with the chat view) reads both the structured result and a plain string.
 const agentDeliveryState = result => result && typeof result === 'object' && !Array.isArray(result) && result.delivery
   ? result.delivery.state : null;
+const agentRefusalText = result => result && typeof result === 'object' && !Array.isArray(result) && result.ok === false
+  ? 'The reply did not arrive: ' + String(result.error || 'provider refused the request') : '';
+const agentTurnTimeoutMs = () => {
+  const configured = Number(window.ARCHHUB_AGENT_TURN_TIMEOUT_MS);
+  return Number.isFinite(configured) ? Math.max(1, Math.min(45000, configured)) : 45000;
+};
+const agentTurnWithTimeout = promise => new Promise((resolve, reject) => {
+  const timer = window.setTimeout(() => reject(new Error('The reply did not arrive within 45 seconds. Retry when ready.')),
+    agentTurnTimeoutMs());
+  Promise.resolve(promise).then(resolve, reject).finally(() => window.clearTimeout(timer));
+});
 
 const InlineAsk = ({ placeholder, model, node, onAnswer, scale, before }) => {
   const S = ASK_SCALE[scale] || ASK_SCALE.node;
@@ -5615,24 +6056,24 @@ const NodeBody = ({ n, expanded, onToggleExpand }) => {
 const LiveBody = ({ n }) => (
   <div style={{ marginTop:9, display:'flex', flexDirection:'column', gap:LM.sp.xs }}>
     {(n.params || []).slice(0, 4).map(row => (
-      <div key={row.k} style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:11 }}>
+      <div key={row.k} style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz }}>
         <span style={{ color:LM.inkSoft, letterSpacing:'0.04em' }}>{row.k}</span>
         <div style={{ flex:1, borderBottom:`1px dashed ${LM.lineSoft}`, marginBottom:2 }}/>
         <span style={{ color:LM.ink, maxWidth:110, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{String(row.v)}</span>
       </div>
     ))}
     {n.status ? (
-      <div style={{ marginTop:2, fontFamily:LM.mono, fontSize:11, color:LM.accent, letterSpacing:'0.03em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{n.status}</div>
+      <div style={{ marginTop:2, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.accent, letterSpacing:'0.03em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{n.status}</div>
     ) : null}
     {n.result ? (
-      <div style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:11, marginTop:2 }}>
+      <div style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, marginTop:2 }}>
         <span style={{ color:LM.inkSoft, letterSpacing:'0.04em' }}>result</span>
         <div style={{ flex:1, borderBottom:`1px dashed ${LM.lineSoft}`, marginBottom:2 }}/>
         <span title={n.result} style={{ color:LM.ink, maxWidth:150, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{n.result}</span>
       </div>
     ) : null}
     {n.mutates ? (
-      <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:4, fontFamily:LM.mono, fontSize:11, color:LM.warn || LM.accent }}>
+      <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:4, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.warn || LM.accent }}>
         <span aria-hidden="true">⚠</span><span>mutates model · requires approval</span>
       </div>
     ) : null}
@@ -5664,7 +6105,7 @@ const LinePreview = ({ id }) => {
 const HostBody = ({ n }) => (
   <div style={{ marginTop:9, display:'flex', flexDirection:'column', gap:LM.sp.xs }}>
     {n.outs.map(o => (
-      <div key={o.id} style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:11 }}>
+      <div key={o.id} style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz }}>
         <span style={{ color:LM.inkSoft, letterSpacing:'0.04em' }}>{o.label}</span>
         <div style={{ flex:1, borderBottom:`1px dashed ${LM.lineSoft}`, marginBottom:2 }}/>
         <span style={{ color:LM.ink }}>{o.val}</span>
@@ -5692,7 +6133,7 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
           <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search this conversation…" style={{
             flex:1, border:0, background:'transparent', color:LM.ink, fontSize:12, outline:'none', fontFamily:LM.sans,
           }}/>
-          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft }}>{filtered.length}/{total}</span>
+          <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft }}>{filtered.length}/{total}</span>
           {q && (
             <button onClick={() => setQ('')} style={{
               width:14, height:14, padding:0, border:0, background:'transparent',
@@ -5716,11 +6157,11 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
                 width:18, height:18, borderRadius: m.me ? '50%' : 4, flexShrink:0,
                 background: m.me ? LM.userAv : LM.accent,
                 color: m.me ? LM.onUserAv : ((window.AH && window.AH.onFill) || '#180f08'),
-                display:'grid', placeItems:'center', fontSize:11, fontWeight:700,
+                display:'grid', placeItems:'center', fontSize:LM.fs.label.sz, fontWeight:700,
               }}>{m.who}</div>
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ display:'flex', alignItems:'baseline', gap:7, marginBottom:1 }}>
-                  <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>{m.time || ''}</span>
+                  <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.04em' }}>{m.time || ''}</span>
                 </div>
                 <div style={{ fontSize:11.5, lineHeight:1.5, color: m.me ? LM.ink : LM.inkSoft }}>
                   {q ? highlight(m.text, q) : m.text}
@@ -5769,7 +6210,7 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
               width:18, height:18, borderRadius: m.me ? '50%' : 4,
               background: m.me ? LM.userAv : LM.accent,
               color: m.me ? LM.onUserAv : ((window.AH && window.AH.onFill) || '#180f08'),
-              display:'grid', placeItems:'center', fontSize:11, fontWeight:700, flexShrink:0,
+              display:'grid', placeItems:'center', fontSize:LM.fs.label.sz, fontWeight:700, flexShrink:0,
             }}>{m.who}</div>
             <div style={{ flex:1, minWidth:0 }}>
               <div style={{ fontSize:12, color: m.me ? LM.ink : LM.inkSoft, lineHeight:1.45 }}>
@@ -5781,7 +6222,7 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
               {isAssistant && isLast && (
                 <button onClick={(e) => { e.stopPropagation(); setShowReasoning(s => !s); }} style={{
                   background:'transparent', border:0, padding:'3px 0', color:LM.inkSoft,
-                  fontFamily:LM.mono, fontSize:11, letterSpacing:'0.06em', cursor:'pointer',
+                  fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, letterSpacing:'0.06em', cursor:'pointer',
                   display:'flex', alignItems:'center', gap:LM.sp.xs, marginTop:3,
                 }}>
                   <span>{showReasoning ? '▾' : '▸'}</span> reasoning · 4 steps
@@ -5791,7 +6232,7 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
                 <div style={{
                   marginTop:3, padding:'5px 8px', background:LM.bgDeep,
                   border:`1px solid ${LM.lineSoft}`, borderLeft:`2px solid ${LM.purple}`, borderRadius:LM.rad.xs,
-                  fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, lineHeight:1.6,
+                  fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, lineHeight:1.6,
                 }}>
                   <div>1. match-skill = "Dimension walls"</div>
                   <div>2. exterior is the noisier baseline → start there</div>
@@ -5818,22 +6259,22 @@ const highlight = (text, q) => {
 };
 
 const ReadBody = ({ n }) => (
-  <div style={{ marginTop:7, fontFamily:LM.mono, fontSize:11, lineHeight:1.55 }}>
+  <div style={{ marginTop:7, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:1.55 }}>
     <div style={{ display:'flex', alignItems:'center', gap:6 }}>
       <span style={{ color:LM.ok }}>✓</span>
       <span style={{ color:LM.ink, flex:1 }}>{n.result}</span>
-      <span style={{ color:LM.inkSoft, fontSize:11 }}>{n.ms}</span>
+        <span style={{ color:LM.inkSoft, fontSize:LM.fs.label.sz }}>{n.ms}</span>
     </div>
   </div>
 );
 
 const FilterBody = ({ n }) => (
   <div style={{ marginTop:7 }}>
-    <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginBottom:LM.sp.xs }}>predicate</div>
-    <div style={{ background:LM.bgDeep, border:`1px solid ${LM.lineSoft}`, borderRadius:4, padding:'5px 8px', fontFamily:LM.mono, fontSize:11, color:LM.cyan }}>
+    <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, marginBottom:LM.sp.xs }}>predicate</div>
+    <div style={{ background:LM.bgDeep, border:`1px solid ${LM.lineSoft}`, borderRadius:4, padding:'5px 8px', fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.purple }}>
       {n.sub.replace(/^.*?·\s*/, '')}
     </div>
-    <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:6, fontFamily:LM.mono, fontSize:11 }}>
+      <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:6, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz }}>
       <span style={{ color:LM.ok }}>→</span>
       <span style={{ color:LM.ink, flex:1 }}>{n.result}</span>
       <span style={{ color:LM.inkSoft, fontSize:11 }}>{n.ms}</span>
@@ -5845,14 +6286,14 @@ const FilterBody = ({ n }) => (
 const TransformBody = ({ n }) => (
   <div style={{ marginTop:LM.sp.sm, display:'flex', flexDirection:'column', gap:6 }}>
     {n.params?.map(p => (
-      <div key={p.k} style={{ display:'flex', alignItems:'center', gap:6, fontFamily:LM.mono, fontSize:11 }}>
+      <div key={p.k} style={{ display:'flex', alignItems:'center', gap:6, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz }}>
         <span style={{ color:LM.inkSoft, letterSpacing:'0.04em' }}>{p.k}</span>
         <div style={{ flex:1, borderBottom:`1px dashed ${LM.lineSoft}`, marginBottom:2 }}/>
         <span style={{ color:LM.ink, padding:'1px 6px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.xs }}>{p.v}</span>
       </div>
     ))}
     <div style={{
-      marginTop:2, fontFamily:LM.mono, fontSize:11, color:LM.warn,
+      marginTop:2, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.warn,
       padding:'4px 8px', background:LM.warn+'14', borderRadius:LM.rad.xs,
       display:'flex', alignItems:'center', gap:6,
     }}>
@@ -5918,9 +6359,9 @@ const AnnotateBody = ({ n }) => (
     {n.runtime && (
       <>
         <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:6 }}>
-          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.accent, letterSpacing:'0.06em' }}>{n.runtime}</span>
+          <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.accent, letterSpacing:'0.06em' }}>{n.runtime}</span>
           <div style={{ flex:1 }}/>
-          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft }}>{Math.round(n.progress*100)}%</span>
+          <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft }}>{Math.round(n.progress*100)}%</span>
         </div>
         <div style={{ height:3, background:LM.bgDeep, borderRadius:2, overflow:'hidden', marginBottom:10 }}>
           <div style={{ width:`${n.progress*100}%`, height:'100%', background:LM.accent }}/>
@@ -5934,7 +6375,7 @@ const AnnotateBody = ({ n }) => (
     )}
     {n.runtime && (
       <>
-        <div style={{ marginTop:10, fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em', marginBottom:5 }}>PREVIEW</div>
+        <div style={{ marginTop:10, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.14em', marginBottom:5 }}>PREVIEW</div>
         <StagePreview/>
       </>
     )}
@@ -5945,8 +6386,8 @@ const OutputBody = ({ n }) => (
   <div style={{ marginTop:LM.sp.sm, display:'flex', flexDirection:'column', gap:7 }}>
     {n.params?.slice(0, 2).map(p => (
       <div key={p.k} style={{ display:'flex', flexDirection:'column', gap:2 }}>
-        <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>{p.k}</span>
-        <div style={{ background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:4, padding:'4px 8px', fontFamily:LM.mono, fontSize:11, color:LM.ink }}>
+        <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.04em' }}>{p.k}</span>
+        <div style={{ background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:4, padding:'4px 8px', fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.ink }}>
           {p.v}
         </div>
       </div>
@@ -5982,8 +6423,8 @@ const CompactParam = ({ p }) => {
     return (
       <div>
         <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
-          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, flex:1, letterSpacing:'0.04em' }}>{p.k}</span>
-          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.ink, fontWeight:500 }}>{p.v}</span>
+          <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, flex:1, letterSpacing:'0.04em' }}>{p.k}</span>
+          <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.ink, fontWeight:500 }}>{p.v}</span>
         </div>
         <div style={{ height:3, background:LM.bgDeep, borderRadius:2, marginTop:LM.sp.xs, position:'relative' }}>
           <div style={{ width:`${pct}%`, height:'100%', background:LM.accent, borderRadius:2 }}/>
@@ -5994,8 +6435,8 @@ const CompactParam = ({ p }) => {
   }
   return (
     <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-      <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, flex:1, letterSpacing:'0.04em' }}>{p.k}</span>
-      <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.ink, padding:'1px 6px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.xs }}>
+      <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, flex:1, letterSpacing:'0.04em' }}>{p.k}</span>
+      <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.ink, padding:'1px 6px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.xs }}>
         {p.v} <span style={{ color:LM.inkSoft, marginLeft:2 }}>▾</span>
       </span>
     </div>
@@ -6018,11 +6459,11 @@ const StagePreview = () => (
       <line x1="20" y1="87" x2="20" y2="93" stroke={LM.accent} strokeWidth="0.6"/>
       <line x1="100" y1="87" x2="100" y2="93" stroke={LM.accent} strokeWidth="0.6"/>
       <line x1="180" y1="87" x2="180" y2="93" stroke={LM.accent} strokeWidth="0.6"/>
-      <text x="60" y="86" textAnchor="middle" fontFamily="JetBrains Mono" fontSize="4" fill={LM.accent}>9 600</text>
-      <text x="140" y="86" textAnchor="middle" fontFamily="JetBrains Mono" fontSize="4" fill={LM.accent}>10 400</text>
+      <text x="60" y="86" textAnchor="middle" fontFamily="JetBrains Mono" fontSize={LM.fs.dataSm.sz} fill={LM.accent}>9 600</text>
+      <text x="140" y="86" textAnchor="middle" fontFamily="JetBrains Mono" fontSize={LM.fs.dataSm.sz} fill={LM.accent}>10 400</text>
     </svg>
     <div style={{
-      position:'absolute', top:5, right:6, fontFamily:LM.mono, fontSize:11,
+      position:'absolute', top:5, right:6, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz,
       color:LM.accent, letterSpacing:'0.06em', background:LM.bgDeep+'cc', padding:'1px 5px', borderRadius:2,
     }}>17 / 23 placed</div>
   </div>
@@ -6037,13 +6478,13 @@ const CanvasToolbar = ({ zoom, setZoom, onFit, fitLabel, onArrange, arrangeDisab
   }}>
     <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.min(2, +(z + 0.1).toFixed(2))); }} title="Zoom in" aria-label="Zoom in" style={toolBtn()}>+</button>
     <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.max(0.3, +(z - 0.1).toFixed(2))); }} title="Zoom out" aria-label="Zoom out" style={toolBtn()}>−</button>
-    <div style={{ ...toolBtn(), width:48, color:LM.ink, background:LM.bg, fontFamily:LM.mono, fontSize:11, cursor:'default' }}>
+    <div style={{ ...toolBtn(), width:48, color:LM.ink, background:LM.bg, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, cursor:'default' }}>
       {Math.round(zoom * 100)}%
     </div>
     <button onClick={(e) => { e.stopPropagation(); onFit(); }} title={fitLabel} aria-label={fitLabel} style={toolBtn()}>{'\u27f2'}</button>
     <button disabled={arrangeDisabled} onClick={(e) => { e.stopPropagation(); onArrange(); }}
       title={arrangeDisabled ? arrangeWhy : 'Arrange'} aria-label="Arrange"
-      style={{...toolBtn(), width:62, fontFamily:LM.mono, fontSize:11, color:arrangeDisabled ? LM.inkSoft : LM.accent}}>Arrange</button>
+      style={{...toolBtn(), width:62, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:arrangeDisabled ? LM.inkSoft : LM.accent}}>Arrange</button>
     <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
     {[['Undo', '\u21b6', undo], ['Redo', '\u21b7', redo]].filter(([, , held]) => held).map(([label, icon, held]) => (
       <button key={label} disabled={held.disabled} onClick={(e) => { e.stopPropagation(); held.run(); }}
@@ -6053,15 +6494,15 @@ const CanvasToolbar = ({ zoom, setZoom, onFit, fitLabel, onArrange, arrangeDisab
     <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
     <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} title="Add node" aria-label="Add node" style={{
       padding:'0 10px', height:22, border:0, background:'transparent', cursor:'pointer',
-      color:LM.accent, fontFamily:LM.mono, fontSize:11, letterSpacing:'0.06em',
+      color:LM.accent, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, letterSpacing:'0.06em',
       display:'flex', alignItems:'center', gap:LM.sp.xs,
     }}>{'\uff0b add node'}</button>
   </div>
 );
 
 const toolBtn = () => ({
-  width:24, height:22, padding:0, border:0, background:'transparent',
-  color:LM.inkSoft, borderRadius:4, cursor:'pointer', fontSize:13,
+  width:LM.icon.ui.box, height:LM.icon.ui.box, padding:0, border:0, background:'transparent',
+  color:LM.inkSoft, borderRadius:LM.rad.control, cursor:'pointer', fontSize:LM.icon.ui.size,
 });
 
 // ─── floating composer (BOTTOM CENTER — always-bottom anchor) ───
@@ -6157,7 +6598,7 @@ const MiniMap = ({ pan, zoom, positions, allNodes }) => {
         })}
       </svg>
       <div style={{
-        position:'absolute', left:6, top:5, fontFamily:LM.mono, fontSize:11,
+        position:'absolute', left:6, top:5, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz,
         color:LM.inkSoft, letterSpacing:'0.14em', background:LM.bgDeep+'cc', padding:'1px 5px', borderRadius:2,
       }}>MAP</div>
     </div>
@@ -6177,13 +6618,13 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary, initialQuery = '' }) => {
     }}>
       <div onClick={e => e.stopPropagation()} style={{
         width:780, maxWidth:'94%', height:540, maxHeight:'88%',
-        background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.xl,
-        overflow:'hidden', boxShadow:'0 30px 80px rgba(0,0,0,.6)',
+        background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.dialog,
+        overflow:'hidden', boxShadow:LM.shadow.dialog,
         display:'grid', gridTemplateColumns:'180px 1fr', gridTemplateRows:'48px 1fr',
       }}>
         <div style={{ gridColumn:'1 / -1', gridRow:'1', borderBottom:`1px solid ${LM.line}`, padding:'0 14px', display:'flex', alignItems:'center', gap:10 }}>
           <span style={{ fontFamily:LM.serif, fontSize:18, letterSpacing:'-0.01em' }}>Node library</span>
-          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.1em' }}>
+          <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.1em' }}>
             {library.reduce((n, g) => n + g.items.length, 0)} NODES · CLICK TO ADD
           </span>
           <div style={{ flex:1 }}/>
@@ -6193,12 +6634,12 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary, initialQuery = '' }) => {
           }}/>
           <button onClick={onClose} style={{
             width:24, height:24, padding:0, border:`1px solid ${LM.line}`, background:'transparent',
-            borderRadius:LM.rad.sm, cursor:'pointer', color:LM.inkSoft, fontSize:12,
+            borderRadius:LM.rad.control, cursor:'pointer', color:LM.inkSoft, fontSize:LM.icon.ui.size,
           }}>✕</button>
         </div>
 
         {/* Categories */}
-        <div style={{ gridColumn:'1', gridRow:'2', borderRight:`1px solid ${LM.line}`, padding:'10px 8px', overflow:'auto' }}>
+        <div style={{ gridColumn:'1', gridRow:'2', borderRight:`1px solid ${LM.line}`, padding:`${LM.sp.md}px ${LM.sp.sm}px`, overflow:'auto' }}>
           <LibCatBtn id="all" label="All categories" active={filter==='all'} onSelect={setFilter}/>
           {Object.entries(CAT).map(([id, c]) => (
             <LibCatBtn key={id} id={id} label={c.label.toLowerCase()} icon={c.icon} col={c.col} active={filter===id} onSelect={setFilter}/>
@@ -6214,8 +6655,8 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary, initialQuery = '' }) => {
               <div key={g.cat} style={{ marginBottom:18 }}>
                 <div style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, marginBottom:LM.sp.sm }}>
                   <span style={{ color:c.col }}>{c.icon}</span>
-                  <span style={{ fontFamily:LM.mono, fontSize:11, color:c.col, letterSpacing:'0.18em' }}>{c.label}</span>
-                  <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.06em' }}>{c.role}</span>
+                  <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:c.col, letterSpacing:'0.18em' }}>{c.label}</span>
+                  <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.06em' }}>{c.role}</span>
                 </div>
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
                   {items.map(i => (
@@ -6243,19 +6684,19 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary, initialQuery = '' }) => {
 
 const LibCatBtn = ({ id, label, icon, col, active, onSelect }) => (
   <button onClick={() => onSelect(id)} style={{
-    width:'100%', padding:'7px 11px', borderRadius:LM.rad.sm, border:0,
+    width:'100%', padding:`${LM.sp.sm}px ${LM.sp.md}px`, borderRadius:LM.rad.control, border:0,
     background: active ? LM.bgSoft : 'transparent',
     color: active ? LM.ink : LM.inkSoft,
-    textAlign:'left', cursor:'pointer', fontFamily:LM.sans, fontSize:13,
+    textAlign:'left', cursor:'pointer', fontFamily:LM.sans, fontSize:LM.fs.bodySm.sz,
     display:'flex', alignItems:'center', gap:LM.sp.sm, marginBottom:1,
   }}>
-    {icon && <span style={{ color:col, width:12, textAlign:'center', fontFamily:LM.mono, fontSize:11 }}>{icon}</span>}
+    {icon && <span style={{ color:col, width:LM.icon.category.box, textAlign:'center', fontFamily:LM.sans, fontSize:LM.icon.category.size }}>{icon}</span>}
     <span style={{ flex:1 }}>{label}</span>
   </button>
 );
 
 // ──────────────────────── NODE RAIL ────────────────────────
-const NodeModelConversation = ({node, scope = '', openConversation}) => {
+const NodeModelConversation = ({node, scope = '', openConversation, active = true}) => {
   const [answer, setAnswer] = React.useState('');
   const [transcriptTick, setTranscriptTick] = React.useState(0);
   // Turns sent from the panel composer that the transcript has not read back yet (UX-CHAT1).
@@ -6271,10 +6712,11 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
       setTurns(held => {
         const prior = held.find(t => t.requestId === d.requestId);
         const rest = held.filter(t => t.requestId !== d.requestId);
-        if (d.phase === 'failed') return rest;
         return [...rest, {requestId:d.requestId, said:d.said, model:d.model,
           baseline:prior ? prior.baseline : new Set(rowsRef.current.map(row => row.id)),
-          answer:d.phase === 'answer' ? (d.answer || '') : null,
+          answer:d.phase === 'answer' || d.phase === 'failed' ? (d.answer || '') : null,
+          failed:d.phase === 'failed',
+          steps:Array.isArray(d.steps) ? d.steps : (prior ? prior.steps || [] : []),
           messageId:d.messageId || '', replyId:d.replyId || ''}];
       });
       // Read the store on send (the question may already be saved) and on the answer.
@@ -6292,6 +6734,9 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
   const route = model ? nodeModelRoute(node) : '';
   const bound = node.graphNode === true || (node.has_conversation === true && !!node.conversation_root);
   React.useEffect(() => {
+    // Keep local turn identity while another inspector tab is open; hidden
+    // conversations retain their listener without polling the transcript.
+    if (!active) return;
     if (!bound || typeof window === 'undefined' || typeof window.ARCHHUB_WORKSHOP_TRANSCRIPT !== 'function') {
       setTranscript(null); return;
     }
@@ -6309,7 +6754,10 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
         }
         // Exact bound-root match: a response for another node, or one whose conversation_root is
         // null/missing/different while this node is bound, is refused — never rendered.
-        if (result.node !== want.node || (want.conv && result.conversation_root !== want.conv)) return;
+        if (result.node !== want.node || (want.conv && result.conversation_root !== want.conv)) {
+          setTranscript({rows:[], error:'This conversation does not match the selected graph or node. Reopen its original scope.', has_older:false});
+          return;
+        }
         setTranscript({rows: Array.isArray(result.rows) ? result.rows : [], error:'', has_older: result.has_older === true});
       } catch (reason) { if (live) setTranscript({rows:[], error: reason?.message || String(reason), has_older:false}); }
       finally { inFlight = false; }
@@ -6317,7 +6765,7 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
     read();                                 // re-read whenever the rail opens or the bound node/scope changes
     const timer = setInterval(read, 8000);  // light poll \u2014 messages live in content, so the revision never moves
     return () => { live = false; clearInterval(timer); };
-  }, [bound, node.id, node.conversation_root, scope, transcriptTick]);
+  }, [active, bound, node.id, node.conversation_root, scope, transcriptTick]);
   const rows = transcript ? transcript.rows : [];
   const hasOlder = !!(transcript && transcript.has_older);
   rowsRef.current = rows;
@@ -6335,8 +6783,9 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
       if (fresh) { claimed.add(fresh.id); questionShown = true; }
     }
     if (!questionShown) turnRows.push({id:turn.requestId + ':q', who:'You', is_me:true, text:turn.said, time:''});
-    turnRows.push({id:turn.requestId + ':a', who:turn.model || 'model', is_me:false, kind:turn.answer === null ? 'waiting' : 'message',
-      text:turn.answer === null ? 'Waiting for ' + (turn.model || 'the model') + '\u2026' : turn.answer, time:''});
+    turnRows.push({id:turn.requestId + ':a', who:turn.model || 'model', is_me:false, kind:turn.failed ? 'error' : turn.answer === null ? 'waiting' : 'message',
+      text:turn.answer === null ? 'Waiting for ' + (turn.model || 'the model') + '\u2026' : turn.answer, time:'',
+      steps:turn.steps || []});
   }
   // PM gate 2026-10-13: a new turn scrolls into view (the newest answer must be on screen),
   // unless the user has scrolled up to read history; then their place is kept.
@@ -6348,32 +6797,35 @@ const NodeModelConversation = ({node, scope = '', openConversation}) => {
   React.useEffect(() => {
     const box = scrollRef.current;
     if (box && pinnedRef.current) box.scrollTop = box.scrollHeight;
-  }, [tailKey]);
+  }, [tailKey, active]);
   const onTranscriptScroll = event => {
     const box = event.currentTarget;
     pinnedRef.current = box.scrollHeight - box.scrollTop - box.clientHeight < 24;
   };
+  // The section leaves the DOM on other tabs; its turn listener remains held
+  // so an admitted reply cannot disappear while the founder inspects properties.
+  if (!active) return null;
   return <section aria-label={'Conversation with ' + node.title} style={{ display:'flex', flexDirection:'column', gap:10, borderTop:`1px solid ${LM.lineSoft}`, paddingTop:12 }}>
     <div style={{ display:'flex', alignItems:'center', gap:7 }}>
       <span style={{ color:cat.col, fontFamily:LM.mono }}>{cat.icon}</span>
-      <span style={{ fontFamily:LM.mono, fontSize:11, color:cat.col, letterSpacing:'0.18em' }}>CONVERSATION</span>
+      <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:cat.col, letterSpacing:'0.18em' }}>CONVERSATION</span>
       <div style={{ flex:1 }}/>
       {model ? (
-        <p title={route || undefined} style={{ margin:0, maxWidth:170, fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.06em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+        <p title={route || undefined} style={{ margin:0, maxWidth:170, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.06em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
           {route || 'Choose a model for this node'}</p>
       ) : null}
     </div>
-    {bound ? (
+    {bound || turnRows.length > 0 ? (
       <div ref={scrollRef} onScroll={onTranscriptScroll} data-chat-scroll className="ah-scroll" style={{ maxHeight:260, overflow:'auto', display:'flex', flexDirection:'column', gap:11 }}>
         {transcript === null && !turnRows.length ? (
-          <p style={{ margin:0, fontFamily:LM.mono, fontSize:11, color:LM.inkSoft }}>Reading the conversation…</p>
+          <p style={{ margin:0, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft }}>Reading the conversation…</p>
         ) : transcript && transcript.error ? (
           <p role="alert" style={{ margin:0, fontSize:12, color:LM.warn || LM.accent }}>{transcript.error}</p>
         ) : rows.length === 0 && !turnRows.length ? (
           <p role="status" style={{ margin:0, fontSize:12, lineHeight:1.5, color:LM.inkSoft }}>No conversation yet · ask below to start one.</p>
         ) : (<>
           {hasOlder ? (
-            <p style={{ margin:0, fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>Latest messages only · full history in the Workshop</p>
+            <p style={{ margin:0, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.04em' }}>Latest messages only · full history in the Workshop</p>
           ) : null}
           {rows.map(row => <div key={row.id} data-chat-turn={row.is_me ? 'question' : 'answer'}><NodeTranscriptRow row={row}/></div>)}
           {turnRows.map(row => <div key={row.id} data-chat-local data-chat-turn={row.is_me ? 'question' : row.kind}><NodeTranscriptRow row={row}/></div>)}
@@ -6399,14 +6851,15 @@ const formatNodeConversationTime = iso => {
 const NodeTranscriptRow = ({ row }) => (
   <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
     <div style={{ display:'flex', alignItems:'baseline', gap:7 }}>
-      <span style={{ fontFamily:LM.mono, fontSize:11, letterSpacing:'0.08em', color: row.is_me ? LM.accent : LM.inkSoft }}>{row.who}</span>
+      <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, letterSpacing:'0.08em', color: row.is_me ? LM.accent : LM.inkSoft }}>{row.who}</span>
       {row.kind && row.kind !== 'message' ? (
-        <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.1em', textTransform:'uppercase' }}>{row.kind}</span>
+        <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.1em', textTransform:'uppercase' }}>{row.kind}</span>
       ) : null}
       <div style={{ flex:1 }}/>
-      <time dateTime={row.time} style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft }}>{formatNodeConversationTime(row.time)}</time>
+      <time dateTime={row.time} style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft }}>{formatNodeConversationTime(row.time)}</time>
     </div>
     <div style={{ fontFamily:LM.serif, fontSize:13, lineHeight:1.5, color:LM.ink, whiteSpace:'pre-wrap', overflowWrap:'anywhere', maxHeight:150, overflow:'auto' }}>{row.text}</div>
+    {typeof BaboomToolSteps === 'function' ? <BaboomToolSteps steps={row.steps}/> : null}
   </div>
 );
 const graphInspectorNode = (canvas, graph, session, sessionRows = []) => {
@@ -6437,7 +6890,7 @@ const CHAT_TURN_EVENT = 'archhub:chat-turn';
 const announceChatTurn = detail => {
   try { window.dispatchEvent(new window.CustomEvent(CHAT_TURN_EVENT, {detail})); } catch (_) {}
 };
-const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadinessStale, onModelReadRetry, onAccount }) => {
+const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadinessStale, onModelReadRetry, onAccount, onSend }) => {
   const [text, setText] = React.useState('');
   const [state, setState] = React.useState('');
   const [stateModel, setStateModel] = React.useState('');
@@ -6466,6 +6919,7 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
       if (typeof setPickerOpen === 'function') setPickerOpen(true);
       return;
     }
+    if (typeof onSend === 'function') onSend();
     const requestId = nextRequestId(said);
     pendingSend.current = {raw:text, said, target:target.id, requestId};
     setAsking(true); setState(''); setStateModel('');
@@ -6474,17 +6928,26 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
       const context = target.kind === 'graph'
         ? {graph:true, graph_id:target.graphId, request_id:requestId, generation:generationRequestOptions()}
         : {node:target.node.id, request_id:requestId, generation:generationRequestOptions()};
-      const result = await window.ARCHHUB_AGENT(said, route, context);
+      const result = await agentTurnWithTimeout(window.ARCHHUB_AGENT(said, route, context));
+      const refusal = agentRefusalText(result);
+      if (refusal) {
+        const message = refusal + ' Your text is still here; retry will use the same request.';
+        announceChatTurn({target:target.id, requestId, said, model:modelName, phase:'failed', answer:message});
+        setState(message);
+        setStateModel(modelName);
+        return;
+      }
       const answer = agentAnswerText(result);
       const deliveryState = agentDeliveryState(result);
       if (!deliveryState || deliveryState === 'replied') {
         // UX-CHAT1: the answer is a turn in the Conversation section above, never a loose line here.
         const delivery = (result && typeof result === 'object' && result.delivery) || {};
         announceChatTurn({target:target.id, requestId, said, model:modelName, phase:'answer', answer,
+          steps:agentAnswerSteps(result),
           messageId:delivery.message_id || '', replyId:delivery.reply_message_id || ''});
       } else {
         // Not confirmed: say so beside the field (the text stays for a safe retry); no half turn above.
-        announceChatTurn({target:target.id, requestId, said, model:modelName, phase:'failed'});
+        announceChatTurn({target:target.id, requestId, said, model:modelName, phase:'failed', answer});
         setState(answer);
         setStateModel(modelName);
       }
@@ -6493,21 +6956,28 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
         setText('');
       }
     } catch (error) {
-      announceChatTurn({target:target.id, requestId, said, model:modelName, phase:'failed'});
-      setState('refused: ' + ((error && error.message) || error || 'no reply') +
-        ' Your text is still here; sending again will not ask twice.');
+      const message = ((error && error.message) || error || 'The reply did not arrive. Retry when ready.') +
+        ' Your text is still here; retry will use the same request.';
+      announceChatTurn({target:target.id, requestId, said, model:modelName, phase:'failed', answer:message});
+      setState(message);
     } finally { setAsking(false); }
   };
   return <div style={{ borderTop:`1px solid ${LM.lineSoft}`, padding:'10px 12px 12px', display:'flex', flexDirection:'column', gap:8, minWidth:0 }}>
-    {state && <p role="status" style={{ margin:0, maxHeight:120, overflow:'auto', whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontFamily:LM.serif, fontSize:13, lineHeight:1.45, color:LM.ink }}>
-      {stateModel && <span style={{ display:'block', fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.06em', marginBottom:3 }}>{stateModel}</span>}
-      <span>{state}</span>
-    </p>}
+    {state && <div role="status" data-chat-turn="error" style={{ margin:0, display:'flex', alignItems:'flex-start', gap:8, maxHeight:120, overflow:'auto',
+      whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontFamily:LM.serif, fontSize:13, lineHeight:1.45, color:LM.ink }}>
+      <div style={{ flex:1, minWidth:0 }}>
+        {stateModel && <span style={{ display:'block', fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.06em', marginBottom:3 }}>{stateModel}</span>}
+        <span>{state}</span>
+      </div>
+      {pendingSend.current && <button type="button" onClick={ask} disabled={asking} style={{
+        ...smallBtn(), flexShrink:0, padding:'4px 9px',
+      }}>{asking ? 'Waiting...' : 'Retry'}</button>}
+    </div>}
     {blocked && <div data-chat-no-model="" role="status" style={{
       background:LM.bgPanel, border:`1px solid ${LM.line}`, borderLeft:`3px solid ${LM.warn}`,
       borderRadius:LM.rad.md, padding:'9px 10px', display:'flex', flexDirection:'column', gap:7,
     }}>
-      <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.warn, letterSpacing:'0.14em' }}>
+      <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.warn, letterSpacing:'0.14em' }}>
         {READINESS_LABELS[blocked.state] || 'NO MODEL'}</div>
       <div style={{ fontSize:12.5, lineHeight:1.45, color:LM.ink }}>{blocked.message}</div>
       <div style={{ display:'flex', gap:7, flexWrap:'wrap' }}>
@@ -6528,7 +6998,7 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
       title={'→ ' + target.name + ' · ' + modelName}
       style={{ alignSelf:'flex-start', maxWidth:'100%', minWidth:0, display:'flex', alignItems:'center', gap:6, padding:'5px 9px',
         background:LM.bg, border:`1px solid ${LM.accent}66`, borderRadius:LM.rad.sm, color:LM.accent,
-        fontFamily:LM.mono, fontSize:11, cursor:'pointer' }}>
+        fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, cursor:'pointer' }}>
       <span style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{'→ ' + target.name + ' · ' + modelName}</span>
       <span aria-hidden="true">▾</span>
     </button>
@@ -6592,24 +7062,31 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
   const [activeTab, setActiveTab] = React.useState(defaultInspectorTab);
   React.useEffect(() => setActiveTab(defaultInspectorTab), [defaultInspectorTab, inspectedNode.id]);
   const visibleTab = labels.includes(activeTab) ? activeTab : defaultInspectorTab;
+  const authority = typeof window !== 'undefined' ? window.ARCHHUB_STUDIO_AUTHORITY : null;
+  const openInspectedGroup = () => authority?.open?.(inspectedNode.id);
+  const ungroupInspectedGroup = () => authority?.composition?.('ungroup', [inspectedNode.id]);
+  const renameInspectedGroup = () => {
+    const next = typeof window !== 'undefined' && window.prompt ? window.prompt('Rename group', inspectedNode.title || '') : '';
+    if (next && next.trim()) authority?.setProperty?.(inspectedNode.id, 'name', next.trim());
+  };
   const target = {kind:inspectedNode.graphNode ? 'graph' : sessionNode ? 'session' : 'node',
     id:inspectedNode.id, graphId:inspectedNode.graph_id || '', name:inspectedNode.title,
     node:inspectedNode.graphNode ? null : inspectedNode};
   const properties = <section aria-label="Properties"><window.NodeInspector key={inspectedNode.id} node={inspectedNode} onFork={forkThroughCanvas}/></section>;
   const groupInterface = <section aria-label="Interface" style={{display:'flex', flexDirection:'column', gap:10}}>
-    <div style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em'}}>INTERFACE · computed from crossing wires</div>
+    <div style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.14em'}}>INTERFACE · computed from crossing wires</div>
     {[...(inspectedNode.ins || []).map(port => ['in', port]), ...(inspectedNode.outs || []).map(port => ['out', port])].map(([dir, port]) => (
       <CalmRow key={dir + ':' + port.id} k={dir + ' · ' + (port.label || port.name || port.id)} v={dir === 'in' ? '→ Request' : 'Commit →'}/>
     ))}
     <div style={{display:'flex', gap:8, flexWrap:'wrap', marginTop:4}}>
-      <HoverBtn primary onClick={() => {}}>Open</HoverBtn>
-      <HoverBtn onClick={() => {}}>Ungroup</HoverBtn>
-      <HoverBtn onClick={() => {}}>Rename</HoverBtn>
+      <HoverBtn primary disabled={!authority?.open} onClick={openInspectedGroup}>Open</HoverBtn>
+      <HoverBtn disabled={!authority?.composition} onClick={ungroupInspectedGroup}>Ungroup</HoverBtn>
+      <HoverBtn disabled={!authority?.setProperty} onClick={renameInspectedGroup}>Rename</HoverBtn>
     </div>
   </section>;
   const groupParameters = <section aria-label="Exposed parameters"><window.NodeInspector key={inspectedNode.id + ':group-params'} node={inspectedNode} onFork={forkThroughCanvas}/></section>;
-  const chat = <section aria-label="Chat">{inspectedNode.live && (inspectedNode.has_conversation || inspectedNode.graphNode || nodeModelRow(inspectedNode)) ?
-    <NodeModelConversation key={inspectedNode.id + ':conversation'} node={inspectedNode} scope={scope} openConversation={openConversation}/> :
+  const chat = <section aria-label={visibleTab === 'Chat' ? 'Chat' : undefined}>{inspectedNode.live ?
+    <NodeModelConversation key={inspectedNode.id + ':conversation'} node={inspectedNode} scope={scope} openConversation={openConversation} active={visibleTab === 'Chat'}/> :
     <p role="status" style={{ margin:0, fontSize:12, lineHeight:1.5, color:LM.inkSoft }}>No conversation yet.</p>}</section>;
   return (
     <aside aria-label="Selection inspector" style={{
@@ -6624,22 +7101,22 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
         <div>
           <div style={{ display:'flex', alignItems:'center', gap:7 }}>
             <span style={{ color:cat.col, fontFamily:LM.mono }}>{cat.icon}</span>
-            <span style={{ fontFamily:LM.mono, fontSize:11, color:cat.col, letterSpacing:'0.18em' }}>
+            <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:cat.col, letterSpacing:'0.18em' }}>
               {inspectedNode.graphNode ? 'GRAPH' : cat.label}</span>
           </div>
           <div style={{ fontFamily:LM.serif, fontSize:21, letterSpacing:'-0.015em', marginTop:5, lineHeight:1.05 }}>
             {inspectedNode.title}
           </div>
-          {inspectedNode.sub && <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:5, letterSpacing:'0.04em' }}>{inspectedNode.sub}</div>}
+          {inspectedNode.sub && <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, marginTop:5, letterSpacing:'0.04em' }}>{inspectedNode.sub}</div>}
         </div>
         <InspectorTabs labels={labels} active={visibleTab} onSelect={setActiveTab}/>
         {visibleTab === 'Interface' && groupInterface}
         {visibleTab === 'Exposed parameters' && groupParameters}
-        {visibleTab === 'Chat' && chat}
+        <div hidden={visibleTab !== 'Chat'}>{chat}</div>
         {visibleTab === 'Properties' && properties}
         {visibleTab === 'Runs' && <InspectorRuns node={inspectedNode} graph={graph}/>}
       </div>
-      <ScopeComposer target={target} model={model} setPickerOpen={setPickerOpen} readiness={readiness}
+      <ScopeComposer target={target} model={model} setPickerOpen={setPickerOpen} readiness={readiness} onSend={() => setActiveTab('Chat')}
         onReadinessStale={onReadinessStale} onModelReadRetry={onModelReadRetry} onAccount={onAccount}/>
     </aside>
   );
@@ -6666,16 +7143,16 @@ const ConversationRail = ({ node }) => {
       <div style={{ padding:'12px 16px 10px', borderBottom:`1px solid ${LM.lineSoft}` }}>
         <div style={{ display:'flex', alignItems:'center', gap:7 }}>
           <span style={{ color:cat.col, fontFamily:LM.mono }}>{cat.icon}</span>
-          <span style={{ fontFamily:LM.mono, fontSize:11, color:cat.col, letterSpacing:'0.18em' }}>CONVERSATION</span>
+          <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:cat.col, letterSpacing:'0.18em' }}>CONVERSATION</span>
           <div style={{ flex:1 }}/>
-          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.06em' }}>
+          <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.06em' }}>
             {node.messages.length} msgs
           </span>
         </div>
         <div style={{ fontFamily:LM.serif, fontSize:18, letterSpacing:'-0.01em', marginTop:5, lineHeight:1.1 }}>
           {node.title}
         </div>
-        <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:3, letterSpacing:'0.04em' }}>
+        <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, marginTop:3, letterSpacing:'0.04em' }}>
           {node.sub}
         </div>
       </div>
@@ -6688,7 +7165,7 @@ const ConversationRail = ({ node }) => {
         <window.NodeInspector key={node.id + ':params'} node={node} onFork={forkThroughCanvas}/>
 
         {/* Date breakpoint */}
-        <div style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.14em' }}>
           <span style={{ flex:1, height:1, background:LM.lineHair }}/>
           <span>WEDNESDAY · MAY 13</span>
           <span style={{ flex:1, height:1, background:LM.lineHair }}/>
@@ -6700,9 +7177,9 @@ const ConversationRail = ({ node }) => {
         <div style={{
           padding:'9px 12px', background:LM.bgDeep, border:`1px solid ${LM.lineSoft}`,
           borderLeft:`2px solid ${LM.cyan}`, borderRadius:LM.rad.sm,
-          fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, lineHeight:1.7,
+                fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, lineHeight:1.6,
         }}>
-          <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.cyan, letterSpacing:'0.14em', marginBottom:LM.sp.xs }}>
+          <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.cyan, letterSpacing:'0.14em', marginBottom:LM.sp.xs }}>
             FROM THIS CONVERSATION
           </div>
           <div>→ list_walls(view) · 47 walls · 120ms</div>
@@ -6721,7 +7198,7 @@ const ConversationRail = ({ node }) => {
           <div style={{ display:'flex', alignItems:'center', gap:6, minHeight:22, fontSize:13, color:LM.inkSoft }}>
             <InlineAsk scale="reply" placeholder="Reply to this conversation…"/>
           </div>
-          <div style={{ display:'flex', alignItems:'center', gap:5, marginTop:5, fontFamily:LM.mono, fontSize:11, color:LM.inkSoft }}>
+          <div style={{ display:'flex', alignItems:'center', gap:5, marginTop:5, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft }}>
             <ChatAction>@ skill</ChatAction>
             <ChatAction># host</ChatAction>
             <ChatAction>+ attach</ChatAction>
@@ -6730,7 +7207,7 @@ const ConversationRail = ({ node }) => {
             <span>sonnet 4.5 · ~412ms</span>
           </div>
         </div>
-        <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:6, letterSpacing:'0.04em', display:'flex', gap:10 }}>
+        <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, marginTop:6, letterSpacing:'0.04em', display:'flex', gap:10 }}>
           <span>↵ send</span>
           <span>⇧↵ newline</span>
           <span>⌘↑ edit last</span>
@@ -6756,7 +7233,7 @@ const ChatTurn = ({ m, isLast }) => {
       <div style={{ flex:1, minWidth:0 }}>
         <div style={{ display:'flex', alignItems:'baseline', gap:LM.sp.sm, marginBottom:3 }}>
           <span style={{ fontSize:12, fontWeight:500, color:LM.ink }}>{m.me ? 'You' : 'Claude'}</span>
-          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>{m.time}</span>
+          <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.04em' }}>{m.time}</span>
         </div>
         <div style={{ fontSize:13, lineHeight:1.55, color:LM.ink }}>
           {m.text}
@@ -6768,7 +7245,7 @@ const ChatTurn = ({ m, isLast }) => {
           <>
             <button onClick={() => setShowReasoning(s => !s)} style={{
               background:'transparent', border:0, padding:'3px 0', color:LM.inkSoft,
-              fontFamily:LM.mono, fontSize:11, letterSpacing:'0.06em', cursor:'pointer',
+              fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, letterSpacing:'0.06em', cursor:'pointer',
               display:'flex', alignItems:'center', gap:LM.sp.xs, marginTop:3,
             }}>
               <span>{showReasoning ? '▾' : '▸'}</span> reasoning
@@ -6784,7 +7261,7 @@ const ChatTurn = ({ m, isLast }) => {
             )}
             <div style={{
               display:'flex', alignItems:'center', gap:5, marginTop:5,
-              fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em',
+              fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.04em',
             }}>
               <ChatAction>↻ regen</ChatAction>
               <ChatAction>⎘ branch</ChatAction>
@@ -6803,7 +7280,7 @@ const ChatTurn = ({ m, isLast }) => {
 const ChatAction = ({ children }) => (
   <button onClick={e => e.stopPropagation()} style={{
     padding:'1px 5px', background:'transparent', border:`1px solid ${LM.lineSoft}`,
-    borderRadius:LM.rad.xs, color:LM.inkSoft, fontFamily:LM.mono, fontSize:11, cursor:'pointer',
+    borderRadius:LM.rad.xs, color:LM.inkSoft, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, cursor:'pointer',
   }}>{children}</button>
 );
 
@@ -6961,20 +7438,20 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
   ];
   return (
     <div onClick={onClose} style={{
-      position:'absolute', inset:0, background:'rgba(0,0,0,.5)', zIndex:60,
+      position:'absolute', inset:0, background:LM.scrim, zIndex:60,
       display:'grid', placeItems:'center',
     }}>
       {/* A modal over a live screen (every settings tool opens here): say so, so nothing behind it is reachable as if open. */}
       <div role="dialog" aria-modal="true" aria-label="Settings" onClick={e => e.stopPropagation()} style={{
         // UX-SET1: the dialog grows with the window (920×580 left a scrolled sidebar and truncated cards at 1920).
         width:1200, maxWidth:'92vw', height:780, maxHeight:'88vh',
-        background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.xl,
-        overflow:'hidden', boxShadow:'0 30px 80px rgba(0,0,0,.6)',
+        background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.dialog,
+        overflow:'hidden', boxShadow:LM.shadow.dialog,
         display:'grid', gridTemplateColumns:'208px 1fr', gridTemplateRows:'46px 1fr',
       }}>
-        <div style={{ gridColumn:'1 / -1', gridRow:'1', borderBottom:`1px solid ${LM.line}`, display:'flex', alignItems:'center', gap:10, padding:'0 16px' }}>
-          <span style={{ fontFamily:LM.serif, fontSize:18, letterSpacing:'-0.01em' }}>Settings</span>
-          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.1em' }}>STUDIO{release?.current_build ? ' \u00b7 ' + release.current_build : ''}</span>
+        <div style={{ gridColumn:'1 / -1', gridRow:'1', borderBottom:`1px solid ${LM.line}`, display:'flex', alignItems:'center', gap:LM.sp.md, padding:`0 ${LM.sp.lg}px` }}>
+          <span style={{ fontFamily:LM.sans, fontSize:LM.fs.title.sz, lineHeight:LM.fs.title.ln + 'px', fontWeight:LM.fs.title.wt }}>Settings</span>
+          <span style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, color:LM.inkSoft, letterSpacing:LM.fs.label.letter, fontWeight:LM.fs.label.wt }}>STUDIO{release?.current_build ? ' \u00b7 ' + release.current_build : ''}</span>
           <div style={{ flex:1 }}/>
           <button onClick={onClose} aria-label="Close" data-close-button style={{
             height:28, padding:'0 10px', border:`1px solid ${LM.line}`, background:'transparent',
@@ -6986,21 +7463,21 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
             borderRadius:LM.rad.sm, cursor:'pointer', color:LM.inkSoft, fontSize:12,
           }}>✕</button>
         </div>
-        <div className="ah-scroll" data-settings-nav="" style={{ gridColumn:'1', gridRow:'2', borderRight:`1px solid ${LM.line}`, padding:'10px 8px', overflow:'auto' }}>
+        <div className="ah-scroll" data-settings-nav="" style={{ gridColumn:'1', gridRow:'2', borderRight:`1px solid ${LM.line}`, padding:`${LM.sp.md}px ${LM.sp.sm}px`, overflow:'auto' }}>
           {tabs.map(([id, label, badge]) => (
             <button key={id} onClick={() => setTab(id)} style={{
-              width:'100%', padding:'7px 11px', borderRadius:LM.rad.sm, border:0,
+              width:'100%', padding:`${LM.sp.sm}px ${LM.sp.md}px`, borderRadius:LM.rad.control, border:0,
               background: tab === id ? LM.bgSoft : 'transparent',
               color: tab === id ? LM.ink : LM.inkSoft,
-              textAlign:'left', cursor:'pointer', fontFamily:LM.sans, fontSize:13,
+              textAlign:'left', cursor:'pointer', fontFamily:LM.sans, fontSize:LM.fs.bodySm.sz,
               display:'flex', alignItems:'center', gap:LM.sp.sm, marginBottom:1,
             }}>
               <span style={{ flex:1 }}>{label}</span>
-              {badge && <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>{badge}</span>}
+              {badge && <span style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, color:LM.inkSoft, letterSpacing:LM.fs.label.letter, fontWeight:LM.fs.label.wt }}>{badge}</span>}
             </button>
           ))}
         </div>
-        <div className="ah-scroll" style={{ gridColumn:'2', gridRow:'2', overflow:'auto', padding:'20px 24px 24px' }}>
+        <div className="ah-scroll" style={{ gridColumn:'2', gridRow:'2', overflow:'auto', padding:`20px ${LM.sp.xl}px ${LM.sp.xl}px` }}>
           {tab === 'hub'         && <SettingsHub toolRows={toolRows} onClose={onClose} onOpenTool={onOpenTool} onOpenToolGraph={onOpenToolGraph} columns={3}/>}
           {tab === 'system'      && <SettingsSystem graph={authorityState?.graph || LM_GRAPH} projection={authorityState}
             onClose={onClose} onOpenToolGraph={onOpenToolGraph} onBackToSettings={() => setTab('hub')}/>}
@@ -7061,7 +7538,7 @@ const SystemMiniGraph = ({ graph }) => {
         {[...groups.values()].map(group => <g key={group.label} data-system-mini-group-boundary="group boundary">
           <rect x={group.left} y={group.top} width={group.right - group.left} height={group.bottom - group.top}
             rx="8" fill={LM.bgSoft + '66'} stroke={LM.lineSoft} strokeDasharray="6 6"/>
-          <text x={group.left + 8} y={group.top + 12} fill={LM.inkSoft} fontFamily="JetBrains Mono" fontSize="9">{group.label}</text>
+          <text x={group.left + 8} y={group.top + 12} fill={LM.inkSoft} fontFamily="JetBrains Mono" fontSize={LM.fs.label.sz}>{group.label}</text>
         </g>)}
         {wires.map((wire, index) => {
           const from = boxes.find(box => box.node.id === wire.from?.[0]);
@@ -7077,7 +7554,7 @@ const SystemMiniGraph = ({ graph }) => {
           return <g key={node.id} data-system-mini-node={node.id}>
             <rect x={x} y={y} width={w} height={h} rx="5" fill={LM.bgPanel} stroke={LM.line}/>
             <rect x={x} y={y} width={w} height="3" rx="2" fill={cat.col}/>
-            <text x={x + 8} y={y + 20} fill={LM.ink} fontFamily="JetBrains Mono" fontSize="9">
+            <text x={x + 8} y={y + 20} fill={LM.ink} fontFamily="JetBrains Mono" fontSize={LM.fs.dataSm.sz}>
               {node.title || node.label || node.id}
             </text>
           </g>;
@@ -7090,24 +7567,34 @@ const SettingsSystem = ({ graph, projection, onClose, onOpenToolGraph, onBackToS
   const count = systemGraphNodeCount(graph);
   const nodes = (graph?.nodes || []).filter(node => node.application === true);
   const pinnedCount = nodes.filter(node => node.pinned).length;
+  const [openError, setOpenError] = React.useState('');
   const readAgain = async () => {
     const owner = window.ARCHHUB_STUDIO_AUTHORITY || window.ARCHHUB_EXISTING_WORKSHOP;
     if (typeof owner?.load === 'function') return owner.load();
     if (typeof owner?.refreshTopologyCanvas === 'function') return owner.refreshTopologyCanvas();
     return null;
   };
-  const open = () => { onClose?.(); onOpenToolGraph?.('system'); };
+  const open = async () => {
+    setOpenError('');
+    const opened = await onOpenToolGraph?.('system');
+    if (opened === false || !opened || opened.ok === false) {
+      if (!opened?.stale) setOpenError(opened?.error || 'System graph is not admitted in this workspace.');
+      return;
+    }
+    onClose?.();
+  };
   const state = projection?.error ? 'error' : count === 0 ? 'empty' : pinnedCount ? 'refused' : '';
   return <div style={{display:'flex', flexDirection:'column', gap:14}}>
     <SHead title="System" sub="The application is itself a node. Its parts, tools and wiring are this graph; open it to inspect or change what you are permitted to."/>
     <SystemMiniGraph graph={graph}/>
     <div style={{display:'flex', alignItems:'center', gap:10}}>
       <div style={{flex:1}}>
-        <div style={{fontSize:13, color:LM.ink}}>ArchHub application <span style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft}}>· {count} nodes · {(graph?.wires || []).length} relations · WIP head</span></div>
+        <div style={{fontSize:13, color:LM.ink}}>ArchHub application <span style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft}}>· {count} nodes · {(graph?.wires || []).length} relations · WIP head</span></div>
         <div style={{fontSize:11.5, color:LM.inkSoft, marginTop:4}}>Opens over this window in its own scope. Esc or the breadcrumb returns here, then to where you were. It is never a Studio session tab.</div>
       </div>
       <HoverBtn primary onClick={open}>Open the System graph</HoverBtn>
     </div>
+    {openError && <p role="status" style={{margin:0, color:LM.warn, fontSize:12.5}}>{openError}</p>}
     {state && <SystemGraphStates state={state} error={projection?.error || ''} pinnedCount={pinnedCount}
       movedCount={Math.max(0, count - pinnedCount)} onReadAgain={readAgain} onBackToSettings={onBackToSettings}
       onAddNode={open} onUnpinAndArrange={open}/>}
@@ -7266,16 +7753,16 @@ const SettingsMemory = ({ store, patch }) => {
               <span style={{ width:7, height:7, borderRadius:2, background:s.col, flexShrink:0 }}/>
               <div style={{ minWidth:0, flex:1 }}>
                 <div style={{ fontSize:13.5, color:LM.ink }}>{s.n}
-                  <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.05em', marginLeft:8 }}>{s.one}</span>
+                  <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.05em', marginLeft:8 }}>{s.one}</span>
                 </div>
                 {on && <div style={{ fontSize:12, color:LM.inkSoft, lineHeight:1.5, marginTop:5 }}>{s.holds}</div>}
               </div>
-              <span style={{ fontFamily:LM.mono, fontSize:11, letterSpacing:'0.1em', padding:'2px 7px', borderRadius:3,
+              <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, letterSpacing:'0.1em', padding:'2px 7px', borderRadius:3,
                 background: s.id === 'instances' ? LM.err + '1f' : s.col + '1c', color: s.id === 'instances' ? LM.err : s.col }}>
                 {s.travels === 'freely' ? 'TRAVELS' : s.travels === 'on opt-in' ? 'OPT-IN' : 'STAYS'}
               </span>
-              <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, minWidth:18, textAlign:'right' }}>{mine.length}</span>
-              <span style={{ color:LM.inkSoft, fontSize:11 }}>{on ? '\u25be' : '\u25b8'}</span>
+              <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, minWidth:18, textAlign:'right' }}>{mine.length}</span>
+              <span style={{ color:LM.inkSoft, fontSize:LM.fs.label.sz }}>{on ? '\u25be' : '\u25b8'}</span>
             </div>
             {on && (
               <div>
@@ -7287,12 +7774,12 @@ const SettingsMemory = ({ store, patch }) => {
                         <div onClick={() => edit(f)} title="Rewrite this memory"
                           style={{ fontSize:13, color: f.sealed ? LM.inkSoft : LM.ink, lineHeight:1.4, cursor:'text' }}>{f.text}</div>
                         <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:4, flexWrap:'wrap' }}>
-                          <span style={{ fontFamily:LM.mono, fontSize:11, letterSpacing:'0.1em', padding:'1px 6px', borderRadius:3, background:c.col + '1c', color:c.col }}>{c.label}</span>
-                          <span role={said[f.id] ? 'status' : undefined} style={{ fontFamily:LM.mono, fontSize:11, color: said[f.id] === 'refused' ? LM.err : LM.inkSoft, letterSpacing:'0.04em' }}>{said[f.id] || f.src}</span>
+                          <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, letterSpacing:'0.1em', padding:'1px 6px', borderRadius:3, background:c.col + '1c', color:c.col }}>{c.label}</span>
+                          <span role={said[f.id] ? 'status' : undefined} style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color: said[f.id] === 'refused' ? LM.err : LM.inkSoft, letterSpacing:'0.04em' }}>{said[f.id] || f.src}</span>
                         </div>
                       </div>
                       <span title="The ontology could not place this, so it defaults to sealed &#x2014; there is no release path at all."
-                        style={{ fontFamily:LM.mono, fontSize:11, color:LM.err, letterSpacing:'0.08em' }}>&#x2298; sealed</span>
+                        style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.err, letterSpacing:'0.08em' }}>&#x2298; sealed</span>
                       {window.ARCHHUB_BRAIN_PUBLISH && (
                         <button title="Share this with the ArchHub community. It is reviewed before other members see it; a fact that names the client folder or a project code is refused."
                           onClick={() => share(f)}
@@ -7305,8 +7792,8 @@ const SettingsMemory = ({ store, patch }) => {
                   );
                 })}
                 {mine.length === 0 && (
-                  <div style={{ padding:'12px 14px', borderTop:`1px solid ${LM.lineSoft}`, fontFamily:LM.serif, fontStyle:'italic', fontSize:13.5, color:LM.inkSoft,
-                    display:'flex', alignItems:'center', gap:10 }}>
+                  <div style={{ padding:`${LM.sp.md}px ${LM.sp.lg}px`, borderTop:`1px solid ${LM.lineSoft}`, fontFamily:LM.sans, fontSize:LM.fs.bodySm.sz, lineHeight:LM.fs.bodySm.ln + 'px', color:LM.inkSoft,
+                    display:'flex', alignItems:'center', gap:LM.sp.md }}>
                     <span role={reading ? (catalogue.error ? 'alert' : 'status') : undefined} style={{ flex:1 }}>
                       {!reading ? 'Nothing at this stratum yet.'
                         : catalogue.loading ? 'Reading the brain\u2026'
@@ -7326,7 +7813,7 @@ const SettingsMemory = ({ store, patch }) => {
     {/* No "restore all": the brain has already forgotten these facts (ARCHHUB_BRAIN_FORGET), so
         un-hiding them here would show facts the brain no longer holds. */}
     {forgotten.length > 0 && (
-      <div role="status" style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.06em', marginBottom:LM.sp.md }}>
+      <div role="status" style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.06em', marginBottom:LM.sp.md }}>
         {forgotten.length} forgotten this session
       </div>
     )}
@@ -7334,13 +7821,13 @@ const SettingsMemory = ({ store, patch }) => {
     {/* gates */}
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden', marginBottom:LM.sp.md }}>
       <div onClick={() => setShowGates(!showGates)} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', cursor:'pointer' }}>
-        <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.12em' }}>GATES</span>
+        <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.12em' }}>GATES</span>
         <span style={{ flex:1, fontSize:12, color:LM.inkSoft }}>Four crossings, each with a decider and a way back. Nothing flows by default.</span>
-        <span style={{ color:LM.inkSoft, fontSize:11 }}>{showGates ? '\u25be' : '\u25b8'}</span>
+        <span style={{ color:LM.inkSoft, fontSize:LM.fs.label.sz }}>{showGates ? '\u25be' : '\u25b8'}</span>
       </div>
       {showGates && gates.map(g => (
         <div key={g.id} style={{ padding:'10px 14px', borderTop:`1px solid ${LM.lineSoft}`, display:'flex', gap:LM.sp.md, alignItems:'flex-start' }}>
-          <span style={{ fontFamily:LM.mono, fontSize:11, letterSpacing:'0.1em', color:LM.accent, minWidth:126 }}>{g.label}</span>
+          <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, letterSpacing:'0.1em', color:LM.accent, minWidth:126 }}>{g.label}</span>
           <div style={{ flex:1, minWidth:0, fontSize:12, lineHeight:1.55, color:LM.inkSoft }}>
             <div>Decided by <b style={{ color:LM.ink, fontWeight:500 }}>{g.decider}</b> &#xb7; default {g.def} &#xb7; {g.revocable}</div>
             <div style={{ marginTop:3 }}>Passes: {g.passes}</div>
@@ -7353,30 +7840,30 @@ const SettingsMemory = ({ store, patch }) => {
     {/* consent record -- the audit the gates are only real because of */}
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden', marginBottom:LM.sp.sm }}>
       <div onClick={() => setShowLog(!showLog)} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', cursor:'pointer' }}>
-        <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.12em' }}>CONSENT RECORD</span>
+        <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.12em' }}>CONSENT RECORD</span>
         <span style={{ flex:1, fontSize:12, color:LM.inkSoft }}>
           {log.length ? `${log.length} crossing${log.length === 1 ? '' : 's'} this session \u00b7 append-only` : 'Nothing has crossed a gate yet.'}
         </span>
-        <span style={{ color:LM.inkSoft, fontSize:11 }}>{showLog ? '\u25be' : '\u25b8'}</span>
+        <span style={{ color:LM.inkSoft, fontSize:LM.fs.label.sz }}>{showLog ? '\u25be' : '\u25b8'}</span>
       </div>
       {showLog && (log.length
         ? log.map((e, i) => (
             <div key={i} style={{ padding:'8px 14px', borderTop:`1px solid ${LM.lineSoft}`, display:'flex', gap:10, alignItems:'baseline', fontSize:12 }}>
-              <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, minWidth:34 }}>{e.t}</span>
-              <span style={{ fontFamily:LM.mono, fontSize:11, letterSpacing:'0.08em', minWidth:58,
+              <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, minWidth:34 }}>{e.t}</span>
+              <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, letterSpacing:'0.08em', minWidth:58,
                 color: e.act === 'shared' ? LM.ok : e.act === 'withdrew' ? LM.warn : LM.err }}>{e.act.toUpperCase()}</span>
               <span style={{ flex:1, minWidth:0, color:LM.inkSoft, lineHeight:1.45 }}>{e.fact}</span>
-              <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.06em' }}>{e.gate}</span>
+              <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.06em' }}>{e.gate}</span>
             </div>
           ))
-        : <div style={{ padding:'12px 14px', borderTop:`1px solid ${LM.lineSoft}`, fontFamily:LM.serif, fontStyle:'italic', fontSize:13.5, color:LM.inkSoft }}>
+        : <div style={{ padding:`${LM.sp.md}px ${LM.sp.lg}px`, borderTop:`1px solid ${LM.lineSoft}`, fontFamily:LM.sans, fontSize:LM.fs.bodySm.sz, lineHeight:LM.fs.bodySm.ln + 'px', color:LM.inkSoft }}>
             Share or withdraw a fact above and it appears here. The record cannot be edited, only exported.
           </div>)}
     </div>
 
     {/* keys + export */}
     <div style={{ padding:'11px 13px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.md, marginBottom:LM.sp.sm }}>
-      <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.12em', marginBottom:7 }}>KEY</div>
+      <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.12em', marginBottom:7 }}>KEY</div>
       <div style={{ fontSize:12, color:LM.inkSoft, lineHeight:1.6 }}>{keys.how}</div>
       <div style={{ fontSize:12, color:LM.inkSoft, lineHeight:1.6, marginTop:7 }}>{keys.cost}</div>
 
@@ -7388,7 +7875,7 @@ const SettingsMemory = ({ store, patch }) => {
     </div>
     <div style={{ padding:'10px 12px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.md }}>
       <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
-        <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.12em' }}>EXPORT</span>
+        <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.12em' }}>EXPORT</span>
         <span style={{ flex:1, fontSize:12, color:LM.inkSoft, minWidth:180 }}>Take the whole brain with you &#x2014; strata, facts, consent record.</span>
         <button onClick={async (e) => {
           const b = e.currentTarget;
@@ -7434,15 +7921,15 @@ const SettingsTeam = ({ account, onAccount }) => {
     <SHead title="Team" sub="One person owns the workspace and invites teammates by email. Firm brain access follows membership &#x2014; removing someone stops what they can read next, not what they already hold."/>
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden', marginBottom:LM.sp.sm }}>
       {!signedIn && <div role="status" style={{ padding:'12px 14px', display:'flex', alignItems:'center', gap:10 }}>
-        <span style={{ flex:1, minWidth:0, fontFamily:LM.serif, fontStyle:'italic', fontSize:13.5, color:LM.inkSoft }}>Sign in to see your team</span>
+        <span style={{ flex:1, minWidth:0, fontFamily:LM.sans, fontSize:LM.fs.bodySm.sz, lineHeight:LM.fs.bodySm.ln + 'px', color:LM.inkSoft }}>Sign in to see your team</span>
         <button type="button" onClick={onAccount} style={{...smallBtn(true), padding:'4px 10px'}}>Sign in</button>
       </div>}
       {signedIn && <div style={{ padding:'12px 14px', display:'grid', gridTemplateColumns:'minmax(0,1fr) auto', gap:12, alignItems:'center' }}>
         <div style={{ minWidth:0 }}>
           <div style={{ fontSize:13.5, color:LM.ink, fontWeight:500 }}>{name || email}</div>
-          <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:3, overflowWrap:'anywhere' }}>{email}</div>
+          <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, marginTop:3, overflowWrap:'anywhere' }}>{email}</div>
         </div>
-        <span style={{ fontFamily:LM.mono, fontSize:11, padding:'2px 7px', borderRadius:LM.rad.xs, background:LM.accentSoft, color:LM.accent, letterSpacing:'0.08em', textTransform:'uppercase' }}>Owner</span>
+        <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, padding:'2px 7px', borderRadius:LM.rad.xs, background:LM.accentSoft, color:LM.accent, letterSpacing:'0.08em', textTransform:'uppercase' }}>Owner</span>
       </div>}
     </div>
     <div style={{ marginTop:LM.sp.md, padding:'10px 12px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.md }}>
@@ -7466,7 +7953,7 @@ const SettingsProfile = () => (
       <SField label="Studio / firm" value={(() => { const a = (typeof acLoad === 'function' && acLoad()) || {}; return a.firm || (window.ARCHHUB_LIVE && window.ARCHHUB_LIVE.firm) || '—'; })()}/>
     </div>
     <div style={{ marginTop:LM.sp.lg }}>
-      <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em', marginBottom:6 }}>STANDING INSTRUCTION</div>
+      <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.14em', marginBottom:6 }}>STANDING INSTRUCTION</div>
       <div style={{ fontSize:12, color:LM.inkSoft, lineHeight:1.55 }}>
         Saved as a brain fact that begins with SYSTEM PROMPT. Preview asks the current session which instruction it is working under.
       </div>
@@ -7499,7 +7986,7 @@ const SettingsProfile = () => (
 
 const SField = ({ label, value }) => (
   <div>
-    <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.1em', marginBottom:LM.sp.xs }}>{label.toUpperCase()}</div>
+    <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.1em', marginBottom:LM.sp.xs }}>{label.toUpperCase()}</div>
     <div style={{
       padding:'7px 10px', background:LM.bg, border:`1px solid ${LM.line}`,
       borderRadius:LM.rad.sm, fontSize:12.5, color:LM.ink, display:'flex', alignItems:'center', gap:6,
@@ -7509,7 +7996,7 @@ const SField = ({ label, value }) => (
   </div>
 );
 
-const accessCell = text => <span style={{ fontFamily:LM.mono, fontSize:11, color:text === 'yes' ? LM.ok : LM.inkSoft }}>{text}</span>;
+const accessCell = text => <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:text === 'yes' ? LM.ok : LM.inkSoft }}>{text}</span>;
 const accessButton = { ...smallBtn(), padding:'3px 8px', whiteSpace:'nowrap' };
 const SettingsPermissions = ({ account, onTab }) => {
   const transport = window.ARCHHUB_EXISTING_WORKSHOP;
@@ -7587,7 +8074,7 @@ const SettingsPermissions = ({ account, onTab }) => {
     <SHead title="Permissions" sub="The Access matrix shows only actors with a store or endpoint this build can read."/>
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
       <div style={{ display:'grid', gridTemplateColumns:'1.35fr .55fr .65fr .9fr .8fr auto', gap:10, padding:'8px 12px',
-        borderBottom:`1px solid ${LM.lineSoft}`, fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.08em', textTransform:'uppercase' }}>
+        borderBottom:`1px solid ${LM.lineSoft}`, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.08em', textTransform:'uppercase' }}>
         <span>What can act</span><span>Read</span><span>Write</span><span>Publish/send</span><span>Needs approval</span><span>Control</span>
       </div>
       {rows.map((row, index) => <div key={row.key} style={{ display:'grid', gridTemplateColumns:'1.35fr .55fr .65fr .9fr .8fr auto',
@@ -7707,7 +8194,7 @@ const SettingsSocialApprovals = ({transport}) => {
   return <div style={{padding:'12px 14px', background:LM.bg, border:`1px solid ${LM.accent || LM.line}`, borderRadius:LM.rad.lg, marginBottom:10}}>
     <div style={{fontSize:13, fontWeight:500}}>Posts waiting for your approval</div>
     {items.map(item => <div key={item.delegation} style={{marginTop:10}}>
-      <div style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft}}>{item.operation} · {item.account_id} · {
+      <div style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft}}>{item.operation} · {item.account_id} · {
         item.account_binding === 'provider-verified' ? 'account confirmed by ' + providerName(item)
           : item.account_binding === 'operator-declared' ? 'account typed in, not confirmed' : 'account not checked'}</div>
       <pre style={{whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontFamily:LM.mono, fontSize:11, maxHeight:220, overflow:'auto',
@@ -7764,10 +8251,10 @@ const SettingsConnectedSocialAccounts = ({transport}) => {
         return <div key={key} style={{display:'grid', gridTemplateColumns:'auto minmax(0,1fr) auto', gap:10, alignItems:'center',
           padding:'8px 10px', border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.md}}>
           <span aria-hidden="true" style={{width:24, height:24, borderRadius:'50%', display:'inline-flex', alignItems:'center', justifyContent:'center',
-            background:LM.lineSoft, color:LM.ink, fontFamily:LM.mono, fontSize:11, textTransform:'uppercase'}}>{view.icon}</span>
+            background:LM.lineSoft, color:LM.ink, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, textTransform:'uppercase'}}>{view.icon}</span>
           <span style={{minWidth:0}}>
             <span style={{display:'block', fontSize:12.5, fontWeight:500}}>{view.name}</span>
-            <span style={{display:'block', fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, overflowWrap:'anywhere'}}>{display || account.vault_entry}</span>
+            <span style={{display:'block', fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, overflowWrap:'anywhere'}}>{display || account.vault_entry}</span>
           </span>
           <button type="button" disabled={!!busy || !transport?.removeLocalSocialAccount} onClick={() => disconnect(account)} style={smallBtn()}>
             Disconnect
@@ -7826,7 +8313,7 @@ const SettingsLinkedInSignIn = ({transport, compact = false}) => {
     onClick={signIn} note={needsSignIn ? 'This connection goes through your ArchHub account. Sign in under Settings › Account, then connect here.' : 'Open Settings › Account before connecting LinkedIn.'} message={message} failed={failed}/>;
   return <div style={{padding:'12px 14px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, marginBottom:10}}>
     <div style={{fontSize:13, fontWeight:500}}>Sign in with LinkedIn</div>
-    <div style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:2, marginBottom:12, letterSpacing:'0.04em'}}>Posts go to your personal LinkedIn profile, and only after you approve each one.</div>
+    <div style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, marginTop:2, marginBottom:12, letterSpacing:'0.04em'}}>Posts go to your personal LinkedIn profile, and only after you approve each one.</div>
     <div>
       <button type="button" disabled={!available || busy} onClick={signIn} style={smallBtn(available)}>{busy ? 'Waiting for LinkedIn...' : (available ? 'Connect LinkedIn' : (needsSignIn ? 'Sign in to ArchHub to connect' : 'Connect from Account'))}</button>
       {needsSignIn && <p role="status" style={{fontSize:12, color:LM.inkSoft}}>This connection goes through your ArchHub account. Sign in under Settings › Account, then connect here.</p>}
@@ -7954,9 +8441,9 @@ const SettingsNotionSignIn = ({transport}) => {
 
 const SettingsSocialEnrollment = ({transport, onAccount}) => {
   const [message, setMessage] = React.useState('');
-  return <div style={{padding:'12px 14px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg}}>
-    <div style={{fontSize:13, fontWeight:500}}>Connections</div>
-    <div style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:2, marginBottom:4, letterSpacing:'0.04em'}}>Connect through each provider's sign-in.</div>
+  return <div style={{padding:`${LM.sp.md}px ${LM.sp.lg}px`, background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg}}>
+    <div style={{fontSize:LM.fs.bodySm.sz, fontWeight:LM.fs.bodySmStrong.wt}}>Connections</div>
+    <div style={{fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.inkSoft, marginTop:LM.sp.xs, marginBottom:LM.sp.xs, letterSpacing:LM.fs.label.letter}}>Connect through each provider's sign-in.</div>
     <SocialConnectionRow icon="in" name="LinkedIn" detail="Draft posts you approve."
       control={<SettingsLinkedInSignIn transport={transport} compact/>}/>
     <SocialConnectionRow icon="f" name="Facebook and Instagram" detail="Post to your page and business account."
@@ -7999,9 +8486,9 @@ const ProviderManage = ({ p, providers, onTab }) => {
       if (mounted.current) setErr(error.message || 'The provider key could not be saved.');
     } finally { savingRef.current = false; if (mounted.current) setSaving(false); }
   };
-  const box = { padding:'11px 14px 12px', borderTop:`1px solid ${LM.lineSoft}`, background:LM.bgDeep };
-  const line = { fontSize:12, color:LM.inkSoft, lineHeight:1.55 };
-  const refresh = <button type="button" disabled={saving || providers.loading} onClick={providers.refresh} style={{ ...smallBtn(), padding:'3px 9px' }}>
+  const box = { padding:`${LM.sp.md}px ${LM.sp.lg}px ${LM.sp.md}px`, borderTop:`1px solid ${LM.lineSoft}`, background:LM.bgDeep };
+  const line = { fontSize:LM.fs.caption.sz, color:LM.inkSoft, lineHeight:LM.fs.caption.ln + 'px' };
+  const refresh = <button type="button" disabled={saving || providers.loading} onClick={providers.refresh} style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>
     {providers.loading ? 'Reading status…' : 'Refresh provider status'}</button>;
   const useOpenCode = async () => {
     if (savingRef.current) return;
@@ -8022,11 +8509,11 @@ const ProviderManage = ({ p, providers, onTab }) => {
     return (
       <div style={box}>
         <div style={line}>{label} keys are managed by the configured service owner. This Settings screen does not accept pasted keys.</div>
-        <div style={{ display:'flex', gap:7, marginTop:9, flexWrap:'wrap' }}>
+        <div style={{ display:'flex', gap:LM.sp.sm, marginTop:LM.sp.sm, flexWrap:'wrap' }}>
           {refresh}
         </div>
-        {saved && <p role="status" style={{ fontSize:12, color:LM.ok, margin:'8px 0 0' }}>{saved}</p>}
-        {err && <p role="alert" style={{ fontSize:12, color:LM.err, margin:'8px 0 0' }}>{err}</p>}
+        {saved && <p role="status" style={{ fontSize:LM.fs.caption.sz, color:LM.ok, margin:`${LM.sp.sm}px 0 0` }}>{saved}</p>}
+        {err && <p role="alert" style={{ fontSize:LM.fs.caption.sz, color:LM.err, margin:`${LM.sp.sm}px 0 0` }}>{err}</p>}
       </div>
     );
   }
@@ -8034,14 +8521,14 @@ const ProviderManage = ({ p, providers, onTab }) => {
     return (
       <div style={box}>
         <div style={line}>{providerDetail(p)}. Chat uses local-cli/opencode with the approved free OpenRouter model.</div>
-        <div style={{ display:'flex', gap:7, marginTop:9, flexWrap:'wrap' }}>
+        <div style={{ display:'flex', gap:LM.sp.sm, marginTop:LM.sp.sm, flexWrap:'wrap' }}>
           <button type="button" disabled={saving || p.state !== 'installed'} onClick={useOpenCode}
-            style={saving || p.state !== 'installed' ? { ...smallBtn(), padding:'3px 9px', borderStyle:'dashed', cursor:'default' } : { ...smallBtn(true), padding:'3px 9px' }}>
+            style={saving || p.state !== 'installed' ? { ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px`, borderStyle:'dashed', cursor:'default' } : { ...smallBtn(true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>
             {saving ? 'Selecting…' : 'Use OpenCode'}</button>
           {refresh}
         </div>
-        {saved && <p role="status" style={{ fontSize:12, color:LM.ok, margin:'8px 0 0' }}>{saved}</p>}
-        {err && <p role="alert" style={{ fontSize:12, color:LM.err, margin:'8px 0 0' }}>{err}</p>}
+        {saved && <p role="status" style={{ fontSize:LM.fs.caption.sz, color:LM.ok, margin:`${LM.sp.sm}px 0 0` }}>{saved}</p>}
+        {err && <p role="alert" style={{ fontSize:LM.fs.caption.sz, color:LM.err, margin:`${LM.sp.sm}px 0 0` }}>{err}</p>}
       </div>
     );
   }
@@ -8053,8 +8540,8 @@ const ProviderManage = ({ p, providers, onTab }) => {
         : p.state === 'installed' || p.state === 'not installed' ? providerDetail(p) + '.'
         : p.sets ? 'Sign in or connect this provider, then read the status again.'
         : 'Start ' + p.name + ' on this machine (' + p.source + '), then read the status again.'}</div>
-      <div style={{ display:'flex', gap:7, marginTop:9, flexWrap:'wrap' }}>
-        {p.id === 'cloud' && <button type="button" onClick={() => onTab && onTab('account')} style={{ ...smallBtn(), padding:'3px 9px' }}>Open Account</button>}
+      <div style={{ display:'flex', gap:LM.sp.sm, marginTop:LM.sp.sm, flexWrap:'wrap' }}>
+        {p.id === 'cloud' && <button type="button" onClick={() => onTab && onTab('account')} style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Open Account</button>}
         {refresh}
       </div>
     </div>
@@ -8078,38 +8565,38 @@ const SettingsProviders = ({ providers, onTab }) => {
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
       {(rows || []).map((p, i) => (
         <div key={p.id} style={{ borderTop: i===0 ? 'none' : `1px solid ${LM.lineSoft}` }}>
-          <div style={{ padding:'12px 14px', display:'flex', alignItems:'center', gap:LM.sp.md }}>
+          <div style={{ padding:`${LM.sp.md}px ${LM.sp.lg}px`, display:'flex', alignItems:'center', gap:LM.sp.md }}>
             <span style={{ width:24, height:24, borderRadius:LM.rad.sm, background:BRAND[p.id] || tone(p.state), color: (window.AH && window.AH.onFill) || '#180f08', display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:12, fontWeight:700 }}>{p.name[0]}</span>
-            <div style={{ flex:1, minWidth:0, lineHeight:1.2 }}>
-              <div style={{ fontSize:13, fontWeight:500, color: off(p.state) ? LM.inkSoft : LM.ink }}>{p.name}</div>
-              <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:2, letterSpacing:'0.04em' }}>
+            <div style={{ flex:1, minWidth:0, lineHeight:LM.fs.caption.ln + 'px' }}>
+              <div style={{ fontSize:LM.fs.bodySm.sz, fontWeight:LM.fs.bodySmStrong.wt, color: off(p.state) ? LM.inkSoft : LM.ink }}>{p.name}</div>
+              <div style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.inkSoft, marginTop:LM.sp.xs, letterSpacing:LM.fs.label.letter }}>
                 <span title={p.state === 'keyed' ? 'Stored keys are never shown' : undefined} style={{ color:LM.inkSoft }}>
                   {providerDetail(p)}
                 </span>
               </div>
             </div>
             <span style={{
-              fontFamily:LM.mono, fontSize:11, padding:'2px 7px', borderRadius:LM.rad.xs, letterSpacing:'0.1em', textTransform:'uppercase',
+              fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, padding:`2px ${LM.sp.sm}px`, borderRadius:LM.rad.chip, letterSpacing:LM.fs.label.letter, textTransform:'uppercase',
               background: off(p.state) ? LM.bgSoft : tone(p.state) + '14',
               color:       warn(p.state) ? LM.err : tone(p.state),
             }}>{providerStateWord(p)}</span>
             <button aria-expanded={managing === p.id} onClick={() => setManaging(managing === p.id ? null : p.id)}
-              style={{ ...smallBtn(), padding:'3px 8px' }}>{off(p.state) || warn(p.state) ? 'connect' : 'manage'}</button>
+              style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.sm}px` }}>{off(p.state) || warn(p.state) ? 'connect' : 'manage'}</button>
           </div>
           {managing === p.id && <ProviderManage p={p} providers={providers} onTab={onTab}/>}
         </div>
       ))}
       {!rows && <SettingsEmpty role={error ? 'alert' : 'status'}
-        action={error && <button onClick={providers.refresh} disabled={loading} style={{ ...smallBtn(), padding:'3px 9px', fontStyle:'normal' }}>read again</button>}>
+        action={error && <button onClick={providers.refresh} disabled={loading} style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>read again</button>}>
         {error ? 'Provider status was not read: ' + error : 'Reading the providers on this machine\u2026'}</SettingsEmpty>}
       {rows && rows.length === 0 && <SettingsEmpty>No provider is registered on this machine.</SettingsEmpty>}
     </div>
     {/* Connections for connector nodes are not in the design. They sit behind the
         design's own dashed "+ ..." affordance (drawn in Settings › Hosts), below the drawn list. */}
     <button onClick={() => setSocial(!social)} aria-expanded={social} style={{
-      marginTop:14, padding:'8px 12px', border:`1px dashed ${LM.line}`, background:'transparent',
-      borderRadius:LM.rad.md, color:LM.accent, fontFamily:LM.sans, fontSize:12.5, cursor:'pointer',
-      display:'inline-flex', alignItems:'center', gap:7, width:'fit-content',
+      marginTop:LM.sp.lg, padding:`${LM.sp.sm}px ${LM.sp.md}px`, border:`1px dashed ${LM.line}`, background:'transparent',
+      borderRadius:LM.rad.md, color:LM.accent, fontFamily:LM.sans, fontSize:LM.fs.caption.sz, cursor:'pointer',
+      display:'inline-flex', alignItems:'center', gap:LM.sp.sm, width:'fit-content',
     }}>
       <span>{social ? '\u2212' : '+'}</span> Connections…
     </button>
@@ -8123,9 +8610,9 @@ const SettingsProviders = ({ providers, onTab }) => {
 };
 
 const SettingsGenerationControl = ({ spec, value, disabled, onChange }) => (
-  <div style={{ display:'grid', gridTemplateColumns:'1fr 1.3fr auto', gap:10, alignItems:'center',
-    padding:'8px 10px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.sm, marginBottom:6 }}>
-    <label htmlFor={'model-default-' + spec.k} style={{ fontSize:12.5, color:LM.ink }}>{spec.label}</label>
+  <div style={{ display:'grid', gridTemplateColumns:'1fr 1.3fr auto', gap:LM.sp.sm, alignItems:'center',
+    padding:`${LM.sp.sm}px ${LM.sp.md}px`, background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.control, marginBottom:LM.sp.sm }}>
+    <label htmlFor={'model-default-' + spec.k} style={{ fontSize:LM.fs.caption.sz, color:LM.ink }}>{spec.label}</label>
     <input id={'model-default-' + spec.k} aria-label={spec.label} type="range" value={value}
       min={spec.min} max={spec.max} step={spec.step} disabled={disabled}
       onChange={event => onChange(spec.k, Number(event.target.value))}
@@ -8133,8 +8620,8 @@ const SettingsGenerationControl = ({ spec, value, disabled, onChange }) => (
     <input aria-label={spec.label + ' value'} type="number" value={value}
       min={spec.min} max={spec.max} step={spec.step} disabled={disabled}
       onChange={event => onChange(spec.k, Number(event.target.value))}
-      style={{ width:80, boxSizing:'border-box', padding:'4px 6px', borderRadius:LM.rad.sm,
-        border:`1px solid ${LM.line}`, background:LM.bgDeep, color:LM.ink, fontFamily:LM.mono, fontSize:11 }}/>
+      style={{ width:80, boxSizing:'border-box', padding:`${LM.sp.xs}px ${LM.sp.sm}px`, borderRadius:LM.rad.control,
+        border:`1px solid ${LM.line}`, background:LM.bgDeep, color:LM.ink, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz }}/>
   </div>
 );
 
@@ -8191,17 +8678,17 @@ const SettingsModels = () => {
       setDefaultsStatus('saved');
     }).catch(failure => setDefaultsStatus(failure?.message || 'not saved'));
   };
-  const selectStyle = { width:'100%', padding:'7px 10px', background:LM.bgDeep, color:LM.ink,
-    border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, fontFamily:LM.mono, fontSize:11.5 };
-  const rowStyle = { display:'grid', gridTemplateColumns:'1fr 1.25fr', gap:14, alignItems:'center',
-    padding:'10px 12px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, marginBottom:6 };
+  const selectStyle = { width:'100%', padding:`${LM.sp.sm}px ${LM.sp.md}px`, background:LM.bgDeep, color:LM.ink,
+    border:`1px solid ${LM.line}`, borderRadius:LM.rad.control, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz };
+  const rowStyle = { display:'grid', gridTemplateColumns:'1fr 1.25fr', gap:LM.sp.lg, alignItems:'center',
+    padding:`${LM.sp.md}px ${LM.sp.md}px`, background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, marginBottom:LM.sp.sm };
   return (
   <div>
     <SHead title="Model routing" sub="Reasoning uses the model you choose here. Only free or local routes are listed."/>
     <div style={rowStyle}>
         <div>
-          <div style={{ fontSize:13, fontWeight:500 }}>Reasoning · planning</div>
-          <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:2, letterSpacing:'0.04em' }}>
+          <div style={{ fontSize:LM.fs.bodySm.sz, fontWeight:LM.fs.bodySmStrong.wt }}>Reasoning · planning</div>
+          <div style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.inkSoft, marginTop:LM.sp.xs, letterSpacing:LM.fs.label.letter }}>
             {selectedItem ? ([selectedItem.vendor, selectedItem.tag].filter(Boolean).join(' · ') || modelRoute(selectedItem)) : 'Choose a free model'}
           </div>
         </div>
@@ -8213,32 +8700,32 @@ const SettingsModels = () => {
       </div>
     {localOptions.length > 0 && <div style={rowStyle}>
       <div>
-        <div style={{ fontSize:13, fontWeight:500 }}>Local fallback (offline)</div>
-        <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:2, letterSpacing:'0.04em' }}>Available local model routes</div>
+        <div style={{ fontSize:LM.fs.bodySm.sz, fontWeight:LM.fs.bodySmStrong.wt }}>Local fallback (offline)</div>
+        <div style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.inkSoft, marginTop:LM.sp.xs, letterSpacing:LM.fs.label.letter }}>Available local model routes</div>
       </div>
-      <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, overflowWrap:'anywhere' }}>
+      <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', color:LM.inkSoft, overflowWrap:'anywhere' }}>
         {localOptions.map(item => modelRoute(item)).join(' · ')}
       </div>
     </div>}
     <div style={rowStyle}>
       <div>
-        <div style={{ fontSize:13, fontWeight:500 }}>Generation defaults</div>
-        <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:2, letterSpacing:'0.04em' }}>
+        <div style={{ fontSize:LM.fs.bodySm.sz, fontWeight:LM.fs.bodySmStrong.wt }}>Generation defaults</div>
+        <div style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.inkSoft, marginTop:LM.sp.xs, letterSpacing:LM.fs.label.letter }}>
           saved with model settings
         </div>
       </div>
       <div>
         {GENERATION_SPECS.map(spec => <SettingsGenerationControl key={spec.k} spec={spec}
           value={defaults[spec.k]} disabled={saving} onChange={saveDefault}/>)}
-        {defaultsStatus && <div role="status" style={{ fontFamily:LM.mono, fontSize:11, color:defaultsStatus === 'not saved' ? LM.err : LM.inkSoft }}>
+        {defaultsStatus && <div role="status" style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, color:defaultsStatus === 'not saved' ? LM.err : LM.inkSoft }}>
           {defaultsStatus}
         </div>}
       </div>
     </div>
-    <div role="status" style={{ padding:'9px 12px', fontFamily:LM.serif, fontStyle:'italic', fontSize:13, color:LM.inkSoft }}>
+    <div role="status" style={{ padding:`${LM.sp.sm}px ${LM.sp.md}px`, fontFamily:LM.sans, fontSize:LM.fs.bodySm.sz, lineHeight:LM.fs.bodySm.ln + 'px', color:LM.inkSoft }}>
       Other jobs use the reasoning model.
     </div>
-    {error && <div role="alert" style={{ padding:'7px 12px', fontSize:12, color:LM.err }}>{error}</div>}
+    {error && <div role="alert" style={{ padding:`${LM.sp.sm}px ${LM.sp.md}px`, fontSize:LM.fs.caption.sz, color:LM.err }}>{error}</div>}
   </div>
   );
 };
@@ -8267,34 +8754,34 @@ const BaboomStartupRow = ({ first }) => {
       setting.revision ? 'revision ' + String(setting.revision).slice(-10) : ''].filter(Boolean).join(' · ');
   const col = on && !unreadable ? LM.ok : LM.inkSoft;
   return (
-    <div style={{ padding:'10px 14px', display:'flex', alignItems:'center', gap:LM.sp.md,
+    <div style={{ padding:`${LM.sp.md}px ${LM.sp.lg}px`, display:'flex', alignItems:'center', gap:LM.sp.md,
       borderTop: first ? 'none' : `1px solid ${LM.lineSoft}` }}>
       <span style={{ width:8, height:8, borderRadius:'50%', background:col, flexShrink:0,
         boxShadow: on && !unreadable ? `0 0 0 2px ${LM.ok}22` : 'none' }}/>
-      <div style={{ flex:1, lineHeight:1.2, minWidth:0 }}>
-        <div style={{ fontSize:13, fontWeight:500, color: on ? LM.ink : LM.inkSoft }}>BABOOM</div>
-        <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em', marginTop:2, lineHeight:1.45 }}>
+      <div style={{ flex:1, lineHeight:LM.fs.caption.ln + 'px', minWidth:0 }}>
+        <div style={{ fontSize:LM.fs.bodySm.sz, fontWeight:LM.fs.bodySmStrong.wt, color: on ? LM.ink : LM.inkSoft }}>BABOOM</div>
+        <div style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, color:LM.inkSoft, marginTop:LM.sp.xs, lineHeight:LM.fs.caption.ln + 'px' }}>
           Start BABOOM when ArchHub opens · {status} · Takes effect next time ArchHub opens.
         </div>
-        {unreadable && <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.warn, marginTop:3, lineHeight:1.45 }}>
+        {unreadable && <div style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, color:LM.warn, marginTop:LM.sp.xs, lineHeight:LM.fs.caption.ln + 'px' }}>
           Setting unreadable - BABOOM will not start until this is fixed{setting.error ? ' (' + setting.error + ')' : ''}
         </div>}
-        {setting && !unreadable && setting.available !== true && <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:3 }}>
+        {setting && !unreadable && setting.available !== true && <div style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, color:LM.inkSoft, marginTop:LM.sp.xs }}>
           Only the owner of this ArchHub can change this.
         </div>}
-        {error && <div role="alert" style={{ fontFamily:LM.mono, fontSize:11, color:LM.warn, marginTop:3, lineHeight:1.45 }}>{error}</div>}
+        {error && <div role="alert" style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, color:LM.warn, marginTop:LM.sp.xs, lineHeight:LM.fs.caption.ln + 'px' }}>{error}</div>}
       </div>
       <span style={{
-        fontFamily:LM.mono, fontSize:11, padding:'2px 7px', borderRadius:LM.rad.xs,
-        background: col + '14', color: col, letterSpacing:'0.1em', textTransform:'uppercase',
+        fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, padding:`2px ${LM.sp.sm}px`, borderRadius:LM.rad.chip,
+        background: col + '14', color: col, letterSpacing:LM.fs.label.letter, textTransform:'uppercase',
       }}>{!setting || unreadable ? 'unread' : on ? 'on start' : 'off'}</span>
       <button type="button" role="switch" aria-checked={on} aria-label="Start BABOOM when ArchHub opens"
         title={enabled ? (on ? 'Do not start BABOOM when ArchHub opens' : 'Start BABOOM when ArchHub opens') : 'BABOOM startup cannot be changed from this view'}
-        disabled={!enabled} onClick={change} style={{width:30, height:16, borderRadius:999, padding:1, flexShrink:0,
-          position:'relative', border:0, background:on ? LM.accent : LM.lineSoft, transition:'background .15s',
+        disabled={!enabled} onClick={change} style={{width:30, height:16, borderRadius:LM.rad.pill, padding:1, flexShrink:0,
+          position:'relative', border:0, background:on ? LM.accent : LM.lineSoft, transition:`background ${LM.dur.fast}ms`,
           cursor:enabled ? 'pointer' : 'default', ...(enabled ? {} : {outline:`1px dashed ${LM.line}`, outlineOffset:1})}}>
         <span style={{position:'absolute', top:1, left:on ? 14 : 1, width:14, height:14,
-          borderRadius:'50%', background:'#fff', transition:'left .15s'}}/>
+          borderRadius:'50%', background:'#fff', transition:`left ${LM.dur.fast}ms`}}/>
       </button>
     </div>
   );
@@ -8330,7 +8817,7 @@ const SettingsTheme = () => {
       (Number.isFinite(a.time) ? a.time : -Infinity) || a.index - b.index)
     .slice(0, 10).map(row => row.entry);
   const fieldStyle = {background:LM.bg, color:LM.ink, border:`1px solid ${LM.line}`,
-    borderRadius:LM.rad.sm, padding:'4px 9px', fontFamily:LM.mono, fontSize:11};
+    borderRadius:LM.rad.control, padding:`${LM.sp.xs}px ${LM.sp.md}px`, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz};
   const notLinked = 'Not linked to Personal Settings yet';
   const family = stack => String(stack || '').split(',')[0].replace(/['"]/g, '').trim();
   const saved = config?.theme?.accent || LM.accent;
@@ -8347,15 +8834,14 @@ const SettingsTheme = () => {
   const fontOptions = [
     ['JetBrains Mono', family(LM.mono)],
     ['Inter', family(LM.sans)],
-    ['Instrument Serif', family(LM.serif)],
     ['Architects Daughter', family(LM.arch)],
   ];
   const densityOptions = [['compact', 'Compact'], ['comfortable', 'Comfortable'], ['spacious', 'Spacious']];
   const pickerRow = (label, value, children) => (
-    <div key={label} style={{ display:'grid', gridTemplateColumns:'minmax(0,1fr) 190px', alignItems:'center', gap:10, padding:'8px 12px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md }}>
+    <div key={label} style={{ display:'grid', gridTemplateColumns:'minmax(0,1fr) 190px', alignItems:'center', gap:LM.sp.sm, padding:`${LM.sp.sm}px ${LM.sp.md}px`, background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md }}>
       <div style={{ minWidth:0 }}>
-        <div style={{ fontSize:12.5 }}>{label}</div>
-        <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:1, letterSpacing:'0.04em' }}>{value} · saved in Personal Settings</div>
+        <div style={{ fontSize:LM.fs.caption.sz }}>{label}</div>
+        <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', color:LM.inkSoft, marginTop:1 }}>{value} · saved in Personal Settings</div>
       </div>
       {children}
     </div>
@@ -8363,64 +8849,64 @@ const SettingsTheme = () => {
   return <div>
     <SHead title="Theme" sub="The themes this graph offers. A theme is listed only when it repaints every colour."/>
     {/* One display card per theme the graph offers (configuration.design_system.themes). */}
-    <div data-theme-cards style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10 }}>
+    <div data-theme-cards style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:LM.sp.sm }}>
       {(config?.design_system?.themes?.offered || []).map(({name, label}) => {
         const active = name === config.design_system.themes.active;
         return <div key={name} data-theme={name} aria-current={active ? 'true' : undefined}
           title={active ? 'The theme the Studio draws' : undefined} style={{
-          padding:'12px 14px', background:LM.bg, border:`1px solid ${active?LM.accent:LM.line}`,
-          borderRadius:7, textAlign:'left', color:LM.ink, fontFamily:LM.sans,
+          padding:`${LM.sp.md}px ${LM.sp.lg}px`, background:LM.bg, border:`1px solid ${active?LM.accent:LM.line}`,
+          borderRadius:LM.rad.panel, textAlign:'left', color:LM.ink, fontFamily:LM.sans,
         }}>
           <div style={{ display:'flex', gap:LM.sp.xs, marginBottom:LM.sp.sm }}>
-            <div style={{ flex:1, height:36, background:active ? LM.bg : LM.bgSoft, borderRadius:4, border:`1px solid ${LM.lineSoft}` }}/>
+            <div style={{ flex:1, height:36, background:active ? LM.bg : LM.bgSoft, borderRadius:LM.rad.control, border:`1px solid ${LM.lineSoft}` }}/>
           </div>
-          <div style={{ fontSize:13, fontWeight:500, textTransform:'capitalize' }}>{name}</div>
-          <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:2 }}>{label}{active ? ' · active' : ''}</div>
+          <div style={{ fontSize:LM.fs.bodySm.sz, fontWeight:LM.fs.bodySmStrong.wt, textTransform:'capitalize' }}>{name}</div>
+          <div style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.inkSoft, letterSpacing:LM.fs.label.letter, marginTop:LM.sp.xs }}>{label}{active ? ' · active' : ''}</div>
         </div>;
       })}
-      {!config?.design_system?.themes && <div style={{ gridColumn:'1 / -1', fontSize:11.5, color:LM.inkSoft }}>Personal Settings not read</div>}
+      {!config?.design_system?.themes && <div style={{ gridColumn:'1 / -1', fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.inkSoft }}>Personal Settings not read</div>}
     </div>
-    <div style={{ marginTop:LM.sp.lg, display:'flex', flexDirection:'column', gap:10 }}>
+    <div style={{ marginTop:LM.sp.lg, display:'flex', flexDirection:'column', gap:LM.sp.sm }}>
       <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, overflow:'hidden' }}>
-        <div style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px' }}>
-          <span title="Current graph accent" style={{ width:16, height:16, borderRadius:4, background:saved, border:`1px solid ${LM.lineSoft}` }}/>
+        <div style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, padding:`${LM.sp.sm}px ${LM.sp.md}px` }}>
+          <span title="Current graph accent" style={{ width:16, height:16, borderRadius:LM.rad.chip, background:saved, border:`1px solid ${LM.lineSoft}` }}/>
           <div style={{ flex:1 }}>
-            <div style={{ fontSize:12.5 }}>Accent colour</div>
-            <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:1, letterSpacing:'0.04em' }}>{saved} &#xb7; {config ? 'saved in Personal Settings' : 'Personal Settings not read'}</div>
+            <div style={{ fontSize:LM.fs.caption.sz }}>Accent colour</div>
+            <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', color:LM.inkSoft, marginTop:1 }}>{saved} &#xb7; {config ? 'saved in Personal Settings' : 'Personal Settings not read'}</div>
           </div>
           <span role="button" tabIndex={0} aria-expanded={editAccent} onClick={toggle}
             onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } }}
-            style={{ color:LM.inkSoft, fontSize:11, cursor:'pointer' }}>{editAccent ? 'close' : 'change'}</span>
+            style={{ color:LM.inkSoft, fontSize:LM.fs.label.sz, cursor:'pointer' }}>{editAccent ? 'close' : 'change'}</span>
         </div>
-        {editAccent && <div style={{ padding:'10px 12px 12px', borderTop:`1px solid ${LM.lineSoft}`, background:LM.bgDeep }}>
-          <div style={{display:'flex', alignItems:'center', gap:8, fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em'}}>
+        {editAccent && <div style={{ padding:`${LM.sp.md}px ${LM.sp.md}px ${LM.sp.md}px`, borderTop:`1px solid ${LM.lineSoft}`, background:LM.bgDeep }}>
+          <div style={{display:'flex', alignItems:'center', gap:LM.sp.sm, fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.inkSoft, letterSpacing:LM.fs.label.letter}}>
             <span style={{flex:1}}>{config ? `${config.binding_mode} · ${config.state}` :
               !api && window.ArchHubTheme?.source === 'graph' ? 'Graph theme · read-only in this view' : 'Personal Settings not read'}</span>
             <button title="Refresh Personal Settings" aria-label="Refresh Personal Settings" disabled={!api || state?.pending}
-              style={{ ...smallBtn(), padding:'3px 8px' }} onClick={() => run(() => api.refreshTheme())}>&#x21bb;</button>
+              style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.sm}px` }} onClick={() => run(() => api.refreshTheme())}>&#x21bb;</button>
           </div>
-          <div style={{fontSize:11.5, color:LM.inkSoft, lineHeight:1.55, margin:'8px 0'}}>Check text and control contrast after changing colours; automatic contrast adjustment is not available.</div>
-          {config && config.binding_mode !== 'personal-wip' && <div style={{fontSize:11.5, color:LM.warn, marginBottom:8}}>
+          <div style={{fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.inkSoft, margin:`${LM.sp.sm}px 0`}}>Check text and control contrast after changing colours; automatic contrast adjustment is not available.</div>
+          {config && config.binding_mode !== 'personal-wip' && <div style={{fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.warn, marginBottom:LM.sp.sm}}>
             Saving switches this view to its personal draft, including that draft&#x2019;s other colours.
           </div>}
-          <div style={{display:'flex', alignItems:'center', gap:8}}>
+          <div style={{display:'flex', alignItems:'center', gap:LM.sp.sm}}>
             <input aria-label="Choose accent colour" type="color" value={/^#[0-9a-fA-F]{6}$/.test(accent) ? accent : LM.accent}
               onChange={event => {setAccent(event.target.value); setDirty(true);}} disabled={!!state?.pending}
-              style={{width:28, height:24, padding:0, border:`1px solid ${LM.line}`, borderRadius:4, background:'transparent'}}/>
+              style={{width:28, height:24, padding:0, border:`1px solid ${LM.line}`, borderRadius:LM.rad.control, background:'transparent'}}/>
             <input aria-label="Accent hex colour" value={accent} maxLength={7} style={{...fieldStyle, width:100}}
               onChange={event => {setAccent(event.target.value); setDirty(true);}} disabled={!!state?.pending}/>
-            <button style={{ ...smallBtn(true), padding:'4px 10px' }} disabled={unavailable || !/^#[0-9a-fA-F]{6}$/.test(accent) || accent.toLowerCase() === config?.theme?.accent?.toLowerCase()}
+            <button style={{ ...smallBtn(true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }} disabled={unavailable || !/^#[0-9a-fA-F]{6}$/.test(accent) || accent.toLowerCase() === config?.theme?.accent?.toLowerCase()}
               onClick={() => run(() => api.previewThemeToken('accent', accent), true)}>{state?.pending ? 'Applying\u2026' : 'Apply accent'}</button>
           </div>
-          {config && !oneDraft && <div style={{fontSize:11.5, color:LM.warn, marginTop:8}}>
+          {config && !oneDraft && <div style={{fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.warn, marginTop:LM.sp.sm}}>
             {config.personal_wip_heads.length > 1 ? 'Multiple theme drafts exist; merging is not linked yet.' : 'No personal theme draft is available.'}
           </div>}
-          {!!history.length && <div style={{marginTop:12}}>
-            <div style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.12em', marginBottom:4}}>VERSIONS &#xb7; SHOWING {Math.min(10,history.length)} OF {history.length}</div>
-            {versions.map(entry => <div key={entry.revision} style={{display:'flex', gap:8, alignItems:'center', padding:'7px 0', borderBottom:`1px solid ${LM.lineSoft}`}}>
-              <span style={{flex:1, fontSize:11.5, color:LM.inkSoft}}>{entry.reason || entry.state} {entry.current ? '· current' : ''}
-                <small style={{display:'block', fontFamily:LM.mono, fontSize:11, color:LM.inkSoft}}>{entry.timestamp || 'Time unavailable'} · {entry.state} · {entry.digest ? entry.digest.slice(0,10) : String(entry.revision).slice(-10)}</small></span>
-              {!entry.current && entry.restore_control && <button style={{ ...smallBtn(), padding:'3px 9px' }} disabled={unavailable}
+          {!!history.length && <div style={{marginTop:LM.sp.md}}>
+            <div style={{fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.inkSoft, letterSpacing:LM.fs.label.letter, marginBottom:LM.sp.xs}}>VERSIONS &#xb7; SHOWING {Math.min(10,history.length)} OF {history.length}</div>
+            {versions.map(entry => <div key={entry.revision} style={{display:'flex', gap:LM.sp.sm, alignItems:'center', padding:`${LM.sp.sm}px 0`, borderBottom:`1px solid ${LM.lineSoft}`}}>
+              <span style={{flex:1, fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.inkSoft}}>{entry.reason || entry.state} {entry.current ? '· current' : ''}
+                <small style={{display:'block', fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', color:LM.inkSoft}}>{entry.timestamp || 'Time unavailable'} · {entry.state} · {entry.digest ? entry.digest.slice(0,10) : String(entry.revision).slice(-10)}</small></span>
+              {!entry.current && entry.restore_control && <button style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }} disabled={unavailable}
                 onClick={() => run(() => api.restoreThemeRevision(entry.revision))}>Restore</button>}
             </div>)}
           </div>}
@@ -8453,19 +8939,19 @@ const SettingsShortcuts = () => {
   return (
     <div>
       <SHead title="Shortcuts" sub="Keyboard bindings handled by this Studio build."/>
-      <div style={{display:'flex', alignItems:'center', gap:LM.sp.sm, padding:'7px 10px', margin:'0 0 14px',
+      <div style={{display:'flex', alignItems:'center', gap:LM.sp.sm, padding:`${LM.sp.sm}px ${LM.sp.md}px`, margin:`0 0 ${LM.sp.lg}px`,
         background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md}}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={LM.inkSoft} strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
         <input aria-label="Filter shortcuts" value={q} onChange={e => setQ(e.target.value)} placeholder="Filter shortcuts..." style={{
-          flex:1, border:0, background:'transparent', color:LM.ink, fontSize:12.5, outline:'none', fontFamily:LM.sans,
+          flex:1, border:0, background:'transparent', color:LM.ink, fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', outline:'none', fontFamily:LM.sans,
         }}/>
       </div>
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'4px 24px' }}>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:`${LM.sp.xs}px ${LM.sp.xl}px` }}>
         {rows.map(binding => (
-          <div key={binding.id} data-shortcut-id={binding.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'7px 0', borderBottom:`1px solid ${LM.lineSoft}` }}>
-            <span style={{ flex:1, fontSize:12.5, color:LM.ink }}>{binding.label}</span>
-            <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.08em', textTransform:'uppercase' }}>{studioShortcutScopeLabel(binding.scope)}</span>
-            <kbd style={{ ...kbd(), fontSize:11, padding:'2px 7px' }}>{binding.display}</kbd>
+          <div key={binding.id} data-shortcut-id={binding.id} style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, padding:`${LM.sp.sm}px 0`, borderBottom:`1px solid ${LM.lineSoft}` }}>
+            <span style={{ flex:1, fontSize:LM.fs.caption.sz, color:LM.ink }}>{binding.label}</span>
+            <span style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.inkSoft, letterSpacing:LM.fs.label.letter, textTransform:'uppercase' }}>{studioShortcutScopeLabel(binding.scope)}</span>
+            <kbd style={{ ...kbd(), fontSize:LM.fs.label.sz, padding:`2px ${LM.sp.sm}px` }}>{binding.display}</kbd>
           </div>
         ))}
       </div>
@@ -8517,36 +9003,36 @@ const SettingsRetention = () => {
   const rows = (data && data.archived) || [];
   const change = data && data.last_change;
   return (
-    <div style={{ marginBottom:18 }}>
-      <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em', marginBottom:6 }}>CONVERSATION RETENTION</div>
+    <div style={{ marginBottom:LM.sp.lg }}>
+      <div style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.inkSoft, letterSpacing:LM.fs.label.letter, marginBottom:LM.sp.sm }}>CONVERSATION RETENTION</div>
       {state.loading && !data && <SettingsEmpty>Reading the retention policy…</SettingsEmpty>}
       {/* retry only where a read exists to retry: never an inert action */}
       {state.error && <SettingsEmpty role="alert" action={window.ARCHHUB_CONVERSATION_RETENTION
         ? <button onClick={load} style={smallBtn()}>retry</button> : null}>{state.error}</SettingsEmpty>}
       {policy && (
-        <div style={{ padding:'12px 14px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:7, fontSize:13, lineHeight:1.55, color:LM.inkSoft }}>
+        <div style={{ padding:`${LM.sp.md}px ${LM.sp.lg}px`, background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.panel, fontSize:LM.fs.bodySm.sz, lineHeight:LM.fs.bodySm.ln + 'px', color:LM.inkSoft }}>
           <div style={{ color:LM.ink }}>
             A conversation with no activity for {policy.inactive_days} days is written to its archive file, then removed from the working store,
             {' '}{policy.messages_per_pass} messages at a time, only after {policy.idle_seconds} seconds without a click.
           </div>
-          <div style={{ marginTop:4 }}>{policy.preserved}</div>
-          {data.reason && <div style={{ marginTop:4, color:LM.ink }}>{data.reason}</div>}
-          <div style={{ fontFamily:LM.mono, fontSize:11, marginTop:6, wordBreak:'break-all' }}>{policy.archive_folder || 'No archive folder: conversation content is not enabled.'}</div>
-          <div style={{ fontFamily:LM.mono, fontSize:11, marginTop:6 }}>
+          <div style={{ marginTop:LM.sp.xs }}>{policy.preserved}</div>
+          {data.reason && <div style={{ marginTop:LM.sp.xs, color:LM.ink }}>{data.reason}</div>}
+          <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', marginTop:LM.sp.sm, wordBreak:'break-all' }}>{policy.archive_folder || 'No archive folder: conversation content is not enabled.'}</div>
+          <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', marginTop:LM.sp.sm }}>
             Last pass: {retentionPass(data.last_run) || 'none since ArchHub started'}
           </div>
-          {change && <div style={{ fontFamily:LM.mono, fontSize:11, marginTop:2 }}>
+          {change && <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', marginTop:LM.sp.xs }}>
             Last removal: {retentionWhen(change.at)} · {change.purged} messages moved · {change.exported} written to the archive
           </div>}
         </div>
       )}
       {data && !rows.length && <SettingsEmpty>No conversation has been archived.</SettingsEmpty>}
       {rows.map(row => (
-        <div key={row.conversation} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', marginTop:6,
+        <div key={row.conversation} style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, padding:`${LM.sp.md}px ${LM.sp.md}px`, marginTop:LM.sp.sm,
           background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md }}>
           <div style={{ flex:1, minWidth:0 }}>
-            <div title={row.conversation} style={{ fontSize:13, color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{row.title || row.conversation}</div>
-            <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:2 }}>
+            <div title={row.conversation} style={{ fontSize:LM.fs.bodySm.sz, color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{row.title || row.conversation}</div>
+            <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', color:LM.inkSoft, marginTop:LM.sp.xs }}>
               {row.archived_at ? 'archived on ' + (retentionWhen(row.archived_at) || 'a date not recorded') : 'restored'} · {row.removed_messages} in the archive file{row.archive_exists ? '' : ' · file missing'}
             </div>
           </div>
@@ -8572,25 +9058,25 @@ const SettingsStorage = () => (
         ['Training queue', '\u2014', 'not measured'],
         ['Model cache', '\u2014', 'not measured'],
       ].map(([k, n, sz]) => (
-        <div key={k} style={{ padding:'12px 14px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:7 }}>
-          <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.14em' }}>{k.toUpperCase()}</div>
-          <div style={{ fontFamily:LM.serif, fontSize:26, letterSpacing:'-0.02em', marginTop:2, color: n === '\u2014' ? LM.inkSoft : LM.ink }}>{n}</div>
-          <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:1 }}>{sz}</div>
+        <div key={k} style={{ padding:`${LM.sp.md}px ${LM.sp.lg}px`, background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.panel }}>
+          <div style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, color:LM.inkSoft, letterSpacing:LM.fs.label.letter, fontWeight:LM.fs.label.wt }}>{k.toUpperCase()}</div>
+          <div style={{ fontFamily:LM.sans, fontSize:LM.fs.display.sz, lineHeight:LM.fs.display.ln + 'px', fontWeight:LM.fs.display.wt, marginTop:LM.sp.xs, color: n === '\u2014' ? LM.inkMuted : LM.ink }}>{n}</div>
+          <div style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.inkSoft, marginTop:LM.sp.xs }}>{sz}</div>
         </div>
       ))}
     </div>
     {/* The design's Export / Clear cache / Forget all / Delete all rows each opened a folder while
         naming an action they did not perform. The rows now name what they do. Deleting sessions or
         the brain is done by hand in the folder; the Brain tab exports the brain. */}
-    <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+    <div style={{ display:'flex', flexDirection:'column', gap:LM.sp.sm }}>
       {[
         ['Graph folder', 'the graph database and its backups', 'graph'],
         ['Brain folder', 'the brain on this machine', 'brain'],
       ].map(([t, sub, target]) => (
-        <div key={t} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md }}>
+        <div key={t} style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, padding:`${LM.sp.md}px ${LM.sp.md}px`, background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md }}>
           <div style={{ flex:1 }}>
-            <div style={{ fontSize:13, color:LM.ink }}>{t}</div>
-            <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, marginTop:2 }}>{sub}</div>
+            <div style={{ fontSize:LM.fs.bodySm.sz, color:LM.ink }}>{t}</div>
+            <div style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.inkSoft, marginTop:LM.sp.xs }}>{sub}</div>
           </div>
           <button onClick={async (e) => {
             const b = e.currentTarget;
@@ -8623,7 +9109,7 @@ const SettingsAbout = ({ providers, release }) => {
   return (
   <div>
     <SHead title="About" sub="ArchHub Studio · the AEC stack with one foot in your model and one in the LLM."/>
-    <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, padding:'14px 16px', fontFamily:LM.mono, fontSize:11.5, color:LM.inkSoft, lineHeight:1.85 }}>
+    <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, padding:`${LM.sp.lg}px ${LM.sp.lg}px`, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', color:LM.inkSoft }}>
       <div><span style={{ color:LM.inkSoft }}>version    </span> {release?.current_build || 'reading\u2026'}</div>
       <div><span style={{ color:LM.inkSoft }}>license    </span> {'\u2014'}</div>
       <div><span style={{ color:LM.inkSoft }}>server     </span> {window.location.host || window.location.origin} &#xb7; running</div>
@@ -8703,27 +9189,27 @@ const SettingsAssistants = () => {
 
   return (
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
-      <div style={{ padding:'10px 14px', fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.12em' }}>
+      <div style={{ padding:`${LM.sp.md}px ${LM.sp.lg}px`, fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.inkSoft, letterSpacing:LM.fs.label.letter }}>
         ASSISTANTS · CONNECTIONS AND SAFETY
       </div>
-      <div style={{padding:'0 14px 10px', fontSize:11.5, color:LM.inkSoft}}>
+      <div style={{padding:`0 ${LM.sp.lg}px ${LM.sp.md}px`, fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.inkSoft}}>
         Saved settings do not prove a live connection. Actions require an assigned task and your approval.
       </div>
       {(held.clients || []).map(c => (
-        <div key={c.client} style={{ padding:'10px 14px', display:'flex', alignItems:'center', gap:LM.sp.md, borderTop:`1px solid ${LM.lineSoft}` }}>
-          <div style={{ flex:1, minWidth:0, lineHeight:1.3 }}>
-            <div style={{ fontSize:13, fontWeight:500, color:LM.ink }}>{ASSISTANT_NAMES[c.client] || 'Assistant'}</div>
-            <div style={{ fontSize:11.5, color:LM.inkSoft }}>{((c.client === 'claude-code' && CLAUDE_CODE_SAID[c.state]) || ASSISTANT_SAID[c.state]) || 'Connection status unavailable'}</div>
+        <div key={c.client} style={{ padding:`${LM.sp.md}px ${LM.sp.lg}px`, display:'flex', alignItems:'center', gap:LM.sp.md, borderTop:`1px solid ${LM.lineSoft}` }}>
+          <div style={{ flex:1, minWidth:0, lineHeight:LM.fs.caption.ln + 'px' }}>
+            <div style={{ fontSize:LM.fs.bodySm.sz, fontWeight:LM.fs.bodySmStrong.wt, color:LM.ink }}>{ASSISTANT_NAMES[c.client] || 'Assistant'}</div>
+            <div style={{ fontSize:LM.fs.caption.sz, color:LM.inkSoft }}>{((c.client === 'claude-code' && CLAUDE_CODE_SAID[c.state]) || ASSISTANT_SAID[c.state]) || 'Connection status unavailable'}</div>
             {c.hooks && (c.hooks.events || []).map(e => (
-              <div key={e.event} style={{fontSize:11.5, color:LM.inkSoft}}>{e.said || 'Status unavailable'}</div>
+              <div key={e.event} style={{fontSize:LM.fs.caption.sz, color:LM.inkSoft}}>{e.said || 'Status unavailable'}</div>
             ))}
-            {c.hooks && c.hooks.approval && <div style={{fontSize:11.5, color:LM.inkSoft}}>{c.hooks.approval}</div>}
-            {c.hooks && !c.hooks.available && <div style={{fontSize:11.5, color:LM.inkSoft}}>{c.hooks.state === 'per_session' ? 'Connects when you open a session' : c.hooks.state === 'unsupported' ? 'Not supported yet' : c.hooks.state === 'not_installed' ? 'Not installed' : c.hooks.state === 'install_required' ? 'Open the installed ArchHub to connect this assistant.' : 'Settings could not be read. Repair the assistant installation first.'}</div>}
+            {c.hooks && c.hooks.approval && <div style={{fontSize:LM.fs.caption.sz, color:LM.inkSoft}}>{c.hooks.approval}</div>}
+            {c.hooks && !c.hooks.available && <div style={{fontSize:LM.fs.caption.sz, color:LM.inkSoft}}>{c.hooks.state === 'per_session' ? 'Connects when you open a session' : c.hooks.state === 'unsupported' ? 'Not supported yet' : c.hooks.state === 'not_installed' ? 'Not installed' : c.hooks.state === 'install_required' ? 'Open the installed ArchHub to connect this assistant.' : 'Settings could not be read. Repair the assistant installation first.'}</div>}
           </div>
           {c.hooks && c.hooks.available && (
             <button onClick={() => previewHooks(c.client)} disabled={!!busy}
               title="Review what Repair will change before applying it"
-              style={{...smallBtn(), padding:'3px 10px', fontStyle:'normal'}}>
+              style={{...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px`}}>
               Repair
             </button>
           )}
@@ -8731,24 +9217,24 @@ const SettingsAssistants = () => {
           {c.state === 'ready_to_register' && (
             <button onClick={() => connect(c.client)} disabled={!!busy}
               title={'Adds one ArchHub entry to ' + (ASSISTANT_NAMES[c.client] || 'Assistant') + "'s connection settings"}
-              style={{ ...smallBtn(), padding:'3px 10px', fontStyle:'normal' }}>{busy === c.client ? 'Connecting…' : 'Connect'}</button>
+              style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>{busy === c.client ? 'Connecting…' : 'Connect'}</button>
           )}
           {c.state === 'migration_available' && (
             <button onClick={() => connect(c.client)} disabled={!!busy}
               title={c.client === 'claude-code' ? "Registers this install in Claude Code and retires only ArchHub's old development coordination entry through Claude Code's own command" : "Replaces only ArchHub's old entry in " + (ASSISTANT_NAMES[c.client] || 'Assistant') + "'s settings and keeps an encrypted copy of the file"}
-              style={{ ...smallBtn(), padding:'3px 10px', fontStyle:'normal' }}>{busy === c.client ? 'Replacing…' : 'Replace'}</button>
+              style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>{busy === c.client ? 'Replacing…' : 'Replace'}</button>
           )}
         </div>
       ))}
       {hookPreview && (
-        <div role="region" aria-label="Review assistant safety settings" style={{padding:'12px 14px', borderTop:'1px solid '+LM.lineSoft}}>
+        <div role="region" aria-label="Review assistant safety settings" style={{padding:`${LM.sp.md}px ${LM.sp.lg}px`, borderTop:'1px solid '+LM.lineSoft}}>
           <div>{ASSISTANT_NAMES[hookPreview.client] || 'Assistant'}: {hookPreview.migration ? 'Repair: move the end-of-turn check to this install' : hookPreview.changed ? 'Repair: add the end-of-turn check' : 'Already set; nothing to change'}</div>
           <p>{hookPreview.description || 'Adds ArchHub\'s end-of-turn check while keeping your other settings and an encrypted backup. The assistant may still need to approve and load the changes.'}</p>
           <button onClick={repairHooks} disabled={!!busy || !hookPreview.changed} style={smallBtn()}>Apply reviewed repair</button>
           <button onClick={() => setHookPreview(null)} disabled={!!busy} style={smallBtn()}>Cancel</button>
         </div>
       )}
-      {hookNotice && <div role="status" style={{padding:'10px 14px'}}>{hookNotice}</div>}
+      {hookNotice && <div role="status" style={{padding:`${LM.sp.md}px ${LM.sp.lg}px`}}>{hookNotice}</div>}
 
       {!held.clients && <SettingsEmpty role={held.error ? 'alert' : 'status'}>{held.error || 'Reading your assistants…'}</SettingsEmpty>}
       {held.clients && held.error && <SettingsEmpty role="alert">{held.error}</SettingsEmpty>}
@@ -8770,16 +9256,16 @@ const SettingsOperations = () => {
   };
   return (
     <details style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
-      <summary style={{ padding:'10px 14px', cursor:'pointer', fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.12em' }}>
+      <summary style={{ padding:`${LM.sp.md}px ${LM.sp.lg}px`, cursor:'pointer', fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.inkSoft, letterSpacing:LM.fs.label.letter }}>
         OPERATIONS · {proven} READY · {rows.length - proven} NEED SETUP
       </summary>
       {rows.map(r => (
-        <div key={r.op} style={{ padding:'7px 14px', display:'flex', gap:LM.sp.md, borderTop:`1px solid ${LM.lineSoft}`, alignItems:'baseline' }}>
-          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.ink, width:190, flexShrink:0 }}>{r.op}</span>
-          <span style={{ fontFamily:LM.mono, fontSize:11, padding:'1px 6px', borderRadius:LM.rad.xs, flexShrink:0,
+        <div key={r.op} style={{ padding:`${LM.sp.sm}px ${LM.sp.lg}px`, display:'flex', gap:LM.sp.md, borderTop:`1px solid ${LM.lineSoft}`, alignItems:'baseline' }}>
+          <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', color:LM.ink, width:190, flexShrink:0 }}>{r.op}</span>
+          <span style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, letterSpacing:LM.fs.label.letter, padding:`1px ${LM.sp.sm}px`, borderRadius:LM.rad.chip, flexShrink:0,
             background:(r.evidence === 'court' ? LM.ok : LM.inkSoft) + '1f', color:r.evidence === 'court' ? LM.ok : LM.inkSoft }}>
             {statusLabel(r)}</span>
-          <span style={{ fontSize:11.5, color:LM.inkSoft, minWidth:0, overflowWrap:'anywhere' }}>
+          <span style={{ fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.inkSoft, minWidth:0, overflowWrap:'anywhere' }}>
             {publicDetail(r)}{r.connector_state ? ' · ' + r.connector_state : ''}</span>
         </div>
       ))}
@@ -8880,27 +9366,27 @@ const SettingsWorkspaces = () => {
       writers:WORKSPACE_AGENTS.filter(agent => current.has(agent)),
     });
   };
-  const row = { padding:'10px 14px', display:'flex', alignItems:'center', gap:LM.sp.md };
-  const mono = { fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em', marginTop:2 };
-  const chip = col => ({ fontFamily:LM.mono, fontSize:11, padding:'2px 7px', borderRadius:LM.rad.xs,
-    background:col + '14', color:col, letterSpacing:'0.1em', textTransform:'uppercase' });
+  const row = { padding:`${LM.sp.md}px ${LM.sp.lg}px`, display:'flex', alignItems:'center', gap:LM.sp.md };
+  const mono = { fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', color:LM.inkSoft, marginTop:LM.sp.xs };
+  const chip = col => ({ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, padding:`2px ${LM.sp.sm}px`, borderRadius:LM.rad.chip,
+    background:col + '14', color:col, letterSpacing:LM.fs.label.letter, textTransform:'uppercase' });
   const field = { background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, color:LM.ink,
-    padding:'6px 9px', fontFamily:LM.sans, fontSize:13 };
+    padding:`${LM.sp.sm}px ${LM.sp.md}px`, fontFamily:LM.sans, fontSize:LM.fs.bodySm.sz };
   return (
-    <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+    <div style={{ display:'flex', flexDirection:'column', gap:LM.sp.lg }}>
       <SHead title="Workspaces" sub="Private workspaces are never shared publicly."/>
       {checking && (
-        <div role="status" style={{ fontSize:12, color:LM.inkSoft }}>
+        <div role="status" style={{ fontSize:LM.fs.caption.sz, color:LM.inkSoft }}>
           Checking the registry the governance hooks read against the graph{'\u2026'} Changes wait for the check.
         </div>
       )}
       {mismatch && (
-        <div role="alert" style={{ padding:'10px 14px', border:`1px solid ${LM.warn}`, borderRadius:LM.rad.lg,
-          background:LM.warn + '12', display:'flex', alignItems:'center', gap:LM.sp.md, fontSize:13 }}>
+        <div role="alert" style={{ padding:`${LM.sp.md}px ${LM.sp.lg}px`, border:`1px solid ${LM.warn}`, borderRadius:LM.rad.panel,
+          background:LM.warn + '12', display:'flex', alignItems:'center', gap:LM.sp.md, fontSize:LM.fs.bodySm.sz }}>
           <span style={{ flex:1 }}>The registry the governance hooks read does not match the graph (start-up check: {boot}; now: {view.projection}). Changes are paused until it is republished.</span>
           {view.key_pinned && (
             <button disabled={!!busy} onClick={() => { if (!busy && mismatch && view.key_pinned) run(WORKSPACE_CHANGE, { action:'republish' }); }}
-              style={{ ...smallBtn(true), padding:'4px 10px' }}>Republish</button>
+              style={{ ...smallBtn(true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Republish</button>
           )}
         </div>
       )}
@@ -8918,13 +9404,13 @@ const SettingsWorkspaces = () => {
               <div style={{ fontSize:13, fontWeight:500 }}>{r.root_id}</div>
               <div style={mono}>{r.path}</div>
               {r.privacy === 'private' && (
-                <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginTop:8 }}>
+                <div style={{ display:'flex', gap:LM.sp.sm, flexWrap:'wrap', marginTop:LM.sp.sm }}>
                   {WORKSPACE_AGENTS.map(w => {
                     const active = (r.writers || []).includes(w);
                     return (
-                      <label key={w} style={{ display:'inline-flex', alignItems:'center', gap:5,
-                        padding:'2px 7px', border:`1px solid ${active ? LM.ok : LM.line}`,
-                        borderRadius:LM.rad.xs, fontFamily:LM.mono, fontSize:11,
+                      <label key={w} style={{ display:'inline-flex', alignItems:'center', gap:LM.sp.xs,
+                        padding:`2px ${LM.sp.sm}px`, border:`1px solid ${active ? LM.ok : LM.line}`,
+                        borderRadius:LM.rad.chip, fontFamily:LM.sans, fontSize:LM.fs.label.sz, fontWeight:LM.fs.label.wt, letterSpacing:LM.fs.label.letter,
                         color:active ? LM.ink : LM.inkSoft, textTransform:'uppercase' }}>
                         <input type="checkbox" checked={active} disabled={!!busy || !ready}
                           aria-label={`Allow ${w} to write ${r.root_id}`}
@@ -8938,31 +9424,31 @@ const SettingsWorkspaces = () => {
             </div>
             <span style={chip(r.privacy === 'private' ? LM.ok : LM.warn)}>{r.privacy}</span>
             <button disabled={!!busy || !ready} onClick={() => { if (ready && !busy) setConfirming(r); }}
-              style={{ ...smallBtn(), padding:'3px 9px' }}>Remove</button>
+              style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Remove</button>
           </div>
         ))}
         {view && !registered.length && <SettingsEmpty>No workspace is registered yet.</SettingsEmpty>}
         {!view && !error && <SettingsEmpty>Reading the workspace registry{'\u2026'}</SettingsEmpty>}
-        {!view && error && workspaceGraphOwnerDown(error) && <SettingsEmpty action={<button disabled={!!busy} onClick={() => { setOwnerReadRetries(0); read(); }} style={{ ...smallBtn(), padding:'3px 9px' }}>Retry</button>}>Starting ArchHub's graph service{'\u2026'} {'\u00b7'}</SettingsEmpty>}
-        {!view && error && !workspaceGraphOwnerDown(error) && <SettingsEmpty role="alert" action={<button disabled={!!busy} onClick={read} style={{ ...smallBtn(), padding:'3px 9px' }}>Read again</button>}>The workspace registry was not read: {error}</SettingsEmpty>}
+        {!view && error && workspaceGraphOwnerDown(error) && <SettingsEmpty action={<button disabled={!!busy} onClick={() => { setOwnerReadRetries(0); read(); }} style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Retry</button>}>Starting ArchHub's graph service{'\u2026'} {'\u00b7'}</SettingsEmpty>}
+        {!view && error && !workspaceGraphOwnerDown(error) && <SettingsEmpty role="alert" action={<button disabled={!!busy} onClick={read} style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Read again</button>}>The workspace registry was not read: {error}</SettingsEmpty>}
       </div>
       {confirming && (
-        <div role="dialog" style={{ padding:'12px 14px', border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, background:LM.bgSoft, fontSize:13, display:'flex', flexDirection:'column', gap:8 }}>
+        <div role="dialog" style={{ padding:`${LM.sp.md}px ${LM.sp.lg}px`, border:`1px solid ${LM.line}`, borderRadius:LM.rad.panel, background:LM.bgSoft, fontSize:LM.fs.bodySm.sz, display:'flex', flexDirection:'column', gap:LM.sp.sm }}>
           <div>Stop governing <b>{confirming.root_id}</b> ({confirming.path})?</div>
           <div style={{ color:LM.inkSoft }}>{WORKSPACE_PROMISE}</div>
-          <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
-            <button onClick={() => setConfirming(null)} style={{ ...smallBtn(), padding:'4px 10px' }}>Keep it</button>
+          <div style={{ display:'flex', gap:LM.sp.sm, justifyContent:'flex-end' }}>
+            <button onClick={() => setConfirming(null)} style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Keep it</button>
             <button disabled={!!busy || !ready} onClick={async () => { if (!ready || busy) return; const r = confirming; setConfirming(null);
               await run(WORKSPACE_CHANGE, { action:'unregister', id:r.root_id }); }}
-              style={{ ...smallBtn(true), padding:'4px 10px' }}>Stop governing</button>
+              style={{ ...smallBtn(true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Stop governing</button>
           </div>
         </div>
       )}
-      <div style={{ display:'grid', gridTemplateColumns:ready ? '1fr auto 150px 110px auto' : '1fr auto 150px 110px', gap:8, alignItems:'center' }}>
+      <div style={{ display:'grid', gridTemplateColumns:ready ? '1fr auto 150px 110px auto' : '1fr auto 150px 110px', gap:LM.sp.sm, alignItems:'center' }}>
         <input value={path} onChange={e => setPath(e.target.value)} placeholder="Folder, e.g. D:\Clients\Project"
           aria-label="Workspace folder" style={field}/>
         <button disabled={!!busy} onClick={browse} aria-label="Browse for a folder"
-          style={{ ...smallBtn(false), padding:'6px 12px' }}>Browse…</button>
+          style={{ ...smallBtn(false), padding:`${LM.sp.sm}px ${LM.sp.md}px` }}>Browse…</button>
         <input value={rootId} onChange={e => setRootId(e.target.value)} placeholder={workspaceSlug(path) || 'name'}
           aria-label="Workspace name" style={field}/>
         <select value={privacy} onChange={e => setPrivacy(e.target.value)} aria-label="Privacy" style={field}>
@@ -8970,17 +9456,17 @@ const SettingsWorkspaces = () => {
           <option value="public">Public</option>
         </select>
         {ready && <button disabled={!!busy || !path.trim()} title={!path.trim() ? 'Choose a folder first' : undefined}
-          onClick={add} style={{ ...smallBtn(true), padding:'6px 12px' }}>Add</button>}
+          onClick={add} style={{ ...smallBtn(true), padding:`${LM.sp.sm}px ${LM.sp.md}px` }}>Add</button>}
       </div>
       {!ready && (
-        <div style={{ fontFamily:LM.sans, fontSize:12, color:LM.inkSoft, lineHeight:1.5 }}>
+        <div style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.inkSoft }}>
           Workspaces are added in Settings > Workspaces after the workspace registry check passes.
         </div>
       )}
-      {busy && <div role="status" style={{ fontSize:12, color:LM.inkSoft }}>{busy}{'\u2026'}</div>}
-      {view && error && <div role="alert" style={{ fontSize:12, color:LM.err || LM.warn }}>{error}</div>}
+      {busy && <div role="status" style={{ fontSize:LM.fs.caption.sz, color:LM.inkSoft }}>{busy}{'\u2026'}</div>}
+      {view && error && <div role="alert" style={{ fontSize:LM.fs.caption.sz, color:LM.err || LM.warn }}>{error}</div>}
       {history.length > 0 && (
-        <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>
+        <div style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.inkSoft, letterSpacing:LM.fs.label.letter }}>
           NO LONGER GOVERNED: {history.map(r => r.root_id).join(', ')}
         </div>
       )}
@@ -9003,7 +9489,7 @@ const HostEnableSwitch = ({ hostId, enabled, enabledState, enabledFreshness, dis
   const freshness = Number.isFinite(Number(enabledFreshness)) ? Math.max(0, Math.floor(Number(enabledFreshness))) : null;
   const freshnessText = state === 'last_confirmed' && freshness !== null ? ' Last confirmed ' + freshness + 's ago.' : '';
   const writeDisabledReason = (disabledReason || row.enable_disabled_reason || row.write_disabled_reason || '') + freshnessText;
-  const refreshRows = () => window.fetch('/tools').then(r => r.ok ? r.json() : null).catch(() => null).then(tools => {
+  const refreshRows = () => window.fetch('/tools', toolHubFetchOptions(null)).then(r => r.ok ? r.json() : null).catch(() => null).then(tools => {
     if (tools && Array.isArray(tools.tools)) {
       window.ARCHHUB_TOOL_HUB = {...(window.ARCHHUB_TOOL_HUB || {}), ...tools};
       toolHubSnapshot = window.ARCHHUB_TOOL_HUB;
@@ -9032,18 +9518,18 @@ const HostEnableSwitch = ({ hostId, enabled, enabledState, enabledFreshness, dis
       .finally(() => setPending(false));
   };
   return (
-    <span style={{ display:'inline-flex', alignItems:'center', gap:8, minWidth:0 }}>
+    <span style={{ display:'inline-flex', alignItems:'center', gap:LM.sp.sm, minWidth:0 }}>
       <button type="button" role="switch" aria-checked={checked ? 'true' : 'false'} aria-label={'Turn ' + name + ' on/off'}
         disabled={pending || !!writeDisabledReason} onClick={toggle} style={{
-          width:34, height:18, borderRadius:9, border:`1px solid ${confirmedOn ? LM.ok : LM.line}`,
+          width:34, height:18, borderRadius:LM.rad.pill, border:`1px solid ${confirmedOn ? LM.ok : LM.line}`,
           background:confirmedOn ? LM.ok : LM.bgPanel, padding:2, display:'inline-flex',
           justifyContent:checked ? 'flex-end' : 'flex-start', alignItems:'center', cursor:pending ? 'wait' : writeDisabledReason ? 'not-allowed' : 'pointer',
         }}>
         <span aria-hidden="true" style={{ width:12, height:12, borderRadius:'50%', background:checked ? '#fff' : LM.inkSoft, display:'block' }}/>
       </button>
-      {writeDisabledReason && <span role="status" style={{ fontSize:11, color:LM.inkSoft, lineHeight:1.3, maxWidth:220 }}>{writeDisabledReason}</span>}
-      {!checked && <span role="status" style={{ fontSize:11, color:LM.inkSoft, lineHeight:1.3, maxWidth:220 }}>{reason}</span>}
-      {error && <span role="alert" style={{ fontSize:11, color:LM.err || LM.warn, lineHeight:1.3, maxWidth:220 }}>{error}</span>}
+      {writeDisabledReason && <span role="status" style={{ fontSize:LM.fs.label.sz, color:LM.inkSoft, lineHeight:LM.fs.label.ln + 'px', maxWidth:220 }}>{writeDisabledReason}</span>}
+      {!checked && <span role="status" style={{ fontSize:LM.fs.label.sz, color:LM.inkSoft, lineHeight:LM.fs.label.ln + 'px', maxWidth:220 }}>{reason}</span>}
+      {error && <span role="alert" style={{ fontSize:LM.fs.label.sz, color:LM.err || LM.warn, lineHeight:LM.fs.label.ln + 'px', maxWidth:220 }}>{error}</span>}
     </span>
   );
 };
@@ -9075,25 +9561,25 @@ const SettingsHosts = () => {
   const connected = visibleHosts.filter(h => hostStateWord(h) === 'Connected').length;
   const dotStyle = (col, dashed) => ({ width:8, height:8, borderRadius:'50%', flex:'none',
     background: dashed ? 'transparent' : col, border: dashed ? `1px dashed ${LM.inkSoft}` : 0 });
-  const rowStyle = { display:'flex', alignItems:'center', gap:10, padding:'9px 10px', flexWrap:'wrap',
-    border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, background:LM.bgPanel };
-  const tagStyle = col => ({ fontFamily:LM.mono, fontSize:11, fontWeight:500, padding:'2px 8px',
-    borderRadius:4, background:LM.bgHover, color:col, whiteSpace:'nowrap' });
+  const rowStyle = { display:'flex', alignItems:'center', gap:LM.sp.sm, padding:`${LM.sp.sm}px ${LM.sp.md}px`, flexWrap:'wrap',
+    border:`1px solid ${LM.line}`, borderRadius:LM.rad.node, background:LM.bgPanel };
+  const tagStyle = col => ({ fontFamily:LM.sans, fontSize:LM.fs.label.sz, fontWeight:LM.fs.label.wt, letterSpacing:LM.fs.label.letter, padding:`2px ${LM.sp.sm}px`,
+    borderRadius:LM.rad.chip, background:LM.bgHover, color:col, whiteSpace:'nowrap' });
   return (
   <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
-      <div data-connectors-bar="" style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px',
+      <div data-connectors-bar="" style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, padding:`${LM.sp.sm}px ${LM.sp.md}px`,
         background:LM.bgPanel, borderBottom:`1px solid ${LM.line}` }}>
-        <b style={{ fontWeight:600, fontSize:13 }}>Connectors</b>
+        <b style={{ fontWeight:LM.fs.bodySmStrong.wt, fontSize:LM.fs.bodySm.sz }}>Connectors</b>
         <span style={tagStyle(LM.inkSoft)}>{connected} running</span>
         <span style={{ flex:1 }}/>
         {speckle && <span style={tagStyle(LM.inkSoft)}>Speckle {'·'} {hostDetail(speckle)}</span>}
         {/* a live control on every state: re-read the hosts probe (never an inert action) */}
         <button type="button" onClick={catalogue.retry} disabled={catalogue.loading}
-          style={{ font:`500 12px ${LM.sans}`, color:LM.ink, background:LM.bgHover, border:`1px ${catalogue.loading ? 'dashed' : 'solid'} ${LM.line}`,
-            borderRadius:6, padding:'5px 10px', cursor: catalogue.loading ? 'default' : 'pointer' }}>{catalogue.loading ? 'Checking\u2026' : 'Check again'}</button>
+          style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, fontWeight:LM.fs.label.wt, color:LM.ink, background:LM.bgHover, border:`1px ${catalogue.loading ? 'dashed' : 'solid'} ${LM.line}`,
+            borderRadius:LM.rad.control, padding:`${LM.sp.xs}px ${LM.sp.md}px`, cursor: catalogue.loading ? 'default' : 'pointer' }}>{catalogue.loading ? 'Checking\u2026' : 'Check again'}</button>
       </div>
-      <div style={{ display:'grid', gap:10, padding:14 }}>
+      <div style={{ display:'grid', gap:LM.sp.sm, padding:LM.sp.lg }}>
       {connectorRows.map(h => {
         const word = hostStateWord(h);
         const col = hostStateTone(h);
@@ -9102,14 +9588,14 @@ const SettingsHosts = () => {
             <span style={{ ...dotStyle(word === 'Connected' ? LM.ok : word === 'Checking' ? LM.warn : LM.line, false),
               animation: word === 'Checking' ? 'lmPulse 1.2s infinite' : 'none' }}/>
             <div style={{ minWidth:0 }}>
-              <div style={{ fontWeight:500, fontSize:13, color:LM.ink }}>{h.name}</div>
-              <div style={{ fontFamily:LM.sans, fontSize:12, color:LM.inkSoft }}>{h.officeDetail || hostDetail(h)}</div>
+              <div style={{ fontWeight:LM.fs.bodySmStrong.wt, fontSize:LM.fs.bodySm.sz, color:LM.ink }}>{h.name}</div>
+              <div style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, color:LM.inkSoft }}>{h.officeDetail || hostDetail(h)}</div>
             </div>
             <span style={{ flex:1 }}/>
-            <span data-host-state="" style={{ fontFamily:LM.sans, fontSize:12, color:col }}>{word.toLowerCase()}</span>
+            <span data-host-state="" style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, color:col }}>{word.toLowerCase()}</span>
             {hostOpenPhrase(h) && word !== 'Connected' && (
               <button type="button" onClick={e => startHost(h, e.currentTarget)}
-                style={{ ...smallBtn(), padding:'5px 10px' }}>Start</button>
+                style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Start</button>
             )}
             <HostEnableSwitch hostId={h.id} enabled={h.enabled === true}
               enabledState={h.enabled_state} enabledFreshness={h.enabled_freshness_seconds}
@@ -9119,14 +9605,14 @@ const SettingsHosts = () => {
         );
       })}
       {!visibleHosts.length && <SettingsEmpty role={catalogue.error ? 'alert' : 'status'}
-        action={catalogue.error && !catalogue.loading && <button onClick={catalogue.retry} style={{ ...smallBtn(), padding:'3px 9px', fontStyle:'normal' }}>read again</button>}>
+        action={catalogue.error && !catalogue.loading && <button onClick={catalogue.retry} style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>read again</button>}>
         {catalogue.loading ? 'Reading the programs on this machine…' : catalogue.error ? 'Connected programs: ' + catalogue.error + '.' : 'No connected program found yet.'}</SettingsEmpty>}
       {CONNECTORS_NOT_BUILT.map(([name, line]) => (
         <div key={name} data-connector-row="" data-not-built="" style={rowStyle}>
           <span style={dotStyle(null, true)}/>
           <div style={{ minWidth:0 }}>
-            <div style={{ fontWeight:500, fontSize:13, color:LM.inkSoft }}>{name}</div>
-            <div style={{ fontFamily:LM.sans, fontSize:12, color:LM.inkSoft }}>{line}</div>
+            <div style={{ fontSize:LM.fs.bodySm.sz, color:LM.ink }}>{name}</div>
+            <div style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.inkSoft, marginTop:LM.sp.xs }}>{line}</div>
           </div>
           <span style={{ flex:1 }}/>
           <span style={tagStyle(LM.warn)}>not built yet</span>
@@ -9146,9 +9632,9 @@ const SettingsHosts = () => {
 // `routed` is what the router reads: a CLOUD row must reach the cloud, and a cloud id and an
 // OpenRouter id look identical. What the design has no place for sits after its groups, in the
 // same row shape: open native agent sessions, then Refresh and Clear selection.
-const pickerSwatch = (col, fg) => ({ width:22, height:22, borderRadius:4, background:col, color:fg, display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:11, fontWeight:700, flexShrink:0 });
+const pickerSwatch = (col, fg) => ({ width:LM.rowH.cozy, height:LM.rowH.cozy, borderRadius:LM.rad.chip, background:col, color:fg, display:'grid', placeItems:'center', fontFamily:LM.sans, fontSize:LM.fs.label.sz, fontWeight:LM.fs.label.wt, flexShrink:0 });
 const pickerRow = (enabled, sel) => ({
-  display:'flex', alignItems:'center', gap:10, padding:'8px 10px', borderRadius:LM.rad.md,
+  display:'flex', alignItems:'center', gap:LM.sp.sm, padding:`${LM.sp.sm}px ${LM.sp.md}px`, borderRadius:LM.rad.node,
   cursor: enabled ? 'pointer' : 'default', background: sel ? LM.bgSoft : 'transparent',
   width:'100%', border:0, color:LM.ink, textAlign:'left', fontFamily:LM.sans,
 });
@@ -9156,9 +9642,9 @@ const pickerHover = enabled => enabled ? {
   onMouseEnter:e => { e.currentTarget.style.background = LM.bgHover; },
   onMouseLeave:e => { e.currentTarget.style.background = 'transparent'; },
 } : {};
-const pickerGroupLabel = () => ({ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.18em', padding:'4px 10px' });
+const pickerGroupLabel = () => ({ fontFamily:LM.sans, fontSize:LM.fs.label.sz, color:LM.inkSoft, letterSpacing:LM.fs.label.letter, padding:`${LM.sp.xs}px ${LM.sp.md}px`, fontWeight:LM.fs.label.wt });
 const pickerTag = tag => ({
-  fontFamily:LM.mono, fontSize:11, padding:'2px 7px', borderRadius:LM.rad.xs, letterSpacing:'0.08em',
+  fontFamily:LM.sans, fontSize:LM.fs.label.sz, padding:`2px ${LM.sp.sm}px`, borderRadius:LM.rad.chip, letterSpacing:LM.fs.label.letter, fontWeight:LM.fs.label.wt,
   background: tag==='CLOUD'?LM.accentDim : tag==='LOCAL'?LM.ok+'22' : LM.cyan+'22',
   color:       tag==='CLOUD'?LM.accent    : tag==='LOCAL'?LM.ok      : LM.cyan,
 });
@@ -9170,7 +9656,7 @@ const DISCOVERY_DEADLINE_MS = 8000;
 // collected, without clearing the rows already on screen.
 const STALE_REDRAW_MS = 2500;
 const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
-  const note = { margin:0, padding:'6px 10px', fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, lineHeight:1.5, letterSpacing:'0.02em' };
+  const note = { margin:0, padding:`${LM.sp.sm}px ${LM.sp.md}px`, fontFamily:LM.sans, fontSize:LM.fs.caption.sz, color:LM.inkSoft, lineHeight:LM.fs.caption.ln + 'px' };
   const onFill = (window.AH && window.AH.onFill) || '#180f08';
   const [live, setLive] = React.useState(null);
   const [catalogueError, setCatalogueError] = React.useState('');
@@ -9226,21 +9712,21 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
   const selectedRoute = modelRoute(model);
   return (
     <div onClick={onClose} style={{
-      position:'absolute', inset:0, background:'rgba(0,0,0,.55)',
+      position:'absolute', inset:0, background:LM.scrim,
       display:'grid', placeItems:'start center', paddingTop:60, zIndex:50,
     }}>
       <div role="dialog" aria-label="Choose a model" onClick={e => e.stopPropagation()} style={{
         width:600, maxWidth:'92%', background:LM.bgPanel, border:`1px solid ${LM.line}`,
-        borderRadius:LM.rad.xl, overflow:'hidden', boxShadow:'0 30px 80px rgba(0,0,0,.6)',
+        borderRadius:LM.rad.dialog, overflow:'hidden', boxShadow:LM.shadow.dialog,
       }}>
-        <div style={{ padding:'12px 14px', borderBottom:`1px solid ${LM.line}`, display:'flex', alignItems:'center', gap:10 }}>
-          <span style={{ fontSize:14 }}>⌕</span>
+        <div style={{ padding:`${LM.sp.md}px ${LM.sp.lg}px`, borderBottom:`1px solid ${LM.line}`, display:'flex', alignItems:'center', gap:LM.sp.md }}>
+          <span style={{ fontSize:LM.icon.ui.size }}>⌕</span>
           <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search models or paste an OpenRouter id…" style={{
-            flex:1, border:0, background:'transparent', color:LM.ink, fontSize:13.5, outline:'none', fontFamily:LM.sans,
+            flex:1, border:0, background:'transparent', color:LM.ink, fontSize:LM.fs.bodySm.sz, lineHeight:LM.fs.bodySm.ln + 'px', outline:'none', fontFamily:LM.sans,
           }}/>
           <kbd style={kbd()}>esc</kbd>
         </div>
-        <div className="ah-scroll" style={{ maxHeight:420, overflow:'auto', padding:'6px 8px 10px' }}>
+        <div className="ah-scroll" style={{ maxHeight:420, overflow:'auto', padding:`${LM.sp.sm}px ${LM.sp.sm}px ${LM.sp.md}px` }}>
           {selectionError && <p role="alert" style={{...note,color:LM.err}}>{selectionError}</p>}
           {saving && <p role="status" style={note}>Saving model selection…</p>}
           {!live && <p role="status" style={note}>{catalogueError || 'Discovering models from connected providers…'}</p>}
@@ -9255,11 +9741,11 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
                 return (
                   <div key={m.route || m.name} onClick={() => choose(m)} style={pickerRow(true, sel)} {...pickerHover(!sel)}>
                     <span style={pickerSwatch(m.col, onFill)}>{m.name[0]}</span>
-                    <div style={{ flex:1, lineHeight:1.15, minWidth:0 }}>
-                      <div style={{ fontSize:13 }}>{m.name}</div>
-                      <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>{m.vendor}{m.ctx ? ' · ctx ' + m.ctx : ''}</div>
+                    <div style={{ flex:1, lineHeight:LM.fs.bodySm.ln + 'px', minWidth:0 }}>
+                      <div style={{ fontSize:LM.fs.bodySm.sz }}>{m.name}</div>
+                      <div style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', color:LM.inkSoft, letterSpacing:LM.fs.label.letter, fontWeight:LM.fs.label.wt }}>{m.vendor}{m.ctx ? ' · ctx ' + m.ctx : ''}</div>
                     </div>
-                    {m.latency != null && <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.ok }}>{m.latency}ms</span>}
+                    {m.latency != null && <span style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', color:LM.ok }}>{m.latency}ms</span>}
                     <span style={pickerTag(m.tag)}>{m.tag}</span>
                   </div>
                 );
@@ -9291,9 +9777,9 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
                 <button type="button" key={JSON.stringify([row.app,row.session_id])} disabled={!enabled}
                   onClick={() => chooseNative(row)} style={pickerRow(enabled, false)} {...pickerHover(enabled)}>
                   <span style={pickerSwatch(LM.inkSoft, onFill)}>{String(row.app || '?')[0].toUpperCase()}</span>
-                  <div style={{ flex:1, lineHeight:1.15, minWidth:0 }}>
-                    <div style={{ fontSize:13 }}>{row.title || 'Untitled session'}</div>
-                    <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>
+                  <div style={{ flex:1, lineHeight:LM.fs.bodySm.ln + 'px', minWidth:0 }}>
+                    <div style={{ fontSize:LM.fs.bodySm.sz }}>{row.title || 'Untitled session'}</div>
+                    <div style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', color:LM.inkSoft, letterSpacing:LM.fs.label.letter, fontWeight:LM.fs.label.wt }}>
                       {row.reason === 'multiple_live_sessions' ? 'Multiple live sessions · open Details to choose one' :
                         row.reason === 'no_live_session' ? 'No live session' :
                         row.connected === true && row.selectable !== false ? 'Selectable · ' + row.live_session_count + ' live session' : 'Agent unavailable'}
@@ -9310,18 +9796,18 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
             <button type="button" disabled={saving} onClick={() => {setLive(null); setNative(null); setDiscovery(value => value + 1);}}
               style={pickerRow(!saving, false)} {...pickerHover(!saving)}>
               <span style={pickerSwatch(LM.bgSoft, LM.inkSoft)}>↻</span>
-              <div style={{ flex:1, lineHeight:1.15, minWidth:0 }}>
-                <div style={{ fontSize:13 }}>Refresh</div>
-                <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>Discover models and open agent sessions again</div>
+              <div style={{ flex:1, lineHeight:LM.fs.bodySm.ln + 'px', minWidth:0 }}>
+                <div style={{ fontSize:LM.fs.bodySm.sz }}>Refresh</div>
+                <div style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', color:LM.inkSoft, letterSpacing:LM.fs.label.letter, fontWeight:LM.fs.label.wt }}>Discover models and open agent sessions again</div>
               </div>
             </button>
             {selectedRoute && <button type="button" disabled={saving} aria-label="Clear this model selection"
               onClick={() => choose({name:'Choose a model', route:'', routed:''})}
               style={pickerRow(!saving, false)} {...pickerHover(!saving)}>
               <span style={pickerSwatch(LM.bgSoft, LM.inkSoft)}>×</span>
-              <div style={{ flex:1, lineHeight:1.15, minWidth:0 }}>
-                <div style={{ fontSize:13 }}>Clear selection</div>
-                <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{selectedRoute}</div>
+              <div style={{ flex:1, lineHeight:LM.fs.bodySm.ln + 'px', minWidth:0 }}>
+                <div style={{ fontSize:LM.fs.bodySm.sz }}>Clear selection</div>
+                <div style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', color:LM.inkSoft, letterSpacing:LM.fs.label.letter, fontWeight:LM.fs.label.wt, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{selectedRoute}</div>
               </div>
             </button>}
           </div>
@@ -9334,23 +9820,23 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
 // ──────────────────────── DOCS ────────────────────────
 // Lives INSIDE the app shell — same overlay geometry, nav width and type scale as Settings,
 // so this is the screen the end user actually gets, only the content differs.
-const dCode = window.ArchHubTheme.derive((LM) => ({ fontFamily:LM.mono, fontSize:11.5, lineHeight:1.65, background:LM.bgDeep, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.sm, padding:'11px 13px', color:LM.inkSoft, overflowX:'auto', whiteSpace:'pre', margin:'0 0 14px' }));
-const DP = ({ children, ...rest }) => <p {...rest} style={{ fontFamily:LM.sans, fontSize:13.5, lineHeight:1.65, color:LM.inkSoft, margin:'0 0 13px', textWrap:'pretty' }}>{children}</p>;
-const DSub = ({ children }) => <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.18em', margin:'22px 0 10px' }}>{children}</div>;
+const dCode = window.ArchHubTheme.derive((LM) => ({ fontFamily:LM.mono, fontSize:LM.fs.data.sz, lineHeight:LM.fs.data.ln + 'px', background:LM.bgDeep, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.control, padding:`${LM.sp.md}px ${LM.sp.lg}px`, color:LM.inkSoft, overflowX:'auto', whiteSpace:'pre', margin:`0 0 ${LM.sp.lg}px` }));
+const DP = ({ children, ...rest }) => <p {...rest} style={{ fontFamily:LM.sans, fontSize:LM.fs.body.sz, lineHeight:LM.fs.body.ln + 'px', color:LM.inkSoft, margin:`0 0 ${LM.sp.lg}px`, textWrap:'pretty' }}>{children}</p>;
+const DSub = ({ children }) => <div style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.inkSoft, letterSpacing:LM.fs.label.letter, margin:`${LM.sp.xl}px 0 ${LM.sp.md}px` }}>{children}</div>;
 const DCode = ({ children }) => <pre style={dCode}>{children}</pre>;
-const DKey = ({ children }) => <span style={{ fontFamily:LM.mono, fontSize:11, background:LM.bgSoft, border:`1px solid ${LM.line}`, borderRadius:4, padding:'1px 5px', color:LM.ink }}>{children}</span>;
+const DKey = ({ children }) => <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', background:LM.bgSoft, border:`1px solid ${LM.line}`, borderRadius:LM.rad.chip, padding:`1px ${LM.sp.xs}px`, color:LM.ink }}>{children}</span>;
 const DNote = ({ children }) => (
-  <div style={{ display:'flex', gap:9, background:LM.bgSoft, border:`1px solid ${LM.line}`, borderLeft:`2px solid ${LM.accent}`, borderRadius:LM.rad.sm, padding:'10px 12px', margin:'0 0 14px' }}>
-    <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.accent, letterSpacing:'0.14em', flexShrink:0, marginTop:2 }}>NOTE</span>
-    <span style={{ fontFamily:LM.sans, fontSize:12.5, lineHeight:1.55, color:LM.inkSoft }}>{children}</span>
+  <div style={{ display:'flex', gap:LM.sp.sm, background:LM.bgSoft, border:`1px solid ${LM.line}`, borderLeft:`2px solid ${LM.accent}`, borderRadius:LM.rad.control, padding:`${LM.sp.md}px ${LM.sp.md}px`, margin:`0 0 ${LM.sp.lg}px` }}>
+    <span style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.accent, letterSpacing:LM.fs.label.letter, flexShrink:0, marginTop:2 }}>NOTE</span>
+    <span style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.inkSoft }}>{children}</span>
   </div>
 );
 const DRows = ({ rows }) => (
-  <div style={{ display:'flex', flexDirection:'column', border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, overflow:'hidden', margin:'0 0 14px' }}>
+  <div style={{ display:'flex', flexDirection:'column', border:`1px solid ${LM.line}`, borderRadius:LM.rad.control, overflow:'hidden', margin:`0 0 ${LM.sp.lg}px` }}>
     {rows.map((r, i) => (
-      <div key={r[0]} style={{ display:'grid', gridTemplateColumns:'170px 1fr', gap:12, padding:'9px 12px', borderTop: i ? `1px solid ${LM.lineSoft}` : 'none', background: i % 2 ? 'transparent' : LM.bgDeep }}>
-        <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.ink }}>{r[0]}</span>
-        <span style={{ fontFamily:LM.sans, fontSize:12.5, color:LM.inkSoft, lineHeight:1.5 }}>{r[1]}</span>
+      <div key={r[0]} style={{ display:'grid', gridTemplateColumns:'170px 1fr', gap:LM.sp.md, padding:`${LM.sp.sm}px ${LM.sp.md}px`, borderTop: i ? `1px solid ${LM.lineSoft}` : 'none', background: i % 2 ? 'transparent' : LM.bgDeep }}>
+        <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', color:LM.ink }}>{r[0]}</span>
+        <span style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.inkSoft }}>{r[1]}</span>
       </div>
     ))}
   </div>
@@ -9422,16 +9908,16 @@ const Docs = ({ onClose, onHome }) => {
   };
   React.useEffect(() => { const t = setTimeout(() => inputRef.current && inputRef.current.focus(), 60); return () => clearTimeout(t); }, []);
   return (
-    <div onClick={onClose} style={{ position:'absolute', inset:0, background:'rgba(0,0,0,.5)', zIndex:60, display:'grid', placeItems:'center' }}>
+    <div onClick={onClose} style={{ position:'absolute', inset:0, background:LM.scrim, zIndex:60, display:'grid', placeItems:'center' }}>
       <div onClick={e => e.stopPropagation()} style={{
         width:1000, maxWidth:'95%', height:620, maxHeight:'90%',
         background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.xl,
         overflow:'hidden', boxShadow:'0 30px 80px rgba(0,0,0,.6)',
         display:'grid', gridTemplateColumns:'208px 1fr', gridTemplateRows:'46px 1fr',
       }}>
-        <div style={{ gridColumn:'1 / -1', gridRow:'1', borderBottom:`1px solid ${LM.line}`, display:'flex', alignItems:'center', gap:10, padding:'0 16px' }}>
-          <span style={{ fontFamily:LM.serif, fontSize:18, letterSpacing:'-0.01em' }}>Documentation</span>
-          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.1em' }}>STUDIO{build ? ' · ' + build : ''}</span>
+        <div style={{ gridColumn:'1 / -1', gridRow:'1', borderBottom:`1px solid ${LM.line}`, display:'flex', alignItems:'center', gap:LM.sp.md, padding:`0 ${LM.sp.lg}px` }}>
+          <span style={{ fontFamily:LM.sans, fontSize:LM.fs.title.sz, lineHeight:LM.fs.title.ln + 'px', fontWeight:LM.fs.title.wt }}>Documentation</span>
+          <span style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, color:LM.inkSoft, letterSpacing:LM.fs.label.letter, fontWeight:LM.fs.label.wt }}>STUDIO{build ? ' · ' + build : ''}</span>
           <div style={{ flex:1 }}/>
           <button onClick={onHome} aria-label="Home" data-home-button style={{
             height:28, padding:'0 10px', border:`1px solid ${LM.line}`,
@@ -9441,61 +9927,61 @@ const Docs = ({ onClose, onHome }) => {
           <div style={{ position:'relative', width:260 }}>
             <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={onKey}
               placeholder="Search the docs…" style={{
-                width:'100%', padding:'6px 10px 6px 26px', borderRadius:LM.rad.sm,
+                width:'100%', padding:`${LM.sp.sm}px ${LM.sp.md}px ${LM.sp.sm}px ${LM.sp['2xl']}px`, borderRadius:LM.rad.control,
                 border:`1px solid ${q ? LM.accent : LM.line}`, background:LM.bg, color:LM.ink,
-                fontFamily:LM.sans, fontSize:12.5, outline:'none',
+                fontFamily:LM.sans, fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', outline:'none',
               }}/>
-            <span style={{ position:'absolute', left:9, top:6, fontSize:11, color:LM.inkSoft, pointerEvents:'none' }}>⌕</span>
+            <span style={{ position:'absolute', left:LM.sp.md, top:LM.sp.sm, fontSize:LM.fs.label.sz, color:LM.inkSoft, pointerEvents:'none' }}>⌕</span>
             {q && (
               <div className="ah-scroll" style={{
                 position:'absolute', top:32, left:0, width:'100%', maxHeight:250, overflow:'auto', zIndex:5,
-                background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md,
-                boxShadow:'0 18px 44px rgba(0,0,0,.55)',
+                background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.panel,
+                boxShadow:LM.shadow.popover,
               }}>
                 {hits.length === 0
-                  ? <div style={{ padding:'10px 12px', fontFamily:LM.sans, fontSize:12.5, color:LM.inkSoft }}>
+                  ? <div style={{ padding:`${LM.sp.md}px ${LM.sp.md}px`, fontFamily:LM.sans, fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.inkSoft }}>
                       No match. Try <b style={{ color:LM.ink }}>wire</b>, <b style={{ color:LM.ink }}>skill</b> or <b style={{ color:LM.ink }}>brain</b>.
                     </div>
                   : hits.map((h, i) => (
                       <button key={h.s + h.k + h.t} onMouseEnter={() => setCur(i)} onClick={() => jump(h)} style={{
-                        width:'100%', display:'flex', alignItems:'center', gap:8, padding:'7px 10px',
+                        width:'100%', display:'flex', alignItems:'center', gap:LM.sp.sm, padding:`${LM.sp.sm}px ${LM.sp.md}px`,
                         border:0, borderTop: i === 0 ? 'none' : `1px solid ${LM.lineSoft}`,
                         background: i === cur ? LM.bgSoft : 'transparent', cursor:'pointer', textAlign:'left',
                       }}>
                         <span style={{
-                          fontFamily:LM.mono, fontSize:11, letterSpacing:'0.1em', flexShrink:0, width:52,
+                          fontFamily:LM.sans, fontSize:LM.fs.label.sz, letterSpacing:LM.fs.label.letter, fontWeight:LM.fs.label.wt, flexShrink:0, width:52,
                           color: h.k === 'key' || h.k === 'cli' ? LM.accent : LM.inkSoft,
                         }}>{DOC_KIND[h.k]}</span>
                         <span style={{ flex:1, minWidth:0, fontFamily: h.k === 'cli' || h.k === 'key' ? LM.mono : LM.sans,
-                          fontSize:12.5, color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{h.t}</span>
-                        <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, flexShrink:0 }}>{h.d}</span>
+                          fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{h.t}</span>
+                        <span style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', color:LM.inkSoft, flexShrink:0 }}>{h.d}</span>
                       </button>
                     ))}
                 {hits.length > 0 && (
-                  <div style={{ padding:'6px 10px', borderTop:`1px solid ${LM.lineSoft}`, fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.08em' }}>
+                  <div style={{ padding:`${LM.sp.sm}px ${LM.sp.md}px`, borderTop:`1px solid ${LM.lineSoft}`, fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.inkSoft, letterSpacing:LM.fs.label.letter }}>
                     ↑↓ MOVE · ↵ OPEN · ESC CLEAR · {hits.length} OF {DOC_INDEX.length} ENTRIES
                   </div>
                 )}
               </div>
             )}
           </div>
-          <button onClick={onClose} aria-label="Close" style={{ width:24, height:24, padding:0, border:`1px solid ${LM.line}`, background:'transparent', borderRadius:LM.rad.sm, cursor:'pointer', color:LM.inkSoft, fontSize:12 }}>✕</button>
+          <button onClick={onClose} style={{ width:24, height:24, padding:0, border:`1px solid ${LM.line}`, background:'transparent', borderRadius:LM.rad.control, cursor:'pointer', color:LM.inkSoft, fontSize:LM.icon.ui.size }}>✕</button>
         </div>
         <div style={{ gridColumn:'1', gridRow:'2', borderRight:`1px solid ${LM.line}`, padding:'10px 8px', overflow:'auto' }}>
           {DOC_SECTIONS.map(([id, label, badge]) => (
             <button key={id} onClick={() => setSec(id)} style={{
-              width:'100%', padding:'7px 11px', borderRadius:LM.rad.sm, border:0,
+              width:'100%', padding:`${LM.sp.sm}px ${LM.sp.md}px`, borderRadius:LM.rad.control, border:0,
               background: sec === id ? LM.bgSoft : 'transparent',
               color: sec === id ? LM.ink : LM.inkSoft,
-              textAlign:'left', cursor:'pointer', fontFamily:LM.sans, fontSize:13,
+              textAlign:'left', cursor:'pointer', fontFamily:LM.sans, fontSize:LM.fs.bodySm.sz,
               display:'flex', alignItems:'center', gap:LM.sp.sm, marginBottom:1,
             }}>
               <span style={{ flex:1 }}>{label}</span>
-              {badge && <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.04em' }}>{badge}</span>}
+              {badge && <span style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, color:LM.inkSoft, letterSpacing:LM.fs.label.letter, fontWeight:LM.fs.label.wt }}>{badge}</span>}
             </button>
           ))}
         </div>
-        <div className="ah-scroll" style={{ gridColumn:'2', gridRow:'2', overflow:'auto', padding:'20px 24px 24px' }}>
+        <div className="ah-scroll" style={{ gridColumn:'2', gridRow:'2', overflow:'auto', padding:`20px ${LM.sp.xl}px ${LM.sp.xl}px` }}>
           {sec === 'start'      && <DocsStart/>}
           {sec === 'canvas'     && <DocsCanvas/>}
           {sec === 'connectors' && <DocsConnectors/>}
@@ -9744,25 +10230,27 @@ const ApplicationUpdateNotice = () => {
     state === 'restarting' ? 'Restarting into build ' + build : 'Update ready \u00b7 build ' + build;
   const title = message || (offered ? label :
     updatedFrom ? 'Updated from build ' + updatedFrom + ' to build ' + updatedTo : label);
-  const action = {height:16, padding:'0 7px', borderRadius:LM.rad.xs, border:`1px solid ${LM.accent}`,
-    background:LM.accentDim, color:LM.accent, fontFamily:LM.mono, fontSize:11, letterSpacing:'0.05em',
-    lineHeight:'14px', flexShrink:0, cursor:pending ? 'default' : 'pointer', opacity:pending ? .6 : 1};
+  const action = disabled => ({height:LM.icon.ui.box, padding:`0 ${LM.sp.sm}px`, borderRadius:LM.rad.chip, border:`1px solid ${LM.accent}`,
+    background:disabled ? 'transparent' : LM.accentDim, color:disabled ? LM.inkSoft : LM.accent, fontFamily:LM.sans,
+    fontSize:LM.fs.label.sz, letterSpacing:LM.fs.label.letter, fontWeight:LM.fs.label.wt,
+    lineHeight:LM.fs.label.ln + 'px', flexShrink:0, cursor:disabled ? 'default' : 'pointer',
+    borderStyle:disabled ? 'dashed' : 'solid'});
   return <div role={message ? 'alert' : 'status'} aria-label="Application update" title={title}
-    style={{display:'flex', alignItems:'center', gap:6, minWidth:0, padding:'0 4px', whiteSpace:'nowrap',
-      fontFamily:LM.mono, fontSize:11, letterSpacing:'0.05em', color:message ? LM.err : LM.accent}}>
+    style={{display:'flex', alignItems:'center', gap:LM.sp.sm, minWidth:0, padding:`0 ${LM.sp.xs}px`, whiteSpace:'nowrap',
+      fontFamily:LM.sans, fontSize:LM.fs.label.sz, letterSpacing:LM.fs.label.letter, fontWeight:LM.fs.label.wt, color:message ? LM.err : LM.accent}}>
     <span aria-hidden="true">{'\u25cf'}</span>
     <span style={{minWidth:0, overflow:'hidden', textOverflow:'ellipsis'}}>{message || label}</span>
     {state === 'ready' && offered && !message && restartSupported && <button type="button" disabled={!!pending}
       onClick={restart} title={warning ? 'Click again to restart into build ' + build : 'Restart into build ' + build}
-      style={warning ? {...action, background:LM.accent, color:LM.bg} : action}>
+      style={warning ? {...action(!!pending), background:LM.accent, color:LM.bg} : action(!!pending)}>
       {warning || 'Restart to update'}</button>}
     {state === 'ready' && offered && !message && !restartSupported && <span style={{color:LM.inkSoft}}>
       restart ArchHub to install</span>}
     {!offered && !message && <button type="button" disabled={!!pending} onClick={() => act('acknowledge')}
-      title="Hide this confirmation" style={action}>Dismiss</button>}
+      title="Hide this confirmation" style={action(!!pending)}>Dismiss</button>}
     {message && (state === 'ready' || !offered) && <button type="button" disabled={!!pending}
-      onClick={() => act('read')} style={action}>Read status</button>}
-    <span aria-hidden="true" style={{color:LM.inkDim, padding:'0 2px'}}>{'\u00b7'}</span>
+      onClick={() => act('read')} style={action(!!pending)}>Read status</button>}
+    <span aria-hidden="true" style={{color:LM.inkDim, padding:`0 ${LM.sp.xs}px`}}>{'\u00b7'}</span>
   </div>;
 };
 
@@ -9775,15 +10263,45 @@ const ServerStrip = ({ session, setDocsOpen, onOpenWaitingTask }) => {
   const waitingItems = Array.isArray(hub?.waiting) ? hub.waiting : [];
   const readBuild = () => String(transport?.getSnapshot?.()?.applicationUpdate?.current_build || '');
   const [build, setBuild] = React.useState(readBuild);
+  const [stopError, setStopError] = React.useState('');
   React.useEffect(() => transport?.subscribe ? transport.subscribe(() => setBuild(readBuild())) : undefined, [transport]);
+  const postStopControl = (path, expectedStopped) => {
+    const session = window.__archhubSession || {};
+    const fetcher = typeof window.fetch === 'function' ? window.fetch.bind(window) : (typeof fetch === 'function' ? fetch : null);
+    if (!fetcher) return;
+    setStopError('');
+    fetcher(path, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-ArchHub-Session': session.token || '',
+        'X-ArchHub-CSRF': session.csrf || '',
+      },
+      body: JSON.stringify({}),
+    }).then(response => response.json().catch(() => null).then(payload => {
+      if (!response.ok || !payload || payload.ok === false || typeof payload.stopped !== 'boolean') {
+        throw new Error(String(payload?.error || 'Stop control was refused'));
+      }
+      if (payload.stopped !== expectedStopped) throw new Error('Stop control returned an unexpected state');
+      publishToolHubStopState(payload.stopped, '');
+    })).catch(error => {
+      setStopError(String(error?.message || 'Stop control was refused'));
+    }).finally(() => requestToolHubRefresh());
+  };
+  const handleStop = () => {
+    postStopControl('/stop-all', true);
+  };
+  const handleResume = () => {
+    postStopControl('/resume', false);
+  };
   const StripItem = ({ onClick, children, accent }) => {
     const [h, setH] = React.useState(false);
     const style = {
-      background:'transparent', border:0, padding:'0 4px',
+      background:'transparent', border:0, padding:`0 ${LM.sp.xs}px`,
       cursor: onClick ? 'pointer' : 'default',
       color: h && onClick ? LM.ink : (accent || LM.inkSoft),
-      fontFamily:LM.mono, fontSize:11, letterSpacing:'0.05em', whiteSpace:'nowrap',
-      transition:'color .12s',
+      fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, letterSpacing:LM.fs.label.letter, whiteSpace:'nowrap',
+      transition:`color ${LM.dur.fast}ms`,
     };
     if (!onClick) return <span style={style}>{children}</span>;
     return (
@@ -9797,19 +10315,19 @@ const ServerStrip = ({ session, setDocsOpen, onOpenWaitingTask }) => {
       // minWidth 0: at the narrowest window the update notice ellipsizes instead of widening the shell grid.
       gridColumn:'1 / -1', gridRow:'2', minWidth:0,
       background:LM.bgPanel, borderTop:`1px solid ${LM.line}`,
-      padding:'0 10px', display:'flex', alignItems:'center', gap:LM.sp.xs,
+      padding:`0 ${LM.sp.md}px`, display:'flex', alignItems:'center', gap:LM.sp.xs,
     }}>
       <StripItem>
         <span style={{ color:LM.ok }}>●</span> server :{port} · {hostTally().read ? `${hostTally().running}/${hostTally().total} hosts` : 'checking hosts'}
       </StripItem>
       {session ? (
         <>
-          <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
+          <span style={{ color:LM.inkDim, padding:`0 ${LM.sp.xs}px` }}> · </span>
           <StripItem>{session.file}</StripItem>
         </>
       ) : (
         <>
-          <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
+          <span style={{ color:LM.inkDim, padding:`0 ${LM.sp.xs}px` }}>·</span>
           <StripItem>{LM_SESSIONS.length} sessions · {LM_SESSIONS.filter(s=>s.state==='running').length} running</StripItem>
         </>
       )}
@@ -9819,6 +10337,20 @@ const ServerStrip = ({ session, setDocsOpen, onOpenWaitingTask }) => {
         item.producer === 'social_approve' ? 'cloud' : 'workshop',
         item.producer === 'workshop_gate' ? {tab:'approvals', root:item.root || item.workshop || '', focus:item.open_target || item.work || item.id} : {})}/>
       {waitingItems.length > 0 && <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>}
+      {hub?.stopped ? (
+        <>
+          <StripItem accent={LM.err}>Stopped</StripItem>
+          <span style={{ color:LM.inkDim, padding:'0 2px' }}> · </span>
+          <StripItem onClick={handleResume}>Resume</StripItem>
+        </>
+      ) : (
+        <StripItem onClick={handleStop} accent={LM.err}>Stop</StripItem>
+      )}
+      {stopError && <>
+        <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
+        <StripItem accent={LM.err}>{stopError}</StripItem>
+      </>}
+      <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
       <StripItem onClick={() => setDocsOpen && setDocsOpen(true)}>docs</StripItem>
       {build && <>
         <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>

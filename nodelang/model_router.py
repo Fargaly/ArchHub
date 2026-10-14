@@ -61,21 +61,20 @@ GOOGLE_CHAT = "https://generativelanguage.googleapis.com/v1beta/openai/chat/comp
 NVIDIA_CHAT = "https://integrate.api.nvidia.com/v1/chat/completions"
 ANTHROPIC_MESSAGES = "https://api.anthropic.com/v1/messages"
 _OPENROUTER_FREE_MODELS_DEFAULT = (
-    "apodex/apodex-1.1-mini:free",
     "dots-studio/dots-3-note-preview:free",
-    "liquid/lfm-2.5-2.6b:free",
-    "nvidia/nemotron-3.5-lightning:free",
-    "thinkingmachines/inkling-small:free",
-    "poolside/laguna-s-2.1:free",
-    "thinkingmachines/inkling:free",
-    "poolside/laguna-xs-2.1:free",
     "cohere/north-mini-code:free",
-    "nvidia/nemotron-3-ultra-550b-a55b:free",
-    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-    "google/gemma-4-26b-a4b-it:free",
-    "google/gemma-4-31b-it:free",
-    "nvidia/nemotron-3-super-120b-a12b:free",
+    "nvidia/nemotron-3.5-lightning:free",
 )
+_OPENROUTER_FREE_TOOL_MODELS_DEFAULT = (
+    "dots-studio/dots-3-note-preview:free",
+    "cohere/north-mini-code:free",
+    "nvidia/nemotron-3.5-lightning:free",
+)
+_OPENROUTER_FREE_TOOL_CATALOGUE_CACHE_SECONDS = 300.0
+_OPENROUTER_FREE_TOOL_CATALOGUE_LOCK = threading.Lock()
+_OPENROUTER_FREE_TOOL_CATALOGUE_FETCHED = False
+_OPENROUTER_FREE_TOOL_CATALOGUE_CACHE_AT = 0.0
+_OPENROUTER_FREE_TOOL_CATALOGUE_CACHE_MODELS: tuple[str, ...] = ()
 _USER_VISIBLE_SECRET_PATTERNS = (
     (re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{16,}"), False),
     (re.compile(
@@ -145,6 +144,7 @@ _LOCAL_CLI_UNCERTAIN_ERRORS = frozenset({
     "output_too_large",
 })
 _FREE_ROTATION_ATTEMPT_SECONDS = 15.0
+_OPENROUTER_FREE_TOOL_ATTEMPT_LIMIT = 3
 _LOCAL_FREE_FALLBACK_SECONDS = 30.0
 _OPENCODE_FREE_FALLBACK_SECONDS = 15.0
 _OPENROUTER_FREE_TOTAL_SECONDS = 20.0
@@ -1207,11 +1207,11 @@ def _checked_messages(messages: object) -> list:
         raise ModelRouteRefused("There was nothing to send to the model.")
     checked = []
     for row in rows:
-        if not isinstance(row, Mapping) or not row.get("content"):
+        if not isinstance(row, Mapping):
             raise ModelRouteRefused(
                 "A message for the model must carry a role and content."
             )
-        content = row["content"]
+        content = row.get("content", "")
         if isinstance(content, (list, tuple)):
             # A message with parts: text and images, the OpenAI shape every
             # non-ollama family here speaks. Each part must say what it is.
@@ -1227,10 +1227,59 @@ def _checked_messages(messages: object) -> list:
             content = parts
         else:
             content = str(content)
-        checked.append({
+        checked_row = {
             "role": str(row.get("role") or "user"),
             "content": content,
+        }
+        if isinstance(row.get("tool_calls"), (list, tuple)):
+            checked_row["tool_calls"] = _checked_message_tool_calls(row["tool_calls"])
+        if isinstance(row.get("tool_call_id"), str):
+            checked_row["tool_call_id"] = row["tool_call_id"]
+        checked.append(checked_row)
+    return checked
+
+
+def _checked_message_tool_calls(tool_calls: object) -> list:
+    checked = []
+    for index, call in enumerate(tool_calls or ()):
+        if not isinstance(call, Mapping):
+            raise ModelRouteRefused("A model tool call is invalid.")
+        if call.get("type") == "function" and isinstance(call.get("function"), Mapping):
+            fn = dict(call["function"])
+            name = fn.get("name")
+            arguments = fn.get("arguments", "{}")
+        else:
+            name = call.get("name")
+            arguments = call.get("arguments", {})
+        if type(name) is not str or not name:
+            raise ModelRouteRefused("A model tool call has an invalid name.")
+        if not isinstance(arguments, str):
+            arguments = json.dumps(arguments, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+        checked.append({
+            "id": str(call.get("id") or "call_%d" % index),
+            "type": "function",
+            "function": {"name": name, "arguments": arguments},
         })
+    return checked
+
+
+def _checked_tools(tools: object) -> list:
+    if tools is None:
+        return []
+    rows = list(tools or ())
+    if len(rows) > 32:
+        raise ModelRouteRefused("The tool list is too large.")
+    checked = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise ModelRouteRefused("A model tool declaration is invalid.")
+        fn = row.get("function")
+        if row.get("type") != "function" or not isinstance(fn, Mapping):
+            raise ModelRouteRefused("A model tool must be an OpenAI function tool.")
+        name = fn.get("name")
+        if type(name) is not str or not name or len(name) > 100:
+            raise ModelRouteRefused("A model tool has an invalid name.")
+        checked.append(dict(row))
     return checked
 
 
@@ -1250,6 +1299,7 @@ def _body(
     max_tokens: int,
     temperature: float,
     top_p: float,
+    tools: Sequence | None = None,
 ) -> dict:
     if destination.family == "ollama":
         if _carries_an_image(messages):
@@ -1257,12 +1307,15 @@ def _body(
                 "An ollama route cannot carry an image in this build; pick a "
                 "vision model on openrouter or the cloud."
             )
-        return {
+        body = {
             "model": destination.model,
             "messages": list(messages),
             "stream": False,
             "options": {"temperature": temperature, "top_p": top_p, "num_predict": max_tokens},
         }
+        if tools:
+            body["tools"] = list(tools)
+        return body
     if destination.family == "openai":
         # Current OpenAI chat models take max_completion_tokens, and the
         # reasoning families accept only their default temperature.
@@ -1273,6 +1326,8 @@ def _body(
         }
         if destination.model.startswith(("gpt-4", "gpt-3.5")):
             body["temperature"] = temperature
+        if tools:
+            body["tools"] = list(tools)
         return body
     if destination.family == "anthropic":
         system = []
@@ -1305,6 +1360,9 @@ def _body(
     # top_p is sent only when the owner changed it.
     if top_p is not None and top_p != 1.0:
         body["top_p"] = top_p
+    if tools:
+        body["tools"] = list(tools)
+        body["tool_choice"] = "auto"
     return body
 
 
@@ -1344,6 +1402,8 @@ def _answer_text(destination: ModelRoute, payload: object) -> str:
                 first = choices[0]
                 if isinstance(first, Mapping):
                     message = first.get("message")
+                    if isinstance(message, Mapping) and isinstance(message.get("tool_calls"), (list, tuple)):
+                        return str(message.get("content") or "")
                     if (
                         isinstance(message, Mapping)
                         and message.get("content") is not None
@@ -1364,6 +1424,33 @@ def _answer_text(destination: ModelRoute, payload: object) -> str:
     raise ModelRouteRefused(
         "%s answered in a shape this app does not read." % destination.provider
     )
+
+
+def _answer_tool_calls(_destination: ModelRoute, payload: object) -> list:
+    if not isinstance(payload, Mapping):
+        return []
+    choices = payload.get("choices")
+    first = choices[0] if isinstance(choices, (list, tuple)) and choices else None
+    message = first.get("message") if isinstance(first, Mapping) else None
+    calls = message.get("tool_calls") if isinstance(message, Mapping) else None
+    if not isinstance(calls, (list, tuple)):
+        return []
+    result = []
+    for index, call in enumerate(calls):
+        if not isinstance(call, Mapping):
+            continue
+        fn = call.get("function")
+        if not isinstance(fn, Mapping):
+            continue
+        name = fn.get("name")
+        if type(name) is not str or not name:
+            continue
+        result.append({
+            "id": str(call.get("id") or "call_%d" % index),
+            "name": name,
+            "arguments": fn.get("arguments") if isinstance(fn.get("arguments"), str) else (fn.get("arguments") or {}),
+        })
+    return result
 
 
 def _remember_unavailable(kind: str, model: object, trace: Optional["_FreeChatTrace"] = None) -> None:
@@ -1429,7 +1516,9 @@ def _openrouter_free_defaults(environ: Optional[Mapping[str, str]]) -> tuple[str
     return tuple(model for model in _OPENROUTER_FREE_MODELS_DEFAULT if _rotation_candidate_allowed(model))
 
 
-def _openrouter_free_catalogue_models(session: Optional[Mapping[str, object]]) -> tuple[str, ...]:
+def _openrouter_free_catalogue_models(
+    session: Optional[Mapping[str, object]], *, require_tools: bool = False
+) -> tuple[str, ...]:
     from . import model_catalogue  # noqa: PLC0415
 
     try:
@@ -1439,9 +1528,81 @@ def _openrouter_free_catalogue_models(session: Optional[Mapping[str, object]]) -
     if not isinstance(held, Mapping):
         return ()
     try:
-        return model_catalogue.openrouter_free_chat_routes(held)
+        return model_catalogue.openrouter_free_chat_routes(held, require_tools=require_tools)
     except Exception:
         return ()
+
+
+def _openrouter_free_tool_preference_order(models: Sequence[str]) -> tuple[str, ...]:
+    available = {model for model in models if _rotation_candidate_allowed(model)}
+    ordered: list[str] = []
+    for model in _OPENROUTER_FREE_TOOL_MODELS_DEFAULT:
+        if model in available and model not in ordered:
+            ordered.append(model)
+    for model in models:
+        if model in available and model not in ordered:
+            ordered.append(model)
+    return tuple(ordered)
+
+
+def _openrouter_free_fetch_tool_catalogue(
+    opener: Callable, *, timeout: float
+) -> Optional[tuple[str, ...]]:
+    from . import model_catalogue  # noqa: PLC0415
+
+    try:
+        rows = model_catalogue.openrouter_models(
+            opener=opener, timeout=min(max(float(timeout), 0.1), 6.0), prices={}
+        )
+        payload = {"groups": [{"name": model_catalogue.BYO_GROUP, "items": rows}]}
+        return _openrouter_free_tool_preference_order(
+            model_catalogue.openrouter_free_chat_routes(payload, require_tools=True)
+        )
+    except Exception:
+        return None
+
+
+def _openrouter_free_tool_catalogue_models(
+    opener: Callable,
+    *,
+    timeout: float,
+) -> tuple[tuple[str, ...], str]:
+    global _OPENROUTER_FREE_TOOL_CATALOGUE_FETCHED
+    global _OPENROUTER_FREE_TOOL_CATALOGUE_CACHE_AT
+    global _OPENROUTER_FREE_TOOL_CATALOGUE_CACHE_MODELS
+
+    now = time.monotonic()
+    with _OPENROUTER_FREE_TOOL_CATALOGUE_LOCK:
+        cached = _OPENROUTER_FREE_TOOL_CATALOGUE_CACHE_MODELS
+        cache_at = _OPENROUTER_FREE_TOOL_CATALOGUE_CACHE_AT
+    if cached and now - cache_at <= _OPENROUTER_FREE_TOOL_CATALOGUE_CACHE_SECONDS:
+        return cached, "tool-cache"
+
+    fetched = _openrouter_free_fetch_tool_catalogue(opener, timeout=timeout)
+    if fetched is not None:
+        with _OPENROUTER_FREE_TOOL_CATALOGUE_LOCK:
+            _OPENROUTER_FREE_TOOL_CATALOGUE_FETCHED = True
+            _OPENROUTER_FREE_TOOL_CATALOGUE_CACHE_AT = now
+            _OPENROUTER_FREE_TOOL_CATALOGUE_CACHE_MODELS = fetched
+        return fetched, "tool-catalogue"
+
+    with _OPENROUTER_FREE_TOOL_CATALOGUE_LOCK:
+        cached = _OPENROUTER_FREE_TOOL_CATALOGUE_CACHE_MODELS
+        cache_at = _OPENROUTER_FREE_TOOL_CATALOGUE_CACHE_AT
+    if cached and now - cache_at <= _OPENROUTER_FREE_TOOL_CATALOGUE_CACHE_SECONDS:
+        return cached, "tool-cache"
+    return (), "tool-catalogue-unavailable"
+
+
+def _reset_openrouter_free_tool_catalogue_cache() -> None:
+    global _OPENROUTER_FREE_TOOL_CATALOGUE_FETCHED
+    global _OPENROUTER_FREE_TOOL_CATALOGUE_CACHE_AT
+    global _OPENROUTER_FREE_TOOL_CATALOGUE_CACHE_MODELS
+
+    with _OPENROUTER_FREE_TOOL_CATALOGUE_LOCK:
+        _OPENROUTER_FREE_TOOL_CATALOGUE_FETCHED = False
+        _OPENROUTER_FREE_TOOL_CATALOGUE_CACHE_AT = 0.0
+        _OPENROUTER_FREE_TOOL_CATALOGUE_CACHE_MODELS = ()
 
 
 def _openrouter_free_pick_allowed(
@@ -1450,11 +1611,16 @@ def _openrouter_free_pick_allowed(
     *,
     opener: Optional[Callable] = None,
     timeout: float = 6.0,
+    require_tools: bool = False,
 ) -> bool:
     if model == "openrouter/free":
         return True
     if not model or _openrouter_free_model_blocked(model):
         return False
+    if require_tools:
+        opener = urllib.request.urlopen if opener is None else opener
+        models, _source = _openrouter_free_tool_catalogue_models(opener, timeout=timeout)
+        return model in models
     if model.endswith(":free"):
         return True
     if model in _openrouter_free_catalogue_models(session):
@@ -1478,18 +1644,26 @@ def _openrouter_free_rotation_models(
     send: Callable,
     session: Optional[Mapping[str, object]] = None,
     trace: Optional["_FreeChatTrace"] = None,
+    require_tools: bool = False,
+    timeout: float = 6.0,
 ) -> tuple[str, ...]:
-    override = _openrouter_free_env_override(environ)
-    if override is not None:
-        source, models = "env", override
+    if require_tools:
+        models, source = _openrouter_free_tool_catalogue_models(send, timeout=timeout)
     else:
-        catalogue = _openrouter_free_catalogue_models(session)
-        if catalogue:
-            source, models = "catalogue", catalogue
+        override = _openrouter_free_env_override(environ)
+        if override is not None:
+            source, models = "env", override
         else:
-            source, models = "fallback", _openrouter_free_defaults(environ)
+            catalogue = _openrouter_free_catalogue_models(session)
+            if catalogue:
+                source, models = "catalogue", catalogue
+            else:
+                source, models = "fallback", _openrouter_free_defaults(environ)
+    candidates = [model for model in models if _rotation_candidate_allowed(model)]
+    if not require_tools:
+        candidates = list(_recent_first(candidates))
     kept: list[str] = []
-    for model in _recent_first([model for model in models if _rotation_candidate_allowed(model)]):
+    for model in candidates:
         if _temporarily_unavailable("openrouter", model):
             if trace is not None:
                 trace.add("skipped unavailable " + model, "session", None)
@@ -1623,11 +1797,19 @@ def _openrouter_free_attempts(
     session: Optional[Mapping[str, object]] = None,
     trace: Optional["_FreeChatTrace"] = None,
     allowed_models: Sequence[str] = (),
+    require_tools: bool = False,
+    timeout: float = 6.0,
 ) -> tuple[ModelRoute, ...]:
     if not free_only or destination.family != "openrouter":
         return (destination,)
-    models = [destination.model, *_openrouter_free_rotation_models(
-        environ, send=send, session=session, trace=trace)]
+    rotation = _openrouter_free_rotation_models(
+        environ, send=send, session=session, trace=trace, require_tools=require_tools,
+        timeout=timeout)
+    models = (
+        list(rotation)
+        if require_tools and destination.model == "openrouter/free"
+        else [destination.model, *rotation]
+    )
     out: list[ModelRoute] = []
     seen: set[str] = set()
     allowed = set(allowed_models)
@@ -1637,6 +1819,10 @@ def _openrouter_free_attempts(
         seen.add(model)
         out.append(ModelRoute(destination.family, model, destination.url,
                               destination.provider, destination.needs_key))
+    if require_tools:
+        out = out[:_OPENROUTER_FREE_TOOL_ATTEMPT_LIMIT]
+    if require_tools:
+        return tuple(out)
     return tuple(out) if out else (destination,)
 
 
@@ -1723,6 +1909,13 @@ def _openrouter_free_exhausted_refusal() -> ModelRouteRefused:
 
 
 def _http_error_refusal(destination: ModelRoute, refused: urllib.error.HTTPError) -> ModelRouteRefused:
+    if refused.code == 429:
+        refused.close()
+        return ModelRouteRefused(
+            "%s refused this request: HTTP 429. Try again later or pick another model."
+            % destination.provider,
+            reason_code="provider_rate_limited",
+        )
     raw = b""
     try:
         raw = refused.read(4097)
@@ -2024,8 +2217,9 @@ def _http_chat_once(
     headers: Optional[Mapping[str, str]] = None,
     free_only: bool = False,
     reasoning_effort: Optional[str] = None,
+    tools: Sequence | None = None,
 ) -> dict:
-    body = _body(destination, rows, max_tokens, temperature, top_p)
+    body = _body(destination, rows, max_tokens, temperature, top_p, tools=tools)
     if reasoning_effort is not None:
         body["reasoning"] = {"effort": reasoning_effort}
     if free_only:
@@ -2055,7 +2249,8 @@ def _http_chat_once(
             reason_code="provider_error",
         ) from refused
     text = _answer_text(destination, payload)
-    if not text.strip():
+    tool_calls = _answer_tool_calls(destination, payload)
+    if not text.strip() and not tool_calls:
         raise ModelRouteRefused("The model returned an empty answer.", reason_code="empty_answer")
     usage = payload.get("usage") if isinstance(payload, Mapping) else None
     if not isinstance(usage, Mapping):
@@ -2083,6 +2278,7 @@ def _http_chat_once(
         "key_source": "not required",
         "usage": usage,
         "finish_reason": None,
+        "tool_calls": tool_calls,
     }
 
 
@@ -2100,6 +2296,7 @@ def _free_only_after_first_openrouter_failure(
     reasoning_effort: Optional[str],
     trace: Optional[_FreeChatTrace] = None,
     openrouter_deadline: Optional[float] = None,
+    tools: Sequence | None = None,
 ) -> dict:
     # One OpenRouter budget for the whole free rotation (first request included);
     # local runtimes and OpenCode keep their own windows inside the overall deadline.
@@ -2130,6 +2327,7 @@ def _free_only_after_first_openrouter_failure(
                     headers=headers,
                     free_only=True,
                     reasoning_effort=reasoning_effort,
+                    tools=tools,
                 )
                 result["key_source"] = key_source
                 _remember_openrouter_free_answered(result.get("actual_model") or attempt.model)
@@ -2147,6 +2345,8 @@ def _free_only_after_first_openrouter_failure(
                 if _next_openrouter_free_allowed(refused):
                     continue
                 raise
+        if tools:
+            raise _openrouter_free_exhausted_refusal()
         for local in _local_catalogue_routes(send, deadline, trace):
             # Catalogue discovery is capped at 300 ms; the chat itself is not.
             # Only already-loaded local chat models are eligible here.
@@ -2221,12 +2421,15 @@ def route_chat(
     reasoning_effort: Optional[str] = None,
     response_byte_limit: Optional[int] = None,
     before_dispatch: Optional[Callable] = None,
+    tools: object = None,
 ) -> dict:
     """Send these messages to the provider this route names, and read its answer.
 
     response_byte_limit opts into bounded body reads and complete-response
     checks. It does not turn timeout into an absolute elapsed-time deadline.
     """
+    tool_rows = _checked_tools(tools)
+    tool_turn = bool(tool_rows)
     if type(free_only) is not bool:
         raise ModelRouteRefused("free_only must be true or false.")
     if before_dispatch is not None and not callable(before_dispatch):
@@ -2269,6 +2472,7 @@ def route_chat(
                 session if isinstance(session, Mapping) else None,
                 opener=opener,
                 timeout=timeout,
+                require_tools=tool_turn,
             )
         )
         if destination.family == "openrouter" and explicit_free and not allowed_openrouter_pick:
@@ -2340,7 +2544,12 @@ def route_chat(
         session=session if isinstance(session, Mapping) else None,
         trace=trace,
         allowed_models=tuple(verified_openrouter_free_picks),
+        require_tools=tool_turn,
+        timeout=timeout,
     )
+    if free_only and destination.family == "openrouter" and tool_turn and not attempts:
+        trace.close("free_model_exhausted")
+        raise _openrouter_free_exhausted_refusal()
     before_dispatch_once()
     openrouter_deadline = min(deadline, time.monotonic() + _OPENROUTER_FREE_TOTAL_SECONDS)
     for index, attempt in enumerate(attempts):
@@ -2352,7 +2561,7 @@ def route_chat(
         if attempt_timeout <= 0 and free_only and attempt.family == "openrouter":
             trace.close("free_model_exhausted")
             raise _openrouter_free_exhausted_refusal()
-        body = _body(attempt, rows, max_tokens, temperature, top_p)
+        body = _body(attempt, rows, max_tokens, temperature, top_p, tools=tool_rows)
         if reasoning_effort is not None:
             body["reasoning"] = {"effort": reasoning_effort}
         if free_only:
@@ -2401,6 +2610,7 @@ def route_chat(
                         top_p=top_p,
                         reasoning_effort=reasoning_effort,
                         trace=trace,
+                        tools=tool_rows,
                     )
                 except ModelRouteRefused as fallback_refused:
                     raise fallback_refused from refused
@@ -2444,6 +2654,7 @@ def route_chat(
                         top_p=top_p,
                         reasoning_effort=reasoning_effort,
                         trace=trace,
+                        tools=tool_rows,
                     )
                 except ModelRouteRefused as fallback_refused:
                     raise fallback_refused from unreadable
@@ -2466,7 +2677,8 @@ def route_chat(
                 reason_code="output_truncated")
         try:
             text = _answer_text(attempt, payload)
-            if not text.strip():
+            tool_calls = _answer_tool_calls(attempt, payload)
+            if not text.strip() and not tool_calls:
                 raise ModelRouteRefused("The model returned an empty answer.", reason_code="empty_answer")
         except ModelRouteRefused as refused:
             trace.add(attempt.model, refused.reason_code or "refused", attempt_started)
@@ -2487,6 +2699,7 @@ def route_chat(
                         top_p=top_p,
                         reasoning_effort=reasoning_effort,
                         trace=trace,
+                        tools=tool_rows,
                     )
                 except ModelRouteRefused as fallback_refused:
                     raise fallback_refused from refused
@@ -2520,6 +2733,7 @@ def route_chat(
                     top_p=top_p,
                     reasoning_effort=reasoning_effort,
                     trace=trace,
+                    tools=tool_rows,
                 )
             raise answerer_refusal
         if (
@@ -2530,6 +2744,7 @@ def route_chat(
             and not _openrouter_free_pick_allowed(
                 actual_model,
                 session if isinstance(session, Mapping) else None,
+                require_tools=tool_turn,
             )
             and not (
                 actual_model == attempt.model
@@ -2545,6 +2760,7 @@ def route_chat(
         return {
             "ok": True,
             "text": text,
+            "tool_calls": tool_calls,
             "family": attempt.family,
             "model": attempt.model,
             "actual_model": actual_model,

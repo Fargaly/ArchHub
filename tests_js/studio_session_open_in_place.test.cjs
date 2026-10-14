@@ -10,6 +10,12 @@ const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const seedText = read('nodelang/universal_presentation_seed.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
 const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)].map(m => [m[1], m[2]]));
 
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return {promise, resolve, reject};
+}
+
 const auth = {subject:'owner-a', session:'view-a', system_view:true};
 const workshopScope = (id, title, revision) => ({
   graph_id:'app:archhub', root:id, revision,
@@ -136,15 +142,21 @@ async function mountStudio(options = {}) {
   };
   const calls = {open:[], create:[], nodeCreate:[], canvas:0, refresh:0, alerts:[], agent:[]};
   let current = options.current || 'graph-a';
+  const extraCanvases = options.canvases || {};
+  const extraRows = options.graphRows || {};
+  const allCanvases = {...canvases, ...extraCanvases};
+  const allRows = {...graphRows, ...extraRows};
   let failRead = false;
+  let deferredCanvasRead = null;
   let nodeCreated = false;
   const currentCanvas = () => nodeCreated && current === 'graph-a'
     ? canvas('graph-a', 'Graph Alpha', [
       {id:'node-a', label:'Alpha node', x:40, y:60},
       {id:'node-created', label:'Created node', x:920, y:640},
     ], 14)
-    : canvases[current];
-  const sessions = options.sessions || [graphRows['graph-a'], graphRows['graph-b']];
+    : allCanvases[current];
+  const sessions = options.sessions || [allRows['graph-a'], allRows['graph-b']];
+  const mountedReceiptCanvas = id => allCanvases[id];
   win.fetch = url => String(url).includes('/api/universal/models')
     ? Promise.resolve({ok:true, json:() => Promise.resolve({ok:true, groups:[], selected_route:'openrouter/free'})})
     : String(url) === '/tools'
@@ -157,26 +169,55 @@ async function mountStudio(options = {}) {
   win.alert = message => calls.alerts.push(String(message));
   win.eval(read('nodelang/studio/studio-existing-workshop.js'));
   win.ARCHHUB_EXISTING_WORKSHOP = win.ArchHubExistingWorkshop.create({
-    get:async () => { calls.canvas += 1; if (failRead) throw new Error('The canvas could not be read.'); return currentCanvas(); },
+    get:async () => {
+      calls.canvas += 1;
+      if (deferredCanvasRead) {
+        const held = deferredCanvasRead;
+        deferredCanvasRead = null;
+        await held.promise;
+      }
+      if (failRead) throw new Error('The canvas could not be read.');
+      return currentCanvas();
+    },
     post:async () => { throw new Error('unexpected post'); },
     projectCanvas:projectStudioCanvas,
   });
   win.ARCHHUB_EXISTING_WORKSHOP.setTopologyCanvas(currentCanvas());
   win.ARCHHUB_GET_CANVAS = async () => {
     calls.canvas += 1;
+    if (deferredCanvasRead) {
+      const held = deferredCanvasRead;
+      deferredCanvasRead = null;
+      await held.promise;
+    }
     return currentCanvas();
   };
   win.ARCHHUB_GRAPH_OPEN = async id => {
     calls.open.push(id);
+    if (typeof options.openGraph === 'function') {
+      return options.openGraph(id, {
+        setCurrent:value => { current = value; },
+        sessions, graphRows:allRows, receiptCanvas:mountedReceiptCanvas,
+      });
+    }
+    if (options.openDeferred) await options.openDeferred.promise;
     current = id;
-    return {ok:true, graphs:[...sessions, graphRows[id]].filter((row, index, rows) =>
-      rows.findIndex(other => other.id === row.id) === index), current_graph:id, canvas:receiptCanvas(id)};
+    return {ok:true, graphs:[...sessions, allRows[id]].filter((row, index, rows) =>
+      rows.findIndex(other => other.id === row.id) === index), current_graph:id, canvas:mountedReceiptCanvas(id)};
   };
   win.ARCHHUB_GRAPH_CREATE = async title => {
     calls.create.push(title);
+    if (options.createDeferred) await options.createDeferred.promise;
+    if (typeof options.createGraph === 'function') {
+      const created = await options.createGraph(title, {
+        setCurrent:value => { current = value; },
+        sessions, graphRows:allRows, receiptCanvas:mountedReceiptCanvas,
+      });
+      return created;
+    }
     current = 'graph-c';
-    return {ok:true, graphs:[...sessions, graphRows['graph-c']], current_graph:'graph-c',
-      graph:graphRows['graph-c'], canvas:receiptCanvas('graph-c')};
+    return {ok:true, graphs:[...sessions, allRows['graph-c']], current_graph:'graph-c',
+      graph:allRows['graph-c'], canvas:mountedReceiptCanvas('graph-c')};
   };
   win.ARCHHUB_NODE_CREATE = async spec => {
     calls.nodeCreate.push(JSON.parse(JSON.stringify(spec)));
@@ -190,10 +231,12 @@ async function mountStudio(options = {}) {
     assert.ok(start > 0 && end > start, 'the real studio.html ARCHHUB_AGENT bridge is present');
     win.jpost = async (url, body) => {
       calls.agent.push([url, JSON.parse(JSON.stringify(body))]);
+      if (typeof options.agentResult === 'function') return options.agentResult(url, body);
       return options.agentResult || {ok:true, answer:'bridge ok', applied:[], delivery:{state:'replied', request_id:body.request_id}};
     };
     win.eval('const jpost = window.jpost;\n' + bridgeSource.slice(start, end));
   }
+  if (Number.isFinite(options.agentTimeoutMs)) win.ARCHHUB_AGENT_TURN_TIMEOUT_MS = options.agentTimeoutMs;
   win.ARCHHUB_WORKSHOP_TRANSCRIPT = async node => ({ok:true, node,
     conversation_root:String(node).startsWith('graph:') ? 'graph-room' : (node === 'session-a' ? 'room-a' : null),
     rows:node === 'session-a' ? [{id:'m1', who:'Agent', text:'Session conversation lives here.', time:'2026-10-10T10:00:00Z', kind:'message'}] : [],
@@ -222,7 +265,8 @@ async function mountStudio(options = {}) {
     win.ReactDOM.flushSync(() => { set.call(input, value); input.dispatchEvent(new win.Event('input', {bubbles:true})); });
   };
   return {win, doc:win.document, calls, navigationErrors, button, buttonIncludes, byTitle, byTitleStarts, click, type, settle, close,
-    failNextRead:() => { failRead = true; }, tabCount, transform};
+    failNextRead:() => { failRead = true; }, deferNextCanvasRead:promise => { deferredCanvasRead = promise; },
+    tabCount, transform};
 }
 
 function openHome(studio) {
@@ -236,6 +280,12 @@ function openWorkshopFromHome(studio) {
   const workshop = studio.doc.querySelector('[data-home-tools] [data-tool-card="workshop"]');
   assert.ok(workshop, 'Home exposes Workshop tool card');
   studio.click(workshop);
+}
+
+function assertHomeView(studio, detail) {
+  assert.ok(studio.button('+ new graph'), detail + ': Home create button is visible');
+  assert.equal(studio.doc.querySelectorAll('[role="region"][aria-label="Workflow canvas"]').length, 0,
+    detail + ': canvas is not visible');
 }
 
 function showCanvas(studio) {
@@ -343,6 +393,33 @@ test('clicking the workspace + creates a second graph tab in place and keeps the
   } finally { studio.close(); }
 });
 
+test('workspace + opens a graph-create rows-only receipt as the active New session tab', async () => {
+  const newId = 'app:composition:new-session';
+  const row = {id:newId, title:'New session', state:'idle', host:'archhub', when:'saved', file:'Graph composition', last:'0 nodes', model:''};
+  const studio = await mountStudio({
+    graphRows:{[newId]:row},
+    canvases:{[newId]:canvas(newId, 'New session', {id:'created-empty', label:'Created empty node', x:120, y:130}, 19)},
+    createGraph:async (_title, helpers) => {
+      helpers.setCurrent(newId);
+      return {ok:true, graphs:[...helpers.sessions, row], current_graph:newId,
+        canvas:helpers.receiptCanvas(newId), reason:'Visible scope changed'};
+    },
+  });
+  try {
+    await studio.settle();
+    studio.click(studio.byTitle('New session'));
+    await studio.settle();
+    showCanvas(studio);
+    await studio.settle();
+    assert.deepEqual(studio.calls.create, ['New session']);
+    assert.equal(studio.tabCount(), 2, 'the created graph opens as a second tab');
+    const tab = studio.doc.querySelector('[data-ws-tab="' + newId + '"]');
+    assert.ok(tab, 'created graph is present in the session strip');
+    assert.equal(tab.getAttribute('aria-current'), 'page', 'created graph is the active tab');
+    assert.match(tab.textContent, /New session/);
+  } finally { studio.close(); }
+});
+
 test('after a create whose canvas refresh fails, the workspace + never posts a second create', async () => {
   const studio = await mountStudio();
   try {
@@ -356,6 +433,157 @@ test('after a create whose canvas refresh fails, the workspace + never posts a s
     await studio.settle();
     assert.deepEqual(studio.calls.create, ['New session'], 'a lost receipt is never replayed as a second create');
     assert.equal(studio.navigationErrors.length, 0, 'no automatic reload');
+  } finally { studio.close(); }
+});
+
+test('New session create cannot overwrite Home after the graph-create bridge resolves', async () => {
+  const createGate = deferred();
+  const studio = await mountStudio({createDeferred:createGate});
+  try {
+    await studio.settle();
+    studio.click(studio.byTitle('New session'));
+    await studio.settle();
+    openHome(studio);
+    await studio.settle();
+    createGate.resolve();
+    await studio.settle();
+    await studio.settle();
+    assertHomeView(studio, 'Home clicked while New session create was pending');
+    assert.deepEqual(studio.calls.create, ['New session'], 'New session create posts exactly once');
+    assert.deepEqual(studio.calls.open, [], 'created graph is not re-posted as graph-open');
+  } finally { studio.close(); }
+});
+
+test('New session create cannot overwrite Home after the create canvas refresh resolves', async () => {
+  const refreshGate = deferred();
+  const studio = await mountStudio();
+  try {
+    await studio.settle();
+    studio.deferNextCanvasRead(refreshGate);
+    studio.click(studio.byTitle('New session'));
+    await studio.settle();
+    openHome(studio);
+    await studio.settle();
+    refreshGate.resolve();
+    await studio.settle();
+    await studio.settle();
+    assertHomeView(studio, 'Home clicked while New session refresh was pending');
+    assert.deepEqual(studio.calls.create, ['New session'], 'New session create posts exactly once');
+    assert.deepEqual(studio.calls.open, [], 'created graph is not re-posted as graph-open');
+  } finally { studio.close(); }
+});
+
+test('Home create form cannot overwrite a session opened before graph-create resolves', async () => {
+  const createGate = deferred();
+  const studio = await mountStudio({createDeferred:createGate});
+  try {
+    await studio.settle();
+    openHome(studio);
+    await studio.settle();
+    studio.click(studio.button('+ new graph'));
+    studio.type(studio.doc.querySelector('input[aria-label="New graph name"]'), 'Created Graph');
+    studio.click(studio.button('Create'));
+    await studio.settle();
+    studio.click([...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Graph Beta')));
+    await studio.settle();
+    createGate.resolve();
+    await studio.settle();
+    await studio.settle();
+    showCanvas(studio);
+    assert.deepEqual(studio.calls.create, ['Created Graph'], 'Home create posts exactly once');
+    assert.deepEqual(studio.calls.open, ['graph-b'], 'the clicked session is opened once');
+    assert.match(studio.doc.body.textContent, /Graph Beta/);
+    assert.match(studio.doc.body.textContent, /Beta node/);
+    assert.doesNotMatch(studio.doc.body.textContent, /Created node/);
+  } finally { studio.close(); }
+});
+
+test('Workshop tool wins over an earlier pending session open', async () => {
+  const openGate = deferred();
+  const studio = await mountStudio({openDeferred:openGate, workshops:[{root:'room-a', label:'Wall room', is_general:false}]});
+  try {
+    await studio.settle();
+    openHome(studio);
+    await studio.settle();
+    studio.click([...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Graph Beta')));
+    await studio.settle();
+    const workshop = studio.doc.querySelector('[data-home-tools] [data-tool-card="workshop"]');
+    assert.ok(workshop, 'Home exposes Workshop tool card while graph-open is pending');
+    studio.click(workshop);
+    await studio.settle();
+    assert.ok(studio.doc.querySelector('[role="tablist"][aria-label="Workshop tabs"]'), 'Workshop opens while graph-open is pending');
+    openGate.resolve();
+    await studio.settle();
+    await studio.settle();
+    assert.ok(studio.doc.querySelector('[role="tablist"][aria-label="Workshop tabs"]'), 'Workshop stays after graph-open resolves');
+    assert.deepEqual(studio.calls.open, ['graph-b'], 'the earlier session open resolves once');
+  } finally { studio.close(); }
+});
+
+test('a stale rejected graph open cannot clear a later successful graph open', async () => {
+  const staleOpen = deferred();
+  const studio = await mountStudio({openGraph:async (id, api) => {
+    if (id === 'graph-a') await staleOpen.promise;
+    api.setCurrent(id);
+    return {ok:true, graphs:[api.sessions[0], api.graphRows[id]].filter((row, index, rows) =>
+      rows.findIndex(other => other.id === row.id) === index), current_graph:id, canvas:api.receiptCanvas(id)};
+  }});
+  try {
+    await studio.settle();
+    openHome(studio);
+    await studio.settle();
+    studio.click([...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Graph Alpha')));
+    await studio.settle();
+    studio.click([...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Graph Beta')));
+    await studio.settle();
+    showCanvas(studio);
+    assert.match(studio.doc.body.textContent, /Graph Beta/);
+    staleOpen.reject(new Error('old graph refused'));
+    await studio.settle();
+    showCanvas(studio);
+    assert.match(studio.doc.body.textContent, /Graph Beta/);
+    assert.doesNotMatch(studio.doc.body.textContent, /old graph refused|Refresh graphs/);
+    assert.deepEqual(studio.calls.open, ['graph-a', 'graph-b']);
+  } finally { studio.close(); }
+});
+
+test('a stale rejected graph open cannot clear Workshop', async () => {
+  const openGate = deferred();
+  const studio = await mountStudio({openDeferred:openGate, workshops:[{root:'room-a', label:'Wall room', is_general:false}]});
+  try {
+    await studio.settle();
+    openHome(studio);
+    await studio.settle();
+    studio.click([...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Graph Beta')));
+    await studio.settle();
+    const workshop = studio.doc.querySelector('[data-home-tools] [data-tool-card="workshop"]');
+    assert.ok(workshop, 'Home exposes Workshop tool card while graph-open is pending');
+    studio.click(workshop);
+    await studio.settle();
+    assert.ok(studio.doc.querySelector('[role="tablist"][aria-label="Workshop tabs"]'), 'Workshop opens while graph-open is pending');
+    openGate.reject(new Error('old graph refused'));
+    await studio.settle();
+    await studio.settle();
+    assert.ok(studio.doc.querySelector('[role="tablist"][aria-label="Workshop tabs"]'), 'Workshop stays after graph-open rejects');
+    assert.doesNotMatch(studio.doc.body.textContent, /old graph refused|Refresh graphs/);
+  } finally { studio.close(); }
+});
+
+test('a stale rejected New session create cannot attach an error to Home', async () => {
+  const createGate = deferred();
+  const studio = await mountStudio({createDeferred:createGate});
+  try {
+    await studio.settle();
+    studio.click(studio.byTitle('New session'));
+    await studio.settle();
+    openHome(studio);
+    await studio.settle();
+    createGate.reject(new Error('old create refused'));
+    await studio.settle();
+    await studio.settle();
+    assertHomeView(studio, 'Home clicked while New session create was pending');
+    assert.doesNotMatch(studio.doc.body.textContent, /old create refused|Refresh the graph list before creating again/);
+    assert.deepEqual(studio.calls.create, ['New session'], 'New session create posts exactly once');
   } finally { studio.close(); }
 });
 
@@ -475,6 +703,43 @@ test('empty selection sends graph target through the real bridge, and node selec
     assert.equal(studio.calls.agent[1][1].node, 'line-watcher');
     assert.equal(studio.calls.agent[1][1].graph, undefined);
     assert.equal(studio.calls.agent[1][1].model, 'openrouter/free');
+  } finally { studio.close(); }
+});
+
+test('real agent bridge bounds unresolved turns and surfaces ok false', async () => {
+  const timeoutStudio = await mountStudio({current:'fresh', sessions:[graphRows.fresh], realAgentBridge:true,
+    agentResult:() => new Promise(() => {})});
+  try {
+    await assert.rejects(
+      () => timeoutStudio.win.ARCHHUB_AGENT('hello', 'openrouter/free', {graph:true, graph_id:'fresh', turn_timeout_ms:5}),
+      /did not answer within 45 seconds/
+    );
+  } finally { timeoutStudio.close(); }
+
+  const refusedStudio = await mountStudio({current:'fresh', sessions:[graphRows.fresh], realAgentBridge:true,
+    agentResult:() => ({ok:false, error:'No free model answered right now. Try again shortly.'})});
+  try {
+    await assert.rejects(
+      () => refusedStudio.win.ARCHHUB_AGENT('hello', 'openrouter/free', {graph:true, graph_id:'fresh', turn_timeout_ms:5}),
+      /No free model answered right now/
+    );
+  } finally { refusedStudio.close(); }
+});
+
+test('composer timeout renders an error line with retry', async () => {
+  const studio = await mountStudio({current:'fresh', sessions:[graphRows.fresh], realAgentBridge:true,
+    agentTimeoutMs:5, agentResult:() => new Promise(() => {})});
+  try {
+    await studio.settle();
+    showCanvas(studio);
+    await studio.settle();
+    const input = studio.doc.querySelector('input[aria-label="Ask selection"]');
+    studio.type(input, 'graph hello');
+    studio.flush = callback => studio.win.ReactDOM.flushSync(callback);
+    studio.flush(() => input.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
+    await studio.settle();
+    assert.match(studio.doc.body.textContent, /did not answer within 45 seconds/);
+    assert.ok([...studio.doc.querySelectorAll('button')].some(button => button.textContent.trim() === 'Retry'));
   } finally { studio.close(); }
 });
 

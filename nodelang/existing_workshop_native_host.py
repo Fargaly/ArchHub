@@ -10,6 +10,7 @@ from .baboom_attach import prepare_workshop_execution_client
 from .cell_authorization import AuthorizationDenied
 from .existing_workshop_conversation import _admit, read_browser_workshop_model_approval
 from .existing_workshop_model_worker import ExistingWorkshopModelWorker, SettledModelWork
+from .native_agentic_loop import ToolSpec, run_agentic_tool_loop
 from .universal_cell import InvalidCell
 
 
@@ -278,9 +279,24 @@ class ExistingWorkshopNativeHost:
         self._review_refresh = None
         self._native = None  # Retained physical owner; graph holds task authority.
 
+    def run_shared_tool_loop(self, model_turn, tools, messages, **options):
+        """Workshop tool turns use the same bounded loop as BABOOM."""
+        specs = {
+            name: spec if isinstance(spec, ToolSpec) else ToolSpec(name, spec)
+            for name, spec in dict(tools).items()
+        }
+        return run_agentic_tool_loop(
+            model_turn,
+            specs,
+            messages,
+            is_halted=self._native_stop_requested,
+            halt_generation=getattr(self.server, "halt_generation", lambda: 0),
+            **options,
+        )
+
     def _native_stop_requested(self):
         held = self._native
-        return held is not None and held['stop_requested'].is_set()
+        return (held is not None and held['stop_requested'].is_set()) or (hasattr(self.server, 'is_halted') and self.server.is_halted())
 
     def _request_native_stop(self, binding, *, root, scope, work, request_id):
         """Signal the retained operation without contending with its execution lock."""
@@ -1555,9 +1571,14 @@ class ExistingWorkshopNativeHost:
                     self._grant = self._client.request("POST", "/api/universal/model-delegation-grant",
                         {"delegation":p.delegation_root})
                     self._settled = self._worker.execute_approved_grant(p, self._grant)
-                    self._set("settled", receipt=self._settled.receipt_root,
-                        proposal=self._settled.proposal_root, reconciled=self._settled.reconciled,
-                        result_text=self._settled.review_text)
+                    fields = {
+                        "receipt": self._settled.receipt_root,
+                        "reconciled": self._settled.reconciled,
+                        "result_text": self._settled.review_text,
+                    }
+                    if self._settled.proposal_root is not None:
+                        fields["proposal"] = self._settled.proposal_root
+                    self._set("settled", **fields)
                 except Exception:
                     self._set("uncertain", error="Execution outcome needs reconciliation. No replacement grant will be issued.")
                     raise

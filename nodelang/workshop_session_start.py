@@ -261,7 +261,9 @@ def _dispatch_model_turn(owner, browser, conversation, scope, prompt, node, rout
         result = run_agent_composer(store, registry, prompt, model=route, node_root=node,
             authentication_context=browser.context, mutation_lock=owner.mutation_lock,
             revalidate=binding_guard, before_dispatch=before_dispatch,
-            conversation_context=conversation_context)
+            conversation_context=conversation_context,
+            is_halted=getattr(owner, "is_halted", lambda: False),
+            halt_generation=getattr(owner, "halt_generation", lambda: 0))
         applied = result.get("applied", [])
         draft_text = ""
         if applied:

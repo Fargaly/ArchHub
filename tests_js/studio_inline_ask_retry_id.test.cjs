@@ -121,3 +121,33 @@ test('a retry after a lost node reply reuses the same request_id until a confirm
     assert.deepEqual(calls.map(call => call.options.request_id), ['id-X', 'id-X', 'id-X', 'id-Y']);
   } finally { studio.close(); }
 });
+
+test('inspector composer renders ok false as an error turn with retry and same request_id', async () => {
+  const calls = [];
+  let mode = 'refused';
+  const studio = await mountStudio(async (prompt, route, options) => {
+    calls.push({prompt, route, options});
+    if (mode === 'refused') return {ok:false, error:'OpenRouter refused this request: HTTP 429'};
+    return {ok:true, answer:'confirmed reply',
+      delivery:{state:'replied', request_id:options.request_id, message_id:'message-a', reply_message_id:'reply-a'}};
+  });
+  try {
+    await studio.settle();
+    const canvas = studio.button('Canvas');
+    if (canvas) studio.flush(() => canvas.click());
+    await studio.settle();
+    const input = studio.composer();
+    studio.type(input, 'will fail once');
+    studio.flush(() => studio.button('Send').click());
+    await studio.settle();
+    const turns = [...studio.doc.querySelectorAll('[data-chat-turn]')];
+    assert.ok(turns.some(turn => turn.textContent.includes('The reply did not arrive: OpenRouter refused this request: HTTP 429')),
+      'ok false is visible in the inspector transcript');
+    assert.ok(studio.doc.body.textContent.includes('Retry'), 'visible retry is offered');
+    assert.equal(studio.composer().value, 'will fail once');
+    mode = 'ok';
+    studio.flush(() => studio.button('Retry').click());
+    await studio.settle();
+    assert.deepEqual(calls.map(call => call.options.request_id), ['id-X', 'id-X']);
+  } finally { studio.close(); }
+});

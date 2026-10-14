@@ -1380,7 +1380,7 @@ def test_openrouter_free_empty_content_falls_to_next_free_default(monkeypatch):
                      before_dispatch=lambda: started.append("once"))
     assert [body["model"] for body in wire.bodies] == [
         "openrouter/free",
-        "apodex/apodex-1.1-mini:free",
+        "dots-studio/dots-3-note-preview:free",
     ]
     assert out["text"] == "fallback ok"
     assert out["actual_model"] == "dots-studio/dots-3-note-preview:free"
@@ -1399,7 +1399,7 @@ def test_openrouter_free_empty_http_body_falls_to_next_free_default(monkeypatch)
                      secrets_loader=NO_SECRETS, cloud_session=None, free_only=True)
     assert [body["model"] for body in wire.bodies] == [
         "openrouter/free",
-        "apodex/apodex-1.1-mini:free",
+        "dots-studio/dots-3-note-preview:free",
     ]
     assert out["text"] == "fallback ok"
 
@@ -1432,7 +1432,7 @@ def test_openrouter_free_non_json_http_body_falls_to_next_free_default(monkeypat
                      secrets_loader=NO_SECRETS, cloud_session=None, free_only=True)
     assert [body["model"] for body in wire.bodies] == [
         "openrouter/free",
-        "apodex/apodex-1.1-mini:free",
+        "dots-studio/dots-3-note-preview:free",
     ]
     assert out["text"] == "fallback ok"
 
@@ -1678,7 +1678,7 @@ def test_the_answer_is_rendered_where_the_person_typed():
     composer = _block(jsx, "const ScopeComposer = ", "const InspectorTabs = ")
     assert "const [state, setState] = React.useState('')" in composer
     assert "setState(answer)" in composer, "the ask reports back into the box"
-    assert "{state && <p role=\"status\"" in composer, "and the box draws it"
+    assert "{state && <div role=\"status\" data-chat-turn=\"error\"" in composer, "and the box draws it"
     assert "whiteSpace:'pre-wrap'" in composer, "a whole answer, not a 60 character stub"
     ask = _block(jsx, "const InlineAsk = ", "const NodeBody = ")
     assert "report(answer)" in ask and "report('refused: '" in ask

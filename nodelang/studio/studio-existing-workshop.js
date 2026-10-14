@@ -1333,7 +1333,8 @@
               heldRoots.some(held => !visible.some(row => row?.id === held)))) {
             fail('Choose a node in the current canvas scope.');
           }
-          if (!clearing && value.selected === root && heldRoots.length === 1) return value;
+          if (!clearing && value.selected === root && heldRoots.length === 1 &&
+              (!Array.isArray(value.selection) || (value.selection.length === 1 && value.selection[0] === root))) return value;
           const result = await command('/api/universal/gesture', {
             roots:clearing ? [] : heldRoots.length ? heldRoots : [root], focus:root, expected_scope:value.scope.current,
           });

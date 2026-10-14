@@ -617,18 +617,39 @@ const StudioLM = () => {
   const [focusId, setLocalFocusId] = React.useState(() =>
     studioInspectorFocus(window.ARCHHUB_STUDIO_AUTHORITY?.getSnapshot()));
   const restoringSelection = React.useRef(true);
+  // Selection is optimistic while the owner saves it. An empty-selection
+  // projection from mount or an earlier clear cannot cancel a newer click.
+  const focusIntent = React.useRef(null);
+  const focusGeneration = React.useRef(0);
   const setFocusId = (root, roots = null) => {
     const signed = window.ARCHHUB_STUDIO_AUTHORITY, existing = window.ARCHHUB_EXISTING_WORKSHOP;
     restoringSelection.current = false;
+    focusGeneration.current += 1;
+    const intent = {root:root || null, scope:studioCanvasScope((signed?.getSnapshot() || existing?.getSnapshot()?.topology)?.canvas)};
+    focusIntent.current = intent;
     setLocalFocusId(root || null);
     const heldRoots = root ? roots : [];
-    if (signed) signed.select(root || null, heldRoots).catch(() => {});
-    else if (existing?.selectTopology) existing.selectTopology(root || null, heldRoots).catch(() => {});
+    if (!signed && !existing?.selectTopology) { focusIntent.current = null; return; }
+    const save = signed ? signed.select(root || null, heldRoots) : existing?.selectTopology?.(root || null, heldRoots);
+    Promise.resolve(save).then(() => {
+      if (focusIntent.current !== intent) return;
+      focusIntent.current = null;
+      const latest = signed?.getSnapshot() || existing?.getSnapshot()?.topology;
+      setLocalFocusId(studioInspectorFocus(latest));
+    }).catch(() => {
+      if (focusIntent.current !== intent) return;
+      focusIntent.current = null;
+      // Keep the clicked card inspectable; the owner exposes the save error.
+    });
   };
   React.useEffect(() => {
     if (authorityState && !authorityState.pending && !authorityState.error && !authorityState.requires_refresh) {
       const restoring = restoringSelection.current;
       restoringSelection.current = false;
+      if (focusIntent.current) {
+        if (focusIntent.current.scope === studioCanvasScope(authorityState.canvas)) return;
+        focusIntent.current = null;
+      }
       if (restoring && Array.isArray(authorityState.canvas?.selection) && authorityState.canvas.selection.length &&
           authorityState.graph?.wires?.some(wire => wire.id === authorityState.selected)) {
         setFocusId(null, []); return;
@@ -930,6 +951,7 @@ const StudioLM = () => {
   // open a session — also pin as a tab if not already open
   const openSession = async (id) => {
     const generation = ++navGeneration.current;
+    const selectionGeneration = focusGeneration.current;
     setLocalFocusId(null);
     const systemId = systemSessionId(workshopState?.canvas, authorityState?.canvas, authorityState?.graph || LM_GRAPH);
     const isSystem = id && id === systemId;
@@ -956,7 +978,8 @@ const StudioLM = () => {
         // Reopening does not count as explicitly selecting the retained relation.
         const restored = window.ARCHHUB_STUDIO_AUTHORITY?.getSnapshot?.() ||
           window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot?.()?.topology;
-        if (restored?.graph?.wires?.some(wire => wire.id === restored.selected)) setFocusId(null, []);
+        if (selectionGeneration === focusGeneration.current &&
+            restored?.graph?.wires?.some(wire => wire.id === restored.selected)) setFocusId(null, []);
         const current = isSystem ? id : (opened.current || graphId);
         if (current && !isSystem && !openTabs.includes(current)) setOpenTabs(t => t.includes(current) ? t : [...t, current]);
         setWorkspaceSelection(viewFor(current || id));
@@ -5167,9 +5190,9 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   const history = authorityState?.canvas?.action_history;
   const canUndo = authority ? typeof authority.undo === 'function' :
     typeof window.ARCHHUB_HISTORY === 'function' && history?.can_undo === true;
-  const canRedo = !authority && typeof window.ARCHHUB_HISTORY === 'function' && history?.can_redo === true;
+  const canRedo = (authority ? typeof authority.redo === 'function' : typeof window.ARCHHUB_HISTORY === 'function') && history?.can_redo === true;
   const undoWhy = typeof window.ARCHHUB_HISTORY !== 'function' && !authority?.undo ? 'Undo is not available in this connection' : 'Nothing to undo';
-  const redoWhy = authority ? 'Redo is not available on this canvas' : typeof window.ARCHHUB_HISTORY !== 'function' ?
+  const redoWhy = authority ? (typeof authority.redo === 'function' ? 'Nothing to redo' : 'Redo is not available on this canvas') : typeof window.ARCHHUB_HISTORY !== 'function' ?
     'Redo is not available in this connection' : 'Nothing to redo';
   const runHistory = operation => {
     if (operation === 'undo' ? !canUndo : !canRedo) { setLayoutError(operation === 'undo' ? undoWhy : redoWhy); return; }
@@ -5178,7 +5201,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     menuTask(async () => {
       const before = read();
       try {
-        if (authority) await authority.undo(); else await window.ARCHHUB_HISTORY(operation);
+        if (authority) await authority[operation](); else await window.ARCHHUB_HISTORY(operation);
       } catch (error) {
         // The history refuses to take back a change a later change depends on; say that in plain words.
         if (/gained references|lost references|Conflict/i.test(String(error?.message || ''))) {
@@ -5966,7 +5989,8 @@ const agentTurnTimeoutMs = () => {
   return Number.isFinite(configured) ? Math.max(1, Math.min(45000, configured)) : 45000;
 };
 const agentTurnWithTimeout = promise => new Promise((resolve, reject) => {
-  const timer = window.setTimeout(() => reject(new Error('The reply did not arrive within 45 seconds. Retry when ready.')),
+  const timer = window.setTimeout(() => reject(Object.assign(new Error('The reply did not arrive within 45 seconds. Retry when ready.'),
+    {code:'AGENT_TURN_TIMEOUT'})),
     agentTurnTimeoutMs());
   Promise.resolve(promise).then(resolve, reject).finally(() => window.clearTimeout(timer));
 });
@@ -6711,13 +6735,14 @@ const NodeModelConversation = ({node, scope = '', openConversation, active = tru
       if (!d || d.target !== node.id) return;
       setTurns(held => {
         const prior = held.find(t => t.requestId === d.requestId);
-        const rest = held.filter(t => t.requestId !== d.requestId);
-        return [...rest, {requestId:d.requestId, said:d.said, model:d.model,
-          baseline:prior ? prior.baseline : new Set(rowsRef.current.map(row => row.id)),
+        const turn = {requestId:d.requestId, said:d.said, model:d.model,
+          baseline:prior && !(prior.queued && d.phase === 'pending') ? prior.baseline : new Set(rowsRef.current.map(row => row.id)),
           answer:d.phase === 'answer' || d.phase === 'failed' ? (d.answer || '') : null,
           failed:d.phase === 'failed',
+          queued:d.phase === 'queued',
           steps:Array.isArray(d.steps) ? d.steps : (prior ? prior.steps || [] : []),
-          messageId:d.messageId || '', replyId:d.replyId || ''}];
+          messageId:d.messageId || '', replyId:d.replyId || ''};
+        return prior ? held.map(t => t.requestId === d.requestId ? turn : t) : [...held, turn];
       });
       // Read the store on send (the question may already be saved) and on the answer.
       if (d.phase === 'pending' || d.phase === 'answer') setTranscriptTick(tick => tick + 1);
@@ -6777,15 +6802,15 @@ const NodeModelConversation = ({node, scope = '', openConversation, active = tru
     if (turn.replyId && rowIds.has(turn.replyId)) continue;
     // Is the question already in the transcript? By its id when known; otherwise only a new-since-send row.
     let questionShown = !!(turn.messageId && rowIds.has(turn.messageId));
-    if (!questionShown && !turn.messageId) {
+    if (!questionShown && !turn.messageId && !turn.queued) {
       const fresh = rows.find(row => row.is_me && !turn.baseline.has(row.id) && !claimed.has(row.id)
         && String(row.text || '').trim() === turn.said);
       if (fresh) { claimed.add(fresh.id); questionShown = true; }
     }
     if (!questionShown) turnRows.push({id:turn.requestId + ':q', who:'You', is_me:true, text:turn.said, time:''});
     turnRows.push({id:turn.requestId + ':a', who:turn.model || 'model', is_me:false, kind:turn.failed ? 'error' : turn.answer === null ? 'waiting' : 'message',
-      text:turn.answer === null ? 'Waiting for ' + (turn.model || 'the model') + '\u2026' : turn.answer, time:'',
-      steps:turn.steps || []});
+      text:turn.answer === null ? (turn.queued ? 'Pending · queued for ' : 'Waiting for ') + (turn.model || 'the model') + '\u2026' : turn.answer, time:'',
+      steps:turn.steps || [], queued:turn.queued});
   }
   // PM gate 2026-10-13: a new turn scrolls into view (the newest answer must be on screen),
   // unless the user has scrolled up to read history; then their place is kept.
@@ -6828,7 +6853,7 @@ const NodeModelConversation = ({node, scope = '', openConversation, active = tru
             <p style={{ margin:0, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.04em' }}>Latest messages only · full history in the Workshop</p>
           ) : null}
           {rows.map(row => <div key={row.id} data-chat-turn={row.is_me ? 'question' : 'answer'}><NodeTranscriptRow row={row}/></div>)}
-          {turnRows.map(row => <div key={row.id} data-chat-local data-chat-turn={row.is_me ? 'question' : row.kind}><NodeTranscriptRow row={row}/></div>)}
+          {turnRows.map(row => <div key={row.id} data-chat-local data-chat-pending={row.queued ? 'queued' : undefined} data-chat-turn={row.is_me ? 'question' : row.kind}><NodeTranscriptRow row={row}/></div>)}
         </>)}
       </div>
     ) : null}
@@ -6896,6 +6921,11 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
   const [stateModel, setStateModel] = React.useState('');
   const [asking, setAsking] = React.useState(false);
   const pendingSend = React.useRef(null);
+  const draftRef = React.useRef('');
+  const sendQueue = React.useRef([]);
+  const sending = React.useRef(false);
+  const pausedRequest = React.useRef(null);
+  const [savedDrafts, setSavedDrafts] = React.useState([]);
   const nodeRoute = target?.node && nodeModelRow(target.node) ? nodeModelRoute(target.node) : '';
   const route = nodeRoute || modelRoute(model);
   const blocked = routeReadiness(route, readiness, model?.pending === true);
@@ -6905,71 +6935,129 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
     target.kind === 'graph' ? 'whole graph · @ agent or session' : 'ask about this node · @ agent';
   const updateText = next => {
     if (pendingSend.current && next !== pendingSend.current.raw) pendingSend.current = null;
+    draftRef.current = next;
     setText(next);
   };
   const nextRequestId = said => {
-    const held = pendingSend.current;
-    if (held && held.raw === text && held.said === said && held.target === target.id) return held.requestId;
+    const held = [pendingSend.current, pausedRequest.current].find(turn => turn &&
+      turn.raw === draftRef.current && turn.said === said && turn.target === target.id);
+    if (held && held.raw === draftRef.current && held.said === said && held.target === target.id) return held.requestId;
     return window.crypto?.randomUUID?.() || String(Date.now()) + '-' + String(Math.random()).slice(2);
   };
-  const ask = async () => {
-    const said = text.trim();
-    if (!said || asking || !window.ARCHHUB_AGENT) return;
-    if ((blocked && blocked.state !== 'unknown') || !route) {
+  const drainQueue = async () => {
+    if (sending.current || pausedRequest.current) return;
+    sending.current = true;
+    setAsking(true);
+    try {
+      while (sendQueue.current.length) {
+        const turn = sendQueue.current.shift();
+        const announce = detail => announceChatTurn({target:turn.target, requestId:turn.requestId,
+          said:turn.said, model:turn.model, ...detail});
+        const admit = result => {
+          const refusal = agentRefusalText(result);
+          if (refusal) throw new Error(refusal);
+          const deliveryState = agentDeliveryState(result);
+          if (deliveryState && deliveryState !== 'replied') throw Object.assign(new Error(agentAnswerText(result)), {unconfirmed:true});
+          const delivery = (result && typeof result === 'object' && result.delivery) || {};
+          announce({phase:'answer', answer:agentAnswerText(result), steps:agentAnswerSteps(result),
+            messageId:delivery.message_id || '', replyId:delivery.reply_message_id || ''});
+        };
+        const refused = error => {
+          const message = String(error?.message || error || 'The reply did not arrive.') +
+            ' Your text is still here; retry will use the same request.';
+          announce({phase:'failed', answer:message});
+          if (draftRef.current && (draftRef.current !== turn.raw ||
+              (pendingSend.current && pendingSend.current.requestId !== turn.requestId))) {
+            const saved = {raw:draftRef.current, retry:pendingSend.current};
+            setSavedDrafts(held => [...held, saved]);
+          }
+          draftRef.current = turn.raw; setText(turn.raw);
+          pendingSend.current = turn;
+          setState(message); setStateModel(turn.model);
+        };
+        announce({phase:'pending'});
+        let outcome;
+        try {
+          outcome = Promise.resolve(window.ARCHHUB_AGENT(turn.said, turn.route, turn.context));
+          admit(await agentTurnWithTimeout(outcome));
+        } catch (error) {
+          refused(error);
+          if (error?.code === 'AGENT_TURN_TIMEOUT') {
+            // A timeout does not cancel the provider. Keep the FIFO lock until
+            // its original promise settles; never overlap the next request.
+            try {
+              admit(await outcome);
+              if (pendingSend.current?.requestId === turn.requestId) {
+                pendingSend.current = null;
+                if (draftRef.current === turn.raw) { draftRef.current = ''; setText(''); }
+                setState(''); setStateModel('');
+              }
+            } catch (lateError) {
+              refused(lateError);
+              if (lateError?.unconfirmed) pausedRequest.current = turn;
+            }
+          } else if (error?.unconfirmed) pausedRequest.current = turn;
+          if (pausedRequest.current) break;
+        }
+      }
+    } finally { sending.current = false; setAsking(false); }
+  };
+  const ask = () => {
+    const raw = draftRef.current, said = raw.trim();
+    if (!said) return;
+    const retry = [pendingSend.current, pausedRequest.current].find(turn => turn &&
+      turn.raw === raw && turn.said === said && turn.target === target.id);
+    if (!window.ARCHHUB_AGENT) { setState('Sending is unavailable in this view. Your text is still here.'); return; }
+    if (!retry && ((blocked && blocked.state !== 'unknown') || !route)) {
+      setState(blocked?.message || 'Choose a model before sending. Your text is still here.');
       if (typeof setPickerOpen === 'function') setPickerOpen(true);
       return;
     }
     if (typeof onSend === 'function') onSend();
     const requestId = nextRequestId(said);
-    pendingSend.current = {raw:text, said, target:target.id, requestId};
-    setAsking(true); setState(''); setStateModel('');
-    announceChatTurn({target:target.id, requestId, said, model:modelName, phase:'pending'});
-    try {
-      const context = target.kind === 'graph'
+    if (sending.current && pendingSend.current?.requestId === requestId) {
+      setState('The original request is still in flight. Queued messages will wait for its reply.'); return;
+    }
+    const context = target.kind === 'graph'
         ? {graph:true, graph_id:target.graphId, request_id:requestId, generation:generationRequestOptions()}
         : {node:target.node.id, request_id:requestId, generation:generationRequestOptions()};
-      const result = await agentTurnWithTimeout(window.ARCHHUB_AGENT(said, route, context));
-      const refusal = agentRefusalText(result);
-      if (refusal) {
-        const message = refusal + ' Your text is still here; retry will use the same request.';
-        announceChatTurn({target:target.id, requestId, said, model:modelName, phase:'failed', answer:message});
-        setState(message);
-        setStateModel(modelName);
-        return;
-      }
-      const answer = agentAnswerText(result);
-      const deliveryState = agentDeliveryState(result);
-      if (!deliveryState || deliveryState === 'replied') {
-        // UX-CHAT1: the answer is a turn in the Conversation section above, never a loose line here.
-        const delivery = (result && typeof result === 'object' && result.delivery) || {};
-        announceChatTurn({target:target.id, requestId, said, model:modelName, phase:'answer', answer,
-          steps:agentAnswerSteps(result),
-          messageId:delivery.message_id || '', replyId:delivery.reply_message_id || ''});
-      } else {
-        // Not confirmed: say so beside the field (the text stays for a safe retry); no half turn above.
-        announceChatTurn({target:target.id, requestId, said, model:modelName, phase:'failed', answer});
-        setState(answer);
-        setStateModel(modelName);
-      }
-      if (!deliveryState || deliveryState === 'replied') {
-        pendingSend.current = null;
-        setText('');
-      }
-    } catch (error) {
-      const message = ((error && error.message) || error || 'The reply did not arrive. Retry when ready.') +
-        ' Your text is still here; retry will use the same request.';
-      announceChatTurn({target:target.id, requestId, said, model:modelName, phase:'failed', answer:message});
-      setState(message);
-    } finally { setAsking(false); }
+    const turn = retry || {raw, said, target:target.id, requestId, route, model:modelName, context};
+    const retrying = pausedRequest.current?.requestId === requestId;
+    if (retrying) { pausedRequest.current = null; sendQueue.current.unshift(turn); }
+    else sendQueue.current.push(turn);
+    pendingSend.current = null;
+    draftRef.current = ''; setText('');
+    setState(pausedRequest.current ? 'Queued messages are waiting for confirmation of the original request. Retry that request to continue.' : '');
+    setStateModel(pausedRequest.current?.model || '');
+    announceChatTurn({target:target.id, requestId, said, model:modelName, phase:sending.current || pausedRequest.current ? 'queued' : 'pending'});
+    void drainQueue();
+  };
+  const retryOriginal = () => {
+    const turn = pausedRequest.current || pendingSend.current;
+    if (!turn || sending.current) return;
+    pausedRequest.current = null; pendingSend.current = null;
+    sendQueue.current.unshift(turn);
+    if (draftRef.current === turn.raw) { draftRef.current = ''; setText(''); }
+    setState(''); setStateModel('');
+    announceChatTurn({target:turn.target, requestId:turn.requestId, said:turn.said, model:turn.model, phase:'pending'});
+    void drainQueue();
   };
   return <div style={{ borderTop:`1px solid ${LM.lineSoft}`, padding:'10px 12px 12px', display:'flex', flexDirection:'column', gap:8, minWidth:0 }}>
+    {savedDrafts.map((saved, index) => <div key={index} role="status" data-saved-draft style={{fontSize:12, whiteSpace:'pre-wrap', overflowWrap:'anywhere'}}>
+      <span>{saved.raw}</span>{' '}
+      <button type="button" onClick={() => {
+        const current = {raw:draftRef.current, retry:pendingSend.current};
+        setSavedDrafts(held => held.flatMap((row, i) => i !== index ? [row] : current.raw ? [current] : []));
+        draftRef.current = saved.raw; setText(saved.raw); pendingSend.current = saved.retry;
+      }} style={smallBtn()}>Restore draft</button>
+    </div>)}
     {state && <div role="status" data-chat-turn="error" style={{ margin:0, display:'flex', alignItems:'flex-start', gap:8, maxHeight:120, overflow:'auto',
       whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontFamily:LM.serif, fontSize:13, lineHeight:1.45, color:LM.ink }}>
       <div style={{ flex:1, minWidth:0 }}>
         {stateModel && <span style={{ display:'block', fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.06em', marginBottom:3 }}>{stateModel}</span>}
         <span>{state}</span>
       </div>
-      {pendingSend.current && <button type="button" onClick={ask} disabled={asking} style={{
+      {(pendingSend.current || pausedRequest.current) && <button type="button" onClick={retryOriginal} disabled={asking} style={{
         ...smallBtn(), flexShrink:0, padding:'4px 9px',
       }}>{asking ? 'Waiting...' : 'Retry'}</button>}
     </div>}
@@ -7007,9 +7095,9 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
         onKeyDown={e => { if (e.key === 'Enter') ask(); }} placeholder={placeholder}
         style={{ flex:1, minWidth:0, background:'transparent', border:0, outline:0, color:LM.ink,
           fontFamily:LM.serif, fontSize:13, fontStyle:'italic' }}/>
-      <button onClick={ask} disabled={asking || !text.trim()} style={{ padding:'4px 11px', background:LM.accent,
+      <button onClick={ask} disabled={!text.trim()} style={{ padding:'4px 11px', background:LM.accent,
         color:(window.AH && window.AH.onFill) || '#180f08', border:0, borderRadius:LM.rad.sm,
-        fontSize:11.5, fontWeight:500, cursor:asking || !text.trim() ? 'default' : 'pointer' }}>{asking ? 'Waiting…' : 'Send'}</button>
+        fontSize:11.5, fontWeight:500, cursor:!text.trim() ? 'default' : 'pointer' }}>{asking ? (text.trim() ? 'Queue' : 'Waiting…') : 'Send'}</button>
     </div>
   </div>;
 };

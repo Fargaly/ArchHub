@@ -55529,12 +55529,32 @@ def apply_universal_canvas_gesture(
     leased_projection: Mapping[str, object] | None = None,
     expected_scope: str | None = None,
     placement: str | None = None,
+    undo: bool = False,
+    redo: bool = False,
 ) -> int:
     """Publish one complete local canvas gesture in one Store revision.
 
     Positions are a hand move unless ``placement`` is ``"arrange"``: a hand
     move pins each moved card, and an Arrange refuses to move a pinned one.
     """
+    if type(undo) is not bool or type(redo) is not bool or (undo and redo):
+        raise InvalidCell("canvas history gesture must name one direction")
+    if undo or redo:
+        if any(value is not None for value in (
+            roots, focus_root, positions, viewport, placement,
+        )):
+            raise InvalidCell("canvas history gesture cannot carry another edit")
+        view_session, context = _view_session_for_context(
+            registry, authentication_context
+        )
+        if expected_scope is not None and expected_scope != (
+            _read_view_scope_trail_structure(
+                store.snapshot(), registry, view_session
+            )[-1]
+        ):
+            raise InvalidCell("canvas history gesture scope drifted")
+        compensate = undo_universal_change if undo else redo_universal_change
+        return compensate(store, registry, authentication_context=context)
     if placement not in (None, "arrange"):
         raise InvalidCell("canvas placement must be a hand move or arrange")
     if placement is not None and not positions:

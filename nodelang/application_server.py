@@ -477,6 +477,7 @@ _TOPOLOGY_DELTA_FIELDS = (
     "catalog",
 )
 _INTERACTION_DELTA_FIELDS = (
+    "action_history",
     "workshop_scope",
     "revision",
     "selected",
@@ -2192,6 +2193,7 @@ class _CleanAuthorityHttpServer:
             # the act -- so it needs no control and no declared
             # interaction, which is what kept Undo off this canvas.
             "undo",
+            "redo",
             "projection",
             "projection_mode",
             "projection_revision",
@@ -2218,7 +2220,18 @@ class _CleanAuthorityHttpServer:
                 raise InvalidCell("graph changed before layout save")
         viewport = body.get("viewport")
         roots = body.get("roots")
-        if body.get("undo"):
+        if body.get("undo") or body.get("redo"):
+            if (type(body.get("undo", False)) is not bool
+                    or type(body.get("redo", False)) is not bool
+                    or (body.get("undo") and body.get("redo"))):
+                raise CleanGestureRefused("canvas history gesture must name one direction")
+            if any(key in body for key in (
+                "roots", "focus", "positions", "viewport", "placement",
+                "delete", "membership", "property",
+            )):
+                raise CleanGestureRefused("canvas history gesture cannot carry another edit")
+            if body.get("redo"):
+                return self._clean_redo(binding)
             return self._clean_undo(binding)
         removing = body.get("delete")
         if isinstance(removing, list) and removing:
@@ -2282,6 +2295,7 @@ class _CleanAuthorityHttpServer:
                 "roots": tuple(released),
                 "selection": tuple(visible_selection),
             } if released else None
+            self._redo_entry = None
             # A selection is a claim about what this scope shows, and the
             # projection refuses one that names a root the scope no longer
             # holds -- rightly. Deleting the selected card therefore took
@@ -2317,7 +2331,7 @@ class _CleanAuthorityHttpServer:
 
             from .clean_browser_authority import revise_clean_browser_focus
             from .unified_authority import (
-                add_composition_member,
+                attach_composition_from_scope,
                 place_composition,
                 read_scope_level,
                 remove_composition_member,
@@ -2353,8 +2367,9 @@ class _CleanAuthorityHttpServer:
             source = from_group or standing
             position = membership.get("position")
             try:
-                add_composition_member(
+                attach_composition_from_scope(
                     self.clean_authority,
+                    source,
                     destination,
                     member_root,
                     caller=self.clean_caller,
@@ -2411,7 +2426,9 @@ class _CleanAuthorityHttpServer:
                 "from": source,
                 "to": destination,
                 "selection": (undo_selection_root,),
+                "position": position if destination == standing else None,
             }
+            self._redo_entry = None
             self._refresh_scope_interactions()
             return self._gesture_answer(binding, body)
         edit = body.get("property")
@@ -2708,6 +2725,7 @@ class _CleanAuthorityHttpServer:
                 interactions=self.clean_scope_interactions,
                 door_root=self.clean_scope_root,
                 can_undo=getattr(self, "_undo_entry", None) is not None,
+                can_redo=getattr(self, "_redo_entry", None) is not None,
                 door_label=self._door_label(snapshot),
             )
             from .workshop_conversation import workshop_descriptors
@@ -2813,7 +2831,7 @@ class _CleanAuthorityHttpServer:
             return projection
         # The clean projection also carries these per-gesture fields the
         # generic delta does not list; a pan moves the viewport.
-        for field in ("viewport", "revision", "scope"):
+        for field in ("viewport", "revision", "scope", "action_history"):
             if field in projection:
                 delta[field] = projection[field]
         # What this view now holds is the full projection just built.
@@ -2832,6 +2850,7 @@ class _CleanAuthorityHttpServer:
 
         from .unified_authority import (
             add_composition_member,
+            attach_composition_from_scope,
             remove_composition_member,
         )
 
@@ -2842,8 +2861,9 @@ class _CleanAuthorityHttpServer:
             raise InvalidCell("this act cannot be taken back yet")
         if entry["kind"] == "membership":
             try:
-                add_composition_member(
+                attach_composition_from_scope(
                     self.clean_authority,
+                    entry["to"],
                     entry["from"],
                     entry["member"],
                     caller=self.clean_caller,
@@ -2877,6 +2897,7 @@ class _CleanAuthorityHttpServer:
                     command_id=str(_uuid.uuid4()),
                 )
             self._undo_entry = None
+            self._redo_entry = entry
             self._refresh_scope_interactions()
             return self._canvas(binding)
         # Policy proves an act on a root REACHABLE within the claimed
@@ -2938,8 +2959,27 @@ class _CleanAuthorityHttpServer:
             )
         # One step deep: what was just put back is not itself undoable.
         self._undo_entry = None
+        self._redo_entry = None
         self._refresh_scope_interactions()
         return self._canvas(binding)
+
+    def _clean_redo(self, binding):
+        """Reapply the membership move through its original signed commands."""
+        entry = getattr(self, "_redo_entry", None)
+        if entry is None or entry["kind"] != "membership":
+            raise InvalidCell("there is nothing on this canvas to redo")
+        standing = self._standing_scope(binding)
+        if standing != entry["scope"]:
+            raise InvalidCell("canvas history gesture scope drifted")
+        return self._clean_gesture(binding, {
+            "expected_scope": standing,
+            "membership": {
+                "member": entry["member"],
+                "from_group": "" if entry["from"] == standing else entry["from"],
+                "to_group": "" if entry["to"] == standing else entry["to"],
+                "position": entry["position"],
+            },
+        })
 
     def _clean_group_or_ungroup(self, binding, body, control_root):
         """Group the current selection, or dissolve the focused group.
@@ -3047,6 +3087,7 @@ class _CleanAuthorityHttpServer:
                 caller=self.clean_caller,
                 command_id=str(_uuid.uuid4()),
             )
+        self._redo_entry = None
         self._refresh_scope_interactions()
         payload = self._canvas(binding, scope_root=standing)
         return payload
@@ -3605,6 +3646,7 @@ class _CleanAuthorityHttpServer:
             # more than one owner shape, and an AttributeError here is
             # swallowed by the reuse path's except and retried forever.
             can_undo=getattr(self, "_undo_entry", None) is not None,
+            can_redo=getattr(self, "_redo_entry", None) is not None,
             door_label=self._door_label(snapshot),
         )
         from .workshop_conversation import workshop_descriptors
@@ -4607,7 +4649,18 @@ class _CleanAuthorityHttpServer:
                                 self._json(200, {"ok": True, **payload})
                                 return
                             if capability == CAPABILITY_HISTORY:
-                                payload = owner._clean_undo(probe)
+                                controls = owner._canvas(probe)["configuration"][
+                                    "design_system"]["control_catalog"]["controls"]
+                                control = next((item for item in controls
+                                    if item.get("owner") == body.get("control")), None)
+                                operation = (control or {}).get("activation", {}).get(
+                                    "arguments", {}).get("operation")
+                                if operation == "undo":
+                                    payload = owner._clean_undo(probe)
+                                elif operation == "redo":
+                                    payload = owner._clean_redo(probe)
+                                else:
+                                    raise InvalidCell("history control operation is not admitted")
                                 self._json(200, {"ok": True, **payload})
                                 return
                             binding = owner._resolve_binding(
@@ -9892,6 +9945,10 @@ class ApplicationServer:
                                     body['root'], float(body['x']), float(body['y']),
                                     authentication_context=binding.context)
                             elif self.path == '/api/universal/gesture':
+                                if (body.get('undo') or body.get('redo')) and any(
+                                    key in body for key in ('delete', 'membership', 'property')
+                                ):
+                                    raise InvalidCell('canvas history gesture cannot carry another edit')
                                 touched = apply_universal_canvas_gesture(
                                     owner.universal_store,
                                     owner.universal_registry,
@@ -9901,6 +9958,8 @@ class ApplicationServer:
                                     viewport=body.get('viewport'),
                                     expected_scope=body.get('expected_scope'),
                                     placement=body.get('placement'),
+                                    undo=body.get('undo', False),
+                                    redo=body.get('redo', False),
                                     consent_evidence_root=binding.session_root,
                                     authentication_context=binding.context,
                                     leased_projection=previous_projection)

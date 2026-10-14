@@ -388,7 +388,8 @@
         const intent = ++focusIntent;
         const clearing = root === null && Array.isArray(roots) && roots.length === 0;
         const held = [...new Set((Array.isArray(roots) ? roots : [root]).filter(text))];
-        if (!clearing && canvas?.selected === root && held.length === 1 && pending === 0) {
+        if (!clearing && canvas?.selected === root && held.length === 1 && pending === 0 &&
+            (!Array.isArray(canvas.selection) || (canvas.selection.length === 1 && canvas.selection[0] === root))) {
           wantedFocus = root;
           project();
           return Promise.resolve(canvas);
@@ -588,6 +589,7 @@
           });
       },
       undo() { return enqueue(() => post('/api/universal/gesture', {expected_scope: canvas.root, undo: true})); },
+      redo() { return enqueue(() => post('/api/universal/gesture', {expected_scope: canvas.root, redo: true})); },
       remove(root) {
         const selected = api.select(root), intent = focusIntent;
         return selected.then(() => enqueue(() => post('/api/universal/gesture',

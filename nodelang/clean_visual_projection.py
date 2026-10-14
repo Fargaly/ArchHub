@@ -17,6 +17,7 @@ from .unified_authority import (
     _decode_data_value as decode_data_value,
     decode_value,
     relation_members,
+    read_scope_level,
 )
 
 
@@ -910,6 +911,7 @@ def _project_clean_visual_canvas_unscoped(
     interactions: CleanScopeInteractions | None = None,
     door_root: str | None = None,
     can_undo: bool = False,
+    can_redo: bool = False,
     door_label: str | None = None,
 ) -> dict[str, object]:
     selected_root = lens.get("selected_root")
@@ -965,6 +967,15 @@ def _project_clean_visual_canvas_unscoped(
     # cards are built, read when the wires are.
     socket_of_wire_end: dict[tuple[str, str, str], str] = {}
     for item in lens["nodes"]:
+        members = ()
+        if item["structural_role"] == "composition":
+            level = read_scope_level(
+                authority, item["root_id"], scope_root=lens["scope_root"],
+                caller=caller, at_revision=lens["revision"],
+            )
+            members = tuple({
+                "id": root, "title": level.composition_labels.get(root) or root,
+            } for root in level.composition_roots)
         rows_by_label = {
             str(row.get("name")): row.get("value")
             for row in (item.get("properties") or ())
@@ -1003,7 +1014,9 @@ def _project_clean_visual_canvas_unscoped(
             "mutates": bool(destructive_ops.get(item.get("operation"))),
             "composition": item["structural_role"] == "composition",
             "openable": bool(item["openable"]),
-            "member_count": len(item["properties"]),
+            "member_count": (len(members) if item["structural_role"] == "composition"
+                             else len(item["properties"])),
+            "members": list(members),
             "connection_count": len(item["ports"]),
             "selected": item["root_id"] in selected_roots,
             "focused": item["root_id"] == selected_root,
@@ -1233,7 +1246,7 @@ def _project_clean_visual_canvas_unscoped(
             # hardcoded False, so the graph's Undo control could never
             # become applicable and nothing on this canvas was reversible.
             "can-undo": bool(can_undo),
-            "can-redo": False,
+            "can-redo": bool(can_redo),
         },
     )
     wire_default_color = tokens.get("accent") or ""
@@ -1525,6 +1538,10 @@ def _project_clean_visual_canvas_unscoped(
             # was ever taken, and every reader gets a whole viewport.
             **dict(lens.get("viewport") or {}),
         },
+        "action_history": {
+            "can_undo": bool(can_undo),
+            "can_redo": bool(can_redo),
+        },
         "configuration": {
             "design_system": {
                 "components": {
@@ -1649,6 +1666,7 @@ def project_clean_visual_canvas(
     interactions: CleanScopeInteractions | None = None,
     door_root: str | None = None,
     can_undo: bool = False,
+    can_redo: bool = False,
     door_label: str | None = None,
 ) -> dict[str, object]:
     """One projection request shares one template-plan cache.
@@ -1673,5 +1691,6 @@ def project_clean_visual_canvas(
             interactions=interactions,
             door_root=door_root,
             can_undo=can_undo,
+            can_redo=can_redo,
             door_label=door_label,
         )

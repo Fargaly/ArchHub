@@ -625,6 +625,48 @@ def test_browser_routes_group_open_and_ungroup_the_live_governed_canvas():
             if node["id"] == composition_root
         )
         assert undone_group["member_count"] == 2
+        assert selected[0] not in {node["id"] for node in undone["nodes"]}, (
+            "undo hides the released member inside its restored group"
+        )
+        status, redone_delta = _json(
+            server.url,
+            "/api/universal/interaction",
+            _interaction_request(
+                undone,
+                "app:control:canvas:redo",
+                projection_mode="topology-delta-v1",
+            ),
+            token=token,
+        )
+        assert status == 200, redone_delta
+        redone = _merge_canvas_delta(undone, redone_delta)
+        redone_group = next(
+            node for node in redone["nodes"]
+            if node["id"] == composition_root
+        )
+        assert redone_group["member_count"] == 1
+        assert selected[0] in {node["id"] for node in redone["nodes"]}, (
+            "redo releases the member onto the parent canvas again"
+        )
+        status, undone_again_delta = _json(
+            server.url,
+            "/api/universal/interaction",
+            _interaction_request(
+                redone,
+                "app:control:canvas:undo",
+                projection_mode="topology-delta-v1",
+            ),
+            token=token,
+        )
+        assert status == 200, undone_again_delta
+        undone_again = _merge_canvas_delta(redone, undone_again_delta)
+        assert next(
+            node for node in undone_again["nodes"]
+            if node["id"] == composition_root
+        )["member_count"] == 2
+        assert selected[0] not in {
+            node["id"] for node in undone_again["nodes"]
+        }
         status, unchanged = _json(
             server.url, "/api/universal/canvas", token=token
         )

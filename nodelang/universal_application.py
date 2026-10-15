@@ -13697,6 +13697,12 @@ def build_universal_application(
     root_properties.setdefault(_GOVERNED_WORK_REGISTRY_ROOT, []).extend(
         reference.relation_root for reference in governed_work_properties
     )
+    _ensure_system_tool_canvas_nodes(
+        store, roles, authorization, standard_library, map_registry,
+        application_root=application_root, canvas_root=canvas_root,
+        visibility_root=visibility_root, properties_lens_root=selection_lens_root,
+        default_color=initial_theme["ink_soft"],
+    )
     workshop_assignment_registry_root = (
         _ensure_application_workshop_assignment_registry(
             store,
@@ -20233,19 +20239,159 @@ _CANVAS_CARD_PITCH = (260.0, 280.0)
 _CANVAS_PLACEMENT_COLUMNS = 6
 _SYSTEM_TOOL_CANVAS_NODES = (
     ("tool_studio", "Studio", "tool.studio", "studio", None,
-     {"default_view": "canvas"}),
+     {}),
     ("tool_workshop", "Workshop", "tool.workshop", "workshop", None,
-     {"default_tab": "tasks", "stale_claim_after_idle_minutes": "30",
+     {"stale_claim_after_idle_minutes": "30",
       "archive_after_idle_days": "20", "tick_cadence_minutes": "5"}),
     ("tool_brain", "Brain", "tool.brain", "brain", "brain",
-     {"default_tab": "memory"}),
+     {}),
     ("tool_baboom", "BABOOM", "tool.baboom", "baboom", None,
-     {"start_with_archhub": "True", "speech_budget_per_hour": "2"}),
+     {}),
     ("tool_connectors", "Connectors", "tool.connectors", "connectors",
-     "connectors", {"default_tab": "hosts"}),
+     "connectors", {}),
     ("tool_cloud", "Cloud", "tool.cloud", "cloud", "cloud",
-     {"default_tab": "account"}),
+     {}),
 )
+
+
+_APPLICATION_SETTING_SPECS = {
+    "stale_claim_after_idle_minutes": ("number", {"min": 1, "max": 1440, "step": 1}),
+    "archive_after_idle_days": ("number", {"min": 1, "max": 3650, "step": 1}),
+    "tick_cadence_minutes": ("number", {"min": 1, "max": 1440, "step": 1}),
+}
+
+# Each edge names an actual reader of an owner object. Imported Grand Map
+# domain links remain knowledge relations; they do not describe runtime flow.
+_APPLICATION_SETTING_READS = (
+    ("ui", "tool_studio", "Theme tokens", "nodelang/studio/studio-lm.jsx:usePersonalTheme"),
+    ("models", "tool_studio", "Model route and generation", "nodelang/application_server.py:run_agent_composer"),
+    ("models", "tool_baboom", "Selected model", "nodelang/application_server.py:_read_agent_model"),
+    ("tool_workshop", "governed_work", "Stale-claim and archive policy", "nodelang/universal_application.py:_workshop_board_plan"),
+    ("brain", "tool_baboom", "Memory context", "nodelang/application_server.py:_answer_open_question"),
+    ("selfext", "connectors", "Governed write filters", "nodelang/application_server.py:_effect_engines_with_mods_store"),
+    ("sessions", "tool_studio", "Conversation records", "nodelang/studio/studio-lm.jsx:Workspace"),
+    ("canvas", "tool_studio", "Canvas projection", "nodelang/studio/studio-authority.js:project"),
+)
+
+
+def _application_relation_label(wire: Mapping[str, object], source: str, target: str) -> str:
+    """Name the relation's own meaning; never invent a dependency."""
+    for key in ("label", "role_label", "name"):
+        value = wire.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    params = {row.get("label"): row.get("value") for row in wire.get("params", ())}
+    for key in ("reason", "relation_kind", "connection", "title", "kind"):
+        value = params.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return "%s → %s" % (source, target)
+
+
+def _application_setting_row(row: Mapping[str, object]) -> dict[str, object]:
+    editor, constraints = _APPLICATION_SETTING_SPECS[str(row["label"])]
+    return {**row, "value": int(str(row["value"])), "editable": True, "editor": editor, "constraints": constraints,
+            "setting": {"kind": "property", "key": row["label"]}}
+
+
+def _project_application_node_settings(
+    nodes: list[dict[str, object]], properties: list[dict[str, object]],
+    selected_root: str, *, registry: UniversalApplicationRegistry,
+    snapshot: Snapshot,
+    theme_fields: list[dict[str, object]], theme_value_root: str,
+    baboom: Mapping[str, object], composer: Mapping[str, object],
+) -> list[dict[str, object]]:
+    """One projection of owner cells shared by Settings, cards and Properties."""
+    composer = composer or {}
+    baboom = baboom or {}
+    app_nodes = {node["id"]: node for node in nodes if node.get("application")}
+    for node in app_nodes.values():
+        node["params"] = [
+            _application_setting_row(row) for row in node.get("params", ())
+            if row.get("label") in _APPLICATION_SETTING_SPECS
+            and node["id"] == _system_tool_canvas_root("tool_workshop")
+        ]
+        node["engine"] = ""
+        node["summary"] = ""
+        node["subtitle"] = ""
+        node["state"] = {"members": node.get("member_count", 0),
+                         "status": node.get("status") or "available"}
+        node["actions"] = [{"id": "open", "label": "Open " + str(node["label"]),
+                            "kind": "open-node", "root": node["id"]}]
+    domains = registry.map.domains or {}
+    studio = domains.get("ui")
+    if studio not in app_nodes:
+        studio = _system_tool_canvas_root("tool_studio")
+    if studio in app_nodes:
+        app_nodes[studio]["params"].extend({
+            "label": field["key"], "value": field["value"], "owner": studio,
+            "relation": field["control"], "value_root": theme_value_root,
+            "cell_id": theme_value_root,
+            "editable": True, "editor": "color", "constraints": {},
+            "setting": {"kind": "theme", "key": field["key"]},
+        } for field in theme_fields)
+    baboom_root = _system_tool_canvas_root("tool_baboom")
+    if baboom_root in app_nodes:
+        app_nodes[baboom_root]["params"].append({
+            "label": "start_with_archhub", "value": baboom.get("value"),
+            "owner": baboom_root, "relation": baboom.get("control"),
+            "value_root": baboom.get("value_root"),
+            "cell_id": baboom.get("value_root"),
+            "editable": bool(baboom.get("available")), "editor": "select",
+            "constraints": {"options": ["on", "off"]},
+            "setting": {"kind": "baboom", "key": "start_with_archhub"},
+        })
+    models_root = domains.get("models")
+    if models_root in app_nodes:
+        values = composer.get("generation", dict(_MODEL_DEFAULTS))
+        app_nodes[models_root]["params"].append({
+            "label": "model", "value": composer.get("value") or "", "owner": models_root,
+            "relation": composer.get("control"), "value_root": composer.get("value_root"),
+            "cell_id": composer.get("value_root"),
+            "editable": bool(composer.get("available")), "editor": "text", "constraints": {},
+            "setting": {"kind": "composer-model", "key": "route"},
+        })
+        for key, lower, upper, step in (("temperature", 0, 2, .05),
+                                       ("top-p", 0, 1, .01),
+                                       ("max tokens", 256, 32000, 256)):
+            app_nodes[models_root]["params"].append({
+                "label": key, "value": values[key], "owner": models_root,
+                "relation": composer.get("control"),
+                "value_root": composer.get("value_root"),
+                "cell_id": composer.get("value_root"),
+                "editable": bool(composer.get("available")), "editor": "number",
+                "constraints": {"min": lower, "max": upper, "step": step},
+                "setting": {"kind": "generation", "key": key},
+            })
+    selfext_root = domains.get("selfext")
+    if selfext_root in app_nodes:
+        from .domains.selfext import SHIPPED_MOD_ROWS, _decode_mod_state, _mod_state_root
+        for base in SHIPPED_MOD_ROWS:
+            held = _decode_mod_state(snapshot, base)
+            value_root = _mod_state_root(base["id"])
+            common = {"owner": selfext_root, "relation": value_root, "value_root": value_root if value_root in snapshot.cells else None,
+                      "editable": True, "constraints": {}}
+            app_nodes[selfext_root]["params"].append({
+                **common, "label": base["name"] + " enabled", "value": held["enabled"],
+                "cell_id": value_root if value_root in snapshot.cells else None, "editor": "toggle",
+                "setting": {"kind": "mod-enabled", "mod_id": base["id"], "key": "enabled"},
+            })
+            for mod_node in base.get("nodes", ()):
+                for key, default in mod_node.get("params", {}).items():
+                    app_nodes[selfext_root]["params"].append({
+                        **common, "label": base["name"] + " " + key,
+                        "value": held["params"].get(key, default),
+                        "cell_id": value_root if value_root in snapshot.cells else None,
+                        "editor": "number" if type(default) in (int, float) else "text",
+                        "setting": {"kind": "mod-param", "mod_id": base["id"], "key": key},
+                    })
+    if selected_root in app_nodes:
+        return [{**row, "owner": selected_root, "mixed": False, "batch": False,
+                 "control": row["relation"] if row["setting"]["kind"] == "property" else None,
+                 "event_fact_input": _EVENT_FACT_ROOTS["submitted_value"]
+                    if row["setting"]["kind"] == "property" else None}
+                for row in app_nodes[selected_root]["params"]]
+    return properties
 
 
 def _system_tool_canvas_root(tool_id: str) -> str:
@@ -20294,7 +20440,7 @@ def _ensure_system_tool_canvas_nodes(
         labels[key] = root
         return root
 
-    def stage_property(owner_root: str, namespace: str, key: str, value: object) -> str:
+    def stage_property(owner_root: str, namespace: str, key: str, value: object, *, read_only=False) -> str:
         token = "%s:%s:%s" % (_part(owner_root), _part(namespace), _part(key))
         value_root = "app:value:%s" % token
         relation_root = "app:property:%s" % token
@@ -20308,6 +20454,7 @@ def _ensure_system_tool_canvas_nodes(
             (roles["owner"], owner_root),
             (roles["value"], value_root),
             (roles["label"], label_root(key)),
+            *(((roles["read-only"], roles["read-only"]),) if read_only else ()),
         ), relation_id=relation_root)
         for cell in relation.cells:
             create[cell.id] = cell
@@ -20347,6 +20494,29 @@ def _ensure_system_tool_canvas_nodes(
         for key, value in params.items():
             property_roots.append(stage_property(target_root, "field", key, value))
 
+    dependency_roots = []
+    def dependency_owner(key):
+        if key == "governed_work":
+            return "app:governed-work-registry"
+        return (_system_tool_canvas_root(key) if key.startswith("tool_")
+                else map_registry.domains[key])
+    for provider, consumer, meaning, reader in _APPLICATION_SETTING_READS:
+        source, target = dependency_owner(provider), dependency_owner(consumer)
+        if target not in snapshot.cells and target not in create:
+            # Governed Work is admitted later in a fresh build; its reader
+            # relation is attached by the second idempotent admission pass.
+            continue
+        root = "app:relation:setting-reader:%s:%s" % (provider, consumer)
+        dependency_roots.append(root)
+        if root not in snapshot.cells:
+            relation = compose_relation_cells((
+                (roles["source"], source), (roles["target"], target),
+            ), relation_id=root)
+            for cell in relation.cells:
+                create[cell.id] = cell
+        stage_property(root, "field", "reason", meaning, read_only=True)
+        stage_property(root, "field", "reader", reader, read_only=True)
+
     snapshot_for_patch = _candidate_snapshot_for_atomic_commit(
         snapshot, create=tuple(create.values())
     )
@@ -20372,6 +20542,7 @@ def _ensure_system_tool_canvas_nodes(
         (canvas_root, missing(canvas_root, [
             *((roles["member"], root) for root in audience_tool_roots),
             *((roles["property"], root) for root in new_property_roots),
+            *((roles["relation"], root) for root in dependency_roots),
         ])),
         (visibility_root, missing(visibility_root,
             [(roles["visible"], root) for root in audience_tool_roots])),
@@ -24648,6 +24819,9 @@ def _project_universal_canvas_interpreter(
                     "label": name,
                     "value": str(effective_property_value(row)),
                     "relation": row.relation_root,
+                    "owner": row.owner_root,
+                    "value_root": row.value_root,
+                    "cell_id": row.value_root,
                 }
                 for name, row in labelled.items()
                 if name not in {
@@ -24656,17 +24830,7 @@ def _project_universal_canvas_interpreter(
                     "evidence_ref", "last_verified", "authority_source",
                     "bim_phase", "standard", "placed",
                 }
-            ] + (
-                [
-                    {
-                        "label": "halted",
-                        "value": str(bool(is_application_halted())).lower(),
-                        "relation": "",
-                    }
-                ]
-                if root_id == getattr(registry, "application_root", "app:archhub")
-                else []
-            ),
+            ],
             # The run wire reads which effect a node declares; the card's
             # display cap must not hide it, and status carries the last run
             # answer for surfaces that draw it on the card.
@@ -24739,13 +24903,6 @@ def _project_universal_canvas_interpreter(
                 node["group"] = (
                     system_groups.get(node["id"]) or _canvas_node_group(node)
                 )
-            if node.get("application"):
-                if not any(p.get("label") == "halted" for p in node.get("params", [])):
-                    node.setdefault("params", []).append({
-                        "label": "halted",
-                        "value": str(bool(is_application_halted())).lower(),
-                        "relation": "",
-                    })
         # Cards with no stored position are drawn in free space by frame.
         _place_unplaced_canvas_nodes(nodes)
     node_index = {node["id"]: node for node in nodes}
@@ -24873,6 +25030,9 @@ def _project_universal_canvas_interpreter(
         )
         if source not in visible_roots or target not in visible_roots:
             continue
+        if (node_index[source].get("application") and node_index[target].get("application")
+                and not root_id.startswith("app:relation:setting-reader:")):
+            continue
         authorities = [
             member.participant_id
             for member in members if member.role_id == registry.roles["authority"]
@@ -24883,6 +25043,8 @@ def _project_universal_canvas_interpreter(
             "id": root_id,
             "source": source,
             "target": target,
+            "reader": (_text(snapshot, labelled["reader"].value_root)
+                       if "reader" in labelled else None),
             "source_interface": (
                 source_interface["id"] if source_interface else None
             ),
@@ -25039,6 +25201,26 @@ def _project_universal_canvas_interpreter(
             ):
                 wire.pop(key, None)
 
+    # System sockets describe the actual reader relation incidences, rather
+    # than every imported Grand Map adjacency or generic engine interface.
+    for node in nodes:
+        if node.get("application"):
+            node["ports"] = []
+    for wire in wires:
+        if not (node_index[wire["source"]].get("application")
+                and node_index[wire["target"]].get("application")):
+            continue
+        meaning = _application_relation_label(
+            wire, str(node_index[wire["source"]]["label"]),
+            str(node_index[wire["target"]]["label"]))
+        for side in ("source", "target"):
+            incidence = wire[side + "_incidence"]
+            wire[side + "_interface"] = incidence
+            node_index[wire[side]]["ports"].append({
+                "id": incidence, "owner": wire[side], "name": meaning,
+                "side": side, "connectable": False, "editable": False,
+                "relation_root": wire["id"], "reader": wire.get("reader"),
+            })
     binary_wires = tuple(wire for wire in wires if not wire["nary"])
     port_index = {
         str(port["id"]): (str(node["id"]), port)
@@ -25258,6 +25440,8 @@ def _project_universal_canvas_interpreter(
         })
 
     for wire in binary_wires:
+        if str(wire["id"]).startswith("app:relation:setting-reader:"):
+            continue
         if not wire["selected"]:
             continue
         wire["disconnect_control"] = _topology_control_root(
@@ -25548,10 +25732,13 @@ def _project_universal_canvas_interpreter(
     }
     wire_labels = {}
     for wire in wires:
-        flow_label = "%s to %s" % (
+        flow_label = _application_relation_label(
+            wire,
             node_labels.get(wire["source"], _humanize_root_id(wire["source"])),
             node_labels.get(wire["target"], _humanize_root_id(wire["target"])),
         )
+        wire["label"] = flow_label
+        wire["description"] = flow_label
         wire_labels[wire["id"]] = flow_label
         participant_labels[wire["id"]] = flow_label
         if wire.get("source_incidence"):
@@ -26195,6 +26382,12 @@ def _project_universal_canvas_interpreter(
     )
     composer_model = _project_universal_composer_model(
         snapshot, registry, view_session
+    )
+    properties = _project_application_node_settings(
+        nodes, properties, selected_root, registry=registry,
+        snapshot=snapshot,
+        theme_fields=settings_theme_fields, theme_value_root=settings_revision.content_root,
+        baboom=baboom_startup, composer=composer_model,
     )
     if previous_projection is None:
         design_token_system = open_archhub_design_token_system(
@@ -27054,6 +27247,7 @@ def _project_universal_canvas_interpreter(
             "theme_fields": settings_theme_fields,
             "baboom_startup": baboom_startup,
             "composer_model": composer_model,
+            "model_defaults": (composer_model or {}).get("generation", dict(_MODEL_DEFAULTS)),
             "design_system": design_system_runtime,
             "history": settings_history,
             "shared_revision": (
@@ -29963,6 +30157,9 @@ def _project_universal_baboom_startup(
     )
     return {
         "value": current["value"],
+        "value_root": (read_revision(snapshot, registry.standard_library.lifecycle_protocol,
+                                     current["revision"]).content_root
+                       if current.get("revision") else None),
         "source": current["source"],
         "revision": current["revision"],
         "actor": current["actor"],
@@ -30141,6 +30338,39 @@ def _composer_model_route_text(value: object) -> str:
     return value
 
 
+_MODEL_DEFAULTS = {"temperature": 0.7, "top-p": 0.95, "max tokens": 4096}
+
+
+def _normalize_model_defaults(value: object) -> dict[str, float | int]:
+    """Validate the actual request-builder options before persisting them."""
+    if not isinstance(value, Mapping) or set(value) - set(_MODEL_DEFAULTS):
+        raise InvalidCell("model generation settings are invalid")
+    result = dict(_MODEL_DEFAULTS)
+    for key, lower, upper in (("temperature", 0, 2), ("top-p", 0, 1),
+                              ("max tokens", 256, 32000)):
+        number = value.get(key, result[key])
+        if type(number) not in (int, float) or not lower <= number <= upper:
+            raise InvalidCell("model generation %s is outside its bound" % key)
+        if key == "max tokens" and int(number) != number:
+            raise InvalidCell("model max tokens must be an integer")
+        result[key] = int(number) if key == "max tokens" else number
+    return result
+
+
+def _decode_composer_model_document(value: str) -> tuple[str, dict[str, object]]:
+    """Old route-only assets and new route/options assets share one owner."""
+    if value.startswith("{"):
+        try:
+            document = json.loads(value)
+        except (ValueError, TypeError) as exc:
+            raise InvalidCell("composer model document is invalid") from exc
+        if not isinstance(document, dict) or set(document) != {"route", "generation"}:
+            raise InvalidCell("composer model document is invalid")
+        return (_composer_model_route_text(document["route"]),
+                _normalize_model_defaults(document["generation"]))
+    return _composer_model_route_text(value), dict(_MODEL_DEFAULTS)
+
+
 def read_universal_composer_model(
     snapshot: Snapshot,
     registry: UniversalApplicationRegistry,
@@ -30209,7 +30439,7 @@ def read_universal_composer_model(
     if content.link0 != NULL_CELL_ID or content.link1 != NULL_CELL_ID:
         raise InvalidCell("composer model value is invalid")
     try:
-        value = _composer_model_route_text(bytes(content.atom).decode("ascii"))
+        value, generation = _decode_composer_model_document(bytes(content.atom).decode("ascii"))
     except (UnicodeDecodeError, InvalidCell) as exc:
         raise InvalidCell("composer model value is invalid") from exc
     if revision.actor_root != owner_root:
@@ -30221,6 +30451,8 @@ def read_universal_composer_model(
         "actor": revision.actor_root,
         "asset": asset_root,
         "binding": binding_root,
+        "generation": generation,
+        "value_root": revision.content_root,
     }
 
 
@@ -30249,6 +30481,8 @@ def _project_universal_composer_model(
     )
     return {
         "value": current["value"],
+        "generation": current.get("generation", dict(_MODEL_DEFAULTS)),
+        "value_root": current.get("value_root"),
         "source": current["source"],
         "revision": current["revision"],
         "actor": current["actor"],
@@ -30275,6 +30509,7 @@ def set_universal_composer_model(
     value: str,
     *,
     base_revision_root: str | None = None,
+    generation: Mapping[str, object] | None = None,
     authentication_context: object | None = None,
 ) -> str:
     """Append the instance owner's composer model pick as a WIP revision.
@@ -30315,17 +30550,21 @@ def set_universal_composer_model(
     actor_root = registry.authorization.broker.resolve(context).subject_root
     lifecycle = registry.standard_library.lifecycle_protocol
     current = read_universal_composer_model(snapshot, registry)
+    defaults = (_normalize_model_defaults(generation) if generation is not None
+                else current.get("generation", dict(_MODEL_DEFAULTS)))
+    content = (json.dumps({"route": value, "generation": defaults}, sort_keys=True).encode("ascii")
+               if generation is not None or "generation" in current else value.encode("ascii"))
     if current["source"] == "graph":
         if base_revision_root != current["revision"]:
             raise InvalidCell("composer model changed; refresh before saving")
-        if value == current["value"]:
+        if value == current["value"] and defaults == current.get("generation", dict(_MODEL_DEFAULTS)):
             raise InvalidCell("composer model is already %r" % value)
         return append_wip_revision(
             store,
             registry.assembly_protocol,
             lifecycle,
             str(current["asset"]),
-            content=value.encode("ascii"),
+            content=content,
             actor_root=actor_root,
             base_revision_root=str(current["revision"]),
             reason="Studio composer model",
@@ -30349,7 +30588,7 @@ def set_universal_composer_model(
             definition_root,
             token=asset_root[len("assembly-instance:"):],
         ),
-        value.encode("ascii"),
+        content,
         actor_root=actor_root,
     )
     if composed.instance.root_id != asset_root:
@@ -45613,6 +45852,8 @@ def disconnect_universal_connection(
     authentication_context: object | None = None,
 ) -> int:
     """Detach one visible binary wire without deleting Cell history."""
+    if str(relation_root).startswith("app:relation:setting-reader:"):
+        raise InvalidCell("application reader relations describe code reads and cannot be rewired or disconnected")
     if type(mutation_route) is not str or not mutation_route.startswith("/"):
         raise InvalidCell("connection mutation route must be an absolute path")
     snapshot = store.dense_snapshot()
@@ -50116,6 +50357,10 @@ def ensure_universal_property_interactions(
     for row in projected_properties:
         if not isinstance(row, Mapping):
             continue
+        if row.get("setting", {}).get("kind") in {"theme", "baboom", "generation", "composer-model", "mod-enabled", "mod-param", "host-enabled", "cloud-consent"}:
+            # These are views of the existing appearance/model interactions,
+            # not additional writable property relations.
+            continue
         if row.get("batch") is True:
             control_root = row.get("relation")
             owners = row.get("owners")
@@ -52275,6 +52520,16 @@ def edit_universal_property(
     if any(member.role_id == registry.roles["read-only"] for member in members):
         raise InvalidCell("read-only graph property cannot be edited")
     label_root = _one_for_role(members, registry.roles["label"])
+    owner_root = _one_for_role(members, registry.roles["owner"])
+    label = _text(snapshot, label_root) if label_root is not None else ""
+    if owner_root == _system_tool_canvas_root("tool_workshop") and label in _APPLICATION_SETTING_SPECS:
+        constraints = _APPLICATION_SETTING_SPECS[label][1]
+        try:
+            number = int(value)
+        except ValueError as exc:
+            raise InvalidCell("Workshop setting must be an integer") from exc
+        if str(number) != value.strip() or not constraints["min"] <= number <= constraints["max"]:
+            raise InvalidCell("Workshop setting is outside its bound")
     if label_root is not None and _text(snapshot, label_root) == "color":
         raise InvalidCell(
             "presentation color requires a personal WIP binding"
@@ -53970,15 +54225,12 @@ def submit_universal_edit_value_interaction(
     if type(value) is not str:
         raise InvalidCell("edit-value interaction value is not text")
     if composer_model_candidate is not None:
-        if (
-            composer_model_candidate.get("source") == "graph"
-            and value == composer_model_candidate.get("value")
-        ):
-            raise InvalidCell("composer model is already %r" % value)
+        route, generation = _decode_composer_model_document(value)
         set_universal_composer_model(
             store,
             registry,
-            value,
+            route,
+            generation=generation if value.startswith("{") else None,
             base_revision_root=composer_model_candidate.get("revision"),
             authentication_context=context,
         )
@@ -56491,6 +56743,8 @@ def rewire_universal_connection(
     if matched is None:
         raise InvalidCell("connection is outside the active canvas lens")
     relation_root, member = matched
+    if str(relation_root).startswith("app:relation:setting-reader:"):
+        raise InvalidCell("application reader relations describe code reads and cannot be rewired or disconnected")
     if member.role_id not in (registry.roles["source"], registry.roles["target"]):
         raise InvalidCell("only relation endpoints may be rewired")
     side = "source" if member.role_id == registry.roles["source"] else "target"

@@ -686,6 +686,7 @@ _CONFIGURATION_DELTA_FIELDS = (
     "can_promote",
     "can_publish",
     "composer_model",
+    "model_defaults",
     "court",
     "digest",
     "heads",
@@ -705,6 +706,50 @@ _CONFIGURATION_DELTA_FIELDS = (
     "theme",
     "theme_fields",
 )
+
+
+def _project_external_setting_owners(projection, *, connectors_root, cloud_root,
+                                     host_authority=None, state_dir=None, account=None):
+    """Read external owners exactly as their Settings routes do; never probe hosts."""
+    nodes = {node["id"]: node for node in projection.get("nodes", ()) if node.get("application")}
+    for root in (connectors_root, cloud_root):
+        if root in nodes:
+            nodes[root]["params"] = [row for row in nodes[root].get("params", ())
+                if (row.get("setting") or {}).get("kind") not in {"host-enabled", "cloud-consent"}]
+    if connectors_root in nodes and host_authority is not None:
+        from .host_enable import _enabled_value_cell, _property_root, _decode_bool
+        snapshot = host_authority.store.snapshot()
+        for root in snapshot.cells:
+            if not root.startswith("app:host-connector:"):
+                continue
+            host_id = root[len("app:host-connector:"):]
+            value_root = _enabled_value_cell(snapshot, host_authority, host_id)
+            if value_root is None:
+                continue
+            nodes[connectors_root]["params"].append({
+                "owner": connectors_root, "label": host_id + " enabled",
+                "relation": _property_root(host_id, "enabled"),
+                "value_root": value_root, "cell_id": value_root,
+                "value": _decode_bool(snapshot.cells[value_root].atom),
+                "editor": "toggle", "editable": True, "constraints": {},
+                "setting": {"kind": "host-enabled", "host_id": host_id, "key": "enabled"},
+            })
+    if cloud_root in nodes and state_dir:
+        from .cloud_publish_consent import read_cloud_publish_consent, CONSENT_FILE
+        consent = read_cloud_publish_consent(Path(state_dir), account)
+        source = str(Path(state_dir) / CONSENT_FILE)
+        nodes[cloud_root]["params"].append({
+            "owner": cloud_root, "label": "publish_map", "value": consent["allowed"],
+            "relation": source, "value_root": None, "cell_id": None,
+            "source": source, "editor": "toggle", "editable": bool(account), "constraints": {},
+            "setting": {"kind": "cloud-consent", "key": "publish_map"},
+        })
+    selected = projection.get("selected")
+    if selected in (connectors_root, cloud_root) and selected in nodes:
+        projection["properties"] = [{**row, "owner": selected, "mixed": False,
+            "batch": False, "control": None, "event_fact_input": None}
+            for row in nodes[selected]["params"]]
+    return projection
 
 
 _CHOICE_FIELDS = frozenset({
@@ -7920,6 +7965,7 @@ class ApplicationServer:
                         )
                     if projection is None:
                         projection = owner.project_interaction_canvas(binding)
+                    owner._project_application_setting_owners(projection)
                     payload = {
                         'ok': True,
                         **projection,
@@ -8787,7 +8833,7 @@ class ApplicationServer:
                                         )),
                                     before_dispatch=before_dispatch if persisted_turn is not None else None,
                                     conversation_context=conversation_context,
-                                    generation=body.get('generation'),
+                                    generation=body.get('generation') if body.get('generation') is not None else owner._read_agent_generation(),
                                     **agent_node_kwargs,
                                 )
                                 if append_turn is not None and user_message is not None:
@@ -12962,6 +13008,25 @@ class ApplicationServer:
             return self._agent_model_path().read_text(encoding="utf-8").strip()[:200]
         except (OSError, ValueError):
             return ""
+
+    def _project_application_setting_owners(self, projection):
+        from .cloud_session import signed_in_cloud_account
+        domains = self.universal_registry.map.domains
+        state_dir = os.environ.get("ARCHHUB_STATE_DIR", "")
+        return _project_external_setting_owners(
+            projection, connectors_root=domains.get("connectors"), cloud_root=domains.get("cloud"),
+            host_authority=getattr(self, "clean_authority", None), state_dir=state_dir,
+            account=signed_in_cloud_account() if state_dir else None,
+        )
+
+    def _read_agent_generation(self) -> dict[str, object]:
+        """The request builder consumes the same composer asset as Settings."""
+        from .universal_application import read_universal_composer_model, _MODEL_DEFAULTS
+        setting = read_universal_composer_model(
+            self.universal_store.snapshot(), self.universal_registry)
+        values = setting.get("generation", _MODEL_DEFAULTS)
+        return {"temperature": values["temperature"], "top_p": values["top-p"],
+                "max_tokens": values["max tokens"]}
 
     def _default_agent_model(self) -> tuple:
         """The model the founder configured, used only while nothing is picked.
@@ -19176,6 +19241,7 @@ class ApplicationServer:
                     reusable_scope_projection=reusable_scope_projection,
                 )
             )
+            self._project_application_setting_owners(projection)
             (
                 instantiate_event_root,
                 instantiation_interaction_roots,

@@ -17,7 +17,8 @@
       "why": "wires are graph relations the canvas projects, not drawn edges",
       "tests": [
         "tests_replica/test_wire_is_a_member.py",
-        "tests_replica/test_cell_relations_view.py"
+        "tests_replica/test_cell_relations_view.py",
+        "tests_replica/test_sysnodes.py::test_wire_labels_name_real_relation_and_flow"
       ]
     },
     "canvas_typed_ports": {
@@ -31,7 +32,9 @@
       "why": "knobs edit graph-held properties, projected not hand-written",
       "tests": [
         "tests_replica/test_cell_properties_view.py",
-        "tests_replica/test_universal_properties_presentation.py"
+        "tests_replica/test_universal_properties_presentation.py",
+        "tests_replica/test_sysnodes.py::test_workshop_properties_and_runtime_use_exact_same_cell",
+        "tests_replica/test_sysnodes.py::test_every_real_application_open_action_commits_authorized_scope_and_returns"
       ]
     },
     "canvas_drag_rewire": {
@@ -64,7 +67,8 @@
     "ui_design_tokens": {
       "why": "the palette and scale are graph-held, not literals in a stylesheet",
       "tests": [
-        "tests_replica/test_cell_design_tokens.py"
+        "tests_replica/test_cell_design_tokens.py",
+        "tests_replica/test_sysnodes.py::test_accent_is_same_personal_settings_revision_and_repaints"
       ]
     },
     "nl_arch_freeze_history": {
@@ -194,7 +198,8 @@
     "models_router": {
       "why": "choosing a model is a brokered, recorded decision",
       "tests": [
-        "tests_replica/test_model_execution_broker.py"
+        "tests_replica/test_model_execution_broker.py",
+        "tests_replica/test_sysnodes.py::test_model_options_persist_in_existing_owner_asset_and_reach_request_builder"
       ]
     },
     "models_registry": {

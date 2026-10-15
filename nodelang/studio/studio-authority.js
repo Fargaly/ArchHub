@@ -93,15 +93,19 @@
         }));
         const parameters = (node.properties || []).map(row => ({
           k: row.label, v: row.value, rel: row.relation,
+          label: row.display_label || row.label, value_root: row.value_root, cell_id:row.cell_id, setting: row.setting,
           owner: row.owner || node.id, editable: row.editable,
           type: row.editor || 'text', constraints: row.constraints || {},
-          min: row.constraints?.minimum, max: row.constraints?.maximum,
+          min: row.constraints?.minimum ?? row.constraints?.min, max: row.constraints?.maximum ?? row.constraints?.max,
+          step: row.constraints?.step,
           opts: row.constraints?.options,
         }));
         return {
           id: node.id, definition_revision_root: node.definition_revision_root,
           cat: node.category || 'Definitions', title: node.label,
           sub: node.summary || node.assembly || '', assembly: node.assembly || '', kind: node.kind || node.assembly || '', x: node.x, y: node.y,
+          subtitle: node.subtitle || '', actions: node.actions || [],
+          liveState: node.state && typeof node.state === 'object' ? node.state : null,
           w: 220, h: Math.max(110, 54 + ports.length * 20), live: true,
           color: node.resolved_color || node.color, status: node.status || '',
           result: node.result || '', mutates: node.mutates === true,
@@ -120,6 +124,7 @@
         nodeIds.has(wire.source) && nodeIds.has(wire.target)).map(wire => ({
           id: wire.id, from: [wire.source, wire.source_interface],
           to: [wire.target, wire.target_interface],
+          label: wire.label || wire.properties?.connection || wire.properties?.reason || '',
           params: wireParameters(wire.properties),
         }));
       const groups = new Map();

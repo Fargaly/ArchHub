@@ -93,7 +93,7 @@ test('S6: Settings BABOOM and the BABOOM node share one parameter source and Set
   assert.match(studio, /pmPersistValue\(node, key, value\)/);
   assert.match(settings, /Open as node/);
   assert.match(settings, /onOpenToolGraph\?\.\('baboom'\)|openToolGraphFromSettings\('baboom'\)/);
-  assert.match(settings, /baboomMaxSpeaks\(personal\)/);
+  assert.doesNotMatch(settings, /baboomMaxSpeaks|Speech budget|Speaks at most/, 'no unenforced speech-budget surface');
   assert.match(library, /"tool_baboom": \{"engine": "tool\.baboom"/);
   assert.match(library, /"start_with_archhub": True/);
   assert.match(library, /"speech_budget_per_hour": 2/);

@@ -533,7 +533,9 @@ window.ARCHHUB_REFRESH_NODE_LIBRARY = async () => {
         if (at >= 0) rows[at] = row; else rows.push(row);
       }
       nodes.push({
-        id:n.id, cat:held[engine] || n.category || CATS(engine), title:n.label || n.id, sub:engine || 'Graph node',
+        id:n.id, cat:held[engine] || n.category || CATS(engine), title:n.label || n.id, sub:n.subtitle || engine || 'Graph node',
+        subtitle:n.subtitle || '', actions:n.actions || [],
+        liveState:n.state && typeof n.state === 'object' ? n.state : null,
         // The engine lets the node menu's Duplicate place the same card; openable lets it open the node.
         engine, openable: n.openable === true, composition: n.composition === true, memberCount: Number.isSafeInteger(n.member_count) ? n.member_count : null,
         members:Array.isArray(n.members) ? n.members.map(member => ({
@@ -546,9 +548,12 @@ window.ARCHHUB_REFRESH_NODE_LIBRARY = async () => {
         params:(n.params || [])
           .filter(r => r.label !== 'engine' && r.label !== 'status')
           .map(r => ({
-            k:r.label, v:r.value, rel:r.relation,
-            editable:r.editable !== false && !!r.relation, owner:n.id,
+            k:r.label, label:r.display_label || r.label, v:r.value, rel:r.relation,
+            value_root:r.value_root, cell_id:r.cell_id, setting:r.setting,
+            editable:r.editable !== false && (!!r.relation || !!r.setting), owner:r.owner || n.id,
             ...(PARAM_SPECS[r.label] || {type:'text'}),
+            ...(r.editor ? {type:r.editor} : {}),
+            ...(r.constraints ? {constraints:r.constraints, min:r.constraints.minimum ?? r.constraints.min, max:r.constraints.maximum ?? r.constraints.max, step:r.constraints.step, opts:r.constraints.options} : {}),
           })),
         ports:{ins:ins.map(x => ({id:x.id, t:x.t})),
                outs:outs.map(x => ({id:x.id, t:x.t}))},

@@ -1908,13 +1908,6 @@ const waitingMeta = item => {
   return bits.join(' · ');
 };
 const toolStatLineIsPlaceholder = value => /…|unknown/i.test(String(value || ''));
-const baboomMaxSpeaks = personal => {
-  const config = personal?.configuration || {};
-  const raw = config.baboom_max_speaks_per_hour?.value ?? config.baboom_speech_limit?.value ??
-    config.baboom_max_speaks?.value ?? 2;
-  const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 ? Math.round(n) : 2;
-};
 const WaitingButton = ({ items = [], variant = 'strip', onOpenTask }) => {
   const [open, setOpen] = React.useState(false);
   const [status, setStatus] = React.useState({});
@@ -3115,20 +3108,10 @@ const ToolCard = ({ tool, onOpen }) => (
 );
 
 const SettingsBaboom = ({ onOpenToolGraph, onClose }) => {
-  const personal = usePersonalTheme();
   const openToolGraphFromSettings = id => { onClose?.(); onOpenToolGraph?.(id); };
   return <div style={{display:'flex', flexDirection:'column', gap:14}}>
     <div style={{background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden'}}>
       <BaboomStartupRow first/>
-      <div style={{padding:'10px 14px', borderTop:`1px solid ${LM.lineSoft}`, display:'flex', alignItems:'center', gap:LM.sp.md}}>
-        <span style={{width:8, height:8, borderRadius:'50%', background:LM.warn}}/>
-        <div style={{flex:1, lineHeight:1.2, minWidth:0}}>
-          <div style={{fontSize:13, fontWeight:500, color:LM.ink}}>Speech budget</div>
-          <div style={{fontFamily:LM.sans, fontSize:12, color:LM.inkSoft, marginTop:2}}>
-            Speaks at most {baboomMaxSpeaks(personal)} times an hour.
-          </div>
-        </div>
-      </div>
     </div>
     <div style={{display:'flex', alignItems:'center', gap:10}}>
       <span style={{flex:1}}/>
@@ -3378,7 +3361,10 @@ const normalizeGenerationDefaults = values => Object.fromEntries(GENERATION_SPEC
   const number = Number(raw);
   return [spec.k, Number.isFinite(number) ? number : spec.v];
 }));
-const modelGenerationDefaults = () => normalizeGenerationDefaults(window.ARCHHUB_MODEL_DEFAULTS ||
+const modelGenerationDefaults = () => normalizeGenerationDefaults(
+  window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot?.()?.theme?.configuration?.model_defaults ||
+  window.ARCHHUB_STUDIO_AUTHORITY?.getSnapshot?.()?.canvas?.configuration?.model_defaults ||
+  window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot?.()?.topology?.canvas?.configuration?.model_defaults || window.ARCHHUB_MODEL_DEFAULTS ||
   window.ARCHHUB_PICKED_MODEL?.generation ||
   window.ARCHHUB_LIVE?.model_defaults ||
   window.ARCHHUB_STUDIO_AUTHORITY?.getSnapshot?.()?.canvas?.configuration?.model_defaults ||
@@ -3394,8 +3380,12 @@ const saveModelDefaults = async values => {
     window.ARCHHUB_MODEL_DEFAULTS = normalizeGenerationDefaults(saved?.model_defaults || saved?.defaults || next);
   } else {
     const owner = window.ARCHHUB_EXISTING_WORKSHOP;
-    const route = modelRoute(pickedModel());
-    if (!owner?.setComposerModel || !route) throw new Error('Choose a model before saving generation defaults.');
+    const configuration = owner?.getSnapshot?.()?.theme?.configuration ||
+      window.ARCHHUB_STUDIO_AUTHORITY?.getSnapshot?.()?.canvas?.configuration ||
+      owner?.getSnapshot?.()?.topology?.canvas?.configuration;
+    const selection = configuration?.composer_model;
+    const route = selection?.source === 'graph' ? String(selection.value ?? '') : modelRoute(pickedModel());
+    if (!owner?.setComposerModel) throw new Error('Model settings are unavailable in this connection.');
     const saved = await owner.setComposerModel(route, next);
     window.ARCHHUB_MODEL_DEFAULTS = normalizeGenerationDefaults(
       saved?.configuration_state?.model_defaults || saved?.model_defaults || next);
@@ -3403,6 +3393,7 @@ const saveModelDefaults = async values => {
   }
   return window.ARCHHUB_MODEL_DEFAULTS;
 };
+Object.assign(window, {saveModelDefaults, modelGenerationDefaults});
 const aiNodeWithMovedParams = node => {
   if (!node || node.cat !== 'ai') return node;
   const params = [...(node.params || [])];
@@ -4412,6 +4403,7 @@ const portRowCentre = (i) => PORT_BAND_PAD + i * SOCKET_STEP + SOCKET_STEP / 2;
 const portY = (bandTop, i) => (Number.isFinite(bandTop) ? bandTop : SOCKET_TOP) + portRowCentre(i);
 const nodeCardTitle = n => String(n?.title || n?.name || 'Node');
 const nodeCardSubtitle = (n, cat) => {
+  if (n?.application) return n.subtitle || 'Application settings';
   const role = cat?.role || cat?.label || 'Node';
   if (typeof n?.subtitle === 'string' && n.subtitle.trim()) return n.subtitle;
   if (n?.cat === 'watch' || n?.engine === 'watch.preview' || n?.sub === 'watch.preview') {
@@ -6207,9 +6199,13 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
                   }}
                   data-wire-id={graph.wires[w.i].id || undefined}
                   style={{ pointerEvents: 'stroke', cursor: 'pointer' }}>
-                  <title>Open this connection · right-click for actions</title>
+                  <title>{graph.wires[w.i].label || 'Open this connection · right-click for actions'}</title>
                 </path>
                 <path data-wire-list={w.list ? 'true' : undefined} d={d} stroke={w.selected ? LM.accent : color} strokeWidth={strokeW} fill="none" opacity={op} style={{ pointerEvents: 'none' }}/>
+                {system && graph.wires[w.i].label && <text data-sysnode-wire-label={graph.wires[w.i].id}
+                  x={(w.x1 + w.x2) / 2} y={(w.y1 + w.y2) / 2 - 5} textAnchor="middle"
+                  fill={LM.ink} stroke={LM.bgCanvas || LM.bgDeep} strokeWidth={4} paintOrder="stroke"
+                  style={{fontFamily:LM.sans, fontSize:12, pointerEvents:'none'}}>{graph.wires[w.i].label}</text>}
                 {w.list && <path data-wire-list-strand="" d={`M${w.x1},${w.y1+4} C${w.x1+dx},${w.y1+4} ${w.x2-dx},${w.y2+4} ${w.x2},${w.y2+4}`}
                   stroke={w.selected ? LM.accent : color} strokeWidth={strokeW} fill="none" opacity={op} style={{pointerEvents:'none'}}/>}
                 {w.animated && (
@@ -6438,17 +6434,17 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
   const cat = studioCategory(n.cat);
   // AI nodes can expand horizontally for full conversation + search
   const isAi = n.cat === 'ai';
-  const workshopCard = typeof isWorkshopGraphNode === 'function' && isWorkshopGraphNode(n);
+  const workshopCard = !n.application && typeof isWorkshopGraphNode === 'function' && isWorkshopGraphNode(n);
   const cardW = workshopCard ? 300 : (isAi && expanded) ? Math.max(520, n.w || NODE_CARD_W) :
     Number.isFinite(n.w) && n.w >= 120 ? n.w : nodeIsWatch(n) ? 260 : NODE_CARD_W;
-  const agent = canvasAgentRecord(n);
+  const agent = n.application ? null : canvasAgentRecord(n);
   const title = agent?.label || agent?.name || nodeCardTitle(n);
   const subtitle = agent ? agent.modelLabel : nodeCardSubtitle(n, cat);
   const lit = selected || focused;
   const cardRef = React.useRef(null), bandRef = React.useRef(null);
   const rows = Math.max(n.ins?.length || 0, n.outs?.length || 0);
   const sessionCard = isSessionNodeShape(n);
-  const groupCard = !!n.composition && !sessionCard;
+  const groupCard = !!n.composition && !sessionCard && !n.application;
   const groupMembers = Array.isArray(n.members) ? n.members : [];
   const handleClick = e => {
     onFocus && onFocus(e);
@@ -6652,7 +6648,7 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
           {!nodeIsWatch(n) && nodePlanPreviewFor(n) ? <NodePlanPreview node={n}/> : !nodeIsWatch(n) && n.preview && typeof WatchPreview === 'function' &&
             (n.preview.kind === 'image' && n.preview.state === 'ready' ? <WatchImage value={n.preview.value}/> : <WatchPreview node={n} actions={watchActions}/>)}
           {agent && !n.preview && n.result != null && <span style={{fontSize:12.5,color:LM.inkSoft}}>{typeof n.result === 'object' ? JSON.stringify(n.result) : String(n.result)}</span>}
-          {!nodeIsWatch(n) && !n.preview && !n.result && !(n.params || []).some(row=>!window.ARCHHUB_INTERNAL_PARAM_KEYS?.has(row.k)) && !n.status && !(window.ARCHHUB_LAST_RUN?.lines?.[n.id]?.length) &&
+          {!n.application && !nodeIsWatch(n) && !n.preview && !n.result && !(n.params || []).some(row=>!window.ARCHHUB_INTERNAL_PARAM_KEYS?.has(row.k)) && !n.status && !(window.ARCHHUB_LAST_RUN?.lines?.[n.id]?.length) &&
             <span aria-disabled="true" style={{fontSize:12.5, color:LM.inkSoft}}>Not available yet</span>}
         </div>
       </div>
@@ -7327,6 +7323,7 @@ const NodePlanPreview = ({ node }) => {
 };
 
 const NodeBody = ({ n, expanded, onToggleExpand, watchActions }) => {
+  if (n.application) return <window.ApplicationNodeParameters node={n} compact/>;
   if (isWorkshopGraphNode(n)) return <GraphWorkshopFace n={n}/>;
   if (isHistoryNode(n)) return <HistoryBody n={n}/>;
   // A GRAPH-BACKED node draws exactly its real parameters, its last run
@@ -8191,11 +8188,48 @@ const CHAT_TURN_EVENT = 'archhub:chat-turn';
 const announceChatTurn = detail => {
   try { window.dispatchEvent(new window.CustomEvent(CHAT_TURN_EVENT, {detail})); } catch (_) {}
 };
+const applicationSettingsProjection = () => window.ARCHHUB_STUDIO_AUTHORITY?.getSnapshot?.() ||
+  window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot?.()?.topology || {graph:LM_GRAPH};
+const applicationSettingProposal = (said, target) => {
+  if (target.kind !== 'graph' && !target.node?.application) return null;
+  const command = /^@ArchHub\s+set\s+(.+?)\s+to\s+(.+)$/i.exec(said);
+  if (!command) return null;
+  const normal = text => String(text).replace(/[_-]/g,' ').replace(/\s+/g,' ').trim().toLowerCase();
+  const key = normal(command[1]), raw = command[2].trim().replace(/^['"]|['"]$/g,'');
+  const state = applicationSettingsProjection();
+  const choices = (state.graph?.nodes || []).filter(node => node.application &&
+    (target.kind === 'graph' || target.node.id === node.id)).flatMap(node => (node.params || [])
+    .filter(row => row.editable === true && [row.k, row.label, node.title + ' ' + row.k, node.title + ' ' + row.label]
+      .some(label => label && normal(label) === key)).map(row => ({node, row})));
+  const distinct = [...new Map(choices.map(choice => [choice.row.cell_id || choice.row.value_root || choice.row.rel || choice.node.id + ':' + choice.row.k, choice])).values()];
+  if (distinct.length !== 1) throw new Error(distinct.length ? 'Name the node as well as its setting.' : 'No editable setting with that name is visible in this graph.');
+  const {node, row} = distinct[0], type = String(row.type || '').toLowerCase();
+  const options = row.opts || row.options || row.constraints?.options;
+  let value = raw;
+  if (type === 'toggle' || type === 'boolean' || typeof row.v === 'boolean') {
+    if (!/^(true|false|on|off|yes|no)$/i.test(raw)) throw new Error('Choose on or off.');
+    value = /^(true|on|yes)$/i.test(raw);
+  } else if (type === 'number' || type === 'integer') {
+    value = Number(raw);
+    if (!Number.isFinite(value) || (type === 'integer' && !Number.isInteger(value)) ||
+        (row.min != null && value < row.min) || (row.max != null && value > row.max)) throw new Error('The value is outside this setting’s range.');
+  } else if (type === 'color' || type === 'colour') {
+    value = ({green:'#008000', red:'#ff0000', blue:'#0000ff', orange:'#ffa500', purple:'#800080', white:'#ffffff', black:'#000000'})[raw.toLowerCase()] || raw;
+    if (!/^#[0-9a-f]{6}$/i.test(value)) throw new Error('Use a six-digit colour or a named colour.');
+  } else if (Array.isArray(options) && options.length) {
+    value = options.map(option => Array.isArray(option) ? option[0] : option).find(option => normal(option) === normal(raw));
+    if (value === undefined) throw new Error('Choose one of this setting’s published options.');
+  }
+  return {id:window.crypto?.randomUUID?.() || String(Date.now()), node:node.id, key:row.k,
+    cell:row.cell_id || row.value_root || row.rel, before:row.v, value, scope:studioCanvasScope(state.canvas),
+    title:'Set ' + (row.label || row.k), target:node.title};
+};
 const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadinessStale, onModelReadRetry, onAccount, onSend }) => {
   const [text, setText] = React.useState('');
   const [state, setState] = React.useState('');
   const [stateModel, setStateModel] = React.useState('');
   const [asking, setAsking] = React.useState(false);
+  const [settingProposal, setSettingProposal] = React.useState(null);
   const pendingSend = React.useRef(null);
   const draftRef = React.useRef('');
   const sendQueue = React.useRef([]);
@@ -8281,6 +8315,13 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
   const ask = () => {
     const raw = draftRef.current, said = raw.trim();
     if (!said) return;
+    try {
+      const proposed = applicationSettingProposal(said, target);
+      if (proposed) {
+        if (settingProposal) { setState('Review the current setting change first.'); return; }
+        setSettingProposal(proposed); setState(''); draftRef.current = ''; setText(''); return;
+      }
+    } catch (error) { setState(error.message); return; }
     const retry = [pendingSend.current, pausedRequest.current].find(turn => turn &&
       turn.raw === raw && turn.said === said && turn.target === target.id);
     if (!window.ARCHHUB_AGENT) { setState('Sending is unavailable in this view. Your text is still here.'); return; }
@@ -8319,6 +8360,23 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
     void drainQueue();
   };
   return <div style={{ borderTop:`1px solid ${LM.lineSoft}`, padding:'10px 12px 12px', display:'flex', flexDirection:'column', gap:8, minWidth:0 }}>
+    {settingProposal && window.ARCHHUB_APPROVAL_CARD && React.createElement(window.ARCHHUB_APPROVAL_CARD, {
+      surface:'sysnodes', approval:{...settingProposal, state:'needs-user', agent:'ArchHub',
+        changes:[{label:settingProposal.key, now:String(settingProposal.before), after:String(settingProposal.value)}],
+        summary:String(settingProposal.before) + ' → ' + String(settingProposal.value)},
+      onApprove:async () => {
+        const held = applicationSettingsProjection();
+        const node = held.graph?.nodes?.find(node => node.id === settingProposal.node);
+        const row = node?.params?.find(row => row.k === settingProposal.key);
+        if (!node || !row || row.editable !== true || studioCanvasScope(held.canvas) !== settingProposal.scope ||
+            (row.cell_id || row.value_root || row.rel) !== settingProposal.cell || String(row.v) !== String(settingProposal.before)) {
+          throw new Error('This setting changed. Reject this proposal and ask again.');
+        }
+        const saved = await window.pmPersistValue(node, row.k, settingProposal.value);
+        setSettingProposal(null); setState(saved?.refresh_required ? 'Saved. Refresh the System graph to review the value.' : 'Saved ' + (row.label || row.k));
+      },
+      onDecline:() => { setSettingProposal(null); setState('Rejected.'); },
+    })}
     {savedDrafts.map((saved, index) => <div key={index} role="status" data-saved-draft style={{fontSize:12, whiteSpace:'pre-wrap', overflowWrap:'anywhere'}}>
       <span>{saved.raw}</span>{' '}
       <button type="button" onClick={() => {
@@ -8367,7 +8425,7 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
       <span aria-hidden="true">▾</span>
     </button>
     <div style={{ display:'flex', alignItems:'center', gap:7, background:LM.bg, border:`1px solid ${LM.accent}66`, borderRadius:7, padding:'8px 10px' }}>
-      <input aria-label="Ask selection" value={text} onChange={e => updateText(e.target.value)}
+      <input data-sysnodes-chat={target.kind === 'graph' || target.node?.application ? '' : undefined} aria-label="Ask selection" value={text} onChange={e => updateText(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter') ask(); }} placeholder={placeholder}
         style={{ flex:1, minWidth:0, background:'transparent', border:0, outline:0, color:LM.ink,
           fontFamily:LM.serif, fontSize:13, fontStyle:'italic' }}/>
@@ -8416,7 +8474,7 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
   const inspectedNode = node ? aiNodeWithMovedParams(node) : graphInspectorNode(canvas, graph, session, sessionRows);
   const sessionNode = isSessionInspectorNode(inspectedNode);
   const cat = studioCategory(inspectedNode.cat);
-  const groupNode = !!inspectedNode.composition;
+  const groupNode = !!inspectedNode.composition && !inspectedNode.application;
   const labels = groupNode ? ['Interface', 'Exposed parameters', 'Chat'] : [sessionNode || inspectedNode.graphNode ? 'Chat' : 'Properties',
     sessionNode || inspectedNode.graphNode ? 'Properties' : 'Chat',
     ...(hasRunsPanel(inspectedNode, graph) ? ['Runs'] : [])];
@@ -8466,12 +8524,12 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
           <div style={{ display:'flex', alignItems:'center', gap:7 }}>
             <span style={{ color:cat.col }}>{cat.icon}</span>
             <span style={{ fontFamily:LM.sans, fontSize:11, fontWeight:600, color:LM.inkSoft, letterSpacing:0 }}>
-              {inspectedNode.graphNode ? 'Graph' : cat.label}</span>
+              {inspectedNode.application ? 'Application' : inspectedNode.graphNode ? 'Graph' : cat.label}</span>
           </div>
           <div style={{ fontFamily:LM.sans, fontSize:16, fontWeight:600, letterSpacing:0, marginTop:5, lineHeight:'20px' }}>
             {inspectedNode.title}
           </div>
-          {inspectedNode.sub && <div style={{ fontFamily:LM.sans, fontSize:11, fontWeight:600, color:LM.inkSoft, marginTop:5, letterSpacing:0 }}>{inspectedNode.sub}</div>}
+          {!inspectedNode.application && inspectedNode.sub && <div style={{ fontFamily:LM.sans, fontSize:11, fontWeight:600, color:LM.inkSoft, marginTop:5, letterSpacing:0 }}>{inspectedNode.sub}</div>}
         </div>
         <InspectorTabs labels={labels} active={visibleTab} onSelect={setActiveTab}/>
         {visibleTab === 'Interface' && groupInterface}
@@ -8890,24 +8948,15 @@ const Settings54Socket = ({ t = 'any', list, filled }) => {
   return <span style={{ width:11, height:11, borderRadius:list ? 2 : '50%', transform:list ? 'rotate(45deg) scale(.86)' : 'none',
     background:filled ? color : LM.bgPanel, border:`2px solid ${color}`, boxSizing:'border-box' }}/>;
 };
-const Settings54ParamChip = ({ label, value }) => (
-  <span style={{ display:'grid', gridTemplateColumns:'1fr auto', gap:8, borderTop:`1px solid ${LM.lineSoft}`,
-    padding:'4px 10px', fontSize:12 }}>
-    <span style={{ color:LM.inkSoft, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{label}</span>
-    <span style={{ color:LM.ink, display:'flex', alignItems:'center', gap:6, background:LM.bgSoft, borderRadius:5, padding:'1px 8px' }}>
-      {label === 'Accent' && <span style={{ width:10, height:10, borderRadius:2, background:value, boxShadow:`inset 0 0 0 1px ${LM.line}` }}/>}
-      {value}
-    </span>
-  </span>
-);
 const settings54PortLabel = port => port?.label || port?.l || port?.id || '';
 const settings54PortId = port => port?.id || port?.k || port?.label || port?.l || '';
 const Settings54Card = ({ node, view, selected, connected, action }) => {
   const name = settings54NodeTitle(node);
   const ins = node?.ins || [], outs = node?.outs || [], rows = Math.max(ins.length, outs.length);
-  const params = (node?.params || []).slice(0, 3);
   const preview = node.preview?.text ?? node.preview?.summary ?? node.result;
-  return <button type="button" data-settings54-node-card={name} data-settings54-node-id={node.id} data-canvas-card-skin="065"
+  return <div role="group" tabIndex={0} aria-label={name + ' node'} onKeyDown={e => {
+    if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); action(); }
+  }} data-settings54-node-card={name} data-settings54-node-id={node.id} data-canvas-card-skin="065"
     data-node-state={canvasNeedsUser(node) ? 'needs-user' : node.state || node.status || 'unavailable'} onClick={action} style={{ position:'absolute', left:view.x, top:view.y, width:view.w || 224, padding:0,
     textAlign:'left', background:LM.bgPanel, borderRadius:6, boxShadow:'none', border:`1px solid ${selected ? LM.accent : LM.line}`,
     outline:selected ? `1px solid ${LM.accent}` : 'none', color:LM.ink, fontFamily:LM.sans, cursor:'pointer', overflow:'hidden' }}>
@@ -8931,12 +8980,11 @@ const Settings54Card = ({ node, view, selected, connected, action }) => {
         {settings54PortLabel(port)}<span data-settings54-port={node.id + ':' + settings54PortId(port)} style={{ position:'absolute', right:-6, top:6 }}><Settings54Socket t={port.t} list={port.list} filled={connected.out}/></span>
       </span>)}</span>
     </span>}
-    {params.map(row => <Settings54ParamChip key={settings54ParamKey(row) || settings54ParamLabel(row)} label={settings54ParamLabel(row)} value={String(settings54ParamValue(row))}/>)}
-    {(node?.params || []).length > params.length ? <span style={{ display:'block', padding:'2px 10px 4px', fontSize:11, color:LM.inkSoft }}>+{(node.params || []).length - params.length} more</span> : null}
+    <window.ApplicationNodeParameters node={node} compact/>
     <span data-settings54-footer="" style={{ display:'block', borderTop:`1px solid ${LM.line}`, padding:'5px 10px', fontSize:11, color:LM.inkSoft }}>
       {node.status || node.state || ((connected.in || connected.out) ? 'connected projection' : 'unavailable')}
     </span>
-  </button>;
+  </div>;
 };
 const Settings = props => {
   const canvasRead = useDeferredCanvas();
@@ -9148,6 +9196,7 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
     const showingProperties = activeCapability === 'Properties' ||
       (!!selectedNode && !capabilityBelongsToNode) ||
       (!!query.trim() && selectedNode && settings54MatchNode(selectedNode, query));
+    if (showingProperties && selectedNode?.application) return <window.NodeInspector node={selectedNode}/>;
     const capabilityPanel = () => {
       if (showingProperties) return null;
       if (activeCapability === 'Hub') return <SettingsHub toolRows={toolRows} onClose={onClose} onOpenTool={onOpenTool} onOpenToolGraph={onOpenToolGraph} columns={3}/>;
@@ -10528,6 +10577,9 @@ const SettingsGenerationControl = ({ spec, value, disabled, onChange }) => (
 // ── Models: route only jobs the app can really route in this build. The router exposes one
 // persisted composer route, so Reasoning is editable and the other jobs are stated once.
 const SettingsModels = () => {
+  const projection = useStudioProjection();
+  const generationNode = projection?.graph?.nodes?.find(node => node.application &&
+    (node.params || []).some(row => row.setting?.kind === 'generation'));
   const [live, setLive] = React.useState(null);
   const [error, setError] = React.useState('');
   const [saving, setSaving] = React.useState(false);
@@ -10615,8 +10667,10 @@ const SettingsModels = () => {
         </div>
       </div>
       <div>
-        {GENERATION_SPECS.map(spec => <SettingsGenerationControl key={spec.k} spec={spec}
-          value={defaults[spec.k]} disabled={saving} onChange={saveDefault}/>)}
+        {generationNode ? <window.ApplicationNodeParameters node={{...generationNode, actions:[],
+          params:generationNode.params.filter(row => row.setting?.kind === 'generation')}}/>
+          : GENERATION_SPECS.map(spec => <SettingsGenerationControl key={spec.k} spec={spec}
+            value={defaults[spec.k]} disabled={saving} onChange={saveDefault}/>)}
         {defaultsStatus && <div role="status" style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, color:defaultsStatus === 'not saved' ? LM.err : LM.inkSoft }}>
           {defaultsStatus}
         </div>}
@@ -10691,6 +10745,23 @@ const BaboomStartupRow = ({ first }) => {
 // The accent row's "change" opens the saved-theme editor: its state, refresh, the accent and the
 // version history all live inside that one design affordance.
 const SettingsTheme = () => {
+  const projection = useStudioProjection();
+  const node = projection?.graph?.nodes?.find(node => node.application &&
+    (node.params || []).some(row => row.k === 'accent' && row.editable === true));
+  return node ? <div><SHead title="Theme" sub="The same settings cells as the application node."/>
+    <window.ApplicationNodeParameters node={node}/><PersonalThemeHistory/></div> : <SettingsPersonalTheme/>;
+};
+const PersonalThemeHistory = () => {
+  const state = usePersonalTheme(), api = window.ARCHHUB_EXISTING_WORKSHOP;
+  const [error, setError] = React.useState('');
+  return <div style={{marginTop:12}}>{(state?.configuration?.history || []).slice(0,10).map(entry =>
+    <div key={entry.revision} style={{padding:8, fontSize:12}}>{entry.reason || entry.state}
+      {!entry.current && entry.restore_control && <button style={smallBtn()} onClick={async () => {
+        try { await api.restoreThemeRevision(entry.revision); setError(''); }
+        catch (failure) { setError(failure.message); }
+      }}>Restore</button>}</div>)}{error && <p role="alert">{error}</p>}</div>;
+};
+const SettingsPersonalTheme = () => {
   const state = usePersonalTheme(), api = window.ARCHHUB_EXISTING_WORKSHOP;
   const config = state?.configuration;
   const [accent, setAccent] = React.useState(() => LM.accent);

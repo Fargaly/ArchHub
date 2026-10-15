@@ -207,12 +207,12 @@ test('DP-CONNECTORS: design rows, Office count row and child rows, not-built row
   } finally { s.close(); }
 });
 
-test('BABOOM renders the existing companion settings: startup switch and speech budget', async () => {
+test('BABOOM renders its real startup setting without an unenforced speech budget', async () => {
   const s = await openSettings();
   try {
     const panel = await s.tab('BABOOM');
-    assert.ok(panel.textContent.includes('Speech budget'), 'the BABOOM tab is the existing companion settings');
-    assert.ok(panel.textContent.includes('Speaks at most 2 times an hour.'), 'the budget states the same value as the badge');
+    assert.equal(panel.textContent.includes('Speech budget'), false, 'no setting without a runtime reader');
+    assert.equal(panel.textContent.includes('Speaks at most 2 times an hour.'), false, 'no unenforced speech-limit promise');
     assert.ok(panel.querySelector('[role="switch"][aria-label="Start BABOOM when ArchHub opens"]'), 'the startup switch is drawn');
   } finally { s.close(); }
 });

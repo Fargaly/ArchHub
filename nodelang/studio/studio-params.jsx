@@ -313,6 +313,50 @@ const pmNotify = state => state.listeners.forEach(notify => notify());
 const pmNotifyAll = () => PM_EDITS.forEach(rec => pmNotify(pmPersistence(rec)));
 
 async function pmPersistValue(node, key, value) {
+  const row = (node.params || []).find(row => row.k === key);
+  if (node.application && row?.editable === false) throw new Error('This setting is read-only.');
+  if (node.application && row?.setting) {
+    const owner = window.ARCHHUB_EXISTING_WORKSHOP;
+    const setting = row.setting;
+    let saved;
+    if (setting.kind === 'theme') {
+      if (!owner?.previewThemeToken) throw new Error('Theme settings are unavailable.');
+      saved = await owner.previewThemeToken(setting.key, value);
+    } else if (setting.kind === 'baboom') {
+      if (!owner?.setBaboomStartup) throw new Error('BABOOM settings are unavailable.');
+      saved = await owner.setBaboomStartup(value === true || value === 'on' || value === 'true' ? 'on' : 'off');
+    } else if (setting.kind === 'generation') {
+      if (!window.saveModelDefaults) throw new Error('Model settings are unavailable.');
+      saved = await window.saveModelDefaults({ ...window.modelGenerationDefaults(), [setting.key]:value });
+    } else if (setting.kind === 'composer-model') {
+      if (!owner?.setComposerModel) throw new Error('Model settings are unavailable.');
+      saved = await owner.setComposerModel(String(value));
+    } else if (setting.kind === 'cloud-consent') {
+      if (!owner?.setCloudPublishConsent) throw new Error('Cloud consent is unavailable.');
+      saved = await owner.setCloudPublishConsent(value === true || value === 'true');
+    } else if (setting.kind === 'mod-enabled' || setting.kind === 'mod-param') {
+      if (!window.ARCHHUB_MODS) throw new Error('Mod settings are unavailable.');
+      saved = await window.ARCHHUB_MODS(setting.kind === 'mod-enabled'
+        ? {action:'enable', id:setting.mod_id, enabled:value === true || value === 'true'}
+        : {action:'param', id:setting.mod_id, param:setting.key, value});
+    } else if (setting.kind === 'host-enabled') {
+      const session = window.__archhubSession || {};
+      const response = await fetch('/api/universal/host-enabled', {method:'POST',
+        headers:{'Content-Type':'application/json', 'X-ArchHub-Session':session.token || '', 'X-ArchHub-CSRF':session.csrf || ''},
+        body:JSON.stringify({host_id:setting.host_id, enabled:value === true || value === 'true'})});
+      saved = await response.json();
+      if (!response.ok) throw new Error(saved.error || 'Host setting was refused.');
+    }
+    if (saved !== undefined) {
+      if (saved?.ok === false) throw new Error(saved.error || 'The setting was not saved.');
+      try {
+        if (window.ARCHHUB_STUDIO_AUTHORITY?.load) await window.ARCHHUB_STUDIO_AUTHORITY.load();
+        else if (!['theme','baboom','generation','composer-model'].includes(setting.kind) && owner?.refreshTopologyCanvas) await owner.refreshTopologyCanvas();
+      } catch (_) { return {...saved, refresh_required:true}; }
+      window.dispatchEvent(new CustomEvent('archhub:settings-changed'));
+      return saved;
+    }
+  }
   if (window.ARCHHUB_STUDIO_AUTHORITY && !node.isWire) {
     return window.ARCHHUB_SET_NODE_PROP(node.id, key, value);
   }
@@ -340,6 +384,10 @@ async function pmPersistValue(node, key, value) {
   if (!relation || !window.ARCHHUB_SET_PROP) throw new Error('This parameter has no available save binding.');
   const saved = await window.ARCHHUB_SET_PROP(relation, String(value));
   if (!saved || saved.ok === false) throw new Error(saved?.error || 'Parameter was not saved.');
+  if (node.application) {
+    await window.ARCHHUB_EXISTING_WORKSHOP?.refreshTopologyCanvas?.();
+    window.dispatchEvent(new CustomEvent('archhub:settings-changed'));
+  }
   return saved;
 }
 
@@ -382,7 +430,7 @@ async function pmFlushParameters() {
 // shape a user-added one has, so one row component renders both.
 const pmNorm = (p) => {
   const meta = PM_META[p.k] || {};
-  const type = meta.type || (p.type === 'slider' || p.type === 'number' ? 'number' : p.type === 'select' ? 'menu' : p.type === 'textarea' ? 'textarea' : p.type === 'path' ? 'path' : 'text');
+  const type = meta.type || (p.type === 'slider' || p.type === 'number' ? 'number' : p.type === 'select' || p.type === 'menu' ? 'menu' : p.type === 'color' || p.type === 'colour' ? 'colour' : p.type === 'textarea' ? 'textarea' : p.type === 'path' ? 'path' : 'text');
   return {
     k: p.k, label: meta.label || p.label, type,
     min: p.min, max: p.max, step: p.step, opts: p.opts || PM_OPTS[p.k], page: 'Main', builtin: true,
@@ -553,13 +601,25 @@ function ParamRow({ node, spec, labels, val, def, wired, onChange, onRevert, onP
     <span title={'Driven by ' + wired} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, maxWidth: 118, fontFamily: PM.mono, fontSize: PM_FS.dataSm.sz, color: wired === 'unconnected' ? PM.warn : T.col, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
       ← {wired}
     </span>
+  ) : spec.fixed && spec.type === 'number' ? (
+    <input aria-label={label} type="number" value={val ?? ''} min={spec.min} max={spec.max} step={spec.step || 'any'}
+      onChange={e => { if (e.target.value !== '' && Number.isFinite(+e.target.value)) onChange(+e.target.value); }}
+      style={{width:'100%', minWidth:0, boxSizing:'border-box', background:PM.bg, color:PM.ink, border:`1px solid ${PM.line}`, borderRadius:4, padding:'4px 7px'}}/>
+  ) : spec.fixed && spec.type === 'colour' ? (
+    <input aria-label={label} type="color" value={String(val)} onChange={e => onChange(e.target.value)}
+      style={{width:40, height:26, border:`1px solid ${PM.line}`, borderRadius:4, background:PM.bg, padding:2}}/>
+  ) : spec.fixed && menuOptions.length ? (
+    <select aria-label={label} value={String(val)} onChange={e => onChange(e.target.value)}
+      style={{width:'100%', minWidth:0, background:PM.bg, color:PM.ink, border:`1px solid ${PM.line}`, borderRadius:4, padding:'4px 7px'}}>
+      {menuOptions.map(o => <option key={Array.isArray(o) ? o[0] : o} value={Array.isArray(o) ? o[0] : o}>{Array.isArray(o) ? o[1] : o}</option>)}
+    </select>
   ) : dataOnly ? (
     <button onClick={onPromote} title={T.label + ' can only arrive on a wire — expose a socket'}
       style={{ padding: '3px 8px', borderRadius: 4, border: `1px dashed ${PM.line}`, background: 'transparent', color: PM.inkSoft, cursor: 'pointer', fontFamily: PM.mono, fontSize: PM_FS.label.sz }}>expose</button>
   ) : isNum ? (
     <ScrubValue value={val} step={spec.step} unit={spec.unit} hard={spec.hard} min={spec.min} max={spec.max} onChange={onChange}/>
   ) : spec.type === 'toggle' ? (
-    <button onClick={() => onChange(!val)} role="switch" aria-checked={!!val} title={label + ' — ' + (val ? 'on' : 'off')}
+    <button onClick={() => onChange(!val)} role="switch" aria-label={label} aria-checked={!!val} title={label + ' — ' + (val ? 'on' : 'off')}
       style={{ background: 'transparent', border: 0, padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
       <span style={{ width: 30, height: 16, borderRadius: 999, position: 'relative', background: val ? PM.accent : PM.lineSoft, transition: 'background .15s' }}>
         <span style={{ position: 'absolute', top: 1, left: val ? 15 : 1, width: 14, height: 14, borderRadius: '50%', background: PM.ink, transition: 'left .15s' }}/>
@@ -595,18 +655,18 @@ function ParamRow({ node, spec, labels, val, def, wired, onChange, onRevert, onP
       <span style={{ color: PM.inkSoft, fontFamily: PM.mono, fontSize: PM_FS.dataSm.sz }}>file</span>
     </button>
   ) : (
-    <input value={val == null ? '' : val} onChange={e => onChange(e.target.value)} placeholder="value…"
-      style={{ width: 104, boxSizing: 'border-box', padding: '4px 7px', borderRadius: 4, border: `1px solid ${PM.line}`, background: PM.bg, color: PM.ink, fontFamily: PM.mono, fontSize: 11, outline: 'none' }}/>
+    <input aria-label={label} value={val == null ? '' : val} onChange={e => onChange(e.target.value)} placeholder="value…"
+      style={{ width:spec.fixed ? '100%' : 104, boxSizing: 'border-box', padding: '4px 7px', borderRadius: 4, border: `1px solid ${PM.line}`, background: PM.bg, color: PM.ink, fontFamily: PM.mono, fontSize: 11, outline: 'none' }}/>
   );
 
   return (
-    <div ref={rowRef} data-param-row="true" data-param-key={spec.k} style={{ display:'grid', gridTemplateColumns:`${PARAM_LABEL_COL}px minmax(0,1fr) auto`, alignItems:'center', gap:8, minHeight:PARAM_ROW_H, borderLeft: `2px solid ${wired ? PM.cyan : changed ? PM.accent : 'transparent'}`, padding:'0 8px', borderBottom: `1px solid ${PM.lineHair}` }}>
+    <div ref={rowRef} data-param-row="true" data-param-key={spec.k} style={{ display:'grid', gridTemplateColumns:spec.fixed ? 'minmax(60px,1fr) minmax(0,1fr)' : `${PARAM_LABEL_COL}px minmax(0,1fr) auto`, alignItems:'center', gap:8, minHeight:PARAM_ROW_H, borderLeft: `2px solid ${wired ? PM.cyan : changed ? PM.accent : 'transparent'}`, padding:'0 8px', borderBottom: `1px solid ${PM.lineHair}` }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth:0 }}>
-        <button onClick={() => (wired ? onUnwire() : onPromote())}
+        {!spec.fixed && <button onClick={() => (wired ? onUnwire() : onPromote())}
           title={wired ? 'Unwire — return to a local value' : 'Expose as a ' + T.label.toLowerCase() + ' input socket'}
           style={{ border: 0, background: 'transparent', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
           <Socket type={spec.type} list={spec.list} filled={!!wired}/>
-        </button>
+        </button>}
 
         {naming ? (
           <input autoFocus value={naming} onChange={e => setNaming(e.target.value)}
@@ -620,11 +680,11 @@ function ParamRow({ node, spec, labels, val, def, wired, onChange, onRevert, onP
       <div data-param-control="true" data-param-disabled={controlState.disabled ? 'true' : 'false'} style={{ minWidth:0, display:'flex', alignItems:'center' }}>
         {control}
       </div>
-      <div style={{ display:'flex', alignItems:'center', justifyContent:'flex-end', gap:6 }}>
+      <div style={{ display:spec.fixed ? 'none' : 'flex', alignItems:'center', justifyContent:'flex-end', gap:6 }}>
         {soft && <span title={'Beyond the usual range — hard limit ' + (spec.hard ? spec.hard[1] : '—')} style={{ color: PM.warn, fontFamily: PM.mono, fontSize: 11 }}>⚠</span>}
-        {changed && <button onClick={onRevert} title={'Revert to default · ' + def} style={{ border: 0, background: 'transparent', color: PM.accent, cursor: 'pointer', fontFamily: PM.mono, fontSize: 12, padding: 0 }}>↺</button>}
-        <button onClick={() => setMenu(m => !m)} title="Row actions"
-          style={{ border: 0, background: 'transparent', color: menu ? PM.ink : PM.inkSoft, cursor: 'pointer', fontFamily: PM.mono, fontSize: 12, padding: '0 1px', flexShrink: 0 }}>⋯</button>
+        {!spec.fixed && changed && <button onClick={onRevert} title={'Revert to default · ' + def} style={{ border: 0, background: 'transparent', color: PM.accent, cursor: 'pointer', fontFamily: PM.mono, fontSize: 12, padding: 0 }}>↺</button>}
+        {!spec.fixed && <button onClick={() => setMenu(m => !m)} title="Row actions"
+          style={{ border: 0, background: 'transparent', color: menu ? PM.ink : PM.inkSoft, cursor: 'pointer', fontFamily: PM.mono, fontSize: 12, padding: '0 1px', flexShrink: 0 }}>⋯</button>}
       </div>
 
       {notice && <div role="status" style={{ gridColumn:'2 / 4', fontFamily:PM.sans, fontSize:11, color:PM.inkSoft, paddingBottom:7 }}>{notice}</div>}
@@ -797,6 +857,72 @@ function TerminalPanel({ node }) {
   );
 }
 
+// Application settings use the same typed rows as canvas nodes, with values
+// re-read from the owner projection. Only in-flight input is held locally.
+function ApplicationParameter({node, row}) {
+  const [draft, setDraft] = React.useState(null);
+  const [error, setError] = React.useState('');
+  const [notice, setNotice] = React.useState('');
+  const pending = React.useRef(0);
+  const type = row.type === 'boolean' ? 'toggle' : row.type;
+  const value = draft === null ? row.v : draft.value;
+  const shown = type === 'toggle' ? value === true || value === 'true' || value === 'on' : value;
+  const spec = {...pmNorm2({...row, type}), fixed:true, opts:row.opts || row.options || row.constraints?.options,
+    min:row.min ?? row.constraints?.minimum ?? row.constraints?.min,
+    max:row.max ?? row.constraints?.maximum ?? row.constraints?.max,
+    step:row.step ?? row.constraints?.step};
+  const write = next => {
+    const version = ++pending.current;
+    setDraft({value:next}); setError(''); setNotice('');
+    const operation = pmWriteTail.then(() => pmPersistValue(node, row.k, next));
+    pmWriteTail = operation.catch(() => {});
+    operation.then(result => { if (version === pending.current && result?.refresh_required) setNotice('Saved. Refresh the System graph to review the value.'); })
+      .catch(failure => { if (version === pending.current) setError(failure.message || 'The setting was not saved.'); })
+      .finally(() => { if (version === pending.current) setDraft(null); });
+  };
+  return <div data-sysnode-cell={row.cell_id || row.value_root || row.rel || undefined} data-value-root={row.value_root || undefined} data-sysnode-param={row.k}>
+    {row.editable === true ? <ParamRow node={node} spec={spec} val={shown} def={row.v} onChange={write}/>
+      : <div data-param-key={row.k} style={{display:'flex', gap:8, justifyContent:'space-between', padding:'7px 8px', fontSize:12, color:PM.inkSoft}}>
+        <span>{humanParamLabel(row)}</span><span>{String(row.v ?? '')}</span></div>}
+    {error && <div role="alert" style={{padding:'3px 8px', fontSize:12, color:PM.err}}>{error}</div>}
+    {notice && <div role="status" style={{padding:'3px 8px', fontSize:12, color:PM.inkSoft}}>{notice}</div>}
+  </div>;
+}
+function ApplicationNodeParameters({node, compact = false}) {
+  const [error, setError] = React.useState('');
+  const [expanded, setExpanded] = React.useState(false);
+  const params = node.params || [];
+  const open = async action => {
+    setError('');
+    try {
+      const authority = window.ARCHHUB_STUDIO_AUTHORITY;
+      if (action.kind === 'open-node' && authority?.open) await authority.open(action.root);
+      else if (action.kind === 'open-node' && window.ARCHHUB_SCOPE_OPEN) {
+        const canvas = window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot?.()?.topology?.canvas;
+        await window.ARCHHUB_SCOPE_OPEN([...(canvas?.scope?.trail || []).map(step => step.root), action.root]);
+        await window.ARCHHUB_EXISTING_WORKSHOP?.refreshTopologyCanvas?.();
+      } else throw new Error('This action is unavailable in the current connection.');
+    } catch (failure) { setError(failure.message || 'The action could not be confirmed.'); }
+  };
+  return <div data-application-parameters={node.id} data-node-inspector={compact ? undefined : 'true'}
+    onMouseDown={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}
+    onKeyDown={event => event.stopPropagation()}
+    onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()} style={{minWidth:0}}>
+    {node.liveState && <div data-sysnode-live-state style={{padding:'6px 8px', fontSize:11, color:PM.inkSoft}}>
+      {Object.entries(node.liveState).map(([key,value]) => key + ': ' + String(value)).join(' · ')}
+    </div>}
+    {(compact && !expanded ? params.slice(0,3) : params).map(row => <ApplicationParameter key={row.k} node={node} row={row}/>)}
+    {compact && params.length > 3 && <button type="button" onClick={() => setExpanded(!expanded)}
+      aria-expanded={expanded} title="Show all settings · Enter" style={{...pmBtn(), margin:6}}>
+      {expanded ? 'Fewer settings' : '+' + (params.length - 3) + ' settings'}</button>}
+    {(node.actions || []).map(action => <button key={action.id} type="button" data-sysnode-action={action.id}
+      onClick={() => open(action)} title={action.label + ' · Enter'} style={{...pmBtn(), margin:'6px 8px', width:'calc(100% - 16px)'}}>{action.label}</button>)}
+    {error && <div role="alert" style={{padding:8, fontSize:12, color:PM.err}}>{error}</div>}
+  </div>;
+}
+function ApplicationAwareInspector(props) {
+  return props.node.application ? <ApplicationNodeParameters node={props.node}/> : <CoreNodeInspector {...props}/>;
+}
 function NodeInspector({ node, onFork, watchActions = {} }) {
   const visibleParams = React.useMemo(() => (node.params || []).filter(row =>
     !INTERNAL_PARAM_KEYS.has(String(row.k || row.label || '').toLowerCase()) &&
@@ -1176,4 +1302,7 @@ const pmBtn = () => ({
 
 // PM_TYPES and Socket are exported so the COCKPIT reads the same type vocabulary — one
 // registry for both graphs, rather than two names for the same idea.
-Object.assign(window, { NodeInspector, wireAsNode, pmPersistValue });
+// Classic-script function bindings alias window properties. Retain the core
+// before exporting its wrapper, so ordinary nodes delegate to the same editor.
+const CoreNodeInspector = NodeInspector;
+Object.assign(window, { NodeInspector:ApplicationAwareInspector, ApplicationNodeParameters, wireAsNode, pmPersistValue });

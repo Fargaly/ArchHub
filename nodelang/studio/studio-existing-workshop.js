@@ -261,14 +261,13 @@
           // Only a pick the graph holds is unchanged. With no binding the graph
           // takes its first value, even '', so a clear also retires a pick an
           // older build recorded beside the graph.
-          if (setting.source === 'graph' && setting.value === value) {
+          if (setting.source === 'graph' && setting.value === value && generation === undefined) {
             const state = {composer_model:setting};
-            if (generation !== undefined) state.model_defaults = normalizeModelDefaults(generation);
-            if (generation !== undefined) acceptTheme({...base, configuration:{...config, ...state}});
             return held ? null : {ok:true, unchanged:true, configuration_state:state};
           }
           control = setting.control;
-          facts = [{input:setting.event_fact_input, value}];
+          facts = [{input:setting.event_fact_input, value:generation === undefined ? value :
+            JSON.stringify({route:value, generation:normalizeModelDefaults(generation)})}];
         } else {
           const entry = config.history.find(entry => entry.revision === key && !entry.current && text(entry.restore_control));
           if (!entry) fail('This theme version cannot be restored from the current view.');
@@ -290,7 +289,6 @@
           fail('The theme save needs reconciliation. Refresh Personal Settings before another save.');
         }
         const state = {...result.configuration_state};
-        if (kind === 'composer-model' && generation !== undefined) state.model_defaults = normalizeModelDefaults(generation);
         acceptTheme({...base, revision:result.revision, interaction_projection:result.interaction_projection,
           configuration:{...config, ...state}});
         if (kind === 'composer-model' && generation !== undefined) result.configuration_state = state;
@@ -339,7 +337,16 @@
       }).finally(() => { themeWrite = null; publish(); });
       themeWrite = operation;
       publish();
-      return operation;
+      return operation.then(async result => {
+        if (topologyCanvas?.nodes?.some(node => node.application === true)) {
+          // Re-read the same setting cells for cards already mounted in System.
+          // A refresh failure must never turn an acknowledged save into a retry.
+          try { await api.refreshTopologyCanvas(); }
+          catch (_) { topologyError = 'Setting saved. Refresh the System graph to review it.'; publish(); }
+        }
+        global.dispatchEvent?.(new Event('archhub:settings-changed'));
+        return result;
+      });
     };
     const acceptTopology = value => {
       if (!value || value.ok === false || !revision(value.revision) || !text(value.application_root) ||

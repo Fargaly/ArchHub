@@ -218,7 +218,7 @@ test('SETTINGS-54 p3: missing permission authority is explicit OPEN, with no syn
     s.flush(() => permButton.click());
     await s.settle();
     assert.equal(shell.querySelectorAll('[data-permission-row]').length, 0);
-    assert.match(shell.textContent, /Per-agent permissions: not available yet/);
+    assert.doesNotMatch(shell.textContent, /Per-agent permissions: not available yet/, 'unsupported empty permission section is removed');
   } finally { s.close(); }
 });
 
@@ -298,7 +298,7 @@ test('SETTINGS-54 p4: Permissions keeps existing consent, social disconnect and 
     assert.match(shell.textContent, /Publish this machine map to the cloud/);
     assert.match(shell.textContent, /Connected accounts/);
     assert.match(shell.textContent, /Posts waiting for your approval/);
-    assert.match(shell.textContent, /Per-agent permissions: not available yet/);
+    assert.doesNotMatch(shell.textContent, /Per-agent permissions: not available yet/, 'unsupported empty permission section is removed');
     assert.equal(shell.querySelectorAll('[data-permission-row]').length, 0, 'new per-agent table is absent without backend');
     const publish = shell.querySelector('button[aria-label="Publish this machine map to the cloud"]');
     s.flush(() => publish.click());

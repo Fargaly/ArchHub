@@ -102,7 +102,7 @@ test('DSYS077 default primary control ceiling lists six routes; unavailable layo
     const controls=[...ui.doc.querySelectorAll('button[data-workshop-primary]')].map(el=>text(el));
     assert.deepEqual(controls.sort(),['New task','Open on canvas','Review','Approve','Decline','Send'].sort());
     assert.equal(ui.doc.querySelectorAll('[data-workshop-primary]').length,6);
-    assert.equal(ui.doc.querySelectorAll('button').length,7,'six primary routes plus the plate picker');
+    assert.equal([...ui.doc.querySelectorAll('button')].filter(button=>!button.closest('[data-app-rail]')).length,7,'six primary routes plus the plate picker');
     assert.equal(ui.doc.querySelector('[data-workshop-agent-picker]').getAttribute('aria-haspopup'),'listbox');
     assert.equal(ui.doc.querySelector('[aria-label="Task layout"] [role=radio]').getAttribute('aria-disabled'),'true');
     await ui.click(ui.doc.querySelector('[aria-label="Task layout"] [role=radio]:nth-child(2)'));

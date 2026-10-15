@@ -160,10 +160,10 @@ test('DSYS-078 Settings system canvas mounts the same skin, preview, 30px ring, 
     await ui.act(() => root.render(React.createElement(ui.context.Settings54Card,{node,view:{x:10,y:20,glyph:'S',color:ui.win.AH.accent},
       connected:{in:false,out:true},selected:false,action:() => opened++})));
     const card = container.querySelector('[data-settings54-node-card]');
-    assert.equal(card.dataset.canvasCardSkin,'078');assert.match(card.style.background,/linear-gradient/);
-    assert.equal(card.style.boxShadow,ui.win.AH.elev.e2);
+    assert.equal(card.dataset.canvasCardSkin,'065');assert.equal(card.style.background,ui.win.getComputedStyle(Object.assign(ui.doc.createElement('div'),{style:'background:'+ui.win.AH.bgPanel})).background);
+    assert.equal(card.style.boxShadow,'none');
     assert.equal(card.querySelector('[data-node-preview-slot]').textContent,'Real preview receipt');
-    assert.equal(card.querySelector('[data-node-status-ring] > span').style.width,'30px');
+    assert.equal(card.querySelector('[aria-hidden=true]').style.width,'20px');
     assert.equal(card.querySelector('[data-settings54-footer]').textContent,'ready');
     assert.ok(card.textContent.includes('DensityCompact'));
     await ui.click(card);assert.equal(opened,1);

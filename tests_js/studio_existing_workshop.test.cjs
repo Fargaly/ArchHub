@@ -1675,7 +1675,7 @@ test('removing and restoring an anchor or changing authenticated view cannot rev
   assert.equal(await reading,null);assert.equal(other.api.getSnapshot().conversationCatalog,null);
 });
 
-const agentRow = {root:'app:agent-session:runtime:' + 'c'.repeat(32), label:'Codex', attached:true, is_agent:true, session_link:'attached'};
+const agentRow = {root:'app:agent-session:runtime:' + 'c'.repeat(32), label:'Codex', attached:true, is_agent:true, connected:true, session_link:'attached'};
 const withAgent = () => ({...transcript(), participants:[...transcript().participants, agentRow]});
 const disconnected = body => ({ok:true, graph_id:'graph-a', root:body.root, scope_root:body.scope, agent:body.agent,
   revision:body.revision, outcome:'revoked', session_link:'none',

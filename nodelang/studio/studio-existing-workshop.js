@@ -530,7 +530,7 @@
       const ordinary = previous?.storage === 'conversation-content';
       const operation = (async () => {
         try {
-          const result = await get('/api/universal/workshop?root=' + encodeURIComponent(root) +
+          let result = await get('/api/universal/workshop?root=' + encodeURIComponent(root) +
             '&scope=' + encodeURIComponent(stamp.scope) +
             (feed === 'all' ? '' : '&feed=' + feed) +
             (before === null ? '' : '&before=' + encodeURIComponent(before)) +
@@ -539,6 +539,20 @@
             (open === true ? '&open=1' : ''));
           if (!isCurrent()) return null;
           if (!result || result.ok === false) fail(result?.error || 'Workshop history was refused.');
+          // This store owns the current roster, not session history. Retire dead
+          // runtime rows on full AND unchanged reads; message ancestry stays intact.
+          if (Array.isArray(result.participants)) {
+            const now = Date.now() / 1000;
+            result = {...result, participants:result.participants.filter(row => {
+              if (!row || row.is_agent !== true) return true;
+              return row.attached === true && row.selectable !== false &&
+                ((row.connected === true && (!Number.isFinite(row.expires_at) || row.expires_at > now)) || (row.connection_status === 'connected' &&
+                  row.connection_basis === 'authenticated-request' &&
+                  Number.isFinite(row.observed_at) && row.observed_at > 0 &&
+                  Number.isFinite(row.expires_at) && row.expires_at > now)) &&
+                !['stale','disconnected','retired'].includes(row.connection_status);
+            })};
+          }
           if (result.graph_id !== stamp.graph || result.root !== root || result.scope_root !== stamp.scope ||
               !revision(result.revision) || result.revision < canvas.revision ||
               (previous && result.revision < previous.revision)) fail('Workshop history is stale or belongs to another scope.');

@@ -94,7 +94,7 @@ test("Team uses the signed-in account as Owner and draws no fake rows", async ()
     const panel = await s.tab("Team");
     assert.match(panel.textContent, /Owner/);
     assert.match(panel.textContent, /o@x\.test/);
-    assert.match(panel.textContent, /Members you invite will appear here\./);
+    assert.doesNotMatch(panel.textContent, /Members you invite will appear here\./, 'unsupported invitation promise is removed');
     for (const fake of ["Amina", "Karim", "Dina", "seat", "invite a teammate"]) {
       assert.equal(panel.textContent.includes(fake), false, "no fake Team value: " + fake);
     }

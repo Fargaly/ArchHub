@@ -11,8 +11,8 @@ function fixture({count=7, input='elements', output='labels'} = {}) {
   const authorization={subject:'human-real',session:'view-real'};
   const state = {canvas:{graph_id:'graph-real',root:'scope-real',authorization},workshops:[{root:node.id,label:node.title}],
     workshop:{root:node.id,ok:true,self:'human-real',participants:[
-      {root:'agent-real-a',label:'Assigned agent',is_agent:true,attached:true},
-      {root:'agent-real-b',label:'Review agent',is_agent:true,attached:true}],messages:[]},
+      {root:'agent-real-a',label:'Assigned agent',is_agent:true,attached:true,connected:true},
+      {root:'agent-real-b',label:'Review agent',is_agent:true,attached:true,connected:true}],messages:[]},
     nativeWork:{root:node.id,scope:'scope-real',owner:'human-real',view:'view-real',work:'work-real',state:'awaiting_approval',approved:false,
       result_count:count,output_label:output,input_digest:'b'.repeat(64)},
     topology:{canvas:{application_root:'graph-real',scope:{current:'scope-real'},authorization},graph:{nodes:[node,{id:'work-real',engine:'work',title:node.title,status:'awaiting_approval'},
@@ -26,7 +26,7 @@ test('WORKSHOP-72 mounted node uses the plate header, width, tile stack and real
   fx.state.workshop.assignments=[{work:'work-real',agent_session:'agent-real-a'}];
   fx.state.workshop.workflows=[{root:'flow-real',title:'Label plan',approval:{current:true},nodes:[]}];
   fx.state.workshop.reviews=[{workflow:'flow-real',judged_by:'agent-real-b'}];
-  fx.state.workshop.participants.push({root:'agent-real-c',label:'Unassigned agent',is_agent:true,attached:true});
+  fx.state.workshop.participants.push({root:'agent-real-c',label:'Unassigned agent',is_agent:true,attached:true,connected:true});
   const ui = await mountWorkshopNode(fx);
   try {
     const appStyle=ui.doc.createElement('style');appStyle.textContent='* {box-sizing:border-box;}';ui.doc.head.append(appStyle);ui.container.style.lineHeight='1.5';
@@ -171,6 +171,7 @@ test('WORKSHOP-72 actual app Frame and Workspace remove duplicate rails, tabs, i
     useWorkshopProjection:()=>fx.state,useStudioProjection:()=>({graph:fx.state.topology.graph}),workshopWaitingItems:()=>[],
     studioCanvasScope:()=>'',WORKSHOP_UNAVAILABLE_ROOT:'studio:workshop-unavailable',LM_SESSIONS:[],LM_GRAPH:{nodes:[],wires:[]}});
   vm.runInContext(read('nodelang/studio/tokens.jsx'),context);context.LM=win.AH;
+  vm.runInContext(transformSync(read('nodelang/studio/shared-data.jsx'),{loader:'jsx'}).code,context);
   win.WorkshopView=()=>React.createElement('section',{'data-actual-workshop-window':''},'Workshop');
   const source=read('nodelang/studio/studio-lm.jsx');
   vm.runInContext(transformSync(slice(source,'const Frame =','const isHistoryNode =')+
@@ -181,8 +182,10 @@ test('WORKSHOP-72 actual app Frame and Workspace remove duplicate rails, tabs, i
       React.createElement(context.Workspace,{session:{id:'graph-real'},view:{mode:'chat',conversationRoot:'room-real'},updateView:()=>{}}))));
     const workspace=win.document.querySelector('[data-workspace-main]');
     assert.equal(workspace.style.gridTemplateColumns,'minmax(0, 1fr)');assert.equal(workspace.style.gridTemplateRows,'1fr');
-    assert.equal(win.document.querySelectorAll('[data-workshop-window-frame],[data-actual-workshop-window]').length,2);
-    assert.equal(win.document.querySelectorAll('nav,footer,button,textarea,[role="tablist"],[data-left-panel]').length,0);
+    assert.equal(win.document.querySelectorAll('[data-app-frame],[data-actual-workshop-window]').length,2);
+    assert.equal(win.document.querySelectorAll('[data-workspace-frame] nav,[data-workspace-frame] footer,[data-workspace-frame] button,textarea,[role="tablist"],[data-left-panel]').length,0);
+    assert.equal(win.document.querySelectorAll('[data-app-rail]').length,1);
+    assert.equal(win.document.querySelectorAll('[data-app-status]').length,1);
   }finally{
     await React.act(async()=>root.unmount());win.close();global.window=oldWindow;global.document=oldDocument;delete global.IS_REACT_ACT_ENVIRONMENT;
   }
@@ -196,6 +199,7 @@ test('WORKSHOP-72 no-graph Workshop tool opens the same lazy window with an hone
     useWorkshopProjection:()=>state,usePersonalTheme:()=>null,useToolHubProjection:()=>null,
     toolRowsFromOwners:()=>[],firstToolTab:()=>'',WORKSHOP_UNAVAILABLE_ROOT:'studio:workshop-unavailable'});
   vm.runInContext(read('nodelang/studio/tokens.jsx'),context);context.LM=win.AH;
+  vm.runInContext(transformSync(read('nodelang/studio/shared-data.jsx'),{loader:'jsx'}).code,context);
   let received;win.WorkshopView=props=>{received=props;return React.createElement('div',{'data-unavailable-workshop':''},'Not available yet');};
   const source=read('nodelang/studio/studio-lm.jsx');
   vm.runInContext(transformSync(slice(source,'const LazyWorkshopWindow =','const Workspace =')+
@@ -234,7 +238,7 @@ test('WORKSHOP-72 mere transcript participation cannot fabricate a draggable gra
 test('WORKSHOP-72 explicit session/account alias drags the admitted graph member, preserves raw route root and uses actual group root',async()=>{
   const fx=fixture();fx.node.id='workbench-real';fx.node.members=[{id:'account-agent-real',title:'Assigned agent'}];
   fx.state.workshops[0].node_root='workbench-real';
-  fx.state.workshop.participants=[{root:'runtime-session-real',app_root:'account-agent-real',label:'Assigned agent',is_agent:true,attached:true}];
+  fx.state.workshop.participants=[{root:'runtime-session-real',app_root:'account-agent-real',label:'Assigned agent',is_agent:true,attached:true,connected:true}];
   fx.state.topology.graph.nodes=[fx.node,{id:'work-real',engine:'work',title:fx.node.title},
     {id:'account-agent-real',title:'Assigned agent',group:'workbench-real'}];
   const ui=await mountWorkshopNode(fx);

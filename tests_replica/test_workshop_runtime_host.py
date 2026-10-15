@@ -16,3 +16,17 @@ def test_every_catalogued_runtime_has_its_catalog_name():
 def test_an_uncatalogued_runtime_has_no_host_rather_than_a_guess():
     for runtime in ("antigravity-ide", "", None, "claude · local", "CLAUDE"):
         assert workshop_runtime_host(runtime) is None
+
+
+def test_workshop_labels_use_the_existing_catalogue_not_runtime_hashes(monkeypatch):
+    from types import SimpleNamespace as NS
+    from nodelang import cell_agent_body
+    from nodelang.existing_workshop_conversation import _workshop_participant_rows
+    monkeypatch.setattr(cell_agent_body, "read_agent_session", lambda *args: NS(state_root="active"))
+    owner = NS(universal_registry=NS(agent_body=NS(protocol=NS(state=lambda value: value)),
+        authorization=NS(protocol=None)))
+    root = "app:agent-session:runtime:abcdef"
+    rows = _workshop_participant_rows(owner, None, NS(participant_roots=[root]),
+        {root: {"runtime": "codex", "connection_status": "connected"}})
+    assert rows[0]["label"] == workshop_runtime_host("codex")
+    assert not rows[0]["label"].startswith("Runtime-")

@@ -399,6 +399,7 @@ test('Storage, Models and About state no seeded measurement; About opens the rel
   const s = await openSettings();
   try {
     const storage = (await s.tab('Storage')).textContent;
+    assert.doesNotMatch(storage, /TRAINING QUEUE|MODEL CACHE|not measured/);
     for (const seeded of ['2.1 GB', '186 MB', '5.4 GB']) assert.equal(storage.includes(seeded), false, 'Storage carries no seeded ' + seeded);
     const models = (await s.tab('Models')).textContent;
     for (const seeded of ['$3 / $15', 'Claude Sonnet 4.5', 'Gemini 2.5 Pro', 'qwen2.5-coder']) assert.equal(models.includes(seeded), false, 'Models carries no seeded ' + seeded);

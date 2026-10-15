@@ -514,7 +514,7 @@ const WorkshopAgentPicker = ({ aliases, target, label, avatar, disabled, onSelec
 };
 
 const WorkshopView = ({ state, descriptor, target = '', setTarget = () => {}, setMode, setFocusId,
-  requestCanvasReveal, onLeave, onHome, onDocs, onSettings, onLibrary, onAddNode, account, sel, setSel }) => {
+  requestCanvasReveal, onLeave, onHome, onDocs, onSettings, onLibrary, onAddNode, account, sel, setSel, embedded = false }) => {
   const authority = window.ARCHHUB_STUDIO_AUTHORITY || window.ARCHHUB_EXISTING_WORKSHOP;
   const transcript = wsTranscript(state, descriptor);
   const native = wsNative(state, descriptor);
@@ -789,10 +789,10 @@ const WorkshopView = ({ state, descriptor, target = '', setTarget = () => {}, se
       <button type="button" aria-label="Send" data-workshop-send="" data-workshop-primary="" disabled={busy||transcript?.can_send!==true||!draft.trim()||(!replyTarget&&!draft.trim().startsWith('@'))} onClick={send} style={button(!!draft.trim()&&!approval&&!model.status.waiting,true)}>Send</button></div>
       {(error||transcript?.error)&&<div role="alert" style={{fontSize:13,color:W.err}}>{error||transcript.error}</div>}</div>;
   return <main data-workshop-s1="" data-workshop72="" data-workshop-v3="" data-screen-label="5.1v3_workshop" data-workshop-id={model.id}
-    style={{gridColumn:'1 / -1',gridRow:'1 / -1',minHeight:0,overflow:'hidden',display:'grid',width:'100%',height:'100%',gridTemplateRows:`1fr ${K.status}px`,background:K.background,color:W.ink,fontFamily:W.sans,margin:0}}>
-    <div style={{display:'grid',gridTemplateColumns:`${K.rail}px ${K.list}px minmax(0,1fr)`,minHeight:0}}>
-      <AppRail active="Workshop" workshop waiting={model.status.waiting}
-        account={{...liveAccount, initials:accountInitials, colour:accountColour}} onNavigate={navigate}/>
+    style={{gridColumn:'1 / -1',gridRow:'1 / -1',minHeight:0,overflow:'hidden',display:'grid',width:'100%',height:'100%',gridTemplateRows:embedded ? '1fr' : `1fr ${K.status}px`,background:K.background,color:W.ink,fontFamily:W.sans,margin:0}}>
+    <div style={{display:'grid',gridTemplateColumns:embedded ? `${K.list}px minmax(0,1fr)` : `${K.rail}px ${K.list}px minmax(0,1fr)`,minHeight:0}}>
+      {!embedded && <AppRail active="Workshop" workshop waiting={model.status.waiting}
+        account={{...liveAccount, initials:accountInitials, colour:accountColour}} onNavigate={navigate}/>}
       <aside data-workshop72-list="" style={{width:K.list,boxSizing:'border-box',background:K.listBackground,borderRight:`1px solid ${W.lineSoft}`,display:'flex',flexDirection:'column',minHeight:0}}>
         <div style={{display:'flex',alignItems:'center',gap:10,height:64,flex:'none',padding:'0 16px 0 22px'}}><span style={{fontSize:20,fontWeight:700,letterSpacing:'-.01em',flex:1}}>Workshop</span>
           <button type="button" data-workshop-primary="" disabled={busy||transcript?.can_send!==true||typeof authority?.beginWorkshopTask!=='function'} onClick={beginTask} style={button(false,true)}>New task</button></div>
@@ -846,10 +846,10 @@ const WorkshopView = ({ state, descriptor, target = '', setTarget = () => {}, se
           <div style={{fontSize:22,fontWeight:600}}>What should the agents do?</div><div style={{display:'flex',gap:8}}>{agents.map(a=><span key={a.id} role="radio" aria-checked={replyTarget===a.id} tabIndex={0}
             onClick={()=>setTarget(a.id)} onKeyDown={e=>e.key==='Enter'&&setTarget(a.id)} style={{display:'inline-flex',alignItems:'center',gap:8,height:32,padding:'0 12px 0 6px',border:`1px solid ${replyTarget===a.id?W.accent:W.line}`,borderRadius:999,background:replyTarget===a.id?W.accentSoft:'transparent',fontSize:13,cursor:'pointer'}}>
               {tile(a,20,null)}{a.name}<span style={{color:W.inkSoft,fontSize:12}}>{modelLabel(a)}</span></span>)}</div>{composer}</div>}</section></div>
-    <footer data-workshop-s1-status="" data-workshop72-status="" style={{height:K.status,boxSizing:'border-box',display:'flex',alignItems:'center',gap:18,padding:'0 16px',fontSize:12,color:W.inkSoft,borderTop:`1px solid ${W.lineSoft}`,background:K.railBackground}}>
+    {!embedded && <footer data-workshop-s1-status="" data-workshop72-status="" style={{height:K.status,boxSizing:'border-box',display:'flex',alignItems:'center',gap:18,padding:'0 16px',fontSize:12,color:W.inkSoft,borderTop:`1px solid ${W.lineSoft}`,background:K.railBackground}}>
       <span style={{display:'flex',alignItems:'center',gap:6,color:model.status.connected?W.ok:W.inkSoft}}>{dot(model.status.connected?W.ok:W.inkSoft)}{model.status.connected?'Connected':'Not available yet'}</span><span>{hostLine}</span>
       {model.viewSections?.find(s=>s.id==='working')?.rows.length>0&&<span style={{color:W.accent}}>{model.viewSections.find(s=>s.id==='working').rows.length} working</span>}
-      {model.status.waiting>0&&<span style={{color:W.warn}}>{model.status.waiting} need you</span>}<span style={{flex:1}}/><span>{modelLabel(lead)}</span></footer>
+      {model.status.waiting>0&&<span style={{color:W.warn}}>{model.status.waiting} need you</span>}<span style={{flex:1}}/><span>{modelLabel(lead)}</span></footer>}
     <style>{`[data-workshop72] * {box-sizing:content-box;} [data-workshop72] button {box-sizing:border-box;} [data-workshop-send]::after {content:'↵';} [data-workshop72] button:disabled {cursor:default;} [data-workshop72] input::placeholder, [data-workshop72] textarea::placeholder {color:${W.inkSoft};opacity:1;}`}</style></main>;
 };
 

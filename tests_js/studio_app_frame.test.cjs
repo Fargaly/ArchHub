@@ -58,7 +58,7 @@ test('APP-FRAME p3: mounted workspace row owns the viewport height between top a
 test('DSYS-060 app frame owns the one Studio shell grid', () => {
   assert.match(source, /const Frame = \(/, 'the app frame primitive is present');
   assert.match(source, /data-app-frame/, 'the shipped shell exposes the frame boundary');
-  assert.match(source, /gridTemplateColumns:hasLeft \? '64px 248px minmax\(0, 1fr\) 320px' : '64px minmax\(0, 1fr\)'/,
+  assert.match(source, /gridTemplateColumns:hasLeft \? `\$\{railWidth\}px 248px minmax\(0, 1fr\) 320px` : `\$\{railWidth\}px minmax\(0, 1fr\)`/,
     'frame columns collapse the empty left panel to rail 64 + content');
   assert.match(source, /\{hasLeft && <aside data-left-panel=/,
     'the left panel element is not mounted when the screen has no left content');

@@ -152,18 +152,16 @@ const Frame = ({ rail, left, top, children, insp, status, onHome, onPanel, onSet
   const waiting = workshopWaitingItems(useWorkshopProjection()).length;
   const hasLeft = !!left;
   const contentColumn = hasLeft ? '3 / -1' : '2 / -1';
-  if (workshopWindow) return <section data-app-frame="" data-workshop-window-frame=""
-    style={{width:'100%', height:'100%', minHeight:0, overflow:'hidden', position:'relative',
-      background:LM.bgDeep, color:LM.ink, fontFamily:LM.sans}}>{children}</section>;
+  const railWidth = rail === 'Settings' ? 44 : 64;
   return (
     <section data-app-frame="" style={{
       width:'100%', height:'100%', background:LM.bgDeep, color:LM.ink, fontFamily:LM.sans,
       fontSize:13, lineHeight:1.5, display:'grid',
-      gridTemplateColumns:hasLeft ? '64px 248px minmax(0, 1fr) 320px' : '64px minmax(0, 1fr)',
+      gridTemplateColumns:hasLeft ? `${railWidth}px 248px minmax(0, 1fr) 320px` : `${railWidth}px minmax(0, 1fr)`,
       gridTemplateRows:'36px minmax(0, 1fr) 22px',
       overflow:'hidden', position:'relative',
     }}>
-      <AppRail active={rail || 'Home'} waiting={waiting} account={account} onNavigate={name => {
+      <AppRail persistent workshop={workshopWindow} active={rail || 'Home'} compact={rail === 'Settings'} waiting={waiting} account={account} onNavigate={name => {
         const route = {Home:onHome, Workshop:onWorkshop, Canvas:onCanvas, Library:() => onPanel?.('nodes'), Settings:onSettings, Account:onSettings}[name];
         route?.();
       }}/>
@@ -174,11 +172,11 @@ const Frame = ({ rail, left, top, children, insp, status, onHome, onPanel, onSet
         height:'100%', minHeight:0, minWidth:0, overflow:'hidden' }}>
         {children}
       </div>
-      {top && <div style={{ gridColumn:contentColumn, gridRow:'1', display:'flex', alignItems:'center', gap:10,
+      {top && !workshopWindow && <div style={{ gridColumn:contentColumn, gridRow:'1', display:'flex', alignItems:'center', gap:10,
         padding:'0 12px', borderBottom:`1px solid ${LM.lineSoft}`, background:LM.bg }}>{top}</div>}
       {insp && <aside style={{ gridColumn:'4', gridRow:'2', background:LM.bgPanel, minHeight:0, overflow:'hidden',
         display:'grid', gridTemplateRows:'auto 1fr' }}>{insp}</aside>}
-      <footer style={{ gridColumn:'1 / -1', gridRow:'3', display:'flex', alignItems:'center', gap:14, padding:'0 12px',
+      <footer data-app-status="" style={{ gridColumn:'1 / -1', gridRow:'3', display:'flex', alignItems:'center', gap:14, padding:'0 12px',
         fontSize:11, color:LM.inkSoft, borderTop:`1px solid ${LM.lineSoft}`, background:LM.bgDeep, minWidth:0 }}>
         {status}
       </footer>
@@ -1401,14 +1399,15 @@ const StudioLM = () => {
   }, []);
 
   const frameRail = settingsOpen ? 'Settings' : docsOpen ? 'Docs' : ['nodes', 'skills', 'search'].includes(panel) ? 'Library' :
+    toolView?.id === 'workshop' || (session && workspaceView.mode === 'chat' && workspaceView.conversationRoot) ? 'Workshop' :
     session ? 'Canvas' : 'Home';
   const frameCrumbs = session ? ['ArchHub', session.title || 'Graph'] :
     toolView ? ['ArchHub', toolTitle(toolView.id)] : ['ArchHub', 'Home'];
   return (
     <Frame workshopWindow={(!!session && workspaceView.mode === 'chat' && !!workspaceView.conversationRoot) || (!session && toolView?.id === 'workshop')}
-      rail={frameRail} onHome={goHome} onPanel={setPanel}
+      rail={frameRail} onHome={goHome} onPanel={value => { setSettingsOpen(false); setDocsOpen(false); setLibraryOpen(false); setPanel(value); }}
       onSettings={() => openSettings(true)} account={account}
-      onWorkshop={() => { setPanel(null); openTool('workshop'); }}
+      onWorkshop={() => { setSettingsOpen(false); setDocsOpen(false); setLibraryOpen(false); setPanel(null); openTool('workshop'); }}
       onCanvas={() => { setPanel(null); setSettingsOpen(false); setDocsOpen(false); openTool('studio'); }}
       left={panel && !workshopContext ? <Sidebar
         panel={panel} setPanel={setPanel}
@@ -1493,7 +1492,7 @@ const StudioLM = () => {
         : window.ARCHHUB_STUDIO_AUTHORITY ? Promise.reject(new Error('Select an AI node on the canvas to set its model.'))
         : rememberComposerModel(m).then(setModel)} onClose={() => setPickerOpen(false)} model={displayedModel}
         onNativeSelect={window.ARCHHUB_EXISTING_WORKSHOP ? (!session ? row => setHomeNative(row) : connectNativeSession) : undefined}/>}
-      {settingsOpen && <Settings onClose={() => openSettings(false)} account={account} setAccount={setAccount} onSignOut={signOut}
+      {settingsOpen && <Settings onHome={goHome} onClose={() => openSettings(false)} account={account} setAccount={setAccount} onSignOut={signOut}
         initialTab={settingsTab} onOpenTool={openTool} onOpenToolGraph={openToolGraph}/>}
       {signUpOpen && <SignUp onDone={(rec) => { setAccount(rec); setSignUpOpen(false); }} onCancel={() => setSignUpOpen(false)} plan={account.plan}/>}
       {booting && <AppBoot account={account} onDone={() => setBooting(false)}/>}
@@ -3088,7 +3087,7 @@ const ToolMainView = ({ view, account, setAccount, onSignOut, onSettings, onHome
   if (tool === 'workshop') {
     const descriptor = (workshopState?.workshops || []).find(row => row.root === view?.root) ||
       {root:WORKSHOP_UNAVAILABLE_ROOT, label:'Workshop', unavailable:true, native_work_available:false};
-    return <LazyWorkshopWindow state={workshopState || {}} descriptor={descriptor} account={account} sel={{task:view?.focus || null}}
+    return <LazyWorkshopWindow embedded state={workshopState || {}} descriptor={descriptor} account={account} sel={{task:view?.focus || null}}
       setSel={next => updateView?.({...view, focus:next.task || null})} onHome={onHome} onDocs={onDocs}
       onSettings={() => onSettings?.(true)} onLibrary={onLibrary} onAddNode={onLibrary} onLeave={onHome}/>;
   }
@@ -3240,7 +3239,7 @@ const Workspace = ({ session, account, model, readiness = null, onReadinessStale
         systemAllowed={systemAllowed(authorityState?.canvas, graph)}
         systemArrangeSummary={systemArrangeSummary}/>}
       {effectiveMode === 'chat' && workshop ? (
-        <LazyWorkshopWindow key={JSON.stringify([session.id, workshopState.canvas.graph_id,
+        <LazyWorkshopWindow embedded key={JSON.stringify([session.id, workshopState.canvas.graph_id,
           workshopState.canvas.root, workshop.root])} state={workshopState} descriptor={workshop} account={account} target={target}
           setTarget={target => updateView({target})} setMode={setMode} setFocusId={setFocusId}
           requestCanvasReveal={requestCanvasReveal} onHome={onHome} onDocs={onDocs} onSettings={onSettings}
@@ -8696,12 +8695,12 @@ const settingsRunningCount = (scope, data = {}) => {
   return { running, total:visible.length };
 };
 const SETTINGS54_GROUPS = [
-  {id:'account', glyph:'◍', color:LM.userAv || LM.accent, title:'Account', items:['Account', 'Profile', 'Team'], focus:'Account'},
-  {id:'connections', glyph:'⌁', color:LM.cyan, title:'Connections', items:['Hub', 'Hosts', 'Providers', 'Connections'], focus:'Connections'},
-  {id:'ai', glyph:'✦', color:LM.purple, title:'AI', items:['BABOOM', 'Models', 'Brain'], focus:'Workshop'},
-  {id:'permissions', glyph:'⚑', color:LM.warn, title:'Permissions', items:['Permissions', 'Workspaces'], focus:'Permissions'},
-  {id:'appearance', glyph:'◐', color:LM.blue || LM.accent, title:'Appearance', items:['Theme', 'Shortcuts'], focus:'UI & Design System'},
-  {id:'storage', glyph:'▤', color:LM.inkSoft, title:'Storage & About', items:['Storage', 'About'], focus:'Storage & About'},
+  {id:'account', glyph:'◍', color:LM.accent, title:'Account', items:['Account', 'Profile', 'Team'], focus:'Account'},
+  {id:'connections', glyph:'⌁', color:LM.accent, title:'Connections', items:['Hub', 'Hosts', 'Providers', 'Connections'], focus:'Connections'},
+  {id:'ai', glyph:'✦', color:LM.accent, title:'AI', items:['BABOOM', 'Models', 'Brain'], focus:'Workshop'},
+  {id:'permissions', glyph:'⚑', color:LM.accent, title:'Permissions', items:['Permissions', 'Workspaces'], focus:'Permissions'},
+  {id:'appearance', glyph:'◐', color:LM.accent, title:'Appearance', items:['Theme', 'Shortcuts'], focus:'UI & Design System'},
+  {id:'storage', glyph:'▤', color:LM.accent, title:'Storage & About', items:['Storage', 'About'], focus:'Storage & About'},
 ];
 const settings54NodeTitle = node => node?.title || node?.label || node?.id || 'System node';
 const settings54ParamKey = row => row?.k || row?.key || row?.label || row?.name || '';
@@ -8737,13 +8736,13 @@ const settings54NodeView = (node, index) => {
   const cat = studioCategory(node?.cat || 'logic');
   return {
     glyph: cat.icon || String(settings54NodeTitle(node)).slice(0, 1).toUpperCase(),
-    color: cat.col || LM.accent,
+    color: LM.accent,
     x: Number.isFinite(node?.x) ? node.x : 40 + (index % 3) * 300,
     y: Number.isFinite(node?.y) ? node.y : 76 + Math.floor(index / 3) * 206,
     w: node?.w || 240,
   };
 };
-const settings54GroupSub = group => group.items.join(' · ');
+const settings54GroupSub = group => ({account:'Account · Profile · Team', connections:'Hosts · AI accounts · apps', ai:'Models · Brain', permissions:'what agents may do · Workspaces', appearance:'Theme · Shortcuts', storage:'disk · version · updates'})[group.id];
 const settings54Button = (active=false, extra={}) => ({
   border:`1px solid ${active ? LM.accent : LM.line}`, background:active ? LM.bgHover : 'transparent',
   color:active ? LM.ink : LM.inkSoft, borderRadius:LM.rad.control, cursor:'pointer',
@@ -8848,22 +8847,22 @@ const Settings54Card = ({ node, view, selected, connected, action }) => {
   const ins = node?.ins || [], outs = node?.outs || [], rows = Math.max(ins.length, outs.length);
   const params = (node?.params || []).slice(0, 3);
   const preview = node.preview?.text ?? node.preview?.summary ?? node.result;
-  return <button type="button" data-settings54-node-card={name} data-settings54-node-id={node.id} data-canvas-card-skin="078"
+  return <button type="button" data-settings54-node-card={name} data-settings54-node-id={node.id} data-canvas-card-skin="065"
     data-node-state={canvasNeedsUser(node) ? 'needs-user' : node.state || node.status || 'unavailable'} onClick={action} style={{ position:'absolute', left:view.x, top:view.y, width:view.w || 224, padding:0,
-    textAlign:'left', ...canvasCardSurface(canvasNeedsUser(node)), border:`1px solid ${selected ? LM.accent : LM.line}`,
+    textAlign:'left', background:LM.bgPanel, borderRadius:6, boxShadow:'none', border:`1px solid ${selected ? LM.accent : LM.line}`,
     outline:selected ? `1px solid ${LM.accent}` : 'none', color:LM.ink, fontFamily:LM.sans, cursor:'pointer', overflow:'hidden' }}>
-    <span style={{ display:'flex', alignItems:'center', gap:10, padding:'12px 14px 10px' }}>
-      <span data-node-status-ring={node.state || node.status || 'unavailable'} style={{boxShadow:`0 0 0 2px ${canvasStatusColor(node)}`,borderRadius:8}}><Settings54Tile glyph={view.glyph} color={view.color} size={30}/></span>
+    <span style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 10px' }}>
+      <span><Settings54Tile glyph={view.glyph} color={view.color} size={20}/></span>
       <span style={{ minWidth:0, flex:1 }}>
-        <span style={{ display:'block', fontSize:14, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{name}</span>
-        <span style={{ display:'block', fontSize:12, color:LM.inkSoft, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{node.subtitle || node.description || view.subtitle || 'System'}</span>
+        <span style={{ display:'block', fontSize:13, fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{name}</span>
+        <span style={{ display:'block', fontSize:11, color:LM.inkSoft, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{node.subtitle || node.description || view.subtitle || 'System'}</span>
       </span>
       <span style={{ width:8, height:8, borderRadius:'50%', background:(connected.in || connected.out) ? LM.ok : LM.inkSoft }}/>
     </span>
-    <span data-node-preview-slot="" aria-disabled={!node.preview} style={{display:'block',minHeight:32,margin:'0 14px 8px',
+    {preview != null && <span data-node-preview-slot="" style={{display:'block',minHeight:32,margin:'0 14px 8px',
       borderRadius:8,fontSize:12.5,color:LM.inkSoft,overflow:'hidden'}}>
-      {preview == null ? 'Not available yet' : typeof preview === 'object' ? JSON.stringify(preview) : String(preview)}
-    </span>
+      {typeof preview === 'object' ? JSON.stringify(preview) : String(preview)}
+    </span>}
     {rows > 0 && <span data-settings54-ports="" style={{ display:'grid', gridTemplateColumns:'1fr 1fr', borderTop:`1px solid ${LM.line}`, padding:'4px 0' }}>
       <span>{ins.map(port => <span key={settings54PortId(port)} style={{ position:'relative', height:22, display:'flex', alignItems:'center', padding:'0 12px', fontSize:12 }}>
         <span data-settings54-port={node.id + ':' + settings54PortId(port)} style={{ position:'absolute', left:-6, top:6 }}><Settings54Socket t={port.t} list={port.list} filled={connected.in}/></span>{settings54PortLabel(port)}
@@ -8874,21 +8873,21 @@ const Settings54Card = ({ node, view, selected, connected, action }) => {
     </span>}
     {params.map(row => <Settings54ParamChip key={settings54ParamKey(row) || settings54ParamLabel(row)} label={settings54ParamLabel(row)} value={String(settings54ParamValue(row))}/>)}
     {(node?.params || []).length > params.length ? <span style={{ display:'block', padding:'2px 10px 4px', fontSize:11, color:LM.inkSoft }}>+{(node.params || []).length - params.length} more</span> : null}
-    <span data-settings54-footer="" style={{ display:'block', borderTop:`1px solid ${LM.line}`, padding:'9px 14px', fontSize:12.5, color:canvasStatusColor(node) }}>
-      {node.status || node.state || ((connected.in || connected.out) ? 'connected projection' : 'Not available yet')}
+    <span data-settings54-footer="" style={{ display:'block', borderTop:`1px solid ${LM.line}`, padding:'5px 10px', fontSize:11, color:LM.inkSoft }}>
+      {node.status || node.state || ((connected.in || connected.out) ? 'connected projection' : 'unavailable')}
     </span>
   </button>;
 };
 const Settings = props => {
   const canvasRead = useDeferredCanvas();
-  if (canvasRead.pending || canvasRead.error) return <div data-settings-canvas-loading="" role="dialog" style={{position:'fixed', inset:40, zIndex:1000, padding:24, background:LM.bg, color:LM.ink}}>
+  if (canvasRead.pending || canvasRead.error) return <div data-settings-canvas-loading="" role="dialog" style={{position:'absolute', top:0, bottom:22, left:44, right:0, zIndex:60, padding:24, background:LM.bg, color:LM.ink}}>
     {canvasRead.error ? <><p role="alert">The canvas could not be loaded: {canvasRead.error}</p>
       <button onClick={canvasRead.retry}>Retry</button></> : <p role="status">Loading your settings…</p>}
     <button onClick={props.onClose}>Close</button>
   </div>;
   return <SettingsLoaded {...props}/>;
 };
-const SettingsLoaded = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub', onOpenTool, onOpenToolGraph }) => {
+const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSignOut, initialTab = 'hub', onOpenTool, onOpenToolGraph }) => {
   const providers = useProviderStatus();
   const workshopState = useWorkshopProjection();
   const release = releaseStatus(workshopState);
@@ -8933,7 +8932,7 @@ const SettingsLoaded = ({ onClose, account, setAccount, onSignOut, initialTab = 
   React.useEffect(() => {
     const capabilityMap = {hub:'Hub', hosts:'Hosts', providers:'Providers', connections:'Connections', account:'Account', profile:'Profile', team:'Team',
       memory:'Brain', brain:'Brain', baboom:'BABOOM', models:'Models', permissions:'Permissions', workspaces:'Workspaces',
-      theme:'Theme', shortcuts:'Shortcuts', storage:'Storage', about:'About', system:'System'};
+      theme:'Theme', shortcuts:'Shortcuts', storage:'Storage', about:'About', system:'Properties'};
     if (userSelection.current.tab !== initialTab) userSelection.current = {tab:initialTab, manual:false};
     if (initialTab && !userSelection.current.manual) {
       const group = groupFromTab(initialTab);
@@ -8958,7 +8957,22 @@ const SettingsLoaded = ({ onClose, account, setAccount, onSignOut, initialTab = 
   const graphNodes = graphItems.length || query.trim() ? graphItems : systemNodes;
   const graphViews = new Map(graphNodes.map((node, index) => [node.id, settings54NodeView(node, index)]));
   const selectedView = selectedNode ? graphViews.get(selectedNode.id) || settings54NodeView(selectedNode, 0) : null;
-  const graphFocus = selectedView ? { x:420 - selectedView.x - (selectedView.w || 240) / 2, y:220 - selectedView.y } : {x:20, y:68};
+  const graphPane = React.useRef(null);
+  const [graphWidth, setGraphWidth] = React.useState(0);
+  React.useLayoutEffect(() => {
+    const pane = graphPane.current;
+    if (!pane) return;
+    const measure = () => setGraphWidth(pane.clientWidth);
+    measure();
+    if (typeof ResizeObserver !== 'function') return;
+    const observer = new ResizeObserver(measure); observer.observe(pane);
+    return () => observer.disconnect();
+  }, []);
+  const minX = Math.min(0, ...[...graphViews.values()].map(view => view.x));
+  const minY = Math.min(0, ...[...graphViews.values()].map(view => view.y));
+  const graphExtent = Math.max(1, ...[...graphViews.values()].map(view => view.x + view.w - minX));
+  const graphScale = graphWidth ? Math.min(1, Math.max(0, graphWidth - 60) / graphExtent) : 1;
+  const graphFocus = {x:30 - minX * graphScale, y:70 - minY * graphScale};
   const nodeWireState = React.useCallback(node => ({
     in: systemWires.some(wire => wire.to?.[0] === node.id),
     out: systemWires.some(wire => wire.from?.[0] === node.id),
@@ -9091,36 +9105,22 @@ const SettingsLoaded = ({ onClose, account, setAccount, onSignOut, initialTab = 
     const panel = capabilityPanel();
     if (panel) return <div data-settings54-capability={activeCapability} style={{ padding:12 }}>{panel}</div>;
     const rows = selectedNode?.params || [];
-    if (!selectedNode) return <Settings54ParamRow label="OPEN"><button type="button" disabled style={settings54Button(false, {cursor:'default', opacity:.6})}>Not available yet</button></Settings54ParamRow>;
-    if (!rows.length) return <Settings54ParamRow label="OPEN" hint="This projected node exposes no writable parameters here."><button type="button" disabled style={settings54Button(false, {cursor:'default', opacity:.6})}>Not available yet</button></Settings54ParamRow>;
+    if (!selectedNode) return null;
+    if (!rows.length) return null;
     return rows.map(row => <Settings54ParamRow key={settings54ParamKey(row) || settings54ParamLabel(row)} label={settings54ParamLabel(row)}
       hint={[row?.hint || row?.description || '', settings54ParamWriter(row).ok ? '' : settings54ParamWriter(row).reason].filter(Boolean).join(' ')}>
       {paramControl(selectedNode, row)}</Settings54ParamRow>);
   };
   return (
     <div onClick={onClose} style={{
-      position:'absolute', inset:0, background:LM.scrim, zIndex:60,
+      position:'absolute', top:0, bottom:22, left:44, right:0, background:LM.bgDeep, zIndex:60,
       display:'grid',
     }}>
       <div data-settings54-shell="" role="dialog" aria-modal="true" aria-label="Settings" onClick={e => e.stopPropagation()} style={{
         width:'100%', height:'100%', background:LM.bgDeep, color:LM.ink, overflow:'hidden',
-        display:'grid', gridTemplateRows:'1fr 22px', fontFamily:LM.sans,
+        display:'grid', gridTemplateRows:'1fr', fontFamily:LM.sans,
       }}>
-        <div style={{ display:'grid', gridTemplateColumns:'44px 248px 1fr 320px', minHeight:0 }}>
-          <nav style={{ background:LM.bg, borderRight:`1px solid ${LM.lineSoft}`, display:'grid', gridTemplateRows:'auto 1fr auto', paddingTop:6 }}>
-            <div style={{ display:'grid', gap:2 }}>
-              {['Chats', 'Library', 'Docs', 'Cockpit'].map((label, index) => <span key={label} style={{ display:'grid', justifyItems:'center', gap:2, padding:'5px 0', color:LM.inkSoft, fontSize:11 }}>
-                <span style={{ width:28, height:24, display:'grid', placeItems:'center' }}>{['◌', '▦', '?', '◫'][index]}</span>{label}
-              </span>)}
-            </div>
-            <span/>
-            <div style={{ display:'grid', justifyItems:'center', gap:6, paddingBottom:8 }}>
-              <span style={{ display:'grid', justifyItems:'center', gap:2, color:LM.ink, fontSize:11 }}>
-                <span style={{ width:28, height:28, borderRadius:6, background:LM.bgHover, display:'grid', placeItems:'center', borderLeft:`2px solid ${LM.accent}` }}>⚙</span>Settings
-              </span>
-              <span style={{ width:28, height:28, borderRadius:'50%', background:LM.userAv || LM.accent, color:LM.onUserAv || LM.onFill, display:'grid', placeItems:'center', fontSize:12, fontWeight:600 }}>AF</span>
-            </div>
-          </nav>
+        <div style={{ display:'grid', gridTemplateColumns:'248px minmax(0,1fr) 320px', minHeight:0 }}>
           <aside style={{ background:LM.bgPanel, borderRight:`1px solid ${LM.line}`, display:'grid', gridTemplateRows:'44px auto 1fr', minWidth:0 }}>
             <div style={{ display:'flex', alignItems:'center', padding:'0 12px', borderBottom:`1px solid ${LM.lineSoft}`, fontSize:16, fontWeight:600 }}>Settings</div>
             <label style={{ margin:10, height:32, borderRadius:5, background:LM.bgSoft, border:`1px solid ${LM.line}`, display:'flex', alignItems:'center', gap:8, padding:'0 10px', color:LM.inkSoft }}>
@@ -9157,19 +9157,20 @@ const SettingsLoaded = ({ onClose, account, setAccount, onSignOut, initialTab = 
           </aside>
           <main style={{ display:'grid', gridTemplateRows:'36px 1fr', minHeight:0, borderRight:`1px solid ${LM.line}` }}>
             <div style={{ display:'flex', alignItems:'center', gap:10, padding:'0 12px', borderBottom:`1px solid ${LM.lineSoft}`, background:LM.bg }}>
-              <span style={{ fontSize:12, color:LM.inkSoft }}>Settings <span style={{ margin:'0 6px' }}>›</span><span style={{ color:LM.ink }}>{activeCapability || selectedGroup.title}</span></span>
-              <span style={{ fontSize:11, color:canOpenSystem ? LM.ok : LM.warn }}>{canOpenSystem ? 'live' : 'OPEN'}</span><span style={{ flex:1 }}/>
+              <span style={{ fontSize:12, color:LM.inkSoft }}>Settings <span style={{ margin:'0 6px' }}>›</span><span style={{ color:LM.ink }}>{activeCapability === 'Properties' ? 'System' : activeCapability || selectedGroup.title}</span></span>
+              <span style={{ fontSize:11, color:canOpenSystem ? LM.ok : LM.warn }}>{canOpenSystem ? 'Connected · live' : 'System graph unavailable'}</span><span style={{ flex:1 }}/>
               {statusMessage && <span role="status" style={{ fontSize:11, color:LM.inkSoft, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:260 }}>{statusMessage}</span>}
               <button type="button" onClick={arrangeSystem} style={settings54Button(false, {border:'1px solid transparent', color:LM.ink})}>Arrange</button>
+              <button type="button" onClick={onHome} title="Home (Alt+Home)" style={settings54Button(false)}>Home</button>
               <button type="button" aria-label="Close" data-close-button="" onClick={onClose} style={settings54Button(false)}>Close</button>
             </div>
-            <div data-settings54-graph="" data-settings54-focus={selectedId} style={{ position:'relative', background:LM.bgCanvas || LM.bgDeep, overflow:'hidden',
+            <div ref={graphPane} data-settings54-graph="" data-settings54-focus={selectedId} style={{ position:'relative', background:LM.bgCanvas || LM.bgDeep, overflow:'hidden',
               backgroundImage:`radial-gradient(${LM.line} 1px, transparent 1px)`, backgroundSize:'24px 24px' }}>
               {!selectedNode && <div data-settings54-no-live-node="" style={{ position:'absolute', left:24, top:24, zIndex:1, maxWidth:360,
                 border:`1px dashed ${LM.line}`, borderRadius:6, background:LM.bgPanel, color:LM.inkSoft, padding:'10px 12px', fontSize:13 }}>
                 No live node for {selectedGroup.title} yet
               </div>}
-              <div style={{ position:'absolute', left:graphFocus.x, top:graphFocus.y, width:900, height:520 }}>
+              <div style={{ position:'absolute', left:graphFocus.x, top:graphFocus.y, width:graphExtent, height:520, transform:`scale(${graphScale})`, transformOrigin:'top left' }}>
                 <svg style={{ position:'absolute', inset:0, width:'100%', height:'100%', overflow:'visible', pointerEvents:'none' }}>
                   {systemWires.map((wire, index) => {
                     const from = graphViews.get(wire.from?.[0]), to = graphViews.get(wire.to?.[0]);
@@ -9198,7 +9199,7 @@ const SettingsLoaded = ({ onClose, account, setAccount, onSignOut, initialTab = 
               </div>
             </div>
             <div style={{ display:'flex', gap:2, padding:'0 12px', borderBottom:`1px solid ${LM.line}` }}>
-              {['Chat', 'Properties'].map((tabName, index) => {
+              {['Properties'].map((tabName, index) => {
                 const active = tabName === 'Properties' && (activeCapability === 'Properties' || !!query.trim());
                 return <button key={tabName} type="button" disabled={tabName === 'Chat'} onClick={() => { if (tabName === 'Properties') { userSelection.current = {tab:initialTab, manual:true}; setActiveCapability('Properties'); } }}
                   style={{ height:32, display:'grid', placeItems:'center', padding:'0 10px', fontSize:13, fontFamily:LM.sans,
@@ -9213,9 +9214,6 @@ const SettingsLoaded = ({ onClose, account, setAccount, onSignOut, initialTab = 
             <div className="ah-scroll" style={{ overflow:'auto', minHeight:0 }}>{inspectorRows()}</div>
           </aside>
         </div>
-        <footer style={{ display:'flex', alignItems:'center', gap:14, padding:'0 12px', fontSize:11, color:LM.inkSoft, borderTop:`1px solid ${LM.lineSoft}` }}>
-          <span style={{ color:canOpenSystem ? LM.ok : LM.warn }}>{canOpenSystem ? '● Connected' : '○ OPEN'}</span><span>System graph</span><span>{systemNodes.length} projected nodes</span><span>{projectionRevision !== '' ? 'revision ' + projectionRevision : 'no admitted revision'}</span><span style={{ flex:1 }}/><span>{pickedModel()?.name || 'models unavailable'}</span>
-        </footer>
       </div>
     </div>
   );
@@ -9284,7 +9282,7 @@ const SystemMiniGraph = ({ graph }) => {
   </div>;
 };
 const SettingsMods = ({ compact=false }) => {
-  const [state, setState] = React.useState({installed:0, failed:0, rows:[]});
+  const [state, setState] = React.useState(null);
   const [toast, setToast] = React.useState('');
   const call = async body => {
     const api = window.ARCHHUB_MODS;
@@ -9313,7 +9311,9 @@ const SettingsMods = ({ compact=false }) => {
       setToast(error.message || String(error));
     }
   };
-  const rows = state.rows || [];
+  const rows = state?.rows || [];
+  if (typeof window.ARCHHUB_MODS !== 'function') return null;
+  if (!state) return <SettingsEmpty role={toast ? 'alert' : 'status'}>{toast || 'Reading installed mods…'}</SettingsEmpty>;
   return <section data-settings-mods style={{
     border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, background:LM.bgPanel,
     overflow:'hidden', color:LM.ink,
@@ -9713,7 +9713,7 @@ const SettingsTeam = ({ account, onAccount }) => {
   const name = String(account?.name || '') || (email ? email.split('@')[0] : '');
   return (
   <div>
-    <SHead title="Team" sub="One person owns the workspace and invites teammates by email. Firm brain access follows membership &#x2014; removing someone stops what they can read next, not what they already hold."/>
+    <SHead title="Team" sub="The signed-in workspace owner and their account settings."/>
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden', marginBottom:LM.sp.sm }}>
       {!signedIn && <div role="status" style={{ padding:'12px 14px', display:'flex', alignItems:'center', gap:10 }}>
         <span style={{ flex:1, minWidth:0, fontFamily:LM.sans, fontSize:LM.fs.bodySm.sz, lineHeight:LM.fs.bodySm.ln + 'px', color:LM.inkSoft }}>Sign in to see your team</span>
@@ -9730,7 +9730,7 @@ const SettingsTeam = ({ account, onAccount }) => {
     <div style={{ marginTop:LM.sp.md, padding:'10px 12px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.md }}>
       <div style={{ display:'flex', alignItems:'center', gap:10 }}>
         <div style={{ flex:1, minWidth:0, fontSize:12, color:LM.inkSoft, lineHeight:1.6 }}>
-          Members you invite will appear here.
+          Manage your account.
         </div>
         {signedIn && <button type="button" onClick={onAccount} style={{...smallBtn(), padding:'4px 10px'}}>Manage account</button>}
       </div>
@@ -9871,15 +9871,7 @@ const SettingsPermissions = ({ account, onTab, compact=false }) => {
           ariaLabel={row.actor + ' ' + col} disabled={!writable || busy === row.actor + col}/>
       </span>)}
     </div>)}
-    {!hasPermissionBackend && <div data-permission-unavailable="" role="status" style={{ display:'grid',
-      gridTemplateColumns:'minmax(0, 1fr) auto', gap:8, alignItems:'center', minHeight:32,
-      padding:'8px 12px', fontSize:12, color:LM.inkSoft, borderBottom:`1px solid ${LM.lineSoft}` }}>
-      <span>Per-agent permissions: not available yet</span>
-      <Settings54Seg value="Ask" disabled ariaLabel="Per-agent permissions not available"/>
-    </div>}
-    {hasPermissionBackend && !rows.length && !message && <div role="status" style={{ padding:'8px 12px', fontSize:12, color:LM.inkSoft }}>
-      Per-agent permissions: not available yet.
-    </div>}
+
   </div>
   );
 };
@@ -10635,10 +10627,6 @@ const SettingsTheme = () => {
   const state = usePersonalTheme(), api = window.ARCHHUB_EXISTING_WORKSHOP;
   const config = state?.configuration;
   const [accent, setAccent] = React.useState(() => LM.accent);
-  const [appearance, setAppearance] = React.useState(() => {
-    try { return JSON.parse(localStorage.getItem('archhub.appearance.v1') || '{}'); }
-    catch (_) { return {}; }
-  });
   const [dirty, setDirty] = React.useState(false);
   const [error, setError] = React.useState('');
   const [editAccent, setEditAccent] = React.useState(false);
@@ -10660,33 +10648,9 @@ const SettingsTheme = () => {
   const fieldStyle = {background:LM.bg, color:LM.ink, border:`1px solid ${LM.line}`,
     borderRadius:LM.rad.control, padding:`${LM.sp.xs}px ${LM.sp.md}px`, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz};
   const notLinked = 'Not linked to Personal Settings yet';
-  const family = stack => String(stack || '').split(',')[0].replace(/['"]/g, '').trim();
   const saved = config?.theme?.accent || LM.accent;
   const alert = error || state?.error || window.ARCHHUB_THEME_ERROR;
   const toggle = () => setEditAccent(!editAccent);
-  const applyAppearance = next => {
-    const merged = {...appearance, ...next};
-    setAppearance(merged);
-    localStorage.setItem('archhub.appearance.v1', JSON.stringify(merged));
-    document.documentElement.style.setProperty('--archhub-editor-font', merged.editorFont || family(LM.mono));
-    document.documentElement.style.setProperty('--archhub-display-font', merged.displayFont || family(LM.sans));
-    document.documentElement.style.setProperty('--archhub-density', merged.density || 'comfortable');
-  };
-  const fontOptions = [
-    ['JetBrains Mono', family(LM.mono)],
-    ['Inter', family(LM.sans)],
-    ['Architects Daughter', family(LM.arch)],
-  ];
-  const densityOptions = [['compact', 'Compact'], ['comfortable', 'Comfortable'], ['spacious', 'Spacious']];
-  const pickerRow = (label, value, children) => (
-    <div key={label} style={{ display:'grid', gridTemplateColumns:'minmax(0,1fr) 190px', alignItems:'center', gap:LM.sp.sm, padding:`${LM.sp.sm}px ${LM.sp.md}px`, background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md }}>
-      <div style={{ minWidth:0 }}>
-        <div style={{ fontSize:LM.fs.caption.sz }}>{label}</div>
-        <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', color:LM.inkSoft, marginTop:1 }}>{value} · saved in Personal Settings</div>
-      </div>
-      {children}
-    </div>
-  );
   return <div>
     <SHead title="Theme" sub="The themes this graph offers. A theme is listed only when it repaints every colour."/>
     {/* One display card per theme the graph offers (configuration.design_system.themes). */}
@@ -10753,21 +10717,6 @@ const SettingsTheme = () => {
           </div>}
         </div>}
       </div>
-      {pickerRow('Editor font', appearance.editorFont || family(LM.mono),
-        <select aria-label="Editor font" value={appearance.editorFont || family(LM.mono)}
-          onChange={e => applyAppearance({editorFont:e.target.value})} style={fieldStyle}>
-          {fontOptions.map(([label, value]) => <option key={value} value={value}>{label}</option>)}
-        </select>)}
-      {pickerRow('Display font', appearance.displayFont || family(LM.sans),
-        <select aria-label="Display font" value={appearance.displayFont || family(LM.sans)}
-          onChange={e => applyAppearance({displayFont:e.target.value})} style={fieldStyle}>
-          {fontOptions.map(([label, value]) => <option key={value} value={value}>{label}</option>)}
-        </select>)}
-      {pickerRow('Density', appearance.density || 'comfortable',
-        <select aria-label="Density" value={appearance.density || 'comfortable'}
-          onChange={e => applyAppearance({density:e.target.value})} style={fieldStyle}>
-          {densityOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-        </select>)}
     </div>
     {alert && <p role="alert" style={{fontSize:12, color:LM.warn}}>{alert}</p>}
   </div>;
@@ -10888,16 +10837,14 @@ const SettingsRetention = () => {
 };
 
 // Storage (design studio-lm.jsx:3039-3072). The session count is the graph index; nothing measures
-// sizes, a training queue or a model cache, so those tiles state no number.
+// sizes, a training queue or a model cache, so those unsupported tiles are omitted.
 const SettingsStorage = () => (
   <div>
-    <SHead title="Storage" sub="Sessions, training queue, cache. Everything is local first."/>
+    <SHead title="Storage" sub="Saved sessions and the folders that hold your data."/>
     <SettingsRetention/>
     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10, marginBottom:14 }}>
       {[
-        ['Sessions', String(LM_SESSIONS.length), 'size not measured'],
-        ['Training queue', '\u2014', 'not measured'],
-        ['Model cache', '\u2014', 'not measured'],
+        ['Sessions', String(LM_SESSIONS.length), 'saved graphs'],
       ].map(([k, n, sz]) => (
         <div key={k} style={{ padding:`${LM.sp.md}px ${LM.sp.lg}px`, background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.panel }}>
           <div style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, color:LM.inkSoft, letterSpacing:LM.fs.label.letter, fontWeight:LM.fs.label.wt }}>{k.toUpperCase()}</div>
@@ -10953,7 +10900,6 @@ const SettingsAbout = ({ providers, release }) => {
     <SHead title="About" sub="ArchHub Studio · the AEC stack with one foot in your model and one in the LLM."/>
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, padding:`${LM.sp.lg}px ${LM.sp.lg}px`, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', color:LM.inkSoft }}>
       <div><span style={{ color:LM.inkSoft }}>version    </span> {release?.current_build || 'reading\u2026'}</div>
-      <div><span style={{ color:LM.inkSoft }}>license    </span> {'\u2014'}</div>
       <div><span style={{ color:LM.inkSoft }}>server     </span> {window.location.host || window.location.origin} &#xb7; running</div>
       <div data-about-host-total={hosts.total}><span style={{ color:LM.inkSoft }}>hosts      </span> {hosts.read ? <>{hosts.total} configured &#xb7; {hosts.running} live</> : 'checking hosts'}</div>
       <div><span style={{ color:LM.inkSoft }}>providers  </span> {rows ? (answering.length ? answering.join(', ') : 'none connected') : providers?.error ? 'not read' : 'reading\u2026'}</div>

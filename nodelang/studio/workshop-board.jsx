@@ -111,7 +111,7 @@ const WorkshopBoardView = ({tasks, agents, selected, onSelect, onDecide, archive
 };
 
 const WorkshopAgentsView = ({agents}) => {
-  const rows = agents || [];
+  const rows = (agents || []).filter(agent => agent.verified === true && visibleName(agent.name));
   return h('section', {'aria-label':'Workshop agents list',
     style:{display:'flex', flexDirection:'column', gap:W.sp?.md || 12, minWidth:0}}, [
     ...rows.map(agent => h('article', {key:agent.id || agent.name,
@@ -125,13 +125,6 @@ const WorkshopAgentsView = ({agents}) => {
       h('div', {key:'doing', style:{fontFamily:W.mono, fontSize:16, lineHeight:1.35, color:W.inkSoft, overflowWrap:'anywhere'}},
         [presence(agent), agent.doing || agent.running || 'Nothing active', mayDo(agent) ? 'may: ' + mayDo(agent) : ''].filter(Boolean).join(' · ')),
     ])),
-    h('article', {key:'baboom', style:{background:W.bgPanel, borderWidth:1, borderStyle:'solid', borderColor:W.line, borderRadius:W.rad?.lg || 8,
-      padding:W.sp?.md || 12, display:'flex', gap:W.sp?.sm || 8, alignItems:'baseline'}}, [
-      h('span', {key:'dot', style:{width:10, height:10, borderRadius:W.rad?.pill || 999, background:W.cyan}}),
-      h('strong', {key:'n', style:{fontSize:18, fontWeight:700}}, 'BABOOM'),
-      h('span', {key:'kind', style:chipStyle}, 'companion'),
-      h('span', {key:'text', style:{fontFamily:W.mono, fontSize:16, color:W.inkSoft}}, 'listens: failed runs, stuck tasks, approvals · says at the next pause'),
-    ]),
     h('article', {key:'add', style:{background:W.bgSoft, borderWidth:1, borderStyle:'solid', borderColor:W.line, borderRadius:W.rad?.lg || 8,
       padding:W.sp?.md || 12, display:'grid', gap:W.sp?.xs || 4}}, [
       h('strong', {key:'h', style:{fontSize:18, fontWeight:700}}, 'Add an agent'),

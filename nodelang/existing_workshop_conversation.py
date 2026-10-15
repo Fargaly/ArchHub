@@ -269,6 +269,8 @@ def _workshop_participant_rows(owner, snapshot, space, connections):
                                          registry.authorization.protocol, root)
             row.update(connections[root])
             row["host"] = workshop_runtime_host(row.get("runtime"))
+            if row["host"]:
+                row["label"] = row["host"]
             if session.state_root != registry.agent_body.protocol.state("active"):
                 row["connection_status"] = "disconnected"
         rows.append(row)

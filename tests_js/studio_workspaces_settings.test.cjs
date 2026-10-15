@@ -115,7 +115,7 @@ test('Hosts renders not-built server rows separately and counts only built runni
     assert.equal(rows.length, 3);
     assert.ok(rows.some(row => row.textContent.includes('Civil 3D') && row.textContent.includes('no connector yet')));
     assert.ok(rows.some(row => row.textContent.includes('Navisworks') && row.textContent.includes('no connector yet')));
-    assert.match(ui.doc.querySelector('[data-connectors-bar]').textContent, /1 of 1 running .* 2 coming/);
+    assert.match(ui.doc.querySelector('[data-connectors-bar]').textContent, /1\/1 running .* 2 coming/);
   } finally { ui.close(); }
 });
 

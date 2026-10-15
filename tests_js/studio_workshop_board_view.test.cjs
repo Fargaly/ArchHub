@@ -188,7 +188,7 @@ test('WorkshopAgentsView renders local and cloud agents with presence and hides 
   assert.match(flat(closed), /Codex local verified 30 s ago .* Run validation .* may: read workspace/);
   assert.match(flat(closed), /Brain MCP cloud verified 12 s ago .* Nothing active .* may: read facts/);
   assert.doesNotMatch(closed, /app:agent-session:runtime:codex-a1/);
-  assert.match(flat(closed), /BABOOM companion listens: failed runs, stuck tasks, approvals/);
+  assert.doesNotMatch(flat(closed), /BABOOM companion listens: failed runs, stuck tasks, approvals/, 'no synthetic companion agent without live evidence');
   assert.match(flat(closed), /Add an agent/);
   assert.deepEqual(buttons(tree).map(button => button.label), []);
 });

@@ -16,7 +16,7 @@ function transport(options = {}) {
   let sequence = 0;
   const transcript = {graph_id:'graph-a', root:'room-a', scope_root:'scope-a', revision:4,
     owner:'owner-a', view:'view-a', self:'owner-a', can_send:true, can_join:false, messages:[],
-    participants:[{root:'owner-a', label:'Owner', attached:true}, {root:'agent-a', label:'Claude Code', attached:true}]};
+    participants:[{root:'owner-a', label:'Owner', attached:true}, {root:'agent-a', label:'Claude Code', attached:true, connected:true}]};
   const api = context.ArchHubExistingWorkshop.create({
     pendingStorage:{getItem:key => storage.get(key) || null, setItem:(key,value) => storage.set(key,value)},
     uuid:() => 'request-' + (++sequence), hash:async value => createHash('sha256').update(value).digest('hex'),

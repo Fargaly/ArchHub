@@ -275,10 +275,20 @@ function openHome(studio) {
   studio.click(home);
 }
 
-function openWorkshopFromHome(studio) {
-  openHome(studio);
-  const workshop = studio.doc.querySelector('[data-home-tools] [data-tool-card="workshop"]');
-  assert.ok(workshop, 'Home exposes Workshop tool card');
+function openWorkshopFromHub(studio) {
+  const settings = studio.doc.querySelector('[data-app-rail] [aria-label="Settings"]') || studio.byTitle('Settings');
+  assert.ok(settings, 'Settings rail control exists');
+  studio.click(settings);
+  const shell = studio.doc.querySelector('[data-settings54-shell]');
+  assert.ok(shell, 'Settings opens for Workshop Hub entry');
+  const group = [...shell.querySelectorAll('[data-settings54-group-title]')].find(node => node.textContent.trim() === 'Connections');
+  assert.ok(group, 'Connections owns Hub');
+  studio.click(group.closest('button'));
+  const hub = [...shell.querySelectorAll('[data-settings54-capability-nav] button')].find(node => node.textContent.trim() === 'Hub');
+  assert.ok(hub, 'Hub is visible under Connections');
+  studio.click(hub);
+  const workshop = shell.querySelector('[data-tool-card="workshop"]');
+  assert.ok(workshop, 'Hub exposes Workshop tool card');
   studio.click(workshop);
 }
 
@@ -507,9 +517,7 @@ test('Workshop tool wins over an earlier pending session open', async () => {
     await studio.settle();
     studio.click([...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Graph Beta')));
     await studio.settle();
-    const workshop = studio.doc.querySelector('[data-home-tools] [data-tool-card="workshop"]');
-    assert.ok(workshop, 'Home exposes Workshop tool card while graph-open is pending');
-    studio.click(workshop);
+    openWorkshopFromHub(studio);
     await studio.settle();
     assert.ok(studio.doc.querySelector('[data-workshop-s1]'), 'Workshop opens while graph-open is pending');
     openGate.resolve();
@@ -556,9 +564,7 @@ test('a stale rejected graph open cannot clear Workshop', async () => {
     await studio.settle();
     studio.click([...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Graph Beta')));
     await studio.settle();
-    const workshop = studio.doc.querySelector('[data-home-tools] [data-tool-card="workshop"]');
-    assert.ok(workshop, 'Home exposes Workshop tool card while graph-open is pending');
-    studio.click(workshop);
+    openWorkshopFromHub(studio);
     await studio.settle();
     assert.ok(studio.doc.querySelector('[data-workshop-s1]'), 'Workshop opens while graph-open is pending');
     openGate.reject(new Error('old graph refused'));
@@ -790,7 +796,7 @@ test('ordinary conversation-bound nodes open Properties first while keeping a Ch
   } finally { studio.close(); }
 });
 
-test('Studio header has no Chat Workshop System tabs, selection resets per session, and Home Workshop card still opens', async () => {
+test('Studio header has no Chat Workshop System tabs, selection resets per session, and Hub Workshop card still opens', async () => {
   const studio = await mountStudio({workshops:[{root:'room-a', label:'Wall room', is_general:false}]});
   try {
     await studio.settle();
@@ -813,9 +819,9 @@ test('Studio header has no Chat Workshop System tabs, selection resets per sessi
     const panelText = studio.doc.querySelector('aside[aria-label="Selection inspector"]').textContent;
     assert.match(panelText, /GRAPH|Graph Beta/);
     assert.equal(/Alpha node/.test(panelText), false, 'node selection from Graph Alpha did not leak into Graph Beta');
-    openWorkshopFromHome(studio);
+    openWorkshopFromHub(studio);
     await studio.settle();
-    assert.match(studio.doc.body.textContent, /Workshop|Wall room/, 'Home Workshop card path still opens');
+    assert.match(studio.doc.body.textContent, /Workshop|Wall room/, 'Hub Workshop card path still opens');
   } finally { studio.close(); }
 });
 
@@ -823,7 +829,7 @@ test('leaving Workshop through Studio, session reopen, or New session restores c
   const studio = await mountStudio({workshops:[{root:'room-a', label:'Wall room', is_general:false}]});
   try {
     await studio.settle();
-    openWorkshopFromHome(studio);
+    openWorkshopFromHub(studio);
     await studio.settle();
     assert.ok(studio.doc.querySelector('[data-workshop-s1]'), 'Workshop is open');
 
@@ -832,7 +838,7 @@ test('leaving Workshop through Studio, session reopen, or New session restores c
     await studio.settle();
     assertCanvasSelectionOnly(studio, 'same session reopen from Workshop');
 
-    openWorkshopFromHome(studio);
+    openWorkshopFromHub(studio);
     await studio.settle();
     const canvasRoute = studio.doc.querySelector('[data-workshop72-rail] [role="link"][aria-label="Canvas"]');
     assert.ok(canvasRoute, 'Workshop exposes its Canvas navigation route');

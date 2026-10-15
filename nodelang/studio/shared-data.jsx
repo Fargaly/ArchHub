@@ -690,7 +690,7 @@ window.ARCHHUB_APP_RAIL = ({active = 'Home', waiting = 0, account = {}, workshop
   </button>;
   return <nav data-app-rail="" data-workshop72-rail={workshop ? '' : undefined} aria-label="Main navigation"
     style={{width:compact ? 44 : 64,boxSizing:'border-box',background:W.bg,borderRight:`1px solid ${W.lineSoft}`,display:'grid',gridTemplateRows:'auto 1fr auto',paddingTop:compact ? 6 : 12,justifyItems:'center',gridColumn:'1',gridRow:workshop && !persistent ? undefined : '1 / span 2'}}>
-    <div style={{display:'grid',gap:4}}>{[['⌂','Home'],['◌','Chats'],['◎','Workshop'],['⬡','Canvas'],['▦','Library'],['?','Docs'],['◫','Cockpit']].map(([g,l])=>item(g,l))}</div><span/>
+    <div style={{display:'grid',gap:4}}>{[['⌂','Home'],['◌','Chats'],['◎','Workshop'],['⬡','Canvas'],['▦','Library'],['?','Docs']].map(([g,l])=>item(g,l))}</div><span/>
     <div style={{paddingBottom:10,display:'grid',gap:4,justifyItems:'center'}}>{item('⚙','Settings')}
       <button type="button" data-workshop-account-avatar={workshop ? '' : undefined} aria-label="Account" title={account.email || 'Account'} onClick={()=>onNavigate?.('Account')}
         style={{width:32,height:32,padding:0,border:0,borderRadius:'50%',background:account.colour||account.color||account.avatar_color||W.userAv,color:W.onUserAv,display:'grid',placeItems:'center',fontFamily:W.sans,fontSize:12,fontWeight:700,cursor:'pointer'}}>{initials}</button>

@@ -509,6 +509,10 @@ test('graph composer preselects the free router with its friendly name', async (
     studio.flush(() => rail(studio.doc, 'Workshop').click());
     await studio.settle(() => studio.doc.querySelector('[data-workshop72-rail]'), 'Workshop opens');
     studio.flush(() => studio.doc.querySelector('[data-workshop72-rail] [aria-label="Settings"]').click());
+    await studio.settle(() => studio.doc.querySelector('[data-settings54-nav]'), 'Settings navigation is visible');
+    const system = [...studio.doc.querySelectorAll('[data-settings54-capability-nav] button')].find(node => node.textContent.trim() === 'System');
+    assert.ok(system, 'System section is visibly reachable from Settings');
+    studio.flush(() => system.click());
     await studio.settle(() => button(studio.doc, 'Open the System graph'), 'Settings System action is visible');
     assert.equal(button(studio.doc, 'Open the System graph').disabled, false);
     studio.flush(() => button(studio.doc, 'Open the System graph').click());

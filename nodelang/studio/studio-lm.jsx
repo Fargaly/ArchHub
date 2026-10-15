@@ -147,7 +147,7 @@ const Search = ({ ph, children }) => (
     <span>⌕</span>{children || <span>{ph}</span>}<span style={{ flex:1 }}/><span style={{ fontSize:11 }}>Ctrl K</span>
   </div>
 );
-const Frame = ({ rail, left, top, children, insp, status, onHome, onPanel, onSettings, onWorkshop, onCanvas, onChats, onDocs, onCockpit, account, workshopWindow = false }) => {
+const Frame = ({ rail, left, top, children, insp, status, onHome, onPanel, onSettings, onWorkshop, onCanvas, onChats, onDocs, account, workshopWindow = false }) => {
   const AppRail = window.ARCHHUB_APP_RAIL;
   const waiting = workshopWaitingItems(useWorkshopProjection()).length;
   const hasLeft = !!left;
@@ -162,7 +162,7 @@ const Frame = ({ rail, left, top, children, insp, status, onHome, onPanel, onSet
       overflow:'hidden', position:'relative',
     }}>
       <AppRail persistent workshop={workshopWindow} active={rail || 'Home'} waiting={waiting} account={account} onNavigate={name => {
-        const route = {Home:onHome, Chats:onChats, Workshop:onWorkshop, Canvas:onCanvas, Library:() => onPanel?.('nodes'), Docs:onDocs, Cockpit:onCockpit, Settings:onSettings, Account:onSettings}[name];
+        const route = {Home:onHome, Chats:onChats, Workshop:onWorkshop, Canvas:onCanvas, Library:() => onPanel?.('nodes'), Docs:onDocs, Settings:onSettings, Account:onSettings}[name];
         route?.();
       }}/>
 
@@ -1416,7 +1416,7 @@ const StudioLM = () => {
       rail={frameRail} onHome={goHome} onPanel={value => { setSettingsOpen(false); setDocsOpen(false); setLibraryOpen(false); setPanel(value); }}
       onSettings={() => openSettings(true)} account={account}
       onChats={() => { goHome(); setPanel('chats'); }}
-      onDocs={() => openDocs(true)} onCockpit={() => { setSettingsOpen(false); setDocsOpen(false); setPanel(null); openTool('cockpit'); }}
+      onDocs={() => openDocs(true)}
       onWorkshop={() => { setSettingsOpen(false); setDocsOpen(false); setLibraryOpen(false); setPanel(null); openTool('workshop', {window:true}); }}
       onCanvas={() => { setPanel(null); setSettingsOpen(false); setDocsOpen(false); openTool('studio'); }}
       left={panel && !workshopContext ? <Sidebar
@@ -1905,10 +1905,6 @@ const toolLiveness = tool => {
   if (tool?.state === 'starting' || /STARTING|CHECKING|UNKNOWN|WAITING/.test(word)) return 'pending';
   return 'live';
 };
-const toolCounts = rows => ({
-  live:rows.filter(tool => toolLiveness(tool) === 'live').length,
-  pending:rows.filter(tool => toolLiveness(tool) === 'pending').length,
-});
 const toolStateWord = state => ({
   running:'RUNNING', starting:'STARTING', off:'OFF', failed:"DIDN'T START", not_installed:'NOT INSTALLED',
   didnt_start:"DIDN'T START",
@@ -2712,10 +2708,6 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null,
   const homeMounted = React.useRef(true);
   const hub = useToolHubProjection();
   const waitingItems = Array.isArray(hub?.waiting) ? hub.waiting : [];
-  // Founder 2026-10-12 (H1): the six tool cards sit on Home AND in Settings > Hub, drawn by the one SettingsHub.
-  const homePersonal = usePersonalTheme();
-  const toolRows = toolRowsFromOwners({workshopState, account, personal:homePersonal, hub});
-  const toolsLive = toolCounts(toolRows);
   const blocked = !native ? routeReadiness(modelRoute(model), readiness, model?.pending === true) : null;
   const offers = new Set((blocked && blocked.actions) || []);
   React.useEffect(() => {homeMounted.current = true; return () => {homeMounted.current = false;};}, []);
@@ -2902,15 +2894,6 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null,
       {startError && <p role="alert" style={{color:LM.warn,marginBottom:0}}>{startError}</p>}
       {attachmentError && <p role="alert" style={{color:LM.warn,marginBottom:0}}>{attachmentError}</p>}
     </form>
-    {toolRows.length > 0 && <section aria-label="Tools" data-home-tools style={{ margin:'0 0 22px' }}>
-      <div style={{ display:'flex', alignItems:'baseline', gap:10, marginBottom:14 }}>
-        <h2 style={{ fontFamily:LM.serif, fontSize:26, fontWeight:400, letterSpacing:'-0.015em', margin:0 }}>Tools</h2>
-        <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.14em' }}>
-          {toolsLive.live}/{toolRows.length} RUNNING{toolsLive.pending ? ` · ${toolsLive.pending} STARTING` : ''} · EACH WORKS ON ITS OWN
-        </span>
-      </div>
-      <SettingsHub toolRows={toolRows} onOpenTool={onOpenTool} onOpenToolGraph={onOpenToolGraph} columns={3}/>
-    </section>}
     <section aria-label="Waiting" style={{ margin:'0 0 18px' }}>
       <WaitingButton variant="home" items={waitingItems} onOpenTask={item => onOpenTool && onOpenTool(
         item.producer === 'workshop_gate' ? 'workshop' : item.producer === 'social_approve' ? 'cloud' : 'workshop',
@@ -8943,7 +8926,7 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
   React.useEffect(() => {
     const capabilityMap = {hub:'Hub', hosts:'Hosts', providers:'Providers', connections:'Connections', account:'Account', profile:'Profile', team:'Team',
       memory:'Brain', brain:'Brain', baboom:'BABOOM', models:'Models', permissions:'Permissions', workspaces:'Workspaces',
-      theme:'Theme', shortcuts:'Shortcuts', storage:'Storage', about:'About', system:'Properties'};
+      theme:'Theme', shortcuts:'Shortcuts', storage:'Storage', about:'About', system:'System'};
     if (userSelection.current.tab !== initialTab) userSelection.current = {tab:initialTab, manual:false};
     if (initialTab && !userSelection.current.manual) {
       const group = groupFromTab(initialTab);
@@ -9151,8 +9134,8 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
                       <span style={{ display:'block', fontSize:11, color:LM.inkSoft, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{settings54GroupSub(group)}</span>
                     </span>
                   </button>
-                  {active && <div data-settings54-capability-nav={group.id} style={{ display:'flex', flexWrap:'wrap', gap:4, padding:'0 4px 4px 34px' }}>
-                    {group.items.map(item => <React.Fragment key={item}>
+                  {(active || group.id === 'appearance') && <div data-settings54-capability-nav={group.id} style={{ display:'flex', flexWrap:'wrap', gap:4, padding:'0 4px 4px 34px' }}>
+                    {(active ? group.items : []).map(item => <React.Fragment key={item}>
                       <button type="button" onClick={() => chooseCapability(group, item)}
                         style={settings54Button(activeCapability === item, {height:22, padding:'0 7px', fontSize:11, maxWidth:'100%'})}>{item}</button>
                       {item === 'Hosts' && <span data-settings-host-total={hostTally().total} style={{fontSize:11, color:LM.inkSoft, alignSelf:'center'}}>

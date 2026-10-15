@@ -159,17 +159,18 @@ test('desktop HTML: cold rail Skills completes its real admitted HTTP read', {sk
   } finally {ui.close();}
 });
 
-test('desktop HTML: Home, status, Hosts and About share the admitted host total', {skip:!process.env.LAZYBOOT_HTTP_URL}, async () => {
+test('desktop HTML: Hub, status, Hosts and About share the admitted host total', {skip:!process.env.LAZYBOOT_HTTP_URL}, async () => {
   const ui = await mountDesktop();
   try {
     const hosts = report.hosts.connectors.filter(row => !!row.drive);
     const ratio = hosts.filter(row => ['connected', 'listening'].includes(row.state)).length + '/' + hosts.length;
-    await ui.wait(() => ui.doc.querySelector('[data-tool-card="connectors"]')?.textContent.includes(ratio + ' hosts running'), 'desktop Home uses admitted hosts');
-    assert.ok(ui.doc.body.textContent.includes(ratio + ' hosts'), 'desktop status agrees');
     ui.click(ui.doc.querySelector('button[title="Settings"]'));
     const dialog = () => ui.doc.querySelector('[role="dialog"][aria-label="Settings"]');
     await ui.wait(() => dialog()?.querySelector('[data-settings54-nav]'), 'real deferred settings opens');
     const nav = settingsNav(ui);
+    await nav.tab('Hub');
+    assert.ok(ui.doc.body.textContent.includes(ratio + ' hosts'), 'desktop shared host state is visible');
+    await ui.wait(() => ui.doc.querySelector('[data-tool-card="connectors"]')?.textContent.includes(ratio + ' hosts running'), 'desktop Hub uses admitted hosts');
     const tab = name => nav.capability(name);
     const hostsTab = await tab('Hosts');
     await ui.wait(() => dialog()?.querySelector('[data-settings-host-total]')?.textContent.includes(ratio + ' running'), 'desktop Settings badge agrees');
@@ -376,7 +377,7 @@ test('cold graph panel rereads its durable message after leaving, reopening, and
   } finally {ui.close();}
 });
 
-test('cold host read gives Home, footer, Settings badge, Hosts, and About one total', async () => {
+test('cold host read gives Hub, footer, Settings badge, Hosts, and About one total', async () => {
   const ui = await mount();
   try {
     const hosts = report.hosts.connectors.filter(row => Object.hasOwn(row, 'drive')
@@ -387,15 +388,16 @@ test('cold host read gives Home, footer, Settings badge, Hosts, and About one to
     }
     const running = hosts.filter(row => row.state === 'connected' || row.state === 'listening').length;
     const ratio = running + '/' + hosts.length;
-    await ui.wait(() => ui.doc.body.textContent.includes(ratio + ' hosts'), 'footer gets the actual host read');
-    await ui.wait(() => ui.doc.querySelector('[data-tool-card="connectors"]'), 'Home gets its Connectors card');
-    assert.ok(ui.doc.querySelector('[data-tool-card="connectors"]').textContent.includes(ratio + ' hosts running'), 'Home uses the shared host tally');
     ui.click(ui.doc.querySelector('button[title="Settings"]'));
     await ui.wait(() => ui.doc.querySelector('[role="dialog"][aria-label="Settings"]'), 'Settings opens after its deferred canvas read');
     await ui.settle(); // hydrate the theme/initial-tab effects before the next gesture
     const dialog = () => ui.doc.querySelector('[role="dialog"][aria-label="Settings"]');
     assert.ok(!!dialog(), 'Settings opens');
     const nav = settingsNav(ui);
+    await nav.tab('Hub');
+    await ui.wait(() => ui.doc.body.textContent.includes(ratio + ' hosts'), 'Hub gets the actual host read');
+    await ui.wait(() => ui.doc.querySelector('[data-tool-card="connectors"]'), 'Hub gets its Connectors card');
+    assert.ok(ui.doc.querySelector('[data-tool-card="connectors"]').textContent.includes(ratio + ' hosts running'), 'Hub uses the shared host tally');
     const hostsTab = await nav.capability('Hosts');
     assert.ok(dialog().querySelector('[data-settings-host-total]').textContent.includes(ratio + ' running'), 'Settings badge agrees with Home and footer');
     ui.click(hostsTab);

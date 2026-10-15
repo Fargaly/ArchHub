@@ -157,18 +157,22 @@ test('status bar: the design strip with live values; the model slot is the picke
   } finally { picked.close(); }
 });
 
-test('icon rail: tools are Home cards, Workshop opens there, and no dead Share control', async () => {
+test('icon rail: tool cards live in Settings Hub, Workshop opens there, and no dead Share control', async () => {
   const studio = await mountStudio();
   try {
     const rail = studio.doc.querySelector('[data-app-frame] nav');
     const buttons = [...rail.querySelectorAll('button')];
     assert.deepEqual(buttons.map(button => button.title.split(' \u00b7 ')[0]),
-      ['All sessions', 'Chats', 'Library', 'Docs', 'Settings', 'Account'],
-      'the rail draws the DSYS-060 controls; tools are not rail entries');
+      ['All sessions', 'Chats', 'Workshop', 'Canvas', 'Library', 'Docs', 'Settings', 'Account'],
+      'the rail draws its real destinations without an empty Cockpit entry');
     studio.flush(() => studio.doc.querySelector('[title="All sessions"]').click());
-    studio.flush(() => studio.doc.querySelector('[data-home-tools] [data-tool-card="workshop"]').click());
-    assert.equal(studio.doc.querySelector('textarea[aria-label="Start a new session"]'), null, 'opening Workshop from its Home card leaves Home');
-    studio.flush(() => studio.doc.querySelector('[data-workshop72-rail] [role="link"][aria-label="Home"]').click());
+    studio.flush(() => studio.doc.querySelector('[data-rail-panel="Settings"]').click());
+    await studio.settle(() => studio.doc.querySelector('[data-settings54-shell]'), 'Settings shell opens');
+    const hub = await settingsNavigator({doc:studio.doc, flush:studio.flush,
+      settle:async () => { await new Promise(resolve => studio.win.setTimeout(resolve, 20)); }}).tab('Hub');
+    studio.flush(() => hub.querySelector('[data-tool-card="workshop"]').click());
+    assert.equal(studio.doc.querySelector('textarea[aria-label="Start a new session"]'), null, 'opening Workshop from its Settings Hub card leaves Home');
+    studio.flush(() => studio.doc.querySelector('[data-rail-home]').click());
     assert.ok(studio.doc.querySelector('textarea[aria-label="Start a new session"]'), 'All sessions opens Home, where a session starts');
     const liveButtons = [...studio.doc.querySelector('[data-app-frame] nav').querySelectorAll('button')];
     const dead = liveButtons.filter(button => !button.disabled && typeof reactProps(button).onClick !== 'function').map(button => button.title);

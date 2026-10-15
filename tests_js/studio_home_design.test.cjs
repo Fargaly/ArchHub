@@ -121,8 +121,10 @@ async function mountStudio(options = {}) {
 async function openSettingsHub(studio) {
   const settings = studio.doc.querySelector('[title="Settings"]');
   assert.ok(settings, 'actual Studio Settings control exists');
-  studio.win.ReactDOM.flushSync(() => settings.click());
-  await studio.settle();
+  if (!studio.doc.querySelector('[data-settings54-shell]')) {
+    studio.win.ReactDOM.flushSync(() => settings.click());
+    await studio.settle();
+  }
   const nav = settingsNavigator({doc:studio.doc, flush:action => studio.win.ReactDOM.flushSync(action), settle:studio.settle});
   const panel = await nav.tab('Hub');
   assert.equal(panel.querySelectorAll('[data-tool-card]').length, 6, 'Settings Hub has the six tool cards');
@@ -143,7 +145,7 @@ test('Home composer shows the four design chip buttons and no raw model route ch
   } finally { studio.close(); }
 });
 
-test('F2/H1: Home shows the six hub tool cards, the same cards Settings Hub draws, and hides waiting at zero', async () => {
+test('F2/H1: Settings Connections Hub alone shows six tool cards and Home hides waiting at zero', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
@@ -152,50 +154,38 @@ test('F2/H1: Home shows the six hub tool cards, the same cards Settings Hub draw
     assert.equal([...studio.doc.querySelectorAll('[data-tool-rail]')]
       .some(node => ['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud'].includes(node.getAttribute('data-tool-rail'))),
       false, 'tools are not icon-rail entries');
-    // Founder 2026-10-12 (H1): tool cards on BOTH Home and Settings > Hub, one component (gate row K expects 6 on Home).
-    const home = studio.doc.querySelector('[data-home-tools]');
-    assert.ok(home, 'Home has its Tools section');
-    assert.deepEqual([...home.querySelectorAll('[data-tool-card]')].map(card => card.getAttribute('data-tool-card')),
-      ['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud'], 'Home has the six tool cards');
-    // The count is what the cards say (Ping F6a): a NOT RUNNING / NOT SIGNED IN / OFF card is not running.
-    const words = [...home.querySelectorAll('[data-tool-card]')].map(card => card.querySelector('[data-tool-dot]').nextElementSibling.textContent.trim().toUpperCase());
-    const live = words.filter(word => !/^(OFF|NOT\b|DIDN'T|FAILED|STOPPED|DISCONNECTED)/.test(word) && !/STARTING|CHECKING|UNKNOWN|WAITING/.test(word)).length;
-    const pending = words.filter(word => /STARTING|CHECKING|UNKNOWN|WAITING/.test(word)).length;
-    const header = home.querySelector('h2').parentElement.textContent;
-    assert.match(header, new RegExp('^Tools' + live + '/6 RUNNING' + (pending ? ' · ' + pending + ' STARTING' : '') + ' · EACH WORKS ON ITS OWN$'),
-      'the header count equals the cards that say they run: ' + words.join(', ') + ' -> ' + header);
-    for (const card of home.querySelectorAll('[data-tool-card]')) {
+    assert.equal(studio.doc.querySelector('[data-home-tools]'), null, 'Home has no duplicate Tools section');
+    assert.equal(studio.doc.body.textContent.includes('Waiting for you'), false);
+    const hub = await openSettingsHub(studio);
+    assert.deepEqual([...hub.querySelectorAll('[data-tool-card]')].map(card => card.getAttribute('data-tool-card')),
+      ['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud'], 'Hub has the six tool cards');
+    assert.equal(studio.doc.querySelectorAll('[data-tool-card]').length, 6, 'only Hub mounts the cards');
+    for (const card of hub.querySelectorAll('[data-tool-card]')) {
       assert.ok(card.querySelector('[data-tool-description]') && card.querySelector('[data-tool-stat]') && card.querySelector('[data-tool-open]'),
         card.getAttribute('data-tool-card') + ' card has the same rows: description, one stat line, the open mark');
       assert.equal(card.getAttribute('tabindex'), '0', 'the card is the keyboard-focusable open control');
       assert.match(card.getAttribute('aria-label'), /^Open /, 'the card has an accessible open name');
     }
-    const homeStudio = home.querySelector('[data-tool-card="studio"]').textContent;
-    assert.equal(home.querySelector('[data-tool-grid]').style.gridTemplateColumns, 'repeat(3, minmax(0, 1fr))',
-      'Home draws the design 3 x 2 grid, never 5 + 1');
-    for (const card of home.querySelectorAll('[data-tool-card]')) {
+    assert.equal(hub.querySelector('[data-tool-grid]').style.gridTemplateColumns, 'repeat(3, minmax(0, 1fr))',
+      'Hub uses the shared three-column card grid');
+    for (const card of hub.querySelectorAll('[data-tool-card]')) {
       assert.equal(card.style.flex.split(' ')[0], '1', 'each card fills its grid cell, so a row is one even height');
       assert.equal(card.parentElement.style.display, 'flex', 'the cell lets the card stretch');
     }
     for (const id of ['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud']) {
-      assert.ok(home.querySelector(`[data-tool-card="${id}"]`), id + ' Home tool card exists');
+      assert.ok(hub.querySelector(`[data-tool-card="${id}"]`), id + ' Hub tool card exists');
     }
     assert.equal(studio.doc.body.textContent.includes('Waiting for you'), false);
-    const hub = await openSettingsHub(studio);
-    for (const id of ['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud']) {
-      assert.ok(hub.querySelector(`[data-tool-card="${id}"]`), id + ' card exists in Settings Hub');
-    }
     assert.match(hub.querySelector('[data-tool-card="studio"]').textContent, /StudioCanvas, chats and graph sessions\.\s*3 sessions · 0 running/);
-    assert.equal(hub.querySelector('[data-tool-card="studio"]').textContent, homeStudio, 'Home and Hub draw the same card');
   } finally { studio.close(); }
 });
 
-test('F1b: Home and Hub tool cards match order, state words, and 6px dot colours', async () => {
+test('F1b: Hub tool cards keep order, state words, and 6px dot colours', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
-    const home = studio.doc.querySelector('[data-home-tools]');
-    const tools = [...home.querySelectorAll('[data-tool-card]')];
+    const hub = await openSettingsHub(studio);
+    const tools = [...hub.querySelectorAll('[data-tool-card]')];
     assert.deepEqual(tools.map(node => node.getAttribute('data-tool-card')),
       ['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud']);
     assert.deepEqual(tools.map(node => node.querySelector('[data-tool-dot]').nextElementSibling.textContent.trim()), [
@@ -220,13 +210,7 @@ test('F1b: Home and Hub tool cards match order, state words, and 6px dot colours
       assert.equal(dot.style.height, '6px', button.getAttribute('data-tool-card') + ' dot is 6px');
       assert.equal(dot.style.background, expected[button.getAttribute('data-tool-card')]);
     }
-    const hub = await openSettingsHub(studio);
-    for (const button of tools) {
-      const id = button.getAttribute('data-tool-card');
-      const homeDot = button.querySelector('[data-tool-dot]');
-      const cardDot = hub.querySelector(`[data-tool-card="${id}"] [data-tool-dot]`);
-      assert.equal(cardDot.style.background, homeDot.style.background, id + ' Home dot equals Hub card dot');
-    }
+    assert.equal(studio.doc.querySelectorAll('[data-tool-card]').length, 6, 'the Hub has no duplicate card owner');
   } finally { studio.close(); }
 });
 
@@ -234,7 +218,8 @@ test('F2/CP1: clicking an off tool opens its Settings > Hub card over the curren
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
-    studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-home-tools] [data-tool-card="brain"]').click());
+    const hubPanel = await openSettingsHub(studio);
+    studio.win.ReactDOM.flushSync(() => hubPanel.querySelector('[data-tool-card="brain"]').click());
     await studio.settle();
     assert.equal(studio.doc.querySelector('[data-tool-view]'), null, 'no full-window tool page');
     const nav = settingsNavigator({doc:studio.doc, flush:action => studio.win.ReactDOM.flushSync(action), settle:studio.settle});
@@ -246,12 +231,13 @@ test('F2/CP1: clicking an off tool opens its Settings > Hub card over the curren
   } finally { studio.close(); }
 });
 
-test('CP1: an off Home tool card keeps the screen under it, so its composer stays mounted', async () => {
+test('CP1: an off Hub tool card keeps the screen under it, so its composer stays mounted', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
     assert.ok(studio.doc.querySelector('textarea[aria-label="Start a new session"]'), 'Home composer before');
-    studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-home-tools] [data-tool-card="brain"]').click());
+    const hubPanel = await openSettingsHub(studio);
+    studio.win.ReactDOM.flushSync(() => hubPanel.querySelector('[data-tool-card="brain"]').click());
     await studio.settle();
     assert.ok(studio.doc.querySelector('textarea[aria-label="Start a new session"]'), 'Home composer still mounted under Settings');
     assert.equal(studio.doc.querySelector('main[data-tool-view]'), null, 'no page replaced the screen');
@@ -259,11 +245,12 @@ test('CP1: an off Home tool card keeps the screen under it, so its composer stay
   } finally { studio.close(); }
 });
 
-test('F1b: right-click on an on Hub/Home tool card shows a six second in-panel off confirm', async () => {
+test('F1b: right-click on an on Hub tool card shows a six second in-panel off confirm', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
-    const baboom = studio.doc.querySelector('[data-home-tools] [data-tool-card="baboom"]').parentElement;
+    const hub = await openSettingsHub(studio);
+    const baboom = hub.querySelector('[data-tool-card="baboom"]').parentElement;
     studio.win.ReactDOM.flushSync(() => baboom.dispatchEvent(new studio.win.MouseEvent('contextmenu', {bubbles:true, cancelable:true})));
     await studio.settle();
     assert.match(studio.doc.body.textContent, /Switch BABOOM off\? Tools asking it will see 'BABOOM is off'\. \u00b7 Yes \u00b7 No/);
@@ -282,8 +269,9 @@ test('F6a: host count stays in Connectors and Hosts badge; the status strip name
     {id:'rh8', name:'Rhino 8', state:'off'}, {id:'xl', name:'Excel', state:'installed'}]});
   try {
     await studio.settle(); await studio.settle();
-    const card = studio.doc.querySelector('[data-home-tools] [data-tool-card="connectors"]');
-    assert.ok(card, 'Home draws the Connectors card');
+    const hubPanel = await openSettingsHub(studio);
+    const card = hubPanel.querySelector('[data-tool-card="connectors"]');
+    assert.ok(card, 'Hub draws the Connectors card');
     assert.match(card.querySelector('[data-tool-stat]').textContent, /^2\/4 hosts running\.$/, 'card: 2 of the 4 listed hosts run');
     assert.match(studio.doc.body.textContent, /●\s*Connected.*Revit 2025/, 'status bar: connected program, not server tally');
     assert.equal(/server\s*:|2\/4 hosts|0\/0/.test(studio.doc.querySelector('footer')?.textContent || ''), false,
@@ -306,7 +294,8 @@ test('F6a v3: the mounted Studio reads the Hosts list; status never shows 0/0', 
   try {
     await studio.settle();
     const strip = () => studio.doc.querySelector('footer')?.textContent || '';
-    const card = () => studio.doc.querySelector('[data-home-tools] [data-tool-card="connectors"] [data-tool-stat]')?.textContent;
+    const hubPanel = await openSettingsHub(studio);
+    const card = () => hubPanel.querySelector('[data-tool-card="connectors"] [data-tool-stat]')?.textContent;
     assert.match(strip(), /Checking programs/, 'before the list is read the strip says so, never 0/0: ' + strip());
     assert.equal(/0\/0|server\s*:/.test(strip()), false, 'before read the strip has no zero/server tally: ' + strip());
     assert.equal(card(), 'Checking hosts.', 'before the list is read the card says so, never another number');
@@ -329,7 +318,9 @@ test('F6a: each tool dot follows its word: green only when the card says it runs
   try {
     await studio.settle(); await studio.settle();
     const green = new studio.win.Option().style; green.color = '#2fb86a';
-    for (const card of studio.doc.querySelectorAll('[data-home-tools] [data-tool-card]')) {
+    const hub = await openSettingsHub(studio);
+    assert.equal(hub.querySelectorAll('[data-tool-card]').length, 6, 'all six dots are checked');
+    for (const card of hub.querySelectorAll('[data-tool-card]')) {
       const dot = card.querySelector('[data-tool-dot]');
       const word = dot.nextElementSibling.textContent.trim().toUpperCase();
       const down = /^(OFF|NOT\b|DIDN'T|FAILED|STOPPED|DISCONNECTED)/.test(word);
@@ -340,7 +331,7 @@ test('F6a: each tool dot follows its word: green only when the card says it runs
   } finally { studio.close(); }
 });
 
-test('F1: Settings Hub card click opens that tool\'s Settings tab; Studio Home card opens Canvas', async () => {
+test('F1: Settings Hub card click opens that tool\'s Settings tab; Studio Hub card opens Canvas', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
@@ -355,7 +346,8 @@ test('F1: Settings Hub card click opens that tool\'s Settings tab; Studio Home c
     assert.ok(hosts, 'Connectors opens the Settings-owned Hosts behavior');
     assert.match((await nav.tab('Hosts')).textContent, /Local clients|Revit|AutoCAD|Hosts/i, 'Hosts behavior panel is shown');
     studio.win.ReactDOM.flushSync(() => studio.win.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Escape', bubbles:true})));
-    studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-home-tools] [data-tool-card="studio"]').click());
+    const studioHub = await openSettingsHub(studio);
+    studio.win.ReactDOM.flushSync(() => studioHub.querySelector('[data-tool-card="studio"]').click());
     await studio.settle();
     assert.ok(studio.doc.querySelector('[role="region"][aria-label="Workflow canvas"]'), 'Studio card opens the Studio canvas');
   } finally { studio.close(); }

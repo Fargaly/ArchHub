@@ -129,7 +129,7 @@ async function mountStudioWithToolHubPoller(mountOptions = {}) {
   win.eval('window.__studioRoot=ReactDOM.createRoot(document.getElementById("root")); ReactDOM.flushSync(()=>window.__studioRoot.render(React.createElement(StudioLM)));');
   const settle = async () => { await new Promise(resolve => setTimeout(resolve, 25)); for (let i = 0; i < 6; i += 1) await Promise.resolve(); };
   await settle();
-  const home = [...win.document.querySelectorAll('button')].find(node => node.textContent.trim() === '+');
+  const home = win.document.querySelector('[data-rail-home]');
   assert.ok(home, 'Home button exists');
   win.ReactDOM.flushSync(() => home.click());
   await settle();
@@ -169,7 +169,7 @@ test('tool hub polls carry the stored Studio session headers the server checks',
   } finally { studio.close(); }
 });
 
-test('tool hub poller shares one idle 5s cadence across Home, Settings Hub and the rail', async () => {
+test('tool hub poller shares one idle 5s cadence across Settings Hub and the rail', async () => {
   const studio = await mountStudioWithToolHubPoller();
   try {
     await studio.clock.advance(60000);

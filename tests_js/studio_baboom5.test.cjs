@@ -26,12 +26,14 @@ test('BABOOM5 one shared rail opens Chats and every destination from the mounted
       onDocs:()=>calls.push('Docs'),onCockpit:()=>calls.push('Cockpit'),onCanvas:()=>calls.push('Canvas'),onPanel:name=>calls.push(name),onSettings:()=>calls.push('Settings'),account:{},
     })));
     assert.equal(dom.window.document.querySelectorAll('[data-app-rail]').length,1);
-    for(const name of ['Home','Chats','Workshop','Canvas','Library','Docs','Cockpit','Settings','Account']) {
+    for(const name of ['Home','Chats','Workshop','Canvas','Library','Docs','Settings','Account']) {
       const button=dom.window.document.querySelector(`[aria-label="${name}"]`);
       assert.ok(button,name+' is visible');
       await React.act(async()=>button.click());
     }
-    assert.deepEqual(calls,['Home','Chats','Workshop','Canvas','nodes','Docs','Cockpit','Settings','Settings']);
+    assert.deepEqual(calls,['Home','Chats','Workshop','Canvas','nodes','Docs','Settings','Settings']);
+    // UIFIX p3: Cockpit had no real content in this build and was removed from the rail (RULE 2); it must stay absent.
+    assert.equal(dom.window.document.querySelector('[aria-label="Cockpit"]'), null, 'Cockpit must not be in the rail');
   } finally {await React.act(async()=>root.unmount());dom.window.close();Object.assign(global,prior);}
 });
 

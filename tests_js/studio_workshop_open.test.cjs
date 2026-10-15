@@ -63,16 +63,22 @@ async function mountStudio({workshops = [], unavailable, models, canvasGraphId =
     const home = doc.querySelector('[title="All sessions"]');
     if (home) flush(() => home.click());
   };
-  const homeTool = id => {
-    let card = doc.querySelector(`[data-home-tools] [data-tool-card="${id}"]`);
-    if (!card) {
-      openHome();
-      card = doc.querySelector(`[data-home-tools] [data-tool-card="${id}"]`);
-    }
-    return card;
+  const hubTool = id => {
+    const settings = doc.querySelector('[data-app-rail] [aria-label="Settings"]') || doc.querySelector('[title="Settings"]');
+    assert.ok(settings, 'Settings rail control exists');
+    flush(() => settings.click());
+    const shell = doc.querySelector('[data-settings54-shell]');
+    assert.ok(shell, 'Settings opens for the Hub card');
+    const group = [...shell.querySelectorAll('[data-settings54-group-title]')].find(node => node.textContent.trim() === 'Connections');
+    assert.ok(group, 'Connections owns Hub');
+    flush(() => group.closest('button').click());
+    const hub = [...shell.querySelectorAll('[data-settings54-capability-nav] button')].find(node => node.textContent.trim() === 'Hub');
+    assert.ok(hub, 'Hub is a visible Connections capability');
+    flush(() => hub.click());
+    return shell.querySelector(`[data-tool-card="${id}"]`);
   };
   const settingsButton = () => doc.querySelector('[data-workshop72-rail] [aria-label="Settings"]') || doc.querySelector('[title="Settings"]');
-  const segment = label => label === 'Workshop' ? homeTool('workshop') :
+  const segment = label => label === 'Workshop' ? hubTool('workshop') :
     [...doc.querySelectorAll('button[aria-pressed]')].find(button => button.textContent.trim() === label);
   const workshopUtilities = () => {
     return [...doc.querySelectorAll('button[data-workshop-utility]')];
@@ -83,10 +89,10 @@ async function mountStudio({workshops = [], unavailable, models, canvasGraphId =
   const close = () => { try { flush(() => win.__studioRoot.unmount()); } finally { dom.window.close(); } };
   const setWorkshop = value => { snapshot = value ? {...snapshot, workshop:value} :
     Object.fromEntries(Object.entries(snapshot).filter(([key]) => key !== 'workshop')); notify(); };
-  return {doc, win, flush, segment, homeTool, openHome, settingsButton, spoken, close, inWorkshop, workshopUtilities, setWorkshop};
+  return {doc, win, flush, segment, hubTool, openHome, settingsButton, spoken, close, inWorkshop, workshopUtilities, setWorkshop};
 }
 
-test('Workshop Home and Settings routes open one DSYS077 thread even without an admitted room',async()=>{
+test('Workshop Hub and Settings routes open one DSYS077 thread even without an admitted room',async()=>{
   for(const options of [{workshops:[],unavailable:'This account has no read access to the Workshop.'},
     {workshops:[],canvasGraphId:'',sessions:[],currentGraph:null},
     {workshops:[{root:'room-a',label:'Wall conversion',is_general:false}]}]){
@@ -108,7 +114,7 @@ test('Workshop Home and Settings routes open one DSYS077 thread even without an 
   }
 });
 
-test('graphless profile Workshop Home card opens Workshop content, never Home', async () => {
+test('graphless profile Workshop Hub card opens Workshop content, never Home', async () => {
   const studio = await mountStudio({workshops:[], canvasGraphId:'', sessions:[], currentGraph:null});
   try {
     const workshop = studio.segment('Workshop');
@@ -121,11 +127,11 @@ test('graphless profile Workshop Home card opens Workshop content, never Home', 
 });
 
 
-test('first Workshop Home-card switch stays under the synchronous render budget and opens directly to the empty composer',async()=>{
+test('first Workshop Hub-card switch stays under the synchronous render budget and opens directly to the empty composer',async()=>{
   const ui=await mountStudio({workshops:[{root:'room-a',label:'Wall conversion',is_general:false}]});
   try{const card=ui.segment('Workshop'),started=ui.win.performance.now();ui.flush(()=>card.click());
     const elapsed=ui.win.performance.now()-started;assert.equal(ui.inWorkshop(),true);assert.ok(elapsed<300,'Workshop switch '+elapsed.toFixed(1)+' ms');
-    console.log('first Workshop Home-card switch ms='+elapsed.toFixed(1));
+    console.log('first Workshop Hub-card switch ms='+elapsed.toFixed(1));
     assert.ok(ui.doc.querySelector('[data-workshop-empty]'));
     assert.match(ui.doc.querySelector('[data-workshop-empty]').textContent,/What should the agents do\?/);
     assert.equal(ui.doc.querySelectorAll('textarea[aria-label="Workshop message"]').length,1);assert.equal(ui.doc.querySelector('[data-workshop-utility]'),null);

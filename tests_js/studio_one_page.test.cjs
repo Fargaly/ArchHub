@@ -1,10 +1,11 @@
+const {settingsNavigator} = require('./settings_navigation_helpers.cjs');
 /* UI audit 2026-09-28 (work/ui-audit 08-back-navigation, 13-ctrl-k): the Studio is the whole window.
      P1  Alt+Left, Alt+Right and the Back / Forward keys are refused by the page (the launcher also
          empties the history behind /studio; tests_replica/test_studio_window_is_one_page.py);
      P2  the mouse's Back / Forward buttons (3, 4) are refused;
      P3  Ctrl+K opens the command bar, and Esc closes it;
      P4  the Studio opens on Canvas; Chat moved into the selection inspector composer and
-         Workshop opens from the Home tool card, not a Studio header tab. */
+         Workshop opens from the Settings Hub tool card, not a Studio header tab. */
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -97,7 +98,7 @@ test('P3: Ctrl+K opens the command bar; Esc closes it', async () => {
   } finally { studio.close(); }
 });
 
-test('P4: the Studio opens on Canvas; Chat input moved to the selection panel and Workshop to the Home card', async () => {
+test('P4: the Studio opens on Canvas; Chat input moved to the selection panel and Workshop to the Settings Hub card', async () => {
   const studio = await mountStudio({workshops:[{root:'general-a', label:'Workshop', is_general:true}]});
   try {
     assert.ok(studio.doc.querySelector('[role="region"][aria-label="Workflow canvas"]'), 'Canvas is the default session view');
@@ -107,6 +108,10 @@ test('P4: the Studio opens on Canvas; Chat input moved to the selection panel an
     assert.equal(studio.doc.querySelectorAll('input[aria-label="Ask selection"]').length, 1,
       'Chat moved to the single selection-panel composer');
     studio.flush(() => studio.doc.querySelector('[title="All sessions"]').click());
-    assert.ok(studio.doc.querySelector('[data-home-tools] [data-tool-card="workshop"]'), 'Workshop is reached from the Home tool card');
+    studio.flush(() => studio.doc.querySelector('[data-rail-panel="Settings"]').click());
+    const settle = async () => { await new Promise(resolve => studio.win.setTimeout(resolve, 20)); };
+    await settle();
+    const hub = await settingsNavigator({doc:studio.doc, flush:studio.flush, settle}).tab('Hub');
+    assert.ok(hub.querySelector('[data-tool-card="workshop"]'), 'Workshop is reached from Settings Connections Hub');
   } finally { studio.close(); }
 });

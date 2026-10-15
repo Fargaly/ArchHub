@@ -1,3 +1,4 @@
+const {settingsNavigator} = require('./settings_navigation_helpers.cjs');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -73,8 +74,9 @@ async function mountStudio() {
   assert.ok(settings, 'Settings button exists');
   win.ReactDOM.flushSync(() => settings.click());
   await settle();
-  const card = win.document.querySelector('[data-tool-card="workshop"]');
-  assert.ok(card, 'Workshop card exists');
+  const hub = await settingsNavigator({doc:win.document, flush:fn => win.ReactDOM.flushSync(fn), settle}).tab('Hub');
+  const card = hub.querySelector('[data-tool-card="workshop"]');
+  assert.ok(card, 'Workshop card exists in Settings Connections Hub');
   win.ReactDOM.flushSync(() => card.click());
   await settle();
   const close = () => { try { win.ReactDOM.flushSync(() => win.__studioRoot.unmount()); } finally { dom.window.close(); } };
@@ -85,9 +87,9 @@ test('identical Workshop polls preserve the single thread and status headers; ch
   const studio = await mountStudio();
   try {
     const studioHeader = studio.doc.querySelector('[data-workshop-head]').parentElement;
-    const workshopHeader = studio.doc.querySelector('[data-workshop-s1-status]');
+    const workshopHeader = studio.doc.querySelector('[data-workshop-head] + span');
     assert.ok(studioHeader, 'Studio header update control is mounted');
-    assert.ok(workshopHeader, 'Workshop header status line is mounted');
+    assert.ok(workshopHeader, 'embedded Workshop header status line is mounted; standalone footer is omitted');
     assert.match(workshopHeader.textContent, /Tower\.rvt/);
 
     const records = [];
@@ -109,13 +111,13 @@ test('identical Workshop polls preserve the single thread and status headers; ch
     await studio.settle();
     assert.equal(records.length, 0, 'same-value poll does not add or remove header DOM nodes');
     assert.strictEqual(studio.doc.querySelector('[data-workshop-head]').parentElement, studioHeader);
-    assert.strictEqual(studio.doc.querySelector('[data-workshop-s1-status]'), workshopHeader);
+    assert.strictEqual(studio.doc.querySelector('[data-workshop-head] + span'), workshopHeader);
 
     const changed = clone(studio.snapshot());
     changed.hosts = [{...changed.hosts[0], file:'Updated file.rvt'}];
     studio.win.ReactDOM.flushSync(() => studio.publish(changed));
     await studio.settle();
-    assert.strictEqual(studio.doc.querySelector('[data-workshop-s1-status]'), workshopHeader,
+    assert.strictEqual(studio.doc.querySelector('[data-workshop-head] + span'), workshopHeader,
       'changed value keeps the Workshop header node and updates its text in place');
     assert.match(workshopHeader.textContent, /Updated file\.rvt/);
   } finally { studio.close(); }

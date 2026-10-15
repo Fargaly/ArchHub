@@ -27,7 +27,8 @@ test('UIFIX p2: one persistent rail exposes Chats and the union of destinations 
   const ui = await mountStudio({workshops:[{root:'room-a',label:'Workshop',is_general:true}]});
   try {
     const rail = ui.doc.querySelector('[data-app-rail]');
-    const destinations = ['Home','Chats','Workshop','Canvas','Library','Docs','Cockpit','Settings'];
+    const destinations = ['Home','Chats','Workshop','Canvas','Library','Docs','Settings'];
+    assert.equal(rail.querySelector('[aria-label="Cockpit"]'), null, 'empty Cockpit destination is removed');
     for (const name of destinations) assert.ok(rail.querySelector(`[aria-label="${name}"]`), name);
     for (const name of ['Settings','Chats','Workshop','Library','Canvas','Home','Settings']) {
       await clickRail(ui, name);

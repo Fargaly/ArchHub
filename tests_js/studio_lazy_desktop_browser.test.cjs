@@ -55,16 +55,17 @@ test('desktop browser: cold rail Skills renders the admitted catalogue', {skip:!
   });
 });
 
-test('desktop browser: Home, status, Hosts and About share one total', {skip:!enabled}, async () => {
+test('desktop browser: Hub, status, Hosts and About share one total', {skip:!enabled}, async () => {
   await desktop(async ({page}) => {
     const hosts = report.hosts.connectors.filter(row => !!row.drive);
     const ratio = hosts.filter(row => ['connected', 'listening'].includes(row.state)).length + '/' + hosts.length;
-    await page.locator('[data-tool-card="connectors"]').filter({hasText:ratio + ' hosts running'}).waitFor();
-    assert.ok((await page.locator('body').innerText()).includes(ratio + ' hosts'), 'status agrees with Home');
     await page.locator('button[title="Settings"]').click();
     const dialog = page.getByRole('dialog', {name:'Settings', exact:true});
     await dialog.waitFor();
     await dialog.locator('[data-settings54-group-title]').filter({hasText:/^Connections$/}).click();
+    await dialog.locator('[data-settings54-capability-nav] button').filter({hasText:/^Hub$/}).click();
+    await dialog.locator('[data-tool-card="connectors"]').filter({hasText:ratio + ' hosts running'}).waitFor();
+    assert.ok((await page.locator('body').innerText()).includes(ratio + ' hosts'), 'Hub shows shared host state');
     const hostsTab = dialog.locator('[data-settings54-capability-nav] button').filter({hasText:/^Hosts/});
     await dialog.locator('[data-settings-host-total]').filter({hasText:ratio + ' running'}).waitFor();
     await hostsTab.click();

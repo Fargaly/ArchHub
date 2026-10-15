@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 import ctypes
+import hashlib
 from ctypes import wintypes
 from dataclasses import replace
 import json
@@ -426,7 +427,7 @@ class BaboomNativeCompanionController:
             animation_tick=self._animation_tick,
             greeting_hour=greeting_hour,
         )
-        if self.host_silent_seconds > _FRAME_GRACE_SECONDS:
+        if self.host_silent_seconds > _FRAME_GRACE_SECONDS or self._host.connection_state in {"closed", "reconnecting"}:
             frame = replace(frame, brain_state="unknown", action="", action_label="")
         # A companion that recomputes its home every 750ms WANDERS: the
         # founder's foreground windows change, the placement search
@@ -523,9 +524,10 @@ class BaboomNativeCompanionController:
         return (round(raw[0] * sprite_size[0] / self._atlas.cell_width),
                 round(raw[1] * sprite_size[1] / self._atlas.cell_height))
 
-    def respond(self, utterance: str) -> Mapping[str, object]:
+    def respond(self, utterance: str, *, on_progress=None) -> Mapping[str, object]:
         """Return a graph-backed response before any founder-confirmed action."""
-        return self._host.respond_input(utterance)
+        return self._host.respond_input(utterance,
+            **({"on_progress": on_progress} if on_progress is not None else {}))
 
     def execute(self, utterance: str) -> Mapping[str, object]:
         """Create only one explicit, graph-authorized founder task."""
@@ -710,6 +712,31 @@ def baboom_face_line(context: Mapping[str, object], foreground: tuple[str, str, 
     return (line, offer)
 
 
+def baboom_approval_html(approval: Mapping[str, object], binding: str) -> str:
+    """Physical WebEngine adapter to the shipped shared card; no copied JSX."""
+    from html import escape
+    studio = Path(__file__).parent / "studio"
+    sources = ["vendor/react.js", "vendor/react-dom.js", "compiled/tokens.js", "compiled/shared-data.js"]
+    scripts = "".join('<script src="%s"></script>' % escape((studio / source).resolve().as_uri(), quote=True)
+        for source in sources)
+    payload = json.dumps(dict(approval), ensure_ascii=True).replace("<", "\\u003c")
+    identity = json.dumps(binding)
+    return ('<!doctype html><meta charset="utf-8">'
+        '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src file: qrc: \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data: file:">'
+        '<style>html,body{margin:0;background:transparent}button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}</style>'
+        '<div id="approval"></div>' + scripts + '<script src="qrc:///qtwebchannel/qwebchannel.js"></script><script>'
+        'document.documentElement.style.setProperty("--accent",window.AH.accent);'
+        'new QWebChannel(qt.webChannelTransport,function(channel){const bridge=channel.objects.baboom;'
+        'const approval=' + payload + ';const binding=' + identity + ';'
+        'const decide=choice=>new Promise((resolve,reject)=>{'
+        'if(choice==="decline"){bridge.decide(binding,choice);resolve();return;}'
+        'const settle=(id,error)=>{if(id!==binding)return;bridge.settled.disconnect(settle);error?reject(new Error(error)):resolve();};'
+        'bridge.settled.connect(settle);bridge.decide(binding,choice);});'
+        'ReactDOM.createRoot(document.getElementById("approval")).render(React.createElement(window.ARCHHUB_APPROVAL_CARD,'
+        '{approval,surface:"baboom",approveLabel:approval.title,onApprove:()=>decide("approve"),onDecline:()=>decide("decline")}));});'
+        '</script>')
+
+
 def create_baboom_native_companion_window(
     controller: BaboomNativeCompanionController,
     *,
@@ -717,6 +744,7 @@ def create_baboom_native_companion_window(
     voice_input: BaboomVoiceInput | None = None,
     position_path: Path | None = None,
     on_stop: Callable[[], None] | None = None,
+    on_open: Callable[[], None] | None = None,
 ) -> Any:
     """Create, but never show or start, the one transparent companion window."""
     if type(controller) is not BaboomNativeCompanionController:
@@ -726,7 +754,7 @@ def create_baboom_native_companion_window(
     if voice_input is not None and type(voice_input) is not BaboomVoiceInput:
         raise ValueError("BABOOM native companion voice input is invalid")
     try:
-        from PyQt6.QtCore import QEvent, QPoint, QRect, QTimer, Qt, pyqtSignal
+        from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, QTimer, Qt, QUrl, pyqtSignal, pyqtSlot
         from PyQt6.QtGui import QFont, QFontDatabase, QImage, QPainter
         from PyQt6.QtWidgets import QLineEdit, QLabel, QToolButton, QWidget
     except ImportError as exc:  # pragma: no cover - exercised by desktop packaging
@@ -743,10 +771,27 @@ def create_baboom_native_companion_window(
                     return QFont(families[0], 10)
         return QFont()
 
+    class ApprovalBridge(QObject):
+        settled = pyqtSignal(str, str)
+
+        @pyqtSlot(str, str)
+        def decide(self, binding, choice):
+            window = self.parent()
+            if binding != window._approval_binding or not window._pending_task_utterance:
+                return
+            if choice == "approve":
+                window._executing_approval_binding = binding
+                window._approval_binding = ""
+                window._execute_task()
+            elif choice == "decline":
+                window._approval_binding = ""
+                window._close_interaction()
+
     class CompanionWindow(QWidget):
         response_ready = pyqtSignal(object)
         execution_ready = pyqtSignal(object)
         voice_ready = pyqtSignal(object)
+        progress_ready = pyqtSignal(object)
 
         def __init__(self) -> None:
             super().__init__()
@@ -778,6 +823,17 @@ def create_baboom_native_companion_window(
             self._act_progress: str = ""
             self._submitted_utterance = ""
             self._interaction_requested = False
+            self._interaction_generation = 0
+            self._busy = False
+            self._response_received_at = 0.0
+            self._response_owner = None
+            self._result_visible = False
+            self._steps: dict[str, Mapping[str, object]] = {}
+            self._approval = None
+            self._approval_binding = ""
+            self._executing_approval_binding = ""
+            self._approval_detail: Mapping[str, object] = {}
+            self._approval_bridge = ApprovalBridge(self)
             self._press_global: Any = None
             self._press_window_pos: Any = None
             self._dragged = False
@@ -799,16 +855,16 @@ def create_baboom_native_companion_window(
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
             )
             self._report.setStyleSheet(
-                "background:%s;color:%s;border:0;padding:3px 6px;"
-                "border-radius:0;font-size:12px;line-height:15px;"
+                "background:%s;color:%s;border:0;padding:12px;"
+                "border-radius:0;font-size:13px;line-height:20px;"
                 % (_theme["bg_raised"], _theme["ink"])
             )
             self._input = QLineEdit(self)
             self._input.setFont(self._companion_font)
-            self._input.setPlaceholderText("Reply or assign a task")
+            self._input.setPlaceholderText("Ask ArchHub…")
             self._input.setStyleSheet(
-                "background:%s;color:%s;border:0;padding:3px 6px;"
-                "border-radius:0;font-size:12px;"
+                "background:%s;color:%s;border:0;padding:12px;"
+                "border-radius:0;font-size:13px;"
                 % (_theme["bg_raised"], _theme["ink"])
             )
             self._input.returnPressed.connect(self._submit_input)
@@ -816,10 +872,10 @@ def create_baboom_native_companion_window(
             self._input.hide()
             # Talk is the lucide mic, not a word: an icon reads at a glance and
             # the accessible name carries "Talk" for the screen reader. It turns
-            # red while it is recording so the founder can see it is listening.
+            # accent while recording so the founder can see it is listening.
             from PyQt6.QtCore import QSize
-            self._talk_idle_icon = _baboom_mic_icon(_theme["cyan"])
-            self._talk_recording_icon = _baboom_mic_icon(_theme["err"])
+            self._talk_idle_icon = _baboom_mic_icon(_theme["ink_muted"])
+            self._talk_recording_icon = _baboom_mic_icon(_theme["accent"])
             self._talk = QToolButton(self)
             self._talk.setText("")
             self._talk.setIcon(self._talk_idle_icon)
@@ -831,6 +887,21 @@ def create_baboom_native_companion_window(
             )
             self._talk.clicked.connect(self._toggle_voice_capture)
             self._talk.hide()
+            self._send = QToolButton(self)
+            self._send.setText("Ask")
+            self._send.setAccessibleName("Ask ArchHub")
+            self._send.setToolTip("Ask ArchHub · Enter")
+            self._send.setStyleSheet("background:%s;color:%s;border:0;padding:0 8px;font-size:13px;font-weight:600;"
+                % (_theme["accent"], _theme["on_fill"]))
+            self._send.clicked.connect(self._submit_input)
+            self._send.hide()
+            self._open = QToolButton(self)
+            self._open.setText("Open ArchHub")
+            self._open.setAccessibleName("Open ArchHub")
+            self._open.setStyleSheet("background:%s;color:%s;border:0;padding:0 8px;font-size:13px;"
+                % (_theme["accent"], _theme["on_fill"]))
+            self._open.clicked.connect(self._open_archhub)
+            self._open.hide()
             # The confirm control carries the action in words, not a glyph, and a
             # labelled Cancel sits beside it so the founder always reads what he is
             # pressing and always has a way out. Confirm is the primary: the accent
@@ -845,7 +916,7 @@ def create_baboom_native_companion_window(
                 "font-size:11px;font-weight:600;"
                 % (_theme["accent"], _theme["on_fill"])
             )
-            self._confirm.clicked.connect(self._execute_task)
+            self._confirm.clicked.connect(self._show_approval)
             self._confirm.hide()
             self._cancel = QToolButton(self)
             self._cancel.setText("Cancel")
@@ -879,6 +950,7 @@ def create_baboom_native_companion_window(
             self.response_ready.connect(self._apply_response)
             self.execution_ready.connect(self._apply_execution)
             self.voice_ready.connect(self._apply_voice)
+            self.progress_ready.connect(self._apply_progress)
             # BABOOM's face: the live line and the offer it carries. The
             # report label doubles as the face when nothing else is said.
             self._face_offer: str | None = None
@@ -957,8 +1029,11 @@ def create_baboom_native_companion_window(
             BABOOM was telling him. Qt knows the true wrap, so it decides the
             height here. The estimate stays the floor.
             """
+            if self._approval is not None and self._approval.isVisible():
+                return (400, 300)
             width, minimum = baboom_compact_message_size(text)
-            padding_x, padding_y = 12, 8
+            width, minimum = max(360, width), max(52, minimum)
+            padding_x, padding_y = 24, 24
             wrapped = self._report.fontMetrics().boundingRect(
                 QRect(0, 0, width - padding_x, 1 << 16),
                 int(Qt.TextFlag.TextWordWrap),
@@ -1038,21 +1113,42 @@ def create_baboom_native_companion_window(
                 self._transient_revision is not None
                 and self._transient_revision != frame.revision
                 and self._pending_task_utterance is None
-                and not self._input.isVisible()
+                and not self._input.isVisible() and not self._busy
+                and not self._result_visible
+                and not (self._approval is not None and self._approval.isVisible())
             ):
                 self._transient_report = None
                 self._transient_revision = None
                 self._interaction_requested = False
-            stale = controller.host_silent_seconds > _FRAME_GRACE_SECONDS
-            report = ("Live state unavailable; waiting for a fresh application response."
+            if self._response_owner is not None and self._response_owner != id(controller._host._transport):
+                self._response_received_at = 0.0
+                self._response_owner = None
+                self._pending_task_utterance = None
+                self._confirm.hide()
+                self._cancel.hide()
+                if self._approval is not None:
+                    self._approval.hide()
+                self._approval_binding = ""
+                self._transient_report = "ArchHub restarted. Ask again."
+            response_age = (time.monotonic() - self._response_received_at
+                if self._response_received_at else float("inf"))
+            stale = (controller.host_silent_seconds > _FRAME_GRACE_SECONDS
+                or controller._host.connection_state in {"closed", "reconnecting"}) and response_age > _FRAME_GRACE_SECONDS and not self._busy
+            offline_line = ("ArchHub is closed." if controller._host.connection_state == "closed"
+                else "Reconnecting to ArchHub…")
+            report = (offline_line
                       if stale else self._transient_report or frame.report)
+            self._open.setVisible(stale)
             if stale:
                 self._pending_task_utterance = None
                 self._confirm.hide()
                 self._cancel.hide()
                 self._face_offer = None
+                if self._approval is not None:
+                    self._approval.hide()
+                self._approval_binding = ""
             if report is None and self._interaction_requested:
-                report = "Reply or assign a task"
+                report = "Ask ArchHub…"
             self._face_showing = False
             if report is None and not self._input.isVisible():
                 # Nothing being said: the face shows the graph, live.
@@ -1064,6 +1160,11 @@ def create_baboom_native_companion_window(
                     self._front, self._front_at = front, time.monotonic()
                 report, self._face_offer = baboom_face_line(context, front)
                 self._face_showing = True
+                if report == "I'm watching the graph.":
+                    # Quiet idle occupies only the character. The ask surface
+                    # appears on click; an all-clear bubble adds no information.
+                    report = None
+                    self._face_showing = False
             layout = self._layout_for_report(frame, screen, report)
             self._frame = frame
             self._layout = layout
@@ -1084,6 +1185,8 @@ def create_baboom_native_companion_window(
             # row in the window bounds while the buttons are up.
             if self._confirm.isVisible() and layout.message is not None:
                 bottom = max(bounds.bottom, message.bottom) + 34
+            if stale and layout.message is not None:
+                bottom = max(bottom, message.bottom + 34)
             self._origin = QPoint(left, top)
             window_rect = QRect(left, top, right - left, bottom - top)
             # Qt caches what it last SET; Windows holds what the window really
@@ -1158,6 +1261,7 @@ def create_baboom_native_companion_window(
                 self._report.hide()
                 self._input.hide()
                 self._talk.hide()
+                self._send.hide()
                 self._confirm.hide()
                 self._cancel.hide()
                 self._pending_task_utterance = None
@@ -1184,13 +1288,21 @@ def create_baboom_native_companion_window(
                     self._report.setGeometry(panel_rect)
                     self._report.show()
                 self._input.setGeometry(message_rect)
+                self._open.setGeometry(message_rect.x(), message_rect.bottom() + 4, 122, 28)
+                if self._approval is not None and self._approval.isVisible():
+                    self._approval.setGeometry(message_rect)
+                    self._report.hide()
+                    self._approval.raise_()
                 if self._input.isVisible():
-                    self._input.setTextMargins(0, 0, 40, 0)
+                    self._input.setTextMargins(0, 0, 94, 0)
                     self._talk.setGeometry(
-                        message_rect.right() - 42, message_rect.top() + 4, 38, 22
+                        message_rect.right() - 94, message_rect.top() + 10, 32, 32
                     )
                     self._talk.show()
                     self._talk.raise_()
+                    self._send.setGeometry(message_rect.right() - 60, message_rect.top() + 10, 52, 32)
+                    self._send.show()
+                    self._send.raise_()
                 if self._confirm.isVisible():
                     band_y = panel_rect.bottom() - 28
                     self._confirm.setGeometry(
@@ -1294,6 +1406,13 @@ def create_baboom_native_companion_window(
             """Show the ask box: BABOOM is listening."""
             if self._frame is None or self._layout is None:
                 return
+            if self._busy:
+                return
+            self._interaction_generation += 1
+            self._result_visible = False
+            if self._approval is not None:
+                self._approval.hide()
+            self._approval_binding = ""
             self._pending_task_utterance = None
             self._confirm.hide()
             self._cancel.hide()
@@ -1305,20 +1424,23 @@ def create_baboom_native_companion_window(
                 return
             self._report.hide()
             self._input.show()
-            self._input.setTextMargins(0, 0, 40, 0)
-            self._talk.setGeometry(
-                self._message_rect.right() - 42,
-                self._message_rect.top() + 4,
-                38,
-                22,
-            )
-            self._talk.show()
-            self._talk.raise_()
+            self.refresh()
             self._input.setFocus()
 
         def _close_interaction(self) -> None:
             """Back to the sprite alone: no box, no stale answer."""
             self._interaction_requested = False
+            self._interaction_generation += 1
+            self._result_visible = False
+            self._busy = False
+            if self._voice_cancel is not None:
+                self._voice_cancel.set()
+                self._voice_cancel = None
+                self._talk.setEnabled(True)
+                self._talk.setIcon(self._talk_idle_icon)
+            self._approval_binding = ""
+            if self._approval is not None:
+                self._approval.hide()
             self._transient_report = None
             self._transient_revision = None
             self._pending_task_utterance = None
@@ -1326,6 +1448,7 @@ def create_baboom_native_companion_window(
             self._input.setEnabled(True)
             self._input.hide()
             self._talk.hide()
+            self._send.hide()
             self._confirm.hide()
             self._cancel.hide()
             self._report.hide()
@@ -1361,7 +1484,7 @@ def create_baboom_native_companion_window(
                 and self._face_showing
                 and self._face_offer
             ):
-                self._say(self._face_offer)
+                self._open_interaction()
                 return True
             return super().eventFilter(obj, event)
 
@@ -1393,6 +1516,44 @@ def create_baboom_native_companion_window(
             # cloud.json lives under APPDATA (Settings > Account writes it);
             # the local (non-roaming) folder held no session, so the link never carried one.
             webbrowser.open(cockpit_url(cloud_session_path().parents[2]))
+
+        def _open_archhub(self) -> None:
+            if on_open is not None:
+                on_open()
+                return
+            from PyQt6.QtGui import QDesktopServices
+            programs = Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs"
+            # setup.iss installs directly in Programs; retain older installs'
+            # ArchHub subfolder as a fallback, without copying a launcher.
+            shortcut = programs / "ArchHub.lnk"
+            if not shortcut.is_file():
+                shortcut = programs / "ArchHub/ArchHub.lnk"
+            if not shortcut.is_file() or not QDesktopServices.openUrl(QUrl.fromLocalFile(str(shortcut))):
+                self._transient_report = "ArchHub could not open. Start it from the Start menu."
+                self.refresh()
+
+        def _show_approval(self) -> None:
+            """Render the very same card as Workshop, with this command's receipt."""
+            if not self._pending_task_utterance:
+                return
+            from PyQt6.QtWebChannel import QWebChannel
+            from PyQt6.QtWebEngineWidgets import QWebEngineView
+            if self._approval is None:
+                self._approval = QWebEngineView(self)
+                self._approval.page().setBackgroundColor(Qt.GlobalColor.transparent)
+                self._approval_channel = QWebChannel(self._approval.page())
+                self._approval_channel.registerObject("baboom", self._approval_bridge)
+                self._approval.page().setWebChannel(self._approval_channel)
+            self._approval_binding = hashlib.sha256((str(self._interaction_generation) + self._pending_task_utterance).encode()).hexdigest()
+            approval = {**dict(self._approval_detail), "id": self._approval_binding, "state": "needs-user",
+                "title": self._approval_label, "summary": self._transient_report,
+                "target": "ArchHub", "undo_available": False}
+            self._approval.setHtml(baboom_approval_html(approval, self._approval_binding),
+                QUrl.fromLocalFile(str(Path(__file__).parent / "studio") + "/"))
+            self._confirm.hide()
+            self._cancel.hide()
+            self._approval.show()
+            self.refresh()
 
         def contextMenuEvent(self, event) -> None:  # noqa: N802 - Qt callback name
             from PyQt6.QtWidgets import QMenu
@@ -1533,30 +1694,49 @@ def create_baboom_native_companion_window(
 
         def _submit_input(self) -> None:
             utterance = self._input.text().strip()
-            if not utterance:
+            if not utterance or self._busy:
                 return
+            self._busy = True
+            self._steps = {}
+            self._result_visible = False
+            generation = self._interaction_generation
+            owner = id(controller._host._transport)
             self._submitted_utterance = utterance
             self._interaction_requested = False
             self._input.setEnabled(False)
-            self._report.setText("Checking ArchHub...")
+            self._transient_report = "Asking ArchHub…"
+            self._report.setText(self._transient_report)
             self._report.show()
             self._input.hide()
             self._talk.hide()
+            self._send.hide()
 
             def resolve() -> None:
                 try:
-                    result: Mapping[str, object] = controller.respond(utterance)
-                except Exception:
+                    result: Mapping[str, object] = controller.respond(utterance,
+                        on_progress=lambda step: self.progress_ready.emit((generation, step)))
+                except Exception as error:
+                    from .application_machine_transport import MachineResponseError
                     result = {
                         "response": {
                             "kind": "unavailable",
-                            "summary": "BABOOM could not read the graph response.",
+                            "summary": (str(error).strip()[:400] if isinstance(error, MachineResponseError)
+                                else "BABOOM could not read the graph response."),
                             "data": {},
                         }
                     }
-                self.response_ready.emit(result)
+                self.response_ready.emit({"generation": generation, "owner": owner, "payload": result})
 
             threading.Thread(target=resolve, name="baboom-native-input", daemon=True).start()
+
+        def _apply_progress(self, event) -> None:
+            generation, step = event
+            if generation != self._interaction_generation or self._dismissed or self._stopped:
+                return
+            self._steps[str(step["tool"])] = dict(step)
+            self._transient_report = "\n".join("%s · %s%s" % (row["tool"], row["status"],
+                (" — " + row["summary"]) if row.get("summary") else "") for row in self._steps.values())
+            self.refresh()
 
         def _toggle_voice_capture(self) -> None:
             if self._voice_cancel is not None:
@@ -1564,6 +1744,7 @@ def create_baboom_native_companion_window(
                 self._talk.setEnabled(False)
                 return
             cancel = threading.Event()
+            generation = self._interaction_generation
             self._voice_cancel = cancel
             self._input.setEnabled(False)
             self._input.setPlaceholderText("Listening...")
@@ -1580,7 +1761,7 @@ def create_baboom_native_companion_window(
                     result = {"cancelled": True}
                 except BaboomVoiceError as exc:
                     result = {"error": str(exc)}
-                self.voice_ready.emit(result)
+                self.voice_ready.emit({"generation": generation, "payload": result})
 
             threading.Thread(
                 target=capture, name="baboom-native-voice", daemon=True
@@ -1589,6 +1770,10 @@ def create_baboom_native_companion_window(
         def _apply_voice(self, result: Mapping[str, object]) -> None:
             if self._dismissed or self._stopped:
                 return
+            if "generation" in result:
+                if result["generation"] != self._interaction_generation:
+                    return
+                result = result["payload"]
             self._voice_cancel = None
             self._talk.setEnabled(True)
             self._talk.setIcon(self._talk_idle_icon)
@@ -1612,15 +1797,32 @@ def create_baboom_native_companion_window(
         def _apply_response(self, result: Mapping[str, object]) -> None:
             if self._dismissed or self._stopped:
                 return
+            if "generation" in result:
+                if result["generation"] != self._interaction_generation:
+                    return
+                if result.get("owner", id(controller._host._transport)) != id(controller._host._transport):
+                    self._busy = False
+                    self._transient_report = "ArchHub restarted. Ask again."
+                    self.refresh()
+                    return
+                result = result["payload"]
+            self._busy = False
             command = result.get("command")
             response = result.get("response")
+            if isinstance(response, Mapping) and response.get("kind") != "unavailable":
+                self._response_received_at = time.monotonic()
+                self._response_owner = id(controller._host._transport)
             self._pending_task_utterance = None
             self._act_progress = ""
             self._interaction_requested = False
             self._confirm.hide()
             self._cancel.hide()
             if isinstance(response, Mapping):
+                self._result_visible = True
                 self._transient_report = compact_baboom_response_report(response)
+                steps = (response.get("data") or {}).get("steps") or []
+                if steps:
+                    self._transient_report += "\n" + "\n".join("%s · %s" % (row.get("tool", "Tool"), row.get("status", "unavailable")) for row in steps[:12])
                 self._transient_revision = (
                     self._frame.revision if self._frame is not None else None
                 )
@@ -1647,6 +1849,11 @@ def create_baboom_native_companion_window(
                     intent = str(command.get("intent") or "")
                     question, label = _BABOOM_ACT_PROMPTS.get(
                         intent, ("Do this in ArchHub?", "Do it"))
+                    label = str(data.get("approve_label") or label)
+                    self._approval_detail = data.get("approval") or {}
+                    if intent == "remember" and isinstance(data.get("text"), str):
+                        self._approval_detail = {"rows": [{"id": "memory", "label": "Brain memory",
+                            "now": "New memory", "after": data["text"]}]}
                     # An act that writes says WHAT before the founder presses:
                     # the app names the engine, the build, the fact.
                     said = response.get("summary") if isinstance(response, Mapping) else None
@@ -1656,13 +1863,12 @@ def create_baboom_native_companion_window(
                     self._pending_task_utterance = utterance
                     self._transient_report = question
                     self._act_progress = _BABOOM_ACT_PROGRESS.get(intent, "Working...")
-                    # The button carries a short verb ("Run", "Create", "Send")
-                    # that fits it without clipping; the full phrase is the
-                    # question above it and the button's tooltip.
-                    verb = label if len(label) <= 10 else label.split()[0]
-                    self._confirm.setText(verb)
-                    self._confirm.setToolTip(label)
-                    self._confirm.setAccessibleName(label)
+                    # Review opens the shared card; its action label names the
+                    # exact write. The native button never executes directly.
+                    self._approval_label = label
+                    self._confirm.setText("Review")
+                    self._confirm.setToolTip("Review · " + label)
+                    self._confirm.setAccessibleName("Review · " + label)
                     self._confirm.show()
                     self._cancel.show()
             if self._pending_task_utterance is None:
@@ -1678,9 +1884,15 @@ def create_baboom_native_companion_window(
             if not utterance:
                 return
             self._pending_task_utterance = None
+            self._busy = True
+            generation = self._interaction_generation
+            owner = id(controller._host._transport)
+            if self._approval is not None:
+                self._approval.hide()
             self._confirm.hide()
             self._cancel.hide()
             self._report.setText(self._act_progress or "Working...")
+            self._transient_report = self._act_progress or "Working…"
             self._report.show()
 
             def execute() -> None:
@@ -1688,7 +1900,7 @@ def create_baboom_native_companion_window(
                     result: Mapping[str, object] = controller.execute(utterance)
                 except Exception as error:
                     result = {"error": baboom_execution_error_text(error)}
-                self.execution_ready.emit(result)
+                self.execution_ready.emit({"generation": generation, "owner": owner, "payload": result})
 
             threading.Thread(
                 target=execute, name="baboom-native-task", daemon=True
@@ -1697,6 +1909,20 @@ def create_baboom_native_companion_window(
         def _apply_execution(self, result: Mapping[str, object]) -> None:
             if self._dismissed or self._stopped:
                 return
+            if "generation" in result:
+                if result["generation"] != self._interaction_generation:
+                    return
+                if result.get("owner", id(controller._host._transport)) != id(controller._host._transport):
+                    self._busy = False
+                    self._transient_report = "ArchHub restarted. Check the result in ArchHub."
+                    self.refresh()
+                    return
+                result = result["payload"]
+            self._busy = False
+            if not result.get("error"):
+                self._response_received_at = time.monotonic()
+                self._response_owner = id(controller._host._transport)
+            self._result_visible = True
             created = result.get("created")
             summary = result.get("summary")
             if isinstance(summary, str) and summary.strip() and created is None:
@@ -1718,6 +1944,10 @@ def create_baboom_native_companion_window(
                 self._frame.revision if self._frame is not None else None
             )
             self._interaction_requested = False
+            if self._executing_approval_binding:
+                error = str(result.get("error") or "")
+                self._approval_bridge.settled.emit(self._executing_approval_binding, error)
+                self._executing_approval_binding = ""
             self.refresh()
             if on_response is not None:
                 on_response({"execution": dict(result)})

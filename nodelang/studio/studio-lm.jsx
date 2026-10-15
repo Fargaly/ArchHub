@@ -259,7 +259,7 @@ const HistoryBody = ({ n }) => {
 };
 
 
-const CommandBar = ({ open, onClose, addNodeFromLibrary, onOpenSession }) => {
+const CommandBar = ({ open, onClose, addNodeFromLibrary, onOpenSession, onChats }) => {
   useNodeLibrary(open);
   useCatalogueVersion();
   React.useEffect(() => {
@@ -307,6 +307,8 @@ const CommandBar = ({ open, onClose, addNodeFromLibrary, onOpenSession }) => {
     rows.push({group:'Chats', icon:'◌', color:LM.inkSoft, label:chat.title || 'Graph',
       meta:chat.when || chat.file || 'conversation', run:() => onOpenSession && onOpenSession(chat.id)});
   }
+  if (onChats && match('Chats conversations')) rows.push({group:'Navigation', icon:'◌', color:LM.inkSoft,
+    label:'Chats', meta:'Conversations', run:onChats});
   const activate = row => {
     if (!row) return;
     setCommandError('');
@@ -1413,7 +1415,7 @@ const StudioLM = () => {
     <Frame workshopWindow={(!!session && workspaceView.mode === 'chat' && !!workspaceView.conversationRoot) || (!session && toolView?.id === 'workshop')}
       rail={frameRail} onHome={goHome} onPanel={value => { setSettingsOpen(false); setDocsOpen(false); setLibraryOpen(false); setPanel(value); }}
       onSettings={() => openSettings(true)} account={account}
-      onChats={() => { setSettingsOpen(false); setDocsOpen(false); setLibraryOpen(false); setToolView(null); setPanel('chats'); }}
+      onChats={() => { goHome(); setPanel('chats'); }}
       onDocs={() => openDocs(true)} onCockpit={() => { setSettingsOpen(false); setDocsOpen(false); setPanel(null); openTool('cockpit'); }}
       onWorkshop={() => { setSettingsOpen(false); setDocsOpen(false); setLibraryOpen(false); setPanel(null); openTool('workshop', {window:true}); }}
       onCanvas={() => { setPanel(null); setSettingsOpen(false); setDocsOpen(false); openTool('studio'); }}
@@ -1433,7 +1435,7 @@ const StudioLM = () => {
         {' '}<button type="button" onClick={() => window.location.reload()}>Refresh graphs</button></div>}
       {toolView && !session
         ? <ToolMainView view={toolView} account={account} setAccount={setAccount} onSignOut={signOut} onSettings={openSettings}
-            onHome={goHome} onDocs={() => openDocs(true)} onLibrary={() => setLibraryOpen(true)} updateView={setToolView}/>
+            onHome={goHome} onChats={() => { goHome(); setPanel('chats'); }} onCockpit={() => openTool('cockpit')} onDocs={() => openDocs(true)} onLibrary={() => setLibraryOpen(true)} updateView={setToolView}/>
         : session
         ? <Workspace
             session={session} account={account} model={displayedModel} readiness={readiness} onReadinessStale={readReadiness}
@@ -1448,7 +1450,7 @@ const StudioLM = () => {
             userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary}
             themeEpoch={themeEpoch}
             view={workspaceView} updateView={updateWorkspaceView} wsSel={wsSel} setWsSel={setWsSel}
-            onHome={goHome} onDocs={() => openDocs(true)}
+            onHome={goHome} onChats={() => { goHome(); setPanel('chats'); }} onCockpit={() => openTool('cockpit')} onDocs={() => openDocs(true)}
             onNewSession={createSessionGraphInPlace}
             onSettings={() => openSettings(true, 'system')}
             onAccount={() => openSettings(true, 'account')}/>
@@ -1511,7 +1513,7 @@ const StudioLM = () => {
       {libraryOpen && <NodeLibrary onClose={() => setLibraryOpen(false)} addNodeFromLibrary={addNodeFromLibrary}
         initialQuery={typeof libraryOpen === 'string' ? libraryOpen : ''}/>}
       <CommandBar open={commandOpen} onClose={() => setCommandOpen(false)}
-        addNodeFromLibrary={addNodeFromLibrary} onOpenSession={openSession}/>
+        addNodeFromLibrary={addNodeFromLibrary} onOpenSession={openSession} onChats={() => { goHome(); setPanel('chats'); }}/>
       <style>{`
         @keyframes lmPulse { 0%,100% { opacity:.4 } 50% { opacity:1 } }
         @keyframes lmCaret { 50% { opacity: 0 } }
@@ -3081,7 +3083,7 @@ const SettingsCloudStatus = ({ toolRow, account, onSettings }) => {
   </div>;
 };
 
-const ToolMainView = ({ view, account, setAccount, onSignOut, onSettings, onHome, onDocs, onLibrary, updateView }) => {
+const ToolMainView = ({ view, account, setAccount, onSignOut, onSettings, onHome, onChats, onCockpit, onDocs, onLibrary, updateView }) => {
   const [store, setStore] = React.useState(() => ({forgotten:[], revealed:{}}));
   const patch = (k, v) => setStore(old => Object.assign({}, old, typeof k === 'object' ? k : {[k]:v}));
   const tool = view?.id || 'brain';
@@ -3097,7 +3099,7 @@ const ToolMainView = ({ view, account, setAccount, onSignOut, onSettings, onHome
       {root:WORKSHOP_UNAVAILABLE_ROOT, label:'Workshop', unavailable:true, native_work_available:false};
     return <LazyWorkshopWindow embedded state={workshopState || {}} descriptor={descriptor} account={account} sel={{task:view?.focus || null}}
       setSel={next => updateView?.({...view, focus:next.task || null})} onHome={onHome} onDocs={onDocs}
-      onSettings={() => onSettings?.(true)} onLibrary={onLibrary} onAddNode={onLibrary} onLeave={onHome}/>;
+      onChats={onChats} onCockpit={onCockpit} onSettings={() => onSettings?.(true)} onLibrary={onLibrary} onAddNode={onLibrary} onLeave={onHome}/>;
   }
   return <main data-tool-view={tool} data-tool-tab={tab} data-tool-focus={view?.focus || ''} className="ah-scroll" style={{
     gridColumn:'2', gridRow:'1', overflow:'auto', minHeight:0, padding:'28px 44px 36px',
@@ -3191,7 +3193,7 @@ const LazyWorkshopWindow = props => {
     style={{gridColumn:'1 / -1', gridRow:'1 / -1', display:'grid', placeItems:'center',
       background:LM.bgDeep, color:LM.inkSoft, fontFamily:LM.sans, fontSize:13}}>{error || 'Opening Workshop…'}</div>;
 };
-const Workspace = ({ session, account, model, readiness = null, onReadinessStale, onModelReadRetry, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, setPickerOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, themeEpoch = 0, onHome, onDocs, onNewSession, onSettings, onAccount, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
+const Workspace = ({ session, account, model, readiness = null, onReadinessStale, onModelReadRetry, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, setPickerOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, themeEpoch = 0, onHome, onChats, onCockpit, onDocs, onNewSession, onSettings, onAccount, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
   const canvasRead = useDeferredCanvas();
   useNodeLibrary();
   const authorityState = useStudioProjection();
@@ -3250,7 +3252,7 @@ const Workspace = ({ session, account, model, readiness = null, onReadinessStale
         <LazyWorkshopWindow embedded key={JSON.stringify([session.id, workshopState.canvas.graph_id,
           workshopState.canvas.root, workshop.root])} state={workshopState} descriptor={workshop} account={account} target={target}
           setTarget={target => updateView({target})} setMode={setMode} setFocusId={setFocusId}
-          requestCanvasReveal={requestCanvasReveal} onHome={onHome} onDocs={onDocs} onSettings={onSettings}
+          requestCanvasReveal={requestCanvasReveal} onHome={onHome} onChats={onChats} onCockpit={onCockpit} onDocs={onDocs} onSettings={onSettings}
           onAddNode={() => setLibraryOpen(true)} onLibrary={() => setLibraryOpen(true)}
           onLeave={() => updateView({conversationRoot:'', mode:'canvas', target:''})}
           sel={wsSel} setSel={setWsSel}/>

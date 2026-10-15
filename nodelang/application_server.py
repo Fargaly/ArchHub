@@ -5499,6 +5499,7 @@ def _answer_open_question(owner, utterance, context, payload, *, revalidate=None
         mutation_lock=owner.mutation_lock,
         revalidate=current_authority,
         host_reader=_baboom_owner_tool_bridge(owner, authentication_context=context),
+        preview_only=True,
         grant_checker=_baboom_owner_grant_checker(
             owner, authentication_context=context, browser=browser),
     )
@@ -5508,11 +5509,25 @@ def _answer_open_question(owner, utterance, context, payload, *, revalidate=None
         "kind": "answer",
         "summary": str(agent_result.get("answer") or ""),
         "data": {
+            "steps": list(agent_result.get("steps") or ()),
             "brain_context_lines": len([
                 line for line in context_text.splitlines() if line.strip()
             ]),
         },
     }
+    actions = agent_result.get("pending_actions")
+    if actions:
+        pending = {"actions": actions, "source_revision": agent_result["source_revision"],
+            "answer": agent_result.get("answer") or ""}
+        nonce = owner._baboom_confirm_ledger().issue(intent="composer-draft",
+            utterance=json.dumps(pending, ensure_ascii=True, separators=(",", ":")))
+        answered["command"]["intent"] = "composer-draft"
+        answered["response"]["data"].update({"requires": "explicit execute",
+            "confirm_utterance": "confirm " + nonce, "approve_label": "Apply draft",
+            "approval": {"title": "Apply canvas changes", "rows": [
+                {"id": str(i), "label": str(action.get("title") or action.get("op")),
+                 "now": "Current canvas", "after": json.dumps(action, ensure_ascii=True)}
+                for i, action in enumerate(actions)]}})
     return answered
 
 
@@ -15490,7 +15505,8 @@ class ApplicationServer:
                 authentication_context=context,
             )
         if method == "POST" and path == "/api/universal/baboom-command-response":
-            if set(body) != {"utterance"}:
+            if (set(body) not in ({"utterance"}, {"utterance", "stream_steps"})
+                    or type(body.get("stream_steps", False)) is not bool):
                 raise InvalidCell(
                     "BABOOM command response request shape is invalid"
                 )
@@ -18615,8 +18631,8 @@ class ApplicationServer:
                     "workshop": self.universal_registry.workshop_root,
                     **workshop_message_identity(entry),
                     "sequence": entry.sequence,
-                    "created": entry.created,
-                    "existing": not entry.created,
+                    **({"created": entry.created, "existing": not entry.created}
+                       if hasattr(entry, "message_id") else {}),
                     "actor": entry.actor_root,
                     "kind": category_names.get(
                         entry.category_root, entry.category_root

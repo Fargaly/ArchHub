@@ -40,7 +40,9 @@ def _companion_court_transport():
 
 
 @pytest.fixture
-def companion(tmp_path):
+def companion(tmp_path, monkeypatch):
+    from tests_replica.test_baboom5 import fake_approval_webview
+    fake_approval_webview(monkeypatch)
     app = QApplication.instance() or QApplication([])
     image = QImage(1536, 2288, QImage.Format.Format_ARGB32_Premultiplied)
     image.fill(QColor(0, 0, 0, 0))
@@ -70,6 +72,9 @@ def companion(tmp_path):
 
 def _press_confirm(app, window, executed):
     window._confirm.click()
+    assert window._approval.isVisible(), "Review opens the shared approval card"
+    assert not executed, "Review alone must never execute"
+    window._approval_bridge.decide(window._approval_binding, "approve")
     deadline = time.monotonic() + 5.0
     while not executed and time.monotonic() < deadline:
         app.processEvents()

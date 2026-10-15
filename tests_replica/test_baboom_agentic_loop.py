@@ -342,8 +342,11 @@ def test_baboom_hides_unimplemented_tools_and_reads_real_context():
         host_reader=lambda name, args: host_calls.append((name, args)) or {"ok": True, "pong": True},
     )
 
-    assert set(tools) == {"graph.read", "host.ping"}
-    assert "host.read" in agent_composer.baboom_hidden_tool_names()
+    assert set(agent_composer._baboom_tool_specs(context_block=context)) == {"graph.read", "host.ping"}
+    assert set(tools) == {"graph.read", "host.ping", "brain.context", "brain.write"}
+    assert tools["brain.context"].mutates is False
+    assert tools["brain.write"].mutates is True
+    assert "host.read" not in tools
     assert "native.work_submit" in agent_composer.baboom_hidden_tool_names()
     assert tools["graph.read"].mutates is False
     assert tools["host.ping"].run("host.ping", {"probe": "now"}) == {"ok": True, "pong": True}

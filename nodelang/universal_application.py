@@ -10079,6 +10079,28 @@ def execute_universal_baboom_utterance(
         if state is None:
             raise InvalidCell(
                 "that confirmation expired or was never offered here; ask BABOOM again. Nothing was done.")
+        if held["intent"] == "composer-draft":
+            from .agent_composer import _apply_draft_actions, _validate_draft_references
+            pending = json.loads(str(held["utterance"]))
+            if store.revision != pending["source_revision"]:
+                confirmations.settle(nonce, {"summary": "Canvas changed; ask again."})
+                raise BaboomActRefused("Canvas changed after review; ask BABOOM again. Nothing was applied.")
+            projection = project_universal_canvas(store, registry,
+                authentication_context=authentication_context)
+            _validate_draft_references(pending["actions"], projection)
+            try:
+                applied = _apply_draft_actions(store, registry, projection,
+                    {"answer": pending["answer"]}, pending["actions"],
+                    authentication_context=authentication_context)
+                result = {"command": {"catalog": registry.baboom_command_catalog.root_id,
+                    "intent": "composer-draft", "payload": "", "revision": store.revision},
+                    "kind": "draft-applied", "summary": applied["answer"] or "Canvas draft applied.",
+                    "data": applied}
+            except Exception as exc:
+                confirmations.uncertain(nonce, str(exc))
+                raise
+            confirmations.settle(nonce, result)
+            return result
         try:
             result = execute_universal_baboom_utterance(
                 store, registry, utterance=str(held["utterance"]),

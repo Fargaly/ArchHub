@@ -680,7 +680,7 @@ window.ARCHHUB_APP_RAIL = ({active = 'Home', waiting = 0, account = {}, workshop
   const W = window.AH;
   const initials = account.initials || String(account.name || account.email || '?').trim().split(/\s+/).map(word => Array.from(word)[0]).slice(0, 2).join('').toUpperCase();
   const item = (g, label) => <button key={label} type="button" role="link" aria-label={label}
-    title={label === 'Home' ? 'All sessions' : label} aria-keyshortcuts={label === 'Settings' ? 'Control+,' : undefined}
+    title={label === 'Home' ? 'All sessions' : label === 'Chats' ? 'Chats · Ctrl+K, search Chats' : label} aria-keyshortcuts={label === 'Settings' ? 'Control+,' : undefined}
     data-rail-panel={label} data-rail-home={label === 'Home' ? '' : undefined}
     aria-current={active === label ? 'true' : undefined} onClick={() => onNavigate?.(label)}
     style={{width:compact ? 44 : 64,height:58,padding:0,border:0,background:'transparent',fontFamily:W.sans,display:'grid',placeItems:'center',alignContent:'center',gap:4,position:'relative',color:active===label?W.ink:W.inkSoft,cursor:'pointer'}}>

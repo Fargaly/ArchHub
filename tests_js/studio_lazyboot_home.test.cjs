@@ -390,7 +390,16 @@ test('first Workspace open loads verified categories and wire metadata without c
   try {
     await ui.settle(() => ui.doc.querySelector('[data-home-page]'), 'cold Home mounts');
     assert.equal(ui.win.WorkshopView, undefined, 'Workshop stays unloaded');
-    assert.deepEqual([...ui.doc.querySelectorAll('[data-app-rail] [data-rail-panel]')].map(el => el.dataset.railPanel), ['Home','Workshop','Canvas','Library','Settings']);
+    assert.deepEqual([...ui.doc.querySelectorAll('[data-app-rail] [data-rail-panel]')].map(el => el.dataset.railPanel), ['Home','Chats','Workshop','Canvas','Library','Docs','Cockpit','Settings']);
     assert.equal(ui.doc.querySelectorAll('[data-app-rail]').length, 1);
+    ui.flush(() => ui.doc.querySelector('[data-rail-panel="Chats"]').click());
+    await ui.settle(() => ui.doc.querySelector('[data-left-panel]')?.textContent.includes('Chats'), 'one rail click opens the real conversations panel');
+    assert.equal(ui.doc.querySelector('[data-rail-panel="Chats"]').getAttribute('aria-current'), 'true');
+    ui.flush(() => ui.doc.querySelector('[data-rail-panel="Home"]').click());
+    ui.flush(() => ui.win.dispatchEvent(new ui.win.KeyboardEvent('keydown', {key:'k',ctrlKey:true,bubbles:true})));
+    await ui.settle(() => ui.doc.querySelector('[data-command-bar]')?.textContent.includes('Conversations'), 'the existing palette exposes Chats');
+    const chats = [...ui.doc.querySelectorAll('[data-command-bar] button')].find(row => row.textContent.includes('Conversations'));
+    ui.flush(() => chats.click());
+    await ui.settle(() => !ui.doc.querySelector('[data-command-bar]') && ui.doc.querySelector('[data-left-panel]')?.textContent.includes('Chats'), 'palette opens the real conversations destination');
   } finally { ui.close(); }
 });

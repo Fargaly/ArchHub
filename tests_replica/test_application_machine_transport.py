@@ -2754,6 +2754,7 @@ def test_runtime_handoff_readiness_is_revision_bound_and_content_free(tmp_path):
                     "claimed": 0,
                     "blocked": 0,
                     "review": 0,
+                    "stale_claims": 0,
                 },
             },
             "founder_review": {
@@ -2785,6 +2786,7 @@ def test_runtime_handoff_readiness_is_revision_bound_and_content_free(tmp_path):
                 "claimed": 0,
                 "blocked": 0,
                 "review": 0,
+                "stale_claims": 0,
             },
         }
         assert active["founder_review"] == {
@@ -6692,6 +6694,7 @@ def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path
             "claimed": 0,
             "blocked": 0,
             "review": 0,
+            "stale_claims": 0,
         }
         assert baboom_context["workshop"]["entry_count"] == 1
         assert baboom_context["workshop"]["category_counts"]["plan"] == 1
@@ -6838,6 +6841,7 @@ def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path
             "claimed": 0,
             "blocked": 0,
             "review": 0,
+            "stale_claims": 0,
         }
         assert (
             baboom_context_after_work["suggestion"]

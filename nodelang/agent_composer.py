@@ -270,12 +270,14 @@ def _baboom_tool_specs(*, context_block: str = "", host_reader=None) -> dict[str
             return host_call("brain.context", {})
         return {"ok": True, "checked": name}
 
-    return {
-        "brain.context": ToolSpec("brain.context", run, mutates=False),
-        "brain.write": ToolSpec("brain.write", run, mutates=True, verify=verify),
+    tools = {
         "graph.read": ToolSpec("graph.read", run, mutates=False),
         "host.ping": ToolSpec("host.ping", run, mutates=False),
     }
+    if host_reader is not None:
+        tools.update({"brain.context": ToolSpec("brain.context", run, mutates=False),
+            "brain.write": ToolSpec("brain.write", run, mutates=True, verify=verify)})
+    return tools
 
 
 def run_baboom_tool_loop(model_turn, tools, messages, **options) -> dict[str, object]:
@@ -489,6 +491,7 @@ def run_agent_composer(
     grant_checker=None,
     is_halted: Callable[[], bool] | None = None,
     halt_generation: Callable[[], object] | None = None,
+    preview_only: bool = False,
 ) -> dict[str, object]:
     """Read and edit under the caller's lock; wait for the model outside it.
 
@@ -589,6 +592,10 @@ def run_agent_composer(
                 model=chosen, authentication_context=authentication_context)
         if actions and store.revision != source_revision:
             raise InvalidCell("canvas changed during planning; refresh the draft before applying")
+        if preview_only and actions:
+            return {"answer": str(plan.get("answer") or "Review the proposed canvas changes."),
+                "pending_actions": actions, "source_revision": source_revision,
+                "steps": steps, "applied": []}
         result = _apply_draft_actions(
             store, registry, projection, plan, actions,
             authentication_context=authentication_context,

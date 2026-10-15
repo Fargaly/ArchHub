@@ -34,6 +34,9 @@ class _Owner:
     def _read_agent_model(self):
         return "picked-model"
 
+    def _effect_engines_with_mods_store(self):
+        return {}
+
 
 def test_open_question_answers_brain_first_then_model(monkeypatch):
     seen = {}
@@ -43,7 +46,8 @@ def test_open_question_answers_brain_first_then_model(monkeypatch):
         return ({"out": "fact one\nfact two\n"}, "2 lines")
 
     def fake_composer(store, registry, prompt, *, model, effect_engines, authentication_context,
-                      mutation_lock, revalidate):
+                      mutation_lock, revalidate, host_reader, grant_checker, preview_only):
+        assert preview_only is True
         seen["prompt"], seen["model"] = prompt, model
         revalidate()
         return {"actions": [], "answer": "We decided on the share, not Azure."}
@@ -100,10 +104,39 @@ def test_the_machine_dispatcher_answers_open_questions_too():
 
 
 def test_the_studio_composer_is_brain_first_too(monkeypatch):
+    import ast
+    from types import SimpleNamespace
     import nodelang.pipeline_engines as engines
     monkeypatch.setattr(engines, "brain_recall", lambda p, f: ({"out": "he prefers millimetres"}, "1"))
     prompt = app_server.brain_first_prompt("draw the wall")
     assert "he prefers millimetres" in prompt and prompt.endswith("Founder says: draw the wall")
-    source = inspect.getsource(app_server.ApplicationServer)
-    agent_branch = source[source.index("self.path == '/api/universal/agent'"):][:3000]
-    assert "brain_first_prompt(" in agent_branch, "the studio composer must recall before it asks the model"
+    # Execute the real route's AST with fake I/O. A fixed character slice of
+    # the growing route stopped before the actual recall and produced a false red.
+    tree = ast.parse(inspect.getsource(app_server.ApplicationServer))
+    branch = next(node for node in ast.walk(tree) if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Compare)
+        and isinstance(node.test.left, ast.Attribute) and node.test.left.attr == 'path'
+        and any(isinstance(value, ast.Constant) and value.value == '/api/universal/agent'
+                for value in node.test.comparators))
+    function = ast.FunctionDef(name='route', args=ast.arguments(posonlyargs=[],
+        args=[ast.arg(arg=name) for name in ('self','owner','binding','body')],
+        kwonlyargs=[],kw_defaults=[],defaults=[]), body=branch.body, decorator_list=[])
+    namespace = dict(vars(app_server))
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[function],type_ignores=[])),
+        app_server.__file__, 'exec'), namespace)
+    seen = []
+    def compose(*args, **kwargs):
+        seen.append(args[2])
+        kwargs['revalidate']()
+        return {'answer':'Wall draft ready','applied':[]}
+    import nodelang.agent_composer as composer
+    monkeypatch.setattr(composer, 'run_agent_composer', compose)
+    binding = SimpleNamespace(context=object())
+    responses = []
+    handler = SimpleNamespace(path='/api/universal/agent',
+        _browser_session_binding=lambda **_: (binding,None),
+        _json=lambda status,payload: responses.append((status,payload)))
+    namespace['route'](handler, _Owner(), binding, {'prompt':'draw the wall','model':'openrouter/free'})
+    assert len(seen) == 1 and 'he prefers millimetres' in seen[0]
+    assert seen[0].endswith('Founder says: draw the wall')
+    assert responses == [(200,{'answer':'Wall draft ready','applied':[]})]

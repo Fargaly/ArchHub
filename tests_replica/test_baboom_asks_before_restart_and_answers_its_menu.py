@@ -534,6 +534,44 @@ def test_every_menu_phrase_answers(graph, phrase, monkeypatch):
     assert response["kind"] != "not-in-this-build", response["summary"]
 
 
+def test_baboom5_mounted_capability_menu_every_leaf_reaches_a_real_route(graph, monkeypatch, tmp_path):
+    from PyQt6.QtWidgets import QMenu
+    from PyQt6.QtGui import QContextMenuEvent
+    from PyQt6.QtCore import QPoint
+    from tests_replica.test_baboom_native_companion import _t13_window
+    app, window = _t13_window(tmp_path, "menu.png")
+    call, _ = _server(graph)
+    call.fake._composer_planning_slot = threading.BoundedSemaphore(1)
+    call.fake._runtime_handoff_exit = threading.Event()
+    call.fake._read_agent_model = lambda: 'openrouter/free'
+    call.fake._effect_engines_with_mods_store = lambda: {}
+    import nodelang.agent_composer as composer
+    import nodelang.pipeline_engines as engines
+    monkeypatch.setattr(engines, 'brain_recall', lambda *_: ({'out':''}, ''))
+    monkeypatch.setattr(composer, 'run_agent_composer', lambda *_, **__: {'answer':'Existing composer answered.', 'applied':[]})
+    menus, routed = [], []
+    monkeypatch.setattr(QMenu, "exec", lambda menu, *_: menus.append(menu))
+    window._say = lambda phrase: routed.append(phrase)
+    window._prefill = lambda phrase: routed.append(phrase + "check the active model")
+    try:
+        window.start_projection()
+        window.contextMenuEvent(QContextMenuEvent(QContextMenuEvent.Reason.Mouse, QPoint(5,5)))
+        selected = [action.menu() for action in menus[0].actions() if action.menu()
+            and any(action.text().startswith(name) for name in ("Brain", "Graph", "Work", "Agents", "Know"))]
+        assert len(selected) == 5
+        for menu in selected:
+            for action in menu.actions():
+                before = len(routed)
+                action.trigger()
+                assert len(routed) == before + 1, action.text()
+                response = call(RESPOND, routed[-1])['response']
+                assert response["kind"] != "not-in-this-build", (action.text(),response)
+                assert response["summary"].strip()
+    finally:
+        window.stop_projection()
+        window.close()
+
+
 @pytest.mark.parametrize("phrase", [
     "repo status", "audit repository", "audit worktree",
     "check brain maintenance readiness",

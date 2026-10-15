@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import ast
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 import json
 import re
@@ -9,6 +11,23 @@ from typing import Callable, Mapping, Sequence
 
 
 NO_TOOLS_MESSAGE = "this model can't use tools; pick one marked tools"
+_STEP_OBSERVER = ContextVar("agentic_step_observer", default=None)
+
+
+@contextmanager
+def observe_steps(callback):
+    """Disposable display subscription; no authority, queue or semantic store."""
+    token = _STEP_OBSERVER.set(callback)
+    try:
+        yield
+    finally:
+        _STEP_OBSERVER.reset(token)
+
+
+def publish_step(step):
+    observer = _STEP_OBSERVER.get()
+    if observer is not None:
+        observer(dict(step))
 _TEXT_CALL_ALIASES = {
     "check_programs": "host.ping",
 }
@@ -311,6 +330,7 @@ def run_agentic_tool_loop(
                 return _stopped_by_user(steps, turn)
             name = str(call["name"])
             args = dict(call["arguments"])
+            publish_step({"tool": name, "status": "running", "summary": ""})
             spec = tools.get(name)
             if spec is None:
                 payload = {"ok": False, "status": "refused", "error": "tool is not allowed"}
@@ -355,6 +375,8 @@ def run_agentic_tool_loop(
                     step = {"tool": name, "args": args, "status": "refused", "ok": False,
                             "summary": str(exc)[:220]}
             steps.append(step)
+            # Only founder-safe display fields cross the companion boundary.
+            publish_step({key: step[key] for key in ("tool", "status", "summary")})
             if step["ok"] is True and (halted() or generation() != turn_generation):
                 return _stopped_by_user(steps, turn)
             transcript.append(_tool_message(str(call["id"]), payload))

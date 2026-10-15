@@ -140,6 +140,8 @@ class BaboomNativeHost:
         self._last_activity_at = 0.0
         self._latest: BaboomNativeSnapshot | None = None
         self._last_error = ""
+        self._reconnecting = False
+        self.connection_state = "connecting"
 
     @property
     def running(self) -> bool:
@@ -164,13 +166,13 @@ class BaboomNativeHost:
 
     def connect(self) -> BaboomNativeSnapshot:
         """Explicitly enroll/renew one approved BABOOM presence capability."""
+        if not self._transport.agent_session_root:
+            self._transport.bind_agent_session(
+                runtime="baboom",
+                external_session_id=self._external_session_id,
+                device_credential_provider=self._device_credential_provider,
+            )
         with self._lock:
-            if not self._transport.agent_session_root:
-                self._transport.bind_agent_session(
-                    runtime="baboom",
-                    external_session_id=self._external_session_id,
-                    device_credential_provider=self._device_credential_provider,
-                )
             self._connected = True
         return self.poll(response_timeout_seconds=_FIRST_FRAME_SECONDS)
 
@@ -178,10 +180,30 @@ class BaboomNativeHost:
         self, *, response_timeout_seconds: float = _STEADY_FRAME_SECONDS
     ) -> BaboomNativeSnapshot:
         """Read and project one graph revision; no Work or provider action occurs."""
+        self._require_not_stopped()
+        # Only a verified new application owner permits a fresh enrollment.
+        # Never retry an ask or effect after a timeout on the same owner.
+        replacement = getattr(self._transport, "replacement_for_current_runtime", None)
+        if replacement is not None:
+            current = replacement()
+            if current is not self._transport:
+                with self._lock:
+                    self._transport = current
+                    self._connected = False
+                    self._reconnecting = True
+                    self.connection_state = "reconnecting"
+                    self._last_activity_app = ""
+                    self._last_signal_fingerprint = ""
+                return self.connect()
+        reconnect = False
         with self._lock:
             if not self._connected or not self._transport.agent_session_root:
-                raise RuntimeError("BABOOM native host is not explicitly connected")
-        self._require_not_stopped()
+                if self._reconnecting and not self.enrollment_sent:
+                    reconnect = True
+                else:
+                    raise RuntimeError("BABOOM native host is not explicitly connected")
+        if reconnect:
+            return self.connect()
         lease = self._transport.renew_runtime_presence()
         expires_at = lease.get("expires_at")
         if (
@@ -230,6 +252,8 @@ class BaboomNativeHost:
         with self._lock:
             self._latest = snapshot
             self._last_error = ""
+            self.connection_state = "live"
+            self._reconnecting = False
         return snapshot
 
     def _record_foreground_activity(self) -> None:
@@ -320,7 +344,7 @@ class BaboomNativeHost:
             raise RuntimeError("BABOOM native input resolution is invalid")
         return MappingProxyType(dict(result))
 
-    def respond_input(self, utterance: str) -> Mapping[str, object]:
+    def respond_input(self, utterance: str, *, on_progress=None) -> Mapping[str, object]:
         """Read the bounded graph-backed detail for one founder request."""
         self._require_not_stopped()
         if type(utterance) is not str or not utterance.strip() or len(utterance) > 4_000:
@@ -328,7 +352,8 @@ class BaboomNativeHost:
         with self._lock:
             if not self._connected:
                 raise RuntimeError("BABOOM native host is not explicitly connected")
-        result = self._transport.respond_baboom_command(utterance=utterance)
+        result = self._transport.respond_baboom_command(utterance=utterance,
+            **({"on_progress": on_progress} if on_progress is not None else {}))
         command = result.get("command")
         response = result.get("response")
         if (
@@ -385,11 +410,15 @@ class BaboomNativeHost:
             try:
                 self.poll()
             except Exception as exc:
-                # The host has no retry ledger or replacement session. It keeps
-                # the failure local and awaits the next bounded heartbeat.
+                # No command is retried. The next display tick rechecks the
+                # owner and may admit a verified successor, never a duplicate.
                 with self._lock:
                     self._last_error = type(exc).__name__
-            self._stop.wait(self._heartbeat_seconds)
+                    self.connection_state = ("closed" if "runtime is not active" in str(exc)
+                        else "reconnecting")
+            # Frame leases last twelve seconds. A thirty-second heartbeat left
+            # a healthy app looking disconnected for most of every interval.
+            self._stop.wait(min(2.0, self._heartbeat_seconds))
 
     def _record_actionable_signal(self, context: Mapping[str, object]) -> str | None:
         if not self._emit_steward_signals:

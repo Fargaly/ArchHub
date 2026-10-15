@@ -1824,7 +1824,15 @@ class UniversalRuntimeTransport:
                 peer = None
             peer_context = _VERIFIED_PIPE_PEER.set((request, peer))
             try:
-                result = dict(self.dispatch(request))
+                from .native_agentic_loop import observe_steps
+                def progress(step):
+                    if (request["path"] == "/api/universal/baboom-command-response"
+                            and request["body"].get("stream_steps") is True):
+                        connection.send_bytes(_canonical({"ok": True,
+                            "runtime_id": self.runtime_id, "request_id": request_id,
+                            "progress": step}))
+                with observe_steps(progress):
+                    result = dict(self.dispatch(request))
             finally:
                 _VERIFIED_PIPE_PEER.reset(peer_context)
             response = {
@@ -2056,6 +2064,20 @@ class UniversalRuntimeClient:
         if self._cancellation_event is not None and self._cancellation_event.is_set():
             raise MachineTransportError("universal runtime request cancelled")
 
+    def replacement_for_current_runtime(self):
+        """Re-admit BABOOM to a verified successor; never copy session tokens."""
+        with self._request_lock:
+            descriptor = self._verified_owner()
+            bound = getattr(self, "_baboom_bound_runtime", None)
+            if bound is None or descriptor.runtime_id == bound:
+                return self
+            if self._agent_session_access != "full":
+                raise MachineTransportError("released native owner cannot reconnect")
+            client = type(self)(self.descriptor_path, self.key_provider,
+                cancellation_event=self._cancellation_event)
+            client.pin_runtime_descriptor(descriptor)
+            return client
+
     def bind_agent_session(
         self,
         *,
@@ -2081,6 +2103,10 @@ class UniversalRuntimeClient:
             body["continuation_id"] = f"{int(time.time()):08x}"+secrets.token_hex(12)
             self._continuation_request = dict(body)
         if device_credential_provider is not None:
+            if runtime == "baboom":
+                descriptor = self._verified_owner()
+                self.pin_runtime_descriptor(descriptor)
+                self._baboom_bound_runtime = descriptor.runtime_id
             challenge = self.request(
                 "POST",
                 "/api/universal/agent-session-challenge",
@@ -2091,7 +2117,11 @@ class UniversalRuntimeClient:
                 raise MachineTransportError("runtime device credential is invalid")
             body["device_credential"] = credential
         self.enrollment_sent = True
-        result = self.request("POST", "/api/universal/agent-session", body)
+        try:
+            result = self.request("POST", "/api/universal/agent-session", body)
+        except MachineNotSent:
+            self.enrollment_sent = False
+            raise
         return self._accept_agent_session_result(result, expected_agent_session)
 
     def _accept_agent_session_result(self, result, expected_agent_session=None):
@@ -2664,13 +2694,14 @@ class UniversalRuntimeClient:
             raise MachineTransportError("BABOOM command resolution is invalid")
         return result
 
-    def respond_baboom_command(self, *, utterance: str) -> dict[str, object]:
+    def respond_baboom_command(self, *, utterance: str, on_progress=None) -> dict[str, object]:
         """Read the detailed founder-safe response for one command."""
         if type(utterance) is not str or not utterance.strip() or len(utterance) > 4_000:
             raise ValueError("BABOOM command utterance is invalid")
         result = self.request("POST", "/api/universal/baboom-command-response", {
             "utterance": utterance,
-        })
+            **({"stream_steps": True} if on_progress is not None else {}),
+        }, **({"on_progress": on_progress} if on_progress is not None else {}))
         command = result.get("command")
         response = result.get("response")
         if (
@@ -3897,6 +3928,7 @@ class UniversalRuntimeClient:
         *,
         request_id: str | None = None,
         response_timeout_seconds: float | None = None,
+        on_progress=None,
     ) -> dict[str, object]:
         """Send one authenticated request with an optional caller wait bound.
 
@@ -3923,6 +3955,7 @@ class UniversalRuntimeClient:
                 body,
                 request_id=request_id,
                 response_timeout_seconds=response_timeout_seconds,
+                **({"on_progress": on_progress} if on_progress is not None else {}),
             )
 
     def _request_once(
@@ -3933,6 +3966,7 @@ class UniversalRuntimeClient:
         *,
         request_id: str | None = None,
         response_timeout_seconds: float | None = None,
+        on_progress=None,
     ) -> dict[str, object]:
         self._check_cancelled()
         descriptor = self._verified_owner()
@@ -3992,22 +4026,28 @@ class UniversalRuntimeClient:
                 raise MachineTransportError("universal runtime response timeout is invalid")
             else:
                 response_timeout = float(response_timeout_seconds)
-            if self._cancellation_event is None:
-                if not connection.poll(response_timeout):
+            deadline = time.monotonic() + response_timeout
+            progress_count = 0
+            while True:
+                self._check_cancelled()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
                     raise MachineNoResponse("universal runtime did not respond")
-            else:
-                deadline = time.monotonic() + response_timeout
-                while True:
-                    self._check_cancelled()
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise MachineNoResponse("universal runtime did not respond")
-                    if connection.poll(min(0.1, remaining)):
-                        self._check_cancelled()
-                        break
-            response = json.loads(
-                connection.recv_bytes(_MAX_MESSAGE_BYTES).decode("utf-8")
-            )
+                if not connection.poll(min(0.1, remaining)):
+                    continue
+                response = json.loads(connection.recv_bytes(_MAX_MESSAGE_BYTES).decode("utf-8"))
+                if (type(response) is not dict or response.get("runtime_id") != descriptor.runtime_id
+                        or response.get("request_id") != identity):
+                    raise MachineTransportError("universal runtime response binding failed")
+                if "progress" not in response:
+                    break
+                progress_count += 1
+                step = response["progress"]
+                if (on_progress is None or progress_count > 64 or response.get("ok") is not True
+                        or type(step) is not dict or set(step) != {"tool", "status", "summary"}
+                        or any(type(value) is not str or len(value) > 4000 for value in step.values())):
+                    raise MachineTransportError("universal runtime progress is invalid")
+                on_progress(step)
         except (EOFError, OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise MachineTransportError("universal runtime response is invalid") from exc
         finally:

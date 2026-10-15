@@ -514,7 +514,7 @@ const WorkshopAgentPicker = ({ aliases, target, label, avatar, disabled, onSelec
 };
 
 const WorkshopView = ({ state, descriptor, target = '', setTarget = () => {}, setMode, setFocusId,
-  requestCanvasReveal, onLeave, onHome, onDocs, onSettings, onLibrary, onAddNode, account, sel, setSel, embedded = false }) => {
+  requestCanvasReveal, onLeave, onHome, onDocs, onSettings, onLibrary, onChats, onCockpit, onAddNode, account, sel, setSel, embedded = false }) => {
   const authority = window.ARCHHUB_STUDIO_AUTHORITY || window.ARCHHUB_EXISTING_WORKSHOP;
   const transcript = wsTranscript(state, descriptor);
   const native = wsNative(state, descriptor);
@@ -745,7 +745,7 @@ const WorkshopView = ({ state, descriptor, target = '', setTarget = () => {}, se
   const hostLine=(state?.hosts||window.ARCHHUB_LIVE?.hosts||[]).filter(row=>row.state==='connected'||row.status==='connected').map(row=>[row.name,row.file].filter(Boolean).join(' · ')).join(' · ');
   const AppRail=window.ARCHHUB_APP_RAIL;
   const navigate=name=>{ if(name==='Workshop')return; if(name==='Canvas')return openCanvas();
-    const route={Home:onHome||onLeave,Library:onLibrary||onAddNode,Docs:onDocs,Settings:onSettings,Account:onSettings}[name];route?.();};
+    const route={Home:onHome||onLeave,Chats:onChats,Cockpit:onCockpit,Library:onLibrary||onAddNode,Docs:onDocs,Settings:onSettings,Account:onSettings}[name];route?.();};
   const agentFor=task=>agents.find(row=>row.id===transcript?.assignments?.find(a=>a.work===task.work)?.agent_session)||agents.find(row=>row.id===task.owner);
   const liveAccount = account || state.account || (typeof window.acLoad === 'function' ? window.acLoad() : null);
   const accountName = liveAccount?.name || liveAccount?.email || names.get(transcript?.self) || '';

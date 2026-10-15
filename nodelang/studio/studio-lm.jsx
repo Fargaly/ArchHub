@@ -3820,6 +3820,16 @@ const canvasHistoryToast = (operation, before, after) => {
   const back = [...now.keys()].filter(id => !was.has(id)).map(id => now.get(id));
   const gone = [...was.keys()].filter(id => !now.has(id)).map(id => was.get(id));
   const name = list => '\u2018' + list[0] + '\u2019' + (list.length > 1 ? ' and ' + (list.length - 1) + ' more' : '');
+  // A collapsed group hides its members: a card appearing/disappearing may be
+  // membership, not creation/deletion. Describe the action being undone/redone.
+  const membership = graph => new Map((graph?.nodes || []).filter(group => was.has(group.id) && now.has(group.id)).flatMap(group =>
+    (group.members || []).map(member => [typeof member === 'string' ? member : member.id || member.root,
+      {group:group.id, title:typeof member === 'string' ? member : member.title || member.label || member.id || member.root}])));
+  const wasIn = membership(before), nowIn = membership(after);
+  const joined = [...nowIn].filter(([id, member]) => was.has(id) && wasIn.get(id)?.group !== member.group).map(([id]) => was.get(id));
+  const left = [...wasIn].filter(([id, member]) => now.has(id) && nowIn.get(id)?.group !== member.group).map(([id]) => now.get(id));
+  if (joined.length) return verb + ': ' + (operation === 'redo' ? 'added ' : 'removed ') + name(joined) + (operation === 'redo' ? ' to the group' : ' from the group');
+  if (left.length) return verb + ': ' + (operation === 'redo' ? 'removed ' : 'added ') + name(left) + (operation === 'redo' ? ' from the group' : ' to the group');
   // Undo that brings a card back took back its deletion; one that removes a card took back its creation.
   if (back.length) return verb + ': ' + (operation === 'redo' ? 'added ' : 'deleted ') + name(back);
   if (gone.length) return verb + ': ' + (operation === 'redo' ? 'deleted ' : 'added ') + name(gone);
@@ -4242,6 +4252,8 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   const menuTaskRef = React.useRef(null);
   const leaveGroupMember = React.useCallback((memberId, groupId, position = null) => {
     const owner = window.ARCHHUB_STUDIO_AUTHORITY || authority || normal;
+    // The drop owns focus now; a later response must not steal a newly edited field.
+    if (!document.querySelector('[role="dialog"],[role="menu"],dialog[open]')) wrapRef.current?.focus({preventScroll:true});
     return menuTaskRef.current(async () => {
       if (!memberId) throw new Error('Choose a group member to move.');
       if (!owner?.moveMember) throw new Error('Removing a member is unavailable in this connection.');
@@ -4250,6 +4262,10 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       if (!beforeGroup) throw new Error('The member has no group to leave. Refresh the canvas.');
       const result = await owner.moveMember(memberId, beforeGroup, '', position);
       if (!result || result.ok === false) throw new Error(result?.error || 'Membership was not confirmed by the graph owner.');
+      if (alive.current && (document.activeElement === document.body || document.activeElement === wrapRef.current) &&
+          !document.querySelector('[role="dialog"],[role="menu"],dialog[open]')) {
+        wrapRef.current?.focus({preventScroll:true});
+      }
       return 'Membership saved by the graph owner.';
     });
   }, [allNodes, authority, normal]);
@@ -4613,6 +4629,8 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   const ARROWS = {ArrowLeft:[-1, 0], ArrowRight:[1, 0], ArrowUp:[0, -1], ArrowDown:[0, 1]};
   const onCanvasKeyDown = e => {
     const shortcut = studioShortcutFromEvent(e, 'canvas');
+    // History is admitted once, by the document listener, including canvas bubbling.
+    if (shortcut?.action === 'undo' || shortcut?.action === 'redo') return;
     if (e.target === e.currentTarget && shortcut?.action === 'open-canvas-menu') { openContextMenu(e); return; }
     const inField = e.target.closest('input,textarea,select,[contenteditable="true"],[role="menu"]');
     if (!inField && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -4650,12 +4668,13 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   };
   const onNodeFocus = id => e => {
     if (suppressNodeClick.current) { suppressNodeClick.current = false; return; }
-    if (e?.target.closest('button,input,textarea,select,a,[contenteditable="true"]')) return;
+    if (e?.target.isContentEditable || e?.target.closest('button,input,textarea,select,a,[contenteditable]:not([contenteditable="false"])')) return;
     let roots = selectedIdsRef.current.filter(root => selectableNodeIds.has(root));
     if (e?.shiftKey) roots = roots.includes(id) ? roots.filter(root => root !== id) : [...roots, id];
     else if (!roots.includes(id)) roots = [id];
     setCanvasSelectedIds(roots);
     setPickedId(roots.length ? id : null); setFocusId(roots.length ? id : null, roots);
+    wrapRef.current?.focus({preventScroll:true});
   };
 
   const onNodeDragStart = (id) => (e) => {
@@ -4835,6 +4854,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     const c = toCanvasCoords(e.clientX, e.clientY);
     addNodeFromLibrary && addNodeFromLibrary(payload, c.x - 110, c.y - 30);
     setDropTarget(null);
+    wrapRef.current?.focus({preventScroll:true});
   };
 
   const nodeById = Object.fromEntries(
@@ -5195,6 +5215,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   const redoWhy = authority ? (typeof authority.redo === 'function' ? 'Nothing to redo' : 'Redo is not available on this canvas') : typeof window.ARCHHUB_HISTORY !== 'function' ?
     'Redo is not available in this connection' : 'Nothing to redo';
   const runHistory = operation => {
+    if (blocked || menuBusyRef.current) return;
     if (operation === 'undo' ? !canUndo : !canRedo) { setLayoutError(operation === 'undo' ? undoWhy : redoWhy); return; }
     if (flushLayoutBurst()) { setLayoutError('Saving the moved nodes first. Try again in a moment.'); return; }
     const read = () => (authority ? authority.getSnapshot() : normal?.getSnapshot()?.topology)?.graph || {nodes:[], wires:[]};
@@ -5213,6 +5234,24 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       return canvasHistoryToast(operation, before, read());
     });
   };
+  // NodeCanvas is mounted only for the active Studio canvas. Keep today's toolbar
+  // path in a ref; one document listener owns history regardless of keyboard focus.
+  const historyKeyRef = React.useRef(null);
+  historyKeyRef.current = e => {
+    if (e.defaultPrevented || e.isComposing || e.repeat) return;
+    const shortcut = studioShortcutFromEvent(e, 'canvas');
+    if (shortcut?.action !== 'undo' && shortcut?.action !== 'redo') return;
+    const editing = node => node?.isContentEditable || node?.closest?.('input,textarea,select,[role="textbox"],[contenteditable]:not([contenteditable="false"])');
+    if (editing(e.target) || editing(document.activeElement) || document.querySelector('[role="dialog"],[role="menu"],dialog[open]')) return;
+    if (blocked || menuBusyRef.current || !scopeStillCurrent() || (shortcut.action === 'undo' ? !canUndo : !canRedo)) return;
+    e.preventDefault();
+    runHistory(shortcut.action);
+  };
+  React.useEffect(() => {
+    const key = e => historyKeyRef.current?.(e);
+    document.addEventListener('keydown', key);
+    return () => document.removeEventListener('keydown', key);
+  }, []);
   const refreshCanvas = async () => {
     if (!scopeStillCurrent() || saving.current || authorityState?.pending) return;
     try {
@@ -6640,7 +6679,7 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary, initialQuery = '' }) => {
       position:'absolute', inset:0, background:'rgba(0,0,0,.55)', zIndex:60,
       display:'grid', placeItems:'center',
     }}>
-      <div onClick={e => e.stopPropagation()} style={{
+      <div role="dialog" aria-modal="true" aria-label="Node library" onClick={e => e.stopPropagation()} style={{
         width:780, maxWidth:'94%', height:540, maxHeight:'88%',
         background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.dialog,
         overflow:'hidden', boxShadow:LM.shadow.dialog,
@@ -9997,7 +10036,7 @@ const Docs = ({ onClose, onHome }) => {
   React.useEffect(() => { const t = setTimeout(() => inputRef.current && inputRef.current.focus(), 60); return () => clearTimeout(t); }, []);
   return (
     <div onClick={onClose} style={{ position:'absolute', inset:0, background:LM.scrim, zIndex:60, display:'grid', placeItems:'center' }}>
-      <div onClick={e => e.stopPropagation()} style={{
+      <div role="dialog" aria-modal="true" aria-label="Documentation" onClick={e => e.stopPropagation()} style={{
         width:1000, maxWidth:'95%', height:620, maxHeight:'90%',
         background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.xl,
         overflow:'hidden', boxShadow:'0 30px 80px rgba(0,0,0,.6)',

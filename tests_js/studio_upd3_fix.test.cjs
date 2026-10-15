@@ -517,11 +517,18 @@ test(`UPD3 GR ${connection}: mounted member drag-out then Ctrl+Z and redo repain
     assert.equal(studio.calls.posts.filter(call => call.url === '/api/universal/interaction').length, 1);
     assert.equal(chips().length, 1, 'group card repaints to one member');
     assert.ok(studio.card('b'), 'dragged member is released onto the canvas');
-    studio.key(studio.region(), {key:'z', ctrlKey:true}); await studio.settle(200);
-    assert.deepEqual(studio.calls.history, ['undo'], 'real canvas keyboard handler reaches host history');
+    assert.ok(studio.doc.activeElement === studio.region(), 'successful member drop restores canvas focus; active=' + studio.doc.activeElement?.outerHTML?.slice(0, 160));
+    studio.click(studio.card('group-a')); await studio.settle(200);
+    assert.ok(studio.doc.activeElement === studio.region(), 'group selection restores canvas focus; active=' + studio.doc.activeElement?.outerHTML?.slice(0, 160));
+    studio.doc.activeElement.blur();
+    assert.ok(studio.doc.activeElement === studio.doc.body, 'reported body focus is reproduced');
+    assert.equal(studio.key(studio.doc.body, {key:'z', ctrlKey:true}), false, 'document shortcut consumes Undo');
+    await studio.settle(200);
+    assert.deepEqual(studio.calls.history, ['undo'], 'body keyboard handler reaches host history exactly once');
     assert.equal(chips().length, 2, 'Undo repaints both members');
     assert.equal(studio.card('b'), null, 'Undo hides the released card inside its group again');
-    studio.key(studio.region(), {key:'Z', ctrlKey:true, shiftKey:true}); await studio.settle(200);
+    assert.ok(studio.region().textContent.includes('Undid: removed \u2018Line Watcher\u2019 from the group'), 'Undo describes the removal it undid');
+    studio.key(studio.doc.body, {key:'Z', ctrlKey:true, shiftKey:true}); await studio.settle(200);
     assert.deepEqual(studio.calls.history, ['undo', 'redo']);
     if (connection === 'signed') {
       const historyPosts = studio.calls.posts.filter(call => call.url === '/api/universal/gesture' && (call.body.undo || call.body.redo));
@@ -531,6 +538,100 @@ test(`UPD3 GR ${connection}: mounted member drag-out then Ctrl+Z and redo repain
     }
     assert.equal(chips().length, 1, 'Redo repaints the reduced membership');
     assert.ok(studio.card('b'), 'Redo releases the member again');
+    assert.ok(studio.region().textContent.includes('Redid: removed \u2018Line Watcher\u2019 from the group'), 'Redo describes the removal it repeated');
+    const undo = [...studio.region().querySelectorAll('button')].find(button => button.getAttribute('aria-label') === 'Undo');
+    studio.click(undo); await studio.settle(200);
+    assert.equal(chips().length, 2, 'toolbar Undo uses the same graph history');
+    assert.equal(studio.card('b'), null, 'toolbar Undo hides the released node');
+    studio.key(studio.region(), {key:'y', ctrlKey:true}); await studio.settle(200);
+    assert.deepEqual(studio.calls.history, ['undo', 'redo', 'undo', 'redo'], 'canvas bubbling and Ctrl+Y each send exactly once');
+    assert.equal(chips().length, 1, 'Ctrl+Y restores the reduced membership');
+    assert.ok(studio.card('b'));
+    studio.key(studio.region(), {key:'z', ctrlKey:true}); await studio.settle(200);
+    assert.equal(chips().length, 2, 'focused canvas Undo still works exactly once');
+    assert.deepEqual(studio.calls.history, ['undo', 'redo', 'undo', 'redo', 'undo']);
+    studio.key(studio.doc.body, {key:'z', metaKey:true, shiftKey:true}); await studio.settle(200);
+    assert.equal(chips().length, 1, 'Cmd+Shift+Z remains supported');
+    assert.deepEqual(studio.calls.history, ['undo', 'redo', 'undo', 'redo', 'undo', 'redo']);
+  } finally { studio.close(); }
+});
+}
+
+test('UNDOKEYS toast: genuine grouped member deletion is not described as a release onto the canvas', () => {
+  const source = read('nodelang/studio/studio-lm.jsx');
+  const begin = source.indexOf('const canvasHistoryToast = '), end = source.indexOf('// Wheel zoom:', begin);
+  const toast = new Function(source.slice(begin, end) + '; return canvasHistoryToast;')();
+  const grouped = {nodes:[{id:'g', title:'Group', members:[{id:'b', title:'Member'}]}], wires:[]};
+  const deleted = {nodes:[{id:'g', title:'Group', members:[]}], wires:[]};
+  assert.equal(toast('redo', grouped, deleted), 'Redid the last change');
+  assert.equal(toast('undo', deleted, grouped), 'Undid the last change');
+});
+
+for (const connection of ['normal', 'signed']) {
+test(`UNDOKEYS ${connection}: document history skips composer, editors, overlays and inactive Studio`, async () => {
+  const studio = await mountStudio({grouped:true, realAuthority:connection === 'signed'});
+  try {
+    await studio.settle();
+    const chip = studio.card('group-a').querySelector('[data-member-chip="b"]');
+    studio.pointer(chip, 'pointerdown', {clientX:120, clientY:100});
+    studio.pointer(studio.region(), 'pointermove', {clientX:700, clientY:400});
+    studio.pointer(studio.win, 'pointerup', {clientX:700, clientY:400});
+    await studio.settle(250);
+    studio.clearBackground(); await studio.settle(200);
+    const shortcuts = [{key:'z', ctrlKey:true}, {key:'Z', ctrlKey:true, shiftKey:true}, {key:'y', ctrlKey:true}];
+    const skip = target => {
+      target.focus();
+      const posts = studio.calls.posts.length;
+      for (const shortcut of shortcuts) assert.equal(studio.key(target, shortcut), true, 'editor/overlay retains native keyboard behavior');
+      assert.equal(studio.calls.posts.length, posts, 'excluded shortcuts send no request');
+      assert.deepEqual(studio.calls.history, []);
+    };
+    studio.type(studio.input(), 'keep this composer draft'); skip(studio.input());
+    assert.equal(studio.input().value, 'keep this composer draft');
+    for (const tag of ['input', 'textarea', 'select']) {
+      const field = studio.doc.createElement(tag); studio.doc.body.append(field); skip(field); field.remove();
+    }
+    for (const editable of ['', 'true', 'plaintext-only']) {
+      const editor = studio.doc.createElement('div'); editor.setAttribute('contenteditable', editable);
+      const child = studio.doc.createElement('span'); child.tabIndex = 0; editor.append(child);
+      studio.doc.body.append(editor); skip(child); editor.remove();
+    }
+    for (const role of ['dialog', 'menu']) {
+      const overlay = studio.doc.createElement('div'); overlay.setAttribute('role', role); studio.doc.body.append(overlay);
+      studio.doc.activeElement.blur(); skip(studio.doc.body); overlay.remove();
+    }
+    const dialog = studio.doc.createElement('dialog'); dialog.setAttribute('open', ''); studio.doc.body.append(dialog);
+    skip(studio.doc.body); dialog.remove();
+    studio.doc.activeElement.blur();
+    studio.key(studio.doc.body, {key:'k', ctrlKey:true}); await studio.settle();
+    assert.ok(studio.doc.querySelector('[role="dialog"][aria-label="Node library"]'), 'real library is an open modal');
+    studio.doc.activeElement.blur(); skip(studio.doc.body);
+    studio.key(studio.doc.body, {key:'Escape'}); await studio.settle();
+    assert.equal(studio.doc.querySelector('[role="dialog"][aria-label="Node library"]'), null);
+    studio.key(studio.doc.body, {key:'/', ctrlKey:true}); await studio.settle();
+    assert.ok(studio.doc.querySelector('[role="dialog"][aria-label="Documentation"]'), 'real Documentation is an open modal');
+    studio.doc.activeElement.blur(); skip(studio.doc.body);
+    studio.key(studio.doc.body, {key:'Escape'}); await studio.settle();
+    studio.win.ReactDOM.flushSync(() => studio.region().dispatchEvent(new studio.win.MouseEvent('contextmenu',
+      {bubbles:true, cancelable:true, clientX:900, clientY:700})));
+    await studio.settle();
+    assert.ok(studio.doc.querySelector('[role="menu"]'), 'real canvas menu is open');
+    studio.doc.activeElement.blur(); skip(studio.doc.body);
+    studio.key(studio.doc.body, {key:'Escape'}); await studio.settle();
+    assert.equal(studio.doc.querySelector('[role="menu"]'), null);
+    studio.doc.activeElement.blur();
+    assert.equal(studio.key(studio.doc.body, {key:'z', ctrlKey:true, altKey:true}), true);
+    assert.deepEqual(studio.calls.history, [], 'Alt-modified chord does not invoke history');
+    studio.key(studio.doc.body, {key:'z', ctrlKey:true}); await studio.settle(200);
+    assert.deepEqual(studio.calls.history, ['undo'], 'listener remains active after exclusions');
+    const home = [...studio.doc.querySelectorAll('button')].find(button => button.getAttribute('aria-label') === 'Home');
+    studio.click(home); await studio.settle(200);
+    assert.equal(studio.region(), null, 'Home unmounts the active Studio canvas');
+    studio.doc.activeElement.blur();
+    const posts = studio.calls.posts.length;
+    assert.equal(studio.key(studio.doc.body, {key:'y', ctrlKey:true}), true);
+    assert.equal(studio.calls.posts.length, posts, 'inactive view sends no history request');
+    assert.deepEqual(studio.calls.history, ['undo'], 'document listener is removed on view exit');
   } finally { studio.close(); }
 });
 }

@@ -743,8 +743,9 @@ const WorkshopView = ({ state, descriptor, target = '', setTarget = () => {}, se
   const planAnchor=visibleMessages.some(message=>message.root===planMessage?.root) ? planMessage.root :
     [...visibleMessages].reverse().find(message=>wsSender(message)===(model.workflow?.proposed_by||lead?.id))?.root;
   const hostLine=(state?.hosts||window.ARCHHUB_LIVE?.hosts||[]).filter(row=>row.state==='connected'||row.status==='connected').map(row=>[row.name,row.file].filter(Boolean).join(' · ')).join(' · ');
+  const AppRail=window.ARCHHUB_APP_RAIL;
   const navigate=name=>{ if(name==='Workshop')return; if(name==='Canvas')return openCanvas();
-    const route={Home:onHome||onLeave,Library:onLibrary||onAddNode,Docs:onDocs,Settings:onSettings}[name];route?.();};
+    const route={Home:onHome||onLeave,Library:onLibrary||onAddNode,Docs:onDocs,Settings:onSettings,Account:onSettings}[name];route?.();};
   const agentFor=task=>agents.find(row=>row.id===transcript?.assignments?.find(a=>a.work===task.work)?.agent_session)||agents.find(row=>row.id===task.owner);
   const liveAccount = account || state.account || (typeof window.acLoad === 'function' ? window.acLoad() : null);
   const accountName = liveAccount?.name || liveAccount?.email || names.get(transcript?.self) || '';
@@ -790,14 +791,8 @@ const WorkshopView = ({ state, descriptor, target = '', setTarget = () => {}, se
   return <main data-workshop-s1="" data-workshop72="" data-workshop-v3="" data-screen-label="5.1v3_workshop" data-workshop-id={model.id}
     style={{gridColumn:'1 / -1',gridRow:'1 / -1',minHeight:0,overflow:'hidden',display:'grid',width:'100%',height:'100%',gridTemplateRows:`1fr ${K.status}px`,background:K.background,color:W.ink,fontFamily:W.sans,margin:0}}>
     <div style={{display:'grid',gridTemplateColumns:`${K.rail}px ${K.list}px minmax(0,1fr)`,minHeight:0}}>
-      <nav data-workshop72-rail="" style={{width:K.rail,boxSizing:'border-box',background:K.railBackground,borderRight:`1px solid ${W.lineSoft}`,display:'grid',gridTemplateRows:'auto 1fr auto',paddingTop:12,justifyItems:'center'}}>
-        <div style={{display:'grid',gap:4}}>{[['⌂','Home'],['◎','Workshop'],['⬡','Canvas'],['▦','Library']].map(([g,l])=><div key={l} role="link" tabIndex={0} aria-label={l}
-          onClick={()=>navigate(l)} onKeyDown={e=>e.key==='Enter'&&navigate(l)} style={{width:64,height:58,display:'grid',placeItems:'center',alignContent:'center',gap:4,position:'relative',color:l==='Workshop'?W.ink:W.inkSoft,cursor:'pointer'}}>
-          <span style={{width:36,height:30,borderRadius:8,display:'grid',placeItems:'center',fontSize:16,background:l==='Workshop'?K.progressBackground:'transparent',boxShadow:l==='Workshop'?W.elev.e1:'none'}}>{g}</span><span style={{fontSize:11,fontWeight:l==='Workshop'?600:500}}>{l}</span>
-          {l==='Workshop'&&model.status.waiting>0&&<b style={{position:'absolute',top:3,right:10,minWidth:18,height:18,borderRadius:9,background:W.warn,color:W.onFill,fontSize:11,fontWeight:700,display:'grid',placeItems:'center'}}>{model.status.waiting}</b>}</div>)}</div><span/>
-        <div style={{paddingBottom:10,display:'grid',gap:4,justifyItems:'center'}}><div role="link" tabIndex={0} aria-label="Settings" onClick={()=>navigate('Settings')} onKeyDown={e=>e.key==='Enter'&&navigate('Settings')}
-          style={{width:64,height:58,display:'grid',placeItems:'center',alignContent:'center',gap:4,color:W.inkSoft,cursor:'pointer'}}><span style={{fontSize:16}}>⚙</span><span style={{fontSize:11}}>Settings</span></div>
-          {transcript?.self&&<span data-workshop-account-avatar="" style={{width:32,height:32,borderRadius:'50%',background:accountColour,color:W.onUserAv,display:'grid',placeItems:'center',fontSize:12,fontWeight:700}}>{accountInitials}</span>}</div></nav>
+      <AppRail active="Workshop" workshop waiting={model.status.waiting}
+        account={{...liveAccount, initials:accountInitials, colour:accountColour}} onNavigate={navigate}/>
       <aside data-workshop72-list="" style={{width:K.list,boxSizing:'border-box',background:K.listBackground,borderRight:`1px solid ${W.lineSoft}`,display:'flex',flexDirection:'column',minHeight:0}}>
         <div style={{display:'flex',alignItems:'center',gap:10,height:64,flex:'none',padding:'0 16px 0 22px'}}><span style={{fontSize:20,fontWeight:700,letterSpacing:'-.01em',flex:1}}>Workshop</span>
           <button type="button" data-workshop-primary="" disabled={busy||transcript?.can_send!==true||typeof authority?.beginWorkshopTask!=='function'} onClick={beginTask} style={button(false,true)}>New task</button></div>

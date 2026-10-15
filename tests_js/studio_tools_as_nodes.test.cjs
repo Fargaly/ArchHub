@@ -9,7 +9,7 @@ const library = fs.readFileSync(path.join(root, 'nodelang/library_engines.py'), 
 const pipeline = fs.readFileSync(path.join(root, 'nodelang/pipeline_engines.py'), 'utf8');
 
 test('tool icons are removed from the icon rail', () => {
-  const rail = studio.slice(studio.indexOf('const IconRail ='), studio.indexOf('const ToolGlyph ='));
+  const rail = studio.slice(studio.indexOf('const Frame ='), studio.indexOf('const isHistoryNode ='));
   assert.doesNotMatch(rail, /toolRows\.map/);
   for (const id of ['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud']) {
     assert.doesNotMatch(rail, new RegExp('dataToolRail=\\{' + id + '\\}|data-tool-rail="' + id + '"'));

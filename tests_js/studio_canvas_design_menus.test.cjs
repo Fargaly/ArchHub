@@ -246,7 +246,8 @@ async function mount({focusId = null, history = null, nodes = NODES(), wires = W
     const end = source.indexOf('// ─', start);
     vm.runInContext(source.slice(start, end), context);
   }
-  vm.runInContext(transformSync(shortcutSlice() + slice() + '\nglobalThis.NodeCanvas = NodeCanvas;',
+  const freeSlot = source.slice(source.indexOf('const studioFreeSlot ='), source.indexOf('const studioRefreshCanvasInPlace ='));
+  vm.runInContext(transformSync(shortcutSlice() + freeSlot + slice() + '\nglobalThis.NodeCanvas = NodeCanvas;',
     {loader:'jsx', format:'cjs'}).code, context);
   const reactRoot = createRoot(dom.window.document.getElementById('root'));
   const props = {focusId, setFocusId:selectionApi ? (id, roots) => {
@@ -541,8 +542,12 @@ test('M4: Duplicate places the same engine card with its rows beside it', async 
     await view.rightClick(view.card('a'));
     await view.click(view.row('Duplicate'));
     await view.settle(5);
-    assert.deepEqual(view.calls, [['create', {title:'Sketch Lines copy', engine:'vision.sketch_lines', x:80, y:100,
+    const {x, y} = view.calls[0][1];
+    assert.deepEqual(view.calls, [['create', {title:'Sketch Lines copy', engine:'vision.sketch_lines', x, y,
       params:{threshold:'60'}}]], 'node-create with the engine and the rows, never the seed marker');
+    assert.ok(Number.isFinite(x) && Number.isFinite(y), 'copy has confirmed canvas coordinates');
+    for (const node of NODES()) assert.equal(x < node.x + 210 && node.x < x + 210 && y < node.y + 110 && node.y < y + 110,
+      false, 'copy clears ' + node.id);
     view.calls.length = 0;
     await view.rightClick(view.card('d'));
     assert.equal(view.row('Duplicate').disabled, true, 'a card with no engine cannot be copied');

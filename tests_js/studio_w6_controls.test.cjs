@@ -55,7 +55,7 @@ test("W6 Providers OpenCode can be selected as local chat route", () => {
 });
 
 test("W6 no visible button is left without an action in the swept shell areas", () => {
-  const shell = slice("const IconRail = ", "const RailIcon = ");
+  const shell = slice("const Frame = ", "const isHistoryNode = ");
   assert.equal(shell.includes("Share · not available"), false);
   const chats = slice("const ChatsPanel = ", "const NodesPanel = ");
   assert.equal(/<button title="More"[^>]*>/.test(chats), false);

@@ -25,7 +25,7 @@ test('the in-place refresh re-reads the canvas and never reloads the page under 
 
 for (const [name, start, end] of [
   ['placing a library node', 'const addNodeFromLibrary = (libItem', '\n  };'],
-  ['copying a node', 'const duplicateNode = React.useCallback(', '\n  }, [positions]);'],
+  ['copying a node', 'const duplicateNode = React.useCallback(', '\n  }, [positions, allNodes, cardHeights]);'],
   ['deleting nodes', 'const confirmRemoval = () => {', '\n  };'],
 ]) {
   test(name + ' re-reads the canvas in place, never reloading the page', () => {

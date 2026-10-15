@@ -130,31 +130,6 @@ const LM_STATE_META = window.ArchHubTheme.derive((LM) => ({
 }));
 
 // DSYS-060 app frame parts. The frame is one shell around Home, graph, Workshop and tool pages.
-const RailItem = ({ g, l, on, badge, onClick, title, dataRailHome }) => (
-  <button type="button" onClick={onClick} title={title || l} aria-current={on ? 'true' : undefined}
-    data-rail-home={dataRailHome ? '' : undefined}
-    data-rail-panel={l}
-    style={{
-      width:44, height:52, padding:0, border:0, background:'transparent',
-      display:'grid', placeItems:'center', alignContent:'center', gap:2,
-      position:'relative', color:on ? LM.ink : LM.inkSoft, fontFamily:LM.sans,
-      cursor:'pointer',
-    }}
-    onMouseEnter={e => !on && (e.currentTarget.style.background = LM.bgHover)}
-    onMouseLeave={e => !on && (e.currentTarget.style.background = 'transparent')}>
-    {on && <span style={{ position:'absolute', left:0, top:8, bottom:8, width:2, background:LM.accent, borderRadius:2 }}/>}
-    <span style={{
-      width:28, height:28, borderRadius:LM.rad.sm, background:on ? LM.bgHover : 'transparent',
-      display:'grid', placeItems:'center', fontSize:13, fontWeight:600,
-    }}>{g}</span>
-    <span style={{ fontSize:11, lineHeight:'12px', whiteSpace:'nowrap' }}>{l}</span>
-    {badge ? <span style={{
-      position:'absolute', right:5, top:5, minWidth:14, height:14, padding:'0 3px',
-      borderRadius:999, background:LM.warn, color:LM.bgDeep, fontSize:11, lineHeight:'14px',
-      fontWeight:700,
-    }}>{badge}</span> : null}
-  </button>
-);
 const Crumb = ({ items }) => <span style={{ fontSize:12, color:LM.inkSoft }}>
   {items.map((t, i) => <span key={String(t) + ':' + i}>{i > 0 && <span style={{ margin:'0 6px' }}>▸</span>}
     <span style={{ color:i === items.length - 1 ? LM.ink : LM.inkSoft }}>{t}</span></span>)}
@@ -172,8 +147,8 @@ const Search = ({ ph, children }) => (
     <span>⌕</span>{children || <span>{ph}</span>}<span style={{ flex:1 }}/><span style={{ fontSize:11 }}>Ctrl K</span>
   </div>
 );
-const Frame = ({ rail, left, top, children, insp, status, onHome, onPanel, onDocs, onSettings, account, workshopWindow = false }) => {
-  const initials = account?.signedIn && account.email ? String(account.name || account.email).trim().slice(0, 2).toUpperCase() : 'AF';
+const Frame = ({ rail, left, top, children, insp, status, onHome, onPanel, onSettings, onWorkshop, onCanvas, account, workshopWindow = false }) => {
+  const AppRail = window.ARCHHUB_APP_RAIL;
   const waiting = workshopWaitingItems(useWorkshopProjection()).length;
   const hasLeft = !!left;
   const contentColumn = hasLeft ? '3 / -1' : '2 / -1';
@@ -184,26 +159,15 @@ const Frame = ({ rail, left, top, children, insp, status, onHome, onPanel, onDoc
     <section data-app-frame="" style={{
       width:'100%', height:'100%', background:LM.bgDeep, color:LM.ink, fontFamily:LM.sans,
       fontSize:13, lineHeight:1.5, display:'grid',
-      gridTemplateColumns:hasLeft ? '44px 248px minmax(0, 1fr) 320px' : '44px minmax(0, 1fr)',
+      gridTemplateColumns:hasLeft ? '64px 248px minmax(0, 1fr) 320px' : '64px minmax(0, 1fr)',
       gridTemplateRows:'36px minmax(0, 1fr) 22px',
       overflow:'hidden', position:'relative',
     }}>
-      <nav style={{ gridColumn:'1', gridRow:'1 / span 2', background:LM.bg, borderRight:`1px solid ${LM.lineSoft}`,
-        display:'grid', gridTemplateRows:'auto auto 1fr auto', paddingTop:6 }}>
-        <RailItem g="⌂" l="Home" title="All sessions" on={!rail || rail === 'Home'} onClick={onHome} dataRailHome/>
-        <div style={{ display:'grid', gap:2 }}>
-          <RailItem g="◌" l="Chats" on={rail === 'Chats'} badge={waiting || null} onClick={() => onPanel && onPanel('chats')}/>
-          <RailItem g="▦" l="Library" on={rail === 'Library'} onClick={() => onPanel && onPanel('nodes')}/>
-          <RailItem g="?" l="Docs" on={rail === 'Docs'} onClick={onDocs}/>
-        </div>
-        <span/>
-        <div style={{ display:'grid', justifyItems:'center', gap:6, paddingBottom:8 }}>
-          <RailItem g="⚙" l="Settings" on={rail === 'Settings'} onClick={onSettings}/>
-          <button type="button" title={account?.signedIn ? account.email : 'Account'} onClick={onSettings}
-            style={{ width:28, height:28, borderRadius:'50%', border:0, background:LM.userAv,
-              color:LM.onUserAv, display:'grid', placeItems:'center', fontSize:12, fontWeight:600, cursor:'pointer' }}>{initials}</button>
-        </div>
-      </nav>
+      <AppRail active={rail || 'Home'} waiting={waiting} account={account} onNavigate={name => {
+        const route = {Home:onHome, Workshop:onWorkshop, Canvas:onCanvas, Library:() => onPanel?.('nodes'), Settings:onSettings, Account:onSettings}[name];
+        route?.();
+      }}/>
+
       {hasLeft && <aside data-left-panel="" style={{ gridColumn:'2', gridRow:'1 / span 2', background:LM.bgPanel, borderRight:`1px solid ${LM.line}`,
         minHeight:0, overflow:'hidden' }}>{left}</aside>}
       <div data-workspace-frame="" style={{ gridColumn:contentColumn, gridRow:'1 / span 2',
@@ -1437,13 +1401,15 @@ const StudioLM = () => {
   }, []);
 
   const frameRail = settingsOpen ? 'Settings' : docsOpen ? 'Docs' : ['nodes', 'skills', 'search'].includes(panel) ? 'Library' :
-    panel === 'chats' ? 'Chats' : session ? 'Library' : 'Home';
+    session ? 'Canvas' : 'Home';
   const frameCrumbs = session ? ['ArchHub', session.title || 'Graph'] :
     toolView ? ['ArchHub', toolTitle(toolView.id)] : ['ArchHub', 'Home'];
   return (
     <Frame workshopWindow={(!!session && workspaceView.mode === 'chat' && !!workspaceView.conversationRoot) || (!session && toolView?.id === 'workshop')}
-      rail={frameRail} onHome={goHome} onPanel={setPanel} onDocs={() => openDocs(true)}
+      rail={frameRail} onHome={goHome} onPanel={setPanel}
       onSettings={() => openSettings(true)} account={account}
+      onWorkshop={() => { setPanel(null); openTool('workshop'); }}
+      onCanvas={() => { setPanel(null); setSettingsOpen(false); setDocsOpen(false); openTool('studio'); }}
       left={panel && !workshopContext ? <Sidebar
         panel={panel} setPanel={setPanel}
         openId={openId} onOpen={openSession}
@@ -1452,7 +1418,7 @@ const StudioLM = () => {
         addNodeFromLibrary={addNodeFromLibrary} workshopContext={workshopContext} railOnly={!panel || !!workshopContext} account={account}
         wsSel={wsSel} setWsSel={setWsSel} onAddAgent={() => setLibraryOpen(true)}
         onWorkshopTarget={target => updateWorkspaceView({target})}/> : null}
-      top={<><Crumb items={frameCrumbs}/><span style={{ flex:1 }}/></>}
+      top={!session && <><Crumb items={frameCrumbs}/><span style={{ flex:1 }}/></>}
       status={<StatusBar session={session} model={displayedModel} setDocsOpen={openDocs} onOpenWaitingTask={openTool}/>}>
       {session && sessionOpenError && <div role="alert" style={{position:'absolute', top:56, left:'50%', transform:'translateX(-50%)',
         zIndex:40, maxWidth:560, padding:'8px 12px', background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md,
@@ -1604,58 +1570,6 @@ const ToolOffPanelFromOwners = ({ panel, account }) => {
   const tool = toolRowsFromOwners({workshopState, account, personal, hub}).find(row => row.id === String(panel).slice(5));
   return <ToolOffPanel tool={tool}/>;
 };
-
-const IconRail = ({ panel, setPanel, onHome, onSettings, onDocs }) => {
-  const items = [
-    { id:'chats',  title:'Chats',  svg:<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4l-5 2 2-4.6A8.4 8.4 0 1 1 21 11.5z"/></svg> },
-    { id:'nodes',  title:'Library',  svg:<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg> },
-    { id:'skills', title:'Skills', svg:<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polygon points="12 2 15 8 22 9 17 14 18 21 12 17.7 6 21 7 14 2 9 9 8"/></svg> },
-    { id:'search', title:'Search', svg:<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg> },
-  ];
-  return (
-    <div style={{
-      background:LM.bgDeep, borderRight:`1px solid ${LM.line}`,
-      display:'flex', flexDirection:'column', alignItems:'center',
-      padding:'10px 0 8px', gap:LM.sp.xs, position:'relative',
-    }}>
-      {items.map(it => (
-        <RailIcon key={it.id} active={panel === it.id} onClick={() => setPanel(it.id)} title={it.title}>
-          {it.svg}
-        </RailIcon>
-      ))}
-      <div style={{ height:6 }}/>
-      <div style={{ flex:1 }}/>
-      <RailIcon onClick={onDocs} title="Documentation · ⌘/">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 19.5V5a2 2 0 0 1 2-2h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6.5A2.5 2.5 0 0 1 4 18.5v1z"/><path d="M8 7h6M8 11h6"/></svg>
-      </RailIcon>
-      <RailIcon onClick={onSettings} title="Settings">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-        </svg>
-      </RailIcon>
-    </div>
-  );
-};
-
-const RailIcon = ({ active, onClick, onContextMenu, title, children, disabled, dot, dataToolRail }) => (
-  <button onClick={onClick} onContextMenu={onContextMenu} title={title} disabled={disabled}
-    data-tool-rail={dataToolRail || undefined}
-    data-rail-panel={title}
-    aria-current={active ? 'true' : undefined} style={{
-    width:30, height:30, padding:0, border:0, borderRadius:LM.rad.md,
-    background: active ? LM.accentDim : 'transparent',
-    color: active ? LM.accent : LM.inkSoft,
-    cursor:'pointer', display:'grid', placeItems:'center', position:'relative',
-  }}
-  onMouseEnter={e => !active && (e.currentTarget.style.background = LM.bgSoft)}
-  onMouseLeave={e => !active && (e.currentTarget.style.background = 'transparent')}>
-    {active && <span style={{ position:'absolute', left:-7, top:6, bottom:6, width:2, background:LM.accent, borderRadius:2 }}/>}
-    {dot && <span data-tool-dot="" style={{ position:'absolute', right:3, bottom:3, width:6, height:6,
-      borderRadius:'50%', background:dot, boxShadow:`0 0 0 1.5px ${LM.bgDeep}` }}/>}
-    {children}
-  </button>
-);
 
 const inlineTextButton = () => ({
   padding:0, border:0, background:'transparent', color:LM.accent,
@@ -6046,15 +5960,23 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     if (typeof window.ARCHHUB_NODE_CREATE !== 'function') throw new Error('Fork is unavailable in this view.');
     const params = Object.fromEntries((node.params || []).filter(row => row.k && row.k !== 'seed').map(row => [row.k, row.v ?? '']));
     const at = positions[node.id] || node;
+    const cards = new Map(Array.from(wrapRef.current?.querySelectorAll('.lm-node[data-node-id]') || [])
+      .map(card => [card.getAttribute('data-node-id'), card]));
+    const occupied = allNodes.map(held => ({...held, ...(positions[held.id] || {}),
+      w:cards.get(held.id)?.offsetWidth || held.w || NODE_CARD_W,
+      h:cards.get(held.id)?.offsetHeight || cardHeights[held.id] || held.h || 230}));
+    const sourceBox = occupied.find(held => held.id === node.id) || {...at, w:node.w || NODE_CARD_W, h:node.h || 230};
+    const free = studioFreeSlot(occupied, {x:at.x + sourceBox.w * 1.5 + 40, y:at.y + sourceBox.h / 2},
+      {w:sourceBox.w, h:sourceBox.h});
     const created = await window.ARCHHUB_NODE_CREATE({title:(node.title || node.engine) + ' copy', engine:node.engine,
-      x:at.x + 40, y:at.y + 40, params});
+      x:free.x, y:free.y, params});
     if (created && created.ok === false) throw new Error(String(created.error || 'The fork was refused.').split(/\r?\n/)[0]);
     const createdId = created?.node?.id || created?.id || created?.node_id || created?.root;
     if (!createdId) throw new Error('Fork not confirmed');
     await studioRefreshCanvasInPlace();
     if (createdId) setCanvasSelectedIds([createdId]);
     return 'Fork placed.';
-  }, [positions]);
+  }, [positions, allNodes, cardHeights]);
   React.useEffect(() => {
     window.__archhubDuplicateNode = duplicateNode;
     window.__archhubSelectNodeById = nodeId => { if (nodeId) { setCanvasSelectedIds([nodeId]); setPickedId(nodeId); setFocusId(nodeId); } };

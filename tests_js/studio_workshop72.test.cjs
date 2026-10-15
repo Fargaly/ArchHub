@@ -33,7 +33,7 @@ test('WORKSHOP-72 no tabs, inspector, board or second composer; visible button c
     assert.ok(buttons.length<=6,buttons.map(el=>text(el)).join(', '));
     assert.deepEqual(buttons.map(el=>text(el)).sort(),['Approve','Decline','New task','Open on canvas','Review','Send'].sort());
     assert.equal(ui.doc.querySelectorAll('button[data-workshop-agent-picker]').length,1,'the plate agent chip is a secondary keyboard control');
-    assert.equal(ui.doc.querySelectorAll('button').length,7,'six primary routes plus the agent chip');
+    assert.equal([...ui.doc.querySelectorAll('button')].filter(el=>!el.closest('[data-app-rail]')).length,7,'six primary routes plus the agent chip outside navigation');
   } finally {await ui.close();}
 });
 

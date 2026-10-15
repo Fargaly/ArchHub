@@ -501,3 +501,23 @@ test('graph composer preselects the free router with its friendly name', async (
       'the answer turn (UX-CHAT1: in the Conversation section) is signed with the friendly model label');
   } finally { studio.close(); }
 });
+
+ test('RELGATEFIX Workshop Settings System opens its graph and labelled Home returns in one click', async () => {
+  const studio = await mountStudio({systemView:true});
+  try {
+    await studio.settle(() => rail(studio.doc, 'Workshop'), 'current rail mounts');
+    studio.flush(() => rail(studio.doc, 'Workshop').click());
+    await studio.settle(() => studio.doc.querySelector('[data-workshop72-rail]'), 'Workshop opens');
+    studio.flush(() => studio.doc.querySelector('[data-workshop72-rail] [aria-label="Settings"]').click());
+    await studio.settle(() => button(studio.doc, 'Open the System graph'), 'Settings System action is visible');
+    assert.equal(button(studio.doc, 'Open the System graph').disabled, false);
+    studio.flush(() => button(studio.doc, 'Open the System graph').click());
+    await studio.settle(() => studio.doc.querySelector('[data-system-header]'), 'real System graph opens');
+    const home = studio.doc.querySelector('[data-system-header] button[aria-label="Home"]');
+    assert.equal(home.textContent.trim(), 'Home');
+    studio.flush(() => home.click());
+    await studio.settle(() => studio.doc.querySelector('[data-home-page]'), 'labelled Home returns in one click');
+    assert.equal(studio.doc.querySelector('[data-system-header]'), null);
+    assert.equal(studio.doc.querySelectorAll('[data-app-rail]').length, 1);
+  } finally { studio.close(); }
+});

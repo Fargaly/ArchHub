@@ -153,7 +153,8 @@ async function mountForkRail(kind, createResult) {
   vm.runInContext(transformSync(paramDeps + inspector + '\nglobalThis.NodeInspector = NodeInspector;',
     {loader:'jsx', format:'cjs'}).code, context);
   win.NodeInspector = context.NodeInspector;
-  vm.runInContext(transformSync(refreshSlice() + shortcutSlice() + canvasSlice() + '\nglobalThis.NodeCanvas = NodeCanvas;',
+  const freeSlot = slice('const studioFreeSlot =', 'const studioRefreshCanvasInPlace =');
+  vm.runInContext(transformSync(refreshSlice() + shortcutSlice() + freeSlot + canvasSlice() + '\nglobalThis.NodeCanvas = NodeCanvas;',
     {loader:'jsx', format:'cjs'}).code, context);
   vm.runInContext(transformSync(RAIL_HELPERS + rails + '\nglobalThis.NodeRail = NodeRail; globalThis.ConversationRail = ConversationRail;',
     {loader:'jsx', format:'cjs'}).code, context);
@@ -190,6 +191,11 @@ test('NodeRail and ConversationRail Fork use the canvas duplicate operation and 
       assert.equal(view.created.length, 1, kind + ' creates once');
       assert.equal(view.refreshes, 1, kind + ' refreshes the canvas once');
       assert.ok(view.selectedCard('node-copy'), kind + ' selects the confirmed node');
+      const box = card => ({x:parseFloat(card.style.left), y:parseFloat(card.style.top), w:card.offsetWidth, h:card.offsetHeight});
+      const copy = box(view.selectedCard('node-copy'));
+      const original = box(view.win.document.querySelector('.lm-node[data-node-id="node-a"]'));
+      assert.equal(copy.x < original.x + original.w && original.x < copy.x + copy.w &&
+        copy.y < original.y + original.h && original.y < copy.y + copy.h, false, kind + ' Fork clears the drawn source card');
       assert.match(view.win.document.body.textContent, /Fork placed\./);
     } finally { await view.close(); }
   }

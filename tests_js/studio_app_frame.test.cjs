@@ -11,7 +11,7 @@ test('APP-FRAME p3: mounted workspace row owns the viewport height between top a
   const React = require('react');
   const {createRoot} = require('react-dom/client');
   const {transformSync} = require('esbuild');
-  const frameStart = source.indexOf('const RailItem = (');
+  const frameStart = source.indexOf('// DSYS-060 app frame parts.');
   const frameEnd = source.indexOf('const CommandBar = (', frameStart);
   assert.ok(frameStart >= 0 && frameEnd > frameStart, 'Frame slice is available');
   const dom = new JSDOM('<div id="root"></div>', {url:'http://127.0.0.1:53916/', pretendToBeVisual:true});
@@ -28,6 +28,9 @@ test('APP-FRAME p3: mounted workspace row owns the viewport height between top a
       useWorkshopProjection:() => ({waiting:[]}),
       workshopWaitingItems:() => [],
     });
+    dom.window.AH = context.LM;
+    const sharedRail = fs.readFileSync(path.join(root, 'nodelang/studio/shared-data.jsx'), 'utf8').slice(fs.readFileSync(path.join(root, 'nodelang/studio/shared-data.jsx'), 'utf8').indexOf('window.ARCHHUB_APP_RAIL ='));
+    vm.runInContext(transformSync(sharedRail, {loader:'jsx'}).code, context);
     vm.runInContext(transformSync(source.slice(frameStart, frameEnd) + '\nglobalThis.Frame = Frame;',
       {loader:'jsx', format:'cjs'}).code, context);
     const reactRoot = createRoot(dom.window.document.getElementById('root'));
@@ -55,8 +58,8 @@ test('APP-FRAME p3: mounted workspace row owns the viewport height between top a
 test('DSYS-060 app frame owns the one Studio shell grid', () => {
   assert.match(source, /const Frame = \(/, 'the app frame primitive is present');
   assert.match(source, /data-app-frame/, 'the shipped shell exposes the frame boundary');
-  assert.match(source, /gridTemplateColumns:hasLeft \? '44px 248px minmax\(0, 1fr\) 320px' : '44px minmax\(0, 1fr\)'/,
-    'frame columns collapse the empty left panel to rail 44 + content');
+  assert.match(source, /gridTemplateColumns:hasLeft \? '64px 248px minmax\(0, 1fr\) 320px' : '64px minmax\(0, 1fr\)'/,
+    'frame columns collapse the empty left panel to rail 64 + content');
   assert.match(source, /\{hasLeft && <aside data-left-panel=/,
     'the left panel element is not mounted when the screen has no left content');
   assert.match(source, /left=\{panel && !workshopContext \? <Sidebar/s,
@@ -69,18 +72,16 @@ test('DSYS-060 app frame owns the one Studio shell grid', () => {
     'the workspace wrapper does not create implicit grid columns');
   assert.match(source, /data-workspace-main=""[\s\S]*height:'100%'/,
     'the Workspace grid inherits the filled wrapper height');
-  assert.doesNotMatch(source, /gridTemplateColumns:\s*\(!panel \|\| workshopContext\) \? '44px 1fr' : '292px 1fr'/,
+  assert.doesNotMatch(source, /gridTemplateColumns:\s*\(!panel \|\| workshopContext\) \? '64px 1fr' : '292px 1fr'/,
     'the old variable outer shell is removed');
   assert.equal((source.match(/<Frame\b/g) || []).length, 1,
     'Home, graph, workshop and tools go through one frame instance');
 });
 
 test('DSYS-060 rail, panel head, search and breadcrumb primitives are the shared plate parts', () => {
-  assert.match(source, /const RailItem = \(/, 'RailItem primitive is ported from the plate');
-  assert.match(source, /width:44,\s*height:52/, 'RailItem uses the plate 44 x 52 tile');
-  assert.match(source, /data-rail-home/, 'the app mark is the Home rail item');
-  assert.match(source, /<RailItem g="[^"]+" l="Home"[^>]*onClick=\{onHome\}[^>]*dataRailHome/s,
-    'one click on the app mark goes Home');
+  assert.match(source, /const AppRail = window\.ARCHHUB_APP_RAIL/, 'the frame reuses the Workshop v3 rail');
+  assert.match(source, /Home:onHome, Workshop:onWorkshop, Canvas:onCanvas/, 'the shared rail routes all primary surfaces');
+  assert.doesNotMatch(source, /const RailItem =|const IconRail =|const RailIcon =/, 'the old rail implementations are deleted');
   assert.match(source, /const PanelHead = \(/, 'PanelHead primitive is shared');
   assert.match(source, /fontSize:16,\s*fontWeight:600/, 'PanelHead title is Inter 16/600');
   assert.doesNotMatch(source, /drag · or 2× click/, 'left panel header has no instruction text');

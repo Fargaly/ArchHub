@@ -75,10 +75,10 @@ test('S3/S4: selection bar offers grouping, selected arrange, and connected sele
   assert.match(studio, /Select connected/);
 });
 
-test('S5: rail has only Chats, Library, Skills, Search, Docs and Settings; tool engines stay off the handoff catalogue', () => {
-  const rail = slice('const IconRail =', 'const RailIcon =');
-  for (const name of ['Chats', 'Library', 'Skills', 'Search', 'Documentation', 'Settings']) assert.match(rail, new RegExp(name));
-  for (const name of ['Studio', 'Workshop', 'Brain', 'BABOOM', 'Connectors', 'Cloud']) assert.doesNotMatch(rail, new RegExp(name));
+test('S5: one current rail replaces the retired rail; tool engines stay off the handoff catalogue', () => {
+  const rail = fs.readFileSync(path.join(root, 'nodelang/studio/shared-data.jsx'), 'utf8').slice(fs.readFileSync(path.join(root, 'nodelang/studio/shared-data.jsx'), 'utf8').indexOf('window.ARCHHUB_APP_RAIL ='));
+  for (const name of ['Home', 'Workshop', 'Canvas', 'Library', 'Settings']) assert.match(rail, new RegExp(name));
+  for (const name of ['Chats', 'Skills', 'Search', 'Documentation', 'Brain', 'BABOOM', 'Connectors', 'Cloud']) assert.doesNotMatch(rail, new RegExp(name));
   assert.match(library, /\(\("tool\.",\), "tools"\)/, 'System tool engines retain their Tools category while the handoff catalogue uses canonical rows');
   for (const id of ['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud']) {
     assert.match(library, new RegExp('"tool_' + id + '"'));

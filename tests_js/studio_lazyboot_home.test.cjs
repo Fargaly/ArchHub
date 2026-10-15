@@ -73,7 +73,7 @@ console.info('LAZYONREL_CATALOGUE_VISIBILITY ' + JSON.stringify({raw_ids:served.
 const visibleCount = groups.reduce((count, group) => count + group.items.length, 0);
 assert.ok(visibleCount > 0, 'main has a nonempty verified catalogue');
 
-async function mountStudio({rawCanvas = captured, fullCanvas = rawCanvas.canvas_deferred ? workspaceCaptured : rawCanvas, holdCanvas = false} = {}) {
+async function mountStudio({rawCanvas = captured, fullCanvas = rawCanvas.canvas_deferred ? workspaceCaptured : rawCanvas, holdCanvas = false, coldWorkshop = false} = {}) {
   const manifest = JSON.parse(read('nodelang/studio/compiled/manifest.json'));
   const {JSDOM} = await import('jsdom');
   const dom = new JSDOM('<div id="root"></div>', {url:'http://127.0.0.1:53914/', runScripts:'outside-only', pretendToBeVisual:true});
@@ -146,7 +146,7 @@ async function mountStudio({rawCanvas = captured, fullCanvas = rawCanvas.canvas_
   await win.eval('(async function(){ const jget=window.__libraryGet; const hosts=[], connectors=[]; const {nodes,wires}=window.ARCHHUB_EXISTING_WORKSHOP.getSnapshot().topology.graph;\n' + indexBootstrap + '\n})();');
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
-  for (const file of manifest.files) if (file.source !== 'mount.jsx') win.eval(file.source === 'studio-lm.jsx' ? lmCode : read('nodelang/studio/compiled/' + file.output));
+  for (const file of manifest.files) if (file.source !== 'mount.jsx' && (!coldWorkshop || !['workshop-board.jsx', 'studio-workshop.jsx'].includes(file.source))) win.eval(file.source === 'studio-lm.jsx' ? lmCode : read('nodelang/studio/compiled/' + file.output));
   win.eval('window.__studioRoot=ReactDOM.createRoot(document.getElementById("root")); ReactDOM.flushSync(()=>window.__studioRoot.render(React.createElement(StudioLM)));');
   const flush = action => win.ReactDOM.flushSync(action);
   const settle = async (predicate = () => true, note = 'settled') => {
@@ -383,4 +383,14 @@ test('first Workspace open loads verified categories and wire metadata without c
     assert.equal(after.wires[0].t, 'text');
     assert.equal(studio.libraryReads.length, 1);
   } finally {studio.close();}
+});
+
+ test('RELGATEFIX cold Home mounts the shared rail without loading Workshop', async () => {
+  const ui = await mountStudio({coldWorkshop:true});
+  try {
+    await ui.settle(() => ui.doc.querySelector('[data-home-page]'), 'cold Home mounts');
+    assert.equal(ui.win.WorkshopView, undefined, 'Workshop stays unloaded');
+    assert.deepEqual([...ui.doc.querySelectorAll('[data-app-rail] [data-rail-panel]')].map(el => el.dataset.railPanel), ['Home','Workshop','Canvas','Library','Settings']);
+    assert.equal(ui.doc.querySelectorAll('[data-app-rail]').length, 1);
+  } finally { ui.close(); }
 });

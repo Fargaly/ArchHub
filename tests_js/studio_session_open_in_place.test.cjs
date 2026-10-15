@@ -329,11 +329,11 @@ test('opening a session from Home applies the graph-open receipt in place: one c
   } finally { studio.close(); }
 });
 
-test('opening a session from the Chats rail applies the receipt; the chat composer lives in the selection panel', async () => {
+test('opening a session from the Home rail applies the receipt; the chat composer lives in the selection panel', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle();
-    studio.click(studio.byTitle('Chats'));
+    studio.click(studio.byTitle('All sessions'));
     await studio.settle();
     studio.calls.canvas = 0;
     studio.click([...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Graph Beta')));

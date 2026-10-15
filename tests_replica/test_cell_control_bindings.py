@@ -40,8 +40,8 @@ def _bindings():
 def test_every_visible_control_has_one_openable_activation_and_condition():
     store, controls, _built, projected = _bindings()
     assert set(projected.bindings) == set(controls.control_roots)
-    # 16 = 15 + the Run control (host execution, 2026-08-20).
-    assert len(projected.bindings) == len(CONTROL_BINDING_SPECS) == 16
+    # The released 16 bindings plus the internal remove-member binding.
+    assert len(projected.bindings) == len(CONTROL_BINDING_SPECS) == 17
     for owner_root, binding in projected.bindings.items():
         assert binding.control_root == owner_root
         assert binding.capability_root in store.snapshot().cells
@@ -161,7 +161,7 @@ def test_binding_catalog_old_release_appends_protocol_and_bindings(monkeypatch):
         store.snapshot(), migrated.protocol, migrated.catalog_root
     )
 
-    assert len(projected.bindings) == len(CONTROL_BINDING_SPECS) == 16
+    assert len(projected.bindings) == len(CONTROL_BINDING_SPECS) == 17
     assert dict(old.binding_roots).items() <= dict(migrated.binding_roots).items()
     assert any(
         member.participant_id == CAPABILITY_RELATION_FORM
@@ -169,6 +169,33 @@ def test_binding_catalog_old_release_appends_protocol_and_bindings(monkeypatch):
             store.snapshot(), migrated.protocol.root_id, budget=128
         )
     )
+
+
+def test_remove_member_appends_after_all_released_control_bindings(monkeypatch):
+    assert CONTROL_BINDING_SPECS[-1].control_root == "app:control:canvas:remove-member"
+    store = CellStore()
+    icons = ensure_archhub_icon_catalog(store)
+    monkeypatch.setattr(
+        control_presentations, "CONTROL_SPECS", CONTROL_PRESENTATION_SPECS[:-1]
+    )
+    controls = ensure_archhub_control_catalog(store, icons)
+    monkeypatch.setattr(control_bindings, "CONTROL_BINDING_SPECS", CONTROL_BINDING_SPECS[:-1])
+    old = ensure_archhub_control_binding_catalog(store, controls)
+    before = project_control_binding_catalog(store.snapshot(), old.protocol, old.catalog_root)
+    monkeypatch.setattr(control_presentations, "CONTROL_SPECS", CONTROL_PRESENTATION_SPECS)
+    controls = ensure_archhub_control_catalog(store, icons)
+    monkeypatch.setattr(control_bindings, "CONTROL_BINDING_SPECS", CONTROL_BINDING_SPECS)
+    migrated = ensure_archhub_control_binding_catalog(store, controls)
+    after = project_control_binding_catalog(store.snapshot(), migrated.protocol, migrated.catalog_root)
+    assert len(before.bindings) == 16
+    assert len(after.bindings) == 17
+    assert all(after.bindings[owner] == binding for owner, binding in before.bindings.items())
+    remove_member = after.bindings["app:control:canvas:remove-member"]
+    assert remove_member.arguments == {"operation": "remove-member"}
+    assert evaluate_control_condition(store.snapshot(), migrated.protocol, remove_member.condition_root, {})
+    revision = store.revision
+    ensure_archhub_control_binding_catalog(store, controls)
+    assert store.revision == revision
 
 
 def test_binding_catalog_upgrades_relation_form_targets_to_v3():

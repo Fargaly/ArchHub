@@ -72,8 +72,10 @@ async function mountModule() {
   const {createRoot} = require('react-dom/client');
   const {transformSync} = require('esbuild');
   const win = dom.window;
-  const context = vm.createContext({React, window:win, document:win.document, setTimeout, clearTimeout, console, URL, Blob, TextEncoder});
+  const context = vm.createContext({React, window:win, document:win.document, setTimeout, clearTimeout, console, CustomEvent:win.CustomEvent, URL, Blob, TextEncoder});
   vm.runInContext(read('nodelang/studio/tokens.jsx'), context);
+  vm.runInContext(transformSync(read('nodelang/studio/workshop-board.jsx'), {loader:'jsx'}).code, context);
+  vm.runInContext(transformSync(read('nodelang/studio/shared-data.jsx'), {loader:'jsx'}).code, context);
   vm.runInContext(transformSync(workshop(), {loader:'jsx'}).code, context);
   const container = win.document.getElementById('root');
   const reactRoot = createRoot(container);
@@ -110,57 +112,33 @@ const mountView = async (setup = () => {}) => {
   return {...fx, ui, render:() => ui.render('WorkshopView', props())};
 };
 
-test('task ids are derived from the Work id; no progress bar is drawn without a projected progress', async () => {
-  const view = await mountView();
-  try {
-    await view.render();
-    const cards = [...view.ui.doc.querySelectorAll('[aria-label="Workshop conversation"] [data-workshop-task]')];
-    assert.deepEqual(cards.map(card => card.getAttribute('data-workshop-task')), [view.ids.W1, view.ids.W2, view.ids.W3]);
-    assert.ok(cards.every(card => !card.querySelector('i[style*="width"]')), 'no invented progress bar');
-  } finally { await view.ui.close(); }
-});
+const {mounted,transport,plain}=require('./workshop72_regression_helpers.cjs');
 
-test('an agent reply that names a Work is that agent speaking on the card, by its relay name', async () => {
-  const view = await mountView(fx => {
-    const W2 = fx.ids.W2;
-    fx.state.workshop.messages.push(
-      {root:'ask-w2', message_id:'ask-w2', sequence:70, sender_root:'owner-a', recipient_roots:[fx.ids.claude], reference_roots:[],
-       body:`Founder note on ${W2}: keep the exterior walls first.`, category:'note', state:'recorded', created_at:Date.now() / 1000 - 9},
-      relayed('reply-w2', 71, 'ask-w2', `Claimed ${W2}: exterior walls are under way.`));
-  });
-  try {
-    await view.render();
-    const card = view.ui.doc.querySelector(`[data-workshop-task="${view.ids.W2}"]`);
-    const body = text(card);
-    assert.match(body, /^Wall creation CLAIMED · Wall creation · run Open as graph/, 'the latest event verb sets the row state');
-    assert.ok(!body.includes('Session Link relayed reply'), 'the relay header is never the agent text');
-    assert.ok(!body.includes('app:wip-cell:'), 'the contact root is never a name');
-    // W8 chat rows keep the task compact; prior events remain data, but are no longer rendered as a thread on the row.
-    assert.ok(!/Founder note on/.test(body));
-    assert.ok(!/Claude Code/.test(body), 'a thread recipient uses the rail name, not the participant label');
-  } finally { await view.ui.close(); }
+test('task rows preserve exact Work identity and never invent a progress bar',async()=>{
+  const view=await mountView();try{await view.render();
+    const row=view.ui.doc.querySelector('[data-workshop-task-row="'+view.ids.W1+'"]');assert.ok(row);
+    assert.equal(row.getAttribute('data-workshop-task-row'),view.ids.W1);
+    assert.equal(row.querySelector('[role="progressbar"]'),null,'a task without projected progress has no fabricated progress; the live run card is independent');assert.equal(view.ui.doc.querySelector('[data-workshop-task]'),null);
+    assert.ok(view.ui.doc.querySelector('[data-workshop-approval-card]'));
+  }finally{await view.ui.close();}
 });
-
-test('C: the proposed workflow is approved, revoked and run on its card only', async () => {
-  const view = await mountView(fx => {
-    fx.state.workshop.workflows = [{root:'wf-1', title:'Release note', proposed_by:CONTACT, digest:'d'.repeat(64),
-      approval:{digest:'d'.repeat(64), approved_by:'owner-a', revision:12, current:true, revoked:false},
-      nodes:[{root:'n1', title:'This Workshop', engine:'workshop.conversation', params:{}}]}];
-    fx.authority.workshopWorkflow = (...args) => { fx.calls.push(['workshopWorkflow', ...args]); return Promise.resolve({ok:true}); };
-  });
-  try {
-    await view.render();
-    const doc = view.ui.doc;
-    const panel = doc.querySelector('[aria-label="Agent-proposed workflows and reviews"]');
-    assert.ok(panel, 'the parameter panel stays for editing');
-    assert.deepEqual([...panel.querySelectorAll('button')].map(text).filter(label => /Approve|Run approved/.test(label)), [],
-      'no second approve or run surface for the workflow on the card');
-    assert.match(text(panel), /Approve, revoke and run it on the workflow card\./);
-    const card = doc.querySelector('[data-workshop-workflow="wf-1"]');
-    const run = [...card.querySelectorAll('button')].find(b => text(b) === 'Run approved');
-    assert.ok(run && card.querySelector('button[aria-label^="Revoke approval"]'));
-    await view.ui.click(run);
-    assert.deepEqual(JSON.parse(JSON.stringify(view.calls.filter(c => c[0] === 'workshopWorkflow').map(c => c.slice(1)))),
-      [['room-a', 'workflow-execute', {workflow:'wf-1'}]]);
-  } finally { await view.ui.close(); }
+test('an agent reply naming a Work is a plain message by that exact relay name in the selected task thread',async()=>{
+  const fx=fixture();const W2=fx.ids.W2;
+  fx.state.workshop.messages.push(relayed('reply-w2',71,'ask-w2',`Claimed ${W2}: exterior walls are under way.`));
+  const ui=await mounted(fx.state,fx.authority,{sel:{agent:null,task:W2}});
+  try{const reply=ui.doc.querySelector('[data-workshop-message="reply-w2"]');assert.ok(reply);
+    assert.match(text(reply),/exterior walls are under way/);assert.match(text(reply),/acceptance-claude/);
+    assert.doesNotMatch(text(reply),/Session Link relayed reply|app:wip-cell:/);
+    assert.equal(ui.doc.querySelector('[data-workshop-head]').textContent,'Wall creation');
+  }finally{await ui.close();}
+});
+test('workflow approval revoke and execution retain their exact existing authority route after rich-card removal',async()=>{
+  const fx=transport(),D='d'.repeat(64);await fx.api.refreshWorkshop('room-a');
+  await fx.api.workshopWorkflow('room-a','workflow-approve',{workflow:'wf-1',digest:D});
+  await fx.api.workshopWorkflow('room-a','workflow-revoke',{workflow:'wf-1'});
+  await fx.api.workshopWorkflow('room-a','workflow-execute',{workflow:'wf-1'});
+  assert.deepEqual(fx.posts.map(post=>[post.url,post.body.root,post.body.action,post.body.workflow]),[
+    ['/api/universal/workshop','room-a','workflow-approve','wf-1'],['/api/universal/workshop','room-a','workflow-revoke','wf-1'],
+    ['/api/universal/workshop','room-a','workflow-execute','wf-1']]);
+  assert.equal(fx.posts[0].body.digest,D);
 });

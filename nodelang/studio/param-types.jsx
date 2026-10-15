@@ -22,6 +22,7 @@ const PM_TYPES = window.ArchHubTheme.derive((T) => ({
   view:     { label: 'View',       glyph: '◱',  col: T.cyan,     wire: true },
   dims:     { label: 'Annotation', glyph: '↔',  col: T.ok,       wire: true },
   file:     { label: 'File',       glyph: '⎘',  col: T.ok,       wire: true },
+  trigger:  { label: 'Trigger',    glyph: '▶',  col: T.cyan,     wire: true, shape: 'triangle' },
   any:      { label: 'Any',        glyph: '✳',  col: T.inkMuted, wire: true },
 }));
 
@@ -29,21 +30,44 @@ const PM_TYPES = window.ArchHubTheme.derive((T) => ({
 const PM_WIRE = window.ArchHubTheme.derive((T) => ({
   view: T.cyan, selection: T.cyan, walls: T.accent, doors: T.accent, sheets: T.accent,
   intent: T.purple, prediction: T.purple, trace: T.inkSoft, dims: T.ok, file: T.ok,
-  any: T.inkSoft, number: T.warn, text: T.inkSoft, string: T.inkSoft,
+  any: T.inkSoft, number: T.warn, text: T.inkSoft, string: T.inkSoft, trigger: T.cyan,
   boolean: T.purple, exec: T.accent,
 }));
 
 // the cockpit's older type names → registry names
-const PM_ALIAS = { string: 'text', boolean: 'toggle', color: 'colour', trigger: 'any' };
+const PM_ALIAS = { string: 'text', boolean: 'toggle', color: 'colour', event: 'trigger' };
+const WATCH_VIEW_OPTIONS = ['table', 'list', 'json', 'image', 'number', 'text', 'chart', 'geometry'];
 
 const pmType = (t) => PM_TYPES[t] || PM_TYPES[PM_ALIAS[t]] || PM_TYPES.any;
 
-const Socket = ({ type, list, filled, size = 9 }) => {
-  const c = pmType(type).col;
+const socketShapeOf = (type, list) => {
+  const held = pmType(type);
+  if (held.shape === 'triangle') return 'triangle';
+  if (list) return 'diamond';
+  if (type === 'any') return 'any';
+  return 'circle';
+};
+
+const socketTypeLabel = type => pmType(type).label;
+
+const Socket = ({ type, list, filled, size = 10 }) => {
+  const held = pmType(type);
+  const c = held.col;
+  const shape = socketShapeOf(type, list);
+  if (shape === 'triangle') return <span data-socket-shape="triangle" style={{
+    width: 0, height: 0, flexShrink: 0, display: 'inline-block',
+    borderTop: `${size / 2}px solid transparent`, borderBottom: `${size / 2}px solid transparent`,
+    borderLeft: `${size}px solid ${c}`, opacity: filled ? 1 : 0.55,
+  }}/>;
+  if (shape === 'any') return <span data-socket-shape="any" style={{
+    width: size, height: size, flexShrink: 0, display: 'inline-block',
+    background: 'transparent', border: `2px dashed ${c}`, borderRadius: '50%',
+    boxSizing: 'border-box', opacity: filled ? 1 : 0.75,
+  }}/>;
   return <span style={{
     width: size, height: size, flexShrink: 0, display: 'inline-block',
-    background: filled ? c : 'transparent', border: `1.5px solid ${c}`,
-    borderRadius: list ? 2 : '50%', transform: list ? 'rotate(45deg)' : 'none',
+    background: filled ? c : 'transparent', border: `2px solid ${c}`,
+    borderRadius: shape === 'diamond' ? 2 : '50%', transform: shape === 'diamond' ? 'rotate(45deg) scale(.86)' : 'none',
   }}/>;
 };
 
@@ -51,5 +75,5 @@ const Socket = ({ type, list, filled, size = 9 }) => {
 // (universal_pipeline.WIRE_PARAMETER_SPECS) and serves it with the node library; studio.html and
 // cockpit.html set window.WIRE_PARAMS from it. The run applies every row it lists.
 
-Object.assign(window, { PM_TYPES, PM_WIRE, PM_ALIAS, pmType, Socket });
+Object.assign(window, { PM_TYPES, PM_WIRE, PM_ALIAS, WATCH_VIEW_OPTIONS, pmType, Socket, socketShapeOf, socketTypeLabel });
 })();

@@ -121,7 +121,7 @@ test('graph composer with no route shows an explicit No model state with Sign in
     await settle(studio.win);
     assert.equal(buttonIn(studio.doc.querySelector('[data-chat-no-model]'), 'Continue with Google'), undefined,
       'Chat does not render a second account sign-in block');
-    assert.ok([...studio.doc.querySelectorAll('button')].some(button => button.firstElementChild?.textContent === 'Account'),
+    assert.ok([...studio.doc.querySelectorAll('[data-settings54-capability-nav="account"] button')].some(button => button.textContent.trim() === 'Account'),
       'Sign in opens the existing Account settings surface');
     assert.deepEqual(started, []);
   } finally { studio.close(); }

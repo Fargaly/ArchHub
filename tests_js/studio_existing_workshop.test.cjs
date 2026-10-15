@@ -1214,127 +1214,71 @@ for(const kind of ['existing','authority']) {
   });
 }
 
-// The Workshop conversation lives in WorkshopView (studio-workshop.jsx) since
-// db74408d; these courts read its own page navigation and its one poll effect.
+// WORKSHOP-72 keeps the existing visibility/paging/first-open/serial-poll behaviors.
+// Removed paging buttons migrate to the existing admitted page-navigation authority.
 const workshopView = () => {
   const jsx=fs.readFileSync(path.join(__dirname,'../nodelang/studio/studio-workshop.jsx'),'utf8');
-  const view=jsx.indexOf('const WorkshopView =');
-  const pollEnd=jsx.indexOf('  const participants = transcript?.participants',view);
-  const pollBegin=jsx.lastIndexOf('  React.useEffect(() => {',pollEnd);
-  const navigateBegin=jsx.indexOf('  const navigatePage = async latest => {',view);
-  const navigateEnd=jsx.indexOf('  React.useEffect(() => { setPublicReview(false); }',navigateBegin);
-  assert.ok(view>=0 && pollBegin>view && pollEnd>pollBegin);
-  assert.ok(navigateBegin>view && navigateEnd>navigateBegin && navigateEnd<pollBegin);
-  return {jsx, poll:jsx.slice(pollBegin,pollEnd), navigate:jsx.slice(navigateBegin,navigateEnd)};
+  const start=jsx.indexOf('// Reuse the visible-page refresh:');
+  const end=jsx.indexOf('// Agent data and task creation admission',start);
+  assert.ok(start>=0 && end>start,'the poll is read from the actual DSYS072 window');
+  return {jsx,poll:jsx.slice(start,end)};
 };
 
-test('WorkshopConversation visibility and 2.5 second poll keep the selected page live and dispose cleanly', async()=>{
-  const latest=ordinary(), older=ordinary({page_before:latest.next_before,content_cursor:'visible older page',
+test('WorkshopConversation visibility and 2.5 second poll keep the selected page live and dispose cleanly',async()=>{
+  const latest=ordinary(),older=ordinary({page_before:latest.next_before,content_cursor:'visible older page',
     next_before:null,has_older:false,messages:[{...latest.messages[0],root:'message-1',sequence:1}]});
-  const {api,gets}=setup({get:url=>{
-    const query=new URL(url,'http://test').searchParams;
-    if(query.has('before')) return query.has('content_after')?unchanged(older):older;
-    return query.has('content_after')?unchanged(latest):latest;
-  }});
-  const {jsx,poll,navigate}=workshopView();
-  const effects=[],timers=new Map(),listeners=new Map(); let timerId=0;
-  const document={hidden:true,addEventListener:(name,fn)=>listeners.set(name,fn),
-    removeEventListener:(name,fn)=>{assert.equal(listeners.get(name),fn);listeners.delete(name);}};
-  const panelContext=vm.createContext({document,Date,authority:api,descriptor:{root:'workshop-a'},
-    openedRoot:{current:'workshop-a'},nativeAvailable:false,nativeTarget:null,busyRef:{current:false},
-    revisionSubmission:{current:null},setRefreshing:()=>{},setNativeSyncError:()=>{},
-    olderPage:true,transcript:null,pageIntent:{current:0},latestJump:{current:false},
-    setPaging:()=>{},setActionError:()=>{},
-    React:{useEffect:fn=>effects.push(fn)},
-    setTimeout:(fn,ms)=>{const id=++timerId;timers.set(id,{fn,ms});return id;},
-    clearTimeout:id=>timers.delete(id)});
-  vm.runInContext(navigate+poll+'\nglobalThis.panel={navigatePage};',panelContext);
-  const panel=panelContext.panel;
-  const dispose=effects.find(fn=>fn.toString().includes("document.addEventListener('visibilitychange'"))();
-  assert.equal(gets.length,0); assert.equal(timers.size,0);
-  document.hidden=false; listeners.get('visibilitychange')();
-  await new Promise(setImmediate);
-  assert.equal(gets.length,1); assert.equal(timers.size,1);
-  await panel.navigatePage(false);
-  assert.equal(api.getSnapshot().workshop.messages[0].root,'message-1');
-  const [id,timer]=[...timers.entries()][0];
-  assert.equal(timer.ms,2500); timers.delete(id); timer.fn();
-  await new Promise(setImmediate);
-  assert.equal(gets.length,3); assert.equal(timers.size,1);
-  const read=new URL(gets[2],'http://test').searchParams;
-  assert.equal(read.get('before'),latest.next_before);
-  assert.equal(read.get('content_after'),older.content_cursor);
-  document.hidden=true; listeners.get('visibilitychange')();
-  assert.equal(timers.size,0); assert.equal(gets.length,3);
-  await panel.navigatePage(true);
-  assert.equal(api.getSnapshot().workshop.messages[0].root,'message-102');
-  dispose(); assert.equal(timers.size,0); assert.equal(listeners.size,0);
-  assert.ok(jsx.includes('onClick={() => navigatePage(false)}>Older messages</Mini>'));
-  assert.ok(jsx.includes('title="Jump to latest messages" onClick={() => navigatePage(true)}'));
+  const {api,gets}=setup({get:url=>{const query=new URL(url,'http://test').searchParams;
+    if(query.has('before'))return query.has('content_after')?unchanged(older):older;
+    return query.has('content_after')?unchanged(latest):latest;}});
+  const {poll}=workshopView(),effects=[],timers=new Map(),listeners=new Map();let timerId=0;
+  const document={hidden:true,addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener:(name,fn)=>{assert.equal(listeners.get(name),fn);listeners.delete(name);}};
+  const ctx=vm.createContext({document,Date,authority:api,descriptor:{root:'workshop-a',native_work_available:false},
+    openedRoot:{current:'workshop-a'},selectedNativeWork:null,busyRef:{current:false},setError:()=>{},
+    React:{useEffect:fn=>effects.push(fn)},setTimeout:(fn,ms)=>{const id=++timerId;timers.set(id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id)});
+  vm.runInContext(poll,ctx);const dispose=effects[0]();
+  assert.equal(gets.length,0);assert.equal(timers.size,0);
+  document.hidden=false;listeners.get('visibilitychange')();await new Promise(setImmediate);
+  assert.equal(gets.length,1);assert.equal(timers.size,1);
+  await api.loadOlderWorkshop('workshop-a');assert.equal(api.getSnapshot().workshop.messages[0].root,'message-1');
+  const [id,timer]=[...timers.entries()][0];assert.equal(timer.ms,2500);timers.delete(id);timer.fn();await new Promise(setImmediate);
+  assert.equal(gets.length,3);assert.equal(timers.size,1);
+  const page=new URL(gets[2],'http://test').searchParams;
+  assert.equal(page.get('before'),latest.next_before);assert.equal(page.get('content_after'),older.content_cursor);
+  document.hidden=true;listeners.get('visibilitychange')();assert.equal(timers.size,0);assert.equal(gets.length,3);
+  await api.showLatestWorkshop('workshop-a');assert.equal(api.getSnapshot().workshop.messages[0].root,'message-102');
+  dispose();assert.equal(timers.size,0);assert.equal(listeners.size,0);
 });
 
-test('WorkshopConversation opens a newly shown Workshop once, then polls with refresh', async()=>{
-  const {poll}=workshopView();
-  const calls=[], timers=new Map(), listeners=new Map(); let timerId=0, dispose;
+test('WorkshopConversation opens a newly shown Workshop once, then polls with refresh',async()=>{
+  const {poll}=workshopView(),calls=[],timers=new Map(),listeners=new Map();let timerId=0,dispose;
   const openedRoot={current:''};
-  const context=vm.createContext({document:{hidden:false,addEventListener:(name,fn)=>listeners.set(name,fn),
-      removeEventListener:(name,fn)=>listeners.delete(name)},
-    Date,descriptor:{root:'workshop-a'},openedRoot,nativeAvailable:false,nativeTarget:null,
-    busyRef:{current:false},revisionSubmission:{current:null},setRefreshing:()=>{},setNativeSyncError:()=>{},
-    authority:{getSnapshot:()=>null,openWorkshop:root=>{calls.push(['open',root]);return Promise.resolve(null);},
-      refreshWorkshop:root=>{calls.push(['refresh',root]);return Promise.resolve(null);}},
-    React:{useEffect:fn=>{dispose=fn();}},
-    setTimeout:(fn,ms)=>{const id=++timerId;timers.set(id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id)});
-  vm.runInContext(poll,context);
-  await new Promise(setImmediate);
-  assert.deepEqual(calls,[['open','workshop-a']]); assert.equal(openedRoot.current,'workshop-a');
-  const [id,timer]=[...timers.entries()][0]; assert.equal(timer.ms,2500); timers.delete(id); timer.fn();
-  await new Promise(setImmediate);
-  assert.deepEqual(calls,[['open','workshop-a'],['refresh','workshop-a']]);
-  dispose(); assert.equal(timers.size,0); assert.equal(listeners.size,0);
+  const ctx=vm.createContext({document:{hidden:false,addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener:name=>listeners.delete(name)},
+    Date,descriptor:{root:'workshop-a',native_work_available:false},openedRoot,selectedNativeWork:null,busyRef:{current:false},setError:()=>{},
+    authority:{openWorkshop:root=>{calls.push(['open',root]);return Promise.resolve(null);},refreshWorkshop:root=>{calls.push(['refresh',root]);return Promise.resolve(null);}},
+    React:{useEffect:fn=>{dispose=fn();}},setTimeout:(fn,ms)=>{const id=++timerId;timers.set(id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id)});
+  vm.runInContext(poll,ctx);await new Promise(setImmediate);
+  assert.deepEqual(calls,[['open','workshop-a']]);assert.equal(openedRoot.current,'workshop-a');
+  const [id,timer]=[...timers.entries()][0];assert.equal(timer.ms,2500);timers.delete(id);timer.fn();await new Promise(setImmediate);
+  assert.deepEqual(calls,[['open','workshop-a'],['refresh','workshop-a']]);dispose();assert.equal(timers.size,0);assert.equal(listeners.size,0);
 });
 
-test('WorkshopConversation message refresh settles before pending native status without overlapping polls', async()=>{
+test('WorkshopConversation message refresh settles before pending native status without overlapping polls',async()=>{
   const {poll}=workshopView();
-  for(const outcome of ['native-pending-unmount','message-failure','message-pending-unmount']) {
-    const message=deferred(), native=deferred(), changes=[], errors=[], timers=new Map(), listeners=new Map();
-    let now=0, reads=0, nativeReads=0, dispose, timerId=0;
-    const document={hidden:false,addEventListener:(name,fn)=>listeners.set(name,fn),
-      removeEventListener:(name,fn)=>{assert.equal(listeners.get(name),fn);listeners.delete(name);}};
-    const context=vm.createContext({document,Date:{now:()=>now},descriptor:{root:'workshop-a'},
-      openedRoot:{current:'workshop-a'},
-      nativeAvailable:true,nativeTarget:'work-a',busyRef:{current:false},revisionSubmission:{current:null},
-      authority:{getSnapshot:()=>({workshop:{content_cursor:'old'}}),
-        refreshWorkshop:()=>{reads++;return message.promise;},
-        refreshNativeWork:()=>{nativeReads++;return native.promise;}},
-      setRefreshing:value=>changes.push(value),setNativeSyncError:value=>errors.push(value),
-      React:{useEffect:fn=>{dispose=fn();}},
-      setTimeout:(fn,ms)=>{const id=++timerId;timers.set(id,{fn,ms});return id;},
-      clearTimeout:id=>timers.delete(id)});
-    vm.runInContext(poll,context);
-    assert.deepEqual(changes,[true]); assert.equal(reads,1);
-    now=10001;
-    if(outcome==='message-pending-unmount') dispose();
-    if(outcome==='message-failure') message.reject(new Error('message read refused'));
-    else message.resolve({content_cursor:'new'});
+  for(const outcome of ['native-pending-unmount','message-failure','message-pending-unmount']){
+    const message=deferred(),native=deferred(),errors=[],timers=new Map(),listeners=new Map();let now=0,reads=0,nativeReads=0,dispose,timerId=0;
+    const document={hidden:false,addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener:(name,fn)=>{assert.equal(listeners.get(name),fn);listeners.delete(name);}};
+    const ctx=vm.createContext({document,Date:{now:()=>now},descriptor:{root:'workshop-a'},openedRoot:{current:'workshop-a'},selectedNativeWork:'work-a',busyRef:{current:false},
+      authority:{refreshWorkshop:()=>{reads++;return message.promise;},refreshNativeWork:()=>{nativeReads++;return native.promise;}},setError:value=>errors.push(value),
+      React:{useEffect:fn=>{dispose=fn();}},setTimeout:(fn,ms)=>{const id=++timerId;timers.set(id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id)});
+    vm.runInContext(poll,ctx);assert.equal(reads,1);assert.equal(nativeReads,0);now=10001;
+    if(outcome==='message-pending-unmount')dispose();
+    if(outcome==='message-failure')message.reject(new Error('message read refused'));else message.resolve({content_cursor:'new'});
     await new Promise(setImmediate);
-    if(outcome==='message-pending-unmount') {
-      assert.deepEqual(changes,[true]); assert.equal(nativeReads,0); assert.equal(timers.size,0);
-    } else {
-      assert.deepEqual(changes,[true,false]);
-      if(outcome==='message-failure') {
-        assert.equal(nativeReads,0); assert.equal(timers.size,1);
-        assert.equal([...timers.values()][0].ms,2500); dispose();
-      } else {
-        assert.equal(nativeReads,1); assert.equal(timers.size,0);
-        listeners.get('visibilitychange')();
-        assert.equal(reads,1); assert.equal(nativeReads,1);
-        dispose(); native.reject(new Error('late native failure'));
-        await new Promise(setImmediate);
-        assert.deepEqual(changes,[true,false]); assert.deepEqual(errors,[]);
-      }
-    }
-    assert.equal(timers.size,0); assert.equal(listeners.size,0);
+    if(outcome==='message-pending-unmount'){assert.equal(nativeReads,0);assert.equal(timers.size,0);}
+    else if(outcome==='message-failure'){assert.equal(nativeReads,0);assert.equal(timers.size,1);assert.equal([...timers.values()][0].ms,2500);assert.deepEqual(errors,['message read refused']);dispose();}
+    else{assert.equal(nativeReads,1);assert.equal(timers.size,0);listeners.get('visibilitychange')();assert.equal(reads,1);assert.equal(nativeReads,1);
+      dispose();native.reject(new Error('late native failure'));await new Promise(setImmediate);assert.deepEqual(errors,[]);}
+    assert.equal(timers.size,0);assert.equal(listeners.size,0);
   }
 });
 

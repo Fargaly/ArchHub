@@ -17,7 +17,12 @@ from urllib.request import Request, urlopen
 
 import pytest
 
+from nodelang import agent_composer, app_brain
 from nodelang.application_server import ApplicationServer
+from nodelang.baboom_owner_grants import (
+    APPROVAL_PREFIX,
+    GRANT_ARGUMENT_KEY,
+)
 from nodelang.cell_secret_keys import MemorySigningKeyProvider
 from nodelang import universal_application as app
 
@@ -38,6 +43,20 @@ PROPOSAL = {
          'params': {'reviewer': 'claude'}},
         {'op': 'wire', 'source': {'ref': 'room'}, 'target': {'ref': 'builder'}},
         {'op': 'wire', 'source': {'ref': 'builder'}, 'target': {'ref': 'judge'}},
+    ],
+}
+BRAIN_WRITE_OPS = [
+    {'op': 'add', 'fragment': {'id': 'baboom-reviewed-fact-1', 'kind': 'fact',
+                               'text': 'Reviewed workflow fact one'}},
+    {'op': 'add', 'fragment': {'id': 'baboom-reviewed-fact-2', 'kind': 'fact',
+                               'text': 'Reviewed workflow fact two'}},
+]
+BRAIN_WRITE_PROPOSAL = {
+    'answer': 'Proposed a reviewed Brain write workflow.',
+    'actions': [
+        {'op': 'node', 'ref': 'remember', 'engine': 'brain.write',
+         'title': 'Remember reviewed facts',
+         'params': {'ops': json.dumps(BRAIN_WRITE_OPS, sort_keys=True)}},
     ],
 }
 
@@ -65,6 +84,8 @@ class TwoAgentTransport:
             if 'PROPOSE-EDIT' in text:
                 edit = {'actions': [{'op': 'set_property', 'root': 'app:anything', 'label': 'x', 'value': 'y'}]}
                 reply = '```json\n' + json.dumps(edit) + '\n```'
+            elif 'PROPOSE-BRAIN-WRITE' in text:
+                reply = 'Here is my proposal.\n```json\n' + json.dumps(BRAIN_WRITE_PROPOSAL) + '\n```'
             elif 'PROPOSE' in text:
                 reply = 'Here is my proposal.\n```json\n' + json.dumps(PROPOSAL) + '\n```'
             elif 'BUILD' in text:
@@ -298,10 +319,10 @@ def _draft(h, convo, reply_id, key):
         'revision': h.page(convo['root'], convo['scope'])['revision']})
 
 
-def _proposal_reply(h, convo):
+def _proposal_reply(h, convo, prompt='PROPOSE a workflow: you build the release note, Claude reviews it.'):
     opencode_digest = _opencode_digest(h, convo)
     asked = _send_contact(h, convo, convo['opencode'], opencode_digest,
-        'PROPOSE a workflow: you build the release note, Claude reviews it.', 'ask-proposal')
+        prompt, 'ask-proposal-' + str(abs(hash(prompt))))
     h.settle()
     workshop = h.page(convo['root'], convo['scope'])
     reply_id = _message(workshop, asked['message_id'])['delivery'][0]['reply_message_id']
@@ -329,6 +350,277 @@ def _workflow(h, convo, workflow):
     rows = [row for row in h.page(convo['root'], convo['scope'])['workflows'] if row['root'] == workflow]
     assert len(rows) == 1
     return rows[0]
+
+
+def _approval_record_roots(server):
+    return sorted(root for root in server.universal_store.snapshot().cells
+                  if root.startswith(APPROVAL_PREFIX) and not root.endswith(':state'))
+
+
+def _post_with_headers(server, path, body, headers):
+    call = Request(server.url + path, method='POST',
+                   headers={'Content-Type': 'application/json', 'Origin': server.url, **headers},
+                   data=json.dumps(body).encode())
+    try:
+        with urlopen(call, timeout=60) as response:
+            return response.status, json.loads(response.read())
+    except HTTPError as exc:
+        return exc.code, json.loads(exc.read())
+
+
+def _approved_route_write_args(approved):
+    held = approved['owner_brain_write']
+    arguments = dict(held['arguments'])
+    arguments[GRANT_ARGUMENT_KEY] = held['approval']
+    return arguments
+
+
+def _request_with_credentials(server, path, body, *, token, csrf, expected=200):
+    call = Request(server.url + path, method='POST',
+                   headers={'Content-Type': 'application/json', 'Origin': server.url,
+                            'Cookie': 'ArchHub-Session=' + token,
+                            'X-ArchHub-CSRF': csrf},
+                   data=json.dumps(body).encode())
+    try:
+        with urlopen(call, timeout=60) as response:
+            return response.status, json.loads(response.read())
+    except HTTPError as exc:
+        return exc.code, json.loads(exc.read())
+
+
+def _count_real_brain_writes(monkeypatch):
+    real_write = app_brain.write
+    writes = []
+
+    def counted(ops, *, actor=None):
+        writes.append({'ops': ops, 'actor': actor})
+        return real_write(ops, actor=actor)
+
+    monkeypatch.setattr(app_brain, 'write', counted)
+    return writes
+
+
+def _dispatch_reviewed_brain_write(h, monkeypatch, arguments, *, key,
+                                   token=None, csrf=None, expected=200):
+    turns = []
+
+    def route_chat(_model, _rows, **_options):
+        turns.append(_rows)
+        if len(turns) == 1:
+            return {'tool_calls': [{'id': 'reviewed-write-' + key,
+                                    'name': 'brain.write',
+                                    'arguments': arguments}]}
+        return {'answer': 'done'}
+
+    monkeypatch.setattr(agent_composer, 'route_chat', route_chat)
+    server = h.state['server']
+    token = token or server.browser_session_token
+    csrf = csrf or server.browser_csrf_token
+    status, result = _request_with_credentials(server, '/api/universal/agent',
+        {'prompt': 'Dispatch the reviewed BABOOM brain.write ' + key,
+         'model': 'openrouter/free'}, token=token, csrf=csrf, expected=expected)
+    assert status == expected, result
+    return result
+
+
+def test_workflow_approval_route_dispatches_reviewed_brain_write_once(harness, monkeypatch):
+    h = harness
+    h.start()
+    convo = h.conversation_with_two_agents()
+    reply_id = _proposal_reply(h, convo, 'PROPOSE-BRAIN-WRITE a workflow that writes reviewed facts.')
+    drafted = _draft(h, convo, reply_id, 'draft-route-brain-write')
+    workflow = drafted['workflow']
+    state = _workflow(h, convo, workflow)
+    approved = _approve(h, convo, workflow, state['digest'])
+    arguments = _approved_route_write_args(approved)
+    assert approved['owner_brain_write']['arguments_digest'] == \
+        arguments[GRANT_ARGUMENT_KEY]['arguments_digest']
+    assert approved['owner_brain_write']['arguments']['ops'] == BRAIN_WRITE_OPS
+    assert approved['owner_brain_write']['summary'].startswith('Adds 2 facts to Brain:')
+    assert 'BABOOM reviewed workflow write intent:' not in json.dumps(arguments)
+
+    h.request('/api/universal/workshop', {'root': convo['root'], 'scope': convo['scope'],
+        'category': 'note', 'text': 'ordinary status after approval', 'refs': [],
+        'evidence': [], 'recipients': [], 'reply_to': None,
+        'idempotency_key': 'ordinary-status-after-route-approval', 'created_at': None})
+
+    writes = _count_real_brain_writes(monkeypatch)
+    result = _dispatch_reviewed_brain_write(
+        h, monkeypatch, arguments, key='approved-once')
+    assert len(writes) == 1
+    assert writes[0]['ops'] == arguments['ops']
+    assert [step['status'] for step in result['steps']
+            if step['tool'] == 'brain.write'] == ['ok']
+
+    replay = _dispatch_reviewed_brain_write(
+        h, monkeypatch, arguments, key='approved-replay')
+    assert len(writes) == 1
+    assert [step['status'] for step in replay['steps']
+            if step['tool'] == 'brain.write'] == ['refused']
+
+
+def test_workflow_without_reviewed_brain_ops_gets_no_write_grant(harness, monkeypatch):
+    h = harness
+    h.start()
+    writes = _count_real_brain_writes(monkeypatch)
+    convo = h.conversation_with_two_agents()
+    reply_id = _proposal_reply(h, convo)
+    drafted = _draft(h, convo, reply_id, 'draft-no-brain-write-grant')
+    workflow = drafted['workflow']
+    state = _workflow(h, convo, workflow)
+    approved = _approve(h, convo, workflow, state['digest'])
+    assert 'owner_brain_write' not in approved
+
+    result = _dispatch_reviewed_brain_write(
+        h, monkeypatch, {'ops': BRAIN_WRITE_OPS}, key='no-grant')
+    assert len(writes) == 0
+    assert [step['status'] for step in result['steps']
+            if step['tool'] == 'brain.write'] == ['refused']
+
+
+@pytest.mark.parametrize(('bad_ops', 'message'), (
+    ('{not-json', 'invalid JSON ops'),
+    (json.dumps([{'op': 'replace', 'fragment': {
+        'id': 'not-an-add', 'kind': 'fact', 'text': 'This must not be granted',
+    }}]), 'must be an add fragment'),
+))
+@pytest.mark.parametrize('existing_approval', (False, True))
+def test_workflow_approval_rejects_invalid_reviewed_brain_ops_before_approval_record(
+        harness, monkeypatch, bad_ops, message, existing_approval):
+    h = harness
+    h.start()
+    writes = _count_real_brain_writes(monkeypatch)
+    convo = h.conversation_with_two_agents()
+    reply_id = _proposal_reply(h, convo, 'PROPOSE-BRAIN-WRITE a workflow that writes reviewed facts.')
+    drafted = _draft(h, convo, reply_id, 'draft-invalid-reviewed-brain-ops-' + str(existing_approval))
+    workflow = drafted['workflow']
+    state = _workflow(h, convo, workflow)
+    if existing_approval:
+        _approve(h, convo, workflow, state['digest'])
+        state = _workflow(h, convo, workflow)
+    ops_param = next(node['params']['ops'] for node in state['nodes']
+                     if node['engine'] == 'brain.write')
+    h.request('/api/universal/set-property',
+              {'relation': ops_param['relation'], 'value': bad_ops})
+    reviewed = _workflow(h, convo, workflow)
+    before_revision = h.page(convo['root'], convo['scope'])['revision']
+    before_approval = reviewed['approval']
+    before_grants = _approval_record_roots(h.state['server'])
+
+    failed = _approve(h, convo, workflow, reviewed['digest'], expected=400)
+
+    assert message in failed['error']
+    assert _workflow(h, convo, workflow)['approval'] == before_approval
+    assert h.page(convo['root'], convo['scope'])['revision'] == before_revision
+    assert _approval_record_roots(h.state['server']) == before_grants
+    assert len(writes) == 0
+
+
+def _approved_workflow_for_dispatch(h, key):
+    convo = h.conversation_with_two_agents()
+    reply_id = _proposal_reply(h, convo, 'PROPOSE-BRAIN-WRITE a workflow that writes reviewed facts.')
+    drafted = _draft(h, convo, reply_id, 'draft-route-' + key)
+    workflow = drafted['workflow']
+    state = _workflow(h, convo, workflow)
+    return convo, workflow, _approve(h, convo, workflow, state['digest'])
+
+
+def test_approved_brain_write_dispatch_refuses_edited_workflow_other_session_and_changed_args(harness, monkeypatch):
+    h = harness
+    h.start()
+    writes = _count_real_brain_writes(monkeypatch)
+
+    convo, workflow, approved = _approved_workflow_for_dispatch(h, 'edited-workflow')
+    edited_args = _approved_route_write_args(approved)
+    state = _workflow(h, convo, workflow)
+    message_param = next(node['params']['ops'] for node in state['nodes']
+                         if node['engine'] == 'brain.write')
+    h.request('/api/universal/set-property',
+              {'relation': message_param['relation'], 'value': json.dumps([{
+                  'op': 'add',
+                  'fragment': {'id': 'after-approval-edit', 'kind': 'fact',
+                               'text': 'Edited after approval'},
+              }])})
+    result = _dispatch_reviewed_brain_write(
+        h, monkeypatch, edited_args, key='edited-workflow')
+    assert len(writes) == 0
+    assert [step['status'] for step in result['steps']
+            if step['tool'] == 'brain.write'] == ['refused']
+
+    approved = _approve(h, convo, workflow, _workflow(h, convo, workflow)['digest'])
+    other_args = _approved_route_write_args(approved)
+    server = h.state['server']
+    other_token, other_csrf = server.issue_browser_session(
+        server.universal_registry.authorization.session.context())
+    result = _dispatch_reviewed_brain_write(
+        h, monkeypatch, other_args, key='other-session',
+        token=other_token, csrf=other_csrf)
+    assert len(writes) == 0
+    assert [step['status'] for step in result['steps']
+            if step['tool'] == 'brain.write'] == ['refused']
+
+    changed = _approved_route_write_args(approved)
+    changed['ops'] = [{'op': 'add', 'fragment': {
+        'id': 'changed-arguments',
+        'kind': 'fact',
+        'text': 'Changed after review',
+    }}]
+    result = _dispatch_reviewed_brain_write(
+        h, monkeypatch, changed, key='changed-args')
+    assert len(writes) == 0
+    assert [step['status'] for step in result['steps']
+            if step['tool'] == 'brain.write'] == ['refused']
+
+
+def test_workflow_approval_route_refuses_unauthenticated_and_wrong_session_without_record(harness):
+    h = harness
+    h.start()
+    convo = h.conversation_with_two_agents()
+    reply_id = _proposal_reply(h, convo)
+    drafted = _draft(h, convo, reply_id, 'draft-route-denials')
+    workflow = drafted['workflow']
+    state = _workflow(h, convo, workflow)
+    body = {'action': 'workflow-approve', 'root': convo['root'], 'scope': convo['scope'],
+            'workflow': workflow, 'digest': state['digest'],
+            'revision': h.page(convo['root'], convo['scope'])['revision']}
+    server = h.state['server']
+    before = _approval_record_roots(server)
+
+    status, unauth = _post_with_headers(server, '/api/universal/workshop', body, {})
+    assert status == 403 and unauth['ok'] is False
+    assert _approval_record_roots(server) == before
+
+    status, wrong = _post_with_headers(server, '/api/universal/workshop', body, {
+        'X-ArchHub-Session': 'not-this-browser-session',
+        'X-ArchHub-CSRF': server.browser_csrf_token,
+    })
+    assert status == 403 and wrong['ok'] is False
+    assert _approval_record_roots(server) == before
+
+
+def test_workflow_approval_route_refuses_stale_digest_after_workflow_edit_without_record(harness):
+    h = harness
+    h.start()
+    convo = h.conversation_with_two_agents()
+    reply_id = _proposal_reply(h, convo)
+    drafted = _draft(h, convo, reply_id, 'draft-route-edited')
+    workflow = drafted['workflow']
+    state = _workflow(h, convo, workflow)
+    stale_digest = state['digest']
+    message_param = next(node['params']['message'] for node in state['nodes']
+                         if node['engine'] == 'agent.session')
+    server = h.state['server']
+    before = _approval_record_roots(server)
+    h.request('/api/universal/set-property',
+              {'relation': message_param['relation'], 'value': 'BUILD the amended release note'})
+
+    refused = h.request('/api/universal/workshop', {'action': 'workflow-approve',
+        'root': convo['root'], 'scope': convo['scope'], 'workflow': workflow,
+        'digest': stale_digest, 'revision': h.page(convo['root'], convo['scope'])['revision']},
+        expected=400)
+
+    assert 'workflow changed' in refused['error'].lower()
+    assert _approval_record_roots(server) == before
 
 
 def test_agent_proposed_workflow_is_edited_approved_executed_and_independently_reviewed(harness):

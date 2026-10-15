@@ -1,7 +1,7 @@
 """The /docs pages the public website projects.
 
 Each page is plain text the website build turns into Cells; the text says
-what build 20260916-2130-e733a13 does, read from its source.
+what pinned verified build 20260916-2130-e733a13 does, read from its source.
 """
 
 from types import MappingProxyType
@@ -12,7 +12,7 @@ DOCS_PAGES = MappingProxyType({
         "Getting started",
         "Install ArchHub on Windows, let the first open finish setting up, sign in from the app and keep it up to date.",
         """\
-ArchHub is a Windows desktop app. This page covers the installer, the first open, signing in and updates as they work in build 20260916-2130-e733a13.
+ArchHub is a Windows desktop app. This page covers the installer, the first open, signing in and updates as they work in pinned verified build 20260916-2130-e733a13.
 
 ## Install
 
@@ -70,31 +70,30 @@ To install a downloaded update, choose Restart to install the update in the tray
     ),
     "composer-canvas": (
         "The canvas and the composer",
-        "Add nodes, wire them, edit their properties, run the graph, and ask the composer to draft changes for you to review.",
+        "Nodes, typed wires, properties, graph runs and composer drafts as they exist in pinned verified build 20260916-2130-e733a13.",
         """\
-The canvas holds your work: nodes, the wires between them and their properties. The composer drafts changes to the canvas from a request you type. Nothing a model drafts runs until you run it.
+The canvas holds your work: nodes, the wires between them and their properties. The composer drafts changes to the canvas from a request you type. A model draft stays inert until the graph run path starts it.
 
-## Add a node
+## Node catalogue
 
-- Drag a node from the Nodes panel onto the canvas, or double-click it.
-- Or open the Node library from the + button in the toolbar, from Add node in the right-click menu, or from the library button in the composer. Search, then click a node to add it.
+The Node library is the one catalogue for placeable nodes. The toolbar, canvas menu and composer all use that same catalogue, so the list and details stay aligned with what this build can run.
 
 Nodes come in nine categories, each with its own colour: Host, Read, Filter, Transform, Annotate, Compose, Logic, AI and Output.
 
 ## Connect nodes
 
-Click an output socket, then a compatible input socket. While you choose, the status line tells you which node the wire starts from, and its cancel button stops. Output sockets are filled and input sockets are hollow. A wire takes the colour of the kind of data it carries.
+Typed sockets define valid wires. While a connection is being formed, the status line names the source node and offers cancel. Output sockets are filled and input sockets are hollow. A wire takes the colour of the kind of data it carries.
 
 ## Select, move and arrange
 
-- Click a node to select it. Shift-click adds or removes nodes. Click empty canvas to clear the selection. Click a wire to select it.
+- Selection supports one node, multiple nodes, empty-canvas clear and individual wires.
 - The right-click menu selects direct neighbours, the connected group, or everything, and clears the selection. Shift+F10 opens the same menu from the keyboard.
-- Drag nodes to move them. Positions are saved when you release the mouse, and the status line shows "Saving positions" while that happens. You can move or arrange up to 256 nodes at a time.
+- Moving nodes saves positions when the pointer is released, and the status line shows "Saving positions" while that happens. You can move or arrange up to 256 nodes at a time.
 - Undo last layout in the right-click menu puts positions back. It covers positions only.
 
 ## Zoom and pan
 
-Use the mouse wheel to zoom around the pointer, or the zoom buttons and Fit in the toolbar. Drag empty canvas to pan. The right-click menu also has Fit selection, Fit all, Arrange selection and Arrange all, and a minimap shows the whole graph. Zoom and pan are not kept after a restart.
+Canvas zoom can follow the pointer, the toolbar controls or Fit. Canvas pan, Fit selection, Fit all, Arrange selection and Arrange all are also available from the graph controls, and a minimap shows the whole graph. Zoom and pan are not kept after a restart.
 
 ## Properties
 
@@ -106,7 +105,7 @@ To delete a node or a wire, use the delete control in the Properties panel and c
 
 ## Run the graph
 
-Press Run graph in the Properties panel. ArchHub waits for pending parameter saves, runs every node in the graph along its wires, and shows each result on its node. One run happens at a time. If something fails, the panel says so, for example "Graph execution failed." or that some nodes did not complete.
+The Properties panel starts graph execution. ArchHub waits for pending parameter saves, runs every node in the graph along its wires, and shows each result on its node. One run happens at a time. If something fails, the panel says so, for example "Graph execution failed." or that some nodes did not complete.
 
 ## Where your work is saved
 
@@ -118,26 +117,25 @@ Type into the box at the bottom of the canvas, or start from Home with Start a n
 
 The composer sends your request to the model you picked and turns the reply into draft changes on the canvas: placing and grouping nodes, wiring them and setting properties. It applies up to twelve changes per request and stops at the first one that fails. Its reply ends with "Draft updated on the canvas. Review its nodes, connections and parameters." or tells you what needs attention.
 
-A draft stays a draft. If the model asks to run it, nothing runs; the graph runs only when you press Run graph.
+A draft stays a draft. If the model asks to run it, nothing runs; graph execution starts only from the app's governed run path.
 
 If no model is picked, the composer answers "No model chosen" and asks you to pick one.
 
 ## Pick a model
 
-Open the model picker from the model button in the header or on Home. It lists models in three groups: CLOUD, through your ArchHub account; BYO, through OpenRouter with your own key; and LOCAL, from LM Studio or Ollama running on this machine. You can search, refresh or clear the choice. With an AI node selected, picking a model sets that node's model.
+Open the model picker from the model button in the header or on Home. It lists models in three groups: CLOUD, through your ArchHub account; PROVIDER, through connected providers; and LOCAL, from LM Studio or Ollama running on this machine. You can search, refresh or clear the choice. With an AI node selected, picking a model sets that node's model.
 
-To use your own OpenRouter key, open Settings, Providers, paste the key into OpenRouter API key and press Save OpenRouter key. The key is stored on this machine, protected with Windows DPAPI for your user. Saving does not test the connection. A key set in the OPENROUTER_API_KEY environment variable takes priority.
+Provider accounts are connected from Settings, Providers. Credentials stay on this machine and are never written into a project file.
 
 For free models, pick a model whose route ends in `:free`, or the `openrouter/free` route. In free mode ArchHub refuses routes that are not free and rejects any reply that reports a cost.
 
 If a provider limits requests, you see "The model provider is rate-limiting requests (HTTP 429)." ArchHub does not retry by itself. Wait, or pick another model.
 
-## Not working in this build
+## Limits in this build
 
-- Most keyboard shortcuts listed in Settings do nothing.
-- There is no undo or redo for graph edits. Undo last layout covers positions only.
-- Save as skill and Fork in the Properties panel do nothing.
-- The table in Settings, Model routing is fixed, and its buttons do nothing.
+- Undo and redo are available only where the running graph exposes history controls. Undo last layout covers positions only.
+- Save as skill and Fork appear only when this build can complete the action.
+- Settings, Model routing lists only free or local routes that the app can route in this build.
 - Ollama routes cannot take images.
 """,
     ),
@@ -145,7 +143,7 @@ If a provider limits requests, you see "The model provider is rate-limiting requ
         "The brain and cloud sync",
         "What the ArchHub brain is in this build, how cloud sync works, what it uploads and what it keeps.",
         """\
-The brain is ArchHub's memory: facts and skills learned from your work. This page describes what runs in build 20260916-2130-e733a13, and says plainly where the brain is not finished.
+The brain is ArchHub's memory: facts and skills learned from your work. This page describes what runs in pinned verified build 20260916-2130-e733a13, and says plainly where the brain is not finished.
 
 ## What runs today
 
@@ -203,7 +201,7 @@ Settings, Account, Sign out clears the saved session on this machine straight aw
 
 ## What needs an account
 
-The canvas, the composer with your own key or a local model, and connectors on this machine work without signing in. Signing in is needed for the CLOUD models in the model picker and for brain cloud sync.
+The canvas, the composer with your own credential or a local model, and connectors on this machine work without signing in. Signing in is needed for the CLOUD models in the model picker and for brain cloud sync.
 
 ## Tiers and the offer
 
@@ -227,7 +225,7 @@ The website describes ArchHub. It has no sign-in form and keeps no session; you 
         "Connectors",
         "Which applications ArchHub can reach in this build, what each one needs, and which are not available yet.",
         """\
-A connector lets ArchHub read from, or act in, an application you already use. This page lists what works in build 20260916-2130-e733a13 and what does not yet.
+A connector lets ArchHub read from, or act in, an application you already use. This page lists what works in pinned verified build 20260916-2130-e733a13 and what does not yet.
 
 ## At a glance
 

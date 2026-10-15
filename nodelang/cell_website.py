@@ -1019,7 +1019,7 @@ def build_universal_website(
         )),
         element("p", "site-fineprint site-dots", children=(
             element("span", text_root=offer_root),
-            element("span", text="bring your own key"),
+            element("span", text="bring your own provider"),
             element("span", text="no credit card"),
             element("span", text="Windows"),
         )),
@@ -1102,7 +1102,7 @@ def build_universal_website(
                             ),
                             element(
                                 "li", "site-canvas-hint", attrs={"data-hint": "hero"},
-                                text="Drag a node, or drag from an output to wire it",
+                                text="Nodes, ports and approvals stay visible on the canvas",
                             ),
                         ),
                     ),
@@ -1190,7 +1190,7 @@ def build_universal_website(
                         element("p", "site-pillar-body", text=body),
                     ))
                     for index, role, title, body in (
-                        ("01", "The surface", "Canvas", "Every action is a node; every node is replayable. Drag a parameter and the chain downstream re-runs. Nothing happens that you can't see, trace, or undo."),
+                        ("01", "The surface", "Canvas", "Every action is a node; every node is replayable. Parameters are graph state, so downstream work can rerun from the change. Nothing happens that you can't see, trace, or undo."),
                         ("02", "The hand", "Composer", "Talk to the project. The AI proposes edits to the graph; you approve the line before it's drawn. Set out, don't ask out: review is the default, not an afterthought."),
                         ("03", "The memory", "Brain", "Persistent memory and reusable skills that grow with your firm. Save any thread as a skill: a graph-held assembly you own, with the work it was learned from and the evidence that earned it. No marketplace lock-in."),
                     )
@@ -1318,8 +1318,8 @@ def build_universal_website(
                         )),
                         feature_list((
                             ("01", "Replayable by construction", "Re-run any node from any upstream state. The same inputs always draw the same line."),
-                            ("02", "Parametric, not one-shot", "Every chat turn becomes a parameter. Nudge a slider; the chain re-runs from that node down."),
-                            ("03", "Auditable wires", "Every connection is typed and logged. Hover any wire to see exactly what passed through it."),
+                            ("02", "Parametric, not one-shot", "Chat stays an indexed conversation. Only an admitted workflow re-runs downstream from its node."),
+                            ("03", "Auditable wires", "Every connection is typed."),
                         )),
                     )),
                     element(
@@ -1417,7 +1417,7 @@ def build_universal_website(
                             ("The canvas", "sessions, nodes and wires"),
                             ("The brain", "your memory and skills, on this machine"),
                             ("Your drawings", "read in place by the connector"),
-                            ("Provider keys", "the graph holds where a key lives, never the key; anything that looks like a credential is refused"),
+                            ("Provider credentials", "the graph holds where a credential lives, never the credential; anything that looks like a secret is refused"),
                             ("Skills", "purpose, work and evidence you can read, diff and delete"),
                         )),
                     )),
@@ -1432,7 +1432,7 @@ def build_universal_website(
                     element("div", "site-boundary-side site-boundary-outside", children=(
                         element("p", "site-boundary-tag", text="Leaves, when a node asks"),
                         boundary_rows((
-                            ("One model call", "the prompt that node built, to your provider on your key"),
+                            ("One model call", "the prompt that node built, to your provider account"),
                         ), "site-boundary-item site-boundary-out"),
                         element(
                             "p", "site-boundary-tag site-boundary-tag-sync",
@@ -1465,7 +1465,7 @@ def build_universal_website(
                 ), accent_class="site-title-ital"),
                 element(
                     "p", "site-closing-copy",
-                    text="Open the canvas. Wire your first host. Read every sentence aloud to a senior architect; if they nod, you're home.",
+                    text="The canvas, host connectors and public docs describe the released build in the same language.",
                 ),
                 element("div", "site-actions site-actions-center", children=(
                     *download_link("site-primary"),

@@ -19,6 +19,7 @@ function harness(api = {}) {
     React: {
       useMemo: f => f(), useEffect: f => f(),
       useState: initial => { let value = initial; return [value, next => { value = typeof next === 'function' ? next(value) : next; }]; },
+      useRef: initial => ({current: initial}),
     },
   };
   vm.createContext(context);
@@ -179,6 +180,111 @@ test('run waits for pending saves and does not mark changed inputs current', asy
   assert.equal(panel.rec.ran,0);
   assert.match(panel.rec.persistence.runError,/changed during execution/);
   finishWrite({ok:true}); await tick();
+});
+
+test('path parameter calls the native desktop file picker route and stores the picked path', async () => {
+  const calls = [];
+  const {context} = harness({ARCHHUB_PICK_FILE: async (title, filter) => {
+    calls.push([title, filter]);
+    return 'C:\\models\\tower.png';
+  }});
+  const picked = await context.window.pmPickNativeFile('Image source', 'Images');
+  assert.equal(picked, 'C:\\models\\tower.png');
+  assert.deepEqual(calls, [['Image source', 'Images']]);
+});
+
+test('level picker reads reported Revit document levels and never invents Level 1-4', () => {
+  const api = {ARCHHUB_LIVE:{connectors:[{
+    id:'r25', name:'Revit 2025', state:'connected',
+    active_document:{id:'doc-a', levels:[{name:'00 Ground'}, {label:'Roof'}]},
+  }]}};
+  const {context} = harness(api);
+  const state = context.window.pmLevelPickerState({params:[{k:'session', v:'doc-a'}]});
+  assert.deepEqual(JSON.parse(JSON.stringify({options:state.options, disabled:state.disabled, reason:state.reason})), {options:['00 Ground', 'Roof'], disabled:false, reason:''});
+  assert.equal(state.options.some(value => /^Level [1-4]$/.test(value)), false);
+});
+
+test('level picker is disabled with one document-picker fix when the node has no Revit target', () => {
+  const {context} = harness({ARCHHUB_LIVE:{connectors:[]}});
+  const state = context.window.pmLevelPickerState({id:'node-a', params:[]});
+  assert.equal(state.disabled, true);
+  assert.equal(state.reason, 'Pick a Revit document first.');
+  assert.equal(state.fix.label, 'Fix');
+  assert.equal(state.fix.target, 'document-picker');
+  assert.equal(state.options.length, 0);
+});
+
+test('level picker requires exact document id when one host has multiple documents', () => {
+  const api = {ARCHHUB_LIVE:{levels:[{label:'Global Wrong'}], connectors:[{
+    id:'host-a', name:'Revit 2025', state:'connected',
+    documents:[
+      {id:'doc-a', title:'Tower A.rvt', levels:[{name:'A Ground'}, {name:'A Roof'}]},
+      {id:'doc-b', title:'Tower B.rvt', levels:[{name:'B Ground'}, {name:'B Roof'}]},
+    ],
+  }]}};
+  const {context} = harness(api);
+  const unbound = context.window.pmLevelPickerState({id:'node-unbound', params:[{k:'session', v:'host-a'}]});
+  assert.equal(unbound.disabled, true);
+  assert.equal(unbound.reason, 'Selected Revit document is not connected.');
+  assert.deepEqual(JSON.parse(JSON.stringify(unbound.options)), []);
+  const node = {id:'node-a', params:[{k:'session', v:'doc-a'}, {k:'level', v:'A Ground'}]};
+  const state = context.window.pmLevelPickerState(node);
+  assert.equal(state.disabled, false);
+  assert.deepEqual(JSON.parse(JSON.stringify(state.options)), ['A Ground', 'A Roof']);
+  assert.equal(state.options.includes('B Ground'), false);
+  assert.equal(state.options.includes('Global Wrong'), false);
+  assert.equal(state.accepts('A Roof'), true);
+  assert.equal(state.accepts('B Roof'), false);
+});
+
+test('level picker resolves same-name Revit documents by id, not name', () => {
+  const api = {ARCHHUB_LIVE:{connectors:[
+    {id:'host-a', name:'Revit 2025', state:'connected', documents:[
+      {id:'doc-a', title:'Shared Name.rvt', levels:[{name:'A Ground'}]},
+    ]},
+    {id:'host-b', name:'Revit 2026', state:'connected', documents:[
+      {id:'doc-b', title:'Shared Name.rvt', levels:[{name:'B Ground'}]},
+    ]},
+  ]}};
+  const {context} = harness(api);
+  const byName = context.window.pmLevelPickerState({id:'node-name', params:[{k:'session', v:'Shared Name.rvt'}]});
+  assert.equal(byName.disabled, true);
+  assert.equal(byName.reason, 'Selected Revit document is not connected.');
+  const byId = context.window.pmLevelPickerState({id:'node-id', params:[{k:'session', v:'doc-b'}]});
+  assert.equal(byId.disabled, false);
+  assert.deepEqual(JSON.parse(JSON.stringify(byId.options)), ['B Ground']);
+});
+
+test('mounted missing-target Fix focuses and opens the existing document picker row', async () => {
+  const {JSDOM} = await import('jsdom');
+  const dom = new JSDOM('<div id="root"></div>', {url:'http://127.0.0.1:53912/', runScripts:'outside-only', pretendToBeVisual:true});
+  const win = dom.window;
+  win.ARCHHUB_LIVE = {connectors:[{id:'host-a', name:'Revit 2025', state:'connected',
+    documents:[{id:'doc-a', title:'Tower A.rvt', levels:[{name:'A Ground'}]}]}]};
+  win.HTMLElement.prototype.scrollIntoView = function scrollIntoView() { this.setAttribute('data-scrolled', 'true'); };
+  win.eval(fs.readFileSync(path.join(__dirname, '../nodelang/studio/vendor/react.js'), 'utf8'));
+  win.eval(fs.readFileSync(path.join(__dirname, '../nodelang/studio/vendor/react-dom.js'), 'utf8'));
+  win.eval(fs.readFileSync(path.join(__dirname, '../nodelang/studio/compiled/tokens.js'), 'utf8'));
+  win.eval(fs.readFileSync(path.join(__dirname, '../nodelang/studio/compiled/param-types.js'), 'utf8'));
+  win.eval(fs.readFileSync(path.join(__dirname, '../nodelang/studio/compiled/studio-params.js'), 'utf8'));
+  const node = {id:'node-mounted-fix', live:false, params:[
+    {k:'target_session', v:'', type:'menu', opts:['doc-a']},
+    {k:'level', v:'', type:'menu'},
+  ]};
+  const root = win.ReactDOM.createRoot(win.document.getElementById('root'));
+  try {
+    win.ReactDOM.flushSync(() => root.render(win.React.createElement(win.NodeInspector, {node})));
+    await new Promise(resolve => win.setTimeout(resolve, 0));
+    const fix = [...win.document.querySelectorAll('button')].find(button => button.textContent === 'Fix');
+    assert.ok(fix, 'missing-target Fix button was not mounted');
+    win.ReactDOM.flushSync(() => fix.click());
+    const targetRow = win.document.querySelector('[data-param-key="target_session"]');
+    assert.equal(targetRow && targetRow.getAttribute('data-scrolled'), 'true');
+    assert.ok([...win.document.querySelectorAll('button')].some(button => button.textContent === 'doc-a'), 'document picker row did not open');
+  } finally {
+    win.ReactDOM.flushSync(() => root.unmount());
+    dom.window.close();
+  }
 });
 
 test('missing execution results and pending nodes never count as a success', async () => {

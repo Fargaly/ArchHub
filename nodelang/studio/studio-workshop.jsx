@@ -1,61 +1,16 @@
-// studio-workshop.jsx — WORKSHOP: the mode the conversation becomes when a Workshop is open.
-// Loaded by studio.html BEFORE studio-lm.jsx renders; studio-lm reads window.WorkshopView and
-// window.WorkshopAgentsRail. The components below are the design bundle's studio-workshop.jsx
-// (archhub/project) taken as sent: same tokens, same task-card-as-container rule as the proposal
-// board. Presets = directions A/B/C.
-//
-// LIVE SEAM. The design's seeded scene (its agent roster, run facts, flow, seeded tasks and activity
-// log) is replaced by ONE mapping of the owner projections, directly below: agents are the transcript
-// participants with their verified connection facts, tasks are Work (messages that name a Work,
-// through workshopTaskItems, plus the native Work status), the flow is the projected topology, and
-// activity is the transcript's tool records. A part with no live source draws the design's own
-// absent state. Nothing below the seam is authored data.
+// WORKSHOP-72 PASS2: DSYS-077 window; 074/075 behavior with the shipped v3 skin.
+// Tasks/messages/approvals are projections of the existing authority; DSYS-078 uses the same selector.
 (() => {
 const W = window.AH;
 const derive = build => window.ArchHubTheme ? window.ArchHubTheme.derive(build) : build(W);
-const WORKSHOP_TABS = [['board', 'Board'], ['chat', 'Chat'], ['agents', 'Agents'], ['approvals', 'Approvals'], ['router', 'Router'], ['relay', 'Relay'], ['prompts', 'Prompts']];
+
 // Projects stays hidden until the project backend lands. Legacy "tasks" opens the Board.
-const WORKSHOP_TASK_PRESETS = ['tasks', 'board'];
+
 
 // Conversation retention. After 20 idle days a conversation's messages move to
 // a file in the user's data folder; this notice says so on the conversation and
 // hands the archive back. It reads with a GET, so looking never delays retention.
-const archiveDay = seconds => (typeof seconds === 'number' && isFinite(seconds))
-  ? new Date(seconds * 1000).toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'})
-  : 'an unknown date';
-const archiveButton = {padding:'4px 10px', border:`1px solid ${W.line}`, borderRadius:5, background:'transparent',
-  color:W.ink, fontFamily:W.sans, fontSize:12, cursor:'pointer', flex:'none'};
-const ConversationArchiveNotice = ({ root }) => {
-  const [row, setRow] = React.useState(null);
-  const [note, setNote] = React.useState('');
-  const [busy, setBusy] = React.useState(false);
-  const load = React.useCallback(() => {
-    if (!root || !window.ARCHHUB_CONVERSATION_RETENTION) return;
-    window.ARCHHUB_CONVERSATION_RETENTION()
-      .then(data => setRow((data.archived || []).find(item => item.conversation === root && item.archived_at) || null))
-      .catch(() => setRow(null));
-  }, [root]);
-  React.useEffect(load, [load]);
-  if (!row) return null;
-  const act = (call, done) => {
-    if (!call) return;
-    setBusy(true); setNote('');
-    call(row.conversation).then(done).catch(error => setNote(error.message || 'Refused.')).finally(() => setBusy(false));
-  };
-  const removed = row.removed_messages || 0;
-  return (
-    <div role="status" style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', border:`1px solid ${W.line}`,
-      borderRadius:7, background:W.bgPanel, fontSize:12.5, color:W.inkSoft }}>
-      <span style={{ flex:1, minWidth:0 }}>
-        Archived on {archiveDay(row.archived_at)}{removed ? ` · ${removed} message${removed === 1 ? '' : 's'} moved to the archive file` : ''}{note ? ` · ${note}` : ''}
-      </span>
-      <button disabled={busy || !row.archive_exists} style={archiveButton}
-        onClick={() => act(window.ARCHHUB_CONVERSATION_ARCHIVE_OPEN, () => setNote('opened in Explorer'))}>Open archive</button>
-      <button disabled={busy || !row.archive_exists} style={archiveButton}
-        onClick={() => act(window.ARCHHUB_CONVERSATION_RESTORE, result => { setNote(`restored ${result.restored}`); load(); })}>Restore</button>
-    </div>
-  );
-};
+
 
 // ═══════════════════════════════ LIVE SEAM ═══════════════════════════════
 // Work review and Canvas share the authenticated view's durable graph selection.
@@ -78,27 +33,8 @@ const WorkshopPrograms = {
   },
 };
 window.WorkshopPrograms = WorkshopPrograms;
-const ProgramChoices = ({selected, onChange, disabled}) =>
-  <fieldset disabled={disabled} style={{border:0, margin:'10px 0', padding:0, minWidth:0}}>
-    <legend>Programs this task may use</legend>
-    {WORKSHOP_PROGRAMS.map(program => <label key={program.id} style={{display:'inline-block', marginRight:12}}>
-      <input type="checkbox" aria-label={'Program ' + program.label} checked={selected.includes(program.id)}
-        onChange={event => onChange(event.target.checked ? [...selected, program.id] :
-          selected.filter(id => id !== program.id))}/>{' '}{program.label}</label>)}
-    <p style={{fontSize:11, color:W.inkSoft, margin:'4px 0 0'}}>
-      An agent on this task can run commands only in the programs ticked here. Nothing is ticked until you tick it.</p>
-  </fieldset>;
-const workshopSelectionId = value => typeof value === 'string' && value.length > 0 && value.length <= 1024;
-const workshopWorkSelectionIdentity = (state, root) => {
-  const canvas = state?.canvas, projected = state?.topology?.canvas || canvas;
-  const authorization = projected?.authorization;
-  if (!canvas || state.error || state.topology?.error ||
-      !state.workshops?.some(row => row.root === root) ||
-      (state.topology?.canvas && (projected.application_root !== canvas.graph_id ||
-        projected.scope?.current !== canvas.root))) return null;
-  const key = [authorization?.subject, authorization?.session, canvas.graph_id, canvas.root, root];
-  return key.every(workshopSelectionId) ? JSON.stringify(key) : null;
-};
+
+
 const workshopProjectedNodes = state => {
   const nodes = state?.topology?.graph?.nodes ?? state?.topology?.canvas?.nodes ?? state?.graph?.nodes ?? state?.canvas?.nodes;
   const drawn = Array.isArray(nodes) ? nodes : [];
@@ -112,32 +48,11 @@ const workshopProjectedWires = state => {
   const wires = state?.topology?.graph?.wires ?? state?.graph?.wires;
   return Array.isArray(wires) ? wires : [];
 };
-const admittedWorkshopWork = (state, key, work, nodes) => {
-  if (!key || !workshopSelectionId(work) || !nodes.some(node => node.id === work)) return false;
-  const [owner, view, , scope, root] = JSON.parse(key), native = state?.nativeWork;
-  if (!native || native.owner !== owner || native.view !== view ||
-      native.scope !== scope || native.root !== root) return false;
-  return native.state === 'idle' ? Array.isArray(native.available_work) && native.available_work.includes(work) :
-    native.state !== 'unavailable' && typeof native.state === 'string' && native.work === work;
-};
-const selectedWorkshopWork = (state, root, nodes = workshopProjectedNodes(state)) => {
-  const key = workshopWorkSelectionIdentity(state, root);
-  const candidate = state?.nativeWork?.state !== 'idle' ? state?.nativeWork?.work :
-    (state?.topology?.selected ?? state?.canvas?.selected);
-  return admittedWorkshopWork(state, key, candidate, nodes) ? candidate : '';
-};
+
+
 // Workshop task cards read from the transcript only: a message that names a Work id is an event of that
 // Work, and every event of one Work folds into one card at the place its first event appeared. The card's
 // state is the verb of its latest event. No progress, tool count or task id is authored.
-const WORKSHOP_WORK_REF = /\b((?:assembly-instance|work):[A-Za-z0-9_-]{6,})/;
-const WORKSHOP_TASK_STATES = [
-  [/\b(fail(?:ed|s)?|refused|rejected|blocked|error|needs? (?:you|review|input|approval))\b/i, 'block'],
-  [/^\s*(delivered|accepted|completed|merged)\b/i, 'done'],
-  [/^\s*(submitted)\b/i, 'review'],
-  [/^\s*(claimed|started|running|working on|assigned)\b/i, 'run'],
-];
-// An agent's relayed reply is that agent speaking: its sender is the contact the relay answered for,
-// its text the agent's own text (never the relay's header or the relay author).
 const wsSender = message => typeof message?.relayed_from === 'string' ? message.relayed_from : message?.sender_root;
 const wsText = message => typeof message?.relayed_from === 'string' && typeof message.agent_text === 'string'
   ? message.agent_text : String(message?.body || '');
@@ -150,221 +65,74 @@ const wsPlanReply = text => {
   try { plan = JSON.parse(found[1]); } catch (_) { return null; }
   if (!plan || typeof plan !== 'object' || !Array.isArray(plan.actions)) return null;
   const steps = plan.actions.filter(row => row && row.op === 'node')
-    .map(row => ({t:String(row.title || row.engine || 'step'), p:String(row.engine || '')}));
+    .map(row => ({id:String(row.root || row.id || row.ref || row.title || row.engine || 'step'),
+      t:String(row.title || row.engine || 'step'), p:String(row.engine || ''), state:String(row.state || row.status || 'open')}));
   const prose = (String(text).slice(0, found.index) + String(text).slice(found.index + found[0].length)).trim();
   return {prose, steps, title:typeof plan.title === 'string' ? plan.title : '', raw:found[1]};
 };
-const workshopTaskItems = (messages, nodes, plannedItems) => {
-  const byId = new Map((Array.isArray(nodes) ? nodes : []).map(node => [node.id, node]));
-  const cards = new Map(), items = [];
-  (Array.isArray(messages) ? messages : []).forEach(message => {
-    const match = WORKSHOP_WORK_REF.exec(wsText(message));
-    if (!match) { items.push({kind:'message', message}); return; }
-    let card = cards.get(match[1]);
-    if (!card) { card = {kind:'task', work:match[1], node:byId.get(match[1]) || null, events:[]}; cards.set(match[1], card); items.push(card); }
-    card.events.push(message);
-  });
-  cards.forEach(card => {
-    const latest = wsText(card.events[card.events.length - 1]);
-    card.state = (WORKSHOP_TASK_STATES.find(([pattern]) => pattern.test(latest)) || [null, 'open'])[1];
-    const [kind, id] = card.work.split(':');
-    card.title = card.node?.title || `${kind} · ${id.slice(0, 8)}`;
-    card.owner = wsSender(card.events[card.events.length - 1]);
-  });
-  (Array.isArray(plannedItems) ? plannedItems : []).forEach(row => {
-    if (!row || typeof row.id !== 'string' || !row.id || typeof row.title !== 'string' || !row.title.trim() || cards.has(row.id)) return;
-    const depends = Array.isArray(row.depends_on) ? row.depends_on.filter(item => typeof item === 'string' && item.trim()) : [];
-    const waits = row.approving === true || /(?:needs?|waits? for).*(?:you|approval)|approval/i.test([row.state, row.status, row.done_when, row.lead].filter(Boolean).join(' '));
-    const card = {kind:'task', work:row.id, node:null, events:[], state:'open', owner:null, title:row.title,
-      status:String(row.state || 'PLANNED'), planned:true, done_when:String(row.done_when || ''),
-      depends_on:depends, blocks:depends.length ? depends.join(' \u00b7 ') : '\u2014',
-      approving:waits, lead:waits ? 'waits for you' : row.done_when ? 'Done when: ' + String(row.done_when) : 'Unowned planned proposal.'};
-    cards.set(row.id, card); items.push(card);
-  });
-  return items;
-};
+const workshopTaskItems = window.ARCHHUB_WORKSHOP_TASK_SOURCE.items;
 // One participant tone for the agents rail and the transcript avatars: palette tokens only, chosen from
 // the participant root so the same agent keeps its colour.
-const workshopAgentTone = (root, self) => {
-  if (self) return {bg:W.userAv, fg:W.onUserAv};
-  const tones = [W.accent, W.cyan, W.purple, W.blue];
-  const bg = tones[[...String(root || '')].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % tones.length];
-  return {bg, fg:W.onFill};
+
+const wsSeconds = value => {
+  const number = typeof value === 'string' ? Date.parse(value) / 1000 : value;
+  return !Number.isFinite(number) || number <= 0 ? null : number > 1e12 ? number / 1000 : number;
 };
-const wsSeconds = value => !Number.isFinite(value) || value <= 0 ? null : value > 1e12 ? value / 1000 : value;
 const wsClockText = (value, seconds) => {
   const at = wsSeconds(value); if (at === null) return '';
   const d = new Date(at * 1000), p = n => String(n).padStart(2, '0');
   return p(d.getHours()) + ':' + p(d.getMinutes()) + (seconds ? ':' + p(d.getSeconds()) : '');
 };
-const wsAgo = value => {
-  const s = Math.max(0, Date.now() / 1000 - wsSeconds(value));
-  return s < 60 ? Math.round(s) + 's' : s < 3600 ? Math.round(s / 60) + 'm' : s < 86400 ? Math.round(s / 3600) + 'h' : Math.round(s / 86400) + 'd';
-};
+
 // An avatar's initial is the name's first whole character: charAt(0) splits an emoji into a lone surrogate.
 const wsInitial = (name, fallback) => (Array.from(String(name || '').trim())[0] || fallback).toUpperCase();
 // Counted and cut in code points: a cut never splits a supplementary character (an emoji) into a lone surrogate.
-const wsLine = (text, limit = 140) => {
-  const line = String(text || '').split('\n').find(row => row.trim()) || '';
-  const points = Array.from(line);
-  return points.length > limit ? points.slice(0, limit - 1).join('') + '\u2026' : line;
-};
-const wsRoute = item => String((item && (item.routed || item.route)) || '').trim();
-const wsFreeRoute = item => {
-  const route = wsRoute(item);
-  if (!route) return false;
-  return route === 'openrouter/free' || route.endsWith(':free') || route.startsWith('lmstudio/') || route.startsWith('ollama/');
-};
-const wsModelOption = item => [item?.name || wsRoute(item), item?.vendor, item?.tag].filter(Boolean).join(' · ');
+
+
 const wsRouteLabel = route => String(route || '').replace(/^openrouter\//, '').replace(/^lmstudio\//, 'LM Studio · ').replace(/^ollama\//, 'Ollama · ');
-const wsTaskModel = (task, native, transcript) => {
-  const source = [
-    task?.model, task?.latest?.model, task?.latest?.route,
-    native?.work === task?.work ? native?.model : '',
-  ].find(Boolean);
-  return String(source || '').trim();
-};
-const wsBlankNames = text => {
-  const names = [], seen = new Set();
-  String(text || '').replace(/\{([^{}\n]{1,40})\}/g, (_, raw) => {
-    const name = raw.trim();
-    if (name && !seen.has(name)) { seen.add(name); names.push(name); }
-    return _;
-  });
-  return names;
-};
-const wsPromptText = prompt => String(prompt?.text || prompt?.prompt || prompt?.template || prompt?.body || prompt?.description || '').trim();
-const wsFactsUsed = message => (Array.isArray(message?.facts_used) ? message.facts_used : [])
-  .filter(row => row && typeof row.label === 'string' && row.label.trim() &&
-    typeof row.root === 'string' && row.root.trim());
-const wsRealGraphRoot = root => /^(assembly-instance|work|app|gm|fact|node):[A-Za-z0-9_.:@-]{3,}$/.test(String(root || '')) &&
-  !String(root || '').startsWith('proposal:');
-const wsReplyPlanLine = message => {
-  const body = wsText(message);
-  const structured = wsPlanReply(body);
-  if (structured?.prose) return structured.prose.replace(/\s+/g, ' ').trim();
-  const found = /\bPlan:\s*([\s\S]+)/i.exec(body);
-  if (found) return "Here's the plan: " + found[1].replace(/\s+/g, ' ').trim();
-  return '';
-};
+
+
 const wsTranscript = (state, descriptor) => {
   const held = state?.workshop;
   const graphOk = held?.graph_id === undefined || held.graph_id === state?.canvas?.graph_id;
   const scopeOk = held?.scope_root === undefined || held.scope_root === state?.canvas?.root;
   return held?.root === descriptor?.root && graphOk && scopeOk ? held : null;
 };
-const wsNative = (state, descriptor) => state?.nativeWork?.root === descriptor?.root &&
-  state.nativeWork.scope === state?.canvas?.root ? state.nativeWork : null;
-const wsObserved = row => typeof row.observed_at === 'number' && Number.isFinite(row.observed_at) && row.observed_at > 0;
-const wsVerified = (row, clock) => row.is_agent === true && row.connection_status === 'connected' &&
-  row.connection_basis === 'authenticated-request' && wsObserved(row) && typeof row.expires_at === 'number' &&
-  Number.isFinite(row.expires_at) && row.expires_at > row.observed_at && row.expires_at > clock;
+const wsNative = (state,descriptor) => window.ARCHHUB_WORKSHOP_TASK_SOURCE.native(state,descriptor?.root);
+
 
 // Shared by the rail and the view, which render in two different component trees (the design's
 // subscribe store): saved agent connections and Session Link disconnect outcomes.
-const store = {subs:new Set(), contacts:[], contactsLoading:false, contactError:'', refreshContacts:null,
-  pending:{}, outcomes:{}};
-const storeChanged = patch => { Object.assign(store, patch); store.subs.forEach(notify => notify()); };
-const useStore = () => {
-  const [, bump] = React.useState(0);
-  React.useEffect(() => { const cb = () => bump(n => n + 1); store.subs.add(cb); return () => store.subs.delete(cb); }, []);
-  return store;
-};
+
+
 // Only a confirmed remote revocation reads as disconnected; everything else says what is known.
-const wsLinkStatus = row => {
-  const outcome = store.outcomes[row.root];
-  if (store.pending[row.root]) return 'Disconnecting\u2026';
-  if (outcome?.error) return outcome.error;
-  if (outcome?.outcome === 'revoked') return 'Session Link disconnected; its grant was revoked';
-  if (outcome?.outcome === 'no_channel') return 'No Session Link channel was attached';
-  if (outcome?.outcome === 'detached_without_revocation') return 'Channel closed; the host reported no grant to revoke';
-  if (outcome?.outcome === 'uncertain' || row.session_link === 'retiring') return 'Disconnect unconfirmed; its grant may still be live. Retry Session Link disconnect.';
-  if (row.session_link === 'attached') return 'Session Link attached';
-  if (row.session_link === 'attaching') return 'Session Link attaching';
-  return '';
-};
-const wsModelLabel = row => {
-  const value = String(row.model || row.model_id || row.modelID || '').trim();
-  if (!value) return '';
-  return value.split('/').pop().replace(/:free$/, '');
-};
-const wsAgentName = (row, host, shared) => {
-  const vendor = host || String(row.vendor || row.provider || row.runtime || row.label || row.root || 'Agent');
-  if (Array.isArray(row.children)) return vendor;
-  const model = wsModelLabel(row);
-  if (model) return `${vendor} \u00b7 ${model}`;
-  return shared ? `${vendor} \u00b7 ${String(row.root).split(':').pop().slice(0, 6)}` : vendor;
-};
-const wsAgentKey = row => row.agent_app || row.runtime || row.host || row.root;
+
+
 // Agents: the transcript's agent participants in the design's rail-row shape.
-const wsAgents = (transcript, cards, clock) => {
-  const sourceRows = (Array.isArray(transcript?.participants) ? transcript.participants : []).filter(row => row.is_agent !== false);
-  const messages = Array.isArray(transcript?.messages) ? transcript.messages : [];
-  const grouped = new Map();
-  sourceRows.forEach(row => {
-    const key = wsAgentKey(row);
-    if (!grouped.has(key)) grouped.set(key, []);
-    grouped.get(key).push(row);
-  });
-  const rows = [...grouped.entries()].map(([key, children]) => {
-    const live = children.filter(row => row.attached !== false && row.connection_status !== 'disconnected' && row.connection_status !== 'retired');
-    const primary = live[0] || children[0];
-    return {...primary, root:key, children, live_session_count:live.length, session_count:children.length,
-      host:primary.host || primary.label, label:primary.host || primary.label};
-  });
-  // Name = one app/account row. Runtime/session identities stay as child details.
-  const hosts = rows.map(row => typeof row.host === 'string' && row.host ? row.host : '');
-  const agents = rows.map((row, index) => {
-    const host = hosts[index], shared = host && hosts.filter(value => value === host).length > 1;
-    const self = row.root === transcript?.self;
-    const name = wsAgentName(row, host, shared);
-    const tone = workshopAgentTone(row.root, self), verified = wsVerified(row, clock);
-    const childRoots = new Set((row.children || [row]).map(child => child.root));
-    const owned = cards.filter(card => childRoots.has(card.owner));
-    const latest = [...messages].reverse().find(message => childRoots.has(message.sender_root));
-    const status = row.live_session_count === 0 || row.connection_status === 'disconnected' || row.attached === false ? 'off' :
-      verified ? (owned.some(card => card.state === 'block') ? 'waiting' : owned.some(card => card.state === 'run') ? 'working' : 'available') :
-      row.connection_status === 'stale' || (row.connection_status === 'connected' && wsObserved(row)) ? 'stale' : 'unverified';
-    const seen = wsObserved(row) ? new Date(row.observed_at * 1000).toLocaleString() : '';
-    return {id:row.root, row, self, name, role:self ? 'YOU' : 'AGENT',
-      prov:row.attached === false ? 'history participant' :
-        row.runtime ? `local \u00b7 ${host || row.runtime} · ${row.live_session_count || 0} live / ${row.session_count || 1} session${(row.session_count || 1) === 1 ? '' : 's'}` : 'agent session',
-      col:tone.bg, ink:tone.fg, ini:wsInitial(name, '?'), round:self, status,
-      ago:status === 'off' && wsObserved(row) ? wsAgo(row.observed_at) : '',
-      doing:status === 'off' ? (seen ? 'Last seen ' + wsClockText(row.observed_at) + '.' : 'Last seen unavailable.') :
-        latest ? (isWorkProposal(latest) ? wsLine('Proposed: ' + wsProposalTask(latest).title, 90) : wsLine(latest.body, 90)) : seen ? 'Last seen ' + wsClockText(row.observed_at) + '.' : 'No message from this agent on this page.',
-      model:wsModelLabel(row) || 'model unknown', seen, verified,
-      live_roots:(row.children || [row]).filter(child => wsVerified(child, clock)).map(child => child.root).filter(Boolean),
-      tools:[row.runtime, row.connection_basis, row.session_link && row.session_link !== 'none' ? 'session link \u00b7 ' + row.session_link : '']
-        .filter(Boolean),
-      card:owned[owned.length - 1] || null};
-  });
-  // Agents that answered through the Session Link relay on this page are in the room too (design audit
-  // gap 4): named as the relay recorded them; no live presence is projected for them, so UNVERIFIED.
-  const known = new Set(agents.map(a => a.id));
-  const contacts = [];
-  messages.forEach(message => {
-    if (typeof message.relayed_from !== 'string' || known.has(message.relayed_from)) return;
-    known.add(message.relayed_from);
-    const replies = messages.filter(row => row.relayed_from === message.relayed_from);
-    const name = String((replies.find(row => typeof row.relayed_label === 'string' && row.relayed_label) || {}).relayed_label || 'agent');
-    const app = (/\(([a-z-]+) native session\)/.exec(String(message.body || '')) || [])[1] || '';
-    const tone = workshopAgentTone(message.relayed_from, false), last = replies[replies.length - 1];
-    contacts.push({id:message.relayed_from, row:{root:message.relayed_from, label:name, attached:true, is_agent:true}, self:false,
-      name, role:'AGENT', prov:'Session Link' + (app ? ' · ' + app + ' session' : ''), col:tone.bg, ink:tone.fg,
-      ini:wsInitial(name, '?'), round:false, status:'unverified', ago:'',
-      doing:last ? wsLine(wsPlanReply(last.agent_text) ? 'Proposed a workflow.' : last.agent_text, 90) : '',
-      model:'model not reported', seen:'', verified:false, tools:['session link'], card:null, contact:true});
-  });
-  return [...agents.filter(a => a.verified), ...agents.filter(a => !a.verified), ...contacts];
-};
+
 // The rail's default list: agents that are here now (and you). Disconnected sessions stay in the
 // graph and in the transcript; they are listed only when asked for.
-const WS_SHOW_OFFLINE = '__show-disconnected__';
-const wsLiveAgent = a => a.self || a.verified;
-const wsShownAgents = (agents, showOff) => showOff ? agents : agents.filter(wsLiveAgent);
-const wsStatusLabel = status => status === 'working' ? 'Live' :
-  (status === 'waiting' || status === 'available') ? 'Idle' : status === 'off' ? 'Disconnected' : 'Unverified';
+
+
+// The window lists individual sessions. App grouping remains the Connections lens's job.
+
+
+// Address only identities advertised by the existing transport. Never guess a recipient.
+const wsResolveAddress = (body, fallback, rows) => {
+  let message = String(body || '').trim(), target = fallback || '';
+  const aliases = [{label:'all', target:''}, ...rows].filter(row => row.label).sort((a,b) => b.label.length - a.label.length);
+  const expression = label => new RegExp('(^|\\s)@' + String(label).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=\\s|$)', 'ig');
+  const found = aliases.filter(row => expression(row.label).test(message));
+  if (new Set(found.map(row => row.target)).size > 1) throw new Error('Address one agent or @all in each message.');
+  if (found.length) {
+    target = found[0].target;
+    for (const row of found) message = message.replace(expression(row.label), '$1').trim();
+  }
+  if (/(^|\s)@\S+/.test(message)) throw new Error('Choose an agent listed in this Workshop.');
+  if (!message) throw new Error('Enter a message after the address.');
+  return {target, message};
+};
+
 const wsParam = (node, pattern) => {
   const row = (node?.params || []).find(param => pattern.test(String(param.k || '')));
   return row && row.v != null && String(row.v).trim() ? String(row.v) : '';
@@ -374,48 +142,7 @@ const wsParam = (node, pattern) => {
 // :404-410): the decision sits inline on the card, first choice primary; the lead reads
 // "Approved: …" or "Declined: …" from persisted graph state. An agent proposes;
 // nothing exists or is granted until the founder approves (nodelang/work_proposals.py).
-const PROPOSAL_MARKER = 'ArchHub work proposal v1\n';
-const isWorkProposal = message => String(message?.body || '').startsWith(PROPOSAL_MARKER);
-const wsProposalTask = (message, held = {}) => {
-  const id = message.message_id || message.root;
-  let payload = null;
-  try { payload = JSON.parse(String(message.body).slice(PROPOSAL_MARKER.length)); } catch (_) { payload = null; }
-  // The same shape the bind admits (studio-existing-workshop.js readWorkProposals): anything
-  // else is shown as unreadable and offers no decision; nothing below reads an unchecked field.
-  const text = value => typeof value === 'string' && value.length > 0;
-  const shapedGrants = payload?.write_grants, shapedReviewers = payload?.requirements?.artifact_reviewers ?? [];
-  const readable = !!payload && typeof payload === 'object' && !Array.isArray(payload) && text(payload.title) &&
-    typeof payload.description === 'string' && ['general', 'artifact-publication'].includes(payload.purpose) &&
-    Number.isSafeInteger(payload.priority) && !!payload.container && typeof payload.container === 'object' &&
-    text(payload.container.container_id) && Array.isArray(shapedGrants) && shapedGrants.length > 0 &&
-    !shapedGrants.some(grant => !grant || !text(grant.path) || !text(grant.scope) || !Array.isArray(grant.operations) ||
-      !grant.operations.length || grant.operations.some(operation => !text(operation))) &&
-    Array.isArray(shapedReviewers) && !shapedReviewers.some(reviewer => !text(reviewer));
-  const grants = readable ? shapedGrants : [];
-  const reviewers = readable ? shapedReviewers : [];
-  const container = readable ?
-    'CDE ' + payload.container.container_id + (text(payload.container.tier) ? ' · ' + payload.container.tier : '') : '';
-  const work = typeof held.work_root === 'string' && held.work_root ? held.work_root : null;
-  const lead = !readable ? 'This proposal cannot be read; it cannot be approved.'
-    : work ? `Approved: ${payload.title}. Work ${work} is created; nothing runs until it is claimed.`
-    : held.declined ? `Declined: ${payload.title}. Nothing exists or is granted.`
-    : (held.error ? held.error + ' ' : '') +
-      `Proposes this Work${payload.description ? ': ' + String(payload.description).replace(/\.?\s*$/, '.') : '.'} Reviewers: ${reviewers.length ? reviewers.join(', ') : 'none'}. Nothing exists or is granted until you approve.`;
-  const gate = readable && text(payload.container.gate_kind) ?
-    payload.container.gate_kind + (text(payload.container.gate_spec?.path) ? ' · ' + payload.container.gate_spec.path : '') : '';
-  // Waiting on the founder reads NEEDS YOU (design T-01 "block"); declined is no longer pending.
-  return {work:'proposal:' + id, id:'PROPOSAL', proposal:id, title:readable ? payload.title : 'Unreadable proposal',
-    state:work ? 'open' : held.declined || !readable ? 'queued' : 'block', owner:message.sender_root || null, lead, thread:[], latest:message, progress:0, artifact:null,
-    graphRoot:work,
-    intent:readable ? (payload.description || payload.title) : '—', criteria:gate || '—', blocks:'—',
-    permissions:{write:grants.length ? grants.map(grant => grant.path + ' (' + (grant.operations || []).join(', ') + ')').join(' · ') : 'none requested',
-      gate:work ? 'approved by you' : 'your approval before any Work exists'},
-    tools:{n:grants.length, t:container,
-      list:grants.length ? grants.map(grant => grant.path + ' · ' + grant.scope + ' · ' + (grant.operations || []).join(', ')).join(' · ') : 'no write grants'},
-    decision:!readable || work || held.declined ? null : [
-      {label:'Approve', action:'approve-proposal', message:id, disabled:!!held.pending},
-      {label:'Decline', action:'decline-proposal', message:id, disabled:!!held.pending}]};
-};
+const {proposal:wsProposalTask,isProposal:isWorkProposal} = window.ARCHHUB_WORKSHOP_TASK_SOURCE;
 // The founder's Approve: read the proposals (the operation status first when it is not
 // held yet), then bind exactly this one through the existing bind.
 const approveWorkProposal = async (authority, root, messageId) => {
@@ -460,71 +187,24 @@ const declineWorkProposal = async (authority, root, messageId) => {
   const result = await authority.declineWorkProposals(root, [row]);
   return {declined:result.declined[0]};
 };
-const wsTasks = (items, nodes, wires, native, names) => {
-  const cards = items.filter(item => item.kind === 'task');
-  if (native?.work && !cards.some(card => card.work === native.work)) {
-    const node = nodes.find(row => row.id === native.work) || null;
-    const [kind, id] = String(native.work).split(':');
-    const card = {kind:'task', work:native.work, node, events:[], state:'open', owner:null, nativeOnly:true,
-      title:node?.title || (id ? `${kind} · ${id.slice(0, 8)}` : native.work)};
-    cards.push(card); items.push(card);
-  }
-  const titles = new Map(nodes.map(node => [node.id, node.title || node.id]));
-  return cards.map(card => {
-    const events = card.events, latest = events[events.length - 1] || null;
-    const nativeApproving = native?.work === card.work && native.state === 'awaiting_approval';
-    const approving = nativeApproving || card.approving === true;
-    const running = native?.work === card.work && ['attaching', 'preparing', 'executing', 'recovering'].includes(native.state);
-    const state = nativeApproving ? 'block' : running ? 'run' : card.state;
-    const blocks = [...new Set(wires.filter(wire => wire.from?.[0] === card.work).map(wire => titles.get(wire.to?.[0])).filter(Boolean))];
-    const categories = [...new Set(events.map(event => event.category).filter(Boolean))];
-    const [, short] = String(card.work).split(':');
-    // The design's task id slot ("T-01"): derived from the Work id, stable across pages; never a counter.
-    return {id:'T-' + (short || card.work).slice(0, 6), work:card.work, graphRoot:card.work, title:card.title, owner:card.owner, state,
-      node:card.node ? card.node.id : null, latest,
-      nodeStatus:card.node?.status || card.node?.sub || card.status || '',
-      status:card.status || '',
-      planned:card.planned === true, done_when:card.done_when || '', depends_on:Array.isArray(card.depends_on) ? card.depends_on : [],
-      intent:wsParam(card.node, /^(description|intent|summary)$/i) || card.title,
-      criteria:card.done_when || wsParam(card.node, /criteri/i) || '\u2014',
-      blocks:card.blocks || (blocks.length ? blocks.join(' \u00b7 ') : '\u2014'),
-      lead:latest ? wsText(latest) : native?.work === card.work ? 'Native Work status: ' + String(native.state || 'unknown').replaceAll('_', ' ') + '.' : card.lead || '',
-      thread:events.slice(0, -1).map(event => ({root:event.root, from:wsSender(event),
-        toRoots:Array.isArray(event.recipient_roots) ? event.recipient_roots : [],
-        to:Array.isArray(event.recipient_roots) && event.recipient_roots.length ? event.recipient_roots.map(root => names.get(root) || root).join(', ') : 'Workshop',
-        text:wsText(event)})),
-      approving, nativeApproving, events,
-      tools:{n:events.length, list:categories.length ? categories.join(' \u00b7 ') : '\u2014',
-        t:latest ? (wsClockText(latest.created_at) || String(latest.state || '')) : String(native?.state || '')}};
-  });
-};
+const wsTasks = window.ARCHHUB_WORKSHOP_TASK_SOURCE.tasks;
+
+
+const WS_S1_FRAME_W = 1496;
+const WS_S1_RAIL_W = 44;
+const WS_S1_LEFT_W = 248;
+const WS_S1_INSPECTOR_W = 320;
+const WS_S1_CANVAS_VIEWPORT_W = WS_S1_FRAME_W - WS_S1_RAIL_W - WS_S1_LEFT_W - WS_S1_INSPECTOR_W;
+
+
+const WS_WATCH_TABLE_VISIBLE_ROWS = 6;
+const WS_WATCH_TABLE_ROW_H = 24;
+const WS_WATCH_TABLE_H = WS_WATCH_TABLE_VISIBLE_ROWS * WS_WATCH_TABLE_ROW_H;
+
+
 // Flow: the projected topology, laid into the design's three columns by wire depth.
-const wsFlow = (nodes, wires, tasks, limit = 12) => {
-  const wired = new Set(wires.flatMap(wire => [wire.from?.[0], wire.to?.[0]]));
-  const named = new Set(tasks.map(task => task.work));
-  const ranked = [...nodes].sort((a, b) => (named.has(b.id) - named.has(a.id)) || (wired.has(b.id) - wired.has(a.id)));
-  const shown = ranked.slice(0, limit), ids = new Set(shown.map(node => node.id));
-  const edges = wires.filter(wire => ids.has(wire.from?.[0]) && ids.has(wire.to?.[0]) && wire.from[0] !== wire.to[0])
-    .map(wire => [wire.from[0], wire.to[0]]);
-  const depth = new Map(shown.map(node => [node.id, 0]));
-  for (let pass = 0; pass < shown.length; pass += 1) {
-    edges.forEach(([a, b]) => { if (depth.get(b) < depth.get(a) + 1) depth.set(b, Math.min(depth.get(a) + 1, shown.length)); });
-  }
-  const deepest = Math.max(0, ...depth.values());
-  const ys = shown.map(node => Number.isFinite(node.y) ? node.y : 0), min = Math.min(...ys, 0), range = Math.max(...ys, 0) - min || 1;
-  const flow = shown.map(node => {
-    const task = tasks.find(row => row.work === node.id);
-    return {id:node.id, t:node.title || node.id, p:String(node.status || node.sub || '\u2014'),
-      col:deepest <= 2 ? depth.get(node.id) : Math.min(2, Math.floor(depth.get(node.id) * 3 / (deepest + 1))),
-      y:56 + ((Number.isFinite(node.y) ? node.y : 0) - min) / range * 344,
-      state:task ? task.state : 'idle'};
-  });
-  [0, 1, 2].forEach(col => {
-    let floor = -Infinity;
-    flow.filter(n => n.col === col).sort((a, b) => a.y - b.y).forEach(n => { n.y = Math.round(Math.max(n.y, floor)); floor = n.y + 58; });
-  });
-  return {flow, wires:edges, more:Math.max(0, nodes.length - shown.length)};
-};
+
+
 // ═════════════════════════════ END LIVE SEAM ═════════════════════════════
 
 const ST = derive(W => ({
@@ -557,325 +237,34 @@ const Av = ({ a, s=22 }) => (
     display:'grid', placeItems:'center', fontSize:Math.round(s*0.45), fontWeight:600, flex:'none',
     fontFamily:W.sans, opacity: a.status==='off' ? .6 : 1 }}>{a.ini}</span>
 );
-const Dot = ({ c, pulse }) => <span style={{ width:6, height:6, borderRadius:'50%', background:c, flex:'none', animation: pulse ? 'lmPulse 1.3s infinite' : 'none' }}/>;
+
 const Lbl = ({ children, c }) => <span style={{ fontFamily:W.sans, fontSize:W.fs.label.sz, fontWeight:W.fs.label.wt, letterSpacing:W.fs.label.letter, color: c || W.inkSoft }}>{children}</span>;
-const Chip = ({ s }) => { const k = CHIP[s] || CHIP.open; return <span style={{ fontFamily:W.sans, fontSize:W.fs.label.sz, fontWeight:W.fs.label.wt, letterSpacing:W.fs.label.letter, padding:`2px ${W.sp.sm}px`, borderRadius:W.rad.chip, background:k.bg, color:k.c }}>{k.l}</span>; };
-const Mini = ({ children, acc, onClick, title, disabled }) => (
-  <span role={onClick ? 'button' : undefined} tabIndex={onClick && !disabled ? 0 : undefined} title={title} aria-pressed={onClick ? !!acc : undefined}
-    aria-disabled={onClick && disabled ? 'true' : undefined}
-    onClick={disabled ? undefined : onClick} onKeyDown={onClick && !disabled ? e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(e); } } : undefined}
-    style={{ display:'inline-flex', alignItems:'center', gap:W.sp.xs, padding:`${W.sp.xs}px ${W.sp.md}px`, borderRadius:W.rad.control,
-    background: acc ? W.accentDim : W.bg, border:`1px ${disabled ? 'dashed' : 'solid'} ${acc ? W.accentSoft : W.line}`, color: acc ? W.accent : W.inkSoft,
-    fontFamily:W.sans, fontSize:W.fs.label.sz, fontWeight:W.fs.label.wt, letterSpacing:W.fs.label.letter, cursor: onClick && !disabled ? 'pointer' : 'default' }}>{children}</span>
-);
+
+
 // Disabled controls use a dashed border, never alpha (design DECISIONS.md).
-const Btn = ({ children, pri, sm, onClick, disabled, title, ...rest }) => (
-  <button type="button" {...rest} onClick={onClick} disabled={disabled} title={title} style={{ padding: sm ? `${W.sp.xs}px ${W.sp.md}px` : `${W.sp.sm}px ${W.sp.md}px`, borderRadius:W.rad.control, cursor: disabled ? 'default' : 'pointer', margin:0,
-    fontFamily:W.sans, fontSize: sm ? W.fs.label.sz : W.fs.bodySm.sz, fontWeight: pri || !sm ? 500 : 400, letterSpacing: sm ? W.fs.label.letter : 0,
-    background: pri && !disabled ? W.accent : sm ? 'transparent' : W.bgHover, border:`1px ${disabled ? 'dashed' : 'solid'} ${pri && !disabled ? W.accent : W.line}`,
-    color: pri && !disabled ? W.onFill : sm ? W.inkSoft : W.ink }}>{children}</button>
-);
+
 // Compact icon button — glyph + tooltip. Icons carry the repeated actions so the surface
 // does not fill with labelled buttons; words stay for decisions only.
-const IBtn = ({ g, title, acc, on, onClick, s = 24, disabled }) => (
-  <button type="button" title={title} aria-label={title} aria-pressed={on === undefined ? undefined : !!on} disabled={disabled}
-    onClick={e => { e.stopPropagation(); onClick && onClick(e); }} style={{ width:s, height:s, display:'grid', placeItems:'center', padding:0, margin:0, cursor: disabled ? 'default' : 'pointer',
-    borderRadius:W.rad.control, background: on ? W.accentDim : 'transparent', border:`1px ${disabled ? 'dashed' : 'solid'} ${on ? W.accentSoft : W.line}`,
-    color: on || acc ? W.accent : W.inkSoft, fontFamily:W.sans, fontSize:W.icon.ui.size, lineHeight:1 }}>{g}</button>
-);
-const PRow = ({ k, v, c, last }) => (
-  <div style={{ display:'flex', justifyContent:'space-between', gap:W.sp.sm, padding:`${W.sp.xs}px 0`, borderBottom: last ? 0 : `1px solid ${W.lineSoft}`, fontSize:W.fs.caption.sz }}>
-    <span style={{ fontFamily:W.sans, fontSize:W.fs.label.sz, letterSpacing:W.fs.label.letter, color:W.inkSoft }}>{k}</span>
-    <span style={{ color: c || W.ink, textAlign:'right', overflowWrap:'anywhere' }}>{v}</span>
-  </div>
-);
-const agentOf = (agents, names, self, root) => {
-  const found = agents.find(a => a.id === root);
-  if (found) return found;
-  const name = String(names.get(root) || root || 'Workshop'), tone = workshopAgentTone(root, root === self);
-  return {id:root, name, col:tone.bg, ink:tone.fg, ini:wsInitial(name, '?'), round:root === self, status:'available', tools:[]};
+
+
+const wsCleanTitle = (value, fallback) => {
+  const text = String(value || '').trim();
+  if (!text || /^(block|done|live|run|open|queued|idle)$/i.test(text)) return fallback;
+  return text || fallback;
 };
+
+
 // ── task card: the container for its own thread ──
-const taskRowMeta = t => {
-  const source = [t.intent, t.lead, t.nodeStatus].filter(Boolean).join(' · ');
-  const step = (/\bstep\s+\d+\s+of\s+\d+\b/i.exec(source) || [])[0] || '';
-  const count = String(t.intent || '').split('·').map(row => row.trim()).find(row => row && !/^step\s+\d+\s+of\s+\d+$/i.test(row)) || '';
-  const host = t.nodeStatus || (/([A-Za-z0-9 ._-]+\s+write)\b/i.exec(source) || [])[1] || '';
-  const status = t.approving ? 'waits for you' : String(t.state || '').replaceAll('_', ' ');
-  return [step, host, count, status].filter(Boolean).join(' · ');
-};
-const TaskCard = ({ t, sel, onSelect, onDecide, onOpen, compact, agent, busy, rowDesign }) => {
-  const [open, setOpen] = React.useState(false);
-  const [all, setAll] = React.useState(false);
-  const [detail, setDetail] = React.useState(null);   // 'diff' | 'notes'
-  const o = agent(t.owner);
-  const thread = all ? t.thread : t.thread.slice(0, 2);
-  const realGraphRoot = typeof wsRealGraphRoot === 'function' ? wsRealGraphRoot :
-    root => /^(assembly-instance|work|app|gm|fact|node):[A-Za-z0-9_.:@-]{3,}$/.test(String(root || '')) &&
-      !String(root || '').startsWith('proposal:');
-  const graphRoot = realGraphRoot(t.graphRoot || t.work) ? (t.graphRoot || t.work) : '';
-  const saveSkill = typeof window !== 'undefined' && typeof window.ARCHHUB_WORKSHOP_SAVE_SKILL === 'function'
-    ? window.ARCHHUB_WORKSHOP_SAVE_SKILL : null;
-  if (rowDesign) {
-    const decisions = t.decision || [];
-    const approve = decisions.find(row => /^approve\b/i.test(row.label));
-    const reject = decisions.find(row => /^(reject|decline)\b/i.test(row.label) && ['stop_native', 'decline-proposal'].includes(row.action));
-    return (
-      <div data-workshop-task={t.work} data-workshop-message={t.latest ? t.latest.root : undefined}
-        aria-current={sel ? 'true' : undefined}
-        onClick={() => onSelect(t.work)}
-        style={{ border:`1px solid ${sel ? W.accent : W.line}`, borderRadius:7, background:W.bgPanel, minWidth:0, overflow:'hidden' }}>
-        <div onClick={() => onSelect(t.work)}
-          style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 12px', minWidth:0, flexWrap:'wrap' }}>
-          <Dot c={(CHIP[t.state] || CHIP.open).c} pulse={t.state==='run'}/>
-          <div style={{ flex:'1 1 260px', minWidth:180, cursor:'pointer' }}>
-            <div style={{ fontSize:12.5, fontWeight:500, color:W.ink, overflowWrap:'anywhere' }}>{t.title}</div>
-            {' '}
-            <div style={{ marginTop:2, fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, letterSpacing:'0.04em', overflowWrap:'anywhere' }}>
-              {taskRowMeta(t)}
-            </div>
-          </div>
-          <div style={{ display:'flex', gap:7, flexWrap:'wrap', marginLeft:'auto' }}>
-            {approve && <Btn pri disabled={busy || approve.disabled} title={approve.reason}
-              onClick={e => { e.stopPropagation(); onDecide(t.work, approve); }}>Approve</Btn>}
-            {reject && <Btn disabled={busy || reject.disabled} title={reject.reason}
-              onClick={e => { e.stopPropagation(); onDecide(t.work, reject); }}>{reject.label}</Btn>}
-            {onOpen && graphRoot && <Btn disabled={busy} onClick={e => { e.stopPropagation(); onOpen(graphRoot); }}>Open as graph</Btn>}
-          </div>
-        </div>
-        {graphRoot && <div style={{ borderTop:`1px solid ${W.lineSoft}`, padding:'8px 12px', display:'flex', justifyContent:'space-between', alignItems:'center', gap:10, background:W.bgSoft }}>
-          <div style={{ fontFamily:W.sans, fontSize:12, color:W.inkSoft }}>
-            After it runs: "Save as skill" keeps this as a graph you can run again from Studio or Player.
-          </div>
-          {saveSkill && <Btn data-workshop-save-skill="" title="Save this Workshop step as a skill."
-            onClick={e => { e.stopPropagation(); saveSkill(t); }}>Save as skill</Btn>}
-        </div>}
-      </div>
-    );
-  }
-  return (
-    <div data-workshop-task={t.work} data-workshop-message={t.latest ? t.latest.root : undefined} aria-current={sel ? 'true' : undefined}
-      onClick={() => onSelect(t.work)} style={{ background:W.bgPanel, borderRadius:9, cursor:'pointer',
-      borderWidth:1, borderStyle: t.state==='queued' ? 'dashed' : 'solid', borderColor: t.state==='block' ? CHIP.BLOCK_EDGE : W.line,
-      opacity: t.state==='queued' ? .75 : 1, boxShadow: sel ? `0 0 0 3px ${W.accent}1a` : 'none', overflow:'hidden' }}>
-      <div style={{ display:'flex', alignItems:'center', gap:9, padding:'10px 13px', borderBottom:`1px solid ${W.lineSoft}`, flexWrap:'wrap' }}>
-        <Dot c={(CHIP[t.state] || CHIP.open).c} pulse={t.state==='run'}/>
-        <span title={t.work} style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.1em', color:W.inkSoft }}>{t.id}</span>
-        <span style={{ fontSize:13, fontWeight:500, letterSpacing:'-0.005em', overflowWrap:'anywhere' }}>{t.title}</span>
-        {t.owner && <Av a={o} s={18}/>}
-        <div style={{ flex:1 }}/>
-        <Chip s={t.state}/>
-      </div>
-      <div style={{ padding:'11px 13px', display:'flex', flexDirection:'column', gap:12 }}>
-        {t.artifact && (
-          <div style={{ display:'flex', gap:11, flexWrap:'wrap' }}>
-            <div style={{ width: compact ? '100%' : 150, height:88, borderRadius:6, border:`1px solid ${W.lineSoft}`, display:'grid', placeItems:'center', flex:'none',
-              background:`repeating-linear-gradient(135deg,${W.bgInk} 0 6px,${W.bgSoft} 6px 12px)` }}>
-              <span style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.1em', color:W.inkSoft }}>DRAFT PATCH</span>
-            </div>
-            <div style={{ flex:'1 1 170px', minWidth:170, fontSize:12.5, lineHeight:1.55, color:W.inkSoft, overflowWrap:'anywhere' }}>{t.artifact.name}
-              <div style={{ display:'flex', gap:6, marginTop:10, flexWrap:'wrap' }}>
-                <IBtn g="⇄" title="What changed — size and digest of the draft patch" on={detail==='diff'} onClick={() => setDetail(detail==='diff' ? null : 'diff')}/>
-                <IBtn g="✎" title="Review notes — the artifact summary" on={detail==='notes'} onClick={() => setDetail(detail==='notes' ? null : 'notes')}/>
-                <IBtn g="↓" title="Download patch" disabled={busy || !t.artifact.download} onClick={() => t.artifact.download && t.artifact.download()}/>
-              </div>
-              {detail === 'diff' && (
-                <div style={{ marginTop:9, fontFamily:W.mono, fontSize:W.fs.dataSm.sz, lineHeight:1.8, color:W.inkSoft, overflowWrap:'anywhere' }}>
-                  + {t.artifact.bytes} bytes<br/>SHA-256 {t.artifact.digest}<br/>Draft only · review and verify before applying
-                </div>
-              )}
-              {detail === 'notes' && (
-                <div style={{ marginTop:9, display:'flex', flexDirection:'column', gap:7, fontSize:11.5, lineHeight:1.5 }}>
-                  <div>{t.artifact.summary || 'No summary was recorded with this patch.'}</div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-        {t.lead && <div style={{ display:'flex', gap:9, fontSize:12.5, lineHeight:1.55, color:W.inkSoft, overflowWrap:'anywhere' }}>{t.owner && <Av a={o} s={18}/>}<div>{t.owner && <><b style={{ color:W.ink, fontWeight:500 }}>{o.name}</b> · </>}{t.lead}</div></div>}
-        {thread.length > 0 && (
-          <div style={{ marginLeft:compact ? 0 : 27, paddingLeft:13, borderLeft:`1px solid ${W.lineSoft}`, display:'flex', flexDirection:'column', gap:11 }}>
-            {thread.map((m, i) => { const f = agent(m.from); return (
-              <div key={m.root || i} style={{ display:'flex', gap:9, fontSize:12.5, lineHeight:1.55, color:W.inkSoft, overflowWrap:'anywhere' }}>
-                <Av a={f} s={18}/>
-                <div><b style={{ color:W.ink, fontWeight:500 }}>{f.name} → {m.toRoots && m.toRoots.length ? m.toRoots.map(root => agent(root).name).join(', ') : m.to}</b> · {m.text}</div>
-              </div> ); })}
-            {t.thread.length > 2 && (
-              <span role="button" tabIndex={0} onClick={e => { e.stopPropagation(); setAll(!all); }} style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.accent, cursor:'pointer' }}>
-                {all ? '▴ collapse thread' : `▾ ${t.thread.length - 2} more in this thread`}
-              </span>
-            )}
-          </div>
-        )}
-        {t.decision && (
-          <div style={{ display:'flex', gap:7, flexWrap:'wrap' }}>
-            {t.decision.map((d, i) => <Btn key={d.label} pri={i===0} disabled={d.disabled} onClick={e => { e.stopPropagation(); onDecide(t.work, d); }}>{d.label}</Btn>)}
-          </div>
-        )}
-      </div>
-      <div style={{ display:'flex', alignItems:'center', gap:9, padding:'8px 13px', borderTop:`1px solid ${W.lineSoft}`, background:W.bgSoft, flexWrap:'wrap',
-        fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.04em', color:W.inkSoft }}>
-        <span onClick={e => { e.stopPropagation(); setOpen(!open); }} title="Events on this Work" style={{ color:W.inkSoft, cursor:'pointer' }}>{open ? '▾' : '▸'} ⇄ {t.tools.n}</span>
-        <span>{open ? t.tools.list : t.tools.list.split(' · ')[0] + ' …'}</span>
-        <div style={{ flex:1 }}/><span>{t.tools.t}</span>
-      </div>
-    </div>
-  );
-};
+
 
 // ── agents rail (replaces the Nodes Library while Workshop is open) ──
-const AgentsRail = ({ context, sel, onSelect, onAddAgent, compact }) => {
-  useStore();
-  const {descriptor, graphId, scopeRoot, transcript:held, state} = context;
-  const transcript = held?.root === descriptor.root && held.graph_id === graphId &&
-    held.scope_root === scopeRoot && !held.error ? held : null;
-  const [now, setNow] = React.useState(() => Date.now() / 1000);
-  const clock = Math.max(now, Date.now() / 1000);
-  const nodes = workshopProjectedNodes(state);
-  const items = workshopTaskItems(transcript?.messages, nodes);
-  const names = new Map((transcript?.participants || []).map(row => [row.root, row.label]));
-  const tasks = wsTasks(items, nodes, workshopProjectedWires(state), wsNative(state, descriptor), names);
-  const agents = wsAgents(transcript, tasks, clock);
-  const expiries = agents.filter(a => a.verified).map(a => a.row.expires_at);
-  const expiry = expiries.length ? Math.min(...expiries) : null;
-  React.useEffect(() => {
-    if (expiry === null) return;
-    const timer = setTimeout(() => setNow(Date.now() / 1000),
-      Math.min(2147483647, Math.max(1, (expiry - Date.now() / 1000) * 1000 + 1)));
-    return () => clearTimeout(timer);
-  }, [expiry, now]);
-  const all = transcript?.participants || [];
-  const canAddress = row => row.attached === true && row.root !== transcript?.self &&
-    all.some(participant => participant.root === transcript?.self && participant.attached === true) &&
-    transcript?.can_send !== false;
-  // Only verified live presence is listed by default. Other sessions remain graph history.
-  const [showOff, setShowOff] = React.useState(false);
-  const offCount = agents.filter(a => !wsLiveAgent(a)).length;
-  const shown = wsShownAgents(agents, showOff);
-  const current = shown.some(a => a.id === sel) ? sel : shown[0]?.id;
 
-  return (
-  <section aria-label="Workshop agents" style={{ background:W.bgPanel, borderRight:`1px solid ${W.line}`, overflow:'auto', display:'flex', flexDirection:'column', minHeight:0 }} className="ah-scroll">
-    <div style={{ padding:'9px 12px 9px 14px', borderBottom:`1px solid ${W.lineSoft}`, display:'flex', alignItems:'center', gap:8 }}>
-      <Lbl>CONNECTED AGENTS</Lbl><div style={{ flex:1 }}/>
-      {onAddAgent && <IBtn g="＋" title="Connect another agent — opens the node library" s={22} onClick={onAddAgent}/>}
-    </div>
-    {!transcript && <p role="status" style={{ fontSize:11.5, lineHeight:1.4, color:W.inkSoft, padding:'9px 14px', margin:0 }}>No live agent data for this Workshop. Waiting for its current connection status.</p>}
-    {transcript && !agents.length && <p role="status" style={{ fontSize:11.5, lineHeight:1.4, color:W.inkSoft, padding:'9px 14px', margin:0 }}>No agent has joined this Workshop.</p>}
-    {transcript && agents.length > 0 && !shown.length && <p role="status" style={{ fontSize:11.5, lineHeight:1.4, color:W.inkSoft, padding:'9px 14px', margin:0 }}>No agent is connected right now.</p>}
-    {shown.map(a => { const s = ST[a.status]; const on = current === a.id; const addressable = canAddress(a.row); return (
-      <div key={a.id} role="button" tabIndex={0} aria-pressed={on} data-workshop-agent={a.id}
-        title={[a.id, addressable ? 'Select, and address messages to this agent' : 'Select', a.seen ? 'Last seen: ' + a.seen : ''].filter(Boolean).join('\n')}
-        onClick={() => onSelect(a.id, addressable)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(a.id, addressable); } }}
-        style={{ display:'flex', gap:9, padding:'9px 14px', cursor:'pointer',
-        borderBottom:`1px solid ${W.lineSoft}`, background: on ? W.bgSoft : 'transparent', boxShadow: on ? `inset 2px 0 0 ${W.accent}` : 'none',
-        opacity: a.status==='off' ? .55 : 1 }}>
-        <Av a={a} s={compact ? 22 : 28}/>
-        <div style={{ minWidth:0, flex:1 }}>
-          <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
-            <span style={{ fontSize:12.5, fontWeight:500, letterSpacing:'-0.005em', overflowWrap:'anywhere' }}>{a.name}</span>
-            <span style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.12em', padding:'1px 5px', borderRadius:3, border:`1px solid ${W.line}`, color:W.inkSoft }}>{a.role}</span>
-          </div>
-          <div role={store.pending[a.id] || store.outcomes[a.id] ? 'status' : undefined} style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, letterSpacing:'0.03em', marginTop:2, overflowWrap:'anywhere' }}>{a.prov}</div>
-          {!compact && <>
-            <div style={{ display:'flex', alignItems:'center', gap:5, marginTop:5, fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.1em', color:s.col }}>
-              <Dot c={s.col} pulse={s.pulse}/>{wsStatusLabel(a.status)}{a.ago ? ` · ${a.ago}` : ''}
-            </div>
-            <div style={{ fontSize:11.5, color:W.inkSoft, lineHeight:1.4, marginTop:5, overflowWrap:'anywhere' }}>{a.doing}</div>
-            {a.status==='off' && store.refreshContacts && <span role="button" tabIndex={0} onClick={e => { e.stopPropagation(); store.refreshContacts(); }} title="Refresh connection status" style={{ fontFamily:W.mono, fontSize:13, color:W.accent, cursor:'pointer', display:'inline-block', marginTop:6 }}>⟳</span>}
-          </>}
-        </div>
-      </div> ); })}
-    {offCount > 0 && <div data-workshop-disconnected-summary="" style={{ margin:'8px 14px', display:'flex', alignItems:'center', gap:8, flexWrap:'wrap',
-      fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.06em', color:W.inkSoft }}>
-      <span>{offCount} inactive session{offCount === 1 ? '' : 's'}</span>
-      <button type="button" data-workshop-disconnected-toggle="" aria-pressed={showOff}
-        onClick={() => setShowOff(value => !value)}
-        style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.06em',
-          color:W.inkSoft, background:'transparent', border:`1px solid ${W.line}`, borderRadius:4, padding:'3px 8px', cursor:'pointer' }}>
-        {showOff ? 'Hide' : 'Show'}
-      </button>
-    </div>}
-    <div style={{ flex:1 }}/>
-    <div style={{ padding:'11px 14px', borderTop:`1px solid ${W.lineSoft}` }}>
-      <Lbl>SCOPE</Lbl>
-      <div style={{ fontSize:11.5, color:W.inkSoft, lineHeight:1.5, marginTop:7 }}>Recent activity is not a running task.</div>
-    </div>
-  </section>
-  );
-};
 
 // ── live graph pane (preset C) ── geometry is expressed in PERCENT of the pane, so it fits
 // the narrow in-app column and a wide window alike with no measurement step to go wrong.
 // Columns: left 4/38/72 %, width 24% → right edges 28/62/96 %.
 const COL_L = c => 4 + c * 34, COL_R = c => COL_L(c) + 24;
-const GraphPane = ({ flow, selTask, tidy, chain, onArrange, onChain, onOpen }) => {
-  const NH = 46;
-  const nodes = flow.flow;
-  const st = id => { const n = nodes.find(x => x.id === id); return n ? n.state : 'idle'; };
-  const col = s => s==='block' ? W.err : s==='run' ? W.accent : s==='paused' ? W.err : s==='done' ? W.ok : s==='review' ? W.cyan : W.inkMuted;
-  const pos = id => nodes.find(n => n.id === id);
-  // Arrange: tidy each column into an even stack. Same nodes, same wires — only layout.
-  const Y = n => tidy ? 56 + nodes.filter(m => m.col === n.col).indexOf(n) * 104 : n.y;
-  const wired = new Set(flow.wires.flat());
-  const lit = id => {
-    if (chain) return wired.has(id);          // the whole connected chain
-    return !!selTask && id === selTask;       // just the selected task's node
-  };
-  const into = flow.wires.length ? pos(flow.wires[0][1]) : null;
-  return (
-    <section aria-label="Workshop live graph" style={{ position:'relative', background:W.bgCanvas, borderLeft:`1px solid ${W.line}`, overflow:'hidden' }}>
-      <div style={{ position:'absolute', inset:0, opacity:.55,
-        backgroundImage:`linear-gradient(${W.lineSoft} 1px,transparent 1px),linear-gradient(90deg,${W.lineSoft} 1px,transparent 1px)`, backgroundSize:'40px 40px' }}/>
-      {flow.wires.map(([a, b], i) => {
-        const p = pos(a), q = pos(b);
-        const acc = st(a)==='run' || st(b)==='run';
-        if (p.col === q.col) {
-          const y1 = Y(p) + NH/2, y2 = Y(q) + NH/2, top = Math.min(y1, y2), h = Math.max(Math.abs(y2 - y1), 2);
-          const ya = y1 <= y2 ? 0 : h, yb = y1 <= y2 ? h : 0;
-          return (
-            <svg key={i} width="4%" height={h} viewBox={`0 0 100 ${h}`} preserveAspectRatio="none"
-              style={{ position:'absolute', left:`${COL_R(p.col)}%`, top, overflow:'visible' }} fill="none">
-              <path d={`M0 ${ya} C 100 ${ya}, 100 ${yb}, 0 ${yb}`} stroke={acc ? W.accent : CHIP.WIRE} strokeWidth="1.5" vectorEffect="non-scaling-stroke"/>
-            </svg>
-          );
-        }
-        const fwd = q.col > p.col;
-        const from = fwd ? p : q, dest = fwd ? q : p;
-        const l = COL_R(from.col), r = COL_L(dest.col);
-        const y1 = Y(from) + NH/2, y2 = Y(dest) + NH/2;
-        const top = Math.min(y1, y2), h = Math.max(Math.abs(y2 - y1), 2);
-        const ya = y1 <= y2 ? 0 : h, yb = y1 <= y2 ? h : 0;
-        return (
-          <svg key={i} width={`${r - l}%`} height={h} viewBox={`0 0 100 ${h}`} preserveAspectRatio="none"
-            style={{ position:'absolute', left:`${l}%`, top, overflow:'visible' }} fill="none">
-            <path d={`M0 ${ya} C 45 ${ya}, 55 ${yb}, 100 ${yb}`} stroke={acc ? W.accent : CHIP.WIRE} strokeWidth="1.5"
-              vectorEffect="non-scaling-stroke"/>
-          </svg>
-        );
-      })}
-      <div style={{ position:'absolute', top:12, left:12, display:'flex', gap:6, zIndex:3, alignItems:'center' }}>
-        <IBtn g="▦" title="Arrange — tidy each column into an even stack" on={tidy} onClick={onArrange}/>
-        <IBtn g="⎇" title="Select the whole connected chain" on={chain} onClick={onChain}/>
-        {onOpen && <IBtn g="⌗" title="Open as nodes" onClick={onOpen}/>}
-        <Mini acc>live</Mini>
-      </div>
-      {nodes.map(n => { const s = n.state; return (
-        <div key={n.id} data-node={n.id} aria-current={lit(n.id) ? 'true' : undefined} style={{ position:'absolute', left:`${COL_L(n.col)}%`, top:Y(n), width:'24%', maxWidth:170, padding:'8px 10px', borderRadius:7, transition:`top ${W.dur.med}ms`,
-          background:W.bgPanel, border:`1px solid ${lit(n.id) ? W.accent : (s==='block' ? CHIP.BLOCK_EDGE : W.line)}`,
-          boxShadow: lit(n.id) ? `0 0 0 3px ${W.accent}1a` : 'none', overflowWrap:'anywhere' }}>
-          <div style={{ fontSize:11.5, fontWeight:500, letterSpacing:'-0.005em' }}>{n.t}</div>
-          <div style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.04em', marginTop:3, color: s==='idle' ? W.inkSoft : col(s) }}>{n.p}</div>
-        </div> ); })}
-      <div role={nodes.length ? undefined : 'status'} style={{ position:'absolute', bottom:12, left:12, right:12, zIndex:3, background:W.bgPanel + 'eb',
-        border:`1px solid ${W.line}`, borderRadius:7, padding:'9px 11px', fontSize:11.5, lineHeight:1.5, color:W.inkSoft }}>
-        {!nodes.length ? 'No topology projection is held for this scope.' : <>
-          Wires carry behaviour.{into ? <> Removing the wire into <b style={{ color:W.ink, fontWeight:500 }}>{into.t}</b> stops what it receives;</> : ''} editing a parameter marks everything downstream stale.
-          {flow.more > 0 && ` ${flow.more} more on the Canvas.`}</>}
-      </div>
-    </section>
-  );
-};
+
 
 // ── assign (design 67caa887: W1 pick · W2 review · W3 assigned · W5 refusals) ──
 // Candidates are the rail's own agents; only a verified one (a live, renewed connection
@@ -1027,171 +416,8 @@ const AssignSection = ({ task, room, agents, assign, assignments = [] }) => {
 // ── context panel ──
 // Founder decision 2026-09-30: agents propose Work; the founder binds the checked
 // proposals in one action. Each shows its grants per governed root and its reviewers.
-const WorkProposals = ({ authority, root, disabled, isCurrent, onBound }) => {
-  const [proposals, setProposals] = React.useState(null);
-  const [busy, setBusy] = React.useState(false);
-  const [error, setError] = React.useState('');
-  const busyRef = React.useRef(false), mounted = React.useRef(true);
-  React.useEffect(() => () => { mounted.current = false; }, []);
-  const live = () => mounted.current && isCurrent();
-  const run = async work => {
-    if (busyRef.current) return;
-    busyRef.current = true; setBusy(true); setError('');
-    try { await work(); } finally { busyRef.current = false; if (mounted.current) setBusy(false); }
-  };
-  const read = () => run(async () => {
-    try {
-      const current = await authority.readWorkProposals(root);
-      if (live()) setProposals(value => ({rows:current.rows, checked:[], result:value?.result || null}));
-    } catch (failure) { if (live()) setError(failure.message || 'The Work proposals could not be read.'); }
-  });
-  const toggle = messageId => setProposals(value => value && ({...value, result:null,
-    checked:value.checked.includes(messageId) ? value.checked.filter(id => id !== messageId) : [...value.checked, messageId]}));
-  const bind = event => {
-    event.preventDefault();
-    const held = proposals;
-    if (!held?.checked.length) return;
-    return run(async () => {
-      let result;
-      try {
-        result = await authority.bindWorkProposals(root, held.rows.filter(row => held.checked.includes(row.message_id)));
-      } catch (failure) {
-        // Binding is keyed by each message: a repeat is refused as already bound, never doubled.
-        if (live()) setError(failure.message || 'The bind was not confirmed. Read the proposals again to see which are bound.');
-        return;
-      }
-      if (!live()) return;
-      const works = Object.fromEntries(result.bound.map(row => [row.message_id, row.work_root]));
-      setProposals(value => value && ({...value, checked:[], result:result.bound,
-        rows:value.rows.map(row => works[row.message_id] ? {...row, work_root:works[row.message_id]} : row)}));
-      try { await onBound(); } catch (_) {
-        if (live()) setError('The proposals are bound. Refresh the canvas to display the new Work.');
-      }
-    });
-  };
-  const off = disabled || busy;
-  return <details style={{margin:'10px 0'}}>
-    <summary>Agent Work proposals</summary>
-    <p style={{fontSize:12, color:W.inkSoft, lineHeight:1.5}}>
-      Agents propose Work in this conversation. Nothing exists or is granted until you bind it.
-      Check the proposals to bind; one confirmation creates each checked Work with the grants and reviewers shown.
-    </p>
-    <button type="button" disabled={off} onClick={read}>Read proposals in the loaded messages</button>
-    {error && <p role="alert" style={{fontSize:12, color:W.err}}>{error}</p>}
-    {proposals && <form aria-label="Bind agent Work proposals" onSubmit={bind}>
-      {!proposals.rows.length && <p role="status">No Work proposals in the loaded messages.</p>}
-      {proposals.rows.map(row => <fieldset key={row.message_id} aria-label={'Work proposal ' + row.title}
-          disabled={off} style={{border:`1px solid ${W.line}`, borderRadius:8, margin:'8px 0', padding:'8px 10px', minWidth:0}}>
-        <label style={{display:'flex', gap:6, alignItems:'baseline', fontWeight:600}}>
-          <input type="checkbox" aria-label={'Bind ' + row.title} disabled={!!row.work_root || !!row.problem}
-            checked={proposals.checked.includes(row.message_id)} onChange={() => toggle(row.message_id)}/>
-          {row.title}
-        </label>
-        {row.problem ? <p role="status" style={{fontSize:12, color:W.err}}>{row.problem}</p> : <>
-          <div style={{fontSize:11.5, color:W.inkSoft, overflowWrap:'anywhere'}}>
-            {row.work_root ? 'Bound · ' + row.work_root : 'Proposed by ' + row.proposer} · {row.purpose} · priority {row.priority}
-          </div>
-          {row.description && <div style={{fontSize:11.5, margin:'4px 0', overflowWrap:'anywhere'}}>{row.description}</div>}
-          {Object.entries(row.grants).map(([governedRoot, grants]) => <div key={governedRoot} aria-label={'Grants in ' + governedRoot} style={{marginTop:4}}>
-            <Lbl>{governedRoot}</Lbl>
-            {grants.map(grant => <div key={grant.path} style={{fontSize:11, fontFamily:W.mono, overflowWrap:'anywhere'}}>
-              {grant.path} · {grant.scope} · {grant.operations.join(', ')}
-            </div>)}
-          </div>)}
-          <div style={{fontSize:11.5, marginTop:4, overflowWrap:'anywhere'}}>
-            Reviewers: {row.reviewers.length ? row.reviewers.join(', ') : 'none'} · CDE {row.container}{row.tier ? ' · ' + row.tier : ''}
-          </div>
-        </>}
-      </fieldset>)}
-      {proposals.rows.some(row => !row.work_root && !row.problem) &&
-        <button type="submit" disabled={off || !proposals.checked.length}>
-          {proposals.checked.length ? 'Bind ' + proposals.checked.length + ' checked proposal' +
-            (proposals.checked.length === 1 ? '' : 's') : 'Check proposals to bind'}
-        </button>}
-      {proposals.result && <p role="status" style={{fontSize:12}}>
-        Bound {proposals.result.length} Work: {proposals.result.map(row => row.work_root).join(', ')}.
-      </p>}
-    </form>}
-  </details>;
-};
 
-const ContextPanel = ({ selAgent, selTask, tasks, agent, descriptor, activity, activityNote, counts, listening, controls, controlsOpen, onControls, agents = [], assign = null, assignments = [] }) => {
-  const t = tasks.find(x => x.work === selTask);
-  const a = selAgent;
-  const showTask = !!t;
-  const o = showTask ? (t.owner ? agent(t.owner) : null) : a;
-  const facts = o && o.row ? o.row : null;
-  const tools = o ? o.tools || [] : [];
-  // An agent's current task is the Work it is assigned in this room; failing that, the last card it spoke on.
-  const assigned = a ? assignments.filter(row => row.agent_session === a.id).map(row => tasks.find(x => x.work === row.work)).find(Boolean) : null;
-  const current = showTask ? t : a ? (assigned || a.card) : null;
-  const asks = showTask && t.permissions ? t.permissions : null;
-  const label = showTask ? `SELECTED · TASK ${t.id}` : a ? 'SELECTED · AGENT' : 'SELECTED · WORKSHOP';
-  const who = o || {name:descriptor.label, col:W.accent, ink:W.onFill, ini:wsInitial(descriptor.label, 'W')};
-  return (
-    <aside aria-label="Workshop context" className="ah-scroll" style={{ background:W.bgPanel, borderLeft:`1px solid ${W.line}`, overflow:'auto', minHeight:0 }}>
-      <div style={{ padding:'11px 16px', borderBottom:`1px solid ${W.lineSoft}`, display:'flex', alignItems:'center', gap:8 }}>
-        <Lbl>{label}</Lbl><div style={{ flex:1 }}/>
-        <span style={{ margin:'-6px 0', display:'inline-flex' }}>
-          <IBtn g="⋯" s={22} on={controlsOpen} onClick={onControls}
-            title="Workshop controls — history, agent connection, Work on a project"/>
-        </span>
-      </div>
-      {controlsOpen ? controls : <>
-      <div style={{ padding:'13px 16px', borderBottom:`1px solid ${W.lineSoft}`, display:'flex', gap:10, alignItems:'flex-start' }}>
-        <Av a={who} s={28}/>
-        <div style={{ minWidth:0 }}><div style={{ fontSize:14, fontWeight:500, overflowWrap:'anywhere' }}>{showTask ? t.title : a ? a.name : descriptor.label}</div>
-          <div style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, marginTop:2, overflowWrap:'anywhere' }}>{showTask ? `owner: ${o ? o.name : 'not named on this page'}` : a ? `${a.role.toLowerCase()} · ${a.model}` : `${listening} listening`}</div></div>
-      </div>
-      <div style={{ padding:'12px 16px', borderBottom:`1px solid ${W.lineSoft}`, fontSize:12, lineHeight:1.55, color:W.inkSoft, overflowWrap:'anywhere' }}>
-        {showTask ? (t.lead || 'No event names this Work on this page.') : a ? a.doing : 'Select an agent in the rail or a task card to see it here.'}
-      </div>
-      <div style={{ padding:'12px 16px', borderBottom:`1px solid ${W.lineSoft}` }}>
-        <Lbl>{showTask ? 'TASK' : a ? 'CURRENT TASK' : 'TASKS'}</Lbl>
-        <div style={{ marginTop:8 }}>
-          {!showTask && !a ? <>
-            <PRow k="needs you" v={counts.block} c={counts.block ? W.err : W.inkMuted}/>
-            <PRow k="running" v={counts.run} c={counts.run ? W.warn : W.inkMuted}/>
-            <PRow k="submitted" v={counts.review} c={counts.review ? W.cyan : W.inkMuted}/>
-            <PRow k="delivered" v={counts.done} c={counts.done ? W.ok : W.inkMuted} last/>
-          </> : <>
-            <PRow k="intent" v={current ? current.intent : '—'}/>
-            <PRow k="criteria" v={current ? current.criteria : '—'}/>
-            <PRow k="blocks" v={current ? current.blocks : '—'}/>
-            <PRow k="state" v={current ? (CHIP[current.state] || CHIP.open).l : '—'} c={current ? (CHIP[current.state] || CHIP.open).c : W.inkMuted} last/>
-          </>}
-        </div>
-      </div>
-      {showTask && assign && t.state !== 'done' && !t.proposal && <AssignSection task={t} room={descriptor.root} agents={agents}
-        assign={assign} assignments={assignments}/>}
-      <div style={{ padding:'12px 16px', borderBottom:`1px solid ${W.lineSoft}` }}>
-        <Lbl>PERMISSIONS</Lbl>
-        <div style={{ marginTop:8 }}>
-          {asks ? <>
-            <PRow k="read" v="this Workshop"/>
-            <PRow k="write" v={asks.write}/>
-            <PRow k="gate" v={asks.gate} last/>
-          </> : facts ? <>
-            <PRow k="read" v={facts.attached === false ? 'history only · detached' : 'this Workshop'}/>
-            <PRow k="gate" v={wsLinkStatus(facts) || 'no Session Link channel'} last/>
-          </> : <div style={{ fontSize:11.5, lineHeight:1.5, color:W.inkSoft }}>No participant is named for this selection, so no permission is projected.</div>}
-        </div>
-      </div>
-      <div style={{ padding:'12px 16px', borderBottom:`1px solid ${W.lineSoft}` }}>
-        <Lbl>CONNECTED TOOLS</Lbl>
-        {tools.length ? <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginTop:8 }}>{tools.map(x => <Mini key={x}>{x}</Mini>)}</div> :
-          <div style={{ fontSize:11.5, lineHeight:1.5, color:W.inkSoft, marginTop:8 }}>No tools are projected for this {showTask ? 'task' : a ? 'agent' : 'Workshop'}.</div>}
-      </div>
-      <div style={{ padding:'12px 16px' }}>
-        <Lbl>ACTIVITY · TOOL RECORDS</Lbl>
-        {activity.length ? <div style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, lineHeight:1.9, color:W.inkSoft, marginTop:8, overflowWrap:'anywhere' }}>
-          {activity.map((row, i) => <React.Fragment key={row.root || i}>{i > 0 && <br/>}{row.at ? row.at + ' ' : ''}{row.dir} {row.text}</React.Fragment>)}
-        </div> : <div style={{ fontSize:11.5, lineHeight:1.5, color:W.inkSoft, marginTop:8 }}>{activityNote}</div>}
-      </div>
-      </>}
-    </aside>
-  );
-};
+
 // ── the view ──
 // "Open as nodes" for a workflow card: its step nodes live in the workflow's own scope
 // (governed Work, hidden at the product scope), so walk there FIRST, then focus and switch
@@ -1259,2208 +485,379 @@ function openShownWorkflowAsNodes(workflow, deps) {
   return openWorkflowAsNodes({ ...deps, focus, workflow: workflow || null });
 }
 
-const WorkshopUtilityPanel = ({ label, children }) => (
-  <section aria-label={label} style={{ display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
-    <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:16 }}>
-      <div style={{ display:'flex', flexDirection:'column', gap:10, maxWidth:980 }}>{children}</div>
-    </div>
-  </section>
-);
-const useDeferredWorkshopPanel = panel => {
-  const shouldDefer = panel === 'chat' || panel === 'router';
-  const [readyPanel, setReadyPanel] = React.useState(shouldDefer ? '' : panel);
-  React.useEffect(() => {
-    if (!shouldDefer) { setReadyPanel(panel); return; }
-    let gone = false, timer = 0, frame = 0;
-    setReadyPanel('');
-    const done = () => { if (!gone) setReadyPanel(panel); };
-    if (typeof requestAnimationFrame === 'function') {
-      frame = requestAnimationFrame(() => { timer = setTimeout(done, 0); });
-    } else {
-      timer = setTimeout(done, 0);
-    }
-    return () => {
-      gone = true;
-      if (frame && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame);
-      if (timer) clearTimeout(timer);
-    };
-  }, [shouldDefer, panel]);
-  return !shouldDefer || readyPanel === panel;
-};
 
-const WorkshopRouterTab = ({ live, error, loading, saving, selected, onSave, tasks }) => {
-  const options = (live?.groups || []).flatMap(group => group.items || []).filter(wsFreeRoute)
-    .filter((item, index, all) => all.findIndex(other => wsRoute(other) === wsRoute(item)) === index);
-  const selectedRoute = options.some(item => wsRoute(item) === selected) ? selected : '';
-  return (
-    <WorkshopUtilityPanel label="Workshop router">
-      <div style={{ border:`1px solid ${W.line}`, borderRadius:8, background:W.bgPanel, padding:'12px 14px',
-        fontFamily:W.serif, fontSize:14.5, lineHeight:1.55, color:W.ink }}>
-        Workshop model selects the one recorded composer model. Per-task rows show only recorded task evidence.
-      </div>
-      <div style={{ border:`1px solid ${W.line}`, borderRadius:8, background:W.bgPanel, overflow:'hidden' }}>
-        <div style={{ display:'grid', gridTemplateColumns:'minmax(180px,.8fr) minmax(220px,1.2fr)', gap:12,
-          alignItems:'center', padding:'11px 13px' }}>
-          <div>
-            <div style={{ fontSize:13, color:W.ink, fontWeight:500 }}>Workshop model</div>
-            <div style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, marginTop:2 }}>
-              {selected ? wsRouteLabel(selected) : loading ? 'Reading model routes' : 'No saved free/local route'}
-            </div>
-          </div>
-          <select aria-label="Workshop model" value={selectedRoute} disabled={saving || options.length === 0}
-            onChange={event => onSave(event.target.value)} style={{ width:'100%', padding:'7px 10px',
-              background:W.bg, color:W.ink, border:`1px solid ${W.line}`, borderRadius:5, fontFamily:W.mono, fontSize:11 }}>
-            <option value="">{error || (!live ? 'Reading free models...' : 'Choose a free/local model')}</option>
-            {options.map(item => <option key={wsRoute(item)} value={wsRoute(item)}>{wsModelOption(item)}</option>)}
-          </select>
-        </div>
-      </div>
-      <div style={{ border:`1px solid ${W.line}`, borderRadius:8, background:W.bgPanel, overflow:'hidden' }}>
-        {(tasks || []).length ? tasks.map((task, index) => (
-          <div key={task.work || index} style={{ display:'grid', gridTemplateColumns:'minmax(180px,1fr) minmax(180px,1fr)', gap:12,
-            padding:'10px 13px', alignItems:'center', borderTop:index ? `1px solid ${W.lineSoft}` : 0 }}>
-            <div style={{ minWidth:0, fontSize:12.5, color:W.ink, overflowWrap:'anywhere' }}>{task.title || 'Untitled work'}</div>
-            <div style={{ minWidth:0, fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, overflowWrap:'anywhere' }}>{task.model || 'model not recorded'}</div>
-          </div>
-        )) : <div role="status" style={{ padding:'12px 13px', fontSize:12.5, color:W.inkSoft }}>No recent tasks in this Workshop.</div>}
-      </div>
-      {error && <div role="alert" style={{ fontSize:12, color:W.err }}>{error}</div>}
-    </WorkshopUtilityPanel>
-  );
-};
-
-const WorkshopRelayTab = ({ consent, session, error, busy, onToggle, onSignIn }) => {
-  const signedIn = !!session && session.state === 'signed_in';
-  const allowed = !!consent?.allowed;
-  return (
-    <WorkshopUtilityPanel label="Workshop relay">
-      <div style={{ border:`1px solid ${W.line}`, borderRadius:8, background:W.bgPanel, padding:'12px 14px',
-        fontFamily:W.serif, fontSize:14.5, lineHeight:1.55, color:W.ink }}>
-        Cloud relay — lets the cockpit send instructions to this app and see the map.
-      </div>
-      {!signedIn ? (
-        <div style={{ border:`1px solid ${W.line}`, borderRadius:8, background:W.bgPanel, padding:'12px 14px',
-          display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
-          <div style={{ flex:'1 1 240px', minWidth:180 }}>
-            <div style={{ fontSize:13.5, color:W.ink, fontWeight:500 }}>Sign in to use the cloud relay</div>
-            <div style={{ marginTop:3, fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft }}>State: Off</div>
-          </div>
-          <Btn sm pri onClick={onSignIn}>Sign in</Btn>
-        </div>
-      ) : (
-        <div style={{ border:`1px solid ${W.line}`, borderRadius:8, background:W.bgPanel, padding:'12px 14px',
-          display:'flex', alignItems:'center', gap:12 }}>
-          <div style={{ flex:1, minWidth:0 }}>
-            <div style={{ fontSize:13.5, color:W.ink, fontWeight:500 }}>State: {allowed ? 'On' : 'Off'}</div>
-            <div role={error ? 'alert' : 'status'} style={{ marginTop:3, fontFamily:W.mono, fontSize:W.fs.dataSm.sz,
-              color:error ? W.err : W.inkSoft, overflowWrap:'anywhere' }}>
-              {error || (allowed ? 'Cockpit instructions and the map are allowed for ' + (consent?.account || session.email || 'this account') + '.'
-                : 'The cockpit cannot instruct this app and cannot see the map.')}
-            </div>
-          </div>
-          <button type="button" role="switch" aria-checked={allowed} aria-label="Relay on/off" disabled={busy}
-            onClick={onToggle} title={allowed ? 'Turn relay off' : 'Turn relay on'}
-            style={{ width:34, height:18, borderRadius:999, padding:1, flexShrink:0, position:'relative',
-              border:`1px solid ${allowed ? W.accent : W.lineSoft}`, background:allowed ? W.accent : W.bgSoft,
-              cursor:busy ? 'default' : 'pointer' }}>
-            <span style={{ position:'absolute', top:1, left:allowed ? 16 : 1, width:14, height:14, borderRadius:'50%',
-              background:allowed ? W.onFill : W.inkSoft }}/>
-          </button>
-        </div>
-      )}
-      {error && !signedIn && <div role="alert" style={{ fontSize:12, color:W.err }}>{error}</div>}
-    </WorkshopUtilityPanel>
-  );
-};
-
-const PromptCard = ({ prompt, values, onValue, onUse, canShare, onShare }) => {
-  const body = wsPromptText(prompt);
-  const blanks = wsBlankNames(body);
-  return (
-    <div style={{ border:`1px solid ${W.line}`, borderRadius:8, background:W.bgPanel, padding:'12px 14px' }}>
-      <div style={{ fontSize:13.5, color:W.ink, fontWeight:500 }}>{prompt.name || prompt.title || 'Saved prompt'}</div>
-      <div style={{ marginTop:8, fontFamily:W.serif, fontSize:14, lineHeight:1.5, color:W.inkSoft, whiteSpace:'pre-wrap', overflowWrap:'anywhere' }}>
-        {body || prompt.description || 'No prompt text recorded.'}
-      </div>
-      {blanks.length > 0 && <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(160px, 1fr))', gap:8, marginTop:10 }}>
-        {blanks.map(name => <label key={name} style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft }}>{name}
-          <input aria-label={name} value={values?.[name] || ''} onChange={e => onValue(name, e.target.value)}
-            style={{ display:'block', width:'100%', marginTop:4, boxSizing:'border-box', padding:'6px 8px',
-              border:`1px solid ${W.line}`, borderRadius:5, background:W.bg, color:W.ink, fontFamily:W.sans, fontSize:12 }}/>
-        </label>)}
-      </div>}
-      <div style={{ display:'flex', gap:7, flexWrap:'wrap', marginTop:10 }}>
-        <Btn sm pri onClick={() => onUse(prompt)}>Use</Btn>
-        {canShare && <Btn sm onClick={() => onShare(prompt)}>Share with firm</Btn>}
-      </div>
-    </div>
-  );
-};
-
-const WorkshopPromptsTab = ({ prompts, loading, error, values, onValue, onUse, canSave, onSave, canShare, onShare }) => {
-  const [title, setTitle] = React.useState('');
-  const [text, setText] = React.useState('');
-  const save = event => {
-    event.preventDefault();
-    if (title.trim() && text.trim()) onSave({title:title.trim(), text:text.trim()});
-  };
-  return (
-    <WorkshopUtilityPanel label="Workshop prompts">
-      {loading && <div role="status" style={{ fontSize:12.5, color:W.inkSoft }}>Reading saved prompts...</div>}
-      {error && <div role="alert" style={{ fontSize:12, color:W.err }}>{error}</div>}
-      {prompts.length ? prompts.map(prompt => <PromptCard key={prompt.id || prompt.name || prompt.title}
-        prompt={prompt} values={values[prompt.id || prompt.name || prompt.title] || {}}
-        onValue={(name, value) => onValue(prompt, name, value)} onUse={onUse} canShare={canShare} onShare={onShare}/>)
-        : !loading && <div role="status" style={{ border:`1px solid ${W.line}`, borderRadius:8, background:W.bgPanel, padding:'12px 14px', color:W.inkSoft }}>
-          No saved prompts found in this Workshop store.
-        </div>}
-      {canSave && <form onSubmit={save} style={{ border:`1px solid ${W.line}`, borderRadius:8, background:W.bgPanel, padding:'12px 14px' }}>
-        <div style={{ fontSize:13.5, color:W.ink, fontWeight:500, marginBottom:8 }}>New prompt</div>
-        <input aria-label="Prompt title" value={title} onChange={e => setTitle(e.target.value)} placeholder="Prompt title"
-          style={{ width:'100%', boxSizing:'border-box', padding:'7px 9px', border:`1px solid ${W.line}`, borderRadius:5,
-            background:W.bg, color:W.ink, marginBottom:8 }}/>
-        <textarea aria-label="Prompt text" value={text} onChange={e => setText(e.target.value)} placeholder="Use {blank} fields for reusable values."
-          style={{ width:'100%', boxSizing:'border-box', minHeight:80, padding:'7px 9px', border:`1px solid ${W.line}`, borderRadius:5,
-            background:W.bg, color:W.ink, resize:'vertical' }}/>
-        <div style={{ marginTop:8 }}><button type="submit" disabled={!title.trim() || !text.trim()} style={{ padding:'3px 9px',
-          borderRadius:5, cursor:(!title.trim() || !text.trim()) ? 'default' : 'pointer', margin:0,
-          fontFamily:W.mono, fontSize:W.fs.dataSm.sz, fontWeight:500, letterSpacing:'0.04em',
-          background:(!title.trim() || !text.trim()) ? 'transparent' : W.accent,
-          border:`1px ${(!title.trim() || !text.trim()) ? 'dashed' : 'solid'} ${(!title.trim() || !text.trim()) ? W.line : W.accent}`,
-          color:(!title.trim() || !text.trim()) ? W.inkSoft : W.onFill }}>New prompt</button></div>
-      </form>}
-    </WorkshopUtilityPanel>
-  );
-};
-
-const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusId, requestCanvasReveal, onLeave, sel, setSel, externalRail }) => {
-  useStore();
-  const authority = window.ARCHHUB_STUDIO_AUTHORITY || window.ARCHHUB_EXISTING_WORKSHOP;
-  const existing = !window.ARCHHUB_STUDIO_AUTHORITY;
-  const unavailableWorkshop = descriptor?.unavailable === true;
-  const nativeAvailable = existing && !unavailableWorkshop && descriptor.native_work_available !== false;
-  const transcript = wsTranscript(state, descriptor);
-  const [preset, setPreset] = React.useState(sel?.tab || 'chat');   // projects · board · chat · agents · approvals · task
-  const [ownSel, setOwnSel] = React.useState({ agent:null, task:null });
-  const S = sel || ownSel, setS = setSel || setOwnSel;
-  const deferredPanelReady = useDeferredWorkshopPanel(preset);
-  const panelReady = preset === 'chat' && Array.isArray(transcript?.messages) && transcript.messages.length
-    ? true : deferredPanelReady;
-  const [tidy, setTidy] = React.useState(false);
-  const [chain, setChain] = React.useState(false);
-  const [controlsOpen, setControlsOpen] = React.useState(false);
-  // Per proposal message: {pending} | {work_root} | {declined} | {error}, from the founder's own decisions and reads.
-  const [proposalHeld, setProposalHeld] = React.useState({});
-  React.useEffect(() => {
-    if (sel?.tab && (WORKSHOP_TABS.some(([key]) => key === sel.tab) || WORKSHOP_TASK_PRESETS.includes(sel.tab))) setPreset(sel.tab);
-  }, [sel?.tab]);
-  // The header's file line (design: Work title · model file): the hosts the
-  // app's own probe sees connected, read once from its cached rows; null until it answers.
-  const [liveHosts, setLiveHosts] = React.useState(null);
-  React.useEffect(() => {
-    const load = window.ARCHHUB_LOAD_HOSTS;
-    if (typeof load !== 'function') return;
-    let gone = false;
-    load().then(read => { if (!gone) setLiveHosts(Array.isArray(read?.hosts) ? read.hosts : []); })
-      .catch(() => { if (!gone) setLiveHosts(null); });
-    return () => { gone = true; };
-  }, []);
-  const [refreshing, setRefreshing] = React.useState(false);
-  const [paging, setPaging] = React.useState(false);
-  const pageIntent = React.useRef(0);
-  const messageViewport = React.useRef(null), messageContent = React.useRef(null);
-  const [awayFromLatest, setAwayFromLatest] = React.useState(false);
-  const messageScroll = React.useRef(null), latestJump = React.useRef(false);
-  if (!messageScroll.current) messageScroll.current = createWorkshopMessageScroll(setAwayFromLatest);
-  const [draft, setDraft] = React.useState('');
-  const [routerLive, setRouterLive] = React.useState(null);
-  const [routerError, setRouterError] = React.useState('');
-  const [routerLoading, setRouterLoading] = React.useState(false);
-  const [routerSaving, setRouterSaving] = React.useState(false);
-  const [routerSelected, setRouterSelected] = React.useState('');
-  const [prompts, setPrompts] = React.useState([]);
-  const [promptsLoading, setPromptsLoading] = React.useState(false);
-  const [promptsError, setPromptsError] = React.useState('');
-  const [promptValues, setPromptValues] = React.useState({});
-  const [relayConsent, setRelayConsent] = React.useState({allowed:false, account:''});
-  const [relaySession, setRelaySession] = React.useState(null);
-  const [relayError, setRelayError] = React.useState('');
-  const [relayBusy, setRelayBusy] = React.useState(false);
-  const [messageTextSize, setMessageTextSize] = React.useState(13.5); // the design's message size until chosen under ⋯
-  const [execution, setExecution] = React.useState('');
-  const [busy, setBusy] = React.useState(false);
-  const busyRef = React.useRef(false);
-  const mounted = React.useRef(true);
-  const fileIntent = React.useRef(0);
-  const routerRead = React.useCallback(() => {
-    if (typeof fetch !== 'function') return;
-    const controller = new AbortController();
-    const s = window.__archhubSession || {};
-    setRouterLoading(true); setRouterError('');
-    fetch('/api/universal/models', {signal:controller.signal,
-      headers:{'X-ArchHub-Session':s.token || '', 'X-ArchHub-CSRF':s.csrf || ''}})
-      .then(r => { if (!r.ok) throw new Error('Model catalogue unavailable'); return r.json(); })
-      .then(d => {
-        if (!d || d.ok === false || !Array.isArray(d.groups)) throw new Error('Model catalogue unavailable');
-        setRouterLive(d);
-        setRouterSelected((typeof d.selected_route === 'string' && d.selected_route.trim()) ||
-          (typeof d.default_route === 'string' && d.default_route.trim()) || '');
-      })
-      .catch(error => { if (!controller.signal.aborted) setRouterError(error.message || 'Model catalogue unavailable'); })
-      .finally(() => { if (!controller.signal.aborted) setRouterLoading(false); });
-    return () => controller.abort();
-  }, []);
-  React.useEffect(() => preset === 'router' && panelReady ? routerRead() : undefined, [preset, panelReady, routerRead]);
-  const saveRouterModel = async route => {
-    if (routerSaving) return;
-    setRouterSaving(true); setRouterError('');
-    try {
-      if (typeof window.ARCHHUB_AGENT_SELECT === 'function') {
-        if (await window.ARCHHUB_AGENT_SELECT(route) !== route) throw new Error('The model selection could not be confirmed.');
-      } else if (authority?.setComposerModel) {
-        await authority.setComposerModel(route);
-      } else {
-        throw new Error('The model selection cannot be saved from this view.');
-      }
-      setRouterSelected(route);
-    } catch (error) {
-      setRouterError(error?.message || 'The model selection could not be saved.');
-    } finally { setRouterSaving(false); }
-  };
-  const promptSave = window.ARCHHUB_SAVE_PROMPT || authority?.savePrompt;
-  const promptShare = window.ARCHHUB_SHARE_PROMPT || authority?.sharePrompt;
-  const readPrompts = React.useCallback(() => {
-    const load = window.ARCHHUB_LOAD_PROMPTS || window.ARCHHUB_LOAD_SKILLS;
-    if (typeof load !== 'function') {
-      const rows = Array.isArray(window.ARCHHUB_LIVE?.skills) ? window.ARCHHUB_LIVE.skills : [];
-      setPrompts(rows.map(row => ({...row, id:row.id || row.name, text:wsPromptText(row)})));
-      return;
-    }
-    let gone = false;
-    setPromptsLoading(true); setPromptsError('');
-    Promise.resolve().then(load).then(async rows => {
-      if (!Array.isArray(rows)) throw new Error('Saved prompts could not be read.');
-      const limited = rows.slice(0, 12);
-      const read = window.ARCHHUB_READ_PROMPT || window.ARCHHUB_READ_SKILL;
-      const resolved = await Promise.all(limited.map(async row => {
-        let text = wsPromptText(row);
-        if (!text && typeof read === 'function') {
-          try { text = String(await read(row.name || row.title || row.id || '') || '').trim(); }
-          catch (_) { text = ''; }
-        }
-        return {...row, id:row.id || row.name || row.title, text};
-      }));
-      if (!gone) setPrompts(resolved.filter(row => wsPromptText(row) || row.name || row.title));
-    }).catch(error => { if (!gone) setPromptsError(error?.message || 'Saved prompts could not be read.'); })
-      .finally(() => { if (!gone) setPromptsLoading(false); });
-    return () => { gone = true; };
-  }, []);
-  React.useEffect(() => preset === 'prompts' ? readPrompts() : undefined, [preset, readPrompts]);
-  const readRelay = React.useCallback(() => {
-    let gone = false;
-    Promise.all([
-      typeof window.ARCHHUB_CLOUD_SESSION === 'function'
-        ? Promise.resolve().then(() => window.ARCHHUB_CLOUD_SESSION()).catch(error => ({ok:false, state:'unknown', error:String(error?.message || error)}))
-        : Promise.resolve({ok:false, state:'signed_out'}),
-      authority?.readCloudPublishConsent
-        ? Promise.resolve().then(() => authority.readCloudPublishConsent()).catch(error => ({allowed:false, account:'', error:String(error?.message || error)}))
-        : Promise.resolve({allowed:false, account:''}),
-    ]).then(([session, consent]) => {
-      if (gone) return;
-      setRelaySession(session && session.ok !== false ? session : {...(session || {}), state:(session && session.state) || 'signed_out'});
-      setRelayConsent({allowed:!!consent?.allowed, account:typeof consent?.account === 'string' ? consent.account : ''});
-      setRelayError(consent?.error || '');
-    });
-    return () => { gone = true; };
-  }, [authority]);
-  React.useEffect(() => readRelay(), [readRelay]);
-  const toggleRelay = async () => {
-    if (relayBusy || !authority?.setCloudPublishConsent) return;
-    setRelayBusy(true); setRelayError('');
-    const next = !relayConsent?.allowed;
-    try {
-      const result = await authority.setCloudPublishConsent(next);
-      setRelayConsent({allowed:!!result?.allowed, account:typeof result?.account === 'string' ? result.account : ''});
-    } catch (error) {
-      setRelayError(String(error?.message || error));
-    } finally { setRelayBusy(false); }
-  };
-  const signInRelay = () => {
-    if (typeof window.ARCHHUB_CLOUD_SIGNIN === 'function') return window.ARCHHUB_CLOUD_SIGNIN('google');
-  };
-  const keyPrompt = prompt => String(prompt.id || prompt.name || prompt.title || 'prompt');
-  const setPromptBlank = (prompt, name, value) => setPromptValues(current => {
-    const key = keyPrompt(prompt);
-    return {...current, [key]: {...(current[key] || {}), [name]:value}};
-  });
-  const usePrompt = prompt => {
-    const text = wsPromptText(prompt);
-    const values = promptValues[keyPrompt(prompt)] || {};
-    setDraft(text.replace(/\{([^{}\n]{1,40})\}/g, (_, raw) => values[raw.trim()] || ''));
-    setPreset('chat');
-  };
-  const savePrompt = async prompt => {
-    if (!promptSave) return;
-    try { await promptSave(prompt); readPrompts(); }
-    catch (error) { setPromptsError(error?.message || 'The prompt could not be saved.'); }
-  };
-  const sharePrompt = async prompt => {
-    if (!promptShare) return;
-    try { await promptShare(prompt); }
-    catch (error) { setPromptsError(error?.message || 'The prompt could not be shared.'); }
-  };
-  // Retention: the first read after a person navigates to a room is an explicit
-  // open (open=1), marked BEFORE the request so a failed open is never retried
-  // as one. Timer polls and reads after an error are never opens.
-  const openedRoot = React.useRef('');
-  const [actionError, setActionError] = React.useState('');
-  const [nativeSyncError, setNativeSyncError] = React.useState('');
-  const projectedWorkNodes = workshopProjectedNodes(state);
-  const nativeTarget = selectedWorkshopWork(state, descriptor.root, projectedWorkNodes);
-  const setNativeTarget = async work => {
-    const key = workshopWorkSelectionIdentity(state, descriptor.root);
-    if (!admittedWorkshopWork(state, key, work, projectedWorkNodes)) throw new Error('Choose a currently admitted Work.');
-    setPublicReview(false);
-    if (existing) await authority.selectTopology(work);
-    else await authority.select(work);
-  };
-  const [publicReview, setPublicReview] = React.useState(false);
-  const [repair, setRepair] = React.useState({title:'', description:'', criterion:'', verification:'', path:'', model:'nex-agi/nex-n2.5-pro:free'});
-  const [existingWork, setExistingWork] = React.useState(null);   // {root, key}: the key already names this Work
-  const [sourceFile, setSourceFile] = React.useState(null);
-  const [readingFile, setReadingFile] = React.useState(false);
-  const [creationUncertain, setCreationUncertain] = React.useState(false);
-  const [revisionBase, setRevisionBase] = React.useState(null);
-  // Founder correction of one OPEN Work's acceptance gate, on the same Work.
-  const [gateEditor, setGateEditor] = React.useState(null);
-  const gateEditorFrom = (read, prior = null) => {
-    const spec = read.requirements.gate?.spec;
-    const currentPath = typeof spec?.path === 'string' ? spec.path : '';
-    const keep = {};
-    if (Array.isArray(spec?.args)) keep.args = spec.args;
-    if (typeof spec?.timeout_seconds === 'number') keep.timeout_seconds = spec.timeout_seconds;
-    return {work:read.work, target:read.target, digest:read.digest, revision:read.revision, state:read.state,
-      editable:read.editable, wired:read.wired, kind:read.requirements.gate?.kind || '',
-      currentPath, path:currentPath, keep, result:prior?.result || null,
-      submission:null, uncertain:false, refreshPending:false};
-  };
-  const openGateEditor = async work => {
-    if (busyRef.current || !work) return;
-    busyRef.current = true; setBusy(true); setActionError('');
-    try {
-      const read = await authority.readWorkRequirements(descriptor.root, work);
-      if (!scopeCurrent()) return;
-      setGateEditor(value => {
-        const next = gateEditorFrom(read, value?.work === work ? value : null);
-        // An ordinary read cannot prove which correction produced this gate.
-        // Retain the exact request until its receipt or explicit discard.
-        if (value?.work === work && value.submission) {
-          return {...next, path:value.submission.gate.spec.path, submission:value.submission, uncertain:true, checked:true};
-        }
-        return next;
-      });
-    } catch (error) { if (scopeCurrent()) setActionError(error.message || 'The Work requirements could not be read.'); }
-    finally { busyRef.current = false; if (mounted.current) setBusy(false); }
-  };
-  const saveGate = async event => {
-    event.preventDefault();
-    const edit = gateEditor;
-    if (busyRef.current || !edit || !edit.editable || edit.refreshPending) return;
-    const path = edit.submission ? edit.submission.gate.spec.path : edit.path.trim();
-    if (!path || (!edit.submission && path === edit.currentPath)) return;
-    const submission = edit.submission || {revision_id:window.crypto.randomUUID().replaceAll('-', ''),
-      expected_revision:edit.revision, expected_target:edit.target, expected_digest:edit.digest,
-      gate:{kind:'pytest', spec:{...edit.keep, path, selector:path}}};
-    busyRef.current = true; setBusy(true); setActionError('');
-    // Hold the exact correction before sending; an uncertain save is retried unchanged.
-    setGateEditor(value => ({...value, submission, uncertain:false}));
-    let saved;
-    try {
-      saved = await authority.reviseWorkRequirements(descriptor.root, edit.work, submission);
-    } catch (error) {
-      if (scopeCurrent()) {
-        setGateEditor(value => ({...value, submission, uncertain:true}));
-        setActionError((error.message || 'The corrected gate was not confirmed.') +
-          ' Retry sends this same correction. Reopen to inspect the current gate; only the correction receipt confirms this attempt.');
-      }
-      busyRef.current = false; if (mounted.current) setBusy(false);
-      return;
-    }
-    try {
-      if (!scopeCurrent()) return;
-      setGateEditor(value => ({...value, submission:null, uncertain:false, refreshPending:true,
-        result:saved.requirements_revision}));
-      const reopened = await authority.readWorkRequirements(descriptor.root, edit.work);
-      if (!scopeCurrent()) return;
-      setGateEditor(value => gateEditorFrom(reopened, value));
-      try { await authority.refreshWorkshop(descriptor.root); await authority.refreshTopologyCanvas(); }
-      catch (_) { setActionError('The corrected gate is saved. Refresh the Workshop and canvas to display the updated value.'); }
-    } catch (_) {
-      if (scopeCurrent()) setActionError('The corrected gate is saved, but this editor could not reload it. Reopen the current gate before making another change.');
-    } finally { busyRef.current = false; if (mounted.current) setBusy(false); }
-  };
-  // Founder configuration of an OPEN Work's inputs, requirements and CDE, on the same Work.
-  const [configEditor, setConfigEditor] = React.useState(null);
-  const configLines = raw => raw.split('\n').map(line => line.trim()).filter(Boolean);
-  const configEditorFrom = (current, prior = null) => {
-    const value = name => current.fields[name].value;
-    const cde = value('cde-container'), requirements = value('requirements'), inputs = value('inputs');
-    return {work:current.work, revision:current.revision, fields:current.fields, state:current.state,
-      drafts:current.drafts || [], invalidDrafts:current.invalid_drafts || [], draft:null, baselineFields:current.fields,
-      editable:current.editable, artifactReady:current.artifact_ready, blocker:current.artifact_blocker || '',
-      purpose:prior?.purpose || 'general',
-      allowedPaths:Array.isArray(cde?.allowed_paths) ? cde.allowed_paths.join('\n') : '',
-      reviewers:Array.isArray(requirements?.artifact_reviewers) ? requirements.artifact_reviewers.join('\n') : '',
-      programs:WorkshopPrograms.from(requirements),
-      publicInputs:inputs?.data_class === 'public-text',
-      result:prior?.result || null, submission:null, uncertain:false, checked:false, refreshPending:false};
-  };
-  const configChanges = edit => {
-    const fields = edit.draft ? {...edit.draft.fields} : {};
-    const entry = (name, value) => ({expected_target:edit.fields[name].target,
-      expected_digest:edit.fields[name].digest, value});
-    const cde = edit.fields['cde-container'].value, requirements = edit.fields.requirements.value;
-    const inputs = edit.fields.inputs.value;
-    const paths = configLines(edit.allowedPaths), reviewers = configLines(edit.reviewers);
-    if (JSON.stringify(paths) !== JSON.stringify(Array.isArray(cde?.allowed_paths) ? cde.allowed_paths : [])) {
-      fields['cde-container'] = entry('cde-container', {...(cde || {}), allowed_paths:paths});
-    }
-    const currentReviewers = Array.isArray(requirements?.artifact_reviewers) ? requirements.artifact_reviewers : [];
-    let nextRequirements = null;
-    if (JSON.stringify(reviewers) !== JSON.stringify(currentReviewers)) {
-      nextRequirements = {...(requirements || {})};
-      if (reviewers.length) nextRequirements.artifact_reviewers = reviewers; else delete nextRequirements.artifact_reviewers;
-    }
-    const withPrograms = WorkshopPrograms.change(nextRequirements || requirements, edit.programs);
-    if (withPrograms) nextRequirements = withPrograms;
-    if (nextRequirements) fields.requirements = entry('requirements', nextRequirements);
-    if (edit.publicInputs !== (inputs?.data_class === 'public-text')) {
-      const next = {...(inputs || {})};
-      if (edit.publicInputs) next.data_class = 'public-text'; else delete next.data_class;
-      fields.inputs = entry('inputs', next);
-    }
-    return fields;
-  };
-  const reviewConfigDraft = revisionId => {
-    setConfigEditor(edit => {
-      const draft = edit.drafts.find(item => item.revision_id === revisionId);
-      const fields = {...edit.baselineFields};
-      if (draft) Object.entries(draft.fields).forEach(([name, entry]) => {
-        fields[name] = {...fields[name], value:entry.value};
-      });
-      const cde = fields['cde-container'].value, requirements = fields.requirements.value;
-      return {...edit, fields, draft:draft || null, purpose:draft?.purpose || 'general',
-        allowedPaths:(cde?.allowed_paths || []).join('\n'),
-        reviewers:(requirements?.artifact_reviewers || []).join('\n'),
-        programs:WorkshopPrograms.from(requirements),
-        publicInputs:fields.inputs.value?.data_class === 'public-text', result:null};
-    });
-  };
-  const openConfigEditor = async work => {
-    if (busyRef.current || !work) return;
-    busyRef.current = true; setBusy(true); setActionError('');
-    try {
-      const current = await authority.readWorkConfiguration(descriptor.root, work);
-      if (!scopeCurrent()) return;
-      setConfigEditor(value => {
-        const next = configEditorFrom(current, value?.work === work ? value : null);
-        // An unconfirmed configuration keeps its exact identity until it is retried or discarded.
-        if (value?.work === work && value.submission) {
-          return {...next, submission:value.submission, uncertain:true, checked:true};
-        }
-        return next;
-      });
-    } catch (error) { if (scopeCurrent()) setActionError(error.message || 'The Work configuration could not be read.'); }
-    finally { busyRef.current = false; if (mounted.current) setBusy(false); }
-  };
-  const saveConfiguration = async event => {
-    event.preventDefault();
-    const edit = configEditor;
-    if (busyRef.current || !edit || !edit.editable || edit.refreshPending || edit.draft?.stale) return;
-    const fields = edit.submission ? null : configChanges(edit);
-    if (!edit.submission && !Object.keys(fields).length) return;
-    const unchangedDraft = edit.draft && edit.purpose === edit.draft.purpose &&
-      JSON.stringify(fields) === JSON.stringify(edit.draft.fields);
-    const submission = edit.submission || {revision_id:unchangedDraft ? edit.draft.revision_id :
-      window.crypto.randomUUID().replaceAll('-', ''),
-      expected_revision:unchangedDraft ? edit.draft.expected_revision : edit.revision, purpose:edit.purpose, fields};
-    busyRef.current = true; setBusy(true); setActionError('');
-    setConfigEditor(value => ({...value, submission, uncertain:false}));
-    let saved;
-    try {
-      saved = await authority.configureWork(descriptor.root, edit.work, submission);
-    } catch (error) {
-      if (scopeCurrent()) {
-        setConfigEditor(value => ({...value, submission, uncertain:true}));
-        setActionError((error.message || 'The Work configuration was not confirmed.') +
-          ' Retry sends this same configuration. Reopen the configuration to see whether it applied.');
-      }
-      busyRef.current = false; if (mounted.current) setBusy(false);
-      return;
-    }
-    try {
-      if (!scopeCurrent()) return;
-      setConfigEditor(value => ({...value, submission:null, uncertain:false, refreshPending:true,
-        result:saved.work_configuration}));
-      const reopened = await authority.readWorkConfiguration(descriptor.root, edit.work);
-      if (!scopeCurrent()) return;
-      setConfigEditor(value => configEditorFrom(reopened, value));
-      try { await authority.refreshWorkshop(descriptor.root); await authority.refreshTopologyCanvas(); }
-      catch (_) { setActionError('The Work configuration is saved. Refresh the Workshop and canvas to display it.'); }
-    } catch (_) {
-      if (scopeCurrent()) setActionError('The Work configuration is saved, but this editor could not reload it. Reopen it before making another change.');
-    } finally { busyRef.current = false; if (mounted.current) setBusy(false); }
-  };
-  const discardConfigAttempt = () => {
-    setConfigEditor(value => value && ({...value, submission:null, uncertain:false, checked:false}));
-    setActionError('');
-  };
-  const discardConfigDraft = async () => {
-    const edit = configEditor;
-    if (busyRef.current || !edit?.draft || edit.submission) return;
-    busyRef.current = true; setBusy(true); setActionError('');
-    try {
-      await authority.discardWorkConfiguration(descriptor.root, edit.work,
-        {revision_id:edit.draft.revision_id, expected_revision:edit.revision});
-      const current = await authority.readWorkConfiguration(descriptor.root, edit.work);
-      if (scopeCurrent()) setConfigEditor(configEditorFrom(current));
-    } catch (error) {
-      if (scopeCurrent()) setActionError(error.message || 'Discard was not confirmed. Reopen the configuration.');
-    } finally { busyRef.current = false; if (mounted.current) setBusy(false); }
-  };
-  const discardGateAttempt = () => {
-    setGateEditor(value => value && ({...value, submission:null, uncertain:false, path:value.currentPath}));
-    setActionError('');
-  };
-  const revisionSubmission = React.useRef(null);
-  const protectedEditors = existing && typeof authority.openConversationEditor === 'function';
-  const editors = React.useRef({message:null, work:null, keys:null});
-  const [editorsReady, setEditorsReady] = React.useState(!protectedEditors);
-  const [editorError, setEditorError] = React.useState('');
-  const editorOpening = React.useRef(false);
-  const prepareEditors = async () => {
-    if (!protectedEditors || editorOpening.current) return;
-    editorOpening.current = true; setEditorError('');
-    try {
-      const held = editors.current;
-      if (!held.keys) held.keys = [window.crypto.randomUUID(), window.crypto.randomUUID()];
-      for (const [index, name] of ['message', ...(nativeAvailable ? ['work'] : [])].entries()) {
-        if (held[name]) await held[name].retry();
-        else held[name] = await authority.openConversationEditor(descriptor.root, held.keys[index], name);
-        if (!mounted.current) { await held[name].close(); return; }
-        // A lost save acknowledgement may resolve to clear while newer local
-        // text still exists. Re-arm protection before enabling that editor.
-        if (name === 'message' ? draft.length > 0 : sourceFile || readingFile || creationUncertain ||
-            ['title','description','criterion','verification','path'].some(key => repair[key].length > 0) ||
-            repair.model !== 'nex-agi/nex-n2.5-pro:free' || native?.state && native.state !== 'idle') {
-          await held[name].dirty();
-        }
-      }
-      if (mounted.current) setEditorsReady(true);
-    } catch (error) {
-      if (mounted.current) { setEditorsReady(false); setEditorError(error.message || 'Draft protection is unavailable.'); }
-    } finally { editorOpening.current = false; }
-  };
-  const protectDraft = name => {
-    const editor = editors.current[name];
-    if (!protectedEditors || !editor) return;
-    editor.dirty().catch(error => {
-      if (mounted.current) { setEditorsReady(false); setEditorError(error.message || 'Retry draft protection before continuing.'); }
-    });
-  };
-  const native = state?.nativeWork?.root === descriptor.root && state.nativeWork.scope === state?.canvas?.root ?
-    state.nativeWork : null;
-  const artifactWork = nativeTarget || native?.work;
-  const [publicationView, setPublicationView] = React.useState(null);
-  React.useEffect(() => { setPublicationView(null); }, [descriptor.root, state?.canvas?.root, artifactWork]);
-  const savedPublications = (native?.existing_artifacts || []).filter(row => row.work === artifactWork);
-  const savedArtifacts = (native?.artifacts || []).filter(row => row.work === artifactWork &&
-    !(native?.artifact?.result === row.result && native?.artifact?.receipt === row.receipt));
-  const failedProjects = (native?.failures || []).filter(row => row.work === artifactWork);
-  const localDeliveries = (native?.local_deliveries || []).filter(row => row.work === artifactWork);
-  const targetAvailable = native?.available_work?.includes(nativeTarget) && projectedWorkNodes.some(node => node.id === nativeTarget);
-  const scopeCurrent = () => mounted.current && authority.getSnapshot()?.canvas?.graph_id === state?.canvas?.graph_id &&
-    authority.getSnapshot()?.canvas?.root === state?.canvas?.root &&
-    authority.getSnapshot()?.workshops?.some(row => row.root === descriptor.root);
-  React.useEffect(() => {
-    mounted.current = true;
-    return () => { mounted.current = false; fileIntent.current += 1; };
-  }, []);
-  React.useEffect(() => {
-    prepareEditors();
-    return () => {
-      // No unload/expiry inference: close preserves dirty/unknown records. If
-      // navigation or lost transport prevents closure, the open record remains.
-      for (const editor of Object.values(editors.current)) {
-        if (editor && typeof editor.close === 'function') editor.close().catch(() => {});
-      }
-    };
-  }, [authority, descriptor.root]);
-  React.useEffect(() => {
-    let disposed = false;
-    if (nativeAvailable) authority.refreshNativeWork(descriptor.root, nativeTarget || null).catch(error => {
-      if (!disposed && mounted.current) setActionError(error.message || 'Read the native Workshop status to continue.');
-    });
-    return () => { disposed = true; };
-  }, [authority, descriptor.root, nativeAvailable, nativeTarget]);
-  const page = state?.workshopPage?.root === descriptor.root ? state.workshopPage : null;
-  const olderPage = typeof page?.before === 'string';
-  const content = transcript?.storage === 'conversation-content';
-  const feed = page?.feed || 'all';
-  const feedIdentity = JSON.stringify([state?.canvas?.graph_id, state?.canvas?.root, descriptor.root]);
-  const chooseFeed = async value => {
-    const intent = ++pageIntent.current;
-    latestJump.current = true;
-    setPaging(true); setActionError('');
-    try { await authority.showWorkshopFeed(descriptor.root, value); }
-    catch (error) {
-      if (pageIntent.current === intent) setActionError(error.message || 'The Workshop feed could not be read.');
-    } finally { if (mounted.current && pageIntent.current === intent) setPaging(false); }
-  };
-  React.useEffect(() => {
-    if (content && !paging && !busy && !page?.feedInitialized && typeof authority.showWorkshopFeed === 'function') {
-      chooseFeed('messages');
-    }
-  }, [content, feedIdentity, authority, page?.feedInitialized, paging, busy]);
-  const navigatePage = async latest => {
-    if (latest && !olderPage && transcript && !transcript.error) {
-      messageScroll.current.jump(messageViewport.current);
-      return;
-    }
-    const intent = ++pageIntent.current;
-    latestJump.current = latest;
-    setPaging(true); setActionError('');
-    try {
-      if (latest) await authority.showLatestWorkshop(descriptor.root);
-      else await authority.loadOlderWorkshop(descriptor.root);
-    } catch (error) {
-      if (pageIntent.current === intent) {
-        latestJump.current = false;
-        setActionError(error.message || 'The message page could not be read.');
-      }
-    } finally { if (pageIntent.current === intent) setPaging(false); }
-  };
-  React.useEffect(() => { setPublicReview(false); }, [native?.request_id]);
-  const projectReviewExpired = native?.mode === 'project' && (native.review_expired === true ||
-    (Number.isFinite(native.review_expires_at) && Date.now() / 1000 >= native.review_expires_at));
-  const artifactReview = ['project', 'agent'].includes(native?.mode);
-  const artifactReviewExpired = artifactReview && (native.review_expired === true ||
-    (Number.isFinite(native.review_expires_at) && Date.now() / 1000 >= native.review_expires_at));
-  const selectedRepairMode = native?.artifacts_work === nativeTarget ? native.selected_work_mode : null;
-  const [stoppingNative, setStoppingNative] = React.useState(false);
-  const stopNative = async () => {
-    if (stoppingNative || native?.mode !== 'agent') return;
-    setStoppingNative(true);
-    try { await authority.nativeWorkAction(descriptor.root, 'stop_native', native.work); }
-    catch (error) { if (scopeCurrent()) setActionError(error.message || 'Read the native operation status before continuing.'); }
-    finally { if (mounted.current) setStoppingNative(false); }
-  };
-  const nativeAct = async (action, artifact = null) => {
-    if (busyRef.current || (action !== 'refresh' && !editorsReady)) return;
-    const actionWork = artifact?.work || nativeTarget;
-    busyRef.current = true; setBusy(true); setActionError('');
-    try {
-      if (!['refresh', 'read_publication'].includes(action) && protectedEditors) await editors.current.work.dirty();
-      if (action === 'refresh') await authority.refreshNativeWork(descriptor.root, nativeTarget || null);
-      else if (action === 'prepare_revision') {
-        const work = native.work;
-        await setNativeTarget(work);
-        await authority.nativeWorkAction(descriptor.root, 'release', work);
-        if (scopeCurrent()) await authority.nativeWorkAction(descriptor.root, 'prepare_project', work);
-      }
-      else if (action === 'approve') {
-        if (artifact?.work && artifact.work !== native?.work) {
-          await setNativeTarget(artifact.work);
-          await authority.refreshNativeWork(descriptor.root, artifact.work);
-          throw new Error('Review this Work status before approving it.');
-        }
-        await authority.approveNativeWork(descriptor.root, native?.input_digest);
-      }
-      else if (action === 'refresh_project_review') await authority.nativeWorkAction(descriptor.root, action,
-        native.work, {delegation:native.delegation, input_digest:native.input_digest});
-      else if (action === 'recover_project' || action === 'recover_review') {
-        await setNativeTarget(artifact.work);
-        await authority.nativeWorkAction(descriptor.root, action,
-          artifact.work, {result:artifact.result, receipt:artifact.receipt});
-      }
-      else if (action === 'abandon_project') await authority.nativeWorkAction(descriptor.root, action,
-        artifact.work, {grant:artifact.grant, result:artifact.result, input_digest:artifact.input_digest});
-      else if (action === 'recover_local_project') {
-        await setNativeTarget(artifact.work);
-        await authority.nativeWorkAction(descriptor.root, action,
-          artifact.work, {result:artifact.result, resolution:artifact.resolution});
-      }
-      else if (action === 'read_publication') {
-        const result = await authority.readExistingPublication(descriptor.root, artifact.work, artifact.publication);
-        if (scopeCurrent()) setPublicationView(result);
-        return;
-      }
-      else if (action === 'read_artifact') {
-        const result = await authority.nativeWorkAction(descriptor.root, action, artifact?.work,
-          artifact ? {result:artifact.result, receipt:artifact.receipt} : {});
-        if (!scopeCurrent()) return;
-        const url = URL.createObjectURL(new Blob([new TextEncoder().encode(result.artifact_text)], {type:'text/plain;charset=utf-8'}));
-        const link = document.createElement('a');
-        try {
-          link.href = url; link.download = result.artifact.name;
-          document.body.appendChild(link); link.click();
-        } finally { link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
-        return;
-      }
-      else await authority.nativeWorkAction(descriptor.root, action, actionWork);
-      if (scopeCurrent()) await authority.refreshWorkshop(descriptor.root);
-    } catch (error) { if (scopeCurrent()) setActionError(action === 'prepare_revision' ?
-      'Read the operation status. If closing is pending, recover the closed result; then prepare this selected Work. ' + (error.message || '') :
-      error.message || 'Read the operation status to reconcile this action.'); }
-    finally { busyRef.current = false; if (mounted.current) setBusy(false); }
-  };
-  const selectSourceFile = async event => {
-    const file = event.target.files?.[0], intent = ++fileIntent.current;
-    setSourceFile(null); setPublicReview(false); setActionError('');
-    setRepair(value => ({...value, path:''}));
-    if (!file) { setReadingFile(false); return; }
-    setReadingFile(true);
-    try {
-      const selected = await authority.readProjectFile(descriptor.root, file);
-      if (intent !== fileIntent.current || !scopeCurrent()) return;
-      setSourceFile(selected); setRepair(value => ({...value, path:selected.path}));
-    } catch (error) {
-      if (intent === fileIntent.current && scopeCurrent()) setActionError(error.message || 'The source file could not be read.');
-    } finally { if (intent === fileIntent.current && mounted.current) setReadingFile(false); }
-  };
-  const createRepairWork = async event => {
-    event.preventDefault();
-    if (busyRef.current || !editorsReady || !sourceFile || readingFile || creationUncertain) return;
-    busyRef.current = true; setBusy(true); setActionError('');
-    try {
-      if (protectedEditors) await editors.current.work.dirty();
-      if (revisionBase) {
-        const localSource = revisionBase.local_source;
-        const expectedRequest = revisionBase.request_id || (revisionSubmission.current &&
-          'local-revision-' + revisionSubmission.current.revision_id);
-        const operationMatches = localSource ?
-          (native?.state === 'idle' || (native?.state === 'local_delivery_abandoned' &&
-            native.work === revisionBase.work && native.request_id === expectedRequest &&
-            native.local_resolution?.result === localSource.result && native.local_resolution?.resolution === localSource.resolution)) :
-          revisionBase.request_id === native?.request_id && revisionBase.work === native?.work;
-        if (revisionBase.graph !== state?.canvas?.graph_id || revisionBase.scope !== state?.canvas?.root ||
-            revisionBase.owner !== native?.owner || revisionBase.view !== native?.view ||
-            !operationMatches) {
-          throw new Error('Return to this revision’s original Workshop operation before saving it.');
-        }
-        let held = revisionSubmission.current;
-        if (!held) {
-          const revisionId = window.crypto.randomUUID().replaceAll('-', '');
-          held = {revision_id:revisionId, base_digest:revisionBase.input_digest,
-            inputs:{...revisionBase.inputs, model:repair.model.trim(), artifact_name:revisionId + '.patch',
-              files:[{path:repair.path, content:sourceFile.content, sha256:sourceFile.sha256},
-                ...revisionBase.inputs.files.slice(1)]},
-            requirements:{acceptance_criteria:[{criterion:repair.criterion.trim(), verification:repair.verification.trim()},
-              ...revisionBase.requirements.acceptance_criteria.slice(1)]}};
-          revisionSubmission.current = held;
-        }
-        if (localSource && native?.state === 'idle') setRevisionBase(value => ({...value,
-          request_id:'local-revision-' + held.revision_id}));
-        const saved = await authority.nativeWorkAction(descriptor.root, 'revise_project', revisionBase.work,
-          {draft:held, ...(localSource || {})});
-        if (!scopeCurrent()) return;
-        setRevisionBase(null); revisionSubmission.current = null; setSourceFile(null);
-        setRepair({title:'', description:'', criterion:'', verification:'', path:'', model:'nex-agi/nex-n2.5-pro:free'});
-        await authority.refreshWorkshop(descriptor.root);
-        try { await authority.refreshTopologyCanvas(); }
-        catch (_) { setActionError('Revised inputs are saved. Refresh the canvas to display their updated wires.'); }
-        if (scopeCurrent() && saved.work_revision.current_input_digest !== saved.work_revision.input_digest) {
-          setActionError('This revision was already saved, but the Work changed afterward. Reopen its current inputs before preparing.');
-        }
-        return;
-      }
-      const node = projectedWorkNodes.find(row => row.id === descriptor.root);
-      const result = await authority.createProjectWork(descriptor.root, {...repair, hosts:repair.programs || [], content:sourceFile.content,
-        external_key:(repair.key || '').trim(),
-        x:Number.isFinite(node?.x) ? node.x + 280 : 200, y:Number.isFinite(node?.y) ? node.y : 200});
-      if (result.existing) {
-        // Founder decision 3: this key already names a Work. Nothing was created; offer that Work.
-        if (mounted.current) setExistingWork({root:result.created_root, key:(repair.key || '').trim()});
-        return;
-      }
-      if (mounted.current) {
-        setSourceFile(null); setRepair({title:'', description:'', criterion:'', verification:'', path:'', model:'nex-agi/nex-n2.5-pro:free'});
-        setCreationUncertain(true);
-      }
-      if (result.navigated || !scopeCurrent()) return;
-      // Select the newly created Work through the same durable view operation.
-      if (result.original_graph === state?.canvas?.graph_id && result.original_scope === state?.canvas?.root) {
-        await authority.refreshTopologyCanvas();
-        await authority.selectTopology(result.created_root);
-      }
-      window.location.reload();
-    } catch (error) {
-      if (scopeCurrent()) {
-        if (revisionBase && error.revisionRejectedNoWrite) revisionSubmission.current = null;
-        setActionError(error.message || 'Work creation could not be confirmed. Refresh the canvas before trying again.');
-        if (error.creationUncertain) setCreationUncertain(true);
-      }
-    } finally { busyRef.current = false; if (mounted.current) setBusy(false); }
-  };
-  const beginWorkRevision = async (delivery = null) => {
-    const localSource = delivery || (native?.state === 'local_delivery_abandoned' ? native.local_resolution : null);
-    if (busyRef.current || !editorsReady || revisionBase ||
-        (localSource ? !['idle','local_delivery_abandoned'].includes(native?.state) : native?.state !== 'published')) return;
-    busyRef.current = true; setBusy(true); setActionError('');
-    try {
-      if (protectedEditors) await editors.current.work.dirty();
-      const work = localSource?.work || native.work;
-      const result = await authority.nativeWorkAction(descriptor.root, 'read_project', work);
-      if (!scopeCurrent()) return;
-      const pending = result.draft.pending_revision;
-      if (pending && (!localSource || pending.result !== localSource.result || pending.resolution !== localSource.resolution)) {
-        throw new Error('Open the exact local delivery associated with this saved revision.');
-      }
-      const draft = pending ? {...result.draft, inputs:pending.inputs, requirements:pending.requirements,
-        input_digest:pending.base_digest} : result.draft;
-      const file = draft.inputs.files[0], criterion = draft.requirements.acceptance_criteria[0];
-      if (typeof file?.content !== 'string' || typeof file?.path !== 'string' ||
-          typeof criterion?.criterion !== 'string' || typeof criterion?.verification !== 'string') {
-        throw new Error('This Work’s editable inputs are incomplete.');
-      }
-      setRevisionBase({...draft, work:result.work, graph:state?.canvas?.graph_id, scope:state?.canvas?.root,
-        owner:result.owner, view:result.view, request_id:native.state === 'idle' ? null : native.request_id,
-        ...(localSource ? {local_source:{result:localSource.result, resolution:localSource.resolution}} : {})});
-      revisionSubmission.current = pending ? {revision_id:pending.revision_id, base_digest:pending.base_digest,
-        inputs:pending.inputs, requirements:pending.requirements} : null;
-      setRepair({title:draft.title, description:draft.description, model:draft.inputs.model,
-        path:file.path, criterion:criterion.criterion, verification:criterion.verification});
-      setSourceFile({...file, bytes:new TextEncoder().encode(file.content).byteLength});
-    } catch (error) { if (scopeCurrent()) setActionError(error.message || 'The Work could not be opened for revision.'); }
-    finally { busyRef.current = false; if (mounted.current) setBusy(false); }
-  };
-  React.useEffect(() => {
-    const unavailable = descriptor?.unavailable === true;
-    if (unavailable || !descriptor.root) return;
-    let disposed = false, timer, active = false;
-    let nativeCursor = authority.getSnapshot()?.workshop?.content_cursor || null;
-    let lastNativeRead = Date.now();
-    const refresh = async () => {
-      if (disposed || document.hidden || active) return;
-      clearTimeout(timer);
-      active = true; setRefreshing(true);
-      try {
-        let projection;
-        try {
-          const opening = openedRoot.current !== descriptor.root && typeof authority.openWorkshop === 'function';
-          if (opening) openedRoot.current = descriptor.root;
-          projection = await (opening ? authority.openWorkshop(descriptor.root) : authority.refreshWorkshop(descriptor.root));
-        } finally {
-          if (!disposed) setRefreshing(false);
-        }
-        const snapshot = authority.getSnapshot();
-        const operation = snapshot?.nativeWork;
-        const cursor = projection?.content_cursor || (projection ? String(projection.revision) : null);
-        const settling = operation?.root === descriptor.root &&
-          ['attaching', 'recovering', 'preparing', 'executing', 'uncertain', 'publication_uncertain'].includes(operation.state);
-        // Reuse the existing visible-page poll. An external worker's result
-        // must refresh this panel too; do not start another background timer.
-        if (!disposed && !document.hidden && nativeAvailable && !busyRef.current && !revisionSubmission.current &&
-            cursor && (cursor !== nativeCursor || settling) && Date.now() - lastNativeRead >= 10000) {
-          lastNativeRead = Date.now();
-          try {
-            const status = await authority.refreshNativeWork(descriptor.root, nativeTarget || null);
-            if (!disposed && status) { nativeCursor = cursor; setNativeSyncError(''); }
-          } catch (error) {
-            if (!disposed) setNativeSyncError(error.message || 'Task status could not refresh. Read operation status to retry.');
-          }
-        }
-      } catch (_) {}
-      finally {
-        active = false;
-        if (!disposed) {
-          timer = setTimeout(refresh, 2500);
-        }
-      }
-    };
-    const visibility = () => { clearTimeout(timer); if (!document.hidden) refresh(); };
-    document.addEventListener('visibilitychange', visibility);
-    refresh();
-    return () => { disposed = true; clearTimeout(timer); document.removeEventListener('visibilitychange', visibility); };
-  }, [authority, descriptor.root, nativeAvailable, nativeTarget, descriptor?.unavailable]);
-  const participants = transcript?.participants || [];
-  const nativeContacts = store.contacts, contactError = store.contactError, contactsLoading = store.contactsLoading;
-  // The recipient picker offers connections that are here now; an offline one is one choice away.
-  const [showOfflineContacts, setShowOfflineContacts] = React.useState(false);
-  const offlineContacts = nativeContacts.filter(row => row.connected === false && 'contact:' + row.root !== target).length;
-  const pickerContacts = showOfflineContacts ? nativeContacts :
-    nativeContacts.filter(row => row.connected !== false || 'contact:' + row.root === target);
-  const contactRead = React.useRef(0), currentTarget = React.useRef(target);
-  currentTarget.current = target;
-  const refreshContacts = React.useCallback(async () => {
-    if (!existing || !authority.nativeAgents) return;
-    const request = ++contactRead.current;
-    storeChanged({contactsLoading:true, contactError:''});
-    try {
-      const result = await authority.nativeAgents(descriptor.root);
-      if (request !== contactRead.current || !mounted.current) return;
-      if (!Array.isArray(result.contacts) || result.contacts.length > 64 || result.contacts.some(row =>
-          !workshopSelectionId(row.root) || typeof row.label !== 'string' ||
-          !/^[a-f0-9]{64}$/.test(row.binding_digest) || ![true,false,null].includes(row.connected))) {
-        throw new Error('The saved agent connections could not be read.');
-      }
-      storeChanged({contacts:result.contacts});
-      if (result.status !== 'ok') storeChanged({contactError:'Saved connections loaded; live agent availability could not be checked.'});
-      try {
-        const choice = JSON.parse(window.sessionStorage.getItem('archhub.native-contact.selection.v1') || 'null');
-        if (!currentTarget.current && choice?.graph === state?.canvas?.graph_id && choice.root === descriptor.root &&
-            result.contacts.some(row => row.root === choice.contact)) {
-          setTarget('contact:' + choice.contact);
-          window.sessionStorage.removeItem('archhub.native-contact.selection.v1');
-        }
-      } catch (_) { /* Selection storage is presentation only. */ }
-    } catch (error) {
-      if (request === contactRead.current && mounted.current) storeChanged({contactError:error?.message || 'Agent connections are unavailable.'});
-    } finally {
-      if (request === contactRead.current && mounted.current) storeChanged({contactsLoading:false});
-    }
-  }, [authority, existing, descriptor.root, state?.canvas?.graph_id]);
-  React.useEffect(() => {
-    storeChanged({contacts:[], contactError:'', contactsLoading:false,
-      refreshContacts:existing && authority.nativeAgents ? refreshContacts : null});
-    refreshContacts();
-    return () => { contactRead.current += 1; storeChanged({refreshContacts:null}); };
-  }, [refreshContacts]);
-  const contactTarget = nativeContacts.find(row => 'contact:' + row.root === target) || null;
-  const modelAgent = existing ? transcript?.model_agent : null;
-  const modelTarget = modelAgent && target === 'model:' + modelAgent.root ? modelAgent : null;
-  // The Workshop itself is the default recipient (design studio-workshop.jsx composer,
-  // "to: Workshop"): opening a room no longer pre-addresses one model agent.
-  const names = new Map(participants.map(row => [row.root, row.label]));
-  const messages = panelReady ? (transcript?.messages || []) : [];
-  // A connected agent's name as the relay recorded it on its reply ("relayed reply from <name>"),
-  // so an agent is never shown by its contact root on this page.
-  const relayLabels = new Map(messages.filter(m => typeof m.relayed_from === 'string' && typeof m.relayed_label === 'string' && m.relayed_label)
-    .map(m => [m.relayed_from, m.relayed_label]));
-  relayLabels.forEach((label, root) => { if (!names.has(root)) names.set(root, label); });
-  // THE LIVE SCENE: every design surface below reads these, never a seed.
-  const taskItems = workshopTaskItems(messages, projectedWorkNodes, transcript?.planned_items);
-  const tasks = wsTasks(taskItems, projectedWorkNodes, workshopProjectedWires(state), native, names).map(t => {
-    const decision = t.nativeApproving ? [
-      {label:artifactReview ? 'Approve this repair' : 'Approve this input', action:'approve',
-        disabled:busy || !editorsReady || (artifactReview && (artifactReviewExpired || native.approved === true || !native.review_text || !native.input_digest))},
-      {label:artifactReview ? 'Generate repair artifact' : 'Run approved review', action:'execute',
-        disabled:busy || !editorsReady || (artifactReview && (artifactReviewExpired || native.approved !== true))},
-      ...(native?.mode === 'agent' ? [{label:'Decline', action:'stop_native',
-        disabled:busy || !editorsReady, reason:'Stop this retained native operation.'}] : []),
-    ] : null;
-    const held = native?.artifact && native.work === t.work && native.artifact.outcome !== 'failed' ? native.artifact : null;
-    const artifact = held ? {name:held.name, bytes:held.bytes, digest:held.digest, summary:held.summary,
-      download:['settled', 'published', 'publication_uncertain', 'release_pending'].includes(native.state) && editorsReady ? () => nativeAct('read_artifact') : null} : null;
-    return {...t, decision, artifact};
-  });
-  const agents = wsAgents(transcript, tasks, Date.now() / 1000);
-  const agent = root => agentOf(agents, names, transcript?.self, root);
-  const flow = wsFlow(projectedWorkNodes, workshopProjectedWires(state), tasks);
-  // The live graph shows the proposed workflow's own steps and wiring when there is one (design: the graph
-  // IS the workflow; audit gap 8); otherwise the canvas topology, as before.
-  const graphWorkflow = (Array.isArray(transcript?.workflows) ? transcript.workflows : []).slice(-1)[0] || null;
-  const graphFlow = graphWorkflow && Array.isArray(graphWorkflow.nodes) && graphWorkflow.nodes.length
-    ? wsFlow(graphWorkflow.nodes.map((node, index) => ({id:node.root, title:node.title || node.engine, status:node.engine || '', y:index * 100})),
-        (Array.isArray(graphWorkflow.edges) ? graphWorkflow.edges : []).map(([a, b]) => ({from:[a], to:[b]})), tasks)
-    : flow;
-  const selAgentId = agents.some(a => a.id === S.agent) ? S.agent : agents[0]?.id || null;
-  const selAgent = agents.find(a => a.id === selAgentId) || null;
-  // Agent Work proposals are task cards too: selectable, and one waiting on you counts as "needs you".
-  // Approved or left for later they no longer count; the bound Work is its own card once named.
-  const proposalTasks = messages.filter(isWorkProposal).map(message =>
-    wsProposalTask(message, proposalHeld[message.message_id || message.root]));
-  const allTasks = [...tasks, ...proposalTasks];
-  const selTask = allTasks.some(t => t.work === S.task) ? S.task : null;
-  const counts = {block:allTasks.filter(t => t.state==='block').length, run:tasks.filter(t => t.state==='run' || t.state==='open').length,
-    review:tasks.filter(t => t.state==='review').length, paused:tasks.filter(t => t.state==='paused').length, done:tasks.filter(t => t.state==='done').length};
-  const approvalCount = allTasks.filter(t => (t.proposal && t.state === 'block') || t.approving).length;
-  // An agent's relayed reply is a conversation row, not tool activity. On the messages feed the
-  // server sends the newest tool records as their own bounded read (the page holds notes only).
-  const activitySource = feed === 'messages' && Array.isArray(transcript?.activity) ? transcript.activity : messages;
-  const toolRecords = activitySource.filter(message => (activitySource !== messages || message.category === 'tool') &&
-    typeof message.relayed_from !== 'string' &&
-    (!selTask || String(message.body || '').includes(selTask))).slice(-5).reverse();
-  const activity = toolRecords.map(message => ({root:message.root, at:wsClockText(message.created_at, true),
-    dir:message.sender_root === transcript?.self ? '←' : '→', text:wsLine(message.body, 60)}));
-  const activityNote = !transcript ? 'Loading messages\u2026' : feed === 'messages' ?
-    'Tool records are on the Tool activity feed, under ⋯.' : 'No tool record on this page.';
-  const listening = participants.filter(row => row.attached && row.root !== transcript?.self).length;
-  const joined = participants.some(row => row.root === transcript?.self && row.attached) &&
-    (!existing || transcript?.can_send === true);
-  const openAsNodes = () => {
-    const focus = selTask || nativeTarget || (projectedWorkNodes.some(node => node.id === descriptor.root) ? descriptor.root : '');
-    // A workflow's step nodes live in its own (hidden) scope; find the workflow this focus
-    // belongs to so its scope is walked before the canvas is shown.
-    const workflows = Array.isArray(transcript?.workflows) ? transcript.workflows : [];
-    const workflow = workflows.find(w => w && (w.root === focus ||
-      (Array.isArray(w.members) && w.members.includes(focus)))) || null;
-    openWorkflowAsNodes({focus, workflow, authority, scopeOpen: window.ARCHHUB_SCOPE_OPEN,
-      setFocusId, requestCanvasReveal, setMode, setError: setActionError});
-  };
-  const openRootAsNodes = root => openWorkflowAsNodes({focus:root, workflow:null, authority,
-    scopeOpen: window.ARCHHUB_SCOPE_OPEN, setFocusId, requestCanvasReveal, setMode, setError: setActionError});
-  const selectTask = id => {
-    setS({ agent:S.agent, task: id === selTask ? null : id });
-    if (id !== selTask) setPreset('task');
-  };
-  const setSelAgent = id => setS({ agent:id, task:null });
-  // A proposal's inline decision (design studio-workshop.jsx:221-223, :404-410): Approve
-  // binds exactly this proposal through the existing bind; Decline persists a decline record.
-  const decideProposal = async choice => {
-    const id = choice.message;
-    if (busyRef.current || !existing) return;
-    busyRef.current = true; setBusy(true); setProposalHeld(held => ({...held, [id]:{pending:true}}));
-    try {
-      if (choice.action === 'decline-proposal') {
-        const done = await declineWorkProposal(authority, descriptor.root, id);
-        if (mounted.current) setProposalHeld(held => ({...held, [id]:done.work_root ? {work_root:done.work_root} : {declined:done.declined}}));
-      } else {
-        const done = await approveWorkProposal(authority, descriptor.root, id);
-        if (mounted.current) setProposalHeld(held => ({...held, [id]:{work_root:done.work_root}}));
-      }
-      try { await authority.refreshTopologyCanvas(); } catch (_) { /* the canvas shows the Work on its next read */ }
-    } catch (failure) {
-      if (mounted.current) setProposalHeld(held => ({...held, [id]:{error:failure?.message || 'The approval was not confirmed. Approve again to retry.'}}));
-    } finally { busyRef.current = false; if (mounted.current) setBusy(false); }
-  };
-  const decide = (work, choice) => {
-    if (choice && ['approve-proposal', 'decline-proposal'].includes(choice.action)) return decideProposal(choice);
-    if (choice && choice.action) nativeAct(choice.action, {work});
-  };
-  // Which loaded proposals are already bound, so an approved one never offers Approve again.
-  const proposalIds = messages.filter(isWorkProposal).map(message => message.message_id || message.root).join(' ');
-  React.useEffect(() => {
-    if (!proposalIds || !existing || typeof authority?.readWorkProposals !== 'function') return;
-    let gone = false;
-    (async () => {
-      try {
-        let read;
-        try { read = await authority.readWorkProposals(descriptor.root); }
-        catch (failure) {
-          if (!/operation status first/.test(String(failure?.message))) throw failure;
-          await authority.refreshNativeWork(descriptor.root, null);
-          read = await authority.readWorkProposals(descriptor.root);
-        }
-        if (!gone && mounted.current) setProposalHeld(held => {
-          const next = {...held};
-          for (const row of read.rows) {
-            if (row.work_root) next[row.message_id] = {work_root:row.work_root};
-            else if (row.declined) next[row.message_id] = {declined:row.declined};
-          }
-          return next;
-        });
-      } catch (_) { /* Approve reads the bound state again before it binds. */ }
-    })();
-    return () => { gone = true; };
-  }, [proposalIds, existing, descriptor.root]);
-  // Disconnect only an agent with its own Session Link channel; base-transport participants never offer it.
-  const canDisconnect = typeof authority?.disconnectAgent === 'function';
-  const disconnectable = row => canDisconnect && row.is_agent === true && row.root !== transcript?.self &&
-    (['attached', 'attaching', 'retiring'].includes(row.session_link) || store.outcomes[row.root]?.outcome === 'uncertain');
-  const disconnectAgent = async row => {
-    if (store.pending[row.root]) return;
-    storeChanged({pending:{...store.pending, [row.root]:true}, outcomes:{...store.outcomes, [row.root]:null}});
-    try {
-      const result = await authority.disconnectAgent(descriptor.root, row.root);
-      storeChanged({outcomes:{...store.outcomes, [row.root]:{outcome:result.outcome}}});
-    } catch (error) {
-      storeChanged({outcomes:{...store.outcomes, [row.root]:{error:error.message || 'The disconnect could not be confirmed. Retry to reconcile it.'}}});
-    } finally {
-      storeChanged({pending:Object.fromEntries(Object.entries(store.pending).filter(([root]) => root !== row.root))});
-    }
-  };
-  const messagePageIdentity = JSON.stringify([state?.canvas?.graph_id, state?.canvas?.root,
-    descriptor.root, feed, page?.before ?? null, transcript?.owner ?? null, transcript?.view ?? null]);
-  React.useLayoutEffect(() => {
-    if (!panelReady) return;
-    const successful = !!transcript && !transcript.error &&
-      (!content || transcript.page_before === (page?.before ?? null));
-    messageScroll.current.update(messageViewport.current, messagePageIdentity, successful, olderPage, latestJump.current);
-    if (successful && !olderPage) latestJump.current = false;
-  }, [panelReady, messagePageIdentity, transcript, messageTextSize, preset]);
-  React.useEffect(() => {
-    if (typeof ResizeObserver !== 'function') return;
-    const observer = new ResizeObserver(() => messageScroll.current.reflow(messageViewport.current));
-    if (messageViewport.current) observer.observe(messageViewport.current);
-    if (messageContent.current) observer.observe(messageContent.current);
-    return () => observer.disconnect();
-  }, [preset]);
-  const act = async (action) => {
-    // Sending never waits for draft protection: the message route stands on its own,
-    // and a protected editor is used only once it is ready.
-    if (busyRef.current) return;
-    const details = action === 'send' ? {target, message:draft.trim(), ...(execution ? {execution_root:execution} : {})} : {};
-    busyRef.current = true; setBusy(true); setActionError('');
-    try {
-      if (action === 'send' && target.startsWith('contact:')) {
-        if (!contactTarget || contactTarget.connected === false) throw new Error('Refresh this agent connection before sending.');
-        await authority.sendNativeContact(descriptor.root, contactTarget, draft.trim(),
-          protectedEditors && editorsReady ? editors.current.message : null);
-      } else if (action === 'send' && target.startsWith('model:')) {
-        if (!modelTarget) throw new Error('Refresh this conversation and its model node before sending.');
-        await authority.sendModelConversation(descriptor.root, modelTarget, draft.trim(),
-          protectedEditors && editorsReady ? editors.current.message : null);
-      } else {
-        await authority.workshopAction(descriptor.root, action, null, details,
-          protectedEditors && editorsReady ? editors.current.message : null);
-      }
-      if (action === 'send' && mounted.current) setDraft('');
-    } catch (error) { setActionError(error.message || 'The action could not be confirmed. Retry to reconcile it.'); }
-    finally { busyRef.current = false; if (mounted.current) setBusy(false); }
-  };
-  // The design's Send stays drawn as the primary action; an empty draft sends nothing, and a recipient that
-  // cannot receive says why instead of a silent no-op.
-  const sendDisabled = busy || !joined;
-  const send = () => {
-    if (sendDisabled || !draft.trim()) return;
-    // No target is the design's default: the message goes to the Workshop, and every
-    // attached participant reads it. Picking one agent addresses only that agent.
-    if ((target.startsWith('contact:') && (!contactTarget || contactTarget.connected === false)) ||
-        (target.startsWith('model:') && !modelTarget)) { setActionError('Refresh this recipient before sending.'); return; }
-    act('send');
-  };
-  const addressable = participants.filter(row => row.attached && row.root !== transcript?.self);
-  const connectedContact = nativeContacts.find(row => row.connected === true);
-  const firstRecipient = modelAgent ? 'model:' + modelAgent.root : connectedContact ? 'contact:' + connectedContact.root :
-    addressable[0] ? addressable[0].root : '';
-  const targetName = target.startsWith('model:') ? (modelAgent ? `Agent · ${modelAgent.model}` : 'the model') :
-    target.startsWith('contact:') ? (contactTarget ? contactTarget.label : 'this connection') : (names.get(target) || target);
-  // Relocated controls (feed, paging, text size, Session Link disconnect, saved connections, Work on a
-  // project) sit behind the context panel's ⋯, so the design's layout is unchanged while it is folded.
-  const selRow = selAgent ? selAgent.row : null;
-  const controls = <>
-    <div style={{ padding:'12px 16px', borderBottom:`1px solid ${W.lineSoft}` }}>
-      <Lbl>HISTORY</Lbl>
-      <div role={transcript?.error ? 'alert' : 'status'} style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, lineHeight:1.6, color:transcript?.error ? W.err : W.inkSoft, marginTop:8, overflowWrap:'anywhere' }}>
-        {transcript?.error || (paging ? 'Loading message page\u2026' : refreshing ? 'Updating messages\u2026' :
-          transcript ? (olderPage ? 'Earlier messages synchronized' : 'Messages synchronized') : 'Loading messages\u2026')}
-        {transcript && !transcript.error ? ` \u00b7 ${messages.length} displayed \u00b7 ${listening} listening` : ''}
-        {transcript && !transcript.error && content ? ` \u00b7 ${transcript.total} ${feed === 'activity' ? 'tool records' : feed === 'messages' ? 'notes' : 'records'} available` : ''}
-      </div>
-      {content && typeof authority.showWorkshopFeed === 'function' && <div role="group" aria-label="Workshop feed" style={{ display:'flex', flexWrap:'wrap', gap:6, marginTop:8 }}>
-        {[['messages', 'Notes & replies'], ['activity', 'Tool activity'], ['all', 'All history']].map(([key, label]) =>
-          <Mini key={key} acc={feed === key} disabled={busy || paging} onClick={() => chooseFeed(key)}>{label}</Mini>)}
-      </div>}
-      <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginTop:8 }}>
-        <Mini disabled={busy || paging || !transcript?.next_before || !!transcript?.error} onClick={() => navigatePage(false)}>Older messages</Mini>
-        <Mini disabled={busy} title="Jump to latest messages" onClick={() => navigatePage(true)}>{'\u2193 Latest'}</Mini>
-        {awayFromLatest && <Lbl>READING EARLIER</Lbl>}
-      </div>
-      <div role="group" aria-label="Workshop message text size" style={{ display:'flex', flexWrap:'wrap', gap:6, marginTop:8, alignItems:'center' }}>
-        <Lbl>TEXT</Lbl>
-        {[13.5, 16, 18, 20].map(size => <Mini key={size} acc={messageTextSize === size} onClick={() => setMessageTextSize(size)}>{size} px</Mini>)}
-      </div>
-    </div>
-    {selRow && <div style={{ padding:'12px 16px', borderBottom:`1px solid ${W.lineSoft}` }}>
-      <Lbl>AGENT CONNECTION · {selAgent.name}</Lbl>
-      <div style={{ marginTop:8 }}>
-        <PRow k="status" v={ST[selAgent.status].label} c={ST[selAgent.status].col}/>
-        <PRow k="session link" v={wsLinkStatus(selRow) || 'none'}/>
-        <PRow k="last seen" v={selAgent.seen || '—'} last/>
-      </div>
-      <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginTop:8 }}>
-        {disconnectable(selRow) && <Btn sm disabled={!!store.pending[selRow.root]} onClick={() => disconnectAgent(selRow)}>
-          {selRow.session_link === 'retiring' || store.outcomes[selRow.root]?.outcome === 'uncertain' ? 'Retry Session Link disconnect' : 'Disconnect Session Link channel'}</Btn>}
-        {existing && authority.nativeAgents && <Btn sm disabled={busy || contactsLoading} onClick={refreshContacts}>{'\u21bb Refresh agent connections'}</Btn>}
-      </div>
-      <div style={{ fontSize:11.5, color:W.inkSoft, lineHeight:1.5, marginTop:8 }}>
-        Disconnecting a Session Link channel does not end the agent session or undo work already delivered.
-      </div>
+// Only menu focus/open state is local; the target stays in the existing composer route.
+const WorkshopAgentPicker = ({ aliases, target, label, avatar, disabled, onSelect }) => {
+  const [open,setOpen]=React.useState(false), trigger=React.useRef(null), menu=React.useRef(null), first=React.useRef(0);
+  const menuId=React.useId();
+  const focus=index=>menu.current?.querySelectorAll('[role=option]')[index]?.focus();
+  const close=()=>{setOpen(false);trigger.current?.focus();};
+  const show=index=>{first.current=index;setOpen(true);};
+  React.useEffect(()=>{if(open)focus(first.current);},[open]);
+  React.useEffect(()=>{if(disabled)setOpen(false);},[disabled]);
+  return <div style={{position:'relative'}} onBlur={event=>{if(!event.currentTarget.contains(event.relatedTarget))setOpen(false);}}>
+    <button ref={trigger} type="button" data-workshop-agent-picker="" aria-label="Reply agent" aria-haspopup="listbox"
+      aria-controls={menuId} aria-expanded={open} disabled={disabled} onClick={()=>open?setOpen(false):show(Math.max(0,aliases.findIndex(a=>a.target===target)))}
+      onKeyDown={event=>{if(['ArrowDown','ArrowUp'].includes(event.key)){event.preventDefault();show(event.key==='ArrowUp'?aliases.length-1:0);}}}
+      style={{display:'inline-flex',alignItems:'center',gap:6,height:30,padding:'0 10px',borderRadius:7,background:W.workshop.buttonBackground,
+        color:W.ink,fontFamily:W.sans,fontSize:12.5,border:0,cursor:'pointer'}}>{avatar}{label}<span aria-hidden="true">▾</span></button>
+    {open&&<div ref={menu} id={menuId} role="listbox" aria-label="Reply agents" style={{position:'absolute',bottom:38,left:0,minWidth:180,
+      padding:4,borderRadius:8,background:W.surf2,boxShadow:W.elev.e2,border:`1px solid ${W.line}`,zIndex:4}}>
+      {aliases.map((a,index)=><div key={a.target} role="option" aria-selected={a.target===target} tabIndex={-1}
+        onClick={()=>{onSelect(a.target);close();}} onKeyDown={event=>{
+          if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){event.preventDefault();focus(event.key==='Home'?0:event.key==='End'?aliases.length-1:(index+(event.key==='ArrowDown'?1:-1)+aliases.length)%aliases.length);}
+          else if(event.key==='Enter'||event.key===' '){event.preventDefault();onSelect(a.target);close();}
+          else if(event.key==='Escape'){event.preventDefault();close();}else if(event.key==='Tab')setOpen(false);
+        }} style={{padding:'8px 10px',borderRadius:5,fontSize:13,color:W.ink,background:a.target===target?W.workshop.buttonBackground:'transparent',cursor:'pointer'}}>{a.label}</div>)}
     </div>}
-    {nativeAvailable && <section aria-label="Native Workshop review" style={{ padding:'12px 16px', fontSize:12, color:W.inkSoft }}>
-        <h3 style={{margin:'0 0 8px'}}>Work on a project</h3>
-        <button disabled={busy} onClick={() => nativeAct('refresh')}>Read operation status</button>
-        <p role="status">{native?.state || 'Read status to connect to the native Workshop.'}</p>
-        {native?.review_recovered && <p style={{fontSize:12, color:W.inkSoft}}>
-          Reviewing a saved result. No new model run has occurred.
-        </p>}
-        {native && <WorkProposals authority={authority} root={descriptor.root} disabled={busy} isCurrent={scopeCurrent}
-          onBound={() => authority.refreshTopologyCanvas()}/>}
-        {(!native || native.state === 'idle' || revisionBase) && <>
-          <details open={!!revisionBase} style={{marginBottom:16}}>
-            <summary>{revisionBase ? 'Revise this Work' : 'Create a repair Work node'}</summary>
-            <p style={{fontSize:12, color:W.inkSoft, lineHeight:1.5}}>
-              {revisionBase ? 'Saving replaces this Work’s source inputs and criteria together; earlier values and results remain saved.' :
-                'Choose one public text source file. Creating Work saves its text, your request, and criteria on the graph.'}
-              No model runs until you review and approve the prepared input, then generate a draft patch. This does not apply changes to your source.
-            </p>
-            {revisionBase && <p style={{fontSize:12, color:W.inkSoft}}>
-              Update the source, model and acceptance criteria for this same Work. Earlier results stay saved.
-              Its task wording stays bound to the existing plan. Saving requires fresh input approval before another run.
-              {revisionBase.inputs.files.length > 1 || revisionBase.requirements.acceptance_criteria.length > 1 ?
-                ' This editor changes the first source and criterion; additional saved sources and criteria are retained.' : ''}
-            </p>}
-            <form onSubmit={createRepairWork} onChangeCapture={() => protectDraft('work')}>
-              <fieldset disabled={busy || !editorsReady || !!revisionSubmission.current} style={{border:0, margin:0, padding:0, minWidth:0}}>
-              <label style={{display:'block', margin:'10px 0'}}>Work title
-                <input aria-label="Repair Work title" required maxLength={160} value={repair.title}
-                  disabled={busy || !!revisionBase} onChange={event => setRepair(value => ({...value, title:event.target.value}))}
-                  style={{display:'block', width:'100%', marginTop:4}}/>
-              </label>
-              {!revisionBase && <label style={{display:'block', margin:'10px 0'}}>Work key
-                <input aria-label="Work key" maxLength={160} value={repair.key || ''} placeholder="project:purpose:1"
-                  pattern="[a-z0-9][a-z0-9.\-]*:[a-z0-9][a-z0-9.\-]*:[0-9]+" disabled={busy}
-                  onChange={event => { setExistingWork(null); setRepair(value => ({...value, key:event.target.value})); }}
-                  style={{display:'block', width:'100%', marginTop:4, fontFamily:W.mono}}/>
-              </label>}
-              {existingWork && <div role="status" aria-label="Existing Work for this key" style={{margin:'8px 0', padding:'8px 10px',
-                  border:`1px solid ${W.warn}`, borderRadius:8}}>
-                <Lbl c={W.warn}>THIS KEY ALREADY HAS A WORK</Lbl>
-                <div style={{fontSize:11.5, lineHeight:1.5, color:W.inkSoft, marginTop:4}}>{existingWork.key} names a Work that already exists. Nothing new was created; change the key to create another.</div>
-                <button type="button" style={{marginTop:6}} onClick={() => { setS({agent:null, task:existingWork.root}); setControlsOpen(false); }}>Assign that Work…</button>
-              </div>}
-              <label style={{display:'block', margin:'10px 0'}}>Requested change
-                <textarea aria-label="Requested source change" required maxLength={12000} value={repair.description}
-                  disabled={busy || !!revisionBase} onChange={event => setRepair(value => ({...value, description:event.target.value}))}
-                  style={{display:'block', width:'100%', minHeight:72, marginTop:4}}/>
-              </label>
-              {!revisionBase && <label style={{display:'block', margin:'10px 0'}}>Repair runtime
-                <select aria-label="Repair runtime" value={repair.runtime || 'openrouter'} disabled={busy}
-                  onChange={event => setRepair(value => ({...value, runtime:event.target.value,
-                    model:event.target.value === 'claude' ? 'sonnet' : 'nex-agi/nex-n2.5-pro:free'}))}>
-                  <option value="openrouter">Free OpenRouter</option>
-                  <option value="claude">Native Claude</option>
-                </select>
-              </label>}
-              <label style={{display:'block', margin:'10px 0'}}>{repair.runtime === 'claude' ? 'Claude model' : 'Free OpenRouter model'}
-                <input aria-label={repair.runtime === 'claude' ? 'Claude repair model' : 'Free OpenRouter repair model'} required maxLength={repair.runtime === 'claude' ? 160 : 256} value={repair.model}
-                  disabled={busy} onChange={event => setRepair(value => ({...value, model:event.target.value}))}
-                  style={{display:'block', width:'100%', marginTop:4}}/>
-              </label>
-              <p style={{fontSize:11, color:W.inkSoft}}>{repair.runtime === 'claude' ?
-                'Uses the installed Claude account. The Work stores a 12-turn, 768 MiB process budget and a 180-second turn timeout. Review and approval are required before a model turn.' :
-                'Use an explicit :free model or openrouter/free. This choice is saved with the Work; there is no automatic fallback.'}</p>
-              {!revisionBase && <ProgramChoices selected={repair.programs || []} disabled={busy}
-                onChange={programs => setRepair(value => ({...value, programs}))}/>}
-              <label style={{display:'block', margin:'10px 0'}}>One source file · UTF-8 · up to 64 KiB
-                <input aria-label="Repair source file" type="file" disabled={busy} onChange={selectSourceFile}
-                  style={{display:'block', width:'100%', marginTop:4}}/>
-              </label>
-              {readingFile && <p role="status">Reading and hashing the selected file…</p>}
-              {sourceFile && <div style={{fontSize:11, color:W.inkSoft, overflowWrap:'anywhere'}}>
-                {sourceFile.bytes.toLocaleString()} bytes · SHA-256 {sourceFile.sha256}
-              </div>}
-              <label style={{display:'block', margin:'10px 0'}}>Relative source path
-                <input aria-label="Relative source path" required maxLength={512} value={repair.path}
-                  placeholder="src/example.js" disabled={busy || !sourceFile}
-                  onChange={event => setRepair(value => ({...value, path:event.target.value}))}
-                  style={{display:'block', width:'100%', marginTop:4}}/>
-              </label>
-              <label style={{display:'block', margin:'10px 0'}}>Acceptance criterion
-                <textarea aria-label="Repair acceptance criterion" required maxLength={4000} value={repair.criterion}
-                  disabled={busy} onChange={event => setRepair(value => ({...value, criterion:event.target.value}))}
-                  style={{display:'block', width:'100%', minHeight:56, marginTop:4}}/>
-              </label>
-              <label style={{display:'block', margin:'10px 0'}}>How to verify it
-                <textarea aria-label="Repair verification method" required maxLength={4000} value={repair.verification}
-                  disabled={busy} onChange={event => setRepair(value => ({...value, verification:event.target.value}))}
-                  style={{display:'block', width:'100%', minHeight:56, marginTop:4}}/>
-              </label>
-              <button type="submit" disabled={busy || readingFile || !sourceFile || creationUncertain ||
-                !repair.title.trim() || !repair.description.trim() || !repair.path.trim() ||
-                !repair.criterion.trim() || !repair.verification.trim() || !repair.model.trim()}>{revisionBase ? 'Save revised inputs' : 'Create repair Work'}</button>
-              {creationUncertain && <>
-                <p role="alert" style={{fontSize:12, color:W.err}}>Inspect the refreshed canvas for a created Work node before submitting again.</p>
-                <button type="button" disabled={busy} onClick={() => window.location.reload()}>Refresh canvas</button>
-              </>}
-              </fieldset>
-              {revisionBase && revisionSubmission.current && <button type="submit" disabled={busy}>Reconcile this revision</button>}
-              {revisionBase && !revisionSubmission.current && <button type="button" disabled={busy} onClick={() => {
-                fileIntent.current += 1; setReadingFile(false); setRevisionBase(null); setSourceFile(null);
-                setRepair({title:'', description:'', criterion:'', verification:'', path:'', model:'nex-agi/nex-n2.5-pro:free'});
-                setActionError('');
-              }}>Discard revision draft</button>}
-            </form>
-          </details>
-          {!revisionBase && <>
-          <select aria-label="Work node to review or repair" value={nativeTarget} disabled={busy}
-            onChange={event => {setNativeTarget(event.target.value).catch(error => setActionError(error.message));}}>
-            <option value="" disabled>Choose a Work node on this canvas</option>
-            {projectedWorkNodes.filter(node => native?.available_work?.includes(node.id)).map(node =>
-              <option key={node.id} value={node.id}>{node.title}</option>)}
-          </select>
-          {nativeTarget && <details style={{margin:'10px 0'}}>
-            <summary>Acceptance gate</summary>
-            {gateEditor?.work !== nativeTarget ?
-              <button type="button" disabled={busy} onClick={() => openGateEditor(nativeTarget)}>Open current gate</button> :
-              <form onSubmit={saveGate}>
-                <p style={{fontSize:12, color:W.inkSoft, lineHeight:1.5}}>
-                  Current gate: {gateEditor.kind || 'none'} {gateEditor.currentPath}. Work state: {gateEditor.state}.
-                  {gateEditor.editable ?
-                    ' Saving replaces only this gate on the same Work; every other requirement keeps its saved content. A test file that does not exist yet is accepted, and completion still fails until it exists.' :
-                    ' Only an OPEN, unclaimed Work accepts a gate correction. The Work keeps its identity when its claim is released.'}
-                </p>
-                <label style={{display:'block', margin:'10px 0'}}>Pytest path inside the CDE of this Work
-                  <input aria-label="Acceptance gate pytest path" required maxLength={1024} value={gateEditor.path}
-                    disabled={busy || !gateEditor.editable || !!gateEditor.submission || gateEditor.refreshPending}
-                    onChange={event => setGateEditor(value => ({...value, path:event.target.value, result:null}))}
-                    style={{display:'block', width:'100%', marginTop:4}}/>
-                </label>
-                {gateEditor.refreshPending ? <>
-                  <p role="status" style={{fontSize:12}}>The corrected gate is saved. Reopen the current gate before making another change.</p>
-                  <button type="button" disabled={busy} onClick={() => openGateEditor(gateEditor.work)}>Reopen current gate</button>
-                </> : gateEditor.uncertain ? <>
-                  <p role="status" style={{fontSize:12}}>This correction was not confirmed. Retrying sends exactly the same correction.</p>
-                  <button type="submit" disabled={busy || !gateEditor.editable}>Retry the same correction</button>
-                  <button type="button" disabled={busy} onClick={() => openGateEditor(gateEditor.work)}>Reopen current gate</button>
-                  {gateEditor.checked && <button type="button" disabled={busy} onClick={discardGateAttempt}>Discard this attempt</button>}
-                </> : <button type="submit" disabled={busy || !gateEditor.editable || !gateEditor.path.trim() ||
-                  gateEditor.path.trim() === gateEditor.currentPath}>Save corrected gate</button>}
-                {gateEditor.result && !gateEditor.refreshPending && <p role="status" style={{fontSize:12}}>
-                  {gateEditor.result.reused ? 'This correction was already saved.' : 'Gate corrected on the same Work.'}
-                </p>}
-                {gateEditor.result && <details style={{fontSize:11, overflowWrap:'anywhere'}}>
-                  <summary>Saved value</summary>
-                  Requirements value {gateEditor.result.target}, digest {gateEditor.result.input_digest}.
-                </details>}
-              </form>}
-          </details>}
-          {nativeTarget && <details style={{margin:'10px 0'}}>
-            <summary>Work configuration</summary>
-            {configEditor?.work !== nativeTarget ?
-              <button type="button" disabled={busy} onClick={() => openConfigEditor(nativeTarget)}>Open current configuration</button> :
-              <form onSubmit={saveConfiguration}>
-                {!!configEditor.drafts.length && <label style={{display:'block', margin:'10px 0'}}>Agent proposals
-                  <select aria-label="Review agent configuration proposal" value={configEditor.draft?.revision_id || ''}
-                    disabled={busy || !!configEditor.submission || configEditor.refreshPending}
-                    onChange={event => reviewConfigDraft(event.target.value)} style={{display:'block', width:'100%'}}>
-                    <option value="">Current configuration</option>
-                    {configEditor.drafts.map(draft => <option key={draft.revision_id} value={draft.revision_id}>
-                      {draft.stale ? 'Outdated - ' : ''}
-                      {Object.keys(draft.fields).join(', ')} · {draft.proposing_actor} · {draft.revision_id.slice(0, 8)}
-                    </option>)}
-                  </select>
-                </label>}
-                {configEditor.draft && <section aria-label="Proposed configuration changes">
-                  {configEditor.draft.stale && <p role="status">The Work changed after this proposal was saved.
-                    Discard it or request an updated proposal; it cannot be approved.</p>}
-                  <button type="button" disabled={busy || !!configEditor.submission}
-                    onClick={discardConfigDraft} title="Discard this proposal; preserve its history">Discard proposal</button>
-                  <p style={{fontSize:12}}>Review the proposed inputs, criteria and destination below. Approval changes
-                    this Work's configuration; it does not run the Work. You can refine the fields before approving.</p>
-                  {Object.entries(configChanges(configEditor)).map(([name, entry]) => <details key={name}>
-                    <summary>{name === 'cde-container' ? 'Destination and allowed paths' :
-                      name === 'requirements' ? 'Criteria and reviewers' : 'Inputs'} — proposed change</summary>
-                    <div style={{display:'grid', gridTemplateColumns:'repeat(2, minmax(0, 1fr))', gap:8}}>
-                      <div><strong>Current</strong><pre style={{whiteSpace:'pre-wrap', overflowWrap:'anywhere', maxHeight:240, overflow:'auto'}}>
-                        {JSON.stringify(configEditor.baselineFields[name].value, null, 2)}</pre></div>
-                      <div><strong>Proposed</strong><pre style={{whiteSpace:'pre-wrap', overflowWrap:'anywhere', maxHeight:240, overflow:'auto'}}>
-                        {JSON.stringify(entry.value, null, 2)}</pre></div>
-                    </div>
-                  </details>)}
-                </section>}
-                {!!configEditor.invalidDrafts.length && <p role="status" style={{fontSize:12}}>
-                  {configEditor.invalidDrafts.length} damaged proposal(s) could not be opened. Current configuration remains available.</p>}
-                <p style={{fontSize:12, color:W.inkSoft, lineHeight:1.5}}>
-                  Work state: {configEditor.state}. Inputs {configEditor.fields.inputs.wired ? 'wired' : 'unwired'},
-                  requirements {configEditor.fields.requirements.wired ? 'wired' : 'unwired'},
-                  CDE {configEditor.fields['cde-container'].wired ? 'wired' : 'unwired'}.
-                  {configEditor.editable ?
-                    ' Saving binds or revises only the fields you change, on this same Work; other keys keep their saved content.' :
-                    ' Only an OPEN, unclaimed Work accepts a configuration change. The Work keeps its identity when its claim is released.'}
-                  {configEditor.artifactReady ? ' Artifact input requirements are present; execution and review are separate.' :
-                    configEditor.blocker ? ' Not yet ready for artifact publication: ' + configEditor.blocker : ''}
-                </p>
-                <label style={{display:'block', margin:'10px 0'}}>CDE allowed paths, one per line
-                  <textarea aria-label="Work CDE allowed paths" maxLength={16000} value={configEditor.allowedPaths}
-                    disabled={busy || !configEditor.editable || !!configEditor.submission || configEditor.refreshPending}
-                    onChange={event => setConfigEditor(value => ({...value, allowedPaths:event.target.value, result:null}))}
-                    style={{display:'block', width:'100%', minHeight:48, marginTop:4}}/>
-                </label>
-                <label style={{display:'block', margin:'10px 0'}}>Artifact reviewer Agent Sessions, one per line
-                  <textarea aria-label="Work artifact reviewers" maxLength={8000} value={configEditor.reviewers}
-                    disabled={busy || !configEditor.editable || !!configEditor.submission || configEditor.refreshPending}
-                    onChange={event => setConfigEditor(value => ({...value, reviewers:event.target.value, result:null}))}
-                    style={{display:'block', width:'100%', minHeight:48, marginTop:4}}/>
-                </label>
-                <ProgramChoices selected={configEditor.programs}
-                  disabled={busy || !configEditor.editable || !!configEditor.submission || configEditor.refreshPending}
-                  onChange={programs => setConfigEditor(value => ({...value, programs, result:null}))}/>
-                <label style={{display:'block', margin:'10px 0'}}><input type="checkbox" checked={configEditor.publicInputs}
-                  disabled={busy || !configEditor.editable || !!configEditor.submission || configEditor.refreshPending}
-                  onChange={event => setConfigEditor(value => ({...value, publicInputs:event.target.checked, result:null}))}/>
-                  {' '}Work inputs are public text</label>
-                <label style={{display:'block', margin:'10px 0'}}>Purpose
-                  <select aria-label="Work configuration purpose" value={configEditor.purpose}
-                    disabled={busy || !configEditor.editable || !!configEditor.submission || configEditor.refreshPending}
-                    onChange={event => setConfigEditor(value => ({...value, purpose:event.target.value}))}
-                    style={{display:'block', marginTop:4}}>
-                    <option value="general">General Work</option>
-                    <option value="artifact-publication">Artifact publication: public inputs and independent reviewers</option>
-                  </select>
-                </label>
-                {configEditor.refreshPending ? <>
-                  <p role="status" style={{fontSize:12}}>The Work configuration is saved. Reopen it before making another change.</p>
-                  <button type="button" disabled={busy} onClick={() => openConfigEditor(configEditor.work)}>Reopen configuration</button>
-                </> : configEditor.uncertain ? <>
-                  <p role="status" style={{fontSize:12}}>This configuration was not confirmed. Retrying sends exactly the same configuration.</p>
-                  <button type="submit" disabled={busy || !configEditor.editable}>Retry the same configuration</button>
-                  <button type="button" disabled={busy} onClick={() => openConfigEditor(configEditor.work)}>Reopen configuration</button>
-                  {configEditor.checked && <button type="button" disabled={busy} onClick={discardConfigAttempt}>Discard this attempt</button>}
-                </> : <button type="submit" disabled={busy || !configEditor.editable || configEditor.draft?.stale ||
-                  !Object.keys(configChanges(configEditor)).length}>{configEditor.draft ?
-                    'Approve configuration changes' : 'Save configuration'}</button>}
-                {configEditor.result && !configEditor.refreshPending && <p role="status" style={{fontSize:12}}>
-                  {configEditor.result.reused ? 'This configuration was already saved.' : 'Configuration saved on the same Work.'}
-                </p>}
-                {configEditor.result && <details style={{fontSize:11, overflowWrap:'anywhere'}}>
-                  <summary>Saved values</summary>
-                  Configuration digest {configEditor.result.input_digest}.
-                </details>}
-              </form>}
-          </details>}
-          <label style={{display:'block', margin:'10px 0'}}><input type="checkbox" checked={publicReview}
-            onChange={event => setPublicReview(event.target.checked)} disabled={busy}/>
-            I confirm this Work, its source text, and instructions are public and may be sent to its selected model after approval.</label>
-          <button disabled={busy || !editorsReady || !!native?.revision_pending || !targetAvailable || !publicReview ||
-            !['project', 'agent'].includes(selectedRepairMode)}
-            onClick={() => nativeAct(selectedRepairMode === 'agent' ? 'prepare_native' : 'prepare_project')}>Prepare repair</button>
-          <button disabled={busy || !editorsReady || !!native?.revision_pending || !targetAvailable || !publicReview} onClick={() => nativeAct('prepare')}>Prepare review</button>
-          </>}
-        </>}
-        {native?.state === 'published' && native.mode === 'project' && !revisionBase && <details style={{margin:'12px 0'}}>
-          <summary>Work options</summary>
-          <button disabled={busy || !editorsReady || !!native.revision_pending} onClick={() => beginWorkRevision()}>Revise inputs and criteria</button>
-          {native.work_revision?.applied && native.work_revision.current_input_digest === native.work_revision.input_digest && <>
-            <p role="status">Revised inputs saved on the same Work. Prepare them for review and approval.</p>
-            <button disabled={busy || !editorsReady} onClick={() => nativeAct('prepare_revision')}>Prepare revised Work</button>
-          </>}
-          {native.work_revision?.applied && native.work_revision.current_input_digest !== native.work_revision.input_digest &&
-            <p role="status">This revision was already saved, but the Work changed afterward. Reopen its current inputs before preparing.</p>}
-        </details>}
-        {native?.review_text && <details><summary>Exact model input · {native.model}</summary>
-          <pre style={{whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontSize:11,
-            maxHeight:220, overflow:'auto', padding:8, background:W.bg}}>{native.review_text}</pre>
-        </details>}
-        {artifactReview && native.input_digest && <div style={{fontSize:11, color:W.inkSoft, overflowWrap:'anywhere', margin:'8px 0'}}>
-          Draft artifact: {native.artifact_name} · Input SHA-256: {native.input_digest}
-        </div>}
-        {native?.state === 'awaiting_approval' && <>
-          {projectReviewExpired && <p role="status">This review expired. Refresh it to review the same input and approve again.</p>}
-          {projectReviewExpired && native.approved === false && <button disabled={busy || !editorsReady || !!native.revision_pending}
-            onClick={() => nativeAct('refresh_project_review')}>Refresh review</button>}
-          {native.mode === 'agent' && artifactReviewExpired && <p role="status">This native review expired. Stop its retained session; the Work and its unapproved input remain saved.</p>}
-          <button disabled={busy || !editorsReady || (artifactReview &&
-            (artifactReviewExpired || native.approved === true || !native.review_text || !native.input_digest))}
-            onClick={() => nativeAct('approve')}>{artifactReview ? 'Approve this repair' : 'Approve this input'}</button>
-          <button disabled={busy || !editorsReady || (artifactReview && (artifactReviewExpired || native.approved !== true))}
-            onClick={() => nativeAct('execute')}>{artifactReview ? 'Generate repair artifact' : 'Run approved review'}</button>
-          {artifactReview && native.approved === true && <p role="status" style={{fontSize:12}}>This exact repair input is approved.</p>}
-        </>}
-        {native?.mode === 'agent' && ['attaching', 'preparing', 'awaiting_approval', 'executing', 'uncertain'].includes(native.state) &&
-          <button type="button" title="Stop native session" aria-label="Stop native session" disabled={stoppingNative}
-            onClick={stopNative} style={{padding:6, verticalAlign:'middle'}}>
-            <svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14"><rect x="3" y="3" width="8" height="8" rx="1" fill="currentColor"/></svg>
-          </button>}
-        {native?.result_text && (artifactReview ?
-          <div style={{whiteSpace:'pre-wrap', overflowWrap:'anywhere', lineHeight:1.6}}>{native.result_text}</div> :
-          <WorkshopReview text={native.result_text}/>)}
-        {artifactReview && native.artifact && native.artifact.outcome !== 'failed' && <div style={{fontSize:12, overflowWrap:'anywhere', margin:'12px 0'}}>
-          <strong>{native.artifact.name}</strong>
-          <div>{native.artifact.bytes} bytes · SHA-256 {native.artifact.digest}</div>
-          {native.artifact.summary && native.artifact.summary !== native.result_text && <p>{native.artifact.summary}</p>}
-          <div style={{color:W.inkSoft}}>Draft patch generated. Review and verification are required before applying it.</div>
-          <button disabled={busy || !editorsReady || !['settled', 'published', 'publication_uncertain', 'release_pending'].includes(native.state)}
-            onClick={() => nativeAct('read_artifact')}>Download patch</button>
-        </div>}
-        {savedPublications.length > 0 && <section aria-label="Agent publications" style={{margin:'16px 0'}}>
-          <h4 style={{fontSize:13, margin:'8px 0'}}>Agent results</h4>
-          {savedPublications.map(artifact => <div key={artifact.publication}
-            style={{fontSize:12, overflowWrap:'anywhere', padding:'10px 0', borderTop:`1px solid ${W.line}`}}>
-            <strong>{artifact.name}</strong>
-            <span style={{color:W.inkSoft}}> · {artifact.bytes} bytes · {artifact.available ? 'Draft' : 'Work or evidence changed'}</span>
-            <button title="Inspect verified patch" aria-label={`Inspect ${artifact.name}`} disabled={busy || !editorsReady || !artifact.available}
-              onClick={() => nativeAct('read_publication', artifact)}>↗</button>
-          </div>)}
-          {publicationView?.work === artifactWork && <section aria-label="Selected agent result">
-            <strong>{publicationView.name}</strong>
-            <button title="Close result" aria-label="Close result" onClick={() => setPublicationView(null)}>×</button>
-            <p style={{fontSize:12, color:W.inkSoft}}>Draft only. Opening this patch does not apply it or approve the Work.</p>
-            <pre tabIndex={0} style={{maxHeight:400, overflow:'auto', fontSize:12, whiteSpace:'pre'}}>{publicationView.artifact_text}</pre>
-          </section>}
-        </section>}
-        {savedArtifacts.length > 0 && <section aria-label="Saved Work patches" style={{margin:'16px 0'}}>
-          <h4 style={{fontSize:13, margin:'8px 0'}}>Saved patches for this Work</h4>
-          {savedArtifacts.map(artifact => <div key={artifact.result + ':' + artifact.receipt}
-            style={{fontSize:12, overflowWrap:'anywhere', padding:'10px 0', borderTop:`1px solid ${W.line}`}}>
-            <strong>{artifact.name}</strong>
-            <div>{artifact.bytes} bytes · SHA-256 {artifact.digest}</div>
-            {artifact.summary && <p>{artifact.summary}</p>}
-            <p style={{color:W.inkSoft}}>Saved draft patch. Review and verify it before applying.</p>
-            <button disabled={busy || !editorsReady} onClick={() => nativeAct('read_artifact', artifact)}>Download saved patch</button>
-            {native?.state === 'idle' && artifact.mode !== 'agent' && <details style={{marginTop:8}}>
-              <summary>Continue this Work</summary>
-              <p>Resume review of this saved result and revise the same task. This does not rerun the model.</p>
-              <button disabled={busy || !editorsReady} onClick={() => nativeAct('recover_review', artifact)}>Resume review</button>
-            </details>}
-          </div>)}
-        </section>}
-        {failedProjects.length > 0 && <section aria-label="Failed project attempts" style={{margin:'16px 0'}}>
-          <h4 style={{fontSize:13, margin:'8px 0'}}>Failed attempts for this Work</h4>
-          {failedProjects.map(failure => <div key={failure.receipt} style={{fontSize:12, overflowWrap:'anywhere', margin:'10px 0'}}>
-            <div>{failure.error}</div>
-            <div style={{color:W.inkSoft}}>Receipt: {failure.receipt}</div>
-            <p>Prepare a retry of this same Work after its prior worker has disconnected. You will review and approve fresh input before any model runs.</p>
-            <button disabled={busy || !editorsReady || !['idle', 'settled', 'published', 'publication_uncertain', 'uncertain'].includes(native?.state)}
-              onClick={() => nativeAct('recover_project', failure)}>Prepare retry of this Work</button>
-          </div>)}
-        </section>}
-        {localDeliveries.length > 0 && <details style={{margin:'12px 0'}}>
-          <summary>Unreceived project results · {localDeliveries.length}</summary>
-          {localDeliveries.map(delivery => <div key={delivery.grant} style={{fontSize:12, margin:'10px 0'}}>
-            <p>No patch was received. The provider may have processed the request; its outcome is unknown.</p>
-            {delivery.state === 'local_delivery_abandoned' ? <>
-              <p role="status">Local delivery closed. Its original result remains saved.</p>
-              <button disabled={busy || !editorsReady || !!revisionBase || !['idle', 'local_delivery_abandoned'].includes(native?.state)}
-                onClick={() => beginWorkRevision(delivery)}>{native?.revision_pending ? 'Finish saved revision' : 'Revise inputs and criteria'}</button>
-              <p>Prepare this Work under a fresh worker once the previous worker disconnects. Review and approval are required before another model runs.</p>
-              <button disabled={busy || !editorsReady || !!revisionBase || !!native?.revision_pending || !['idle', 'local_delivery_abandoned'].includes(native?.state)}
-                onClick={() => nativeAct('recover_local_project', delivery)}>Prepare this Work again</button>
-              </> : <>
-                <p>Close local delivery to leave this attempt. This does not cancel the provider request or run it again.</p>
-                <button disabled={busy || !editorsReady || !['idle', 'uncertain'].includes(native?.state)}
-                  onClick={() => nativeAct('abandon_project', delivery)}>Close local delivery</button>
-              </>}
-          </div>)}
-        </details>}
-        {native?.state === 'uncertain' &&
-          <button disabled={busy || !editorsReady} onClick={() => nativeAct('reconcile')}>Recover recorded result</button>}
-        {['settled', 'publication_uncertain'].includes(native?.state) &&
-          !(native?.mode === 'agent' && native.native_result?.outcome === 'failed') &&
-          <button disabled={busy || !editorsReady} onClick={() => nativeAct('publish')}>Publish result to Workshop</button>}
-        {(['published', 'local_delivery_abandoned', 'release_pending'].includes(native?.state) ||
-          (native?.mode === 'agent' && native.state === 'settled' && native.native_result?.state === 'settled' &&
-            native.native_result?.outcome === 'failed' && native.native_result?.receipt) ||
-          (native?.mode === 'agent' && native.state === 'native_cancelled' &&
-            native.native_cancellation?.state === 'cancelled' && native.native_cancellation.releasable === true)) &&
-          <button disabled={busy || !editorsReady || !!revisionBase || !!native.revision_pending} onClick={() => nativeAct('release')}>
-            {native.state === 'release_pending' ? 'Recover closed result' :
-              native.state === 'native_cancelled' ? 'Close cancelled review' : 'Close result'}</button>}
-        {native?.error && <p role="alert">{native.error}</p>}
-        {nativeSyncError && <p role="status">{nativeSyncError}</p>}
-    </section>}
-  </>;
-  // The proposed workflow's approval row reads the native Work gate: approve, stop, or nothing pending.
-  const approvalWork = native?.work ? (projectedWorkNodes.find(node => node.id === native.work)?.title || native.work) : '';
-  const awaiting = native?.state === 'awaiting_approval';
-  const running = ['attaching', 'preparing', 'executing', 'recovering'].includes(native?.state);
-  const approval = awaiting && native.approved !== true
-    ? {bg:W.err + '1f', c:W.err, l:`AWAITING YOUR APPROVAL · ${String(approvalWork).toUpperCase()}`}
-    : (awaiting && native.approved === true) || running
-      ? {bg:W.cyan + '1c', c:W.cyan, l:`APPROVED · WORK: ${String(approvalWork).toUpperCase()}`}
-      : {bg:W.bgSoft, c:W.inkMuted, l:'NOTHING AWAITS APPROVAL'};
-  const chainNodes = [...flow.flow].sort((a, b) => a.col - b.col || a.y - b.y);
-  // As in the design, the proposed workflow answers the owner's opening message when the page starts with one.
-  const openingAsk = taskItems[0]?.kind === 'message' && taskItems[0].message.sender_root === transcript?.self ? 0 : -1;
-  const room = {name:descriptor.label, col:W.accent, ink:W.onFill, ini:wsInitial(descriptor.label, 'W')};
-  // The design's workflow card (studio-workshop.jsx:440-466) from the latest agent-proposed workflow
-  // (workshop_workflow.py): its real steps, its approval chip, ⊘ Revoke and Re-approve. With no
-  // proposed workflow the card reads the canvas chain and the native Work gate, as before.
-  const shownWorkflow = (Array.isArray(transcript?.workflows) ? transcript.workflows : []).slice(-1)[0] || null;
-  const wfApproval = shownWorkflow?.approval || null;
-  const wfState = !shownWorkflow ? null : wfApproval?.revoked ? 'revoked' : wfApproval?.current === true ? 'approved' :
-    wfApproval && !wfApproval.invalid ? 'changed' : 'awaiting';
-  const wfSteps = shownWorkflow ? (shownWorkflow.nodes || []).map(node => ({id:node.root, t:node.title || node.engine, p:node.engine || ''})) : [];
-  const wfChip = {
-    approved:{bg:W.cyan + '1c', c:W.cyan, l:`APPROVED · REV ${wfApproval?.revision ?? '?'} · SCOPE: ${wfSteps.length} STEP${wfSteps.length === 1 ? '' : 'S'} ON THIS CANVAS`},
-    revoked:{bg:W.err + '1f', c:W.err, l:'REVOKED · NOTHING FURTHER RUNS'},
-    changed:{bg:W.warn + '1f', c:W.warn, l:'CHANGED SINCE APPROVAL · REVIEW AND APPROVE AGAIN'},
-    awaiting:{bg:W.err + '1f', c:W.err, l:'AWAITING YOUR APPROVAL'},
-  }[wfState];
-  const proposerName = shownWorkflow ? ((nativeContacts.find(row => row.root === shownWorkflow.proposed_by) || {}).label ||
-    relayLabels.get(shownWorkflow.proposed_by)) : '';
-  const proposer = shownWorkflow ? (proposerName ? {...agent(shownWorkflow.proposed_by), name:proposerName,
-    ini:wsInitial(proposerName, 'A')} : agent(shownWorkflow.proposed_by)) : null;
-  const workflowProposalCard = shownWorkflow && (
-    <div data-workshop-workflow={shownWorkflow.root} style={{ display:'flex', gap:12 }}>
-      <Av a={proposer} s={28}/>
-      <div style={{ flex:1, minWidth:0 }}>
-        <div style={{ display:'flex', alignItems:'baseline', gap:8, marginBottom:4 }}>
-          <span style={{ fontSize:12.5, fontWeight:500 }}>{proposer.name}</span>
-          <span style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, border:`1px solid ${W.line}`, borderRadius:3, padding:'1px 5px' }}>proposed</span>
-        </div>
-        <div data-workshop-plan-card-copy="" style={{ fontFamily:W.sans, fontSize:15, lineHeight:1.6, letterSpacing:0, marginBottom:11 }}>
-          {`Here is the workflow ${proposer.name} proposes: ${shownWorkflow.title}. ${wfSteps.length} step${wfSteps.length === 1 ? '' : 's'}; ` +
-            (wfState === 'approved' ? 'you approved exactly these.' : 'nothing runs until you approve.')}
-        </div>
-        <div style={{ background:W.bg, border:`1px solid ${W.lineSoft}`, borderRadius:7, padding:'12px 13px', display:'flex', flexWrap:'wrap', alignItems:'center', columnGap:0, rowGap:10 }}>
-          {wfSteps.map((n, i, arr) => (
-            <React.Fragment key={n.id}>
-              <div style={{ border:`1px solid ${wfState === 'awaiting' ? W.accent : W.line}`, background:W.bgPanel, borderRadius:5, padding:'6px 9px', fontSize:11, lineHeight:1.25, maxWidth:220, overflowWrap:'anywhere' }}>
-                {n.t}<div style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, letterSpacing:'0.06em', marginTop:2 }}>{n.p}</div>
-              </div>
-              {i < arr.length - 1 && <span style={{ width:22, height:1, background:W.line, flex:'none' }}/>}
-            </React.Fragment>
-          ))}
-          <div style={{ flexBasis:'100%', height:11 }}/>
-          <div style={{ display:'flex', alignItems:'center', gap:7, width:'100%' }}>
-            <span data-workshop-workflow-chip="" style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.1em', padding:'2px 6px', borderRadius:3,
-              background:wfChip.bg, color:wfChip.c, overflowWrap:'anywhere' }}>{wfChip.l}</span>
-            <div style={{ flex:1 }}/>
-            <IBtn g="⌗" title="Open as nodes" onClick={() => openShownWorkflowAsNodes(shownWorkflow,
-              {authority, scopeOpen: window.ARCHHUB_SCOPE_OPEN,
-               refreshTopology: () => authority.refreshTopologyCanvas(),
-               // The owner's snapshot.canvas is the Workshop DESCRIPTOR; the universal projection
-               // with scope.current lives at snapshot.topology.canvas.
-               currentScope: () => { const s = authority.getSnapshot && authority.getSnapshot();
-                 return s && s.topology && s.topology.canvas && s.topology.canvas.scope ? s.topology.canvas.scope.current : undefined; },
-               setFocusId, requestCanvasReveal, setMode, setError: setActionError})}/>
-            {wfState === 'approved'
-              ? <><Btn sm pri disabled={busy} onClick={() => wfAct('workflow-execute', {workflow:shownWorkflow.root})}>Run approved</Btn>
-                <IBtn g="⊘" title="Revoke approval — nothing further runs" disabled={busy} onClick={() => wfAct('workflow-revoke', {workflow:shownWorkflow.root})}/></>
-              : <Btn sm pri disabled={busy || !shownWorkflow.digest} onClick={() => wfAct('workflow-approve', {workflow:shownWorkflow.root, digest:shownWorkflow.digest})}>
-                  {wfState === 'awaiting' ? 'Approve' : 'Re-approve'}</Btn>}
-          </div>
-        </div>
-        {/* Design studio-workshop.jsx:402: revoking leaves its trace in the thread (audit gap 9). The design's
-            seeded wall count is not a fact here, so its sentence stops before it. */}
-        {wfState === 'revoked' && <div data-workshop-revoked="" style={{ fontFamily:W.serif, fontSize:14, lineHeight:1.6, marginTop:10, color:W.ink }}>
-          Approval revoked. Runs already started are not undone; approve again before another run.</div>}
-      </div>
-    </div>
-  );
-  // The proposed workflow answers in place: it is drawn at the agent reply it came from when that reply is on
-  // this page (design: the proposing agent's message IS the card), never at the top out of order.
-  // Only where that reply is actually drawn as a message row: a reply that names a Work is folded into
-  // its task card instead, and then the card keeps its own placement (Ping, batch 1 return).
-  const anchoredWorkflow = !!shownWorkflow && typeof shownWorkflow.source_message === 'string' &&
-    taskItems.some(item => item.kind === 'message' && item.message.root === shownWorkflow.source_message);
-  const workflowCard = shownWorkflow ? workflowProposalCard : null;
-
-  // Delivery state, relayed replies, agent-proposed workflows and independent review
-  // (workshop_workflow.py). Every state shown here is read from the Workshop's own
-  // receipts; a stored message is only stored until a receipt says otherwise.
-  const DELIVERY_TONE = {replied:W.ok, started:W.cyan, unavailable:W.err, uncertain:W.warn, stored:W.inkSoft};
-  const contactLabel = root => (nativeContacts.find(row => row.root === root) || {}).label || relayLabels.get(root) || names.get(root) || String(root || 'agent');
-  const workflowApi = authority && typeof authority.workshopWorkflow === 'function' ? authority : null;
-  const wfAct = async (action, fields) => {
-    if (busyRef.current || !workflowApi) return;
-    busyRef.current = true; setBusy(true); setActionError('');
-    try {
-      await workflowApi.workshopWorkflow(descriptor.root, action, fields);
-      // The mutation is accepted; refresh the topology so the drafted/approved member nodes are
-      // in the snapshot the canvas draws (wfAct used not to, so draft/approve left it stale).
-      // A failed refresh is non-fatal and never replays the mutation (decideProposal, ~:1806).
-      try { await authority.refreshTopologyCanvas(); } catch (_) { /* the canvas shows the Work on its next read */ }
-    }
-    catch (error) { setActionError(error.message || 'The workflow action could not be confirmed.'); }
-    finally { busyRef.current = false; if (mounted.current) setBusy(false); }
-  };
-  const saveParam = async (relation, value) => {
-    if (busyRef.current || !workflowApi) return;
-    busyRef.current = true; setBusy(true); setActionError('');
-    try { await workflowApi.workshopWorkflowParam(descriptor.root, relation, value); }
-    catch (error) { setActionError(error.message || 'The parameter was not saved.'); }
-    finally { busyRef.current = false; if (mounted.current) setBusy(false); }
-  };
-  const chip = (label, tone, title, key) => <span key={key} title={title} style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.04em',
-    color:tone, border:`1px solid ${tone}`, borderRadius:3, padding:'1px 5px', overflowWrap:'anywhere' }}>{label}</span>;
-  const deliveryChips = message => {
-    if (!Array.isArray(message.delivery)) return null;
-    const rows = message.delivery.length ? message.delivery : [{recipient:null, state:message.state}];
-    return <div aria-label="Delivery state" style={{ display:'flex', gap:6, flexWrap:'wrap', marginTop:6 }}>
-      {rows.map((row, index) => chip((row.recipient ? contactLabel(row.recipient) + ' · ' : '') + String(row.state).toUpperCase(),
-        DELIVERY_TONE[row.state] || W.inkSoft, row.reason || (row.state === 'uncertain' ? 'Delivery may have happened; it is never resent automatically.' : ''),
-        (row.recipient || 'stored') + ':' + index))}
-    </div>;
-  };
-  const relayedActions = (message, drafted = false) => {
-    if (!workflowApi) return null;
-    const reviewers = nativeContacts.filter(row => row.root !== message.relayed_from).slice(0, 3);
-    const proposal = !drafted && /"actions"\s*:/.test(message.agent_text);
-    if (!proposal && !reviewers.length) return null;
-    return <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center', marginTop:8 }}>
-      {chip('sha256 ' + String(message.artifact_digest || '').slice(0, 12), W.inkSoft, 'Artifact digest of this reply', 'digest')}
-      {proposal && <Btn sm disabled={busy} onClick={() => wfAct('workflow-draft', {message:message.root})}>Draft as workflow</Btn>}
-      {reviewers.map(row => <Btn sm key={row.root} disabled={busy} title="A different agent reviews this reply; its verdict is evidence, not a court pass."
-        onClick={() => wfAct('artifact-review', {artifact:message.root, reviewer:row.root})}>{'Review with ' + row.label}</Btn>)}
-    </div>;
-  };
-  const HIDDEN_PARAMS = new Set(['engine', 'definition', 'version']);
-  const proposedWorkflows = Array.isArray(transcript?.workflows) ? transcript.workflows : [];
-  // What a displayed workflow waits on you for (null once approved): the panel's chips and the summary read this one rule.
-  const wfWaiting = wf => wf.approval && wf.approval.current === true ? null : wf.approval?.revoked ? 'approval revoked'
-    : wf.approval ? 'changed since approval' : 'awaiting your approval';
-  const artifactReviews = Array.isArray(transcript?.reviews) ? transcript.reviews : [];
-  const workflowsPanel = (proposedWorkflows.length > 0 || artifactReviews.length > 0) && (
-    <div aria-label="Agent-proposed workflows and reviews" style={{ display:'flex', flexDirection:'column', gap:12 }}>
-      {proposedWorkflows.map(wf => {
-        const waits = wfWaiting(wf), approved = waits === null;
-        const status = approved ? chip('APPROVED · READY TO RUN', W.ok, 'Approval ' + String(wf.approval.digest).slice(0, 12), 's')
-          : waits === 'approval revoked' ? chip('REVOKED · NOTHING FURTHER RUNS', W.err, 'You revoked the approval; approve it again before it runs.', 's')
-          : waits === 'changed since approval' ? chip('CHANGED SINCE APPROVAL', W.warn, 'Review and approve again before it runs.', 's')
-          : chip('AWAITING YOUR APPROVAL', W.err, 'A proposal is not approval.', 's');
-        return <div key={wf.root} style={{ background:W.bgPanel, border:`1px solid ${W.line}`, borderRadius:7, padding:'12px 13px' }}>
-          <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap', marginBottom:8 }}>
-            <span style={{ fontSize:12.5, fontWeight:500 }}>{wf.title}</span>
-            {chip('proposed by ' + contactLabel(wf.proposed_by), W.inkSoft, wf.proposed_by, 'p')}
-            {status}
-          </div>
-          {wf.reason && <div role="status" style={{ fontSize:11.5, color:W.warn, marginBottom:8 }}>{wf.reason}</div>}
-          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-            {(wf.nodes || []).map(node => <div key={node.root} style={{ border:`1px solid ${W.lineSoft}`, borderRadius:5, padding:'7px 9px' }}>
-              <div style={{ fontSize:11.5, marginBottom:4 }}>{node.title} <span style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft }}>{node.engine}</span></div>
-              {Object.entries(node.params || {}).filter(([label]) => !HIDDEN_PARAMS.has(label)).map(([label, param]) =>
-                <form key={param.relation + ':' + param.value} onSubmit={e => { e.preventDefault(); if (param.editable) saveParam(param.relation, e.currentTarget.elements.value.value); }}
-                  style={{ display:'flex', alignItems:'center', gap:6, margin:'3px 0' }}>
-                  <span style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, minWidth:88 }}>{label}</span>
-                  {param.editable && (label === 'agent' || label === 'reviewer')
-                    ? <><select name="value" aria-label={label} defaultValue={param.value} disabled={busy} title={param.value}
-                        style={{ flex:1, minWidth:0, border:`1px solid ${W.line}`, borderRadius:4, background:W.bg, color:W.ink, fontSize:11.5, padding:'3px 6px' }}>
-                        {[...new Set([param.value, ...nativeContacts.map(row => row.root), ...relayLabels.keys()])].filter(Boolean)
-                          .map(root => <option key={root} value={root}>{contactLabel(root)}</option>)}
-                      </select>
-                      <Btn sm disabled={busy} onClick={e => saveParam(param.relation, e.currentTarget.form.elements.value.value)}>Save</Btn></>
-                  : param.editable
-                    ? <><input name="value" aria-label={label} defaultValue={param.value} disabled={busy} maxLength={12000}
-                        style={{ flex:1, minWidth:0, border:`1px solid ${W.line}`, borderRadius:4, background:W.bg, color:W.ink, fontSize:11.5, padding:'3px 6px' }}/>
-                      <Btn sm disabled={busy} onClick={e => saveParam(param.relation, e.currentTarget.form.elements.value.value)}>Save</Btn></>
-                    : <span title={label === 'agent' || label === 'reviewer' ? param.value : undefined} style={{ fontSize:11.5, color:W.inkSoft, overflowWrap:'anywhere' }}>{label === 'agent' || label === 'reviewer' ? contactLabel(param.value) : param.value}</span>}
-                </form>)}
-            </div>)}
-          </div>
-          <div style={{ display:'flex', gap:8, marginTop:10, alignItems:'center' }}>
-            <span style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft }}>{wf.digest ? 'behavior ' + wf.digest.slice(0, 12) : ''}</span>
-            <div style={{ flex:1 }}/>
-            {wf.root === shownWorkflow?.root
-              ? <span style={{ fontSize:11, color:W.inkSoft }}>Approve, revoke and run it on the workflow card.</span>
-              : <><Btn sm disabled={busy || !wf.digest || approved} onClick={() => wfAct('workflow-approve', {workflow:wf.root, digest:wf.digest})}>Approve</Btn>
-                <Btn sm pri disabled={busy || !approved} onClick={() => wfAct('workflow-execute', {workflow:wf.root})}>Run approved</Btn></>}
-          </div>
-        </div>;
-      })}
-      {artifactReviews.map(review => <div key={review.review} style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center', fontSize:11.5 }}>
-        <span>Independent review of {String(review.artifact_digest).slice(0, 12)}</span>
-        {chip('judged by ' + contactLabel(review.judged_by), W.cyan, review.judged_by, 'j')}
-        {chip('produced by ' + contactLabel(review.claimed_by), W.inkSoft, review.claimed_by, 'c')}
-        {chip(String(review.state).toUpperCase(), DELIVERY_TONE[review.state] || W.inkSoft, '', 'st')}
-        {review.verdict && chip('VERDICT ' + String(review.verdict).toUpperCase(), review.verdict === 'pass' ? W.ok : review.verdict === 'fail' ? W.err : W.warn,
-          'Review evidence from the reviewer; not a court pass.', 'v')}
-      </div>)}
-    </div>
-  );
-
-  // The companion's summary line closing the thread (design studio-workshop.jsx:544-547, audit gap 11): what on
-  // THIS PAGE waits on you, said as page-scoped. Every displayed workflow whose decision waits on you counts
-  // (awaiting, changed since approval, revoked). Nothing about running or finished work is inferred from message verbs.
-  const needsYou = [...allTasks.filter(t => t.state === 'block' || t.approving).map(t => t.id + ' ' + t.title),
-    ...proposedWorkflows.filter(wf => wfWaiting(wf) !== null).map(wf => `${wf.title || 'Proposed workflow'} (${wfWaiting(wf)})`)];
-  const summaryText = needsYou.length === 1 ? `On this page, one thing needs you: ${needsYou[0]}.`
-    : needsYou.length > 1 ? `On this page, ${needsYou.length} things need you: ${needsYou.join('; ')}.`
-      : 'On this page, nothing is waiting on you.';
-  // The companion speaks when it is in the room; otherwise the Workshop itself carries the line.
-  const baboomAgent = agents.find(a => a.row && a.row.runtime === 'baboom') ||
-    {name:descriptor.label, ini:wsInitial(descriptor.label, 'W'), col:W.accent, ink:W.onFill, status:'available'};
-  const baboomSummary = transcript && (
-    <div data-workshop-summary="" style={{ display:'flex', gap:12 }}>
-      <Av a={baboomAgent} s={28}/>
-      <div style={{ flex:1, minWidth:0 }}>
-        <div style={{ display:'flex', alignItems:'baseline', gap:8, marginBottom:4 }}>
-          <span style={{ fontSize:12.5, fontWeight:500 }}>{baboomAgent.name}</span>
-          <span title="Read from this page's tasks and workflow; not a message anyone sent" style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft,
-            border:`1px solid ${W.line}`, borderRadius:3, padding:'1px 5px' }}>summary</span>
-        </div>
-        <div style={{ fontSize:messageTextSize, lineHeight:1.6, fontFamily:W.sans, letterSpacing:0 }}>{summaryText}</div>
-      </div>
-    </div>
-  );
-  const BrainFacts = ({ facts }) => facts.length ? (
-    <div style={{ marginTop:6, fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, letterSpacing:'0.03em' }}>
-      Used {facts.length} fact{facts.length === 1 ? '' : 's'} from Brain:{' '}
-      {facts.map((fact, index) => <React.Fragment key={fact.root}>
-        {index > 0 && ' · '}
-        <button type="button" onClick={() => openRootAsNodes(fact.root)} title={fact.root}
-          style={{ padding:0, margin:0, border:0, background:'transparent', color:W.inkSoft,
-            textDecoration:'underline', cursor:'pointer', fontFamily:W.mono, fontSize:W.fs.dataSm.sz }}>
-          {fact.label}
-        </button>
-      </React.Fragment>)}
-    </div>
-  ) : null;
-  const AgentPlanReply = ({ message }) => {
-    const plan = wsReplyPlanLine(message);
-    const facts = wsFactsUsed(message);
-    if (!plan && !facts.length) return null;
-    const a = agent(wsSender(message));
-    return (
-      <div data-workshop-plan-reply={message.root} style={{ display:'flex', gap:12 }}>
-        <Av a={a} s={28}/>
-        <div style={{ flex:1, minWidth:0, background:W.bgPanel, border:`1px solid ${W.lineSoft}`,
-          borderRadius:7, padding:'10px 12px' }}>
-          {plan && <div data-workshop-plan-copy="" style={{ fontSize:messageTextSize, lineHeight:1.6, fontFamily:W.sans, letterSpacing:0,
-            overflowWrap:'anywhere' }}>{plan}</div>}
-          <BrainFacts facts={facts}/>
-        </div>
-      </div>
-    );
-  };
-  const msgRow = message => {
-    const relayed = typeof message.relayed_from === 'string' && typeof message.agent_text === 'string';
-    if (relayed && anchoredWorkflow && message.root === shownWorkflow.source_message) {
-      return <div key={message.root} data-workshop-message={message.root} style={{ display:'flex', flexDirection:'column', gap:6 }}>
-        {workflowProposalCard}
-        <div style={{ marginLeft:40 }}>{relayedActions(message, true)}</div>
-        <details style={{ marginLeft:40, fontSize:11.5, color:W.inkSoft }}>
-          <summary style={{ cursor:'pointer', fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft }}>show the agent's text</summary>
-          <div style={{ whiteSpace:'pre-wrap', overflowWrap:'anywhere', marginTop:6 }}>{message.agent_text}</div>
-        </details>
-      </div>;
-    }
-    const plan = relayed ? wsPlanReply(message.agent_text) : null;
-    const facts = wsFactsUsed(message);
-    // A relayed reply is recorded by this application, but it is the agent's own text.
-    const isUser = !relayed && message.sender_root === transcript?.self;
-    const a = relayed ? {...agent(message.relayed_from), name:contactLabel(message.relayed_from),
-      ini:wsInitial(contactLabel(message.relayed_from), 'A')} : agent(message.sender_root);
-    const to = Array.isArray(message.recipient_roots) ?
-      (message.recipient_roots.length ? message.recipient_roots.map(root => names.get(root) || root).join(', ') : 'Workshop') :
-      (names.get(message.recipient_root) || message.recipient_root || 'Workshop');
-    if (isUser) {
-      return (
-        <div key={message.root} data-workshop-message={message.root} style={{ display:'flex', justifyContent:'flex-end' }}>
-          <div style={{ maxWidth:'min(100%, 560px)', background:W.bgPanel, border:`1px solid ${W.lineSoft}`,
-            borderRadius:7, padding:'10px 12px', fontSize:messageTextSize, lineHeight:1.55,
-            fontFamily:W.sans, color:W.ink, overflowWrap:'anywhere' }}>
-            {message.body}
-            {deliveryChips(message)}
-          </div>
-        </div>
-      );
-    }
-    return (
-      <div key={message.root} data-workshop-message={message.root} style={{ display:'flex', gap:12 }}>
-        <Av a={a} s={28}/>
-        <div style={{ flex:1, minWidth:0 }}>
-          <div style={{ display:'flex', alignItems:'baseline', gap:8, marginBottom:4, flexWrap:'wrap' }}>
-            <span title={message.sender_root} style={{ fontSize:12.5, fontWeight:500, overflowWrap:'anywhere' }}>{a.name}</span>
-            <span title={[message.state === 'acted' ? 'Acted on \u00b7 verification separate' : message.state, message.category, message.reply_to_root ? 'Reply' : ''].filter(Boolean).join(' \u00b7 ')}
-              style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, border:`1px solid ${W.line}`, borderRadius:3, padding:'1px 5px', overflowWrap:'anywhere' }}>to {to}</span>
-          </div>
-          <div style={{ fontSize:messageTextSize, lineHeight:1.6, fontFamily:W.sans, letterSpacing:0, whiteSpace:'pre-wrap', overflowWrap:'anywhere' }}>
-            {plan ? <>
-                {plan.prose && <div>{plan.prose}</div>}
-                <div data-workshop-plan="" style={{ marginTop:8, background:W.bg, border:`1px solid ${W.lineSoft}`, borderRadius:7, padding:'10px 12px',
-                  display:'flex', flexWrap:'wrap', alignItems:'center', rowGap:8, fontFamily:W.sans, whiteSpace:'normal' }}>
-                  {plan.steps.map((n, i, arr) => <React.Fragment key={i}>
-                    <div style={{ border:`1px solid ${W.line}`, background:W.bgPanel, borderRadius:5, padding:'6px 9px', fontSize:11, lineHeight:1.25 }}>
-                      {n.t}<div style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, letterSpacing:'0.06em', marginTop:2 }}>{n.p}</div></div>
-                    {i < arr.length - 1 && <span style={{ width:22, height:1, background:W.line, flex:'none' }}/>}
-                  </React.Fragment>)}
-                  <div style={{ flexBasis:'100%', fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.1em', color:W.inkSoft }}>
-                    {`PROPOSED WORKFLOW${plan.title ? ' · ' + plan.title.toUpperCase() : ''} · ${plan.steps.length} STEP${plan.steps.length === 1 ? '' : 'S'} · NOT A WORKFLOW UNTIL DRAFTED`}</div>
-                </div>
-                <details style={{ marginTop:6, fontFamily:W.sans }}>
-                  <summary style={{ cursor:'pointer', fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft }}>show the plan's JSON</summary>
-                  <pre style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, whiteSpace:'pre-wrap', overflowWrap:'anywhere', margin:'6px 0 0' }}>{plan.raw}</pre>
-                </details>
-              </> : relayed ? message.agent_text :
-              String(message.body || '').startsWith('Model review evidence. Independent review is still required.\n') ?
-              <WorkshopReview text={message.body.slice(message.body.indexOf('\n') + 1)}/> : message.body}
-            {!plan && facts.length > 0 && <BrainFacts facts={facts}/>}
-          </div>
-          {relayed ? relayedActions(message) : deliveryChips(message)}
-        </div>
-      </div>
-    );
-  };
-
-  const composer = (
-    <div style={{ borderTop:`1px solid ${W.lineSoft}`, padding:'12px 0 16px' }}>
-      <div style={{ maxWidth: preset==='chat' ? 760 : 'none', margin:'0 auto', padding:'0 26px' }}>
-        {protectedEditors && !editorsReady && <div role={editorError ? 'alert' : 'status'} style={{ fontSize:11.5, color:W.inkSoft, marginBottom:8 }}>
-          {editorError || 'Connecting draft protection\u2026'}
-          {editorError && <span style={{ marginLeft:8 }}><Btn sm onClick={prepareEditors}>Retry</Btn></span>}
-        </div>}
-        {actionError && <div role="alert" style={{ fontSize:11.5, color:W.err, marginBottom:8 }}>{actionError}</div>}
-        {state?.workshopNotice && !(/^Message saved and delivery started/.test(state.workshopNotice) &&
-          !messages.some(message => Array.isArray(message.delivery) && message.delivery.some(row => row.state === 'started'))) &&
-          <div role="status" style={{ fontSize:11.5, color:W.inkSoft, marginBottom:8 }}>{state.workshopNotice}</div>}
-        <div style={{ background:W.bgPanel, border:`1px solid ${W.line}`, borderRadius:9, padding:'11px 13px' }}>
-          {!joined && !existing ? <Btn pri disabled={busy || !transcript?.can_join} onClick={() => act('attach')}>{busy ? 'Joining\u2026' : 'Join Workshop'}</Btn> : <>
-          <input aria-label="Workshop message" value={draft} maxLength={12000} disabled={busy || !joined}
-            onChange={e => { if (editorsReady) protectDraft('message'); setDraft(e.target.value); }} onKeyDown={e => { if (e.key === 'Enter') send(); }}
-            placeholder={!joined ? 'Messaging requires an admitted Workshop participant.' : !target ? 'Reply to the Workshop…' : `Message ${targetName}…`}
-            style={{ width:'100%', border:0, background:'transparent', outline:'none', color:W.ink, fontFamily:W.serif, fontSize:16.5, letterSpacing:'-0.01em', padding:'2px 0 9px' }}/>
-          <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
-            <select aria-label="Recipient" value={target} disabled={busy || !joined} onChange={e => {
-              if (e.target.value === WS_SHOW_OFFLINE) setShowOfflineContacts(value => !value); else setTarget(e.target.value);
-            }} style={{ padding:'3px 8px', borderRadius:5, background:W.accentDim,
-              border:`1px solid ${W.accentSoft}`, color:W.accent, fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.04em', cursor:'pointer', maxWidth:'min(100%, 240px)' }}>
-              <option value="">to: Workshop (everyone)</option>
-              {modelAgent && <option value={'model:' + modelAgent.root}>{`to: @Agent · ${modelAgent.model}`}</option>}
-              {pickerContacts.length > 0 && <optgroup label="Connected agent environments">
-                {pickerContacts.map(row => <option key={row.root} value={'contact:' + row.root}>
-                  {`to: @${row.label} · ${row.connected === true ? row.app : row.connected === false ? 'offline' : 'availability unknown'}`}
-                </option>)}
-              </optgroup>}
-              {addressable.map(row => <option key={row.root} value={row.root}>{`to: @${row.label}`}</option>)}
-              {(offlineContacts > 0 || showOfflineContacts) && <option value={WS_SHOW_OFFLINE}>
-                {showOfflineContacts ? 'hide disconnected' : `show disconnected (${offlineContacts})`}</option>}
-            </select>
-            <IBtn g="@" title="Address one agent" acc={!!target} disabled={busy || !joined || (!target && !firstRecipient)} onClick={() => setTarget(target ? '' : firstRecipient)}/>
-            <IBtn g="⌗" title="Open as nodes" onClick={openAsNodes}/>
-            {!existing && transcript && <select aria-label="Connected task node" value={execution} disabled={busy} onChange={e => setExecution(e.target.value)} style={{ padding:'3px 8px', borderRadius:5, background:W.bg,
-              border:`1px solid ${W.line}`, color:W.inkSoft, fontFamily:W.mono, fontSize:W.fs.dataSm.sz, letterSpacing:'0.04em', cursor:'pointer', maxWidth:'100%' }}>
-              <option value="">Message only</option>
-              {(transcript.execution_nodes || []).map(row => <option key={row.root} value={row.root}>{row.label}</option>)}
-            </select>}
-            <div style={{ flex:1 }}/>
-            <span style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft }}>{agents.filter(a => a.status !== 'off').length} agents listening</span>
-            <Btn pri disabled={sendDisabled} onClick={send}>{busy ? 'Sending\u2026' : execution ? 'Assign task' : 'Send ↵'}</Btn>
-          </div>
-          </>}
-        </div>
-        {contactError && <p role="status" style={{ margin:'8px 0 0', fontSize:11.5, color:W.inkSoft }}>{contactError}</p>}
-      </div>
-    </div>
-  );
-
-  const connectedHosts = (liveHosts || []).filter(row => row && row.state === 'connected' && typeof row.name === 'string');
-  const hostLine = liveHosts === null ? 'hosts not read yet' : connectedHosts.length === 1
-    ? connectedHosts[0].name + (typeof connectedHosts[0].file === 'string' && connectedHosts[0].file ? ' · ' + connectedHosts[0].file : '')
-    : connectedHosts.length ? `${connectedHosts.length} hosts connected` : 'no host connected';
-  const headTitle = [descriptor.label, native?.work ? approvalWork : ''].filter(Boolean).join(' · ');
-  const liveRoute = routerSelected || routerLive?.selected_route || routerLive?.default_route || '';
-  const modelChip = liveRoute ? wsRouteLabel(liveRoute) : transcript?.model_agent?.model
-    ? `${transcript.model_agent.model} · route ${transcript.model_agent.route || 'auto'}`
-    : '';
-  const setWorkshopTab = tab => setPreset(tab);
-  const bar = (
-    <>
-      <div style={{ gridColumn:'1 / -1', gridRow:'1', display:'flex', alignItems:'center', gap:8, padding:'0 20px',
-        minWidth:0, borderBottom:`1px solid ${W.line}`, background:W.bgPanel }}>
-        <strong style={{ fontSize:16, lineHeight:1.25, fontWeight:700, color:W.ink, whiteSpace:'nowrap' }}>Workshop</strong>
-        {headTitle && <span title={descriptor.root} style={{ fontFamily:W.mono, fontSize:13, color:W.inkSoft,
-          overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', minWidth:0 }} data-workshop-head="">{headTitle}{hostLine ? ' · ' + hostLine : ''}</span>}
-        <div style={{ flex:1 }}/>
-        <div aria-label="Workshop header chips" style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap', justifyContent:'flex-end' }}>
-          {modelChip && <span style={{ fontFamily:W.mono, fontSize:11, color:W.inkSoft, padding:'3px 8px',
-            border:`1px solid ${W.lineSoft}`, borderRadius:4, background:W.bgSoft }}>{modelChip}</span>}
-          <span style={{ fontFamily:W.mono, fontSize:11, color:relayConsent?.allowed ? W.ok : W.inkSoft, padding:'3px 8px',
-            border:`1px solid ${W.lineSoft}`, borderRadius:4, background:W.bgSoft }}>
-            Relay {relayConsent?.allowed ? 'On' : 'Off'}
-          </span>
-          <span style={{ display:'inline-flex', alignItems:'center', gap:7, padding:'3px 8px', border:`1px solid ${W.lineSoft}`,
-            background:W.bgPanel, borderRadius:999, fontFamily:W.mono, fontSize:11, color:W.ink }}>
-            <Dot c={W.ok}/>Hub
-          </span>
-        </div>
-      </div>
-      <div style={{ gridColumn:'1 / -1', gridRow:'2', display:'flex', alignItems:'center', gap:18, padding:'0 20px',
-        minWidth:0, borderBottom:`1px solid ${W.line}`, background:W.bg }}>
-        <WorkshopTabs tab={WORKSHOP_TASK_PRESETS.includes(preset) ? 'board' : preset} setTab={setWorkshopTab} approvals={approvalCount}/>
-        <div style={{ flex:1 }}/>
-        <IBtn g="✕" title="Leave Workshop — back to the plain conversation" s={24} onClick={() => (onLeave ? onLeave() : setMode('chat'))}/>
-      </div>
-    </>
-  );
-
-  const renderStream = () => (
-    <section aria-label="Workshop conversation" style={{ display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
-      <div ref={messageViewport} className="ah-scroll" onScroll={() => messageScroll.current.scroll(messageViewport.current)}
-        style={{ flex:1, overflow:'auto', overflowAnchor:'none', padding:'20px 0 10px' }}>
-        <div ref={messageContent} style={{ maxWidth: preset==='chat' ? 760 : 'none', margin:'0 auto', padding:'0 26px', display:'flex', flexDirection:'column', gap:20 }}>
-          {!panelReady && <div role="status" style={{ fontFamily:W.serif, fontSize:15, color:W.inkSoft }}>Loading messages…</div>}
-          {panelReady && transcript?.error && <div role="alert" style={{ fontSize:12.5, color:W.err }}>{transcript.error}</div>}
-          {unavailableWorkshop && <div role="status" style={{ fontFamily:W.serif, fontSize:15, color:W.inkSoft }}>
-            {descriptor.unavailable_reason || 'No Workshop conversation in this scope'}
-          </div>}
-          {panelReady && !unavailableWorkshop && !transcript && <div role="status" style={{ fontFamily:W.serif, fontSize:15, color:W.inkSoft }}>Loading messages…</div>}
-          {panelReady && <ConversationArchiveNotice root={descriptor.root}/>}
-          {panelReady && !content && transcript?.has_older && <div style={{ fontSize:12.5, color:W.inkSoft }}>Showing the available recent messages.</div>}
-          {panelReady && openingAsk < 0 && !anchoredWorkflow && workflowCard}
-          {panelReady && workflowsPanel}
-          {panelReady && transcript && !transcript.error && !messages.length && <div style={{ fontFamily:W.serif, fontSize:15, color:W.inkSoft }}>{olderPage ? 'No messages on this page.' : 'No messages have been sent in this Workshop yet.'}</div>}
-          {panelReady && taskItems.map((item, index) => {
-            if (item.kind !== 'task') {
-              if (!isWorkProposal(item.message)) return msgRow(item.message);
-              const proposal = wsProposalTask(item.message, proposalHeld[item.message.message_id || item.message.root]);
-              return <TaskCard key={proposal.work} t={proposal} sel={selTask===proposal.work} onSelect={selectTask} onDecide={decide}
-                onOpen={openRootAsNodes} compact={['router', 'prompts'].includes(preset)}
-                agent={agent} busy={busy} rowDesign={preset === 'chat'}/>;
-            }
-            const t = tasks.find(x => x.work === item.work);
-            return t && <React.Fragment key={'task:' + t.work}>
-              {t.latest && <AgentPlanReply message={t.latest}/>}
-              <TaskCard t={t} sel={selTask===t.work} onSelect={selectTask} onDecide={decide}
-                onOpen={openRootAsNodes} compact={['router', 'prompts'].includes(preset)}
-                agent={agent} busy={busy} rowDesign={preset === 'chat'}/>
-            </React.Fragment>;
-          }).flatMap((row, index) => index === openingAsk && !anchoredWorkflow ? [row, <React.Fragment key="workflow">{workflowCard}</React.Fragment>] : [row])}
-          {baboomSummary}
-        </div>
-      </div>
-      {composer}
-    </section>
-  );
-
-  const board = (
-    <section aria-label="Workshop task board" style={{ flex:1, display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
-      <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:14 }}>
-        {window.WorkshopBoardView
-          ? <window.WorkshopBoardView tasks={allTasks} agents={agents} selected={selTask} onSelect={selectTask} onDecide={decide}
-              archiveDays={20}/>
-          : <div role="status" style={{ fontSize:11.5, lineHeight:1.5, color:W.inkSoft }}>Workshop board is unavailable.</div>}
-      </div>
-    </section>
-  );
-
-  const agentsPage = (
-    <section aria-label="Workshop agents" style={{ display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
-      <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:14 }}>
-        {window.WorkshopAgentsView
-          ? <window.WorkshopAgentsView agents={agents}/>
-          : <div role="status" style={{ fontSize:11.5, lineHeight:1.5, color:W.inkSoft }}>Workshop agents are unavailable.</div>}
-      </div>
-    </section>
-  );
-
-  const approvalsPage = (
-    <section aria-label="Workshop approvals" style={{ display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
-      <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:14 }}>
-        {window.WorkshopApprovalsView
-          ? <window.WorkshopApprovalsView tasks={allTasks.filter(t => (t.proposal && t.state === 'block') || t.approving)} selected={selTask} onSelect={selectTask} onDecide={decide}/>
-          : <div role="status" style={{ fontSize:11.5, lineHeight:1.5, color:W.inkSoft }}>Workshop approvals are unavailable.</div>}
-      </div>
-    </section>
-  );
-
-  const taskPage = (
-    <section aria-label="Workshop task page" style={{ display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
-      <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:14 }}>
-        {window.WorkshopTaskPage
-          ? <window.WorkshopTaskPage task={allTasks.find(t => t.work === selTask) || allTasks[0]} agent={agent} details={false} onDecide={decide}/>
-          : <div role="status" style={{ fontSize:11.5, lineHeight:1.5, color:W.inkSoft }}>Workshop task page is unavailable.</div>}
-      </div>
-      {composer}
-    </section>
-  );
-  const canStopTask = task => native?.mode === 'agent' && task?.work === native.work &&
-    ['attaching', 'preparing', 'awaiting_approval', 'executing', 'uncertain'].includes(native.state);
-  const tasksPage = (
-    <section aria-label="Workshop tasks" style={{ flex:1, display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
-      <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:14 }}>
-        <div style={{ display:'grid', gridTemplateColumns:'minmax(180px,1.25fr) minmax(120px,.75fr) minmax(130px,.75fr) minmax(180px,1fr) auto',
-          gap:10, alignItems:'center', fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:W.inkSoft, padding:'0 10px 8px' }}>
-          <div>task</div><div>agent</div><div>status</div><div>result</div><div></div>
-        </div>
-        {allTasks.length ? allTasks.map((task, index) => {
-          const decisions = (task.decision || []).filter(row => !row.disabled);
-          const approve = decisions.find(row => /^approve\b/i.test(row.label));
-          const reject = decisions.find(row => /^(reject|decline)\b/i.test(row.label));
-          const result = task.artifact?.summary || task.artifact?.name || task.lead || wsLine(wsText(task.latest), 120) || 'No result recorded';
-          return (
-            <div key={task.work} data-workshop-task-row={task.work} style={{ borderTop:index ? `1px solid ${W.lineSoft}` : `1px solid ${W.line}`,
-              display:'grid', gridTemplateColumns:'minmax(180px,1.25fr) minmax(120px,.75fr) minmax(130px,.75fr) minmax(180px,1fr) auto',
-              gap:10, alignItems:'center', padding:'10px', minWidth:0 }}>
-              <button type="button" onClick={() => selectTask(task.work)} style={{ border:0, background:'transparent', color:W.ink,
-                textAlign:'left', padding:0, margin:0, fontSize:12.5, fontWeight:500, cursor:'pointer', overflowWrap:'anywhere' }}>
-                {task.title || 'Untitled work'}
-              </button>
-              <div style={{ fontSize:12, color:W.inkSoft, overflowWrap:'anywhere' }}>{agent(task.owner).name}</div>
-              <div style={{ fontFamily:W.mono, fontSize:W.fs.dataSm.sz, color:(CHIP[task.state] || CHIP.open).c, overflowWrap:'anywhere' }}>
-                {taskRowMeta(task) || task.state}
-              </div>
-              <div style={{ fontSize:12, color:W.inkSoft, overflowWrap:'anywhere' }}>{result}</div>
-              <div style={{ display:'flex', gap:7, alignItems:'center', justifyContent:'flex-end', flexWrap:'wrap' }}>
-                {approve && <Btn pri disabled={busy} onClick={() => decide(task.work, approve)}>Approve</Btn>}
-                {['stop_native', 'decline-proposal'].includes(reject?.action) && <Btn disabled={busy} onClick={() => decide(task.work, reject)}>Decline</Btn>}
-                {canStopTask(task) && <Btn sm disabled={stoppingNative} onClick={stopNative}>Stop</Btn>}
-                <details style={{ fontSize:11, color:W.inkSoft }}>
-                  <summary>Details</summary>
-                  <div style={{ marginTop:6, minWidth:220, maxWidth:420, overflowWrap:'anywhere', lineHeight:1.5 }}>
-                    <div><b>Work</b> {task.work}</div>
-                    <div><b>Criteria</b> {task.criteria}</div>
-                    <div><b>Permissions</b> {task.permissions?.write || 'none recorded'}</div>
-                    <div><b>Tools</b> {task.tools?.list || task.tools?.t || 'none recorded'}</div>
-                  </div>
-                </details>
-              </div>
-            </div>
-          );
-        }) : <div role="status" style={{ padding:12, color:W.inkSoft }}>No governed tasks in this Workshop.</div>}
-      </div>
-      {composer}
-    </section>
-  );
-
-  // Projects stays hidden until its backend exists. Board is the visible Work surface.
-  const taskView = preset === 'board' ? 'board' : 'list';
-  const workPage = (
-    <section aria-label="Workshop work" data-workshop-work="" style={{ display:'flex', flexDirection:'column', minHeight:0, minWidth:0, background:W.bg, overflow:'hidden' }}>
-      {preset === 'tasks' && <div style={{ display:'flex', justifyContent:'flex-end', gap:12, padding:'14px 14px 0', minWidth:0 }}>
-        <div role="tablist" aria-label="Task view" style={{ display:'inline-flex', gap:4, flexShrink:0, border:`1px solid ${W.line}`, borderRadius:6, padding:2 }}>
-          {[['list', 'List', 'tasks'], ['board', 'Board', 'board']].map(([key, label, target]) => (
-            <button key={key} type="button" role="tab" aria-selected={taskView === key} onClick={() => setPreset(target)}
-              style={{ minHeight:24, border:0, borderRadius:4, margin:0, padding:'0 10px', cursor:'pointer',
-                background:taskView === key ? W.accentSoft : 'transparent', color:taskView === key ? W.ink : W.inkSoft,
-                fontFamily:W.sans, fontSize:12 }}>{label}</button>
-          ))}
-        </div>
-      </div>}
-      {taskView === 'board' ? board : tasksPage}
-    </section>
-  );
-
-  const cols = externalRail
-    ? (preset==='board' ? 'minmax(0,1fr) 300px' : 'minmax(0,1fr) 320px')
-    : (preset==='board' ? '212px minmax(0,1fr) 300px' : '262px minmax(0,1fr) 320px');
-  let middle = null;
-  if (WORKSHOP_TASK_PRESETS.includes(preset)) middle = workPage;
-  else if (preset === 'agents') middle = agentsPage;
-  else if (preset === 'approvals') middle = approvalsPage;
-  else if (preset === 'task') middle = taskPage;
-  else if (preset === 'router') {
-    const routerTasks = panelReady ? allTasks.slice(0, 12).map(task => ({...task, model:wsTaskModel(task, native, transcript)})) : [];
-    middle = <WorkshopRouterTab live={panelReady ? routerLive : null} error={routerError} loading={!panelReady || routerLoading}
-      saving={routerSaving} selected={routerSelected} onSave={saveRouterModel} tasks={routerTasks}/>;
-  } else if (preset === 'relay') {
-    middle = <WorkshopRelayTab consent={relayConsent} session={relaySession} error={relayError}
-      busy={relayBusy} onToggle={toggleRelay} onSignIn={signInRelay}/>;
-  } else if (preset === 'prompts') {
-    middle = <WorkshopPromptsTab prompts={prompts} loading={promptsLoading} error={promptsError}
-      values={promptValues} onValue={setPromptBlank} onUse={usePrompt} canSave={!!promptSave} onSave={savePrompt}
-      canShare={!!promptShare} onShare={sharePrompt}/>;
-  } else middle = renderStream();
-  return (
-    <main style={{ gridColumn:'1 / -1', gridRow:'2', minHeight:0, overflow:'hidden', display:'grid',
-      gridTemplateColumns:'minmax(0,1fr)', gridTemplateRows:'42px 48px minmax(0,1fr)', border:`1px solid ${W.line}`,
-      borderRadius:12, background:W.bg, margin:0 }}>
-      {bar}
-      {middle}
-      <style>{`
-        [aria-label="Native Workshop review"] button,
-        [aria-label="Native Workshop review"] select,
-        [aria-label="Native Workshop review"] input:not([type="checkbox"]),
-        [aria-label="Native Workshop review"] textarea {
-          background:${W.bg}; color:${W.ink}; border:1px solid ${W.line};
-          border-radius:5px; padding:5px 9px; font-family:${W.sans}; font-size:11.5px; max-width:100%; box-sizing:border-box;
-        }
-        [aria-label="Native Workshop review"] button {margin:4px 4px 4px 0; cursor:pointer; background:transparent; color:${W.inkSoft}; padding:5px 12px;}
-        [aria-label="Native Workshop review"] summary {font-family:${W.mono}; font-size:${W.fs.label.sz}px; letter-spacing:0.04em; color:${W.inkSoft}; cursor:pointer;}
-        [aria-label="Native Workshop review"] h3, [aria-label="Native Workshop review"] h4 {font-family:${W.mono}; font-size:${W.fs.label.sz}px; font-weight:400; letter-spacing:0.18em; text-transform:uppercase; color:${W.inkSoft};}
-        [aria-label="Native Workshop review"] button:disabled {border-style:dashed; cursor:default;}
-      `}</style>
-    </main>
-  );
+  </div>;
 };
 
-// ── header tabs: project board, conversation, agents, approvals, plus retained routing views ──
-const WorkshopTabs = ({tab, setTab, approvals = 0}) => (
-  <div role="tablist" aria-label="Workshop tabs" style={{ display:'flex', alignItems:'center', gap:8, minWidth:0, flexWrap:'wrap' }}>
-    {WORKSHOP_TABS.map(([k, l]) => (
-      <button key={k} type="button" role="tab" onClick={() => setTab(k)} title={l} aria-label={l} aria-selected={tab === k}
-        style={{ minHeight:28, border:0, borderRadius:5, margin:0, cursor:'pointer', padding:'0 10px',
-          background: tab===k ? W.accentSoft : 'transparent', color:tab===k ? W.ink : W.inkSoft,
-          fontFamily:W.sans, fontSize:13, fontWeight:400, letterSpacing:0, display:'inline-flex', alignItems:'center', gap:7 }}>
-        <span>{l}</span>{k === 'approvals' && approvals > 0 && <span style={{ minWidth:18, height:18, padding:'0 5px',
-          borderRadius:5, background:W.warn + '24', color:W.warn, display:'inline-flex', alignItems:'center',
-          justifyContent:'center', fontFamily:W.sans, fontSize:12, lineHeight:1, fontWeight:600 }}>{approvals}</span>}
-      </button>
-    ))}
-  </div>
-);
+const WorkshopView = ({ state, descriptor, target = '', setTarget = () => {}, setMode, setFocusId,
+  requestCanvasReveal, onLeave, onHome, onDocs, onSettings, onLibrary, onAddNode, account, sel, setSel }) => {
+  const authority = window.ARCHHUB_STUDIO_AUTHORITY || window.ARCHHUB_EXISTING_WORKSHOP;
+  const transcript = wsTranscript(state, descriptor);
+  const native = wsNative(state, descriptor);
+  const [draft, setDraft] = React.useState('');
+  const [busy, setBusy] = React.useState(false), busyRef = React.useRef(false);
+  const [error, setError] = React.useState('');
+  const [contacts, setContacts] = React.useState([]);
+  const [selection, ownSelect] = React.useState(null);
+  const [search, setSearch] = React.useState('');
+  const searchRef = React.useRef(null);
+  const acceptedDecisions = React.useRef(new Set());
+  const selected = sel?.task || selection;
+  const viewport = React.useRef(null), content = React.useRef(null), approvalRef = React.useRef(null);
+  const scroll = React.useRef(null), mounted = React.useRef(true);
+  if (!scroll.current) scroll.current = createWorkshopMessageScroll(() => {});
+  const scope = JSON.stringify([state?.canvas?.graph_id, state?.canvas?.root, descriptor.root]);
+  const heldScope = React.useRef(scope); heldScope.current = scope;
+  const current = () => mounted.current && heldScope.current === scope;
+  React.useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const graphNodes = workshopProjectedNodes(state);
+  const selectedNativeWork = selected && !(transcript?.workflows || []).some(row => row.root === selected) &&
+    graphNodes.some(row => row.id === selected) ? selected : native?.work || null;
+  const openedRoot = React.useRef(null);
+  // Reuse the visible-page refresh: first navigation opens once, messages settle before status.
+  React.useEffect(() => {
+    if (!descriptor.root || descriptor.unavailable || !authority) return;
+    let gone = false, timer, active = false;
+    let lastNativeRead = 0;
+    const refresh = async () => {
+      if (gone || document.hidden || active) return;
+      active = true; clearTimeout(timer);
+      try {
+        const opening = openedRoot.current !== descriptor.root && typeof authority.openWorkshop === 'function';
+        if (opening) openedRoot.current = descriptor.root;
+        const projection = await (opening ? authority.openWorkshop(descriptor.root) : authority.refreshWorkshop?.(descriptor.root));
+        if (!gone && !document.hidden && projection && !busyRef.current && Date.now() - lastNativeRead >= 10000 &&
+            descriptor.native_work_available !== false && typeof authority.refreshNativeWork === 'function') {
+          lastNativeRead = Date.now();
+          await authority.refreshNativeWork(descriptor.root, selectedNativeWork);
+        }
+      } catch (failure) { if (!gone) setError(failure.message || 'Workshop could not be refreshed.'); }
+      finally { active = false; if (!gone) timer = setTimeout(refresh, 2500); }
+    };
+    refresh();
+    const visible = () => { clearTimeout(timer); if (!document.hidden) refresh(); };
+    document.addEventListener('visibilitychange', visible);
+    return () => { gone = true; clearTimeout(timer); document.removeEventListener('visibilitychange', visible); };
+  }, [authority, descriptor.root, descriptor.unavailable, selectedNativeWork]);
+  // Agent data and task creation admission are requested only from an open window.
+  React.useEffect(() => {
+    if (!descriptor.root || descriptor.unavailable || !authority) return;
+    let gone = false;
+    if (typeof authority.nativeAgents === 'function') Promise.resolve(authority.nativeAgents(descriptor.root))
+      .then(read => { if (!gone && Array.isArray(read?.contacts)) setContacts(read.contacts); })
+      .catch(failure => { if (!gone) setError(failure.message || 'Agent connections could not be read.'); });
+    authority.refreshWorkshopPresentation?.(descriptor.root)?.catch(failure => {
+      if (!gone) setError(failure.message || 'Workshop preferences could not be read.');
+    });
+    return () => { gone = true; };
+  }, [authority, descriptor.root, descriptor.unavailable]);
+  const messages = transcript?.messages || [];
+  React.useEffect(() => {
+    const focusSearch = event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+      event.preventDefault(); event.stopPropagation(); searchRef.current?.focus();
+    }};
+    document.addEventListener('keydown', focusSearch, true);
+    return () => document.removeEventListener('keydown', focusSearch, true);
+  }, []);
+  const names = new Map((transcript?.participants || []).map(row => [row.root, row.label]));
+  const model = window.ARCHHUB_WORKSHOP_MODEL({state, descriptor, selected});
+  const tasks = model.tasks;
+  const creating = !!model.draft;
+  const hasThread = !creating && (tasks.length > 0 || messages.length > 0);
+  const agents = model.members;
+  const activeTask = creating ? null : model.tasks.find(row => row.work === selected) || model.tasks.find(row => row.work === model.approval?.work) || model.tasks[0] || null;
+  const assignedAgents = model.assigned;
+  const lead = assignedAgents[0] || agents.find(row => row.row?.attached || row.row?.connected === true) || null;
+  const aliases = [...(transcript?.participants || []).filter(row => row.attached && row.root !== transcript?.self)
+    .map(row => ({label:row.label, target:row.root})), ...contacts.map(row => ({label:row.label, target:'contact:' + row.root}))];
+  const modelAgent = transcript?.model_agent;
+  if (modelAgent) aliases.push({label:window.ARCHHUB_WORKSHOP_AGENT_MODEL(modelAgent,state), target:'model:' + modelAgent.root});
+  const taskAgent = transcript?.assignments?.find(row=>row.work===activeTask?.work)?.agent_session || activeTask?.owner;
+  const taskReply = aliases.find(row=>row.target===taskAgent)?.target || '';
+  const replyTarget = target || (activeTask ? taskReply : aliases.find(row=>row.target===lead?.id)?.target || aliases[0]?.target) ||
+    (!activeTask && modelAgent ? 'model:' + modelAgent.root : !activeTask && contacts.find(row => row.connected === true) ? 'contact:' + contacts.find(row => row.connected === true).root : '');
+  const replyName = aliases.find(row => row.target === replyTarget)?.label || 'Not available yet';
+  const selectTask = task => { if (creating) authority?.cancelWorkshopTask?.(descriptor.root); ownSelect(task.work); setSel?.({agent:null, task:task.work,review:false});
+    const assigned = transcript?.assignments?.find(row => row.work === task.work)?.agent_session || task.owner;
+    setTarget(assigned && aliases.some(row => row.target === assigned) ? assigned : '');
+  };
+  const reviewTask = task => {
+    selectTask(task);
+    setTimeout(() => { const card = approvalRef.current?.querySelector('[data-workshop-approval-card]') || approvalRef.current;
+      card?.scrollIntoView?.({block:'center'}); card?.focus?.(); }, 0);
+  };
+  React.useEffect(() => {
+    if (sel?.task && sel?.review === true) { const card = approvalRef.current?.querySelector('[data-workshop-approval-card]') || approvalRef.current;
+      card?.scrollIntoView?.({block:'center'}); card?.focus?.(); }
+  }, [sel?.task, sel?.review, model.approval?.id]);
+  React.useLayoutEffect(() => {
+    scroll.current.update(viewport.current, scope + '|' + (activeTask?.work || ''), !!transcript && !transcript.error, !!state?.workshopPage?.before);
+  }, [scope, activeTask?.work, transcript?.content_cursor, messages.length]);
+  const run = async action => {
+    if (busyRef.current) return;
+    busyRef.current = true; setBusy(true); setError('');
+    try { await action(); return true; }
+    catch (failure) { if (current()) setError(failure.message || 'The action was not confirmed.'); return false; }
+    finally { busyRef.current = false; if (mounted.current) setBusy(false); }
+  };
+  const send = () => run(async () => {
+    if (!draft.trim() || transcript?.can_send !== true || (!replyTarget && !draft.trim().startsWith('@'))) return;
+    const address = wsResolveAddress(draft, replyTarget, aliases);
+    if (creating) {
+      if (typeof authority?.createWorkshopTask !== 'function') throw new Error('Task creation is not available yet.');
+      const result = await authority.createWorkshopTask(descriptor.root,{message:address.message,target:address.target});
+      if (current()) {setTarget(address.target);setDraft('');ownSelect(result.created_root);setSel?.({agent:null,task:result.created_root,review:false});}
+      return;
+    }
+    const contact = contacts.find(row => 'contact:' + row.root === address.target);
+    if (contact) {
+      if (contact.connected === false) throw new Error('Refresh this agent connection before sending.');
+      await authority.sendNativeContact(descriptor.root, contact, address.message);
+    } else if (address.target.startsWith('model:')) {
+      if (!modelAgent || address.target !== 'model:' + modelAgent.root) throw new Error('Refresh this model before sending.');
+      await authority.sendModelConversation(descriptor.root, modelAgent, address.message);
+    } else await authority.workshopAction(descriptor.root, 'send', null, {target:address.target, message:address.message,
+      ...(address.target && graphNodes.some(node=>node.id===activeTask?.work && node.engine==='work') ? {work:activeTask.work} : {})});
+    if (current()) { setTarget(address.target); setDraft(''); }
+  });
+  const approval = model.approval;
+  const decisionAvailable = (card,operation,choice) => {
+    const key = [scope,card?.kind,card?.id,card?.kind === 'native' ? operation?.input_digest : card?.workflow?.digest || card?.input_digest || ''].join('|');
+    if (!card || acceptedDecisions.current.has(key)) return false;
+    if (choice === 'approve' && Number.isFinite(operation?.review_expires_at) && operation.review_expires_at <= Date.now()/1000) return false;
+    return choice === 'approve' ? card.kind === 'proposal' ? typeof authority?.bindWorkProposals === 'function' :
+      card.kind === 'native' ? typeof authority?.approveNativeWork === 'function' && !!operation?.input_digest :
+        card.kind === 'workflow' && typeof authority?.workshopWorkflow === 'function' && !!card.workflow?.digest :
+      card.kind === 'proposal' ? typeof authority?.declineWorkProposals === 'function' :
+        card.kind === 'native' && operation?.mode === 'agent' && typeof authority?.nativeWorkAction === 'function';
+  };
+  const decide = (choice,card = approval,operation = native) => run(async () => {
+    if (!decisionAvailable(card,operation,choice)) return;
+    const key = [scope,card.kind,card.id,card.kind === 'native' ? operation?.input_digest : card.workflow?.digest || card.input_digest || ''].join('|');
+    if (card.kind === 'proposal') {
+      const message = card.proposal.decision?.find(row => row.action === (choice === 'approve' ? 'approve-proposal' : 'decline-proposal'))?.message;
+      if (!message) throw new Error('Read this proposal before deciding.');
+      await (choice === 'approve' ? approveWorkProposal(authority, descriptor.root, message)
+        : declineWorkProposal(authority, descriptor.root, message));
+    } else if (card.kind === 'native') {
+      if (choice === 'approve') await authority.approveNativeWork(descriptor.root, operation.input_digest);
+      else await authority.nativeWorkAction(descriptor.root, 'stop_native', operation.work);
+    } else if (choice === 'approve') await authority.workshopWorkflow(descriptor.root, 'workflow-approve',
+      {workflow:card.workflow.root, digest:card.workflow.digest});
+    acceptedDecisions.current.add(key);
+    try { await authority.refreshTopologyCanvas?.(); await authority.refreshWorkshop?.(descriptor.root); }
+    catch (_) { /* A refresh failure never replays an accepted decision. */ }
+  });
+  const openCanvas = () => run(async () => {
+    const workflow = (transcript?.workflows || []).find(row => row.root === activeTask?.work ||
+      row.members?.includes(activeTask?.work) || row.nodes?.some(node => node.root === activeTask?.work)) || null;
+    const deps = {authority, scopeOpen:window.ARCHHUB_SCOPE_OPEN, setFocusId, requestCanvasReveal, setMode, setError,
+      refreshTopology:typeof authority?.refreshTopologyCanvas === 'function' ? () => authority.refreshTopologyCanvas() : null,
+      currentScope:() => authority.getSnapshot()?.topology?.canvas?.scope?.current || authority.getSnapshot()?.canvas?.root};
+    if (workflow) await openShownWorkflowAsNodes(workflow,deps);
+    else await openWorkflowAsNodes({...deps,focus:activeTask?.graphRoot || activeTask?.work || descriptor.node_root || descriptor.root,workflow:null});
+  });
+  const K = W.workshop;
+  const isPlanned = row => row.boardLane === 'planned' || row.planned || ['planned','open','queued'].includes(row.state);
+  const tone = row => row.approving || row.state === 'needs-user' || (row.proposal && row.state === 'block') ? W.warn : isPlanned(row) ? W.inkSoft :
+    ['done','submitted','completed'].includes(row.state) ? W.ok : ['failed','stopped','block'].includes(row.state) ? W.err :
+    ['run','running','open','working'].includes(row.state) ? W.accent : W.inkSoft;
+  const statusLine = row => row.approving || row.state === 'needs-user' || (row.proposal && row.state === 'block') ?
+    row.work === model.approval?.work && Number.isSafeInteger(model.count) ? `Approve ${model.count}${model.output_label ? ' ' + model.output_label : ''}` : 'waits for you' :
+    row.boardLane === 'done' ? [row.result_summary || row.latest?.result_summary || 'Not available yet',
+      wsClockText(row.completed_at ?? row.done_at ?? row.updated_at ?? row.latest?.created_at)].filter(Boolean).join(' · ') :
+    isPlanned(row) ? row.depends_on?.length ? 'starts after ' + row.depends_on.map(id=>tasks.find(task=>task.work===id)?.title||graphNodes.find(node=>node.id===id)?.title||id).join(', ') : 'ready to start' :
+    /^claimed$/i.test(row.status || row.nodeStatus || '') ? 'ready to start' :
+    String(row.statusLine || row.status || row.nodeStatus || row.latest?.state || row.state || 'Not available yet').replaceAll('_',' ');
+  const presence = row => row?.presence === 'needs-user' ? W.warn : row?.presence === 'working' ? W.accent : null;
+  const tile = (row, size = 28, ring = presence(row)) => <span data-workshop-avatar={row?.id || ''}
+    style={{position:'relative',width:size,height:size,flex:'none',display:'inline-block'}}>
+    <i style={{position:'absolute',inset:0,borderRadius:size/3.5,background:`linear-gradient(180deg, ${row?.col || W.purple} 0%, ${row?.col || W.purple}cc 100%)`,
+      color:'#fff',display:'grid',placeItems:'center',fontStyle:'normal',fontSize:Math.max(11,size*.44),fontWeight:700,boxShadow:'0 1px 0 rgba(255,255,255,.25) inset'}}>
+      {row?.ini || wsInitial(row?.name,'?')}</i>{ring && <i data-presence-ring="" style={{position:'absolute',inset:-3,borderRadius:size/3.5+3,border:`2px solid ${ring}`,boxShadow:`0 0 10px ${ring}66`}}/>}</span>;
+  const dot = color => <i style={{width:8,height:8,borderRadius:'50%',background:color,boxShadow:`0 0 8px ${color}aa`,display:'inline-block',flex:'none'}}/>;
+  const chip = (label,color) => <span style={{display:'inline-flex',alignItems:'center',gap:6,height:24,padding:'0 9px',borderRadius:999,background:`${color}1f`,color,fontSize:12,fontWeight:600}}>{label}</span>;
+  const button = (primary = false, small = false) => ({display:'inline-flex',alignItems:'center',gap:7,height:small?30:36,padding:small?'0 12px':'0 16px',borderRadius:8,
+    fontFamily:W.sans,fontSize:small?13:14,fontWeight:600,cursor:'pointer',background:primary?`linear-gradient(180deg, ${W.accentHi || W.accent} 0%, ${W.accent} 100%)`:K.buttonBackground,
+    color:primary?'#fff':W.ink,boxShadow:primary?`0 1px 0 rgba(255,255,255,.25) inset, 0 4px 14px ${W.accent}44`:'0 1px 0 rgba(255,255,255,.06) inset',border:primary?0:`1px solid ${W.line}`});
+  const eventRoots = new Set((activeTask?.events || []).map(message => message.root));
+  const taskMessages = activeTask ? messages.filter(message => eventRoots.has(message.root) ||
+    (!message.task_root && !message.work_root && !(message.reference_roots || message.refs || []).some(id=>tasks.some(task=>task.work===id)) && !/\b(?:assembly-instance|work):[A-Za-z0-9_-]+/.test(wsText(message)) &&
+      !(transcript?.workflows || []).some(row=>row.source_message===message.root && row.root!==selected && row.root!==model.workflow?.root)) ||
+    ((message.task_root === activeTask.work || message.work_root === activeTask.work) &&
+      !(transcript?.workflows || []).some(row => row.source_message === message.root && row.root !== selected))) : messages;
+  const planMessage = model.workflow?.source_message ? messages.find(message => message.root === model.workflow.source_message)
+    : [...taskMessages].reverse().find(message => wsPlanReply(wsText(message))?.steps?.length);
+  const plan = model.plans.length ? model.plans : wsPlanReply(wsText(planMessage))?.steps || [];
+  const plainText = message => {
+    const structured = wsPlanReply(message.agent_text || wsText(message));
+    const body = structured ? structured.prose : message.agent_text || message.body || '';
+    if (isWorkProposal(message)) return model.tasks.find(row => row.proposal === (message.message_id || message.root))?.intent || 'Not available yet';
+    return String(body).replace(/\b(?:assembly-instance|work|app|room):[A-Za-z0-9_.:@-]+/g,
+      id => graphNodes.find(row => row.id === id)?.title || model.tasks.find(row => row.work === id)?.title || 'task');
+  };
+  const rawMessages = model.workflow?.source_message && selected === model.workflow.root
+    ? messages.filter(message => message.root === model.workflow.source_message ||
+      (transcript?.reviews || []).some(review => review.workflow === model.workflow.root && review.review_message === message.root)) : taskMessages;
+  const visibleMessages = rawMessages.filter(message => !window.ARCHHUB_WORKSHOP_TASK_SOURCE.lifecycle(message));
+  const planElement = plan.length > 0 && <div data-workshop-plan="" style={{borderRadius:12,background:W.surf,boxShadow:W.elev.e1,overflow:'hidden'}}>
+    <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px'}}><span style={{fontSize:13,fontWeight:600,flex:1}}>Run</span>
+      <span style={{fontSize:12.5,color:W.inkSoft}}>{plan.filter(step=>['done','completed','settled','published'].includes(graphNodes.find(n=>n.id===(step.root||step.id))?.status || step.state)).length} of {plan.length} steps</span>
+      <span role="progressbar" aria-label="Run progress" aria-valuemin={0} aria-valuemax={plan.length}
+        aria-valuenow={plan.filter(step=>['done','completed','settled','published'].includes(graphNodes.find(n=>n.id===(step.root||step.id))?.status || step.state)).length}
+        style={{width:120,height:4,borderRadius:2,background:K.progressBackground}}><i style={{display:'block',height:'100%',borderRadius:2,
+          width:`${100*plan.filter(step=>['done','completed','settled','published'].includes(graphNodes.find(n=>n.id===(step.root||step.id))?.status || step.state)).length/plan.length}%`,background:`linear-gradient(90deg, ${W.ok}, ${W.warn})`}}/></span></div>
+    {plan.map((step,index) => { const node=graphNodes.find(row=>row.id===(step.root||step.id));
+      const st=String(node?.status||node?.state||step.state||'').toLowerCase(),done=['done','completed','settled','published'].includes(st),waits=['block','blocked','waiting','awaiting_approval','needs-user'].includes(st)||node?.id===approval?.work;
+      const c=done?W.ok:waits?W.warn:W.inkSoft;
+      return <div key={step.root||step.id||index} data-workshop-plan-step={step.root||step.id||''} style={{display:'grid',gridTemplateColumns:'28px 1fr auto auto',gap:12,alignItems:'center',padding:'7px 14px',borderTop:`1px solid ${W.lineSoft}`}}>
+        <span style={{width:26,height:26,borderRadius:7,background:`${c}22`,color:c,display:'grid',placeItems:'center',fontSize:13}}>{done?'✓':waits?'⏸':'○'}</span>
+        <span data-workshop-step-title="" style={{fontSize:14,color:W.ink}}>{wsCleanTitle(step.title||step.t||node?.title,'Not available yet')}</span>
+        <span style={{fontSize:12.5,color:W.inkSoft}}>{step.duration ?? node?.duration ?? ''}</span>
+        <span data-workshop-step-result="" style={{fontSize:12.5,color:c,textAlign:'right'}}>{done||waits?chip(step.result||node?.result_summary||(done?'done':'waits for you'),c):step.result||node?.result_summary||'next'}</span>
+      </div>;})}</div>;
+  const planAnchor=visibleMessages.some(message=>message.root===planMessage?.root) ? planMessage.root :
+    [...visibleMessages].reverse().find(message=>wsSender(message)===(model.workflow?.proposed_by||lead?.id))?.root;
+  const hostLine=(state?.hosts||window.ARCHHUB_LIVE?.hosts||[]).filter(row=>row.state==='connected'||row.status==='connected').map(row=>[row.name,row.file].filter(Boolean).join(' · ')).join(' · ');
+  const navigate=name=>{ if(name==='Workshop')return; if(name==='Canvas')return openCanvas();
+    const route={Home:onHome||onLeave,Library:onLibrary||onAddNode,Docs:onDocs,Settings:onSettings}[name];route?.();};
+  const agentFor=task=>agents.find(row=>row.id===transcript?.assignments?.find(a=>a.work===task.work)?.agent_session)||agents.find(row=>row.id===task.owner);
+  const liveAccount = account || state.account || (typeof window.acLoad === 'function' ? window.acLoad() : null);
+  const accountName = liveAccount?.name || liveAccount?.email || names.get(transcript?.self) || '';
+  const accountInitials = liveAccount?.initials || accountName.trim().split(/\s+/).map(word=>Array.from(word)[0]).slice(0,2).join('').toUpperCase() || '?';
+  const accountColour = liveAccount?.colour || liveAccount?.color || liveAccount?.avatar_color || W.userAv;
+  const beginTask = () => run(async()=>{await authority?.beginWorkshopTask?.(descriptor.root);setDraft('');ownSelect(null);setSel?.({agent:null,task:null,review:false});setTarget(aliases.find(row=>row.target===lead?.id)?.target||aliases[0]?.target||'');});
+  const taskProgress=task=>{const projected=graphNodes.find(n=>n.id===(task.graphRoot||task.work));
+    const value=task.progress ?? projected?.progress; return Number.isFinite(value)?Math.max(0,Math.min(100,value)):null;};
+  const renderSection=section=><section key={section.id} data-workshop-section={section.id}>
+    <div style={{display:'flex',alignItems:'center',gap:8,padding:'18px 22px 8px',fontSize:12,fontWeight:600,color:W.inkSoft,letterSpacing:'.05em'}}>
+      {section.label}<span style={{minWidth:20,height:18,borderRadius:9,background:K.buttonBackground,display:'grid',placeItems:'center',fontSize:11,color:W.ink}}>{section.rows.length}</span></div>
+    {section.rows.filter(task=>!search||task.title?.toLowerCase().includes(search.toLowerCase())).map(task=>{const a=agentFor(task),selectedTask=activeTask?.work===task.work,needs=section.id==='needs-user',prog=taskProgress(task),c=needs?W.warn:tone(task);
+      return <div key={task.work} data-workshop-task-row={task.work} data-state={needs?'needs-user':task.state} role="option" aria-selected={selectedTask} tabIndex={0}
+        onClick={()=>selectTask(task)} onKeyDown={event=>event.key==='Enter'&&selectTask(task)}
+        style={{position:'relative',display:'grid',gridTemplateColumns:'32px 1fr auto',gap:12,alignItems:'center',margin:'2px 10px',padding:'10px 12px',borderRadius:10,
+          background:selectedTask?W.surf2:'transparent',boxShadow:selectedTask?W.elev.e1:'none',cursor:'pointer'}}>
+        {tile(a,30,needs?W.warn:['run','running','executing'].includes(task.state)?W.accent:null)}<div style={{minWidth:0,display:'grid',gap:3}}>
+          <div style={{fontSize:14,fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{wsCleanTitle(task.title,'Untitled task')}</div>
+          <div style={{display:'flex',alignItems:'center',gap:6,fontSize:12.5,color:c}}><span style={{flex:1}}>{statusLine(task)}</span>
+            {selectedTask&&model.approval?.work===task.work&&<button type="button" data-workshop-primary="" data-workshop-row-review={task.work} onClick={e=>{e.stopPropagation();reviewTask(task);}} style={{...button(false,true),height:18,padding:'0 7px',fontSize:11}}>Review</button>}</div>
+          {prog!==null&&<span role="progressbar" aria-label="Task progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={prog}
+            style={{height:3,borderRadius:2,background:K.progressBackground,marginTop:3}}><i style={{display:'block',height:'100%',borderRadius:2,width:prog+'%',background:c}}/></span>}</div>{dot(c)}
+        {selectedTask&&needs&&<i style={{position:'absolute',left:-10,top:12,bottom:12,width:3,borderRadius:3,background:W.warn}}/>}</div>;})}</section>;
+  const ApprovalCard=window.ARCHHUB_APPROVAL_CARD;
+  const approvalElement=(card=model.approval,taskModel=model,compact=false)=>{if(!card)return null; const active=card.id===approval?.id;
+    return <div ref={active?approvalRef:undefined} tabIndex={-1} data-approval-anchor={card.id} style={{marginLeft:compact?0:46}}>
+      <ApprovalCard approval={card} accent={active} approveLabel="Approve" surface={compact?'workshop-tile':'workshop'} busy={busy} canApprove={decisionAvailable(card,taskModel.native,'approve')} canDecline={decisionAvailable(card,taskModel.native,'decline')}
+        onApprove={async()=>{if(await decide('approve',card,taskModel.native)===false)throw new Error('Approval could not be confirmed.');}}
+        onDecline={async()=>{if(await decide('decline',card,taskModel.native)===false)throw new Error('Decline could not be confirmed.');}}/></div>;};
+  const layout=[1,2,4].includes(model.layout)?model.layout:1;
+  const setLayout=value=>run(async()=>{ if(typeof authority?.setWorkshopLayout!=='function')return; await authority.setWorkshopLayout(descriptor.root,value); });
+  const modelLabel=a=>a?.modelLabel||(a?window.ARCHHUB_WORKSHOP_AGENT_MODEL?.(a.row||a,state):null)||'Not available yet';
+  const selectedTiles=[activeTask,...tasks.filter(t=>t.work!==activeTask?.work)].filter(Boolean).slice(0,layout);
+  const composer=<div data-workshop72-composer="" style={{width:hasThread?K.thread:640,maxWidth:'calc(100% - 48px)',margin:'0 auto',borderRadius:14,background:W.surf2,boxShadow:W.elev.e2,border:`1px solid ${W.line}`,padding:'14px 16px',display:'grid',gap:12}}>
+    <textarea aria-label="Workshop message" placeholder={`Reply to ${replyName}, or @ another agent…`} value={draft} disabled={busy||transcript?.can_send!==true}
+      onChange={event=>setDraft(event.target.value)} onKeyDown={event=>{if((event.ctrlKey||event.metaKey)&&event.key==='Enter'){event.preventDefault();send();}}}
+      style={{fontFamily:W.sans,fontSize:15,color:W.ink,background:'transparent',border:0,padding:0,resize:'none',height:18,minHeight:18,outline:'none'}}/>
+    <div style={{display:'flex',alignItems:'center',gap:8}}>
+      <WorkshopAgentPicker aliases={aliases} target={replyTarget} label={replyName} onSelect={setTarget} disabled={!aliases.length||busy}
+        avatar={tile(agents.find(a=>a.id===replyTarget)||lead,16,null)}/><span style={{flex:1}}/>
+      <button type="button" aria-label="Send" data-workshop-send="" data-workshop-primary="" disabled={busy||transcript?.can_send!==true||!draft.trim()||(!replyTarget&&!draft.trim().startsWith('@'))} onClick={send} style={button(!!draft.trim()&&!approval&&!model.status.waiting,true)}>Send</button></div>
+      {(error||transcript?.error)&&<div role="alert" style={{fontSize:13,color:W.err}}>{error||transcript.error}</div>}</div>;
+  return <main data-workshop-s1="" data-workshop72="" data-workshop-v3="" data-screen-label="5.1v3_workshop" data-workshop-id={model.id}
+    style={{gridColumn:'1 / -1',gridRow:'1 / -1',minHeight:0,overflow:'hidden',display:'grid',width:'100%',height:'100%',gridTemplateRows:`1fr ${K.status}px`,background:K.background,color:W.ink,fontFamily:W.sans,margin:0}}>
+    <div style={{display:'grid',gridTemplateColumns:`${K.rail}px ${K.list}px minmax(0,1fr)`,minHeight:0}}>
+      <nav data-workshop72-rail="" style={{width:K.rail,boxSizing:'border-box',background:K.railBackground,borderRight:`1px solid ${W.lineSoft}`,display:'grid',gridTemplateRows:'auto 1fr auto',paddingTop:12,justifyItems:'center'}}>
+        <div style={{display:'grid',gap:4}}>{[['⌂','Home'],['◎','Workshop'],['⬡','Canvas'],['▦','Library']].map(([g,l])=><div key={l} role="link" tabIndex={0} aria-label={l}
+          onClick={()=>navigate(l)} onKeyDown={e=>e.key==='Enter'&&navigate(l)} style={{width:64,height:58,display:'grid',placeItems:'center',alignContent:'center',gap:4,position:'relative',color:l==='Workshop'?W.ink:W.inkSoft,cursor:'pointer'}}>
+          <span style={{width:36,height:30,borderRadius:8,display:'grid',placeItems:'center',fontSize:16,background:l==='Workshop'?K.progressBackground:'transparent',boxShadow:l==='Workshop'?W.elev.e1:'none'}}>{g}</span><span style={{fontSize:11,fontWeight:l==='Workshop'?600:500}}>{l}</span>
+          {l==='Workshop'&&model.status.waiting>0&&<b style={{position:'absolute',top:3,right:10,minWidth:18,height:18,borderRadius:9,background:W.warn,color:W.onFill,fontSize:11,fontWeight:700,display:'grid',placeItems:'center'}}>{model.status.waiting}</b>}</div>)}</div><span/>
+        <div style={{paddingBottom:10,display:'grid',gap:4,justifyItems:'center'}}><div role="link" tabIndex={0} aria-label="Settings" onClick={()=>navigate('Settings')} onKeyDown={e=>e.key==='Enter'&&navigate('Settings')}
+          style={{width:64,height:58,display:'grid',placeItems:'center',alignContent:'center',gap:4,color:W.inkSoft,cursor:'pointer'}}><span style={{fontSize:16}}>⚙</span><span style={{fontSize:11}}>Settings</span></div>
+          {transcript?.self&&<span data-workshop-account-avatar="" style={{width:32,height:32,borderRadius:'50%',background:accountColour,color:W.onUserAv,display:'grid',placeItems:'center',fontSize:12,fontWeight:700}}>{accountInitials}</span>}</div></nav>
+      <aside data-workshop72-list="" style={{width:K.list,boxSizing:'border-box',background:K.listBackground,borderRight:`1px solid ${W.lineSoft}`,display:'flex',flexDirection:'column',minHeight:0}}>
+        <div style={{display:'flex',alignItems:'center',gap:10,height:64,flex:'none',padding:'0 16px 0 22px'}}><span style={{fontSize:20,fontWeight:700,letterSpacing:'-.01em',flex:1}}>Workshop</span>
+          <button type="button" data-workshop-primary="" disabled={busy||transcript?.can_send!==true||typeof authority?.beginWorkshopTask!=='function'} onClick={beginTask} style={button(false,true)}>New task</button></div>
+        <div style={{margin:'0 16px',height:36,flex:'none',borderRadius:8,background:'#18181d',border:`1px solid ${W.lineSoft}`,display:'flex',alignItems:'center',gap:8,padding:'0 12px',fontSize:13.5,color:W.inkSoft}}>
+          <span>⌕</span><input ref={searchRef} aria-label="Search tasks" placeholder="Search tasks" value={search} onChange={e=>setSearch(e.target.value)} style={{minWidth:0,flex:1,border:0,background:'transparent',color:W.ink,fontFamily:W.sans,fontSize:13.5,outline:'none'}}/>
+          <span style={{fontSize:11,border:`1px solid ${W.line}`,borderRadius:4,padding:'1px 5px'}}>Ctrl K</span></div>
+        <div className="ah-scroll" data-workshop72-sections="" style={{overflowY:'auto',flex:1,minHeight:0}}>{tasks.length>0&&(model.viewSections||[]).map(renderSection)}
+          {!tasks.length&&<div role="status" aria-disabled={transcript?.ok!==true} style={{padding:'24px 16px',fontSize:13,color:W.inkSoft}}>{transcript?.ok===true?'No tasks yet.':'Not available yet'}</div>}</div>
+        <div data-workshop-agents="" style={{margin:12,padding:'12px 14px',borderRadius:10,background:W.surf,boxShadow:W.elev.e1,display:'grid',gap:10}}>
+          {agents.map(a=><div key={a.id} style={{display:'flex',alignItems:'center',gap:10,fontSize:13,minWidth:0}}>{tile(a,22)}
+            <span style={{fontWeight:600,whiteSpace:'nowrap',flexShrink:0}}>{a.name}</span>
+            <span title={modelLabel(a)} style={{color:W.inkSoft,fontSize:12,whiteSpace:'nowrap',minWidth:0,overflow:'hidden',textOverflow:'ellipsis',flex:1}}>{modelLabel(a)}</span>
+            <span style={{fontSize:12,color:presence(a)||W.inkSoft,whiteSpace:'nowrap',flexShrink:0}}>{a.liveState||'Not available yet'}</span></div>)}
+          {!agents.length&&<span aria-disabled="true" style={{fontSize:13,color:W.inkSoft}}>Not available yet</span>}</div></aside>
+      <section data-workshop72-main="" style={{display:'grid',gridTemplateRows:hasThread?`${K.header}px 1fr auto`:'1fr',minHeight:0,background:K.threadBackground}}>
+        {hasThread?<><header style={{display:'flex',alignItems:'center',gap:16,padding:'0 36px',borderBottom:`1px solid ${W.lineSoft}`}}>
+          <div style={{display:'grid',gap:4,minWidth:0}}><span data-workshop-head="" style={{fontSize:22,fontWeight:700,letterSpacing:'-.01em'}}>{activeTask?.title||model.title}</span>
+            <span style={{display:'flex',alignItems:'center',gap:10,fontSize:13,color:W.inkSoft}}>
+              {assignedAgents.map(a=><React.Fragment key={a.id}>{tile(a,18,null)}{a.name}<span>·</span></React.Fragment>)}
+              {model.reviewers.map(a=><React.Fragment key={a.id}>{tile(a,18,null)}{a.name} reviews<span>·</span></React.Fragment>)}
+              {[native?.document || (state?.hosts || []).filter(row=>row.state==='connected'||row.status==='connected').map(row=>row.file).filter(Boolean).join(' · '),activeTask?.elapsed||native?.elapsed].filter(Boolean).join(' · ')}</span></div><span style={{flex:1}}/>
+          <span role="radiogroup" aria-label="Task layout" style={{display:'inline-flex',border:`1px solid ${W.line}`,borderRadius:6,overflow:'hidden'}}>{[1,2,4].map(n=><span key={n} role="radio" aria-checked={layout===n}
+            aria-disabled={typeof authority?.setWorkshopLayout!=='function'||busy} tabIndex={0} onClick={()=>setLayout(n)} onKeyDown={e=>(e.key==='Enter'||e.key===' ')&&setLayout(n)}
+            style={{width:32,height:26,display:'grid',placeItems:'center',fontSize:12,background:layout===n?K.buttonBackground:'transparent',color:layout===n?W.ink:W.inkSoft,cursor:'pointer',borderLeft:n===1?0:`1px solid ${W.line}`}}>{n}</span>)}</span>
+          {approval&&chip(<>{dot(W.warn)}Waiting for you</>,W.warn)}<button type="button" data-workshop-primary="" disabled={descriptor.unavailable||!state?.canvas?.graph_id||!authority||!setMode}
+            title={descriptor.unavailable?'Not available yet':undefined} onClick={openCanvas} style={button(false,true)}>Open on canvas</button></header>
+        {layout===1?<div ref={viewport} className="ah-scroll" aria-label="Workshop conversation" onScroll={e=>scroll.current.scroll(e.currentTarget)} style={{overflowY:'auto',overflowX:'hidden',padding:'18px 0',minHeight:0}}>
+          <div ref={content} data-workshop72-thread="" style={{width:K.thread,maxWidth:'calc(100% - 48px)',margin:'0 auto',display:'grid',gap:14}}>
+            {visibleMessages.map(message=>{const sender=wsSender(message),a=agents.find(row=>row.id===sender),self=sender===transcript?.self;
+              const elapsed=message.elapsed??message.duration;
+              const messageMeta=[a?modelLabel(a):null,typeof elapsed==='number'?elapsed+' s':elapsed,message.cost_label??(message.cost!==undefined?String(message.cost):null)].filter(v=>v!==null&&v!==undefined&&v!=='');
+              return <article key={message.root} data-workshop-message={message.root} data-user-bubble={self?'':undefined}
+                style={self?{position:'relative',justifySelf:'end',maxWidth:560,padding:'12px 16px',borderRadius:'14px 14px 4px 14px',background:K.bubbleBackground,fontSize:15,lineHeight:'23px',boxShadow:W.elev.e1}:{display:'grid',gridTemplateColumns:'32px 1fr',gap:14}}>
+                {self?<><div>{plainText(message)}</div><time dateTime={String(message.created_at||'')} style={{position:'absolute',right:16,bottom:-14,fontSize:12.5,lineHeight:'14px',color:W.inkSoft}}>{wsClockText(message.created_at)}</time></>:<>{tile(a||{name:message.relayed_label||names.get(sender)},32,null)}<div style={{display:'grid',gap:model.reviewers.some(review=>review.id===sender)?6:12,minWidth:0}}>
+                  <div style={{display:'flex',alignItems:'baseline',gap:10}}><b style={{fontSize:15,fontWeight:700}}>{a?.name||message.relayed_label||names.get(sender)||'Agent'}</b>
+                    <span style={{fontSize:12.5,color:W.inkSoft}}>{messageMeta.join(' · ')}</span><time dateTime={String(message.created_at||'')} style={{fontSize:12.5,color:W.inkSoft}}>{wsClockText(message.created_at)}</time></div>
+                  <div style={{fontSize:15,lineHeight:'24px',whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{plainText(message)}</div>{message.root===planAnchor&&planElement}</div></>}
+              </article>;})}{!planAnchor&&planElement&&<div style={{marginLeft:46}}>{planElement}</div>}{approvalElement()}
+            {!transcript&&<div role="status" style={{fontSize:13,color:W.inkSoft}}>{descriptor.unavailable?'Not available yet':'Loading messages…'}</div>}</div></div>
+          :<div data-workshop-tiles={layout} style={{display:'grid',gridTemplateColumns:'1fr 1fr',gridTemplateRows:layout===4?'1fr 1fr':'1fr',gap:12,padding:16,minHeight:0}}>
+            {selectedTiles.map(task=>{const tm=window.ARCHHUB_WORKSHOP_MODEL({state,descriptor,selected:task.work}),a=agentFor(task),
+              taskLines=(task.events?.length?task.events:tm.messages.filter(m=>m.work_root===task.work||m.task_root===task.work||m.root===task.workflow?.source_message)).filter(m=>!window.ARCHHUB_WORKSHOP_TASK_SOURCE.lifecycle(m)),
+              lines=taskLines.flatMap(m=>plainText(m).split('\n')).slice(-2),c=tm.needs_user?W.warn:tone(task);
+              return <div key={task.work} data-workshop-tile={task.work} role="option" aria-selected={task.work===activeTask?.work} tabIndex={0} onClick={()=>selectTask(task)} onKeyDown={e=>e.key==='Enter'&&selectTask(task)}
+                style={{background:W.surf,border:`1px solid ${task.work===activeTask?.work?W.accent:W.line}`,borderRadius:12,display:'grid',gridTemplateRows:'44px 1fr',minHeight:0,overflow:'auto',boxShadow:W.elev.e2}}>
+                <div style={{display:'flex',alignItems:'center',gap:10,padding:'0 14px',borderBottom:`1px solid ${W.lineSoft}`}}>{tile(a,20)}<span style={{fontSize:14,fontWeight:600,flex:1}}>{task.title}</span><span style={{fontSize:12.5,color:c}}>{statusLine(task)}</span>{dot(c)}</div>
+                <div style={{padding:14,display:'grid',gap:10,alignContent:'start'}}>{lines.map((line,i)=><div key={i} style={{fontSize:13,lineHeight:'19px',color:i===lines.length-1?W.ink:W.inkSoft}}>{line}</div>)}
+                  {!lines.length&&<div aria-disabled="true" style={{fontSize:13,color:W.inkSoft}}>Not available yet</div>}
+                  {tm.approval&&<div onClick={e=>e.stopPropagation()}>{approvalElement(tm.approval,tm,true)}</div>}</div></div>;})}</div>}
+        <div style={{padding:'0 0 22px'}}>{composer}</div></>:<div data-workshop-empty="" style={{display:'grid',alignContent:'center',justifyItems:'center',gap:18,padding:24}}>
+          <div style={{fontSize:22,fontWeight:600}}>What should the agents do?</div><div style={{display:'flex',gap:8}}>{agents.map(a=><span key={a.id} role="radio" aria-checked={replyTarget===a.id} tabIndex={0}
+            onClick={()=>setTarget(a.id)} onKeyDown={e=>e.key==='Enter'&&setTarget(a.id)} style={{display:'inline-flex',alignItems:'center',gap:8,height:32,padding:'0 12px 0 6px',border:`1px solid ${replyTarget===a.id?W.accent:W.line}`,borderRadius:999,background:replyTarget===a.id?W.accentSoft:'transparent',fontSize:13,cursor:'pointer'}}>
+              {tile(a,20,null)}{a.name}<span style={{color:W.inkSoft,fontSize:12}}>{modelLabel(a)}</span></span>)}</div>{composer}</div>}</section></div>
+    <footer data-workshop-s1-status="" data-workshop72-status="" style={{height:K.status,boxSizing:'border-box',display:'flex',alignItems:'center',gap:18,padding:'0 16px',fontSize:12,color:W.inkSoft,borderTop:`1px solid ${W.lineSoft}`,background:K.railBackground}}>
+      <span style={{display:'flex',alignItems:'center',gap:6,color:model.status.connected?W.ok:W.inkSoft}}>{dot(model.status.connected?W.ok:W.inkSoft)}{model.status.connected?'Connected':'Not available yet'}</span><span>{hostLine}</span>
+      {model.viewSections?.find(s=>s.id==='working')?.rows.length>0&&<span style={{color:W.accent}}>{model.viewSections.find(s=>s.id==='working').rows.length} working</span>}
+      {model.status.waiting>0&&<span style={{color:W.warn}}>{model.status.waiting} need you</span>}<span style={{flex:1}}/><span>{modelLabel(lead)}</span></footer>
+    <style>{`[data-workshop72] * {box-sizing:content-box;} [data-workshop72] button {box-sizing:border-box;} [data-workshop-send]::after {content:'↵';} [data-workshop72] button:disabled {cursor:default;} [data-workshop72] input::placeholder, [data-workshop72] textarea::placeholder {color:${W.inkSoft};opacity:1;}`}</style></main>;
+};
+
 // Presentation only: retain row identities/geometry, never a second transcript.
 const createWorkshopMessageScroll = onAway => {
   let identity = null, ready = false, olderMode = false, following = true, anchors = [], position = 0, expected = null, away = false;
@@ -3495,8 +892,8 @@ const createWorkshopMessageScroll = onAway => {
       if (!viewport || !ready) return;
       olderMode = older;
       if (identity !== key) {
-        identity = key; following = !older; anchors = []; position = 0;
-        return move(viewport, following ? viewport.scrollHeight : 0);
+        identity = key; following = false; anchors = []; position = 0;
+        return move(viewport, 0);
       }
       if (jump && !older) following = true;
       restore(viewport);
@@ -3516,25 +913,9 @@ const createWorkshopMessageScroll = onAway => {
 };
 
 // The conversation panel is a live lens; no browser-owned message history.
-const WorkshopReview = ({text}) => {
-  let review;
-  try {review = JSON.parse(text);} catch (_) {}
-  if (!review || typeof review.summary !== 'string' || !Array.isArray(review.next_actions) ||
-      !Array.isArray(review.risks) || [...review.next_actions, ...review.risks].some(value => typeof value !== 'string')) {
-    return <div style={{whiteSpace:'pre-wrap', overflowWrap:'anywhere'}}>{text}</div>;
-  }
-  return <div style={{lineHeight:1.6, overflowWrap:'anywhere'}}>
-    <p>{review.summary}</p>
-    <ul style={{paddingLeft:20}}>{review.next_actions.map((action,index) => <li key={index}>{action}</li>)}</ul>
-    {review.risks.length > 0 && <><div style={{color:W.inkSoft}}>Risks</div>
-      <ul style={{paddingLeft:20}}>{review.risks.map((risk,index) => <li key={index}>{risk}</li>)}</ul></>}
-    <div style={{fontSize:11, color:W.inkSoft}}>Independent review is still required.</div>
-    {typeof review.uncertainty === 'number' && Number.isFinite(review.uncertainty) &&
-      <div style={{fontSize:11, color:W.inkSoft}}>Model uncertainty: {Math.round(review.uncertainty * 100)}%</div>}
-  </div>;
-};
+
 
 window.WorkshopView = WorkshopView;
-window.WorkshopAgentsRail = AgentsRail;
+
 window.WorkshopAssignSection = AssignSection;   // the Work context panel's ASSIGN section (JSDOM court)
 })();

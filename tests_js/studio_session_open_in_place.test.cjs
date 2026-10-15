@@ -270,7 +270,7 @@ async function mountStudio(options = {}) {
 }
 
 function openHome(studio) {
-  const home = studio.byTitle('All sessions');
+  const home = studio.byTitle('All sessions') || studio.doc.querySelector('[data-workshop72-rail] [role="link"][aria-label="Home"]');
   assert.ok(home, 'Home button exists');
   studio.click(home);
 }
@@ -511,11 +511,11 @@ test('Workshop tool wins over an earlier pending session open', async () => {
     assert.ok(workshop, 'Home exposes Workshop tool card while graph-open is pending');
     studio.click(workshop);
     await studio.settle();
-    assert.ok(studio.doc.querySelector('[role="tablist"][aria-label="Workshop tabs"]'), 'Workshop opens while graph-open is pending');
+    assert.ok(studio.doc.querySelector('[data-workshop-s1]'), 'Workshop opens while graph-open is pending');
     openGate.resolve();
     await studio.settle();
     await studio.settle();
-    assert.ok(studio.doc.querySelector('[role="tablist"][aria-label="Workshop tabs"]'), 'Workshop stays after graph-open resolves');
+    assert.ok(studio.doc.querySelector('[data-workshop-s1]'), 'Workshop stays after graph-open resolves');
     assert.deepEqual(studio.calls.open, ['graph-b'], 'the earlier session open resolves once');
   } finally { studio.close(); }
 });
@@ -560,11 +560,11 @@ test('a stale rejected graph open cannot clear Workshop', async () => {
     assert.ok(workshop, 'Home exposes Workshop tool card while graph-open is pending');
     studio.click(workshop);
     await studio.settle();
-    assert.ok(studio.doc.querySelector('[role="tablist"][aria-label="Workshop tabs"]'), 'Workshop opens while graph-open is pending');
+    assert.ok(studio.doc.querySelector('[data-workshop-s1]'), 'Workshop opens while graph-open is pending');
     openGate.reject(new Error('old graph refused'));
     await studio.settle();
     await studio.settle();
-    assert.ok(studio.doc.querySelector('[role="tablist"][aria-label="Workshop tabs"]'), 'Workshop stays after graph-open rejects');
+    assert.ok(studio.doc.querySelector('[data-workshop-s1]'), 'Workshop stays after graph-open rejects');
     assert.doesNotMatch(studio.doc.body.textContent, /old graph refused|Refresh graphs/);
   } finally { studio.close(); }
 });
@@ -825,7 +825,7 @@ test('leaving Workshop through Studio, session reopen, or New session restores c
     await studio.settle();
     openWorkshopFromHome(studio);
     await studio.settle();
-    assert.ok(studio.doc.querySelector('[role="tablist"][aria-label="Workshop tabs"]'), 'Workshop is open');
+    assert.ok(studio.doc.querySelector('[data-workshop-s1]'), 'Workshop is open');
 
     openHome(studio);
     studio.click([...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Graph Alpha')));
@@ -833,6 +833,10 @@ test('leaving Workshop through Studio, session reopen, or New session restores c
     assertCanvasSelectionOnly(studio, 'same session reopen from Workshop');
 
     openWorkshopFromHome(studio);
+    await studio.settle();
+    const canvasRoute = studio.doc.querySelector('[data-workshop72-rail] [role="link"][aria-label="Canvas"]');
+    assert.ok(canvasRoute, 'Workshop exposes its Canvas navigation route');
+    studio.click(canvasRoute);
     await studio.settle();
     studio.click(studio.byTitle('New session'));
     await studio.settle();

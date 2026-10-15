@@ -24,7 +24,7 @@ const WORKSHOP_UNAVAILABLE_ROOT = 'studio:workshop-unavailable';
 const CAT = window.AH_CAT;
 const WIRE = window.AH_WIRE;
 
-const studioCategory = name => CAT[name] || {col:LM.accent, icon:'○', label:name, role:''};
+const studioCategory = name => CAT[name] || CAT[String(name || '').toLowerCase()] || {col:LM.accent, icon:'○', label:name, role:''};
 // A cleared selection retains the server's primary focus for navigation. That
 // retained card or wire is not the empty-selection graph inspector's target.
 const studioInspectorFocus = state => {
@@ -106,7 +106,7 @@ const _SEED_SESSIONS = [
 
 const LM_HOSTS = (window.ARCHHUB_LIVE?.hosts) || [];
 const _SEED_HOSTS = [
-  { id:'r25', name:'Revit 2025',  port:'48884', state:'connected', file:'Tower-A_central.rvt · 47 walls' },
+  { id:'r25', name:'Revit',       port:'48884', state:'connected', file:'Live model from host' },
   { id:'r24', name:'Revit 2024',  port:'48886', state:'connected', file:'AssetA_lib.rvt' },
   { id:'bld', name:'Blender 5.1', port:'48890', state:'syncing',   file:'sketch.blend · awaiting handshake' },
   { id:'rhi', name:'Rhino 8',     port:'48892', state:'connected', file:'panels.3dm · 8 layers' },
@@ -129,12 +129,324 @@ const LM_STATE_META = window.ArchHubTheme.derive((LM) => ({
   scheduled:{ label:'scheduled',   col:LM.cyan },
 }));
 
+// DSYS-060 app frame parts. The frame is one shell around Home, graph, Workshop and tool pages.
+const RailItem = ({ g, l, on, badge, onClick, title, dataRailHome }) => (
+  <button type="button" onClick={onClick} title={title || l} aria-current={on ? 'true' : undefined}
+    data-rail-home={dataRailHome ? '' : undefined}
+    data-rail-panel={l}
+    style={{
+      width:44, height:52, padding:0, border:0, background:'transparent',
+      display:'grid', placeItems:'center', alignContent:'center', gap:2,
+      position:'relative', color:on ? LM.ink : LM.inkSoft, fontFamily:LM.sans,
+      cursor:'pointer',
+    }}
+    onMouseEnter={e => !on && (e.currentTarget.style.background = LM.bgHover)}
+    onMouseLeave={e => !on && (e.currentTarget.style.background = 'transparent')}>
+    {on && <span style={{ position:'absolute', left:0, top:8, bottom:8, width:2, background:LM.accent, borderRadius:2 }}/>}
+    <span style={{
+      width:28, height:28, borderRadius:LM.rad.sm, background:on ? LM.bgHover : 'transparent',
+      display:'grid', placeItems:'center', fontSize:13, fontWeight:600,
+    }}>{g}</span>
+    <span style={{ fontSize:11, lineHeight:'12px', whiteSpace:'nowrap' }}>{l}</span>
+    {badge ? <span style={{
+      position:'absolute', right:5, top:5, minWidth:14, height:14, padding:'0 3px',
+      borderRadius:999, background:LM.warn, color:LM.bgDeep, fontSize:11, lineHeight:'14px',
+      fontWeight:700,
+    }}>{badge}</span> : null}
+  </button>
+);
+const Crumb = ({ items }) => <span style={{ fontSize:12, color:LM.inkSoft }}>
+  {items.map((t, i) => <span key={String(t) + ':' + i}>{i > 0 && <span style={{ margin:'0 6px' }}>▸</span>}
+    <span style={{ color:i === items.length - 1 ? LM.ink : LM.inkSoft }}>{t}</span></span>)}
+</span>;
+const PanelHead = ({ title, children }) => (
+  <div style={{ display:'flex', alignItems:'center', gap:8, height:44, padding:'0 12px',
+    borderBottom:`1px solid ${LM.lineSoft}` }}>
+    <span style={{ fontSize:16, fontWeight:600 }}>{title}</span><span style={{ flex:1 }}/>{children}
+  </div>
+);
+const Search = ({ ph, children }) => (
+  <div style={{ margin:'10px 12px', height:32, borderRadius:5, background:LM.bgSoft,
+    border:`1px solid ${LM.line}`, display:'flex', alignItems:'center', gap:8, padding:'0 10px',
+    fontSize:13, color:LM.inkSoft }}>
+    <span>⌕</span>{children || <span>{ph}</span>}<span style={{ flex:1 }}/><span style={{ fontSize:11 }}>Ctrl K</span>
+  </div>
+);
+const Frame = ({ rail, left, top, children, insp, status, onHome, onPanel, onDocs, onSettings, account, workshopWindow = false }) => {
+  const initials = account?.signedIn && account.email ? String(account.name || account.email).trim().slice(0, 2).toUpperCase() : 'AF';
+  const waiting = workshopWaitingItems(useWorkshopProjection()).length;
+  const hasLeft = !!left;
+  const contentColumn = hasLeft ? '3 / -1' : '2 / -1';
+  if (workshopWindow) return <section data-app-frame="" data-workshop-window-frame=""
+    style={{width:'100%', height:'100%', minHeight:0, overflow:'hidden', position:'relative',
+      background:LM.bgDeep, color:LM.ink, fontFamily:LM.sans}}>{children}</section>;
+  return (
+    <section data-app-frame="" style={{
+      width:'100%', height:'100%', background:LM.bgDeep, color:LM.ink, fontFamily:LM.sans,
+      fontSize:13, lineHeight:1.5, display:'grid',
+      gridTemplateColumns:hasLeft ? '44px 248px minmax(0, 1fr) 320px' : '44px minmax(0, 1fr)',
+      gridTemplateRows:'36px minmax(0, 1fr) 22px',
+      overflow:'hidden', position:'relative',
+    }}>
+      <nav style={{ gridColumn:'1', gridRow:'1 / span 2', background:LM.bg, borderRight:`1px solid ${LM.lineSoft}`,
+        display:'grid', gridTemplateRows:'auto auto 1fr auto', paddingTop:6 }}>
+        <RailItem g="⌂" l="Home" title="All sessions" on={!rail || rail === 'Home'} onClick={onHome} dataRailHome/>
+        <div style={{ display:'grid', gap:2 }}>
+          <RailItem g="◌" l="Chats" on={rail === 'Chats'} badge={waiting || null} onClick={() => onPanel && onPanel('chats')}/>
+          <RailItem g="▦" l="Library" on={rail === 'Library'} onClick={() => onPanel && onPanel('nodes')}/>
+          <RailItem g="?" l="Docs" on={rail === 'Docs'} onClick={onDocs}/>
+        </div>
+        <span/>
+        <div style={{ display:'grid', justifyItems:'center', gap:6, paddingBottom:8 }}>
+          <RailItem g="⚙" l="Settings" on={rail === 'Settings'} onClick={onSettings}/>
+          <button type="button" title={account?.signedIn ? account.email : 'Account'} onClick={onSettings}
+            style={{ width:28, height:28, borderRadius:'50%', border:0, background:LM.userAv,
+              color:LM.onUserAv, display:'grid', placeItems:'center', fontSize:12, fontWeight:600, cursor:'pointer' }}>{initials}</button>
+        </div>
+      </nav>
+      {hasLeft && <aside data-left-panel="" style={{ gridColumn:'2', gridRow:'1 / span 2', background:LM.bgPanel, borderRight:`1px solid ${LM.line}`,
+        minHeight:0, overflow:'hidden' }}>{left}</aside>}
+      <div data-workspace-frame="" style={{ gridColumn:contentColumn, gridRow:'1 / span 2',
+        height:'100%', minHeight:0, minWidth:0, overflow:'hidden' }}>
+        {children}
+      </div>
+      {top && <div style={{ gridColumn:contentColumn, gridRow:'1', display:'flex', alignItems:'center', gap:10,
+        padding:'0 12px', borderBottom:`1px solid ${LM.lineSoft}`, background:LM.bg }}>{top}</div>}
+      {insp && <aside style={{ gridColumn:'4', gridRow:'2', background:LM.bgPanel, minHeight:0, overflow:'hidden',
+        display:'grid', gridTemplateRows:'auto 1fr' }}>{insp}</aside>}
+      <footer style={{ gridColumn:'1 / -1', gridRow:'3', display:'flex', alignItems:'center', gap:14, padding:'0 12px',
+        fontSize:11, color:LM.inkSoft, borderTop:`1px solid ${LM.lineSoft}`, background:LM.bgDeep, minWidth:0 }}>
+        {status}
+      </footer>
+    </section>
+  );
+};
+const isHistoryNode = node => !!node && (
+  node.kind === 'history' ||
+  node.engine === 'app:history'
+);
+const historyShortTime = timestamp => {
+  const date = new Date(timestamp || '');
+  if (!Number.isFinite(date.getTime())) return '';
+  const now = new Date();
+  const day = value => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+  const daysAgo = Math.round((day(now) - day(date)) / 86400000);
+  const time = date.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false});
+  if (daysAgo === 0) return time + ' · today';
+  if (daysAgo === 1) return 'yesterday ' + time;
+  return date.toLocaleDateString([], {year:date.getFullYear() === now.getFullYear() ? undefined : 'numeric', month:'short', day:'numeric'});
+};
+const historyTargetLabel = row => row?.target_label || row?.operation_type || row?.type || row?.operation || 'graph';
+const historyRowsFromCanvas = canvas => Array.isArray(canvas?.action_history?.transactions)
+  ? canvas.action_history.transactions : [];
+const decorateHistoryNode = (node, canvas) => {
+  if (!isHistoryNode(node)) return node;
+  const rows = historyRowsFromCanvas(canvas);
+  const params = Array.isArray(node.params) ? node.params : [];
+  return {
+    ...node,
+    cat:node.cat || 'app',
+    sub:node.sub || 'signed authority history',
+    history_node:true,
+    history_rows:rows,
+    action_history:canvas?.action_history || null,
+    params,
+  };
+};
+
+const HISTORY_LIBRARY_ITEM = Object.freeze({id:'app-history', title:'History', sub:'Signed authority history', engine:'app:history',
+  kind:'history', noEngine:false});
+// Graph-held compatibility aliases stay available by identity in the API, but
+// only the public catalogue entries belong in counts, search and insert controls.
+const visibleLibraryGroups = groups => (Array.isArray(groups) ? groups : [])
+  .map(group => ({...group, items:(Array.isArray(group?.items) ? group.items : [])
+    .filter(item => item && item.hidden !== true)}))
+  .filter(group => group.items.length);
+const withHistoryLibrary = groups => {
+  const source = visibleLibraryGroups(groups);
+  if (source.some(group => (group.items || []).some(item => item.engine === 'app:history' || item.id === 'app-history'))) return source;
+  const appIndex = source.findIndex(group => group.cat === 'App');
+  if (appIndex >= 0) return source.map((group, index) => index === appIndex
+    ? {...group, items:[...(group.items || []), HISTORY_LIBRARY_ITEM]} : group);
+  return [...source, {cat:'App', items:[HISTORY_LIBRARY_ITEM]}];
+};
+
+const HistoryBody = ({ n }) => {
+  const rows = Array.isArray(n.history_rows) ? n.history_rows : [];
+  const preview = rows.slice(0, 5);
+  const openInspector = () => {
+    window.__archhubSelectNodeById?.(n.id);
+  };
+  return <div data-history-card="true" style={{ margin:'8px 10px 8px', background:LM.bgSoft, border:`1px solid ${LM.lineSoft}`,
+    borderRadius:5, padding:'6px 7px', display:'flex', flexDirection:'column', gap:5 }}>
+    {preview.length ? preview.map(row => (
+      <div key={row.root || row.timestamp || row.operation} data-history-row={row.root || ''} style={{
+        display:'grid', gridTemplateColumns:'minmax(0,1fr) auto', gap:6, alignItems:'center',
+        fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', color:LM.ink }}>
+        <span style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+          {historyShortTime(row.timestamp)} {row.actor || row.capability || 'Graph'} · {row.operation || 'Graph change'} · {historyTargetLabel(row)}
+        </span>
+        <span style={{ color:row.state === 'applied' ? LM.ok : LM.inkSoft }}>{row.state || 'kept'}</span>
+      </div>
+    )) : <div role="status" style={{ fontSize:11, color:LM.inkSoft }}>No graph actions yet.</div>}
+    {rows.length > preview.length && <button type="button" onClick={openInspector} style={{ border:0, padding:0, background:'transparent',
+      textAlign:'left', cursor:'pointer', fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', color:LM.inkSoft }}>
+      +{rows.length - preview.length} more
+    </button>}
+  </div>;
+};
+
+
+const CommandBar = ({ open, onClose, addNodeFromLibrary, onOpenSession }) => {
+  const projected = useStudioProjection();
+  const library = withHistoryLibrary(window.AH_LIBRARY || projected?.library || LM_LIBRARY);
+  const [q, setQ] = React.useState('');
+  const [commandError, setCommandError] = React.useState('');
+  const inputRef = React.useRef(null);
+  React.useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 0); else { setQ(''); setCommandError(''); } }, [open]);
+  if (!open) return null;
+  const needle = q.trim().toLowerCase();
+  const match = text => !needle || String(text || '').toLowerCase().includes(needle);
+  const rows = [];
+  for (const group of library) {
+    for (const item of (group.items || [])) {
+      if (!match([item.title, item.sub, group.cat].join(' '))) continue;
+      rows.push({group:'Add node', icon:studioCategory(group.cat).icon, color:studioCategory(group.cat).col,
+        label:item.title, meta:item.sub || group.cat, hint:rows.length === 0 ? 'Enter' : '',
+        run:() => addNodeFromLibrary && addNodeFromLibrary({...item, cat:group.cat})});
+      if (rows.filter(row => row.group === 'Add node').length >= 4) break;
+    }
+    if (rows.filter(row => row.group === 'Add node').length >= 4) break;
+  }
+  for (const skill of LM_SAVED_SKILLS.filter(skill => match([skill.name, skill.description, skill.source].join(' ')))) {
+    rows.push({group:'Skills', icon:'✦', color:LM.accent, label:skill.name || 'Skill',
+      meta:skill.source || skill.description || 'saved workflow',
+      run:() => {
+        const openSkill = window.ArchHubStudioScreens?.open;
+        if (typeof openSkill !== 'function') {
+          setCommandError('Skill viewer is unavailable. Open Library > Skills instead.');
+          return false;
+        }
+        try {
+          openSkill('skill', skill);
+          return true;
+        } catch (error) {
+          setCommandError(error?.message || 'Skill viewer is unavailable.');
+          return false;
+        }
+      }});
+  }
+  for (const chat of LM_SESSIONS.filter(session => match([session.title, session.file, session.state].join(' '))).slice(0, 3)) {
+    rows.push({group:'Chats', icon:'◌', color:LM.inkSoft, label:chat.title || 'Graph',
+      meta:chat.when || chat.file || 'conversation', run:() => onOpenSession && onOpenSession(chat.id)});
+  }
+  const activate = row => {
+    if (!row) return;
+    setCommandError('');
+    const keepOpen = row.run?.() === false;
+    if (!keepOpen) onClose?.();
+  };
+  const onKeyDown = e => {
+    if (e.key === 'Escape') { e.preventDefault(); onClose?.(); return; }
+    if (e.key === 'Enter') { e.preventDefault(); activate(rows[0]); }
+  };
+  const grouped = rows.reduce((acc, row) => ((acc[row.group] ||= []).push(row), acc), {});
+  return (
+    <div data-command-bar="" role="dialog" aria-label="Command bar" onMouseDown={e => { if (e.target === e.currentTarget) onClose?.(); }}
+      style={{ position:'absolute', inset:0, zIndex:80, background:'rgba(0,0,0,.18)' }}>
+      <div style={{ position:'absolute', left:206, top:244, width:462, maxWidth:'calc(100% - 64px)',
+        background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:8, boxShadow:LM.shadow.dialog,
+        overflow:'hidden', color:LM.ink }}>
+        <div style={{ height:44, display:'flex', alignItems:'center', gap:9, padding:'0 14px', borderBottom:`1px solid ${LM.lineSoft}` }}>
+          <span style={{ color:LM.inkSoft }}>⌕</span>
+          <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={onKeyDown}
+            placeholder="Search" aria-label="Search commands" style={{ flex:1, minWidth:0, border:0, outline:0,
+            background:'transparent', color:LM.ink, fontFamily:LM.sans, fontSize:13 }}/>
+          <span style={{ fontSize:11, color:LM.inkSoft }}>Esc</span>
+        </div>
+        {commandError && <div role="alert" style={{ padding:'7px 14px 0', color:LM.err, fontSize:12 }}>{commandError}</div>}
+        <div style={{ padding:'7px 6px 10px', display:'grid', gap:7, maxHeight:360, overflow:'auto' }}>
+          {Object.entries(grouped).map(([group, groupRows]) => (
+            <div key={group}>
+              <div style={{ padding:'0 9px 5px', color:LM.inkSoft, fontSize:11 }}>{group}</div>
+              {groupRows.map((row, index) => (
+                <button type="button" key={group + ':' + row.label + ':' + index} onClick={() => activate(row)}
+                  style={{ width:'100%', height:32, display:'flex', alignItems:'center', gap:9, padding:'0 9px',
+                    border:0, borderRadius:5, background:index === 0 && group === Object.keys(grouped)[0] ? LM.bgHover : 'transparent',
+                    color:LM.ink, fontFamily:LM.sans, textAlign:'left', cursor:'pointer' }}>
+                  <span style={{ width:18, height:18, borderRadius:5, display:'grid', placeItems:'center', flex:'none',
+                    background:row.color + '33', color:row.color, fontSize:11 }}>{row.icon}</span>
+                  <span style={{ flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+                    fontSize:13, fontWeight:600 }}>{row.label}</span>
+                  <span style={{ color:LM.inkSoft, fontSize:12, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{row.meta}</span>
+                  {row.hint && <span style={{ color:LM.inkSoft, fontSize:11, marginLeft:6 }}>{row.hint}</span>}
+                </button>
+              ))}
+            </div>
+          ))}
+          {!rows.length && <div role="status" style={{ padding:'10px 9px', color:LM.inkSoft, fontSize:12 }}>No matching commands.</div>}
+        </div>
+      </div>
+    </div>
+  );
+};
+const AppToast = ({ toast }) => {
+  React.useEffect(() => {
+    if (!toast?.id || !toast.close) return;
+    const timer = window.setTimeout(toast.close, 6000);
+    return () => window.clearTimeout(timer);
+  }, [toast?.id]);
+  if (!toast) return null;
+  const isErr = toast.tone === 'err';
+  const icon = toast.icon || (isErr ? '✕' : toast.tone === 'run' ? '●' : '✓');
+  return (
+    <div data-app-toast="" data-no-pan="" role={isErr ? 'alert' : 'status'} style={{
+      position:'fixed', left:'50%', bottom:28, transform:'translateX(-50%)', zIndex:120,
+      minWidth:320, maxWidth:'min(520px, calc(100% - 48px))', height:42, boxSizing:'border-box',
+      display:'flex', alignItems:'center', gap:10, padding:'0 14px',
+      background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:6, boxShadow:LM.shadow.dialog,
+      color:LM.ink, fontFamily:LM.sans, fontSize:13,
+    }}>
+      <span style={{ color:isErr ? LM.err : toast.tone === 'run' ? LM.accent : LM.ok }}>{icon}</span>
+      <span style={{ flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontWeight:600 }}>{toast.text}</span>
+      {toast.actionLabel && <button type="button" onClick={toast.action} style={{
+        border:0, background:'transparent', color:LM.ink, fontFamily:LM.sans, fontSize:13, fontWeight:700, cursor:'pointer',
+      }}>{toast.actionLabel}</button>}
+    </div>
+  );
+};
+const DestructiveDialog = ({ confirming, onCancel, onConfirm }) => {
+  if (!confirming) return null;
+  const nodes = confirming.ids?.length || 0;
+  const wires = confirming.wires || 0;
+  const noun = (n, one) => n + ' ' + one + (n === 1 ? '' : 's');
+  const title = confirming.kind === 'clear' ? 'Delete all nodes?' : 'Delete “' + confirming.title + '”?';
+  return (
+    <div data-no-pan="" role="presentation" style={{ position:'absolute', inset:0, zIndex:75, background:'rgba(0,0,0,.5)',
+      display:'grid', placeItems:'center' }}>
+      <div role="alertdialog" aria-label="Confirm delete" aria-modal="true" style={{
+        width:400, maxWidth:'calc(100% - 48px)', background:LM.bgPanel, border:`1px solid ${LM.line}`,
+        borderRadius:8, boxShadow:LM.shadow.dialog, padding:20, color:LM.ink, fontFamily:LM.sans,
+      }}>
+        <h2 style={{ margin:'0 0 10px', fontSize:16, lineHeight:'22px', fontWeight:700 }}>{title}</h2>
+        <p style={{ margin:'0 0 16px', fontSize:13, lineHeight:'19px', color:LM.inkSoft }}>
+          {noun(nodes, 'node') + ' and ' + noun(wires, 'wire') + ' go with it. Undo brings them back.'}
+        </p>
+        <div style={{ display:'flex', justifyContent:'flex-end', gap:12 }}>
+          <button type="button" autoFocus onClick={onCancel} style={{...toolBtn(), color:LM.ink, border:'1px solid transparent'}}>Cancel</button>
+          <button type="button" onClick={onConfirm} style={{...toolBtn(), background:LM.err, border:`1px solid ${LM.err}`, color:LM.onFill}}>Delete</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── The active graph for "walls" session — typed AEC nodes
 let LM_GRAPH = (window.ARCHHUB_LIVE?.graph) || { nodes: [], wires: [] };
 const _SEED_GRAPH = {
   nodes: [
     { id:'revit', cat:'host', x:24, y:48, w:220, h:124,
-      title:'Revit 2025', sub:'Tower-A_central.rvt · L03',
+      title:'Revit', sub:'Live model from host',
       outs:[
         { id:'view', label:'active view', t:'view', val:'L03 · 1:50' },
         { id:'sel',  label:'selection',   t:'selection', val:'23 walls' },
@@ -309,18 +621,19 @@ const _SEED_GRAPH = {
 
 // The insertable nodes: one definition, served by the graph (library_engines).
 // Served by the graph (studio.html sets it from /api/universal/node-library); never typed here.
-const LM_LIBRARY = window.AH_LIBRARY || [];
+const LM_LIBRARY = visibleLibraryGroups(window.AH_LIBRARY || []);
 
 // ──────────────────────── ROOT ────────────────────────
 // Alt+Left / Alt+Right and the keyboard's Back / Forward keys ask the page to navigate away.
 const studioLeavesPage = e => e.key === 'BrowserBack' || e.key === 'BrowserForward' ||
   (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight'));
+const studioTextEntryTarget = target => !!target?.closest?.('input,textarea,select,[contenteditable="true"],[role="textbox"]');
 const studioShortcut = binding => Object.freeze({
   ...binding,
   combos:Object.freeze(binding.combos.map(combo => Object.freeze(combo))),
 });
 const STUDIO_SHORTCUT_BINDINGS = Object.freeze([
-  studioShortcut({id:'open-node-library', label:'Open the node catalogue', scope:'global', display:'Ctrl/Cmd+K', menu:'⌘K', action:'open-node-library', combos:[{key:'k', ctrlOrMeta:true}]}),
+  studioShortcut({id:'open-command-bar', label:'Open the command bar', scope:'global', display:'Ctrl/Cmd+K', menu:'⌘K', action:'open-command-bar', combos:[{key:'k', ctrlOrMeta:true}]}),
   studioShortcut({id:'toggle-settings', label:'Toggle settings', scope:'global', display:'Ctrl/Cmd+,', menu:'⌘,', action:'toggle-settings', combos:[{key:',', ctrlOrMeta:true}]}),
   studioShortcut({id:'open-documentation', label:'Open documentation', scope:'global', display:'Ctrl/Cmd+/', menu:'⌘/', action:'open-documentation', combos:[{key:'/', ctrlOrMeta:true}]}),
   studioShortcut({id:'close-overlays', label:'Close settings, docs, or catalogue', scope:'global', display:'Esc', menu:'Esc', action:'close-overlays', combos:[{key:'Escape', anyModifiers:true}]}),
@@ -425,6 +738,7 @@ const StudioLM = () => {
   const [model, setModel] = React.useState(pendingModelAnswer);
   const [homeNative, setHomeNative] = React.useState(null);
   const [pickerOpen, setPickerOpen] = React.useState(false);
+  const [commandOpen, setCommandOpen] = React.useState(false);
   // The server's answer to "can a Send reach a model": ready, no_model or no_key
   // (model_router.composer_readiness). Chat and the boot Brain line show it.
   const [readiness, setReadiness] = React.useState(null);
@@ -490,7 +804,7 @@ const StudioLM = () => {
         const fallback = !saved && typeof result.default_route === 'string' ? result.default_route.trim() : '';
         const source = typeof result.default_source === 'string' ? result.default_source.trim() : '';
         const route = saved || fallback;
-        noteRead('ok', route ? 'route ' + route : 'no route');
+        noteRead('ok', route ? 'selected model route' : 'no route');
         clearModelReadRetry();
         modelReadRetryAttempt.current = 0;
         if (!controller.signal.aborted && result.readiness && typeof result.readiness === 'object') {
@@ -823,7 +1137,7 @@ const StudioLM = () => {
       const liveSessions = Array.isArray(window.ARCHHUB_LIVE?.sessions) ? window.ARCHHUB_LIVE.sessions : [];
       const graphId = openId || window.ARCHHUB_LIVE?.currentGraph || visibleSessions[0]?.id ||
         liveSessions[0]?.id || LM_SESSIONS[0]?.id || workshopState?.canvas?.graph_id || '';
-      if (room || graphId) {
+      if (graphId) {
         const authorization = (workshopState?.topology?.canvas || workshopState?.canvas)?.authorization || {};
         const conversationRoot = room?.root || WORKSHOP_UNAVAILABLE_ROOT;
         setToolView(null);
@@ -835,6 +1149,9 @@ const StudioLM = () => {
         if (graphId) setOpenId(graphId);
         return;
       }
+      setOpenId(null);
+      setToolView({id:'workshop', root:room?.root || WORKSHOP_UNAVAILABLE_ROOT, focus:options.focus || null});
+      return;
     }
     const toolRow = toolRowsFromOwners({workshopState, account, personal:readPersonalThemeSnapshot(), hub:window.ARCHHUB_TOOL_HUB})
       .find(row => row.id === tool);
@@ -884,16 +1201,21 @@ const StudioLM = () => {
   // its room here: the menu itself unmounts when the scope changes, and a selection made under the
   // old scope is reset. The room opens on the first render that lists it at the new scope.
   const [reachingRoom, setReachingRoom] = React.useState('');
+  const [reachingApproval, setReachingApproval] = React.useState(null);
   React.useEffect(() => {
-    const listen = event => setReachingRoom(typeof event.detail === 'string' ? event.detail : '');
+    const listen = event => {
+      setReachingRoom(typeof event.detail === 'string' ? event.detail : event.detail?.root || '');
+      setReachingApproval(typeof event.detail === 'object' ? event.detail?.work || null : null);
+    };
     window.addEventListener('archhub:reach-conversation', listen);
     return () => window.removeEventListener('archhub:reach-conversation', listen);
   }, []);
   React.useEffect(() => {
     if (!reachingRoom || !workspaceReady || !availableWorkshops.some(row => row.root === reachingRoom)) return;
     setReachingRoom('');
+    setWorkshopSelection({root:reachingRoom, agent:null, task:reachingApproval, review:!!reachingApproval});
     setWorkspaceSelection({mode:'chat', conversationRoot:reachingRoom, target:'', notice:'', pending:false, scope:viewScope});
-  }, [reachingRoom, workspaceReady, availableWorkshops, viewScope]);
+  }, [reachingRoom, reachingApproval, workspaceReady, availableWorkshops, viewScope]);
   const selectedWorkshop = session && workshopState?.workshops?.find(row => row.root === workspaceView.conversationRoot);
   const workshopContext = selectedWorkshop && workspaceView.mode === 'chat' &&
     workshopState?.canvas?.graph_id && workshopState?.canvas?.root ? {
@@ -906,7 +1228,7 @@ const StudioLM = () => {
   const wsSel = workshopSelection.root === workspaceView.conversationRoot ? workshopSelection :
     {root:workspaceView.conversationRoot, agent:null, task:null};
   const setWsSel = next => setWorkshopSelection({root:workspaceView.conversationRoot, agent:next.agent ?? null,
-    task:next.task ?? null, tab:next.tab ?? null});
+    task:next.task ?? null, tab:next.tab ?? null, review:next.review === true});
 
   const nativeConnection = React.useRef(null);
   const connectNativeSession = async row => {
@@ -1050,8 +1372,8 @@ const StudioLM = () => {
   };
 
   // Docs and Settings are mutually exclusive — they share a z-index, so opening one closes the other.
-  // A named tab (the account chip opens Account) lasts one opening; every other way in opens the Hub.
-  const openSettings = (v, tab) => { if (v) setDocsOpen(false); setSettingsTab(v && tab ? tab : 'hub'); setSettingsOpen(v); };
+  // A named Settings node lasts one opening; every other way in opens the System graph.
+  const openSettings = (v, tab) => { if (v) setDocsOpen(false); setSettingsTab(v && tab ? tab : 'system'); setSettingsOpen(v); };
   const openDocs = (v) => {
     if (v) {
       openSettings(false);
@@ -1081,19 +1403,25 @@ const StudioLM = () => {
     const onKey = (e) => {
       // The Studio is the whole window: Back and Forward keys never leave it.
       if (studioLeavesPage(e)) { e.preventDefault(); return; }
+      const inField = studioTextEntryTarget(e.target);
+      if (!inField && !e.ctrlKey && !e.metaKey && !e.altKey && e.key === '/') {
+        e.preventDefault();
+        setCommandOpen(true);
+        return;
+      }
       const shortcut = studioShortcutFromEvent(e, 'global');
       if (!shortcut) return;
       e.preventDefault();
       if (shortcut.action === 'close-overlays') {
-        setDocsOpen(false); openSettings(false); setLibraryOpen(false); return;
+        setDocsOpen(false); openSettings(false); setLibraryOpen(false); setCommandOpen(false); return;
       }
+      if (shortcut.action === 'open-command-bar') { setCommandOpen(true); return; }
       if (shortcut.action === 'open-documentation') {
         setDocsOpen(o => { if (!o) openSettings(false); return !o; }); return;
       }
       if (shortcut.action === 'toggle-settings') {
-        setSettingsTab('hub'); setSettingsOpen(o => { if (!o) setDocsOpen(false); return !o; }); return;
+        setSettingsTab('system'); setSettingsOpen(o => { if (!o) setDocsOpen(false); return !o; }); return;
       }
-      if (shortcut.action === 'open-node-library') { setLibraryOpen(true); }
     };
     // The mouse's Back and Forward buttons (3 and 4) are the same request.
     const onButton = (e) => { if (e.button === 3 || e.button === 4) e.preventDefault(); };
@@ -1105,32 +1433,34 @@ const StudioLM = () => {
     };
   }, []);
 
+  const frameRail = settingsOpen ? 'Settings' : docsOpen ? 'Docs' : ['nodes', 'skills', 'search'].includes(panel) ? 'Library' :
+    panel === 'chats' ? 'Chats' : session ? 'Library' : 'Home';
+  const frameCrumbs = session ? ['ArchHub', session.title || 'Graph'] :
+    toolView ? ['ArchHub', toolTitle(toolView.id)] : ['ArchHub', 'Home'];
   return (
-    <div style={{
-      width:'100%', height:'100%', background:LM.bg, color:LM.ink,
-      fontFamily:LM.sans, fontSize:13, lineHeight:1.5,
-      display:'grid',
-      gridTemplateColumns: (!panel || workshopContext) ? '44px 1fr' : '292px 1fr',
-      gridTemplateRows:'1fr 22px',
-      overflow:'hidden', position:'relative',
-    }}>
-      <Sidebar
+    <Frame workshopWindow={(!!session && workspaceView.mode === 'chat' && !!workspaceView.conversationRoot) || (!session && toolView?.id === 'workshop')}
+      rail={frameRail} onHome={goHome} onPanel={setPanel} onDocs={() => openDocs(true)}
+      onSettings={() => openSettings(true)} account={account}
+      left={panel && !workshopContext ? <Sidebar
         panel={panel} setPanel={setPanel}
         openId={openId} onOpen={openSession}
         onHome={goHome} onSettings={() => openSettings(true)} onAccount={() => openSettings(true, 'account')} onDocs={() => openDocs(true)}
         onOpenTool={openTool}
         addNodeFromLibrary={addNodeFromLibrary} workshopContext={workshopContext} railOnly={!panel || !!workshopContext} account={account}
         wsSel={wsSel} setWsSel={setWsSel} onAddAgent={() => setLibraryOpen(true)}
-        onWorkshopTarget={target => updateWorkspaceView({target})}/>
+        onWorkshopTarget={target => updateWorkspaceView({target})}/> : null}
+      top={<><Crumb items={frameCrumbs}/><span style={{ flex:1 }}/></>}
+      status={<StatusBar session={session} model={displayedModel} setDocsOpen={openDocs} onOpenWaitingTask={openTool}/>}>
       {session && sessionOpenError && <div role="alert" style={{position:'absolute', top:56, left:'50%', transform:'translateX(-50%)',
         zIndex:40, maxWidth:560, padding:'8px 12px', background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md,
         color:LM.warn, fontFamily:LM.sans, fontSize:12.5}}>{sessionOpenError}
         {' '}<button type="button" onClick={() => window.location.reload()}>Refresh graphs</button></div>}
       {toolView && !session
-        ? <ToolMainView view={toolView} account={account} setAccount={setAccount} onSignOut={signOut} onSettings={openSettings}/>
+        ? <ToolMainView view={toolView} account={account} setAccount={setAccount} onSignOut={signOut} onSettings={openSettings}
+            onHome={goHome} onDocs={() => openDocs(true)} onLibrary={() => setLibraryOpen(true)} updateView={setToolView}/>
         : session
         ? <Workspace
-            session={session} model={displayedModel} readiness={readiness} onReadinessStale={readReadiness}
+            session={session} account={account} model={displayedModel} readiness={readiness} onReadinessStale={readReadiness}
             onModelReadRetry={readInitialModel}
             updateCanvasViewport={updateCanvasViewport}
             openTabs={openTabs} sessionRows={visibleSessions} setOpenId={openSession} closeTab={closeTab}
@@ -1142,7 +1472,7 @@ const StudioLM = () => {
             userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary}
             themeEpoch={themeEpoch}
             view={workspaceView} updateView={updateWorkspaceView} wsSel={wsSel} setWsSel={setWsSel}
-            onHome={goHome}
+            onHome={goHome} onDocs={() => openDocs(true)}
             onNewSession={createSessionGraphInPlace}
             onSettings={() => openSettings(true, 'system')}
             onAccount={() => openSettings(true, 'account')}/>
@@ -1188,7 +1518,6 @@ const StudioLM = () => {
                   authorization?.subject || '', authorization?.session || ''])});
               setOpenId(result.graph_id);
             }}/>}
-      <ServerStrip session={session} setDocsOpen={openDocs} onOpenWaitingTask={openTool}/>
       {pickerOpen && <ModelPicker setModel={m => !session
         ? rememberComposerModel(m).then(picked => { setHomeNative(null); setModel(picked); }) : modelTarget
         ? window.pmPersistValue(modelTarget, 'model', modelRoute(m))
@@ -1205,6 +1534,8 @@ const StudioLM = () => {
       {docsOpen && <Docs onClose={() => setDocsOpen(false)} onHome={goHome}/>}
       {libraryOpen && <NodeLibrary onClose={() => setLibraryOpen(false)} addNodeFromLibrary={addNodeFromLibrary}
         initialQuery={typeof libraryOpen === 'string' ? libraryOpen : ''}/>}
+      <CommandBar open={commandOpen} onClose={() => setCommandOpen(false)}
+        addNodeFromLibrary={addNodeFromLibrary} onOpenSession={openSession}/>
       <style>{`
         @keyframes lmPulse { 0%,100% { opacity:.4 } 50% { opacity:1 } }
         @keyframes lmCaret { 50% { opacity: 0 } }
@@ -1213,7 +1544,7 @@ const StudioLM = () => {
         @keyframes lmPop    { from { transform: scale(.92); opacity: 0 } to { transform: scale(1); opacity: 1 } }
         .lm-home-draft::placeholder { color: ${LM.inkSoft}; font-style: italic; opacity: 1 }
       `}</style>
-    </div>
+    </Frame>
   );
 };
 
@@ -1221,17 +1552,34 @@ const StudioLM = () => {
 const Sidebar = ({ panel, setPanel, openId, onOpen, onHome, onSettings, onAccount, onDocs, onOpenTool, addNodeFromLibrary,
   workshopContext, railOnly, wsSel, setWsSel, onAddAgent, onWorkshopTarget, account }) => (
   <aside style={{
-    gridColumn:'1', gridRow:'1',
-    display:'grid', gridTemplateColumns:'44px 1fr',
+    height:'100%',
+    display:'grid', gridTemplateRows:railOnly ? '1fr' : '36px minmax(0, 1fr)',
     background:LM.bgPanel, borderRight:`1px solid ${LM.line}`,
     overflow:'hidden', minHeight:0,
   }}>
-    <IconRail panel={panel} setPanel={setPanel} onHome={onHome} onSettings={onSettings} onDocs={onDocs}
-      onOpenTool={onOpenTool} account={account}/>
+    {!railOnly && <div aria-label="Library tabs" style={{
+      display:'grid', gridTemplateColumns:'repeat(3, 1fr)', alignItems:'stretch',
+      padding:'4px 6px', gap:4, borderBottom:`1px solid ${LM.lineSoft}`,
+    }}>
+      {[
+        ['nodes', 'Nodes'],
+        ['skills', 'Skills'],
+        ['search', 'Search'],
+      ].map(([id, label]) => (
+        <button key={id} type="button" title={label} data-library-tab={id} aria-current={panel === id ? 'true' : undefined}
+          onClick={() => setPanel(id)} style={{
+            height:28, border:0, borderRadius:LM.rad.sm,
+            background:panel === id ? LM.bgHover : 'transparent',
+            color:panel === id ? LM.ink : LM.inkSoft,
+            fontFamily:LM.sans, fontSize:12, fontWeight:600, cursor:'pointer',
+          }}>{label}</button>
+      ))}
+    </div>}
     {railOnly ? null : <>
     {panel === 'chats'  && <ChatsPanel openId={openId} onOpen={onOpen} onNew={onHome} onHome={onHome} account={account} onAccount={onAccount || onSettings}/>}
-    {panel === 'nodes'  && <NodesPanel addNodeFromLibrary={addNodeFromLibrary} onHome={onHome} account={account} onAccount={onAccount || onSettings}/>}
+    {panel === 'nodes'  && <NodesPanel addNodeFromLibrary={addNodeFromLibrary} onHome={onHome} account={account} onAccount={onAccount || onSettings} onSwitchPanel={setPanel}/>}
     {panel === 'skills' && <SkillsPanel addNodeFromLibrary={addNodeFromLibrary} onHome={onHome}/>}
+    {panel === 'runs' && <RunsPanel onHome={onHome} onOpenTask={item => onOpenTool && onOpenTool('workshop', {focus:item?.id || item?.label || ''})}/>}
     {panel === 'search' && <SearchPanel onHome={onHome}/>}
     {String(panel || '').startsWith('tool:') && <ToolOffPanelFromOwners panel={panel} account={account}/>}
       </>}
@@ -1257,7 +1605,7 @@ const ToolOffPanelFromOwners = ({ panel, account }) => {
 const IconRail = ({ panel, setPanel, onHome, onSettings, onDocs }) => {
   const items = [
     { id:'chats',  title:'Chats',  svg:<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4l-5 2 2-4.6A8.4 8.4 0 1 1 21 11.5z"/></svg> },
-    { id:'nodes',  title:'Nodes',  svg:<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg> },
+    { id:'nodes',  title:'Library',  svg:<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg> },
     { id:'skills', title:'Skills', svg:<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polygon points="12 2 15 8 22 9 17 14 18 21 12 17.7 6 21 7 14 2 9 9 8"/></svg> },
     { id:'search', title:'Search', svg:<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg> },
   ];
@@ -1334,14 +1682,47 @@ const TOOL_STATE_COLOR = {
   not_installed:LM.inkSoft,
 };
 const toolColor = state => TOOL_STATE_COLOR[state] || LM.inkSoft;
-// One host count for the Connectors card, the status bar and the Hosts badge: every probe row the
-// Hosts list draws, running when connected or listening (the same rule as tool_hub._apply_connectors).
-const hostTally = () => {
+const hostRunningState = row => ['connected', 'listening', 'running'].includes(String(row?.state || '').toLowerCase());
+const isOfficeHost = row => /^(excel|word|powerpoint|outlook)$/i.test(String(row?.name || row?.id || '').trim());
+const hostConnectorRows = (rows = LM_HOSTS) => {
+  const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
+  const office = list.filter(isOfficeHost);
+  const officeRunning = office.filter(hostRunningState);
+  const officeKnown = office.filter(h => typeof h.enabled === 'boolean');
+  const officeOn = officeKnown.filter(h => h.enabled === true);
+  const officeSummary = officeKnown.length
+    ? String(officeOn.length) + ' of ' + office.length + ' on'
+    : String(office.length) + ' Office host' + (office.length === 1 ? '' : 's');
+  const officeRow = office.length ? {
+    id:'office',
+    name:office.map(h => h.name || h.id).join(' · '),
+    state:officeRunning.length ? 'running' : (office[0].state || 'unknown'),
+    connector_built:true,
+    officeAggregate:true,
+    officeChildren:office,
+    officeEnabledSummary:officeSummary,
+    officeDetail:officeRunning.length
+      ? String(officeRunning.length) + ' Office host' + (officeRunning.length === 1 ? '' : 's') + ' running'
+      : 'installed · reads when a file is open',
+  } : null;
+  return list.flatMap(row => !isOfficeHost(row) ? [row] : row === office[0] ? [officeRow] : []);
+};
+// One host count for the Connectors card, the status bar and the Hosts badge: every Settings row,
+// with Office collapsed the same way everywhere.
+const hostTally = (rows = LM_HOSTS) => {
   // The Hosts list itself (studio.html fills it and ARCHHUB_LIVE.connectors from the same probe rows).
   // With no host reader at all there is nothing to wait for: the empty list is the answer.
-  const rows = LM_HOSTS;
-  const read = window.ARCHHUB_HOSTS_READ === true || rows.length > 0 || typeof window.ARCHHUB_LOAD_HOSTS !== 'function';
-  return {running:rows.filter(row => row?.state === 'connected' || row?.state === 'listening').length, total:rows.length, read};
+  const list = hostConnectorRows(rows);
+  const read = window.ARCHHUB_HOSTS_READ === true || list.length > 0 || typeof window.ARCHHUB_LOAD_HOSTS !== 'function';
+  const builtRows = list.filter(row => row?.connector_built !== false && !/no wire in this build|no connector yet/i.test(String(row?.detail || '')));
+  return {
+    running:builtRows.filter(hostRunningState).length,
+    total:builtRows.length,
+    coming:list.length - builtRows.length,
+    builtRows,
+    rows:list,
+    read,
+  };
 };
 const plural = (n, one, many = one + 's') => String(n) + ' ' + (n === 1 ? one : many);
 const workshopWaitingItems = state => {
@@ -1561,6 +1942,18 @@ const hostStateTone = row => {
   const word = hostStateWord(row);
   return word === 'Connected' ? LM.ok : word === 'Checking' ? LM.warn : LM.inkSoft;
 };
+const hostPanelStateWord = row => {
+  const state = String(row?.state || '').toLowerCase();
+  if (state === 'connected' || state === 'listening' || state === 'running') return 'Running';
+  if (state === 'installed' || state === 'prerequisites-ready' || state === 'needs-sign-in' || state === 'needs_key' || state === 'needs-key') return 'Installed';
+  if (state === 'off' || state === 'stopped' || state === 'idle') return 'Not running';
+  if (state === 'absent' || state === 'not_installed' || state === 'not installed' || state === 'unavailable') return 'Not installed';
+  return 'Unknown';
+};
+const hostPanelStateTone = row => {
+  const word = hostPanelStateWord(row);
+  return word === 'Running' ? LM.ok : word === 'Unknown' ? LM.warn : LM.inkSoft;
+};
 const providerStateWord = p => {
   const state = String(p?.state || '').toLowerCase();
   if (state === 'keyed' || state === 'running') return 'Connected';
@@ -1611,13 +2004,12 @@ const baboomMaxSpeaks = personal => {
 };
 const WaitingButton = ({ items = [], variant = 'strip', onOpenTask }) => {
   const [open, setOpen] = React.useState(false);
-  const [confirmReject, setConfirmReject] = React.useState('');
   const [status, setStatus] = React.useState({});
   const liveItems = Array.isArray(items) ? items : [];
   useWaitingOpenShortcut(setOpen);
   if (!liveItems.length && !open) return <span data-waiting-empty-host="" style={{display:'contents'}}/>;
   const decide = (item, decision) => {
-    setStatus(state => ({...state, [item.id]: decision === 'approve' ? 'pending' : 'rejected'}));
+    setStatus(state => ({...state, [item.id]:'pending'}));
     const owner = window.ARCHHUB_EXISTING_WORKSHOP;
     const postRoute = (path, body) => {
       const session = window.__archhubSession || {};
@@ -1647,11 +2039,11 @@ const WaitingButton = ({ items = [], variant = 'strip', onOpenTask }) => {
       }
       throw new Error('No owner route is available for ' + (item.producer || 'this request') + '.');
     };
-    Promise.resolve().then(run).then(() => {
+    return Promise.resolve().then(run).then(() => {
       const finish = decision === 'approve' ? 'approved · delivered to ' + (item.to || item.producer || 'producer') : 'rejected';
       setStatus(state => ({...state, [item.id]: finish}));
       window.setTimeout(() => setStatus(state => ({...state, [item.id]: ''})), 2000);
-    }).catch(error => setStatus(state => ({...state, [item.id]: error?.message || 'decision refused'})));
+    }).catch(error => {setStatus(state => ({...state, [item.id]: error?.message || 'decision refused'})); throw error;});
   };
   const showHost = item => {
     const ids = item.host_ids || item.ids || [];
@@ -1685,23 +2077,28 @@ const WaitingButton = ({ items = [], variant = 'strip', onOpenTask }) => {
           border:`1px solid ${item.second_approval ? '#8b5cf6' : LM.lineSoft}`,
           borderRadius:LM.rad.sm, padding:'9px 10px', marginBottom:8,
         }}>
-          <div style={{fontSize:13, fontWeight:500, color:LM.ink}}>{waitingLine(item)}</div>
-          <div style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, marginTop:3}}>{waitingMeta(item)}</div>
+          {window.ARCHHUB_APPROVAL_CARD && React.createElement(window.ARCHHUB_APPROVAL_CARD, {
+            surface:variant === 'home' ? 'home' : 'status', approveLabel:'Approve',
+            approval:{...item,state:'needs-user',title:waitingLine(item),target:item.target || item.to || '',
+              scope:waitingMeta(item),rows:item.changes || item.approval_rows || [],
+              preview:item.preview || (item.review_text ? {kind:'post',text:item.review_text} : undefined)},
+            busy:status[item.id] === 'pending',
+            canApprove:!(item.second_approval && String(status[item.id] || '').startsWith('approved')) &&
+              (item.producer === 'workshop_gate' ? typeof window.ARCHHUB_EXISTING_WORKSHOP?.approveNativeWork === 'function' && !!item.input_digest :
+                item.producer === 'social_approve' ? typeof window.ARCHHUB_EXISTING_WORKSHOP?.decideSocialApproval === 'function' :
+                ['model_delegation','baboom_execute','host_write'].includes(item.producer) && !!item.delegation && typeof window.fetch === 'function'),
+            canDecline:item.producer === 'social_approve' ? typeof window.ARCHHUB_EXISTING_WORKSHOP?.decideSocialApproval === 'function' :
+              item.producer === 'workshop_gate' &&
+                (item.mode === 'agent' || window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot?.()?.nativeWork?.mode === 'agent') &&
+                typeof window.ARCHHUB_EXISTING_WORKSHOP?.nativeWorkAction === 'function',
+            onApprove:() => decide(item,'approve'),onDecline:() => decide(item,'reject')})}
           <div style={{display:'flex', gap:6, alignItems:'center', marginTop:8, flexWrap:'wrap'}}>
             {item.producer === 'workshop_gate' ? (
               <button type="button" onClick={() => onOpenTask ? onOpenTask(item) :
                 setStatus(state => ({...state, [item.id]:'Approvals view is unavailable.'}))} style={smallBtn(true)}>
                 {item.open_label || 'Open in Approvals'}
               </button>
-            ) : item.second_approval && status[item.id] === 'approved' ? <button disabled style={smallBtn()}>Approved by you</button> :
-              <button type="button" disabled={status[item.id] === 'pending'} onClick={() => decide(item, 'approve')} style={smallBtn(true)}>
-                {status[item.id] === 'pending' ? 'pending' : 'Approve'}
-              </button>}
-            {item.producer !== 'workshop_gate' && (confirmReject === item.id ? <>
-              <span style={{fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, letterSpacing:LM.fs.label.letter, color:LM.warn}}>Decline?</span>
-              <button type="button" onClick={() => { setConfirmReject(''); decide(item, 'reject'); }} style={smallBtn()}>Yes</button>
-              <button type="button" onClick={() => setConfirmReject('')} style={smallBtn()}>No</button>
-            </> : <button type="button" onClick={() => setConfirmReject(item.id)} style={smallBtn()}>Decline</button>)}
+            ) : null}
             {(item.host_ids || item.ids || []).length > 0 && window.ARCHHUB_CONNECTORS?.highlight &&
               <button type="button" onClick={() => showHost(item)} style={smallBtn()}>Show in host</button>}
             {onOpenTask && item.producer !== 'workshop_gate' && <button type="button" onClick={() => onOpenTask(item)} style={smallBtn()}>Open task</button>}
@@ -1722,6 +2119,7 @@ const FRAME_TOOL_DEFAULTS = [
 ].map(([id, label, state, description, statLine, offSentence, wireSummary, emptyTitle, emptyLine]) => ({
   id, label, state, description, stat_line:statLine, off_sentence:offSentence, wire_summary:wireSummary, emptyTitle, emptyLine,
 }));
+const toolTitle = id => (FRAME_TOOL_DEFAULTS.find(row => row.id === id)?.label || String(id || 'Tool'));
 const toolRowsFromOwners = ({workshopState, account, personal, hub}) => {
   const liveHosts = LM_HOSTS.filter(host => hostState(host) === 'connected');
   const connectorHostWord = hostStateWord(liveHosts[0] || {state:'off'});
@@ -1733,12 +2131,13 @@ const toolRowsFromOwners = ({workshopState, account, personal, hub}) => {
   const api = window.ARCHHUB_EXISTING_WORKSHOP;
   const projects = (workshopState?.workshops || []).length;
   const tasks = Math.max(waiting.length, workshopState?.nativeWork ? 1 : 0);
+  const connectorsTally = hostTally();
   const stats = {
     studio:{stat:plural(LM_SESSIONS.length, 'session') + ' · ' + plural(LM_SESSIONS.filter(s => s.state === 'running').length, 'running', 'running'), wire:plural((graph?.wires || []).length, 'wire')},
     workshop:{stat:plural(projects, 'project') + ' · ' + plural(tasks, 'task'), wire:waiting.length ? plural(waiting.length, 'waiting') : 'no waiting work'},
     brain:{stat:plural(LM_MEMORY.length, 'fact'), wire:plural((window.BRAIN_STRATA || []).length, 'stratum', 'strata')},
     baboom:{stat:'Starts with Windows: ' + (baboomOn ? 'on' : 'off'), wire:baboom?.source ? String(baboom.source) : 'Personal Settings'},
-    connectors:{stat:String(hostTally().running) + '/' + String(hostTally().total) + ' hosts running.', wire:plural((window.ARCHHUB_LIVE?.connectors || []).length, 'connector')},
+    connectors:{stat:String(connectorsTally.running) + '/' + String(connectorsTally.total) + ' hosts running.', wire:plural((window.ARCHHUB_LIVE?.connectors || []).length, 'connector')},
     cloud:{stat:signedIn ? String(account.email || 'signed in') : 'signed out', wire:window.ARCHHUB_CLOUD_SESSION ? 'cloud session owner' : 'no device list owner'},
   };
   const baboomToggle = {
@@ -1756,7 +2155,7 @@ const toolRowsFromOwners = ({workshopState, account, personal, hub}) => {
     const rowWord = String(row.state_word || '');
     const stateWord = row.id === 'connectors' ? connectorHostWord :
       /unknown/i.test(rowWord) ? toolStateWord(normalizedState) : (rowWord || toolStateWord(normalizedState));
-    const tally = row.id === 'connectors' ? hostTally() : null;
+    const tally = row.id === 'connectors' ? connectorsTally : null;
     const ownerLine = tally ? (tally.read ? stats.connectors.stat : 'Checking hosts.')
       : toolStatLineIsPlaceholder(row.stat_line) ? stats[row.id]?.stat : (row.stat_line || stats[row.id]?.stat || '');
     const baboomRuntime = ownerLine || 'No signed runtime attached.';
@@ -1806,27 +2205,14 @@ const ToolOffPanel = ({ tool }) => {
 
 const ChatsPanel = ({ openId, onOpen, onNew, onHome, account, onAccount }) => (
   <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
-    {/* Panel header */}
-    <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:LM.sp.sm }}>
-      <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, letterSpacing:'-0.005em', color:LM.ink }}>Chats</span>
-      <div style={{ flex:1 }}/>
+    <PanelHead title="Chats">
       <PanelHomeButton onHome={onHome || onNew}/>
       <button title="New chat" onClick={onNew} style={panelIconBtn()}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
       </button>
-    </div>
+    </PanelHead>
 
-    {/* Search */}
-    <div style={{ padding:'0 10px 8px' }}>
-      <div style={{
-        display:'flex', alignItems:'center', gap:LM.sp.sm, padding:'6px 10px',
-        background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md,
-        color:LM.inkSoft, fontSize:12.5,
-      }}>
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-        <span style={{ flex:1 }}>Search chats…</span>
-      </div>
-    </div>
+    <Search ph="Search chats..."/>
 
     {/* Sessions list */}
     <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'0 6px 8px', minHeight:0 }}>
@@ -1889,48 +2275,180 @@ const panelIconBtn = () => ({
   display:'grid', placeItems:'center',
 });
 
-// ─── Nodes panel — primary drag source ───
-const NodesPanel = ({ addNodeFromLibrary, onHome, account, onAccount }) => {
-  const library = useStudioProjection()?.library || LM_LIBRARY;
+// ─── Library panel — primary drag source ───
+const LIBRARY_FAMILIES = [
+  {id:'all', label:'All', cats:null},
+  {id:'get', label:'Get', cats:['host', 'input', 'trigger']},
+  {id:'change', label:'Change', cats:['shape', 'transform', 'document']},
+  {id:'decide', label:'Decide', cats:['logic', 'ai', 'agent']},
+  {id:'see', label:'See', cats:['watch', 'check']},
+  {id:'send', label:'Send', cats:['output']},
+];
+const LIBRARY_FAMILY_BY_CAT = LIBRARY_FAMILIES.reduce((out, family) => {
+  (family.cats || []).forEach(cat => { out[cat] = family.id; });
+  return out;
+}, {});
+const LIBRARY_CATEGORY_ORDER = ['host', 'input', 'trigger', 'shape', 'transform', 'document', 'logic', 'ai', 'agent', 'watch', 'check', 'output'];
+const LIBRARY_DISPLAY_CAT_BY_RAW = {
+  host:'host', input:'input', trigger:'trigger', shape:'shape', transform:'transform',
+  document:'document', file:'output', text:'shape', math:'shape', logic:'logic',
+  ai:'ai', governance:'agent', watch:'watch', output:'output', note:'shape', skill:'agent',
+};
+const LIBRARY_CHECK_ITEMS = new Set(['g_dryrun_diff', 'g_host_health', 'g_evidence_attach', 'g_rule_check']);
+const libraryHumanText = value => String(value || '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+const libraryTitle = item => libraryHumanText(item.title || item.name || item.label || 'Untitled node');
+const librarySub = (item, cat) => libraryHumanText(item.sub || item.description || cat.role || '');
+const librarySearchText = (group, item) => [group.cat, studioCategory(group.cat).label, libraryTitle(item), librarySub(item, studioCategory(group.cat))]
+  .join(' ').toLowerCase();
+const libraryTotal = groups => visibleLibraryGroups(groups).reduce((n, group) => n + group.items.length, 0);
+const librarySource = projected => {
+  if (Array.isArray(window.AH_LIBRARY) && window.AH_LIBRARY.length) return visibleLibraryGroups(window.AH_LIBRARY);
+  if (Array.isArray(projected?.library) && projected.library.length) return visibleLibraryGroups(projected.library);
+  return [];
+};
+const libraryDisplayCategory = (rawCat, item) => {
+  if (LIBRARY_CHECK_ITEMS.has(String(item?.id || ''))) return 'check';
+  return LIBRARY_DISPLAY_CAT_BY_RAW[String(rawCat || '').toLowerCase()] || String(rawCat || '').toLowerCase() || 'shape';
+};
+const libraryDisplayGroups = library => {
+  const buckets = Object.fromEntries(LIBRARY_CATEGORY_ORDER.map(cat => [cat, []]));
+  const seen = new Set();
+  for (const group of visibleLibraryGroups(library)) {
+    for (const item of group.items || []) {
+      const id = String(item.id || '');
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const displayCat = libraryDisplayCategory(group.cat, item);
+      if (!buckets[displayCat]) buckets[displayCat] = [];
+      buckets[displayCat].push({...item, rawCat:group.cat, displayCat});
+    }
+  }
+  const known = LIBRARY_CATEGORY_ORDER
+    .filter(cat => (buckets[cat] || []).length)
+    .map(cat => ({cat, items:buckets[cat]}));
+  const custom = Object.keys(buckets)
+    .filter(cat => !LIBRARY_CATEGORY_ORDER.includes(cat) && (buckets[cat] || []).length)
+    .sort((a, b) => a.localeCompare(b))
+    .map(cat => ({cat, items:buckets[cat]}));
+  return [...known, ...custom];
+};
+const libraryVisibleGroups = (library, family, q) => {
+  const query = q.trim().toLowerCase();
+  return visibleLibraryGroups(library).map(group => {
+    const catId = String(group.cat || '').toLowerCase();
+    if (family !== 'all' && LIBRARY_FAMILY_BY_CAT[catId] !== family) return {...group, items:[]};
+    const items = (group.items || []).filter(item => !query || librarySearchText(group, item).includes(query));
+    return {...group, items};
+  }).filter(group => group.items.length);
+};
+const libraryPortKind = port => {
+  const type = String(port?.type || port?.t || port?.logical_type || '').toLowerCase();
+  const cardinality = String(port?.cardinality || (port?.multiple ? 'many' : '')).toLowerCase();
+  if (!type || type === 'unknown' || cardinality === 'unknown') return 'unknown';
+  if (type === 'trigger' || type === 'event' || type === 'exec' || port?.shape === 'triangle') return 'trigger';
+  if (cardinality === 'many' || cardinality === 'list' || cardinality === 'multiple') return 'list';
+  return 'single';
+};
+const libraryPortGlyph = kind => kind === 'trigger' ? '▷' : kind === 'list' ? '◇' : kind === 'unknown' ? '?' : '●';
+const libraryPortSummary = item => {
+  const rows = [];
+  const ports = item?.ports || item?.port_metadata || null;
+  for (const [side, dir] of [['target', 'in'], ['source', 'out']]) {
+    const declared = Array.isArray(ports?.[side]) ? ports[side] : null;
+    const fallback = !declared && Array.isArray(item?.sockets?.[side])
+      ? item.sockets[side].map(name => ({id:name, type:'unknown', cardinality:'unknown'}))
+      : [];
+    for (const port of declared || fallback) {
+      const kind = libraryPortKind(port);
+      const name = port.id || port.name || port.port_id || '';
+      rows.push({glyph:libraryPortGlyph(kind), label:(kind === 'trigger' ? 'trigger' : kind) + ' ' + dir, name, dir});
+    }
+  }
+  return rows;
+};
+const LibraryTile = ({ cat, group, open, onToggle }) => (
+  <button type="button" onClick={onToggle} data-library-category={String(group.cat || '')} style={{
+    width:'100%', height:30, padding:'0 6px', border:0, borderRadius:5,
+    background:open ? LM.bgHover : 'transparent', color:LM.ink, cursor:'pointer',
+    display:'flex', alignItems:'center', gap:8, fontFamily:LM.sans, fontSize:13, textAlign:'left',
+  }}>
+    <span style={{ width:8, color:LM.inkSoft, fontSize:11 }}>{open ? '▾' : '▸'}</span>
+    <span style={{ width:18, height:18, borderRadius:4, background:cat.col, color:LM.onFill,
+      display:'grid', placeItems:'center', fontSize:11, fontWeight:600, flex:'none' }}>{cat.icon}</span>
+    <span style={{ flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{cat.label[0] + cat.label.slice(1).toLowerCase()}</span>
+    <span style={{ color:LM.inkSoft, fontSize:11 }}>{(group.items || []).length}</span>
+  </button>
+);
+const NodesPanel = ({ addNodeFromLibrary, onHome, account, onAccount, onSwitchPanel, onOpenRuns }) => {
+  const projected = useStudioProjection();
+  const workshopState = useWorkshopProjection();
+  const hub = useToolHubProjection();
+  const runsWaiting = Array.isArray(hub?.waiting) ? hub.waiting.length : workshopWaitingItems(workshopState).length;
+  const library = libraryDisplayGroups(librarySource(projected));
   const [q, setQ] = React.useState('');
-  const [openCats, setOpenCats] = React.useState(() => Object.fromEntries(library.map(group => [group.cat, true])));
+  const [family, setFamily] = React.useState('all');
+  const [openCats, setOpenCats] = React.useState(() => ({shape:true}));
+  const [selectedId, setSelectedId] = React.useState('');
   const addRef = React.useRef(addNodeFromLibrary);
   addRef.current = addNodeFromLibrary;
   const addFromLibrary = React.useCallback(item => addRef.current(item), []);
   const toggleCat = React.useCallback(cat => setOpenCats(o => ({ ...o, [cat]: !o[cat] })), []);
+  const groups = libraryVisibleGroups(library, family, q);
   return (
     <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
-      <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:LM.sp.sm }}>
-        <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Nodes</span>
-        <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.08em' }}>
-          drag · or 2× click
-        </span>
-        <div style={{ flex:1 }}/>
-        <PanelHomeButton onHome={onHome}/>
-        <button title="Collapse all" style={panelIconBtn()} onClick={() => setOpenCats({})}>
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14"/></svg>
-        </button>
+      <PanelHead title="Nodes"><PanelHomeButton onHome={onHome}/><button title="Collapse all" onClick={() => setOpenCats({})} style={panelIconBtn()}>−</button></PanelHead>
+      <div style={{ display:'flex', gap:4, padding:'10px 10px 0' }}>
+        {[
+          ['Library', 'nodes', () => onSwitchPanel && onSwitchPanel('nodes')],
+          ['Graphs', 'chats', () => onSwitchPanel && onSwitchPanel('chats')],
+          ['Skills', 'skills', () => onSwitchPanel && onSwitchPanel('skills')],
+          ['Runs', 'runs', () => onOpenRuns ? onOpenRuns() : onSwitchPanel && onSwitchPanel('runs')],
+        ].map(([tab, route, act]) => (
+          <button key={tab} type="button" data-library-tab={route} onClick={act} style={{ height:28, display:'inline-flex', alignItems:'center', gap:5, padding:'0 7px',
+            borderRadius:5, fontFamily:LM.sans, fontSize:13,
+            background:route === 'nodes' ? LM.accentDim : 'transparent',
+            color:route === 'nodes' ? LM.accent : LM.inkSoft, border:0, cursor:'pointer' }}>
+            {tab}{tab === 'Runs' && runsWaiting > 0 && <span style={{ fontSize:11, background:LM.bgHover, color:LM.ink, borderRadius:999, padding:'0 6px' }}>{runsWaiting}</span>}
+          </button>
+        ))}
       </div>
 
-      <div style={{ padding:'0 10px 8px' }}>
+      <div style={{ padding:'10px 10px 8px' }}>
         <div style={{
-          display:'flex', alignItems:'center', gap:LM.sp.sm, padding:'6px 10px',
-          background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md,
+          height:32, boxSizing:'border-box', display:'flex', alignItems:'center', gap:8, padding:'0 10px',
+          background:LM.bgSoft, border:`1px solid ${LM.line}`, borderRadius:5,
         }}>
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={LM.inkSoft} strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search nodes…" style={{
-            flex:1, border:0, background:'transparent', color:LM.ink, fontSize:12, outline:'none', fontFamily:LM.sans,
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={`Search ${libraryTotal(groups)} nodes`} style={{
+            flex:1, minWidth:0, border:0, background:'transparent', color:LM.ink, fontSize:13, outline:'none', fontFamily:LM.sans,
           }}/>
+          <span style={{ color:LM.inkSoft, fontSize:11 }}>/</span>
         </div>
+      </div>
+
+      <div style={{ display:'flex', flexWrap:'wrap', gap:6, padding:'0 10px 8px' }}>
+        {LIBRARY_FAMILIES.map(filter => (
+          <span key={filter.id} role="button" tabIndex={0}
+            onClick={() => setFamily(filter.id)}
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setFamily(filter.id); } }}
+            style={{
+            height:24, display:'inline-flex', alignItems:'center', padding:'0 9px',
+            borderRadius:999, border:filter.id === family ? '1px solid transparent' : `1px solid ${LM.line}`,
+            background:filter.id === family ? LM.accentDim : 'transparent',
+            color:filter.id === family ? LM.accent : LM.ink,
+            cursor:'pointer', fontFamily:LM.sans, fontSize:12,
+          }}>{filter.label}</span>
+        ))}
       </div>
 
       <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'0 6px 8px', minHeight:0 }}>
         {!library.length && window.AH_LIBRARY_ERROR && (
-          <div role="alert" style={{ padding:'8px 12px', fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.err, lineHeight:1.5 }}>
+          <div role="alert" style={{ padding:'8px 12px', fontFamily:LM.sans, fontSize:12, color:LM.err, lineHeight:1.5 }}>
             {'The node library could not be loaded: ' + window.AH_LIBRARY_ERROR}
           </div>
         )}
-        <NodeLibraryGroups library={library} q={q} openCats={openCats} onToggle={toggleCat} onAdd={addFromLibrary}/>
+        <NodeLibraryGroups library={groups} q={q} openCats={openCats} onToggle={toggleCat} onAdd={addFromLibrary}
+          selectedId={selectedId} onSelect={setSelectedId}/>
       </div>
 
       <AccountChip account={account} onOpen={onAccount}/>
@@ -1938,33 +2456,27 @@ const NodesPanel = ({ addNodeFromLibrary, onHome, account, onAccount }) => {
   );
 };
 
-// The 232 library cards re-rendered on every owner publish (canvas-perf). They depend only on the
-// library, the search and which sections are open, so they are memoized on exactly those.
-const NodeLibraryGroups = React.memo(({ library, q, openCats, onToggle, onAdd }) => (
+// The library rows re-render on every owner publish; memoizing keeps drag/search calm.
+const NodeLibraryGroups = React.memo(({ library, q, openCats, onToggle, onAdd, selectedId = '', onSelect = null }) => (
   <>
-        {library.map(group => {
+        {library.map((group, index) => {
           const c = studioCategory(group.cat);
-          const items = q ? group.items.filter(i => (i.title + ' ' + i.sub).toLowerCase().includes(q.toLowerCase())) : group.items;
+          const items = group.items || [];
           if (items.length === 0) return null;
           const open = q ? true : !!openCats[group.cat];
+          const family = LIBRARY_FAMILIES.find(row => row.id === LIBRARY_FAMILY_BY_CAT[String(group.cat || '').toLowerCase()]);
+          const prev = library.slice(0, index).reverse().find(row => (row.items || []).length);
+          const prevFamily = prev && LIBRARY_FAMILIES.find(row => row.id === LIBRARY_FAMILY_BY_CAT[String(prev.cat || '').toLowerCase()]);
+          const showFamily = family && family.id !== prevFamily?.id;
           return (
-            <div key={group.cat} style={{ marginBottom:LM.sp.xs }}>
-              <button onClick={() => onToggle(group.cat)} style={{
-                width:'100%', display:'flex', alignItems:'center', gap:7, padding:'5px 7px',
-                background:'transparent', border:0, borderRadius:4, cursor:'pointer',
-                color:LM.inkSoft, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, letterSpacing:'0.14em',
-                textAlign:'left',
-              }}
-              onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
-              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                <span style={{ width:9, color:LM.inkSoft, transition:`transform ${LM.dur.fast}ms`, display:'inline-block', transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}>▸</span>
-                <span style={{ color: c.col, fontSize:LM.fs.label.sz }}>{c.icon}</span>
-                <span style={{ flex:1, color:c.col }}>{c.label}</span>
-                <span style={{ color:LM.inkSoft, fontSize:LM.fs.label.sz }}>{items.length}</span>
-              </button>
+            <div key={group.cat} data-library-family={family?.label || 'Other'} style={{ marginBottom:2 }}>
+              {showFamily && <div style={{ fontSize:11, color:LM.inkSoft, padding:'8px 6px 2px', letterSpacing:'.04em', textTransform:'uppercase', fontFamily:LM.sans }}>{family.label}</div>}
+              <LibraryTile cat={c} group={{...group, items}} open={open} onToggle={() => onToggle(group.cat)}/>
               {open && (
-                <div style={{ display:'flex', flexDirection:'column', gap:1, paddingLeft:6 }}>
-                  {items.map(it => <NodeLibItem key={it.id} it={it} cat={c} onAdd={() => onAdd({ ...it, cat:group.cat })}/>)}
+                <div style={{ display:'flex', flexDirection:'column', gap:1, paddingLeft:34 }}>
+                  {items.map(it => <NodeLibItem key={it.id} it={it} cat={c} catId={group.cat}
+                    selected={selectedId === it.id}
+                    onAdd={() => { onSelect && onSelect(it.id); onAdd({ ...it, cat:it.rawCat || group.cat }); }}/>)}
                 </div>
               )}
             </div>
@@ -1973,37 +2485,48 @@ const NodeLibraryGroups = React.memo(({ library, q, openCats, onToggle, onAdd })
   </>
 ));
 
-const NodeLibItem = ({ it, cat, onAdd }) => {
+const NodeLibItem = ({ it, cat, catId, selected = false, onAdd }) => {
   const [h, setH] = React.useState(false);
   const onDragStart = (e) => {
     e.dataTransfer.effectAllowed = 'copy';
-    e.dataTransfer.setData('application/x-lm-node', JSON.stringify({ ...it, cat: cat.label.toLowerCase() }));
-    e.dataTransfer.setData('text/plain', it.title);
+    e.dataTransfer.setData('application/x-lm-node', JSON.stringify({ ...it, cat: catId }));
+    e.dataTransfer.setData('text/plain', libraryTitle(it));
+    window.__archhubDraggingLibraryTitle = libraryTitle(it);
   };
+  const title = libraryTitle(it);
+  const sub = librarySub(it, cat);
+  const ports = libraryPortSummary(it);
+  const outlined = h || selected;
   return (
-    <div
+    <button type="button"
       draggable="true"
       onDragStart={onDragStart}
-      onDoubleClick={onAdd}
+      onDragEnd={() => { delete window.__archhubDraggingLibraryTitle; }}
+      onClick={onAdd}
       onMouseEnter={() => setH(true)}
       onMouseLeave={() => setH(false)}
-      title="Drag onto canvas, or double-click to add"
+      data-library-row={title}
       style={{
-        display:'flex', alignItems:'center', gap:LM.sp.sm, padding:'5px 8px',
+        width:'100%', minHeight:32, display:'flex', alignItems:'center', gap:8, padding:'5px 8px',
         borderRadius:4, cursor:'grab', userSelect:'none',
-        background: h ? LM.bgHover : 'transparent',
-        borderLeft:`2px solid ${h ? cat.col : 'transparent'}`,
+        background: h || selected ? LM.bgHover : 'transparent',
+        border:`1px ${outlined ? 'dashed' : 'solid'} ${outlined ? LM.accent : 'transparent'}`,
         transition:`background ${LM.dur.fast}ms, border-color ${LM.dur.fast}ms`,
+        color:LM.ink, fontFamily:LM.sans, textAlign:'left',
       }}>
-      <span style={{ width:5, height:5, borderRadius:'50%', background:cat.col, flexShrink:0, opacity:0.8 }}/>
+      <span style={{ width:8, height:8, boxSizing:'border-box', background:LM.bgPanel, border:`2px solid ${cat.col}`,
+        borderRadius:2, transform:'rotate(45deg) scale(.86)', flexShrink:0 }}/>
       <div style={{ flex:1, minWidth:0, lineHeight:1.2 }}>
-        <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{it.title}</div>
-        <div style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, color:LM.inkSoft, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{it.sub}</div>
+        <div style={{ fontFamily:LM.sans, fontSize:13, color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{title}</div>
+        <div style={{ fontFamily:LM.sans, fontSize:11, color:LM.inkSoft, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{sub}</div>
       </div>
-      {h && (
-        <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.04em', flexShrink:0 }}>+</span>
-      )}
-    </div>
+      <span data-library-port-glyphs="" aria-label={ports.map(port => port.label + ' ' + port.name).join(' · ')}
+        title={ports.map(port => port.label + ' · ' + port.name).join('\n')}
+        style={{ display:'inline-flex', alignItems:'center', justifyContent:'flex-end', gap:3, minWidth:38,
+          color:LM.inkSoft, fontSize:12, flexShrink:0 }}>
+        {ports.slice(0, 4).map((port, index) => <span key={port.dir + port.name + index}>{port.glyph}</span>)}
+      </span>
+    </button>
   );
 };
 
@@ -2031,7 +2554,13 @@ const useCatalogueVersion = () => React.useSyncExternalStore(
 const loadCatalogue = (loaderName, items) => {
   const load = window[loaderName];
   // No loader (a hosted page): the list ARCHHUB_LIVE holds is the whole list, so it counts as read.
-  if (typeof load !== 'function') { if (!catalogueStates.has(loaderName)) catalogueStates.set(loaderName, {loading:false, error:'', read:true}); return Promise.resolve(); }
+  if (typeof load !== 'function') {
+    if (!catalogueStates.has(loaderName)) {
+      catalogueStates.set(loaderName, {loading:false, error:'', read:true});
+      catalogueChanged();
+    }
+    return Promise.resolve();
+  }
   let state = catalogueStates.get(loaderName);
   if (state?.pending) return state.pending;
   state = {loading:true, error:'', pending:null};
@@ -2089,22 +2618,12 @@ const studioSkillLibraryItem = skill => ({
 
 const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, ({ catalogue = {}, addNodeFromLibrary, onHome }) => (
   <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
-    <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:LM.sp.sm }}>
-      <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Skills</span>
+    <PanelHead title="Skills">
       <span data-skills-count="" style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.08em' }}>
         {catalogue.read ? LM_SAVED_SKILLS.length + ' SAVED' : catalogue.error ? 'NOT READ' : 'READING\u2026'}</span>
-      <div style={{ flex:1 }}/>
       <PanelHomeButton onHome={onHome}/>
-    </div>
-    <div style={{ padding:'0 10px 8px' }}>
-      <div style={{
-        display:'flex', alignItems:'center', gap:LM.sp.sm, padding:'6px 10px',
-        background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, color:LM.inkSoft, fontSize:12,
-      }}>
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-        <span style={{ flex:1 }}>Search saved skills…</span>
-      </div>
-    </div>
+    </PanelHead>
+    <Search ph="Search saved skills..."/>
     <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'0 6px 8px' }}>
       {LM_SAVED_SKILLS.map((s, index) => (
         <button key={s.id || s.path || ((s.source || '') + ':' + (s.name || index))} type="button"
@@ -2136,6 +2655,42 @@ const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, ({
   </div>
 ));
 
+const RunsPanel = ({ onHome, onOpenTask }) => {
+  const hub = useToolHubProjection();
+  const workshopState = useWorkshopProjection();
+  const items = Array.isArray(hub?.waiting) ? hub.waiting : workshopWaitingItems(workshopState);
+  return (
+  <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
+    <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:LM.sp.sm }}>
+      <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Runs</span>
+      <span data-runs-count="" style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.08em' }}>
+        {items.length ? items.length + ' WAITING' : 'NONE WAITING'}</span>
+      <div style={{ flex:1 }}/>
+      <PanelHomeButton onHome={onHome}/>
+    </div>
+    <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'0 6px 8px' }}>
+      {items.map((item, index) => (
+        <button key={item.id || item.label || index} type="button" data-run-waiting-row="" onClick={() => onOpenTask && onOpenTask(item)} style={{
+          display:'block', width:'100%', padding:'7px 9px', borderRadius:LM.rad.sm, cursor:'pointer', marginBottom:1,
+          background:'transparent', border:'0', borderLeft:`2px solid transparent`, textAlign:'left', fontFamily:LM.sans,
+        }}
+        onMouseEnter={e => { e.currentTarget.style.background = LM.bgHover; e.currentTarget.style.borderLeftColor = LM.warn; }}
+        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderLeftColor = 'transparent'; }}>
+          <div style={{ display:'flex', alignItems:'center', gap:7 }}>
+            <span style={{ color:LM.warn, fontFamily:LM.mono, fontSize:11 }}>▶</span>
+            <span style={{ flex:1, minWidth:0, fontSize:12.5, color:LM.ink, overflowWrap:'anywhere' }}>{waitingLine(item)}</span>
+          </div>
+          <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, paddingLeft:18, marginTop:3 }}>{waitingMeta(item)}</div>
+        </button>
+      ))}
+      {!items.length && <div data-runs-empty="" role="status" style={{
+        padding:'14px 10px', fontFamily:LM.sans, fontSize:13, color:LM.inkSoft, lineHeight:1.45 }}>
+        Nothing waiting.</div>}
+    </div>
+  </div>
+  );
+};
+
 // ─── Global search panel ───
 const SearchPanel = ({ onHome }) => {
   // Scope counts are read from what this Studio holds; a scope nothing counts draws no number.
@@ -2144,24 +2699,11 @@ const SearchPanel = ({ onHome }) => {
   const count = list => Array.isArray(list) ? list.length : null;
   return (
   <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
-    <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:LM.sp.sm }}>
-      <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Search</span>
-      <div style={{ flex:1 }}/>
+    <PanelHead title="Search">
       <PanelHomeButton onHome={onHome}/>
       <kbd style={kbd()}>⌘K</kbd>
-    </div>
-    <div style={{ padding:'0 10px 10px' }}>
-      <div style={{
-        display:'flex', alignItems:'center', gap:LM.sp.sm, padding:'8px 12px',
-        background:LM.bg, border:`1px solid ${LM.accent}55`, borderRadius:LM.rad.md,
-        boxShadow:`0 0 0 3px ${LM.accentDim}`,
-      }}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={LM.accent} strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-        <span style={{ flex:1, color:LM.inkSoft, fontStyle:'italic', fontFamily:LM.serif, fontSize:13 }}>
-          everything in studio…
-        </span>
-      </div>
-    </div>
+    </PanelHead>
+    <Search ph="Search everything..."/>
     <div style={{ padding:'4px 10px', fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.14em' }}>SCOPES</div>
     <div style={{ padding:'0 6px', display:'flex', flexDirection:'column', gap:1 }}>
       {[
@@ -2528,56 +3070,24 @@ const ToolCard = ({ tool, onOpen }) => (
   </div>
 );
 
-const WorkshopToolProjects = ({ workshopState }) => {
-  const waiting = workshopWaitingItems(workshopState);
-  const projects = (workshopState?.workshops || []).map(row => ({
-    id:row.root,
-    name:row.label || 'Workshop',
-    status:row.status || 'not recorded',
-    ...(row.tasks != null ? {tasks:row.tasks} : {}),
-    ...(row.blocked != null ? {blocked:row.blocked} : {}),
-    ...(row.hosts != null ? {hosts:row.hosts} : {}),
-    ...(row.agents != null ? {agents:row.agents} : {}),
-  }));
-  return <div style={{display:'flex', flexDirection:'column', gap:14}}>
-    <div>
-      <div style={{fontFamily:LM.serif, fontSize:22, letterSpacing:'-0.01em'}}>Tasks</div>
-      <div style={{fontFamily:LM.sans, fontSize:13, color:LM.inkSoft, marginTop:3}}>
-        Each Workshop's tasks and progress, from the current owner projection.
-      </div>
-    </div>
-    {window.WorkshopProjectsView && projects.length
-      ? <window.WorkshopProjectsView projects={projects}/>
-      : <SettingsEmpty>{projects.length ? 'Workshop projects are unavailable.' : 'No Workshop project is in this scope.'}</SettingsEmpty>}
-  </div>;
-};
-
 const SettingsBaboom = ({ onOpenToolGraph, onClose }) => {
   const personal = usePersonalTheme();
   const openToolGraphFromSettings = id => { onClose?.(); onOpenToolGraph?.(id); };
   return <div style={{display:'flex', flexDirection:'column', gap:14}}>
-    <div>
-      <div style={{fontFamily:LM.serif, fontSize:22, letterSpacing:'-0.01em'}}>Companion settings</div>
-      <div style={{fontFamily:LM.sans, fontSize:13, color:LM.inkSoft, marginTop:3}}>
-        These are the parameters of the BABOOM node. Change them here or on the node: it is one value.
-      </div>
-    </div>
     <div style={{background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden'}}>
       <BaboomStartupRow first/>
       <div style={{padding:'10px 14px', borderTop:`1px solid ${LM.lineSoft}`, display:'flex', alignItems:'center', gap:LM.sp.md}}>
         <span style={{width:8, height:8, borderRadius:'50%', background:LM.warn}}/>
         <div style={{flex:1, lineHeight:1.2, minWidth:0}}>
           <div style={{fontSize:13, fontWeight:500, color:LM.ink}}>Speech budget</div>
-          <div style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.04em', marginTop:2}}>
+          <div style={{fontFamily:LM.sans, fontSize:12, color:LM.inkSoft, marginTop:2}}>
             Speaks at most {baboomMaxSpeaks(personal)} times an hour.
           </div>
         </div>
       </div>
     </div>
     <div style={{display:'flex', alignItems:'center', gap:10}}>
-      <span style={{flex:1, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft}}>
-        Node: BABOOM · System graph · parameters tab shows the same two rows
-      </span>
+      <span style={{flex:1}}/>
       <button type="button" onClick={() => openToolGraphFromSettings('baboom')} style={smallBtn(false)}>Open as node ↗</button>
     </div>
   </div>;
@@ -2612,7 +3122,7 @@ const SettingsCloudStatus = ({ toolRow, account, onSettings }) => {
   </div>;
 };
 
-const ToolMainView = ({ view, account, setAccount, onSignOut, onSettings }) => {
+const ToolMainView = ({ view, account, setAccount, onSignOut, onSettings, onHome, onDocs, onLibrary, updateView }) => {
   const [store, setStore] = React.useState(() => ({forgotten:[], revealed:{}}));
   const patch = (k, v) => setStore(old => Object.assign({}, old, typeof k === 'object' ? k : {[k]:v}));
   const tool = view?.id || 'brain';
@@ -2623,6 +3133,13 @@ const ToolMainView = ({ view, account, setAccount, onSignOut, onSettings }) => {
   const hub = useToolHubProjection();
   const toolRow = toolRowsFromOwners({workshopState, account, personal, hub}).find(row => row.id === tool);
   const offTool = toolRow?.state === 'off' ? toolRow : null;
+  if (tool === 'workshop') {
+    const descriptor = (workshopState?.workshops || []).find(row => row.root === view?.root) ||
+      {root:WORKSHOP_UNAVAILABLE_ROOT, label:'Workshop', unavailable:true, native_work_available:false};
+    return <LazyWorkshopWindow state={workshopState || {}} descriptor={descriptor} account={account} sel={{task:view?.focus || null}}
+      setSel={next => updateView?.({...view, focus:next.task || null})} onHome={onHome} onDocs={onDocs}
+      onSettings={() => onSettings?.(true)} onLibrary={onLibrary} onAddNode={onLibrary} onLeave={onHome}/>;
+  }
   return <main data-tool-view={tool} data-tool-tab={tab} data-tool-focus={view?.focus || ''} className="ah-scroll" style={{
     gridColumn:'2', gridRow:'1', overflow:'auto', minHeight:0, padding:'28px 44px 36px',
     background:LM.bg, color:LM.ink,
@@ -2634,7 +3151,6 @@ const ToolMainView = ({ view, account, setAccount, onSignOut, onSettings }) => {
       </span>
     </div>
     {offTool ? <ToolOffPanel tool={offTool}/> : <>
-    {tool === 'workshop' && <WorkshopToolProjects workshopState={workshopState}/>}
     {tool === 'brain' && <SettingsMemory store={store} patch={patch}/>}
     {tool === 'connectors' && <SettingsHosts/>}
     {tool === 'cloud' && <SettingsCloudStatus toolRow={toolRow} account={account} onSettings={onSettings}/>}
@@ -2680,10 +3196,30 @@ const SessionCard = ({ s, onOpen }) => {
 };
 
 // ──────────────────────── WORKSPACE ────────────────────────
-const Workspace = ({ session, model, readiness = null, onReadinessStale, onModelReadRetry, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, setPickerOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, themeEpoch = 0, onHome, onNewSession, onSettings, onAccount, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
+// Loading this face is the only point where its code enters Studio.
+const LazyWorkshopWindow = props => {
+  const [View, setView] = React.useState(() => window.WorkshopView || null);
+  const [error, setError] = React.useState('');
+  React.useEffect(() => {
+    if (View) return undefined;
+    let live = true;
+    const load = window.ARCHHUB_LOAD_WORKSHOP;
+    if (typeof load !== 'function') { setError('Not available yet'); return undefined; }
+    Promise.resolve().then(load).then(component => {
+      if (live) setView(() => component);
+    }).catch(reason => { if (live) setError(reason?.message || 'Not available yet'); });
+    return () => { live = false; };
+  }, [View]);
+  return View ? <View {...props}/> : <div data-workshop-loading="" role="status"
+    style={{gridColumn:'1 / -1', gridRow:'1 / -1', display:'grid', placeItems:'center',
+      background:LM.bgDeep, color:LM.inkSoft, fontFamily:LM.sans, fontSize:13}}>{error || 'Opening Workshop…'}</div>;
+};
+const Workspace = ({ session, account, model, readiness = null, onReadinessStale, onModelReadRetry, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, setPickerOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, themeEpoch = 0, onHome, onDocs, onNewSession, onSettings, onAccount, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
   const authorityState = useStudioProjection();
   const graph = authorityState?.graph || LM_GRAPH;
-  const allNodes = [...graph.nodes, ...(userNodes || [])];
+  const historyDecorator = typeof decorateHistoryNode === 'function' ? decorateHistoryNode : node => node;
+  const allNodes = [...graph.nodes, ...(userNodes || [])].map(node =>
+    historyDecorator(node, authorityState?.canvas || {}));
   // A wire is a node: focusId may name one, and the SAME rail renders it.
   const wireIdx = authorityState ? graph.wires.findIndex(wire => wire.id === focusId) : (String(focusId).indexOf('wire:') === 0 ? +String(focusId).slice(5) : -1);
   const focusNode = wireIdx >= 0
@@ -2703,17 +3239,19 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, onModel
       is_general:true, native_work_available:false, unavailable:true,
       unavailable_reason:view.notice || workshopUnavailableText(workshopState?.canvas?.unavailable)} : null);
   const graphScopeKey = JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas)]);
+  const workshopWindow = effectiveMode === 'chat' && !!workshop;
   if (view.pending) return <main style={{gridColumn:'2', gridRow:'1', padding:24, color:LM.inkSoft}}>
     <p role="status">{view.notice}</p>
   </main>;
   return (
-    <main style={{
+    <main data-workspace-main="" style={{
       gridColumn:'2', gridRow:'1', minHeight:0, minWidth:0, overflow:'hidden',
+      height:'100%',
       display:'grid',
-      gridTemplateColumns:'minmax(0, 1fr) 320px',
-      gridTemplateRows:'36px 1fr',
+      gridTemplateColumns:workshopWindow ? 'minmax(0, 1fr)' : 'minmax(0, 1fr) 320px',
+      gridTemplateRows:workshopWindow ? '1fr' : '36px 1fr',
     }}>
-      <WsHeader
+      {!workshopWindow && <WsHeader
         session={session} model={model} openTabs={openTabs}
         sessionRows={sessionRows}
         setOpenId={setOpenId} closeTab={closeTab} mode={effectiveMode} setMode={setMode}
@@ -2724,12 +3262,13 @@ const Workspace = ({ session, model, readiness = null, onReadinessStale, onModel
         setPickerOpen={setPickerOpen} onHome={onHome} onNewSession={onNewSession}
         onSettings={onSettings}
         systemAllowed={systemAllowed(authorityState?.canvas, graph)}
-        systemArrangeSummary={systemArrangeSummary}/>
-      {effectiveMode === 'chat' && workshop && window.WorkshopView ? (
-        <window.WorkshopView key={JSON.stringify([session.id, workshopState.canvas.graph_id,
-          workshopState.canvas.root, workshop.root])} state={workshopState} descriptor={workshop} target={target}
+        systemArrangeSummary={systemArrangeSummary}/>}
+      {effectiveMode === 'chat' && workshop ? (
+        <LazyWorkshopWindow key={JSON.stringify([session.id, workshopState.canvas.graph_id,
+          workshopState.canvas.root, workshop.root])} state={workshopState} descriptor={workshop} account={account} target={target}
           setTarget={target => updateView({target})} setMode={setMode} setFocusId={setFocusId}
-          requestCanvasReveal={requestCanvasReveal}
+          requestCanvasReveal={requestCanvasReveal} onHome={onHome} onDocs={onDocs} onSettings={onSettings}
+          onAddNode={() => setLibraryOpen(true)} onLibrary={() => setLibraryOpen(true)}
           onLeave={() => updateView({conversationRoot:'', mode:'canvas', target:''})}
           sel={wsSel} setSel={setWsSel}/>
       ) : (
@@ -3793,8 +4332,9 @@ const ModelStrip = ({ model, setPickerOpen, compact }) => {
 
 // ──────────────────────── NODE CANVAS ────────────────────────
 const SOCKET_TOP = 42;
-const SOCKET_STEP = 19;
-const SOCKET_R = 5;
+const NODE_CARD_W = 224;
+const SOCKET_STEP = 22;
+const SOCKET_R = 5.5;
 const LM_CANVAS_TOKENS = typeof LM !== 'undefined' ? LM : {};
 const LM_CATEGORY_ICON = (LM_CANVAS_TOKENS.icon && typeof LM_CANVAS_TOKENS.icon === 'object' && LM_CANVAS_TOKENS.icon.category) || {size:12, box:20};
 const LM_FS_SOURCE = LM_CANVAS_TOKENS.fs && typeof LM_CANVAS_TOKENS.fs === 'object' ? LM_CANVAS_TOKENS.fs : {};
@@ -3803,6 +4343,31 @@ const LM_FS_DATASM = LM_FS_SOURCE.dataSm || {sz:11, ln:14, wt:400};
 const LM_FS_CAPTION = LM_FS_SOURCE.caption || {sz:12, ln:16, wt:400};
 const LM_FS_BODYSM = LM_FS_SOURCE.bodySm || {sz:13, ln:18, wt:400};
 const LM_FS_BODYSM_STRONG = LM_FS_SOURCE.bodySmStrong || {sz:13, ln:18, wt:500};
+// DSYS-078 is a thin skin on every real graph card; content and handlers stay graph-owned.
+const canvasCardSurface = (needsUser = false) => ({background:LM.surf,
+  boxShadow:needsUser ? `${LM.elev.e2}, ${LM.glow.warn}` : LM.elev.e2, borderRadius:12});
+const canvasNeedsUser = node => ['needs-user', 'needs_user', 'awaiting_approval', 'waiting_approval'].includes(node?.state || node?.status);
+const canvasStatusColor = node => canvasNeedsUser(node) ? LM.warn :
+  /done|complete|ready|success/.test(node?.state || node?.status || '') ? LM.ok :
+  /running|working/.test(node?.state || node?.status || '') ? LM.accent : LM.inkSoft;
+const canvasStatusText = node => {
+  const value=String(node?.status || node?.state || 'Not available yet');
+  return /^(?:open|planned|queued|claimed)$/i.test(value) ? 'ready to start' : value.replaceAll('_',' ');
+};
+const canvasAgentRecord = node => {
+  const owner = window.ARCHHUB_STUDIO_AUTHORITY || window.ARCHHUB_EXISTING_WORKSHOP;
+  const state = owner?.getSnapshot?.() || {};
+  const participants = state.workshop?.participants || [];
+  const identities = [node.id, node.agent_id, node.agent_session].filter(Boolean);
+  const agent = participants.find(row => row.is_agent !== false &&
+    [row.root,row.id,row.app_root,row.account_root,row.node_root,row.agent_root].filter(Boolean).some(id => identities.includes(id)));
+  if (!agent) return null;
+  const assignment = (state.workshop?.assignments || []).find(row => row.agent_session === (agent.root || agent.id));
+  const graph = state.topology?.graph || state.graph || {};
+  const task = (graph.nodes || []).find(row => row.id === assignment?.work);
+  return {...agent, taskTitle:task?.title || task?.name || '',
+    modelLabel:window.ARCHHUB_WORKSHOP_AGENT_MODEL?.(agent, state) || 'Not available yet'};
+};
 
 // Ports sit in a band BELOW the card's content (never over its title, summary or
 // parameters): one row per port pair. Each card reports where its band starts, and a
@@ -3810,6 +4375,26 @@ const LM_FS_BODYSM_STRONG = LM_FS_SOURCE.bodySmStrong || {sz:13, ln:18, wt:500};
 const PORT_BAND_PAD = 4;
 const portRowCentre = (i) => PORT_BAND_PAD + i * SOCKET_STEP + SOCKET_STEP / 2;
 const portY = (bandTop, i) => (Number.isFinite(bandTop) ? bandTop : SOCKET_TOP) + portRowCentre(i);
+const nodeCardTitle = n => String(n?.title || n?.name || 'Node');
+const nodeCardSubtitle = (n, cat) => {
+  const role = cat?.role || cat?.label || 'Node';
+  if (typeof n?.subtitle === 'string' && n.subtitle.trim()) return n.subtitle;
+  if (n?.cat === 'watch' || n?.engine === 'watch.preview' || n?.sub === 'watch.preview') {
+    const as = (n.params || []).find(row => row.k === 'as')?.v || 'table';
+    return 'Watch · as ' + as;
+  }
+  const host = (n?.host || n?.source || '').replace(/\bid[:=]\S+/gi, '').trim();
+  return [role, host].filter(Boolean).join(' · ');
+};
+const nodeIsWatch = n => !!n && (n.cat === 'watch' || n.engine === 'watch.preview' || n.sub === 'watch.preview');
+const visibleNodeParams = n => (n.params || []).filter(row => {
+  const key = String(row.k || row.label || '').toLowerCase();
+  if (nodeIsWatch(n) && key === 'watchsize') return false;
+  const hidden = window.ARCHHUB_INTERNAL_PARAM_KEYS;
+  return !(hidden && typeof hidden.has === 'function' && hidden.has(key));
+});
+const socketShapeOf = (t, list) => window.socketShapeOf ? window.socketShapeOf(t, list) : (t === 'trigger' || t === 'event' ? 'triangle' : list ? 'diamond' : t === 'any' ? 'any' : 'circle');
+const socketTypeLabel = t => window.socketTypeLabel ? window.socketTypeLabel(t) : ((window.pmType && window.pmType(t)?.label) || String(t || 'Any'));
 // Snap to grid (design CanvasMenu) uses the dot grid's own 20-unit pitch.
 const CANVAS_GRID = 20;
 // What an Undo or Redo changed, in plain words, read from the canvas before and after it.
@@ -3885,8 +4470,8 @@ const canvasConnectedNodeIds = (nodeIds, wires, seeds, whole) => {
   }
   return [...found];
 };
-// Reserved bands: 24 px each side; top 120 = toolbar + hint row + minimap; bottom 80 = the add box.
-const CANVAS_FIT_TOP = 120, CANVAS_FIT_BOTTOM = 80;
+// DSYS-078 has a 56px top bar; equal 80px clear bands centre the graph vertically.
+const CANVAS_FIT_TOP = 80, CANVAS_FIT_BOTTOM = 80;
 const canvasFitBounds = (ids, positions, sizes, viewport, maxZoom = 2) => {
   const width = viewport.width - 48, height = viewport.height - CANVAS_FIT_TOP - CANVAS_FIT_BOTTOM;
   const left = Math.min(...ids.map(id => positions[id].x)), top = Math.min(...ids.map(id => positions[id].y));
@@ -4072,7 +4657,7 @@ const canvasLayoutBurstMoves = burst => Object.entries(burst?.next || {})
   .filter(([id, point]) => burst.before[id]?.x !== point.x || burst.before[id]?.y !== point.y);
 const canvasNodeBox = (node, positions, heights = {}) => {
   const p = positions[node.id] || node;
-  const w = Number.isFinite(node.w) ? node.w : 220;
+  const w = (typeof isWorkshopGraphNode === 'function' && isWorkshopGraphNode(node)) ? 300 : Number.isFinite(node.w) ? node.w : 220;
   const h = Number.isFinite(heights[node.id]) ? heights[node.id] : Number.isFinite(node.h) ? node.h : 110;
   return {id:node.id, x:p.x, y:p.y, w, h, group:node.group || ''};
 };
@@ -4134,6 +4719,9 @@ const writeCanvasLayoutTrace = (scope, burst) => {
 
 const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingReveal = null, setLibraryOpen, userNodes = [], addNodeFromLibrary, model, system = false, onViewportChange = null, fitOnOpen = false, onSystemArrangeSummary = null, themeEpoch = 0 }) => {
   const authorityState = useStudioProjection();
+  const workshopSnapshot = typeof useWorkshopProjection === 'function' ? useWorkshopProjection() : null;
+  const workshopDescriptor = workshopSnapshot?.workshops?.find(row=>row.root===workshopSnapshot.workshop?.root);
+  const workshopModel = workshopDescriptor ? window.ARCHHUB_WORKSHOP_MODEL?.({state:workshopSnapshot,descriptor:workshopDescriptor}) : null;
   const projectedGraph = authorityState?.graph || LM_GRAPH;
   const [draggingNode, setDraggingNode] = React.useState(false);
   const setSystemArrangeSummary = onSystemArrangeSummary;
@@ -4192,7 +4780,10 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       setWireStartState(null);
     } catch (error) { setWireError(error.message || 'The connection was refused.'); }
   };
-  const allNodes = React.useMemo(() => [...graph.nodes, ...userNodes], [graph.nodes, userNodes]);
+  const actionCanvas = authorityState?.canvas || {};
+  const historyDecorator = typeof decorateHistoryNode === 'function' ? decorateHistoryNode : node => node;
+  const allNodes = React.useMemo(() => [...graph.nodes, ...userNodes].map(node =>
+    historyDecorator(node, actionCanvas)), [graph.nodes, userNodes, actionCanvas?.action_history]);
   const selectableNodeIds = React.useMemo(() => new Set(allNodes
     .filter(node => !String(node.id || '').startsWith('app:system-tool:'))
     .map(node => node.id)), [allNodes]);
@@ -4456,7 +5047,9 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   }, []);
 
   // A scope seen for the first time has no stored view: it opens fitted to its cards (below).
-  const openFitPending = React.useRef(fitOnOpen && !CANVAS_VIEWS.has(scopeKey));
+  const workshopCanvas = graph.nodes.some(node => typeof isWorkshopGraphNode === 'function' && isWorkshopGraphNode(node));
+  const openFitPending = React.useRef(workshopCanvas || (fitOnOpen && !CANVAS_VIEWS.has(scopeKey)));
+  const workshopOpenFitCompleted = React.useRef(false);
   const [pan, setPan] = React.useState(() => readCanvasView(scopeKey).pan);
   const [zoom, setZoom] = React.useState(() => readCanvasView(scopeKey).zoom);
   const viewportTransformRef = React.useRef({pan, zoom});
@@ -4468,6 +5061,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     onViewportChange({scope:scopeKey, pan, zoom, width:rect.width, height:rect.height});
   }, [onViewportChange, scopeKey, pan, zoom]);
   const [menuNotice, setMenuNotice] = React.useState('');
+  const [appToast, setAppToast] = React.useState(null);
   // What the person picked on this canvas (a node or a wire), held here so the dim follows the click at
   // once without waiting on the owner. Nothing picked -- including a selection restored at start -- dims nothing.
   const [pickedId, setPickedId] = React.useState(null);
@@ -4475,12 +5069,21 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   const [menuBusy, setMenuBusy] = React.useState(false);
   const menuBusyRef = React.useRef(false);
   const [ctxMenu, setCtxMenu] = React.useState(null);
+  const CanvasToast = typeof AppToast === 'function' ? AppToast : ({toast}) => toast ? <div data-app-toast="" data-no-pan="" role={toast.tone === 'err' ? 'alert' : 'status'}>{toast.text}{toast.actionLabel && <button onClick={toast.action}>{toast.actionLabel}</button>}</div> : null;
+  const CanvasDestructiveDialog = typeof DestructiveDialog === 'function' ? DestructiveDialog : ({confirming, onCancel, onConfirm}) => {
+    if (!confirming) return null;
+    return <div data-no-pan="" role="presentation"><div role="alertdialog" aria-label="Confirm delete">
+      <h2>{confirming.kind === 'clear' ? 'Delete all nodes?' : 'Delete “' + confirming.title + '”?'}</h2>
+      <p>{(confirming.ids?.length || 0) + ' nodes and ' + (confirming.wires || 0) + ' wires go with it. Undo brings them back.'}</p>
+      <button autoFocus onClick={onCancel}>Cancel</button><button onClick={onConfirm}>Delete</button>
+    </div></div>;
+  };
   const closeContextMenu = () => {
     setCtxMenu(null);
     if (ctxMenu?.opener?.isConnected) ctxMenu.opener.focus({preventScroll:true});
   };
   const [expanded, setExpanded] = React.useState({});
-  const [dropTarget, setDropTarget] = React.useState(null); // {x,y} canvas-local
+  const [dropTarget, setDropTarget] = React.useState(null); // {x,y,title} canvas-local
   // Snap to grid, on as drawn. A dragged node lands on the dot grid while it is on.
   const [snap, setSnap] = React.useState(true);
   const snapRef = React.useRef(snap);
@@ -4839,7 +5442,8 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     const rect = wrapRef.current.getBoundingClientRect();
-    setDropTarget({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    const title = e.dataTransfer.getData('text/plain') || window.__archhubDraggingLibraryTitle || 'node';
+    setDropTarget({ x: e.clientX - rect.left, y: e.clientY - rect.top, title });
   };
   const onDragLeave = (e) => {
     // ignore re-entries inside children
@@ -4881,13 +5485,15 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
         'The projection did not supply both port interfaces.' : 'A supplied port interface is absent from its node.'});
       return null;
     }
-    const sourceWidth = fromNode.cat === 'ai' && expanded[fromNode.id] ? Math.max(520, fromNode.w) : fromNode.w;
+    const sourceWidth = (typeof isWorkshopGraphNode === 'function' && isWorkshopGraphNode(fromNode)) ? 300 : fromNode.cat === 'ai' && expanded[fromNode.id] ? Math.max(520, fromNode.w || NODE_CARD_W) :
+      Number.isFinite(fromNode.w) && fromNode.w >= 120 ? fromNode.w : nodeIsWatch(fromNode) ? 260 : NODE_CARD_W;
     const x1 = fromNode.x + sourceWidth, y1 = fromNode.y + portY(portBands[fromNode.id], fromIdx);
     const x2 = toNode.x,                y2 = toNode.y + portY(portBands[toNode.id], toIdx);
     const touches = w.from[0] === focusId || w.to[0] === focusId || i === focusWireIdx;
     return {
       i, x1, y1, x2, y2, selected: i === focusWireIdx,
       t: fromNode.outs[fromIdx].t,
+      list:!!fromNode.outs[fromIdx].list || !!fromNode.outs[fromIdx].multiple,
       animated: fromNode.state === 'running' || toNode.state === 'running',
       focused: touches,
     };
@@ -4932,7 +5538,23 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       if (typeof window.ARCHHUB_SCOPE_OPEN === 'function' && Array.isArray(trail)) {
         window.ARCHHUB_SCOPE_OPEN([...trail.map(step => step.root).filter(Boolean), id]);
       }
-    }};
+    },
+    watchAddInput:id => {
+      const node = allNodes.find(row => row.id === id);
+      setFocusId(id);
+      const input = (node?.ins || []).find(port => port.connectable) || (node?.ins || [])[0];
+      if (input?.connectable) useSocket(id, input, 'in');
+      setLibraryOpen(true);
+    },
+    watchRun:id => runNodeToHere(id),
+    watchShowAll:id => {
+      setFocusId(id);
+      window.dispatchEvent(new CustomEvent('archhub:watch-show-all', {detail:{node:id}}));
+    },
+    watchStop:id => window.ARCHHUB_CANCEL_RUN?.(id),
+    watchShowInRevit:id => (window.ARCHHUB_SHOW_IN_REVIT || window.ARCHHUB_HIGHLIGHT_IN_HOST)?.(id),
+    watchTurnOn:id => window.ARCHHUB_TURN_ON_NODE?.(id)
+  };
   const handlerCache = React.useRef(new Map());
   const cardHandlers = id => {
     let held = handlerCache.current.get(id);
@@ -4948,6 +5570,21 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
         expand:() => latest.current.composeGroup('ungroup', [id], 'Expanded the group.'),
         open:() => latest.current.open(id)};
       handlerCache.current.set(id, held);
+    }
+    held.watch = {
+      addInput:() => latest.current.watchAddInput(id),
+      runToHere:() => latest.current.watchRun(id),
+      retry:() => latest.current.watchRun(id),
+      showAll:() => latest.current.watchShowAll(id),
+      stop:typeof window.ARCHHUB_CANCEL_RUN === 'function' ? () => latest.current.watchStop(id) : null,
+      showInRevit:(typeof window.ARCHHUB_SHOW_IN_REVIT === 'function' || typeof window.ARCHHUB_HIGHLIGHT_IN_HOST === 'function') ? () => latest.current.watchShowInRevit(id) : null,
+      turnOn:typeof window.ARCHHUB_TURN_ON_NODE === 'function' ? () => latest.current.watchTurnOn(id) : null,
+    };
+    if (typeof window !== 'undefined') {
+      if (!window.ARCHHUB_WATCH_ACTIONS || typeof window.ARCHHUB_WATCH_ACTIONS.get !== 'function') {
+        window.ARCHHUB_WATCH_ACTIONS = new Map();
+      }
+      window.ARCHHUB_WATCH_ACTIONS.set(id, held.watch);
     }
     return held;
   };
@@ -4966,7 +5603,8 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       if (!w || !h || !Number.isFinite(positions[node.id]?.x) || !Number.isFinite(positions[node.id]?.y)) {
         if (!silent) setLayoutError('Wait for the node cards to finish rendering, then try again.'); return null;
       }
-      const targetWidth = node.cat === 'ai' && expanded[node.id] ? Math.max(520, node.w) : node.w;
+      const targetWidth = node.cat === 'ai' && expanded[node.id] ? Math.max(520, node.w || NODE_CARD_W) :
+        Number.isFinite(node.w) ? node.w : w;
       sizes[node.id] = {w:Math.ceil(Math.max(w, targetWidth)), h:Math.ceil(h)};
     }
     return sizes;
@@ -5127,7 +5765,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   // and offers Arrange, the one user-initiated write that lays them out by the same measured sizes.
   const overlapCount = (() => {
     if (!allNodes.length || !allNodes.every(node => Number.isFinite(cardHeights[node.id]))) return 0;
-    const boxes = allNodes.map(node => ({id:node.id, ...(positions[node.id] || node), w:node.w || 220, h:cardHeights[node.id]}));
+    const boxes = allNodes.map(node => ({id:node.id, ...(positions[node.id] || node), w:(typeof isWorkshopGraphNode === 'function' && isWorkshopGraphNode(node)) ? 300 : node.w || 220, h:cardHeights[node.id]}));
     const hit = new Set();
     for (let a = 0; a < boxes.length; a += 1) for (let b = a + 1; b < boxes.length; b += 1) {
       const p = boxes[a], q = boxes[b];
@@ -5261,20 +5899,35 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       if (scopeStillCurrent()) { setLayoutError(''); setWireError(''); setLayoutNeedsRefresh(false); }
     } catch (error) { if (scopeStillCurrent()) setLayoutError(error.message || 'The canvas could not be refreshed.'); }
   };
+  React.useEffect(() => {
+    const text = layoutError || authorityState?.error || wireError || menuNotice;
+    if (!text) return;
+    const error = !!(layoutError || authorityState?.error || wireError);
+    const canUndoToast = !error && canUndo && /(deleted|removed|Grouped|Fork placed|Batch placed|Automation trigger selected)/i.test(text);
+    setAppToast({
+      id:Date.now() + ':' + text,
+      tone:error ? 'err' : 'ok',
+      text,
+      actionLabel:error ? 'Retry' : canUndoToast ? 'Undo' : '',
+      action:error ? refreshCanvas : canUndoToast ? () => runHistory('undo') : undefined,
+      close:() => setAppToast(null),
+    });
+  }, [layoutError, authorityState?.error, wireError, menuNotice, canUndo]);
   // Open fitted (founder window 2026-10-12: a graph opened at 66% under the toolbar, cut at the left).
   // Once per scope, after the cards have measured; never above 100%; a stored view is kept as left.
   React.useEffect(() => {
+    if (workshopCanvas && !workshopOpenFitCompleted.current) openFitPending.current = true;
     if (!openFitPending.current || !allIds.length) return undefined;
     let frame = 0, cancelled = false;
     const raf = window.requestAnimationFrame || (fn => window.setTimeout(fn, 16));
     const tick = () => {
       if (cancelled || !openFitPending.current) return;
-      if (fitIds(allIds, true, 1)) { openFitPending.current = false; return; }
+      if (fitIds(allIds, true, 1)) { openFitPending.current = false; workshopOpenFitCompleted.current = true; return; }
       if (++frame < 20) raf(tick); else openFitPending.current = false;
     };
     raf(tick);
     return () => { cancelled = true; };
-  }, [scopeKey, allIds.length]);
+  }, [scopeKey, allIds.length, workshopCanvas]);
   // The routes the menus call. Each one already exists: the inspector's Delete (ARCHHUB_RETRACT ->
   // /api/universal/retract), its connection Delete (disconnectTopology / authority.remove), Rerun (ARCHHUB_RUN ->
   // /api/universal/run-graph), the library's placement (ARCHHUB_NODE_CREATE -> /api/universal/node-create) and
@@ -5315,6 +5968,12 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
     const waiting = Object.keys(result.pending || {}).length;
     return 'The graph ran' + (waiting ? '; ' + waiting + ' node(s) did not finish' : '') + '.';
   });
+  const runNodeToHere = id => menuTask(async () => {
+    const result = await window.ARCHHUB_RUN({node:id});
+    if (!result || result.ok === false) throw new Error(result?.error || 'The graph run failed.');
+    if (result.pending?.[id]) throw new Error(String(result.pending[id]));
+    return 'Ran to this node.';
+  });
   const menuDisconnect = roots => menuTask(async () => {
     let cut = 0;
     for (const root of roots.filter(Boolean)) { await cutWire(root); cut += 1; }
@@ -5336,7 +5995,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   }, [positions]);
   React.useEffect(() => {
     window.__archhubDuplicateNode = duplicateNode;
-    window.__archhubSelectNodeById = nodeId => { if (nodeId) setCanvasSelectedIds([nodeId]); };
+    window.__archhubSelectNodeById = nodeId => { if (nodeId) { setCanvasSelectedIds([nodeId]); setPickedId(nodeId); setFocusId(nodeId); } };
     return () => {
       if (window.__archhubDuplicateNode === duplicateNode) delete window.__archhubDuplicateNode;
       delete window.__archhubSelectNodeById;
@@ -5458,6 +6117,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       onDrop={onDrop}
       style={{
         gridColumn:'1', gridRow:'2', position:'relative', overflow:'hidden',
+        height:'100%', minHeight:0,
         background:LM.bgCanvas,
         backgroundImage:`radial-gradient(${LM.lineHair} 1px, transparent 1px)`,
         // The dot grid is fixed: shifting it on every pan repainted the whole canvas (canvas-perf).
@@ -5506,7 +6166,9 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
                   style={{ pointerEvents: 'stroke', cursor: 'pointer' }}>
                   <title>Open this connection · right-click for actions</title>
                 </path>
-                <path d={d} stroke={w.selected ? LM.accent : color} strokeWidth={strokeW} fill="none" opacity={op} style={{ pointerEvents: 'none' }}/>
+                <path data-wire-list={w.list ? 'true' : undefined} d={d} stroke={w.selected ? LM.accent : color} strokeWidth={strokeW} fill="none" opacity={op} style={{ pointerEvents: 'none' }}/>
+                {w.list && <path data-wire-list-strand="" d={`M${w.x1},${w.y1+4} C${w.x1+dx},${w.y1+4} ${w.x2-dx},${w.y2+4} ${w.x2},${w.y2+4}`}
+                  stroke={w.selected ? LM.accent : color} strokeWidth={strokeW} fill="none" opacity={op} style={{pointerEvents:'none'}}/>}
                 {w.animated && (
                   <path d={d} stroke={color} strokeWidth={strokeW} fill="none" strokeDasharray="6 10" style={{ animation:'lmDash 0.9s linear infinite' }}/>
                 )}
@@ -5545,6 +6207,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
               onSocketDrag={on.socketDrag}
               onOpen={n.openable && (authority || typeof window.ARCHHUB_SCOPE_OPEN === 'function') ? on.open : undefined}
               onMemberLeave={leaveGroupMember}
+              watchActions={on.watch}
               screenToCanvasPoint={screenToCanvasPoint}
             />
           );
@@ -5576,16 +6239,16 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
         {overlapCount} cards overlap
         <button type="button" onClick={() => arrangeIds(allNodes.map(node => node.id))} style={{...smallBtn()}}>Arrange</button>
       </div>}
-      {(layoutError || authorityState?.error || wireError || layoutBusy || burstPending || authorityState?.pending || wireStart || unwrittenLayout || menuBusy || menuNotice) &&
+      {(layoutBusy || burstPending || authorityState?.pending || wireStart || unwrittenLayout || menuBusy) &&
       <div data-no-pan style={{position:'absolute', top:118, right:14, zIndex:5,
         display:'flex', gap:8, alignItems:'center', maxWidth:'55%', background:LM.bgPanel, padding:'6px 10px', borderRadius:6}}>
-        <span role={authorityState?.error || wireError || layoutError ? 'alert' : 'status'} style={{fontSize:12,
-          color:authorityState?.error || wireError || layoutError ? LM.err : LM.inkSoft, overflowWrap:'anywhere'}}>
-          {layoutError || authorityState?.error || wireError || (menuBusy ? 'Working…' : menuNotice ? menuNotice : layoutBusy || burstPending ? 'Saving positions…' :
+        <span role="status" style={{fontSize:12,
+          color:LM.inkSoft, overflowWrap:'anywhere'}}>
+          {menuBusy ? 'Working…' : layoutBusy || burstPending ? 'Saving positions…' :
             authorityState?.pending ? 'Saving…' : unwrittenLayout ?
               'Positions moved in the last session were never confirmed (' +
               Object.keys(unwrittenLayout.next).length + '). Move them again to save them.' :
-            (wireStart.reverse ? 'Choose an output for ' : 'Choose an input for ') + wireStart.port.label)}
+            (wireStart.reverse ? 'Choose an output for ' : 'Choose an input for ') + wireStart.port.label}
         </span>
         {wireStart && <button disabled={blocked} onClick={() => setWireStartState(null)} title="Cancel wire" aria-label="Cancel wire" style={toolBtn()}>✕</button>}
         <button disabled={layoutBusy || !!authorityState?.pending || (!authority && !normal)} onClick={refreshCanvas}
@@ -5599,7 +6262,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
           background:LM.accent + '14', border:`1.5px dashed ${LM.accent}`,
           borderRadius:LM.rad.md, display:'grid', placeItems:'center',
           fontFamily:LM.mono, fontSize:LM_FS_DATASM.sz, color:LM.accent, letterSpacing:'0.06em',
-        }}>＋ DROP TO ADD NODE</div>
+        }}>Adding {dropTarget.title || 'node'}</div>
       )}
 
       {selected.size >= 2 && <div data-no-pan data-selection-bar style={{
@@ -5609,7 +6272,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
         boxShadow:'0 10px 24px rgba(0,0,0,.35)',
       }}>
         <button type="button" onClick={composeCurrentSelection}
-          disabled={!composer || layoutBusy || layoutNeedsRefresh || authorityState?.requires_refresh || menuBusy} style={smallBtn(true)}>
+          disabled={!composer || layoutBusy || layoutNeedsRefresh || authorityState?.requires_refresh || menuBusy} style={smallBtn(false)}>
           Group {selected.size} nodes <kbd style={kbd()}>Ctrl+G</kbd>
         </button>
         <button type="button" onClick={() => arrangeIds([...selected])}
@@ -5618,7 +6281,11 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
           style={smallBtn(false)}>Select connected</button>
       </div>}
 
-      <CanvasToolbar undo={{run:() => runHistory('undo'), disabled:blocked || menuBusy || !canUndo, why:undoWhy}}
+      <CanvasToolbar onRun={() => menuRun()} runDisabled={typeof window.ARCHHUB_RUN !== 'function' || menuBusy || blocked}
+        title={authorityState?.canvas?.scope?.label || authorityState?.canvas?.label || ''}
+        project={authorityState?.canvas?.project_label || ''} waiting={graph.nodes.filter(node=>canvasNeedsUser(node)||typeof isWorkshopGraphNode==='function'&&isWorkshopGraphNode(node)&&workshopModel?.needs_user).length}
+        status={workshopSnapshot?.nativeWork?.state === 'executing' || workshopModel?.members?.some(row=>row.presence==='working') ? 'Running' : ''}
+        undo={{run:() => runHistory('undo'), disabled:blocked || menuBusy || !canUndo, why:undoWhy}}
         redo={{run:() => runHistory('redo'), disabled:blocked || menuBusy || !canRedo, why:redoWhy}}
         zoom={zoom} setZoom={(updater) => {
         setZoom(z => {
@@ -5630,45 +6297,22 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
         arrangeDisabled={layoutNeedsRefresh || !canSaveLayout || !allIds.length}
         arrangeWhy={layoutWhy(noNodesWhy)}
         fitLabel={selected.size ? 'Fit selection' : 'Fit all nodes'} setLibraryOpen={setLibraryOpen}/>
-      <MiniMap pan={pan} zoom={zoom} positions={positions} allNodes={allNodes}/>
+      <MiniMap pan={pan} zoom={zoom} positions={positions} allNodes={allNodes.map(node=>({...node,
+        w:node.w || (typeof isWorkshopGraphNode==='function'&&isWorkshopGraphNode(node)?300:nodeIsWatch(node)?260:NODE_CARD_W),
+        h:cardHeights[node.id] || node.h}))}/>
       <CanvasAddBox setLibraryOpen={setLibraryOpen}/>
       {ctxMenu && <CanvasMenu x={ctxMenu.x} y={ctxMenu.y} maxHeight={ctxMenu.maxHeight}
         opener={ctxMenu.opener} items={ctxMenu.nodeId ? nodeMenuItems : ctxMenu.wireId ? wireMenuItems : canvasMenuItems}
         label={ctxMenu.nodeId ? 'Node actions' : ctxMenu.wireId ? 'Wire actions' : 'Canvas actions'} onClose={closeContextMenu}/>}
-      {confirming && <div data-no-pan role="alertdialog" aria-label="Confirm delete" style={{position:'absolute', left:'50%',
-        top:64, transform:'translateX(-50%)', zIndex:40, display:'flex', gap:10, alignItems:'center', maxWidth:'80%',
-        background:LM.bgPanel, border:`1px solid ${LM.err}`, borderRadius:LM.rad.md, padding:'8px 12px'}}>
-        <span style={{fontSize:12.5, color:LM.ink}}>
-          {confirming.kind === 'clear'
-            ? 'Delete all ' + confirming.title + ' on this canvas and their wires? This cannot be undone here.'
-            : 'Delete \u201c' + confirming.title + '\u201d' + (confirming.wires ? ' and its ' + confirming.wires + ' wire' + (confirming.wires === 1 ? '' : 's') : '') + '? This cannot be undone here.'}
-        </span>
-        <button autoFocus onClick={() => setConfirming(null)} style={toolBtn()}>Cancel</button>
-        <button onClick={confirmRemoval} style={{...toolBtn(), color:LM.err}}>Delete</button>
-      </div>}
-      <CanvasHint/>
+      <CanvasDestructiveDialog confirming={confirming} onCancel={() => setConfirming(null)} onConfirm={confirmRemoval}/>
+      <CanvasToast toast={appToast}/>
     </div>
   );
 };
 
 const CanvasContextHint = () => null;
 
-// Top-left hint strip (under the toolbar) — reminds the user of the canvas affordances.
-// Lives top-left, NOT bottom-left, so it never collides with the wide bottom-center composer.
-const CanvasHint = () => (
-  <div data-no-pan style={{
-    position:'absolute', left:14, top:52, display:'flex', alignItems:'center', gap:LM.sp.sm,
-    background:LM.bgPanel+'cc', backdropFilter:'blur(6px)',
-    border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.sm, padding:'4px 9px',
-    fontFamily:LM.mono, fontSize:LM_FS_DATASM.sz, color:LM.inkSoft, letterSpacing:'0.04em',
-  }}>
-    <span>scroll → zoom</span>
-    <span style={{ color:LM.inkDim }}>·</span>
-    <span>drag → pan</span>
-    <span style={{ color:LM.inkDim }}>·</span>
-    <span>right-click → menu</span>
-  </div>
-);
+const CanvasHint = () => null;
 
 // Right-click canvas context menu (design studio-lm.jsx:1519-1573)
 const CanvasMenu = ({ x, y, maxHeight, opener, items, label, onClose }) => {
@@ -5745,13 +6389,18 @@ const CanvasMenu = ({ x, y, maxHeight, opener, items, label, onClose }) => {
 };
 
 // ─── nodes dispatcher ───
-const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimmed, expanded, onToggleExpand, onDragStart, onFocus, onSocket, onSocketDrag, onOpen, onContextMenu, onKeyDown, onPortBand, onExpand, onMemberLeave, screenToCanvasPoint }) => {
+const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimmed, expanded, onToggleExpand, onDragStart, onFocus, onSocket, onSocketDrag, onOpen, onContextMenu, onKeyDown, onPortBand, onExpand, onMemberLeave, screenToCanvasPoint, watchActions }) => {
   const n = held.x === x && held.y === y ? held : {...held, x, y};
   if (typeof window !== 'undefined' && window.__archhubCardRenders) window.__archhubCardRenders[held.id] = (window.__archhubCardRenders[held.id] || 0) + 1;
   const cat = studioCategory(n.cat);
   // AI nodes can expand horizontally for full conversation + search
-  const w = (n.cat === 'ai' && expanded) ? Math.max(520, n.w) : n.w;
   const isAi = n.cat === 'ai';
+  const workshopCard = typeof isWorkshopGraphNode === 'function' && isWorkshopGraphNode(n);
+  const cardW = workshopCard ? 300 : (isAi && expanded) ? Math.max(520, n.w || NODE_CARD_W) :
+    Number.isFinite(n.w) && n.w >= 120 ? n.w : nodeIsWatch(n) ? 260 : NODE_CARD_W;
+  const agent = canvasAgentRecord(n);
+  const title = agent?.label || agent?.name || nodeCardTitle(n);
+  const subtitle = agent ? agent.modelLabel : nodeCardSubtitle(n, cat);
   const lit = selected || focused;
   const cardRef = React.useRef(null), bandRef = React.useRef(null);
   const rows = Math.max(n.ins?.length || 0, n.outs?.length || 0);
@@ -5762,6 +6411,12 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
     onFocus && onFocus(e);
   };
   const handleKeyDown = e => {
+    if ((e.key === 'Enter' || e.key === ' ') && workshopCard) {
+      e.preventDefault();
+      const root = n.conversation_root || n.workshop_root || n.id;
+      window.dispatchEvent(new window.CustomEvent('archhub:reach-conversation', {detail:root}));
+      return;
+    }
     if ((e.key === 'Enter' || e.key === ' ') && onOpen && (sessionCard || groupCard)) {
       e.preventDefault(); onOpen(e); return;
     }
@@ -5850,21 +6505,33 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
     const watch = new ResizeObserver(report); watch.observe(card);
     return () => watch.disconnect();
   }, [rows, onPortBand]);
+  if (workshopCard) return <div ref={cardRef} className="lm-node" data-node-id={n.id}
+    data-group={n.group || undefined} data-selected={selected ? 'true' : undefined}
+    data-focused={focused ? 'true' : undefined} onClick={handleClick} onContextMenu={onContextMenu}
+    tabIndex={0} role="group" aria-label="Workshop node" onKeyDown={handleKeyDown}
+    data-canvas-card-skin="078" style={{position:'absolute', left:n.x, top:n.y, width:cardW, ...canvasCardSurface(),
+      color:LM.ink, fontFamily:LM.sans, opacity:dimmed ? .42 : 1,
+      outline:focused ? LM.selection.outline : 'none', outlineColor:LM.accent, zIndex:lit ? 3 : 2}}>
+    <GraphWorkshopFace n={n} onDragStart={onDragStart} bandRef={bandRef} onPortBand={onPortBand}
+      onSocket={onSocket} onSocketDrag={onSocketDrag} startMemberDrag={onMemberLeave ? startMemberDrag : null}
+      memberDragTrace={memberDragTrace}/>
+  </div>;
   return (
     <div ref={cardRef} className="lm-node" data-node-id={n.id} data-group={n.group || undefined}
+      data-canvas-card-skin="078" data-agent-node={agent ? n.id : undefined}
+      data-node-state={canvasNeedsUser(n) ? 'needs-user' : n.state || n.status || 'unavailable'}
       data-session-card={sessionCard ? 'true' : undefined} data-group-card={groupCard ? 'true' : undefined}
       data-selected={selected ? 'true' : undefined}
       data-focused={focused ? 'true' : undefined} onClick={handleClick} onDoubleClick={onOpen} onContextMenu={onContextMenu}
       tabIndex={0} role="group" aria-label={(n.title || n.id) + ' node'} aria-haspopup="menu" aria-keyshortcuts="Shift+F10" onKeyDown={handleKeyDown}
       style={{
-        position:'absolute', left:n.x, top:n.y, width:w, minHeight:n.h,
-        background:LM.bgPanel,
+        position:'absolute', left:n.x, top:n.y, width:cardW, minHeight:n.h,
+        ...canvasCardSurface(canvasNeedsUser(n)),
         borderStyle:'solid',
-        borderWidth:'2px 1px 1px 1px',
+        borderWidth: '1px',
         // Selected and focused cards use the one accent; focus adds a 2px ring. No hover motion.
-        borderColor: `${cat.col} ${lit ? LM.accent : LM.line} ${lit ? LM.accent : LM.line} ${lit ? LM.accent : LM.line}`,
-        borderRadius:LM.rad.node, color:LM.ink, fontFamily:LM.sans,
-        boxShadow:LM.shadow.flat,
+        borderColor: lit ? LM.accent : LM.line,
+        color:LM.ink, fontFamily:LM.sans,
         cursor: 'default', outline:focused ? LM.selection.outline : 'none',
         outlineColor:focused ? LM.accent : 'transparent', outlineOffset:focused ? LM.selection.outlineOffset : 0,
         opacity: dimmed ? 0.42 : 1,
@@ -5873,22 +6540,24 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
       }}>
       {groupCard && <>
         <div data-stacked-edge="1" style={{position:'absolute', inset:0, transform:'translate(5px, 5px)', border:`1px solid ${LM.line}`,
-          borderRadius:LM.rad.node, background:LM.bgPanel, opacity:1, zIndex:-1, pointerEvents:'none'}}/>
+          ...canvasCardSurface(), opacity:1, zIndex:-1, pointerEvents:'none'}}/>
         <div data-stacked-edge="2" style={{position:'absolute', inset:0, transform:'translate(10px, 10px)', border:`1px solid ${LM.line}`,
-          borderRadius:LM.rad.node, background:LM.bgPanel, opacity:.6, zIndex:-2, pointerEvents:'none'}}/>
+          ...canvasCardSurface(), opacity:.6, zIndex:-2, pointerEvents:'none'}}/>
       </>}
       {/* Title bar — drag handle */}
       <div onMouseDown={onDragStart}
         style={{
-          padding:`${LM.sp.sm}px ${LM.sp.md}px`, display:'flex', alignItems:'center', gap:LM.sp.sm,
+          padding:'12px 14px 10px', display:'flex', alignItems:'center', gap:10,
           borderBottom:`1px solid ${LM.lineSoft}`,
           background: lit ? LM.bgSoft : 'transparent',
           cursor:'move',
           borderTopLeftRadius:LM.rad.node, borderTopRightRadius:LM.rad.node,
         }}>
-        <span style={{ width:LM_CATEGORY_ICON.box, height:LM_CATEGORY_ICON.box, display:'grid', placeItems:'center', color:cat.col, fontFamily:LM.sans, fontSize:LM_CATEGORY_ICON.size }}>{cat.icon}</span>
-        <span style={{ fontFamily:LM.sans, fontSize:LM_FS_LABEL.sz, fontWeight:LM_FS_LABEL.wt, color:cat.col, letterSpacing:LM_FS_LABEL.letter }}>{cat.label}</span>
-        <div style={{ flex:1 }}/>
+        <span data-category-tile="" data-node-status-ring={n.state || n.status || 'unavailable'} style={{ width:30, height:30, borderRadius:8, background:cat.col + '26', color:cat.col, boxShadow:`0 0 0 2px ${canvasStatusColor(n)}`, display:'grid', placeItems:'center', fontFamily:LM.sans, fontSize:15, fontWeight:600, flex:'none' }}>{agent ? String(title).slice(0,1).toUpperCase() : cat.icon}</span>
+        <div style={{ minWidth:0, flex:1 }}>
+          <div data-node-card-title="" title={title} style={{ fontFamily:LM.sans, fontSize:14, fontWeight:700, color:LM.ink, lineHeight:'18px', overflowWrap:'anywhere' }}>{title}</div>
+          <div data-node-card-subtitle="" title={subtitle} style={{ fontFamily:LM.sans, fontSize:12, color:LM.inkSoft, lineHeight:'16px', overflowWrap:'anywhere' }}>{subtitle}</div>
+        </div>
         {groupCard && Number.isSafeInteger(n.memberCount) && <span data-member-count={n.memberCount} style={{
           fontFamily:LM.sans, fontSize:LM_FS_LABEL.sz, fontWeight:LM_FS_LABEL.wt, color:LM.inkSoft, whiteSpace:'nowrap'}}>{n.memberCount} {n.memberCount === 1 ? 'node' : 'nodes'}</span>}
         {onExpand && groupCard && <button type="button" aria-label={'Expand ' + (n.title || 'group')} title="Expand the group back into its nodes"
@@ -5897,8 +6566,8 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
           color:LM.inkSoft, fontFamily:LM.sans, fontSize:LM_FS_LABEL.sz, cursor:'pointer'}}>⊞ expand</button>}
         {n.state && <NodeStateDot s={n.state}/>}
         {n.ms && !n.state && <span style={{ fontFamily:LM.sans, fontSize:LM_FS_LABEL.sz, color:LM.inkSoft }}>{n.ms}</span>}
-        {isAi && (
-          <button onClick={(e) => { e.stopPropagation(); onToggleExpand(); }} title={expanded ? 'Collapse' : 'Expand & search'} style={{
+        {isAi && !agent && (
+          <button onClick={(e) => { e.stopPropagation(); onToggleExpand(); }} title={expanded ? 'Collapse' : 'Expand & search'} aria-label={expanded ? 'Collapse' : 'Expand & search'} style={{
             width:18, height:18, padding:0, border:0, borderRadius:LM.rad.xs,
             background:'transparent', color:LM.inkSoft, cursor:'pointer',
             display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:LM_FS_DATASM.sz, marginLeft:2,
@@ -5911,9 +6580,7 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
       </div>
 
       {/* Body */}
-      <div style={{ padding:LM.sp.md }}>
-        <div title={n.title} style={{ fontSize:LM_FS_BODYSM.sz, fontWeight:LM_FS_BODYSM_STRONG.wt, color:LM.ink, marginBottom:2, lineHeight:LM_FS_BODYSM.ln + 'px' }}>{n.title}</div>
-        {n.sub && <div title={n.description || n.sub} style={{ fontFamily:LM.sans, fontSize:LM_FS_CAPTION.sz, color:LM.inkSoft, lineHeight:LM_FS_CAPTION.ln + 'px' }}>{n.sub}</div>}
+      <div style={{ padding:'0 14px 8px' }}>
         {sessionCard && <div data-session-ports style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:8,
           fontSize:11, color:LM.inkSoft}}>
           <div><strong style={{fontSize:LM_FS_LABEL.sz, color:LM.inkSoft, textTransform:'uppercase'}}>Accepts</strong><br/>{(n.ins || []).length || 0} sockets</div>
@@ -5937,19 +6604,31 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
             </span>;
           })}
         </div>}
-        <NodeBody n={n} expanded={expanded} onToggleExpand={onToggleExpand}/>
+        <div data-node-preview-slot="" style={{minHeight:n.preview || (n.params || []).length ? 0 : 32, borderRadius:8, overflow:'hidden'}}>
+          {!agent && <NodeBody n={n} expanded={expanded} onToggleExpand={onToggleExpand} watchActions={watchActions}/>}
+          {!nodeIsWatch(n) && nodePlanPreviewFor(n) ? <NodePlanPreview node={n}/> : !nodeIsWatch(n) && n.preview && typeof WatchPreview === 'function' &&
+            (n.preview.kind === 'image' && n.preview.state === 'ready' ? <WatchImage value={n.preview.value}/> : <WatchPreview node={n} actions={watchActions}/>)}
+          {agent && !n.preview && n.result != null && <span style={{fontSize:12.5,color:LM.inkSoft}}>{typeof n.result === 'object' ? JSON.stringify(n.result) : String(n.result)}</span>}
+          {!nodeIsWatch(n) && !n.preview && !n.result && !(n.params || []).some(row=>!window.ARCHHUB_INTERNAL_PARAM_KEYS?.has(row.k)) && !n.status && !(window.ARCHHUB_LAST_RUN?.lines?.[n.id]?.length) &&
+            <span aria-disabled="true" style={{fontSize:12.5, color:LM.inkSoft}}>Not available yet</span>}
+        </div>
       </div>
 
       {/* Sockets: their own band below the content, one row per port pair */}
       {rows > 0 && <div ref={bandRef} data-port-band="" style={{ position:'relative',
         height:PORT_BAND_PAD * 2 + rows * SOCKET_STEP, borderTop:`1px solid ${LM.lineSoft}` }}>
-        {n.ins?.map((s, i) => <Socket key={'in-'+s.id} id={s.id} side="in" i={i} t={s.t} label={s.label} half={w / 2}
+        {n.ins?.map((s, i) => <Socket key={'in-'+s.id} id={s.id} side="in" i={i} t={s.t} label={s.label} list={!!s.list || !!s.multiple} half={cardW / 2}
           onUse={s.connectable && onSocket ? () => onSocket(s, 'in') : undefined}
           onDragStart={s.connectable && onSocket ? e => onSocketDrag?.(e, s, 'in') : undefined}/>)}
-        {n.outs?.map((s, i) => <Socket key={'out-'+s.id} id={s.id} side="out" i={i} t={s.t} label={s.label} half={w / 2}
+        {n.outs?.map((s, i) => <Socket key={'out-'+s.id} id={s.id} side="out" i={i} t={s.t} label={s.label} list={!!s.list || !!s.multiple} half={cardW / 2}
           onUse={s.connectable && onSocket ? () => onSocket(s, 'out') : undefined}
           onDragStart={s.connectable && onSocket ? e => onSocketDrag?.(e, s, 'out') : undefined}/>)}
       </div>}
+      <footer data-node-footer-status="" style={{display:'flex', alignItems:'center', gap:8, padding:'9px 14px',
+        borderTop:`1px solid ${LM.lineSoft}`, fontSize:12.5, color:canvasStatusColor(n)}}>
+        <i aria-hidden="true" style={{width:7,height:7,borderRadius:'50%',background:canvasStatusColor(n)}}/>
+        {[agent?.taskTitle,n.result_summary || canvasStatusText({...n,state:n.state || agent?.state || agent?.live_state})].filter(Boolean).join(' · ')}
+      </footer>
     </div>
   );
 };
@@ -5973,8 +6652,15 @@ const NodeStateDot = ({ s }) => {
   );
 };
 
-const Socket = ({ id, side, i, t, label, onUse, onDragStart, half = 110 }) => {
-  const col = WIRE[t] || LM.inkSoft;
+const Socket = ({ id, side, i, t, label, list = false, onUse, onDragStart, half = 110, connected = false, plate = false }) => {
+  const col = WIRE[t] || window.PM_WIRE?.[t] || (window.pmType && window.pmType(t)?.col) || LM.inkSoft;
+  // DSYS-078 skins the socket; the graph's type and connection route stay intact.
+  const socketShape = list ? 'diamond' : socketShapeOf(t, false) === 'any' ? 'any' : 'circle';
+  const shapeStyle = socketShape === 'diamond'
+      ? {borderRadius:2, transform:'rotate(45deg) scale(.86)'}
+      : socketShape === 'any'
+        ? {borderRadius:'50%', borderStyle:'dashed', background:'transparent'}
+        : {borderRadius:'50%'};
   // The dot is a button, so a connectable port starts or finishes a wire; a port that cannot be connected stays inert.
   return (
     <div style={{
@@ -5985,19 +6671,26 @@ const Socket = ({ id, side, i, t, label, onUse, onDragStart, half = 110 }) => {
       pointerEvents: onUse ? 'auto' : 'none',
     }}>
       <button type="button" aria-label={(side === 'out' ? 'Connect output ' : 'Connect input ') + label}
+        title={(side === 'out' ? 'Connect output ' : 'Connect input ') + label}
         data-studio-socket={onUse ? 'true' : undefined}
         data-socket-side={side}
         data-socket-port={id}
+        data-socket-type={t || 'any'}
+        data-socket-label={label}
+        data-socket-type-label={socketTypeLabel(t)}
+        data-socket-color={col}
+        data-socket-shape={socketShape}
+        data-socket-connected={connected ? 'true' : 'false'}
         disabled={!onUse} onPointerDown={onDragStart} onMouseDown={e => e.stopPropagation()}
         onClick={e => { e.stopPropagation(); if (onUse) onUse(); }} style={{
         display:'block', padding:0, margin:0, flexShrink:0, cursor: onUse ? 'crosshair' : 'default',
-        width: SOCKET_R*2, height: SOCKET_R*2, borderRadius:'50%',
-        background: side === 'out' ? col : LM.bgPanel,
-        border:`1.5px solid ${col}`, boxShadow:`0 0 0 2px ${LM.bgCanvas}`,
+        width: SOCKET_R*2, height: SOCKET_R*2, ...shapeStyle,
+        background: socketShape === 'any' ? 'transparent' : col,
+        border:`2px solid #17171c`, boxShadow:'none',
       }}/>
       {/* An input's and an output's label share one row: each gets half the card, never the other's half. */}
       <span title={label || undefined} style={{
-          fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.08em',
+          fontFamily:LM.sans, fontSize:12.5, color:LM.inkSoft, letterSpacing:0,
         whiteSpace:'nowrap', padding:'0 4px', pointerEvents:'none',
         maxWidth:Math.max(24, half - SOCKET_R * 2 - 10), overflow:'hidden', textOverflow:'ellipsis',
         opacity: label ? 0.85 : 0,
@@ -6093,15 +6786,509 @@ const InlineAsk = ({ placeholder, model, node, onAnswer, scale, before }) => {
           marginLeft: S.lead || 0,
           color: state ? LM.accent : LM.ink }}/>
       {before || null}
-      <button onClick={ask} disabled={needsNode || asking || !text.trim()} style={{ padding:S.send.padding, background:LM.accent, color: (window.AH && window.AH.onFill) || '#180f08', border:0, borderRadius:S.send.radius, fontSize:S.send.size, fontWeight:500, cursor:'pointer' }}>{asking ? 'Waiting…' : 'Send ↵'}</button>
+      <button onClick={ask} disabled={needsNode || asking || !text.trim()} style={{ padding:S.send.padding, background:node||scale==='node'?'#26262d':LM.accent, color:node||scale==='node'?LM.ink:(window.AH && window.AH.onFill) || '#180f08', border:node||scale==='node'?`1px solid ${LM.line}`:0, borderRadius:S.send.radius, fontSize:S.send.size, fontWeight:500, cursor:'pointer' }}>{asking ? 'Waiting…' : 'Send ↵'}</button>
     </>
   );
 };
 
-const NodeBody = ({ n, expanded, onToggleExpand }) => {
+const useLastRunEpoch = () => {
+  const [epoch, setEpoch] = React.useState(0);
+  React.useEffect(() => {
+    const bump = () => setEpoch(value => value + 1);
+    window.addEventListener('archhub-last-run', bump);
+    return () => window.removeEventListener('archhub-last-run', bump);
+  }, []);
+  return epoch;
+};
+
+const watchPreviewFor = node => {
+  const run = (typeof window !== 'undefined' && window.ARCHHUB_LAST_RUN) || {};
+  return run.previews?.[node.id] || node.preview || null;
+};
+
+const WATCH_TABLE_ROWS = 20;
+const WATCH_TABLE_ROWS_INSPECTOR = 25;
+const WATCH_TABLE_COLS = 8;
+const WATCH_TEXT_LIMIT = 200 * 1024;
+const WATCH_IMAGE_DATA = /^data:image\/[a-z0-9.+-]+;base64,/i;
+const WATCH_MODES = [
+  ['table', 'table'], ['list', 'list'], ['json', 'json'], ['image', 'image'],
+  ['number', 'number'], ['chart', 'chart'], ['geometry', '3D'],
+];
+const WATCH_FS_DATA = LM.fs?.dataSm || {sz:11, ln:14};
+const WATCH_FS_LABEL = LM.fs?.label || {sz:10, ln:12};
+const watchSmallBtn = () => ({
+  border:`1px solid ${LM.lineSoft}`, background:'transparent', color:LM.inkSoft,
+  borderRadius:4, padding:'2px 7px', fontFamily:LM.sans, fontSize:12.5,
+  cursor:'pointer'
+});
+
+const watchCellText = value => value === null || value === undefined ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+
+const parseWatchLiteral = text => {
+  if (typeof text !== 'string' || text.length > WATCH_TEXT_LIMIT) return undefined;
+  try { return JSON.parse(text); } catch (_) {}
+  let i = 0;
+  const fail = () => { throw new Error('not a bounded literal'); };
+  const space = () => { while (i < text.length && /\s/.test(text[i])) i += 1; };
+  const value = depth => {
+    if (depth > 8) fail();
+    space();
+    const c = text[i];
+    if (c === '"' || c === "'") {
+      const quote = c; i += 1; let out = '';
+      while (i < text.length && text[i] !== quote) {
+        if (text[i] === '\\') { i += 1; if (i < text.length) out += text[i++]; }
+        else out += text[i++];
+      }
+      if (text[i] !== quote) fail();
+      i += 1; return out;
+    }
+    if (c === '[' || c === '(') {
+      i += 1; const out = [];
+      for (space(); text[i] !== (c === '[' ? ']' : ')'); space()) {
+        out.push(value(depth + 1)); space();
+        if (text[i] === ',') i += 1; else if (text[i] !== (c === '[' ? ']' : ')')) fail();
+      }
+      i += 1; return out;
+    }
+    if (c === '{') {
+      i += 1; const out = {};
+      for (space(); text[i] !== '}'; space()) {
+        const key = value(depth + 1); space(); if (text[i] !== ':') fail(); i += 1;
+        out[String(key)] = value(depth + 1); space();
+        if (text[i] === ',') i += 1; else if (text[i] !== '}') fail();
+      }
+      i += 1; return out;
+    }
+    const word = /^(None|True|False|-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)/.exec(text.slice(i));
+    if (!word) fail();
+    i += word[0].length;
+    return word[0] === 'None' ? null : word[0] === 'True' ? true : word[0] === 'False' ? false : Number(word[0]);
+  };
+  try { const held = value(0); space(); return i === text.length ? held : undefined; } catch (_) { return undefined; }
+};
+
+const watchPreviewFromResult = node => {
+  if (node?.engine !== 'watch.preview' || typeof node.result !== 'string') return null;
+  const text = node.result.trim();
+  if (!text) return null;
+  if (WATCH_IMAGE_DATA.test(text)) return {kind:'image', value:text, shape:{}};
+  const parsed = parseWatchLiteral(text);
+  if (Array.isArray(parsed) && parsed.length && (
+    parsed.every(row => row && typeof row === 'object' && !Array.isArray(row)) ||
+    (parsed.length > 1 && parsed.every(Array.isArray))
+  )) return {kind:'table', value:parsed, shape:{rows:parsed.length}};
+  return null;
+};
+
+const watchParamValue = (node, key) => Array.isArray(node?.params)
+  ? (node.params.find(row => row.k === key || row.label === key) || {}).v
+  : undefined;
+
+const watchSizeValue = node => {
+  const raw = String(watchParamValue(node, 'watchSize') || '').trim();
+  const match = /^(\d{2,4})x(\d{2,4})$/.exec(raw);
+  if (!match) return '310x140';
+  const w = Math.max(180, Math.min(900, Number(match[1])));
+  const h = Math.max(100, Math.min(700, Number(match[2])));
+  return `${w}x${h}`;
+};
+
+const watchPersistParam = (node, key, value) => {
+  if (typeof window === 'undefined' || typeof window.pmPersistValue !== 'function') return;
+  try { window.pmPersistValue(node, key, value); } catch (_) {}
+};
+
+const watchRows = value => Array.isArray(value) ? value : value === null || value === undefined ? [] : [value];
+
+const watchCsvText = value => {
+  const rows = watchRows(value);
+  const columns = rows.every(row => row && typeof row === 'object' && !Array.isArray(row))
+    ? Array.from(rows.reduce((set, row) => { Object.keys(row).forEach(k => set.add(k)); return set; }, new Set()))
+    : ['value'];
+  const quote = value => `"${watchCellText(value).replace(/"/g, '""')}"`;
+  return [columns.map(quote).join(','), ...rows.map(row => columns.map(col => quote(col === 'value' && !(row && typeof row === 'object' && !Array.isArray(row)) ? row : row?.[col])).join(','))].join('\n');
+};
+
+const watchExportCsv = (node, preview) => {
+  const text = watchCsvText(preview?.value);
+  if (typeof window !== 'undefined') {
+    window.ARCHHUB_WATCH_EXPORTS = window.ARCHHUB_WATCH_EXPORTS || [];
+    window.ARCHHUB_WATCH_EXPORTS.push({node:node.id, text});
+  }
+  return text;
+};
+
+const watchMode = value => WATCH_MODES.some(([key]) => key === value) ? value : 'table';
+const watchFallbackPreview = node => watchPreviewFromResult(node) || {kind:watchParamValue(node, 'as') || 'table', state:'empty', value:null, shape:{}};
+
+const watchState = (preview, mode) => {
+  if (!preview) return 'empty';
+  if (preview.state) return preview.state;
+  if (mode === 'image' && !WATCH_IMAGE_DATA.test(String(preview.value || ''))) return 'empty';
+  return 'ready';
+};
+
+const WatchPreview = ({ node, inspector = false, actions = {} }) => {
+  useLastRunEpoch();
+  const preview = watchPreviewFor(node) || watchFallbackPreview(node);
+  const initialMode = watchMode(preview?.kind || watchParamValue(node, 'as') || 'table');
+  const [mode, setMode] = React.useState(initialMode);
+  React.useEffect(() => setMode(initialMode), [initialMode, node.id]);
+  const setModePersisted = key => {
+    setMode(key);
+    watchPersistParam(node, 'as', key);
+  };
+  const safePreview = preview && typeof preview === 'object' ? preview : {kind:mode, state:'empty', value:null, shape:{}};
+  const state = watchState(safePreview, mode);
+  return <div data-watch-preview="" style={{display:'grid', gap:6, marginTop:6}}>
+    {inspector && <div data-watch-show-as="" style={{display:'flex', gap:4, flexWrap:'wrap'}}>
+      {WATCH_MODES.map(([key, label]) => <button key={key} type="button" onClick={() => setModePersisted(key)} style={{
+        border:`1px solid ${key === mode ? LM.accent : LM.lineSoft}`, background:key === mode ? LM.accent + '22' : 'transparent',
+        color:key === mode ? LM.ink : LM.inkSoft, borderRadius:4, padding:'2px 6px', fontFamily:LM.mono, fontSize:WATCH_FS_LABEL.sz, cursor:'pointer'
+      }}>{label}</button>)}
+    </div>}
+    <WatchWell node={node} preview={safePreview} mode={mode} state={state} inspector={inspector} actions={actions}/>
+  </div>;
+};
+
+const WatchWell = ({ node, preview, mode, state, inspector, actions }) => {
+  const size = watchSizeValue(node);
+  const [w, h] = size.split('x').map(Number);
+  const onMouseUp = event => {
+    if (!event.currentTarget?.style) return;
+    const nextW = parseInt(event.currentTarget.style.width, 10);
+    const nextH = parseInt(event.currentTarget.style.height, 10);
+    if (Number.isFinite(nextW) && Number.isFinite(nextH)) watchPersistParam(node, 'watchSize', `${nextW}x${nextH}`);
+  };
+  return <div data-watch-well="" data-watch-size={size} onMouseUp={onMouseUp} style={{
+    minWidth:220, maxHeight:480,
+    width:w, height:h, overflow:'auto', resize:inspector ? 'both' : 'none',
+    border:`1px solid ${LM.lineSoft}`, background:LM.bgDeep || LM.bg, color:LM.ink,
+    borderRadius:5, display:'grid', gridTemplateRows:'1fr auto'
+  }}>
+    <div style={{overflow:'auto'}}>
+      {state === 'ready' ? <WatchRender node={node} preview={preview} mode={mode} inspector={inspector}/> : <WatchState state={state} preview={preview} actions={actions}/>}
+    </div>
+    <WatchFoot node={node} preview={preview} mode={mode} state={state} actions={actions}/>
+  </div>;
+};
+
+const WatchState = ({ state, preview, actions = {} }) => {
+  const label = state === 'empty' ? 'Add input' : state === 'error' ? 'Retry' : state === 'too-big' ? 'Show all' : null;
+  const handler = state === 'empty' ? actions.addInput : state === 'error' ? actions.retry : state === 'too-big' ? actions.showAll : null;
+  return <div data-watch-state={state} style={{padding:10, display:'grid', gap:7, placeItems:'center', minHeight:70, fontFamily:LM.mono, fontSize:WATCH_FS_DATA.sz, color:LM.inkSoft}}>
+    <span>{preview?.error || (state === 'loading' ? 'loading' : state)}</span>
+    {label && handler ? <button data-watch-state-action="" type="button" onClick={handler} style={watchSmallBtn()}>{label}</button> : null}
+  </div>;
+};
+
+const WatchRender = ({ node, preview, mode, inspector }) => {
+  const value = preview?.value;
+  if (mode === 'table') return <WatchTable rows={watchRows(value)} inspector={inspector}/>;
+  if (mode === 'list') return <WatchList rows={watchRows(value)}/>;
+  if (mode === 'json') return <pre data-watch-json="" style={{margin:0, padding:8, fontFamily:LM.mono, fontSize:WATCH_FS_DATA.sz, color:LM.ink, whiteSpace:'pre-wrap'}}>{typeof value === 'string' ? value : JSON.stringify(value, null, 2)}</pre>;
+  if (mode === 'image') return <WatchImage value={value}/>;
+  if (mode === 'number') return <WatchNumber value={value} preview={preview}/>;
+  if (mode === 'chart') return <WatchChart values={watchRows(value)}/>;
+  if (mode === 'geometry') return <WatchGeometry node={node} mesh={value} inspector={inspector}/>;
+  return null;
+};
+
+const watchFootStateAction = (node, preview, state, actions = {}) => {
+  if (node.state === 'out-of-date' && actions.runToHere) return ['Run', actions.runToHere];
+  if (node.state === 'refused' && actions.retry) return ['Retry', actions.retry];
+  if (node.state === 'off' && actions.turnOn) return ['Turn on', actions.turnOn];
+  if (state === 'ready' && actions.runToHere) return ['Run to here', actions.runToHere];
+  return null;
+};
+
+const WatchFoot = ({ node, preview, mode, state, actions = {} }) => {
+  const stateAction = watchFootStateAction(node, preview, state, actions);
+  const ready = state === 'ready';
+  const actionList = [];
+  if (stateAction) actionList.push(stateAction);
+  if (ready && actions.showInRevit) actionList.push(['Show in Revit', actions.showInRevit]);
+  if (ready && (mode === 'table' || preview?.kind === 'table')) actionList.push(['Export CSV', () => watchExportCsv(node, preview)]);
+  return <div data-watch-actions="" style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:6, padding:'5px 6px', borderTop:`1px solid ${LM.lineSoft}`}}>
+    <span data-watch-caption="" style={{fontFamily:LM.sans, fontSize:13, color:LM.inkMuted}}>{watchFootText(preview, mode, state)}</span>
+    <span style={{display:'flex', gap:4, flexWrap:'wrap', justifyContent:'flex-end'}}>
+      {actionList.map(([label, handler]) => <button key={label} type="button" onClick={handler} style={watchSmallBtn()}>{label}</button>)}
+    </span>
+  </div>;
+};
+
+const watchFootText = (preview, mode, state) => {
+  if (state !== 'ready') return state === 'empty' ? 'needs input' : state;
+  const value = preview?.value;
+  const shape = preview?.shape || {};
+  if (mode === 'table') return `${shape.rows ?? watchRows(value).length} rows`;
+  if (mode === 'list') return `${shape.items ?? watchRows(value).length} items`;
+  if (mode === 'json') return typeof value === 'object' && value !== null ? '1 object' : '1 value';
+  if (mode === 'image') return shape.file || shape.size || '';
+  if (mode === 'geometry') return `${shape.vertices ?? 0} vertices`;
+  return '';
+};
+
+const WatchTable = ({ rows, inspector = false }) => {
+  const matrixRows = rows.length > 1 && rows.every(Array.isArray);
+  const sourceRows = matrixRows ? rows.slice(1) : rows;
+  const visible = sourceRows.slice(0, inspector ? WATCH_TABLE_ROWS_INSPECTOR : WATCH_TABLE_ROWS);
+  const objectRows = !matrixRows && visible.every(row => row && typeof row === 'object' && !Array.isArray(row));
+  const columns = matrixRows ? rows[0].slice(0, WATCH_TABLE_COLS).map(watchCellText)
+    : objectRows ? Array.from(visible.reduce((set, row) => { Object.keys(row).forEach(k => set.add(k)); return set; }, new Set())).slice(0, WATCH_TABLE_COLS)
+    : ['value'];
+  const more = Math.max(0, sourceRows.length - visible.length);
+  return <div data-watch-table="" style={{padding:7}}>
+    <table style={{width:'100%', borderCollapse:'collapse', fontFamily:LM.mono, fontSize:WATCH_FS_DATA.sz, color:LM.ink}}>
+      <thead style={{fontFamily:LM.sans,fontSize:12.5}}><tr>{columns.map(col => <th key={col} style={{textAlign:'left', color:LM.inkSoft, borderBottom:`1px solid ${LM.lineSoft}`, padding:'2px 4px'}}>{col}</th>)}</tr></thead>
+      <tbody>{visible.map((row, idx) => <tr key={idx}>{columns.map((col, cidx) => <td key={col} style={{borderBottom:`1px solid ${LM.lineSoft}`, padding:'2px 4px'}}>{watchCellText(matrixRows ? row[cidx] : col === 'value' && !objectRows ? row : row?.[col])}</td>)}</tr>)}</tbody>
+    </table>
+    {more > 0 ? <div style={{fontFamily:LM.sans, fontSize:13, color:LM.inkMuted, paddingTop:4}}>+{more} more rows</div> : null}
+  </div>;
+};
+
+const WatchList = ({ rows }) => <div data-watch-list="" style={{padding:7, display:'grid', gap:3}}>
+  {rows.map((row, idx) => <div key={idx} style={{fontFamily:LM.mono, fontSize:WATCH_FS_DATA.sz, color:LM.ink}}>{watchCellText(row)}</div>)}
+</div>;
+
+const WatchImage = ({ value }) => WATCH_IMAGE_DATA.test(String(value || ''))
+  ? <img data-watch-image="" src={value} alt="" style={{maxWidth:'100%', maxHeight:'100%', display:'block'}}/>
+  : <WatchState state="empty" preview={{}}/>;
+
+const WatchNumber = ({ value, preview }) => <div data-watch-number="" style={{padding:12, display:'grid', gap:5}}>
+  <div style={{fontFamily:LM.mono, fontSize:(LM.fs?.title?.sz || 28), lineHeight:'34px', color:LM.ink}}>{Number(value).toLocaleString()}</div>
+  <div style={{fontSize:(LM.fs?.caption?.sz || 12), color:LM.inkSoft}}>{preview?.shape?.caption || ''}</div>
+</div>;
+
+const WatchChart = ({ values }) => {
+  const nums = values.map(row => typeof row === 'number' ? row : Number(row?.value ?? row?.y)).filter(Number.isFinite);
+  const max = Math.max(1, ...nums.map(Math.abs));
+  return <div data-watch-chart="" style={{padding:8, display:'flex', alignItems:'end', gap:3, height:90}}>
+    {nums.slice(0, 24).map((value, idx) => <span key={idx} title={String(value)} style={{width:8, height:Math.max(2, Math.round(Math.abs(value) / max * 76)), background:LM.accent, display:'block'}}/>)}
+  </div>;
+};
+
+const watchVector = value => Array.isArray(value) ? value : [value?.x, value?.y, value?.z];
+const normalizeWatchVertices = vertices => (Array.isArray(vertices) ? vertices : [])
+  .map(watchVector)
+  .filter(row => row.length >= 3 && row.slice(0, 3).every(Number.isFinite))
+  .map(row => row.slice(0, 3));
+
+const triangulateWatchFace = (face, countPrefixed = false) => {
+  const held = Array.isArray(face) ? face : [];
+  const ids = countPrefixed && held.length && held.length === Number(held[0]) + 1 ? held.slice(1) : held;
+  if (ids.length < 3 || !ids.every(Number.isInteger)) return [];
+  const out = [];
+  for (let i = 1; i < ids.length - 1; i += 1) out.push([ids[0], ids[i], ids[i + 1]]);
+  return out;
+};
+
+const triangulateWatchFaces = faces => {
+  if (!Array.isArray(faces)) return [];
+  if (faces.every(Number.isInteger)) {
+    const out = [];
+    for (let i = 0; i < faces.length;) {
+      const n = faces[i++];
+      const face = faces.slice(i, i + n); i += n;
+      out.push(...triangulateWatchFace([n, ...face], true));
+    }
+    return out;
+  }
+  return faces.flatMap(face => triangulateWatchFace(face, false));
+};
+
+const decodeWatchGeometryMesh = mesh => {
+  const vertices = normalizeWatchVertices(mesh?.vertices || mesh?.points || []);
+  const faces = triangulateWatchFaces(mesh?.faces || mesh?.triangles || [])
+    .filter(face => face.every(i => i >= 0 && i < vertices.length));
+  return {vertices, faces, shape:{vertices:vertices.length, faces:faces.length}};
+};
+
+const watchCameraAfterDrag = (camera, drag, x, y) => ({
+  ...camera,
+  yaw:camera.yaw + (x - drag.x) * 0.01,
+  pitch:Math.max(-1.4, Math.min(1.4, camera.pitch + (y - drag.y) * 0.01)),
+});
+
+const watchCameraAfterWheel = (camera, deltaY) => ({
+  ...camera,
+  zoom:Math.max(0.2, Math.min(5, camera.zoom * (deltaY < 0 ? 1.12 : 0.88))),
+});
+
+const WatchGeometry = ({ node, mesh, inspector }) => {
+  const ref = React.useRef(null);
+  const dragRef = React.useRef(null);
+  const [camera, setCamera] = React.useState({yaw:0.7, pitch:-0.55, zoom:1, panX:0, panY:0});
+  const decoded = React.useMemo(() => decodeWatchGeometryMesh(mesh), [mesh]);
+  React.useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.ARCHHUB_LAST_WATCH_MESH = window.ARCHHUB_LAST_WATCH_MESH || {};
+      window.ARCHHUB_LAST_WATCH_MESH[node.id] = decoded;
+    }
+  }, [node.id, decoded]);
+  const onPointerDown = event => { dragRef.current = {x:event.clientX, y:event.clientY}; };
+  const onPointerMove = event => {
+    if (!dragRef.current) return;
+    setCamera(prev => watchCameraAfterDrag(prev, dragRef.current, event.clientX, event.clientY));
+    dragRef.current = {x:event.clientX, y:event.clientY};
+  };
+  const endDrag = () => { dragRef.current = null; };
+  const onWheel = event => {
+    event.preventDefault?.();
+    setCamera(prev => watchCameraAfterWheel(prev, event.deltaY));
+  };
+  return <canvas ref={ref} data-watch-geometry="" data-vertices={decoded.shape.vertices}
+    data-faces={decoded.shape.faces} data-camera={`${camera.yaw.toFixed(3)},${camera.pitch.toFixed(3)}`}
+    data-zoom={camera.zoom.toFixed(3)} width={inspector ? 460 : 260} height={inspector ? 260 : 140}
+    onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endDrag} onPointerLeave={endDrag} onWheel={onWheel}
+    style={{display:'block', width:'100%', height:'100%', background:LM.bgDeep || LM.bg}}/>;
+};
+
+if (typeof window !== 'undefined') {
+  window.WatchPreview = WatchPreview;
+  window.ARCHHUB_WATCH_GEOMETRY = {decodeWatchGeometryMesh, watchCameraAfterDrag, watchCameraAfterWheel};
+}
+
+const isWorkshopGraphNode = n => {
+  if (!n || typeof n.id !== 'string' || !n.id) return false;
+  const authority = window.ARCHHUB_STUDIO_AUTHORITY || window.ARCHHUB_EXISTING_WORKSHOP;
+  const descriptors = authority?.getSnapshot?.()?.workshops;
+  return (Array.isArray(descriptors) && descriptors.some(row => row?.root === n.id || row?.node_root === n.id)) ||
+    n.cat === 'workshop' || n.kind === 'workshop';
+};
+const GraphWorkshopFace = ({ n, onDragStart, bandRef, onSocket, onSocketDrag, startMemberDrag, memberDragTrace = {} }) => {
+  const state = useWorkshopProjection();
+  const root = n.conversation_root || n.workshop_root || n.id;
+  const descriptor = (state?.workshops || []).find(row => row.root === root || row.node_root === n.id) ||
+    (root ? {root, label:n.title || 'Workshop'} : null);
+  const model = window.ARCHHUB_WORKSHOP_MODEL?.({state:state || {}, descriptor:descriptor || {}});
+  const members = model?.task_agents?.length ? model.task_agents : model?.members || [];
+  const approval = model?.approval;
+  // One review owns the accent in this canvas; all other Review routes stay available.
+  const reviewNodes = (state?.topology?.graph?.nodes || [n]).filter(isWorkshopGraphNode);
+  const accentReview = reviewNodes.find(node => window.ARCHHUB_WORKSHOP_MODEL?.({state:state || {},
+    descriptor:{root:node.conversation_root || node.workshop_root || node.id}})?.approval)?.id;
+  const reviewPrimary = !accentReview || accentReview === n.id;
+  const authority = window.ARCHHUB_STUDIO_AUTHORITY || window.ARCHHUB_EXISTING_WORKSHOP;
+  const canMoveMember = typeof authority?.moveMember === 'function';
+  const color = approval ? LM.warn : /done|complete|submitted/i.test(model?.status?.text || '') ? LM.ok : LM.inkSoft;
+  const outputCount = Number.isSafeInteger(model?.count) && model.count >= 0 ?
+    ` · ${model.count}${model.output_label ? ' ' + model.output_label : ''}` : '';
+  const openWindow = (event, review = false) => {
+    event?.stopPropagation();
+    if (!descriptor?.root) return;
+    window.dispatchEvent(new window.CustomEvent('archhub:reach-conversation', {
+      detail:review ? {root:descriptor.root, work:approval?.work || approval?.id} : descriptor.root}));
+  };
+  const rows = Math.max(n.ins?.length || 0, n.outs?.length || 0);
+  return <section data-workshop-node-face="" data-workshop-id={descriptor?.root || ''}
+    data-canvas-card-skin="078" data-workshop-node-state={model?.needs_user ? 'needs-user' : model?.status?.text}
+    data-workshop-approval={approval?.work || approval?.id || undefined} onDoubleClick={openWindow}
+    style={{...canvasCardSurface(model?.needs_user === true), border:`1px solid ${LM.line}`, boxSizing:'border-box', lineHeight:'normal'}}>
+    <style>{`[data-workshop-node-face] * {box-sizing:content-box;} [data-workshop-node-face] button {box-sizing:border-box;}`}</style>
+    <div onMouseDown={onDragStart} style={{display:'flex', gap:10, alignItems:'center', padding:'12px 14px', cursor:'move'}}>
+      <i data-node-status-ring={model?.needs_user ? 'needs-user' : model?.status?.text} style={{width:30, height:30, borderRadius:8, background:LM.purple, color:LM.onFill,
+        boxShadow:`0 0 0 2px ${color}`, display:'grid', placeItems:'center', fontStyle:'normal', fontSize:15, flex:'none'}}>◎</i>
+      <div style={{flex:1, minWidth:0}}><div style={{fontSize:14, fontWeight:700}}>Workshop</div>
+        <div data-workshop-node-title="" style={{fontSize:12, color:LM.inkSoft, overflow:'hidden',
+          textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{model?.title || 'Not available yet'}</div></div>
+      <span data-workshop-node-agent-stack="" style={{display:'flex',gap:6}}>{members.map((member, index) => {
+        const participant = member.row?.root || member.root || member.id;
+        const id = member.graph_member_id || participant;
+        const canDrag = !!startMemberDrag && canMoveMember && !!member.graph_member_id && member.graph_group_id === n.id;
+        const name = member.name || member.label || member.row?.label || 'Not available yet';
+        return <i key={id} data-workshop-node-member={id} data-member-drag={memberDragTrace[id] || undefined}
+          data-workshop-participant-root={participant} data-workshop-member-draggable={canDrag ? 'true' : 'false'}
+          title={canDrag ? name : name + ' · Not available yet'} role="img" aria-label={name} aria-disabled={!canDrag} draggable={false} onDragStart={event => event.preventDefault()}
+          onPointerDown={canDrag ? event => startMemberDrag({...member, id}, event) : undefined}
+          onMouseDown={event => {event.stopPropagation(); if (canDrag) startMemberDrag({...member, id}, event);}}
+          data-agent-presence={member.presence || member.liveState || 'unavailable'}
+          style={{width:26, height:26, borderRadius:8, background:member.col || member.c || member.color || LM.purple, color:LM.onFill,
+            boxShadow:`0 0 0 2px ${member.presence === 'needs-user' || member.liveState === 'needs-user' ? LM.warn : member.presence === 'ready' || member.verified ? LM.ok : LM.inkSoft}`,
+            display:'grid', placeItems:'center', fontStyle:'normal', fontSize:11, fontWeight:700, flex:'none',
+            marginLeft:0, cursor:canDrag ? 'grab' : 'default'}}>{member.ini || name.slice(0,1).toUpperCase()}</i>;
+      })}</span>
+    </div>
+    <div data-node-preview-slot="" data-workshop-node-steps="" style={{margin:'0 16px', borderRadius:10,
+      background:LM.bgDeep, border:`1px solid ${LM.lineSoft}`, overflow:'hidden'}}>
+      {(model?.steps || []).length ? model.steps.map((step,index) => {
+        const waits = ['needs-user','waiting','awaiting_approval','paused'].includes(step.state);
+        const done = ['done','complete','completed','success'].includes(step.state);
+        const stepColor = waits ? LM.warn : done ? LM.ok : LM.inkSoft;
+        return <div key={step.id || step.root || index} data-workshop-node-step={step.id || step.root || index}
+          style={{display:'grid', gridTemplateColumns:'18px 1fr auto', gap:8, padding:'6px 10px',
+            borderTop:index ? `1px solid ${LM.lineSoft}` : 0, fontSize:13}}>
+          <span style={{color:stepColor}}>{done ? '✓' : waits ? '⏸' : '○'}</span><span>{step.title || 'Not available yet'}</span>
+          <span style={{color:stepColor,fontSize:12}}>{step.result ?? (waits ? 'needs you' : step.duration || '')}</span>
+        </div>;
+      }) : <div aria-disabled="true" style={{padding:'8px 10px',fontSize:12.5,color:LM.inkSoft}}>Not available yet</div>}
+    </div>
+    {rows > 0 && <div ref={bandRef} data-port-band="" data-workshop-node-ports=""
+      style={{position:'relative', height:PORT_BAND_PAD * 2 + rows * SOCKET_STEP}}>
+      {(n.ins || []).map((port, index) => <Socket key={'in-' + port.id} id={port.id} side="in" i={index}
+        t={port.t} label={port.label} list={!!port.list || !!port.multiple} half={150} plate
+        onUse={port.connectable && onSocket ? () => onSocket(port, 'in') : undefined}
+        onDragStart={port.connectable && onSocket ? event => onSocketDrag?.(event, port, 'in') : undefined}/>)}
+      {(n.outs || []).map((port, index) => <Socket key={'out-' + port.id} id={port.id} side="out" i={index}
+        t={port.t} label={port.label} list={!!port.list || !!port.multiple} half={150} plate
+        onUse={port.connectable && onSocket ? () => onSocket(port, 'out') : undefined}
+        onDragStart={port.connectable && onSocket ? event => onSocketDrag?.(event, port, 'out') : undefined}/>)}
+    </div>}
+    <footer style={{display:'flex', alignItems:'center', gap:8, padding:'10px 14px', borderTop:`1px solid ${LM.lineSoft}`}}>
+      <i aria-hidden="true" style={{width:8, height:8, borderRadius:'50%', background:color, flex:'none'}}/>
+      <span data-workshop-node-status="" style={{fontSize:13.5, fontWeight:600, color, flex:1}}>{approval && Number.isSafeInteger(model?.count) ? `${model.count}${model.output_label ? ' ' + model.output_label : ''} wait for you` : <>{model?.status?.text || 'Not available yet'}{outputCount}</>}</span>
+      {approval && <button type="button" data-workshop-node-review="" onMouseDown={event => event.stopPropagation()}
+        onClick={event => openWindow(event, true)} disabled={!descriptor?.root || !(approval.work || approval.id)}
+        style={{border:reviewPrimary?0:`1px solid ${LM.line}`, borderRadius:8, background:reviewPrimary?`linear-gradient(180deg, ${LM.accentHi || LM.accent}, ${LM.accent})`:'#26262d', color:reviewPrimary?'#fff':LM.ink,boxShadow:reviewPrimary?`0 1px 0 rgba(255,255,255,.25) inset, 0 4px 14px ${LM.accent}44`:'none',
+          height:30, display:'inline-flex', alignItems:'center', fontFamily:LM.sans, fontSize:13, fontWeight:600, padding:'0 12px', cursor:'pointer'}}>Review</button>}
+    </footer>
+  </section>;
+};
+// Host locations and crop coordinates are projected data; never invent plan rooms or marks.
+const nodePlanPreviewFor = node => {
+  const preview = watchPreviewFor(node);
+  const value = preview?.value;
+  const read = node.cat === 'read' || /\bread\b/i.test(node.subtitle || node.sub || node.engine || '');
+  if(!read)return null;
+  const elements = [preview?.elements,value?.elements,value,node.result].find(Array.isArray);
+  const count = elements?.length ?? preview?.shape?.items ?? preview?.element_count ?? node.element_count;
+  if (!Number.isSafeInteger(count) || count < 0) return null;
+  const marks = (Array.isArray(elements) ? elements : []).flatMap((element,index)=>{
+    const point = element?.location?.point || element?.location;
+    const x = Array.isArray(point) ? point[0] : point?.x ?? point?.X;
+    const y = Array.isArray(point) ? point[1] : point?.y ?? point?.Y;
+    return Number.isFinite(x) && Number.isFinite(y) ? [{id:element?.id ?? index,x,y}] : [];
+  });
+  const crop = preview?.plan_crop || node.plan_crop;
+  const url = typeof crop === 'string' ? crop : crop?.url || crop?.data_url || (preview?.kind==='image' ? value : null);
+  const cropSafe = typeof url === 'string' && /^(?:data:image\/(?:png|jpeg|webp);base64,|blob:|\/api\/)/.test(url);
+  const label = node.output_label || node.outs?.find(port=>port.list || port.multiple)?.label || 'elements';
+  return {marks,count,label,url:cropSafe ? url : null,width:crop?.width || preview?.shape?.width || 220,height:crop?.height || preview?.shape?.height || 100};
+};
+const NodePlanPreview = ({ node }) => {
+  const plan=nodePlanPreviewFor(node);
+  if(!plan)return null;
+  if(!plan.marks.length)return <div data-node-plan-count="" style={{minHeight:96,display:'grid',placeItems:'center',
+    fontFamily:LM.sans,fontSize:22,fontWeight:700,color:LM.ink}}>{plan.count} {plan.label}</div>;
+  const xs=plan.marks.map(mark=>mark.x),ys=plan.marks.map(mark=>mark.y);
+  const spanX=Math.max(...xs)-Math.min(...xs),spanY=Math.max(...ys)-Math.min(...ys);
+  const padding=Math.max(spanX,spanY,1)*.08;
+  const box=plan.url ? [0,0,plan.width,plan.height] : [Math.min(...xs)-padding,Math.min(...ys)-padding,spanX+2*padding,spanY+2*padding];
+  const radius=plan.url ? 3 : padding*.35;
+  return <svg data-node-plan-preview="" viewBox={box.join(' ')} role="img" aria-label={`${plan.count} ${plan.label} on plan`}
+    style={{display:'block',width:'100%',height:96,borderRadius:8,background:LM.bgDeep || LM.bg}}>
+    {plan.url&&<image href={plan.url} width={plan.width} height={plan.height}/>}
+    {plan.marks.map(mark=><circle key={mark.id} data-node-plan-mark={mark.id} cx={mark.x} cy={mark.y} r={radius} fill={LM.accent}/>)}</svg>;
+};
+
+const NodeBody = ({ n, expanded, onToggleExpand, watchActions }) => {
+  if (isWorkshopGraphNode(n)) return <GraphWorkshopFace n={n}/>;
+  if (isHistoryNode(n)) return <HistoryBody n={n}/>;
   // A GRAPH-BACKED node draws exactly its real parameters, its last run
   // answer, and what actually flowed. Never a category's demo furniture.
-  if (n.live) return <LiveBody n={n}/>;
+  if (n.live || nodeIsWatch(n)) return <LiveBody n={n} watchActions={watchActions}/>;
   switch (n.cat) {
     case 'host':      return <HostBody n={n}/>;
     case 'ai':        return <AIBody n={n} expanded={expanded} onToggleExpand={onToggleExpand}/>;
@@ -6116,19 +7303,15 @@ const NodeBody = ({ n, expanded, onToggleExpand }) => {
   }
 };
 
-const LiveBody = ({ n }) => (
-  <div style={{ marginTop:9, display:'flex', flexDirection:'column', gap:LM.sp.xs }}>
-    {(n.params || []).slice(0, 4).map(row => (
-      <div key={row.k} style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz }}>
-        <span style={{ color:LM.inkSoft, letterSpacing:'0.04em' }}>{row.k}</span>
-        <div style={{ flex:1, borderBottom:`1px dashed ${LM.lineSoft}`, marginBottom:2 }}/>
-        <span style={{ color:LM.ink, maxWidth:110, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{String(row.v)}</span>
+const LiveBody = ({ n, watchActions }) => (
+  <div style={{ marginTop:0, display:'flex', flexDirection:'column', gap:LM.sp.xs }}>
+    {visibleNodeParams(n).slice(0, 3).map(row => (
+      <div key={row.k} data-node-inline-param={row.k} style={{ display:'flex', justifyContent:'space-between', gap:6, fontFamily:LM.sans, fontSize:12.5, padding:'3px 0' }}>
+        <span data-node-param-label="" style={{ color:LM.inkSoft, minWidth:0 }}>{typeof window.humanParamLabel === 'function' ? window.humanParamLabel(row) : String(row.label || row.k).replace(/([a-z])([A-Z])/g,'$1 $2').replaceAll('_',' ').replace(/^./,ch=>ch.toUpperCase())}</span>
+        <span data-node-param-value="" title={String(row.v)} style={{ background:LM.bgHover, borderRadius:5, padding:'1px 8px', color:LM.ink, maxWidth:'65%', minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{String(row.v)}</span>
       </div>
     ))}
-    {n.status ? (
-      <div style={{ marginTop:2, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.accent, letterSpacing:'0.03em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{n.status}</div>
-    ) : null}
-    {n.result ? (
+    {n.result && !nodePlanPreviewFor(n) ? (
       <div style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, marginTop:2 }}>
         <span style={{ color:LM.inkSoft, letterSpacing:'0.04em' }}>result</span>
         <div style={{ flex:1, borderBottom:`1px dashed ${LM.lineSoft}`, marginBottom:2 }}/>
@@ -6140,6 +7323,7 @@ const LiveBody = ({ n }) => (
         <span aria-hidden="true">⚠</span><span>mutates model · requires approval</span>
       </div>
     ) : null}
+    {nodeIsWatch(n) ? <WatchPreview node={n} actions={watchActions}/> : null}
     <LinePreview id={n.id}/>
   </div>
 );
@@ -6198,7 +7382,7 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
           }}/>
           <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft }}>{filtered.length}/{total}</span>
           {q && (
-            <button onClick={() => setQ('')} style={{
+            <button onClick={() => setQ('')} title="Clear conversation search" aria-label="Clear conversation search" style={{
               width:14, height:14, padding:0, border:0, background:'transparent',
               color:LM.inkSoft, cursor:'pointer', fontSize:11, lineHeight:1,
             }}>×</button>
@@ -6533,34 +7717,40 @@ const StagePreview = () => (
 );
 
 // ─── canvas toolbar (TOP-LEFT) ───
-const CanvasToolbar = ({ zoom, setZoom, onFit, fitLabel, onArrange, arrangeDisabled = false, arrangeWhy = 'Arrange', setLibraryOpen, undo, redo }) => (
+const CanvasToolbar = ({ zoom, setZoom, onFit, fitLabel, onArrange, arrangeDisabled = false, arrangeWhy = 'Arrange', setLibraryOpen, undo, redo, onRun, runDisabled = true, title = '', project = '', status = '', waiting = 0 }) => (<>
+  <div data-canvas-topbar="" data-no-pan style={{position:'absolute',left:0,right:0,top:0,height:56,
+    display:'flex',alignItems:'center',gap:14,padding:'0 24px',borderBottom:`1px solid ${LM.lineSoft}`,background:'#0f0f13'}}>
+    {project&&<span style={{fontSize:13,color:LM.inkSoft}}>{project} ›</span>}<span style={{fontSize:17,fontWeight:700}}>{title}</span>
+    {status&&<span data-canvas-live-state="" style={{borderRadius:999,padding:'4px 9px',background:LM.accent+'1f',color:LM.accent,fontSize:12,fontWeight:600}}>{status}</span>}
+    {waiting>0&&<span data-canvas-needs-user="" style={{borderRadius:999,padding:'4px 9px',background:LM.warn+'1f',color:LM.warn,fontSize:12,fontWeight:600}}>{waiting} needs you</span>}<span style={{flex:1}}/>
+    <button disabled={arrangeDisabled} onClick={event => {event.stopPropagation(); onArrange();}}
+      title={arrangeDisabled ? arrangeWhy : 'Arrange'} aria-label="Arrange" style={{...smallBtn(),height:30,fontSize:13}}>Arrange</button>
+    <button data-canvas-run-primary="" disabled={runDisabled} onClick={event => {event.stopPropagation(); onRun?.();}}
+      style={{height:30,padding:'0 12px',border:waiting>0?`1px solid ${LM.line}`:0,borderRadius:8,fontFamily:LM.sans,fontSize:13,fontWeight:600,color:waiting>0?LM.ink:'#fff',background:waiting>0?'#26262d':`linear-gradient(180deg, ${LM.accentHi || LM.accent}, ${LM.accent})`,boxShadow:waiting>0?'0 1px 0 rgba(255,255,255,.06) inset':`0 1px 0 rgba(255,255,255,.25) inset, 0 4px 14px ${LM.accent}44`,cursor:'pointer'}}>{runDisabled ? 'Not available yet' : '▶ Run'}</button>
+  </div>
   <div data-no-pan style={{
-    position:'absolute', left:14, top:14, display:'flex', gap:LM.sp.xs,
-    background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:7, padding:LM.sp.xs,
-    boxShadow:'0 4px 12px rgba(0,0,0,.3)',
+    position:'absolute', left:40, bottom:28, display:'flex', gap:LM.sp.xs,
+    ...canvasCardSurface(), border:`1px solid ${LM.line}`, borderRadius:10, padding:LM.sp.xs,
   }}>
-    <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.min(2, +(z + 0.1).toFixed(2))); }} title="Zoom in" aria-label="Zoom in" style={toolBtn()}>+</button>
-    <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.max(0.3, +(z - 0.1).toFixed(2))); }} title="Zoom out" aria-label="Zoom out" style={toolBtn()}>−</button>
-    <div style={{ ...toolBtn(), width:48, color:LM.ink, background:LM.bg, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, cursor:'default' }}>
+    <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.max(0.3, +(z - 0.1).toFixed(2))); }} title="Zoom out" aria-label="Zoom out" style={{...toolBtn(),width:'auto',padding:'0 6px',fontFamily:LM.sans,fontSize:13}}>Zoom out</button>
+    <div data-canvas-zoom="" style={{ ...toolBtn(), width:48, color:LM.ink, background:LM.bg, fontFamily:LM.sans, fontSize:13, cursor:'default' }}>
       {Math.round(zoom * 100)}%
     </div>
-    <button onClick={(e) => { e.stopPropagation(); onFit(); }} title={fitLabel} aria-label={fitLabel} style={toolBtn()}>{'\u27f2'}</button>
-    <button disabled={arrangeDisabled} onClick={(e) => { e.stopPropagation(); onArrange(); }}
-      title={arrangeDisabled ? arrangeWhy : 'Arrange'} aria-label="Arrange"
-      style={{...toolBtn(), width:62, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:arrangeDisabled ? LM.inkSoft : LM.accent}}>Arrange</button>
+    <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.min(2, +(z + 0.1).toFixed(2))); }} title="Zoom in" aria-label="Zoom in" style={{...toolBtn(),width:'auto',padding:'0 6px',fontFamily:LM.sans,fontSize:13}}>Zoom in</button>
+    <button onClick={(e) => { e.stopPropagation(); onFit(); }} title={fitLabel} aria-label={fitLabel} style={{...toolBtn(),width:'auto',padding:'0 6px',fontFamily:LM.sans,fontSize:13}}>Fit</button>
     <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
     {[['Undo', '\u21b6', undo], ['Redo', '\u21b7', redo]].filter(([, , held]) => held).map(([label, icon, held]) => (
       <button key={label} disabled={held.disabled} onClick={(e) => { e.stopPropagation(); held.run(); }}
-        title={held.disabled ? held.why : label} aria-label={label}
+        title={label} aria-label={label} aria-description={held.disabled ? held.why : undefined}
         style={{...toolBtn(), cursor:held.disabled ? 'default' : 'pointer', color:held.disabled ? LM.inkSoft : LM.inkSoft}}>{icon}</button>
     ))}
     <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
     <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} title="Add node" aria-label="Add node" style={{
       padding:'0 10px', height:22, border:0, background:'transparent', cursor:'pointer',
-      color:LM.accent, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, letterSpacing:'0.06em',
+      color:LM.accent, fontFamily:LM.sans, fontSize:12, fontWeight:600, letterSpacing:0,
       display:'flex', alignItems:'center', gap:LM.sp.xs,
     }}>{'\uff0b add node'}</button>
-  </div>
+  </div></>
 );
 
 const toolBtn = () => ({
@@ -6610,20 +7800,23 @@ const FloatingComposer = ({ setLibraryOpen, model, node }) => {
 // the library ONLY. It has no model, sends nothing, and is not a chat: the one chat is the right panel.
 const CanvasAddBox = ({ setLibraryOpen }) => {
   const [q, setQ] = React.useState('');
+  React.useEffect(()=>{const key=event=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){
+    event.preventDefault();setLibraryOpen(true);
+  }};document.addEventListener('keydown',key);return()=>document.removeEventListener('keydown',key);},[setLibraryOpen]);
   const open = () => { setLibraryOpen(q.replace(/^\/+/, '').trim() || true); setQ(''); };
   return (
     <div data-no-pan data-canvas-add style={{
-      position:'absolute', left:'50%', bottom:14, transform:'translateX(-50%)',
-      width:480, maxWidth:'70%', background:LM.bgPanel, border:`1px solid ${LM.line}`,
-      borderRadius:9, boxShadow:'0 10px 24px rgba(0,0,0,.4)', padding:'7px 10px',
+      position:'absolute', left:'50%', bottom:24, transform:'translateX(-50%)',
+      width:520, maxWidth:'70%', height:44, background:LM.surf2, border:`1px solid ${LM.line}`,
+      borderRadius:12, boxShadow:LM.elev.e2, padding:'0 14px',
       display:'flex', alignItems:'center', gap:LM.sp.sm,
     }}>
       <span aria-hidden="true" style={{ color:LM.accent, fontFamily:LM.mono, fontSize:13 }}>/</span>
-      <input aria-label="Add a node" value={q} placeholder="Type / to add a node…"
+      <input aria-label="Add a node" value={q} placeholder="Add a node, or ask the Workshop…"
         onChange={e => setQ(e.target.value)}
         onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); open(); } else if (e.key === 'Escape') setQ(''); }}
         style={{ flex:1, minWidth:0, background:'transparent', border:0, outline:'none', color:LM.ink, fontFamily:LM.sans, fontSize:13 }}/>
-      <button type="button" onClick={e => { e.stopPropagation(); setLibraryOpen(true); }} style={{ ...smallBtn(), padding:'3px 9px' }}>library</button>
+      <button type="button" aria-label="Open node library" onClick={e => { e.stopPropagation(); setLibraryOpen(true); }} style={{fontFamily:LM.sans,fontSize:11,color:LM.inkSoft,border:`1px solid ${LM.line}`,borderRadius:4,padding:'1px 5px',background:'transparent',cursor:'pointer'}}>Ctrl K</button>
     </div>
   );
 };
@@ -6646,36 +7839,56 @@ const MiniMap = ({ pan, zoom, positions, allNodes }) => {
   const boxes = nodes.map(n => ({ n, p: positions[n.id] || { x: n.x, y: n.y } }))
     .filter(({ n, p }) => [p.x, p.y, n.w, n.h].every(Number.isFinite));
   return (
-    <div data-no-pan style={{
-      position:'absolute', right:14, top:14, width:170, height:96,
-      background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md,
-      overflow:'hidden', boxShadow:'0 4px 12px rgba(0,0,0,.3)',
+    <div data-no-pan data-canvas-minimap="" style={{
+      position:'absolute', right:28, bottom:24, width:180, height:110,
+      ...canvasCardSurface(), border:`1px solid ${LM.line}`, borderRadius:10,
+      overflow:'hidden',
     }}>
       <svg viewBox={minimapViewBox(boxes.map(({ n, p }) => ({ x: p.x, y: p.y, w: n.w, h: n.h })))} style={{ width:'100%', height:'100%' }}>
         {boxes.map(({ n, p }) => {
           const cat = studioCategory(n.cat);
           return (
-            <rect key={n.id} x={p.x} y={p.y} width={n.w} height={n.h}
+            <rect key={n.id} data-minimap-node={n.id} x={p.x} y={p.y} width={n.w} height={n.h}
               fill={cat.col + '66'} stroke={LM.lineSoft} strokeWidth="2" rx="4"/>
           );
         })}
       </svg>
       <div style={{
-        position:'absolute', left:6, top:5, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz,
+        position:'absolute', left:6, top:5, fontFamily:LM.sans, fontSize:12,
         color:LM.inkSoft, letterSpacing:'0.14em', background:LM.bgDeep+'cc', padding:'1px 5px', borderRadius:2,
-      }}>MAP</div>
+      }}>Overview</div>
     </div>
   );
 };
 
 // ──────────────────────── NODE LIBRARY ────────────────────────
+const useLibraryRefreshEpoch = () => {
+  const [epoch, setEpoch] = React.useState(0);
+  React.useEffect(() => {
+    const refresh = () => setEpoch(value => value + 1);
+    window.addEventListener('archhub:library-refresh', refresh);
+    return () => window.removeEventListener('archhub:library-refresh', refresh);
+  }, []);
+  return epoch;
+};
+
+
 const NodeLibrary = ({ onClose, addNodeFromLibrary, initialQuery = '' }) => {
-  const library = useStudioProjection()?.library || LM_LIBRARY;
+  useLibraryRefreshEpoch();
+  const library = libraryDisplayGroups(librarySource(useStudioProjection()));
   const [filter, setFilter] = React.useState('all');
   const [q, setQ] = React.useState(initialQuery);
-  const groups = filter === 'all' ? library : library.filter(g => g.cat === filter);
+  const [openCats, setOpenCats] = React.useState(() => Object.fromEntries(library.map(group => [group.cat, true])));
+  const addFromLibrary = React.useCallback(item => {
+    if (addNodeFromLibrary) addNodeFromLibrary(item);
+    onClose();
+  }, [addNodeFromLibrary, onClose]);
+  const toggleCat = React.useCallback(cat => setOpenCats(o => ({ ...o, [cat]: !o[cat] })), []);
+  const modCount = library.reduce((count, group) => count + group.items.filter(item => item.mod).length, 0);
+  const sourceGroups = filter === 'mods' ? library.map(group => ({...group, items:group.items.filter(item => item.mod)})).filter(group => group.items.length) : filter === 'all' ? library : library.filter(g => g.cat === filter);
+  const groups = libraryVisibleGroups(sourceGroups, 'all', q);
   return (
-    <div onClick={onClose} style={{
+    <div data-node-library-overlay="" onClick={onClose} style={{
       position:'absolute', inset:0, background:'rgba(0,0,0,.55)', zIndex:60,
       display:'grid', placeItems:'center',
     }}>
@@ -6683,15 +7896,13 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary, initialQuery = '' }) => {
         width:780, maxWidth:'94%', height:540, maxHeight:'88%',
         background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.dialog,
         overflow:'hidden', boxShadow:LM.shadow.dialog,
-        display:'grid', gridTemplateColumns:'180px 1fr', gridTemplateRows:'48px 1fr',
+        display:'grid', gridTemplateColumns:'248px 1fr', gridTemplateRows:'48px 1fr',
       }}>
         <div style={{ gridColumn:'1 / -1', gridRow:'1', borderBottom:`1px solid ${LM.line}`, padding:'0 14px', display:'flex', alignItems:'center', gap:10 }}>
-          <span style={{ fontFamily:LM.serif, fontSize:18, letterSpacing:'-0.01em' }}>Node library</span>
-          <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.1em' }}>
-            {library.reduce((n, g) => n + g.items.length, 0)} NODES · CLICK TO ADD
-          </span>
+          <span style={{ fontFamily:LM.sans, fontSize:15, fontWeight:600 }}>Library</span>
+          <span style={{ fontFamily:LM.sans, fontSize:12, color:LM.inkSoft }}>{libraryTotal(library)} nodes</span>
           <div style={{ flex:1 }}/>
-          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search… (e.g. dimension, schedule, push)" style={{
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search nodes" style={{
             padding:'6px 11px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
             color:LM.ink, fontFamily:LM.sans, fontSize:12.5, outline:'none', width:280,
           }}/>
@@ -6703,42 +7914,16 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary, initialQuery = '' }) => {
 
         {/* Categories */}
         <div style={{ gridColumn:'1', gridRow:'2', borderRight:`1px solid ${LM.line}`, padding:`${LM.sp.md}px ${LM.sp.sm}px`, overflow:'auto' }}>
-          <LibCatBtn id="all" label="All categories" active={filter==='all'} onSelect={setFilter}/>
-          {Object.entries(CAT).map(([id, c]) => (
-            <LibCatBtn key={id} id={id} label={c.label.toLowerCase()} icon={c.icon} col={c.col} active={filter===id} onSelect={setFilter}/>
-          ))}
+          <LibCatBtn id="all" label="All" active={filter==='all'} onSelect={setFilter}/>
+          {modCount > 0 && <LibCatBtn id="mods" label={`From mods · ${modCount}`} active={filter==='mods'} onSelect={setFilter}/>}
+          {library.map(group => {
+            const c = studioCategory(group.cat);
+            return <LibCatBtn key={group.cat} id={group.cat} label={c.label[0] + c.label.slice(1).toLowerCase()} icon={c.icon} col={c.col} active={filter===group.cat} onSelect={setFilter}/>;
+          })}
         </div>
 
         <div className="ah-scroll" style={{ gridColumn:'2', gridRow:'2', overflow:'auto', padding:'14px 18px' }}>
-          {groups.map(g => {
-            const c = studioCategory(g.cat);
-            const items = q ? g.items.filter(i => (i.title + ' ' + i.sub).toLowerCase().includes(q.toLowerCase())) : g.items;
-            if (items.length === 0) return null;
-            return (
-              <div key={g.cat} style={{ marginBottom:18 }}>
-                <div style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, marginBottom:LM.sp.sm }}>
-                  <span style={{ color:c.col }}>{c.icon}</span>
-                  <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:c.col, letterSpacing:'0.18em' }}>{c.label}</span>
-                  <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.06em' }}>{c.role}</span>
-                </div>
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
-                  {items.map(i => (
-                    <button key={i.id} onClick={() => { addNodeFromLibrary && addNodeFromLibrary({ ...i, cat:g.cat }); onClose(); }} style={{
-                      background:LM.bg, border:`1px solid ${LM.line}`, borderLeft:`2px solid ${c.col}`,
-                      borderRadius:LM.rad.md, padding:'8px 11px', textAlign:'left', cursor:'pointer',
-                      color:LM.ink, fontFamily:LM.sans,
-                      display:'flex', flexDirection:'column', gap:2,
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = LM.accent+'88'; e.currentTarget.style.borderLeftColor = c.col; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = LM.line; e.currentTarget.style.borderLeftColor = c.col; }}>
-                      <span style={{ fontSize:12.5, fontWeight:500, fontFamily:LM.mono }}>{i.title}</span>
-                      <span style={{ fontSize:11, color:LM.inkSoft }}>{i.sub}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
+          <NodeLibraryGroups library={groups} q={q} openCats={openCats} onToggle={toggleCat} onAdd={addFromLibrary}/>
         </div>
       </div>
     </div>
@@ -6871,11 +8056,11 @@ const NodeModelConversation = ({node, scope = '', openConversation, active = tru
   if (!active) return null;
   return <section aria-label={'Conversation with ' + node.title} style={{ display:'flex', flexDirection:'column', gap:10, borderTop:`1px solid ${LM.lineSoft}`, paddingTop:12 }}>
     <div style={{ display:'flex', alignItems:'center', gap:7 }}>
-      <span style={{ color:cat.col, fontFamily:LM.mono }}>{cat.icon}</span>
-      <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:cat.col, letterSpacing:'0.18em' }}>CONVERSATION</span>
+      <span style={{ color:cat.col }}>{cat.icon}</span>
+      <span style={{ fontFamily:LM.sans, fontSize:11, fontWeight:600, color:LM.inkSoft, letterSpacing:0 }}>Conversation</span>
       <div style={{ flex:1 }}/>
       {model ? (
-        <p title={route || undefined} style={{ margin:0, maxWidth:170, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.06em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+        <p title={route || undefined} style={{ margin:0, maxWidth:170, fontFamily:LM.sans, fontSize:11, fontWeight:600, color:LM.inkSoft, letterSpacing:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
           {route || 'Choose a model for this node'}</p>
       ) : null}
     </div>
@@ -6996,7 +8181,7 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
           const refusal = agentRefusalText(result);
           if (refusal) throw new Error(refusal);
           const deliveryState = agentDeliveryState(result);
-          if (deliveryState && deliveryState !== 'replied') throw Object.assign(new Error(agentAnswerText(result)), {unconfirmed:true});
+          if (deliveryState && deliveryState !== 'replied') throw Object.assign(new Error(agentAnswerText(result) || 'reply not confirmed - check before sending again'), {unconfirmed:true});
           const delivery = (result && typeof result === 'object' && result.delivery) || {};
           announce({phase:'answer', answer:agentAnswerText(result), steps:agentAnswerSteps(result),
             messageId:delivery.message_id || '', replyId:delivery.reply_message_id || ''});
@@ -7227,14 +8412,14 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
       <div className="ah-scroll" style={{ overflowY:'auto', overflowX:'hidden', minWidth:0, padding:'14px 16px 20px', display:'flex', flexDirection:'column', gap:LM.sp.lg }}>
         <div>
           <div style={{ display:'flex', alignItems:'center', gap:7 }}>
-            <span style={{ color:cat.col, fontFamily:LM.mono }}>{cat.icon}</span>
-            <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:cat.col, letterSpacing:'0.18em' }}>
-              {inspectedNode.graphNode ? 'GRAPH' : cat.label}</span>
+            <span style={{ color:cat.col }}>{cat.icon}</span>
+            <span style={{ fontFamily:LM.sans, fontSize:11, fontWeight:600, color:LM.inkSoft, letterSpacing:0 }}>
+              {inspectedNode.graphNode ? 'Graph' : cat.label}</span>
           </div>
-          <div style={{ fontFamily:LM.serif, fontSize:21, letterSpacing:'-0.015em', marginTop:5, lineHeight:1.05 }}>
+          <div style={{ fontFamily:LM.sans, fontSize:16, fontWeight:600, letterSpacing:0, marginTop:5, lineHeight:'20px' }}>
             {inspectedNode.title}
           </div>
-          {inspectedNode.sub && <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, marginTop:5, letterSpacing:'0.04em' }}>{inspectedNode.sub}</div>}
+          {inspectedNode.sub && <div style={{ fontFamily:LM.sans, fontSize:11, fontWeight:600, color:LM.inkSoft, marginTop:5, letterSpacing:0 }}>{inspectedNode.sub}</div>}
         </div>
         <InspectorTabs labels={labels} active={visibleTab} onSelect={setActiveTab}/>
         {visibleTab === 'Interface' && groupInterface}
@@ -7269,17 +8454,17 @@ const ConversationRail = ({ node }) => {
       {/* Header */}
       <div style={{ padding:'12px 16px 10px', borderBottom:`1px solid ${LM.lineSoft}` }}>
         <div style={{ display:'flex', alignItems:'center', gap:7 }}>
-          <span style={{ color:cat.col, fontFamily:LM.mono }}>{cat.icon}</span>
-          <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:cat.col, letterSpacing:'0.18em' }}>CONVERSATION</span>
+          <span style={{ color:cat.col }}>{cat.icon}</span>
+          <span style={{ fontFamily:LM.sans, fontSize:11, fontWeight:600, color:LM.inkSoft, letterSpacing:0 }}>Conversation</span>
           <div style={{ flex:1 }}/>
-          <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.06em' }}>
+          <span style={{ fontFamily:LM.sans, fontSize:11, fontWeight:600, color:LM.inkSoft, letterSpacing:0 }}>
             {node.messages.length} msgs
           </span>
         </div>
-        <div style={{ fontFamily:LM.serif, fontSize:18, letterSpacing:'-0.01em', marginTop:5, lineHeight:1.1 }}>
+        <div style={{ fontFamily:LM.sans, fontSize:16, fontWeight:600, letterSpacing:0, marginTop:5, lineHeight:'20px' }}>
           {node.title}
         </div>
-        <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, marginTop:3, letterSpacing:'0.04em' }}>
+        <div style={{ fontFamily:LM.sans, fontSize:11, fontWeight:600, color:LM.inkSoft, marginTop:3, letterSpacing:0 }}>
           {node.sub}
         </div>
       </div>
@@ -7502,6 +8687,205 @@ const SettingsEmpty = ({ children, role = 'status', action }) => (
 // seed per item, so an empty or partial store made a badge contradict the panel beside it.
 const hostState = h => h.state; // the probe's answer; there is no local override
 const systemGraphNodeCount = graph => (graph?.nodes || []).filter(node => node.application === true).length || (graph?.nodes || []).length;
+const settingsRunningCount = (scope, data = {}) => {
+  const transport = window.ARCHHUB_EXISTING_WORKSHOP;
+  if (typeof transport?.settingsRunningCount === 'function') {
+    const live = transport.settingsRunningCount(scope);
+    if (live && Number.isFinite(live.running) && Number.isFinite(live.total)) return live;
+  }
+  if (scope === 'hub') {
+    const rows = data.toolRows || [];
+    return { running:rows.filter(row => row.status === 'running').length, total:rows.length };
+  }
+  const hosts = data.hosts || window.ARCHHUB_LIVE?.hosts || LM_HOSTS || [];
+  const visible = hosts.filter(Boolean);
+  const running = visible.filter(host => /running|connected|listening|syncing/i.test(String(host.state || ''))).length;
+  return { running, total:visible.length };
+};
+const SETTINGS54_GROUPS = [
+  {id:'account', glyph:'◍', color:LM.userAv || LM.accent, title:'Account', items:['Account', 'Profile', 'Team'], focus:'Account'},
+  {id:'connections', glyph:'⌁', color:LM.cyan, title:'Connections', items:['Hub', 'Hosts', 'Providers', 'Connections'], focus:'Connections'},
+  {id:'ai', glyph:'✦', color:LM.purple, title:'AI', items:['BABOOM', 'Models', 'Brain'], focus:'Workshop'},
+  {id:'permissions', glyph:'⚑', color:LM.warn, title:'Permissions', items:['Permissions', 'Workspaces'], focus:'Permissions'},
+  {id:'appearance', glyph:'◐', color:LM.blue || LM.accent, title:'Appearance', items:['Theme', 'Shortcuts'], focus:'UI & Design System'},
+  {id:'storage', glyph:'▤', color:LM.inkSoft, title:'Storage & About', items:['Storage', 'About'], focus:'Storage & About'},
+];
+const settings54NodeTitle = node => node?.title || node?.label || node?.id || 'System node';
+const settings54ParamKey = row => row?.k || row?.key || row?.label || row?.name || '';
+const settings54ParamLabel = row => row?.label || row?.name || row?.k || row?.key || '';
+const settings54ParamValue = row => row?.v ?? row?.value ?? row?.current ?? '';
+const settings54SystemNodes = graph => (graph?.nodes || []).filter(node => node?.application === true);
+const settings54SystemWires = (graph, nodes) => {
+  const ids = new Set(nodes.map(node => node.id));
+  return (graph?.wires || []).filter(wire => ids.has(wire.from?.[0]) && ids.has(wire.to?.[0]));
+};
+const settings54NodeGroup = node => {
+  const text = [node?.group, node?.title, node?.sub, node?.engine, node?.id].filter(Boolean).join(' ').toLowerCase();
+  if (/account|profile|team/.test(text)) return 'account';
+  if (/connection|host|provider|hub|relay|connector/.test(text)) return 'connections';
+  if (/ai|agent|model|brain|workshop|baboom/.test(text)) return 'ai';
+  if (/permission|workspace|approval|consent|govern/.test(text)) return 'permissions';
+  if (/theme|appearance|ui|design|shortcut/.test(text)) return 'appearance';
+  if (/storage|about|update|archive|release/.test(text)) return 'storage';
+  return '';
+};
+const settings54GroupNodes = (group, nodes) => nodes.filter(node =>
+  settings54NodeGroup(node) === group.id ||
+  group.items.some(item => settings54NodeTitle(node).toLowerCase().includes(item.toLowerCase())) ||
+  settings54NodeTitle(node).toLowerCase().includes(group.focus.toLowerCase()));
+const settings54FindNodeForGroup = (group, nodes) => settings54GroupNodes(group, nodes)[0] || null;
+const settings54MatchNode = (node, query) => {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return true;
+  return [settings54NodeTitle(node), node?.sub, node?.group, node?.engine, ...(node?.params || []).map(settings54ParamLabel)]
+    .some(value => String(value || '').toLowerCase().includes(q));
+};
+const settings54NodeView = (node, index) => {
+  const cat = studioCategory(node?.cat || 'logic');
+  return {
+    glyph: cat.icon || String(settings54NodeTitle(node)).slice(0, 1).toUpperCase(),
+    color: cat.col || LM.accent,
+    x: Number.isFinite(node?.x) ? node.x : 40 + (index % 3) * 300,
+    y: Number.isFinite(node?.y) ? node.y : 76 + Math.floor(index / 3) * 206,
+    w: node?.w || 240,
+  };
+};
+const settings54GroupSub = group => group.items.join(' · ');
+const settings54Button = (active=false, extra={}) => ({
+  border:`1px solid ${active ? LM.accent : LM.line}`, background:active ? LM.bgHover : 'transparent',
+  color:active ? LM.ink : LM.inkSoft, borderRadius:LM.rad.control, cursor:'pointer',
+  fontFamily:LM.sans, fontSize:12, fontWeight:500, padding:'0 10px', height:26,
+  display:'inline-flex', alignItems:'center', justifyContent:'center', gap:6, whiteSpace:'nowrap', ...extra,
+});
+const Settings54Tile = ({ glyph, color, size=20 }) => (
+  <span aria-hidden="true" style={{ width:size, height:size, borderRadius:size === 30 ? 8 : 5, background:color, color:LM.onFill,
+    display:'grid', placeItems:'center', fontFamily:LM.sans, fontSize:size === 30 ? 15 : 11, fontWeight:600, flex:'none' }}>{glyph}</span>
+);
+const Settings54Seg = ({ value, options=['Ask', 'Allow', 'Off'], onChange, ariaLabel, disabled=false }) => (
+  <span data-seg-control="" aria-label={ariaLabel} style={{ display:'inline-flex', border:`1px solid ${LM.line}`, borderRadius:LM.rad.control,
+    overflow:'hidden', height:26, fontFamily:LM.sans }}>
+    {options.map((option, index) => <button key={option} type="button" disabled={disabled} onClick={() => onChange && onChange(option)}
+      style={{ border:0, borderLeft:index ? `1px solid ${LM.line}` : 0, background:option === value ? LM.accentSoft : 'transparent',
+        color:option === value ? LM.accentHi : LM.ink, padding:'0 8px', minWidth:42, fontFamily:LM.sans, fontSize:12,
+        cursor:disabled ? 'default' : 'pointer', opacity:disabled ? .55 : 1 }}>{option}</button>)}
+  </span>
+);
+const Settings54Select = ({ label, value, onChange, options = [], disabled=false }) => (
+  <select aria-label={label} value={value} disabled={disabled} onChange={event => onChange && onChange(event.target.value)}
+    data-settings54-sel="" style={{ width:200, height:26, boxSizing:'border-box', padding:'0 8px',
+      border:`1px solid ${LM.line}`, borderRadius:LM.rad.control, background:LM.bgSoft,
+      color:LM.ink, fontFamily:LM.sans, fontSize:12, opacity:disabled ? .55 : 1 }}>
+    {options.map(option => Array.isArray(option)
+      ? <option key={option[0]} value={option[0]}>{option[1]}</option>
+      : <option key={option} value={option}>{option}</option>)}
+  </select>
+);
+const Settings54Switch = ({ on, disabled, onClick, label }) => (
+  <button type="button" role="switch" aria-checked={!!on} aria-label={label} disabled={disabled} onClick={onClick}
+    style={{ width:30, height:18, borderRadius:999, background:on ? LM.accent : LM.bgHover,
+      border:`1px solid ${on ? LM.accent : LM.line}`, position:'relative', padding:0, cursor:disabled ? 'default' : 'pointer',
+      opacity:disabled ? .5 : 1 }}>
+    <span style={{ position:'absolute', top:2, left:on ? 14 : 2, width:12, height:12, borderRadius:'50%', background:on ? LM.onFill : LM.inkSoft }}/>
+  </button>
+);
+const Settings54Num = ({ value, unit, onChange, label, disabled=false }) => (
+  <span style={{ display:'inline-flex', alignItems:'center', gap:6 }}>
+    <input aria-label={label} type="number" value={value} disabled={disabled} onChange={event => onChange && onChange(event.target.value)}
+      style={{ width:68, height:26, boxSizing:'border-box', padding:'0 8px', textAlign:'right',
+        border:`1px solid ${LM.line}`, borderRadius:LM.rad.control, background:LM.bgSoft, color:LM.ink,
+        fontFamily:LM.sans, fontSize:12, opacity:disabled ? .55 : 1 }}/>
+    {unit && <span style={{ fontSize:12, color:LM.inkSoft }}>{unit}</span>}
+  </span>
+);
+const settings54ParamWriter = row => {
+  const key = settings54ParamKey(row);
+  if (!key) return { ok:false, reason:'No parameter key is published for this setting.' };
+  if (row?.editable === false) return { ok:false, reason:'This setting is read-only in the System projection.' };
+  const wanted = String(row?.writer || row?.write_route || row?.writeRoute || row?.setter || '').trim();
+  const hasPersist = typeof window !== 'undefined' && typeof window.pmPersistValue === 'function';
+  const hasNodeProp = typeof window !== 'undefined' && typeof window.ARCHHUB_SET_NODE_PROP === 'function';
+  if (wanted) {
+    if (/pmPersistValue/i.test(wanted)) return hasPersist
+      ? { ok:true, route:'pmPersistValue' }
+      : { ok:false, reason:'Writer pmPersistValue is not available in this runtime.' };
+    if (/ARCHHUB_SET_NODE_PROP|node[-_ ]?prop|system[-_ ]?param/i.test(wanted)) return hasNodeProp
+      ? { ok:true, route:'ARCHHUB_SET_NODE_PROP' }
+      : { ok:false, reason:'Writer ARCHHUB_SET_NODE_PROP is not available in this runtime.' };
+    return { ok:false, reason:'Writer ' + wanted + ' is not supported in this runtime.' };
+  }
+  if (hasNodeProp) return { ok:true, route:'ARCHHUB_SET_NODE_PROP' };
+  return { ok:false, reason:'Parameter writer is not available in this runtime.' };
+};
+const Settings54ParamRow = ({ label, children, changed, hint, onReset }) => (
+  <div data-settings54-param-row="" style={{ display:'grid', gridTemplateColumns:'96px minmax(0, 1fr) auto',
+    alignItems:'center', gap:8, minHeight:32, padding:'0 12px', borderTop:`1px solid ${LM.lineSoft}`, fontFamily:LM.sans }}>
+    <span style={{ fontSize:13, color:LM.inkSoft, display:'flex', alignItems:'center', gap:6 }}>
+      {changed && <span style={{ width:6, height:6, borderRadius:'50%', background:LM.accent }}/>}
+      {label}
+    </span>
+    <span style={{ display:'grid', gap:2, padding:'4px 0' }}>
+      <span style={{ display:'flex', alignItems:'center', gap:8, minWidth:0 }}>{children}</span>
+      {hint && <span style={{ fontSize:11, color:LM.inkSoft }}>{hint}</span>}
+    </span>
+    {changed && onReset ? <button type="button" onClick={onReset}
+      style={settings54Button(false, {border:'1px solid transparent', textDecoration:'underline', color:LM.inkSoft})}>Reset</button> : <span/>}
+  </div>
+);
+const Settings54Socket = ({ t = 'any', list, filled }) => {
+  const color = t === 'view' ? LM.cyan : t === 'boolean' ? LM.purple : t === 'number' ? LM.warn : t === 'event' ? LM.cyan : t === 'text' ? LM.inkSoft : LM.inkSoft;
+  if (t === 'event') return <span style={{ width:0, height:0, borderTop:'6px solid transparent', borderBottom:'6px solid transparent', borderLeft:`10px solid ${color}` }}/>;
+  if (t === 'any') return <span style={{ width:11, height:11, borderRadius:'50%', border:`2px dashed ${color}`, boxSizing:'border-box' }}/>;
+  return <span style={{ width:11, height:11, borderRadius:list ? 2 : '50%', transform:list ? 'rotate(45deg) scale(.86)' : 'none',
+    background:filled ? color : LM.bgPanel, border:`2px solid ${color}`, boxSizing:'border-box' }}/>;
+};
+const Settings54ParamChip = ({ label, value }) => (
+  <span style={{ display:'grid', gridTemplateColumns:'1fr auto', gap:8, borderTop:`1px solid ${LM.lineSoft}`,
+    padding:'4px 10px', fontSize:12 }}>
+    <span style={{ color:LM.inkSoft, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{label}</span>
+    <span style={{ color:LM.ink, display:'flex', alignItems:'center', gap:6, background:LM.bgSoft, borderRadius:5, padding:'1px 8px' }}>
+      {label === 'Accent' && <span style={{ width:10, height:10, borderRadius:2, background:value, boxShadow:`inset 0 0 0 1px ${LM.line}` }}/>}
+      {value}
+    </span>
+  </span>
+);
+const settings54PortLabel = port => port?.label || port?.l || port?.id || '';
+const settings54PortId = port => port?.id || port?.k || port?.label || port?.l || '';
+const Settings54Card = ({ node, view, selected, connected, action }) => {
+  const name = settings54NodeTitle(node);
+  const ins = node?.ins || [], outs = node?.outs || [], rows = Math.max(ins.length, outs.length);
+  const params = (node?.params || []).slice(0, 3);
+  const preview = node.preview?.text ?? node.preview?.summary ?? node.result;
+  return <button type="button" data-settings54-node-card={name} data-settings54-node-id={node.id} data-canvas-card-skin="078"
+    data-node-state={canvasNeedsUser(node) ? 'needs-user' : node.state || node.status || 'unavailable'} onClick={action} style={{ position:'absolute', left:view.x, top:view.y, width:view.w || 224, padding:0,
+    textAlign:'left', ...canvasCardSurface(canvasNeedsUser(node)), border:`1px solid ${selected ? LM.accent : LM.line}`,
+    outline:selected ? `1px solid ${LM.accent}` : 'none', color:LM.ink, fontFamily:LM.sans, cursor:'pointer', overflow:'hidden' }}>
+    <span style={{ display:'flex', alignItems:'center', gap:10, padding:'12px 14px 10px' }}>
+      <span data-node-status-ring={node.state || node.status || 'unavailable'} style={{boxShadow:`0 0 0 2px ${canvasStatusColor(node)}`,borderRadius:8}}><Settings54Tile glyph={view.glyph} color={view.color} size={30}/></span>
+      <span style={{ minWidth:0, flex:1 }}>
+        <span style={{ display:'block', fontSize:14, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{name}</span>
+        <span style={{ display:'block', fontSize:12, color:LM.inkSoft, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{node.subtitle || node.description || view.subtitle || 'System'}</span>
+      </span>
+      <span style={{ width:8, height:8, borderRadius:'50%', background:(connected.in || connected.out) ? LM.ok : LM.inkSoft }}/>
+    </span>
+    <span data-node-preview-slot="" aria-disabled={!node.preview} style={{display:'block',minHeight:32,margin:'0 14px 8px',
+      borderRadius:8,fontSize:12.5,color:LM.inkSoft,overflow:'hidden'}}>
+      {preview == null ? 'Not available yet' : typeof preview === 'object' ? JSON.stringify(preview) : String(preview)}
+    </span>
+    {rows > 0 && <span data-settings54-ports="" style={{ display:'grid', gridTemplateColumns:'1fr 1fr', borderTop:`1px solid ${LM.line}`, padding:'4px 0' }}>
+      <span>{ins.map(port => <span key={settings54PortId(port)} style={{ position:'relative', height:22, display:'flex', alignItems:'center', padding:'0 12px', fontSize:12 }}>
+        <span data-settings54-port={node.id + ':' + settings54PortId(port)} style={{ position:'absolute', left:-6, top:6 }}><Settings54Socket t={port.t} list={port.list} filled={connected.in}/></span>{settings54PortLabel(port)}
+      </span>)}</span>
+      <span>{outs.map(port => <span key={settings54PortId(port)} style={{ position:'relative', height:22, display:'flex', alignItems:'center', justifyContent:'flex-end', padding:'0 12px', fontSize:12 }}>
+        {settings54PortLabel(port)}<span data-settings54-port={node.id + ':' + settings54PortId(port)} style={{ position:'absolute', right:-6, top:6 }}><Settings54Socket t={port.t} list={port.list} filled={connected.out}/></span>
+      </span>)}</span>
+    </span>}
+    {params.map(row => <Settings54ParamChip key={settings54ParamKey(row) || settings54ParamLabel(row)} label={settings54ParamLabel(row)} value={String(settings54ParamValue(row))}/>)}
+    {(node?.params || []).length > params.length ? <span style={{ display:'block', padding:'2px 10px 4px', fontSize:11, color:LM.inkSoft }}>+{(node.params || []).length - params.length} more</span> : null}
+    <span data-settings54-footer="" style={{ display:'block', borderTop:`1px solid ${LM.line}`, padding:'9px 14px', fontSize:12.5, color:canvasStatusColor(node) }}>
+      {node.status || node.state || ((connected.in || connected.out) ? 'connected projection' : 'Not available yet')}
+    </span>
+  </button>;
+};
 const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub', onOpenTool, onOpenToolGraph }) => {
   const providers = useProviderStatus();
   const workshopState = useWorkshopProjection();
@@ -7509,120 +8893,317 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
   const personal = usePersonalTheme();
   const hub = useToolHubProjection();
   const toolRows = toolRowsFromOwners({workshopState, account, personal, hub});
-  const toolsLive = toolCounts(toolRows);
   const authorityState = useStudioProjection();
-  const canOpenSystem = systemAllowed(authorityState?.canvas, authorityState?.graph || LM_GRAPH);
-  const systemNodeBadge = systemGraphNodeCount(authorityState?.graph || LM_GRAPH) + ' nodes';
-  // The Hosts badge states the cached host probe, read when Settings opens. The brain is
-  // another process and may be slow or down, so it is read only when the Brain tab opens
-  // (SettingsMemory); the badge states the facts already held (2026-09-24 click-path gate).
+  const projectedGraph = authorityState?.graph || LM_GRAPH;
+  const systemNodes = settings54SystemNodes(projectedGraph);
+  const systemWires = settings54SystemWires(projectedGraph, systemNodes);
+  const canOpenSystem = systemAllowed(authorityState?.canvas, projectedGraph);
+  const projectionRevision = authorityState?.canvas?.revision ?? workshopState?.canvas?.revision ?? '';
   useLiveCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS);
-  const [tab, setTab] = React.useState(initialTab || 'hub');
-  React.useEffect(() => { if (initialTab) setTab(initialTab); }, [initialTab]);
   const [store, setStore] = React.useState(() => {
-    // Only the Brain panel's session record lives here. Permission modes and host on/off switches
-    // were stored here too and nothing read them, so they are gone (2026-09-24).
     var seed = { forgotten: [], revealed: {} };
-    // MERGE PER KEY, never swap the container: Object.assign is shallow, so a persisted
-    // `perms`/`hosts` object would REPLACE the fully-seeded one and drop every capability the
-    // founder hadn't touched. Rows still rendered (each falls back to its own default) but the
-    // sidebar badges count Object.values(store.perms) — so the panel looked right while the
-    // badge under-reported.
     try {
       var raw = localStorage.getItem(SET_LS);
       if (raw) {
         var saved = JSON.parse(raw) || {};
-        delete saved.theme; // Saved appearance belongs to the graph, never this legacy UI cache.
-        delete saved.perms; delete saved.hosts; // retired ornamental switches
-        return Object.assign({}, seed, saved, {
-          revealed: Object.assign({}, seed.revealed, saved.revealed || {}),
-        });
+        delete saved.theme; delete saved.perms; delete saved.hosts;
+        return Object.assign({}, seed, saved, { revealed: Object.assign({}, seed.revealed, saved.revealed || {}) });
       }
     } catch (e) {}
     return seed;
   });
   React.useEffect(() => { try { localStorage.setItem(SET_LS, JSON.stringify(store)); } catch (e) {} }, [store]);
   const patch = (k, v) => setStore(st => Object.assign({}, st, typeof k === 'object' ? k : { [k]: v }));
-  const keyed = providerKeyed(providers.rows);
-  const tabs = [
-    ['hub',         'Hub',         `${toolsLive.live}/${toolRows.length} running`],
-    ...(canOpenSystem ? [['system',      'System',      systemNodeBadge]] : []),
-    ['account',     'Account',     (account || {}).graphTier || null],
-    ['memory',      'Brain',       `${(window.BRAIN_STRATA || []).length} strata \u00b7 ${LM_MEMORY.length - (store.forgotten || []).length} facts`],
-    // A badge is one short fact; the sentence lives in the tab (it wrapped to 3 lines in the sidebar).
-    ['baboom',      'BABOOM',      `${baboomMaxSpeaks(personal)}/h`],
-    ['team',        'Team',        null],
-    ['profile',     'Profile',     'Architect'],
-    ['permissions', 'Permissions', null],
-    ['workspaces',  'Workspaces',  null],
-    ['hosts',       'Hosts',       hostTally().read ? `${hostTally().running}/${hostTally().total} running` : null],
-    ['providers',   'Providers',   providers.rows ? `${keyed} key${keyed === 1 ? '' : 's'}` : null],
-    ['models',      'Models',      pickedModel() ? pickedModel().name : null],
-    ['theme',       'Theme',       STUDIO_THEME_MODE],
-    ['shortcuts',   'Shortcuts',   null],
-    ['storage',     'Storage',     null],
-    ['about',       'About',       null],
-  ];
+  const groupFromTab = tabName => {
+    const map = {hub:'connections', hosts:'connections', providers:'connections', connections:'connections', account:'account', profile:'account', team:'account',
+      memory:'ai', brain:'ai', baboom:'ai', models:'ai', permissions:'permissions', workspaces:'permissions',
+      theme:'appearance', shortcuts:'appearance', storage:'storage', about:'storage', system:'appearance'};
+    return SETTINGS54_GROUPS.find(group => group.id === (map[tabName] || 'appearance')) || SETTINGS54_GROUPS[4];
+  };
+  const initialGroup = groupFromTab(initialTab);
+  const [selectedGroupId, setSelectedGroupId] = React.useState(initialGroup.id);
+  const [selectedId, setSelectedId] = React.useState(() => settings54FindNodeForGroup(initialGroup, systemNodes)?.id || '');
+  const [query, setQuery] = React.useState('');
+  const [statusMessage, setStatusMessage] = React.useState('');
+  const [activeCapability, setActiveCapability] = React.useState(initialGroup.items[0] || 'Hub');
+  const selectedGroup = SETTINGS54_GROUPS.find(group => group.id === selectedGroupId) || initialGroup;
+  React.useEffect(() => {
+    const capabilityMap = {hub:'Hub', hosts:'Hosts', providers:'Providers', connections:'Connections', account:'Account', profile:'Profile', team:'Team',
+      memory:'Brain', brain:'Brain', baboom:'BABOOM', models:'Models', permissions:'Permissions', workspaces:'Workspaces',
+      theme:'Theme', shortcuts:'Shortcuts', storage:'Storage', about:'About', system:'System'};
+    if (initialTab) {
+      const group = groupFromTab(initialTab);
+      const node = settings54FindNodeForGroup(group, systemNodes);
+      setSelectedGroupId(group.id);
+      setSelectedId(node?.id || '');
+      setActiveCapability(capabilityMap[initialTab] || 'Hub');
+    }
+  }, [initialTab, systemNodes.map(node => node.id).join('|')]);
+  React.useEffect(() => {
+    const selectedStillLive = !!selectedId && systemNodes.some(node => node.id === selectedId);
+    if (selectedStillLive) return;
+    const node = settings54FindNodeForGroup(selectedGroup, systemNodes);
+    setSelectedId(node?.id || '');
+  }, [selectedId, selectedGroup.id, systemNodes.map(node => node.id).join('|')]);
+  const selectedNode = systemNodes.find(node => node.id === selectedId) || null;
+  const visibleGroups = SETTINGS54_GROUPS.filter(group => !query.trim() ||
+    group.title.toLowerCase().includes(query.trim().toLowerCase()) ||
+    group.items.some(item => item.toLowerCase().includes(query.trim().toLowerCase())) ||
+    settings54GroupNodes(group, systemNodes).some(node => settings54MatchNode(node, query)));
+  const graphItems = systemNodes.filter(node => settings54MatchNode(node, query));
+  const graphNodes = graphItems.length || query.trim() ? graphItems : systemNodes;
+  const graphViews = new Map(graphNodes.map((node, index) => [node.id, settings54NodeView(node, index)]));
+  const selectedView = selectedNode ? graphViews.get(selectedNode.id) || settings54NodeView(selectedNode, 0) : null;
+  const graphFocus = selectedView ? { x:420 - selectedView.x - (selectedView.w || 240) / 2, y:220 - selectedView.y } : {x:20, y:68};
+  const nodeWireState = React.useCallback(node => ({
+    in: systemWires.some(wire => wire.to?.[0] === node.id),
+    out: systemWires.some(wire => wire.from?.[0] === node.id),
+  }), [systemWires]);
+  const chooseGroup = group => {
+    const node = settings54FindNodeForGroup(group, systemNodes);
+    setSelectedGroupId(group.id);
+    setSelectedId(node?.id || '');
+    setActiveCapability(group.items[0] || group.title);
+  };
+  const chooseCapability = (group, label) => {
+    const node = systemNodes.find(item =>
+      settings54NodeGroup(item) === group.id &&
+      settings54NodeTitle(item).toLowerCase().includes(String(label || '').toLowerCase())) ||
+      settings54FindNodeForGroup(group, systemNodes);
+    setSelectedGroupId(group.id);
+    setSelectedId(node?.id || '');
+    setActiveCapability(label);
+  };
+  const findSetting = value => {
+    setQuery(value);
+    const match = systemNodes.find(node => settings54MatchNode(node, value));
+    if (match) {
+      const group = SETTINGS54_GROUPS.find(item => settings54GroupNodes(item, [match]).length);
+      if (group) setSelectedGroupId(group.id);
+      setSelectedId(match.id);
+      setActiveCapability('Properties');
+    }
+  };
+  const writeParam = async (node, row, value) => {
+    const key = settings54ParamKey(row);
+    if (!node || !key) throw new Error('Not available yet');
+    const writer = settings54ParamWriter(row);
+    if (!writer.ok) { setStatusMessage(writer.reason); return; }
+    setStatusMessage('');
+    try {
+      if (writer.route === 'pmPersistValue') await window.pmPersistValue(node, key, value);
+      else if (writer.route === 'ARCHHUB_SET_NODE_PROP') await window.ARCHHUB_SET_NODE_PROP(node.id, key, value);
+      else throw new Error(writer.reason || 'Parameter writer is not available in this runtime.');
+      setStatusMessage('Saved ' + settings54ParamLabel(row));
+    } catch (error) {
+      setStatusMessage(error.message || 'Parameter write failed.');
+    }
+  };
+  const optionsFor = row => {
+    const opts = row?.options || row?.opts || row?.choices || row?.enum;
+    if (Array.isArray(opts)) return opts.map(option => Array.isArray(option) ? option : String(option));
+    return [];
+  };
+  const paramControl = (node, row) => {
+    const label = settings54ParamLabel(row);
+    const value = settings54ParamValue(row);
+    const type = String(row?.type || row?.kind || '').toLowerCase();
+    const writer = settings54ParamWriter(row);
+    const opts = optionsFor(row);
+    const unavailable = !writer.ok;
+    const title = writer.ok ? '' : writer.reason;
+    if (opts.length) return <span title={title}><Settings54Select label={label} value={String(value)} options={opts} disabled={unavailable}
+      onChange={next => writeParam(node, row, next)}/></span>;
+    if (type.includes('bool') || type.includes('toggle') || typeof value === 'boolean') return <span title={title}><Settings54Switch on={value === true || String(value).toLowerCase() === 'true' || String(value).toLowerCase() === 'on'}
+      disabled={unavailable} label={label} onClick={() => writeParam(node, row, !(value === true || String(value).toLowerCase() === 'true' || String(value).toLowerCase() === 'on'))}/></span>;
+    if (type.includes('number') || type.includes('int') || type.includes('float') || (String(value) !== '' && !Number.isNaN(Number(value)))) return <span title={title}><Settings54Num value={String(value)} disabled={unavailable}
+      unit={row?.unit || ''} label={label} onChange={next => writeParam(node, row, next)}/></span>;
+    if (type.includes('color') || /^#[0-9a-f]{6}$/i.test(String(value))) return <input aria-label={label} title={title} type="color" defaultValue={String(value || '#4f8cff')} disabled={unavailable}
+      onChange={event => writeParam(node, row, event.target.value)}
+      style={{ width:26, height:26, padding:0, border:`1px solid ${LM.line}`, borderRadius:LM.rad.control, background:LM.bgSoft, opacity:unavailable ? .55 : 1 }}/>;
+    return <input aria-label={label} title={title} defaultValue={String(value)} disabled={unavailable} onBlur={event => writeParam(node, row, event.target.value)}
+      style={{ height:26, width:'100%', background:LM.bgSoft, color:LM.ink, border:`1px solid ${LM.line}`, borderRadius:LM.rad.control, fontFamily:LM.sans, fontSize:12, padding:'0 8px', opacity:unavailable ? .55 : 1 }}/>;
+  };
+  const arrangeSystem = async () => {
+    if (!systemNodes.length) { setStatusMessage('System projection is not available.'); return; }
+    const ids = systemNodes.map(node => node.id);
+    const positions = Object.fromEntries(systemNodes.map((node, index) => [node.id, {
+      x:Number.isFinite(node.x) ? node.x : 40 + (index % 3) * 300,
+      y:Number.isFinite(node.y) ? node.y : 76 + Math.floor(index / 3) * 206,
+    }]));
+    const sizes = Object.fromEntries(systemNodes.map(node => [node.id, {w:node.w || 240, h:Math.max(110, 86 + (node.params || []).slice(0, 3).length * 24)}]));
+    const next = canvasArrangePositions(ids, positions, sizes, ids, systemWires);
+    const changed = Object.fromEntries(Object.entries(next).filter(([id, point]) => point.x !== positions[id]?.x || point.y !== positions[id]?.y));
+    if (!Object.keys(changed).length) { setStatusMessage('Arrangement is already current.'); return; }
+    const before = Object.fromEntries(Object.keys(changed).map(id => [id, positions[id]]));
+    const revision = authorityState?.canvas?.revision;
+    try {
+      if (window.ARCHHUB_STUDIO_AUTHORITY?.moveMany) await window.ARCHHUB_STUDIO_AUTHORITY.moveMany(changed, revision, before, 'arrange');
+      else if (window.ARCHHUB_EXISTING_WORKSHOP?.moveTopologyNodes) await window.ARCHHUB_EXISTING_WORKSHOP.moveTopologyNodes(changed, revision, before, 'arrange');
+      else throw new Error('Not available yet');
+      setStatusMessage('Arranged ' + Object.keys(changed).length + ' System nodes');
+    } catch (error) {
+      setStatusMessage(error.message || 'Arrange failed.');
+    }
+  };
+  const openCompatibilityTab = tabName => {
+    const key = String(tabName || '').toLowerCase();
+    const names = {hub:'Hub', hosts:'Hosts', providers:'Providers', connections:'Connections',
+      account:'Account', profile:'Profile', team:'Team', memory:'Brain', brain:'Brain', baboom:'BABOOM',
+      models:'Models', permissions:'Permissions', workspaces:'Workspaces', theme:'Theme',
+      shortcuts:'Shortcuts', storage:'Storage', about:'About', system:'System'};
+    chooseCapability(groupFromTab(key), names[key] || String(tabName || ''));
+  };
+  const inspectorRows = () => {
+    const capabilityBelongsToNode = selectedGroup.items.includes(activeCapability) ||
+      (selectedGroup.id === 'appearance' && activeCapability === 'System');
+    const showingProperties = activeCapability === 'Properties' ||
+      (!!selectedNode && !capabilityBelongsToNode) ||
+      (!!query.trim() && selectedNode && settings54MatchNode(selectedNode, query));
+    const capabilityPanel = () => {
+      if (showingProperties) return null;
+      if (activeCapability === 'Hub') return <SettingsHub toolRows={toolRows} onClose={onClose} onOpenTool={onOpenTool} onOpenToolGraph={onOpenToolGraph} columns={3}/>;
+      if (activeCapability === 'System') return <SettingsSystem graph={authorityState?.graph || LM_GRAPH} projection={authorityState} onClose={onClose} onOpenToolGraph={onOpenToolGraph} onBackToSettings={() => setActiveCapability('Hub')}/>;
+      if (activeCapability === 'Account') return <SettingsAccount account={account} setAccount={setAccount} onSignOut={onSignOut}/>;
+      if (activeCapability === 'Brain') return <SettingsMemory store={store} patch={patch}/>;
+      if (activeCapability === 'BABOOM') return <SettingsBaboom onOpenToolGraph={onOpenToolGraph} onClose={onClose}/>;
+      if (activeCapability === 'Team') return <SettingsTeam account={account} onAccount={() => setActiveCapability('Account')}/>;
+      if (activeCapability === 'Profile') return <SettingsProfile/>;
+      if (activeCapability === 'Permissions') return <SettingsPermissions account={account} onTab={openCompatibilityTab}/>;
+      if (activeCapability === 'Workspaces') return <SettingsWorkspaces/>;
+      if (activeCapability === 'Hosts') return <SettingsHosts/>;
+      if (activeCapability === 'Connections') return <SettingsConnections/>;
+      if (activeCapability === 'Providers') return <SettingsProviders providers={providers} onTab={openCompatibilityTab}/>;
+      if (activeCapability === 'Models') return <SettingsModels/>;
+      if (activeCapability === 'Theme') return <SettingsTheme/>;
+      if (activeCapability === 'Shortcuts') return <SettingsShortcuts/>;
+      if (activeCapability === 'Storage') return <SettingsStorage/>;
+      if (activeCapability === 'About') return <SettingsAbout providers={providers} release={release}/>;
+      return null;
+    };
+    const panel = capabilityPanel();
+    if (panel) return <div data-settings54-capability={activeCapability} style={{ padding:12 }}>{panel}</div>;
+    const rows = selectedNode?.params || [];
+    if (!selectedNode) return <Settings54ParamRow label="OPEN"><button type="button" disabled style={settings54Button(false, {cursor:'default', opacity:.6})}>Not available yet</button></Settings54ParamRow>;
+    if (!rows.length) return <Settings54ParamRow label="OPEN" hint="This projected node exposes no writable parameters here."><button type="button" disabled style={settings54Button(false, {cursor:'default', opacity:.6})}>Not available yet</button></Settings54ParamRow>;
+    return rows.map(row => <Settings54ParamRow key={settings54ParamKey(row) || settings54ParamLabel(row)} label={settings54ParamLabel(row)}
+      hint={[row?.hint || row?.description || '', settings54ParamWriter(row).ok ? '' : settings54ParamWriter(row).reason].filter(Boolean).join(' ')}>
+      {paramControl(selectedNode, row)}</Settings54ParamRow>);
+  };
   return (
     <div onClick={onClose} style={{
       position:'absolute', inset:0, background:LM.scrim, zIndex:60,
-      display:'grid', placeItems:'center',
+      display:'grid',
     }}>
-      {/* A modal over a live screen (every settings tool opens here): say so, so nothing behind it is reachable as if open. */}
-      <div role="dialog" aria-modal="true" aria-label="Settings" onClick={e => e.stopPropagation()} style={{
-        // UX-SET1: the dialog grows with the window (920×580 left a scrolled sidebar and truncated cards at 1920).
-        width:1200, maxWidth:'92vw', height:780, maxHeight:'88vh',
-        background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.dialog,
-        overflow:'hidden', boxShadow:LM.shadow.dialog,
-        display:'grid', gridTemplateColumns:'208px 1fr', gridTemplateRows:'46px 1fr',
+      <div data-settings54-shell="" role="dialog" aria-modal="true" aria-label="Settings" onClick={e => e.stopPropagation()} style={{
+        width:'100%', height:'100%', background:LM.bgDeep, color:LM.ink, overflow:'hidden',
+        display:'grid', gridTemplateRows:'1fr 22px', fontFamily:LM.sans,
       }}>
-        <div style={{ gridColumn:'1 / -1', gridRow:'1', borderBottom:`1px solid ${LM.line}`, display:'flex', alignItems:'center', gap:LM.sp.md, padding:`0 ${LM.sp.lg}px` }}>
-          <span style={{ fontFamily:LM.sans, fontSize:LM.fs.title.sz, lineHeight:LM.fs.title.ln + 'px', fontWeight:LM.fs.title.wt }}>Settings</span>
-          <span style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, color:LM.inkSoft, letterSpacing:LM.fs.label.letter, fontWeight:LM.fs.label.wt }}>STUDIO{release?.current_build ? ' \u00b7 ' + release.current_build : ''}</span>
-          <div style={{ flex:1 }}/>
-          <button onClick={onClose} aria-label="Close" data-close-button style={{
-            height:28, padding:'0 10px', border:`1px solid ${LM.line}`, background:'transparent',
-            borderRadius:LM.rad.sm, cursor:'pointer', color:LM.inkSoft, fontSize:12,
-            fontFamily:LM.sans, fontWeight:500, marginRight:8,
-          }}>Close</button>
-          <button onClick={onClose} aria-label="Close" style={{
-            width:24, height:24, padding:0, border:`1px solid ${LM.line}`, background:'transparent',
-            borderRadius:LM.rad.sm, cursor:'pointer', color:LM.inkSoft, fontSize:12,
-          }}>✕</button>
+        <div style={{ display:'grid', gridTemplateColumns:'44px 248px 1fr 320px', minHeight:0 }}>
+          <nav style={{ background:LM.bg, borderRight:`1px solid ${LM.lineSoft}`, display:'grid', gridTemplateRows:'auto 1fr auto', paddingTop:6 }}>
+            <div style={{ display:'grid', gap:2 }}>
+              {['Chats', 'Library', 'Docs', 'Cockpit'].map((label, index) => <span key={label} style={{ display:'grid', justifyItems:'center', gap:2, padding:'5px 0', color:LM.inkSoft, fontSize:11 }}>
+                <span style={{ width:28, height:24, display:'grid', placeItems:'center' }}>{['◌', '▦', '?', '◫'][index]}</span>{label}
+              </span>)}
+            </div>
+            <span/>
+            <div style={{ display:'grid', justifyItems:'center', gap:6, paddingBottom:8 }}>
+              <span style={{ display:'grid', justifyItems:'center', gap:2, color:LM.ink, fontSize:11 }}>
+                <span style={{ width:28, height:28, borderRadius:6, background:LM.bgHover, display:'grid', placeItems:'center', borderLeft:`2px solid ${LM.accent}` }}>⚙</span>Settings
+              </span>
+              <span style={{ width:28, height:28, borderRadius:'50%', background:LM.userAv || LM.accent, color:LM.onUserAv || LM.onFill, display:'grid', placeItems:'center', fontSize:12, fontWeight:600 }}>AF</span>
+            </div>
+          </nav>
+          <aside style={{ background:LM.bgPanel, borderRight:`1px solid ${LM.line}`, display:'grid', gridTemplateRows:'44px auto 1fr', minWidth:0 }}>
+            <div style={{ display:'flex', alignItems:'center', padding:'0 12px', borderBottom:`1px solid ${LM.lineSoft}`, fontSize:16, fontWeight:600 }}>Settings</div>
+            <label style={{ margin:10, height:32, borderRadius:5, background:LM.bgSoft, border:`1px solid ${LM.line}`, display:'flex', alignItems:'center', gap:8, padding:'0 10px', color:LM.inkSoft }}>
+              <span>⌕</span><input aria-label="Find a setting" placeholder="Find a setting" value={query} onChange={event => findSetting(event.target.value)}
+                style={{ flex:1, minWidth:0, border:0, outline:0, background:'transparent', color:LM.ink, fontFamily:LM.sans, fontSize:13 }}/>
+            </label>
+            <div data-settings54-nav="" className="ah-scroll" style={{ display:'grid', alignContent:'start', gap:3, padding:'0 6px', overflow:'auto' }}>
+              {visibleGroups.map(group => {
+                const active = group.id === selectedGroup.id;
+                return <div key={group.id} style={{ borderRadius:6, background:active ? LM.bgHover : 'transparent', padding:4 }}>
+                  <button type="button" onClick={() => chooseGroup(group)} style={{ width:'100%', minHeight:34, border:0, background:'transparent',
+                    color:active ? LM.ink : LM.inkSoft, display:'grid', gridTemplateColumns:'20px 1fr', gap:10, alignItems:'center',
+                    textAlign:'left', cursor:'pointer', fontFamily:LM.sans, padding:4 }}>
+                    <Settings54Tile glyph={group.glyph} color={group.color}/>
+                    <span style={{ minWidth:0 }}>
+                      <span data-settings54-group-title="" style={{ display:'block', fontSize:13, fontWeight:active ? 600 : 400, color:active ? LM.ink : LM.inkSoft }}>{group.title}</span>
+                      <span style={{ display:'block', fontSize:11, color:LM.inkSoft, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{settings54GroupSub(group)}</span>
+                    </span>
+                  </button>
+                  {active && <div data-settings54-capability-nav={group.id} style={{ display:'flex', flexWrap:'wrap', gap:4, padding:'0 4px 4px 34px' }}>
+                    {group.items.map(item => <button key={item} type="button" onClick={() => chooseCapability(group, item)}
+                      style={settings54Button(activeCapability === item, {height:22, padding:'0 7px', fontSize:11, maxWidth:'100%'})}>{item}</button>)}
+                    {group.id === 'appearance' && <button type="button" onClick={() => chooseCapability(group, 'System')}
+                      style={settings54Button(activeCapability === 'System', {height:22, padding:'0 7px', fontSize:11})}>System</button>}
+                  </div>}
+                </div>;
+              })}
+            </div>
+          </aside>
+          <main style={{ display:'grid', gridTemplateRows:'36px 1fr', minHeight:0, borderRight:`1px solid ${LM.line}` }}>
+            <div style={{ display:'flex', alignItems:'center', gap:10, padding:'0 12px', borderBottom:`1px solid ${LM.lineSoft}`, background:LM.bg }}>
+              <span style={{ fontSize:12, color:LM.inkSoft }}>Settings <span style={{ margin:'0 6px' }}>›</span><span style={{ color:LM.ink }}>{activeCapability || selectedGroup.title}</span></span>
+              <span style={{ fontSize:11, color:canOpenSystem ? LM.ok : LM.warn }}>{canOpenSystem ? 'live' : 'OPEN'}</span><span style={{ flex:1 }}/>
+              {statusMessage && <span role="status" style={{ fontSize:11, color:LM.inkSoft, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:260 }}>{statusMessage}</span>}
+              <button type="button" onClick={arrangeSystem} style={settings54Button(false, {border:'1px solid transparent', color:LM.ink})}>Arrange</button>
+              <button type="button" aria-label="Close" data-close-button="" onClick={onClose} style={settings54Button(false)}>Close</button>
+            </div>
+            <div data-settings54-graph="" data-settings54-focus={selectedId} style={{ position:'relative', background:LM.bgCanvas || LM.bgDeep, overflow:'hidden',
+              backgroundImage:`radial-gradient(${LM.line} 1px, transparent 1px)`, backgroundSize:'24px 24px' }}>
+              {!selectedNode && <div data-settings54-no-live-node="" style={{ position:'absolute', left:24, top:24, zIndex:1, maxWidth:360,
+                border:`1px dashed ${LM.line}`, borderRadius:6, background:LM.bgPanel, color:LM.inkSoft, padding:'10px 12px', fontSize:13 }}>
+                No live node for {selectedGroup.title} yet
+              </div>}
+              <div style={{ position:'absolute', left:graphFocus.x, top:graphFocus.y, width:900, height:520 }}>
+                <svg style={{ position:'absolute', inset:0, width:'100%', height:'100%', overflow:'visible', pointerEvents:'none' }}>
+                  {systemWires.map((wire, index) => {
+                    const from = graphViews.get(wire.from?.[0]), to = graphViews.get(wire.to?.[0]);
+                    if (!from || !to) return null;
+                    const x1 = from.x + (from.w || 240), y1 = from.y + 60, x2 = to.x, y2 = to.y + 60;
+                    const dx = Math.max(40, Math.abs(x2 - x1) * 0.44);
+                    return <path key={wire.id || index} data-settings54-wire={wire.from?.[0] + ':' + (wire.from?.[1] || '') + '->' + wire.to?.[0] + ':' + (wire.to?.[1] || '')}
+                      d={`M${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`} fill="none"
+                      stroke={LM.inkSoft} strokeWidth="2" strokeLinecap="round"/>;
+                  })}
+                </svg>
+                {graphNodes.map(node => {
+                  const view = graphViews.get(node.id) || settings54NodeView(node, 0);
+                  return <Settings54Card key={node.id} node={node} view={view} selected={node.id === selectedId}
+                    connected={nodeWireState(node)} action={() => { setSelectedId(node.id); setActiveCapability('Properties'); }}/>;
+                })}
+              </div>
+            </div>
+          </main>
+          <aside style={{ background:LM.bgPanel, minHeight:0, overflow:'hidden', display:'grid', gridTemplateRows:'auto auto auto 1fr' }}>
+            <div style={{ display:'flex', gap:8, padding:12, alignItems:'center' }}>
+              <Settings54Tile glyph={selectedView?.glyph || selectedGroup.glyph} color={selectedView?.color || selectedGroup.color}/>
+              <div style={{ minWidth:0 }}>
+                <div style={{ fontSize:15, fontWeight:600 }}>{selectedNode ? settings54NodeTitle(selectedNode) : selectedGroup.title}</div>
+                <div style={{ fontSize:12, color:LM.inkSoft }}>{selectedNode?.sub || selectedNode?.group || selectedNode?.id || 'No live node selected'}</div>
+              </div>
+            </div>
+            <div style={{ display:'flex', gap:2, padding:'0 12px', borderBottom:`1px solid ${LM.line}` }}>
+              {['Chat', 'Properties'].map((tabName, index) => {
+                const active = tabName === 'Properties' && (activeCapability === 'Properties' || !!query.trim());
+                return <button key={tabName} type="button" disabled={tabName === 'Chat'} onClick={() => tabName === 'Properties' && setActiveCapability('Properties')}
+                  style={{ height:32, display:'grid', placeItems:'center', padding:'0 10px', fontSize:13, fontFamily:LM.sans,
+                    color:active ? LM.ink : LM.inkSoft, border:0, borderBottom:`2px solid ${active ? LM.accent : 'transparent'}`,
+                    background:'transparent', cursor:tabName === 'Properties' ? 'pointer' : 'default', opacity:tabName === 'Chat' ? .65 : 1 }}>{tabName}</button>;
+              })}
+            </div>
+            {settings54NodeGroup(selectedNode) !== 'permissions' && <div style={{ display:'flex', gap:6, padding:'8px 12px' }}>
+              <span style={{ display:'inline-flex', height:20, alignItems:'center', padding:'0 8px', borderRadius:999, border:`1px solid ${LM.line}`, fontSize:11, color:LM.inkSoft }}>All</span>
+              {!!(selectedNode?.params || []).length && <span style={{ display:'inline-flex', height:20, alignItems:'center', padding:'0 8px', borderRadius:999, border:`1px solid ${LM.line}`, fontSize:11, color:LM.inkSoft }}>{(selectedNode.params || []).length} parameters</span>}
+            </div>}
+            <div className="ah-scroll" style={{ overflow:'auto', minHeight:0 }}>{inspectorRows()}</div>
+          </aside>
         </div>
-        <div className="ah-scroll" data-settings-nav="" style={{ gridColumn:'1', gridRow:'2', borderRight:`1px solid ${LM.line}`, padding:`${LM.sp.md}px ${LM.sp.sm}px`, overflow:'auto' }}>
-          {tabs.map(([id, label, badge]) => (
-            <button key={id} onClick={() => setTab(id)} style={{
-              width:'100%', padding:`${LM.sp.sm}px ${LM.sp.md}px`, borderRadius:LM.rad.control, border:0,
-              background: tab === id ? LM.bgSoft : 'transparent',
-              color: tab === id ? LM.ink : LM.inkSoft,
-              textAlign:'left', cursor:'pointer', fontFamily:LM.sans, fontSize:LM.fs.bodySm.sz,
-              display:'flex', alignItems:'center', gap:LM.sp.sm, marginBottom:1,
-            }}>
-              <span style={{ flex:1 }}>{label}</span>
-              {badge && <span style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, color:LM.inkSoft, letterSpacing:LM.fs.label.letter, fontWeight:LM.fs.label.wt }}>{badge}</span>}
-            </button>
-          ))}
-        </div>
-        <div className="ah-scroll" style={{ gridColumn:'2', gridRow:'2', overflow:'auto', padding:`20px ${LM.sp.xl}px ${LM.sp.xl}px` }}>
-          {tab === 'hub'         && <SettingsHub toolRows={toolRows} onClose={onClose} onOpenTool={onOpenTool} onOpenToolGraph={onOpenToolGraph} columns={3}/>}
-          {tab === 'system'      && <SettingsSystem graph={authorityState?.graph || LM_GRAPH} projection={authorityState}
-            onClose={onClose} onOpenToolGraph={onOpenToolGraph} onBackToSettings={() => setTab('hub')}/>}
-          {tab === 'account'     && <SettingsAccount account={account} setAccount={setAccount} onSignOut={onSignOut}/>}
-          {tab === 'memory'      && <SettingsMemory store={store} patch={patch}/>}
-          {tab === 'baboom'      && <SettingsBaboom onOpenToolGraph={onOpenToolGraph} onClose={onClose}/>}
-          {tab === 'team'        && <SettingsTeam account={account} onAccount={() => setTab('account')}/>}
-          {tab === 'profile'     && <SettingsProfile/>}
-          {tab === 'permissions' && <SettingsPermissions account={account} onTab={setTab}/>}
-          {tab === 'workspaces'  && <SettingsWorkspaces/>}
-          {tab === 'hosts'       && <SettingsHosts/>}
-          {tab === 'providers'   && <SettingsProviders providers={providers} onTab={setTab}/>}
-          {tab === 'models'      && <SettingsModels/>}
-          {tab === 'theme'       && <SettingsTheme/>}
-          {tab === 'shortcuts'   && <SettingsShortcuts/>}
-          {tab === 'storage'     && <SettingsStorage/>}
-          {tab === 'about'       && <SettingsAbout providers={providers} release={release}/>}
-        </div>
+        <footer style={{ display:'flex', alignItems:'center', gap:14, padding:'0 12px', fontSize:11, color:LM.inkSoft, borderTop:`1px solid ${LM.lineSoft}` }}>
+          <span style={{ color:canOpenSystem ? LM.ok : LM.warn }}>{canOpenSystem ? '● Connected' : '○ OPEN'}</span><span>System graph</span><span>{systemNodes.length} projected nodes</span><span>{projectionRevision !== '' ? 'revision ' + projectionRevision : 'no admitted revision'}</span><span style={{ flex:1 }}/><span>{pickedModel()?.name || 'models unavailable'}</span>
+        </footer>
       </div>
     </div>
   );
@@ -7690,6 +9271,79 @@ const SystemMiniGraph = ({ graph }) => {
     </div>
   </div>;
 };
+const SettingsMods = ({ compact=false }) => {
+  const [state, setState] = React.useState({installed:0, failed:0, rows:[]});
+  const [toast, setToast] = React.useState('');
+  const call = async body => {
+    const api = window.ARCHHUB_MODS;
+    if (!api) return null;
+    const answer = await api(body || {action:'state'});
+    if (answer?.mods) setState(answer.mods);
+    return answer;
+  };
+  const reloadLibrary = async () => {
+    try { await window.ARCHHUB_REFRESH_NODE_LIBRARY?.(); }
+    catch (_) { window.dispatchEvent(new CustomEvent('archhub:library-refresh')); }
+  };
+  React.useEffect(() => { call({action:'state'}).catch(error => setToast(error.message || String(error))); }, []);
+  const toggle = async row => {
+    try {
+      await call({action:'enable', id:row.id, enabled:!row.enabled});
+      await reloadLibrary();
+    } catch (error) {
+      setToast(error.message || String(error));
+    }
+  };
+  const updateParam = async (row, key, value) => {
+    try {
+      await call({action:'param', id:row.id, param:key, value});
+    } catch (error) {
+      setToast(error.message || String(error));
+    }
+  };
+  const rows = state.rows || [];
+  return <section data-settings-mods style={{
+    border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, background:LM.bgPanel,
+    overflow:'hidden', color:LM.ink,
+  }}>
+    <div style={{display:'flex', alignItems:'center', gap:10, padding:'12px 12px', borderBottom:`1px solid ${LM.line}`}}>
+      <div style={{width:20, height:20, display:'grid', placeItems:'center', borderRadius:5, background:LM.accent, color:LM.bg, fontSize:13}}>⌘</div>
+      <div style={{flex:1}}>
+        <div style={{fontFamily:LM.sans, fontSize:20, lineHeight:1.1, fontWeight:700}}>Mods</div>
+        <div style={{fontSize:13, color:LM.inkSoft}}>{state.built_in || 0} built in · {state.installed || 0} installed · {state.failed || 0} did not load</div>
+      </div>
+    </div>
+    <div style={{padding:'10px 12px', display:'grid', gap:8}}>
+      {rows.map(row => {
+        const failed = row.status === 'failed';
+        const tag = row.shipped ? 'built in'
+          : row.tutorials?.length ? `${row.nodes?.length || 0} nodes · ${row.tutorials.length} tutorial` : row.author ? 'mine' : `${row.nodes?.length || 0} node`;
+        return <div key={row.id} data-mod-row={row.status} style={{display:'grid', gridTemplateColumns:'12px 1fr auto', gap:8, alignItems:'center', position:'relative'}}>
+          <span style={{width:8, height:8, borderRadius:8, background:failed ? LM.err : row.enabled ? LM.ok : LM.inkMuted}}/>
+          <div style={{minWidth:0}}>
+            <div style={{display:'flex', alignItems:'center', gap:6, minWidth:0}}>
+              <span style={{fontSize:13, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{row.name}</span>
+              <span style={{fontSize:13, color:LM.inkSoft, border:`1px solid ${LM.line}`, borderRadius:10, padding:'1px 6px'}}>{tag}</span>
+              {row.fired_today > 0 && <span style={{fontSize:13, color:LM.inkSoft}}>fired {row.fired_today} times today</span>}
+            </div>
+            <div style={{fontSize:13, color:failed ? LM.err : LM.inkSoft, lineHeight:1.35}}>
+              {failed ? String(row.error || '').split(/\r?\n/)[0] : row.description || (row.nodes || []).map(n => n.title).join(' and ')}
+            </div>
+            {(row.nodes || []).flatMap(n => Object.entries(n.params || {})).slice(0, 2).map(([k, v]) =>
+              <span key={k} style={{fontSize:13, color:LM.ink, marginRight:10}}>{k.replace(/_/g, ' ')}: <input value={String(v)} onChange={event => updateParam(row, k, event.target.value)} style={{width:58, background:LM.bg, color:LM.ink, border:`1px solid ${LM.line}`, borderRadius:5, fontSize:13, padding:'2px 4px'}}/></span>)}
+          </div>
+          <button type="button" role="switch" aria-checked={!!row.enabled} onClick={() => toggle(row)} style={{
+            width:34, height:18, border:0, borderRadius:18, background:row.enabled ? LM.accent : LM.inkMuted,
+            padding:2, cursor:'pointer',
+          }}><span style={{display:'block', width:14, height:14, borderRadius:14, background:LM.bg, marginLeft:row.enabled ? 16 : 0}}/></button>
+        </div>;
+      })}
+      {toast && <div role="status" style={{fontSize:13, color:LM.inkSoft}}>{toast}</div>}
+    </div>
+  </section>;
+};
+
+
 const SettingsSystem = ({ graph, projection, onClose, onOpenToolGraph, onBackToSettings }) => {
   const count = systemGraphNodeCount(graph);
   const nodes = (graph?.nodes || []).filter(node => node.application === true);
@@ -7721,6 +9375,7 @@ const SettingsSystem = ({ graph, projection, onClose, onOpenToolGraph, onBackToS
       </div>
       <HoverBtn primary onClick={open}>Open the System graph</HoverBtn>
     </div>
+    <SettingsMods/>
     {openError && <p role="status" style={{margin:0, color:LM.warn, fontSize:12.5}}>{openError}</p>}
     {state && <SystemGraphStates state={state} error={projection?.error || ''} pinnedCount={pinnedCount}
       movedCount={Math.max(0, count - pinnedCount)} onReadAgain={readAgain} onBackToSettings={onBackToSettings}
@@ -7758,6 +9413,7 @@ const SettingsHub = ({ toolRows, onClose, onOpenTool, onOpenToolGraph, columns }
     onOpenToolGraph?.(id);
   };
   return <div style={{position:'relative'}}>
+    <SettingsMods compact/>
     <div data-tool-grid style={{ display:'grid', gap:8,
       gridTemplateColumns:columns ? `repeat(${columns}, minmax(0, 1fr))` : 'repeat(auto-fill, minmax(180px, 1fr))' }}>
       {toolRows.map(tool => <div key={tool.id} style={{display:'flex', minWidth:0}}
@@ -8123,96 +9779,95 @@ const SField = ({ label, value }) => (
   </div>
 );
 
-const accessCell = text => <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:text === 'yes' ? LM.ok : LM.inkSoft }}>{text}</span>;
-const accessButton = { ...smallBtn(), padding:'3px 8px', whiteSpace:'nowrap' };
-const SettingsPermissions = ({ account, onTab }) => {
+const SettingsPermissions = ({ account, onTab, compact=false }) => {
   const transport = window.ARCHHUB_EXISTING_WORKSHOP;
-  const [relay, setRelay] = React.useState(null);
-  const [relayBusy, setRelayBusy] = React.useState(false);
-  const [social, setSocial] = React.useState([]);
-  const [approvals, setApprovals] = React.useState([]);
+  const [rows, setRows] = React.useState([]);
+  const [busy, setBusy] = React.useState('');
   const [message, setMessage] = React.useState('');
-  const signedIn = !!account?.signedIn;
-  React.useEffect(() => {
+  const hasPermissionBackend = !!transport?.readSettingsPermissionRows;
+  const readRows = React.useCallback(() => {
     let alive = true;
-    if (transport?.readCloudPublishConsent) transport.readCloudPublishConsent()
-      .then(next => { if (alive) setRelay(next); })
-      .catch(error => { if (alive) setMessage(error.message || 'Cloud relay consent could not be read.'); });
-    if (transport?.listLocalSocialAccounts) transport.listLocalSocialAccounts()
-      .then(next => { if (alive) setSocial(Array.isArray(next) ? next : []); })
-      .catch(error => { if (alive) setMessage(error.message || 'Saved social accounts could not be read.'); });
-    if (transport?.listSocialApprovals) transport.listSocialApprovals()
-      .then(next => { if (alive) setApprovals(Array.isArray(next) ? next : []); })
-      .catch(error => { if (alive) setMessage(error.message || 'Pending approvals could not be read.'); });
+    setMessage('');
+    if (!hasPermissionBackend) {
+      setRows([]);
+      return () => { alive = false; };
+    }
+    transport.readSettingsPermissionRows().then(next => {
+      if (!alive) return;
+      setRows((Array.isArray(next) ? next : []).map(row => ({
+        ...row,
+        read:String(row.read || 'Ask').replace(/^./, c => c.toUpperCase()),
+        write:String(row.write || 'Ask').replace(/^./, c => c.toUpperCase()),
+        send:String(row.send || 'Ask').replace(/^./, c => c.toUpperCase()),
+      })));
+    }).catch(error => {
+      if (alive) setMessage(error.message || 'Permission store unavailable.');
+    });
     return () => { alive = false; };
-  }, [transport]);
-  const toggleRelay = async () => {
-    if (!transport?.setCloudPublishConsent || !relay || relayBusy) return;
-    setRelayBusy(true); setMessage('');
-    try { setRelay(await transport.setCloudPublishConsent(!relay.allowed)); }
-    catch (error) { setMessage(error.message || 'Cloud relay consent could not be changed.'); }
-    finally { setRelayBusy(false); }
-  };
-  const disconnect = async account => {
-    if (!transport?.removeLocalSocialAccount) return;
-    setMessage('');
+  }, [transport, hasPermissionBackend]);
+  React.useEffect(() => readRows(), [readRows]);
+  const change = async (index, col, value) => {
+    const row = rows[index];
+    if (!row || busy) return;
+    if (!hasPermissionBackend || !transport?.setSettingsPermission) {
+      setMessage('Per-agent permissions: not available yet');
+      return;
+    }
+    const next = rows.map((item, idx) => idx === index ? {...item, [col.toLowerCase()]:value} : item);
+    setRows(next);
+    setBusy(row.actor + col); setMessage('');
     try {
-      await transport.removeLocalSocialAccount({provider:account.provider, account_id:account.account_id, vault_entry:account.vault_entry});
-      setSocial(social.filter(row => row.provider !== account.provider || row.account_id !== account.account_id || row.vault_entry !== account.vault_entry));
-    } catch (error) { setMessage(error.message || 'Saved social account could not be disconnected.'); }
+      await transport.setSettingsPermission({actor:row.actor, column:col.toLowerCase(), value});
+    } catch (error) {
+      setRows(rows);
+      setMessage(error.message || 'Permission change was not saved.');
+    } finally { setBusy(''); }
   };
-  const decide = async (item, decision) => {
-    if (!transport?.decideSocialApproval) return;
-    setMessage('');
-    try {
-      await transport.decideSocialApproval({delegation:item.delegation, input_digest:item.input_digest, decision});
-      setApprovals(approvals.filter(row => row.delegation !== item.delegation));
-    } catch (error) { setMessage(error.message || 'Approval decision could not be recorded.'); }
-  };
-  const hostCount = LM_HOSTS.filter(h => hostState(h) !== 'off').length;
-  const connectorCount = (window.ARCHHUB_LIVE?.connectors || []).length;
-  const rows = [];
-  if (hostCount || connectorCount) rows.push({
-    key:'hosts', actor:'Connectors / hosts', read:'yes', write:'workflow', publish:'host route', approval:'yes',
-    control:<button type="button" onClick={() => onTab && onTab('hosts')} style={accessButton}>Open Hosts</button>,
-  });
-  if (relay && transport?.setCloudPublishConsent) rows.push({
-    key:'relay', actor:'Cloud relay / publish', read:relay.allowed ? 'yes' : 'no', write:'no',
-    publish:relay.allowed ? 'allowed' : 'blocked', approval:signedIn ? 'consent' : 'sign in',
-    control:<button type="button" role="switch" aria-checked={!!relay.allowed} aria-label="Allow cloud relay publish"
-      disabled={relayBusy || (!signedIn && !relay.allowed)} onClick={toggleRelay}
-      style={{ width:30, height:16, borderRadius:999, padding:1, border:0, background:relay.allowed ? LM.accent : LM.lineSoft, position:'relative' }}>
-      <span style={{ position:'absolute', top:1, left:relay.allowed ? 14 : 1, width:14, height:14, borderRadius:'50%', background:'#fff' }}/>
-    </button>,
-  });
-  if (social.length && transport?.removeLocalSocialAccount) rows.push({
-    key:'social', actor:'Social accounts', read:'yes', write:'no', publish:'approval only', approval:'yes',
-    control:<button type="button" onClick={() => disconnect(social[0])} style={accessButton}>Disconnect</button>,
-  });
-  if (approvals.length && transport?.decideSocialApproval) rows.push({
-    key:'approvals', actor:'Agents / approvals', read:'request', write:'no', publish:'after approval', approval:'yes',
-    control:<span style={{ display:'inline-flex', gap:6 }}>
-      <button type="button" onClick={() => decide(approvals[0], 'approve')} style={accessButton}>Approve</button>
-      <button type="button" onClick={() => decide(approvals[0], 'deny')} style={accessButton}>Deny</button>
-    </span>,
-  });
+  const writable = hasPermissionBackend && !!transport?.setSettingsPermission;
   return (
-  <div>
-    <SHead title="Permissions" sub="The Access matrix shows only actors with a store or endpoint this build can read."/>
-    <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
-      <div style={{ display:'grid', gridTemplateColumns:'1.35fr .55fr .65fr .9fr .8fr auto', gap:10, padding:'8px 12px',
-        borderBottom:`1px solid ${LM.lineSoft}`, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.08em', textTransform:'uppercase' }}>
-        <span>What can act</span><span>Read</span><span>Write</span><span>Publish/send</span><span>Needs approval</span><span>Control</span>
-      </div>
-      {rows.map((row, index) => <div key={row.key} style={{ display:'grid', gridTemplateColumns:'1.35fr .55fr .65fr .9fr .8fr auto',
-        gap:10, alignItems:'center', padding:'10px 12px', borderTop:index ? `1px solid ${LM.lineSoft}` : 'none' }}>
-        <span style={{ fontSize:12.5, color:LM.ink }}>{row.actor}</span>
-        {accessCell(row.read)}{accessCell(row.write)}{accessCell(row.publish)}{accessCell(row.approval)}
-        <span>{row.control}</span>
-      </div>)}
-      {!rows.length && <SettingsEmpty>No access records are exposed by this connection.</SettingsEmpty>}
-    </div>
-    {message && <p role="alert" style={{ fontSize:12, color:LM.err, overflowWrap:'anywhere' }}>{message}</p>}
+  <div style={{ fontFamily:LM.sans }}>
+    <div style={{ padding:'8px 12px', borderBottom:`1px solid ${LM.lineSoft}`, fontSize:13, color:LM.ink }}>Writes always ask unless you allow them</div>
+    {typeof window !== 'undefined' && window.CloudPublishConsent && <div style={{ padding:'10px 12px', borderBottom:`1px solid ${LM.lineSoft}` }}>
+      <window.CloudPublishConsent signedIn={!!account?.signedIn}/>
+    </div>}
+    {typeof SettingsConnectedSocialAccounts !== 'undefined' && <div style={{ padding:'10px 12px', borderBottom:`1px solid ${LM.lineSoft}` }}>
+      <SettingsConnectedSocialAccounts transport={transport}/>
+    </div>}
+    {typeof SettingsSocialApprovals !== 'undefined' && <div style={{ padding:'10px 12px', borderBottom:`1px solid ${LM.lineSoft}` }}>
+      <SettingsSocialApprovals transport={transport}/>
+    </div>}
+    {typeof SettingsSocialEnrollment !== 'undefined' && <div style={{ padding:'10px 12px', borderBottom:`1px solid ${LM.lineSoft}` }}>
+      <SettingsSocialEnrollment transport={transport} onAccount={() => onTab && onTab('Account')}/>
+    </div>}
+    {hasPermissionBackend && <div style={{ display:'grid', gridTemplateColumns:'minmax(0, 1fr) repeat(3, auto)', gap:8, alignItems:'center',
+      padding:'6px 12px', borderBottom:`1px solid ${LM.lineSoft}`, fontSize:11, color:LM.inkSoft }}>
+      <span>Actor</span><span>Read</span><span>Write</span><span>Send</span>
+    </div>}
+    {message && <div role="alert" style={{ display:'flex', alignItems:'center', gap:8, padding:'8px 12px', color:LM.err, fontSize:12, borderBottom:`1px solid ${LM.lineSoft}` }}>
+      <span style={{ flex:1, minWidth:0, overflowWrap:'anywhere' }}>{message}</span>
+      {hasPermissionBackend && <button type="button" onClick={readRows} style={settings54Button(false, {background:LM.bgHover, color:LM.ink})}>Retry</button>}
+    </div>}
+    {hasPermissionBackend && rows.map((row, index) => <div key={row.actor + index} data-permission-row="" style={{ display:'grid',
+      gridTemplateColumns:'minmax(0, 1fr) repeat(3, auto)', gap:8, alignItems:'center', minHeight:32,
+      padding:'4px 12px', borderTop:index ? `1px solid ${LM.lineSoft}` : 'none' }}>
+      <span style={{ minWidth:0 }}>
+        <span style={{ display:'block', fontSize:13, color:LM.ink, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{row.actor}</span>
+        <span style={{ display:'block', fontSize:11, color:LM.inkSoft }}>{row.kind === 'agent' ? 'Agent app' : 'Connection'}</span>
+      </span>
+      {['Read', 'Write', 'Send'].map(col => <span key={col} data-permission-col={col}>
+        <Settings54Seg value={row[col.toLowerCase()] || 'Ask'} onChange={value => change(index, col, value)}
+          ariaLabel={row.actor + ' ' + col} disabled={!writable || busy === row.actor + col}/>
+      </span>)}
+    </div>)}
+    {!hasPermissionBackend && <div data-permission-unavailable="" role="status" style={{ display:'grid',
+      gridTemplateColumns:'minmax(0, 1fr) auto', gap:8, alignItems:'center', minHeight:32,
+      padding:'8px 12px', fontSize:12, color:LM.inkSoft, borderBottom:`1px solid ${LM.lineSoft}` }}>
+      <span>Per-agent permissions: not available yet</span>
+      <Settings54Seg value="Ask" disabled ariaLabel="Per-agent permissions not available"/>
+    </div>}
+    {hasPermissionBackend && !rows.length && !message && <div role="status" style={{ padding:'8px 12px', fontSize:12, color:LM.inkSoft }}>
+      Per-agent permissions: not available yet.
+    </div>}
   </div>
   );
 };
@@ -8307,7 +9962,7 @@ const SettingsSocialApprovals = ({transport}) => {
       await transport.decideSocialApproval({delegation:item.delegation, input_digest:item.input_digest, decision});
       if (alive.current) { setMessage(decision === 'approve' ? 'Approved. The agent can post it once.' : 'Denied. It will not be posted.');
         setItems(items.filter(other => other.delegation !== item.delegation)); }
-    } catch (error) { if (alive.current) setMessage(error.message); }
+    } catch (error) { if (alive.current) setMessage(error.message); throw error; }
     finally { if (alive.current) setBusy(''); }
   };
   const providerName = item => {
@@ -8324,12 +9979,12 @@ const SettingsSocialApprovals = ({transport}) => {
       <div style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft}}>{item.operation} · {item.account_id} · {
         item.account_binding === 'provider-verified' ? 'account confirmed by ' + providerName(item)
           : item.account_binding === 'operator-declared' ? 'account typed in, not confirmed' : 'account not checked'}</div>
-      <pre style={{whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontFamily:LM.mono, fontSize:11, maxHeight:220, overflow:'auto',
-        padding:8, margin:'6px 0', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm}}>{item.review_text}</pre>
-      <div style={{display:'flex', gap:7}}>
-        <button type="button" disabled={!!busy} onClick={() => decide(item, 'approve')} style={smallBtn(true)}>Approve this post</button>
-        <button type="button" disabled={!!busy} onClick={() => decide(item, 'deny')} style={{...smallBtn(), color:LM.err}}>Deny</button>
-      </div>
+      {window.ARCHHUB_APPROVAL_CARD && React.createElement(window.ARCHHUB_APPROVAL_CARD, {
+        surface:'social',approveLabel:'Approve',approval:{...item,id:item.delegation,state:'needs-user',title:'Post to ' + providerName(item),
+          host:providerName(item),target:item.account_id,scope:item.scope || item.operation,
+          preview:{kind:'post',text:item.review_text}},busy:!!busy,
+        canApprove:typeof transport?.decideSocialApproval === 'function',canDecline:typeof transport?.decideSocialApproval === 'function',
+        onApprove:() => decide(item,'approve'),onDecline:() => decide(item,'deny')})}
     </div>)}
     {message && <p role="status" style={{fontSize:12, overflowWrap:'anywhere'}}>{message}</p>}
   </div>;
@@ -8553,6 +10208,53 @@ const SocialConnectionRow = ({icon, name, detail, control, onAccount}) => (
   </div>
 );
 
+const MCP_CLIENT_TARGETS = {
+  notion: {name:'Notion', icon:'N', button:'Add ArchHub to Notion',
+    fallback:'https://www.notion.so/profile/connections'},
+  gemini: {name:'Gemini', icon:'G', button:'Add ArchHub to Gemini',
+    fallback:'https://gemini.google.com/settings/connected-apps'},
+};
+
+const SettingsMcpClientRow = ({provider}) => {
+  const target = MCP_CLIENT_TARGETS[provider];
+  const transport = window.ARCHHUB_EXISTING_WORKSHOP;
+  const [busy, setBusy] = React.useState(false);
+  const [message, setMessage] = React.useState('');
+  const [failed, setFailed] = React.useState(false);
+  const connect = async () => {
+    setBusy(true); setMessage(''); setFailed(false);
+    try {
+      if (transport?.installMcpClient) {
+        await transport.installMcpClient(provider);
+      } else if (typeof window.open === 'function') {
+        window.open(target.fallback, '_blank', 'noopener,noreferrer');
+      } else {
+        throw new Error(target.name + ' connection is unavailable in this Studio session.');
+      }
+      setMessage(target.name + ' opened.');
+    } catch (error) {
+      setFailed(true); setMessage(error?.message || target.name + ' connection was refused.');
+    } finally { setBusy(false); }
+  };
+  return <SocialConnectionRow icon={target.icon} name={target.name} detail="ArchHub remote MCP"
+    control={<div style={{display:'flex', flexDirection:'column', alignItems:'flex-end', gap:6}}>
+      <button type="button" disabled={busy} onClick={connect} style={smallBtn(true)}>
+        {busy ? 'Opening...' : target.button}
+      </button>
+      {message && <span role={failed ? 'alert' : 'status'} style={{fontSize:11.5, color:failed ? LM.err : LM.ok, maxWidth:240, textAlign:'right'}}>{message}</span>}
+    </div>}/>;
+};
+
+const SettingsConnections = () => (
+  <section aria-label="Connections" style={{display:'flex', flexDirection:'column', gap:14}}>
+    <div style={{fontFamily:LM.serif, fontSize:22, letterSpacing:'-0.01em'}}>Connections</div>
+    <div style={{padding:`${LM.sp.md}px ${LM.sp.lg}px`, background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg}}>
+      <SettingsMcpClientRow provider="notion"/>
+      <SettingsMcpClientRow provider="gemini"/>
+    </div>
+  </section>
+);
+
 const SettingsNotionSignIn = ({transport}) => {
   const [busy, setBusy] = React.useState(false), [message, setMessage] = React.useState(''), [failed, setFailed] = React.useState(false);
   const connect = async () => {
@@ -8730,7 +10432,7 @@ const SettingsProviders = ({ providers, onTab }) => {
     {social && <div style={{ marginTop:10 }}>
       <SettingsConnectedSocialAccounts transport={transport}/>
       <SettingsSocialApprovals transport={transport}/>
-      <SettingsSocialEnrollment transport={transport} onAccount={() => onTab && onTab('account')}/>
+      <SettingsSocialEnrollment transport={transport} onAccount={() => onTab && onTab('Account')}/>
     </div>}
   </div>
   );
@@ -9600,22 +11302,38 @@ const SettingsWorkspaces = () => {
     </div>
   );
 };
-// Design #connectors "Never removed": programs without a connector yet stay in the list.
-const CONNECTORS_NOT_BUILT = [['Civil 3D','no connector yet'],['Navisworks','no connector yet'],['SketchUp · Archicad · IFC','no connector yet'],['Bluebeam · Enscape · Power BI','no connector yet'],['Dropbox · SharePoint · Slack · Airtable','no connector yet']];
-const HostEnableSwitch = ({ hostId, enabled, enabledState, enabledFreshness, disabledReason, onChange }) => {
+// Design #connectors "Never removed": programs without a connector yet stay in the host catalogue.
+const CONNECTORS_NOT_BUILT = [];
+const HostEnableSwitch = ({ hostId, enabled, enabledState, enabledFreshness, disabledReason, authorityReading, onChange }) => {
   const pendingState = React.useState(false);
   const pending = pendingState[0], setPending = pendingState[1];
   const errorState = React.useState('');
   const error = errorState[0], setError = errorState[1];
   const row = (window.ARCHHUB_LIVE?.connectors || LM_HOSTS || []).find(h => h && h.id === hostId) || {id:hostId};
   const name = hostDisplayName(row);
-  const state = enabledState || 'confirmed';
-  const checked = enabled === true;
+  const state = enabledState || (typeof enabled === 'boolean' ? 'confirmed' : 'unknown');
+  const unknown = state === 'unknown' || typeof enabled !== 'boolean';
+  const stale = state === 'last_confirmed';
+  const checked = !unknown && enabled === true;
   const confirmedOn = checked && state === 'confirmed';
   const reason = name + ' is turned off in Settings \u203a Connectors.';
   const freshness = Number.isFinite(Number(enabledFreshness)) ? Math.max(0, Math.floor(Number(enabledFreshness))) : null;
-  const freshnessText = state === 'last_confirmed' && freshness !== null ? ' Last confirmed ' + freshness + 's ago.' : '';
-  const writeDisabledReason = (disabledReason || row.enable_disabled_reason || row.write_disabled_reason || '') + freshnessText;
+  const baseDisabledReason = String(disabledReason || row.enable_disabled_reason || row.write_disabled_reason || '').trim();
+  const unavailableReason = baseDisabledReason || "Could not read this host's state.";
+  const unavailable = unknown && !authorityReading;
+  const writeDisabledReason = (!unknown && !stale) ? baseDisabledReason : '';
+  const freshnessText = freshness !== null ? freshness + 's ago' : 'recently';
+  const stateStatus = unknown
+    ? unavailable ? '' : 'Checking\u2026'
+    : stale
+      ? 'Last known: ' + (enabled === true ? 'on' : 'off') + ', ' + freshnessText + '.' + (baseDisabledReason ? ' ' + baseDisabledReason : '')
+      : '';
+  const switchDisabledReason = pending ? 'Change is being saved.'
+    : unavailable ? unavailableReason
+      : unknown ? 'Reading host authority.'
+        : stale ? 'Host authority is stale; retry before changing this.'
+          : writeDisabledReason;
+  const switchDisabled = pending || unknown || stale || !!writeDisabledReason;
   const refreshRows = () => window.fetch('/tools', toolHubFetchOptions(null)).then(r => r.ok ? r.json() : null).catch(() => null).then(tools => {
     if (tools && Array.isArray(tools.tools)) {
       window.ARCHHUB_TOOL_HUB = {...(window.ARCHHUB_TOOL_HUB || {}), ...tools};
@@ -9628,7 +11346,7 @@ const HostEnableSwitch = ({ hostId, enabled, enabledState, enabledFreshness, dis
     return loadCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS);
   });
   const toggle = () => {
-    if (pending || writeDisabledReason || typeof window.fetch !== 'function') return;
+    if (switchDisabled || typeof window.fetch !== 'function') return;
     const session = window.__archhubSession || {};
     const next = !checked;
     setPending(true);
@@ -9646,23 +11364,33 @@ const HostEnableSwitch = ({ hostId, enabled, enabledState, enabledFreshness, dis
   };
   return (
     <span style={{ display:'inline-flex', alignItems:'center', gap:LM.sp.sm, minWidth:0 }}>
-      <button type="button" role="switch" aria-checked={checked ? 'true' : 'false'} aria-label={'Turn ' + name + ' on/off'}
-        disabled={pending || !!writeDisabledReason} onClick={toggle} style={{
+      <button type="button" role="switch" aria-checked={checked ? 'true' : 'false'} aria-label={'Turn ' + name + ' on/off' + (switchDisabledReason ? ': ' + switchDisabledReason : '')}
+        title={switchDisabledReason || ''}
+        disabled={switchDisabled} onClick={toggle} style={{
           width:34, height:18, borderRadius:LM.rad.pill, border:`1px solid ${confirmedOn ? LM.ok : LM.line}`,
           background:confirmedOn ? LM.ok : LM.bgPanel, padding:2, display:'inline-flex',
-          justifyContent:checked ? 'flex-end' : 'flex-start', alignItems:'center', cursor:pending ? 'wait' : writeDisabledReason ? 'not-allowed' : 'pointer',
+          justifyContent:checked ? 'flex-end' : 'flex-start', alignItems:'center', cursor:pending ? 'wait' : switchDisabled ? 'not-allowed' : 'pointer',
         }}>
         <span aria-hidden="true" style={{ width:12, height:12, borderRadius:'50%', background:checked ? '#fff' : LM.inkSoft, display:'block' }}/>
       </button>
+      {unavailable && <span role="status" style={{ fontSize:LM.fs.label.sz, color:LM.inkSoft, lineHeight:LM.fs.label.ln + 'px', maxWidth:220 }}>Unavailable. {unavailableReason}</span>}
+      {unavailable && <button type="button" onClick={refreshRows}
+        style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, fontWeight:LM.fs.label.wt, color:LM.ink, background:LM.bgHover, border:`1px solid ${LM.line}`,
+          borderRadius:LM.rad.control, padding:`${LM.sp.xs}px ${LM.sp.sm}px`, cursor:'pointer' }}>Retry</button>}
       {writeDisabledReason && <span role="status" style={{ fontSize:LM.fs.label.sz, color:LM.inkSoft, lineHeight:LM.fs.label.ln + 'px', maxWidth:220 }}>{writeDisabledReason}</span>}
-      {!checked && <span role="status" style={{ fontSize:LM.fs.label.sz, color:LM.inkSoft, lineHeight:LM.fs.label.ln + 'px', maxWidth:220 }}>{reason}</span>}
+      {stateStatus && <span role="status" style={{ fontSize:LM.fs.label.sz, color:LM.inkSoft, lineHeight:LM.fs.label.ln + 'px', maxWidth:220 }}>{stateStatus}</span>}
+      {!unknown && !checked && <span role="status" style={{ fontSize:LM.fs.label.sz, color:LM.inkSoft, lineHeight:LM.fs.label.ln + 'px', maxWidth:220 }}>{reason}</span>}
       {error && <span role="alert" style={{ fontSize:LM.fs.label.sz, color:LM.err || LM.warn, lineHeight:LM.fs.label.ln + 'px', maxWidth:220 }}>{error}</span>}
     </span>
   );
 };
 const SettingsHosts = () => {
   const catalogue = useLiveCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS);
-  const visibleHosts = LM_HOSTS.filter(h => !/no wire in this build/i.test(String(h.detail || '')));
+  const visibleHosts = LM_HOSTS;
+  const officeExpandedState = React.useState(true);
+  const officeExpanded = officeExpandedState[0], setOfficeExpanded = officeExpandedState[1];
+  const hostRowsRevisionState = React.useState(0);
+  const setHostRowsRevision = hostRowsRevisionState[1];
   const startHost = (h, button) => {
     const phrase = hostOpenPhrase(h);
     if (!phrase || typeof window.ARCHHUB_AGENT !== 'function') return;
@@ -9675,17 +11403,15 @@ const SettingsHosts = () => {
   };
   // DP-CONNECTORS (design: ArchHub Product.html #connectors). One row per program: state dot,
   // name, what the probe says, then its live state word and Start. Programs ArchHub has no
-  // connector for yet stay listed as "not built yet" (design: "Never removed").
-  // Design CONN: Excel · Word · PowerPoint · Outlook is ONE row (one sub-line, one state).
-  const isOffice = h => /^(excel|word|powerpoint|outlook)$/i.test(String(h.name || h.id || '').trim());
-  const office = visibleHosts.filter(isOffice);
-  const officeOpen = office.find(h => hostStateWord(h) === 'Connected');
-  const officeRow = office.length ? { id:'office', name:office.map(h => h.name).join(' \u00b7 '),
-    state:(officeOpen || office[0]).state,
-    officeDetail: officeOpen ? hostDetail(officeOpen) : 'installed \u00b7 reads when a file is open' } : null;
-  const connectorRows = visibleHosts.flatMap(h => !isOffice(h) ? [h] : h === office[0] ? [officeRow] : []);
+  // connector for yet stay listed as "no connector yet" (design: "Never removed").
+  // Design CONN: Excel · Word · PowerPoint · Outlook is ONE count row; governed controls stay on the real child rows.
+  const connectorRows = hostConnectorRows(visibleHosts);
   const speckle = visibleHosts.find(h => /speckle/i.test(String(h.name || h.id || '')));
-  const connected = visibleHosts.filter(h => hostStateWord(h) === 'Connected').length;
+  // Built-vs-coming uses hostTally's shared "no wire in this build" / "no connector yet" filter.
+  const tally = hostTally(connectorRows);
+  const builtRows = tally.builtRows;
+  const coming = tally.coming;
+  const running = tally.running;
   const dotStyle = (col, dashed) => ({ width:8, height:8, borderRadius:'50%', flex:'none',
     background: dashed ? 'transparent' : col, border: dashed ? `1px dashed ${LM.inkSoft}` : 0 });
   const rowStyle = { display:'flex', alignItems:'center', gap:LM.sp.sm, padding:`${LM.sp.sm}px ${LM.sp.md}px`, flexWrap:'wrap',
@@ -9698,7 +11424,7 @@ const SettingsHosts = () => {
       <div data-connectors-bar="" style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, padding:`${LM.sp.sm}px ${LM.sp.md}px`,
         background:LM.bgPanel, borderBottom:`1px solid ${LM.line}` }}>
         <b style={{ fontWeight:LM.fs.bodySmStrong.wt, fontSize:LM.fs.bodySm.sz }}>Connectors</b>
-        <span style={tagStyle(LM.inkSoft)}>{connected} running</span>
+        <span style={tagStyle(LM.inkSoft)}>{running} of {builtRows.length} running{coming ? ` \u00b7 ${coming} coming` : ''}</span>
         <span style={{ flex:1 }}/>
         {speckle && <span style={tagStyle(LM.inkSoft)}>Speckle {'·'} {hostDetail(speckle)}</span>}
         {/* a live control on every state: re-read the hosts probe (never an inert action) */}
@@ -9707,44 +11433,66 @@ const SettingsHosts = () => {
             borderRadius:LM.rad.control, padding:`${LM.sp.xs}px ${LM.sp.md}px`, cursor: catalogue.loading ? 'default' : 'pointer' }}>{catalogue.loading ? 'Checking\u2026' : 'Check again'}</button>
       </div>
       <div style={{ display:'grid', gap:LM.sp.sm, padding:LM.sp.lg }}>
-      {connectorRows.map(h => {
-        const word = hostStateWord(h);
-        const col = hostStateTone(h);
-        return (
+      {connectorRows.flatMap(h => {
+        const built = builtRows.includes(h);
+        const word = built ? hostPanelStateWord(h) : 'no connector yet';
+        const col = built ? hostPanelStateTone(h) : LM.inkSoft;
+        const rows = [(
           <div key={h.id} data-connector-row="" style={rowStyle}>
-            <span style={{ ...dotStyle(word === 'Connected' ? LM.ok : word === 'Checking' ? LM.warn : LM.line, false),
-              animation: word === 'Checking' ? 'lmPulse 1.2s infinite' : 'none' }}/>
+            <span style={{ ...dotStyle(word === 'Running' ? LM.ok : word === 'Unknown' ? LM.warn : LM.line, !built),
+              animation: word === 'Unknown' ? 'lmPulse 1.2s infinite' : 'none' }}/>
             <div style={{ minWidth:0 }}>
               <div style={{ fontWeight:LM.fs.bodySmStrong.wt, fontSize:LM.fs.bodySm.sz, color:LM.ink }}>{h.name}</div>
-              <div style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, color:LM.inkSoft }}>{h.officeDetail || hostDetail(h)}</div>
+              <div style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, color:LM.inkSoft }}>{h.officeEnabledSummary ? h.officeEnabledSummary + ' · ' : ''}{h.officeDetail || hostDetail(h)}</div>
             </div>
             <span style={{ flex:1 }}/>
-            <span data-host-state="" style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, color:col }}>{word.toLowerCase()}</span>
-            {hostOpenPhrase(h) && word !== 'Connected' && (
+            <span data-host-state="" style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, color:col }}>{word}</span>
+            {built && hostOpenPhrase(h) && word !== 'Running' && (
               <button type="button" onClick={e => startHost(h, e.currentTarget)}
                 style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Start</button>
             )}
-            <HostEnableSwitch hostId={h.id} enabled={h.enabled === true}
+            {built && !h.officeAggregate && <HostEnableSwitch hostId={h.id} enabled={h.enabled}
               enabledState={h.enabled_state} enabledFreshness={h.enabled_freshness_seconds}
               disabledReason={h.enable_disabled_reason || h.write_disabled_reason || ''}
-              onChange={row => { Object.assign(h, row); catalogueChanged(); }}/>
+              authorityReading={catalogue.loading}
+              onChange={row => { Object.assign(h, row); setHostRowsRevision(v => v + 1); catalogueChanged(); }}/>}
+            {h.officeAggregate && <button type="button" aria-expanded={officeExpanded ? 'true' : 'false'} aria-label="Show Office host controls"
+              onClick={() => setOfficeExpanded(!officeExpanded)}
+              style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>{officeExpanded ? 'Hide' : 'Show'}</button>}
           </div>
-        );
+        )];
+        if (h.officeAggregate && officeExpanded) {
+          rows.push(...(h.officeChildren || []).map(child => {
+            const childWord = hostPanelStateWord(child);
+            const childCol = hostPanelStateTone(child);
+            return (
+              <div key={child.id} data-connector-row="" data-office-child="" style={{ ...rowStyle, marginLeft:LM.sp.lg, background:LM.bg }}>
+                <span style={{ ...dotStyle(childWord === 'Running' ? LM.ok : childWord === 'Unknown' ? LM.warn : LM.line, false),
+                  animation: childWord === 'Unknown' ? 'lmPulse 1.2s infinite' : 'none' }}/>
+                <div style={{ minWidth:0 }}>
+                  <div style={{ fontWeight:LM.fs.bodySmStrong.wt, fontSize:LM.fs.bodySm.sz, color:LM.ink }}>{child.name || child.id}</div>
+                  <div style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, color:LM.inkSoft }}>{hostDetail(child)}</div>
+                </div>
+                <span style={{ flex:1 }}/>
+                <span data-host-state="" style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, color:childCol }}>{childWord}</span>
+                {hostOpenPhrase(child) && childWord !== 'Running' && (
+                  <button type="button" onClick={e => startHost(child, e.currentTarget)}
+                    style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Start</button>
+                )}
+                <HostEnableSwitch hostId={child.id} enabled={child.enabled}
+                  enabledState={child.enabled_state} enabledFreshness={child.enabled_freshness_seconds}
+                  disabledReason={child.enable_disabled_reason || child.write_disabled_reason || ''}
+                  authorityReading={catalogue.loading}
+                  onChange={row => { Object.assign(child, row); setHostRowsRevision(v => v + 1); catalogueChanged(); }}/>
+              </div>
+            );
+          }));
+        }
+        return rows;
       })}
-      {!visibleHosts.length && <SettingsEmpty role={catalogue.error ? 'alert' : 'status'}
+      {!connectorRows.length && <SettingsEmpty role={catalogue.error ? 'alert' : 'status'}
         action={catalogue.error && !catalogue.loading && <button onClick={catalogue.retry} style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>read again</button>}>
         {catalogue.loading ? 'Reading the programs on this machine…' : catalogue.error ? 'Connected programs: ' + catalogue.error + '.' : 'No connected program found yet.'}</SettingsEmpty>}
-      {CONNECTORS_NOT_BUILT.map(([name, line]) => (
-        <div key={name} data-connector-row="" data-not-built="" style={rowStyle}>
-          <span style={dotStyle(null, true)}/>
-          <div style={{ minWidth:0 }}>
-            <div style={{ fontSize:LM.fs.bodySm.sz, color:LM.ink }}>{name}</div>
-            <div style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.inkSoft, marginTop:LM.sp.xs }}>{line}</div>
-          </div>
-          <span style={{ flex:1 }}/>
-          <span style={tagStyle(LM.warn)}>not built yet</span>
-        </div>
-      ))}
       </div>
     </div>
     <SettingsAssistants/>
@@ -9969,18 +11717,112 @@ const DRows = ({ rows }) => (
   </div>
 );
 
-const DOC_INDEX = [{"s":"start","k":"page","t":"Getting started","d":"ArchHub runs as a local server next to your CAD/BIM host. Nothing leaves your machine unless a node asks it to."},{"s":"canvas","k":"page","t":"The canvas & nodes","d":"A node takes typed inputs, does one job, and emits typed outputs. The canvas is the record of how they connect."},{"s":"connectors","k":"page","t":"Connectors","d":"A connector is a long-lived link to a running application. It is the only thing in ArchHub that can read or write your model."},{"s":"skills","k":"page","t":"Skills as JSON you own","d":"A skill is a saved group of nodes, serialised as plain JSON in your project. No proprietary format, no lock-in, no hidden state."},{"s":"healing","k":"page","t":"Self-healing internals","d":"A graph that stops the moment a host hiccups is not usable in practice. Self-healing is the loop that keeps a long run alive."},{"s":"cli","k":"page","t":"CLI & API reference","d":"Everything Studio does, the CLI does. The UI is a client of the same local server."},{"s":"start","k":"section","t":"INSTALL","d":"Getting started"},{"s":"start","k":"section","t":"FIRST RUN","d":"Getting started"},{"s":"start","k":"section","t":"KEYS","d":"Getting started"},{"s":"canvas","k":"section","t":"THE NINE CATEGORIES","d":"The canvas & nodes"},{"s":"canvas","k":"section","t":"WIRES ARE TYPED","d":"The canvas & nodes"},{"s":"canvas","k":"section","t":"GROUPING","d":"The canvas & nodes"},{"s":"canvas","k":"section","t":"NAVIGATION","d":"The canvas & nodes"},{"s":"connectors","k":"section","t":"SUPPORTED HOSTS","d":"Connectors"},{"s":"connectors","k":"section","t":"LIFECYCLE","d":"Connectors"},{"s":"skills","k":"section","t":"SHAPE","d":"Skills as JSON you own"},{"s":"skills","k":"section","t":"RULES","d":"Skills as JSON you own"},{"s":"healing","k":"section","t":"THE LOOP","d":"Self-healing internals"},{"s":"healing","k":"section","t":"REPAIR STRATEGIES","d":"Self-healing internals"},{"s":"healing","k":"section","t":"GUARANTEES","d":"Self-healing internals"},{"s":"cli","k":"section","t":"CLI","d":"CLI & API reference"},{"s":"cli","k":"section","t":"HTTP","d":"CLI & API reference"},{"s":"cli","k":"section","t":"EXIT CODES","d":"CLI & API reference"},{"s":"start","k":"key","t":"\u2318K","d":"Getting started"},{"s":"start","k":"key","t":"\u2318L","d":"Getting started"},{"s":"start","k":"key","t":"\u2318\u21b5","d":"Getting started"},{"s":"start","k":"key","t":"\u2318,","d":"Getting started"},{"s":"start","k":"key","t":"\u2318/","d":"Getting started"},{"s":"start","k":"cli","t":"archhub up","d":"Getting started"},{"s":"start","k":"cli","t":"archhub doctor","d":"Getting started"},{"s":"cli","k":"cli","t":"archhub up","d":"CLI & API reference"},{"s":"cli","k":"cli","t":"archhub doctor","d":"CLI & API reference"},{"s":"cli","k":"cli","t":"archhub run","d":"CLI & API reference"},{"s":"cli","k":"cli","t":"archhub skill","d":"CLI & API reference"},{"s":"cli","k":"cli","t":"archhub brain","d":"CLI & API reference"},{"s":"cli","k":"cli","t":"archhub hosts","d":"CLI & API reference"},{"s":"cli","k":"cli","t":"archhub logs","d":"CLI & API reference"},{"s":"start","k":"topic","t":"1 \u00b7 Connect a host","d":"Getting started"},{"s":"start","k":"topic","t":"2 \u00b7 Add a provider","d":"Getting started"},{"s":"start","k":"topic","t":"3 \u00b7 Open a session","d":"Getting started"},{"s":"start","k":"topic","t":"4 \u00b7 Place a node","d":"Getting started"},{"s":"canvas","k":"topic","t":"Hosts","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Read","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Filter","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Transform","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Annotate","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Compose","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Logic","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"AI","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Output","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Pan","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Zoom","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Focus a node","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Multi-select","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Run","d":"The canvas & nodes"},{"s":"connectors","k":"topic","t":"Revit 2022\u20132025","d":"Connectors"},{"s":"connectors","k":"topic","t":"Rhino 7 / 8","d":"Connectors"},{"s":"connectors","k":"topic","t":"Blender 4.x / 5.x","d":"Connectors"},{"s":"connectors","k":"topic","t":"Speckle","d":"Connectors"},{"s":"connectors","k":"topic","t":"IFC 2x3 / 4","d":"Connectors"},{"s":"skills","k":"topic","t":"inputs / outputs","d":"Skills as JSON you own"},{"s":"skills","k":"topic","t":"params","d":"Skills as JSON you own"},{"s":"skills","k":"topic","t":"requires","d":"Skills as JSON you own"},{"s":"skills","k":"topic","t":"version","d":"Skills as JSON you own"},{"s":"skills","k":"topic","t":"dry_run","d":"Skills as JSON you own"},{"s":"healing","k":"topic","t":"transport","d":"Self-healing internals"},{"s":"healing","k":"topic","t":"version drift","d":"Self-healing internals"},{"s":"healing","k":"topic","t":"auth","d":"Self-healing internals"},{"s":"healing","k":"topic","t":"host busy","d":"Self-healing internals"},{"s":"healing","k":"topic","t":"crash","d":"Self-healing internals"},{"s":"cli","k":"topic","t":"archhub run <session>","d":"CLI & API reference"},{"s":"cli","k":"topic","t":"archhub skill ls | add | rm","d":"CLI & API reference"},{"s":"cli","k":"topic","t":"archhub brain ls | share | forget","d":"CLI & API reference"},{"s":"cli","k":"topic","t":"archhub logs -f","d":"CLI & API reference"}];
-// The brain's search entries are DERIVED from brain-model.jsx, never restated. The old static
-// entries kept indexing the superseded layer model long after the page stopped saying it, so
-// search returned a brain the page no longer held. Deriving makes that drift impossible.
-(() => {
-  const P = 'The Brain';
-  DOC_INDEX.push({ s:'brain', k:'page', t:P, d:'Not a store of facts \u2014 the layer that governs what kinds of things exist, how they relate, and how they are filed.' });
-  ['FOUR STRATA', 'THREE LAKES, NOT ONE CASCADE', 'GATES', 'YOUR KEY'].forEach(t => DOC_INDEX.push({ s:'brain', k:'section', t, d:P }));
-  (window.BRAIN_STRATA || []).forEach(x => DOC_INDEX.push({ s:'brain', k:'topic', t:x.n + ' \u00b7 ' + x.one, d:P }));
-  (window.BRAIN_LAKES  || []).forEach(x => DOC_INDEX.push({ s:'brain', k:'topic', t:x.n + ' brain', d:P }));
-  (window.BRAIN_GATES  || []).forEach(x => DOC_INDEX.push({ s:'brain', k:'topic', t:x.label, d:P }));
-})();
+const docsNodeGroups = library => {
+  const groups = [];
+  for (const group of withHistoryLibrary(library || [])) {
+    const cat = group.cat || group.label || 'Nodes';
+    const fallback = group.description || group.sub || '';
+    const rows = [];
+    for (const item of group.items || []) {
+      const title = item.title || item.name || 'Untitled node';
+      const detail = item.sub || item.description || fallback;
+      rows.push({title, detail});
+    }
+    if (rows.length) groups.push({cat, rows});
+  }
+  return groups;
+};
+const docsNodeIndexRows = nodeGroups => (nodeGroups || []).flatMap(group =>
+  (group.rows || []).map(row => ({...row, cat:group.cat || 'Nodes'}))
+);
+const DNodeGroups = ({ groups = [] }) => (
+  <div data-docs-node-catalogue="" style={{ display:'flex', flexDirection:'column', gap:LM.sp.md, margin:`0 0 ${LM.sp.lg}px` }}>
+    {groups.map(group => {
+      const meta = studioCategory(group.cat);
+      return (
+      <section key={group.cat} data-docs-node-category={group.cat} data-docs-node-color={meta.col}>
+        <div style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:meta.col, marginBottom:LM.sp.xs }}>{meta.label || group.cat}</div>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(180px, 1fr))', gap:LM.sp.sm }}>
+          {(group.rows || []).map(row => (
+            <div key={row.title} data-docs-node-tile="" style={{ border:`1px solid ${LM.line}`, borderLeft:`3px solid ${meta.col}`, borderRadius:LM.rad.control, background:LM.bgDeep, padding:`${LM.sp.sm}px ${LM.sp.md}px`, minHeight:78 }}>
+              <div style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, marginBottom:4 }}>
+                <span aria-hidden="true" style={{ width:LM.icon.category.box, height:LM.icon.category.box, borderRadius:LM.rad.sm, background:meta.col, color:LM.onFill, display:'grid', placeItems:'center', fontFamily:LM.sans, fontSize:LM.icon.category.size, fontWeight:700, flex:'0 0 auto' }}>{meta.icon}</span>
+                <div style={{ fontFamily:LM.sans, fontSize:13, lineHeight:'18px', fontWeight:600, color:LM.ink, minWidth:0 }}>{row.title}</div>
+              </div>
+              <div style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.inkSoft }}>{row.detail}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+    );})}
+  </div>
+);
+const connectorLabel = row => row.name || row.label || row.host || row.id || 'Connector';
+const connectorState = row => hostStateWord(row || {state:'off'});
+const docsConnectorRows = hosts => {
+  const rows = (hosts || []).map(row => {
+    const parts = [connectorState(row)];
+    if (row.port) parts.push('port ' + row.port);
+    if (row.detail || row.file) parts.push(row.detail || row.file);
+    return [connectorLabel(row), parts.filter(Boolean).join(' · ')];
+  });
+  return rows.length ? rows : [['Checking hosts', hostTally().read ? 'No hosts are available yet.' : 'Looking for local host apps.']];
+};
+const DOC_FIRST_RUN_ROWS = [
+  ['1 · Connect a host', 'Studio scans for Revit, Rhino, Blender and a Speckle token. Anything it finds appears in Settings → Hosts.'],
+  ['2 · Pick a model', 'Free models work out of the box. Settings → Providers signs in to a provider, or uses a local LM Studio / Ollama. Credentials stay on this machine, never in a project file.'],
+  ['3 · Open a session', 'A session is one canvas plus its chat. Sessions are files — commit them, diff them, share them.'],
+  ['4 · Place a node', 'Open the node library, then place a node on the canvas.'],
+];
+const DOC_NAVIGATION_ROWS = [
+  ['Pan',           'Move the empty canvas, or hold Space while moving.'],
+  ['Zoom',          'Use the zoom control in the toolbar.'],
+  ['Focus a node',  'Select a node, then open its interior.'],
+  ['Multi-select',  'Select a box of nodes, or add nodes one at a time.'],
+  ['Run',           'Run starts from the focused node and includes everything it depends on.'],
+];
+const DOC_SKILL_ROWS = [
+  ['inputs / outputs', 'typed ports'],
+  ['params', 'editable settings'],
+  ['requires', 'host or model requirements'],
+  ['version', 'schema version'],
+  ['dry_run', 'preview without writing'],
+];
+const DOC_HEAL_ROWS = [
+  ['transport', 'connection dropped'],
+  ['version drift', 'schema mismatch'],
+  ['auth', 'token expired'],
+  ['host busy', 'modal dialog'],
+  ['crash', 'host restarted'],
+];
+const docsBrainIndex = () => {
+  const page = 'Brain';
+  return [
+    {s:'brain', k:'page', t:page, d:'memory'},
+    ...['FOUR STRATA', 'THREE LAKES, NOT ONE CASCADE', 'GATES', 'YOUR KEY'].map(t => ({s:'brain', k:'section', t, d:page})),
+    ...(window.BRAIN_STRATA || []).map(x => ({s:'brain', k:'topic', t:x.n + ' · ' + x.one, d:page})),
+    ...(window.BRAIN_LAKES  || []).map(x => ({s:'brain', k:'topic', t:x.n + ' brain', d:page})),
+    ...(window.BRAIN_GATES  || []).map(x => ({s:'brain', k:'topic', t:x.label, d:page})),
+  ];
+};
+const buildDocsProjection = ({library, hosts}) => {
+  const nodeGroups = docsNodeGroups(library);
+  const nodeRows = docsNodeIndexRows(nodeGroups);
+  const connectorRows = docsConnectorRows(hosts);
+  const sections = DOC_SECTIONS.map(row => row[0] === 'canvas' ? ['canvas', 'Nodes', plural(nodeRows.length, 'node')]
+    : row[0] === 'connectors' ? ['connectors', 'Connectors', hostTally().read ? plural(connectorRows.length, 'host') : 'checking']
+    : row);
+  const index = sections.map(row => ({s:row[0], k:'page', t:row[1], d:row[2] || ''})).concat(
+    DOC_FIRST_RUN_ROWS.map(row => ({s:'start', k:'topic', t:row[0], d:'Getting started'})),
+    DOC_NAVIGATION_ROWS.map(row => ({s:'canvas', k:'topic', t:row[0], d:'Navigation'})),
+    DOC_SKILL_ROWS.map(row => ({s:'skills', k:'topic', t:row[0], d:'Skill shape'})),
+    DOC_HEAL_ROWS.map(row => ({s:'healing', k:'topic', t:row[0], d:'Repair strategies'})),
+    nodeRows.map(row => ({s:'canvas', k:'topic', t:row.title, d:row.cat})),
+    connectorRows.map(row => ({s:'connectors', k:'topic', t:row[0], d:'Connectors'})),
+    docsBrainIndex()
+  );
+  return {nodeGroups, nodeRows, connectorRows, index, sections};
+};
 
 const DOC_SECTIONS = [
   ['start',      'Getting started', 'install'],
@@ -9989,7 +11831,6 @@ const DOC_SECTIONS = [
   ['skills',     'Skills as JSON',  'you own them'],
   ['brain',      'Brain',           '4 strata'],
   ['healing',    'Self-healing',    'internals'],
-  ['cli',        'CLI & API',       'reference'],
 ];
 
 const DOC_KIND = { page:'PAGE', section:'SECTION', topic:'TOPIC', key:'KEY', cli:'CLI' };
@@ -10004,9 +11845,11 @@ const docsBuild = () => {
 const Docs = ({ onClose, onHome }) => {
   const [sec, setSec] = React.useState('start');
   const build = docsBuild();
-  // SEARCH — docs without search get painful the moment they grow. DOC_INDEX is generated
-  // from the rendered content (headings, row labels, keys, CLI commands), so a hit always
-  // corresponds to something the reader will actually find on the page it opens.
+  const authorityState = useStudioProjection();
+  const library = withHistoryLibrary(authorityState?.library || LM_LIBRARY);
+  useLiveCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS);
+  const projection = buildDocsProjection({library, hosts:LM_HOSTS});
+  // SEARCH uses the same section and row data rendered by these pages, plus live catalogue rows.
   const [q, setQ] = React.useState('');
   const [cur, setCur] = React.useState(0);
   const inputRef = React.useRef(null);
@@ -10021,9 +11864,9 @@ const Docs = ({ onClose, onHome }) => {
       if (d.indexOf(s0) >= 0) return 3;
       return -1;
     };
-    return DOC_INDEX.map(e => ({ e, r: score(e) })).filter(x => x.r >= 0)
+    return projection.index.map(e => ({ e, r: score(e) })).filter(x => x.r >= 0)
       .sort((a, b) => a.r - b.r || a.e.t.length - b.e.t.length).slice(0, 9).map(x => x.e);
-  }, [q]);
+  }, [q, projection.index]);
   React.useEffect(() => setCur(0), [q]);
   const jump = (h) => { if (!h) return; setSec(h.s); setQ(''); };
   const onKey = (e) => {
@@ -10086,7 +11929,7 @@ const Docs = ({ onClose, onHome }) => {
                     ))}
                 {hits.length > 0 && (
                   <div style={{ padding:`${LM.sp.sm}px ${LM.sp.md}px`, borderTop:`1px solid ${LM.lineSoft}`, fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.inkSoft, letterSpacing:LM.fs.label.letter }}>
-                    ↑↓ MOVE · ↵ OPEN · ESC CLEAR · {hits.length} OF {DOC_INDEX.length} ENTRIES
+                    ↑↓ MOVE · ↵ OPEN · ESC CLEAR · {hits.length} OF {projection.index.length} ENTRIES
                   </div>
                 )}
               </div>
@@ -10095,7 +11938,7 @@ const Docs = ({ onClose, onHome }) => {
           <button onClick={onClose} style={{ width:24, height:24, padding:0, border:`1px solid ${LM.line}`, background:'transparent', borderRadius:LM.rad.control, cursor:'pointer', color:LM.inkSoft, fontSize:LM.icon.ui.size }}>✕</button>
         </div>
         <div style={{ gridColumn:'1', gridRow:'2', borderRight:`1px solid ${LM.line}`, padding:'10px 8px', overflow:'auto' }}>
-          {DOC_SECTIONS.map(([id, label, badge]) => (
+          {projection.sections.map(([id, label, badge]) => (
             <button key={id} onClick={() => setSec(id)} style={{
               width:'100%', padding:`${LM.sp.sm}px ${LM.sp.md}px`, borderRadius:LM.rad.control, border:0,
               background: sec === id ? LM.bgSoft : 'transparent',
@@ -10110,12 +11953,11 @@ const Docs = ({ onClose, onHome }) => {
         </div>
         <div className="ah-scroll" style={{ gridColumn:'2', gridRow:'2', overflow:'auto', padding:`20px ${LM.sp.xl}px ${LM.sp.xl}px` }}>
           {sec === 'start'      && <DocsStart/>}
-          {sec === 'canvas'     && <DocsCanvas/>}
-          {sec === 'connectors' && <DocsConnectors/>}
+          {sec === 'canvas'     && <DocsCanvas nodeGroups={projection.nodeGroups}/>}
+          {sec === 'connectors' && <DocsConnectors connectorRows={projection.connectorRows}/>}
           {sec === 'skills'     && <DocsSkills/>}
           {sec === 'brain'      && <DocsBrain/>}
           {sec === 'healing'    && <DocsHealing/>}
-          {sec === 'cli'        && <DocsAPI/>}
         </div>
       </div>
     </div>
@@ -10127,72 +11969,40 @@ const DocsStart = () => (
     <SHead title="Getting started" sub="ArchHub runs as a local server next to your CAD/BIM host. Nothing leaves your machine unless a node asks it to."/>
     <DSub>INSTALL</DSub>
     <DP data-docs-install="">Download the Windows installer from <code style={{ fontFamily:LM.mono, fontSize:12 }}>archhub.io</code> and run it. ArchHub starts its local server by itself and updates itself when a new release is out; the strip at the bottom offers the restart.</DP>
-    <DP data-docs-strip="">The strip at the bottom of Studio shows the local server, how many hosts are running, and the graph you are in. The model a chat uses is named once, on the chip above the chat box.</DP>
+    <DP data-docs-strip="">The strip at the bottom of Studio shows the connected program, document, running work, waiting work, and the command hint. The model/provider sits on the right when a model is selected.</DP>
     <DSub>FIRST RUN</DSub>
-    <DRows rows={[
-      ['1 · Connect a host', 'Studio scans for Revit, Rhino, Blender and a Speckle token. Anything it finds appears in Settings → Hosts.'],
-      ['2 · Pick a model', 'Free models work out of the box. Settings → Providers signs in to a provider, or uses a local LM Studio / Ollama. Keys stay on this machine, never in a project file.'],
-      ['3 · Open a session', 'A session is one canvas plus its chat. Sessions are files — commit them, diff them, share them.'],
-      ['4 · Place a node', 'Press ⌘L for the library, or drag from the Nodes panel.'],
-    ]}/>
+    <DRows rows={DOC_FIRST_RUN_ROWS}/>
     <DNote>ArchHub is local-first. Sessions, skills and the brain live on this machine. The only outbound traffic is the model call a node makes; Settings → Permissions shows which agents can act.</DNote>
-    <DSub>KEYS</DSub>
+    <DSub>SHORTCUTS</DSub>
     <DP><DKey>⌘K</DKey> command palette · <DKey>⌘L</DKey> node library · <DKey>⌘↵</DKey> run focused node · <DKey>⌘,</DKey> settings · <DKey>⌘/</DKey> these docs</DP>
   </div>
 );
 
-const DocsCanvas = () => (
+const DocsCanvas = ({ nodeGroups = [] }) => (
   <div>
-    <SHead title="The canvas & nodes" sub="A node takes typed inputs, does one job, and emits typed outputs. The canvas is the record of how they connect."/>
-    <DP>Every node carries the same anatomy: a title bar you drag, typed input ports on the left, parameters (its cells) in the body, typed output ports on the right, and a status dot. Nothing about a node is special-cased — the same primitive scales from one operation to a whole pipeline.</DP>
-    <DSub>THE NINE CATEGORIES</DSub>
-    <DRows rows={[
-      ['Hosts',     'Live links to Revit, Rhino, Blender, Speckle. The only nodes that touch your model.'],
-      ['Read',      'Pull elements, schedules, parameters, views out of a host.'],
-      ['Filter',    'Narrow a set — by category, level, phase, parameter value, or a rule.'],
-      ['Transform', 'Change geometry or data: move, array, remap, recompute, unit-convert.'],
-      ['Annotate',  'Tags, dimensions, keynotes, sheet marks — the drawing layer.'],
-      ['Compose',   'Assemble sheets, views, schedules and exports.'],
-      ['Logic',     'Branch, gate, loop, assert. Where a graph gets opinions.'],
-      ['AI',        'Model calls. Each one names its model, its prompt and its cost.'],
-      ['Output',    'Write back to the host, to disk, or to a report.'],
-    ]}/>
+    <SHead title="Nodes" sub="The node list below matches the Node library."/>
+    <DP>Every entry here is a placeable catalogue item. If a node appears in the library, it appears on this page with its category and detail.</DP>
+    <DSub>CATALOGUE NODES</DSub>
+    <DNodeGroups groups={nodeGroups}/>
     <DSub>WIRES ARE TYPED</DSub>
     <DP>A wire carries a signal type — <code style={{ fontFamily:LM.mono, fontSize:12 }}>element · geometry · data · text · number · bool · file · model</code>. Studio refuses a connection whose types can't reconcile, and colors the wire by type so you can read a graph without opening a single node.</DP>
     <DSub>GROUPING</DSub>
     <DP>Select nodes and group them. The group is itself a node: it collapses to one box, exposes the ports its members left unconnected, and can be grouped again. That is the whole compositional rule — there is no second mechanism to learn.</DP>
     <DNote>A saved group is a <b style={{ color:LM.ink }}>skill</b>. A saved canvas is a <b style={{ color:LM.ink }}>workflow</b>. Neither is a new kind of thing — both are nodes you named and kept.</DNote>
     <DSub>NAVIGATION</DSub>
-    <DRows rows={[
-      ['Pan',           'Drag empty canvas, or hold Space and drag.'],
-      ['Zoom',          '⌘ + scroll, or the zoom control in the toolbar.'],
-      ['Focus a node',  'Click to select, double-click to open its interior.'],
-      ['Multi-select',  'Shift + drag a box · ⌘/Ctrl + click to add.'],
-      ['Run',           '⌘↵ runs the focused node and everything it depends on.'],
-    ]}/>
+    <DRows rows={DOC_NAVIGATION_ROWS}/>
   </div>
 );
 
-const DocsConnectors = () => (
+const DocsConnectors = ({ connectorRows = [] }) => (
   <div>
-    <SHead title="Connectors" sub="A connector is a long-lived link to a running application. It is the only thing in ArchHub that can read or write your model."/>
-    <DP>Connectors run in-process with the host via a thin add-in, and talk to the ArchHub server over a local socket. They report a heartbeat, a schema version, and a capability list — which is how the canvas knows what a Read node can offer before you run it.</DP>
-    <DSub>SUPPORTED HOSTS</DSub>
-    <DRows rows={[
-      ['Revit 2022–2025',  'Elements, types, parameters, schedules, views, sheets. Read + write. Transactions are wrapped and rolled back on failure.'],
-      ['Rhino 7 / 8',      'Geometry, layers, blocks, Grasshopper definitions. Read + write.'],
-      ['Blender 4.x / 5.x','Meshes, collections, modifiers. Read + write via the ArchHub add-on.'],
-      ['Speckle',          'Commits, branches, streams. Read + write; use it to move between hosts without a file exchange.'],
-      ['IFC 2x3 / 4',      'File-based read. No live link — an import node, not a connector.'],
-    ]}/>
-    <DSub>LIFECYCLE</DSub>
-    <DCode>{`discover → handshake → capability sync → live
-                                    ↓
-                          heartbeat every 2s
-                                    ↓
-                    miss 3 beats → degraded → self-heal`}</DCode>
-    <DP>A connector never silently dies. When beats stop, the node turns amber (degraded), the graph pauses at that node instead of failing downstream, and the self-healing loop takes over — see <b style={{ color:LM.ink }}>Self-healing</b>.</DP>
-    <DNote>Version drift is the most common failure. A connector reports its host build on every handshake; if the schema it knows and the schema the host offers disagree, ArchHub degrades to the subset both understand rather than guessing.</DNote>
+    <SHead title="Connectors" sub="These rows match Settings > Hosts."/>
+    <DP>A connector row appears when the running app has a host to show. The state word, port and detail match Settings and the bottom strip.</DP>
+    <DSub>HOST REGISTRY</DSub>
+    <div data-docs-connectors="">
+      <DRows rows={connectorRows}/>
+    </div>
+    <DNote>When the host probe has not answered, this page says it is checking. It does not substitute a fixed support list.</DNote>
   </div>
 );
 
@@ -10284,38 +12094,6 @@ resume      or escalate to the founder after 3 failed attempts`}</DCode>
   </div>
 );
 
-const DocsAPI = () => (
-  <div>
-    <SHead title="CLI & API reference" sub="Everything Studio does, the CLI does. The UI is a client of the same local server."/>
-    <DSub>CLI</DSub>
-    <DRows rows={[
-      ['archhub up',              'Start the server on :7300.'],
-      ['archhub doctor',          'Check hosts, providers, ports, brain integrity.'],
-      ['archhub run <session>',   'Run a session headless. --node to run one node and its dependencies.'],
-      ['archhub skill ls | add | rm', 'Manage skills in the current project.'],
-      ['archhub brain ls | share | forget', 'Inspect the strata, share a fact into the firm brain, or forget one. Sealed and unclassified facts have no share path.'],
-      ['archhub hosts',           'List connectors with state and host build.'],
-      ['archhub logs -f',         'Follow the audit stream, including heal attempts.'],
-    ]}/>
-    <DSub>HTTP</DSub>
-    <DCode>{`GET  /v1/hosts                 → connectors + state
-GET  /v1/sessions              → sessions in this project
-POST /v1/sessions/:id/run      → { node?: id, dry_run?: bool }
-GET  /v1/sessions/:id/events   → SSE: node status, wire traffic, heals
-GET  /v1/skills                → installed skills + versions
-POST /v1/skills                → install from JSON body or path
-GET  /v1/brain?layer=project   → facts with sources`}</DCode>
-    <DP>The server binds to localhost only and requires the token printed by <code style={{ fontFamily:LM.mono, fontSize:12 }}>archhub up</code> in an <code style={{ fontFamily:LM.mono, fontSize:12 }}>Authorization: Bearer</code> header. There is no remote mode; if you need one, tunnel it yourself and own that decision.</DP>
-    <DSub>EXIT CODES</DSub>
-    <DRows rows={[
-      ['0', 'Run completed, all nodes green.'],
-      ['1', 'Usage or configuration error — nothing ran.'],
-      ['2', 'A node reported blocked (unmet requires). Nothing was written.'],
-      ['3', 'A run failed after self-healing escalated. Partial writes were rolled back.'],
-    ]}/>
-  </div>
-);
-
 // Application update notice. The desktop check stages a verified release in the background and the
 // launcher pushes it here. After any update, a release restart or a local install, the running build is
 // confirmed once until dismissed. The notice never blocks work and restarts through the same reload
@@ -10381,21 +12159,36 @@ const ApplicationUpdateNotice = () => {
   </div>;
 };
 
-// ──────────────────────── SERVER STRIP ────────────────────────
-const ServerStrip = ({ session, setDocsOpen, onOpenWaitingTask }) => {
-  // Live values in the design's slots: this server's port, the connectors that drive a host, and the running build.
-  const port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
-  const transport = window.ARCHHUB_EXISTING_WORKSHOP;
+// ──────────────────────── STATUS BAR ────────────────────────
+const StatusBar = ({ session, model, setDocsOpen, onOpenWaitingTask }) => {
+  // Live values in the design's slots: connected program, active graph document, running work and waiting work.
+  useCatalogueVersion();
   const hub = useToolHubProjection();
+  const hostCatalogue = catalogueStates.get('ARCHHUB_LOAD_HOSTS') || {};
   const waitingItems = Array.isArray(hub?.waiting) ? hub.waiting : [];
-  const readBuild = () => String(transport?.getSnapshot?.()?.applicationUpdate?.current_build || '');
-  const [build, setBuild] = React.useState(readBuild);
+  const waitingCount = waitingItems.length;
+  const connectedHost = LM_HOSTS.find(row => ['connected', 'listening', 'running'].includes(String(row?.state || '').toLowerCase()));
+  const sessionsForStatus = Array.isArray(typeof LM_SESSIONS === 'undefined' ? null : LM_SESSIONS)
+    ? LM_SESSIONS
+    : (Array.isArray(window.ARCHHUB_LIVE?.sessions) ? window.ARCHHUB_LIVE.sessions : []);
+  const runningCount = sessionsForStatus.filter(s => s.state === 'running').length;
+  const documentLabel = session?.file || connectedHost?.file || '';
+  const hostLabel = connectedHost ? [connectedHost.name, connectedHost.version].filter(Boolean).join(' ') : '';
+  const hostReadFailed = !!hostCatalogue.error;
+  const hostReadSucceeded = hostCatalogue.read === true && !hostReadFailed;
+  const hostReadInFlight = !!hostCatalogue.loading || (!hostReadSucceeded && !hostReadFailed);
+  const hostStripState = hostReadFailed ? 'failed' : hostReadInFlight ? 'checking' : connectedHost ? 'connected' : 'empty';
+  const modelLabel = model?.tag === 'free' || /(^|\/)free$/i.test(modelRoute(model))
+    ? ['free models', model?.provider || model?.vendor || 'OpenRouter'].filter(Boolean).join(' · ')
+    : [modelRoute(model), model?.vendor || model?.provider].filter(Boolean).join(' · ');
   const [stopError, setStopError] = React.useState('');
-  React.useEffect(() => transport?.subscribe ? transport.subscribe(() => setBuild(readBuild())) : undefined, [transport]);
   const postStopControl = (path, expectedStopped) => {
     const session = window.__archhubSession || {};
     const fetcher = typeof window.fetch === 'function' ? window.fetch.bind(window) : (typeof fetch === 'function' ? fetch : null);
-    if (!fetcher) return;
+    if (!fetcher) {
+      setStopError('Stop control is unavailable.');
+      return;
+    }
     setStopError('');
     fetcher(path, {
       method: 'POST',
@@ -10415,12 +12208,8 @@ const ServerStrip = ({ session, setDocsOpen, onOpenWaitingTask }) => {
       setStopError(String(error?.message || 'Stop control was refused'));
     }).finally(() => requestToolHubRefresh());
   };
-  const handleStop = () => {
-    postStopControl('/stop-all', true);
-  };
-  const handleResume = () => {
-    postStopControl('/resume', false);
-  };
+  const handleStop = () => postStopControl('/stop-all', true);
+  const handleResume = () => postStopControl('/resume', false);
   const StripItem = ({ onClick, children, accent }) => {
     const [h, setH] = React.useState(false);
     const style = {
@@ -10440,34 +12229,45 @@ const ServerStrip = ({ session, setDocsOpen, onOpenWaitingTask }) => {
   return (
     <div style={{
       // minWidth 0: at the narrowest window the update notice ellipsizes instead of widening the shell grid.
-      gridColumn:'1 / -1', gridRow:'2', minWidth:0,
-      background:LM.bgPanel, borderTop:`1px solid ${LM.line}`,
-      padding:`0 ${LM.sp.md}px`, display:'flex', alignItems:'center', gap:LM.sp.xs,
+      minWidth:0, width:'100%', height:'100%',
+      background:'transparent',
+      display:'flex', alignItems:'center', gap:LM.sp.xs,
     }}>
-      <StripItem>
-        <span style={{ color:LM.ok }}>●</span> server :{port} · {hostTally().read ? `${hostTally().running}/${hostTally().total} hosts` : 'checking hosts'}
-      </StripItem>
-      {session ? (
+      {hostStripState === 'connected' ? <>
+        <StripItem><span style={{ color:LM.ok }}>●</span> Connected</StripItem>
+        {hostLabel && <><span style={{ color:LM.inkDim, padding:`0 ${LM.sp.xs}px` }}>·</span><StripItem>{hostLabel}</StripItem></>}
+        {documentLabel && <><span style={{ color:LM.inkDim, padding:`0 ${LM.sp.xs}px` }}>·</span><StripItem>{documentLabel}</StripItem></>}
+      </> : hostStripState === 'checking' ? (
+        <StripItem><span style={{ color:LM.inkSoft }}>○</span> Checking programs…</StripItem>
+      ) : hostStripState === 'failed' && connectedHost ? (
         <>
-          <span style={{ color:LM.inkDim, padding:`0 ${LM.sp.xs}px` }}> · </span>
-          <StripItem>{session.file}</StripItem>
-        </>
-      ) : (
-        <>
+          <StripItem>{'Last known: ' + [hostLabel, documentLabel].filter(Boolean).join(' · ')}</StripItem>
           <span style={{ color:LM.inkDim, padding:`0 ${LM.sp.xs}px` }}>·</span>
-          <StripItem>{LM_SESSIONS.length} sessions · {LM_SESSIONS.filter(s=>s.state==='running').length} running</StripItem>
+          <StripItem onClick={() => loadCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS)}>Retry</StripItem>
         </>
-      )}
+      ) : hostStripState === 'failed' ? (
+        <>
+          <StripItem accent={LM.err}>Programs unavailable</StripItem>
+          <span style={{ color:LM.inkDim, padding:`0 ${LM.sp.xs}px` }}>·</span>
+          <StripItem onClick={() => loadCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS)}>Retry</StripItem>
+        </>
+      ) : <StripItem><span style={{ color:LM.inkSoft }}>○</span> No program connected</StripItem>}
+      {runningCount > 0 && <><span style={{ color:LM.inkDim, padding:`0 ${LM.sp.xs}px` }}>·</span><StripItem>{plural(runningCount, 'running', 'running')}</StripItem></>}
+      {waitingCount > 0 && <><span style={{ color:LM.inkDim, padding:`0 ${LM.sp.xs}px` }}>·</span><StripItem>{waitingCount + ' waits for you'}</StripItem></>}
       <div style={{ flex:1 }}/>
       <ApplicationUpdateNotice/>
       <WaitingButton variant="strip" items={waitingItems} onOpenTask={item => onOpenWaitingTask && onOpenWaitingTask(
         item.producer === 'social_approve' ? 'cloud' : 'workshop',
         item.producer === 'workshop_gate' ? {tab:'approvals', root:item.root || item.workshop || '', focus:item.open_target || item.work || item.id} : {})}/>
-      {waitingItems.length > 0 && <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>}
+      {waitingCount > 0 && modelLabel && <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>}
+      {modelLabel && <>
+        <StripItem>{modelLabel}</StripItem>
+      </>}
+      <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
       {hub?.stopped ? (
         <>
           <StripItem accent={LM.err}>Stopped</StripItem>
-          <span style={{ color:LM.inkDim, padding:'0 2px' }}> · </span>
+          <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
           <StripItem onClick={handleResume}>Resume</StripItem>
         </>
       ) : (
@@ -10478,14 +12278,11 @@ const ServerStrip = ({ session, setDocsOpen, onOpenWaitingTask }) => {
         <StripItem accent={LM.err}>{stopError}</StripItem>
       </>}
       <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
-      <StripItem onClick={() => setDocsOpen && setDocsOpen(true)}>docs</StripItem>
-      {build && <>
-        <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
-        <StripItem>{build}</StripItem>
-      </>}
+      <StripItem>Ctrl K</StripItem>
     </div>
   );
 };
+const ServerStrip = StatusBar;
 
 window.StudioLM = StudioLM;
 

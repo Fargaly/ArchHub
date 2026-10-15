@@ -16,17 +16,22 @@ const slice = (startNeedle, endNeedle) => {
   return studio.slice(start, end);
 };
 
-test('S1: Settings has System as the second tab, with badge, mini preview, and one graph action', () => {
-  const settings = slice('const Settings =', 'const SettingsHub =');
-  assert.match(settings, /\['hub',\s*'Hub'/);
-  assert.match(settings, /\['system',\s*'System',\s*systemNodeBadge/);
-  assert.ok(settings.indexOf("['hub',") < settings.indexOf("['system',"), 'System follows Hub');
-  assert.ok(settings.indexOf("['system',") < settings.indexOf("['account',"), 'System is before Account');
-  assert.match(settings, /tab === 'system'\s*&&\s*<SettingsSystem/);
-  const panel = slice('const SystemMiniGraph =', 'const SettingsHub =');
-  assert.match(panel, /data-settings-system-preview/);
-  assert.match(panel, /Open the System graph/);
-  assert.doesNotMatch(panel, /SettingsHub/);
+test('S1: Settings opens as the DSYS-065 System graph with real system cards and wires', () => {
+  const settings = slice('const Settings =', 'const SystemMiniGraph =');
+  for (const banned of ['SETTINGS54_' + 'NODE', 'SETTINGS54_' + 'SYSTEM_GRAPH', 'SETTINGS54_' + 'SYSTEM_WIRES']) {
+    assert.equal(studio.includes(banned), false);
+  }
+  assert.match(studio, /settings54SystemNodes = graph => \(graph\?\.nodes \|\| \[\]\)\.filter\(node => node\?\.application === true\)/);
+  assert.match(studio, /settings54SystemWires = \(graph, nodes\) =>/);
+  assert.match(settings, /data-settings54-shell/);
+  assert.match(settings, /data-settings54-graph/);
+  assert.match(studio, /data-settings54-node-card/);
+  assert.match(studio, /data-settings54-node-id/);
+  assert.match(settings, /data-settings54-wire/);
+  assert.match(settings, /pmPersistValue/);
+  assert.match(settings, /moveMany\(changed, revision, before, 'arrange'\)|moveTopologyNodes\(changed, revision, before, 'arrange'\)/);
+  assert.doesNotMatch(settings, /Add node/);
+  assert.doesNotMatch(settings, /data-settings-compat-tabs/);
 });
 
 test('S1: System is not injected as a Studio session tab or Hub button', () => {
@@ -70,11 +75,11 @@ test('S3/S4: selection bar offers grouping, selected arrange, and connected sele
   assert.match(studio, /Select connected/);
 });
 
-test('S5: rail has only Chats, Nodes, Skills, Search, Docs and Settings; tools are catalogue nodes', () => {
+test('S5: rail has only Chats, Library, Skills, Search, Docs and Settings; tool engines stay off the handoff catalogue', () => {
   const rail = slice('const IconRail =', 'const RailIcon =');
-  for (const name of ['Chats', 'Nodes', 'Skills', 'Search', 'Documentation', 'Settings']) assert.match(rail, new RegExp(name));
+  for (const name of ['Chats', 'Library', 'Skills', 'Search', 'Documentation', 'Settings']) assert.match(rail, new RegExp(name));
   for (const name of ['Studio', 'Workshop', 'Brain', 'BABOOM', 'Connectors', 'Cloud']) assert.doesNotMatch(rail, new RegExp(name));
-  assert.match(library, /\("tools",/);
+  assert.match(library, /\(\("tool\.",\), "tools"\)/, 'System tool engines retain their Tools category while the handoff catalogue uses canonical rows');
   for (const id of ['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud']) {
     assert.match(library, new RegExp('"tool_' + id + '"'));
     assert.match(pipeline, new RegExp('"tool\\.' + id + '"'));
@@ -83,7 +88,9 @@ test('S5: rail has only Chats, Nodes, Skills, Search, Docs and Settings; tools a
 
 test('S6: Settings BABOOM and the BABOOM node share one parameter source and Settings opens the node', () => {
   const settings = slice('const SettingsBaboom =', 'const SettingsCloudStatus =');
-  assert.match(settings, /parameters of the BABOOM node|same binding/i);
+  assert.match(studio, /settings54NodeGroup\(selectedNode\) !== 'permissions'/);
+  assert.match(studio, /settings54ParamKey\(row\)/);
+  assert.match(studio, /pmPersistValue\(node, key, value\)/);
   assert.match(settings, /Open as node/);
   assert.match(settings, /onOpenToolGraph\?\.\('baboom'\)|openToolGraphFromSettings\('baboom'\)/);
   assert.match(settings, /baboomMaxSpeaks\(personal\)/);

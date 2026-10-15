@@ -1203,11 +1203,12 @@ def api_agent_task_claim(body: Optional[AgentTaskClaimReq] = None,
     # predates it would read its JSON as a BABOOM instruction.
     kinds = (tuple(k for k in body.kinds if k in app_relay.APP_KINDS)
              or tuple(k for k in app_relay.APP_KINDS if k != app_relay.WORKSHOP_CALL))
-    # Only what the founder's own accounts queued reaches his desktop: the
-    # claim used to take the oldest task of ANY account (review 2026-09-28).
+    # Only what this signed-in app account queued reaches this desktop. A
+    # multi-founder deployment is not a shared session namespace.
+    account = (founder.get("email") or "").strip().lower()
     task = db.claim_next_agent_task(
         claimed_by=str(body.claimed_by or "archhub-app")[:120], kinds=kinds,
-        creators=config.founder_emails())
+        creators=(account,))
     if task is not None:
         # An idle poll ({task: null}) changes nothing and is not an action.
         _audit(founder, "POST /founder/api/agent-tasks/claim", "agent_task.claim",

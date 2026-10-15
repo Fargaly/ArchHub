@@ -1,3 +1,4 @@
+const {settingsNavigator} = require('./settings_navigation_helpers.cjs');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -62,9 +63,10 @@ async function mountStudio(options = {}) {
   const authorization = {subject:'owner-a', session:'view-a'};
   const graph = {nodes:[{id:'tool-a', title:'Tool node', cat:'ai', x:40, y:40, w:220, h:120, params:[], outs:[]}],
     wires:[{id:'wire-a', from:['tool-a','out'], to:['tool-a','in']}]};
+  if(options.nativeWork)graph.nodes.push({id:options.nativeWork.work,title:'Approve wall opening',status:'awaiting_approval',params:[]});
   const snapshot = {canvas:{graph_id:'graph-a', root:'scope-a', revision:7, authorization},
     workshops:[{root:'room-a', label:'General Workshop', is_general:true}],
-    nativeWork:{state:'awaiting_approval', work:'Layer choice', review_text:'Pick a layer', approved:false},
+    nativeWork:options.nativeWork || {state:'awaiting_approval', work:'Layer choice', review_text:'Pick a layer', approved:false},
     theme:{configuration:{baboom_startup:{value:'on', source:'graph', available:true, revision:12}}, pending:false, error:''},
     applicationUpdate:{state:'idle', current_build:'20261009-w7'},
     topology:{canvas:{application_root:'graph-a', scope:{current:'scope-a'}, authorization, revision:7}, graph, selected:null}};
@@ -114,11 +116,8 @@ async function openSettingsHub(studio) {
   assert.ok(settings, 'actual Studio Settings control exists');
   studio.win.ReactDOM.flushSync(() => settings.click());
   await studio.settle();
-  const theme = [...studio.doc.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Theme');
-  assert.ok(theme, 'actual Settings sidebar exists');
-  const sidebar = theme.parentElement;
-  assert.equal(sidebar.firstElementChild.firstElementChild.textContent, 'Hub', 'Hub is the first Settings tab');
-  const panel = sidebar.nextElementSibling;
+  const nav = settingsNavigator({doc:studio.doc, flush:action => studio.win.ReactDOM.flushSync(action), settle:studio.settle});
+  const panel = await nav.tab('Hub');
   assert.equal(panel.querySelectorAll('[data-tool-card]').length, 6, 'Settings Hub has the six tool cards');
   return panel;
 }
@@ -231,9 +230,11 @@ test('F2/CP1: clicking an off tool opens its Settings > Hub card over the curren
     studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-home-tools] [data-tool-card="brain"]').click());
     await studio.settle();
     assert.equal(studio.doc.querySelector('[data-tool-view]'), null, 'no full-window tool page');
-    const hub = [...studio.doc.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Hub');
+    const nav = settingsNavigator({doc:studio.doc, flush:action => studio.win.ReactDOM.flushSync(action), settle:studio.settle});
+    const hub = await nav.capability('Hub');
     assert.ok(hub, 'Settings is open');
-    const card = hub.parentElement.nextElementSibling.querySelector('[data-tool-card="brain"]');
+    const panel = await nav.tab('Hub');
+    const card = panel.querySelector('[data-tool-card="brain"]');
     assert.ok(card, 'the Hub shows the Brain card, which states it is off');
   } finally { studio.close(); }
 });
@@ -266,9 +267,9 @@ test('F1b: right-click on an on Hub/Home tool card shows a six second in-panel o
   } finally { studio.close(); }
 });
 
-// Ping F6a: one host count. The Connectors card, the status bar and the Hosts badge read the same
-// Hosts list, counted as the server counts it (connected or listening).
-test('F6a: the host count is one number on the Connectors card, the status bar and the Hosts badge', async () => {
+// Ping F6a p2: the Connectors card and Hosts badge still share the same count. The app-frame status
+// strip now names the connected program/document instead of exposing server/port host tallies.
+test('F6a: host count stays in Connectors and Hosts badge; the status strip names the connected program', async () => {
   const studio = await mountStudio({hosts:[
     {id:'r25', name:'Revit 2025', state:'connected'}, {id:'acad', name:'AutoCAD', state:'listening'},
     {id:'rh8', name:'Rhino 8', state:'off'}, {id:'xl', name:'Excel', state:'installed'}]});
@@ -277,16 +278,19 @@ test('F6a: the host count is one number on the Connectors card, the status bar a
     const card = studio.doc.querySelector('[data-home-tools] [data-tool-card="connectors"]');
     assert.ok(card, 'Home draws the Connectors card');
     assert.match(card.querySelector('[data-tool-stat]').textContent, /^2\/4 hosts running\.$/, 'card: 2 of the 4 listed hosts run');
-    assert.match(studio.doc.body.textContent, /server :\d+ · 2\/4 hosts/, 'status bar: the same 2/4');
+    assert.match(studio.doc.body.textContent, /●\s*Connected.*Revit 2025/, 'status bar: connected program, not server tally');
+    assert.equal(/server\s*:|2\/4 hosts|0\/0/.test(studio.doc.querySelector('footer')?.textContent || ''), false,
+      'status strip has no server/host tally text');
     const hub = await openSettingsHub(studio);
-    const hosts = [...studio.doc.querySelectorAll('button')].filter(b => b.firstElementChild?.textContent === 'Hosts').find(child => child.firstElementChild?.textContent === 'Hosts');
-    assert.equal(hosts.children[1].textContent, '2/4 running', 'Hosts badge: the same 2/4');
+    const nav = settingsNavigator({doc:studio.doc, flush:action => studio.win.ReactDOM.flushSync(action), settle:studio.settle});
+    const hosts = await nav.tab('Hosts');
+    assert.match(hosts.querySelector('[data-connectors-bar]').textContent, /2 of 4 running/, 'Hosts owner carries the same 2/4 count');
   } finally { studio.close(); }
 });
 
-// Ping F6a v3 (rig: the mounted strip said 0/0 while the card said 2/27): on the MOUNTED Studio the
-// Hosts list is read at start-up, so Home's card, the status bar and the Hosts badge state one read list.
-test('F6a v3: the mounted Studio reads the Hosts list at start and every reader shows the same count', async () => {
+// Ping F6a v3 p2: the mounted Studio reads the Hosts list at start. Before that, the status strip must
+// use the approved checking sentence, never 0/0; after that it names the connected program.
+test('F6a v3: the mounted Studio reads the Hosts list; status never shows 0/0', async () => {
   const rows = [{id:'r25', name:'Revit 2025', state:'connected'}, {id:'acad', name:'AutoCAD', state:'listening'},
     {id:'rh8', name:'Rhino 8', state:'off'}, {id:'xl', name:'Excel', state:'installed'}, {id:'wd', name:'Word', state:'installed'}];
   let release;
@@ -294,17 +298,20 @@ test('F6a v3: the mounted Studio reads the Hosts list at start and every reader 
   const studio = await mountStudio({hosts:[], loadHosts:async () => { await answered; return {hosts:rows, connectors:rows}; }});
   try {
     await studio.settle();
-    const strip = () => (studio.doc.body.textContent.match(/server :\d+ · [^·]*/) || [''])[0];
+    const strip = () => studio.doc.querySelector('footer')?.textContent || '';
     const card = () => studio.doc.querySelector('[data-home-tools] [data-tool-card="connectors"] [data-tool-stat]')?.textContent;
-    assert.match(strip(), /checking hosts/, 'before the list is read the strip says so, never 0/0: ' + strip());
+    assert.match(strip(), /Checking programs/, 'before the list is read the strip says so, never 0/0: ' + strip());
+    assert.equal(/0\/0|server\s*:/.test(strip()), false, 'before read the strip has no zero/server tally: ' + strip());
     assert.equal(card(), 'Checking hosts.', 'before the list is read the card says so, never another number');
     release();
-    for (let i = 0; i < 50 && !/2\/5 hosts/.test(strip()); i += 1) await studio.settle();
-    assert.match(strip(), /server :\d+ · 2\/5 hosts/, 'status bar: 2 of the 5 listed hosts');
-    assert.equal(card(), '2/5 hosts running.', 'Connectors card: the same 2/5');
+    for (let i = 0; i < 50 && !/Connected/.test(strip()); i += 1) await studio.settle();
+    assert.match(strip(), /Connected.*Revit 2025/, 'status bar: connected host is named');
+    assert.equal(/2\/5 hosts|server\s*:/.test(strip()), false, 'status bar no longer owns the host tally');
+    assert.equal(card(), '2/4 hosts running.', 'Connectors card: Excel and Word share one Office row');
     const hub = await openSettingsHub(studio);
-    const hosts = [...studio.doc.querySelectorAll('button')].find(b => b.firstElementChild?.textContent === 'Hosts');
-    assert.equal(hosts.children[1].textContent, '2/5 running', 'Hosts badge: the same 2/5');
+    const nav = settingsNavigator({doc:studio.doc, flush:action => studio.win.ReactDOM.flushSync(action), settle:studio.settle});
+    const hosts = await nav.tab('Hosts');
+    assert.match(hosts.querySelector('[data-connectors-bar]').textContent, /2 of 4 running/, 'Hosts owner agrees with the folded Office count');
     assert.ok(hub, 'Settings opened');
   } finally { studio.close(); }
 });
@@ -336,8 +343,10 @@ test('F1: Settings Hub card click opens that tool\'s Settings tab; Studio Home c
     studio.win.ReactDOM.flushSync(() => hub.querySelector('[data-tool-card="connectors"]').click());
     await studio.settle();
     assert.equal(studio.doc.querySelector('[data-tool-view]'), null, 'no full-window tool page');
-    const hosts = [...studio.doc.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Hosts');
-    assert.ok(hosts && hosts.style.background !== 'transparent', 'Connectors opens Settings > Hosts');
+    const nav = settingsNavigator({doc:studio.doc, flush:action => studio.win.ReactDOM.flushSync(action), settle:studio.settle});
+    const hosts = await nav.capability('Hosts');
+    assert.ok(hosts, 'Connectors opens the Settings-owned Hosts behavior');
+    assert.match((await nav.tab('Hosts')).textContent, /Local clients|Revit|AutoCAD|Hosts/i, 'Hosts behavior panel is shown');
     studio.win.ReactDOM.flushSync(() => studio.win.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Escape', bubbles:true})));
     studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-home-tools] [data-tool-card="studio"]').click());
     await studio.settle();
@@ -363,24 +372,31 @@ test('F2: waiting popover is fed by the hub and shows Workshop approval metadata
   } finally { studio.close(); }
 });
 
-test('F2U repair: Workshop waiting opens Approvals and has no popover decision buttons', async () => {
+test('F2U repair: Workshop waiting uses one shared digest approval and Review opens the same Workshop', async () => {
   const studio = await mountStudio({waiting:[{
     id:'wait-a', producer:'workshop_gate', root:'room-a', work:'work-a', input_digest:'b'.repeat(64),
     summary:'Approve wall opening', who:'Claude', for:'you',
-  }]});
+  }],nativeWork:{root:'room-a',scope:'scope-a',owner:'owner-a',view:'view-a',work:'work-a',state:'awaiting_approval',mode:'agent',review_text:'Approve wall opening',input_digest:'b'.repeat(64),approved:false}});
   try {
     await studio.settle(); await studio.settle();
     studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-waiting-trigger="home"]').click());
     const popover = studio.doc.querySelector('[data-waiting-popover]');
     assert.ok(popover);
-    assert.equal([...popover.querySelectorAll('button')].some(node => node.textContent.trim() === 'Approve'), false);
-    assert.equal([...popover.querySelectorAll('button')].some(node => node.textContent.trim() === 'Reject'), false);
+    const cards=popover.querySelectorAll('[data-approval-component="shared"]');assert.equal(cards.length,1);
+    const buttons=[...cards[0].querySelectorAll('button')];
+    assert.deepEqual(buttons.map(node=>node.textContent.trim()),['Approve','Decline']);
+    assert.equal([...popover.querySelectorAll('button')].filter(node=>/^Approve/.test(node.textContent.trim())&&!node.closest('[data-approval-component="shared"]')).length,0,'no parallel popover approval control');
+    assert.equal([...popover.querySelectorAll('button')].some(node=>node.textContent.trim()==='Reject'),false);
+    assert.deepEqual(studio.ownerCalls,[],'opening the review never auto-approves');
+    studio.win.ReactDOM.flushSync(()=>{buttons[0].click();buttons[0].click();});
+    await studio.settle();await studio.settle();
+    assert.deepEqual(studio.ownerCalls,[['approveNativeWork','room-a','b'.repeat(64)]],'shared approval binds the shown digest once');
     studio.win.ReactDOM.flushSync(() => [...popover.querySelectorAll('button')]
       .find(node => node.textContent.trim() === 'Open in Approvals').click());
     await studio.settle();
-    const approvals = studio.doc.querySelector('[role="tab"][aria-label="Approvals"]');
-    assert.equal(approvals?.getAttribute('aria-selected'), 'true');
-    assert.deepEqual(studio.ownerCalls, []);
+    assert.ok(studio.doc.querySelector('[data-workshop-s1]'), 'Open in Approvals enters the S1 Workshop view');
+    assert.match(studio.doc.body.textContent, /waits for you/);
+    assert.deepEqual(studio.ownerCalls,[['approveNativeWork','room-a','b'.repeat(64)]],'Review does not replay the accepted decision');
   } finally { studio.close(); }
 });
 
@@ -407,9 +423,12 @@ test('F2R owner decisions: unsupported waiting producers are refused and not mar
   try {
     await studio.settle(); await studio.settle();
     studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-waiting-trigger="home"]').click());
-    studio.win.ReactDOM.flushSync(() => studio.button('Approve').click());
+    const approve=studio.button('Approve');
+    assert.equal(approve.disabled,true,'unknown producer has no admitted decision route');
+    assert.equal(approve.title,'Not available yet');
+    studio.win.ReactDOM.flushSync(() => approve.click());
     await studio.settle();
-    assert.match(studio.doc.body.textContent, /No owner route is available/);
+    assert.equal(studio.doc.querySelector('[data-approval-component="shared"]')!==null,true,'refusal is visible through the single approval component');
     assert.deepEqual(studio.ownerCalls, []);
     assert.equal(studio.doc.body.textContent.includes('approved · delivered'), false);
   } finally { studio.close(); }
@@ -453,16 +472,17 @@ test('F2R D1: Settings Hub cards show owner state lines, no placeholders or plum
   } finally { studio.close(); }
 });
 
-test('F2R D2 / WS-022: Workshop card opens the full Workshop view on its Board tab, not Studio Chat', async () => {
+test('F2R D2 / WS-022: Workshop card opens the DSYS077 window and DSYS074 empty state without a board', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle(); await studio.settle();
     const hub = await openSettingsHub(studio);
     studio.win.ReactDOM.flushSync(() => hub.querySelector('[data-tool-card="workshop"]').click());
     await studio.settle();
-    const tabs = [...studio.doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')];
-    assert.deepEqual(tabs.map(tab => tab.getAttribute('aria-label')), ['Board', 'Chat', 'Agents', 'Approvals', 'Router', 'Relay', 'Prompts']);
-    assert.equal(tabs.find(tab => tab.getAttribute('aria-label') === 'Board')?.getAttribute('aria-selected'), 'true');
+    assert.ok(studio.doc.querySelector('[data-workshop-s1]'), 'Workshop card opens the S1 Workshop view');
+    assert.ok(studio.doc.querySelector('[data-workshop-empty]'),'empty authority opens the DSYS074 composer state');
+    assert.equal(studio.doc.querySelector('[data-workshop-s1-canvas]'),null,'removed duplicate canvas stays absent');
+    assert.equal(studio.doc.querySelector('[role="tablist"]'),null);
     assert.equal(studio.doc.querySelector('textarea[aria-label="Message the model"]'), null);
   } finally { studio.close(); }
 });
@@ -475,10 +495,11 @@ test('F2R D3: BABOOM card opens Settings > BABOOM with the companion settings bo
     studio.win.ReactDOM.flushSync(() => hub.querySelector('[data-tool-card="baboom"]').click());
     await studio.settle();
     assert.equal(studio.doc.querySelector('[data-tool-view="baboom"]'), null, 'no full-window BABOOM page (founder 2026-10-12)');
-    const tab = [...studio.doc.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'BABOOM');
+    const nav = settingsNavigator({doc:studio.doc, flush:action => studio.win.ReactDOM.flushSync(action), settle:studio.settle});
+    const tab = await nav.capability('BABOOM');
     assert.ok(tab, 'Settings is open with its BABOOM tab');
-    const main = tab.parentElement.nextElementSibling;
-    assert.match(main.textContent, /Companion settings/);
+    const main = await nav.tab('BABOOM');
+    assert.match(main.textContent, /Speech budget|Start BABOOM/);
     assert.match(main.textContent, /Start BABOOM when ArchHub opens/);
     assert.equal(main.textContent.includes('Local clients the host probe found on this machine'), false);
   } finally { studio.close(); }
@@ -545,9 +566,10 @@ test('F2R cloud card opens Settings > Account, the one place that states sign-in
     studio.win.ReactDOM.flushSync(() => hub.querySelector('[data-tool-card="cloud"]').click());
     await studio.settle();
     assert.equal(studio.doc.querySelector('[data-tool-view="cloud"]'), null, 'no full-window Cloud page (founder 2026-10-12)');
-    const account = [...studio.doc.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Account');
+    const nav = settingsNavigator({doc:studio.doc, flush:action => studio.win.ReactDOM.flushSync(action), settle:studio.settle});
+    const account = await nav.capability('Account');
     assert.ok(account, 'Settings is open');
-    assert.equal(account.parentElement.nextElementSibling.textContent.includes('Cloud status'), false, 'no second sign-in verdict');
+    assert.equal((await nav.tab('Account')).textContent.includes('Cloud status'), false, 'no second sign-in verdict');
     const source = read('nodelang/studio/studio-lm.jsx');
     assert.doesNotMatch(source, /tool === 'cloud' && <SettingsAccount/);
   } finally { studio.close(); }
@@ -571,7 +593,7 @@ test('Home composer chips call their existing handlers', async () => {
   try {
     await studio.settle(); await studio.settle();
     studio.win.ReactDOM.flushSync(() => studio.button('/ node').click());
-    assert.ok([...studio.doc.querySelectorAll('span')].some(node => node.textContent === 'Node library'));
+    assert.ok([...studio.doc.querySelectorAll('span')].some(node => node.textContent === 'Library'));
     studio.win.ReactDOM.flushSync(() => studio.win.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Escape', bubbles:true})));
     studio.win.ReactDOM.flushSync(() => studio.button('@ skill').click());
     assert.ok(studio.doc.body.textContent.includes('Search saved skills'),

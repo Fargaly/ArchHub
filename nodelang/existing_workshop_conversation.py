@@ -891,17 +891,26 @@ def send_browser_workshop(owner, binding, body, *, browser_guard=None, expected_
         "reply_to", "idempotency_key", "created_at"}
     if type(body) is not dict or set(body) != expected:
         raise InvalidCell("Workshop message fields are invalid")
-    if (body["category"] != "note" or body["refs"] != [] or body["evidence"] != [] or
+    if (body["category"] != "note" or type(body["refs"]) is not list or len(body["refs"]) > 1 or
+            any(type(value) is not str or not value for value in body["refs"]) or body["evidence"] != [] or
             body["reply_to"] is not None or body["created_at"] is not None or
             type(body["recipients"]) is not list or len(body["recipients"]) not in (0, 1) or
             any(type(value) is not str or not value for value in body["recipients"]) or
             type(body["idempotency_key"]) is not str or not 1 <= len(body["idempotency_key"]) <= 128):
         raise InvalidCell("Workshop message values are invalid")
     if not body['recipients']:
+        if body['refs']:
+            raise InvalidCell("A task reply names its exact recipient")
         if expected_revision is not None:
             raise InvalidCell("A revision-bound Workshop send names its recipient")
         return _send_browser_workshop_everyone(owner, binding, body, browser_guard)
     _snapshot, _space = _admit(owner, binding, body["root"], body["scope"], allow_child=True)
+    if body['refs']:
+        from .workshop_work_creation import _registered_work, _work_scope
+        work = body['refs'][0]
+        if (work not in _registered_work(_snapshot, owner.universal_registry) or
+                _work_scope(_snapshot, owner.universal_registry, work) != body['root']):
+            raise AuthorizationDenied("Task reply requires Work in this exact Workshop")
     if expected_revision is not None and _snapshot.revision != expected_revision:
         # The caller admitted its own condition at expected_revision; the append below is
         # bound to this snapshot's revision, so it commits only if nothing changed since.
@@ -917,6 +926,7 @@ def send_browser_workshop(owner, binding, body, *, browser_guard=None, expected_
             content=validate_universal_workshop_entry_content(body["text"]),
             idempotency_key=body["idempotency_key"],
             recipient_roots=tuple(body["recipients"]), authentication_context=binding.context,
+            reference_roots=tuple(body['refs']),
             expected_revision=_snapshot.revision)
         message = result["message"]
         relay = _relay_native_recipients(owner, body["root"], message["id"], message["author"],
@@ -929,6 +939,7 @@ def send_browser_workshop(owner, binding, body, *, browser_guard=None, expected_
         content=validate_universal_workshop_entry_content(body["text"]),
         idempotency_key=body["idempotency_key"], created_at=None,
         recipient_roots=tuple(body["recipients"]), authentication_context=binding.context,
+        reference_roots=tuple(body['refs']),
         expected_revision=_snapshot.revision,
         content_service=getattr(owner, "conversation_content", None))
     relay = (_relay_native_recipients(owner, entry.space_root, entry.message_id, entry.actor_root,

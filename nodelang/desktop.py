@@ -130,6 +130,7 @@ class DesktopRuntime:
                 machine_pointer_path=default_runtime_descriptor_path(),
                 browser_session_credentials=credentials,
                 runtime_compliance_runner=run_physical_runtime_compliance_court,
+                enable_cloud_relay=True,
             )
             self.server = self._new_server()
             parsed = urlsplit(preferred_url)
@@ -162,6 +163,7 @@ class DesktopRuntime:
                 machine_descriptor_path=machine_descriptor_path,
                 browser_session_credentials=credentials,
                 runtime_compliance_runner=run_physical_runtime_compliance_court,
+                enable_cloud_relay=True,
             )
             self.server = self._new_server()
             parsed = urlsplit(preferred_url)

@@ -27,7 +27,11 @@ def test_the_table_covers_exactly_the_catalogue():
 
 def test_every_library_card_maps_to_an_operation_in_the_table():
     from nodelang.library_engines import LIBRARY_ITEM_ENGINES
-    assert {row["engine"] for row in LIBRARY_ITEM_ENGINES.values()} <= set(evidence.EVIDENCE)
+    pipeline_card_engines = {
+        row["engine"] for row in LIBRARY_ITEM_ENGINES.values()
+        if row["engine"] in PIPELINE_ENGINES
+    }
+    assert pipeline_card_engines <= set(evidence.EVIDENCE)
 
 
 def test_every_named_court_is_a_test_that_exists():

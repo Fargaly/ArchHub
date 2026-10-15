@@ -189,7 +189,7 @@ def test_an_app_that_names_no_kinds_never_claims_a_workshop_step(client, monkeyp
     db.enqueue_agent_task(directive='{"method":"send_message"}', created_by=FOUNDER, kind=app_relay.WORKSHOP_CALL)
     import founder_cockpit
     kinds = tuple(k for k in app_relay.APP_KINDS if k != app_relay.WORKSHOP_CALL)
-    assert "workshop-call" not in kinds and set(kinds) == {"app", "app-execute", "host-read"}
+    assert "workshop-call" not in kinds and set(kinds) == {"app", "app-execute", "host-read", "session-call"}
     body = founder_cockpit.AgentTaskClaimReq(kinds=[])
     response = founder_cockpit.api_agent_task_claim(body, founder={"email": FOUNDER})
     assert json.loads(response.body)["task"] is None

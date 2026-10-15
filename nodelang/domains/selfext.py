@@ -10,11 +10,16 @@ effect, apply it through the audited effect law, and freeze it again.
 from __future__ import annotations
 
 import math
+import json
+import re
+import copy
 from collections.abc import Iterable, Mapping, MutableMapping
+from pathlib import Path
 from typing import Any
 
 from ..core import Store
 from ..laws_effect import apply_effect
+from ..universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell, Snapshot
 
 
 DEFAULT_PROPOSAL = {
@@ -69,6 +74,472 @@ DEFAULT_COURT_EVIDENCE = {
     "evidence_present": False,
     "evidence_refs": [],
 }
+
+MOD_MANIFEST_NAMES = ("archhub.mod.json", "mod.json", "manifest.json")
+MOD_WRITE_PERMISSIONS = {"host.write", "write.host", "write_model", "rename sheets", "add a chip to tasks"}
+MOD_HARM_PERMISSIONS = {"filesystem.write", "shell", "network", "credential", "secret"}
+SHIPPED_MOD_ROWS = (
+    {
+        "id": "blast-radius", "name": "Blast radius", "version": "1",
+        "author": "ArchHub", "enabled": True, "status": "built-in", "error": "",
+        "description": "previews host, document, and element scope before governed writes",
+        "permissions": ["observe settings"], "nodes": [], "tutorials": [], "hooks": ["before_write"],
+        "fired_today": 0, "shipped": True,
+    },
+    {
+        "id": "element-limit", "name": "Element limit", "version": "1",
+        "author": "ArchHub", "enabled": True, "status": "built-in", "error": "",
+        "description": "blocks governed writes that exceed the configured element count",
+        "permissions": ["observe settings"], "nodes": [{"id": "limit", "title": "Element limit", "params": {"Limit": 100}}],
+        "tutorials": [], "hooks": ["before_write"], "fired_today": 0, "shipped": True,
+    },
+)
+SHIPPED_MOD_IDS = {str(row["id"]) for row in SHIPPED_MOD_ROWS}
+MODS_OWNER_ROOT = "app:archhub:mods:owner"
+MOD_STATE_SCHEMA = "archhub.mods.owner-state.v1"
+LEGACY_MODS_OWNER_GRAPH = "mods-owner.graph.json"
+LEGACY_OWNER_PARAMS = "owner-params.json"
+
+
+def _mod_slug(value: Any) -> str:
+    slug = re.sub(r"[^a-z0-9._-]+", "-", str(value or "").strip().lower()).strip("-._")
+    if not slug:
+        raise ValueError("mod identity must name the mod")
+    return slug[:80]
+
+
+def _mod_manifest_path(folder: Path) -> Path:
+    for name in MOD_MANIFEST_NAMES:
+        path = folder / name
+        if path.is_file():
+            return path
+    raise FileNotFoundError("mod manifest was not found")
+
+
+def read_mod_manifest(folder: str | Path) -> dict[str, Any]:
+    root = Path(folder).expanduser().resolve()
+    manifest_path = _mod_manifest_path(root)
+    try:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError("mod manifest is not valid JSON") from exc
+    if not isinstance(raw, dict):
+        raise ValueError("mod manifest must be an object")
+    identity = raw.get("identity") if isinstance(raw.get("identity"), dict) else {}
+    name = str(identity.get("name") or raw.get("name") or "").strip()
+    mod_id = _mod_slug(identity.get("id") or name)
+    version = str(raw.get("version") or identity.get("version") or "0.1.0").strip()
+    permissions = [str(p).strip() for p in (raw.get("permissions") or raw.get("requested_permissions") or []) if str(p).strip()]
+    contents = raw.get("contents") if isinstance(raw.get("contents"), dict) else raw
+    node_kinds = contents.get("node_kinds") or contents.get("nodes") or []
+    tutorials = contents.get("tutorials") or contents.get("tutorial_nodes") or []
+    hooks = contents.get("hooks") or raw.get("hooks") or []
+    if not name:
+        raise ValueError("mod name is required")
+    if not isinstance(node_kinds, list):
+        raise ValueError("mod node kinds must be a list")
+    clean_nodes = []
+    for index, node in enumerate(node_kinds):
+        if not isinstance(node, dict):
+            raise ValueError("mod node kind %d must be an object" % (index + 1))
+        title = str(node.get("title") or node.get("name") or "").strip()
+        if not title:
+            raise ValueError("mod node kind %d needs a name" % (index + 1))
+        node_id = _mod_slug(node.get("id") or title)
+        category = str(node.get("category") or "Change").strip() or "Change"
+        clean_nodes.append({
+            "id": node_id,
+            "title": title,
+            "category": category,
+            "summary": str(node.get("summary") or node.get("description") or title).strip(),
+            "params": dict(node.get("params") or {}),
+            "behavior": dict(node.get("behavior") or {}),
+        })
+    return {
+        "id": mod_id,
+        "name": name,
+        "version": version,
+        "author": str(identity.get("author") or raw.get("author") or "").strip(),
+        "permissions": permissions,
+        "nodes": clean_nodes,
+        "tutorials": [str(t.get("name") if isinstance(t, dict) else t).strip() for t in tutorials if str(t.get("name") if isinstance(t, dict) else t).strip()],
+        "hooks": [str(h).strip() for h in hooks if str(h).strip()],
+        "description": str(raw.get("description") or raw.get("summary") or "").strip(),
+    }
+
+
+def _require_mods_store(store: CellStore) -> CellStore:
+    if not isinstance(store, CellStore):
+        raise InvalidCell("Mods state requires the application graph")
+    return store
+
+
+def _legacy_mods_root(store: CellStore) -> Path | None:
+    database = store.database_path
+    if not database:
+        return None
+    path = Path(database)
+    if path.suffix:
+        return path.with_suffix(path.suffix + ".mods")
+    return path.with_name(path.name + ".mods")
+
+
+def _mod_state_root(mod_id: str) -> str:
+    return "%s:%s" % (MODS_OWNER_ROOT, _mod_slug(mod_id))
+
+
+def _default_builtin_state(base: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "enabled": bool(base.get("enabled", True)),
+        "fired_today": int(base.get("fired_today") or 0),
+        "params": {},
+    }
+
+
+def _decode_mod_state(snapshot: Snapshot, base: Mapping[str, Any]) -> dict[str, Any]:
+    mod_id = str(base["id"])
+    cell = snapshot.cells.get(_mod_state_root(mod_id))
+    if cell is None:
+        return _default_builtin_state(base)
+    try:
+        raw = json.loads(bytes(cell.atom).decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise InvalidCell("Mods state is unreadable: %s" % mod_id) from exc
+    if not isinstance(raw, dict) or raw.get("schema") != MOD_STATE_SCHEMA or raw.get("id") != mod_id:
+        raise InvalidCell("Mods state is unreadable: %s" % mod_id)
+    params = raw.get("params") if isinstance(raw.get("params"), dict) else {}
+    return {
+        "enabled": bool(raw.get("enabled")),
+        "fired_today": int(raw.get("fired_today") or 0),
+        "params": dict(params),
+    }
+
+
+def _encode_mod_state(mod_id: str, state: Mapping[str, Any]) -> bytes:
+    return json.dumps(
+        {
+            "schema": MOD_STATE_SCHEMA,
+            "id": mod_id,
+            "enabled": bool(state.get("enabled")),
+            "fired_today": int(state.get("fired_today") or 0),
+            "params": dict(state.get("params") or {}),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _commit_mod_state(store: CellStore, base: Mapping[str, Any], state: Mapping[str, Any]) -> dict[str, Any]:
+    mod_id = str(base["id"])
+    root = _mod_state_root(mod_id)
+    snapshot = store.snapshot()
+    create: list[Cell] = []
+    replace: list[Cell] = []
+    if MODS_OWNER_ROOT not in snapshot.cells:
+        create.append(Cell(MODS_OWNER_ROOT, NULL_CELL_ID, NULL_CELL_ID, b"mods-owner"))
+    cell = Cell(root, MODS_OWNER_ROOT, NULL_CELL_ID, _encode_mod_state(mod_id, state))
+    if root in snapshot.cells:
+        replace.append(cell)
+    else:
+        create.append(cell)
+    if create or replace:
+        store.commit(snapshot.revision, create=tuple(create), replace=tuple(replace))
+    readback = _decode_mod_state(store.snapshot(), base)
+    expected = {
+        "enabled": bool(state.get("enabled")),
+        "fired_today": int(state.get("fired_today") or 0),
+        "params": dict(state.get("params") or {}),
+    }
+    if readback != expected:
+        raise InvalidCell("Mods state readback failed: %s" % mod_id)
+    return readback
+
+
+def _coerce_legacy_mod_state(base: Mapping[str, Any], held: Mapping[str, Any]) -> dict[str, Any]:
+    state = _default_builtin_state(base)
+    if "enabled" in held:
+        state["enabled"] = bool(held["enabled"])
+    if "fired_today" in held:
+        state["fired_today"] = int(held.get("fired_today") or 0)
+    if isinstance(held.get("params"), Mapping):
+        state["params"] = dict(held["params"])
+    return state
+
+
+def _archive_legacy_mods_file(path: Path) -> None:
+    target = path.with_name(path.name + ".migrated")
+    counter = 1
+    while target.exists():
+        target = path.with_name("%s.%d.migrated" % (path.name, counter))
+        counter += 1
+    path.rename(target)
+
+
+def _legacy_state_from_owner_params(path: Path) -> dict[str, dict[str, Any]]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise InvalidCell("Legacy Mods state is unreadable: %s" % path.name) from exc
+    if not isinstance(raw, dict):
+        raise InvalidCell("Legacy Mods state is unreadable: %s" % path.name)
+    builtins = raw.get("builtins") if isinstance(raw.get("builtins"), dict) else raw
+    migrated: dict[str, dict[str, Any]] = {}
+    for base in SHIPPED_MOD_ROWS:
+        mod_id = str(base["id"])
+        held = builtins.get(mod_id) if isinstance(builtins, dict) else None
+        if isinstance(held, Mapping):
+            migrated[mod_id] = _coerce_legacy_mod_state(base, held)
+    return migrated
+
+
+def _legacy_state_from_owner_graph(path: Path) -> dict[str, dict[str, Any]]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise InvalidCell("Legacy Mods owner graph is unreadable: %s" % path.name) from exc
+    nodes = raw.get("nodes") if isinstance(raw, dict) else None
+    if not isinstance(nodes, dict):
+        raise InvalidCell("Legacy Mods owner graph is unreadable: %s" % path.name)
+    try:
+        legacy_store = Store.load([node for node in nodes.values() if isinstance(node, dict)])
+    except Exception as exc:  # noqa: BLE001
+        raise InvalidCell("Legacy Mods owner graph is unreadable: %s" % path.name) from exc
+    migrated: dict[str, dict[str, Any]] = {}
+    for base in SHIPPED_MOD_ROWS:
+        mod_id = str(base["id"])
+        owner = next((node for node in legacy_store.nodes.values()
+                      if node.get("kind") == "group" and node.get("title") == "Mod owner: %s" % mod_id), None)
+        if owner is None:
+            continue
+        refs = owner.get("params", {})
+
+        def value(name: str, default: Any) -> Any:
+            node_id = refs.get(name) if isinstance(refs, dict) else None
+            if not node_id:
+                return default
+            try:
+                return legacy_store.pull(str(node_id))
+            except Exception:  # noqa: BLE001
+                return default
+
+        migrated[mod_id] = {
+            "enabled": bool(value("enabled", base.get("enabled", True))),
+            "fired_today": int(value("fired_today", base.get("fired_today") or 0) or 0),
+            "params": dict(value("params", {}) or {}),
+        }
+    return migrated
+
+
+def _migrate_legacy_mods_state(store: CellStore) -> None:
+    root = _legacy_mods_root(store)
+    if root is None:
+        return
+    legacy_files = (
+        (root / LEGACY_OWNER_PARAMS, _legacy_state_from_owner_params),
+        (root / LEGACY_MODS_OWNER_GRAPH, _legacy_state_from_owner_graph),
+    )
+    present = [(path, loader) for path, loader in legacy_files if path.is_file()]
+    if not present:
+        return
+    migrated: dict[str, dict[str, Any]] = {}
+    for path, loader in present:
+        migrated.update(loader(path))
+    snapshot = store.snapshot()
+    for base in SHIPPED_MOD_ROWS:
+        mod_id = str(base["id"])
+        held = migrated.get(mod_id)
+        if not isinstance(held, Mapping):
+            continue
+        if _mod_state_root(mod_id) in snapshot.cells:
+            continue
+        _commit_mod_state(store, base, held)
+        snapshot = store.snapshot()
+    for path, _loader in present:
+        _archive_legacy_mods_file(path)
+
+
+def load_mods_state(mods_store: CellStore) -> dict[str, Any]:
+    store = _require_mods_store(mods_store)
+    _migrate_legacy_mods_state(store)
+    snapshot = store.snapshot()
+    builtins: dict[str, dict[str, Any]] = {}
+    for base in SHIPPED_MOD_ROWS:
+        mod_id = str(base["id"])
+        held = _decode_mod_state(snapshot, base)
+        if held != _default_builtin_state(base):
+            builtins[mod_id] = held
+    return {"builtins": builtins}
+
+
+def save_mods_state(mods_store: CellStore, state: Mapping[str, Any]) -> None:
+    store = _require_mods_store(mods_store)
+    _migrate_legacy_mods_state(store)
+    builtins = state.get("builtins") if isinstance(state.get("builtins"), dict) else {}
+    for base in SHIPPED_MOD_ROWS:
+        mod_id = str(base["id"])
+        held = builtins.get(mod_id)
+        if not isinstance(held, Mapping):
+            continue
+        current = _decode_mod_state(store.snapshot(), base)
+        if "enabled" in held:
+            current["enabled"] = bool(held["enabled"])
+        if "fired_today" in held:
+            current["fired_today"] = int(held.get("fired_today") or 0)
+        if isinstance(held.get("params"), Mapping):
+            current["params"] = dict(held["params"])
+        _commit_mod_state(store, base, current)
+
+
+def _increment_builtin_fire(mods_store: CellStore, mod_id: str) -> None:
+    store = _require_mods_store(mods_store)
+    _migrate_legacy_mods_state(store)
+    base = next((row for row in SHIPPED_MOD_ROWS if str(row["id"]) == str(mod_id)), None)
+    if base is None:
+        return
+    held = _decode_mod_state(store.snapshot(), base)
+    held["fired_today"] = int(held.get("fired_today") or 0) + 1
+    _commit_mod_state(store, base, held)
+
+
+def _mod_needs_write_grant(manifest: Mapping[str, Any]) -> bool:
+    perms = {str(p).strip().lower() for p in manifest.get("permissions", [])}
+    return bool(perms & MOD_WRITE_PERMISSIONS) or any("write" in p for p in perms)
+
+
+def _mod_has_real_harm(manifest: Mapping[str, Any]) -> bool:
+    perms = {str(p).strip().lower() for p in manifest.get("permissions", [])}
+    return bool(perms & MOD_HARM_PERMISSIONS)
+
+
+def review_mod_package(folder: str | Path) -> dict[str, Any]:
+    raise PermissionError("Mod package review is not available in this build")
+
+
+def install_mod_package(mods_root: str | Path, folder: str | Path, *, granted: bool = False) -> dict[str, Any]:
+    raise PermissionError("Mod package installation is not available in this build")
+
+
+def set_mod_enabled(mods_store: CellStore, mod_id: str, enabled: bool) -> dict[str, Any]:
+    store = _require_mods_store(mods_store)
+    _migrate_legacy_mods_state(store)
+    key = str(mod_id)
+    if key not in SHIPPED_MOD_IDS:
+        raise KeyError("mod is not installed")
+    base = next(row for row in SHIPPED_MOD_ROWS if str(row["id"]) == key)
+    held = _decode_mod_state(store.snapshot(), base)
+    held["enabled"] = bool(enabled)
+    _commit_mod_state(store, base, held)
+    return next(row for row in mods_rows(store)["rows"] if row["id"] == key)
+
+
+def set_mod_param(mods_store: CellStore, mod_id: str, param: str, value: Any) -> dict[str, Any]:
+    store = _require_mods_store(mods_store)
+    _migrate_legacy_mods_state(store)
+    key = str(mod_id)
+    name = str(param).strip()
+    if key not in SHIPPED_MOD_IDS or not name:
+        raise KeyError("mod parameter is not installed")
+    base = next(row for row in SHIPPED_MOD_ROWS if str(row["id"]) == key)
+    held = _decode_mod_state(store.snapshot(), base)
+    params = dict(held.get("params") or {})
+    params[name] = int(value) if str(value).strip().isdigit() else str(value)
+    held["params"] = params
+    _commit_mod_state(store, base, held)
+    return next(row for row in mods_rows(store)["rows"] if row["id"] == key)
+
+
+def remove_mod_package(mods_root: str | Path, mod_id: str) -> dict[str, Any]:
+    raise PermissionError("Mod package removal is not available in this build")
+
+
+def mods_rows(mods_store: CellStore) -> dict[str, Any]:
+    store = _require_mods_store(mods_store)
+    _migrate_legacy_mods_state(store)
+    snapshot = store.snapshot()
+    rows = []
+    for base in SHIPPED_MOD_ROWS:
+        row = copy.deepcopy(base)
+        held = _decode_mod_state(snapshot, base)
+        row["enabled"] = bool(held["enabled"])
+        row["fired_today"] = int(held["fired_today"])
+        params = held.get("params")
+        if isinstance(params, dict):
+            for node in row.get("nodes", []):
+                if isinstance(node.get("params"), dict):
+                    for key, value in params.items():
+                        if key in node["params"]:
+                            node["params"][key] = value
+        row["status"] = "built-in" if row.get("enabled") else "off"
+        rows.append(row)
+    return {"installed": 0, "built_in": len(rows), "failed": 0, "rows": rows}
+
+
+def merge_mod_library(groups: list[dict[str, Any]], mods_root: str | Path) -> list[dict[str, Any]]:
+    return groups
+
+
+def run_mod_node(params: Mapping[str, Any], context: Mapping[str, Any] | None = None):
+    behavior = params.get("behavior") if isinstance(params.get("behavior"), dict) else {}
+    result = behavior.get("result", params.get("text") or params.get("name") or "mod ran")
+    shown = str(behavior.get("message") or result)
+    return {"out": result}, shown
+
+
+def _write_element_count(arguments: Mapping[str, Any]) -> int:
+    for key in ("elements", "rows", "ids"):
+        value = arguments.get(key)
+        if isinstance(value, list):
+            return len(value)
+    return 0
+
+
+def _blast_radius(arguments: Mapping[str, Any], element_count: int) -> dict[str, Any]:
+    return {
+        "host": "revit",
+        "document": arguments.get("document") or arguments.get("instance") or "",
+        "elements": element_count,
+        "operation_scope": "document" if element_count == 0 else "selection",
+    }
+
+
+def before_write_hooks(mods_store: CellStore | None, op_id: str, arguments: Mapping[str, Any]) -> list[dict[str, Any]]:
+    if mods_store is None:
+        return []
+    rows = mods_rows(mods_store)["rows"]
+    enabled = [
+        row for row in rows
+        if row.get("enabled") and "before_write" in row.get("hooks", [])
+    ]
+    annotations: list[dict[str, Any]] = []
+    element_count = _write_element_count(arguments)
+    # Resolve refusal hooks first, independent of their presentation order.
+    # A rejected attempt records its refusing hook, never an allowed-write preview.
+    for row in enabled:
+        if row["id"] == "element-limit":
+            limit = 0
+            for node in row.get("nodes", []):
+                params = node.get("params") if isinstance(node, Mapping) else None
+                if isinstance(params, Mapping) and "Limit" in params:
+                    try:
+                        limit = int(params["Limit"])
+                    except (TypeError, ValueError):
+                        limit = 0
+            if limit and element_count > limit:
+                _increment_builtin_fire(mods_store, "element-limit")
+                raise PermissionError(
+                    "Element limit refused %s: %d elements exceeds Limit %d"
+                    % (op_id, element_count, limit)
+                )
+    for row in enabled:
+        if row["id"] == "blast-radius":
+            annotation = {
+                "mod": "blast-radius",
+                "label": "Blast radius",
+                **_blast_radius(arguments, element_count),
+            }
+            annotations.append(annotation)
+            _increment_builtin_fire(mods_store, "blast-radius")
+    return annotations
 
 _PROPOSAL_FIELDS = frozenset(DEFAULT_PROPOSAL)
 _REQUIREMENT_FIELDS = frozenset(DEFAULT_REQUIREMENTS[0])

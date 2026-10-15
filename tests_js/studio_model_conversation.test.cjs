@@ -88,18 +88,18 @@ test('malformed projected model metadata cannot be sent',async()=>{
   await assert.rejects(f.prepare(),/binding is invalid/);await assert.rejects(f.send(),/Refresh/);
   assert.equal(f.posts.length,0);
 });
-test('visible Send dispatches to selected model and preserves draft after refusal',async()=>{
-  const component=jsx.indexOf('const WorkshopView =');
-  const start=jsx.indexOf('  const act = async (action) => {',component),end=jsx.indexOf('\n  const sendDisabled =',start);
-  assert.ok(start>component && end>start);
-  for (const rejected of [false,true]) {
-    const calls=[],clears=[],errors=[];
-    const context=vm.createContext({busyRef:{current:false},editorsReady:true,setBusy:()=>{},setActionError:value=>errors.push(value),
-      target:'model:'+agent.root,draft:'actual text',execution:'',contactTarget:null,modelTarget:agent,
-      authority:{sendModelConversation:async(...args)=>{calls.push(args);if(rejected)throw Error('not called');}},
-      descriptor:{root:'child-a'},protectedEditors:false,editors:{current:{}},mounted:{current:true},setDraft:value=>clears.push(value)});
-    vm.runInContext(jsx.slice(start,end)+'\nglobalThis.send=act;',context);await context.send('send');
-    assert.equal(calls.length,1);assert.equal(calls[0][0],'child-a');assert.equal(calls[0][1],agent);
-    assert.deepEqual(clears,rejected?[]:['']);if(rejected)assert.equal(errors.at(-1),'not called');
+test('visible Send dispatches through the selected real model authority and preserves its draft after refusal',async()=>{
+  const {mounted}=require('./workshop72_regression_helpers.cjs');
+  for(const rejected of [false,true]){
+    const fx=fixture({post:body=>{if(rejected)throw new Error('not called');return receipt(body);}});await fx.prepare();
+    const state=fx.api.getSnapshot();const authority={getSnapshot:()=>state,subscribe:()=>()=>{},
+      refreshWorkshop:root=>fx.api.refreshWorkshop(root),sendModelConversation:(...args)=>fx.api.sendModelConversation(...args)};
+    const ui=await mounted(state,authority,{target:'model:'+agent.root});
+    try{await ui.input('actual text');await ui.click(ui.button('Send'));
+      assert.equal(fx.posts.length,1);assert.equal(fx.posts[0].body.root,'child-a');assert.equal(fx.posts[0].body.node,agent.root);
+      assert.equal(fx.posts[0].body.binding_digest,agent.binding_digest);
+      assert.equal(ui.doc.querySelector('textarea').value,rejected?'actual text':'');
+      if(rejected)assert.match(ui.doc.querySelector('[role="alert"]').textContent,/not called/);
+    }finally{await ui.close();}
   }
 });

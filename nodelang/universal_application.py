@@ -19844,12 +19844,38 @@ def _product_canvas_roots(
     the scope trail passes through a Work home. Everything else draws
     unchanged. The lens writes nothing.
     """
+    if tuple(scope_trail)[-1:] == (registry.canvas_root,):
+        return tuple(
+            root_id for root_id in roots
+            if _system_canvas_app_part_root(snapshot, registry, root_id)
+            or _user_canvas_root(snapshot, registry, root_id, level_root=registry.canvas_root)
+        )
     if _governed_work_home_trail(snapshot, registry, tuple(scope_trail)):
         return tuple(roots)
     return tuple(
         root_id for root_id in roots
         if not _governed_work_owned_root(snapshot, registry, root_id)
     )
+
+
+def _system_canvas_app_part_root(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    root_id: str,
+) -> bool:
+    """Whether a root is an app-owned part allowed on the top System graph."""
+    if _folded_system_tool_canvas_root(root_id):
+        return False
+    if root_id in registry.map.domains.values():
+        return True
+    if root_id in {registry.core_values.root_id, registry.governed_work_registry_root}:
+        return True
+    return root_id in {
+        _system_tool_canvas_root(tool_id)
+        for tool_id, _title, _engine, _tool, domain_key, _params
+        in _SYSTEM_TOOL_CANVAS_NODES
+        if domain_key is None
+    }
 
 
 def _user_canvas_root(
@@ -19971,6 +19997,11 @@ def _system_tool_canvas_root(tool_id: str) -> str:
     return "app:system-tool:%s" % _part(tool_id)
 
 
+def _folded_system_tool_canvas_root(root_id: str) -> bool:
+    """System tools whose controls are projected through another visible node."""
+    return root_id == _system_tool_canvas_root("tool_theme")
+
+
 def _is_system_tool_canvas_root(root_id: str) -> bool:
     return str(root_id).startswith("app:system-tool:")
 
@@ -20040,7 +20071,8 @@ def _ensure_system_tool_canvas_nodes(
             target_root = map_registry.domains[domain_key]
         else:
             target_root = _system_tool_canvas_root(tool_id)
-            audience_tool_roots.append(target_root)
+            if not _folded_system_tool_canvas_root(target_root):
+                audience_tool_roots.append(target_root)
             if target_root not in snapshot.cells and target_root not in create:
                 relation = compose_relation_cells((
                     (roles["authority"], "app:node-library"),
@@ -20119,7 +20151,8 @@ def _ensure_system_tool_canvas_nodes(
         authorization,
         subject_root=authorization.subject_root,
         visibility_root=visibility_root,
-        target_roots=tuple(dict.fromkeys(tool_roots)),
+        target_roots=tuple(root for root in dict.fromkeys(tool_roots)
+                           if not _folded_system_tool_canvas_root(root)),
         administrator_root=authorization.subject_root,
     )
     grant_snapshot = store.snapshot()
@@ -20145,7 +20178,8 @@ def _ensure_system_tool_canvas_nodes(
                 create=session_patch.create,
                 replace=session_patch.replace,
             )
-    return tuple(dict.fromkeys(tool_roots))
+    return tuple(root for root in dict.fromkeys(tool_roots)
+                 if not _folded_system_tool_canvas_root(root))
 
 
 def _canvas_node_group(node: Mapping[str, object]) -> str:
@@ -51889,8 +51923,9 @@ def create_universal_property(
     *,
     authentication_context: object | None = None,
     leased_projection: Mapping[str, object] | None = None,
+    mutation_route: str = "/api/universal/interaction",
 ) -> tuple[str, int]:
-    """Compose one visible owner/value/label property in one WIP commit."""
+    """Compose one visible owner/value/label property in one governed commit."""
     if type(owner_root) is not str or not owner_root:
         raise InvalidCell("property owner must be one exact Cell identity")
     if type(label) is not str or type(value) is not str:
@@ -52083,7 +52118,7 @@ def create_universal_property(
         view_session,
         context,
         snapshot,
-        route="/api/universal/interaction",
+        route=mutation_route,
         command_name="catalog.configure",
         authorization_scope_root=owner_root,
         create=tuple(create),

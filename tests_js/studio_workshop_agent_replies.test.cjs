@@ -70,8 +70,10 @@ async function mountModule() {
   const {createRoot} = require('react-dom/client');
   const {transformSync} = require('esbuild');
   const win = dom.window;
-  const context = vm.createContext({React, window:win, document:win.document, setTimeout, clearTimeout, console, URL, Blob, TextEncoder});
+  const context = vm.createContext({React, window:win, document:win.document, setTimeout, clearTimeout, console, CustomEvent:win.CustomEvent, URL, Blob, TextEncoder});
   vm.runInContext(read('nodelang/studio/tokens.jsx'), context);
+  vm.runInContext(transformSync(read('nodelang/studio/workshop-board.jsx'), {loader:'jsx'}).code, context);
+  vm.runInContext(transformSync(read('nodelang/studio/shared-data.jsx'), {loader:'jsx'}).code, context);
   vm.runInContext(transformSync(workshop(), {loader:'jsx'}).code, context);
   const container = win.document.getElementById('root');
   const reactRoot = createRoot(container);
@@ -107,17 +109,18 @@ const withReply = fx => {
      relayed_from:contact, relayed_label:'acceptance-claude', agent_text:PLAN, artifact_digest:'f'.repeat(64)});
   fx.authority.workshopWorkflow = (...args) => { fx.calls.push(['workshopWorkflow', ...args]); return Promise.resolve({ok:true}); };
 };
-const mountView = async (setup = () => {}) => {
+const mountView = async (setup = () => {}, selection = {agent:null,task:null}) => {
   const fx = fixture();
   setup(fx);
   const ui = await mountModule();
   ui.win.ARCHHUB_EXISTING_WORKSHOP = fx.authority;
   const props = () => ({state:fx.state, descriptor:fx.state.workshops[0], target:'', setTarget:() => {}, setMode:() => {},
-    setFocusId:() => {}, onLeave:() => {}, sel:{agent:null, task:null}, setSel:() => {}, externalRail:true});
+    setFocusId:() => {}, onLeave:() => {}, sel:selection, setSel:() => {}, externalRail:true});
   return {...fx, ui, render:() => ui.render('WorkshopView', props())};
 };
 
-test('an agent relayed reply is an agent row named by the relay, with its delivery and Draft as workflow', async () => {
+const {transport,mounted}=require('./workshop72_regression_helpers.cjs');
+test('an agent relayed reply is rendered in the S1 thread without raw contact ids or legacy draft controls', async () => {
   const view = await mountView(withReply);
   try {
     await view.render();
@@ -126,26 +129,46 @@ test('an agent relayed reply is an agent row named by the relay, with its delive
     assert.ok(reply, 'the relayed reply is in the thread');
     assert.match(text(reply), /^A acceptance-claude/, 'named by the relay header, not the contact root');
     assert.ok(!text(stream).includes('app:wip-cell:'), 'no contact root is shown anywhere in the thread');
-    assert.match(text(stream.querySelector('[data-workshop-message="ask-1"]')), /acceptance-claude · REPLIED/);
-    const draft = [...reply.querySelectorAll('button')].find(b => text(b) === 'Draft as workflow');
-    assert.ok(draft, 'the founder can draft the proposal from the reply');
-    await view.ui.click(draft);
+    assert.match(text(stream.querySelector('[data-workshop-message="ask-1"]')), /PROPOSE a workflow/);
+    assert.equal([...reply.querySelectorAll('button')].some(b => text(b) === 'Draft as workflow'), false,
+      'legacy Draft as workflow control is not rendered');
     assert.deepEqual(JSON.parse(JSON.stringify(view.calls.filter(c => c[0] === 'workshopWorkflow').map(c => c.slice(1)))),
-      [['room-a', 'workflow-draft', {message:'reply-1'}]]);
+      [], 'the removed control cannot create a workflow draft');
     const panel = text(view.ui.doc.querySelector('[aria-label="Workshop context"]'));
     assert.ok(!panel.includes('Session Link relayed reply'), 'an agent reply is not listed as tool activity');
   } finally { await view.ui.close(); }
 });
 
-test('the workflow card names its proposer by the relay label', async () => {
+
+test('removed Properties draft route still binds exact reply and retains accepted receipt after refresh refusal',async()=>{
+  let posted=false;const fx=transport({get:(_url,held)=>{if(posted)throw new Error('refresh boom');return held;},post:()=>{posted=true;return{ok:true,draft:'wf-1'};}});
+  await fx.api.refreshWorkshop('room-a');const result=await fx.api.workshopWorkflow('room-a','workflow-draft',{message:'reply-1'});
+  assert.equal(result.ok,true);assert.equal(result.draft,'wf-1');assert.equal(fx.posts.length,1);
+  assert.equal(fx.posts[0].body.message,'reply-1');assert.equal(fx.posts[0].body.action,'workflow-draft');assert.match(fx.posts[0].body.idempotency_key,/^draft-/);
+});
+test('legacy workflow cards stay removed while the S1 thread names the relay label', async () => {
   const view = await mountView(fx => {
     withReply(fx);
-    fx.state.workshop.workflows = [{root:'wf-1', title:'Release note', proposed_by:fx.ids.contact, digest:'d'.repeat(64), approval:null,
+    fx.state.workshop.workflows = [{root:'wf-1', source_message:'reply-1', title:'Release note', proposed_by:fx.ids.contact, digest:'d'.repeat(64), approval:null,
       nodes:[{root:'n1', title:'This Workshop', engine:'workshop.conversation', params:{}}]}];
-  });
+  },{agent:null,task:'wf-1'});
   try {
     await view.render();
-    const card = view.ui.doc.querySelector('[data-workshop-workflow="wf-1"]');
-    assert.match(text(card), /^A acceptance-claude proposed Here is the workflow acceptance-claude proposes: Release note\./);
+    assert.equal(view.ui.doc.querySelector('[data-workshop-workflow="wf-1"]'), null,
+      'the removed workflow card is not rendered');
+    const streamText = text(view.ui.doc.querySelector('[aria-label="Workshop conversation"]'));
+    assert.match(streamText, /acceptance-claude/, 'the S1 thread names the relay label');
+    assert.ok(!streamText.includes('app:wip-cell:'), 'the relay contact root never renders');
   } finally { await view.ui.close(); }
+});
+
+
+test('relay-only contact stays visible by its name but cannot be addressed as an attached agent',async()=>{
+  const fx=fixture();withReply(fx);const ui=await mounted(fx.state,fx.authority);
+  try{assert.match(text(ui.doc.querySelector('[data-workshop-message="reply-1"]')),/acceptance-claude/);
+    await ui.input('@acceptance-claude Please check');await ui.click(ui.button('Send'));
+    assert.match(text(ui.doc.querySelector('[role="alert"]')),/Choose an agent listed in this Workshop/);
+    assert.equal(fx.calls.filter(row=>row[0]==='workshopAction'||row[0]==='sendModelConversation'||row[0]==='sendNativeContact').length,0);
+    assert.equal(ui.doc.querySelector('[data-workshop-disconnected-toggle]'),null);
+  }finally{await ui.close();}
 });

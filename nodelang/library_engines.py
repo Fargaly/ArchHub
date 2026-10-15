@@ -37,6 +37,48 @@ _OPERATORS = (">=", "<=", "!=", "==", ">", "<")
 
 _EMPTY_LIST = "nothing is wired in"
 
+ENGINE_INTERFACE_ALIASES = {
+    "revit.elements_of_category": {
+        "source": {"els": "elements"},
+    },
+    "revit.get_parameter": {
+        "target": {"els": "elements", "name": "parameter"},
+        "param": {"name": "parameter"},
+    },
+    "revit.set_parameter_by_name": {
+        "target": {"els": "elements", "name": "parameter"},
+        "param": {"name": "parameter"},
+    },
+    "revit.renumber_rename": {
+        "source": {"els": "elements"},
+        "target": {
+            "els": "elements",
+            "number_pattern": "number_format",
+            "name_pattern": "name_format",
+        },
+        "param": {
+            "number_pattern": "number_format",
+            "name_pattern": "name_format",
+        },
+    },
+}
+
+
+def canonical_engine_interface(engine: object, side: str, name: object) -> object:
+    """Map saved old interface names onto the current engine contract."""
+    held = ENGINE_INTERFACE_ALIASES.get(str(engine or "").strip()) or {}
+    aliases = held.get(side) or {}
+    return aliases.get(name, name)
+
+
+def canonical_engine_parameters(engine: object, params: Mapping[str, object]) -> dict:
+    held = dict(params or {})
+    aliases = (ENGINE_INTERFACE_ALIASES.get(str(engine or "").strip()) or {}).get("param") or {}
+    for old, new in aliases.items():
+        if old in held and new not in held:
+            held[new] = held[old]
+    return held
+
 
 def _wired(feeds: Mapping[str, object], *names: str) -> object:
     """The first wired feed among the names the graph might have used."""
@@ -140,6 +182,32 @@ def filter_rule(params: Mapping[str, object], feeds: Mapping[str, object]):
     mode = _text(params, "mode", "keep") or "keep"
     kept, shown = _filter_by_rule(rows, rule, mode)
     return {"out": kept}, shown
+
+
+def rule_check(params: Mapping[str, object], feeds: Mapping[str, object]):
+    rows = _rows(feeds)
+    if not rows:
+        return {"out": []}, _EMPTY_LIST
+    rule = _text(params, "rule") or _text(params, "predicate")
+    if not rule:
+        field = _plain(_text(params, "parameter") or _text(params, "field"), "parameter")
+        operator = _text(params, "operator", "==") or "=="
+        wanted = _plain(_text(params, "value"), "value")
+        if operator not in _OPERATORS:
+            raise ValueError("operator must be one of %s" % ", ".join(_OPERATORS))
+        if not field:
+            raise ValueError("set parameter, operator, and value")
+        rule = "item.%s %s %s" % (field, operator, wanted)
+    passed, _ = _filter_by_rule(rows, rule, "keep")
+    failed, _ = _filter_by_rule(rows, rule, "drop")
+    report = {
+        "rule": rule,
+        "passed": len(passed),
+        "failed": len(failed),
+        "total": len(rows),
+    }
+    return {"pass": passed, "fail": failed, "report": report, "out": report}, (
+        "%d pass, %d fail" % (len(passed), len(failed)))
 
 
 # ---------------------------------------------------------- transform --
@@ -539,6 +607,7 @@ LIBRARY_ENGINES = {
     "library.filter_field": filter_field,
     "library.filter_compare": filter_compare,
     "library.filter_rule": filter_rule,
+    "library.rule_check": rule_check,
     "library.set_field": set_field,
     "library.move": move,
     "library.rotate": rotate,
@@ -556,21 +625,37 @@ LIBRARY_ENGINES = {
     "library.save_skill": save_skill,
 }
 
+STEM_RUN_ENGINES = frozenset({
+    "data.constant", "data.list", "input.parameter", "output.parameter",
+    "watch.preview", "trigger.emit", "control.if", "control.foreach",
+    "control.switch", "control.merge", "shape.filter", "shape.map",
+    "shape.sort", "shape.group", "shape.unique", "shape.pluck",
+    "shape.count", "shape.slice", "shape.flatten", "shape.concat",
+    "note", "reroute", "ai.master", "skill.wrap",
+})
+
+
+def engine_runs(engine: str, pipeline_engines=None) -> bool:
+    """True when a listed card is executable by the stem or effect runner."""
+    name = str(engine or "").strip()
+    return name in STEM_RUN_ENGINES or (
+        pipeline_engines is not None and name in pipeline_engines
+    )
+
 # Which library card each engine answers, and the parameters that card is
 # placed with. The studio owner reads this to give every listed item an
 # engine; until it does, these cards still vanish when they are dropped.
 LIBRARY_ITEM_ENGINES = {
-    "f_type": {"engine": "library.filter_field",
-               "params": {"field": "type", "value": "", "mode": "keep"}},
-    "f_cat": {"engine": "library.filter_field",
-              "params": {"field": "category", "value": "", "mode": "keep"}},
-    "f_level": {"engine": "library.filter_field",
-                "params": {"field": "level", "value": "", "mode": "keep"}},
-    "f_param": {"engine": "library.filter_compare",
-                "params": {"field": "", "operator": "==", "value": "",
-                           "mode": "keep"}},
-    "f_pred": {"engine": "library.filter_rule",
-               "params": {"rule": "", "mode": "keep"}},
+    "f_type": {"engine": "shape.filter",
+               "params": {"predicate": "item.type == ''", "mode": "keep"}},
+    "f_cat": {"engine": "shape.filter",
+              "params": {"predicate": "item.category == ''", "mode": "keep"}},
+    "f_level": {"engine": "shape.filter",
+                "params": {"predicate": "item.level == ''", "mode": "keep"}},
+    "f_param": {"engine": "shape.filter",
+                "params": {"predicate": "item.parameter == ''", "mode": "keep"}},
+    "f_pred": {"engine": "shape.filter",
+               "params": {"predicate": "", "mode": "keep"}},
     "t_setp": {"engine": "library.set_field",
                "params": {"field": "", "value": ""}},
     "t_move": {"engine": "library.move",
@@ -579,13 +664,13 @@ LIBRARY_ITEM_ENGINES = {
               "params": {"degrees": "0", "cx": "0", "cy": "0"}},
     "t_scale": {"engine": "library.scale",
                 "params": {"factor": "1", "cx": "0", "cy": "0"}},
-    "t_group": {"engine": "library.group_by", "params": {"by": ""}},
-    "t_sort": {"engine": "library.sort_by",
+    "t_group": {"engine": "shape.group", "params": {"by": ""}},
+    "t_sort": {"engine": "shape.sort",
                "params": {"by": "", "direction": "asc"}},
-    "l_if": {"engine": "library.if", "params": {"rule": ""}},
-    "l_switch": {"engine": "library.switch", "params": {"key": "a", "cases": "a, b, c"}},
-    "l_loop": {"engine": "library.loop", "params": {}},
-    "l_merge": {"engine": "library.merge", "params": {"mode": "concat"}},
+    "l_if": {"engine": "control.if", "params": {"condition": ""}},
+    "l_switch": {"engine": "control.switch", "params": {"key": "a", "cases": "a, b, c"}},
+    "l_loop": {"engine": "control.foreach", "params": {}},
+    "l_merge": {"engine": "control.merge", "params": {}},
     "a_text": {"engine": "library.add_text",
                "params": {"text": "", "x": "0", "y": "0"}},
     "a_dims": {"engine": "library.dimensions",
@@ -1220,6 +1305,68 @@ LIBRARY_ITEM_ENGINES["o_spk"] = {"engine": "library.push_speckle",
                                  "params": {"project": "", "branch": "archhub/main", "message": "ArchHub push", "server": ""}}
 LIBRARY_ITEMS_WITHOUT_ENGINE.pop("o_spk", None)
 
+
+def host_read(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Generic handoff host read, dispatched to the engines this build already runs."""
+    host = _text(params, "host", "Revit").casefold()
+    operation = _text(params, "operation", "List walls").casefold()
+    if "revit" in host:
+        op_map = {
+            "list walls": "revit.list_walls",
+            "list doors": "revit.list_doors",
+            "list windows": "revit.list_windows",
+            "list sheets": "revit.list_sheets",
+            "list views": "revit.list_views",
+            "list levels": "revit.list_levels",
+            "get selection": "revit.get_selection",
+            "list warnings": "revit.list_warnings",
+        }
+        if operation not in op_map:
+            return {"out": []}, "unknown Revit read operation: %s" % _text(params, "operation", "operation")
+        from .pipeline_engines import revit_read
+        try:
+            return revit_read({"operation": op_map[operation]}, feeds)
+        except ValueError as refusal:
+            return {"out": []}, str(refusal)
+    if "autocad" in host:
+        from .pipeline_engines import cad_lines_from_host
+        return cad_lines_from_host(params, feeds)
+    return {"out": []}, "%s read %r is not wired in this build" % (
+        _text(params, "host", "host"), _text(params, "operation", "operation"))
+
+
+def host_write(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Generic handoff host write: explicit refusal unless a specific broker owns it."""
+    rows = _rows(feeds)
+    if not rows:
+        return {"out": []}, "nothing is wired in"
+    return {"out": []}, (
+        "host write needs a specific approved host operation; %d item(s) held"
+        % len(rows)
+    )
+
+
+def speckle_receive(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Receive-from-Speckle handoff node, bounded at the credential edge."""
+    if not _text(params, "project"):
+        return {"out": []}, "set the Speckle project before receiving"
+    return {"out": []}, "Speckle receive needs the Speckle download adapter"
+
+
+def speckle_diff(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Diff handoff node: refuses incomplete version pairs instead of guessing."""
+    if not _text(params, "project"):
+        return {"out": []}, "set the Speckle project before diffing"
+    if not _text(params, "from"):
+        return {"out": []}, "set the from version before diffing"
+    return {"out": []}, "Speckle diff needs the Speckle download adapter"
+
+
+LIBRARY_ENGINES.update({
+    "host.read": host_read,
+    "speckle.send": push_speckle,
+})
+
 # Workshop, Agent session and Independent review: the clean-bootstrap contracts
 # reconciled into this one running catalogue (workshop_workflow.WORKSHOP_CATALOGUE).
 # Placing one runs nothing; the canvas Run refuses them and only an approved
@@ -1247,10 +1394,56 @@ LIBRARY_ITEMS_WITHOUT_ENGINE.pop("o_term", None)
 # (universal_pipeline._ensure_pipeline_node_interfaces mints them), so what
 # the library says a card does is what can be wired to it.
 ENGINE_SOCKETS = {
+    "data.constant": {"source": ("value",), "target": ()},
+    "data.list": {"source": ("value",), "target": ()},
+    "input.parameter": {"source": ("value",), "target": ()},
+    "trigger.emit": {"source": ("out", "fire"), "target": ()},
+    "trigger.schedule": {"source": ("fire", "payload"), "target": ()},
+    "trigger.file": {"source": ("fire", "payload"), "target": ()},
+    "trigger.host": {"source": ("fire", "payload"), "target": ()},
+    "trigger.approval": {"source": ("fire", "payload"), "target": ()},
+    "approval.gate": {"source": ("out", "grant"), "target": ("in", "value", "grant")},
+    "trigger.webhook": {"source": ("fire", "payload"), "target": ()},
+    "output.parameter": {"source": (), "target": ("value",)},
+    "watch.preview": {"source": ("out",), "target": ("in",)},
+    "note": {"source": (), "target": ()},
+    "reroute": {"source": ("out",), "target": ("in",)},
+    "input.slider": {"source": ("value",), "target": ()},
+    "ai.master": {"source": ("response", "intent"), "target": ("context",)},
+    "brain.recall": {"source": ("out",), "target": ("in",)},
+    "brain.remember": {"source": ("out",), "target": ("in",)},
+    "skill.wrap": {"source": ("result",), "target": ("trace",)},
+    "host.read": {"source": ("out",), "target": ("in",)},
+    "office.read": {"source": ("out",), "target": ()},
+    "speckle.send": {"source": ("out",), "target": ("in",)},
+    "revit.elements_of_category": {"source": ("elements", "out"), "target": ()},
+    "revit.get_parameter": {"source": ("values", "out"), "target": ("elements", "parameter")},
+    "text.ops": {"source": ("text", "out"), "target": ("text", "items")},
+    "math.expression": {"source": ("value", "out"), "target": ("a", "b", "c", "x", "y")},
+    "math.series": {"source": ("values", "out"), "target": ()},
+    "archhub.dry_run_diff": {"source": ("diff", "out"), "target": ("before", "after", "proposed")},
+    "host.health": {"source": ("out",), "target": ()},
+    "evidence.attach": {"source": ("evidence", "out"), "target": ("files",)},
+    "control.if": {"source": ("true", "false"), "target": ("value", "condition")},
+    "control.switch": {"source": ("a", "b", "c"), "target": ("value", "key")},
+    "control.foreach": {"source": ("each", "results"), "target": ("items",)},
+    "control.merge": {"source": ("value",), "target": ("a", "b")},
+    "shape.map": {"source": ("items_out",), "target": ("items",)},
+    "shape.unique": {"source": ("items_out",), "target": ("items",)},
+    "shape.pluck": {"source": ("values",), "target": ("items",)},
+    "shape.count": {"source": ("count",), "target": ("items",)},
+    "shape.slice": {"source": ("items_out",), "target": ("items",)},
+    "shape.flatten": {"source": ("items_out",), "target": ("items",)},
+    "shape.concat": {"source": ("items_out",), "target": ("a", "b")},
     "library.if": {"source": ("out", "false"), "target": ("in", "condition")},
     "library.switch": {"source": ("out", "a", "b", "c"), "target": ("in", "key")},
     "library.loop": {"source": ("out", "each"), "target": ("in",)},
     "library.merge": {"source": ("out",), "target": ("in", "b")},
+    "library.rule_check": {"source": ("pass", "fail", "report", "out"), "target": ("in",)},
+    "revit.set_parameter_by_name": {"source": ("elements", "out"), "target": ("elements", "parameter", "value", "grant")},
+    "excel.write_range": {"source": ("file", "out"), "target": ("rows", "grant")},
+    "revit.create_sheets": {"source": ("sheets", "out"), "target": ("rows", "grant")},
+    "revit.renumber_rename": {"source": ("elements", "out"), "target": ("elements", "number_format", "name_format", "grant")},
 }
 
 
@@ -1258,8 +1451,8 @@ def engine_sockets(engine: str) -> dict:
     """{"source": names, "target": names} for one engine card."""
     held = ENGINE_SOCKETS.get(str(engine or "").strip()) or {}
     return {
-        "source": tuple(held.get("source") or ("out",)),
-        "target": tuple(held.get("target") or ("in",)),
+        "source": tuple(held["source"]) if "source" in held else ("out",),
+        "target": tuple(held["target"]) if "target" in held else ("in",),
     }
 
 
@@ -1340,133 +1533,466 @@ LIBRARY_ITEM_ENGINES.update({
     "r_selection": {"engine": "revit.read", "params": {"operation": "revit.get_selection"}},
     "r_warnings": {"engine": "revit.read", "params": {"operation": "revit.list_warnings"}},
     "r_xl_sheets": {"engine": "office.read", "params": {"operation": "excel.list_worksheets"}},
+    "r_xl_range": {"engine": "office.read",
+                   "params": {"operation": "excel.read_range", "file": "", "sheet": "Sheet1", "range": "A1:B10"}},
     "r_doc_paras": {"engine": "office.read", "params": {"operation": "word.list_paragraphs"}},
     "r_ppt_slides": {"engine": "office.read", "params": {"operation": "powerpoint.list_slides"}},
+    "tr_manual": {"engine": "trigger.emit", "params": {}},
+    "tr_schedule": {"engine": "trigger.schedule", "params": {"schedule": "every day 08:00", "every_seconds": "300", "daily_at": "08:00"}},
+    "tr_file": {"engine": "trigger.file", "params": {"folder": "", "pattern": "*.*", "debounce_seconds": "5"}},
+    "tr_host": {"engine": "trigger.host", "params": {"event": "revit.document_saved"}},
+    "tr_approval": {"engine": "trigger.approval", "params": {"grant_id": "revit-write"}},
+    "tr_webhook": {"engine": "trigger.webhook", "params": {"url": "", "token": ""}},
+    "l_foreach": {"engine": "control.foreach", "params": {"items": ""}},
+})
+
+LIBRARY_ITEM_ENGINES.update({
+    "n_number": {"engine": "data.constant",
+                 "params": {"value": "0", "min": "", "max": ""}},
+    "n_text": {"engine": "data.constant", "params": {"value": ""}},
+    "n_list": {"engine": "data.list", "params": {"value": "[1, 2, 3]"}},
+    "n_yesno": {"engine": "data.constant", "params": {"value": "false"}},
+    "n_file": {"engine": "data.constant", "params": {"value": "", "extensions": ""}},
+    "n_colour": {"engine": "data.constant", "params": {"value": "#d97757"}},
+    "n_parameter": {"engine": "input.parameter",
+                    "params": {"name": "parameter", "type": "any", "default": ""}},
+    "n_slider": {"engine": "input.slider",
+                 "params": {"min": "0", "max": "100", "step": "1", "value": "50"}},
+    "n_run": {"engine": "trigger.emit", "params": {}},
+    "h_read": {"engine": "host.read",
+               "params": {"host": "Revit", "operation": "List walls", "view": "active"}},
+    "b_all_category": {"engine": "revit.elements_of_category",
+                       "params": {"category": "Walls", "scope": "document"}},
+    "b_get_parameter": {"engine": "revit.get_parameter",
+                        "params": {}},
+    "s_filter": {"engine": "shape.filter",
+                 "params": {"predicate": "item.height > 3000", "mode": "keep"}},
+    "s_map": {"engine": "shape.map", "params": {"expression": "item"}},
+    "s_sort": {"engine": "shape.sort",
+               "params": {"by": "name", "direction": "asc"}},
+    "s_group": {"engine": "shape.group", "params": {"by": "category"}},
+    "s_unique": {"engine": "shape.unique", "params": {}},
+    "s_pluck": {"engine": "shape.pluck", "params": {"field": "name"}},
+    "s_count": {"engine": "shape.count", "params": {}},
+    "s_slice": {"engine": "shape.slice", "params": {"count": "10", "from": "start"}},
+    "s_flatten": {"engine": "shape.flatten", "params": {}},
+    "s_join": {"engine": "shape.concat", "params": {}},
+    "t_set_field": {"engine": "library.set_field",
+                    "params": {"field": "", "value": ""}},
+    "t_move_handoff": {"engine": "library.move",
+                       "params": {"dx": "0", "dy": "0", "dz": "0"}},
+    "t_rotate_handoff": {"engine": "library.rotate",
+                         "params": {"degrees": "0", "cx": "0", "cy": "0"}},
+    "t_scale_handoff": {"engine": "library.scale",
+                        "params": {"factor": "1", "cx": "0", "cy": "0"}},
+    "l_if_handoff": {"engine": "control.if", "params": {"condition": ""}},
+    "l_switch_handoff": {"engine": "control.switch",
+                         "params": {"key": "a", "cases": "a, b, c"}},
+    "l_loop_handoff": {"engine": "control.foreach", "params": {}},
+    "l_merge_handoff": {"engine": "control.merge", "params": {}},
+    "d_add_text": {"engine": "library.add_text",
+                   "params": {"text": "", "x": "0", "y": "0"}},
+    "d_dimensions": {"engine": "library.dimensions",
+                     "params": {"style": "aligned", "offset": "0"}},
+    "d_tag_rooms": {"engine": "library.tag_rooms", "params": {}},
+    "d_place_tags": {"engine": "library.place_tags",
+                     "params": {"category": "Doors", "leader": "true"}},
+    "d_place_sheet": {"engine": "library.place_on_sheet",
+                      "params": {"sheet": "", "views": ""}},
+    "d_schedule": {"engine": "library.build_schedule", "params": {"columns": ""}},
+    "d_legend": {"engine": "library.make_legend", "params": {"by": "type"}},
+    "text_ops": {"engine": "text.ops",
+                 "params": {"operation": "replace", "text": "", "pattern": "", "replacement": "",
+                            "separator": ",", "template": "{value}", "width": "0", "fill": " "}},
+    "math_expression": {"engine": "math.expression",
+                        "params": {"expression": "a + b", "a": "0", "b": "0"}},
+    "math_series": {"engine": "math.series",
+                    "params": {"start": "0", "step": "1", "count": "10"}},
+    "ai_master": {"engine": "ai.master",
+                  "params": {"action": "think", "model": "", "prompt": ""}},
+    "ai_recall": {"engine": "brain.recall", "params": {"query": "", "limit": "5"}},
+    "g_remember": {"engine": "brain.remember",
+                   "params": {"text": "", "source": "nodeslib"}},
+    "g_dryrun_diff": {"engine": "archhub.dry_run_diff",
+                      "params": {"changes": "[]"}},
+    "g_host_health": {"engine": "host.health", "params": {"host": ""}},
+    "g_evidence_attach": {"engine": "evidence.attach", "params": {"path": ""}},
+    "g_approval_gate": {"engine": "approval.gate",
+                        "params": {"operation": "revit.write", "scope": "revit.write"}},
+    "g_rule_check": {"engine": "library.rule_check",
+                     "params": {"parameter": "height", "operator": ">", "value": "3000"}},
+    "b_set_parameter": {"engine": "revit.set_parameter_by_name",
+                        "params": {}},
+    "f_write_table": {"engine": "excel.write_range",
+                      "params": {"format": "xlsx", "sheet": "Sheet1", "range": "A1"}},
+    "b_create_sheets": {"engine": "revit.create_sheets", "params": {}},
+    "b_renumber": {"engine": "revit.renumber_rename",
+                   "params": {}},
+    "w_watch": {"engine": "watch.preview", "params": {"as": "table"}},
+    "o_result": {"engine": "output.parameter", "params": {"name": "result"}},
+    "o_skill_handoff": {"engine": "library.save_skill",
+                        "params": {"name": "", "path": "", "description": ""}},
+    "o_pdf_handoff": {"engine": "library.publish_pdf",
+                      "params": {"sheets": "", "folder": ""}},
+    "o_email_handoff": {"engine": "library.draft_email",
+                        "params": {"to": "", "subject": ""}},
+    "o_notify_handoff": {"engine": "library.notify",
+                         "params": {"notice_title": "ArchHub", "message": ""}},
+    "o_speckle_send": {"engine": "speckle.send",
+                       "params": {"project": "", "branch": "main"}},
+    "n_note": {"engine": "note", "params": {"text": ""}},
+    "n_reroute": {"engine": "reroute", "params": {}},
+    "sk_skill": {"engine": "skill.wrap", "params": {"name": "untitled skill"}},
 })
 
 # How each card is listed: category, then (item, title, one-line summary).
+# This is the handoff catalogue, reconciled to executable engines in this build.
 LIBRARY_PRESENTATION = (
+    ("trigger", (
+        ("tr_manual", "Manual run", "starts when you press Run"),
+        ("tr_schedule", "Schedule", "clock trigger"),
+        ("tr_file", "File change", "folder and pattern watcher"),
+        ("tr_host", "Host event", "event from Revit or another host"),
+        ("tr_approval", "Approval", "runs after approval grant"),
+        ("tr_webhook", "Webhook", "read-only URL trigger"),
+    )),
+    ("input", (
+        ("n_number", "Number", "A number the graph holds"),
+        ("n_text", "Text", "A text the graph holds"),
+        ("n_list", "List", "A list, as JSON or comma-separated"),
+        ("n_yesno", "Yes / No", "True or false"),
+        ("n_file", "File", "A local file value"),
+        ("n_colour", "Colour", "A hex colour value"),
+        ("n_parameter", "Parameter", "Set by whoever runs this graph"),
+        ("n_slider", "Slider", "A bounded numeric input"),
+        ("n_run", "Run button", "Starts the graph when you press Run"),
+    )),
     ("host", (
-        ("h_revit", "Revit", "live sessions on this machine"),
-        ("h_autocad", "AutoCAD", "line work from the live drawing"),
-        ("h_max", "3ds Max", "MAXScript / Python in the open scene"),
-        ("h_rhino", "Rhino", "RhinoPython in the open model"),
-        ("h_blender", "Blender", "Python in the open scene"),
-        ("h_excel", "Excel", "open workbooks and their sheets"),
-        ("h_word", "Word", "open documents and their paragraphs"),
-        ("h_ppt", "PowerPoint", "open decks and their slides"),
-        ("h_outlook", "Outlook", "the inbox, newest first"),
-        ("h_notion", "Notion", "search your workspace"),
-        ("h_dropbox", "Dropbox", "files in your Dropbox folder"),
-        ("h_speckle", "Speckle", "commit the wired rows to a branch"),
+        ("h_read", "Read from host", "Ask a connected host for elements"),
+        ("r_xl_range", "Excel read range", "Rows from a fixture workbook range"),
+        ("b_all_category", "All elements of category", "Read elements by Revit category"),
+        ("b_get_parameter", "Get parameter by name", "Read a named parameter from elements"),
+        ("b_set_parameter", "Set parameter by name", "Write a named parameter after approval"),
+        ("b_create_sheets", "Create sheets", "Create sheets from approved rows"),
+        ("b_renumber", "Renumber", "Renumber or rename approved elements"),
     )),
-    ("read", (
-        ("r_walls", "list_walls", "pull walls from active view"),
-        ("r_doors", "list_doors", "pull doors + swings + marks"),
-        ("r_windows", "list_windows", "pull windows + types"),
-        ("r_sheets", "list_sheets", "enumerate sheets in set"),
-        ("r_views", "list_views", "plans, sections, schedules"),
-        ("r_levels", "list_levels", "levels + elevations"),
-        ("r_selection", "get_selection", "whatever is selected in host"),
-        ("r_warnings", "list_warnings", "host warnings \u00b7 by severity"),
-        ("r_xl_sheets", "excel worksheets", "sheets of the workbook in front"),
-        ("r_doc_paras", "word paragraphs", "paragraphs of the document in front"),
-        ("r_ppt_slides", "powerpoint slides", "slides of the deck in front"),
-    )),
-    ("filter", (
-        ("f_type", "where type", "by family/type"),
-        ("f_cat", "where category", "by Revit category"),
-        ("f_level", "where level", "by level reference"),
-        ("f_param", "where parameter", "predicate on a parameter"),
-        ("f_pred", "where custom", "a comparison rule, e.g. item.height >= 3000"),
+    ("shape", (
+        ("s_filter", "Filter", "Keep or drop items by a rule"),
+        ("s_map", "Map", "Change each item by an expression"),
+        ("s_sort", "Sort", "Order items by a field"),
+        ("s_group", "Group by", "Group items by a field"),
+        ("s_unique", "Unique", "Drop duplicate items"),
+        ("s_pluck", "Pluck", "Take one field from each item"),
+        ("s_count", "Count", "How many items"),
+        ("s_slice", "Slice", "First or last N items"),
+        ("s_flatten", "Flatten", "Nested lists into one"),
+        ("s_join", "Join lists", "Join lists end to end"),
     )),
     ("transform", (
-        ("t_setp", "set parameter", "sets a field on the stream"),
-        ("t_move", "move", "translation"),
-        ("t_rot", "rotate", "rotation"),
-        ("t_scale", "scale", "uniform"),
-        ("t_group", "group by", "key \u2192 list"),
-        ("t_sort", "sort by", "asc / desc on key"),
-    )),
-    ("annotate", (
-        ("a_dims", "create_dimensions", "aligned, parallel, baseline"),
-        ("a_tags", "place_tags", "tag every untagged element of a category"),
-        ("a_text", "add_text", "text note \u00b7 positioned"),
-        ("a_rooms", "tag_rooms", "tag every untagged room in the view"),
-    )),
-    ("compose", (
-        ("c_sched", "build_schedule", "table from a stream"),
-        ("c_sheet", "place_on_sheet", "named views onto a sheet"),
-        ("c_legend", "make_legend", "symbol legend block"),
+        ("t_set_field", "Set field", "Write a value onto every item"),
+        ("t_move_handoff", "Move", "Translate coordinates in millimetres"),
+        ("t_rotate_handoff", "Rotate", "Turn coordinates about a centre"),
+        ("t_scale_handoff", "Scale", "Scale coordinates about a centre"),
     )),
     ("logic", (
-        ("l_if", "if", "rule \u2192 out (true) / false branches"),
-        ("l_switch", "switch", "key \u2192 branch a / b / c by its cases"),
-        ("l_loop", "loop", "iterate a list: each (first) and out (all)"),
-        ("l_merge", "merge", "concat / dedupe streams in + b"),
+        ("l_if_handoff", "If", "Route by a rule"),
+        ("l_foreach", "Batch", "Batch over a list"),
+        ("l_switch_handoff", "Switch", "Route by a key"),
+        ("l_loop_handoff", "For each", "Iterate a list"),
+        ("l_merge_handoff", "Merge", "Merge streams"),
+    )),
+    ("document", (
+        ("d_add_text", "Add text", "A text note in the stream"),
+        ("d_dimensions", "Dimensions", "One dimension per line"),
+        ("d_tag_rooms", "Tag rooms", "Tag every untagged room"),
+        ("d_place_tags", "Place tags", "Tag every untagged element"),
+        ("d_place_sheet", "Place on sheet", "Put named views on a sheet"),
+        ("d_schedule", "Schedule", "A table from the stream"),
+        ("d_legend", "Legend", "One entry per symbol"),
+    )),
+    ("file", (
+        ("f_write_table", "Write Excel / CSV", "Write rows to an Excel or CSV file"),
+    )),
+    ("text", (
+        ("text_ops", "Text ops", "Replace, split, join, format or pad text"),
+    )),
+    ("math", (
+        ("math_expression", "Expression", "Safe numeric expression"),
+        ("math_series", "Series", "Start, step and count"),
     )),
     ("ai", (
-        ("i_think", "think", "reason with the picked model"),
-        ("i_vis", "vision", "read a sketch / screenshot with the picked model"),
-        ("i_match", "match_skill", "best saved skill for an intent"),
-        ("i_embed", "embed", "similar facts from the brain"),
+        ("ai_master", "AI", "Ask a model"),
+        ("ai_recall", "Recall", "What the Brain remembers for a query"),
     )),
-    ("workshop", (
-        ("w_workshop", "Workshop", "this conversation; routes wired agents into it"),
-        ("w_agent", "Agent session", "one live native session through Session Link"),
-        ("w_review", "Independent review", "a different agent reviews the wired artifact"),
+    ("governance", (
+        ("g_remember", "Remember", "Write back to Brain"),
+        ("g_dryrun_diff", "Dry-run diff", "Show proposed changes without applying them"),
+        ("g_host_health", "Host health probe", "Read connector health"),
+        ("g_evidence_attach", "Evidence attach", "Attach file hashes as evidence"),
+        ("g_approval_gate", "Approval gate", "Hold data until approved"),
+        ("g_rule_check", "Rule check", "Pass/fail report from a rule"),
     )),
-    ("tools", (
-        ("tool_studio", "Studio", "canvas and session workspace settings"),
-        ("tool_workshop", "Workshop", "projects, tasks and governed work settings"),
-        ("tool_brain", "Brain", "memory, facts and recall settings"),
-        ("tool_baboom", "BABOOM", "desktop companion settings"),
-        ("tool_connectors", "Connectors", "host bridge settings"),
-        ("tool_cloud", "Cloud", "account, devices and relay settings"),
+    ("watch", (
+        ("w_watch", "Watch", "See what flows through"),
     )),
     ("output", (
-        ("o_skill", "save_skill", "template this run"),
-        ("o_pdf", "publish_pdf", "sheets \u2192 PDF files via the live Revit"),
-        ("o_spk", "push_speckle", "commit the wired rows to a branch"),
-        ("o_email", "draft_email", "draft in Outlook \u00b7 you send"),
-        ("o_notify", "notify", "desktop notification"),
-        # The terminal card (library.terminal; terminal_sessions binds it).
-        ("o_term", "terminal", "a shell in a folder this ArchHub admits"),
+        ("o_result", "Result", "What this graph returns"),
+        ("o_skill_handoff", "Save as skill", "Save this run as a skill file"),
+        ("o_pdf_handoff", "Publish PDF", "Export sheets from open Revit"),
+        ("o_email_handoff", "Email draft", "A draft in open Outlook"),
+        ("o_notify_handoff", "Notify", "A desktop notification"),
+        ("o_speckle_send", "Send to Speckle", "Send elements to Speckle"),
+    )),
+    ("note", (
+        ("n_note", "Note", "Words on the canvas"),
+        ("n_reroute", "Reroute", "A dot a wire passes through"),
+    )),
+    ("skill", (
+        ("sk_skill", "Skill", "A saved graph as one node"),
     )),
 )
 
 
-def library_catalogue() -> list:
-    """The node library Studio draws: every card, its engine and defaults.
+# Stable placement bindings from the pre-consolidation catalogue. These seed
+# compatibility metadata in Cells; the visible catalogue remains LIBRARY_PRESENTATION.
+LEGACY_LIBRARY_ITEM_ENGINES = {'a_dims': {'engine': 'library.dimensions', 'params': {'offset': '0', 'style': 'aligned'}},
+ 'a_rooms': {'engine': 'library.tag_rooms', 'params': {}},
+ 'a_tags': {'engine': 'library.place_tags', 'params': {'category': 'Doors', 'leader': 'true'}},
+ 'a_text': {'engine': 'library.add_text', 'params': {'text': '', 'x': '0', 'y': '0'}},
+ 'c_legend': {'engine': 'library.make_legend', 'params': {'by': 'type'}},
+ 'c_sched': {'engine': 'library.build_schedule', 'params': {'columns': ''}},
+ 'c_sheet': {'engine': 'library.place_on_sheet', 'params': {'sheet': '', 'views': ''}},
+ 'f_cat': {'engine': 'library.filter_field', 'params': {'field': 'category', 'mode': 'keep', 'value': ''}},
+ 'f_level': {'engine': 'library.filter_field', 'params': {'field': 'level', 'mode': 'keep', 'value': ''}},
+ 'f_param': {'engine': 'library.filter_compare',
+             'params': {'field': '', 'mode': 'keep', 'operator': '==', 'value': ''}},
+ 'f_pred': {'engine': 'library.filter_rule', 'params': {'mode': 'keep', 'rule': ''}},
+ 'f_type': {'engine': 'library.filter_field', 'params': {'field': 'type', 'mode': 'keep', 'value': ''}},
+ 'h_autocad': {'engine': 'cad.host_lines', 'params': {}},
+ 'h_blender': {'engine': 'blender.exec', 'params': {'code': ''}},
+ 'h_dropbox': {'engine': 'dropbox.list', 'params': {'path': ''}},
+ 'h_excel': {'engine': 'office.read', 'params': {'operation': 'excel.list_workbooks'}},
+ 'h_max': {'engine': 'max.exec', 'params': {'code': ''}},
+ 'h_notion': {'engine': 'notion.search', 'params': {'query': ''}},
+ 'h_outlook': {'engine': 'outlook.inbox', 'params': {'count': '20'}},
+ 'h_ppt': {'engine': 'office.read', 'params': {'operation': 'powerpoint.list_presentations'}},
+ 'h_revit': {'engine': 'revit.sessions', 'params': {}},
+ 'h_rhino': {'engine': 'rhino.exec', 'params': {'code': ''}},
+ 'h_speckle': {'engine': 'library.push_speckle',
+               'params': {'branch': 'archhub/main', 'message': 'ArchHub push', 'project': '', 'server': ''}},
+ 'h_word': {'engine': 'office.read', 'params': {'operation': 'word.list_documents'}},
+ 'i_embed': {'engine': 'library.embed', 'params': {'query': ''}},
+ 'i_match': {'engine': 'library.match_skill', 'params': {'count': '3', 'intent': ''}},
+ 'i_think': {'engine': 'library.think', 'params': {'max_tokens': '600', 'model': '', 'prompt': ''}},
+ 'i_vis': {'engine': 'library.vision',
+           'params': {'image_path': '', 'max_tokens': '600', 'model': '', 'prompt': ''}},
+ 'l_if': {'engine': 'library.if', 'params': {'rule': ''}},
+ 'l_loop': {'engine': 'library.loop', 'params': {}},
+ 'l_merge': {'engine': 'library.merge', 'params': {'mode': 'concat'}},
+ 'l_switch': {'engine': 'library.switch', 'params': {'cases': 'a, b, c', 'key': 'a'}},
+ 'o_email': {'engine': 'library.draft_email', 'params': {'body': '', 'subject': '', 'to': ''}},
+ 'o_notify': {'engine': 'library.notify', 'params': {'message': '', 'notice_title': 'ArchHub'}},
+ 'o_pdf': {'engine': 'library.publish_pdf', 'params': {'folder': '', 'sheets': ''}},
+ 'o_skill': {'engine': 'library.save_skill', 'params': {'description': '', 'name': '', 'path': ''}},
+ 'o_spk': {'engine': 'library.push_speckle',
+           'params': {'branch': 'archhub/main', 'message': 'ArchHub push', 'project': '', 'server': ''}},
+ 'o_term': {'engine': 'library.terminal', 'params': {'command': '', 'cwd': ''}},
+ 'r_doc_paras': {'engine': 'office.read', 'params': {'operation': 'word.list_paragraphs'}},
+ 'r_doors': {'engine': 'revit.read', 'params': {'operation': 'revit.list_doors'}},
+ 'r_levels': {'engine': 'revit.read', 'params': {'operation': 'revit.list_levels'}},
+ 'r_ppt_slides': {'engine': 'office.read', 'params': {'operation': 'powerpoint.list_slides'}},
+ 'r_selection': {'engine': 'revit.read', 'params': {'operation': 'revit.get_selection'}},
+ 'r_sheets': {'engine': 'revit.read', 'params': {'operation': 'revit.list_sheets'}},
+ 'r_views': {'engine': 'revit.read', 'params': {'operation': 'revit.list_views'}},
+ 'r_walls': {'engine': 'revit.read', 'params': {'operation': 'revit.list_walls'}},
+ 'r_warnings': {'engine': 'revit.read', 'params': {'operation': 'revit.list_warnings'}},
+ 'r_windows': {'engine': 'revit.read', 'params': {'operation': 'revit.list_windows'}},
+ 'r_xl_sheets': {'engine': 'office.read', 'params': {'operation': 'excel.list_worksheets'}},
+ 't_group': {'engine': 'library.group_by', 'params': {'by': ''}},
+ 't_move': {'engine': 'library.move', 'params': {'dx': '0', 'dy': '0', 'dz': '0'}},
+ 't_rot': {'engine': 'library.rotate', 'params': {'cx': '0', 'cy': '0', 'degrees': '0'}},
+ 't_scale': {'engine': 'library.scale', 'params': {'cx': '0', 'cy': '0', 'factor': '1'}},
+ 't_setp': {'engine': 'library.set_field', 'params': {'field': '', 'value': ''}},
+ 't_sort': {'engine': 'library.sort_by', 'params': {'by': '', 'direction': 'asc'}},
+ 'tool_baboom': {'engine': 'tool.baboom',
+                 'params': {'speech_budget_per_hour': 2, 'start_with_archhub': True, 'tool': 'baboom'}},
+ 'tool_brain': {'engine': 'tool.brain', 'params': {'default_tab': 'memory', 'tool': 'brain'}},
+ 'tool_cloud': {'engine': 'tool.cloud', 'params': {'default_tab': 'account', 'tool': 'cloud'}},
+ 'tool_connectors': {'engine': 'tool.connectors', 'params': {'default_tab': 'hosts', 'tool': 'connectors'}},
+ 'tool_studio': {'engine': 'tool.studio', 'params': {'default_view': 'canvas', 'tool': 'studio'}},
+ 'tool_workshop': {'engine': 'tool.workshop',
+                   'params': {'archive_after_idle_days': '20',
+                              'default_tab': 'tasks',
+                              'stale_claim_after_idle_minutes': '30',
+                              'tool': 'workshop'}}}
+LEGACY_LIBRARY_PRESENTATION = (('host',
+  (('h_revit', 'Revit', 'live sessions on this machine'),
+   ('h_autocad', 'AutoCAD', 'line work from the live drawing'),
+   ('h_max', '3ds Max', 'MAXScript / Python in the open scene'),
+   ('h_rhino', 'Rhino', 'RhinoPython in the open model'),
+   ('h_blender', 'Blender', 'Python in the open scene'),
+   ('h_excel', 'Excel', 'open workbooks and their sheets'),
+   ('h_word', 'Word', 'open documents and their paragraphs'),
+   ('h_ppt', 'PowerPoint', 'open decks and their slides'),
+   ('h_outlook', 'Outlook', 'the inbox, newest first'),
+   ('h_notion', 'Notion', 'search your workspace'),
+   ('h_dropbox', 'Dropbox', 'files in your Dropbox folder'),
+   ('h_speckle', 'Speckle', 'commit the wired rows to a branch'))),
+ ('read',
+  (('r_walls', 'list_walls', 'pull walls from active view'),
+   ('r_doors', 'list_doors', 'pull doors + swings + marks'),
+   ('r_windows', 'list_windows', 'pull windows + types'),
+   ('r_sheets', 'list_sheets', 'enumerate sheets in set'),
+   ('r_views', 'list_views', 'plans, sections, schedules'),
+   ('r_levels', 'list_levels', 'levels + elevations'),
+   ('r_selection', 'get_selection', 'whatever is selected in host'),
+   ('r_warnings', 'list_warnings', 'host warnings · by severity'),
+   ('r_xl_sheets', 'excel worksheets', 'sheets of the workbook in front'),
+   ('r_doc_paras', 'word paragraphs', 'paragraphs of the document in front'),
+   ('r_ppt_slides', 'powerpoint slides', 'slides of the deck in front'))),
+ ('filter',
+  (('f_type', 'where type', 'by family/type'),
+   ('f_cat', 'where category', 'by Revit category'),
+   ('f_level', 'where level', 'by level reference'),
+   ('f_param', 'where parameter', 'predicate on a parameter'),
+   ('f_pred', 'where custom', 'a comparison rule, e.g. item.height >= 3000'))),
+ ('transform',
+  (('t_setp', 'set parameter', 'sets a field on the stream'),
+   ('t_move', 'move', 'translation'),
+   ('t_rot', 'rotate', 'rotation'),
+   ('t_scale', 'scale', 'uniform'),
+   ('t_group', 'group by', 'key → list'),
+   ('t_sort', 'sort by', 'asc / desc on key'))),
+ ('annotate',
+  (('a_dims', 'create_dimensions', 'aligned, parallel, baseline'),
+   ('a_tags', 'place_tags', 'tag every untagged element of a category'),
+   ('a_text', 'add_text', 'text note · positioned'),
+   ('a_rooms', 'tag_rooms', 'tag every untagged room in the view'))),
+ ('compose',
+  (('c_sched', 'build_schedule', 'table from a stream'),
+   ('c_sheet', 'place_on_sheet', 'named views onto a sheet'),
+   ('c_legend', 'make_legend', 'symbol legend block'))),
+ ('logic',
+  (('l_if', 'if', 'rule → out (true) / false branches'),
+   ('l_switch', 'switch', 'key → branch a / b / c by its cases'),
+   ('l_loop', 'loop', 'iterate a list: each (first) and out (all)'),
+   ('l_merge', 'merge', 'concat / dedupe streams in + b'))),
+ ('ai',
+  (('i_think', 'think', 'reason with the picked model'),
+   ('i_vis', 'vision', 'read a sketch / screenshot with the picked model'),
+   ('i_match', 'match_skill', 'best saved skill for an intent'),
+   ('i_embed', 'embed', 'similar facts from the brain'))),
+ ('workshop',
+  (('w_workshop', 'Workshop', 'this conversation; routes wired agents into it'),
+   ('w_agent', 'Agent session', 'one live native session through Session Link'),
+   ('w_review', 'Independent review', 'a different agent reviews the wired artifact'))),
+ ('tools',
+  (('tool_studio', 'Studio', 'canvas and session workspace settings'),
+   ('tool_workshop', 'Workshop', 'projects, tasks and governed work settings'),
+   ('tool_brain', 'Brain', 'memory, facts and recall settings'),
+   ('tool_baboom', 'BABOOM', 'desktop companion settings'),
+   ('tool_connectors', 'Connectors', 'host bridge settings'),
+   ('tool_cloud', 'Cloud', 'account, devices and relay settings'))),
+ ('output',
+  (('o_skill', 'save_skill', 'template this run'),
+   ('o_pdf', 'publish_pdf', 'sheets → PDF files via the live Revit'),
+   ('o_spk', 'push_speckle', 'commit the wired rows to a branch'),
+   ('o_email', 'draft_email', 'draft in Outlook · you send'),
+   ('o_notify', 'notify', 'desktop notification'),
+   ('o_term', 'terminal', 'a shell in a folder this ArchHub admits'))))
+for _legacy_item, _legacy_row in WORKSHOP_CATALOGUE.items():
+    LEGACY_LIBRARY_ITEM_ENGINES.setdefault(_legacy_item, {
+        "engine": _legacy_row["engine"], "params": dict(_legacy_row["params"])})
+for _legacy_item, _legacy_binding in LEGACY_LIBRARY_ITEM_ENGINES.items():
+    LIBRARY_ITEM_ENGINES.setdefault(_legacy_item, _legacy_binding)
 
-    One source: item ids, engines and parameters are LIBRARY_ITEM_ENGINES. A
-    card with no engine entry is not listed; one whose engine is not in the
-    Run table is marked noEngine, never silently dropped. Every
-    LIBRARY_ITEM_ENGINES card must have a presentation row (court).
+
+def library_catalogue() -> list:
+    """Canonical cards plus hidden compatibility bindings for exact old IDs.
+
+    Every row is seeded into the same graph. Ordinary projections omit hidden
+    rows before counts/search/rendering; explicit old placements keep their IDs.
     """
     from .pipeline_engines import PIPELINE_ENGINES
+    visible_ids = {item for _category, rows in LIBRARY_PRESENTATION for item, _title, _summary in rows}
+    legacy_rows = {item: (category, title, summary)
+                   for category, rows in LEGACY_LIBRARY_PRESENTATION
+                   for item, title, summary in rows}
+    sections = {category: list(rows) for category, rows in LIBRARY_PRESENTATION}
+    for item, wiring in LIBRARY_ITEM_ENGINES.items():
+        if item not in visible_ids:
+            category, title, summary = legacy_rows.get(item, ("compatibility", item, "Existing graph placement binding"))
+            sections.setdefault(category, []).append((item, title, summary))
     groups = []
-    for category, rows in LIBRARY_PRESENTATION:
+    for category, rows in sections.items():
         items = []
         for item, title, summary in rows:
             wiring = LIBRARY_ITEM_ENGINES.get(item)
             if wiring is None:
-                continue  # a card this build does not carry is not listed
+                continue
             entry = {
                 "id": item, "cat": category, "title": title, "sub": summary,
                 "engine": wiring["engine"], "params": dict(wiring["params"]),
-                "sockets": {
-                    side: list(names)
-                    for side, names in engine_sockets(wiring["engine"]).items()
-                },
+                "sockets": {side: list(names) for side, names in engine_sockets(wiring["engine"]).items()},
+                "ports": library_item_ports(item, wiring["engine"], title),
             }
+            if item not in visible_ids:
+                entry["hidden"] = True
+            legacy = LEGACY_LIBRARY_ITEM_ENGINES.get(item)
+            if legacy is not None and legacy != wiring:
+                entry["compatibility"] = {legacy["engine"]: {
+                    "engine": legacy["engine"], "params": dict(legacy["params"])}}
             reason = LIBRARY_ITEMS_WITHOUT_ENGINE.get(item)
-            if wiring["engine"] not in PIPELINE_ENGINES or reason:
+            if not engine_runs(wiring["engine"], PIPELINE_ENGINES) or reason:
                 entry["noEngine"] = True
                 entry["reason"] = reason or "engine %s is not in this build" % wiring["engine"]
             items.append(entry)
         groups.append({"cat": category, "items": items})
     return groups
+
+
+def _base_catalogue_interfaces() -> dict:
+    """(name, engine) -> declared base catalogue interfaces."""
+    from .base_universal_catalogue import BASE_CATALOGUE
+    out = {}
+    for entry in BASE_CATALOGUE:
+        engine = entry.get("engine")
+        name = entry.get("name")
+        if not engine or not name:
+            continue
+        out[(str(name).casefold(), str(engine))] = dict(entry.get("interfaces") or {})
+    return out
+
+def _interface_ports(interfaces: Mapping[str, object], sockets: Mapping[str, object]) -> dict:
+    by_side = {"source": [], "target": []}
+    for name, spec in (interfaces or {}).items():
+        if not isinstance(spec, Mapping):
+            spec = {}
+        direction = str(spec.get("direction") or "").lower()
+        side = "source" if direction in ("output", "out", "source") else "target"
+        type_name = str(spec.get("type") or spec.get("logical_type") or "any")
+        cardinality = "many" if spec.get("multiple") or type_name == "list" else "one"
+        by_side[side].append({
+            "id": str(name),
+            "type": type_name,
+            "cardinality": cardinality,
+        })
+    known = {side: {port["id"] for port in ports} for side, ports in by_side.items()}
+    for side, names in sockets.items():
+        for name in names:
+            if str(name) not in known[side]:
+                by_side[side].append({
+                    "id": str(name),
+                    "type": "unknown",
+                    "cardinality": "unknown",
+                })
+    return by_side
+
+def library_item_ports(item: str, engine: str, title: str = "") -> dict:
+    """Projected port metadata: id, type and cardinality for the library card."""
+    sockets = engine_sockets(engine)
+    interfaces = _base_catalogue_interfaces().get((str(title or "").casefold(), str(engine or "")), {})
+    return _interface_ports(interfaces, sockets)
 
 
 def engine_categories(groups=None) -> dict:
@@ -1490,9 +2016,11 @@ def engine_categories(groups=None) -> dict:
     families = (
         (("vision.", "cad."), "read"), (("lines.",), "annotate"),
         (("revit.",), "host"), (("brain.", "ai.", "baboom."), "ai"),
-        (("tool.",), "tools"),
+        (("tool.",), "tools"), (("trigger.",), "trigger"),
     )
-    for engine in sorted(set(PIPELINE_ENGINES) | {"baboom.status", "baboom.presence"}):
+    for engine in sorted(
+        set(PIPELINE_ENGINES) | STEM_RUN_ENGINES | {"baboom.status", "baboom.presence"}
+    ):
         if engine in held:
             continue
         held[engine] = next(
@@ -1512,3 +2040,21 @@ __all__ = [
     "engine_sockets",
     "library_catalogue",
 ]
+
+
+# Compatibility names share the NODES engine implementation and verifier state.
+from . import nodeslib_v2_engines as _nodeslib  # noqa: E402
+_digest_payload = _nodeslib._digest_payload
+_params_with_wired_grant = _nodeslib._params_with_wired_grant
+_verified_write_grant = _nodeslib._verified_write_grant
+_require_grant = _nodeslib._require_grant
+_require_file_grant = _nodeslib._require_file_grant
+_confirmed_write = _nodeslib._confirmed_write
+_revit = _nodeslib._revit
+revit_elements_of_category = _nodeslib.revit_elements_of_category
+revit_get_parameter = _nodeslib.revit_get_parameter
+revit_set_parameter = _nodeslib.revit_set_parameter
+revit_create_sheets = _nodeslib.revit_create_sheets
+revit_renumber_rename = _nodeslib.revit_renumber_rename
+write_table_file = _nodeslib.write_table_file
+approval_gate = _nodeslib.approval_gate

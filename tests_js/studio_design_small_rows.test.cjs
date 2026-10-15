@@ -1,3 +1,4 @@
+const {settingsNavigator} = require('./settings_navigation_helpers.cjs');
 /* Design gap small rows (design-gap-table.md rows 1, 4, 11 and 15), measured on the whole compiled
    Studio mounted in an in-memory DOM over an existing-graph shape: raw canvas rows as the server
    emits them, projected by the shipped projectStudioCanvas slice of studio.html, with the transport
@@ -110,9 +111,9 @@ const openCanvas = studio => {
   assert.ok(studio.doc.querySelector('.lm-node[data-node-id="work-a"]'), 'the canvas draws the projected Work node');
 };
 const serverStrip = studio => {
-  const server = [...studio.doc.querySelectorAll('button,span')].find(node => node.textContent.includes('server :53912'));
-  assert.ok(server, 'the status bar is drawn');
-  return server.parentElement;
+  const strip = studio.doc.querySelector('[data-app-frame] > footer > div');
+  assert.ok(strip, 'the status bar is drawn');
+  return strip;
 };
 const assertDisabledStyle = (button, label) => {
   assert.equal(button.disabled, true, label + ' is disabled');
@@ -127,11 +128,14 @@ test('status bar: the design strip with live values; the model slot is the picke
   try {
     const strip = serverStrip(unpicked);
     assert.equal(/choose[- ]a[- ]model/i.test(strip.textContent), false, 'no placeholder slug in the status bar: ' + strip.textContent);
-    assert.ok(strip.textContent.includes('Graph composition'), 'the open session file is still named');
+    await unpicked.settle(() => strip.textContent.includes('No program connected'), 'the authoritative empty hosted list reaches the status bar');
+    assert.ok(strip.textContent.includes('No program connected'), 'without a connected program the strip names that state');
+    assert.equal(strip.textContent.includes('Graph composition'), false, 'the disconnected strip does not append document/count filler');
     assert.equal(/sign in|@/i.test(strip.textContent), false, 'no account item: the account chip and Settings hold the account');
-    assert.ok(strip.textContent.trim().endsWith('20260916-2130-e733a13'),
-      'the running build closes the strip where the design names its version (design studio-lm.jsx:3625): ' + strip.textContent);
-    assert.match(strip.textContent, /server :53912 \u00b7 0\/0 hosts/, 'server port and live/total hosts in the design format');
+    assert.equal(/server\s*:|0\/0|proof|docs/.test(strip.textContent), false,
+      'the strip has no server port, zero tally, proof label, or docs link: ' + strip.textContent);
+    assert.ok([...strip.querySelectorAll('button')].some(button => button.textContent.trim() === 'Stop'),
+      'the accepted APP frame keeps the real global Stop owner in its status bar');
     const kinds = [...strip.children].map(child => child.tagName === 'SPAN' && child.textContent.trim() === DOT ? 'sep' :
       child.tagName === 'DIV' && !child.textContent ? 'spacer' : 'item');
     assert.equal(kinds.join(' ').includes('sep sep'), false, 'no doubled separator: ' + kinds.join(' '));
@@ -143,10 +147,10 @@ test('status bar: the design strip with live values; the model slot is the picke
     groups:[{name:'BYO ' + DOT + ' OpenRouter', items:[{name, route:'anthropic/claude-sonnet-4.5', routed:route,
       vendor:'anthropic', tag:'BYO', col:'#3a6acc'}]}]}}});
   try {
-    const chip = () => [...picked.doc.querySelectorAll('button')].find(button => button.textContent.includes(route) &&
-      !serverStrip(picked).contains(button));
-    await picked.settle(() => !!chip(), 'the saved model selection reaches the moved selection-panel model chip');
     const strip = serverStrip(picked);
+    await picked.settle(() => strip.textContent.includes(route), 'the saved model selection reaches its actual status-bar owner');
+    assert.ok(strip.textContent.includes(route), 'the actual selected route is stated in the model slot');
+    assert.match(strip.textContent, /anthropic/i, 'the actual model vendor remains visible');
     assert.equal(strip.textContent.includes(name.toLowerCase().replace(/\s+/g, '-')), false,
       'the status bar does not duplicate the picked model slug: ' + strip.textContent);
     assert.equal(/choose[- ]a[- ]model/i.test(strip.textContent), false, 'no placeholder beside the picked model');
@@ -156,19 +160,20 @@ test('status bar: the design strip with live values; the model slot is the picke
 test('icon rail: tools are Home cards, Workshop opens there, and no dead Share control', async () => {
   const studio = await mountStudio();
   try {
-    const rail = studio.doc.querySelector('aside').firstElementChild;
+    const rail = studio.doc.querySelector('[data-app-frame] nav');
     const buttons = [...rail.querySelectorAll('button')];
     assert.deepEqual(buttons.map(button => button.title.split(' \u00b7 ')[0]),
-      ['Chats', 'Nodes', 'Skills', 'Search', 'Documentation', 'Settings'],
-      'the rail draws the fixed navigation controls; tools are not rail entries');
+      ['All sessions', 'Chats', 'Library', 'Docs', 'Settings', 'Account'],
+      'the rail draws the DSYS-060 controls; tools are not rail entries');
     studio.flush(() => studio.doc.querySelector('[title="All sessions"]').click());
     studio.flush(() => studio.doc.querySelector('[data-home-tools] [data-tool-card="workshop"]').click());
     assert.equal(studio.doc.querySelector('textarea[aria-label="Start a new session"]'), null, 'opening Workshop from its Home card leaves Home');
-    studio.flush(() => studio.doc.querySelector('[title="All sessions"]').click());
+    studio.flush(() => studio.doc.querySelector('[data-workshop72-rail] [role="link"][aria-label="Home"]').click());
     assert.ok(studio.doc.querySelector('textarea[aria-label="Start a new session"]'), 'All sessions opens Home, where a session starts');
-    const dead = buttons.filter(button => !button.disabled && typeof reactProps(button).onClick !== 'function').map(button => button.title);
+    const liveButtons = [...studio.doc.querySelector('[data-app-frame] nav').querySelectorAll('button')];
+    const dead = liveButtons.filter(button => !button.disabled && typeof reactProps(button).onClick !== 'function').map(button => button.title);
     assert.deepEqual(dead, [], 'enabled rail controls with no action: ' + dead.join(', '));
-    assert.equal(buttons.some(button => button.title.startsWith('Share')), false, 'Share is not drawn without a binding');
+    assert.equal(liveButtons.some(button => button.title.startsWith('Share')), false, 'Share is not drawn without a binding');
   } finally { studio.close(); }
 });
 
@@ -233,7 +238,12 @@ test('update controls: not in the Workspace header; in Settings > About a pendin
       'the Workspace header draws the update icons (founder, 2026-09-18: bring them back)');
     if (!studio.doc.querySelector('section[aria-label="Application release updates"]')) {
       studio.flush(() => studio.win.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:',', ctrlKey:true, bubbles:true})));
-      const about = [...studio.doc.querySelectorAll('button')].find(button => button.textContent.trim().startsWith('About'));
+      const nav = settingsNavigator({doc:studio.doc, flush:studio.flush, settle:studio.settle});
+      const group = [...nav.sidebar.querySelectorAll('[data-settings54-group-title]')]
+        .find(title => title.textContent.trim() === 'Storage & About');
+      assert.ok(group, 'Settings offers the About capability group');
+      studio.flush(() => group.closest('button').click());
+      const about = nav.capabilityButtons('About')[0];
       assert.ok(about, 'Settings offers About');
       studio.flush(() => about.click());
       // The design's About card keeps the controls behind its own "updates →" row.
@@ -287,7 +297,7 @@ test('minimap: the map frames the real nodes of an existing graph, wherever they
     const studio = await mountStudio({rawCanvas});
     try {
       openCanvas(studio);
-      const label = [...studio.doc.querySelectorAll('div')].find(node => node.textContent === 'MAP' && !node.children.length);
+      const label = [...studio.doc.querySelectorAll('div')].find(node => node.textContent === 'Overview' && !node.children.length);
       assert.ok(label, 'the minimap is drawn');
       const svg = label.parentElement.querySelector('svg');
       const [left, top, width, height] = svg.getAttribute('viewBox').split(/\s+/).map(Number);

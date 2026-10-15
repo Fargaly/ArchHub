@@ -1,7 +1,7 @@
 /* Canvas node cards as the founder design bundle draws them (archhub/project/studio-lm.jsx: NodeCanvas wires
    1403-1427, NodeRenderer 1575-1635, Socket 1651-1674): the title and summary sit in the card body as drawn. The
    sockets sit in a port band BELOW that content (d649e84f: fixed offsets drew port labels over the title and
-   summary), one 19px row per port index, on the card's own edges; every wire ends at its row in the band the card
+   summary), one 22px row per port index, on the card's own edges; every wire ends at its row in the band the card
    reports. The live graph keeps its handles: a connectable port is a button that starts or finishes a
    wire through the application's topology transport; a port the server marks not connectable stays inert. */
 const {test} = require('node:test');
@@ -22,14 +22,16 @@ const LM = new Proxy(Object.fromEntries([...palette.matchAll(/^ {2}(\w+):/gm)].m
     if (key === 'fs') return {bodySm:{sz:13, ln:18}, bodySmStrong:{wt:500}, caption:{sz:12, ln:16}, label:{sz:11, ln:14, wt:500, letter:'.04em'}, data:{sz:12, ln:16, wt:400}, dataSm:{sz:11, ln:14, wt:400}};
     if (key === 'icon') return {ui:{size:16, box:20}, category:{size:12, box:20}};
     if (key === 'shadow') return {flat:'none'};
+    if (key === 'elev') return {e1:'none',e2:'none'};
+    if (key === 'glow') return {warn:'none',accent:'none'};
     if (key === 'selection') return {outline:'2px solid token-accent', outlineOffset:2};
     if (key === 'dur') return {fast:120, med:180};
     if (typeof key === 'string' && !(key in held)) throw new Error('studio-lm.jsx reads an undefined token: ' + key);
     return held[key];
   }});
 
-// The socket geometry: one 19px row per port, radius 5, the band padded 4px (studio-lm.jsx PORT_BAND_PAD).
-const STEP = 19, RADIUS = 5, PAD = 4;
+// The socket geometry: DSYS-056 uses one 22px row per port, radius 5.5, the band padded 4px.
+const STEP = 22, RADIUS = 5.5, PAD = 4, CARD_W = 224;
 const rowCentre = index => PAD + index * STEP + STEP / 2;
 const shortcutSlice = () => {
   const start = source.indexOf('const studioShortcut =');
@@ -85,7 +87,7 @@ async function mount() {
     studioCategory:cat => ({col:'token-cat', icon:'+', label:String(cat).toUpperCase()}), WIRE:{},
     NodeBody:() => null, CanvasToolbar:() => null, FloatingComposer:() => null, CanvasAddBox:() => null, MiniMap:() => null,
     nodeModelRow:() => null, smallBtn:() => ({}), toolBtn:() => ({}), kbd:() => ({})});
-  vm.runInContext(transformSync(shortcutSlice() + source.slice(start, end) + '\n' + source.slice(socketStart, socketEnd) +
+  vm.runInContext(transformSync(shortcutSlice() + source.slice(start, end) + require('./workshop72_node_helpers.cjs').nodePreviewSource(source) + '\n' + source.slice(socketStart, socketEnd) +
     '\nglobalThis.NodeCanvas = NodeCanvas;', {loader:'jsx', format:'cjs'}).code, context);
   const root = createRoot(dom.window.document.getElementById('root'));
   const props = {focusId:null, setFocusId:() => {}, setLibraryOpen:() => {}, userNodes:[], addNodeFromLibrary:() => {}, model:null};
@@ -124,7 +126,7 @@ test('sockets sit in a port band below the title and summary, one row per port, 
       assert.ok(element, 'the card is drawn: ' + node.id);
       const band = element.querySelector('[data-port-band]');
       assert.ok(band && band.parentElement === element, 'the card has its own port band: ' + node.id);
-      assert.equal(band, element.lastElementChild, 'the band comes after the title bar and body');
+      assert.equal(band, element.lastElementChild.previousElementSibling, 'the band follows the title/body and precedes the live status footer');
       const rows = Math.max(node.ins.length, node.outs.length);
       assert.equal(band.style.height, (PAD * 2 + rows * STEP) + 'px', 'one row per port pair: ' + node.id);
       const sides = [['in', node.ins, 'left'], ['out', node.outs, 'right']];
@@ -151,29 +153,34 @@ test('each wire ends at its row in the band the card reports, and follows the ba
     const view = await mount();
     try {
       const doc = await view.draw();
-      assert.deepEqual(wireEnd(doc), {x1:40 + 210, y1:60 + top + rowCentre(0), x2:420, y2:300 + top + rowCentre(1)},
+      const actualWidth=parseFloat(doc.defaultView.getComputedStyle(card(doc,'work')).width);
+      assert.equal(actualWidth,nodes.find(node=>node.id==='work').w,'the mounted card respects the real graph width');
+      assert.deepEqual(wireEnd(doc), {x1:40 + actualWidth, y1:60 + top + rowCentre(0), x2:420, y2:300 + top + rowCentre(1)},
         'output row 0 of work to input row 1 of sink, below a band starting at ' + top + 'px');
     } finally { await view.close(); bandTop = 0; }
   }
 });
 
-test('title and summary sit in the card body as drawn, never clamped to one line', async () => {
+test('title and human summary sit in the DSYS card header, never exposing engine ids', async () => {
   const view = await mount();
   try {
     const doc = await view.draw();
     for (const node of nodes) {
-      const rows = [...card(doc, node.id).querySelectorAll('div')];
+      const tile = card(doc, node.id).querySelector('[data-category-tile]');
+      assert.ok(tile, 'the DSYS category tile is drawn: ' + node.id);
+      const rows = [...tile.parentElement.querySelectorAll('div')];
       const title = rows.find(row => row.textContent === node.title && !row.children.length);
-      const sub = rows.find(row => row.textContent === node.sub && !row.children.length);
-      assert.ok(title && sub, 'the card draws its title and summary: ' + node.id);
-      assert.ok(title.parentElement === sub.parentElement, 'title and summary share the body');
-      assert.equal(title.parentElement.style.padding, '12px', 'the foundation body padding');
-      assert.equal(title.style.fontSize, '13px');
+      const sub = rows.find(row => row.textContent && row !== title && !row.children.length && row.style.fontSize === '12px');
+      assert.ok(title && sub, 'the card draws its title and human summary: ' + node.id);
+      assert.ok(title.parentElement === sub.parentElement, 'title and summary share the header stack');
+      assert.equal(title.style.fontSize, '14px');
+      assert.equal(title.style.fontWeight, '700');
       assert.equal(sub.style.fontSize, '12px');
       for (const [element, what] of [[title, 'title'], [sub, 'summary']]) {
         assert.notEqual(element.style.whiteSpace, 'nowrap', 'the ' + what + ' of ' + node.id + ' is not clamped');
         assert.equal(element.style.textOverflow, '', 'the ' + what + ' of ' + node.id + ' is not ellipsized');
       }
+      assert.doesNotMatch(sub.textContent, /\b[a-z]+(?:\.[a-z_]+)+\b/, 'summary hides engine id text');
       assert.equal(title.getAttribute('title'), node.title, 'the full title stays reachable as the tooltip');
     }
   } finally { await view.close(); }
@@ -185,7 +192,7 @@ test('socket labels keep the design type; a connectable port wires through the t
     const doc = await view.draw();
     const label = socket(doc, 'work', 'Connect input required-capabilities').nextElementSibling;
     assert.equal(label.textContent, 'required-capabilities');
-    assert.equal(label.style.fontSize, '11px');
+    assert.equal(label.style.fontSize, '12.5px');
     assert.equal(label.style.whiteSpace, 'nowrap');
     assert.equal(label.style.padding, '0px 4px');
     // An input's and an output's label share one row: each is held to half the card, ellipsized, whole in its tooltip.

@@ -43,6 +43,19 @@ def tool_settings(params: Mapping[str, object], feeds: Mapping[str, object]):
     held = {str(key): value for key, value in params.items()}
     return {"out": held}, "%s settings node" % tool
 
+def trigger_emit(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Graph-run placeholder for trigger nodes; automation.py owns scheduling."""
+    payload = {str(key): value for key, value in params.items()}
+    return {"fire": payload, "payload": payload, "out": payload}, "trigger ready"
+
+
+def control_foreach(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """The base For each node as a runnable graph engine."""
+    from .stem_graph_evaluation import as_list, run_stem_operation
+    rows = as_list(feeds.get("items") if feeds.get("items") is not None else params.get("items"))
+    produced, shown = run_stem_operation("control.foreach", {}, {"items": rows})
+    return {"each": produced.get("each"), "results": produced.get("results"), "out": produced.get("results")}, shown
+
 
 def _lines_of(value: object) -> list:
     if isinstance(value, str):
@@ -283,6 +296,11 @@ def brain_facts(params: Mapping[str, object], feeds: Mapping[str, object]):
     if isinstance(skills, int):
         said += ", %d skill(s)" % skills
     return {"out": json.dumps({"facts": facts, "skills": skills}), "facts": facts}, said
+
+
+def brain_write_reviewed(_params: Mapping[str, object], _feeds: Mapping[str, object]):
+    """A reviewed workflow may carry Brain write ops; dispatch consumes the grant."""
+    raise ValueError("brain.write runs only through a reviewed owner grant")
 
 
 def revit_read(params: Mapping[str, object], feeds: Mapping[str, object]):
@@ -542,6 +560,7 @@ PIPELINE_ENGINES = {
     "revit.build_walls": revit_build_walls,
     "brain.recall": brain_recall,
     "brain.facts": brain_facts,
+    "brain.write": brain_write_reviewed,
     "connector.status": connector_status,
     "skills.catalogue": skills_catalogue,
     "skills.read": skill_read,
@@ -552,6 +571,13 @@ PIPELINE_ENGINES = {
     "tool.baboom": tool_settings,
     "tool.connectors": tool_settings,
     "tool.cloud": tool_settings,
+    "trigger.emit": trigger_emit,
+    "trigger.schedule": trigger_emit,
+    "trigger.file": trigger_emit,
+    "trigger.host": trigger_emit,
+    "trigger.approval": trigger_emit,
+    "trigger.webhook": trigger_emit,
+    "control.foreach": control_foreach,
 }
 
 
@@ -636,12 +662,16 @@ def probe_connectors():
 from .host_brokers import ENGINES as _HOST_ENGINES  # noqa: E402
 
 PIPELINE_ENGINES.update(_HOST_ENGINES)
+from .nodeslib_v2_engines import ENGINES as _NODESLIB_V2_ENGINES  # noqa: E402
+PIPELINE_ENGINES.update(_NODESLIB_V2_ENGINES)
 # The node library offered 53 cards and only 22 could run: dropping one of the
 # other 31 put a card in the browser's memory only, invisible to Run and gone
 # on reload. These engines close 20 of that gap; the 11 that remain are named
 # in library_engines.LIBRARY_ITEMS_WITHOUT_ENGINE so the library can grey them.
 from .library_engines import LIBRARY_ENGINES as _LIBRARY_ENGINES  # noqa: E402
 PIPELINE_ENGINES.update(_LIBRARY_ENGINES)
+from .domains.selfext import run_mod_node as _run_mod_node  # noqa: E402
+PIPELINE_ENGINES["mods.run"] = _run_mod_node
 # The base catalogue's AI and Skill stems run on the same routes.
 from .library_engines import STEM_EFFECT_ENGINES as _STEM_EFFECT_ENGINES  # noqa: E402
 PIPELINE_ENGINES.update(_STEM_EFFECT_ENGINES)

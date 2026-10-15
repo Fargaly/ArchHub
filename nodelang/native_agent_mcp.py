@@ -271,6 +271,10 @@ def build_server(*, session=None, workshop_task: str | None = None):
         return owner.recover_rebind_owner(expected_failed_owner=expected_failed_owner,
                                          expected_current_owner=expected_current_owner)
 
+    @server.tool(name='native.connection_recover', description=_CONNECTION_RECOVER_DOC)
+    def connection_recover(expected_owner: str):
+        return owner.recover_connection(expected_owner=expected_owner)
+
     if os.environ.get("ARCHHUB_NATIVE_MCP_LAUNCHER") == "1":
         @server.tool(name="native.handoff_release")
         def handoff_release() -> dict[str, object]:

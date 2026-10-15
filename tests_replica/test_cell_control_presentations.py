@@ -31,8 +31,8 @@ def test_every_admitted_visible_control_is_a_graph_composition_with_an_icon_wire
     assert set(projected.controls) == {
         specification.owner_root for specification in CONTROL_SPECS
     }
-    # 16 = 15 + the Run control (host execution, 2026-08-20).
-    assert len(projected.controls) == len(CONTROL_SPECS) == 16
+    # The released 16 controls plus the internal remove-member control.
+    assert len(projected.controls) == len(CONTROL_SPECS) == 17
     for owner_root, control in projected.controls.items():
         assert control.owner_root == owner_root
         assert control.label
@@ -41,6 +41,7 @@ def test_every_admitted_visible_control_is_a_graph_composition_with_an_icon_wire
             "application-rail",
             "library",
             "canvas-toolbar",
+            "canvas-internal",
             "inspector-properties",
             "inspector-interfaces",
         }
@@ -103,10 +104,33 @@ def test_control_catalog_old_release_appends_missing_controls(monkeypatch):
         store.snapshot(), migrated.protocol, icons.protocol, migrated.catalog_root
     )
 
-    assert len(projected.controls) == len(CONTROL_SPECS) == 16
+    assert len(projected.controls) == len(CONTROL_SPECS) == 17
     assert dict(old.control_roots).items() <= dict(migrated.control_roots).items()
     assert (
         store.snapshot().cells["app:control-presentation-catalog:v1:chain:12"]
         .link1
         == "app:control-presentation-catalog:v1:chain:13"
     )
+
+
+def test_remove_member_appends_after_all_released_control_presentations(monkeypatch):
+    assert CONTROL_SPECS[-1].owner_root == "app:control:canvas:remove-member"
+    store = CellStore()
+    icons = ensure_archhub_icon_catalog(store)
+    monkeypatch.setattr(control_presentations, "CONTROL_SPECS", CONTROL_SPECS[:-1])
+    old = ensure_archhub_control_catalog(store, icons)
+    before = project_control_catalog(
+        store.snapshot(), old.protocol, icons.protocol, old.catalog_root
+    )
+    monkeypatch.setattr(control_presentations, "CONTROL_SPECS", CONTROL_SPECS)
+    migrated = ensure_archhub_control_catalog(store, icons)
+    after = project_control_catalog(
+        store.snapshot(), migrated.protocol, icons.protocol, migrated.catalog_root
+    )
+    assert len(before.controls) == 16
+    assert len(after.controls) == 17
+    assert all(after.controls[owner] == control for owner, control in before.controls.items())
+    assert after.controls["app:control:canvas:remove-member"].zone == "canvas-internal"
+    revision = store.revision
+    ensure_archhub_control_catalog(store, icons)
+    assert store.revision == revision

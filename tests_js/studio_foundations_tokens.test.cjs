@@ -65,7 +65,8 @@ test('DS-FOUNDATIONS B1 studio text has no numeric font size below 11px', () => 
   const workshop = read('nodelang/studio/studio-workshop.jsx');
   const under11 = /fontSize:\s*(?:[0-9](?:\.[0-9]+)?|10(?:\.[0-9]+)?)\b|font-size:\s*(?:[0-9](?:\.[0-9]+)?|10(?:\.[0-9]+)?)px/;
   assert.doesNotMatch(source, under11);
-  assert.doesNotMatch(workshop, under11);
+  // DSYS-077 tool tiles use readable glyphs; the provisional 072 tick exception is retired.
+  assert.doesNotMatch(workshop,under11);
 });
 
 test('DS-FOUNDATIONS B2 selection outline derives from the live accent', () => {
@@ -108,9 +109,9 @@ test('DS-FOUNDATIONS shared controls consume tokens and do not alpha-disable', (
     between('const SettingsGenerationControl =', '// ── Models:'),
     between('const pickerGroupLabel =', 'const DISCOVERY_DEADLINE_MS'),
     betweenAfter('const ModelPicker =', '  const note =', '  const onFill ='),
-    between('const dCode =', 'const DOC_INDEX ='),
+    between('const dCode =', 'const DOC_FIRST_RUN_ROWS ='),
     between('const ApplicationUpdateNotice =', 'window.StudioLM ='),
-    betweenWorkshop('const Lbl =', 'const agentOf ='),
+    betweenWorkshop('const Lbl =', 'const wsCleanTitle ='),
   ].join('\n');
   assert.doesNotMatch(shared, /fontSize:\s*(?:9|9\.5|10|10\.5|11\.5|12\.5|13\.5|15|18)\b/);
   assert.doesNotMatch(shared, /borderRadius:\s*(?:4|6|7|9|12|14|16)\b/);

@@ -75,6 +75,7 @@ CONTROL_SPECS = (
         10,
         "plus",
     ),
+    # Persisted catalog incidences are positional: additions extend the tail.
     ControlSpec("app:control:canvas:remove-member", "Remove member", "Remove member from group", "canvas-internal", 65, "ungroup"),
 )
 

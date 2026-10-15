@@ -332,6 +332,20 @@ _CATALOGUE = (
     ("procore", "Procore", (), (), 0),
 )
 
+_CONNECTORS_NOT_BUILT = (
+    ("civil3d", "Civil 3D"),
+    ("navisworks", "Navisworks"),
+    ("sketchup", "SketchUp"),
+    ("archicad", "Archicad"),
+    ("ifc", "IFC"),
+    ("bluebeam", "Bluebeam"),
+    ("enscape", "Enscape"),
+    ("powerbi", "Power BI"),
+    ("sharepoint", "SharePoint"),
+    ("slack", "Slack"),
+    ("airtable", "Airtable"),
+)
+
 
 def revit_years() -> list[str]:
     from .clean_revit_adapter import revit_addin_years
@@ -366,6 +380,9 @@ def probe_catalogue_rows() -> list[dict]:
         else:
             state, detail = "absent", "not found on this machine"
         rows.append({"id": host_id, "name": name, "drive": "", "state": state, "detail": detail})
+    for host_id, name in _CONNECTORS_NOT_BUILT:
+        rows.append({"id": host_id, "name": name, "drive": "", "state": "off",
+                     "detail": "no connector yet", "connector_built": False})
     return rows
 
 
@@ -446,12 +463,23 @@ def office_read(params: Mapping[str, object], feeds: Mapping[str, object]):
     from .clean_office_adapter import OfficeUnreachable, invoke
     operation = str(params.get("operation") or "excel.list_workbooks")
     arguments = {"name": params.get("name")} if params.get("name") else {}
+    if operation == "excel.read_range":
+        arguments = {"file": params.get("file"), "sheet": params.get("sheet"), "range": params.get("range")}
     try:
         result = invoke(operation, arguments)
     except OfficeUnreachable as exc:
         return _honest(str(exc))
     count = result.get("count", len(result.get("rows", []) or []))
     return {"out": result}, "%s: %s" % (operation, count)
+
+
+def excel_write_range(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Write rows to a local xlsx/csv path through the governed file writer."""
+    from .nodeslib_v2_engines import write_table_file
+    held = feeds.get("rows") if isinstance(feeds, Mapping) else None
+    if held is None and isinstance(feeds, Mapping):
+        held = feeds.get("in")
+    return write_table_file(params, {"rows": held})
 
 
 def outlook_inbox(params: Mapping[str, object], feeds: Mapping[str, object]):
@@ -556,7 +584,7 @@ from .outlook_imap import inbox as _imap_inbox, status as _imap_status, message 
 
 ENGINES = {
     "max.exec": max_exec, "max.info": max_info, "max.python": max_python, "rhino.exec": rhino_exec, "blender.exec": blender_exec,
-    "office.read": office_read, "outlook.inbox": outlook_inbox, "notion.search": notion_search,
+    "office.read": office_read, "excel.write_range": excel_write_range, "outlook.inbox": outlook_inbox, "notion.search": notion_search,
     "notion.connect": notion_connect,
     "dropbox.list": dropbox_list, "connector.rows": connector_rows,
     "outlook.graph.inbox": _graph_inbox, "outlook.graph.status": _graph_status,

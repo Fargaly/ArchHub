@@ -436,7 +436,7 @@ _STOP = {"claude-code": ("Stop", "claude-code"), "codex": ("Stop", "codex"),
 def _stop_command(root, flag):
     command = '"%s" "%s" --vendor %s' % ((root / ".venv/Scripts/python.exe").as_posix(),
                                         (root / "nodelang/native_stop_hook.py").as_posix(), flag)
-    return "& " + command if flag == "codex" else command  # Codex runs hooks through PowerShell
+    return "& " + command if flag in ("codex", "gemini") else command  # Codex and Gemini CLI run hooks through PowerShell
 
 
 @pytest.mark.parametrize("vendor", sorted(_STOP))

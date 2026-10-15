@@ -33,7 +33,7 @@ test("t: host state wording comes from one plain vocabulary shared by Connectors
   }
   for (const surface of [
     slice("const chatConnectors = ", "// \u2500\u2500\u2500 Calm chat view"),
-    slice("const SettingsHosts = ", "const ModelPicker = "),
+    slice("const hostDetail = ", "const ModelPicker = "),
     slice("const toolRowsFromOwners = ", "const ToolOffPanel = "),
   ]) {
     assert.match(surface, /hostStateWord/);

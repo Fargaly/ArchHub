@@ -37,9 +37,9 @@ async function mountStudio() {
     : new Promise(() => {});
   const authorization = {subject:'owner-a', session:'view-a'};
   const graph = {nodes:[{id:'tool-a', title:'Tool node', cat:'ai', x:40, y:40, w:220, h:120, params:[], outs:[]}], wires:[]};
-  let snapshot = {canvas:{graph_id:'graph-a', root:'scope-a', revision:7, authorization},
+  let snapshot = {hosts:[{name:'Revit 2025',state:'connected',file:'Tower.rvt'}],canvas:{graph_id:'graph-a', root:'scope-a', revision:7, authorization},
     workshops:[{root:'room-a', label:'General Workshop', is_general:true}],
-    workshop:{graph_id:'graph-a', root:'room-a', scope_root:'scope-a', revision:7,
+    workshop:{ok:true,graph_id:'graph-a', root:'room-a', scope_root:'scope-a', revision:7,
       owner:'owner-a', view:'view-a', self:'owner-a', can_send:true, can_join:false, messages:[], participants:[]},
     nativeWork:{root:'room-a', scope:'scope-a', owner:'owner-a', view:'view-a', state:'idle', work:'work-a', title:'Layer selection', mode:'project'},
     theme:{configuration:{baboom_startup:{value:'on', source:'graph', available:true, revision:12}}, pending:false, error:''},
@@ -81,11 +81,11 @@ async function mountStudio() {
   return {win, doc:win.document, publish, snapshot:() => snapshot, settle, intervals, close};
 }
 
-test('identical Workshop polls do not rebuild the Studio header or Workshop header, and changed text updates in place', async () => {
+test('identical Workshop polls preserve the single thread and status headers; changed host text updates in place', async () => {
   const studio = await mountStudio();
   try {
-    const studioHeader = studio.doc.querySelector('section[aria-label="Application release updates"]');
-    const workshopHeader = studio.doc.querySelector('[data-workshop-head]');
+    const studioHeader = studio.doc.querySelector('[data-workshop-head]').parentElement;
+    const workshopHeader = studio.doc.querySelector('[data-workshop-s1-status]');
     assert.ok(studioHeader, 'Studio header update control is mounted');
     assert.ok(workshopHeader, 'Workshop header status line is mounted');
     assert.match(workshopHeader.textContent, /Tower\.rvt/);
@@ -108,16 +108,16 @@ test('identical Workshop polls do not rebuild the Studio header or Workshop head
     studio.win.ReactDOM.flushSync(() => studio.publish(clone(studio.snapshot())));
     await studio.settle();
     assert.equal(records.length, 0, 'same-value poll does not add or remove header DOM nodes');
-    assert.strictEqual(studio.doc.querySelector('section[aria-label="Application release updates"]'), studioHeader);
-    assert.strictEqual(studio.doc.querySelector('[data-workshop-head]'), workshopHeader);
+    assert.strictEqual(studio.doc.querySelector('[data-workshop-head]').parentElement, studioHeader);
+    assert.strictEqual(studio.doc.querySelector('[data-workshop-s1-status]'), workshopHeader);
 
     const changed = clone(studio.snapshot());
-    changed.nativeWork = {...changed.nativeWork, work:'Door review'};
+    changed.hosts = [{...changed.hosts[0], file:'Updated file.rvt'}];
     studio.win.ReactDOM.flushSync(() => studio.publish(changed));
     await studio.settle();
-    assert.strictEqual(studio.doc.querySelector('[data-workshop-head]'), workshopHeader,
+    assert.strictEqual(studio.doc.querySelector('[data-workshop-s1-status]'), workshopHeader,
       'changed value keeps the Workshop header node and updates its text in place');
-    assert.match(workshopHeader.textContent, /Door review/);
+    assert.match(workshopHeader.textContent, /Updated file\.rvt/);
   } finally { studio.close(); }
 });
 

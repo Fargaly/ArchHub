@@ -33,9 +33,9 @@ _OPENROUTER_FREE_TOOL_MODELS = frozenset({
 })
 _BABOOM_LOCAL_TOOL_NAMES = frozenset({
     "brain.context",
+    "brain.write",
     "graph.read",
     "host.ping",
-    "host.read",
 })
 _BABOOM_HIDDEN_TOOL_NAMES = frozenset(WORKSHOP_TASK_TOOL_NAMES) | (_BABOOM_LOCAL_TOOL_NAMES - {
     "graph.read",
@@ -79,6 +79,13 @@ If the founder asks to use a tool, check what ArchHub can see, inspect the graph
 or verify host/program visibility, call an admitted tool before answering. Do not
 turn a tool request into a canvas draft.
 """
+
+_SYSTEM += """
+When tools are available, read brain.context before planning. Use graph.read or
+the canvas context for current state. Use brain.write only for facts the founder
+asked the Brain to remember, and rely on the tool readback before mentioning a
+write as complete. Other host, plan and Skill writes are not available in this
+chat; prepare editable Work through JSON actions instead."""
 
 _SYSTEM += """
 For a requested text review, analysis or planning task, use work: it creates
@@ -232,6 +239,12 @@ def baboom_hidden_tool_names() -> tuple[str, ...]:
 
 
 def _baboom_tool_specs(*, context_block: str = "", host_reader=None) -> dict[str, ToolSpec]:
+    def host_call(action: str, arguments: Mapping[str, object]) -> object:
+        if host_reader is None:
+            return {"ok": False, "status": "unavailable",
+                    "error": "%s owner unavailable. Retry from an owned Workshop context." % action}
+        return host_reader(action, dict(arguments))
+
     def run(name, arguments):
         if name == "host.ping":
             if host_reader is not None:
@@ -242,9 +255,24 @@ def _baboom_tool_specs(*, context_block: str = "", host_reader=None) -> dict[str
             if not context_block.startswith(prefix):
                 return {"ok": False, "status": "failed", "error": "graph context is unavailable"}
             return {"ok": True, "graph": json.loads(context_block[len(prefix):].split("\nRecent conversation content", 1)[0])}
+        if name == "brain.context":
+            return host_call("brain.context", arguments)
+        if name == "brain.write":
+            ops = arguments.get("ops")
+            if not isinstance(ops, (list, tuple)):
+                return {"ok": False, "status": "refused",
+                        "error": "brain.write requires ops with add fragments"}
+            return host_call("brain.write", arguments)
         raise InvalidCell("%s is not wired in this BABOOM chat context" % name)
 
+    def verify(name, arguments, _result):
+        if name == "brain.write":
+            return host_call("brain.context", {})
+        return {"ok": True, "checked": name}
+
     return {
+        "brain.context": ToolSpec("brain.context", run, mutates=False),
+        "brain.write": ToolSpec("brain.write", run, mutates=True, verify=verify),
         "graph.read": ToolSpec("graph.read", run, mutates=False),
         "host.ping": ToolSpec("host.ping", run, mutates=False),
     }
@@ -261,6 +289,8 @@ def _chat(
     *,
     before_dispatch=None,
     generation=None,
+    host_reader=None,
+    grant_checker=None,
     is_halted: Callable[[], bool] | None = None,
     halt_generation: Callable[[], object] | None = None,
 ) -> dict[str, object]:
@@ -278,7 +308,7 @@ def _chat(
                 {"role": "user",
                  "content": context_block + chr(10) + chr(10) + "FOUNDER: " + prompt},
             ]
-        tools = _baboom_tool_specs(context_block=context_block)
+        tools = _baboom_tool_specs(context_block=context_block, host_reader=host_reader)
 
         last_answer = {}
 
@@ -298,6 +328,7 @@ def _chat(
             turn, tools, messages,
             max_steps=_BABOOM_AGENTIC_STEP_CAP,
             model_supports_tools=_model_supports_tools(model),
+            grant_checker=grant_checker,
             is_halted=is_halted,
             halt_generation=halt_generation,
         )
@@ -454,6 +485,8 @@ def run_agent_composer(
     before_dispatch=None,
     conversation_context=None,
     generation=None,
+    host_reader=None,
+    grant_checker=None,
     is_halted: Callable[[], bool] | None = None,
     halt_generation: Callable[[], object] | None = None,
 ) -> dict[str, object]:
@@ -498,6 +531,10 @@ def run_agent_composer(
         chat_kwargs["is_halted"] = is_halted
     if halt_generation is not None:
         chat_kwargs["halt_generation"] = halt_generation
+    if host_reader is not None:
+        chat_kwargs["host_reader"] = host_reader
+    if grant_checker is not None:
+        chat_kwargs["grant_checker"] = grant_checker
     routed_answer = _chat(prompt.strip(), context_block, chosen, **chat_kwargs)
     via = routed_answer.get("via") if isinstance(routed_answer, Mapping) else None
     steps = list(routed_answer.get("steps") or ()) if isinstance(routed_answer, Mapping) else []

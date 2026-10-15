@@ -701,6 +701,7 @@
         if (typeof global.pmFlushParameters === 'function') await global.pmFlushParameters();
         const result = await api.run();
         global.ARCHHUB_LAST_RUN = result;
+        try { global.dispatchEvent(new Event('archhub-last-run')); } catch (_) {}
         return result;
       }).finally(() => { running = null; });
       return running;

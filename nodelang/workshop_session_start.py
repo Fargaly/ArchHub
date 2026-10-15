@@ -1,10 +1,12 @@
 """Start a saved conversation through the existing Workshop, composer and relay."""
 import hashlib
 import json
+from contextlib import nullcontext
 
 from . import universal_application as app
+from .baboom_owner_grants import GRANT_ARGUMENT_KEY, baboom_owner_grant_checker
 from .cell_authorization import AuthorizationDenied
-from .model_router import ModelRouteRefused, resolve_model_route
+from .model_router import ModelRouteRefused, resolve_model_route, redact_user_visible
 from .universal_cell import InvalidCell
 from .workshop_conversation_catalog import create_workshop_conversation, validate_workshop_conversation_scope
 
@@ -230,6 +232,126 @@ def _failure_record(exc):
             % (token(type(exc).__name__), token(getattr(exc, "reason_code", None))))
 
 
+def _tool_steps_record(steps):
+    if not isinstance(steps, list) or not steps:
+        return ""
+    lines = ["", "", "Tool steps:"]
+    for index, step in enumerate(steps[:12], 1):
+        if not isinstance(step, dict):
+            continue
+        label = str(step.get("tool") or "tool")[:80]
+        status = str(step.get("status") or ("ok" if step.get("ok") else "unknown"))[:40]
+        summary = _safe_tool_text(step.get("summary") or "")[:180]
+        readback = _safe_tool_text(step.get("readback") or "")[:180]
+        line = "- %d. %s: %s" % (index, label, status)
+        if summary:
+            line += " - " + summary
+        if readback:
+            line += " | check: " + readback
+        lines.append(line)
+    return "\n".join(lines) if len(lines) > 3 else ""
+
+
+def _safe_tool_text(value):
+    return redact_user_visible(value)
+
+
+def _baboom_owner_tool_bridge(_store, _registry, *, authentication_context=None):
+    def brain_call(tool, arguments):
+        from . import pipeline_engines
+        authority = getattr(_registry, "authorization", None)
+        broker = getattr(authority, "broker", None)
+        context = (
+            broker.live_context(authentication_context)
+            if broker is not None and authentication_context is not None else
+            nullcontext(None)
+        )
+        try:
+            with context as identity:
+                actor = (getattr(identity, "subject_root", None)
+                         or getattr(authority, "subject_root", None))
+                answer = pipeline_engines._brain_call(tool, arguments, actor=actor)
+        except pipeline_engines.BrainSilent as silence:
+            return {"ok": False, "status": "unavailable", "error": str(silence)}
+        try:
+            payload = json.loads(answer)
+        except (TypeError, ValueError):
+            payload = {"text": str(answer)}
+        if isinstance(payload, dict):
+            payload.setdefault("ok", True)
+            return payload
+        return {"ok": True, "result": payload}
+
+    def bridge(action, arguments):
+        if action == "ping":
+            return {"ok": True, "owners": ("brain", "workshop-approval")}
+        if action in {"brain.context", "brain.write"}:
+            return brain_call(action, dict(arguments))
+        return {"ok": False, "status": "refused", "error": "%s is not an owned BABOOM tool" % action}
+
+    return bridge
+
+
+def _baboom_owner_grant_checker(_store, _registry, *, authentication_context=None,
+                                workflow_root=None, browser=None,
+                                workflow_conversation=None, owner_ref=None):
+    authority = getattr(_registry, "authorization", None)
+    broker = getattr(authority, "broker", None)
+    owner = getattr(authority, "subject_root", None)
+    session = getattr(getattr(getattr(_registry, "agent_body", None), "session", None),
+                      "root_id", None)
+
+    def checker(name, arguments):
+        workflow = workflow_root
+        workflow_revision = None
+        workflow_digest = None
+        current_session = session
+        if browser is not None:
+            if name != "brain.write" or not isinstance(arguments, dict):
+                return False
+            approval = arguments.get(GRANT_ARGUMENT_KEY)
+            if not isinstance(approval, dict):
+                return False
+            workflow = workflow or approval.get("workflow")
+            from .workshop_workflow import current_workflow_approval_identity
+            current = (
+                current_workflow_approval_identity(
+                    owner_ref, browser, workflow, conversation=workflow_conversation,
+                )
+                if owner_ref is not None else None
+            )
+            if current is None:
+                return False
+            workflow = current["workflow"]
+            workflow_revision = current["workflow_revision"]
+            workflow_digest = current["workflow_digest"]
+            current_session = browser.session_root
+        else:
+            approval = (
+                arguments.get(GRANT_ARGUMENT_KEY)
+                if isinstance(arguments, dict) else None
+            )
+            if not isinstance(approval, dict) or type(approval.get("workflow_revision")) is not int:
+                return False
+            workflow_revision = _store.snapshot().revision
+            workflow = (workflow or getattr(_registry, "workshop_root", None)
+                        or getattr(_registry, "application_root", None))
+        context = (
+            broker.live_context(authentication_context)
+            if broker is not None and authentication_context is not None else
+            nullcontext(None)
+        )
+        with context as identity:
+            actor = (getattr(identity, "subject_root", None) or owner)
+        return baboom_owner_grant_checker(
+            _store, name, arguments,
+            owner=owner, actor=actor, session=(current_session or actor or owner),
+            workflow=workflow, workflow_revision=workflow_revision,
+            workflow_digest=workflow_digest)
+
+    return checker
+
+
 def _dispatch_model_turn(owner, browser, conversation, scope, prompt, node, route,
                          expected, user, append, context, guard, response):
     from .agent_composer import run_agent_composer, resolve_node_model_route
@@ -262,6 +384,12 @@ def _dispatch_model_turn(owner, browser, conversation, scope, prompt, node, rout
             authentication_context=browser.context, mutation_lock=owner.mutation_lock,
             revalidate=binding_guard, before_dispatch=before_dispatch,
             conversation_context=conversation_context,
+            host_reader=_baboom_owner_tool_bridge(
+                store, registry, authentication_context=browser.context),
+            grant_checker=_baboom_owner_grant_checker(
+                store, registry, authentication_context=browser.context,
+                browser=browser, workflow_conversation=conversation,
+                owner_ref=owner),
             is_halted=getattr(owner, "is_halted", lambda: False),
             halt_generation=getattr(owner, "halt_generation", lambda: 0))
         applied = result.get("applied", [])
@@ -273,7 +401,8 @@ def _dispatch_model_turn(owner, browser, conversation, scope, prompt, node, rout
                     (" (" + str(row["root"]) + ")") if row.get("root") else "")
                 for row in applied)
         draft_roots = tuple(dict.fromkeys((node, *(row["root"] for row in applied if row.get("root")))))
-        reply = append("Model reply from %s:\n%s%s" % (route, result.get("answer", ""), draft_text),
+        tool_steps_text = _tool_steps_record(result.get("steps"))
+        reply = append("Model reply from %s:\n%s%s%s" % (route, result.get("answer", ""), tool_steps_text, draft_text),
             ":reply", refs=draft_roots, reply_to=user["id"])
         return response(user, "replied", reply_message_id=reply["id"], model=route,
             node=node, applied=result.get("applied", []))

@@ -38,6 +38,8 @@
         'SHA-256', new TextEncoder().encode(value))), byte => byte.toString(16).padStart(2, '0')).join('')}) {
     let canvas = null, canvasAuthorizationKnown = false, workshops = [], workshop = null, workshopNotice = '', epoch = 0, membershipEpoch = 0;
     let snapshot = null, nativeWork = null, nativeRead = 0;
+    let workshopPresentation = null, presentationRead = null, presentationWrite = null;
+    let workshopTaskDraft = null, taskWrite = null;
     let pageTarget = null, pageEpoch = 0;
     let conversationCatalog = null, conversationCatalogPage = null, catalogEpoch = 0;
     let conversationCreation = null, conversationWrite = null;
@@ -57,7 +59,7 @@
     const updateActive = () => ['checking', 'downloading', 'restarting'].includes(applicationUpdate?.state);
     const listeners = new Set(), reads = new Map(), sends = new Map(), creations = new Map();
     const publish = () => {
-      snapshot = {canvas, workshops, workshop, workshopPage:pageTarget, workshopNotice, nativeWork,
+      snapshot = {canvas, workshops, workshop, workshopPage:pageTarget, workshopNotice, nativeWork, workshopPresentation, workshopTaskDraft,
         conversationCatalog, conversationCatalogPage, conversationCreation,
         applicationUpdate, applicationUpdateError, applicationUpdatePending,
         theme: {configuration:themeCanvas?.configuration || null, pending:!!themeWrite, error:themeError},
@@ -100,6 +102,23 @@
         workshopCache.delete(key); workshopCache.set(key, value);
         while (workshopCache.size > WORKSHOP_CACHE_LIMIT) workshopCache.delete(workshopCache.keys().next().value);
       }
+    };
+    // Confirmed proposal decisions are part of the admitted Workshop projection,
+    // so its canvas node and open window see the same response even if refresh fails.
+    const publishProposalDecisions = (stamp, root, page, held, rows, decisionRevision) => {
+      if (!current(stamp, root) || nativeWork !== held || workshop !== page ||
+          page?.error || page?.root !== root || page.graph_id !== stamp.graph || page.scope_root !== stamp.scope ||
+          (page.owner !== undefined && page.owner !== held.owner) ||
+          (page.view !== undefined && page.view !== held.view)) return false;
+      const decisions = Object.assign(Object.create(null), page.proposal_decisions);
+      for (const row of rows) decisions[row.message_id] = {
+        message_id:row.message_id, digest:row.digest, work_root:row.work_root || null,
+        declined:row.declined || null, revision:decisionRevision,
+      };
+      workshop = {...page, proposal_decisions:decisions};
+      rememberWorkshop(stamp, root, page.page_before ?? null, page.feed || 'all', workshop);
+      publish();
+      return true;
     };
     const mergeWorkshopMessages = (previous, result) => {
       if (!previous || previous.root !== result.root || previous.scope_root !== result.scope_root ||
@@ -523,6 +542,8 @@
           if (result.graph_id !== stamp.graph || result.root !== root || result.scope_root !== stamp.scope ||
               !revision(result.revision) || result.revision < canvas.revision ||
               (previous && result.revision < previous.revision)) fail('Workshop history is stale or belongs to another scope.');
+          const decisions = workshop?.root === root && workshop.graph_id === stamp.graph && workshop.scope_root === stamp.scope
+            ? workshop.proposal_decisions : previous?.proposal_decisions;
           const content = result.storage === 'conversation-content';
           const modelAgent = result.model_agent ?? null;
           if (modelAgent !== null && (!text(modelAgent.root) || modelAgent.root.length > 512 ||
@@ -550,10 +571,11 @@
               if (JSON.stringify(previous.participants) === JSON.stringify(result.participants) &&
                   result.revision === previous.revision && !modelChanged && !assignmentsChanged) return previous;
               workshop = {...previous, revision:result.revision, participants:result.participants,
-                model_agent:modelAgent, ...assignments}; publish(); return workshop;
+                model_agent:modelAgent, ...assignments, proposal_decisions:decisions || Object.create(null)}; publish(); return workshop;
             }
             if (result.revision !== previous.revision || modelChanged || assignmentsChanged) {
-              workshop = {...previous, revision:result.revision, model_agent:modelAgent, ...assignments}; publish(); return workshop;
+              workshop = {...previous, revision:result.revision, model_agent:modelAgent, ...assignments,
+                proposal_decisions:decisions || Object.create(null)}; publish(); return workshop;
             }
             return previous;
           }
@@ -578,14 +600,17 @@
             fail('Workshop activity is invalid.');
           }
           const mergedMessages = mergeWorkshopMessages(previous, result);
-          const next = {...result, messages:mergedMessages, model_agent:modelAgent, error:''};
+          const next = {...result, messages:mergedMessages, model_agent:modelAgent, error:'',
+            proposal_decisions:decisions || Object.create(null)};
           if (previous && sameJson(previous, next)) return previous;
           if (content) pageTarget = {...pageTarget, storage:'conversation-content'};
           workshop = next; rememberWorkshop(stamp, root, before, feed, workshop); publish(); return workshop;
         } catch (error) {
           if (!isCurrent()) return null;
           const refusedPage = ordinary && /refresh|page|invalid|stale/.test(error.message || String(error));
-          workshop = (previous && !refusedPage) ? previous : {root, graph_id:stamp.graph, scope_root:stamp.scope, messages:[], participants:[],
+          const admitted = workshop?.root === root && workshop.graph_id === stamp.graph && workshop.scope_root === stamp.scope && !workshop.error
+            ? workshop : previous;
+          workshop = (admitted && !refusedPage) ? admitted : {root, graph_id:stamp.graph, scope_root:stamp.scope, messages:[], participants:[],
             ...(ordinary || before !== null || contentKnown ?
               {storage:'conversation-content', page_before:before, feed} : {}),
             error:error.message || String(error)};
@@ -787,6 +812,92 @@
     };
     const api = {
       openConversationEditor,
+      beginWorkshopTask(root) {
+        const stamp = stampFor(root);
+        if (taskWrite) fail('Wait for task creation to finish.');
+        if (!workshop || workshop.root !== root || workshop.error || workshop.can_send !== true) fail('Read the Workshop before starting a task.');
+        workshopTaskDraft = {root, graph_id:stamp.graph, scope_root:stamp.scope, subject:stamp.subject, request:uuid()};
+        publish(); return workshopTaskDraft;
+      },
+      cancelWorkshopTask(root) {
+        stampFor(root);
+        if (taskWrite) fail('Wait for task creation to finish.');
+        workshopTaskDraft = null; publish();
+      },
+      async createWorkshopTask(root, {message, target} = {}) {
+        const stamp = stampFor(root), draft = workshopTaskDraft;
+        if (!draft || draft.root !== root || draft.graph_id !== stamp.graph || draft.scope_root !== stamp.scope || draft.subject !== stamp.subject) fail('Start a new task in this Workshop.');
+        if (!text(message) || !message.trim() || message.length > 12000 || !text(target) ||
+            !workshop?.participants?.some(row => row.root === target && row.root !== workshop.self && row.attached === true && row.is_agent !== false)) fail('Choose an attached agent and enter a task.');
+        if (taskWrite) return taskWrite;
+        const operation = (async () => {
+          const fresh = await api.refreshWorkshop(root);
+          if (!current(stamp,root) || workshopTaskDraft !== draft || !fresh || fresh.error || !revision(fresh.revision)) fail('The Workshop changed before task creation.');
+          // Reuse the admitted browser Work route. No model execution, source file,
+          // write permit or invented acceptance criterion is attached to a plain task.
+          if (draft.created && (draft.message !== message.trim() || draft.target !== target)) fail('Finish the accepted task before changing its text or agent.');
+          const key = 'workshop:task:' + BigInt('0x' + await hash(draft.request)).toString(10);
+          let result = draft.created;
+          if (!result) {
+            result = await post('/api/universal/work', {workshop_root:root,workshop_scope:stamp.scope,revision:fresh.revision,
+              title:message.trim().split('\n')[0].slice(0,160),description:message.trim(),external_key:key,projection:false});
+            if (!result || result.ok !== true || !text(result.created_root) || !revision(result.revision) ||
+                result.workshop_root !== root || result.workshop_scope !== stamp.scope || (result.existing !== true && !text(result.membership_wire))) fail('Task creation needs reconciliation. Retry the same task.');
+            draft.created = result; draft.message = message.trim(); draft.target = target;
+          }
+          if (!current(stamp,root) || workshopTaskDraft !== draft) fail('Task was saved in the previous Workshop.');
+          if (target.startsWith('app:agent-session:runtime:') && !draft.assigned) {
+            await api.assignWork(root,{work:result.created_root,agent_session:target,
+              assignment_id:'app:workshop-assignment:' + draft.request});
+            draft.assigned = true;
+          }
+          await api.workshopAction(root,'send',null,{target,message:message.trim(),work:result.created_root});
+          if (current(stamp,root) && workshopTaskDraft === draft) {workshopTaskDraft = null;publish();}
+          try {await api.refreshTopologyCanvas();} catch (_) { /* accepted task remains in the next graph projection */ }
+          return result;
+        })();
+        taskWrite = operation;
+        try {return await operation;} finally {if (taskWrite === operation) taskWrite = null;}
+      },
+      async refreshWorkshopPresentation(root) {
+        const stamp = stampFor(root), identity = JSON.stringify([stamp.graph,stamp.subject,stamp.session]);
+        if (workshopPresentation?.identity === identity) return workshopPresentation;
+        if (presentationRead?.identity === identity) return presentationRead.promise;
+        const promise = Promise.all([
+          post('/api/universal/workshop',{action:'presentation-read',root,scope:stamp.scope,revision:canvas.revision}),
+          get('/api/universal/models').catch(() => null),
+        ]).then(([value,models]) => {
+          if (!current(stamp,root)) return null;
+          if (!value || value.ok !== true || value.graph_id !== stamp.graph || value.subject !== stamp.subject ||
+              value.root !== root || value.scope_root !== stamp.scope || !revision(value.revision) || ![1,2,4].includes(value.layout)) {
+            fail('Workshop presentation response could not be reconciled.');
+          }
+          workshopPresentation = {...value,identity,models:models?.ok !== false && Array.isArray(models?.groups) ? models : null};
+          publish(); return workshopPresentation;
+        });
+        presentationRead = {identity,promise};
+        try { return await promise; } finally {if(presentationRead?.promise === promise) presentationRead = null;}
+      },
+      async setWorkshopLayout(root,layout) {
+        if (![1,2,4].includes(layout)) fail('Choose a Workshop layout of 1, 2 or 4.');
+        if (presentationWrite) return presentationWrite;
+        const stamp = stampFor(root);
+        const promise = (async () => {
+          // Refresh just this account preference's revision; no full-canvas scan.
+          const fresh = await post('/api/universal/workshop',{action:'presentation-read',root,scope:stamp.scope,revision:canvas.revision});
+          if (!current(stamp,root) || fresh?.subject !== stamp.subject || !revision(fresh?.revision)) fail('Workshop account changed.');
+          const value = await post('/api/universal/workshop',{action:'presentation-layout',root,scope:stamp.scope,revision:fresh.revision,layout});
+          if (!current(stamp,root)) return null;
+          if (!value || value.ok !== true || value.subject !== stamp.subject || value.graph_id !== stamp.graph ||
+              value.root !== root || value.scope_root !== stamp.scope || value.layout !== layout || !revision(value.revision)) {
+            fail('Workshop layout save needs reconciliation.');
+          }
+          workshopPresentation = {...workshopPresentation,...value,identity:JSON.stringify([stamp.graph,stamp.subject,stamp.session])};
+          publish(); return workshopPresentation;
+        })();
+        presentationWrite = promise;
+        try {return await promise;} finally {if(presentationWrite === promise) presentationWrite = null;}
+      },
       async startSession(details) {
         if (!details || typeof details.prompt !== 'string' || !details.prompt.trim() || details.prompt.length > 12000 ||
             (!!details.model === !!details.native) || details.model && !text(details.model) ||
@@ -1307,6 +1418,12 @@
         if (result?.ok !== true) fail(result?.label || 'Notion sign-in could not start.');
         return result;
       },
+      async installMcpClient(provider) {
+        const result = await post('/api/universal/mcp-client-install', {provider:String(provider || '')});
+        if (result?.ok !== true || !text(result.open_url)) fail(result?.error || 'MCP client connection could not start.');
+        if (typeof global.open === 'function') global.open(result.open_url, '_blank', 'noopener,noreferrer');
+        return result;
+      },
       // Social posts waiting for the founder: the exact request, then his Approve or Deny.
       async listSocialApprovals() {
         const result = await get('/api/universal/social-approvals');
@@ -1596,9 +1713,10 @@
             authorizationKnown === canvasAuthorizationKnown && sameJson(authorization, canvas.authorization || null) &&
             sameJson(nextWorkshops, workshops)) return;
         const scopeChanged = !canvas || value.graph_id !== canvas.graph_id || value.root !== canvas.root;
+        if (scopeChanged) workshopTaskDraft = null;
         const authChanged = canvas && (authorizationKnown !== canvasAuthorizationKnown ||
           !sameJson(authorization, canvas.authorization || null));
-        if (authChanged) clearWorkshopCache();
+        if (authChanged) {clearWorkshopCache();workshopPresentation = null;workshopTaskDraft = null;}
         if (workshops.some(row => !value.workshops.some(next => next.root === row.root))) membershipEpoch += 1;
         if (scopeChanged || authChanged || (conversationCatalogPage && !value.workshops.some(row => row.root === conversationCatalogPage.root)) ||
             value.revision > (conversationCatalog?.revision ?? canvas?.revision ?? -1)) {
@@ -2153,12 +2271,16 @@
               row.message_id !== id || !/^[a-f0-9]{64}$/.test(row.digest || '') || !text(row.actor) || !text(row.declined_at)))) {
           fail('Which proposals are already bound could not be verified.');
         }
-        if (!current(stamp, root) || nativeWork !== held) fail('Workshop changed while reading the proposals.');
-        return {rows:rows.map(row => ({...row, work_root:bound[row.message_id], declined:declined[row.message_id]})), revision:result.revision};
+        if (!current(stamp, root) || nativeWork !== held || workshop !== page) fail('Workshop changed while reading the proposals.');
+        const projected = rows.map(row => ({...row, work_root:bound[row.message_id], declined:declined[row.message_id]}));
+        if (!publishProposalDecisions(stamp, root, page, held, projected, result.revision)) {
+          fail('Workshop changed while reading the proposals.');
+        }
+        return {rows:projected, revision:result.revision};
       },
       // The founder's one action: bind exactly the checked proposals, as shown.
       async bindWorkProposals(root, chosen) {
-        const stamp = stampFor(root), held = nativeWork;
+        const stamp = stampFor(root), held = nativeWork, page = workshop;
         if (!held || held.root !== root || held.scope !== stamp.scope) fail('Read this Workshop operation status first.');
         if (!Array.isArray(chosen) || !chosen.length || chosen.length > 16 ||
             new Set(chosen.map(row => row?.message_id)).size !== chosen.length ||
@@ -2179,10 +2301,11 @@
               row.external_key !== 'proposal:' + row.message_id || !text(row.authorization))) {
           fail('The bind was not confirmed. Read the proposals again to see which are bound.');
         }
+        publishProposalDecisions(stamp, root, page, held, bound, result.revision);
         return result;
       },
       async declineWorkProposals(root, chosen) {
-        const stamp = stampFor(root), held = nativeWork;
+        const stamp = stampFor(root), held = nativeWork, page = workshop;
         if (!held || held.root !== root || held.scope !== stamp.scope) fail('Read this Workshop operation status first.');
         if (!Array.isArray(chosen) || !chosen.length || chosen.length > 16 ||
             new Set(chosen.map(row => row?.message_id)).size !== chosen.length ||
@@ -2203,6 +2326,8 @@
               !text(row.actor) || !text(row.declined_at))) {
           fail('The decline was not confirmed. Read the proposals again to see which are pending.');
         }
+        publishProposalDecisions(stamp, root, page, held,
+          declined.map(row => ({...row, work_root:null, declined:row})), result.revision);
         return result;
       },
       async nativeWorkAction(root, action, work, details = {}) {
@@ -2581,7 +2706,7 @@
       },
       async workshopAction(root, action, commandId, details = {}, editor = null) {
         const stamp = stampFor(root);
-        if (action !== 'send' || Object.keys(details).some(key => !['target', 'message'].includes(key))) {
+        if (action !== 'send' || Object.keys(details).some(key => !['target', 'message', 'work'].includes(key))) {
           fail('This Workshop exposes messaging only; execution uses its existing agent authority.');
         }
         if (editor && (!editorHandles.has(editor) || editor.root !== root)) fail('Message editor belongs to another conversation.');
@@ -2597,8 +2722,9 @@
             typeof details.message !== 'string' || !details.message.trim() || details.message.length > 12000) {
           fail('Choose a current participant and enter a bounded message.');
         }
+        if (details.work && (everyone || !text(details.work))) fail('A task reply requires its exact task and agent.');
         const body = {root, scope:stamp.scope, category, text:details.message.trim(),
-          refs:[], evidence:[], recipients:everyone ? [] : [details.target], reply_to:null, created_at:null};
+          refs:details.work ? [details.work] : [], evidence:[], recipients:everyone ? [] : [details.target], reply_to:null, created_at:null};
         const pendingKey = await hash(JSON.stringify({graph:stamp.graph, owner:held.owner, view:held.view, body}));
         if (!/^[a-f0-9]{64}$/.test(pendingKey)) fail('Message identity could not be prepared.');
         if (!current(stamp, root) || workshop !== held) fail('The Workshop changed before sending. Refresh and retry.');

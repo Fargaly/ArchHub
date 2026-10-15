@@ -426,6 +426,10 @@ def _redact_user_visible(text: object) -> str:
     return value
 
 
+def redact_user_visible(text: object) -> str:
+    return _redact_user_visible(text)
+
+
 def _bare_openrouter_route(route: object) -> bool:
     text = str(route or "").strip()
     parts = text.split("/")

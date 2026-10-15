@@ -28,7 +28,7 @@ const conversationSlice = () => slice('const NodeModelConversation =', '// One c
   "\nconst CHAT_TURN_EVENT = 'archhub:chat-turn';\n";
 // Add the real rail gate and its nearby dependencies when a test mounts NodeRail.
 const railSlice = () => slice('const NodeModelConversation =', '\nconst ConversationRail =');
-const canvasSlice = () => slice('const SOCKET_TOP =', '\nconst NodeStateDot =');
+const canvasSlice = () => slice('const SOCKET_TOP =', '\nconst NodeStateDot =') + require('./workshop72_node_helpers.cjs').nodePreviewSource(source);
 const refreshSlice = () => slice('const studioRefreshCanvasInPlace =', '\nconst StudioLM =');
 const shortcutSlice = () => slice('const studioShortcut =', '\n// An ordinary canvas edit');
 

@@ -95,11 +95,69 @@ def test_a_quoted_codex_stop_entry_is_repaired_and_the_hand_fix_is_kept(installe
         assert json.dumps(kept) == json.dumps(existing)
 
 
-def test_claude_and_gemini_rendering_is_unchanged(installed):
-    for vendor in ("claude-code", "gemini-cli"):
-        event = config._STOP_HOOKS[vendor][0]
-        command = config.render_stop_hook(vendor, install_root=installed)[event][0]["hooks"][0]["command"]
-        assert command.startswith('"') and not command.startswith("&")
+def test_claude_rendering_is_unchanged(installed):
+    # Claude Code runs hooks under Git Bash, where the call operator never works; Gemini
+    # CLI runs them under PowerShell and is courted by the Gemini test below.
+    command = config.render_stop_hook("claude-code", install_root=installed)["Stop"][0]["hooks"][0]["command"]
+    assert command.startswith('"') and not command.startswith("&")
     claude = {"type": "command", "command": config.render_stop_hook(
         "codex", install_root=installed)["Stop"][0]["hooks"][0]["command"]}
     assert config._claude_bash_broken(claude, "claude-code")  # `&` never works under Git Bash
+
+def test_rendered_gemini_stop_hook_starts_the_installed_script(installed):
+    # Gemini CLI on Windows runs hooks through PowerShell too: the quoted spelling was a
+    # ParserError on every AfterAgent (field evidence 2026-10-15).
+    command = config.render_stop_hook("gemini-cli", install_root=installed)["AfterAgent"][0]["hooks"][0]["command"]
+    assert command.startswith("& ")
+    marker = installed / "nodelang" / "ran.txt"
+    old = _codex_runs(_old_wrapper(command), installed)
+    assert old.returncode != 0 and not marker.exists()
+    ran = _codex_runs(command, installed)
+    assert ran.returncode == 0, ran.stderr
+    assert marker.read_text() == "--vendor gemini"
+
+def test_an_installed_quoted_gemini_stop_entry_is_repaired_by_merge_and_runs(installed):
+    # Ping RETURN on GEMHOOK: the renderer alone left the already-installed quoted
+    # AfterAgent hook in place, because the merge judged it a healthy equivalent.
+    managed = config.render_stop_hook("gemini-cli", install_root=installed)
+    desired = managed["AfterAgent"][0]["hooks"][0]["command"]
+    quoted = {"type": "command", "name": "archhub-stop-followup", "command": _old_wrapper(desired),
+              "timeout": 41}
+    theirs = {"type": "command", "command": "someone-elses-hook --keep", "timeout": 5}
+    existing = {"hooks": {"AfterAgent": [{"matcher": "*", "hooks": [quoted, theirs]}]}, "theme": "x"}
+    settings, binding, _ = config.merge_stop_hook(existing, managed, vendor="gemini-cli",
+                                                  install_root=installed)
+    assert binding == "ours"
+    group = settings["hooks"]["AfterAgent"][0]
+    assert group["matcher"] == "*" and settings["theme"] == "x"
+    assert group["hooks"] == [{**quoted, "command": desired}, theirs]  # only the command changed
+    marker = installed / "nodelang" / "ran.txt"
+    ran = _codex_runs(group["hooks"][0]["command"], installed)
+    assert ran.returncode == 0, ran.stderr
+    assert marker.read_text() == "--vendor gemini"
+    again, _, _ = config.merge_stop_hook(settings, managed, vendor="gemini-cli", install_root=installed)
+    assert json.dumps(again) == json.dumps(settings)  # idempotent
+
+
+def test_quoted_gemini_tool_hooks_are_repaired_by_merge_and_a_bare_hand_fix_is_kept(installed):
+    python = installed / ".venv" / "Scripts" / "python.exe"
+    gate = installed / "00.GOVERNANCE" / "hooks" / "agent_scope_gate.py"
+    managed = config.render_client_hooks("gemini-cli", python_executable=python,
+                                        gate_script=gate, install_root=installed)
+    marker = gate.with_name("ran.txt")
+    for event in ("BeforeTool", "AfterTool"):
+        desired = managed[event][0]["hooks"][0]["command"]
+        quoted = {"type": "command", "name": "archhub-scope", "command": _old_wrapper(desired), "timeout": 30000}
+        existing = {"hooks": {event: [{"matcher": ".*", "hooks": [quoted]}]}}
+        after = config.merge_client_hooks(existing, managed, vendor="gemini-cli", known_owned_commands=())
+        assert after["hooks"][event] == [{"matcher": ".*", "hooks": [{**quoted, "command": desired}]}]
+        marker.unlink(missing_ok=True)
+        ran = _codex_runs(desired, installed)
+        assert ran.returncode == 0, ran.stderr
+        assert marker.read_text() == "--vendor gemini"
+        if " " not in python.as_posix():
+            # The live hand spelling: bare paths, no quotes. It runs under PowerShell; keep it.
+            hand = {"type": "command", "command": python.as_posix() + " " + gate.as_posix() + " --vendor gemini"}
+            kept_in = {"hooks": {event: [{"matcher": ".*", "hooks": [hand]}]}}
+            kept = config.merge_client_hooks(kept_in, managed, vendor="gemini-cli", known_owned_commands=())
+            assert json.dumps(kept["hooks"][event]) == json.dumps(kept_in["hooks"][event])  # the other event gains only its own managed hook

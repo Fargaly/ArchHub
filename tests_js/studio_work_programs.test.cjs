@@ -15,6 +15,7 @@ function programs() {
   const context = vm.createContext({React:{createElement:() => null, useState:() => [null, () => {}]},
     window, document:{}, console, setTimeout, clearTimeout});
   vm.runInContext(read('nodelang/studio/tokens.jsx'), context);
+  vm.runInContext(read('nodelang/studio/shared-data.jsx').split('const HOSTS =')[0], context);
   vm.runInContext(transformSync(read('nodelang/studio/studio-workshop.jsx'), {loader:'jsx'}).code, context);
   return context.window.WorkshopPrograms;
 }
@@ -41,12 +42,12 @@ test('a change keeps every other requirement and only writes when the programs d
   assert.deepEqual(JSON.parse(JSON.stringify(p.change(null, ['blender']))), {hosts:['blender']});
 });
 
-test('the editor and the create form both carry the selector and write through the existing paths', () => {
-  const jsx = read('nodelang/studio/studio-workshop.jsx');
-  assert.equal(jsx.split('Programs this task may use').length - 1, 2);
-  assert.match(jsx, /WorkshopPrograms\.change\(/);
-  assert.match(jsx, /programs:WorkshopPrograms\.from\(requirements\)/);
-  assert.match(jsx, /hosts:repair\.programs/);
-  const authority = read('nodelang/studio/studio-existing-workshop.js');
-  assert.match(authority, /requirements:\{acceptance_criteria:\[\{[\s\S]*?\}\]\s*,\s*\.\.\.\(hosts\.length \? \{hosts\} : \{\}\)\}/);
+test('removed Workshop program forms retain the exact existing creation authority and no default-all hosts',()=>{
+  const p=programs(),requirements={gate:{kind:'pytest'},artifact_reviewers:['reviewer-a']};
+  const chosen=p.change(requirements,['revit','blender']);
+  assert.deepEqual(JSON.parse(JSON.stringify(chosen)),{gate:{kind:'pytest'},artifact_reviewers:['reviewer-a'],hosts:['revit','blender']});
+  const authority=read('nodelang/studio/studio-existing-workshop.js');
+  assert.match(authority,/requirements:\{acceptance_criteria:\[\{[\s\S]*?\}\]\s*,\s*\.\.\.\(hosts\.length \? \{hosts\} : \{\}\)\}/);
+  assert.match(authority,/hosts\.some\(host => !\['revit', 'acad', 'max', 'rhino', 'blender'\]\.includes\(host\)\)/);
+  const jsx=read('nodelang/studio/studio-workshop.jsx');assert.doesNotMatch(jsx,/hosts:repair\.programs|<[^>]+>Programs this task may use/);
 });

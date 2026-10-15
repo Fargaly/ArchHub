@@ -30,6 +30,11 @@ BROKER_HOST = "localhost"
 _CONNECT_TIMEOUT = 0.15
 _PING_TIMEOUT = 2.0
 _READ_TIMEOUT = 30.0
+_REVIT_WRITE_OPS = {
+    "revit.set_parameter_by_name",
+    "revit.create_sheets",
+    "revit.renumber_rename",
+}
 
 
 class RevitUnreachable(RuntimeError):
@@ -894,6 +899,167 @@ result = rows;
 """,
 }
 
+
+def _cs_string(value: object) -> str:
+    return json.dumps("" if value is None else str(value))
+
+
+def _effect_arguments(arguments: Mapping[str, object]) -> dict:
+    return {
+        str(key): value for key, value in arguments.items()
+        if key not in ("grant", "approval", "permit", "instance", "mods_store")
+    }
+
+
+def _require_write_grant(op_id: str, arguments: Mapping[str, object]) -> Mapping[str, object]:
+    from . import nodeslib_v2_engines as nodeslib
+    grant = nodeslib._require_grant(
+        arguments, operation=op_id, scope="revit.write",
+        input_digest=nodeslib._digest_payload(_effect_arguments(arguments)),
+    )
+    from .domains.selfext import before_write_hooks
+    annotations = before_write_hooks(arguments.get("mods_store"), op_id, arguments)
+    if annotations:
+        grant = dict(grant)
+        grant["mods_before_write"] = annotations
+    return grant
+
+
+def _script_for(op_id: str, arguments: Mapping[str, object]) -> str | None:
+    if op_id == "revit.elements_of_category":
+        category_name = _cs_string(arguments.get("category"))
+        return """
+string categoryName = %s;
+var rows = new List<Dictionary<string,object>>();
+foreach (Category cat in Doc.Settings.Categories) {
+    if (cat.Name != categoryName) continue;
+    var col = new FilteredElementCollector(Doc).OfCategoryId(cat.Id).WhereElementIsNotElementType();
+    foreach (var e in col) {
+        rows.Add(new Dictionary<string,object>{
+            {"id", e.Id.IntegerValue}, {"name", e.Name},
+            {"category", e.Category != null ? e.Category.Name : ""}
+        });
+    }
+}
+result = rows;
+""" % category_name
+    if op_id == "revit.get_parameter":
+        name = _cs_string(arguments.get("name") or arguments.get("parameter"))
+        ids = []
+        for row in arguments.get("elements") or []:
+            if isinstance(row, Mapping):
+                try:
+                    ids.append(int(row.get("id")))
+                except (TypeError, ValueError):
+                    pass
+        id_list = ", ".join(str(item) for item in ids)
+        return """
+string parameterName = %s;
+var wanted = new HashSet<int>(new int[] { %s });
+var rows = new List<Dictionary<string,object>>();
+foreach (int id in wanted) {
+    var e = Doc.GetElement(new ElementId(id));
+    if (e == null) continue;
+    var p = e.LookupParameter(parameterName);
+    rows.Add(new Dictionary<string,object>{
+        {"id", id}, {"name", e.Name}, {"parameter", parameterName},
+        {"value", p == null ? null : (object)(p.AsValueString() ?? p.AsString())}
+    });
+}
+result = rows;
+""" % (name, id_list)
+    if op_id == "revit.set_parameter_by_name":
+        name = _cs_string(arguments.get("name") or arguments.get("parameter"))
+        value = _cs_string(arguments.get("value"))
+        ids = []
+        for row in arguments.get("elements") or []:
+            if isinstance(row, Mapping):
+                try:
+                    ids.append(int(row.get("id")))
+                except (TypeError, ValueError):
+                    pass
+        id_list = ", ".join(str(item) for item in ids)
+        return """
+string parameterName = %s;
+string parameterValue = %s;
+var wanted = new HashSet<int>(new int[] { %s });
+var rows = new List<Dictionary<string,object>>();
+foreach (int id in wanted) {
+    var e = Doc.GetElement(new ElementId(id));
+    if (e == null) continue;
+    var p = e.LookupParameter(parameterName);
+    if (p == null || p.IsReadOnly) continue;
+    bool changed = false;
+    if (p.StorageType == StorageType.String) changed = p.Set(parameterValue);
+    else changed = p.SetValueString(parameterValue);
+    rows.Add(new Dictionary<string,object>{{ {"id", id}, {"name", e.Name}, {"changed", changed} }});
+}
+result = rows;
+""" % (name, value, id_list)
+    if op_id == "revit.create_sheets":
+        rows = []
+        for row in arguments.get("rows") or []:
+            if isinstance(row, Mapping):
+                rows.append((_cs_string(row.get("number")), _cs_string(row.get("name"))))
+        entries = ", ".join("new string[] { %s, %s }" % item for item in rows)
+        return """
+var rows = new List<Dictionary<string,object>>();
+foreach (var pair in new [] { %s }) {
+    var sheet = ViewSheet.Create(Doc, ElementId.InvalidElementId);
+    if (pair[0].Length > 0) sheet.SheetNumber = pair[0];
+    if (pair[1].Length > 0) sheet.Name = pair[1];
+    rows.Add(new Dictionary<string,object>{{ {"id", sheet.Id.IntegerValue}, {"number", sheet.SheetNumber}, {"name", sheet.Name} }});
+}
+result = rows;
+""" % entries
+    if op_id == "revit.renumber_rename":
+        number_pattern = _cs_string(arguments.get("number_pattern") or arguments.get("number_format"))
+        name_pattern = _cs_string(arguments.get("name_pattern") or arguments.get("name_format"))
+        ids = []
+        for row in arguments.get("elements") or []:
+            if isinstance(row, Mapping):
+                try:
+                    ids.append(int(row.get("id")))
+                except (TypeError, ValueError):
+                    pass
+        id_list = ", ".join(str(item) for item in ids)
+        return """
+string numberPattern = %s;
+string namePattern = %s;
+var wanted = new int[] { %s };
+var rows = new List<Dictionary<string,object>>();
+Func<string,int,string> applyIndexFormat = (pattern, number) => {
+    if (String.IsNullOrEmpty(pattern)) return "";
+    return System.Text.RegularExpressions.Regex.Replace(
+        pattern,
+        @"\\{index(?::([^}]+))?\\}",
+        match => {
+            var format = match.Groups[1].Success ? match.Groups[1].Value : "";
+            if (format.Length == 0 || format == "d") return number.ToString();
+            if (format.Length >= 2 && format.StartsWith("0") && format.EndsWith("d")) {
+                int width;
+                if (Int32.TryParse(format.Substring(1, format.Length - 2), out width))
+                    return number.ToString("D" + width);
+            }
+            try { return String.Format("{0:" + format + "}", number); }
+            catch { return number.ToString(); }
+        });
+};
+for (int index = 0; index < wanted.Length; index++) {
+    var e = Doc.GetElement(new ElementId(wanted[index]));
+    if (e == null) continue;
+    string number = applyIndexFormat(numberPattern, index + 1);
+    string name = applyIndexFormat(namePattern, index + 1);
+    var numberParam = e.LookupParameter("Sheet Number") ?? e.LookupParameter("Number");
+    if (number.Length > 0 && numberParam != null && !numberParam.IsReadOnly) numberParam.Set(number);
+    if (name.Length > 0) e.Name = name;
+    rows.Add(new Dictionary<string,object>{{ {"id", e.Id.IntegerValue}, {"number", number}, {"name", e.Name} }});
+}
+result = rows;
+""" % (number_pattern, name_pattern, id_list)
+    return _READS.get(op_id)
+
+
 def broker_sessions(service: str) -> list[dict]:
     """Live sessions of one broker, each by its own identity.
 
@@ -930,8 +1096,9 @@ def broker_call(service: str, route: str, body: Mapping[str, object] | None = No
 
 def invoke(op_id: str, arguments: Mapping[str, object]) -> dict:
     """Carry out one declared Revit operation against a live session."""
+    write_grant = _require_write_grant(op_id, arguments) if op_id in _REVIT_WRITE_OPS else None
     sessions = live_sessions()
-    script = _READS.get(op_id)
+    script = _script_for(op_id, arguments)
     if script is None:
         raise RevitUnreachable(
             "this adapter does not yet carry out %s" % op_id
@@ -939,18 +1106,43 @@ def invoke(op_id: str, arguments: Mapping[str, object]) -> dict:
     session = _session_for(arguments.get("instance"), sessions)
     answer = _call(
         session["port"], "/exec",
-        {"code": script, "transaction_name": "ArchHub read"},
+        {"code": script, "transaction_name": "ArchHub write" if write_grant else "ArchHub read"},
     )
     if answer.get("status") != "ok":
         raise RevitUnreachable(
             "Revit refused %s: %s" % (op_id, answer.get("error"))
         )
-    return {
+    result = {
         "port": session["port"],
         "pid": session["pid"],
         "revit_version": session["revit_version"],
+        "document": session.get("document"),
         "result": answer.get("result"),
     }
+    if write_grant:
+        from . import nodeslib_v2_engines as nodeslib
+        result["ok"] = True
+        result["receipt"] = {
+            "operation": op_id,
+            "port": session["port"],
+            "grant_digest": write_grant.get("digest"),
+            "result_digest": nodeslib._digest_payload(answer.get("result")),
+        }
+        if write_grant.get("mods_before_write"):
+            # Project the already-fired hook into the accepted count receipt;
+            # retain its canonical scope evidence without firing it a second time.
+            details = [dict(annotation) for annotation in write_grant["mods_before_write"]]
+            result["receipt"]["mods_before_write_details"] = details
+            result["receipt"]["mods_before_write"] = [
+                {
+                    "mod": annotation["mod"], "label": annotation["label"],
+                    "host_count": int(bool(annotation.get("host"))),
+                    "document_count": int(bool(annotation.get("document"))),
+                    "element_count": annotation["elements"],
+                } if annotation.get("mod") == "blast-radius" else dict(annotation)
+                for annotation in details
+            ]
+    return result
 
 
 __all__ = ["BROKER_PORTS", "REVIT_ADDIN_ABSENT", "RevitUnreachable", "broker_call", "broker_sessions", "invoke",

@@ -1,7 +1,4 @@
-/* Workshop design audit, batch 2 (board 2026-10-01): gap 4 an agent that answered through the relay is
-   in CONNECTED AGENTS; gap 8 the live graph draws the proposed workflow's own steps and wiring; gap 9 a
-   revoked workflow leaves a truthful line (no stop claimed: none is recorded); gap 11 the summary line closes
-   the thread with what on this page needs you, workflow decisions included, and infers no motion or completion. */
+/* WORKSHOP-61 p3 S1 audit batch 2: old workflow cards/panels are gone. */
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -10,278 +7,157 @@ const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
-const workshop = () => fs.readFileSync(path.join(root, 'nodelang/studio/studio-workshop.jsx'), 'utf8');
+const text = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
+const WORK = 'assembly-instance:3f9a1c7e5b2d4f60';
+const AGENT = 'app:agent-session:runtime:codex-a1';
+const DIGEST = 'd'.repeat(64);
 
-// A live-shaped fixture: studio-existing-workshop.js snapshot, projectStudioCanvas nodes and wires.
-function fixture() {
+const addWorkflow = (state, root, title, approval) => {
+  state.workshop.workflows = [...(state.workshop.workflows || []), {
+    root, title, proposed_by:AGENT, digest:DIGEST, approval,
+    nodes:[{root:root + ':step', title:'Step', engine:'agent.session', params:{agent:AGENT}}],
+  }];
+};
+
+function fixture(waiting=true, setup = () => {}) {
   const now = Date.now() / 1000;
-  const W1 = 'assembly-instance:3f9a1c7e5b2d4f60', W2 = 'assembly-instance:8b41d0e27c93a5f1', W3 = 'assembly-instance:c5e2a9f4180d7b36';
-  const codex = 'app:agent-session:runtime:codex-a1', claude = 'app:agent-session:runtime:claude-b2', gone = 'app:agent-session:runtime:gone-c3';
-  const participants = [
-    {root:'owner-a', label:'Owner', attached:true, is_agent:false, connection_status:'unknown'},
-    {root:gone, label:'Gone agent', attached:true, is_agent:true, connection_status:'disconnected', observed_at:now - 360, runtime:'antigravity-ide'},
-    {root:codex, label:'Codex', attached:true, is_agent:true, connection_status:'connected', connection_basis:'authenticated-request',
-      observed_at:now - 30, expires_at:now + 3600, runtime:'codex', host:'Codex', session_link:'attached'},
-    {root:claude, label:'Claude Code', attached:true, is_agent:true, connection_status:'connected', connection_basis:'authenticated-request',
-      observed_at:now - 10, expires_at:now + 3600, runtime:'claude', host:'Claude', session_link:'none'},
-  ];
-  let n = 0;
-  const msg = (sender, body, category = 'note') => ({root:'m' + (++n), sequence:n, sender_root:sender, recipient_roots:[], body, category, state:'recorded', created_at:now - 600 + n * 30});
-  const messages = [
-    msg('owner-a', 'Turn the wall layer into walls.'),
-    msg(codex, `Claimed Work ${W1}.`),
-    msg(codex, `Gate failed for Work ${W1}: the layer choice needs you.`),
-    msg(claude, `Claimed Work ${W2}. Exterior walls first.`),
-    msg(codex, `Submitted Work ${W3}: 29 walls created.`),
-  ];
-  const nodes = [
-    {id:'read-dwg', title:'Read DWG', sub:'cad.read_lines', status:'824 lines', x:40, y:80, params:[]},
-    {id:W1, title:'Layer selection', sub:'Graph node', status:'OPEN', x:320, y:220, params:[{k:'description', v:'Pick the source wall layers'}]},
-    {id:W2, title:'Wall creation', sub:'Graph node', status:'CLAIMED', x:620, y:120, params:[]},
-    {id:W3, title:'Verification', sub:'Graph node', status:'SUBMITTED', x:900, y:320, params:[]},
-  ];
-  const wires = [{id:'w1', from:['read-dwg', 'a'], to:[W1, 'b']}, {id:'w2', from:[W1, 'c'], to:[W2, 'd']}, {id:'w3', from:[W2, 'e'], to:[W3, 'f']}];
-  const auth = {subject:'owner-a', session:'view-a'};
-  const transcript = {ok:true, graph_id:'graph-a', root:'room-a', scope_root:'scope-a', revision:9, owner:'owner-a', view:'view-a', self:'owner-a',
-    can_send:true, participants, messages, storage:'conversation-content', content_cursor:'c9', page_before:null, next_before:null, total:5,
-    has_older:false, feed:'messages', model_agent:{root:'model-a', model:'openrouter/model-a', binding_digest:'b'.repeat(64)}};
-  const state = {canvas:{graph_id:'graph-a', root:'scope-a', revision:9, authorization:auth}, workshops:[{root:'room-a', label:'L03 wall take-off', is_general:true}],
-    workshop:transcript, workshopPage:{root:'room-a', before:null, feed:'messages', feedInitialized:true}, workshopNotice:'',
-    nativeWork:{owner:'owner-a', view:'view-a', root:'room-a', scope:'scope-a', state:'awaiting_approval', mode:'project', work:W1, approved:false,
-      review_text:'input', input_digest:'a'.repeat(64), review_expires_at:now + 3600, available_work:[W1, W2, W3], artifacts_work:W1, selected_work_mode:'project'},
-    topology:{canvas:{application_root:'graph-a', scope:{current:'scope-a'}, authorization:auth, revision:9}, graph:{nodes, wires}, selected:null}};
+  const read = 'node:read-wall-layer';
+  const watch = 'node:watch-walls';
+  const state = {canvas:{graph_id:'graph-a', root:'scope-a', revision:7, authorization:{subject:'owner-a', session:'view-a'}},
+    workshops:[{root:'room-a', label:'Wall conversion', is_general:true, native_work_available:true}],
+    workshopNotice:'', workshopPage:{root:'room-a', before:null, feed:'messages', feedInitialized:true},
+    nativeWork: waiting ? {owner:'owner-a', view:'view-a', root:'room-a', scope:'scope-a', state:'awaiting_approval',
+      mode:'project', work:WORK, approved:false, review_text:'input', input_digest:'a'.repeat(64), document:'Tower.rvt',
+      review_expires_at:now + 600, available_work:[WORK], artifacts_work:WORK, selected_work_mode:'project'} : null,
+    topology:{canvas:{application_root:'graph-a', scope:{current:'scope-a'}, authorization:{subject:'owner-a', session:'view-a'}, revision:7},
+      graph:{nodes:[
+        {id:read, title:'Read wall layer', status:'ready', engine:'host.read', x:80, y:120,
+          outs:[{id:'walls', label:'walls', t:'elements', list:true}]},
+        {id:WORK, title:'Wall creation', status:'awaiting approval', x:330, y:160,
+          ins:[{id:'walls', label:'walls', t:'elements', list:true}], outs:[{id:'created', label:'created', t:'elements', list:true}],
+          params:[{k:'description', v:'step 2 of 3'}]},
+        {id:watch, title:'Watch wall result', status:'idle', engine:'watch.preview', x:580, y:190,
+          ins:[{id:'created', label:'created', t:'elements', list:true}], result:JSON.stringify([{Wall:'W-01', State:'pending'}])},
+      ], wires:[
+        {id:'wire-read-work', from:[read, 'walls'], to:[WORK, 'walls']},
+        {id:'wire-work-watch', from:[WORK, 'created'], to:[watch, 'created']},
+      ]}, selected:null}};
+  state.workshop = {ok:true, graph_id:'graph-a', root:'room-a', scope_root:'scope-a', revision:7,
+    owner:'owner-a', view:'view-a', self:'owner-a', can_send:true,
+    model_agent:{root:'model-a', model:'Sonnet', route:'auto'},
+    participants:[{root:'owner-a', label:'Owner', attached:true},
+      {root:AGENT, label:'Codex', attached:true, is_agent:true, connection_status:'connected',
+        connection_basis:'authenticated-request', observed_at:now - 30, expires_at:now + 600, host:'Codex'}],
+    messages:[
+      {root:'m1', sequence:1, sender_root:'owner-a', recipient_roots:[], body:'Turn the wall layer into walls.', category:'note', state:'recorded', created_at:now - 40},
+      {root:'m2', sequence:2, sender_root:AGENT, recipient_roots:['owner-a'], body:`Claimed Work ${WORK}. Plan: read 29 walls, create walls, refresh view.`, category:'note', state:'acted', created_at:now - 20},
+    ]};
   const calls = [];
-  const spy = (name, value) => (...args) => { calls.push([name, ...args]); return Promise.resolve(typeof value === 'function' ? value(...args) : value); };
-  const authority = {getSnapshot:() => state, subscribe:() => () => {},
-    refreshWorkshop:spy('refreshWorkshop', transcript), refreshNativeWork:spy('refreshNativeWork', state.nativeWork),
-    showWorkshopFeed:spy('showWorkshopFeed', transcript), nativeAgents:spy('nativeAgents', {status:'ok', contacts:[]}),
-    sendModelConversation:spy('sendModelConversation', {accepted:true}), approveNativeWork:spy('approveNativeWork', {}),
-    disconnectAgent:spy('disconnectAgent', {outcome:'revoked'}), selectTopology:spy('selectTopology', null)};
-  return {state, authority, calls, ids:{W1, W2, W3, codex, claude, gone}};
+  const authority = {getSnapshot:() => state, subscribe:() => () => {}, refreshWorkshop:async() => state.workshop,
+    refreshNativeWork:async() => state.nativeWork, showWorkshopFeed:async() => state.workshop,
+    nativeAgents:async() => ({status:'ok', contacts:[]}), sendModelConversation:async() => ({accepted:true}),
+    approveNativeWork:async(...args) => { calls.push(['approveNativeWork', ...args]); return {}; },
+    workshopAction:async(...args) => { calls.push(['workshopAction', ...args]); return {}; }};
+  setup({state, authority, calls});
+  return {state, authority, calls};
 }
 
-async function mountModule() {
+async function mount(waiting=true, setup = () => {}) {
   const {JSDOM} = await import('jsdom');
   const dom = new JSDOM('<div id="root"></div>', {url:'http://127.0.0.1/', pretendToBeVisual:true});
   const oldWindow = global.window, oldDocument = global.document;
-  // The DOM exists before react-dom loads, so React uses the real input event instead of its legacy polyfill.
   global.window = dom.window; global.document = dom.window.document; global.IS_REACT_ACT_ENVIRONMENT = true;
   const React = require('react');
   const {createRoot} = require('react-dom/client');
   const {transformSync} = require('esbuild');
-  const win = dom.window;
-  const context = vm.createContext({React, window:win, document:win.document, setTimeout, clearTimeout, console, URL, Blob, TextEncoder});
+  const context = vm.createContext({React, window:dom.window, document:dom.window.document, setTimeout, clearTimeout, console, CustomEvent:dom.window.CustomEvent, URL, Blob, TextEncoder});
   vm.runInContext(read('nodelang/studio/tokens.jsx'), context);
-  vm.runInContext(transformSync(fs.readFileSync(path.join(root, 'nodelang/studio/workshop-board.jsx'), 'utf8'), {loader:'jsx'}).code, context);
-  vm.runInContext(transformSync(workshop(), {loader:'jsx'}).code, context);
-  const container = win.document.getElementById('root');
-  const reactRoot = createRoot(container);
+  vm.runInContext(transformSync(read('nodelang/studio/workshop-board.jsx'), {loader:'jsx'}).code, context);
+  vm.runInContext(transformSync(read('nodelang/studio/shared-data.jsx'), {loader:'jsx'}).code, context);
+  vm.runInContext(transformSync(read('nodelang/studio/studio-workshop.jsx'), {loader:'jsx'}).code, context);
+  const fx = fixture(waiting, setup);
+  dom.window.ARCHHUB_EXISTING_WORKSHOP = fx.authority;
+  const rootEl = createRoot(dom.window.document.getElementById('root'));
   const act = async fn => { await React.act(async () => { await fn(); }); };
-  const click = el => act(() => el.dispatchEvent(new win.MouseEvent('click', {bubbles:true})));
-  return {React, win, doc:win.document, container, act, click,
-    render:(component, props) => act(() => reactRoot.render(React.createElement(win[component], props))),
-    close:async () => { await act(() => reactRoot.unmount()); win.close(); global.window = oldWindow; global.document = oldDocument; delete global.IS_REACT_ACT_ENVIRONMENT; }};
+  await act(() => rootEl.render(React.createElement(dom.window.WorkshopView, {state:fx.state, descriptor:fx.state.workshops[0],
+    target:'', setTarget:() => {}, setMode:() => {}, setFocusId:() => {}, onLeave:() => {},
+    sel:{agent:null, task:null}, setSel:() => {}, externalRail:true})));
+  return {...fx, doc:dom.window.document, click:el => act(() => el.dispatchEvent(new dom.window.MouseEvent('click', {bubbles:true}))),
+    close:async () => { await act(() => rootEl.unmount()); dom.window.close(); global.window = oldWindow; global.document = oldDocument; delete global.IS_REACT_ACT_ENVIRONMENT; }};
 }
-// Visible text as a reader meets it: every text node, in order, separated by one space.
-const text = el => {
-  if (!el) return '';
-  const out = [];
-  const walk = node => node.childNodes.forEach(child => {
-    if (child.nodeType === 3) { if (child.nodeValue.trim()) out.push(child.nodeValue.trim()); } else walk(child);
+
+const {mountWorkshopNode}=require('./workshop72_node_helpers.cjs');
+
+test('typed list ports move from embedded Workshop canvas to the real graph Workshop node',async()=>{
+  const fx=fixture();const node={id:'room-a',cat:'workshop',title:'Workshop',x:0,y:0,
+    ins:[{id:'walls',label:'walls',t:'elements',list:true,connectable:true}],outs:[{id:'created',label:'created',t:'elements',list:true,connectable:true}]};
+  fx.state.topology.graph.nodes.push(node);const ui=await mountWorkshopNode({state:fx.state,node});
+  try {assert.deepEqual([...ui.doc.querySelectorAll('[data-socket-port]')].map(el=>[el.dataset.socketPort,el.dataset.socketType,el.dataset.socketShape]),
+    [['walls','elements','diamond'],['created','elements','diamond']]);
+    assert.equal(ui.doc.querySelector('[data-workshop-s1-canvas]'),null);
+  }finally{await ui.close();}
+});
+test('gap8 real workflow steps are one inline plan while the window contains no duplicate graph',async()=>{
+  const view=await mount(false,({state})=>addWorkflow(state,'wf-review','Review workflow',null));
+  try {assert.match(text(view.doc.querySelector('[data-workshop-plan]')),/Step/);
+    assert.equal(view.doc.querySelectorAll('[data-workshop-plan-step]').length,1);
+    assert.equal(view.doc.querySelector('[data-workshop-s1-canvas]'),null);
+  }finally{await view.close();}
+});
+test('summary state migrates to the selected inline decision and real status bar without summary panels',async()=>{
+  const view=await mount();try{assert.ok(view.doc.querySelector('[data-workshop-approval-card]'));
+    assert.match(text(view.doc.querySelector('[data-workshop-s1-status]')),/1 need you/);
+    assert.equal(view.doc.querySelector('[data-workshop-summary]'),null);
+  }finally{await view.close();}
+});
+test('gap11 changed workflow approval remains selectable in the real list and inline review',async()=>{
+  const view=await mount(false,({state})=>addWorkflow(state,'wf-old','Older workflow',{digest:'e'.repeat(64),current:false,revoked:false}));
+  try{const row=view.doc.querySelector('[data-workshop-task-row="wf-old"]');assert.ok(row);await view.click(row);
+    assert.equal(view.doc.querySelector('[data-workshop-approval-card]').getAttribute('data-workshop-approval-card'),'wf-old');
+  }finally{await view.close();}
+});
+test('gap9 revoked approval retains a real review decision and never claims to stop a started run',async()=>{
+  const view=await mount(false,({state})=>{state.workshop.messages=[];addWorkflow(state,'wf-revoked','Revoked workflow',{digest:DIGEST,current:false,revoked:true});});
+  try{const row=view.doc.querySelector('[data-workshop-task-row="wf-revoked"]');assert.ok(row);await view.click(row);
+    assert.ok(view.doc.querySelector('[data-workshop-approval-card]'));
+    assert.doesNotMatch(text(view.doc.body),/\b(stopp?ed|halted|paused|cancel(?:l)?ed)\b/i);
+  }finally{await view.close();}
+});
+test('gap11 every awaiting changed and revoked workflow remains visible and selects its exact decision',async()=>{
+  const view=await mount(false,({state})=>{
+    state.workshop.messages=[];
+    addWorkflow(state,'wf-awaiting','Awaiting workflow',null);
+    addWorkflow(state,'wf-changed','Changed workflow',{digest:'e'.repeat(64),current:false});
+    addWorkflow(state,'wf-revoked','Revoked workflow',{digest:DIGEST,current:false,revoked:true});
+    addWorkflow(state,'wf-approved','Approved workflow',{digest:DIGEST,current:true});
   });
-  walk(el);
-  return out.join(' ').replace(/\s+/g, ' ');
-};
-
-
-const CONTACT = 'app:wip-cell:ece542c574ae470bbbd962ac8c5ff39a';
-const PLAN = 'Here is my proposal.\n```json\n' + JSON.stringify({actions:[{op:'node', ref:'r', engine:'workshop.conversation', title:'This Workshop'}]}) + '\n```';
-const withReply = fx => fx.state.workshop.messages.push({root:'reply-1', message_id:'reply-1', sequence:62, sender_root:'owner-a',
-  recipient_roots:['owner-a'], reference_roots:[CONTACT], category:'tool', state:'recorded', created_at:Date.now() / 1000,
-  body:"Session Link relayed reply from acceptance-claude (claude native session). The application relays that agent's own text; it is not Work completion or execution evidence.\n\n" + PLAN,
-  relayed_from:CONTACT, relayed_label:'acceptance-claude', agent_text:PLAN, artifact_digest:'f'.repeat(64)});
-const withWorkflow = approval => fx => {
-  withReply(fx);
-  fx.state.workshop.workflows = [{root:'wf-1', title:'Release note workflow', proposed_by:CONTACT, source_message:'reply-1',
-    digest:'d'.repeat(64), approval, edges:[['n1', 'n2']],
-    nodes:[{root:'n1', title:'This Workshop', engine:'workshop.conversation', params:{}},
-      {root:'n2', title:'Claude drafts the release note', engine:'agent.session', params:{}}]}];
-};
-const mountView = async (setup = () => {}) => {
-  const fx = fixture();
-  setup(fx);
-  const ui = await mountModule();
-  ui.win.ARCHHUB_EXISTING_WORKSHOP = fx.authority;
-  const props = () => ({state:fx.state, descriptor:fx.state.workshops[0], target:'', setTarget:() => {}, setMode:() => {},
-    setFocusId:() => {}, onLeave:() => {}, sel:{agent:null, task:null}, setSel:() => {}, externalRail:true});
-  return {...fx, ui, render:() => ui.render('WorkshopView', props())};
-};
-
-test('gap 4: an agent that answered through the relay is collapsed until shown, by name, unverified', async () => {
-  const fx = fixture();
-  withReply(fx);
-  const ui = await mountModule();
-  try {
-    ui.win.ARCHHUB_EXISTING_WORKSHOP = fx.authority;
-    const context = {descriptor:fx.state.workshops[0], graphId:'graph-a', scopeRoot:'scope-a', transcript:fx.state.workshop, state:fx.state};
-    await ui.render('WorkshopAgentsRail', {context, sel:null, onSelect:() => {}});
-    assert.equal(ui.doc.querySelector(`[data-workshop-agent="${CONTACT}"]`), null);
-    await ui.click(ui.doc.querySelector('button[data-workshop-disconnected-toggle]'));
-    const row = ui.doc.querySelector(`[data-workshop-agent="${CONTACT}"]`);
-    assert.ok(row, 'the replying agent has a rail row');
-    assert.match(text(row), /^A acceptance-claude AGENT Session Link · claude session Unverified Proposed a workflow\./);
-    assert.ok(!text(ui.doc.querySelector('[aria-label="Workshop agents"]')).includes('app:wip-cell:'));
-  } finally { await ui.close(); }
-});
-
-test('gap 8: with a proposed workflow the live graph draws its steps and its wire, not the canvas', async () => {
-  const view = await mountView(withWorkflow(null));
-  try {
-    await view.render();
-    assert.ok(view.ui.doc.querySelector('[role="tab"][aria-label="Router"]'));
-    assert.equal(view.ui.doc.querySelector('[aria-label="Workshop live graph"]'), null);
-    assert.match(text(view.ui.doc.querySelector('[data-workshop-workflow]')), /Claude drafts the release note/);
-  } finally { await view.ui.close(); }
-  const plain = await mountView();
-  try {
-    await plain.render();
-    assert.ok(plain.ui.doc.querySelector('[role="tab"][aria-label="Router"]'));
-    assert.equal(plain.ui.doc.querySelector('[aria-label="Workshop live graph"]'), null);
-  } finally { await plain.ui.close(); }
-});
-
-// No stop is claimed: revoke_workflow writes no stop receipt; started runs are not undone, the next run is refused.
-const STOP_CLAIM = /\b(stopp?ed|halted|paused|cancel(?:l)?ed)\b/i;
-test('gap 9: a revoked workflow leaves a truthful line in the thread and claims no stop', async () => {
-  // Revoked before any run (the approval never ran): still no stop claim.
-  const revoked = await mountView(withWorkflow({digest:'d'.repeat(64), approved_by:'owner-a', revision:12, current:false, revoked:true}));
-  try {
-    await revoked.render();
-    const line = text(revoked.ui.doc.querySelector('[data-workshop-revoked]'));
-    assert.equal(line, 'Approval revoked. Runs already started are not undone; approve again before another run.');
-    assert.doesNotMatch(line, STOP_CLAIM);
-    assert.doesNotMatch(text(revoked.ui.doc.querySelector('[data-workshop-workflow]')), STOP_CLAIM);
-  } finally { await revoked.ui.close(); }
-  const approved = await mountView(withWorkflow({digest:'d'.repeat(64), approved_by:'owner-a', revision:12, current:true, revoked:false}));
-  try { await approved.render(); assert.equal(approved.ui.doc.querySelector('[data-workshop-revoked]'), null); }
-  finally { await approved.ui.close(); }
-});
-
-// The summary is page-scoped, counts workflow decisions that wait on you, and infers no running/finished state.
-const OVERREACH = /moving|everything else|running|done|delivered|last change/i;
-const summaryOf = view => text(view.ui.doc.querySelector('[data-workshop-summary]'));
-test('gap 11: the summary closes the thread with what on this page needs you', async () => {
-  const view = await mountView();
-  try {
-    await view.render();
-    const stream = view.ui.doc.querySelector('[aria-label="Workshop conversation"]');
-    const summary = stream.querySelector('[data-workshop-summary]');
-    assert.ok(summary && summary === [...stream.querySelectorAll('[data-workshop-message], [data-workshop-task], [data-workshop-summary]')].pop(),
-      'the last thing in the thread');
-    // Blocked + open (claimed) + review on the page: the blocked one needs you; nothing else is asserted.
-    assert.match(summaryOf(view), /summary On this page, one thing needs you: T-3f9a1c Layer selection\.$/);
-    assert.doesNotMatch(summaryOf(view), OVERREACH);
-  } finally { await view.ui.close(); }
-});
-
-test('gap 11 (Ping repro): an awaiting workflow with only the ask and its reply is waiting on you', async () => {
-  for (const [approval, reason] of [[null, 'awaiting your approval'],
-    [{digest:'e'.repeat(64), approved_by:'owner-a', revision:12, current:false, revoked:false}, 'changed since approval'],
-    [{digest:'d'.repeat(64), approved_by:'owner-a', revision:12, current:false, revoked:true}, 'approval revoked']]) {
-    const view = await mountView(fx => {
-      fx.state.workshop.messages = fx.state.workshop.messages.slice(0, 1); fx.state.nativeWork = null;
-      withWorkflow(approval)(fx);
-    });
-    try {
-      await view.render();
-      const said = summaryOf(view);
-      assert.doesNotMatch(said, /nothing is waiting/i, reason);
-      assert.ok(said.endsWith(`On this page, one thing needs you: Release note workflow (${reason}).`), said);
-    } finally { await view.ui.close(); }
+  try {for(const id of ['wf-awaiting','wf-changed','wf-revoked']){
+    const row=view.doc.querySelector('[data-workshop-task-row="'+id+'"]');assert.ok(row,id);await view.click(row);
+    assert.equal(view.doc.querySelector('[data-workshop-approval-card]').getAttribute('data-workshop-approval-card'),id);
+    assert.equal(view.doc.querySelectorAll('[data-workshop-approval-card]').length,1);
   }
-  const approved = await mountView(fx => { fx.state.workshop.messages = fx.state.workshop.messages.slice(0, 1); fx.state.nativeWork = null;
-    withWorkflow({digest:'d'.repeat(64), approved_by:'owner-a', revision:12, current:true, revoked:false})(fx); });
-  try { await approved.render(); assert.match(summaryOf(approved), /On this page, nothing is waiting on you\.$/); }
-  finally { await approved.ui.close(); }
+  await view.click(view.doc.querySelector('[data-workshop-task-row="wf-approved"]'));
+  assert.equal(view.doc.querySelector('[data-workshop-approval-card]'),null);
+  }finally{await view.close();}
 });
-
-const APPROVED = {digest:'d'.repeat(64), approved_by:'owner-a', revision:12, current:true, revoked:false};
-const appendWorkflow = (fx, root, title, approval) => fx.state.workshop.workflows.push(
-  {...fx.state.workshop.workflows[0], root, title, approval, source_message:'reply-1'});
-const quietPage = approval => fx => { fx.state.workshop.messages = fx.state.workshop.messages.slice(0, 1); fx.state.nativeWork = null;
-  withWorkflow(approval)(fx); };
-
-test('gap 11 (Ping repro v2): an older awaiting workflow under a newer approved one is still waiting on you', async () => {
-  const view = await mountView(fx => { quietPage(null)(fx); appendWorkflow(fx, 'wf-new', 'New approved workflow', APPROVED); });
-  try {
-    await view.render();
-    const panel = view.ui.doc.querySelector('[aria-label="Agent-proposed workflows and reviews"]');
-    assert.ok([...panel.querySelectorAll('button')].some(b => text(b) === 'Approve' && !b.disabled), 'the panel offers Approve');
-    const said = summaryOf(view);
-    assert.doesNotMatch(said, /nothing is waiting/i);
-    assert.ok(said.endsWith('On this page, one thing needs you: Release note workflow (awaiting your approval).'), said);
-  } finally { await view.ui.close(); }
+test('gap11 approved workflow and calm claimed task never invent motion or completion',async()=>{
+  const view=await mount(false,({state})=>{state.workshop.messages=[];addWorkflow(state,'wf-approved','Approved workflow',{digest:DIGEST,current:true});});
+  try{assert.equal(view.doc.querySelector('[data-workshop-approval-card]'),null);
+    assert.doesNotMatch(text(view.doc.querySelector('[data-workshop-s1-status]')),/running|moving|done|delivered/i);
+  }finally{await view.close();}
 });
-
-test('gap 11: every displayed workflow decision counts, read by the panel\'s own rule', async () => {
-  const view = await mountView(fx => {
-    quietPage(null)(fx);
-    appendWorkflow(fx, 'wf-changed', 'Changed workflow', {digest:'e'.repeat(64), approved_by:'owner-a', revision:12, current:false, revoked:false});
-    appendWorkflow(fx, 'wf-revoked', 'Revoked workflow', {digest:'d'.repeat(64), approved_by:'owner-a', revision:12, current:false, revoked:true});
-    appendWorkflow(fx, 'wf-new', 'New approved workflow', APPROVED);
+test('no waiting work omits the inline approval when native review and workflows are absent',async()=>{
+  const view=await mount(false);try{assert.equal(view.doc.querySelector('[data-workshop-approval-card]'),null);
+    assert.equal(view.doc.querySelector('[data-workshop-summary]'),null);
+  }finally{await view.close();}
+});
+test('avatars use a whole emoji first character without a lone surrogate',async()=>{
+  const face=String.fromCodePoint(0x1f600);
+  const view=await mount(false,({state})=>{
+    state.workshop.participants=[{root:'owner-a',label:'Owner',attached:true},{root:AGENT,label:face+face+' Codex',attached:true,is_agent:true,connected:true}];
+    state.workshop.messages=[{root:'emoji-reply',sequence:4,sender_root:AGENT,body:'The emoji avatar should be whole.',created_at:Date.now()/1000}];
   });
-  try {
-    await view.render();
-    const chips = text(view.ui.doc.querySelector('[aria-label="Agent-proposed workflows and reviews"]'));
-    for (const chip of ['AWAITING YOUR APPROVAL', 'CHANGED SINCE APPROVAL', 'REVOKED · NOTHING FURTHER RUNS', 'APPROVED · READY TO RUN'])
-      assert.ok(chips.includes(chip), chip);
-    assert.ok(summaryOf(view).endsWith('On this page, 3 things need you: Release note workflow (awaiting your approval); ' +
-      'Changed workflow (changed since approval); Revoked workflow (approval revoked).'), summaryOf(view));
-  } finally { await view.ui.close(); }
-});
-
-// An emoji-led agent name (a real Session Link title, installed 20261001-2310-2d6dc02) gives each avatar a
-// whole first character: charAt(0) split it into a lone surrogate, drawn as a broken glyph.
-const LONE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
-test('avatars: an emoji-led agent name gives a whole first character, never a lone surrogate', async () => {
-  const FACE = String.fromCodePoint(0x1f600), NAME = FACE + FACE + ' acceptance-claude';
-  const named = fx => { withWorkflow(null)(fx); const reply = fx.state.workshop.messages.find(m => m.root === 'reply-1');
-    reply.relayed_label = NAME; reply.body = reply.body.replace('acceptance-claude', NAME); };
-  // An avatar's initial is the first non-empty text node it draws.
-  const initialOf = el => el ? [...el.querySelectorAll('*')].map(n => [...n.childNodes].filter(c => c.nodeType === 3)
-    .map(c => c.nodeValue).join('')).find(t => t.trim()) : undefined;
-  const view = await mountView(named);
-  try {
-    await view.render();
-    const doc = view.ui.doc;
-    const card = doc.querySelector('[data-workshop-workflow]');
-    assert.ok(card, 'the proposal card from the named agent');
-    assert.equal(initialOf(card), FACE, 'the proposer avatar is the whole emoji');
-    const stream = doc.querySelector('[aria-label="Workshop conversation"]');
-    const all = [...stream.querySelectorAll('*')].flatMap(n => [...n.childNodes].filter(c => c.nodeType === 3).map(c => c.nodeValue)).join('|');
-    assert.ok(!LONE.test(all), 'no lone surrogate is drawn in the conversation');
-  } finally { await view.ui.close(); }
-  // The CONNECTED AGENTS rail (its own component, as the Studio mounts it).
-  const fx = fixture(); named(fx);
-  const ui = await mountModule();
-  try {
-    ui.win.ARCHHUB_EXISTING_WORKSHOP = fx.authority;
-    const context = {descriptor:fx.state.workshops[0], graphId:'graph-a', scopeRoot:'scope-a', transcript:fx.state.workshop, state:fx.state};
-    await ui.render('WorkshopAgentsRail', {context, sel:null, onSelect:() => {}});
-    await ui.click(ui.doc.querySelector('button[data-workshop-disconnected-toggle]'));
-    const rail = ui.doc.querySelector('[data-workshop-agent="' + CONTACT + '"]');
-    assert.ok(rail, 'the named agent is in the rail');
-    assert.equal(initialOf(rail), FACE, 'the rail avatar is the whole emoji');
-    const all = [...rail.querySelectorAll('*')].flatMap(n => [...n.childNodes].filter(c => c.nodeType === 3).map(c => c.nodeValue)).join('|');
-    assert.ok(!LONE.test(all), 'no lone surrogate is drawn in the rail');
-  } finally { await ui.close(); }
-});
-
-test('gap 11: review and claimed tasks with nothing blocked claim no motion or completion', async () => {
-  const calm = await mountView(fx => { fx.state.workshop.messages = fx.state.workshop.messages.filter(m => !/Gate failed|Claimed Work assembly-instance:3f9a/.test(m.body)); fx.state.nativeWork = null; });
-  try {
-    await calm.render();
-    assert.match(summaryOf(calm), /On this page, nothing is waiting on you\.$/);
-    assert.doesNotMatch(summaryOf(calm), OVERREACH);
-  } finally { await calm.ui.close(); }
+  try{const avatar=view.doc.querySelector('[data-workshop-message="emoji-reply"] [data-workshop-avatar] i');assert.equal(avatar.textContent,face);
+    assert.equal(avatar.textContent.length,face.length);
+  }finally{await view.close();}
 });

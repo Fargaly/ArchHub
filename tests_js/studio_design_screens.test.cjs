@@ -2,8 +2,8 @@
    full-bleed screens that open inside the Studio (Skill split view, connector diagnostic), measured on the
    whole compiled Studio mounted in an in-memory DOM over an existing-graph shape. Design contract:
    ArchHub App.html artboards "Studio · Settings · Docs", "Loading", "Skill JSON · split view" and
-   "Self-healing inspector"; HANDOVER.md section 2 (docs search over 90 entries, 16 derived from
-   brain-model.jsx). Seeded artboard values (ratings, installs, PIDs, uptimes, heal history) must not ship;
+   "Self-healing inspector"; docs search entries are generated from rendered docs, brain-model.jsx,
+   the node catalogue and the host registry. Seeded artboard values (ratings, installs, PIDs, uptimes, heal history) must not ship;
    live rows replace them and an unmeasured cell draws the design's '—'.
    No application, provider, network or graph file is touched. */
 const test = require('node:test');
@@ -104,9 +104,9 @@ test('docs: the version slot names the running build; search and Docs > Brain ar
     const setter = Object.getOwnPropertyDescriptor(studio.win.HTMLInputElement.prototype, 'value').set;
     studio.flush(() => { setter.call(input, 'brain'); input.dispatchEvent(new studio.win.Event('input', {bubbles:true})); });
     const panel = input.parentElement;
-    assert.match(panel.textContent, /\u2191\u2193 MOVE \u00b7 \u21b5 OPEN \u00b7 ESC CLEAR \u00b7 \d OF 90 ENTRIES/, 'search runs over 90 entries: 74 static + 16 derived from brain-model.jsx');
+    assert.match(panel.textContent, /\u2191\u2193 MOVE \u00b7 \u21b5 OPEN \u00b7 ESC CLEAR \u00b7 \d OF \d+ ENTRIES/, 'search count is generated from the docs projection');
     const hits = [...panel.querySelectorAll('button')].map(button => button.textContent);
-    assert.ok(hits.some(text => text.startsWith('PAGEThe Brain')), 'the derived brain page is a hit: ' + hits.join(' | '));
+    assert.ok(hits.some(text => text.startsWith('PAGEBrain')), 'the derived brain page is a hit: ' + hits.join(' | '));
     studio.flush(() => { setter.call(input, ''); input.dispatchEvent(new studio.win.Event('input', {bubbles:true})); });
     const nav = [...studio.doc.querySelectorAll('button')].find(button => button.textContent === 'Brain4 strata');
     assert.ok(nav, 'the Docs nav carries the design Brain row');
@@ -125,6 +125,45 @@ test('docs: the version slot names the running build; search and Docs > Brain ar
     const title = [...unversioned.doc.querySelectorAll('span')].find(node => node.textContent === 'Documentation');
     assert.equal(title.nextElementSibling.textContent, 'STUDIO', 'with no release report the slot is the label alone, never a typed version');
   } finally { unversioned.close(); }
+});
+
+test('docs: Nodes and Connectors are generated from catalogue and host registry, without Router and Relay status rows', async () => {
+  const catalogue = [{cat:'Custom', items:[
+    {id:'claim-source-node', title:'Claim source node', sub:'generated from AH_LIBRARY'},
+    {id:'doc-proof-node', title:'Doc proof node', sub:'second catalogue entry'},
+  ]}];
+  const hosts = [{id:'rhino', name:'Rhino', port:'48892', state:'connected', detail:'live registry row'}];
+  const studio = await mountStudio({prepare:win => {
+    win.AH_LIBRARY = catalogue;
+    win.ARCHHUB_LIVE.hosts.push(...hosts);
+    win.ARCHHUB_HOSTS_READ = true;
+    win.ARCHHUB_PICKED_MODEL = {name:'Free Models Router', route:'openrouter/free', routed:'openrouter/free'};
+    win.ARCHHUB_MODEL_READINESS = {state:'ready', route:'openrouter/free'};
+  }});
+  try {
+    key(studio, {key:'/', ctrlKey:true});
+    await studio.settle(() => studio.doc.body.textContent.includes('Documentation'), 'docs opened');
+    assert.doesNotMatch(studio.doc.body.textContent, /Routerready/);
+    assert.doesNotMatch(studio.doc.body.textContent, /Relaypublish allowed/);
+    const nodes = [...studio.doc.querySelectorAll('button')].find(button => button.textContent === 'Nodes3 nodes');
+    assert.ok(nodes, 'Nodes badge is generated from the catalogue plus History');
+    studio.flush(() => nodes.click());
+    const nodePanel = studio.doc.querySelector('[data-docs-node-catalogue]');
+    const customGroup = nodePanel.querySelector('[data-docs-node-category="Custom"]');
+    assert.ok(customGroup, 'custom catalogue category has a docs group');
+    assert.equal(customGroup.getAttribute('data-docs-node-color'), studio.win.AH.accent, 'fallback category colour is bound to the docs group');
+    const firstTile = customGroup.querySelector('[data-docs-node-tile]');
+    assert.equal(firstTile.style.borderLeftWidth, '3px', 'node tile renders the category colour rail');
+    assert.equal(firstTile.style.borderLeftStyle, 'solid', 'node tile category rail is visible');
+    assert.equal(firstTile.querySelector('[aria-hidden="true"]').textContent, '○', 'node tile renders the category icon');
+    for (const item of catalogue[0].items) {
+      assert.ok(customGroup.textContent.includes(item.title), 'catalogue node has a docs tile: ' + item.title);
+    }
+    const connectors = [...studio.doc.querySelectorAll('button')].find(button => button.textContent === 'Connectors1 host');
+    assert.ok(connectors, 'Connectors badge is generated from the host registry');
+    studio.flush(() => connectors.click());
+    assert.match(studio.doc.querySelector('[data-docs-connectors]').textContent, /RhinoConnected \u00b7 port 48892 \u00b7 live registry row/);
+  } finally { studio.close(); }
 });
 
 test('boot: the splash is the design held moment, and its line reads what answered', async () => {

@@ -71,8 +71,10 @@ async function mountModule() {
   const {createRoot} = require('react-dom/client');
   const {transformSync} = require('esbuild');
   const win = dom.window;
-  const context = vm.createContext({React, window:win, document:win.document, setTimeout, clearTimeout, console, URL, Blob, TextEncoder});
+  const context = vm.createContext({React, window:win, document:win.document, setTimeout, clearTimeout, console, CustomEvent:win.CustomEvent, URL, Blob, TextEncoder});
   vm.runInContext(read('nodelang/studio/tokens.jsx'), context);
+  vm.runInContext(transformSync(read('nodelang/studio/workshop-board.jsx'), {loader:'jsx'}).code, context);
+  vm.runInContext(transformSync(read('nodelang/studio/shared-data.jsx'), {loader:'jsx'}).code, context);
   vm.runInContext(transformSync(workshop(), {loader:'jsx'}).code, context);
   const container = win.document.getElementById('root');
   const reactRoot = createRoot(container);
@@ -92,13 +94,6 @@ const text = el => {
   walk(el);
   return out.join(' ').replace(/\s+/g, ' ');
 };
-const openChatTab = async view => {
-  const tab = [...view.ui.doc.querySelectorAll('[role="tab"]')].find(row => text(row) === 'Chat');
-  assert.ok(tab, 'Chat tab exists');
-  await view.ui.click(tab);
-};
-
-
 const MARKER = 'ArchHub work proposal v1\n';
 const proposalBody = title => MARKER + JSON.stringify({container:{container_id:'GM.nodes.cde-authority', gate_kind:'pytest',
   gate_spec:{path:'tests_replica/test_cell_cde_authority.py'}, tier:'T1'}, description:'proposed by an agent', inputs:{}, priority:100,
@@ -116,120 +111,71 @@ const mountView = async (setup = () => {}) => {
   return {...fx, ui, props, sel:() => sel, render:() => ui.render('WorkshopView', props())};
 };
 
-test('rail: an agent is named once by its host; runtime sessions stay child details', async () => {
-  const fx = fixture();
-  const second = 'app:agent-session:runtime:codexb7f2e1';
-  const now = Date.now() / 1000;
-  fx.state.workshop.participants.push({root:second, label:'Runtime-b7f2e1', attached:true, is_agent:true, connection_status:'connected',
-    connection_basis:'authenticated-request', observed_at:now - 5, expires_at:now + 3600, runtime:'codex', host:'Codex', model:'gpt-5.4', session_link:'none'});
-  const ui = await mountModule();
-  try {
-    ui.win.ARCHHUB_EXISTING_WORKSHOP = fx.authority;
-    const context = {descriptor:fx.state.workshops[0], graphId:'graph-a', scopeRoot:'scope-a', transcript:fx.state.workshop, state:fx.state};
-    await ui.render('WorkshopAgentsRail', {context, sel:null, onSelect:() => {}});
-    const rows = [...ui.doc.querySelectorAll('[data-workshop-agent]')].map(text);
-    assert.equal(rows.filter(row => /^C Codex AGENT local · Codex · 2 live \/ 2 sessions/.test(row)).length, 1, rows.join(' | '));
-    assert.ok(rows.some(row => /^C Claude AGENT local · Claude · 1 live \/ 1 session/.test(row)), 'a host shared by no other session is the plain name');
-    assert.ok(!rows.some(row => /Runtime-/.test(row)), 'the opaque runtime label is never the name when a host is known');
-  } finally { await ui.close(); }
-  const view = await mountView();
-  try {
-    await view.render();
-    assert.equal(view.ui.doc.querySelector('[aria-label="Workshop context"]'), null);
-  } finally { await view.ui.close(); }
-});
+const {mounted,plain}=require('./workshop72_regression_helpers.cjs');
 
-test('header: Workshop · Work title · the probed host; counts include a proposal waiting on you', async () => {
-  for (const [hosts, expected] of [
-    [[{id:'r25', name:'Revit 2025', state:'connected', file:'Tower.rvt · 47 walls'}], 'L03 wall take-off · Layer selection · Revit 2025 · Tower.rvt · 47 walls'],
-    [[{id:'a', name:'Revit 2025', state:'connected', file:'x'}, {id:'b', name:'Rhino 8', state:'connected', file:'y'}], 'L03 wall take-off · Layer selection · 2 hosts connected'],
-    [[{id:'a', name:'Revit 2025', state:'listening', file:''}], 'L03 wall take-off · Layer selection · no host connected'],
-  ]) {
-    const view = await mountView(withProposal);
-    try {
-      view.ui.win.ARCHHUB_LOAD_HOSTS = async () => ({hosts, connectors:[]});
-      await view.render();
-      await view.ui.act(async () => {});
-      assert.equal(text(view.ui.doc.querySelector('[data-workshop-head]')), expected);
-      assert.match(text(view.ui.doc.querySelector('[role="tab"][aria-label="Approvals"]')), /Approvals 2/);
-    } finally { await view.ui.close(); }
+test('agent tile/footer uses exact participant identities instead of grouping runtime sessions into an address',async()=>{
+  const fx=fixture();fx.state.workshop.assignments=[{work:fx.ids.W1,agent_session:fx.ids.codex}];
+  const ui=await mounted(fx.state,fx.authority);
+  try{const head=ui.doc.querySelector('[data-workshop-head]').parentElement;
+    assert.match(text(head),/Layer selection/);assert.match(text(head),/Codex/);
+    assert.doesNotMatch(text(head),/app:agent-session|Runtime-/);
+    assert.equal(ui.doc.querySelector('[aria-label="Workshop agents"]'),null);
+    assert.equal(ui.doc.querySelectorAll('textarea').length,1);
+  }finally{await ui.close();}
+});
+test('header and status use the real assigned agents and connected host projection',async()=>{
+  const fx=fixture();fx.state.hosts=[{name:'Revit 2025',state:'connected',file:'Tower.rvt'}];
+  fx.state.workshop.assignments=[{work:fx.ids.W1,agent_session:fx.ids.codex},{work:fx.ids.W1,agent_session:fx.ids.claude}];
+  const ui=await mounted(fx.state,fx.authority);
+  try{const header=text(ui.doc.querySelector('[data-workshop-head]').parentElement);
+    assert.match(header,/Layer selection/);assert.match(header,/Codex/);assert.match(header,/Claude/);
+    assert.match(text(ui.doc.querySelector('[data-workshop-s1-status]')),/Revit 2025.*Tower.rvt/);
+    const waiting=ui.win.ARCHHUB_WORKSHOP_MODEL({state:fx.state,descriptor:fx.state.workshops[0]}).viewSections[0].rows.length;
+    assert.match(text(ui.doc.querySelector('[data-workshop-s1-status]')),new RegExp(waiting+' need you'));
+  }finally{await ui.close();}
+});
+test('no retained approval action means no inline card; the real submitted board review still counts',async()=>{
+  const fx=fixture();fx.state.nativeWork=null;fx.state.workshop.workflows=[];const ui=await mounted(fx.state,fx.authority);
+  try{assert.equal(ui.doc.querySelector('[data-workshop-approval-card]'),null);
+    assert.equal(ui.doc.querySelector('[data-workshop-utility="Approvals"]'),null);
+    const waiting=ui.win.ARCHHUB_WORKSHOP_MODEL({state:fx.state,descriptor:fx.state.workshops[0]}).viewSections[0].rows.length;
+    assert.match(text(ui.doc.querySelector('[data-workshop-s1-status]')),new RegExp(waiting+' need you'));
+  }finally{await ui.close();}
+});
+test('proposal selection exposes its real inline approval only and never an assignment inspector',async()=>{
+  const fx=fixture();withProposal(fx);fx.state.nativeWork=null;
+  const ui=await mounted(fx.state,fx.authority,{sel:{agent:null,task:'proposal:p1'}});
+  try{const card=ui.doc.querySelector('[data-workshop-approval-card]');assert.ok(card);
+    assert.match(text(card),/Tighten the CDE check/);assert.deepEqual([...card.querySelectorAll('button')].map(text),['Approve','Decline']);
+    assert.equal(ui.doc.querySelector('[aria-label="Workshop context"]'),null);
+    assert.doesNotMatch(text(card),/Open as graph|assignment/i);
+  }finally{await ui.close();}
+});
+test('latest workflow approval state is reviewed inline and reapproval binds the current workflow digest',async()=>{
+  const D='d'.repeat(64);
+  for(const approval of [null,{digest:D,current:false,revoked:true},{digest:'e'.repeat(64),current:false,revoked:false}]){
+    const fx=fixture();fx.state.nativeWork=null;fx.state.workshop.workflows=[{root:'wf-1',title:'Release note',proposed_by:fx.ids.codex,digest:D,approval,
+      nodes:[{root:'n1',title:'Conversation'},{root:'n2',title:'Build the note'},{root:'n3',title:'Review'}]}];
+    fx.authority.workshopWorkflow=async(...args)=>{fx.calls.push(['workshopWorkflow',...args]);return{ok:true};};
+    const ui=await mounted(fx.state,fx.authority,{sel:{agent:null,task:'wf-1'}});
+    try{assert.equal(ui.doc.querySelectorAll('[data-workshop-plan-step]').length,3);
+      await ui.click(ui.button('Approve'));assert.deepEqual(plain(fx.calls.filter(row=>row[0]==='workshopWorkflow')),
+        [['workshopWorkflow','room-a','workflow-approve',{workflow:'wf-1',digest:D}]]);
+      assert.equal(ui.button('Run'),undefined);assert.equal(ui.doc.querySelector('[data-workshop-workflow="wf-1"]'),null);
+    }finally{await ui.close();}
   }
 });
-
-test('approvals tab has no badge when no proposal or Work approval is pending', async () => {
-  const view = await mountView(fx => {
-    fx.state.nativeWork = {...fx.state.nativeWork, state:'idle', work:null, approved:false};
-  });
-  try {
-    await view.render();
-    const approvals = view.ui.doc.querySelector('[role="tab"][aria-label="Approvals"]');
-    assert.equal(text(approvals), 'Approvals');
-    assert.equal(approvals.querySelector('span span'), null);
-  } finally { await view.ui.close(); }
+test('a selected task header uses its exact assignment ahead of an unrelated last speaker',async()=>{
+  const fx=fixture();fx.state.workshop.assignments=[{assignment:'as-1',work:fx.ids.W2,agent_session:fx.ids.codex}];
+  const ui=await mounted(fx.state,fx.authority,{sel:{agent:null,task:fx.ids.W2}});
+  try{const header=text(ui.doc.querySelector('[data-workshop-head]').parentElement);
+    assert.match(header,/Wall creation/);assert.match(header,/Codex/);
+    assert.doesNotMatch(header,/Claude/);
+    const row=ui.doc.querySelector('[data-workshop-task-row="'+fx.ids.W2+'"]');
+    assert.equal(text(row.children[0]),'X','task row uses the exact assigned Codex tile ahead of its unrelated Claude speaker');
+    assert.equal(ui.doc.querySelector('[aria-label="Workshop context"]'),null);
+  }finally{await ui.close();}
 });
-
-test('a proposal is a NEEDS YOU card; selecting it shows the permissions it asks for and offers no assignment', async () => {
-  const view = await mountView(withProposal);
-  try {
-    view.authority.assignWork = async () => ({});
-    await view.render();
-    await openChatTab(view);
-    const card = view.ui.doc.querySelector('[data-workshop-task="proposal:p1"]');
-    assert.match(text(card), /^Tighten the CDE check proposed by an agent · block Approve Decline$/);
-    assert.equal(card.style.borderStyle, 'solid');
-    await view.ui.click(card);
-    assert.equal(view.sel().task, 'proposal:p1');
-    await view.render();
-    assert.equal(view.ui.doc.querySelector('[aria-label="Workshop context"]'), null);
-    assert.match(text(card), /^Tighten the CDE check proposed by an agent · block Approve Decline$/);
-  } finally { await view.ui.close(); }
-});
-
-test('workflow card: the latest proposed workflow, its steps, its approval chip, Revoke and Re-approve', async () => {
-  const workflow = approval => fx => {
-    fx.state.workshop.workflows = [{root:'wf-1', title:'Release note', proposed_by:fx.ids.codex, digest:'d'.repeat(64), approval,
-      nodes:[{root:'n1', title:'Conversation', engine:'workshop.conversation', params:{}}, {root:'n2', title:'Build the note', engine:'agent.session', params:{}},
-        {root:'n3', title:'Review', engine:'workshop.review', params:{}}]}];
-    fx.authority.workshopWorkflow = (...args) => { fx.calls.push(['workshopWorkflow', ...args]); return Promise.resolve({ok:true}); };
-  };
-  const D = 'd'.repeat(64);
-  const cases = [
-    [{digest:D, approved_by:'owner-a', revision:12, current:true, revoked:false}, 'APPROVED · REV 12 · SCOPE: 3 STEPS ON THIS CANVAS',
-      'button[aria-label^="Revoke approval"]', ['room-a', 'workflow-revoke', {workflow:'wf-1'}]],
-    [{digest:D, approved_by:'owner-a', revision:13, current:false, revoked:true, revoked_by:'owner-a'}, 'REVOKED · NOTHING FURTHER RUNS',
-      'Re-approve', ['room-a', 'workflow-approve', {workflow:'wf-1', digest:D}]],
-    [{digest:'e'.repeat(64), approved_by:'owner-a', revision:11, current:false, revoked:false}, 'CHANGED SINCE APPROVAL · REVIEW AND APPROVE AGAIN',
-      'Re-approve', ['room-a', 'workflow-approve', {workflow:'wf-1', digest:D}]],
-    [null, 'AWAITING YOUR APPROVAL', 'Approve', ['room-a', 'workflow-approve', {workflow:'wf-1', digest:D}]],
-  ];
-  for (const [approval, chip, control, call] of cases) {
-    const view = await mountView(workflow(approval));
-    try {
-      await view.render();
-      await openChatTab(view);
-      const card = view.ui.doc.querySelector('[data-workshop-workflow="wf-1"]');
-      assert.ok(card, 'the proposed workflow is the workflow card');
-      assert.match(text(card), /^C Codex proposed Here is the workflow Codex proposes: Release note\. 3 steps;/);
-      assert.match(text(card), /Conversation workshop\.conversation Build the note agent\.session Review workshop\.review/);
-      assert.equal(text(card.querySelector('[data-workshop-workflow-chip]')), chip);
-      const button = control.startsWith('button') ? card.querySelector(control) :
-        [...card.querySelectorAll('button')].find(b => text(b) === control);
-      assert.ok(button, chip + ': ' + control);
-      await view.ui.click(button);
-      assert.deepEqual(JSON.parse(JSON.stringify(view.calls.filter(c => c[0] === 'workshopWorkflow').map(c => c.slice(1)))), [call]);
-      assert.ok(!/Here is the workflow on this canvas/.test(text(view.ui.doc.body)), 'the canvas-chain card gives way to the proposed workflow');
-    } finally { await view.ui.close(); }
-  }
-});
-
-test('an agent current task is the Work it is assigned here, before the last card it spoke on', async () => {
-  const view = await mountView(fx => { fx.state.workshop.assignments = [{assignment:'as-1', work:fx.ids.W2, agent_session:fx.ids.codex}]; });
-  try {
-    await view.render();
-    assert.equal(view.ui.doc.querySelector('[aria-label="Workshop context"]'), null);
-  } finally { await view.ui.close(); }
-});
-
 test('server: the participant host comes from the runtime catalog; revoke is a workflow action of the one route', () => {
   const conversation = read('nodelang/existing_workshop_conversation.py');
   assert.match(conversation, /row\["host"\] = workshop_runtime_host\(row\.get\("runtime"\)\)/);

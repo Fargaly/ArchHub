@@ -1,3 +1,4 @@
+const {settingsNavigator} = require('./settings_navigation_helpers.cjs');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -51,7 +52,7 @@ async function mountStudio({currentGraph = 'graph-a'} = {}) {
   win.eval('window.__studioRoot=ReactDOM.createRoot(document.getElementById("root")); ReactDOM.flushSync(()=>window.__studioRoot.render(React.createElement(StudioLM)));');
   const flush = action => win.ReactDOM.flushSync(action);
   const settle = () => new Promise(resolve => win.setTimeout(resolve, 40));
-  const buttons = text => [...win.document.querySelectorAll('button')].filter(button => button.textContent.trim() === text);
+  const buttons = text => [...win.document.querySelectorAll('button')].filter(button => button.textContent.trim() === text || (text === 'Home' && button.hasAttribute('data-rail-home')));
   const clickText = text => {
     const button = buttons(text)[0];
     assert.ok(button, text + ' button exists');
@@ -68,13 +69,17 @@ test('rail panels, docs and settings expose labelled navigation controls', async
     const mine = ui.buttons('Mine')[0];
     if (mine) ui.flush(() => mine.click());
     await ui.settle();
-    for (const title of ['Chats', 'Nodes', 'Skills', 'Search']) {
-      const icon = ui.doc.querySelector(`[title="${title}"]`);
-      assert.ok(icon, title + ' rail icon exists');
+    for (const title of ['Chats', 'Library', 'Skills', 'Search']) {
+      if (title === 'Skills' || title === 'Search') ui.flush(() => ui.doc.querySelector('[data-rail-panel="Library"]').click());
+      const icon = title === 'Skills' || title === 'Search'
+        ? ui.doc.querySelector('[data-library-tab="' + title.toLowerCase() + '"]')
+        : ui.doc.querySelector(`[title="${title}"]`);
+      assert.ok(icon, title + ' navigation control exists');
       ui.flush(() => icon.click());
-      assert.ok(ui.buttons('Home').some(button => button.hasAttribute('data-home-button')), title + ' panel has labelled Home');
+      if (title === 'Library') assert.ok(ui.doc.querySelector('input[placeholder^="Search"]'), 'Library panel has search');
+      else assert.ok(ui.buttons('Home').some(button => button.hasAttribute('data-home-button')), title + ' panel has labelled Home');
     }
-    const docs = ui.doc.querySelector('[title="Documentation . Command+/"]') || ui.doc.querySelector('[title^="Documentation"]');
+    const docs = ui.doc.querySelector('[title="Docs"]') || ui.doc.querySelector('[title^="Documentation"]');
     assert.ok(docs, 'Docs rail icon exists');
     ui.flush(() => docs.click());
     assert.equal(ui.buttons('Home').filter(button => button.hasAttribute('data-home-button')).length, 1, 'Docs has exactly one labelled Home');
@@ -85,11 +90,11 @@ test('rail panels, docs and settings expose labelled navigation controls', async
     ui.flush(() => settings.click());
     await ui.settle();
     assert.ok(ui.buttons('Close').some(button => button.hasAttribute('data-close-button')), 'Hub settings section has labelled Close');
+    const nav = settingsNavigator({doc:ui.doc, flush:ui.flush, settle:ui.settle});
     for (const section of ['Account', 'Brain']) {
-      const tab = [...ui.doc.querySelectorAll('button')].find(button =>
-        button.textContent.trim() === section || button.textContent.trim().startsWith(section));
+      const tab = await nav.capability(section);
       assert.ok(tab, section + ' settings tab exists');
-      ui.flush(() => tab.click());
+      await nav.tab(section);
       assert.ok(ui.buttons('Close').some(button => button.hasAttribute('data-close-button')), section + ' settings section has labelled Close');
     }
   } finally { ui.close(); }
@@ -100,8 +105,9 @@ test('Home from an open rail panel clears the active graph and panel', async () 
   try {
     await ui.settle();
     assert.ok(ui.doc.querySelector('[data-ws-tab][aria-current="page"]'), 'session view opened');
-    const search = ui.doc.querySelector('[title="Search"]');
-    assert.ok(search, 'Search rail icon exists');
+    ui.flush(() => ui.doc.querySelector('[data-rail-panel="Library"]').click());
+    const search = ui.doc.querySelector('[data-library-tab="search"]');
+    assert.ok(search, 'Search Library tab exists');
     ui.flush(() => search.click());
     await ui.settle();
     assert.ok(ui.buttons('Home').some(button => button.hasAttribute('data-home-button')), 'Search panel Home exists');

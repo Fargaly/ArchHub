@@ -156,6 +156,33 @@ WORKSHOP_TOOLS = [
                      "required": ["work_root"], "additionalProperties": False}},
 ]
 WORKSHOP_TOOL_NAMES = frozenset(tool["name"] for tool in WORKSHOP_TOOLS)
+
+SESSION_TAIL_LIMIT = 40
+SESSION_TEXT_LIMIT = 4000
+SESSION_TITLE_LIMIT = 200
+SESSION_TOOLS = [
+    {"name": "list_sessions", "inputSchema": _NO_ARGS, "description": (
+        "List this ArchHub account's open/continued sessions on the private "
+        "instance. Identity is the OAuth account, not a machine.")},
+    {"name": "open_session", "description": (
+        "Open one session by id and return its transcript tail and state. "
+        "Another account's session id is refused."),
+     "inputSchema": {"type": "object", "properties": {
+         "id": _TEXT_ID,
+     }, "required": ["id"], "additionalProperties": False}},
+    {"name": "send_to_session", "description": (
+        "Ask in one existing session. This is Ask by default and never "
+        "auto-replays a prior failed send."),
+     "inputSchema": {"type": "object", "properties": {
+         "id": _TEXT_ID,
+         "text": {"type": "string", "minLength": 1, "maxLength": SESSION_TEXT_LIMIT},
+     }, "required": ["id", "text"], "additionalProperties": False}},
+    {"name": "new_session", "description": "Create a new ArchHub session for this account.",
+     "inputSchema": {"type": "object", "properties": {
+         "title": {"type": "string", "minLength": 1, "maxLength": SESSION_TITLE_LIMIT},
+     }, "required": ["title"], "additionalProperties": False}},
+]
+SESSION_TOOL_NAMES = frozenset(tool["name"] for tool in SESSION_TOOLS)
 WORKSHOP_METHODS = {
     "workshop.lens": "workshop_lens", "workshop.agents": "list_agents",
     "workshop.read": "read_messages", "workshop.message": "read_message",
@@ -242,6 +269,28 @@ def host_arguments(name: str, arguments: dict) -> dict:
     return {}
 
 
+def session_arguments(name: str, arguments: dict) -> dict:
+    """Only declared session parameters travel to the private instance."""
+    if name == "list_sessions":
+        return {}
+    if name == "open_session":
+        return {"id": _bounded_text(arguments, "id", 256)}
+    if name == "send_to_session":
+        return {"id": _bounded_text(arguments, "id", 256),
+                "text": _bounded_text(arguments, "text", SESSION_TEXT_LIMIT),
+                "mode": "ask"}
+    if name == "new_session":
+        return {"title": _bounded_text(arguments, "title", SESSION_TITLE_LIMIT),
+                "mode": "ask"}
+    raise KeyError(name)
+
+
+def session_method(name: str) -> str:
+    if name in SESSION_TOOL_NAMES:
+        return name
+    raise KeyError(name)
+
+
 def text_result(payload: object) -> dict:
     """One tool result in the content shape every MCP client reads."""
     return {
@@ -296,6 +345,13 @@ def call_tool(user: dict, replica, name: str, arguments: dict) -> dict:
     raise KeyError(name)
 
 
+def call_session_tool(user: dict, name: str, arguments: dict,
+                      session_call: Callable[[dict, str, dict], object] | None) -> dict:
+    if session_call is None:
+        raise RuntimeError("device_offline: ArchHub is not open and signed in, so sessions are unavailable")
+    return text_result(session_call(user, session_method(name), session_arguments(name, arguments)))
+
+
 def call_host_tool(user: dict, name: str, arguments: dict, *,
                    host_read, pushed_hosts) -> dict:
     """One founder read of his desktop: the published snapshot, or live from his app."""
@@ -336,6 +392,7 @@ def answer(
     host_read: Callable[[dict, str, dict], object] | None = None,
     pushed_hosts: Callable[[], dict] | None = None,
     workshop_call: Callable[[dict, dict, str, dict], object] | None = None,
+    session_call: Callable[[dict, str, dict], object] | None = None,
 ) -> tuple[int, bytes, str]:
     """Dispatch one JSON-RPC message. Returns (status, body, media type).
 
@@ -376,12 +433,15 @@ def answer(
             lister = resolve_user()
         except Exception:
             lister = None
-        founder = lister is not None and bool(is_founder(lister))
+        authenticated = lister is not None
+        founder = authenticated and bool(is_founder(lister))
         # The Workshop group: the founder's own OAuth client granted mcp:workshop.
         workshop = founder and workshop_client(lister) is not None
         return 200, sse_block(rpc_id, {"result": {
-            "tools": (TOOLS + HOST_TOOLS + (WORKSHOP_TOOLS if workshop else []))
-            if founder else TOOLS}}), sse
+            "tools": (
+                TOOLS + (SESSION_TOOLS if authenticated else []) +
+                (HOST_TOOLS + (WORKSHOP_TOOLS if workshop else []) if founder else [])
+            )}}), sse
     if method != "tools/call":
         return 200, sse_block(rpc_id, {
             "error": {"code": -32601, "message": "unsupported method"},
@@ -401,7 +461,9 @@ def answer(
         if isinstance(params.get("arguments"), dict) else {}
     )
     try:
-        if name in HOST_TOOL_NAMES:
+        if name in SESSION_TOOL_NAMES:
+            result = call_session_tool(user, name, arguments, session_call)
+        elif name in HOST_TOOL_NAMES:
             if not is_founder(user):
                 raise KeyError(name)  # another account is never told they exist
             result = call_host_tool(user, name, arguments,

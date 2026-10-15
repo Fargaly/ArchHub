@@ -1,3 +1,4 @@
+const {settingsNavigator} = require('./settings_navigation_helpers.cjs');
 /* Settings > Brain is the design's governance layer read from brain-model.jsx, filled with the real
    facts the brain holds; Settings > Team is the design layout with every value empty.
    The design bundle (archhub/project/studio-lm.jsx Settings 2411-2506, SettingsMemory 2519-2730,
@@ -29,6 +30,7 @@ test('brain-model.jsx is the one brain definition, registered once and carrying 
   // Design ArchHub App.html load order: brain-model.jsx, then the Workshop (its board, then studio-workshop.jsx), then studio-lm.jsx.
   assert.match(names, /'studio-account\.jsx',[\s\S]*'brain-model\.jsx',\s*'workshop-board\.jsx',\s*'studio-workshop\.jsx',\s*'studio-lm\.jsx'/, 'brain-model.jsx loads before studio-lm.jsx');
   assert.match(read('nodelang/studio/studio.html'), /'studio-account\.jsx',(?:'[a-z-]+\.jsx',)*'brain-model\.jsx','workshop-board\.jsx','studio-workshop\.jsx','studio-lm\.jsx'/);
+  assert.match(read('nodelang/studio/studio.html'), /manifest\.files\.filter\(file => !workshopSources\.has\(file\.source\)\)/, 'Workshop loads lazily while Brain retains its existing source ordering');
   assert.match(model, /const BRAIN_FACTS = \[\];/, 'the seeded facts stay in the design bundle');
   for (const name of ['BRAIN_STRATA', 'BRAIN_LAKES', 'BRAIN_GATES', 'BRAIN_KEYS', 'BRAIN_PATHS']) {
     assert.ok(model.includes(name), `brain-model.jsx exports ${name}`);
@@ -40,19 +42,13 @@ test('brain-model.jsx is the one brain definition, registered once and carrying 
   }
 });
 
-test('the Settings tab table matches the design: Brain on the memory tab, Team beside it', () => {
-  const settings = jsx.indexOf('const Settings = (');
-  const tabsStart = jsx.indexOf('  const tabs = [', settings);
-  const tabsEnd = jsx.indexOf('\n  ];', tabsStart);
-  const componentEnd = jsx.indexOf('// \u2500\u2500 Settings section header', tabsEnd);
-  assert.ok(settings > 0 && tabsStart > settings && tabsEnd > tabsStart && componentEnd > tabsEnd);
-  const tabs = jsx.slice(tabsStart, tabsEnd);
-  const rendered = jsx.slice(tabsEnd, componentEnd);
-  assert.match(tabs, /\['memory',\s*'Brain',\s*`\$\{\(window\.BRAIN_STRATA \|\| \[\]\)\.length\} strata \\u00b7 \$\{LM_MEMORY\.length/);
-  assert.match(tabs, /\['team',\s*'Team',\s*null\]/, 'the Team badge states nothing it cannot read');
-  assert.equal(/\['brain',/.test(tabs), false, 'there is one Brain tab, not a Memory tab beside an empty Brain tab');
-  assert.match(rendered, /\{tab === 'memory'\s+&& <SettingsMemory /);
-  assert.match(rendered, /\{tab === 'team'\s+&& <SettingsTeam account=\{account\} onAccount=\{\(\) => setTab\('account'\)\}\/>\}/);
+test('the Settings graph keeps Brain and Team as Settings-owned inspector targets', () => {
+  assert.match(jsx, /const SETTINGS54_GROUPS = \[/);
+  assert.match(jsx, /items:\['BABOOM', 'Models', 'Brain'\]/, 'Brain remains reachable from the AI group');
+  assert.match(jsx, /items:\['Account', 'Profile', 'Team'\]/, 'Team remains reachable from the Account group');
+  assert.match(jsx, /if \((?:compatTab|activeCapability) === 'Brain'\) return <SettingsMemory /, 'Brain behavior is still owned by Settings');
+  assert.match(jsx, /if \((?:compatTab|activeCapability) === 'Team'\) return <SettingsTeam account=\{account\}/, 'Team behavior is still owned by Settings');
+  assert.doesNotMatch(jsx, /const tabs = \[[\s\S]*\['brain'/, 'the retired 16-tab table is gone');
 });
 
 test('the shipped Settings dialog draws the brain strata with real facts and an empty Team', async () => {
@@ -79,15 +75,13 @@ test('the shipped Settings dialog draws the brain strata with real facts and an 
     const settings = win.document.querySelector('[title="Settings"]');
     assert.ok(settings, 'actual Studio Settings control exists');
     win.ReactDOM.flushSync(() => settings.click());
-    const anchor = [...win.document.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Theme');
-    assert.ok(anchor, 'actual Settings sidebar exists');
-    const sidebar = anchor.parentElement;
-    const tab = label => [...sidebar.children].filter(button => button.firstElementChild?.textContent === label);
+    const nav = settingsNavigator({doc:win.document, flush:action => win.ReactDOM.flushSync(action),
+      settle:async () => { for (let i = 0; i < 5; i += 1) await new Promise(resolve => win.setTimeout(resolve, 0)); }});
+    const panel = await nav.tab('Brain');
+    const tab = nav.capabilityButtons;
     assert.equal(tab('Memory').length, 0, 'no separate Memory tab');
     assert.equal(tab('Brain').length, 1, 'one Brain tab');
-    assert.equal(tab('Brain')[0].lastElementChild.textContent, '4 strata \u00b7 1 facts');
-    win.ReactDOM.flushSync(() => tab('Brain')[0].click());
-    const panel = sidebar.nextElementSibling;
+    assert.equal(tab('Brain')[0].textContent.trim(), 'Brain');
     for (const name of STRATA) assert.ok(panel.textContent.includes(name), `the Brain panel draws the ${name} stratum`);
     assert.ok(panel.textContent.includes('Real fact read from the brain.'), 'the real fact is filed under Instances');
     assert.ok(panel.textContent.includes('UNCLASSIFIED \u00b7 SEALED'), 'an unclassified real fact is sealed by default');
@@ -97,10 +91,9 @@ test('the shipped Settings dialog draws the brain strata with real facts and an 
       'no ornamental recovery-kit or rotation control');
     assert.ok([...panel.querySelectorAll('[role="status"]')].some(node => node.textContent.startsWith('No recovery kit or wrapped login key exists in this build.')),
       'the recovery kit is an absent state, never a sample key');
-    const team = tab('Team')[0];
-    assert.ok(team && !team.lastElementChild.textContent.includes('seat'), 'the Team badge names no firm or seats');
-    win.ReactDOM.flushSync(() => team.click());
-    const teamPanel = sidebar.nextElementSibling;
+    const team = await nav.capability('Team');
+    assert.ok(team && !team.textContent.includes('seat'), 'the Team badge names no firm or seats');
+    const teamPanel = await nav.tab('Team');
     assert.ok([...teamPanel.querySelectorAll('[role="status"]')].some(node => node.textContent.trim().startsWith(TEAM_STATUS)));
     const controls = [...teamPanel.querySelectorAll('button')];
     assert.deepEqual(controls.map(button => button.textContent), ['Sign in']);

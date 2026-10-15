@@ -10,6 +10,7 @@ application_server.
 """
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -67,7 +68,7 @@ HOME_DESIGN_TEXT = (
     "Graph-first AI workspace for AEC",
     '<a class="site-primary" href="%s">Download for Windows</a>' % INSTALLER,
     '<a class="site-secondary" href="/website/signin">Sign in</a>',
-    "bring your own key",
+    "bring your own provider",
     "no credit card",
     "<span>Windows</span>",
     "The three pillars",
@@ -132,6 +133,71 @@ def test_no_unproven_design_literal_survives(documents, path):
     document = documents[path]
     found = [pattern.pattern for pattern in FORBIDDEN if pattern.search(document)]
     assert found == []
+
+
+def test_public_website_never_promises_provider_keys(documents):
+    joined = "\n".join(documents.values())
+    for forbidden in (
+        "bring your own key",
+        "Provider keys",
+        "on your key",
+        "paste the credential",
+        "BYO",
+    ):
+        assert forbidden not in joined
+
+
+def test_public_docs_do_not_publish_stale_instruction_or_build_text(documents):
+    document = documents["/website/docs/composer-canvas"]
+    for forbidden in (
+        "Drag a node",
+        "Drag a parameter",
+        "Nudge a slider",
+        "Hover any wire",
+        "Search, then click a node",
+        "Click an output socket",
+        "Click a node to select",
+        "Click empty canvas",
+        "Press Run graph",
+        "current released build",
+    ):
+        assert forbidden not in document
+    assert "pinned verified build 20260916-2130-e733a13" in document
+
+
+def test_sealed_public_export_never_promises_provider_keys():
+    export = (Path(__file__).resolve().parents[1] / "public_site" / "site-export.json").read_text(
+        encoding="utf-8"
+    )
+    for forbidden in (
+        "bring your own key",
+        "Provider keys",
+        "on your key",
+        "paste the credential",
+        "BYO",
+    ):
+        assert forbidden not in export
+
+
+def test_sealed_public_export_do_not_publish_stale_instruction_or_build_text():
+    payload = json.loads((Path(__file__).resolve().parents[1] / "public_site" / "site-export.json").read_text(
+        encoding="utf-8"
+    ))
+    export = payload["routes"]["/website/docs/composer-canvas"]["html"]
+    for forbidden in (
+        "Drag a node",
+        "Drag a parameter",
+        "Nudge a slider",
+        "Hover any wire",
+        "Search, then click a node",
+        "Click an output socket",
+        "Click a node to select",
+        "Click empty canvas",
+        "Press Run graph",
+        "current released build",
+    ):
+        assert forbidden not in export
+    assert "pinned verified build 20260916-2130-e733a13" in export
 
 
 def test_the_home_draws_no_grand_map_domain_grid(application, documents):

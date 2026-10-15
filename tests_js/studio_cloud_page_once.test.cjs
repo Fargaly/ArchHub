@@ -1,3 +1,4 @@
+const {settingsNavigator} = require('./settings_navigation_helpers.cjs');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -65,9 +66,9 @@ async function openSettingsHub(studio) {
   assert.ok(settings, 'Studio Settings control exists');
   studio.win.ReactDOM.flushSync(() => settings.click());
   await studio.settle();
-  const theme = [...studio.doc.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Theme');
-  assert.ok(theme, 'Settings sidebar exists');
-  return theme.parentElement.nextElementSibling;
+  const nav = settingsNavigator({doc:studio.doc, flush:action => studio.win.ReactDOM.flushSync(action), settle:studio.settle});
+  const panel = await nav.tab('Hub');
+  return panel;
 }
 
 // Founder 2026-10-12: Cloud's page only restated sign-in, so an on Cloud opens Settings > Account
@@ -81,9 +82,11 @@ async function openCloudTool(studio) {
   await studio.settle(); await studio.settle();
   const page = studio.doc.querySelector('[data-tool-view="cloud"]');
   if (page) return {page};
-  const account = [...studio.doc.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Account');
-  assert.ok(account, 'Settings is open');
-  return {settings:account.parentElement.nextElementSibling, dialog:account.parentElement.parentElement};
+  const nav = settingsNavigator({doc:studio.doc, flush:action => studio.win.ReactDOM.flushSync(action), settle:studio.settle});
+  const panel = nav.shell.querySelector('aside:last-of-type > .ah-scroll');
+  assert.ok(panel, 'Settings is open');
+  // Observe the route the card chose; do not navigate an off Cloud away from Hub.
+  return {settings:panel, dialog:nav.shell};
 }
 
 test('an on Cloud opens Settings > Account, never a full-window Cloud page', async () => {
@@ -107,13 +110,18 @@ test('Cloud is not on the rail; Hub still opens the same Settings > Account', as
     const settings = studio.doc.querySelector('[title="Settings"]');
     studio.win.ReactDOM.flushSync(() => settings.click());
     await studio.settle(); await studio.settle();
+    const nav = settingsNavigator({doc:studio.doc, flush:action => studio.win.ReactDOM.flushSync(action), settle:studio.settle});
+    const hub = await nav.capability('Hub');
+    studio.win.ReactDOM.flushSync(() => hub.click());
+    await studio.settle();
     const hubCloud = studio.doc.querySelector('[data-tool-card="cloud"]');
     assert.ok(hubCloud, 'Hub keeps the Cloud card');
     studio.win.ReactDOM.flushSync(() => hubCloud.click());
     await studio.settle(); await studio.settle();
-    const account = [...studio.doc.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Account');
+    const account = await nav.capability('Account');
     assert.ok(account, 'Settings opened');
-    assert.ok(account.parentElement.nextElementSibling.textContent.includes('Continue with Google'), 'on its Account tab');
+    const accountPanel = await nav.tab('Account');
+    assert.ok(accountPanel.textContent.includes('Continue with Google'), 'on its Account tab');
   } finally {
     studio.close();
   }

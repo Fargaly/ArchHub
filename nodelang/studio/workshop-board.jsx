@@ -35,6 +35,16 @@ const liveAgentIds = agents => {
 };
 const routeButtons = task => Array.isArray(task.decision) && task.decision.length ? task.decision : [];
 const decisionLabel = choice => /^reject$/i.test(choice?.label || '') ? 'Decline' : (choice?.label || choice?.action);
+const approvalChoice = choice => /approve|decline|reject|deny/i.test([choice?.action,choice?.label].filter(Boolean).join(' '));
+const choicesHaveApproval = task => routeButtons(task).some(approvalChoice);
+const SharedTaskApproval = ({task,onDecide}) => {
+  const choices = routeButtons(task);
+  const approve = choices.find(choice => /approve/i.test([choice.action,choice.label].filter(Boolean).join(' ')));
+  const decline = choices.find(choice => /decline|reject|deny/i.test([choice.action,choice.label].filter(Boolean).join(' ')));
+  return h(window.ARCHHUB_APPROVAL_CARD,{approval:{...task,id:task.work,state:'needs-user',rows:task.changes || []},surface:'board',approveLabel:'Approve',
+    canApprove:!!onDecide && !!approve && !approve.disabled,canDecline:!!onDecide && !!decline && !decline.disabled,
+    onApprove:approve && (() => onDecide(task.work,approve)),onDecline:decline && (() => onDecide(task.work,decline))});
+};
 
 const labelStyle = {fontFamily:W.mono, fontSize:14, letterSpacing:'0.12em', color:W.inkMuted};
 const chipStyle = {fontFamily:W.mono, fontSize:13, letterSpacing:'0.02em', paddingTop:3, paddingBottom:3,
@@ -61,9 +71,12 @@ const BoardCard = ({task, onSelect, onDecide}) => h('article', {
   ]),
   routeButtons(task).length || approvalBlocked(task)
     ? h('div', {key:'actions', style:{display:'flex', gap:W.sp?.sm || 8, flexWrap:'wrap', alignItems:'center'}},
-      routeButtons(task).length ? routeButtons(task).map((choice, index) =>
-        h('button', {key:choice.label || choice.action, type:'button', style:buttonStyle(index === 0),
-          onClick:event => { stop(event); onDecide && onDecide(task.work, choice); }}, decisionLabel(choice)))
+      routeButtons(task).length ? [
+        choicesHaveApproval(task) ? h('div',{key:'approval',onClick:stop},h(SharedTaskApproval,{task,onDecide})) : null,
+        ...routeButtons(task).filter(choice => !approvalChoice(choice)).map((choice,index) =>
+          h('button',{key:choice.label || choice.action,type:'button',style:buttonStyle(index === 0),
+            onClick:event => {stop(event);onDecide && onDecide(task.work,choice);}},decisionLabel(choice))),
+      ]
         : [
           h('span', {key:'waits', style:{fontSize:13, color:W.inkSoft}}, 'waits for you'),
           h('button', {key:'review', type:'button', style:buttonStyle(true),
@@ -72,26 +85,7 @@ const BoardCard = ({task, onSelect, onDecide}) => h('article', {
     : null,
 ]);
 
-const boardLane = (task, live, archiveDays) => {
-  if (['archived', 'cancelled'].includes(task.state)) return 'archived';
-  if (task.state === 'done') return 'done';
-  if (['review', 'submitted'].includes(task.state)) return 'review';
-  const hasLiveAgent = !!task.owner && live.has(task.owner);
-  if ((['run', 'running', 'executing', 'approving'].includes(task.state) || toolBlocked(task) || task.approving) && hasLiveAgent) return 'wip';
-  return 'planned';
-};
-
-const groupTasks = (tasks, agents, archiveDays = 20) => {
-  const live = liveAgentIds(agents);
-  const grouped = Object.fromEntries(laneSpec.map(([id]) => [id, []]));
-  for (const task of tasks || []) {
-    const current = {...task, boardLane:boardLane(task, live, archiveDays)};
-    const spec = laneSpec.find(([, , admits]) => admits(current)) || laneSpec[0];
-    grouped[spec[0]].push(current);
-  }
-  Object.values(grouped).forEach(rows => rows.sort((a, b) => (approvalBlocked(b) - approvalBlocked(a)) || (toolBlocked(b) - toolBlocked(a))));
-  return grouped;
-};
+const groupTasks = (tasks,agents,archiveDays) => window.ARCHHUB_WORKSHOP_BOARD.groupTasks(tasks,agents,archiveDays);
 
 const WorkshopBoardView = ({tasks, agents, selected, onSelect, onDecide, archiveDays = 20, onArchiveDays}) => {
   const grouped = groupTasks(tasks, agents, archiveDays);
@@ -199,9 +193,12 @@ const WorkshopTaskPage = ({task, agent, onDecide, details}) => {
       h('h3', {key:'h', style:{...labelStyle, marginTop:0}}, 'THREAD'),
       ...(thread.length ? thread : [{text:task.lead || task.title, from:task.owner, root:'summary'}]).slice(0, 4).map((row, index) =>
         h('p', {key:row.root || index, style:{fontSize:12.5, lineHeight:1.6, color:W.inkSoft}}, row.text || row.body || task.title)),
-      approvalBlocked(task) && task.decision ? h('div', {key:'actions', style:{display:'flex', gap:W.sp?.sm || 8}}, task.decision.map((choice, index) =>
-        h('button', {key:choice.label || choice.action, type:'button', style:buttonStyle(index === 0),
-          onClick:() => onDecide && onDecide(task.work, choice)}, decisionLabel(choice)))) : null,
+      approvalBlocked(task) && task.decision ? h('div', {key:'actions', style:{display:'grid',gap:W.sp?.sm || 8}},[
+        choicesHaveApproval(task) ? h(SharedTaskApproval,{key:'approval',task,onDecide}) : null,
+        ...task.decision.filter(choice => !approvalChoice(choice)).map((choice,index) =>
+          h('button',{key:choice.label || choice.action,type:'button',style:buttonStyle(index === 0),
+            onClick:() => onDecide && onDecide(task.work,choice)},decisionLabel(choice))),
+      ]) : null,
     ]),
     details ? h('article', {key:'details', style:{gridColumn:'1 / -1', background:W.bgPanel, border:`1px solid ${W.line}`,
       borderRadius:W.rad?.lg || 8, padding:W.sp?.lg || 16}}, [

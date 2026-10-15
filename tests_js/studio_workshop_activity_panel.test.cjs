@@ -69,8 +69,10 @@ async function mountModule() {
   const {createRoot} = require('react-dom/client');
   const {transformSync} = require('esbuild');
   const win = dom.window;
-  const context = vm.createContext({React, window:win, document:win.document, setTimeout, clearTimeout, console, URL, Blob, TextEncoder});
+  const context = vm.createContext({React, window:win, document:win.document, setTimeout, clearTimeout, console, CustomEvent:win.CustomEvent, URL, Blob, TextEncoder});
   vm.runInContext(read('nodelang/studio/tokens.jsx'), context);
+  vm.runInContext(transformSync(read('nodelang/studio/workshop-board.jsx'), {loader:'jsx'}).code, context);
+  vm.runInContext(transformSync(read('nodelang/studio/shared-data.jsx'), {loader:'jsx'}).code, context);
   vm.runInContext(transformSync(workshop(), {loader:'jsx'}).code, context);
   const container = win.document.getElementById('root');
   const reactRoot = createRoot(container);
@@ -115,6 +117,7 @@ test('gap 10: the default feed shows the newest tool records the server reads in
   try {
     await view.render();
     assert.equal(view.ui.doc.querySelector('[aria-label="Workshop context"]'), null);
+    assert.ok(view.ui.doc.querySelector('[aria-label="Workshop conversation"]'));
   } finally { await view.ui.close(); }
 });
 
@@ -137,6 +140,8 @@ test('gap 10: the tool feed pages its own records; a stray activity field is not
   try {
     await view.render();
     assert.equal(view.ui.doc.querySelector('[aria-label="Workshop context"]'), null);
+    assert.match(text(view.ui.doc.querySelector('[data-workshop-message="m-tool"]')), /Paged tool record/);
+    assert.doesNotMatch(text(view.ui.doc.querySelector('[aria-label="Workshop conversation"]')), /Not from this feed/);
   } finally { await view.ui.close(); }
 });
 
@@ -146,9 +151,12 @@ const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[
 test('gap 10: an emoji-bearing tool record is cut on whole characters in the ACTIVITY line', async () => {
   const face = String.fromCodePoint(0x1f600);
   const body = 'Session Link started relaying this message to ' + face.repeat(40) + ' acceptance-claude.';
-  const view = await mountView(fx => { fx.state.workshop.activity = [tool(1, body)]; });
+  const view = await mountView(fx => { fx.state.workshop.activity = [tool(1, 'Off-page tool record')]; fx.state.workshop.messages.push({...tool(1, body), category:'tool'}); });
   try {
     await view.render();
     assert.equal(view.ui.doc.querySelector('[aria-label="Workshop context"]'), null);
+    const row = view.ui.doc.querySelector('[data-workshop-message="t1"]');
+    assert.ok(row); assert.ok(text(row).includes(face.repeat(40))); assert.equal(LONE_SURROGATE.test(text(row)), false);
+    assert.doesNotMatch(text(view.ui.doc.querySelector('[aria-label="Workshop conversation"]')), /Off-page tool record/);
   } finally { await view.ui.close(); }
 });

@@ -1,3 +1,4 @@
+const {settingsNavigator} = require('./settings_navigation_helpers.cjs');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -140,8 +141,8 @@ test('Settings Models generation values persist through the model owner and reac
     await studio.settle();
     studio.flush(() => studio.doc.querySelector('[title="Settings"]').click());
     await studio.settle();
-    studio.flush(() => [...studio.doc.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Models').click());
-    await studio.settle();
+    const nav = settingsNavigator({doc:studio.doc, flush:studio.flush, settle:studio.settle});
+    await nav.tab('Models');
     const temperature = studio.doc.querySelector('input[type="range"][aria-label="temperature"]');
     assert.ok(temperature, 'Settings > Models owns the temperature control');
     studio.flush(() => {
@@ -175,8 +176,8 @@ test('Chat has no SYSTEM PROMPT card; Settings Profile owns the Standing instruc
     assert.equal(studio.exact('SYSTEM PROMPT').length, 0, 'Chat does not render the old decorative SYSTEM PROMPT card');
     studio.flush(() => studio.doc.querySelector('[title="Settings"]').click());
     await studio.settle();
-    studio.flush(() => [...studio.doc.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Profile').click());
-    await studio.settle();
+    const nav = settingsNavigator({doc:studio.doc, flush:studio.flush, settle:studio.settle});
+    await nav.tab('Profile');
     assert.ok(studio.exact('STANDING INSTRUCTION').length > 0, 'Settings > Profile shows the Standing instruction editor');
     assert.ok([...studio.doc.querySelectorAll('button')].some(button => button.textContent.trim() === 'edit raw prompt'),
       'Profile editor writes the standing instruction brain fact');
@@ -205,13 +206,14 @@ test('Settings System follows the old systemAllowed gate, opens in place, and re
   } finally { studio.close(); }
 });
 
-test('Settings hides the System tab when the old systemAllowed gate is false', async () => {
+test('Settings hides the legacy System graph action when the old systemAllowed gate is false', async () => {
   const studio = await mountStudio({home:true, systemAllowed:false});
   try {
     await studio.settle();
     studio.flush(() => studio.doc.querySelector('[title="Settings"]').click());
     await studio.settle();
-    const system = [...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('System'));
-    assert.equal(!!system, false, 'System is not shown when the founder-only system gate is false');
+    const compat = [...studio.doc.querySelectorAll('button')]
+      .filter(node => node.firstElementChild?.textContent === 'System');
+    assert.equal(compat.length, 0, 'the old System tab action is not shown when the founder-only system gate is false');
   } finally { studio.close(); }
 });

@@ -26,7 +26,7 @@ function canvasSlice() {
   const start = lmSource.indexOf('const SOCKET_TOP =');
   const end = lmSource.indexOf('const NodeStateDot =', start);
   assert.ok(start > 0 && end > start);
-  return lmSource.slice(start, end);
+  return lmSource.slice(start, end) + require('./workshop72_node_helpers.cjs').nodePreviewSource(lmSource);
 }
 
 async function mountGroupCanvas() {

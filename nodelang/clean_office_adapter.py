@@ -12,6 +12,9 @@ decide to open Excel because someone pressed a button.
 """
 from __future__ import annotations
 
+import re
+import zipfile
+import xml.etree.ElementTree as ET
 from typing import Mapping
 
 
@@ -39,6 +42,7 @@ _OPEN_READS: dict[str, str] = {
 # fails.
 _INSIDE_READS: dict[str, tuple[str, str, str]] = {
     "excel.list_worksheets": ("excel", "workbook", "worksheets"),
+    "excel.read_range": ("excel", "workbook", "range"),
     "powerpoint.list_slides": ("powerpoint", "presentation", "slides"),
     "word.list_paragraphs": ("word", "document", "paragraphs"),
 }
@@ -64,6 +68,69 @@ def _text(value: object) -> str:
         return str(value)
     except Exception:  # noqa: BLE001
         return ""
+
+
+def _a1_cell(cell: str) -> tuple[int, int]:
+    match = re.fullmatch(r"([A-Za-z]+)([1-9][0-9]*)", cell.strip())
+    if not match:
+        raise OfficeUnreachable("Excel range must use A1 notation")
+    col = 0
+    for ch in match.group(1).upper():
+        col = col * 26 + ord(ch) - 64
+    return int(match.group(2)), col
+
+
+def _range_bounds(value: object) -> tuple[int, int, int, int]:
+    text = str(value or "").strip()
+    if not text:
+        raise OfficeUnreachable("set Excel range")
+    parts = text.split(":", 1)
+    start = _a1_cell(parts[0])
+    end = _a1_cell(parts[-1])
+    r1, c1 = min(start[0], end[0]), min(start[1], end[1])
+    r2, c2 = max(start[0], end[0]), max(start[1], end[1])
+    return r1, c1, r2, c2
+
+
+def _read_xlsx_range(path: object, sheet: object, wanted_range: object) -> dict[str, object]:
+    file = str(path or "").strip()
+    if not file:
+        raise OfficeUnreachable("set Excel fixture file")
+    if str(file).startswith(("\\\\", "//")):
+        raise OfficeUnreachable("Excel fixture file must be local")
+    r1, c1, r2, c2 = _range_bounds(wanted_range)
+    wanted_sheet = str(sheet or "Sheet1").strip() or "Sheet1"
+    cells: dict[tuple[int, int], str] = {}
+    with zipfile.ZipFile(file) as zf:
+        workbook = ET.fromstring(zf.read("xl/workbook.xml"))
+        ns = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+              "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships"}
+        sheet_id = None
+        for node in workbook.findall(".//m:sheet", ns):
+            if node.attrib.get("name") == wanted_sheet:
+                sheet_id = node.attrib.get("{%s}id" % ns["r"])
+                break
+        if sheet_id is None:
+            raise OfficeUnreachable("worksheet not found: %s" % wanted_sheet)
+        rels = ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+        target = None
+        for rel in rels:
+            if rel.attrib.get("Id") == sheet_id:
+                target = rel.attrib.get("Target")
+                break
+        if not target:
+            raise OfficeUnreachable("worksheet relationship missing")
+        worksheet = ET.fromstring(zf.read("xl/" + target.lstrip("/")))
+        for cell in worksheet.findall(".//m:c", ns):
+            ref = cell.attrib.get("r", "")
+            try:
+                row, col = _a1_cell(ref)
+            except OfficeUnreachable:
+                continue
+            inline = cell.find(".//m:t", ns)
+            cells[(row, col)] = "" if inline is None or inline.text is None else inline.text
+    rows = [[cells.get((row, col), "") for col in range(c1, c2 + 1)] for row in range(r1, r2 + 1)]
+    return {"host": "excel", "workbook": file, "sheet": wanted_sheet, "range": str(wanted_range), "rows": rows, "count": len(rows)}
 
 
 def _active_item(application, collection_name: str, wanted: str, noun: str):
@@ -133,6 +200,9 @@ def _rows_inside(host: str, kind: str, item) -> list[dict]:
 
 def invoke(op_id: str, arguments: Mapping[str, object]) -> dict:
     """Carry out one declared read against an already-open application."""
+    if op_id == "excel.read_range":
+        return _read_xlsx_range(arguments.get("file"), arguments.get("sheet"), arguments.get("range"))
+
     host = _OPEN_READS.get(op_id)
     if host is not None:
         prog_id, collection_name, noun = _HOSTS[host]

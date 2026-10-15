@@ -61,10 +61,11 @@ async function mountModule() {
   const {createRoot} = require('react-dom/client');
   const {transformSync} = require('esbuild');
   const win = dom.window;
-  const context = vm.createContext({React, window:win, document:win.document, setTimeout, clearTimeout, console, URL, Blob, TextEncoder,
+  const context = vm.createContext({React, window:win, document:win.document, setTimeout, clearTimeout, console, CustomEvent:win.CustomEvent, URL, Blob, TextEncoder,
     AbortController:win.AbortController, fetch:(...args) => win.fetch(...args)});
   vm.runInContext(read('nodelang/studio/tokens.jsx'), context);
   vm.runInContext(transformSync(read('nodelang/studio/workshop-board.jsx'), {loader:'jsx'}).code, context);
+  vm.runInContext(transformSync(read('nodelang/studio/shared-data.jsx'), {loader:'jsx'}).code, context);
   vm.runInContext(transformSync(read('nodelang/studio/studio-workshop.jsx'), {loader:'jsx'}).code, context);
   const reactRoot = createRoot(win.document.getElementById('root'));
   const act = async fn => { await React.act(async () => { await fn(); }); };
@@ -73,27 +74,14 @@ async function mountModule() {
     close:async () => { await act(() => reactRoot.unmount()); win.close(); global.window = oldWindow; global.document = oldDocument; delete global.IS_REACT_ACT_ENVIRONMENT; }};
 }
 
-test('Workshop plan turn uses sans copy and exposes disabled Save as skill with reason', async () => {
-  const fx = fixture();
-  const ui = await mountModule();
-  try {
-    ui.win.ARCHHUB_EXISTING_WORKSHOP = fx.authority;
-    await ui.render('WorkshopView', {state:fx.state, descriptor:fx.state.workshops[0], target:'',
-      setTarget:() => {}, setMode:() => {}, setFocusId:() => {}, onLeave:() => {},
-      sel:{agent:null, task:null}, setSel:() => {}});
-    await ui.act(async () => {});
 
-    const plan = ui.doc.querySelector('[data-workshop-plan-copy]');
-    assert.ok(plan, 'plan copy is rendered with a stable selector');
-    assert.equal(plan.style.fontFamily, '"Inter", system-ui, sans-serif');
-    assert.match(text(plan), /Here(?:'|’)s the plan: read doors, place tags, rerun schedule\./);
-
-    const task = ui.doc.querySelector('[data-workshop-task]');
-    const save = ui.doc.querySelector('[data-workshop-save-skill]');
-    assert.equal(save, null, 'Save as skill button is absent without a route');
-    assert.match(text(task), /After it runs: "Save as skill" keeps this as a graph you can run again from Studio or Player\./);
-    assert.deepEqual([...task.querySelectorAll('button')].map(button => button.textContent.trim()), ['Approve', 'Open as graph']);
-  } finally {
-    await ui.close();
-  }
+test('Workshop lifecycle plan enters the sans Run card and the inline decision has only Approve and Decline',async()=>{
+  const fx=fixture();const ui=await mountModule();
+  try{ui.win.ARCHHUB_EXISTING_WORKSHOP=fx.authority;await ui.render('WorkshopView',{state:fx.state,descriptor:fx.state.workshops[0],target:'',setTarget:()=>{},setMode:()=>{},setFocusId:()=>{},sel:{agent:null,task:null},setSel:()=>{}});
+    assert.equal(ui.doc.querySelector('[data-workshop-message="m2"]'),null,'lifecycle text is not an agent reply');
+    const plan=ui.doc.querySelector('[data-workshop-plan]');assert.ok(plan);assert.match(text(plan),/Door tagging plan/);
+    assert.equal([...plan.querySelectorAll('*')].some(el=>/mono/i.test(el.style.fontFamily||'')),false);
+    assert.equal(ui.doc.querySelector('[data-workshop-save-skill]'),null);assert.doesNotMatch(text(ui.doc.body),/After it runs/);
+    assert.deepEqual([...ui.doc.querySelectorAll('[data-workshop-approval-card] button')].map(text),['Approve','Decline']);
+  }finally{await ui.close();}
 });

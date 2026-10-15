@@ -63,8 +63,10 @@ test('the account holds no quota or tier of its own: the graph answers, with no 
   const exported = lines('studio-account.jsx').find(line => line.startsWith('Object.assign(window,'));
   assert.ok(exported, 'studio-account.jsx no longer exports its surfaces to window.');
   assert.equal(exported.includes('AC_PLANS'), false, 'AC_PLANS is still exported to window.');
-  const tab = lines('studio-lm.jsx').find(line => line.includes("['account',"));
-  assert.ok(tab && /graphTier/.test(tab), `The Account tab badge is not the graph tier: ${tab}`);
+  const studio = source.get('studio-lm.jsx');
+  assert.match(studio, /if \((?:compatTab|activeCapability) === 'Account'\) return <SettingsAccount account=\{account\}/,
+    'Account behavior remains owned by the graph-backed account surface.');
+  assert.doesNotMatch(studio, /Account tab badge|quota|meter prose/i);
 });
 
 test('the Landing survives without its price strip; the pricing dialog is gone', () => {

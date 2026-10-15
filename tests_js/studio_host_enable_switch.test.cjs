@@ -30,7 +30,13 @@ function extractFunction(source, name) {
 
 function extractSettings(source) {
   return [
+    extractFunction(source, 'hostRunningState'),
+    extractFunction(source, 'isOfficeHost'),
+    extractFunction(source, 'hostConnectorRows'),
+    extractFunction(source, 'hostTally'),
     extractFunction(source, 'HostEnableSwitch'),
+    extractFunction(source, 'hostPanelStateWord'),
+    extractFunction(source, 'hostPanelStateTone'),
     extractFunction(source, 'SettingsHosts'),
   ].join('\n');
 }
@@ -73,6 +79,7 @@ function loadSettingsHosts(overrides = {}) {
     toolHubSnapshot: null,
     toolHubSnapshotSignature: '',
     _objectSpread: (target, ...sources) => Object.assign(target, ...sources),
+    _toConsumableArray: value => Array.from(value),
     LM_HOSTS: [{id: 'revit', name: 'Revit', enabled: true}],
     window: global.window,
     ...overrides,
@@ -83,7 +90,7 @@ function loadSettingsHosts(overrides = {}) {
   };
 }
 
-async function mountSettings(fetchImpl, hosts) {
+async function mountSettings(fetchImpl, hosts, overrides = {}) {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {url: 'http://127.0.0.1/'});
   global.window = dom.window;
   global.document = dom.window.document;
@@ -92,7 +99,7 @@ async function mountSettings(fetchImpl, hosts) {
   window.ARCHHUB_LIVE = {connectors: hosts};
   window.ARCHHUB_LOAD_HOSTS = async () => ({hosts: window.ARCHHUB_LIVE.connectors, connectors: window.ARCHHUB_LIVE.connectors});
   window.fetch = fetchImpl;
-  const loaded = loadSettingsHosts({LM_HOSTS: hosts});
+  const loaded = loadSettingsHosts({LM_HOSTS: hosts, ...overrides});
   const root = ReactDOMClient.createRoot(document.getElementById('root'));
   await React.act(async () => {
     root.render(React.createElement(loaded.Component));
@@ -144,7 +151,50 @@ test('Settings Connectors switch posts the toggle and re-reads host/tool state',
   assert.equal(hosts[1].enabled, true);
 });
 
-test('Settings Connectors renders unknown authority state as neutral and disabled', async () => {
+test('Settings Connectors Office aggregate is display-only and child switches keep owner state separate', async () => {
+  const calls = [];
+  const hosts = [
+    {id: 'excel', name: 'Excel', state: 'running', detail: 'workbook open', enabled: true, enabled_state: 'confirmed'},
+    {id: 'word', name: 'Word', state: 'running', detail: 'document open', enabled: true, enabled_state: 'confirmed'},
+    {id: 'powerpoint', name: 'PowerPoint', state: 'running', detail: 'deck open', enabled: true, enabled_state: 'confirmed'},
+    {id: 'revit', name: 'Revit', state: 'connected', detail: 'fake session', enabled: true, enabled_state: 'confirmed'},
+  ];
+  await mountSettings(async (url, options = {}) => {
+    calls.push(String(url));
+    if (String(url) === '/api/universal/host-enabled') {
+      const body = JSON.parse(options.body);
+      assert.deepEqual(body, {host_id: 'word', enabled: false});
+      return {ok: true, json: async () => ({ok: true, host: {id: 'word', name: 'Word', enabled: false, enabled_state: 'confirmed'}})};
+    }
+    if (String(url) === '/tools') {
+      return {ok: true, json: async () => ({ok: true, tools: [{id: 'connectors', hosts}]})};
+    }
+    return {ok: true, json: async () => ({ok: true, items: []})};
+  }, hosts);
+  const aggregate = [...document.querySelectorAll('[data-connector-row]')]
+    .find(row => row.textContent.includes('Excel') && row.textContent.includes('PowerPoint') && !row.hasAttribute('data-office-child'));
+  assert.ok(aggregate, 'Office aggregate row is present');
+  assert.equal(aggregate.querySelector('[role="switch"]'), null, 'Office aggregate has no switch');
+  assert.match(aggregate.textContent, /3 of 3 on/);
+  const childRows = [...document.querySelectorAll('[data-office-child]')];
+  assert.deepEqual(childRows.map(row => row.querySelector('[role="switch"]').getAttribute('aria-label').match(/^Turn ([^ ]+)/)[1]),
+    ['Excel', 'Word', 'PowerPoint']);
+  const wordSwitch = childRows[1].querySelector('[role="switch"]');
+  await React.act(async () => {
+    wordSwitch.click();
+    await new Promise(resolve => setTimeout(resolve, 80));
+  });
+  assert.deepEqual(calls.slice(0, 2), ['/api/universal/host-enabled', '/tools']);
+  assert.equal(hosts.find(host => host.id === 'word').enabled, false);
+  assert.equal(hosts.find(host => host.id === 'excel').enabled, true);
+  assert.equal(hosts.find(host => host.id === 'powerpoint').enabled, true);
+  assert.equal(hosts.find(host => host.id === 'revit').enabled, true);
+  assert.equal(childRows[1].querySelector('[role="switch"]').getAttribute('aria-checked'), 'false');
+  assert.equal(document.querySelector('[data-office-child] [aria-label^="Turn Excel"]').getAttribute('aria-checked'), 'true');
+  assert.match(aggregate.textContent, /2 of 3 on/);
+});
+
+test('Settings Connectors renders in-flight unknown authority state as checking and disabled', async () => {
   const reason = "Can't change this right now: ArchHub's graph service is unavailable.";
   const calls = [];
   const hosts = [
@@ -154,19 +204,71 @@ test('Settings Connectors renders unknown authority state as neutral and disable
   await mountSettings(async url => {
     calls.push(String(url));
     return {ok: true, json: async () => ({ok: true})};
-  }, hosts);
+  }, hosts, {useLiveCatalogue: () => ({loading: true, error: '', retry() {}})});
   const rows = [...document.querySelectorAll('[data-connector-row]:not([data-not-built])')];
   const switches = [...document.querySelectorAll('[role="switch"]')];
   assert.equal(rows.length, 2);
   assert.equal(switches.length, 2);
   assert.equal(switches.filter(sw => sw.disabled).length, 2);
   assert.deepEqual(switches.map(sw => sw.getAttribute('aria-checked')), ['false', 'false']);
-  assert.match(document.body.textContent, /ArchHub's graph service is unavailable\./);
+  assert.match(document.body.textContent, /Checking…/);
+  assert.doesNotMatch(document.body.textContent, /ArchHub's graph service is unavailable\./);
+  assert.doesNotMatch(document.body.textContent, /turned off in Settings/);
   await React.act(async () => {
     switches[0].click();
     await new Promise(resolve => setTimeout(resolve, 20));
   });
   assert.deepEqual(calls, []);
+});
+
+test('Settings Connectors renders settled unknown authority failure with reason and Retry', async () => {
+  const reason = "Can't change this right now: ArchHub's graph service is unavailable.";
+  const calls = [];
+  const hosts = [
+    {id: 'revit', name: 'Revit', state: 'connected', detail: 'fake session', enabled: false, enabled_state: 'unknown', enable_disabled_reason: reason},
+  ];
+  const mounted = await mountSettings(async url => {
+    calls.push(String(url));
+    return {ok: true, json: async () => ({ok: true, tools: []})};
+  }, hosts);
+  const sw = document.querySelector('[role="switch"]');
+  assert.equal(sw.disabled, true);
+  assert.match(sw.getAttribute('aria-label'), /graph service is unavailable/);
+  assert.match(sw.getAttribute('title'), /graph service is unavailable/);
+  assert.doesNotMatch(document.body.textContent, /Checking…/);
+  assert.match(document.body.textContent, /Unavailable\./);
+  assert.match(document.body.textContent, /ArchHub's graph service is unavailable\./);
+  const retry = [...document.querySelectorAll('button')].find(button => button.textContent === 'Retry');
+  assert.ok(retry, 'settled failure offers Retry');
+  await React.act(async () => {
+    retry.click();
+    await new Promise(resolve => setTimeout(resolve, 20));
+  });
+  assert.deepEqual(calls, ['/tools']);
+  assert.equal(mounted.context.loadCatalogueCalls, 1);
+});
+
+test('Settings Connectors renders settled unknown authority failure with fallback reason and Retry', async () => {
+  const calls = [];
+  const hosts = [
+    {id: 'revit', name: 'Revit', state: 'connected', detail: 'fake session', enabled_state: 'unknown'},
+  ];
+  await mountSettings(async url => {
+    calls.push(String(url));
+    return {ok: true, json: async () => ({ok: true, tools: []})};
+  }, hosts);
+  const sw = document.querySelector('[role="switch"]');
+  assert.equal(sw.disabled, true);
+  assert.match(sw.getAttribute('aria-label'), /Could not read this host's state\./);
+  assert.doesNotMatch(document.body.textContent, /Checking…/);
+  assert.match(document.body.textContent, /Unavailable\. Could not read this host's state\./);
+  const retry = [...document.querySelectorAll('button')].find(button => button.textContent === 'Retry');
+  assert.ok(retry, 'settled failure without backend reason offers Retry');
+  await React.act(async () => {
+    retry.click();
+    await new Promise(resolve => setTimeout(resolve, 20));
+  });
+  assert.deepEqual(calls, ['/tools']);
 });
 
 test('Settings Connectors refused mutation leaves the displayed state unchanged', async () => {

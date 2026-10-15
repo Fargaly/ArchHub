@@ -5,7 +5,9 @@ import re
 import queue
 import threading
 import time
+import weakref
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
 
 from .cell_protocols import compose_relation_cells, read_relation
 from .unified_authority import (
@@ -22,7 +24,27 @@ OWNER_UNAVAILABLE_REASON = "Can't change this right now: ArchHub's graph service
 OWNER_TIMED_OUT_REASON = "Can't change this right now: ArchHub's graph service timed out."
 HOST_ENABLE_OWNER_DEADLINE_SECONDS = 1.5
 _HOST_ENABLE_CACHE_LOCK = threading.Lock()
-_HOST_ENABLE_CACHE: dict[int, dict[str, dict[str, object]]] = {}
+
+
+@dataclass
+class _OwnerEnabledReads:
+    confirmed: dict[str, dict[str, object]] = field(default_factory=dict)
+
+
+_HOST_ENABLE_CACHE: weakref.WeakKeyDictionary[object, _OwnerEnabledReads] = weakref.WeakKeyDictionary()
+
+
+def _owner_cache_key(authority):
+    try:
+        weakref.ref(authority)
+        return authority
+    except TypeError:
+        try:
+            store = authority.store
+            weakref.ref(store)
+            return store
+        except Exception:  # noqa: BLE001 - unavailable owners cannot hold a cache key
+            return None
 
 
 def _part(value: str) -> str:
@@ -200,15 +222,22 @@ def _read_enabled_states(authority, host_ids: Iterable[str],
 
 
 def _cached_state(authority, host_id: str) -> dict[str, object] | None:
+    owner_key = _owner_cache_key(authority)
+    if owner_key is None:
+        return None
     with _HOST_ENABLE_CACHE_LOCK:
-        value = _HOST_ENABLE_CACHE.get(id(authority), {}).get(canonical_host_id(host_id))
+        owner = _HOST_ENABLE_CACHE.get(owner_key)
+        value = owner.confirmed.get(canonical_host_id(host_id)) if owner else None
         return dict(value) if value else None
 
 
 def _remember_states(authority, states: Mapping[str, bool]) -> None:
     now = time.time()
+    owner_key = _owner_cache_key(authority)
+    if owner_key is None:
+        return
     with _HOST_ENABLE_CACHE_LOCK:
-        cache = _HOST_ENABLE_CACHE.setdefault(id(authority), {})
+        cache = _HOST_ENABLE_CACHE.setdefault(owner_key, _OwnerEnabledReads()).confirmed
         for host_id, enabled in states.items():
             cache[canonical_host_id(host_id)] = {"enabled": bool(enabled), "confirmed_at": now}
 

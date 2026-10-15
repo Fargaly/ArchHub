@@ -18,6 +18,7 @@ function createHarness() {
     useState(initial) {
       return [initial, value => calls.push(['setState', value])];
     },
+    useRef(initial) {return {current:initial};},
   };
   const W = {bg:'bg', bgPanel:'panel', bgSoft:'soft', bgHover:'hover', ink:'ink', inkSoft:'inkSoft',
     inkMuted:'muted', line:'line', lineSoft:'lineSoft', accent:'accent', accentDim:'accentDim',
@@ -25,6 +26,8 @@ function createHarness() {
     mono:'mono', sans:'sans', serif:'serif'};
   const window = {AH:W};
   const context = vm.createContext({React, window, console});
+  const shared = read('nodelang/studio/shared-data.jsx');
+  vm.runInContext(require('esbuild').transformSync(shared,{loader:'jsx'}).code, context);
   vm.runInContext(read('nodelang/studio/workshop-board.jsx'), context);
   const render = node => {
     if (node == null || node === false) return '';
@@ -39,17 +42,25 @@ function createHarness() {
   const visit = (node, fn) => {
     if (node == null || node === false || typeof node === 'string' || typeof node === 'number') return;
     if (Array.isArray(node)) return node.forEach(child => visit(child, fn));
-    const expanded = typeof node.type === 'function' ? node.type({...node.props, children:node.children}) : node;
-    fn(expanded);
-    visit(expanded.children || [], fn);
+    if(typeof node.type === 'function'){visit(node.type({...node.props,children:node.children}),fn);return;}
+    fn(node);
+    visit(node.children || [], fn);
   };
   const clickButton = (tree, label) => {
-    let found = null;
-    visit(tree, node => {
-      if (!found && node.type === 'button' && flat(render(node)) === label) found = node;
-    });
-    assert.ok(found, 'button not found: ' + label);
-    found.props.onClick && found.props.onClick({stopPropagation:() => events.push('stopped')});
+    let found=null;
+    const find=(node,parents=[])=>{
+      if(node==null||node===false||typeof node==='string'||typeof node==='number')return;
+      if(Array.isArray(node)){node.forEach(child=>find(child,parents));return;}
+      if(typeof node.type==='function'){find(node.type({...node.props,children:node.children}),parents);return;}
+      const expanded=node;
+      if(!found&&expanded.type==='button'&&flat(render(expanded))===label)found={node:expanded,parents};
+      (expanded.children||[]).forEach(child=>find(child,[expanded,...parents]));
+    };
+    find(tree);assert.ok(found,'button not found: '+label);
+    let stopped=false;
+    const event={stopPropagation:()=>{stopped=true;events.push('stopped');}};
+    found.node.props.onClick?.(event);
+    for(const parent of found.parents){if(stopped)break;parent.props?.onClick?.(event);}
   };
   const buttons = tree => {
     const found = [];
@@ -91,7 +102,7 @@ function fixture() {
   };
 }
 
-test('WS-022 court: board lanes are Planned, WIP, In Review, Done, Archived with live blocked cards in WIP', () => {
+test('WS-022 court: real board lanes retain blocked recovery in WIP and founder approval tasks in review', () => {
   const {window, React, render, clickButton, events, buttons} = createHarness();
   const fx = fixture();
   const decisions = [];
@@ -104,10 +115,10 @@ test('WS-022 court: board lanes are Planned, WIP, In Review, Done, Archived with
   assert.match(html, /data-workshop-lane="done"/);
   assert.match(html, /data-workshop-lane="archived"/);
   assert.doesNotMatch(html, /data-workshop-lane="claimed"|data-workshop-lane="blocked"|Claimed|Blocked|no agent|host unknown|CDE/);
-  assert.match(flat(html), /Planned 3 .* WIP 4 .* In review 1 .* Done 9 .* Archived 1/);
+  assert.match(flat(html), /Planned 3 .* WIP 2 .* In review 3 .* Done 9 .* Archived 1/);
   assert.doesNotMatch(flat(html), /Archive after|archive_after_idle_days/);
   assert.match(flat(html), /Collect requirements Workshop step 1 of 3/);
-  assert.match(flat(html), /Approve connector Codex Codex waiting for your approval Approve Decline/);
+  assert.match(flat(html), /Approve connector Codex Codex waiting for your approval .* Approve Decline/);
   assert.match(flat(html), /Waiting card Codex Codex waiting for your approval waits for you Review/);
   assert.match(flat(html), /Connector off Codex Codex Connectors are off Turn on Retry/);
   clickButton(tree, 'Approve');
@@ -219,27 +230,29 @@ test('WS-022 court: task page shows task, linked, steps, thread, with raw ids on
   assert.match(flat(open), /DETAILS .* work:blocked-a .* connector/);
 });
 
-test('Workshop approvals list predicate matches the badge count predicate', () => {
-  const source = read('nodelang/studio/studio-workshop.jsx');
-  assert.match(source, /const approvalCount = allTasks\.filter\(t => \(t\.proposal && t\.state === 'block'\) \|\| t\.approving\)\.length;/);
-  assert.match(source, /<window\.WorkshopApprovalsView tasks=\{allTasks\.filter\(t => \(t\.proposal && t\.state === 'block'\) \|\| t\.approving\)\}/);
-  assert.doesNotMatch(source, /WorkshopApprovalsView tasks=\{allTasks\.filter\(t => t\.state === 'block' \|\| t\.approving \|\| t\.proposal\)\}/);
-});
 
-test('WS-022 court: header hides Projects and keeps Board, Chat, Agents, Approvals, Router, Relay, Prompts', () => {
-  const source = read('nodelang/studio/studio-workshop.jsx');
-  assert.match(source, /WORKSHOP_TABS = \[\['board', 'Board'\], \['chat', 'Chat'\], \['agents', 'Agents'\], \['approvals', 'Approvals'\], \['router', 'Router'\], \['relay', 'Relay'\], \['prompts', 'Prompts'\]\]/);
-  assert.doesNotMatch(source, /WORKSHOP_TABS[\s\S]*\['projects', 'Projects'\]/);
-  assert.match(source, /WORKSHOP_TASK_PRESETS = \['tasks', 'board'\]/);
-  assert.match(source, /readCloudPublishConsent|setCloudPublishConsent|WorkshopRelayTab|Relay on\/off/);
-  assert.match(source, /ARCHHUB_LOAD_SKILLS/);
+test('Workshop approval status and inline card predicate derive from the same selected authority snapshot',()=>{
+  const {window}=createHarness();const shared=read('nodelang/studio/shared-data.jsx');
+  vm.runInNewContext(shared.slice(0,shared.indexOf('const HOSTS =')),{window});
+  const state={workshops:[{root:'room-a'}],canvas:{graph_id:'graph-a',root:'scope-a'},topology:{canvas:{application_root:'graph-a',scope:{current:'scope-a'},authorization:{subject:'owner-a',session:'view-a'}},graph:{nodes:[{id:'work:blocked-a',title:'Blocked task'}],wires:[]}},nativeWork:{root:'room-a',scope:'scope-a',owner:'owner-a',view:'view-a',work:'work:blocked-a',state:'awaiting_approval',input_digest:'a'.repeat(64)}};
+  const model=window.ARCHHUB_WORKSHOP_MODEL({state,descriptor:{root:'room-a'},tasks:[],messages:[]});
+  assert.equal(model.approval.work,'work:blocked-a');assert.equal(model.status.waiting,1);
+  state.nativeWork.approved=true;const settled=window.ARCHHUB_WORKSHOP_MODEL({state,descriptor:{root:'room-a'},tasks:[],messages:[]});
+  assert.equal(settled.approval,null);assert.equal(settled.status.waiting,0);
 });
-
-test('WS-022 court: router chip uses the live route value and no cost or price text is rendered', () => {
-  const source = read('nodelang/studio/studio-workshop.jsx');
-  assert.match(source, /liveRoute = routerSelected \|\| routerLive\?\.selected_route \|\| routerLive\?\.default_route/);
-  assert.match(source, /liveRoute \? wsRouteLabel\(liveRoute\)/);
-  assert.doesNotMatch(source, /wsTaskCost|cost:|price/i);
+test('WS022 window replaces Board Chat Agents Approvals Router Relay Prompts navigation with one real thread',()=>{
+  const source=read('nodelang/studio/studio-workshop.jsx');
+  assert.doesNotMatch(source,/WORKSHOP_TABS|WORKSHOP_TASK_PRESETS|WorkshopTabs|WorkshopRouterTab|WorkshopRelayTab|WorkshopPromptsTab/);
+  assert.match(source,/aria-label="Workshop conversation"/);assert.match(source,/data-workshop72-sections/);
+  assert.match(source,/data-workshop72-composer/);assert.match(source,/Open on canvas/);
+});
+test('WS022 model route and labels use recorded registry state; message costs require recorded data',()=>{
+  const source=read('nodelang/studio/studio-workshop.jsx');
+  assert.match(source,/ARCHHUB_WORKSHOP_AGENT_MODEL/);
+  const shared=read('nodelang/studio/shared-data.jsx');
+  assert.match(shared,/registry|model_registry|modelRegistry/);
+  for(const placeholder of ['Sonnet 4.6','GPT-5.5','Qwen3 free'])assert.equal(source.includes(placeholder),false,'model labels must come from the live registry: '+placeholder);
+  assert.doesNotMatch(source,/cost:\s*[0-9]|price:\s*[0-9]/,'no invented cost constants');
 });
 
 test('gate row l: no agent card or linked panel shows "not projected" or an empty "may:"', async () => {

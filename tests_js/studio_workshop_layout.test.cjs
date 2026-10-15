@@ -61,62 +61,37 @@ test('the System graph is its own session, not a header tab; the system mode sti
     'System is opened from Settings as the application node, never injected as a session row');
 });
 
-test('studio-workshop.jsx ships as its own Studio source, loaded after brain-model.jsx and before studio-lm.jsx everywhere', () => {
-  assert.ok(fs.existsSync(workshopPath), 'nodelang/studio/studio-workshop.jsx is shipped');
-  const names = read('packaging/compile_studio.cjs').match(/const names = \[([\s\S]*?)\];/)[1];
-  assert.match(names, /'brain-model\.jsx', 'workshop-board\.jsx', 'studio-workshop\.jsx', 'studio-lm\.jsx', 'mount\.jsx'/);
-  assert.match(read('nodelang/studio/studio.html'), /'brain-model\.jsx','workshop-board\.jsx','studio-workshop\.jsx','studio-lm\.jsx','mount\.jsx'\]/);
-  const server = read('nodelang/application_server.py');
-  const admitted = server.slice(server.indexOf('def _clean_studio_asset'), server.indexOf('if name not in admitted'));
-  assert.match(admitted, /"studio-workshop\.jsx"/);
-  assert.match(admitted, /"compiled\/studio-workshop\.js"/);
-  const installer = read('installer/build_release.ps1');
-  assert.match(installer, /'selected\/nodelang\/studio\/studio-workshop\.jsx'/);
-  assert.match(installer, /'brain-model\.js', 'workshop-board\.js', 'studio-workshop\.js', 'studio-lm\.js', 'mount\.js'\)/);
-  assert.match(installer, /\$entries\.Count -ne 15\) \{ throw 'Studio compiler did not produce exactly fourteen scripts and one manifest\.'/);
-  assert.match(installer, /\$manifest\.files\.Count -ne 14\) \{ throw 'Unsupported Studio compiler manifest\.'/);
+test('Workshop ships compiled and admitted but its source/output are deferred until first open',()=>{
+  const names=read('packaging/compile_studio.cjs').match(/const names = \[([\s\S]*?)\];/)[1];assert.match(names,/'workshop-board\.jsx', 'studio-workshop\.jsx'/);
+  const html=read('nodelang/studio/studio.html');assert.match(html,/workshopSources/);assert.match(html,/ARCHHUB_LOAD_WORKSHOP/);
+  assert.match(html,/manifest\.files\.filter\(file => !workshopSources\.has\(file\.source\)\)/);
+  const server=read('nodelang/application_server.py');const admitted=server.slice(server.indexOf('def _clean_studio_asset'),server.indexOf('if name not in admitted'));
+  assert.match(admitted,/"studio-workshop\.jsx"/);assert.match(admitted,/"compiled\/studio-workshop\.js"/);
+  const installer=read('installer/build_release.ps1');assert.match(installer,/'selected\/nodelang\/studio\/studio-workshop\.jsx'/);
+  assert.match(installer,/'workshop-board\.js', 'studio-workshop\.js'/);
 });
 
-test('studio-lm.jsx reads the Workshop from the module: the icon rail remains and the Workshop owns the workspace', () => {
-  const sidebar = source.slice(source.indexOf('const Sidebar ='), source.indexOf('const IconRail ='));
-  assert.match(source, /gridTemplateColumns: \(!panel \|\| workshopContext\) \? '44px 1fr' : '292px 1fr'/);
-  assert.match(sidebar, /railOnly \? null : <>/);
-  assert.doesNotMatch(sidebar, /WorkshopAgentsRail/);
-  const workspace = source.slice(source.indexOf('const Workspace ='), source.indexOf('const modelRoute ='));
-  assert.match(workspace, /effectiveMode === 'chat' && workshop && window\.WorkshopView \? \(\s*<window\.WorkshopView key=[^]*?state=\{workshopState\} descriptor=\{workshop\} target=\{target\}[^]*?onLeave=\{\(\) => updateView\(\{conversationRoot:'', mode:'canvas', target:''\}\)\}\s*sel=\{wsSel\} setSel=\{setWsSel\}\/>/);
-  assert.doesNotMatch(workspace, /<ChatView key=|<InferenceInspector model=/);
-  assert.doesNotMatch(workspace, /externalRail\/>/);
-  for (const retired of ['const WorkshopConversation =', 'const WorkshopAgentsPanel =', 'const WorkshopTaskCard =',
-    'const WorkshopTaskBoard =', 'const WorkshopLayoutPane =', 'const workshopTaskItems =']) {
-    assert.equal(source.includes(retired), false, 'studio-lm.jsx no longer defines ' + retired);
-  }
-  const module = workshop();
-  assert.match(module, /window\.WorkshopView = WorkshopView;\nwindow\.WorkshopAgentsRail = AgentsRail;/);
-  // The design's authored scene is not shipped: every value on the surface comes from a projection.
-  for (const seeded of ['Atlas', 'CAD Reader', 'Revit Builder', 'Rhino Bridge', 'BABOOM', 'Tower-A_central', 'L03-base',
-    'seedTasks', 'WS_RUN', 'WS_AGENTS', 'window.wsNode', '09:47', 'Spend cap']) {
-    assert.equal(module.includes(seeded), false, 'studio-workshop.jsx carries no ' + JSON.stringify(seeded));
-  }
+test('Studio reads one lazy Workshop module whose window owns the complete frame',()=>{
+  const workspace=source.slice(source.indexOf('const Workspace ='),source.indexOf('const modelRoute ='));
+  assert.match(workspace,/<LazyWorkshopWindow/);assert.doesNotMatch(workspace,/<ChatView key=|<InferenceInspector model=/);
+  assert.match(source,/window\.ARCHHUB_LOAD_WORKSHOP/);
+  assert.match(workshop(),/window\.WorkshopView = WorkshopView/);
+  for(const retired of ['const WorkshopConversation =','const WorkshopTaskCard =','const WorkshopTaskBoard =','const WorkshopLayoutPane ='])assert.equal(source.includes(retired),false,retired);
+  for(const seeded of ['Atlas','CAD Reader','Revit Builder','Rhino Bridge','BABOOM','Tower-A_central','L03-base','seedTasks','WS_RUN','WS_AGENTS','window.wsNode','09:47','Spend cap'])assert.equal(workshop().includes(seeded),false,seeded);
 });
 
-test('task cards fold every event of one named Work into one card whose state is its latest verb', () => {
-  const module = workshop();
-  const context = vm.createContext({});
-  vm.runInContext(module.slice(module.indexOf('const WORKSHOP_WORK_REF ='), module.indexOf('// One participant tone')) +
-    '\nglobalThis.items = workshopTaskItems;', context);
-  const note = (root, sender, body) => ({root, sender_root:sender, body, state:'recorded', category:'note', recipient_roots:[]});
-  const rows = [
-    note('m1', 'agent-a', 'Claimed Work assembly-instance:aaaaaaaa11112222.'),
-    note('m2', 'agent-b', 'Please look at the export when you can.'),
-    note('m3', 'agent-a', 'Submitted Work assembly-instance:aaaaaaaa11112222.'),
-    note('m4', 'agent-b', 'Claimed Work assembly-instance:bbbbbbbb33334444.'),
-    note('m5', 'agent-a', 'Claimed Work work:repair-export'),
-    note('m6', 'agent-a', 'Gate failed for Work work:repair-export: pytest exit 1'),
-  ];
-  const items = context.items(rows, [{id:'work:repair-export', title:'Repair export', status:'OPEN'}]);
-  assert.deepEqual(Array.from(items, item => item.kind === 'task' ? `${item.title}|${item.state}|${item.events.map(e => e.root).join(',')}` : item.message.root), [
-    'assembly-instance · aaaaaaaa|review|m1,m3', 'm2', 'assembly-instance · bbbbbbbb|run|m4', 'Repair export|block|m5,m6']);
-  assert.equal(context.items([], []).length, 0);
+test('task grouping preserves one Work id and latest event verb through the shared source',()=>{
+  const shared=read('nodelang/studio/shared-data.jsx');const context=vm.createContext({window:{}});
+  vm.runInContext(shared.slice(0,shared.indexOf('window.ARCHHUB_WORKSHOP_MODEL =')),context);
+  const note=(root,sender,body)=>({root,sender_root:sender,body,state:'recorded',category:'note',recipient_roots:[]});
+  const items=context.window.ARCHHUB_WORKSHOP_TASK_SOURCE.items([
+    note('m1','agent-a','Claimed Work assembly-instance:aaaaaaaa11112222.'),note('m2','agent-b','Please review the export.'),
+    note('m3','agent-a','Submitted Work assembly-instance:aaaaaaaa11112222.'),
+    note('m4','agent-a','Claimed Work work:repair-export'),note('m5','agent-a','Gate failed for Work work:repair-export: court exit 1')],
+    [{id:'work:repair-export',title:'Repair export',status:'OPEN'}]);
+  assert.deepEqual(Array.from(items,item=>item.kind==='task'?`${item.work}|${item.state}|${item.events.map(e=>e.root).join(',')}`:item.message.root),
+    ['assembly-instance:aaaaaaaa11112222|review|m1,m3','m2','work:repair-export|block|m4,m5']);
+  assert.equal(context.window.ARCHHUB_WORKSHOP_TASK_SOURCE.items([],[]).length,0);
 });
 
 // A live-shaped fixture: studio-existing-workshop.js snapshot, projectStudioCanvas nodes and wires.
@@ -177,9 +152,10 @@ async function mountModule() {
   const {createRoot} = require('react-dom/client');
   const {transformSync} = require('esbuild');
   const win = dom.window;
-  const context = vm.createContext({React, window:win, document:win.document, setTimeout, clearTimeout, console, URL, Blob, TextEncoder});
+  const context = vm.createContext({React, window:win, document:win.document, setTimeout, clearTimeout, console, CustomEvent:win.CustomEvent, URL, Blob, TextEncoder});
   vm.runInContext(read('nodelang/studio/tokens.jsx'), context);
   vm.runInContext(transformSync(read('nodelang/studio/workshop-board.jsx'), {loader:'jsx'}).code, context);
+  vm.runInContext(transformSync(read('nodelang/studio/shared-data.jsx'), {loader:'jsx'}).code, context);
   vm.runInContext(transformSync(workshop(), {loader:'jsx'}).code, context);
   const container = win.document.getElementById('root');
   const reactRoot = createRoot(container);
@@ -200,121 +176,37 @@ const text = el => {
   return out.join(' ').replace(/\s+/g, ' ');
 };
 
-test('the Workshop view draws the design surfaces from the live projections and keeps every live action', async () => {
-  const {state, authority, calls, ids} = fixture();
-  const ui = await mountModule();
-  try {
-    ui.win.ARCHHUB_EXISTING_WORKSHOP = authority;
-    let sel = {agent:null, task:null}, mode = '', left = 0, target = 'model:model-a';
-    const props = () => ({state, descriptor:state.workshops[0], target, setTarget:value => { target = value; },
-      setMode:value => { mode = value; }, setFocusId:() => {}, onLeave:() => { left += 1; },
-      sel, setSel:value => { sel = value; }, externalRail:true});
-    await ui.render('WorkshopView', props());
-    const doc = ui.doc;
-    // Header: design title, Workshop label, route/Hub chips, and design tabs.
-    const main = doc.querySelector('main');
-    assert.equal(main.style.gridTemplateColumns, 'minmax(0,1fr)');
-    assert.match(text(main.firstElementChild), /^Workshop L03 wall take-off · Layer selection · hosts not read yet openrouter\/model-a · route auto Relay Off Hub/);
-    const strip = [...doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')];
-    assert.deepEqual(strip.map(b => b.getAttribute('aria-label')),
-      ['Board', 'Chat', 'Agents', 'Approvals', 'Router', 'Relay', 'Prompts']);
-    assert.deepEqual(strip.map(b => b.getAttribute('aria-selected')), ['false', 'true', 'false', 'false', 'false', 'false', 'false']);
-    assert.ok(strip.every(b => b.style.fontFamily === '"Inter", system-ui, sans-serif' && b.style.fontSize === '13px' && b.style.fontWeight === '400'));
-    assert.equal(strip[0].style.borderRadius, '5px');
-    assert.equal(strip[0].style.background, 'transparent');
-    assert.equal(strip[1].style.background, 'rgb(58, 32, 24)');
-    assert.equal(text(strip[3]), 'Approvals 1');
-    // Conversation: the owner's ask, the agent reply metadata, then one row per named Work.
-    const stream = doc.querySelector('[aria-label="Workshop conversation"]');
-    assert.doesNotMatch(text(stream), /Here is the workflow on this canvas/);
-    assert.deepEqual([...stream.querySelectorAll('[data-workshop-task]')].map(card => card.getAttribute('data-workshop-task')), [ids.W1, ids.W2, ids.W3]);
-    const first = stream.querySelector('[data-workshop-task]');
-    assert.match(text(first), /^Layer selection .* waits for you Approve Open as graph After it runs: "Save as skill" keeps this as a graph you can run again from Studio or Player\./);
-    assert.deepEqual([...first.querySelectorAll('button')].map(text), ['Approve', 'Open as graph']);
-    // Send, approve: the live actions.
-    const input = doc.querySelector('input[aria-label="Workshop message"]');
-    await ui.act(() => { Object.getOwnPropertyDescriptor(ui.win.HTMLInputElement.prototype, 'value').set.call(input, 'Check the joins');
-      input.dispatchEvent(new ui.win.Event('input', {bubbles:true})); });
-    await ui.act(() => input.dispatchEvent(new ui.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
-    assert.deepEqual(calls.filter(c => c[0] === 'sendModelConversation').map(c => [c[1], c[2].root, c[3]]), [['room-a', 'model-a', 'Check the joins']]);
-    await ui.click([...first.querySelectorAll('button')][0]);
-    assert.equal(calls.filter(c => c[0] === 'approveNativeWork').length, 1);
-    // Select a task card: selection is retained without opening the retired context shell.
-    await ui.click(first);
-    assert.deepEqual(JSON.parse(JSON.stringify(sel)), {agent:null, task:ids.W1});
-    await ui.render('WorkshopView', props());
-    assert.ok(doc.querySelector('[aria-label="Workshop task page"] input[aria-label="Workshop message"]'));
-    // Board: WS-022 release lanes.
-    const tabs = () => [...doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')];
-    await ui.click(tabs()[0]);
-    assert.equal(tabs()[0].getAttribute('aria-selected'), 'true');
-    const board = doc.querySelector('[aria-label="Workshop board"]');
-    assert.deepEqual([...board.querySelectorAll('[data-workshop-lane] h3')].map(text), ['Planned', 'WIP', 'In review', 'Done', 'Archived']);
-    assert.equal(doc.querySelector('main').style.gridTemplateColumns, 'minmax(0,1fr)');
-    assert.equal(doc.querySelector('input[aria-label="Workshop message"]'), null);
-    // Chat remains available in the full-width shell.
-    await ui.click(tabs()[1]);
-    assert.ok(doc.querySelector('[aria-label="Workshop conversation"]'));
-    assert.ok(doc.querySelector('input[aria-label="Workshop message"]'));
-    await ui.click(doc.querySelector('button[aria-label^="Leave Workshop"]'));
-    assert.equal(left, 1);
-  } finally { await ui.close(); }
-});
+const {mounted,plain}=require('./workshop72_regression_helpers.cjs');
 
-test('WS-022: Board is the Workshop work tab and Projects remains hidden without a project backend', async () => {
-  const {state, authority} = fixture();
-  const ui = await mountModule();
-  try {
-    ui.win.ARCHHUB_EXISTING_WORKSHOP = authority;
-    const props = sel => ({state, descriptor:state.workshops[0], target:'model:model-a', setTarget:() => {},
-      setMode:() => {}, setFocusId:() => {}, onLeave:() => {}, sel, setSel:() => {}, externalRail:true});
-    const doc = ui.doc;
-    const selected = () => [...doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')]
-      .filter(t => t.getAttribute('aria-selected') === 'true').map(text);
-    // A link that names Board opens the Board tab directly.
-    await ui.render('WorkshopView', props({agent:null, task:null, tab:'board'}));
-    assert.deepEqual(selected(), ['Board']);
-    assert.ok(doc.querySelector('[aria-label="Workshop task board"]'), 'the board is drawn');
-    assert.equal(doc.querySelector('[aria-label="Workshop tasks"]'), null);
-    // A stale Projects preset is not a visible tab or surface.
-    await ui.render('WorkshopView', props({agent:null, task:null, tab:'projects'}));
-    assert.deepEqual(selected(), ['Board']);
-    assert.equal(doc.querySelector('[aria-label="Workshop projects"]'), null);
-    assert.ok(![...doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"] [role="tab"]')].some(t => text(t) === 'Projects'));
-  } finally { await ui.close(); }
+test('Workshop view draws the exact DSYS077 frame with real send approval and canvas handoff',async()=>{
+  const fx=fixture(), modes=[],focus=[];fx.state.workshop.participants=[];
+  const ui=await mounted(fx.state,fx.authority,{target:'model:'+fx.state.workshop.model_agent.root,setMode:value=>modes.push(value),setFocusId:value=>focus.push(value)});
+  try{const main=ui.doc.querySelector('[data-workshop72]');assert.equal(main.style.gridTemplateRows,'1fr 28px');
+    assert.equal(ui.doc.querySelector('[data-workshop72-rail]').style.width,'64px');
+    assert.equal(ui.doc.querySelector('[data-workshop72-list]').style.width,'340px');
+    assert.equal(ui.doc.querySelector('[data-workshop72-thread]').style.width,'780px');
+    assert.equal(ui.doc.querySelector('[role="tablist"]'),null);assert.equal(ui.doc.querySelector('[data-workshop-s1-inspector]'),null);
+    const card=ui.doc.querySelector('[data-workshop-approval-card]');assert.deepEqual([...card.querySelectorAll('button')].map(text),['Approve','Decline']);
+    await ui.input('Check the joins');await ui.click(ui.button('Send'));
+    assert.deepEqual(plain(fx.calls.filter(row=>row[0]==='sendModelConversation').map(row=>[row[1],row[2].root,row[3]])),[['room-a','model-a','Check the joins']]);
+    await ui.click(ui.button('Approve'));assert.equal(fx.calls.filter(row=>row[0]==='approveNativeWork').length,1);
+    await ui.click(ui.button('Open on canvas'));assert.ok(modes.includes('canvas'));assert.ok(focus.includes(fx.ids.W1));
+  }finally{await ui.close();}
 });
-
-test('the agents rail is the transcript participants with verified connection facts, and selecting one addresses it', async () => {
-  const {state, authority, ids} = fixture();
-  const ui = await mountModule();
-  try {
-    ui.win.ARCHHUB_EXISTING_WORKSHOP = authority;
-    const picked = [];
-    const context = {descriptor:state.workshops[0], graphId:'graph-a', scopeRoot:'scope-a', transcript:state.workshop, state};
-    await ui.render('WorkshopAgentsRail', {context, sel:null, onSelect:(id, addressable) => picked.push([id, addressable]), onAddAgent:() => picked.push(['library'])});
-    const rail = ui.doc.querySelector('[aria-label="Workshop agents"]');
-    assert.match(text(rail), /^CONNECTED AGENTS/);
-    // Founder order 2026-09-24: the rail lists the agents that are here now; a disconnected
-    // session is one toggle away and is never removed from the graph.
-    let rows = [...rail.querySelectorAll('[data-workshop-agent]')];
-    assert.deepEqual(rows.map(r => r.getAttribute('data-workshop-agent')), ['codex', 'claude'], 'verified agents first; the owner is not an agent row; disconnected hidden');
-    assert.deepEqual(rows.map(r => r.getAttribute('aria-pressed')), ['true', 'false']);
-    assert.match(text(rows[0]), /^C Codex AGENT local · Codex · 1 live \/ 1 session Idle/);
-    assert.match(text(rows[1]), /^C Claude AGENT local · Claude · 1 live \/ 1 session Live/);
-    const toggle = rail.querySelector('button[data-workshop-disconnected-toggle]');
-    assert.match(text(rail.querySelector('[data-workshop-disconnected-summary]')), /^1 inactive session Show$/);
-    assert.equal(text(toggle), 'Show');
-    assert.equal(toggle.getAttribute('aria-pressed'), 'false');
-    assert.doesNotMatch(text(rail), /Runtime-|not projected|not verified|Disconnected from this app|may:/);
-    assert.equal(rail.querySelector('button[data-workshop-disconnected-clear]'), null, 'no bulk revoke: a reconnecting session must never be cut');
-    await ui.click(toggle);
-    rows = [...rail.querySelectorAll('[data-workshop-agent]')];
-    assert.deepEqual(rows.map(r => r.getAttribute('data-workshop-agent')), ['codex', 'claude', 'antigravity-ide']);
-    assert.match(text(rows[2]), /^A Antigravity AGENT local · Antigravity · 0 live \/ 1 session Disconnected · 6m Last seen/);
-    assert.equal(text(rail.querySelector('button[data-workshop-disconnected-toggle]')), 'Hide');
-    assert.match(text(rail), /SCOPE Recent activity is not a running task\.$/);
-    await ui.click(rows[1]);
-    await ui.click(rail.querySelector('button[aria-label^="Connect another agent"]'));
-    assert.deepEqual(picked, [['claude', true], ['library']]);
-  } finally { await ui.close(); }
+test('WS022 Board and Projects presets now select the same real thread without hidden duplicate views',async()=>{
+  const fx=fixture();const ui=await mounted(fx.state,fx.authority,{sel:{agent:null,task:fx.ids.W2,tab:'board'}});
+  try{assert.ok(ui.doc.querySelector('[aria-label="Workshop conversation"]'));
+    assert.equal(ui.doc.querySelector('[data-workshop-s1-canvas]'),null);assert.equal(ui.doc.querySelector('[aria-label="Workshop tasks"]'),null);
+    assert.equal(ui.doc.querySelector('[aria-label="Workshop projects"]'),null);assert.equal(ui.doc.querySelector('[data-workshop-utility]'),null);
+    await ui.click(ui.doc.querySelector('[data-workshop-task-row="'+fx.ids.W1+'"]'));
+    assert.ok(ui.doc.querySelector('[data-workshop-approval-card]'));
+  }finally{await ui.close();}
+});
+test('agent addressing uses exact attached participant ids through @ rather than the removed agents rail',async()=>{
+  const fx=fixture();fx.authority.workshopAction=async(...args)=>{fx.calls.push(['workshopAction',...args]);return{ok:true};};
+  const ui=await mounted(fx.state,fx.authority);
+  try{await ui.input('@Claude Code Check the selected wall');await ui.click(ui.button('Send'));
+    assert.deepEqual(plain(fx.calls.filter(row=>row[0]==='workshopAction')),[['workshopAction','room-a','send',null,{target:fx.ids.claude,message:'Check the selected wall'}]]);
+    assert.equal(ui.doc.querySelector('[aria-label="Workshop agents"]'),null);assert.equal(ui.doc.querySelectorAll('select').length,0);assert.ok(ui.doc.querySelector('button[data-workshop-agent-picker]'));assert.doesNotMatch(text(ui.doc.querySelector('[data-workshop-agent-picker]')),/Workshop \(everyone\)/);
+  }finally{await ui.close();}
 });

@@ -1,5 +1,5 @@
 /* Workshop "Assign to agent" (design workshop-assign-design.html, founder decisions 1-5): the ASSIGN
-   section of the Work's context panel, rendered from the COMPILED Studio in a real browser DOM.
+   section of the Work's context panel, rendered from the shipped JSX through esbuild in a real browser DOM.
    Only the rail's verified agents can be picked; nothing lets anyone type or start a session; the
    review card says what assigning does and does not do; a refusal leaves nothing assigned; a lost
    reply is retried with the SAME assignment id. The assign call is a stand-in for the transport. */
@@ -7,7 +7,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const {createHash} = require('node:crypto');
 const root = path.resolve(__dirname, '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const seedText = read('nodelang/universal_presentation_seed.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
@@ -25,10 +24,7 @@ const AGENTS = [
 const TASK = {work:'app:governed-work:7f3c21a0', title:'BBC4 installed evidence (3)', state:'open'};
 
 async function mount(assign) {
-  const manifest = JSON.parse(read('nodelang/studio/compiled/manifest.json'));
-  const held = manifest.files.find(file => file.source === 'studio-workshop.jsx');
-  const live = createHash('sha256').update(fs.readFileSync(path.join(root, 'nodelang/studio/studio-workshop.jsx'))).digest('hex');
-  assert.equal(held && held.source_sha256, live, 'Studio build is stale for studio-workshop.jsx: run npm run build:studio');
+  const {transformSync} = require('esbuild');
   let JSDOM;
   try { ({JSDOM} = require('jsdom')); } catch (error) { ({JSDOM} = await import('jsdom')); }
   const dom = new JSDOM('<div id="root"></div>', {url:'http://localhost/', runScripts:'outside-only', pretendToBeVisual:true});
@@ -41,8 +37,9 @@ async function mount(assign) {
   }
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
-  for (const file of manifest.files) {
-    if (file.source !== 'mount.jsx') win.eval(read('nodelang/studio/compiled/' + file.output));
+  win.eval(read('nodelang/studio/tokens.jsx'));
+  for (const source of ['shared-data.jsx','studio-workshop.jsx']) {
+    win.eval(transformSync(read('nodelang/studio/' + source), {loader:'jsx', target:'es2020'}).code);
   }
   assert.equal(typeof win.WorkshopAssignSection, 'function', 'the compiled Workshop module exports the ASSIGN section');
   win.__assign = assign;

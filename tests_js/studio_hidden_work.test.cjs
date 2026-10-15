@@ -84,11 +84,9 @@ test('the rail says where hidden Work lives and disables the button without a Wo
 
 test('the Workshop still admits and titles Work the canvas does not draw', () => {
   const context = vm.createContext({window:{}});
-  const start = workshopSource.indexOf('const workshopSelectionId =');
-  const end = workshopSource.indexOf('// One participant tone for the agents rail', start);
-  assert.ok(start > 0 && end > start, 'the Workshop helpers are a slice of the shipped studio-workshop.jsx');
-  vm.runInContext(workshopSource.slice(start, end) +
-    '\nglobalThis.nodes = workshopProjectedNodes; globalThis.select = selectedWorkshopWork; globalThis.items = workshopTaskItems;', context);
+  const shared=fs.readFileSync(path.join(__dirname,'../nodelang/studio/shared-data.jsx'),'utf8');
+  vm.runInContext(shared.slice(0,shared.indexOf('window.ARCHHUB_WORKSHOP_MODEL ='))+
+    '\nglobalThis.nodes=window.ARCHHUB_WORKSHOP_TASK_SOURCE.nodes;globalThis.select=window.ARCHHUB_WORKSHOP_TASK_SOURCE.selected;globalThis.items=window.ARCHHUB_WORKSHOP_TASK_SOURCE.items;',context);
   const state = {canvas:{graph_id:'graph-a', root:'scope-a'},
     topology:{canvas:{application_root:'graph-a', scope:{current:'scope-a'}, authorization:{subject:'owner-a', session:'view-a'},
       nodes:[{id:'node-a'}], hidden_work:[{id:'assembly-instance:work000a', title:'Website lane'}]},

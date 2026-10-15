@@ -4,6 +4,7 @@ A question typed into the cockpit is not answered by the cloud: it is queued
 for the founder's app (agent_tasks kind 'app'), the app claims it, puts it to
 BABOOM and posts the answer, and the cockpit returns that answer. These courts
 play the app's side over the real routes."""
+import json
 import threading
 import time
 
@@ -19,6 +20,11 @@ def _founder(monkeypatch):
                 "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY"):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("COCKPIT_APP_RELAY_WAIT_S", "6")
+    # These route courts exercise the offline fallback, even when config cached
+    # a provider before the environment scrub above. Never call a real model.
+    import cockpit_agent
+    monkeypatch.setattr(cockpit_agent, "reachable_model", lambda: None)
+    assert cockpit_agent.reachable_model() is None
     import founder_cockpit
     founder_cockpit.clear_errors()
     yield
@@ -134,6 +140,29 @@ def test_the_routes_carry_the_whole_claim_answer_read_cycle(client, monkeypatch)
     r = client.get("/founder/api/agent-tasks/%s" % task["id"], headers=_auth(token))
     assert r.json()["task"]["result"].startswith("3 agent session(s)")
     assert app_relay.wait_for(task["id"], wait_s=0)["status"] == "done"
+
+
+def test_claim_filters_to_the_signed_in_app_account_not_all_founders(monkeypatch):
+    other_founder = "other-founder@example.com"
+    monkeypatch.setenv("FOUNDER_EMAIL", "%s,%s" % (FOUNDER_EMAIL, other_founder))
+    import app_relay
+    import db
+    import founder_cockpit
+    with db.connect() as con:
+        con.execute("DELETE FROM agent_tasks")
+    other = app_relay.enqueue("other", actor=other_founder)
+    mine = app_relay.enqueue("mine", actor=FOUNDER_EMAIL)
+
+    response = founder_cockpit.api_agent_task_claim(
+        founder_cockpit.AgentTaskClaimReq(
+            claimed_by="archhub-app", kinds=["app", "app-execute"]),
+        founder={"email": FOUNDER_EMAIL},
+    )
+    payload = json.loads(response.body.decode("utf-8"))
+
+    assert response.status_code == 200
+    assert payload["task"]["id"] == mine["id"]
+    assert db.get_agent_task(other["id"])["status"] == "queued"
 
 
 def test_help_still_answers_as_help(client, monkeypatch):

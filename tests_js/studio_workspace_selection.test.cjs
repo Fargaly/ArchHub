@@ -16,7 +16,7 @@ assert.ok(start > 0 && end > start);
 // order, and useEffect run after the render when its dependencies changed (cleanup first). The
 // block listens on window for 'archhub:reach-conversation'; the stub window delivers those events.
 function harness() {
-  const slots = [], effects = [], listeners = new Map();
+  const slots = [], effects = [], listeners = new Map(), workshopSelections=[];
   const window = {
     addEventListener:(name, listen) => { if (!listeners.has(name)) listeners.set(name, new Set()); listeners.get(name).add(listen); },
     removeEventListener:(name, listen) => { listeners.get(name)?.delete(listen); },
@@ -39,13 +39,15 @@ function harness() {
         });
       },
     };
-    const context = {session:{id:sessionId}, workshopState:projection, React, window};
+    const context = {session:{id:sessionId}, workshopState:projection, React, window,
+      setWorkshopSelection:value=>workshopSelections.push(value)};
     vm.createContext(context);
     vm.runInContext(source.slice(start, end) +
       '\nglobalThis.result = {view:workspaceView, update:updateWorkspaceView};', context);
     commit.forEach(run => run());
     return context.result;
   };
+  render.workshopSelections=workshopSelections;
   render.dispatch = (name, detail) => [...(listeners.get(name) || [])].forEach(listen => listen({detail}));
   return render;
 }
@@ -54,14 +56,10 @@ const projection = (subject = 'owner-a') => ({canvas:{graph_id:'graph-a',root:'s
   workshops:[{root:'general-a',is_general:true},{root:'child-a',is_general:false}]});
 
 function workSelectionHarness() {
-  const context = {};
-  vm.createContext(context);
-  const from = workshopSource.indexOf('const workshopSelectionId =');
-  const to = workshopSource.indexOf('// Workshop task cards read from the transcript only', from);
-  assert.ok(from > 0 && to > from);
-  vm.runInContext(workshopSource.slice(from, to) + '\nglobalThis.select = selectedWorkshopWork;', context);
-  return (state, root = 'general-a', nodes) =>
-    context.select(state, root, nodes);
+  const shared=fs.readFileSync(path.join(__dirname,'../nodelang/studio/shared-data.jsx'),'utf8');
+  const context=vm.createContext({window:{}});
+  vm.runInContext(shared.slice(0,shared.indexOf('window.ARCHHUB_WORKSHOP_MODEL =')),context);
+  return (state,root='general-a',nodes)=>context.window.ARCHHUB_WORKSHOP_TASK_SOURCE.selected(state,root,nodes);
 }
 const workProjection = () => {
   const state = projection();
@@ -119,44 +117,26 @@ test('exact active Work stays visible while idle available choices are empty', (
   assert.equal(workSelectionHarness()(state), '');
 });
 
-test('cold local revision editor restores exact saved submission and refuses foreign decision', async () => {
-  const pending = {revision_id:'c'.repeat(32),base_digest:'a'.repeat(64),input_digest:'d'.repeat(64),
-    result:'grant:project-result',resolution:'grant:project-local-resolution',
-    inputs:{model:'openrouter/free',artifact_name:'pinned.patch',data_class:'public-text',
-      files:[{path:'saved.js',content:'saved immutable text',sha256:'e'.repeat(64)}]},
+test('saved local revision reads the exact immutable submission and refuses a foreign decision after editor removal',async()=>{
+  const {transport,plain}=require('./workshop72_regression_helpers.cjs');
+  const pending={revision_id:'c'.repeat(32),base_digest:'a'.repeat(64),input_digest:'d'.repeat(64),result:'grant:project-result',resolution:'grant:project-local-resolution',
+    inputs:{model:'openrouter/free',artifact_name:'pinned.patch',data_class:'public-text',files:[{path:'saved.js',content:'saved immutable text',sha256:'e'.repeat(64)}]},
     requirements:{acceptance_criteria:[{criterion:'Saved criterion',verification:'Saved verification'}]}};
-  for (const foreign of [false, true]) {
-    let base, repair, file, error;
-    const submission = {current:null};
-    const context = {TextEncoder,busyRef:{current:false},editorsReady:true,revisionBase:null,
-      native:{state:'idle',owner:'owner-a',view:'view-a'},protectedEditors:false,
-      state:{canvas:{graph_id:'graph-a',root:'scope-a'}},descriptor:{root:'workshop-a'},
-      mounted:{current:true},scopeCurrent:() => true,revisionSubmission:submission,
-      setBusy:() => {},setActionError:value => {error=value;},
-      setRevisionBase:value => {base=value;},setRepair:value => {repair=value;},setSourceFile:value => {file=value;},
-      authority:{nativeWorkAction:async (_root, action, work) => {
-        assert.equal(action,'read_project');assert.equal(work,'work-a');
-        return {work,owner:'owner-a',view:'view-a',draft:{title:'Keep title',description:'Keep description',
-          input_digest:'a'.repeat(64),inputs:{files:[]},requirements:{},pending_revision:pending}};
-      }}};
-    vm.createContext(context);
-    const from = workshopSource.indexOf('  const beginWorkRevision =');
-    const to = workshopSource.indexOf('  React.useEffect(', from);
-    assert.ok(from > 0 && to > from);
-    vm.runInContext(workshopSource.slice(from,to) + '\nglobalThis.openRevision = beginWorkRevision;', context);
-    await context.openRevision({work:'work-a',result:pending.result,
-      resolution:foreign ? 'other-decision' : pending.resolution});
-    if (foreign) {
-      assert.match(error,/exact local delivery/);assert.equal(base,undefined);assert.equal(submission.current,null);
-    } else {
-      assert.equal(base.local_source.result,pending.result);assert.equal(base.request_id,null);
-      assert.equal(submission.current.revision_id,pending.revision_id);
-      assert.equal(submission.current.base_digest,pending.base_digest);
-      assert.equal(submission.current.inputs,pending.inputs);
-      assert.equal(submission.current.requirements,pending.requirements);
-      assert.equal(file.content,'saved immutable text');assert.equal(repair.criterion,'Saved criterion');
-      assert.equal(repair.title,'Keep title');
-    }
+  const status={ok:true,root:'room-a',scope:'scope-a',owner:'owner-a',view:'view-a',work:'work-a',artifacts_work:'work-a',artifacts:[],failures:[],
+    state:'local_delivery_abandoned',mode:'project',approved:false,request_id:'attempt-a',available_work:['work-a'],worker:'worker-a',
+    local_deliveries:[{work:'work-a',grant:'grant',result:pending.result,input_digest:'d'.repeat(64),worker:'worker-a',provider_outcome:'unknown',output_bytes:0,
+      state:'local_delivery_abandoned',resolution:pending.resolution}],
+    local_resolution:{decision:'abandon_local_delivery',provider_outcome:'unknown',grant:'grant',result:pending.result,input_digest:'d'.repeat(64),work:'work-a',worker:'worker-a',
+      actor:'owner-a',view:'view-a',scope:'scope-a',claim:'claim-a',grant_revision:20,created_at:1,resolution:pending.resolution}};
+  for(const foreign of [false,true]){
+    const fx=transport({get:()=>status,post:(_url,body)=>({...status,request_id:body.request_id,state:'draft',draft:{title:'Keep title',description:'Keep description',
+      revision:10,input_digest:pending.base_digest,inputs:pending.inputs,requirements:pending.requirements,pending_revision:{...pending,...(foreign?{resolution:'other-decision'}:{})}}})});
+    await fx.api.refreshNativeWork('room-a','work-a');const operation=fx.api.nativeWorkAction('room-a','read_project','work-a');
+    if(foreign)await assert.rejects(operation,/saved revision/);
+    else{const draft=(await operation).draft;assert.deepEqual(plain(draft.pending_revision),pending);
+      assert.equal(draft.inputs.files[0].content,'saved immutable text');assert.equal(draft.requirements.acceptance_criteria[0].criterion,'Saved criterion');assert.equal(draft.title,'Keep title');}
+    assert.equal(fx.posts.length,1);assert.equal(fx.posts[0].body.action,'read_project');assert.equal(fx.posts[0].body.work,'work-a');
+    assert.equal(fx.api.getSnapshot().nativeWork.draft,undefined,'source text never persists in the status projection');
   }
 });
 
@@ -282,6 +262,9 @@ test('a Conversations row that walked to the Workshop canvas opens its room once
   render(landed);                                                    // the render that lists it commits the room
   const opened = render(landed).view;
   assert.equal(opened.conversationRoot, 'child-b');
+  assert.equal(render.workshopSelections.length,1);
+  assert.equal(render.workshopSelections[0].root,'child-b');
+  assert.equal(render.workshopSelections[0].task,null);
   assert.equal(opened.mode, 'chat');
   assert.equal(opened.scope, JSON.stringify(['session-a', 'graph-a', 'scope-b', 'owner-a', 'view-a']));
 });

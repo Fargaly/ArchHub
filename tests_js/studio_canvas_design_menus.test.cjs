@@ -31,6 +31,8 @@ const LM = new Proxy(Object.fromEntries([...palette.matchAll(/^ {2}(\w+):/gm)].m
     if (key === 'fs') return {bodySm:{sz:13, ln:18, wt:400}, bodySmStrong:{sz:13, ln:18, wt:500}, caption:{sz:12, ln:16}, label:{sz:11, ln:14, wt:500, letter:'.04em'}, data:{sz:12, ln:16, wt:400}, dataSm:{sz:11, ln:14, wt:400}};
     if (key === 'icon') return {ui:{size:16, box:20}, category:{size:12, box:20}};
     if (key === 'shadow') return {flat:'none'};
+    if (key === 'elev') return {e1:'none',e2:'none'};
+    if (key === 'glow') return {warn:'none',accent:'none'};
     if (key === 'dur') return {fast:120, med:180};
     if (typeof key === 'string' && !(key in held)) throw new Error('studio-lm.jsx reads an undefined token: ' + key);
     return held[key];
@@ -39,7 +41,7 @@ const slice = () => {
   const start = source.indexOf('const SOCKET_TOP =');
   const end = source.indexOf('const NodeStateDot =', start);
   assert.ok(start > 0 && end > start);
-  return source.slice(start, end);
+  return source.slice(start, end) + require('./workshop72_node_helpers.cjs').nodePreviewSource(source);
 };
 const shortcutSlice = () => {
   const start = source.indexOf('const studioShortcut =');

@@ -11,12 +11,14 @@ from nodelang.pipeline_engines import PIPELINE_ENGINES, probe_connectors
 
 EXPECTED = {"revit", "autocad", "speckle", "max", "rhino", "blender", "excel", "word", "powerpoint",
             "outlook", "notion", "dropbox", "revit-2024", "autocad-2025", "max-2025", "photoshop",
-            "illustrator", "indesign", "teams", "lmstudio", "antigravity", "procore"}
+            "illustrator", "indesign", "teams", "lmstudio", "antigravity", "procore", "civil3d",
+            "navisworks", "sketchup", "archicad", "ifc", "bluebeam", "enscape", "powerbi",
+            "sharepoint", "slack", "airtable"}
 
 
 # Host and key states every program row may report.
 TRUTHFUL_STATES = frozenset({
-    "connected", "listening", "running", "installed", "needs-key", "absent", "reachable",
+    "connected", "listening", "running", "installed", "needs-key", "absent", "reachable", "off",
 })
 # Rows that report the exact result of their own shipped check instead: the
 # Microsoft Graph prerequisite check (nodelang/outlook_graph.ps1

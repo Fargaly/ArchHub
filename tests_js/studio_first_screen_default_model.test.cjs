@@ -1,3 +1,4 @@
+const {settingsNavigator} = require('./settings_navigation_helpers.cjs');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -173,7 +174,7 @@ for (const pending of [false, true]) {
 const homeComposer = doc => doc.querySelector('textarea[aria-label="Start a new session"]');
 const homeText = doc => doc.querySelector('[data-home-page]')?.textContent || '';
 const rail = (doc, title) => doc.querySelector(`[data-rail-panel="${title}"]`);
-const homeButtons = doc => [...doc.querySelectorAll('[data-home-button], button[aria-label="Home"]')];
+const homeButtons = doc => [...doc.querySelectorAll('[data-home-button], [data-rail-home], button[aria-label="Home"]')];
 const deferred = () => {
   let resolve;
   const promise = new Promise(done => { resolve = done; });
@@ -204,24 +205,29 @@ test('Home boot shows the default free router with its friendly name', async () 
   } finally { studio.close(); }
 });
 
-test('Home rail panels open beside Home and their Home button closes the panel', async () => {
+test('Home Library tabs open beside Home and Home collapses the frame left panel', async () => {
   const studio = await mountStudio({home:true});
   try {
     await studio.settle(() => studio.doc.querySelector('[data-home-page]'), 'Home is visible');
+    assert.equal(studio.doc.querySelector('[data-left-panel]'), null, 'Home mounts with no empty left panel');
+    assert.equal(rail(studio.doc, 'Skills'), null, 'Skills moved from the rail into Library');
+    assert.equal(rail(studio.doc, 'Search'), null, 'Search moved from the rail into Library');
     for (const [title, visible] of [
-      ['Nodes', () => studio.doc.querySelector('input[placeholder="Search nodes…"]')],
+      ['Library', () => studio.doc.querySelector('input[placeholder^="Search"]')],
       ['Skills', () => studio.doc.body.textContent.includes('Search saved skills')],
-      ['Search', () => studio.doc.body.textContent.includes('everything in studio')],
+      ['Search', () => studio.doc.body.textContent.includes('Search everything')],
     ]) {
-      studio.flush(() => rail(studio.doc, title).click());
+      studio.flush(() => rail(studio.doc, 'Library').click());
+      if (title !== 'Library') studio.flush(() => studio.doc.querySelector('[data-library-tab="' + title.toLowerCase() + '"]').click());
       await studio.settle(() => studio.doc.querySelector('[data-home-page]') &&
         visible(), title + ' panel opens beside Home');
       assert.equal(studio.doc.querySelectorAll('[data-node-id]').length, 0, title + ' does not open a graph');
-      const panelHome = homeButtons(studio.doc).find(node => node.textContent.trim() === 'Home');
+      assert.ok(studio.doc.querySelector('[data-left-panel]'), title + ' occupies the one left panel');
+      const panelHome = homeButtons(studio.doc).find(node => node.textContent.trim() === 'Home') || studio.doc.querySelector('[data-rail-home]');
       assert.ok(panelHome, title + ' panel exposes Home');
       studio.flush(() => panelHome.click());
       await studio.settle(() => studio.doc.querySelector('[data-home-page]') &&
-        !visible(), title + ' panel closes back to Home');
+        !visible() && !studio.doc.querySelector('[data-left-panel]'), title + ' panel closes back to Home');
     }
   } finally { studio.close(); }
 });
@@ -233,10 +239,10 @@ test('Home wins over a deferred graph open started from the Home session list', 
     await studio.settle(() => studio.doc.querySelector('[data-home-page]'), 'Home is visible');
     const tab = [...studio.doc.querySelectorAll('button, [role="tab"]')].find(node => /ArchHub/.test(node.textContent));
     studio.flush(() => tab.click());
-    studio.flush(() => rail(studio.doc, 'Nodes').click());
-    await studio.settle(() => studio.doc.querySelector('input[placeholder="Search nodes…"]'),
-      'Nodes panel opens while graph waits');
-    const panelHome = homeButtons(studio.doc).find(node => node.textContent.trim() === 'Home');
+    studio.flush(() => rail(studio.doc, 'Library').click());
+    await studio.settle(() => studio.doc.querySelector('input[placeholder^="Search"]'),
+      'Library panel opens while graph waits');
+    const panelHome = homeButtons(studio.doc).find(node => node.textContent.trim() === 'Home') || studio.doc.querySelector('[data-rail-home]');
     studio.flush(() => panelHome.click());
     graphOpen.resolve({ok:true, current_graph:'graph-a'});
     await new Promise(resolve => studio.win.setTimeout(resolve, 0));
@@ -255,9 +261,9 @@ test('Settings System open respects a labelled Home click while graph open is pe
     studio.win.ARCHHUB_GRAPH_OPEN = async () => graphOpen.promise;
     studio.flush(() => rail(studio.doc, 'Settings').click());
     await studio.settle(() => studio.doc.querySelector('[aria-label="Settings"]'), 'Settings opens');
-    const systemTab = [...studio.doc.querySelectorAll('[data-settings-nav] button')]
-      .find(node => node.textContent.trim().startsWith('System'));
-    assert.ok(systemTab, 'System settings tab is listed');
+    const nav = settingsNavigator({doc:studio.doc, flush:studio.flush, settle:async () => { await new Promise(resolve => studio.win.setTimeout(resolve, 0)); }});
+    const systemTab = await nav.capability('System');
+    assert.ok(systemTab, 'the gated System graph action is still mounted for Settings behavior');
     studio.flush(() => systemTab.click());
     await studio.settle(() => button(studio.doc, 'Open the System graph'), 'System tab opens');
     studio.flush(() => button(studio.doc, 'Open the System graph').click());
@@ -280,9 +286,9 @@ test('Settings System labelled Home lands on Home with no active session tab', a
     await studio.settle(() => studio.doc.querySelector('[data-node-id]'), 'graph starts open');
     studio.flush(() => rail(studio.doc, 'Settings').click());
     await studio.settle(() => studio.doc.querySelector('[aria-label="Settings"]'), 'Settings opens');
-    const systemTab = [...studio.doc.querySelectorAll('[data-settings-nav] button')]
-      .find(node => node.textContent.trim().startsWith('System'));
-    assert.ok(systemTab, 'System settings tab is listed');
+    const nav = settingsNavigator({doc:studio.doc, flush:studio.flush, settle:async () => { await new Promise(resolve => studio.win.setTimeout(resolve, 0)); }});
+    const systemTab = await nav.capability('System');
+    assert.ok(systemTab, 'the gated System graph action is still mounted for Settings behavior');
     studio.flush(() => systemTab.click());
     await studio.settle(() => button(studio.doc, 'Open the System graph'), 'System tab opens');
     studio.flush(() => button(studio.doc, 'Open the System graph').click());

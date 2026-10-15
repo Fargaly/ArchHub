@@ -14,14 +14,6 @@ const MB_DEVICES = [
   { id: 'ws',  icon: '🏢', name: 'OFFICE-WS',  meta: 'offline 2h ago',      state: 'off' },
 ];
 
-// Gates come from the same permission vocabulary the desktop uses: anything set to ASK
-// surfaces here instead of blocking the run until someone is back at the machine.
-const MB_GATES_SEED = [
-  { id: 'g1', cap: 'Place new elements', detail: '14 dimensions on L03 exterior walls', node: 'auto-dimension', risk: 'low' },
-  { id: 'g2', cap: 'Edit parameter values', detail: 'Set "Mark" on 23 walls → auto-number', node: 'set wall marks', risk: 'low' },
-  { id: 'g3', cap: 'Publish / export', detail: 'Publish 6-sheet PDF set to project-share', node: 'publish PDF set', risk: 'high' },
-];
-
 const MB_RUNS_SEED = [
   { id: 'r1', title: 'Dimension L03 exterior', state: 'running', pct: 0.74, note: '17 / 23 placed', ms: '3.1 / 4.2s' },
   { id: 'r2', title: 'Wall schedule → sheet', state: 'queued', pct: 0, note: 'waiting on gate g2', ms: '—' },
@@ -39,7 +31,15 @@ const mbTabs = [['approve', 'Approve'], ['runs', 'Runs'], ['params', 'Params'], 
 function StudioMobile() {
   const [tab, setTab] = React.useState('approve');
   const [device, setDevice] = React.useState('pc');
-  const [gates, setGates] = React.useState(MB_GATES_SEED);
+  const authority = window.ARCHHUB_EXISTING_WORKSHOP;
+  const empty = React.useMemo(() => ({}),[]);
+  const state = React.useSyncExternalStore(authority?.subscribe || (() => () => {}),
+    authority?.getSnapshot || (() => empty),() => empty) || empty;
+  const descriptor = (state.workshops || []).find(row => row.root === state.workshop?.root);
+  const model = descriptor ? window.ARCHHUB_WORKSHOP_MODEL({state,descriptor}) : null;
+  // Mobile reads the same reviewed operation; no simulated approval authority.
+  const gates = model?.approval ? [model.approval] : [];
+  const ApprovalCard = window.ARCHHUB_APPROVAL_CARD;
   const [runs, setRuns] = React.useState(MB_RUNS_SEED);
   const [params, setParams] = React.useState(MB_PARAMS_SEED);
   const [log, setLog] = React.useState([]);
@@ -59,13 +59,12 @@ function StudioMobile() {
     return () => clearInterval(iv);
   }, []);
 
-  const decide = (id, ok) => {
-    const g = gates.find(x => x.id === id);
-    setGates(gs => gs.filter(x => x.id !== id));
-    say((ok ? 'Approved' : 'Rejected') + ' · ' + g.cap.toLowerCase());
-    if (ok) setRuns(rs => rs.map(r => r.note === 'waiting on gate ' + id
-      ? Object.assign({}, r, { state: 'running', note: 'started from phone', pct: 0.05 }) : r));
-    else setRuns(rs => rs.filter(r => r.note !== 'waiting on gate ' + id));
+  const decide = async (approval,ok) => {
+    if (approval.kind !== 'native') throw new Error('Not available yet');
+    if (ok) await authority.approveNativeWork(descriptor.root,approval.input_digest);
+    else await authority.nativeWorkAction(descriptor.root,'stop_native',approval.work);
+    await authority.refreshNativeWork(descriptor.root);
+    say((ok ? 'Approved' : 'Declined') + ' · ' + approval.title);
   };
 
   const dev = MB_DEVICES.find(d => d.id === device);
@@ -133,30 +132,11 @@ function StudioMobile() {
             {/* body */}
             <div className="ah-scroll" style={{ flex: 1, overflow: 'auto', padding: '12px 12px 4px' }}>
               {tab === 'approve' && (pend === 0
-                ? <div style={{ padding: '30px 8px', textAlign: 'center' }}>
-                    <div style={{ fontFamily: MB.serif, fontSize: 19 }}>Nothing waiting.</div>
-                    <div style={{ fontFamily: MB.mono, fontSize: MB.fs.dataSm.sz, color: MB.inkSoft, marginTop: 6, lineHeight: 1.6 }}>
-                      The desktop is running unattended.<br/>You’ll get a push when it needs you.
-                    </div>
-                    <button onClick={() => { setGates(MB_GATES_SEED); say('Reset · 3 requests restored'); }}
-                      style={Object.assign({}, mbBtn(), { marginTop: 14 })}>Simulate new requests</button>
-                  </div>
-                : gates.map(g => (
-                    <div key={g.id} style={{ padding: '11px 12px', border: `1px solid ${g.risk === 'high' ? MB.warn : MB.line}`, borderRadius: MB.rad.md, background: MB.bgPanel, marginBottom: 9 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                        <span style={{ fontFamily: MB.mono, fontSize: MB.fs.label.sz, letterSpacing: '0.12em', padding: '2px 6px', borderRadius: 3, border: `1px solid ${g.risk === 'high' ? MB.warn : MB.inkMuted}`, color: g.risk === 'high' ? MB.warn : MB.inkSoft }}>
-                          {g.risk === 'high' ? 'NEEDS CARE' : 'ROUTINE'}
-                        </span>
-                        <span style={{ fontFamily: MB.mono, fontSize: MB.fs.dataSm.sz, color: MB.inkSoft, flex: 1, textAlign: 'right' }}>{g.node}</span>
-                      </div>
-                      <div style={{ fontSize: 13.5, marginTop: 7, lineHeight: 1.35 }}>{g.cap}</div>
-                      <div style={{ fontSize: 12, color: MB.inkSoft, marginTop: 3, lineHeight: 1.45 }}>{g.detail}</div>
-                      <div style={{ display: 'flex', gap: 7, marginTop: 10 }}>
-                        <button onClick={() => decide(g.id, false)} style={Object.assign({}, mbBtn(), { flex: 1, minHeight: 44, color: MB.err, borderColor: MB.lineSoft })}>Reject</button>
-                        <button onClick={() => decide(g.id, true)} style={Object.assign({}, mbBtn(true), { flex: 2, minHeight: 44 })}>Approve</button>
-                      </div>
-                    </div>
-                  )))}
+                ? <div style={{padding:'30px 8px',fontFamily:MB.sans,fontSize:14}}>Nothing waiting.</div>
+                : gates.map(g => <ApprovalCard key={g.id} approval={g} approveLabel="Approve" surface="mobile"
+                    canApprove={g.kind === 'native' && typeof authority?.approveNativeWork === 'function'}
+                    canDecline={g.kind === 'native' && typeof authority?.nativeWorkAction === 'function'}
+                    onApprove={() => decide(g,true)} onDecline={() => decide(g,false)}/>))}
 
               {tab === 'runs' && runs.map(r => (
                 <div key={r.id} style={{ padding: '10px 12px', border: `1px solid ${MB.lineSoft}`, borderRadius: MB.rad.md, background: MB.bgPanel, marginBottom: 8 }}>

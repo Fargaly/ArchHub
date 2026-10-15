@@ -2157,6 +2157,7 @@ async def brain_over_mcp(req: Request,
         host_read=_desktop_host_read,
         pushed_hosts=founder_cockpit.pushed_hosts,
         workshop_call=_desktop_workshop_call,
+        session_call=_desktop_session_call,
     )
     # An unauthenticated call learns where to authorize (MCP authorization).
     headers = {"WWW-Authenticate": oauth_mcp.challenge_header()} if status == 401 else None
@@ -2179,6 +2180,13 @@ def _desktop_workshop_call(user: dict, client: dict, method: str, params: dict) 
     import app_relay
     return app_relay.workshop_call(client, method, params,
                                    actor=(user.get("email") or "").strip().lower())
+
+
+def _desktop_session_call(user: dict, method: str, params: dict) -> object:
+    """Queue one session operation for this account's running application."""
+    import app_relay
+    return app_relay.session_call(method, params,
+                                  actor=(user.get("email") or "").strip().lower())
 
 
 def _desktop_host_read(user: dict, tool: str, arguments: dict) -> object:

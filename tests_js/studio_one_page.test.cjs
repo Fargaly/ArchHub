@@ -2,7 +2,7 @@
      P1  Alt+Left, Alt+Right and the Back / Forward keys are refused by the page (the launcher also
          empties the history behind /studio; tests_replica/test_studio_window_is_one_page.py);
      P2  the mouse's Back / Forward buttons (3, 4) are refused;
-     P3  Ctrl+K opens the node library (User-Agency mandate), and Esc closes it;
+     P3  Ctrl+K opens the command bar, and Esc closes it;
      P4  the Studio opens on Canvas; Chat moved into the selection inspector composer and
          Workshop opens from the Home tool card, not a Studio header tab. */
 const test = require('node:test');
@@ -82,17 +82,18 @@ test('P1/P2: Back keys and mouse Back / Forward buttons never navigate the Studi
   } finally { studio.close(); }
 });
 
-test('P3: Ctrl+K opens the node library; Esc closes it', async () => {
+test('P3: Ctrl+K opens the command bar; Esc closes it', async () => {
   const studio = await mountStudio();
   try {
-    const library = () => [...studio.doc.querySelectorAll('span')].find(node => node.textContent === 'Node library');
-    assert.equal(library(), undefined, 'closed at start');
+    const library = () => studio.doc.querySelector('[data-command-bar]');
+    assert.equal(library(), null, 'closed at start');
     const event = new studio.win.KeyboardEvent('keydown', {key:'k', ctrlKey:true, bubbles:true, cancelable:true});
     studio.flush(() => studio.win.dispatchEvent(event));
     assert.equal(event.defaultPrevented, true, 'Ctrl+K is answered');
-    assert.ok(library(), 'Ctrl+K draws the node library');
+    assert.ok(library(), 'Ctrl+K draws the command bar');
+    assert.ok(library().textContent.includes('Add node'), 'command bar includes Add node group');
     studio.flush(() => studio.win.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Escape', bubbles:true})));
-    assert.equal(library(), undefined, 'Esc closes it again');
+    assert.equal(library(), null, 'Esc closes it again');
   } finally { studio.close(); }
 });
 

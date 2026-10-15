@@ -196,7 +196,8 @@ class SessionLinkTransport:
                     or any(app not in {"claude","codex","opencode","antigravity","antigravity-ide"} for app in apps)):
                 raise ValueError("Invalid discovery app scope")
             payload["apps"]=list(dict.fromkeys(apps))
-        return self._call(payload, self._budget(timeout_seconds), None)
+        result = self._call(payload, self._budget(timeout_seconds), None)
+        return result
 
     def request(self, recipient, text, timeout_seconds=180, cancel_event=None,
                 *, permission_mode="prompting"):

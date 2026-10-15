@@ -1,3 +1,4 @@
+const {settingsNavigator} = require('./settings_navigation_helpers.cjs');
 /* Court (lane baboom-settings, 2026-09-24): every enabled Settings control reads and writes one
    source its effect uses, or it is not drawn. Before this lane the Permissions switches, the
    per-host switches, the HARD CAP buttons and "Choose sync folder" wrote this page's localStorage
@@ -15,7 +16,9 @@ const seedText = read("nodelang/universal_presentation_seed.py").match(/^THEME =
 const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)].map(m => [m[1], m[2]]));
 
 async function openSettings({account = null, connectors = [], hosts = [], memory = null, session = undefined, models = undefined,
-  providers = [], socialAccounts = [], socialApprovals = []} = {}) {
+  providers = [], socialAccounts = [], socialApprovals = [],
+  permissionRows = ['Claude Code','Codex','OpenCode','BABOOM'].map(actor =>
+    ({actor, kind:'agent', read:'Ask', write:'Ask', send:'Ask'}))} = {}) {
   const manifest = JSON.parse(read("nodelang/studio/compiled/manifest.json"));
   for (const source of ["studio-lm.jsx", "studio-account.jsx"]) {
     const held = manifest.files.find(file => file.source === source);
@@ -34,12 +37,17 @@ async function openSettings({account = null, connectors = [], hosts = [], memory
   win.ARCHHUB_THEME = {...seed};
   win.matchMedia = () => ({matches:false, addEventListener() {}, removeEventListener() {}});
   if (account) win.localStorage.setItem("archhub.account.v1", JSON.stringify(account));
-  const calls = {consent:[], reveal:[], memory:0, modelSelect:[], socialRemovals:[], approvals:[]};
+  const calls = {consent:[], reveal:[], memory:0, modelSelect:[], socialRemovals:[], approvals:[], permissions:[]};
   win.ARCHHUB_AGENT_SELECT = async route => { calls.modelSelect.push(route); return route; };
   if (memory) win.ARCHHUB_LOAD_MEMORY = async () => { calls.memory += 1; return memory(); };
   let consent = {allowed:false, account:""};
   win.ARCHHUB_CLOUD_SESSION = session === "pending" ? () => new Promise(() => {})
-    : async () => (session || {state:"signed_in", email:"owner@example.com", expires_at:2000000000, founder:false});
+     : async () => {
+      const held = session || {state:"signed_in", email:"owner@example.com", expires_at:2000000000, founder:false};
+      // Both existing account owners read this real session contract.
+      return {...held, state:held.state || (held.signed_in ? "signed_in" : "signed_out"),
+        signed_in:held.signed_in ?? (held.state === "signed_in")};
+    };
   win.ARCHHUB_REVEAL = async what => { calls.reveal.push(what); return {ok:true, opened:"C:/x/" + what}; };
   const listeners = new Set();
   const snapshot = {canvas:null, workshops:[], applicationUpdate:{state:"idle", current_build:"b1"},
@@ -56,6 +64,8 @@ async function openSettings({account = null, connectors = [], hosts = [], memory
     removeLocalSocialAccount:async body => { calls.socialRemovals.push({...body}); return {ok:true, ...body, state:"removed"}; },
     listSocialApprovals:async () => socialApprovals.map(row => ({...row})),
     decideSocialApproval:async body => { calls.approvals.push({...body}); return {ok:true, ...body}; },
+    readSettingsPermissionRows:async () => permissionRows.map(row => ({...row})),
+    setSettingsPermission:async row => { calls.permissions.push({...row}); return {ok:true, ...row}; },
     refreshTopologyCanvas:async () => {}, refreshConversationCatalog:async () => {}, selectTopology:async () => {},
   };
   win.ARCHHUB_LIVE = {sessions:[], currentGraph:null, hosts, connectors, graph:{nodes:[], wires:[]},
@@ -73,17 +83,9 @@ async function openSettings({account = null, connectors = [], hosts = [], memory
   assert.ok(opener, "actual Studio Settings control exists");
   flush(() => opener.click());
   await settle();
-  const anchor = [...doc.querySelectorAll("button")].find(button => button.firstElementChild?.textContent === "Theme");
-  const sidebar = anchor.parentElement;
-  const tab = async label => {
-    const button = [...sidebar.children].find(child => child.firstElementChild?.textContent === label);
-    assert.ok(button, "the sidebar has the " + label + " tab");
-    flush(() => button.click());
-    await settle();
-    return sidebar.nextElementSibling;
-  };
+  const {sidebar, tab, labels} = settingsNavigator({doc, flush, settle});
   const close = () => { try { if (win.__studioRoot) flush(() => win.__studioRoot.unmount()); } finally { dom.window.close(); } };
-  return {win, doc, flush, settle, sidebar, tab, calls, close};
+  return {win, doc, flush, settle, sidebar, tab, labels, calls, close};
 }
 
 test("Team uses the signed-in account as Owner and draws no fake rows", async () => {
@@ -124,25 +126,13 @@ test("Permissions renders only rows backed by stores and its controls call exist
   });
   try {
     const panel = await s.tab("Permissions");
-    for (const row of ["Connectors / hosts", "Cloud relay / publish", "Social accounts", "Agents / approvals"]) {
-      assert.ok(panel.textContent.includes(row), row + " row is backed and rendered");
-    }
+    for (const row of ["Claude Code", "Codex", "OpenCode", "BABOOM"]) assert.ok(panel.textContent.includes(row), row + " row is backed and rendered");
     assert.equal(panel.textContent.includes("File system"), false, "unbacked rows are omitted");
-    const relay = panel.querySelector("[role=\"switch\"][aria-label=\"Allow cloud relay publish\"]");
-    assert.ok(relay, "cloud relay row has the existing consent toggle");
-    s.flush(() => relay.click());
+    const allow = panel.querySelector("[data-permission-col=\"Write\"] [data-seg-control] button:nth-child(2)");
+    assert.ok(allow, "permission row has the existing segmented write control");
+    s.flush(() => allow.click());
     await s.settle();
-    assert.deepEqual(s.calls.consent, [true]);
-    const disconnect = [...panel.querySelectorAll("button")].find(button => button.textContent.trim() === "Disconnect");
-    assert.ok(disconnect, "social row has the existing revoke control");
-    s.flush(() => disconnect.click());
-    await s.settle();
-    assert.deepEqual(s.calls.socialRemovals, [{provider:"linkedin", account_id:"li-a", vault_entry:"social-li-a"}]);
-    const approve = [...panel.querySelectorAll("button")].find(button => button.textContent.trim() === "Approve");
-    assert.ok(approve, "approval row has the existing approval control");
-    s.flush(() => approve.click());
-    await s.settle();
-    assert.deepEqual(s.calls.approvals, [{delegation:"d1", input_digest:"dg1", decision:"approve"}]);
+    assert.ok(s.calls.permissions.length >= 1);
   } finally { s.close(); }
 });
 
@@ -158,7 +148,7 @@ test("Every Settings section has a working control and no stub words", async () 
     socialApprovals:[{delegation:"d1", input_digest:"dg1", operation:"linkedin.post", account_id:"li-a", review_text:"post"}],
   });
   try {
-    const labels = [...s.sidebar.children].map(child => child.firstElementChild.textContent);
+    const labels = s.labels;
     for (const label of labels) {
       const panel = await s.tab(label);
       assert.equal(/coming soon|not available yet|placeholder|stub/i.test(panel.textContent), false, label + " has no stub words");
@@ -174,7 +164,7 @@ test("Permissions and Hosts draw no switch that nothing reads", async () => {
     const perms = await s.tab("Permissions");
     const labels = [...perms.querySelectorAll("button")].map(b => b.textContent.trim());
     for (const mode of ["AUTO", "ASK", "BLOCK"]) assert.equal(labels.includes(mode), false, "no " + mode + " switch");
-    assert.match(perms.textContent, /Access matrix/);
+    assert.match(perms.textContent, /Writes always ask unless you allow them/);
     assert.equal(/Cost ceiling per session|Auto-undo window/.test(perms.textContent), false, "no invented ceiling or undo window");
     const hosts = await s.tab("Hosts");
     const switches = [...hosts.querySelectorAll("[role=\"switch\"]")].map(node => node.getAttribute("aria-label") || node.getAttribute("title"));
@@ -267,12 +257,12 @@ test("Shortcuts lists only keys that have a handler, and they act", async () => 
     for (const unbound of ["⌘N", "⌘↵", "⌥B", "⌘⇧S", "⌘M", "⌥R"]) {
       assert.equal(keys.includes(unbound), false, unbound + " has no handler in this build");
     }
-    assert.ok(keys.includes("Ctrl/Cmd+,") && keys.includes("Ctrl/Cmd+/") && keys.includes("Ctrl/Cmd+K"), "Ctrl/Cmd+K opens the library (User-Agency)");
-    const before = !!s.doc.querySelector("[title=\"Settings\"]") && [...s.doc.querySelectorAll("button")].some(b => b.firstElementChild?.textContent === "Theme");
+    assert.ok(keys.includes("Ctrl/Cmd+,") && keys.includes("Ctrl/Cmd+/") && keys.includes("Ctrl/Cmd+K"), "Ctrl/Cmd+K opens the command bar");
+    const before = !!s.doc.querySelector("[title=\"Settings\"]") && !!s.doc.querySelector("[data-settings54-shell]");
     assert.equal(before, true);
     s.flush(() => s.win.dispatchEvent(new s.win.KeyboardEvent("keydown", {key:",", ctrlKey:true, bubbles:true})));
     await s.settle();
-    assert.equal([...s.doc.querySelectorAll("button")].some(b => b.firstElementChild?.textContent === "Theme"), false,
+    assert.equal(!!s.doc.querySelector("[data-settings54-shell]"), false,
       "Ctrl+, closes Settings: the listed key acts");
   } finally { s.close(); }
 });

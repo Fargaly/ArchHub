@@ -11,19 +11,14 @@ const vm = require('node:vm');
 const file = process.env.ARCHHUB_WORKSHOP_TEST_PATH ||
   path.join(__dirname, '../nodelang/studio/studio-workshop.jsx');
 const source = fs.readFileSync(file, 'utf8');
-const ahFixture = () => new Proxy({
-  onFill:'#000',
-  rad:{chip:3, xs:3, control:5, sm:5, node:6, md:6, panel:8, lg:8},
-  sp:{xs:4, sm:8, md:12, lg:16},
-  fs:{bodySm:{sz:13, ln:18}, bodySmStrong:{wt:500}, caption:{sz:12, ln:16}, label:{sz:11, ln:14, wt:500, letter:'.04em'}, data:{sz:12, ln:16, wt:400}, dataSm:{sz:11, ln:14, wt:400}},
-  icon:{ui:{size:16, box:20}, category:{size:12, box:20}},
-  shadow:{flat:'none'},
-  selection:{outline:'2px solid token-accent', outlineOffset:2},
-  dur:{fast:120, med:180},
-}, {get:(t,k)=> k in t ? t[k] : 'token-' + String(k)});
+const ahFixture = () => {
+  const window={};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../nodelang/studio/tokens.jsx'),'utf8'),{window});
+  return window.AH;
+};
 
 function loadHelper() {
-  const from = 'async function openWorkflowAsNodes', to = '\nconst WorkshopUtilityPanel =';
+  const from = 'async function openWorkflowAsNodes', to = '\nconst WorkshopAgentPicker =';
   const start = source.indexOf(from), end = source.indexOf(to, start);
   assert.ok(start >= 0 && end > start, 'openWorkflowAsNodes is a slice of the shipped studio-workshop.jsx');
   const context = vm.createContext({});
@@ -35,10 +30,9 @@ const WORKFLOW = {root:'assembly-instance:wf', scope:'app:workshop-workbench', m
   scope_path:['app:map-domain', 'app:workshop-workbench']};
 
 // ── source: openAsNodes routes through the helper (not a bare focus+mode) ──
-test('openAsNodes delegates to the scope-walking helper', () => {
-  const body = source.slice(source.indexOf('const openAsNodes ='), source.indexOf('const openAsNodes =') + 600);
-  assert.match(body, /openWorkflowAsNodes\(/, 'openAsNodes must call openWorkflowAsNodes');
-  assert.match(body, /scope_path|workflow/, 'openAsNodes must resolve the focused workflow');
+test('Open on canvas delegates to the existing scope-walking owner helpers',()=>{
+  const start=source.indexOf('  const openCanvas =');const body=source.slice(start,source.indexOf('  const create =',start));
+  assert.match(body,/openWorkflowAsNodes|openShownWorkflowAsNodes/);assert.match(body,/workflow/);
 });
 
 // ── walk: a workflow with a valid scope_path is walked, then focus + canvas ──
@@ -117,7 +111,7 @@ test('a focus with no workflow focuses and switches with no scope walk', async (
 
 // The real card handler: slices BOTH functions and returns the one the workflow card calls.
 function loadCard() {
-  const from = 'async function openWorkflowAsNodes', to = '\nconst WorkshopUtilityPanel =';
+  const from = 'async function openWorkflowAsNodes', to = '\nconst WorkshopAgentPicker =';
   const start = source.indexOf(from), end = source.indexOf(to, start);
   assert.ok(start >= 0 && end > start, 'the open helpers are a slice of the shipped studio-workshop.jsx');
   const context = vm.createContext({});
@@ -159,15 +153,12 @@ test('the workflow-card handler walks its own workflow scope and ignores selecti
 });
 
 // ── wfAct refreshes the topology after an accepted mutation (stale-snapshot root cause) ──
-test('wfAct refreshes topology after an accepted workflow mutation', () => {
-  const start = source.indexOf('const wfAct = async');
-  const body = source.slice(start, source.indexOf('};', start));
-  assert.ok(start > 0, 'wfAct is in studio-workshop.jsx');
-  assert.match(body, /workshopWorkflow\(descriptor\.root, action, fields\)/, 'it still performs the mutation');
-  assert.match(body, /refreshTopologyCanvas\(\)/, 'it refreshes topology after the accepted mutation');
+test('inline workflow approval refreshes topology after the accepted existing mutation',()=>{
+  const start=source.indexOf('  const decide =');const body=source.slice(start,source.indexOf('  const openCanvas =',start));
+  assert.ok(start>0);assert.match(body,/authority\.workshopWorkflow\(descriptor\.root, 'workflow-approve'/);
+  assert.match(body,/refreshTopologyCanvas\?\.\(\)/);
 });
 
-// ── refresh+verify: after the walk the member must be in the fresh snapshot before switching ──
 test('a refreshed snapshot missing the member is refused without switching', async () => {
   const open = loadHelper();
   let mode = null, err = null;
@@ -200,7 +191,7 @@ const WORKFLOW_STATE = () => {
   const room = 'app:workshop:conversation:room';
   const wf = {root:'assembly-instance:wf', scope:'app:workshop-workbench', members:['assembly-instance:m1'],
     scope_path:WF_SCOPE_PATH, nodes:[{root:'assembly-instance:m1', title:'Step one', engine:'library.think', params:{}}],
-    wires:0, edges:[], digest:'dg', approval:null, proposed_by:'agent-a', source_message:'no-such-message',
+    wires:0, edges:[], digest:'d'.repeat(64), approval:null, proposed_by:'agent-a', source_message:'no-such-message',
     title:'My Workflow', conversation:room};
   return {state:{workshop:{root:room, workflows:[wf], messages:[], participants:[], self:'owner', can_send:true,
       can_manage_history:false, has_older:false, next_before:null, total:0, activity:[]},
@@ -238,22 +229,30 @@ async function mountWorkshop(sel) {
   win.ARCHHUB_CONVERSATION_RETENTION = async () => ({});
   const context = vm.createContext({React, window:win, document:win.document, globalThis:win,
     setTimeout, clearTimeout, setInterval, clearInterval, console, JSON, Date, Math, Object, Array, String, Number, Boolean});
+  const shared=fs.readFileSync(path.join(__dirname,'../nodelang/studio/shared-data.jsx'),'utf8');
+  vm.runInContext(transformSync(shared,{loader:'jsx'}).code,context);
   vm.runInContext(transformSync(source, {loader:'jsx'}).code, context);
   const WorkshopView = win.WorkshopView;
   assert.equal(typeof WorkshopView, 'function', 'window.WorkshopView is defined by the shipped module');
   const root = createRoot(win.document.getElementById('root'));
   const {state, descriptor} = WORKFLOW_STATE();
+  let selection=sel;
+  const render=()=>root.render(React.createElement(WorkshopView, {state,descriptor,target:'',setTarget(){},setMode:m=>modes.push(m),setFocusId:id=>focuses.push(id),requestCanvasReveal:ids=>reveals.push(ids),sel:selection,setSel:value=>{selection=value;}}));
   try {
     await React.act(async () => root.render(React.createElement(WorkshopView, {
       state, descriptor, target:'', setTarget(){}, setMode:m => modes.push(m),
-      setFocusId:id => focuses.push(id), requestCanvasReveal:ids => reveals.push(ids), onLeave(){}, sel, setSel(){}, externalRail:false})));
+      setFocusId:id => focuses.push(id), requestCanvasReveal:ids => reveals.push(ids), onLeave(){}, sel:selection, setSel:value=>{selection=value;}, externalRail:false})));
     await React.act(async () => { await new Promise(r => setTimeout(r, 0)); });
-    const card = win.document.querySelector('[data-workshop-workflow]');
-    assert.ok(card, 'the workflow card is drawn');
-    const btn = [...card.querySelectorAll('button')].find(b =>
-      /open as nodes/i.test((b.getAttribute('title') || '') + ' ' + (b.getAttribute('aria-label') || '') + ' ' + b.textContent));
-    assert.ok(btn, 'the card has an Open-as-nodes control');
-    await React.act(async () => { btn.click(); await new Promise(r => setTimeout(r, 0)); });
+    assert.ok(win.document.querySelector('[data-workshop-s1]'), 'the S1 workshop surface is drawn');
+    assert.equal(win.document.querySelector('[data-workshop-workflow]'), null,
+      'legacy workflow cards are not rendered in the new design');
+    const row=win.document.querySelector('[data-workshop-task-row="assembly-instance:wf"]');
+    assert.ok(row,'the real workflow is selected from the list');
+    await React.act(async()=>row.click());
+    await React.act(async()=>render());
+    const open=[...win.document.querySelectorAll('button')].find(el=>el.textContent.trim()==='Open on canvas');
+    assert.ok(open && !open.disabled);
+    await React.act(async()=>{open.click();await new Promise(resolve=>setTimeout(resolve,0));});
     return {openCalls, modes, focuses, reveals, refreshes};
   } finally {
     await React.act(async () => root.unmount());
@@ -261,20 +260,22 @@ async function mountWorkshop(sel) {
   }
 }
 
-test('MOUNTED: the drawn card ⌗ walks the shown workflow, refreshes topology, then focuses', async () => {
+test('MOUNTED: Open on canvas walks the selected workflow, refreshes topology, then focuses', async () => {
   const {openCalls, modes, focuses, reveals, refreshes} = await mountWorkshop({agent:null, task:null});
-  assert.deepEqual(openCalls, WF_SCOPE_PATH, 'the card walked the workflow scope path');
-  assert.ok(refreshes >= 1, 'it refreshed the topology before focus (so the member is in the snapshot)');
-  assert.deepEqual(reveals, [['assembly-instance:m1']], 'the mounted card emits exactly one reveal request carrying member ids');
-  assert.ok(modes.includes('canvas'), 'it switched to the canvas');
-  assert.ok(focuses.includes('assembly-instance:m1'), 'it focused a workflow member');
+  assert.deepEqual(openCalls, WF_SCOPE_PATH, 'the signed authority walks the workflow scope path');
+  assert.equal(refreshes, 1, 'the workflow verifies a fresh universal topology after the scope walk');
+  assert.deepEqual(focuses, ['assembly-instance:m1'], 'the workflow member is focused');
+  assert.deepEqual(reveals, [['assembly-instance:m1']], 'the actual workflow member is revealed');
+  assert.deepEqual(modes, ['canvas']);
 });
 
-test('MOUNTED: the drawn card ⌗ walks the shown workflow even with an unrelated Work selected', async () => {
-  const {openCalls, modes, refreshes} = await mountWorkshop({agent:null, task:'assembly-instance:unrelated-work'});
-  assert.deepEqual(openCalls, WF_SCOPE_PATH, 'an unrelated selection never redirects the card');
-  assert.ok(refreshes >= 1);
-  assert.ok(modes.includes('canvas'));
+test('MOUNTED: selecting the workflow replaces an unrelated task before Open on canvas', async () => {
+  const {openCalls, modes, focuses, reveals, refreshes} = await mountWorkshop({agent:null, task:'assembly-instance:unrelated-work'});
+  assert.deepEqual(openCalls, WF_SCOPE_PATH);
+  assert.equal(refreshes, 1);
+  assert.deepEqual(focuses, ['assembly-instance:m1'], 'unrelated selection cannot redirect the owner action');
+  assert.deepEqual(reveals, [['assembly-instance:m1']]);
+  assert.deepEqual(modes, ['canvas']);
 });
 
 // ── OWNER: a stale topology read must not publish across navigation, incl. away-and-back / identity ──
@@ -366,7 +367,7 @@ test('OWNER a different-identity response is accepted even at a lower revision',
 });
 
 // ── RUNTIME: an accepted workflow action with a failed refresh keeps the receipt, no second POST ──
-async function mountForApprove() {
+async function mountForApprove({execute = false} = {}) {
   const {JSDOM} = await import('jsdom');
   const React = require('react');
   const {createRoot} = require('react-dom/client');
@@ -386,6 +387,8 @@ async function mountForApprove() {
   }, {get(t,k){ if (k in t) return t[k]; if (typeof k === 'string') return async () => ({}); return undefined; }});
   const context = vm.createContext({React, window:win, document:win.document, globalThis:win,
     setTimeout, clearTimeout, setInterval, clearInterval, console, JSON, Date, Math, Object, Array, String, Number, Boolean});
+  const shared=fs.readFileSync(path.join(__dirname,'../nodelang/studio/shared-data.jsx'),'utf8');
+  vm.runInContext(transformSync(shared,{loader:'jsx'}).code,context);
   vm.runInContext(transformSync(source, {loader:'jsx'}).code, context);
   const root = createRoot(win.document.getElementById('root'));
   const {state, descriptor} = WORKFLOW_STATE();
@@ -394,10 +397,14 @@ async function mountForApprove() {
       state, descriptor, target:'', setTarget(){}, setMode(){}, setFocusId(){}, onLeave(){},
       sel:{agent:null, task:null}, setSel(){}, externalRail:false})));
     await React.act(async () => { await new Promise(r => setTimeout(r, 0)); });
-    const btn = [...win.document.querySelectorAll('[data-workshop-workflow] button')]
-      .find(b => /approve/i.test(b.textContent));
-    assert.ok(btn, 'the awaiting workflow card shows an Approve button');
-    await React.act(async () => { btn.click(); await new Promise(r => setTimeout(r, 0)); });
+    assert.ok(win.document.querySelector('[data-workshop-s1]'), 'the S1 workshop surface is drawn');
+    assert.equal(win.document.querySelector('[data-workshop-workflow]'), null,
+      'the retired workflow approval card is not rendered');
+    if(execute){
+      const approve=[...win.document.querySelectorAll('[data-workshop-approval-card] button')].find(el=>el.textContent.trim()==='Approve');
+      assert.ok(approve && !approve.disabled);
+      await React.act(async()=>{approve.click();await new Promise(resolve=>setTimeout(resolve,0));});
+    }
     const alert = win.document.querySelector('[role="alert"]');
     if (alert) errors.push(alert.textContent);
     return {posts, errors};
@@ -407,11 +414,34 @@ async function mountForApprove() {
   }
 }
 
-test('RUNTIME an accepted workflow action with a failed refresh keeps the receipt and never re-POSTs', async () => {
+test('RUNTIME removed workflow-card approval cannot POST or replay from S1', async () => {
   const {posts, errors} = await mountForApprove();
-  assert.deepEqual(posts, ['workflow-approve'], 'exactly one accepted mutation POST, no replay after the failed refresh');
-  assert.deepEqual(errors, [], 'the accepted action is not reported as failed when only the refresh threw');
+  assert.deepEqual(posts, [], 'no retired workflow-card mutation is posted from S1');
+  assert.deepEqual(errors, [], 'the removed action cannot surface a refresh failure');
 });
+
+
+// INTEG1 preserves the pre-WORKSHOP receipt/no-replay behavior at both the
+// visible S1 Run route and the shipped owner retained for workflow approval.
+test('RUNTIME inline approval keeps an accepted workflow receipt when topology refresh fails', async () => {
+  const {posts, errors} = await mountForApprove({execute:true});
+  assert.deepEqual(posts, ['workflow-approve'], 'one accepted mutation POST, never replayed after failed refresh');
+  assert.deepEqual(errors, [], 'a failed refresh does not report the accepted action as failed');
+});
+
+for(const action of ['workflow-approve','workflow-revoke','workflow-draft']){
+  test('OWNER '+action+' preserves an accepted receipt and never re-POSTs on refresh failure',async()=>{
+    const {transport}=require('./workshop72_regression_helpers.cjs');let posted=false;
+    const owner=transport({get:(_url,held)=>{if(posted)throw new Error('refresh boom');return held;},post:()=>{posted=true;return{ok:true};}});
+    await owner.api.refreshWorkshop('room-a');
+    const fields=action==='workflow-draft'?{message:'reply-1'}:action==='workflow-approve'?{workflow:'wf-1',digest:'d'.repeat(64)}:{workflow:'wf-1'};
+    const result=await owner.api.workshopWorkflow('room-a',action,fields);
+    assert.equal(result.ok,true);assert.equal(owner.posts.length,1);
+    assert.equal(owner.posts[0].body.action,action);assert.equal(owner.posts[0].body.root,'room-a');
+    for(const [key,value] of Object.entries(fields))assert.equal(owner.posts[0].body[key],value);
+    assert.equal(owner.gets.length,2,'one transcript refresh after the accepted action, never another POST');
+  });
+}
 
 async function mountCanvasReveal(options = {}) {
   const {JSDOM} = await import('jsdom');
@@ -462,7 +492,7 @@ async function mountCanvasReveal(options = {}) {
     NodeBody:() => null, CanvasToolbar:() => null, FloatingComposer:() => null, CanvasAddBox:() => null, MiniMap:() => null, Socket:() => null,
     nodeModelRow:() => null, smallBtn:() => ({}), toolBtn:() => ({}), kbd:() => ({}),
     setTimeout:dom.window.setTimeout.bind(dom.window), clearTimeout:dom.window.clearTimeout.bind(dom.window)});
-  vm.runInContext(transformSync(lmSource.slice(shortcutStart, shortcutEnd) + lmSource.slice(start, end) + '\nglobalThis.NodeCanvas = NodeCanvas;',
+  vm.runInContext(transformSync(lmSource.slice(shortcutStart, shortcutEnd) + lmSource.slice(start, end) + require('./workshop72_node_helpers.cjs').nodePreviewSource(lmSource) + '\nglobalThis.NodeCanvas = NodeCanvas;',
     {loader:'jsx', format:'cjs'}).code, context);
   const root = createRoot(dom.window.document.getElementById('root'));
   let props = {focusId:null, setFocusId:() => {}, pendingReveal:null, clearPendingReveal:() => {},
@@ -482,7 +512,7 @@ async function mountCanvasReveal(options = {}) {
 }
 
 // D-FIX1 (founder window 2026-10-12: a graph opened at 66% under the toolbar and cut at the left edge).
-test('a Workspace canvas opens fitted below the toolbar band, at most 100%; a bare canvas keeps its default view', async () => {
+test('a Workspace canvas opens fitted and vertically centred inside the viewport margins, at most 100%; a bare canvas keeps its default view', async () => {
   const read = view => {
     const t = view.doc.querySelector('[role="region"][aria-label="Workflow canvas"]').firstElementChild.style.transform;
     const n = ((t.match(/translate3d\(([^)]*)\)/) || [])[1] || '').split(',').map(part => parseFloat(part));
@@ -493,7 +523,8 @@ test('a Workspace canvas opens fitted below the toolbar band, at most 100%; a ba
     for (let i = 0; i < 6; i += 1) await fitted.settle();
     const v = read(fitted);
     assert.ok(v.zoom > 0.9 && v.zoom <= 1, 'opens fitted, never above 100%: ' + v.t);
-    assert.ok(v.y + 60 * v.zoom >= 119.5, 'the top card clears the toolbar, hint row and minimap band (120 px): ' + v.t);
+    assert.ok(v.y + 60 * v.zoom >= 79.5, 'the top card clears the v3 viewport margin (80 px): ' + v.t);
+    assert.ok(Math.abs(((v.y+60*v.zoom)+(v.y+630*v.zoom))/2-380)<0.5,'graph is centred vertically in the 760px viewport: '+v.t);
     assert.ok(v.x + 40 * v.zoom >= 23.5, 'no card is cut at the left edge: ' + v.t);
     assert.ok(v.y + 630 * v.zoom <= 760 - 79.5, 'the bottom card clears the add box band (80 px): ' + v.t);
   } finally { await fitted.close(); }
@@ -550,10 +581,8 @@ test('NodeCanvas clears a stale pending reveal across a scope remount without pa
 });
 
 // ── wiring: the workflow card's ⌗ binds openShownWorkflowAsNodes(shownWorkflow), not openAsNodes ──
-test('the workflow card button is wired to its own workflow, not the generic handler', () => {
-  const card = source.slice(source.indexOf('const workflowProposalCard'), source.indexOf('// The proposed workflow answers'));
-  assert.ok(card.length > 0, 'the workflow card is a slice of studio-workshop.jsx');
-  const openBtn = card.slice(card.indexOf('data-workshop-workflow-chip'));
-  assert.match(openBtn, /openShownWorkflowAsNodes\(shownWorkflow/, 'the card ⌗ opens its own shownWorkflow');
-  assert.ok(!/onClick=\{openAsNodes\}/.test(openBtn), 'the card ⌗ must not use the generic openAsNodes');
+test('Open on canvas binds the currently selected real workflow rather than a removed rich-card handler',()=>{
+  const start=source.indexOf('  const openCanvas =');const handler=source.slice(start,source.indexOf('  const create =',start));
+  assert.match(handler,/model\.workflow/);assert.match(handler,/openShownWorkflowAsNodes|openWorkflowAsNodes/);
+  assert.match(source,/onClick=\{openCanvas\}/);assert.doesNotMatch(source,/data-workshop-workflow-chip/);
 });

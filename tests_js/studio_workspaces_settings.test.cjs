@@ -7,6 +7,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {createHash} = require('node:crypto');
+const {settingsNavigator} = require('./settings_navigation_helpers.cjs');
 const root = path.resolve(__dirname, '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const seedText = read('nodelang/universal_presentation_seed.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
@@ -22,7 +23,7 @@ const view = (boot, projection, roots = [], pinned = roots.length > 0) => ({
     writers:[...AGENTS], state:'registered', registered_at:'2026-09-29T00:00:00Z'})),
 });
 
-async function mount(answers) {
+async function mount(answers, options = {}) {
   const manifest = JSON.parse(read('nodelang/studio/compiled/manifest.json'));
   const held = manifest.files.find(file => file.source === 'studio-lm.jsx');
   const live = createHash('sha256').update(fs.readFileSync(path.join(root, 'nodelang/studio/studio-lm.jsx'))).digest('hex');
@@ -32,7 +33,15 @@ async function mount(answers) {
   const dom = new JSDOM('<div id="root"></div>', {url:'http://localhost/', runScripts:'outside-only', pretendToBeVisual:true});
   const win = dom.window;
   const requests = [];
+  const hostAnswers = [...(options.hosts || [{ok:true, connectors:[], operations:[]}])];
+  let lastHostAnswer = {ok:true, connectors:[], operations:[]};
   win.fetch = (url, options = {}) => {
+    if (String(url) === '/api/universal/hosts') {
+      const answer = hostAnswers.length ? (lastHostAnswer = hostAnswers.shift()) : lastHostAnswer;
+      return Promise.resolve({ok:answer.ok !== false, status:answer.ok === false ? 500 : 200, json:async () => answer});
+    }
+    if (String(url) === '/tools') return Promise.resolve({ok:true, json:async () => ({tools:[]})});
+    if (String(url) === '/waiting') return Promise.resolve({ok:true, json:async () => ({items:[]})});
     if (String(url) !== '/api/universal/workspace-roots') return new Promise(() => {});
     const body = JSON.parse(options.body || '{}');
     requests.push(body);
@@ -44,6 +53,17 @@ async function mount(answers) {
     return Promise.resolve({ok:true, status:200, json:async () => answer});
   };
   win.ARCHHUB_THEME = {...seed};
+  win.ARCHHUB_LIVE = {hosts:[], connectors:[], skills:[], memory:[], graph:{nodes:[], wires:[]}};
+  win.ARCHHUB_LOAD_HOSTS = async () => {
+    const scan = await win.fetch('/api/universal/hosts').then(response => response.json());
+    const rows = (Array.isArray(scan.connectors) ? scan.connectors : []).filter(row => row && row.id).map(row => ({
+      ...row,
+      id:String(row.id),
+      state:row.state || 'unknown',
+      detail:row.detail || (row.connector_built === false ? 'no connector yet' : 'status unknown'),
+    }));
+    return {hosts:rows, connectors:rows};
+  };
   const renewals = [];
   win.__archhubSession = {token:'held-token', csrf:'held-csrf'};
   win.__archhubRenewSession = async () => {
@@ -61,10 +81,10 @@ async function mount(answers) {
   const doc = win.document;
   const click = element => win.eval('(el => ReactDOM.flushSync(() => el.click()))')(element);
   click(doc.querySelector('[title="Settings"]'));
-  const tab = [...doc.querySelectorAll('button')].find(button => button.textContent.trim().startsWith('Workspaces'));
-  assert.ok(tab, 'Settings offers the Workspaces tab');
-  click(tab);
   const settle = async (ms = 30) => { await new Promise(resolve => setTimeout(resolve, ms)); };
+  const tabName = options.tab || 'Workspaces';
+  const navigation = settingsNavigator({doc, flush:fn => win.ReactDOM.flushSync(fn), settle});
+  await navigation.tab(tabName);
   const button = label => [...doc.querySelectorAll('button')].find(item => item.textContent.trim() === label);
   const typePath = value => {
     const input = doc.querySelector('[aria-label="Workspace folder"]');
@@ -81,6 +101,36 @@ async function mount(answers) {
   return {win, doc, requests, renewals, click, settle, button, typePath, typeName,
     close: () => { win.eval('window.__studioRoot.unmount()'); win.close(); }};
 }
+
+test('Hosts renders not-built server rows separately and counts only built running rows', async () => {
+  const hosts = {ok:true, operations:[], connectors:[
+    {id:'revit', name:'Revit', state:'connected', detail:'1 session', connector_built:true},
+    {id:'civil3d', name:'Civil 3D', state:'off', detail:'no connector yet', connector_built:false},
+    {id:'navisworks', name:'Navisworks', state:'off', detail:'no connector yet', connector_built:false},
+  ]};
+  const ui = await mount([], {tab:'Hosts', hosts:[hosts]});
+  try {
+    await ui.settle(80);
+    const rows = [...ui.doc.querySelectorAll('[data-connector-row]')];
+    assert.equal(rows.length, 3);
+    assert.ok(rows.some(row => row.textContent.includes('Civil 3D') && row.textContent.includes('no connector yet')));
+    assert.ok(rows.some(row => row.textContent.includes('Navisworks') && row.textContent.includes('no connector yet')));
+    assert.match(ui.doc.querySelector('[data-connectors-bar]').textContent, /1 of 1 running .* 2 coming/);
+  } finally { ui.close(); }
+});
+
+test('Hosts renders stopped built programs as Not running without warn pulse', async () => {
+  const hosts = {ok:true, operations:[], connectors:[
+    {id:'revit', name:'Revit', state:'stopped', detail:'installed', connector_built:true},
+  ]};
+  const ui = await mount([], {tab:'Hosts', hosts:[hosts]});
+  try {
+    await ui.settle(80);
+    const row = ui.doc.querySelector('[data-connector-row]');
+    assert.ok(row.textContent.includes('Not running'));
+    assert.equal(row.querySelector('span').style.animation, 'none');
+  } finally { ui.close(); }
+});
 
 test('a pending start-up check offers no change, is read again, and opens changes when it matches', async () => {
   const ui = await mount([view('checking', 'missing'), view('checking', 'missing'), view('missing', 'missing')]);

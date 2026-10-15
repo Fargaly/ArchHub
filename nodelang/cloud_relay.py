@@ -36,6 +36,7 @@ HOST_READ = "host-read"
 # One Workshop step of an MCP client (Spark, Notion) as its own agent; see
 # McpWorkshopAgents. Claimed only when this app can answer it.
 WORKSHOP_CALL = "workshop-call"
+SESSION_CALL = "session-call"
 APP_KINDS = ("app", "app-execute", HOST_READ)
 # What a remote host read may run: the SAME local read functions the host
 # tools use, and nothing that executes, captures or sends. Anything else is
@@ -52,6 +53,358 @@ OFFICE_READS = frozenset({
 # head rather than JSON cut in half.
 RESULT_LIMIT = 7900
 OFFER_KEYS = ("revision", "sha256", "availability", "pricing_visible", "public_label")
+SESSION_TAIL_LIMIT = 40
+REMOTE_OWNER_LABEL = "remote cloud owner"
+
+
+def _session_account(value: object) -> str:
+    return str(value or "").strip().casefold()
+
+
+class RemoteSessionCaller:
+    """Account-scoped remote session tools over real app sessions and native peers."""
+
+    def __init__(self, *, account: Callable[[], object], transport: object,
+                 application_sessions: object = None):
+        if not callable(account):
+            raise ValueError("session account loader must be callable")
+        if transport is None or not callable(getattr(transport, "discover", None)):
+            raise ValueError("session transport must expose discover")
+        if application_sessions is not None and not all(callable(getattr(application_sessions, name, None))
+                for name in ("list", "open", "create", "send")):
+            raise ValueError("application sessions must expose list/open/create/send")
+        self._account = account
+        self._transport = transport
+        self._application_sessions = application_sessions
+
+    def __call__(self, account: object, method: object, params: object,
+                 request_id: object = None) -> object:
+        requested = _session_account(account)
+        current = _session_account(self._account())
+        if not requested or requested != current:
+            raise PermissionError("session request belongs to another signed-in account")
+        if not isinstance(params, Mapping):
+            params = {}
+        request_identity = self._request_identity(request_id)
+        name = str(method or "")
+        if name == "list_sessions":
+            return {"sessions": [self._public_session(row) for row in self._sessions(current)]}
+        if name == "open_session":
+            return self._public_session(self._session(current, params.get("id")))
+        if name == "send_to_session":
+            session = self._session(current, params.get("id"))
+            text = str(params.get("text") or "")
+            if not text.strip():
+                raise ValueError("session message is empty")
+            if str(params.get("mode") or "ask") != "ask":
+                raise PermissionError("send_to_session is Ask-gated")
+            if session.get("app") == "archhub":
+                if self._application_sessions is None:
+                    raise RuntimeError("ArchHub conversation route is unavailable")
+                if request_identity is None:
+                    raise ValueError("session send requires the relay task request identity")
+                return self._application_sessions.send(
+                    current, session["id"], text, request_identity=request_identity)
+            request = getattr(self._transport, "request", None)
+            if not callable(request):
+                raise RuntimeError("session transport cannot send")
+            return {"session_id": session["id"], "mode": "ask",
+                    "delivery": request(session, text, permission_mode="prompting")}
+        if name == "new_session":
+            title = str(params.get("title") or "").strip()
+            if not title:
+                raise ValueError("session title is empty")
+            if str(params.get("mode") or "ask") != "ask":
+                raise PermissionError("new_session is Ask-gated")
+            if self._application_sessions is None:
+                raise RuntimeError("ArchHub conversation route is unavailable")
+            if request_identity is None:
+                raise ValueError("session creation requires the relay task request identity")
+            created = self._application_sessions.create(
+                current, title, request_identity=request_identity)
+            if not isinstance(created, Mapping):
+                raise RuntimeError("session creation did not return a session")
+            created_account = created.get("account")
+            if created_account is None or _session_account(created_account) != current:
+                raise PermissionError("created session has no proven ArchHub account owner")
+            session_id = created.get("id")
+            if not isinstance(session_id, str) or not session_id:
+                raise RuntimeError("created session has no id")
+            return self._public_session(created)
+        raise KeyError(name)
+
+    @staticmethod
+    def _request_identity(value: object) -> str | None:
+        if value is None:
+            return None
+        identity = str(value or "").strip()
+        if not identity or "\x00" in identity or len(identity.encode("utf-8")) > 512:
+            raise ValueError("relay task request identity is invalid")
+        return identity
+
+    def _sessions(self, account: str) -> tuple[dict, ...]:
+        rows = []
+        if self._application_sessions is not None:
+            rows.extend(self._application_sessions.list(account))
+        found = self._transport.discover()
+        if not isinstance(found, Mapping) or found.get("status") != "ok":
+            reason = found.get("reason") if isinstance(found, Mapping) else None
+            raise RuntimeError("session discovery failed: " + str(reason or "invalid response"))
+        for row in found.get("recipients") or ():
+            if not isinstance(row, Mapping):
+                continue
+            if row.get("app") == "archhub":
+                continue
+            row_account = row.get("account")
+            if row_account is None or _session_account(row_account) != account:
+                continue
+            session_id = row.get("id")
+            if isinstance(session_id, str) and session_id:
+                rows.append(dict(row))
+        return tuple(rows)
+
+    def _session(self, account: str, session_id: object) -> dict:
+        wanted = str(session_id or "").strip()
+        if self._application_sessions is not None:
+            opened = self._application_sessions.open(account, wanted, missing_ok=True)
+            if opened is not None:
+                return opened
+        for row in self._sessions(account):
+            if row.get("id") == wanted:
+                return row
+        raise PermissionError("session is not in this ArchHub account")
+
+    @staticmethod
+    def _public_session(row: Mapping[str, object]) -> dict:
+        allowed = ("id", "app", "title", "name", "state", "cwd", "pid", "port", "runtimeId",
+                   "tail", "history", "model_agent")
+        return {key: row[key] for key in allowed if key in row}
+
+
+class ArchHubApplicationSessions:
+    """Remote session tools backed by the same application conversation route as Home."""
+
+    def __init__(self, owner, *, cloud_account: Callable[[], object]):
+        if not callable(cloud_account):
+            raise ValueError("application sessions require authenticated cloud account")
+        self._owner = owner
+        self._cloud_account = cloud_account
+
+    def list(self, account: str) -> list[dict]:
+        from .workshop_conversation_catalog import list_workshop_conversations
+        account, binding = self._account_binding(account)
+        result = list_workshop_conversations(self._owner,
+            authentication_context=binding.context,
+            expected_revision=self._owner.universal_store.revision)
+        rows = []
+        for row in result.get("conversations", ()):
+            if row.get("is_general"):
+                continue
+            root = row.get("root")
+            if (isinstance(root, str) and root
+                    and self._conversation_owner(root, binding) == account):
+                rows.append({"account": account, "app": "archhub", "id": root,
+                    "title": row.get("title", root), "state": "idle",
+                    "runtimeId": "application-conversation"})
+        return rows
+
+    def open(self, account: str, session_id: object, *, missing_ok: bool = False) -> dict | None:
+        wanted = str(session_id or "").strip()
+        if not wanted:
+            if missing_ok:
+                return None
+            raise PermissionError("session is not in this ArchHub account")
+        account, binding = self._account_binding(account)
+        titles = {row["id"]: row.get("title", row["id"]) for row in self.list(account)}
+        if wanted not in titles:
+            if missing_ok:
+                return None
+            raise PermissionError("session is not in this ArchHub account")
+        page = self._read(wanted, binding)
+        history = [{"id": row.get("message_id") or row.get("root"),
+                    "sequence": row.get("sequence"),
+                    "author": row.get("sender_root"),
+                    "category": row.get("category"),
+                    "text": row.get("body", ""),
+                    "reply_to": row.get("reply_to_root")}
+                   for row in page.get("messages", ())]
+        history.extend({"id": row.get("root"),
+                        "sequence": row.get("sequence"),
+                        "author": row.get("sender_root"),
+                        "category": "tool",
+                        "text": row.get("body", ""),
+                        "reply_to": None}
+                       for row in page.get("activity", ()))
+        history.sort(key=lambda row: row.get("sequence") or 0)
+        return {"account": account, "app": "archhub", "id": wanted,
+                "title": titles[wanted], "state": "idle",
+                "runtimeId": "application-conversation",
+                "tail": [row["text"] for row in history[-SESSION_TAIL_LIMIT:]],
+                "history": history, "model_agent": page.get("model_agent")}
+
+    def create(self, account: str, title: str, *, request_identity: str) -> dict:
+        from .workshop_session_start import start_workshop_session
+        from . import commit_intent
+        account, binding = self._account_binding(account)
+        prompt = str(title or "").strip()
+        route = self._model_route()
+        body = {"prompt": prompt, "model": route,
+                "idempotency_key": self._relay_key("remote-session-create", request_identity)}
+        with commit_intent.declare(commit_intent.USER_ACTION, actor=binding.subject_root,
+                reason="remote ArchHub session creation"):
+            with self._planning():
+                result = start_workshop_session(self._owner, binding, body,
+                    browser_guard=lambda: self._guard(binding, "/api/universal/workshop"))
+            self._ensure_conversation_owner(result["root"], account, binding)
+        opened = self.open(account, result["root"])
+        return {**opened, "account": account}
+
+    def send(self, account: str, session_id: str, text: str, *, request_identity: str) -> dict:
+        from .workshop_session_start import send_workshop_model_message
+        from . import commit_intent
+        account, binding = self._account_binding(account)
+        opened = self.open(account, session_id)
+        agent = opened.get("model_agent")
+        if not isinstance(agent, Mapping) or not isinstance(agent.get("root"), str):
+            raise RuntimeError("ArchHub conversation has no admitted model agent")
+        key = self._relay_key("remote-session-send", request_identity)
+        body = {"root": session_id, "scope": self._owner.universal_registry.workshop_workbench_root,
+                "node": agent["root"], "binding_digest": agent["binding_digest"],
+                "prompt": text, "idempotency_key": key}
+        with commit_intent.declare(commit_intent.USER_ACTION, actor=binding.subject_root,
+                reason="remote ArchHub conversation send"):
+            with self._planning():
+                result = send_workshop_model_message(self._owner, binding, body,
+                    browser_guard=lambda: self._guard(binding, "/api/universal/workshop"))
+        return {"session_id": session_id, "mode": "ask", "delivery": result["delivery"],
+                "message_id": result["message_id"], "reply_persisted": result["delivery"].get("state") == "replied"}
+
+    def _read(self, root: str, binding) -> dict:
+        from .existing_workshop_conversation import read_browser_workshop
+        return read_browser_workshop(self._owner, binding, root=root,
+            scope=self._owner.universal_registry.workshop_workbench_root,
+            session_token=self._owner.browser_session_token, feed="messages")
+
+    @staticmethod
+    def _relay_key(prefix: str, request_identity: str) -> str:
+        return prefix + ":" + hashlib.sha256(request_identity.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _owner_roots(root: str) -> tuple[str, str, str]:
+        digest = hashlib.sha256(root.encode("utf-8")).hexdigest()
+        base = "app:remote-session-owner:" + digest
+        return base, base + ":value", base + ":label"
+
+    def _account_binding(self, account: object):
+        requested = _session_account(account)
+        authenticated = _session_account(self._cloud_account())
+        if not requested or requested != authenticated:
+            raise PermissionError("session request belongs to another signed-in account")
+        binding = self._binding()
+        if not isinstance(getattr(binding, "subject_root", None), str) or not binding.subject_root:
+            raise PermissionError("remote sessions require an authenticated application subject")
+        return authenticated, binding
+
+    def _conversation_owner(self, root: str, binding) -> str | None:
+        from .cell_protocols import read_relation
+        relation_root, value_root, label_root = self._owner_roots(root)
+        snapshot = self._owner.universal_store.snapshot()
+        if relation_root not in snapshot.cells:
+            return None
+        try:
+            members = read_relation(snapshot, relation_root, budget=8)
+            roles = self._owner.universal_registry.roles
+            if ({(row.role_id, row.participant_id) for row in members}
+                    != {(roles["owner"], root), (roles["value"], value_root),
+                        (roles["label"], label_root)}):
+                return None
+            label = snapshot.cells[label_root].atom.decode("utf-8")
+            value = json.loads(snapshot.cells[value_root].atom.decode("utf-8"))
+        except (KeyError, UnicodeDecodeError, ValueError, TypeError):
+            return None
+        account = _session_account(value.get("account") if isinstance(value, Mapping) else None)
+        subject_root = value.get("subject_root") if isinstance(value, Mapping) else None
+        if label != REMOTE_OWNER_LABEL or subject_root != binding.subject_root:
+            return None
+        return account or None
+
+    def _ensure_conversation_owner(self, root: str, account: str, binding) -> None:
+        from .cell_protocols import compose_relation_cells
+        from .universal_cell import Cell, NULL_CELL_ID
+        relation_root, value_root, label_root = self._owner_roots(root)
+        with self._owner.mutation_lock:
+            store, registry = self._owner.universal_store, self._owner.universal_registry
+            with registry.authorization.broker.live_context(binding.context):
+                snapshot = store.snapshot()
+                current = self._conversation_owner(root, binding)
+                if current == account:
+                    return
+                if current is not None:
+                    raise PermissionError("ArchHub conversation belongs to another cloud account")
+                if relation_root in snapshot.cells:
+                    raise PermissionError("ArchHub conversation owner property is invalid")
+                value = json.dumps({"account": account, "subject_root": binding.subject_root},
+                                   sort_keys=True, separators=(",", ":")).encode("utf-8")
+                relation = compose_relation_cells((
+                    (registry.roles["owner"], root),
+                    (registry.roles["value"], value_root),
+                    (registry.roles["label"], label_root),
+                ), relation_id=relation_root)
+                registry.authorization.broker.commit_authenticated(binding.context, store,
+                    snapshot.revision, create=(
+                        Cell(value_root, NULL_CELL_ID, NULL_CELL_ID, value),
+                        Cell(label_root, NULL_CELL_ID, NULL_CELL_ID,
+                             REMOTE_OWNER_LABEL.encode("utf-8")),
+                        *relation.cells))
+        if self._conversation_owner(root, binding) != account:
+            raise PermissionError("ArchHub conversation owner was not proven")
+
+    def _binding(self):
+        return self._owner._resolve_browser_session(
+            self._owner.browser_session_token,
+            csrf_token=self._owner.browser_csrf_token,
+            require_csrf=True)
+
+    def _guard(self, binding, path: str):
+        current = self._binding()
+        if current != binding:
+            from .cell_authorization import AuthorizationDenied
+            raise AuthorizationDenied("Remote session browser changed")
+        if self._owner._runtime_handoff_exit.is_set():
+            from .cell_authorization import AuthorizationDenied
+            raise AuthorizationDenied("runtime generation was released during planning")
+        if self._owner.universal_checkpoint_guard is not None:
+            self._owner.universal_checkpoint_guard.require_healthy()
+        self._owner.require_universal_http_route("POST", path,
+            authentication_context=binding.context, revalidate=True)
+
+    def _model_route(self) -> str:
+        reader = getattr(self._owner, "_read_agent_model", None)
+        route = ""
+        if callable(reader):
+            route = str(reader() or "").strip()
+        if not route:
+            default = getattr(self._owner, "_default_agent_model", None)
+            if callable(default):
+                route = str((default() or ("", ""))[0] or "").strip()
+        if not route:
+            raise RuntimeError("ArchHub session creation requires a configured composer model")
+        return route
+
+    def _planning(self):
+        class _Planning:
+            def __init__(self, slot):
+                self._slot = slot
+
+            def __enter__(self):
+                if self._slot is not None and not self._slot.acquire(blocking=False):
+                    from .universal_cell import InvalidCell
+                    raise InvalidCell("Another draft is being prepared; wait for its result before trying again")
+
+            def __exit__(self, exc_type, exc, tb):
+                if self._slot is not None:
+                    self._slot.release()
+        return _Planning(getattr(self._owner, "_composer_planning_slot", None))
 
 
 def pinned_cloud_base(value: object) -> str:
@@ -383,9 +736,11 @@ class CloudRelay:
         models: Optional[Callable[[], object]] = None,
         session_loader: Optional[Callable[[], Optional[Mapping[str, str]]]] = None,
         workshop_caller: Optional[Callable[[object, object, object], object]] = None,
+        session_caller: Optional[Callable[[object, object, object, object], object]] = None,
         session_path: Optional[Path] = None,
         consent: Optional[Callable[[], bool]] = None,
         host_reader: Optional[Callable[[object, object], object]] = None,
+        app_kinds: tuple[str, ...] = APP_KINDS,
     ) -> None:
         self.base_url = str(base_url).rstrip("/")
         # A remote read runs this: host_read, unless a caller supplies its own.
@@ -403,6 +758,8 @@ class CloudRelay:
         self.models = models
         self.session_loader = session_loader
         self.workshop_caller = workshop_caller
+        self.session_caller = session_caller
+        self.app_kinds = tuple(k for k in app_kinds if k in APP_KINDS)
         self.session_path = session_path
         # Settings > Account withdraws cloud publish consent by deleting its
         # record; the relay reads it before every claim and stops for good.
@@ -469,7 +826,9 @@ class CloudRelay:
             self._stop.set()
             self.last_error = "cloud publish consent withdrawn; relay stopped"
             return None
-        kinds = list(APP_KINDS) + ([WORKSHOP_CALL] if callable(self.workshop_caller) else [])
+        kinds = (list(self.app_kinds) +
+                 ([WORKSHOP_CALL] if callable(self.workshop_caller) else []) +
+                 ([SESSION_CALL] if callable(self.session_caller) else []))
         claimed = self._call(CLAIM_PATH, {"claimed_by": self.claimed_by, "kinds": kinds})
         task = claimed.get("task")
         if not isinstance(task, Mapping) or not task.get("id"):
@@ -478,6 +837,8 @@ class CloudRelay:
             return self._answer_host_read(task)
         if task.get("kind") == WORKSHOP_CALL:
             return self._answer_workshop_call(task)
+        if task.get("kind") == SESSION_CALL:
+            return self._answer_session_call(task)
         utterance = str(task.get("directive") or "").strip()
         execute = task.get("kind") == "app-execute"
         handled = None
@@ -529,6 +890,26 @@ class CloudRelay:
             ok, text = True, bounded_json(self.workshop_caller(
                 request.get("agent"), request.get("method"), request.get("params")))
         except Exception as exc:  # the refusal IS the answer; never a silent drop
+            ok, text = False, "%s: %s" % (type(exc).__name__, exc)
+        self._call(RESULT_PATH % str(task["id"]), {"ok": ok, "result": text[:8000]})
+        self.answered += 1
+        return {"task": str(task["id"]), "ok": ok, "result": text}
+
+    def _answer_session_call(self, task: Mapping[str, object]) -> dict:
+        """One remote session operation; never BABOOM, never a host."""
+        try:
+            if not callable(self.session_caller):
+                raise PermissionError("this app does not answer remote session calls")
+            request = json.loads(str(task.get("directive") or ""))
+            if not isinstance(request, Mapping):
+                raise ValueError("a session call is {account, method, params}")
+            account = _session_account(request.get("account"))
+            if not account:
+                raise ValueError("a session call requires an account")
+            request_id = request.get("request_id") or task["id"]
+            ok, text = True, bounded_json(self.session_caller(
+                account, request.get("method"), request.get("params"), request_id))
+        except Exception as exc:
             ok, text = False, "%s: %s" % (type(exc).__name__, exc)
         self._call(RESULT_PATH % str(task["id"]), {"ok": ok, "result": text[:8000]})
         self.answered += 1
@@ -706,6 +1087,10 @@ def start_cloud_relay(
     offer_command: Optional[Callable[[str, bool], object]] = None,
     models: Optional[Callable[[], object]] = None,
     workshop_caller: Optional[Callable[[object, object, object], object]] = None,
+    session_caller: Optional[Callable[[object, object, object, object], object]] = None,
+    session_transport: object = None,
+    application_session_owner: object = None,
+    app_kinds: tuple[str, ...] = APP_KINDS,
 ) -> Optional[CloudRelay]:
     """Start the relay thread when the founder's session and consent exist.
 
@@ -726,6 +1111,20 @@ def start_cloud_relay(
     session = load_cloud_session(appdata)
     if session is None:
         return None
+    if session_caller is None and session_transport is not None:
+        can_open_application = (application_session_owner is not None and all(
+            hasattr(application_session_owner, name) for name in (
+                "browser_session_token", "browser_csrf_token", "universal_store",
+                "universal_registry", "conversation_content")))
+        cloud_account = lambda: signed_in_cloud_account(session_path)
+        application_sessions = (ArchHubApplicationSessions(
+            application_session_owner, cloud_account=cloud_account)
+                                if can_open_application else None)
+        session_caller = RemoteSessionCaller(
+            account=cloud_account,
+            transport=session_transport,
+            application_sessions=application_sessions,
+        )
     relay = CloudRelay(
         base_url=session["base_url"], token=session["token"],
         respond=respond, execute=execute, map_script=map_script, hosts=hosts,
@@ -736,6 +1135,8 @@ def start_cloud_relay(
         session_path=session_path,
         consent=consented,
         workshop_caller=workshop_caller,
+        session_caller=session_caller,
+        app_kinds=app_kinds,
     )
     return relay.start()
 
@@ -744,7 +1145,7 @@ __all__ = [
     "CloudRelay", "PINNED_BASES", "load_cloud_session", "pinned_cloud_base",
     "published_models_form", "published_offer_form",
     "render_answer", "host_read", "bounded_json", "HOST_READ_TOOLS",
-    "McpWorkshopAgents", "WORKSHOP_CALL", "WORKSHOP_METHODS", "mcp_runtime",
-    "start_cloud_relay",
+    "McpWorkshopAgents", "WORKSHOP_CALL", "SESSION_CALL", "WORKSHOP_METHODS", "mcp_runtime",
+    "RemoteSessionCaller", "ArchHubApplicationSessions", "start_cloud_relay",
     "CLAIM_PATH", "RESULT_PATH", "MAP_PATH",
 ]

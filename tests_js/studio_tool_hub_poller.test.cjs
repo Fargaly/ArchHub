@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {createHash} = require('node:crypto');
+const {settingsNavigator} = require('./settings_navigation_helpers.cjs');
 
 const root = path.resolve(__dirname, '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
@@ -136,8 +137,8 @@ async function mountStudioWithToolHubPoller(mountOptions = {}) {
   assert.ok(settings, 'Settings button exists');
   win.ReactDOM.flushSync(() => settings.click());
   await settle();
-  const hub = [...win.document.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Hub');
-  assert.ok(hub, 'Settings Hub is mounted');
+  const navigation = settingsNavigator({doc:win.document, flush:fn => win.ReactDOM.flushSync(fn), settle});
+  await navigation.tab('Hub');
   calls.length = 0;
   const close = () => { try { win.ReactDOM.flushSync(() => win.__studioRoot.unmount()); } finally { dom.window.close(); } };
   return {win, calls, clock, setHidden, close, held:pending};

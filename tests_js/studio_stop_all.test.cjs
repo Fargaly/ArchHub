@@ -24,9 +24,7 @@ function installIntervalClock(win) {
     return id;
   };
   win.clearTimeout = id => intervals.delete(id);
-  const drain = async () => {
-    for (let i = 0; i < 6; i += 1) await Promise.resolve();
-  };
+  const drain = async () => { for (let i = 0; i < 6; i += 1) await Promise.resolve(); };
   const advance = async ms => {
     const end = now + ms;
     while (true) {
@@ -45,7 +43,7 @@ function installIntervalClock(win) {
     now = end;
     await drain();
   };
-  return {advance, intervals, now:() => now};
+  return {advance, now:() => now};
 }
 
 async function mountStudioForStopAll(options = {}) {
@@ -57,24 +55,21 @@ async function mountStudioForStopAll(options = {}) {
   const dom = new JSDOM('<div id="root"></div>', {url:'http://127.0.0.1:53916/', runScripts:'outside-only', pretendToBeVisual:true});
   const win = dom.window;
   const clock = installIntervalClock(win);
-  let hidden = false;
-  Object.defineProperty(win.document, 'hidden', {configurable:true, get:() => hidden});
+  Object.defineProperty(win.document, 'hidden', {configurable:true, get:() => false});
 
   let serverStopped = false;
   const failToolsAfterStop = !!options.failToolsAfterStop;
   const postCalls = [];
   const toolRows = [
-    {id:'studio', label:'Studio', state:'running', state_word:'RUNNING', description:'Canvas, chats and graph sessions.', stat_line:'3 sessions · 0 running.', off_sentence:'Switched off. Sessions are kept.', wire_summary:'Studio → Brain'},
-    {id:'workshop', label:'Workshop', state:'running', state_word:'RUNNING', description:'Projects, tasks and governed work.', stat_line:'1 projects · 1 tasks.', off_sentence:'Switched off. Tasks are paused.', wire_summary:'Workshop → Studio'},
-    {id:'brain', label:'Brain', state:'off', state_word:'OFF', description:'Memory, facts and local classification.', stat_line:'1 facts.', off_sentence:'Switched off.', wire_summary:'Brain → Studio'},
-    {id:'baboom', label:'BABOOM', state:'running', state_word:'RUNNING', description:'Desktop companion and approved execution.', stat_line:'Attached runtime.', off_sentence:'Switched off.', wire_summary:'BABOOM ← Studio'},
-    {id:'connectors', label:'Connectors', state:'running', state_word:'RUNNING', description:'Host bridges.', stat_line:'1/1 hosts running.', off_sentence:'Switched off.', wire_summary:'Connectors → Studio'},
-    {id:'cloud', label:'Cloud', state:'starting', state_word:'STARTING', description:'Devices and cloud agents.', stat_line:'Not signed in.', off_sentence:'Switched off.', wire_summary:'Cloud ← Brain'},
+    {id:'studio', label:'Studio', state:'running', state_word:'RUNNING', description:'Canvas, chats and graph sessions.', stat_line:'3 sessions - 0 running.', off_sentence:'Switched off. Sessions are kept.', wire_summary:'Studio -> Brain'},
+    {id:'workshop', label:'Workshop', state:'running', state_word:'RUNNING', description:'Projects, tasks and governed work.', stat_line:'1 projects - 1 tasks.', off_sentence:'Switched off. Tasks are paused.', wire_summary:'Workshop -> Studio'},
+    {id:'brain', label:'Brain', state:'off', state_word:'OFF', description:'Memory, facts and local classification.', stat_line:'1 facts.', off_sentence:'Switched off.', wire_summary:'Brain -> Studio'},
+    {id:'connectors', label:'Connectors', state:'running', state_word:'RUNNING', description:'Host bridges.', stat_line:'1/1 hosts running.', off_sentence:'Switched off.', wire_summary:'Connectors -> Studio'},
   ];
 
-  win.fetch = (url, options = {}) => {
+  win.fetch = (url, requestOptions = {}) => {
     const urlStr = String(url);
-    const method = String(options.method || 'GET').toUpperCase();
+    const method = String(requestOptions.method || 'GET').toUpperCase();
     if (urlStr === '/stop-all' && method === 'POST') {
       postCalls.push({url:urlStr, method, at:clock.now()});
       serverStopped = true;
@@ -94,39 +89,31 @@ async function mountStudioForStopAll(options = {}) {
       }
       return Promise.resolve({ok:true, json:() => Promise.resolve({ok:true, tools:toolRows, stopped:serverStopped})});
     }
-    if (urlStr === '/waiting') {
-      return Promise.resolve({ok:true, json:() => Promise.resolve({ok:true, items:[]})});
-    }
+    if (urlStr === '/waiting') return Promise.resolve({ok:true, json:() => Promise.resolve({ok:true, items:options.waiting || []})});
     return new Promise(() => {});
   };
 
   win.ARCHHUB_THEME = {...seed};
+  if (options.loadHosts) win.ARCHHUB_LOAD_HOSTS = options.loadHosts;
   win.matchMedia = () => ({matches:false, addEventListener() {}, removeEventListener() {}});
   const authorization = {subject:'owner-a', session:'view-a'};
   const graph = {nodes:[{id:'tool-a', title:'Tool node', cat:'ai', x:40, y:40, w:220, h:120, params:[], outs:[]}], wires:[]};
   const snapshot = {canvas:{graph_id:'graph-a', root:'scope-a', revision:7, authorization},
-    workshops:[{root:'room-a', label:'General Workshop', is_general:true}],
-    nativeWork:null,
-    theme:{configuration:{baboom_startup:{value:'on', source:'graph', available:true, revision:12}}, pending:false, error:''},
-    applicationUpdate:{state:'idle', current_build:'20261010-o'},
+    workshops:[], nativeWork:null, applicationUpdate:{state:'idle', current_build:'20261010-o'},
     topology:{canvas:{application_root:'graph-a', scope:{current:'scope-a'}, authorization, revision:7}, graph, selected:null}};
-  const owner = {
+  win.ARCHHUB_EXISTING_WORKSHOP = {
     getSnapshot:() => snapshot,
     subscribe:() => () => {},
     watchApplicationUpdate:() => () => {},
-    setBaboomStartup:async value => {
-      snapshot.theme.configuration.baboom_startup.value = value;
-      return {ok:true, value};
-    },
+    refreshTopologyCanvas:async () => ({ok:true}),
   };
-  win.ARCHHUB_EXISTING_WORKSHOP = new Proxy(owner, {get:(target, key) =>
-    key in target || typeof key !== 'string' || key === 'then' ? target[key] : () => new Promise(() => {})});
-  win.ARCHHUB_TOOL_HUB = {ok:true, tools:toolRows, stopped:false, waiting:[]};
+  win.ARCHHUB_TOOL_HUB = {ok:true, tools:toolRows, stopped:false, waiting:options.waiting || []};
+  const hostRows = options.hosts || [{id:'local-host', name:'Local Host', state:'connected', file:'Tower.rvt'}];
   win.ARCHHUB_LIVE = {sessions:[
-      {id:'graph-a', title:'Mine', state:'idle', file:'mine.graph', owner:'mine'},
+      {id:'graph-a', title:'Mine', state:'running', file:'mine.graph', owner:'mine'},
     ], currentGraph:'graph-a',
-    hosts:[{id:'r25', name:'Revit 2025', state:'connected', file:'Tower.rvt'}],
-    connectors:[{id:'revit', drive:true}], graph, memory:[], skills:[]};
+    hosts:hostRows,
+    connectors:hostRows.map(row => ({id:row.id, drive:true})), graph, memory:[], skills:[]};
 
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
@@ -145,67 +132,97 @@ async function mountStudioForStopAll(options = {}) {
   return {win, postCalls, clock, settle, close};
 }
 
-test('ServerStrip: Stop posts /stop-all, strip shows "Stopped · Resume", and Resume posts /resume', async () => {
+test('StatusBar: global Stop posts /stop-all, shows Stopped and keeps Resume reachable', async () => {
   const studio = await mountStudioForStopAll();
   try {
     const {win, postCalls, settle} = studio;
-
-    // 1. Find initial Stop button
     const buttons = () => [...win.document.querySelectorAll('button')];
-    const stopButton = buttons().find(b => b.textContent.trim() === 'Stop');
-    assert.ok(stopButton, 'ServerStrip contains Stop button');
+    const stopButton = buttons().find(button => button.textContent.trim() === 'Stop');
+    assert.ok(stopButton, 'StatusBar contains Stop button');
 
-    // 2. Click Stop -> posts /stop-all
     win.ReactDOM.flushSync(() => stopButton.click());
     await settle();
 
-    const stopCall = postCalls.find(c => c.url === '/stop-all');
-    assert.ok(stopCall, 'Stop clicked: POST /stop-all was sent');
+    assert.ok(postCalls.find(call => call.url === '/stop-all'), 'Stop clicked: POST /stop-all was sent');
+    assert.ok(win.document.body.textContent.includes('Stopped'), 'StatusBar shows Stopped after confirmed stop');
 
-    // 3. Verify strip shows "Stopped · Resume"
-    const stripText = win.document.body.textContent;
-    assert.ok(stripText.includes('Stopped · Resume'), `ServerStrip shows "Stopped · Resume": got text "${stripText}"`);
-
-    // 4. Find Resume button
-    const resumeButton = buttons().find(b => b.textContent.trim() === 'Resume');
-    assert.ok(resumeButton, 'ServerStrip contains Resume button when stopped');
-
-    // 5. Click Resume -> posts /resume
+    const resumeButton = buttons().find(button => button.textContent.trim() === 'Resume');
+    assert.ok(resumeButton, 'StatusBar contains Resume button when stopped');
     win.ReactDOM.flushSync(() => resumeButton.click());
     await settle();
 
-    const resumeCall = postCalls.find(c => c.url === '/resume');
-    assert.ok(resumeCall, 'Resume clicked: POST /resume was sent');
-
-    // 6. Verify strip reverts to Stop
-    const revertedStop = buttons().find(b => b.textContent.trim() === 'Stop');
-    assert.ok(revertedStop, 'ServerStrip reverted to Stop button after resume');
+    assert.ok(postCalls.find(call => call.url === '/resume'), 'Resume clicked: POST /resume was sent');
+    assert.ok(buttons().find(button => button.textContent.trim() === 'Stop'), 'StatusBar reverted to Stop button after resume');
   } finally {
     studio.close();
   }
 });
 
-test('ServerStrip: confirmed Stop survives the next failed /tools read and Resume remains reachable', async () => {
+test('StatusBar: host read states are explicit and running/waiting counts are independent', async () => {
+  const pending = await mountStudioForStopAll({
+    hosts:[],
+    waiting:[{id:'wait-a', label:'Approve work', producer:'workshop_gate'}],
+    loadHosts:() => new Promise(() => {}),
+  });
+  try {
+    await pending.settle(() => pending.win.document.body.textContent.includes('1 waits for you'), 'pending waiting count rendered');
+    assert.ok(pending.win.document.body.textContent.includes('Checking programs'), 'host read in flight does not claim no program connected');
+    assert.ok(pending.win.document.body.textContent.includes('1 running'), 'running count remains visible without a connected host');
+    assert.ok(pending.win.document.body.textContent.includes('1 waits for you'), 'waiting count remains visible without a connected host');
+  } finally { pending.close(); }
+
+  const failed = await mountStudioForStopAll({
+    hosts:[],
+    waiting:[{id:'wait-a', label:'Approve work', producer:'workshop_gate'}, {id:'wait-b', label:'Confirm cloud', producer:'social_approve'}],
+    loadHosts:async () => { throw new Error('host read failed'); },
+  });
+  try {
+    await failed.settle(() => failed.win.document.body.textContent.includes('2 waits for you'), 'failed waiting count rendered');
+    assert.ok(failed.win.document.body.textContent.includes('Programs unavailable'), 'failed host read has a visible unavailable state');
+    assert.ok([...failed.win.document.querySelectorAll('button')].some(button => button.textContent.trim() === 'Retry'), 'failed host read exposes Retry');
+    assert.ok(failed.win.document.body.textContent.includes('1 running'), 'running count still renders after host read failure');
+    assert.ok(failed.win.document.body.textContent.includes('2 waits for you'), 'waiting count still renders after host read failure');
+  } finally { failed.close(); }
+
+  const stale = await mountStudioForStopAll({
+    hosts:[{id:'local-host', name:'Revit', version:'2026', state:'connected', file:'Tower.rvt'}],
+    loadHosts:async () => { throw new Error('host read failed'); },
+  });
+  try {
+    await stale.settle();
+    const strip = stale.win.document.querySelector('footer')?.textContent || '';
+    assert.match(strip, /Last known:\s*Revit 2026\s*·\s*Tower\.rvt\s*·\s*Retry/,
+      'failed refresh keeps cached host explicitly last-known with retry');
+    assert.doesNotMatch(strip, /●\s*Connected/, 'failed refresh never reports cached host as plain Connected');
+  } finally { stale.close(); }
+
+  const empty = await mountStudioForStopAll({hosts:[], loadHosts:async () => ({hosts:[], connectors:[]})});
+  try {
+    await empty.settle();
+    assert.ok(empty.win.document.body.textContent.includes('No program connected'), 'no program appears only after a completed empty host read');
+  } finally { empty.close(); }
+});
+
+test('StatusBar: confirmed Stop survives a failed /tools read and Resume remains reachable', async () => {
   const studio = await mountStudioForStopAll({failToolsAfterStop:true});
   try {
     const {win, postCalls, settle} = studio;
     const buttons = () => [...win.document.querySelectorAll('button')];
-    const stopButton = buttons().find(b => b.textContent.trim() === 'Stop');
-    assert.ok(stopButton, 'ServerStrip contains Stop button');
+    const stopButton = buttons().find(button => button.textContent.trim() === 'Stop');
+    assert.ok(stopButton, 'StatusBar contains Stop button');
 
     win.ReactDOM.flushSync(() => stopButton.click());
     await settle();
     await studio.clock.advance(1000);
 
-    const stripText = win.document.body.textContent;
-    assert.ok(stripText.includes('Stopped · Resume'), `confirmed stop survived failed /tools: got "${stripText}"`);
-    const resumeButton = buttons().find(b => b.textContent.trim() === 'Resume');
+    assert.ok(win.document.body.textContent.includes('Stopped'), 'confirmed stop survived failed /tools');
+    const resumeButton = buttons().find(button => button.textContent.trim() === 'Resume');
     assert.ok(resumeButton, 'Resume remains reachable while owner reads fail');
 
     win.ReactDOM.flushSync(() => resumeButton.click());
     await settle();
-    assert.ok(postCalls.find(c => c.url === '/resume'), 'Resume clicked: POST /resume was sent');
-    assert.ok(buttons().find(b => b.textContent.trim() === 'Stop'), 'normal controls returned after resume');
+    assert.ok(postCalls.find(call => call.url === '/resume'), 'Resume clicked: POST /resume was sent');
+    assert.ok(buttons().find(button => button.textContent.trim() === 'Stop'), 'normal controls returned after resume');
   } finally {
     studio.close();
   }

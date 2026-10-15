@@ -22,6 +22,7 @@ from nodelang.library_engines import (
     LIBRARY_ENGINES,
     LIBRARY_ITEMS_WITHOUT_ENGINE,
     LIBRARY_ITEM_ENGINES,
+    engine_runs,
     library_catalogue,
 )
 
@@ -45,6 +46,7 @@ _PLACEMENTS = {
     "library.filter_compare": (
         {"field": "height", "operator": ">", "value": "2500"}, _ROWS),
     "library.filter_rule": ({"rule": "item.height >= 3000"}, _ROWS),
+    "library.rule_check": ({"rule": "item.height >= 3000"}, _ROWS),
     "library.set_field": ({"field": "Comments", "value": "checked"}, _ROWS),
     "library.move": ({"dx": "100", "dy": "50"}, _LINES),
     "library.rotate": ({"degrees": "90"}, _LINES),
@@ -73,6 +75,8 @@ _PLACEMENTS = {
     "library.place_tags": ({"category": "Doors"}, {}),
     "library.place_on_sheet": ({"sheet": "A101", "views": "Level 1"}, {}),
     "library.push_speckle": ({"project": "abc123"}, _ROWS),
+    "host.read": ({"host": "Revit", "operation": "List walls"}, {}),
+    "speckle.send": ({"project": "abc123"}, _ROWS),
 }
 
 # Engines whose input is a stream: with nothing wired they must answer an
@@ -88,7 +92,8 @@ _STREAM_ENGINES = [
                     "library.think", "library.match_skill", "library.embed",
                     "library.notify", "library.draft_email", "library.vision",
                     "library.publish_pdf", "library.tag_rooms",
-                    "library.place_tags", "library.place_on_sheet")
+                    "library.place_tags", "library.place_on_sheet",
+                    "host.read")
 ]
 
 
@@ -97,6 +102,7 @@ def _library_items():
     return {
         item["id"]: (None if item.get("noEngine") else item["engine"])
         for group in library_catalogue() for item in group["items"]
+        if item.get("hidden") is not True
     }
 
 
@@ -180,7 +186,7 @@ def test_save_skill_writes_nothing_when_nothing_is_wired(tmp_path):
 
 
 def test_every_library_card_either_runs_or_says_it_cannot():
-    """The library offered 53 cards; 31 of them vanished on reload.
+    """The library offers the merged handoff catalogue and no dead cards.
 
     Dropping a card with no engine put it in the browser's memory only:
     invisible to Run, never written to the graph, gone on the next reload.
@@ -193,14 +199,24 @@ def test_every_library_card_either_runs_or_says_it_cannot():
     holds the LANDED state.
     """
     items = _library_items()
-    # 54 cards plus the three Workshop cards (Workshop, Agent session,
-    # Independent review) reconciled from the clean-bootstrap catalogue,
-    # plus the Terminal card (terminal_sessions.py, 2026-09-24).
-    assert len(items) == 58, len(items)
+    visible_groups = [{**group, "items": [item for item in group["items"]
+        if item.get("hidden") is not True]} for group in library_catalogue()]
+    assert [(group["cat"], len(group["items"])) for group in visible_groups if group["items"]] == [
+        ("trigger", 6), ("input", 9), ("host", 7), ("shape", 10),
+        ("transform", 4), ("logic", 5), ("document", 7), ("file", 1),
+        ("text", 1), ("math", 2), ("ai", 2), ("governance", 6),
+        ("watch", 1), ("output", 6), ("note", 2), ("skill", 1),
+    ]
+    assert len(items) == 70, len(items)
     wired = {item for item, engine in items.items() if engine}
-    assert len(wired) == 58, sorted(wired)
+    assert len(wired) == 70, sorted(wired)
+    assert "h_write" not in items
+    assert "h_read" in items
+    for host_item in ("b_all_category", "b_get_parameter", "b_set_parameter",
+                      "b_create_sheets", "b_renumber"):
+        assert host_item in items
 
-    for item, wiring in LIBRARY_ITEM_ENGINES.items():
+    for item, wiring in {item: LIBRARY_ITEM_ENGINES[item] for item in items}.items():
         assert items.get(item) == wiring["engine"], (
             "%s is mapped to %s but the library says %r"
             % (item, wiring["engine"], items.get(item)))
@@ -214,12 +230,29 @@ def test_every_library_card_either_runs_or_says_it_cannot():
     assert "libItem.noEngine" in _CANVAS.read_text(encoding="utf-8", errors="replace"), "the drop must refuse, not vanish"
 
 
+def test_unknown_revit_read_operation_refuses_without_substitution(monkeypatch):
+    from nodelang import pipeline_engines
+
+    calls = []
+
+    def fake_revit_read(params, feeds):
+        calls.append(params)
+        return {"out": [{"wrong": True}]}, "wrong"
+
+    monkeypatch.setattr(pipeline_engines, "revit_read", fake_revit_read)
+    outputs, display = _answered("host.read", {"host": "Revit", "operation": "List floors"}, None)
+    assert outputs == {"out": []}
+    assert display == "unknown Revit read operation: List floors"
+    assert calls == []
+
+
 def test_every_mapped_card_names_an_engine_that_exists():
     # Host and read cards run on host engines; every card's engine is in the
     # one table both Run paths carry.
     from nodelang.pipeline_engines import PIPELINE_ENGINES
-    for item, wiring in LIBRARY_ITEM_ENGINES.items():
-        assert wiring["engine"] in PIPELINE_ENGINES, item
+    for item in _library_items():
+        wiring = LIBRARY_ITEM_ENGINES[item]
+        assert engine_runs(wiring["engine"], PIPELINE_ENGINES), item
         assert isinstance(wiring["params"], dict), item
 
 

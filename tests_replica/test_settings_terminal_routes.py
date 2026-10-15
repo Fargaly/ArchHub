@@ -202,6 +202,41 @@ def test_settings_reads_never_wait_on_a_port_scan_or_a_silent_brain(server, monk
                                  "detail": "no answer on the brain port"}
 
 
+def test_hosts_route_serves_the_broker_catalogue_and_operation_evidence(server, monkeypatch):
+    from nodelang.connector_operation_evidence import operation_rows
+    from nodelang.host_brokers import probe_catalogue_rows, probe_host_rows
+
+    canonical = probe_host_rows() + probe_catalogue_rows()
+    monkeypatch.setattr(server, "_probe_hosts", lambda: canonical)
+    deadline = time.monotonic() + 5
+    answered = call(server, "/api/universal/hosts")
+    while time.monotonic() < deadline and answered.get("probing"):
+        time.sleep(0.05)
+        answered = call(server, "/api/universal/hosts")
+    assert answered.get("probing") is not True, answered
+    connector_ids = {row["id"] for row in answered["connectors"]}
+    assert {row["id"] for row in canonical} == connector_ids, answered
+    operation_ids = {row["op"] for row in answered["operations"]}
+    assert {row["op"] for row in operation_rows(canonical)} == operation_ids, answered
+
+
+def test_hosts_route_serves_each_not_built_program_once(server, monkeypatch):
+    from nodelang.host_brokers import probe_catalogue_rows, probe_host_rows
+
+    canonical = probe_host_rows() + probe_catalogue_rows()
+    monkeypatch.setattr(server, "_probe_hosts", lambda: canonical)
+    answered = call(server, "/api/universal/hosts")
+    expected = ["Civil 3D", "Navisworks", "SketchUp", "Archicad", "IFC", "Bluebeam",
+                "Enscape", "Power BI", "SharePoint", "Slack", "Airtable"]
+    rows = [row for row in answered["connectors"] if row.get("name") in expected]
+    assert sorted(row["name"] for row in rows) == sorted(expected)
+    for name in expected:
+        matches = [row for row in rows if row["name"] == name]
+        assert len(matches) == 1, (name, rows)
+        assert matches[0]["connector_built"] is False
+        assert matches[0]["detail"] == "no connector yet"
+
+
 def test_every_library_card_can_be_placed_including_notify(server):
     """o_notify declared a "title" parameter, which every placed card already holds, so it
     could never be placed ("property label already exists"). It is notice_title now."""

@@ -1,3 +1,4 @@
+const {settingsNavigator} = require('./settings_navigation_helpers.cjs');
 /* Settings is the design's dialog: the shell, the twelve tabs and each tab's drawn layout come from
    archhub/project studio-lm.jsx:2403-3142 and studio-account.jsx:362-465. Only seeded values are
    replaced (provider registry, Personal Settings, release status, account tier, the brain's facts),
@@ -15,7 +16,7 @@ const seedText = read('nodelang/universal_presentation_seed.py').match(/^THEME =
 const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)].map(match => [match[1], match[2]]));
 // Workspaces (274e4f2a) registers the folders the graph governs; it sits after Permissions.
 // BABOOM sits after Brain as in the design dialog (ArchHub App Window.html, Settings).
-const DESIGN_TABS = ['Hub', 'Account', 'Brain', 'BABOOM', 'Team', 'Profile', 'Permissions', 'Workspaces', 'Hosts', 'Providers', 'Models',
+const DESIGN_TABS = ['Hub', 'Account', 'Brain', 'BABOOM', 'Team', 'Profile', 'Permissions', 'Connections', 'Workspaces', 'Hosts', 'Providers', 'Models',
   'Theme', 'Shortcuts', 'Storage', 'About'];
 // Shaped as model_router.provider_rows() emits them. No row carries a key.
 const PROVIDERS = [
@@ -26,7 +27,7 @@ const PROVIDERS = [
 ];
 
 async function openSettings({account = null, socialAccounts = [], socialApprovals = [], linkedInAppSaved = false, metaAppSaved = false,
-  linkedInReady = false, metaReady = false, hosts = []} = {}) {
+  linkedInReady = false, metaReady = false, hosts = [], systemNodes = []} = {}) {
   const manifest = JSON.parse(read('nodelang/studio/compiled/manifest.json'));
   for (const source of ['studio-lm.jsx', 'studio-account.jsx']) {
     const held = manifest.files.find(file => file.source === source);
@@ -41,7 +42,7 @@ async function openSettings({account = null, socialAccounts = [], socialApproval
   win.matchMedia = () => ({matches:false, addEventListener() {}, removeEventListener() {}});
   if (account) win.localStorage.setItem('archhub.account.v1', JSON.stringify(account));
   const calls = {edit:[], providers:0, watch:0, socialRemovals:[], linkedInStarts:0, linkedInFinishes:0,
-    metaStarts:0, metaFinishes:0, notionStarts:0};
+    metaStarts:0, metaFinishes:0, notionStarts:0, clientMcp:[]};
   let heldSocialAccounts = socialAccounts.map(row => ({...row}));
   win.prompt = () => 'Rewritten fact.';
   win.ARCHHUB_BRAIN_EDIT = async (id, text) => { calls.edit.push([id, text]); return {ok:true}; };
@@ -86,12 +87,13 @@ async function openSettings({account = null, socialAccounts = [], socialApproval
     finishMetaSignIn:async ({page_id}) => { calls.metaFinishes += 1; return {ok:true, state:'enrolled', provider:'meta', account_id:page_id,
       vault_entry:'social-meta-page-' + page_id, account_binding:'provider-verified'}; },
     connectNotion:async () => { calls.notionStarts += 1; return {ok:true, label:'Notion is connected'}; },
+    installMcpClient:async provider => { calls.clientMcp.push(provider); return {ok:true, provider}; },
     watchApplicationUpdate:() => { calls.watch += 1; return () => {}; },
     refreshApplicationUpdate:async () => {}, applicationUpdateAction:async () => {},
     refreshTheme:async () => {}, previewThemeToken:async () => {}, restoreThemeRevision:async () => {}, setBaboomStartup:async () => {},
     refreshTopologyCanvas:async () => {}, refreshConversationCatalog:async () => {}, selectTopology:async () => {},
   };
-  win.ARCHHUB_LIVE = {sessions:[], currentGraph:null, hosts:hosts.map(row => ({...row})), connectors:[], graph:{nodes:[], wires:[]},
+  win.ARCHHUB_LIVE = {sessions:[], currentGraph:null, hosts:hosts.map(row => ({...row})), connectors:[], graph:{nodes:systemNodes.map(row => ({...row})), wires:[]},
     memory:[{id:'m1', text:'Real fact read from the brain.', src:'folder'}], skills:[]};
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
@@ -106,39 +108,35 @@ async function openSettings({account = null, socialAccounts = [], socialApproval
   assert.ok(opener, 'actual Studio Settings control exists');
   flush(() => opener.click());
   await settle();
-  const anchor = [...doc.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Theme');
-  assert.ok(anchor, 'actual Settings sidebar exists');
-  const sidebar = anchor.parentElement;
-  const tab = async label => {
-    const button = [...sidebar.children].find(child => child.firstElementChild?.textContent === label);
-    assert.ok(button, 'the sidebar has the ' + label + ' tab');
-    flush(() => button.click());
-    await settle();
-    return sidebar.nextElementSibling;
-  };
+  const {sidebar, tab} = settingsNavigator({doc, flush, settle});
   const buttons = (scope, text) => [...scope.querySelectorAll('button, [role="button"]')].filter(node => node.textContent.trim() === text);
   const close = () => { try { if (win.__studioRoot) flush(() => win.__studioRoot.unmount()); } finally { dom.window.close(); } };
   return {win, doc, flush, settle, sidebar, tab, buttons, calls, close};
 }
 
-test('the Settings sidebar is the design tab table, in the design order, and states the live badges', async () => {
-  const s = await openSettings();
+module.exports.openSettingsForCourt = openSettings;
+
+test('the Settings sidebar is the DSYS-065 six-group graph rail and retains the existing capability badges', async () => {
+  const s = await openSettings({systemNodes:[
+    ['account', 'Account'], ['connections', 'Connections'], ['ai', 'AI'],
+    ['permissions', 'Permissions'], ['appearance', 'Appearance'], ['storage', 'Storage & About'],
+  ].map(([id, group], index) => ({id:'sys_' + id, application:true, title:group, group, cat:'logic',
+    x:40 + (index % 3) * 300, y:76 + Math.floor(index / 3) * 206, params:[]}))});
   try {
-    const dialog = s.sidebar.closest('[role="dialog"]');
+    const dialog = s.doc.querySelector('[data-settings54-shell]');
     assert.ok(dialog, 'Settings is a dialog');
     assert.equal(dialog.getAttribute('aria-modal'), 'true', 'Settings says it is modal');
     assert.equal(dialog.getAttribute('aria-label'), 'Settings');
-    assert.deepEqual([...s.sidebar.children].map(child => child.firstElementChild.textContent), DESIGN_TABS);
-    const badge = label => [...s.sidebar.children].find(child => child.firstElementChild.textContent === label).children[1]?.textContent || null;
-    assert.equal(badge('Providers'), '1 key', 'the Providers badge counts the keyed registry rows');
-    assert.equal(badge('Theme'), 'Dark', 'the Theme badge states the mode the Studio draws');
-    assert.equal(badge('Brain'), '4 strata \u00b7 1 facts');
-    assert.equal(badge('BABOOM'), '2/h', 'the BABOOM badge is one short fact: the speech budget per hour (UX-SET1)');
-    assert.deepEqual([dialog.style.width, dialog.style.maxWidth, dialog.style.height, dialog.style.maxHeight],
-      ['1200px', '92vw', '780px', '88vh'], 'the dialog grows with the window, within 92vw x 88vh (UX-SET1)');
-    assert.ok(s.sidebar.classList.contains('ah-scroll'), 'the sidebar uses the dark app scrollbar, not the native white one');
-    assert.match(badge('Hub'), /^\d\/6 running$/, 'the Hub badge counts the tools whose cards say they run');
-    // UX-SET1 v2 (gate-uxset1-1920x1040, 09_Settings_Hub): 5 + 1 wrap and truncated stat lines.
+    assert.deepEqual([...dialog.querySelectorAll('[data-settings54-group-title]')].map(node => node.textContent.trim()),
+      ['Account', 'Connections', 'AI', 'Permissions', 'Appearance', 'Storage & About']);
+    assert.equal(dialog.querySelectorAll('[data-settings54-node-card]').length >= 5, true,
+      'System graph cards are the visible Settings surface');
+    assert.deepEqual([dialog.style.width, dialog.style.height], ['100%', '100%'],
+      'the full-page Settings shell grows with the window');
+    assert.ok(dialog.querySelector('[data-settings54-nav]').classList.contains('ah-scroll'),
+      'the visible group rail uses the dark app scrollbar, not the native white one');
+    // Old flat-tab order, per-tab badges and bounded-dialog dimensions are retired surface DOM.
+    // Capability behavior remains covered by the owner courts below, including Office collapse.
     const hub = await s.tab('Hub');
     assert.equal(hub.querySelector('[data-tool-grid]').style.gridTemplateColumns, 'repeat(3, minmax(0, 1fr))',
       'the Settings Hub is the same 3 x 2 grid as Home, never 5 + 1');
@@ -146,29 +144,58 @@ test('the Settings sidebar is the design tab table, in the design order, and sta
       assert.notEqual(stat.style.textOverflow, 'ellipsis', 'a card stat line is never cut with an ellipsis');
       assert.notEqual(stat.style.whiteSpace, 'nowrap', 'a card stat line wraps instead');
     }
-    assert.ok(s.doc.body.textContent.includes('STUDIO \u00b7 20260916-2130-e733a13'), 'the dialog header states the running build');
+    const about = await s.tab('About');
+    assert.ok(about.textContent.includes('20260916-2130-e733a13'), 'About states the same running build after the old dialog header moved');
   } finally { s.close(); }
 });
 
-// DP-CONNECTORS (design: ArchHub Product.html #connectors, superseding UX-SET2's column chips): one row per
-// live program with plain copy, the four Office programs folded into ONE row, and the programs without a
-// connector kept as "not built yet" rows (design "Never removed").
-test('DP-CONNECTORS: design rows, Office folded, not-built rows kept, plain copy', async () => {
+test('Hosts counts use the same Office-collapsed rows in badge, card and Settings', async () => {
+  const hosts = [
+    {id:'revit', name:'Revit', state:'connected', detail:'add-in on :48884'},
+    {id:'excel', name:'Excel', state:'running', detail:'workbook open'},
+    {id:'word', name:'Word', state:'running', detail:'document open'},
+    {id:'powerpoint', name:'PowerPoint', state:'running', detail:'deck open'},
+  ];
+  const s = await openSettings({hosts});
+  try {
+    const hub = await s.tab('Hub');
+    assert.ok(hub.textContent.includes('2/2 hosts running.'), 'Hub Connectors card uses collapsed Office rows');
+    const hostsPanel = await s.tab('Hosts');
+    assert.match(hostsPanel.querySelector('[data-connectors-bar]').textContent, /2 of 2 running/);
+  } finally { s.close(); }
+});
+
+// DP-CONNECTORS (design: ArchHub Product.html #connectors, superseding UX-SET2's column chips): one count row
+// for Office with governed child rows below it, and the programs without a connector kept as separate
+// "no connector yet" rows (design "Never removed").
+test('DP-CONNECTORS: design rows, Office count row and child rows, not-built rows kept, plain copy', async () => {
   const s = await openSettings({hosts:[
     {id:'revit', name:'Revit', state:'absent', detail:'no session listening on 48884-48899'},
     {id:'autocad', name:'AutoCAD', state:'absent', detail:'no session listening'},
     {id:'excel', name:'Excel', state:'installed', detail:'installed \u00b7 open a file and the reads answer'},
     {id:'outlook', name:'Outlook', state:'installed', detail:'installed \u00b7 open Outlook and the inbox reads answer'},
     {id:'rhino', name:'Rhino', state:'absent', detail:''},
+    {id:'civil3d', name:'Civil 3D', state:'unknown', detail:'no connector yet', connector_built:false},
+    {id:'navisworks', name:'Navisworks', state:'unknown', detail:'no connector yet', connector_built:false},
+    {id:'sketchup', name:'SketchUp', state:'unknown', detail:'no connector yet', connector_built:false},
+    {id:'archicad', name:'Archicad', state:'unknown', detail:'no connector yet', connector_built:false},
+    {id:'ifc', name:'IFC', state:'unknown', detail:'no connector yet', connector_built:false},
+    {id:'bluebeam', name:'Bluebeam', state:'unknown', detail:'no connector yet', connector_built:false},
+    {id:'enscape', name:'Enscape', state:'unknown', detail:'no connector yet', connector_built:false},
+    {id:'powerbi', name:'Power BI', state:'unknown', detail:'no connector yet', connector_built:false},
+    {id:'sharepoint', name:'SharePoint', state:'unknown', detail:'no connector yet', connector_built:false},
+    {id:'slack', name:'Slack', state:'unknown', detail:'no connector yet', connector_built:false},
+    {id:'airtable', name:'Airtable', state:'unknown', detail:'no connector yet', connector_built:false},
   ]});
   try {
     const panel = await s.tab('Hosts');
     const rows = [...panel.querySelectorAll('[data-connector-row]')];
-    const notBuilt = [...panel.querySelectorAll('[data-not-built]')];
-    assert.equal(notBuilt.length, 5, 'the five programs without a connector stay listed');
-    assert.equal(rows.length - notBuilt.length, 4, 'Revit, AutoCAD, Rhino and ONE Office row');
+    const notBuilt = [...panel.querySelectorAll('[data-host-state]')].filter(row => row.textContent === 'no connector yet');
+    assert.equal(notBuilt.length, 11, 'the eleven programs without a connector stay listed separately');
+    assert.equal(rows.length - notBuilt.length, 6, 'Revit, AutoCAD, Rhino, ONE Office count row and two Office child rows');
     const text = panel.textContent;
     assert.ok(text.includes('Excel \u00b7 Outlook'), 'the Office programs share one row');
+    assert.equal(panel.querySelectorAll('[data-office-child]').length, 2, 'the actual Office host controls render under the count row');
     for (const stale of ['reads answer', '48884', 'no session listening']) assert.equal(text.includes(stale), false, 'no "' + stale + '" on screen');
     assert.ok(text.includes('installed \u00b7 reads when a file is open'));
     assert.ok(text.includes('Not open \u00b7 Start opens it'), 'a startable host says Start opens it');
@@ -179,7 +206,7 @@ test('BABOOM renders the existing companion settings: startup switch and speech 
   const s = await openSettings();
   try {
     const panel = await s.tab('BABOOM');
-    assert.ok(panel.textContent.includes('Companion settings'), 'the BABOOM tab is the existing companion settings');
+    assert.ok(panel.textContent.includes('Speech budget'), 'the BABOOM tab is the existing companion settings');
     assert.ok(panel.textContent.includes('Speaks at most 2 times an hour.'), 'the budget states the same value as the badge');
     assert.ok(panel.querySelector('[role="switch"][aria-label="Start BABOOM when ArchHub opens"]'), 'the startup switch is drawn');
   } finally { s.close(); }

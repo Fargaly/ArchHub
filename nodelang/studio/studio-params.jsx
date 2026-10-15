@@ -44,19 +44,29 @@ const pmType = window.pmType;
 
 const PM_WIRE = window.PM_WIRE;
 const Socket = window.Socket;
+const PARAM_LABEL_COL = 96;
+const PARAM_ROW_H = 32;
 
 const PM_OPTS = {
   scale:   ['1:20', '1:50', '1:100', '1:200'],
+  level:   [],
   align:   ['parallel', 'horizontal', 'vertical'],
   snap_to: ['outer face', 'inner face', 'centre line', 'core face'],
   key:     ['length', 'area', 'mark', 'level'],
   order:   ['desc', 'asc'],
   leader:  ['auto', 'always', 'never'],
+  as:      (typeof window !== 'undefined' && window.WATCH_VIEW_OPTIONS) ||
+           ['table', 'list', 'json', 'image', 'number', 'text', 'chart', 'geometry'],
 };
 
 const PM_META = {
   offset_mm: { label: 'Offset', unit: 'mm', hard: [0, 2000], help: 'Distance from the snapped face to the dimension line.' },
   scale:     { label: 'Scale', help: 'View scale the dimension text is sized for.' },
+  level:     { label: 'Level', type: 'menu', help: 'Revit level used by this run.' },
+  scale_mm_px: { label: 'Scale', unit: 'mm/px', hard: [0.01, 1000], help: 'Image scale in millimetres per pixel.' },
+  height_mm: { label: 'Wall height', unit: 'mm', hard: [0, 20000], help: 'Wall height written in millimetres.' },
+  image_path: { label: 'Image', type: 'path', help: 'Source image file.' },
+  session:   { label: 'Connected host', internal: true, help: 'Host connection is shown by the host node.' },
   align:     { label: 'Alignment', help: 'Direction the dimension line runs.' },
   snap_to:   { label: 'Snap to', help: 'Which face of the wall the witness line lands on.' },
   key:       { label: 'Sort by' }, order: { label: 'Order' }, body: { label: 'Text' },
@@ -64,9 +74,131 @@ const PM_META = {
   temperature:{ label: 'temperature' }, 'top-p': { label: 'top-p' },
   'max tokens': { label: 'max tokens' }, 'system prompt': { label: 'system prompt' },
 };
-const pmLabel = (spec, labels) => (labels && labels[spec.k]) || spec.label || (PM_META[spec.k] || {}).label || spec.k.replace(/_/g, ' ');
-const INTERNAL_PARAM_KEYS = new Set(['source_digest', 'seed', 'image_path']);
+const humanParamLabel = (spec, labels) => (labels && labels[spec.k]) || spec.label || (PM_META[spec.k] || {}).label || String(spec.k || '').replace(/_+/g, ' ').replace(/-+/g, ' ');
+const pmLabel = humanParamLabel;
+const INTERNAL_PARAM_KEYS = new Set(['source_digest', 'seed', 'image_path', 'session']);
 if (typeof window !== 'undefined') window.ARCHHUB_INTERNAL_PARAM_KEYS = INTERNAL_PARAM_KEYS;
+
+const pmArray = value => Array.isArray(value) ? value : [];
+const pmHostRows = () => {
+  const live = (typeof window !== 'undefined' && window.ARCHHUB_LIVE) || {};
+  return [...pmArray(live.hosts), ...pmArray(live.connectors)];
+};
+const pmIsConnectedRevitHost = row => {
+  const text = String((row && (row.name || row.id || row.kind || row.app)) || '').toLowerCase();
+  const state = String((row && row.state) || '').toLowerCase();
+  return text.includes('revit') && ['connected', 'running', 'listening', 'ready'].includes(state);
+};
+const pmLevelName = row => typeof row === 'string' ? row : (row && (row.label || row.name || row.title || row.id)) || '';
+const pmLevelSources = row => [
+  row && row.levels,
+  row && row.level_names,
+  row && row.document && row.document.levels,
+  row && row.document && row.document.level_names,
+  row && row.active_document && row.active_document.levels,
+  row && row.active_document && row.active_document.level_names,
+  row && row.info && row.info.levels,
+];
+const pmTargetKeys = new Set(['session', 'target_session', 'host', 'host_id', 'document', 'document_id', 'target_document', 'revit_document']);
+const pmCanonicalDocumentId = value => {
+  if (value == null) return '';
+  if (typeof value === 'string' || typeof value === 'number') return String(value).trim();
+  if (typeof value === 'object') {
+    for (const key of ['document_id', 'session_id', 'id', 'unique_id']) {
+      if (value[key]) return String(value[key]).trim();
+    }
+  }
+  return '';
+};
+const pmTargetValue = value => pmCanonicalDocumentId(value);
+const pmNodeTargetValue = node => {
+  const direct = pmTargetValue(node && (node.target_document || node.document_id || node.session_id || node.target_session || node.host_id));
+  if (direct) return direct;
+  for (const row of pmArray(node && node.params)) {
+    const key = String(row && (row.k || row.label || '')).toLowerCase();
+    if (pmTargetKeys.has(key)) {
+      const value = pmTargetValue(row.v ?? row.value ?? row.id);
+      if (value) return value;
+    }
+  }
+  return '';
+};
+const pmIdentityTokens = row => {
+  const tokens = [];
+  for (const key of ['id', 'session', 'session_id', 'document_id', 'target_document', 'unique_id']) {
+    if (row && row[key]) tokens.push(String(row[key]).trim().toLowerCase());
+  }
+  return tokens.filter(Boolean);
+};
+const pmHostDocuments = host => {
+  const docs = [...pmArray(host && host.documents), ...pmArray(host && host.open_documents), ...pmArray(host && host.files)];
+  if (host && host.document) docs.push(host.document);
+  if (host && host.active_document) docs.push(host.active_document);
+  return docs.length ? docs : [];
+};
+const pmResolveLevelDocument = (node, connected) => {
+  const target = pmNodeTargetValue(node);
+  if (!target) return { target: '', host: null, document: null, missingTarget: true };
+  const needle = String(target).trim().toLowerCase();
+  for (const host of connected) {
+    for (const doc of pmHostDocuments(host)) {
+      if (pmIdentityTokens(doc).includes(needle)) return { target, host, document: doc, missingTarget: false };
+    }
+  }
+  return { target, host: null, document: null, missingTarget: false };
+};
+function pmLevelPickerState(node) {
+  const connected = pmHostRows().filter(pmIsConnectedRevitHost);
+  const binding = pmResolveLevelDocument(node, connected);
+  if (binding.missingTarget) return {
+    options: [], disabled: true, reason: 'Pick a Revit document first.',
+    fix: { label: 'Fix', target: 'document-picker' },
+    accepts: () => false,
+  };
+  if (!connected.length) return { options: [], disabled: true, reason: 'Connect Revit to choose a document level.', accepts: () => false };
+  if (!binding.document) return { options: [], disabled: true, reason: 'Selected Revit document is not connected.', accepts: () => false };
+  const values = [];
+  for (const source of pmLevelSources(binding.document)) {
+    for (const item of pmArray(source)) values.push(pmLevelName(item));
+  }
+  const options = [...new Set(values.map(v => String(v || '').trim()).filter(Boolean))];
+  const accepts = value => options.includes(String(value || '').trim());
+  if (options.length) return { options, disabled: false, reason: '', binding, accepts };
+  if (connected.length) return { options, disabled: true, reason: 'Connected Revit has not reported document levels.', binding, accepts };
+  return { options, disabled: true, reason: 'Connect Revit to choose a document level.' };
+}
+async function pmRefreshHostRead() {
+  if (typeof window === 'undefined' || typeof window.ARCHHUB_LOAD_HOSTS !== 'function') return null;
+  const result = await window.ARCHHUB_LOAD_HOSTS();
+  if (result && window.ARCHHUB_LIVE) {
+    if (Array.isArray(result.hosts)) window.ARCHHUB_LIVE.hosts = result.hosts;
+    if (Array.isArray(result.connectors)) window.ARCHHUB_LIVE.connectors = result.connectors;
+  }
+  return result;
+}
+async function pmPickNativeFile(title, filter = '') {
+  if (typeof window !== 'undefined' && typeof window.ARCHHUB_PICK_FILE === 'function') {
+    return String(await window.ARCHHUB_PICK_FILE(title, filter) || '');
+  }
+  if (typeof fetch !== 'function') throw new Error('File picker is unavailable.');
+  const response = await fetch('/api/universal/pick-file', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({title, filter}),
+  });
+  const picked = await response.json();
+  if (!response.ok || picked?.ok === false) throw new Error(picked?.error || 'File picker was refused.');
+  return String(picked?.path || '');
+}
+const pmFileChip = value => {
+  const text = String(value || '');
+  const tail = text.split(/[\\/]/).filter(Boolean).pop();
+  return tail || text || 'Choose file...';
+};
+if (typeof window !== 'undefined') {
+  window.pmLevelPickerState = pmLevelPickerState;
+  window.pmPickNativeFile = pmPickNativeFile;
+}
 
 // ── A WIRE IS A NODE ────────────────────────────────────────────────────────
 // Everything in the application is a node, so a connection is not a special case with its own
@@ -243,11 +375,15 @@ async function pmFlushParameters() {
 
 // A built-in parameter arrives in the node's own shorthand; normalise it into the same spec
 // shape a user-added one has, so one row component renders both.
-const pmNorm = (p) => ({
-  k: p.k, type: p.type === 'slider' || p.type === 'number' ? 'number' : p.type === 'select' ? 'menu' : p.type === 'textarea' ? 'textarea' : 'text',
-  min: p.min, max: p.max, step: p.step, opts: PM_OPTS[p.k], page: 'Main', builtin: true,
-  unit: (PM_META[p.k] || {}).unit, hard: (PM_META[p.k] || {}).hard, help: (PM_META[p.k] || {}).help,
-});
+const pmNorm = (p) => {
+  const meta = PM_META[p.k] || {};
+  const type = meta.type || (p.type === 'slider' || p.type === 'number' ? 'number' : p.type === 'select' ? 'menu' : p.type === 'textarea' ? 'textarea' : p.type === 'path' ? 'path' : 'text');
+  return {
+    k: p.k, label: meta.label || p.label, type,
+    min: p.min, max: p.max, step: p.step, opts: p.opts || PM_OPTS[p.k], page: 'Main', builtin: true,
+    unit: meta.unit, hard: meta.hard, help: meta.help,
+  };
+};
 // a node may ship parameters already typed and grouped onto pages
 const pmNorm2 = (p) => { const o = pmNorm(p); if (p.type === 'toggle') o.type = 'toggle'; if (p.page) o.page = p.page; return o; };
 
@@ -335,21 +471,78 @@ const pmChip = (on) => ({
 // ON the line; the key, type, range and help are reference material and live in the tooltip
 // and the ⋯ menu. State is now read from the left edge: accent = you changed it, cyan = a
 // wire drives it, nothing = default.
-function ParamRow({ spec, labels, val, def, wired, onChange, onRevert, onPromote, onUnwire, onRename, onDelete }) {
+function ParamRow({ node, spec, labels, val, def, wired, onChange, onRevert, onPromote, onUnwire, onRename, onDelete }) {
+  const rowRef = React.useRef(null);
   const [menu, setMenu] = React.useState(false);
   const [open, setOpen] = React.useState(false);
   const [naming, setNaming] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const [notice, setNotice] = React.useState('');
+  const [hostTick, setHostTick] = React.useState(0);
+  const [hasDocumentPicker, setHasDocumentPicker] = React.useState(false);
   const T = pmType(spec.type === 'textarea' ? 'text' : spec.type);
   const dataOnly = T.wire;
   const changed = !wired && !dataOnly && String(val) !== String(def);
   const isNum = spec.type === 'number';
   const soft = isNum && Number.isFinite(+val) && (val < spec.min || val > spec.max);
-  const label = pmLabel(spec, labels);
-  const tip = spec.k + ' · ' + T.label.toLowerCase() + (spec.list ? '[]' : '')
+  const label = humanParamLabel(spec, labels);
+  const tip = label + ' · ' + T.label.toLowerCase() + (spec.list ? '[]' : '')
     + (isNum ? ' · ' + spec.min + '–' + spec.max + (spec.unit ? ' ' + spec.unit : '') : '')
     + (spec.help ? ' — ' + spec.help : '');
+  const levelState = spec.k === 'level' ? pmLevelPickerState(node, hostTick) : null;
+  const menuOptions = levelState ? levelState.options : (spec.opts || []);
+  const findDocumentPickerRow = () => {
+    const root = rowRef.current && rowRef.current.closest('[data-node-inspector="true"]');
+    return root && root.querySelector('[data-param-key="session"], [data-param-key="target_session"], [data-param-key="document"], [data-param-key="document_id"], [data-param-key="target_document"], [data-param-key="revit_document"]');
+  };
+  React.useEffect(() => {
+    if (!(levelState && levelState.fix && levelState.fix.target === 'document-picker')) {
+      setHasDocumentPicker(false);
+      return;
+    }
+    setHasDocumentPicker(!!findDocumentPickerRow());
+  }, [spec.k, node.id, levelState && levelState.fix && levelState.fix.target]);
+  const focusDocumentPicker = () => {
+    const row = findDocumentPickerRow();
+    if (!row) return false;
+    row.scrollIntoView({ block: 'center', inline: 'nearest' });
+    const button = row.querySelector('[data-param-control="true"] button:not([disabled])');
+    if (button) button.click();
+    else {
+      const input = row.querySelector('input, textarea, select');
+      if (input && typeof input.focus === 'function') input.focus();
+    }
+    return true;
+  };
+  const refreshLevels = () => {
+    if (levelState && levelState.fix && levelState.fix.target === 'document-picker') {
+      focusDocumentPicker();
+      return;
+    }
+    setNotice('Reading Revit levels...');
+    setBusy(true);
+    pmRefreshHostRead()
+      .then(() => { setHostTick(t => t + 1); setNotice(''); })
+      .catch(error => setNotice((error && error.message) || 'Could not read hosts.'))
+      .finally(() => setBusy(false));
+  };
+  const choosePath = () => {
+    setNotice('');
+    setBusy(true);
+    pmPickNativeFile(label || 'Choose a file')
+      .then(path => { if (path) onChange(path); })
+      .catch(error => setNotice((error && error.message) || 'File picker failed.'))
+      .finally(() => setBusy(false));
+  };
 
-  const pick = (v) => { onChange(v); setOpen(false); };
+  const pick = (v) => {
+    if (levelState && typeof levelState.accepts === 'function' && !levelState.accepts(v)) {
+      setNotice('That level is not in the selected Revit document.');
+      return;
+    }
+    onChange(v); setOpen(false);
+  };
+  const controlState = { disabled: false };
 
   const control = wired ? (
     <span title={'Driven by ' + wired} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, maxWidth: 118, fontFamily: PM.mono, fontSize: PM_FS.dataSm.sz, color: wired === 'unconnected' ? PM.warn : T.col, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
@@ -375,11 +568,26 @@ function ParamRow({ spec, labels, val, def, wired, onChange, onRevert, onPromote
       rows={3} style={{ width: 128, minHeight: 58, boxSizing: 'border-box', padding: '5px 7px', borderRadius: 4,
         border: `1px solid ${PM.line}`, background: PM.bg, color: PM.ink, fontFamily: PM.mono, fontSize: 11,
         outline: 'none', resize: 'vertical' }}/>
-  ) : (spec.opts && spec.opts.length) ? (
-    <button onClick={() => setOpen(o => !o)} title={label + ' — ' + spec.opts.length + ' options'}
+  ) : levelState && levelState.disabled ? (
+    <span style={{ display:'inline-flex', alignItems:'center', gap:6, minWidth:0 }}>
+      <button disabled onClick={() => {}} title={levelState.reason}
+        style={{ width: 104, boxSizing: 'border-box', padding: '4px 7px', borderRadius: 4, border: `1px dashed ${PM.line}`, background: PM.bg, color: PM.inkSoft, fontFamily: PM.sans, fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', cursor:'not-allowed' }}>
+        {String(val || 'No levels')}
+      </button>
+      <span role="status" style={{ fontFamily:PM.sans, fontSize:11, color:PM.inkSoft, lineHeight:'14px' }}>{levelState.reason}</span>
+      {((levelState.fix && levelState.fix.target === 'document-picker' && hasDocumentPicker) || (!levelState.fix && typeof window !== 'undefined' && typeof window.ARCHHUB_LOAD_HOSTS === 'function')) && <button onClick={refreshLevels} disabled={busy} style={pmChip(false)}>{levelState.fix?.label || 'Fix'}</button>}
+    </span>
+  ) : (menuOptions && menuOptions.length) ? (
+    <button onClick={() => setOpen(o => !o)} title={label + ' — ' + menuOptions.length + ' options'}
       style={{ width: 104, boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, padding: '4px 7px', borderRadius: 4, cursor: 'pointer', border: `1px solid ${open ? PM.accent : PM.line}`, background: PM.bg, color: PM.ink, fontFamily: PM.mono, fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden' }}>
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{String(val)}</span>
       <span style={{ color: PM.inkSoft, fontSize: PM_FS.dataSm.sz }}>{open ? '▴' : '▾'}</span>
+    </button>
+  ) : spec.type === 'path' ? (
+    <button onClick={choosePath} disabled={busy} title={val ? String(val) : label + ' — file path'}
+      style={{ maxWidth: 160, boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 7, padding: '4px 7px', borderRadius: 4, cursor: busy ? 'wait' : 'pointer', border: `1px solid ${PM.line}`, background: PM.bg, color: PM.ink, fontFamily: PM.sans, fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden' }}>
+      <span data-param-file-chip="" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{pmFileChip(val)}</span>
+      <span style={{ color: PM.inkSoft, fontFamily: PM.mono, fontSize: PM_FS.dataSm.sz }}>file</span>
     </button>
   ) : (
     <input value={val == null ? '' : val} onChange={e => onChange(e.target.value)} placeholder="value…"
@@ -387,8 +595,8 @@ function ParamRow({ spec, labels, val, def, wired, onChange, onRevert, onPromote
   );
 
   return (
-    <div style={{ borderLeft: `2px solid ${wired ? PM.cyan : changed ? PM.accent : 'transparent'}`, paddingLeft: 8, borderBottom: `1px solid ${PM.lineHair}` }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 34 }}>
+    <div ref={rowRef} data-param-row="true" data-param-key={spec.k} style={{ display:'grid', gridTemplateColumns:`${PARAM_LABEL_COL}px minmax(0,1fr) auto`, alignItems:'center', gap:8, minHeight:PARAM_ROW_H, borderLeft: `2px solid ${wired ? PM.cyan : changed ? PM.accent : 'transparent'}`, padding:'0 8px', borderBottom: `1px solid ${PM.lineHair}` }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth:0 }}>
         <button onClick={() => (wired ? onUnwire() : onPromote())}
           title={wired ? 'Unwire — return to a local value' : 'Expose as a ' + T.label.toLowerCase() + ' input socket'}
           style={{ border: 0, background: 'transparent', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
@@ -401,36 +609,41 @@ function ParamRow({ spec, labels, val, def, wired, onChange, onRevert, onPromote
             onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setNaming(''); }}
             style={{ flex: 1, minWidth: 0, padding: '2px 5px', borderRadius: 3, border: `1px solid ${PM.accent}`, background: PM.bg, color: PM.ink, fontFamily: PM.sans, fontSize: 12.5, outline: 'none' }}/>
         ) : (
-          <span title={tip} style={{ flex: 1, minWidth: 0, fontFamily: PM.sans, fontSize: 12.5, color: PM.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'help' }}>{label}</span>
+          <span title={tip} style={{ flex: 1, minWidth: 0, fontFamily: PM.sans, fontSize: 13, color: PM.inkSoft, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'help' }}>{label}</span>
         )}
-
+      </div>
+      <div data-param-control="true" data-param-disabled={controlState.disabled ? 'true' : 'false'} style={{ minWidth:0, display:'flex', alignItems:'center' }}>
+        {control}
+      </div>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'flex-end', gap:6 }}>
         {soft && <span title={'Beyond the usual range — hard limit ' + (spec.hard ? spec.hard[1] : '—')} style={{ color: PM.warn, fontFamily: PM.mono, fontSize: 11 }}>⚠</span>}
         {changed && <button onClick={onRevert} title={'Revert to default · ' + def} style={{ border: 0, background: 'transparent', color: PM.accent, cursor: 'pointer', fontFamily: PM.mono, fontSize: 12, padding: 0 }}>↺</button>}
-        {control}
         <button onClick={() => setMenu(m => !m)} title="Row actions"
           style={{ border: 0, background: 'transparent', color: menu ? PM.ink : PM.inkSoft, cursor: 'pointer', fontFamily: PM.mono, fontSize: 12, padding: '0 1px', flexShrink: 0 }}>⋯</button>
       </div>
 
+      {notice && <div role="status" style={{ gridColumn:'2 / 4', fontFamily:PM.sans, fontSize:11, color:PM.inkSoft, paddingBottom:7 }}>{notice}</div>}
+
       {open && (spec.type === 'colour' ? (
-        <div style={{ display: 'flex', gap: 5, paddingBottom: 9 }}>
+        <div style={{ gridColumn:'2 / 4', display: 'flex', gap: 5, paddingBottom: 9 }}>
           {[PM.accent, PM.cyan, PM.ok, PM.warn, PM.purple, PM.inkSoft].map(c => (
             <button key={c} onClick={() => pick(c)} title={c} style={{ width: 22, height: 22, borderRadius: 4, background: c, cursor: 'pointer', border: `2px solid ${String(val).toLowerCase() === c.toLowerCase() ? PM.ink : 'transparent'}` }}/>
           ))}
         </div>
       ) : (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, paddingBottom: 9 }}>
-          {(spec.opts || []).map(o => <button key={o} onClick={() => pick(o)} style={pmChip(val === o)}>{o}</button>)}
+        <div style={{ gridColumn:'2 / 4', display: 'flex', flexWrap: 'wrap', gap: 4, paddingBottom: 9 }}>
+          {menuOptions.map(o => <button key={o} onClick={() => pick(o)} style={pmChip(val === o)}>{o}</button>)}
         </div>
       ))}
 
       {menu && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, paddingBottom: 9 }}>
+        <div style={{ gridColumn:'1 / 4', display: 'flex', flexWrap: 'wrap', gap: 4, paddingBottom: 9 }}>
           <button onClick={() => { setNaming(label); setMenu(false); }} style={pmChip(false)}>✎ rename label</button>
           {!dataOnly && <button onClick={() => { onRevert(); setMenu(false); }} style={pmChip(false)}>↺ reset</button>}
           {!wired && <button onClick={() => { onPromote(); setMenu(false); }} style={pmChip(false)}>⇄ expose</button>}
           {!spec.builtin && <button onClick={() => { onDelete(); setMenu(false); }} style={Object.assign({}, pmChip(false), { color: PM.err, borderColor: PM.err })}>⌫ remove</button>}
-          <span style={{ flexBasis: '100%', fontFamily: PM.mono, fontSize: PM_FS.label.sz, color: PM.inkSoft, lineHeight: 1.5 }}>
-            <b style={{ color: PM.ink }}>{spec.k}</b> · {T.label.toLowerCase()}{spec.list ? '[]' : ''}{isNum ? ' · ' + spec.min + '–' + spec.max : ''} · key is fixed, the skill JSON references it
+          <span style={{ flexBasis: '100%', fontFamily: PM.sans, fontSize: 11, color: PM.inkSoft, lineHeight: 1.5 }}>
+            {label} stays compatible with saved runs. {T.label}{spec.list ? ' list' : ''}{isNum ? ' · ' + spec.min + '–' + spec.max : ''}
           </span>
         </div>
       )}
@@ -446,7 +659,7 @@ function AddParam({ page, taken, onAdd, onCancel }) {
   const [type, setType] = React.useState('number');
   const [list, setList] = React.useState(false);
   const T = pmType(type);
-  const key = (name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')) || 'new_param';
+  const key = (name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')) || 'parameter';
   const clash = taken.indexOf(key) >= 0;
 
   return (
@@ -456,8 +669,8 @@ function AddParam({ page, taken, onAdd, onCancel }) {
       <div>
         <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="Label — e.g. Max span"
           style={{ width: '100%', padding: '7px 9px', borderRadius: PM.rad.sm, border: `1px solid ${clash ? PM.err : PM.line}`, background: PM.bgPanel, color: PM.ink, fontFamily: PM.sans, fontSize: 12.5, outline: 'none' }}/>
-        <div style={{ marginTop: 4, fontFamily: PM.mono, fontSize: PM_FS.label.sz, color: clash ? PM.err : PM.inkSoft }}>
-          key <b style={{ color: clash ? PM.err : PM.ink }}>{key}</b>{clash ? ' · already used on this node' : ' · fixed once created'}
+        <div style={{ marginTop: 4, fontFamily: PM.sans, fontSize: 11, color: clash ? PM.err : PM.inkSoft }}>
+          {clash ? 'That label is already used on this node.' : 'Label is available.'}
         </div>
       </div>
 
@@ -579,9 +792,10 @@ function TerminalPanel({ node }) {
   );
 }
 
-function NodeInspector({ node, onFork }) {
+function NodeInspector({ node, onFork, watchActions = {} }) {
   const visibleParams = React.useMemo(() => (node.params || []).filter(row =>
-    !INTERNAL_PARAM_KEYS.has(String(row.k || row.label || '').toLowerCase())), [node.id]);
+    !INTERNAL_PARAM_KEYS.has(String(row.k || row.label || '').toLowerCase()) &&
+    !(PM_META[String(row.k || '').toLowerCase()] || {}).internal), [node.id]);
   const builtins = React.useMemo(() => visibleParams.map(pmNorm2), [node.id]);
   const defs = React.useMemo(() => { const d = {}; builtins.forEach(p => d[p.k] = (visibleParams.find(x => x.k === p.k) || {}).v); return d; }, [node.id]);
 
@@ -699,6 +913,21 @@ function NodeInspector({ node, onFork }) {
       pmNotify(persistence);
     }
   };
+  const saveSkillRoute = typeof window.ARCHHUB_SAVE_NODE_SKILL === 'function' ? window.ARCHHUB_SAVE_NODE_SKILL : null;
+  const saveSkill = async () => {
+    if (!saveSkillRoute) return;
+    try {
+      await pmFlushParameters();
+      const result = await saveSkillRoute({node, params:rec.vals, labels:rec.labels});
+      persistence.runError = '';
+      persistence.result = result?.message || 'Skill saved.';
+      pmNotify(persistence);
+    } catch (error) {
+      persistence.runError = String(error?.message || 'Skill save refused.').split(/\r?\n/)[0];
+      persistence.result = '';
+      pmNotify(persistence);
+    }
+  };
   const discardCustom = key => {
     // Only a local draft with no possible persistence path can be discarded.
     // A wire create may have committed despite a lost response: keep that row
@@ -753,7 +982,7 @@ function NodeInspector({ node, onFork }) {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+    <div data-node-inspector="true" style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       {node.endpointError && <div role="alert" style={{fontSize:12, color:PM.warn, overflowWrap:'anywhere'}}>
         {node.endpointError} Endpoint compatibility cannot be determined from this projection.
       </div>}
@@ -775,6 +1004,13 @@ function NodeInspector({ node, onFork }) {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {node.sub === 'watch.preview' && typeof window.WatchPreview === 'function' && (
+        <div>
+          {pmHead('◉', 'PREVIEW')}
+          <window.WatchPreview node={node} inspector={true} actions={watchActions}/>
         </div>
       )}
 
@@ -813,7 +1049,7 @@ function NodeInspector({ node, onFork }) {
 
         <div style={{ display: 'flex', flexDirection: 'column', borderTop: `1px solid ${PM.lineHair}` }}>
           {onPage.map(spec => (
-            <ParamRow key={spec.k} spec={spec} labels={labels} val={vals[spec.k]} def={allDefs[spec.k]} wired={wired[spec.k]}
+            <ParamRow key={spec.k} node={node} spec={spec} labels={labels} val={vals[spec.k]} def={allDefs[spec.k]} wired={wired[spec.k]}
               onChange={v => set(spec.k, v)}
               onRevert={() => set(spec.k, allDefs[spec.k])}
               onPromote={() => setWired(w => Object.assign({}, w, { [spec.k]: 'graph input' }))}
@@ -912,7 +1148,7 @@ function NodeInspector({ node, onFork }) {
               boxShadow: dirty.length ? 'none' : `inset 0 0 0 1px ${PM.line}`,
               fontFamily: PM.sans, fontSize: 12.5, fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap',
             }}>{pmGraphRunning ? '↻ Running…' : '↻ Rerun' + (dirty.length ? ' · ' + dirty.length : '')}</button>
-            <button style={pmIcon()} title={node.isWire ? 'Save this connection\u2019s rules as a reusable skill' : 'Save these parameters as a reusable skill'}>◈</button>
+            {saveSkillRoute && <button onClick={saveSkill} style={pmIcon()} title={node.isWire ? 'Save this connection\u2019s rules as a reusable skill' : 'Save these parameters as a reusable skill'}>◈</button>}
             <button onClick={forkNode} aria-label="Fork" data-fork-button style={{...pmIcon(), width:'auto', padding:'0 8px', gap:4, fontFamily:PM.sans, fontSize:12.5, fontWeight:500}} title="Fork this node onto the canvas">⑂ Fork</button>
             <button onClick={() => setConfirmDel(true)} style={pmIcon()} title={node.isWire ? 'Delete this connection…' : 'Delete node…'}>⌫</button>
           </div>
@@ -935,4 +1171,4 @@ const pmBtn = () => ({
 
 // PM_TYPES and Socket are exported so the COCKPIT reads the same type vocabulary — one
 // registry for both graphs, rather than two names for the same idea.
-Object.assign(window, { NodeInspector, wireAsNode });
+Object.assign(window, { NodeInspector, wireAsNode, pmPersistValue });

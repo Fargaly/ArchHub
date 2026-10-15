@@ -40,6 +40,56 @@ def test_watch_passes_through_and_shows_the_value():
     assert ev.results == {"result": "hello"}
 
 
+def test_watch_scalar_display_keeps_values_in_every_preview_mode():
+    for value, shown in (("hello", "hello"), (42, "42"), (False, "false")):
+        for mode in ("table", "list", "text", "number", "json"):
+            ev = evaluate_stem_graph(
+                [
+                    _n("src", "data.constant", {"value": value}),
+                    _n("watch", "watch.preview", {"as": mode}),
+                    _n("res", "output.parameter"),
+                ],
+                [
+                    StemWire("src", "value", "watch", "in"),
+                    StemWire("watch", "out", "res", "value"),
+                ],
+            )
+            assert ev.display["watch"] == shown, (value, mode)
+            assert ev.results == {"result": value}
+            assert ev.node_outputs["watch"]["out"] == value
+            assert "preview" in ev.node_outputs["watch"]
+            assert not ev.pending
+
+
+def test_watch_structured_values_keep_rich_preview_and_full_pass_through():
+    rows = [{"name": "row %s" % index} for index in range(45)]
+    for value, mode, shape, preview_value in (
+        (rows, "table", {"rows": 45}, rows[:40]),
+        ([1, 2, 3], "list", {"items": 3}, [1, 2, 3]),
+        ({"name": "one row"}, "table", {"rows": 1}, ["{'name': 'one row'}"]),
+        ([], "table", {"rows": 0}, []),
+    ):
+        ev = evaluate_stem_graph(
+            [
+                _n("src", "data.constant", {"value": value}),
+                _n("watch", "watch.preview", {"as": mode}),
+                _n("res", "output.parameter"),
+            ],
+            [
+                StemWire("src", "value", "watch", "in"),
+                StemWire("watch", "out", "res", "value"),
+            ],
+        )
+        count_key, count = next(iter(shape.items()))
+        assert ev.display["watch"] == "%s %s %s" % (mode, count, count_key)
+        assert ev.node_outputs["watch"]["preview"] == {
+            "kind": mode, "shape": shape, "value": preview_value,
+        }
+        assert ev.node_outputs["watch"]["out"] == value
+        assert ev.results == {"result": value}
+        assert not ev.pending
+
+
 def test_if_routes_by_condition_and_merge_picks_the_live_branch():
     ev = evaluate_stem_graph(
         [

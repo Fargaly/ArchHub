@@ -146,6 +146,7 @@ class SignIn:
     def __init__(self, method: str, *, base_url: str = "", path: Optional[Path] = None,
                  opener: Callable[[str], object] | None = None,
                  http: Callable[..., tuple[int, dict]] = http_json,
+                 on_complete: Optional[Callable[[str], object]] = None,
                  wait_seconds: float = WAIT_SECONDS) -> None:
         if method not in METHODS:
             raise ValueError("sign-in method must be one of " + ", ".join(METHODS))
@@ -154,6 +155,7 @@ class SignIn:
         self.path = path or cloud_session_path()
         self._opener = opener
         self._http = http
+        self._on_complete = on_complete
         self._wait = wait_seconds
         self._cancel = False
         self._lock = threading.Lock()
@@ -271,6 +273,11 @@ class SignIn:
             "cloud_base_url": self.base_url,
             "refused_at": None,
         })
+        if self._on_complete is not None:
+            try:
+                self._on_complete(email)
+            except Exception:
+                pass
         self._set(phase="done", email=email)
 
 

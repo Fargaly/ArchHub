@@ -69,6 +69,19 @@ def _with_tool_guidance(
     return [{"role": "system", "content": guidance}, *transcript]
 
 
+def _failed_result(value: object) -> bool:
+    if value is False or value is None:
+        return True
+    if not isinstance(value, Mapping):
+        return False
+    status = str(value.get("status") or "").casefold()
+    return (
+        value.get("ok") is False
+        or value.get("uncertain") is True
+        or status in {"failed", "refused", "denied", "error", "unavailable"}
+    )
+
+
 def _calls(answer: object) -> list[dict[str, object]]:
     if not isinstance(answer, Mapping):
         return []
@@ -304,7 +317,7 @@ def run_agentic_tool_loop(
                 step = {"tool": name, "args": args, "status": "refused", "ok": False,
                         "summary": payload["error"]}
             elif spec.mutates and (grant_checker is None or grant_checker(name, args) is not True):
-                payload = {"ok": False, "status": "refused", "error": "approval grant required"}
+                payload = {"ok": False, "status": "refused", "error": "approval grant required. Retry."}
                 step = {"tool": name, "args": args, "status": "refused", "ok": False,
                         "summary": payload["error"]}
             else:
@@ -330,6 +343,13 @@ def run_agentic_tool_loop(
                         readback = spec.verify(name, args, result)
                         payload["readback"] = readback
                         step["readback"] = _summary(readback)
+                        if _failed_result(readback):
+                            payload["ok"] = False
+                            payload["status"] = "failed"
+                            payload["error"] = "verification failed: " + _summary(readback)
+                            step["ok"] = False
+                            step["status"] = "failed"
+                            step["summary"] = payload["error"][:220]
                 except Exception as exc:  # noqa: BLE001 - model receives refusal text, not traceback
                     payload = {"ok": False, "status": "refused", "error": str(exc)}
                     step = {"tool": name, "args": args, "status": "refused", "ok": False,

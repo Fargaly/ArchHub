@@ -674,7 +674,7 @@ const StudioLanding = () => (
       <div style={{ display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:ST.sp.xl }}>
         {[
           ['Connectors build themselves','Toggle Blender on. Claude writes the addon, installs it, verifies the handshake. New host? Same loop. No DLLs to maintain.','♺'],
-          ['Every step is a node','Every chat turn becomes a parameter in the sidebar. Drag the slider — the entire chain downstream re-runs.','◈'],
+          ['Every step is a node','Chat stays an indexed conversation. Only an admitted workflow re-runs downstream from its node.','◈'],
           ['Skills are JSON you own','Save any thread as a Skill. Copy-paste shareable. Synced via your private GitHub. No marketplace lock-in.','{ }'],
         ].map(([t,d,g])=>(
           <div key={t} style={{ borderTop:`1px solid ${ST.line}`, paddingTop:16 }}>

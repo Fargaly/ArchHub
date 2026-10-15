@@ -678,4 +678,4 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
   );
 }
 
-Object.assign(window, { AppBoot, SignUp, SettingsAccount, CloudSignIn, acLoad, acSave, AC_SEED, acBootDetail: _bootDetail });
+Object.assign(window, { AppBoot, SignUp, SettingsAccount, CloudPublishConsent, CloudSignIn, acLoad, acSave, AC_SEED, acBootDetail: _bootDetail });

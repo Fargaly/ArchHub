@@ -99,7 +99,7 @@ test('Settings has one visible entry point plus Ctrl+, and the model has one pic
     await studio.settle(() => studio.doc.body.textContent.includes('openrouter/free'), 'the selected model route is visible once the catalogue answers');
     assert.equal(settingsEntryControls(studio.doc).length, 1, 'only the rail Settings control is visible');
     studio.flush(() => studio.win.dispatchEvent(new studio.win.KeyboardEvent('keydown', {bubbles:true, ctrlKey:true, key:','})));
-    await studio.settle(() => [...studio.doc.querySelectorAll('button')].some(button => button.firstElementChild?.textContent === 'Hub'),
+    await studio.settle(() => !!studio.doc.querySelector('[data-settings54-shell]'),
       'Ctrl+, opens Settings');
     studio.flush(() => studio.win.dispatchEvent(new studio.win.KeyboardEvent('keydown', {bubbles:true, key:'Escape'})));
 

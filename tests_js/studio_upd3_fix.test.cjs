@@ -198,7 +198,7 @@ async function mountStudio({grouped = false, delayedSelection = false, realAutho
 
 function assertGraph(studio) {
   assert.ok(studio.input(), 'inspector remains GRAPH with its actual whole-graph input');
-  assert.match(studio.inspector().textContent, /GRAPH/);
+  assert.match(studio.inspector().textContent, /Graph/);
 }
 function assertSelectedWithFork(studio) {
   assert.match(studio.inspector().textContent, /Line Watcher/);

@@ -23,6 +23,7 @@ evaluates.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
@@ -97,7 +98,183 @@ def _display(value: object) -> str:
     return str(value)
 
 
-_PASS_THROUGH = {"watch.preview": ("in", "out"), "reroute": ("in", "out")}
+_WATCH_KINDS = (
+    "table", "list", "json", "image", "number", "text", "chart", "geometry"
+)
+
+
+def _watch_preview(value: object, requested: object = "table") -> Mapping[str, object]:
+    """A compact render contract for the Watch card and inspector."""
+    import json
+
+    kind = str(requested or "table").strip().casefold()
+    if kind in {"3d", "geometry3d"}:
+        kind = "geometry"
+    if kind not in _WATCH_KINDS:
+        kind = "table"
+    if kind == "number" and (
+        isinstance(value, bool) or not isinstance(value, (int, float))
+    ):
+        kind = "text"
+    if kind == "chart":
+        numbers = _numeric_series(value)
+        if numbers:
+            return {
+                "kind": "chart", "shape": {"points": len(numbers)},
+                "value": numbers[:200],
+            }
+        kind = "list" if isinstance(value, list) else "json"
+    if kind == "geometry":
+        mesh = _mesh_preview(value)
+        if mesh is not None:
+            return {"kind": "geometry", "shape": mesh["shape"], "value": mesh}
+        kind = "json"
+    if kind == "table":
+        rows = _table_rows(value)
+        return {"kind": "table", "shape": {"rows": len(rows)}, "value": rows[:40]}
+    if kind == "list":
+        rows = _as_list(value)
+        return {"kind": "list", "shape": {"items": len(rows)}, "value": rows[:80]}
+    if kind == "image":
+        return {"kind": "image", "shape": {}, "value": str(value or "")}
+    if kind == "number":
+        return {"kind": "number", "shape": {}, "value": value}
+    if kind == "text":
+        return {
+            "kind": "text", "shape": {"chars": len(str(value or ""))},
+            "value": str(value or "")[:4000],
+        }
+    return {
+        "kind": "json", "shape": {},
+        "value": json.dumps(value, default=str)[:12000],
+    }
+
+
+def _table_rows(value: object) -> list:
+    rows = _as_list(value)
+    if not rows and isinstance(value, Mapping):
+        rows = [value]
+    return rows
+
+
+def _numeric_series(value: object) -> list:
+    rows = _as_list(value)
+    numbers = []
+    for item in rows:
+        if isinstance(item, bool):
+            continue
+        if isinstance(item, (int, float)):
+            numbers.append(float(item))
+        elif isinstance(item, Mapping):
+            for held in item.values():
+                if isinstance(held, (int, float)) and not isinstance(held, bool):
+                    numbers.append(float(held))
+                    break
+    return numbers
+
+
+def _mesh_preview(value: object) -> "dict | None":
+    """Mesh/BREP/Speckle-ish input normalized to vertices and triangles."""
+    source = value
+    if isinstance(source, str):
+        import json
+        try:
+            source = json.loads(source)
+        except ValueError:
+            return None
+    if not isinstance(source, Mapping):
+        return None
+    if isinstance(source.get("mesh"), Mapping):
+        source = source["mesh"]
+    vertices = source.get("vertices") or source.get("verts")
+    faces = source.get("faces") or source.get("indices")
+    if isinstance(vertices, list) and vertices and isinstance(vertices[0], Mapping):
+        vertices = [
+            [row.get("x"), row.get("y"), row.get("z")]
+            for row in vertices
+        ]
+    elif (
+        isinstance(vertices, list) and vertices
+        and all(isinstance(v, (int, float)) for v in vertices[:9])
+    ):
+        vertices = [vertices[index:index + 3] for index in range(0, len(vertices), 3)]
+    if not isinstance(vertices, list) or not vertices:
+        return None
+    clean_vertices = []
+    vertex_remap = {}
+    for source_index, row in enumerate(vertices[:2000]):
+        if not isinstance(row, (list, tuple)) or len(row) < 3:
+            continue
+        if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in row[:3]):
+            continue
+        nums = [float(v) for v in row[:3]]
+        if not all(math.isfinite(v) for v in nums):
+            continue
+        vertex_remap[source_index] = len(clean_vertices)
+        clean_vertices.append(nums)
+    if not clean_vertices:
+        return None
+    polygons = _mesh_polygons(faces)
+    triangles = _triangulate_polygons(polygons)
+    clean_faces = []
+    for face in triangles[:4000]:
+        remapped = []
+        for vertex_index in face:
+            if vertex_index not in vertex_remap:
+                remapped = []
+                break
+            remapped.append(vertex_remap[vertex_index])
+        if len(remapped) == 3:
+            clean_faces.append(remapped)
+    return {
+        "vertices": clean_vertices,
+        "faces": clean_faces,
+        "shape": {"vertices": len(clean_vertices), "faces": len(clean_faces)},
+    }
+
+
+def _mesh_polygons(faces: object) -> list:
+    if not isinstance(faces, list) or not faces:
+        return []
+    if all(isinstance(value, int) and not isinstance(value, bool) for value in faces):
+        polygons = []
+        index = 0
+        while index < len(faces):
+            size = faces[index]
+            end = index + size + 1
+            if size < 3 or end > len(faces):
+                polygons = []
+                break
+            polygons.append([int(value) for value in faces[index + 1:end]])
+            index = end
+        if polygons and index == len(faces):
+            return polygons
+        if len(faces) % 3 == 0:
+            return [
+                [int(value) for value in faces[index:index + 3]]
+                for index in range(0, len(faces), 3)
+            ]
+        return []
+    polygons = []
+    for face in faces[:4000]:
+        if isinstance(face, (list, tuple)):
+            if any(not isinstance(value, int) or isinstance(value, bool) for value in face):
+                continue
+            polygon = [int(value) for value in face]
+            if len(polygon) >= 3:
+                polygons.append(polygon)
+    return polygons
+
+
+def _triangulate_polygons(polygons: list) -> list:
+    triangles = []
+    for polygon in polygons:
+        for index in range(1, len(polygon) - 1):
+            triangles.append([polygon[0], polygon[index], polygon[index + 1]])
+    return triangles
+
+
+_PASS_THROUGH = {"reroute": ("in", "out")}
 
 # The comparisons a rule may use, longest first so ">=" is never read as ">".
 _OPERATORS = (
@@ -409,6 +586,22 @@ def _run_engine(
         results[str(name)] = value
         display[root] = _display(value)
         return {}
+    if engine == "watch.preview":
+        if "in" not in feeds:
+            pending[root] = "input in is not wired"
+            return None
+        value = feeds["in"]
+        preview = _watch_preview(value, params.get("as", "table"))
+        shape = preview.get("shape") if isinstance(preview, Mapping) else {}
+        count = ""
+        if isinstance(shape, Mapping) and shape:
+            count = " " + ", ".join("%s %s" % (v, k) for k, v in shape.items())
+        # Scalars show their value; only structured inputs need a shape summary.
+        display[root] = (
+            "%s%s" % (preview.get("kind", "watch"), count)
+            if isinstance(value, (list, Mapping)) else _display(value)
+        )
+        return {"out": value, "preview": preview}
     if engine in _PASS_THROUGH:
         source_name, out_name = _PASS_THROUGH[engine]
         if source_name not in feeds:

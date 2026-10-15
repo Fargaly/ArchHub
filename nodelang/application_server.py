@@ -48,6 +48,7 @@ from .application_machine_transport import (
     validate_baboom_native_frame_payload,
 )
 from .model_execution_broker import ModelExecutionBroker
+from .baboom_owner_grants import GRANT_ARGUMENT_KEY, baboom_owner_grant_checker
 from .cell_capabilities import CAPABILITIES, missing_capabilities
 from .cell_agent_body import read_agent_session
 from .cell_baboom_model_execution import read_model_delegation
@@ -1765,24 +1766,30 @@ class _CleanAuthorityHttpServer:
     def _clean_stem_plan(self, payload):
         """Under the graph lock: the scope's engine nodes and wires."""
         from .stem_graph_evaluation import StemNode, StemWire
+        from .library_engines import (
+            canonical_engine_interface,
+            canonical_engine_parameters,
+        )
 
         stem_nodes = []
+        engines_by_id = {}
         for item in payload["nodes"]:
             engine = item.get("engine")
             if type(engine) is not str or not engine.strip():
                 continue
+            engine = engine.strip()
+            engines_by_id[item["id"]] = engine
             overrides = {
                 str(row.get("label")): row.get("value")
                 for row in (item.get("properties") or ())
                 if isinstance(row, dict) and row.get("label")
             }
-            parameters = dict(item.get("parameter_defaults") or {})
-            parameters.update({
-                name: value for name, value in overrides.items()
-                if name in parameters
+            parameters = canonical_engine_parameters(engine, {
+                **dict(item.get("parameter_defaults") or {}),
+                **overrides,
             })
             stem_nodes.append(StemNode(
-                item["id"], engine.strip(), parameters
+                item["id"], engine, parameters
             ))
         stem_wires = []
         for wire in payload.get("wires") or ():
@@ -1795,6 +1802,12 @@ class _CleanAuthorityHttpServer:
                 and type(wire.get("source")) is str
                 and type(wire.get("target")) is str
             ):
+                source_interface = canonical_engine_interface(
+                    engines_by_id.get(wire["source"]), "source", source_interface
+                )
+                target_interface = canonical_engine_interface(
+                    engines_by_id.get(wire["target"]), "target", target_interface
+                )
                 stem_wires.append(StemWire(
                     wire["source"], source_interface,
                     wire["target"], target_interface,
@@ -1802,7 +1815,7 @@ class _CleanAuthorityHttpServer:
         return stem_nodes, stem_wires, self._graph_held_operations()
 
     @staticmethod
-    def _clean_engine_table(gate=None):
+    def _clean_engine_table(gate=None, extra_effect_engines=None):
         """The engines the clean shell runs.
 
         This shell carries no host adapter, so every pipeline engine that
@@ -1824,10 +1837,11 @@ class _CleanAuthorityHttpServer:
         table.update({name: LIBRARY_ENGINES[name] for name in PURE_LIBRARY_ENGINES})
         for name, engine in STEM_EFFECT_ENGINES.items():
             table[name] = gate(name, engine) if gate is not None else refuse(name)
+        table.update(dict(extra_effect_engines or {}))
         return table
 
     @staticmethod
-    def _clean_evaluate(plan, gate=None):
+    def _clean_evaluate(plan, gate=None, extra_effect_engines=None):
         """The evaluation itself. A gated effect may wait on a model, so
         callers run this OUTSIDE the graph lock."""
         from .stem_graph_evaluation import evaluate_stem_graph
@@ -1835,7 +1849,8 @@ class _CleanAuthorityHttpServer:
         stem_nodes, stem_wires, held = plan
         return evaluate_stem_graph(
             stem_nodes, stem_wires, held,
-            _CleanAuthorityHttpServer._clean_engine_table(gate))
+            _CleanAuthorityHttpServer._clean_engine_table(
+                gate, extra_effect_engines))
 
     def _clean_owner_effect_gate(self, token, csrf_token, admitted_session, records):
         """Owner admission for model and skill effects on the clean shell.
@@ -1999,7 +2014,27 @@ class _CleanAuthorityHttpServer:
         # Every model or skill call passes the owner gate, which re-proves the
         # binding before the provider is touched; a non-owner is refused.
         gate = self._clean_owner_effect_gate(token, csrf_token, probe.session_root, records)
-        evaluation = self._clean_evaluate(plan, gate)
+        from .terminal_sessions import TerminalRefused
+
+        def terminal_admission():
+            try:
+                current = self._resolve_binding(
+                    token, csrf_token=csrf_token, require_csrf=True)
+                if current.session_root != probe.session_root:
+                    raise AuthorizationDenied("Browser binding changed during the run")
+                self._standing_scope(current, expected_scope=standing)
+                if current.subject_root != self.authority.manifest.principal_root:
+                    raise AuthorizationDenied("not the owner")
+            except AuthorizationDenied:
+                raise TerminalRefused(
+                    "A terminal card runs only for this application owner "
+                    "with the right to run commands.") from None
+
+        terminal_engines = {}
+        if hasattr(self, "terminal_sessions"):
+            terminal_engines["library.terminal"] = (
+                self.terminal_sessions.admitted_engine(terminal_admission))
+        evaluation = self._clean_evaluate(plan, gate, terminal_engines)
         with self._mutation_lock:
             # An effect that ran is a fact: its receipt lands even if the
             # binding lapsed meanwhile and no status may land.
@@ -4011,7 +4046,8 @@ class _CleanAuthorityHttpServer:
                     _held[3] = None
             try:
                 store.subscribe(_on_commit)
-            except Exception:
+            except BaseException as exc:
+                self._browser_canvas_prewarm_errors.append(repr(exc)[:200])
                 pass
         delta = held[1]
         if held[3] is None:
@@ -5158,6 +5194,82 @@ def brain_first_prompt(utterance):
             + context_text[:4000] + chr(10) + chr(10) + 'Founder says: ' + utterance)
 
 
+def _baboom_owner_tool_bridge(owner, *, authentication_context=None):
+    def brain_call(tool, arguments):
+        from . import pipeline_engines
+        authority = getattr(owner.universal_registry, "authorization", None)
+        broker = getattr(authority, "broker", None)
+        context = (
+            broker.live_context(authentication_context)
+            if broker is not None and authentication_context is not None else
+            contextlib.nullcontext(None)
+        )
+        try:
+            with context as identity:
+                actor = (getattr(identity, "subject_root", None)
+                         or getattr(authority, "subject_root", None))
+                answer = pipeline_engines._brain_call(tool, dict(arguments), actor=actor)
+        except pipeline_engines.BrainSilent as silence:
+            return {"ok": False, "status": "unavailable", "error": str(silence)}
+        try:
+            payload = json.loads(answer)
+        except (TypeError, ValueError):
+            payload = {"text": str(answer)}
+        if isinstance(payload, dict):
+            payload.setdefault("ok", True)
+            return payload
+        return {"ok": True, "result": payload}
+
+    def bridge(action, arguments):
+        if action == "ping":
+            return {"ok": True, "owners": ("brain", "workshop-approval")}
+        if action in {"brain.context", "brain.write"}:
+            return brain_call(action, arguments)
+        return {"ok": False, "status": "refused", "error": "%s is not an owned BABOOM tool" % action}
+
+    return bridge
+
+
+def _baboom_owner_grant_checker(owner, *, authentication_context=None,
+                                workflow_root=None, browser=None,
+                                workflow_conversation=None):
+    registry, store = owner.universal_registry, owner.universal_store
+    authority = getattr(registry, "authorization", None)
+    broker = getattr(authority, "broker", None)
+    owner_root = getattr(authority, "subject_root", None)
+    def checker(name, arguments):
+        if name != "brain.write" or not isinstance(arguments, Mapping):
+            return False
+        approval = arguments.get(GRANT_ARGUMENT_KEY)
+        if not isinstance(approval, Mapping):
+            return False
+        current_browser = browser
+        if current_browser is None:
+            return False
+        workflow = workflow_root or approval.get("workflow")
+        from .workshop_workflow import current_workflow_approval_identity
+        current = current_workflow_approval_identity(
+            owner, current_browser, workflow, conversation=workflow_conversation,
+        )
+        if current is None:
+            return False
+        context = (
+            broker.live_context(authentication_context)
+            if broker is not None and authentication_context is not None else
+            contextlib.nullcontext(None)
+        )
+        with context as identity:
+            actor = (getattr(identity, "subject_root", None) or owner_root)
+        return baboom_owner_grant_checker(
+            store, name, arguments,
+            owner=owner_root, actor=actor, session=current_browser.session_root,
+            workflow=current["workflow"],
+            workflow_revision=current["workflow_revision"],
+            workflow_digest=current["workflow_digest"])
+
+    return checker
+
+
 def _revalidate_composer_context(owner, context, path):
     """Recheck the current owner and authority after an unlocked provider wait."""
     if owner._runtime_handoff_exit.is_set():
@@ -5334,12 +5446,15 @@ def _agent_graph_conversation_binding(owner, binding, body, current_authority):
         return {"conversation": conversation_root, "node": graph, "model": model, "kind": "graph"}
 
 
-def answer_open_question(owner, utterance, context, payload, *, revalidate=None):
+def answer_open_question(owner, utterance, context, payload, *, revalidate=None,
+                         browser=None):
     with _composer_planning(owner):
-        return _answer_open_question(owner, utterance, context, payload, revalidate=revalidate)
+        return _answer_open_question(owner, utterance, context, payload,
+            revalidate=revalidate, browser=browser)
 
 
-def _answer_open_question(owner, utterance, context, payload, *, revalidate=None):
+def _answer_open_question(owner, utterance, context, payload, *, revalidate=None,
+                          browser=None):
     """Brain first, then the model, for free text that is not a catalogue command.
 
     Both entry points -- the browser HTTP handler and the machine dispatcher
@@ -5377,10 +5492,13 @@ def _answer_open_question(owner, utterance, context, payload, *, revalidate=None
         # graph holds. With none picked, the composer refuses and names the
         # picker.
         model=owner._read_agent_model() or owner._default_agent_model()[0],
-        effect_engines=owner.pipeline_effect_engines,
+        effect_engines=owner._effect_engines_with_mods_store(),
         authentication_context=context,
         mutation_lock=owner.mutation_lock,
         revalidate=current_authority,
+        host_reader=_baboom_owner_tool_bridge(owner, authentication_context=context),
+        grant_checker=_baboom_owner_grant_checker(
+            owner, authentication_context=context, browser=browser),
     )
     answered = dict(payload)
     answered["command"] = {**dict(payload.get("command") or {}), "intent": "ask"}
@@ -6051,6 +6169,7 @@ class ApplicationServer:
                  enable_machine_transport=False,
                  enable_universal_cloud_gateway=False,
                  enable_brain_cloud_sync=False,
+                  enable_cloud_relay=False,
                  cloud_resource_origin=None,
                  cloud_tls_certificate_file=None,
                  cloud_tls_private_key_file=None,
@@ -6192,6 +6311,7 @@ class ApplicationServer:
             ]
         ] = {}
         self._browser_scope_projection_lineage: dict[str, int] = {}
+        self._brain_export_active = 0
         self._machine_agent_sessions = {}
         self._machine_agent_recovery_capabilities = {}
         self._machine_agent_release_receipts = {}
@@ -6312,6 +6432,10 @@ class ApplicationServer:
             Path(universal_state_path).expanduser().resolve()
             if universal_state_path is not None else None
         )
+        self.mods_root = (
+            self.universal_state_path.with_suffix(self.universal_state_path.suffix + ".mods")
+            if self.universal_state_path is not None else Path.cwd() / ".archhub-mods"
+        )
         # Terminal nodes: one owner. A terminal STARTS in a folder under this
         # instance's own workspace folder (beside its graph), or under the
         # workspace root the entry point named; the shell is not confined
@@ -6321,7 +6445,6 @@ class ApplicationServer:
         if universal_workspace_root is not None:
             self.terminal_sessions = TerminalSessions(self.universal_workspace_root)
         else:
-            from .persistence import default_state_path
             instance_state = (self.universal_state_path or requested_state_path
                               or default_state_path())
             self.terminal_sessions = TerminalSessions(
@@ -6657,6 +6780,18 @@ class ApplicationServer:
         self._fresh_content_bootstrap = False
         # The reused Session Link transport is optional; absent, sends are unchanged.
         self.native_recipient_relay = NativeRecipientRelay(self, session_link_transport)
+        self._cloud_relay_enabled = bool(enable_cloud_relay)
+        self._cloud_relay_transport = session_link_transport
+        self._cloud_relay_appdata = Path(os.environ.get('APPDATA', ''))
+        state_base = Path(
+            os.environ.get('ARCHHUB_STATE_DIR', '')
+            or (self.universal_state_path or requested_state_path or default_state_path())
+        ).resolve()
+        if state_base.suffix:
+            state_base = state_base.parent
+        self._cloud_relay_state_dir = state_base
+        self.cloud_relay = None
+        self._restart_cloud_relay()
         self._composer_planning_slot = threading.BoundedSemaphore(1)
         self._work_index_cache_lock = threading.RLock()
         self._work_index_cache_ready = threading.Condition(
@@ -7345,7 +7480,7 @@ class ApplicationServer:
                     # now. A port scan of the published broker range, never
                     # a remembered list.
                     try:
-                        self._browser_session_binding()
+                        binding, _session_token = self._browser_session_binding()
                     except AuthorizationDenied as denied:
                         self._json(403, {'ok': False, 'error': str(denied)})
                         return
@@ -7378,9 +7513,9 @@ class ApplicationServer:
                             ],
                         })
                     except Exception as exc:  # noqa: BLE001
-                        self._json(200, {
-                            'ok': True, 'hosts': [], 'connectors': [],
-                            'note': str(exc),
+                        self._json(503, {
+                            'ok': False, 'hosts': [], 'connectors': [],
+                            'error': str(exc),
                         })
                     return
                 if parsed.path == '/api/universal/assistant-registration':
@@ -7681,9 +7816,21 @@ class ApplicationServer:
                         return
                     # The projection takes the graph lock itself, and only for
                     # its short revision-checked tail (00911b3 pattern).
+                    if owner._brain_export_active:
+                        projection = project_universal_canvas(
+                            owner.universal_store,
+                            owner.universal_registry,
+                            authentication_context=binding.context,
+                        )
+                    else:
+                        projection = owner._cached_browser_canvas_projection(
+                            binding, owner.universal_store.revision
+                        )
+                    if projection is None:
+                        projection = owner.project_interaction_canvas(binding)
                     payload = {
                         'ok': True,
-                        **owner.project_interaction_canvas(binding),
+                        **projection,
                     }
                     self._json(200, payload)
                     return
@@ -8180,6 +8327,60 @@ class ApplicationServer:
                             'revision': owner.universal_store.revision,
                         })
                         return
+                    if self.path == '/api/universal/mods':
+                        body = self._body(max_bytes=65536)
+                        if type(body) is not dict:
+                            raise InvalidCell('mods request must be an object')
+                        if binding.subject_root != owner.universal_registry.authorization.subject_root:
+                            raise AuthorizationDenied('only this instance owner changes mods')
+                        from .domains.selfext import (
+                            install_mod_package,
+                            mods_rows,
+                            remove_mod_package,
+                            review_mod_package,
+                            set_mod_enabled,
+                            set_mod_param,
+                        )
+                        action = str(body.get('action') or 'state')
+                        if action == 'browse':
+                            picker = getattr(owner, 'native_folder_picker', None)
+                            if picker is None:
+                                raise InvalidCell('folder picker is unavailable')
+                            chosen = picker('Choose an ArchHub mod folder')
+                            self._json(200, {'ok': True, 'path': str(chosen or '')})
+                            return
+                        if action == 'state':
+                            self._json(200, {'ok': True, 'mods': mods_rows(owner.universal_store)})
+                            return
+                        if action == 'review':
+                            self._json(200, {'ok': True, 'review': review_mod_package(body.get('path') or '')})
+                            return
+                        if action == 'install':
+                            row = install_mod_package(
+                                owner.universal_store, body.get('path') or '',
+                            )
+                            self._json(200, {'ok': True, 'mod': row, 'mods': mods_rows(owner.universal_store)})
+                            return
+                        if action == 'enable':
+                            row = set_mod_enabled(owner.universal_store, str(body.get('id') or ''), bool(body.get('enabled')))
+                            self._json(200, {'ok': True, 'mod': row, 'mods': mods_rows(owner.universal_store)})
+                            return
+                        if action == 'param':
+                            row = set_mod_param(owner.universal_store, str(body.get('id') or ''),
+                                                str(body.get('param') or ''), body.get('value'))
+                            self._json(200, {'ok': True, 'mod': row, 'mods': mods_rows(owner.universal_store)})
+                            return
+                        if action == 'remove':
+                            removed = remove_mod_package(owner.universal_store, str(body.get('id') or ''))
+                            self._json(200, {'ok': True, 'removed': removed.get('manifest', {}).get('name', ''), 'mods': mods_rows(owner.universal_store)})
+                            return
+                        if action == 'retry':
+                            row = set_mod_enabled(owner.universal_store, str(body.get('id') or ''), True)
+                            self._json(200, {'ok': True, 'mod': row, 'mods': mods_rows(owner.universal_store)})
+                            return
+                        if action == 'draft':
+                            raise InvalidCell('mod drafting waits for the governed MODS-3 writer')
+                        raise InvalidCell('unknown mods action')
                     # A browser POST is a person acting; retention waits for
                     # an idle moment after the last one (reads and polls are GETs).
                     owner.last_user_action_monotonic = time.monotonic()
@@ -8481,6 +8682,15 @@ class ApplicationServer:
                                     authentication_context=binding.context,
                                     mutation_lock=owner.mutation_lock,
                                     revalidate=current_authority,
+                                    host_reader=_baboom_owner_tool_bridge(
+                                        owner, authentication_context=binding.context),
+                                    grant_checker=_baboom_owner_grant_checker(
+                                        owner, authentication_context=binding.context,
+                                        browser=binding,
+                                        workflow_conversation=(
+                                            persisted_turn.get('conversation')
+                                            if persisted_turn is not None else None
+                                        )),
                                     before_dispatch=before_dispatch if persisted_turn is not None else None,
                                     conversation_context=conversation_context,
                                     generation=body.get('generation'),
@@ -8579,6 +8789,10 @@ class ApplicationServer:
                             else:
                                 withdraw_cloud_publish_consent(Path(state_dir))
                             payload = read_cloud_publish_consent(Path(state_dir), account)
+                        if allow:
+                            owner._restart_cloud_relay()
+                        else:
+                            owner._stop_cloud_relay()
                         self._json(200, {'ok': True, **payload})
                         return
                     if self.path == '/api/universal/application-update':
@@ -8677,6 +8891,17 @@ class ApplicationServer:
                                     authentication_context=binding.context, revalidate=True)
                             self._json(200, perform_workshop_action(owner, binding, body,
                                 browser_guard=workflow_guard))
+                            return
+                        from .workshop_presentation import ACTIONS as PRESENTATION_ACTIONS, perform_presentation_action
+                        if type(body) is dict and body.get('action') in PRESENTATION_ACTIONS:
+                            def presentation_guard():
+                                current, current_token = self._browser_session_binding(unsafe=True)
+                                if current != binding or current_token != _session_token:
+                                    raise AuthorizationDenied('Workshop presentation browser changed')
+                                owner.require_universal_http_route('POST', self.path,
+                                    authentication_context=binding.context, revalidate=True)
+                            self._json(200, perform_presentation_action(owner, binding, body,
+                                browser_guard=presentation_guard))
                             return
                         from .workshop_page_lifecycle import PAGE_ACTIONS, perform_browser_page_action
                         if type(body) is dict and type(body.get('action')) is str and body['action'] in PAGE_ACTIONS:
@@ -8789,7 +9014,7 @@ class ApplicationServer:
                         ):
                             payload = answer_open_question(
                                 owner, body['utterance'], binding.context, payload,
-                                revalidate=current_baboom_binding,
+                                revalidate=current_baboom_binding, browser=binding,
                             )
                         self._json(200, payload)
                         return
@@ -9451,9 +9676,13 @@ class ApplicationServer:
                             wanted = 500
                         quick = (body or {}).get('quick') is True
                         try:
-                            listing = str(_brain_call(
-                                'brain.list_facts', {'limit': max(1, min(wanted, 100000))},
-                                budget=4.0 if quick else None))
+                            owner._brain_export_active += 1
+                            try:
+                                listing = str(_brain_call(
+                                    'brain.list_facts', {'limit': max(1, min(wanted, 100000))},
+                                    budget=4.0 if quick else None))
+                            finally:
+                                owner._brain_export_active -= 1
                         except (BrainSilent, OSError) as silent:
                             self._json(503, {'ok': False, 'error': 'Brain not answering',
                                              'detail': str(silent)[:200]})
@@ -9503,10 +9732,11 @@ class ApplicationServer:
                         # baboom.presence answers from the graph's own
                         # presence leases (universal_pipeline._graph_engines):
                         # the one source every BABOOM presence route reads.
-                        engines = dict(owner.pipeline_effect_engines or {})
+                        engines = owner._effect_engines_with_mods_store()
                         if "library.terminal" in engines:
                             engines["library.terminal"] = (
                                 owner.terminal_sessions.admitted_engine(terminal_admission))
+
                         run_result = run_universal_pipeline(
                             owner.universal_store,
                             owner.universal_registry,
@@ -9614,10 +9844,12 @@ class ApplicationServer:
                                 if method not in METHODS:
                                     raise InvalidCell(
                                         'sign-in method must be google')
-                                self._json(200, {'ok': True, **begin(method)})
+                                self._json(200, {'ok': True, **begin(
+                                    method, on_complete=lambda _email: owner._restart_cloud_relay())})
                                 return
                             elif self.path == '/api/universal/cloud-signout':
                                 from .cloud_signin import sign_out
+                                owner._stop_cloud_relay()
                                 self._json(200, {'ok': True, **sign_out()})
                                 return
                             elif self.path == '/api/universal/login':
@@ -9701,6 +9933,13 @@ class ApplicationServer:
                                     'skill': str(body.get('skill') or ''),
                                     'topic': str(body.get('topic') or ''),
                                 }
+                                if want == 'read' and params['skill'].startswith('mod:'):
+                                    from .domains.selfext import mods_rows
+                                    _, mod_id, tutorial = (params['skill'].split(':', 2) + ['', ''])[:3]
+                                    for row in mods_rows(owner.universal_store)['rows']:
+                                        if row['id'] == mod_id and tutorial in row.get('tutorials', []):
+                                            self._json(200, {'ok': True, 'answer': 'mod tutorial', 'result': '# %s\n\n%s\n' % (tutorial, row['name'])})
+                                            return
                                 engine = {
                                     'catalogue': skills_catalogue,
                                     'read': skill_read,
@@ -9715,6 +9954,18 @@ class ApplicationServer:
                                     return
                                 try:
                                     produced, answer = engine(params, {})
+                                    if want == 'catalogue':
+                                        from .domains.selfext import mods_rows
+                                        out = list(produced.get('out') or [])
+                                        for row in mods_rows(owner.universal_store)['rows']:
+                                            for tutorial in row.get('tutorials', []):
+                                                out.append({
+                                                    'name': 'mod:%s:%s' % (row['id'], tutorial),
+                                                    'source': 'mods',
+                                                    'description': '%s · %s' % (row['name'], tutorial),
+                                                    'path': '',
+                                                })
+                                        produced = dict(produced, out=out)
                                     self._json(200, {
                                         'ok': True, 'answer': answer,
                                         'result': produced.get('out'),
@@ -10267,6 +10518,33 @@ class ApplicationServer:
                 target=self._live_loop, name='archhub-live-watcher', daemon=True)
             self._live_thread.start()
 
+    def _stop_cloud_relay(self):
+        relay = getattr(self, 'cloud_relay', None)
+        self.cloud_relay = None
+        if relay is not None:
+            relay.close()
+
+    def _restart_cloud_relay(self):
+        self._stop_cloud_relay()
+        if (not getattr(self, '_cloud_relay_enabled', False)
+                or getattr(self, '_cloud_relay_transport', None) is None):
+            return None
+        try:
+            from .cloud_relay import start_cloud_relay
+            self.cloud_relay = start_cloud_relay(
+                appdata=self._cloud_relay_appdata,
+                state_dir=self._cloud_relay_state_dir,
+                respond=lambda _text: {},
+                execute=lambda _text: {},
+                session_transport=self._cloud_relay_transport,
+                application_session_owner=self,
+                app_kinds=(),
+            )
+        except Exception as refused:
+            print("  cloud relay: session tools not started -- %s" % refused, flush=True)
+            self.cloud_relay = None
+        return self.cloud_relay
+
     def is_halted(self) -> bool:
         return self._application_halted.is_set()
 
@@ -10287,7 +10565,8 @@ class ApplicationServer:
                     proc = held.get('process')
                     if proc is not None and hasattr(proc, 'stop'):
                         proc.stop(timeout_seconds=0.5)
-            except Exception:
+            except Exception as exc:
+                self._browser_canvas_prewarm_errors.append(str(exc)[:200])
                 pass
         # 2. Cancel and clean up active native workshop reservations
         reservations = getattr(self, '_native_workshop_reservations', None)
@@ -12604,13 +12883,37 @@ class ApplicationServer:
         except Exception:
             return "", ""
 
+    def _effect_engines_with_mods_store(self):
+        engines = dict(self.pipeline_effect_engines or {})
+        write_engines = {
+            'revit.set_parameter_by_name',
+            'revit.create_sheets',
+            'revit.renumber_rename',
+            'revit.override_color_in_view',
+            'revit.export_dwg',
+            'revit.export_ifc',
+        }
+
+        def bound(engine):
+            def run(params, feeds):
+                held = dict(params or {})
+                held.setdefault('mods_store', self.universal_store)
+                return engine(held, feeds)
+            return run
+
+        for name in write_engines:
+            if name in engines:
+                engines[name] = bound(engines[name])
+        return engines
+
+
     def _host_rows(self) -> list:
         """probe_connectors rows, refreshed every 30 s off the request path."""
         value = self._refresh_in_background("hosts", 30.0, self._probe_hosts)
         if not isinstance(value, list):
             return []
         from .host_enable import annotate_host_rows
-        return annotate_host_rows(self.clean_authority, value)
+        return annotate_host_rows(getattr(self, "clean_authority", None), value)
 
     def _host_rows_or_none(self):
         """The same cached rows, or None while the first probe has not answered."""
@@ -12618,7 +12921,7 @@ class ApplicationServer:
         if not isinstance(value, list):
             return None
         from .host_enable import annotate_host_rows
-        return annotate_host_rows(self.clean_authority, value)
+        return annotate_host_rows(getattr(self, "clean_authority", None), value)
 
     def _local_runtime_states(self):
         """{port: running} for LM Studio and Ollama, refreshed every 10 s off the
@@ -12637,6 +12940,15 @@ class ApplicationServer:
             "opencode-cli-status", 30.0, lambda: probe_opencode_status(executable))
         return value if isinstance(value, dict) else {
             "installed": bool(executable), "signed_in": False, "route_ok": False}
+
+    def _assistant_cli_path(self, executable):
+        """Assistant CLI discovery cached per server; Settings reads do not rescan PATH."""
+        cache = self.__dict__.setdefault("_assistant_cli_path_cache", {})
+        key = str(executable or "")
+        if key not in cache:
+            from .model_router import find_assistant
+            cache[key] = find_assistant(key)
+        return cache[key]
 
     def _staged_update(self) -> dict:
         """The build the quiet updater staged (state_dir/updates/staged.json), cached 30 s."""
@@ -13743,6 +14055,7 @@ class ApplicationServer:
                 return {'ok': True, 'providers': provider_rows(
                     cloud_session=session,
                     local_probe=lambda _host, port: None if states is None else states.get(int(port)),
+                    cli_probe=self._assistant_cli_path,
                     opencode_status_probe=self._opencode_cli_status)}
             from .model_catalogue import (default_route_display_row, groups_with_routes,
                                           held_model_groups, live_model_groups)
@@ -19166,7 +19479,18 @@ class ApplicationServer:
                         root for root in projected_roots
                         if root not in visible_roots
                     ]
-                    if not missing and not extra:
+                    projection_hidden_roots = {"app:system-tool:tool_theme"}
+                    if (
+                        not extra
+                        and missing
+                        and set(missing).issubset(projection_hidden_roots)
+                    ):
+                        # The canvas projection folds the implementation-only
+                        # Theme tool params into the UI domain card before
+                        # rendering, so it is visible to scope authority but
+                        # intentionally absent from drawn nodes.
+                        visible_roots = projected_roots
+                    elif not missing and not extra:
                         visible_roots = projected_roots
                     else:
                         raise InvalidCell(
@@ -19175,9 +19499,9 @@ class ApplicationServer:
                             "%d missing %s, %d unexpected %s" % (
                                 len(projected_roots), len(visible_roots),
                                 len(missing),
-                                [root[:12] for root in missing[:4]],
+                                missing[:4],
                                 len(extra),
-                                [root[:12] for root in extra[:4]],
+                                extra[:4],
                             )
                         )
                 # The retained identity keeps every assigned root: Work the
@@ -20344,6 +20668,7 @@ class ApplicationServer:
         if native_relay is not None:
             # Before any drain or teardown: the relay settles into live content.
             native_relay.close()
+        self._stop_cloud_relay()
         with self.mutation_lock:
             self._model_execution_closing = True
         if not self._model_execution_idle.wait(timeout=65.0):

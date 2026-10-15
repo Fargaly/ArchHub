@@ -39,12 +39,13 @@ function fixture() {
   };
 }
 
-test('latest waits for success then follows bottom; reading up preserves the same row through bounded tail replacement',()=>{
+test('opening waits for success then starts at the first message; explicit follow and reader anchors survive bounded replacement',()=>{
   const f=fixture();f.rows(['a','b','c','d','e']);
   f.control.update(f.viewport,'room/view/latest',false,false);
   assert.equal(f.viewport.scrollTop,0);
   f.control.update(f.viewport,'room/view/latest',true,false);
-  assert.equal(f.viewport.scrollTop,300);
+  assert.equal(f.viewport.scrollTop,0,'first successful task open starts at the first message');
+  f.control.jump(f.viewport);assert.equal(f.viewport.scrollTop,300,'explicit follow still reaches the latest message');
   f.rows(['b','c','d','e','f']);f.control.update(f.viewport,'room/view/latest',true,false);
   assert.equal(f.viewport.scrollTop,300);
   f.userScroll(125);assert.equal(f.offset('c'),-25);
@@ -53,9 +54,9 @@ test('latest waits for success then follows bottom; reading up preserves the sam
   f.control.scroll(f.viewport); // The programmatic scroll event cannot change intent.
   f.rows(['c','d','e','f','g','h']);f.control.update(f.viewport,'room/view/latest',true,false);
   assert.equal(f.viewport.scrollTop,25);
-  assert.deepEqual(f.events,[true]);
+  assert.deepEqual(f.events,[true,false,true]);
   f.control.jump(f.viewport);assert.equal(f.viewport.scrollTop,400);
-  assert.deepEqual(f.events,[true,false]);
+  assert.deepEqual(f.events,[true,false,true,false]);
 });
 
 test('font and viewport reflow preserve reader anchor; explicit older pages start at top and never follow',()=>{
@@ -70,7 +71,7 @@ test('font and viewport reflow preserve reader anchor; explicit older pages star
   f.control.update(f.viewport,'older-token',true,true);assert.equal(f.viewport.scrollTop,150);
   f.control.jump(f.viewport);assert.equal(f.viewport.scrollTop,150);
   f.rows(['new-a','new-b','new-c','new-d']);f.control.update(f.viewport,'latest',true,false);
-  assert.equal(f.viewport.scrollTop,150);
+  assert.equal(f.viewport.scrollTop,0,'returning to a different page opens at its first message');
 });
 
 test('evicted anchors clamp without acquiring follow intent; error gaps and owner/room reset stay distinct',()=>{
@@ -84,5 +85,5 @@ test('evicted anchors clamp without acquiring follow intent; error gaps and owne
   f.rows(['x','y','z','next']);f.control.update(f.viewport,'owner-a/room-a/latest',true,false);
   assert.equal(f.viewport.scrollTop,100);
   f.control.update(f.viewport,'owner-b/room-a/latest',true,false);
-  assert.equal(f.viewport.scrollTop,200);assert.deepEqual(f.events,[true,false]);
+  assert.equal(f.viewport.scrollTop,0,'a changed owner/room opens at its first message');assert.deepEqual(f.events,[true]);
 });

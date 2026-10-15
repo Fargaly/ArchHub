@@ -52,6 +52,49 @@ def _node(projection, root):
     return next(node for node in projection["nodes"] if node["id"] == root)
 
 
+def test_selection_and_owned_properties_do_not_admit_an_unprojected_engine(graph, monkeypatch):
+    from nodelang import universal_pipeline as pipeline
+
+    store, registry = graph
+    root = create_engine_node(
+        store, registry, title="Selected effect", engine="library.notify",
+        properties={"message": "only when admitted"},
+    )["root"]
+    set_universal_selection(store, registry, [root], focus_root=root)
+    admitted = project_universal_canvas(store, registry)
+    assert admitted["selected"] == root
+    assert root in {node["id"] for node in admitted["nodes"]}
+    assert _owner_properties(store.snapshot(), registry)[root]["engine"][1] == "library.notify"
+    calls = []
+
+    def effect(params, feeds):
+        calls.append(params["message"])
+        return {"out": "admitted"}, "effect answered"
+
+    # Model a projection that withholds this selected root. Keep its real
+    # ownership/selection metadata, so neither can become an execution grant.
+    withheld = {**admitted, "nodes": [], "wires": []}
+    with monkeypatch.context() as patch:
+        patch.setattr(pipeline, "project_universal_canvas", lambda *a, **kw: withheld)
+        revision = store.revision
+        refused = run_universal_pipeline(
+            store, registry, effect_engines={"library.notify": effect}, only_roots=[root])
+    assert refused["ran"] == refused["written"] == 0
+    assert refused["display"] == refused["pending"] == {}
+    assert calls == []
+    assert store.revision == revision
+    assert "status" not in _owner_properties(store.snapshot(), registry)[root]
+
+    # The real admitted projection still executes the same selected engine
+    # and persists its answer through the normal status writer.
+    answered = run_universal_pipeline(
+        store, registry, effect_engines={"library.notify": effect}, only_roots=[root])
+    assert answered["ran"] == answered["written"] == 1
+    assert calls == ["only when admitted"]
+    assert answered["display"][root] == "effect answered"
+    assert _owner_properties(store.snapshot(), registry)[root]["status"][1] == "effect answered"
+
+
 def test_a_new_engine_out_wires_to_another_engine_in(graph):
     store, registry = graph
     first = create_engine_node(store, registry, title="Watch A", engine="lines.watch")["root"]

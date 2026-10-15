@@ -1,3 +1,4 @@
+const {settingsNavigator} = require('./settings_navigation_helpers.cjs');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -18,7 +19,7 @@ const SKILLS = [
   {id:'qa', name:'Door schedule QA', runs:38, args:'level', when:'yesterday'},
 ];
 const EXPECTED_SHORTCUTS = [
-  ['open-node-library', 'Open the node catalogue', 'Global', 'Ctrl/Cmd+K'],
+  ['open-command-bar', 'Open the command bar', 'Global', 'Ctrl/Cmd+K'],
   ['toggle-settings', 'Toggle settings', 'Global', 'Ctrl/Cmd+,'],
   ['open-documentation', 'Open documentation', 'Global', 'Ctrl/Cmd+/'],
   ['close-overlays', 'Close settings, docs, or catalogue', 'Global', 'Esc'],
@@ -81,11 +82,10 @@ test('Settings Shortcuts renders the explicit handled shortcut list and filters 
     assert.ok(settings, 'Settings rail button exists');
     studio.flush(() => settings.click());
     await studio.settle();
-    const shortcutTab = [...studio.doc.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Shortcuts');
+    const nav = settingsNavigator({doc:studio.doc, flush:studio.flush, settle:studio.settle});
+    const shortcutTab = await nav.capability('Shortcuts');
     assert.ok(shortcutTab, 'Settings has the Shortcuts tab');
-    studio.flush(() => shortcutTab.click());
-    await studio.settle();
-    const panel = shortcutTab.parentElement.nextElementSibling;
+    const panel = await nav.tab('Shortcuts');
     const rows = () => [...panel.querySelectorAll('[data-shortcut-id]')];
     const rowValues = () => rows().map(row => {
       const spans = row.querySelectorAll('span');
@@ -115,9 +115,10 @@ test('global keydown actions are driven by the exported shortcut table', async (
         bubbles:true, cancelable:true, ...init,
       })));
     };
-    send('open-node-library', {key:'k', ctrlKey:true});
+    send('open-command-bar', {key:'k', ctrlKey:true});
     await studio.settle();
-    assert.ok([...studio.doc.querySelectorAll('span')].some(node => node.textContent === 'Node library'), 'Ctrl+K opens the node library overlay');
+    assert.ok(studio.doc.querySelector('[data-command-bar]'), 'Ctrl+K opens the command bar overlay');
+    assert.ok(studio.doc.querySelector('[data-command-bar]').textContent.includes('Add node'), 'command bar includes Add node rows');
     send('open-documentation', {key:'/', ctrlKey:true});
     await studio.settle();
     assert.ok(studio.doc.body.textContent.includes('Getting started'), 'Ctrl+/ opens documentation');
@@ -127,9 +128,9 @@ test('global keydown actions are driven by the exported shortcut table', async (
       assert.equal(docs.includes(stale), false, 'Getting started no longer says ' + stale);
     }
     assert.match(studio.doc.querySelector('[data-docs-install]').textContent, /Windows installer from archhub\.io/);
-    assert.match(studio.doc.querySelector('[data-docs-strip]').textContent, /local server, how many hosts are running/);
+    assert.match(studio.doc.querySelector('[data-docs-strip]').textContent, /connected program, document, running work, waiting work, and the command hint/);
     send('toggle-settings', {key:',', ctrlKey:true});
     await studio.settle();
-    assert.ok([...studio.doc.querySelectorAll('button')].some(button => button.firstElementChild?.textContent === 'Hub'), 'Ctrl+, opens Settings');
+    assert.ok(studio.doc.querySelector('[data-settings54-shell]'), 'Ctrl+, opens Settings');
   } finally { studio.close(); }
 });

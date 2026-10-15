@@ -19,7 +19,8 @@ import db
 
 HOST_READ = "host-read"
 WORKSHOP_CALL = "workshop-call"
-APP_KINDS = ("app", "app-execute", HOST_READ, WORKSHOP_CALL)
+SESSION_CALL = "session-call"
+APP_KINDS = ("app", "app-execute", HOST_READ, WORKSHOP_CALL, SESSION_CALL)
 # One agent_tasks.directive holds 2000 characters; a longer step is refused
 # here rather than cut into JSON the app cannot read.
 DIRECTIVE_LIMIT = 2000
@@ -143,3 +144,28 @@ def workshop_call(client: dict, method: str, params: dict, *, actor: str,
                             "desktop, so nothing was read or posted")
     raise TimeoutError("your ArchHub app took this Workshop step but has not answered yet; "
                        "retry with the same idempotency_key")
+
+
+def session_call(method: str, params: dict, *, actor: str,
+                 wait_s: Optional[float] = None) -> object:
+    """One remote session operation, answered by the user's running application."""
+    account = str(actor or "").strip().lower()
+    directive = json.dumps({"account": account, "method": str(method),
+                            "params": dict(params or {})},
+                           sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    if len(directive) > DIRECTIVE_LIMIT:
+        raise ValueError("this session request is too long for one relay task; shorten it")
+    task = db.enqueue_agent_task(directive=directive, created_by=actor, kind=SESSION_CALL)
+    row = wait_for(task["id"], wait_s=wait_s) or task
+    status = str(row.get("status") or "queued")
+    result = str(row.get("result") or "")
+    if status == "done":
+        try:
+            return json.loads(result)
+        except ValueError:
+            raise RuntimeError("your ArchHub app answered with unreadable data") from None
+    if status == "failed":
+        raise RuntimeError("your ArchHub app refused: " + (result or "no reason given"))
+    if db.expire_agent_task(task["id"], "device_offline: no running ArchHub app claimed this session request"):
+        raise DeviceOffline("device_offline: ArchHub is not open and signed in, so sessions are unavailable")
+    raise TimeoutError("your ArchHub app took this session request but has not answered yet")

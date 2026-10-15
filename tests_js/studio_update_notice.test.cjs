@@ -115,7 +115,9 @@ async function mountStrip(server) {
   const toolHub = jsx.slice(jsx.indexOf('\nconst TOOL_HUB_POLL_MS ='), jsx.indexOf('\nconst firstToolTab ='));
   assert.match(toolHub, /const useToolHubProjection = /, 'the status strip reads waiting items through the tool hub projection');
   // The strip restarts through the shared confirmation and keeps the waiting shortcut helpers.
-  const shared = toolHub + '\n' + [
+  const catalogue = jsx.slice(jsx.indexOf('\nconst catalogueStates ='), jsx.indexOf('\nconst withLiveCatalogue ='));
+  assert.match(catalogue, /const useCatalogueVersion = /, 'the status strip subscribes through the real catalogue owner');
+  const shared = toolHub + '\n' + catalogue + '\n' + [
     'LM_HOSTS', 'hostTally', 'modelRoute', 'useRestartConfirmation',
     'waitingLine', 'waitingMeta', 'WaitingButton', 'smallBtn',
   ].filter(name => jsx.includes('\nconst ' + name + ' = '))
@@ -197,7 +199,7 @@ test('nothing is shown while up to date; a pushed ready release appears in the s
     assert.ok(strip.gets.length >= 1 && strip.gets.every(url => url === UPDATE));
     assert.equal(strip.notice(), null, 'up to date: no notice');
     assert.equal(strip.button(RESTART), null);
-    assert.ok(strip.button('docs') && !strip.button('settings'), 'the shipped status strip keeps docs and removes Settings');
+    assert.ok(!strip.button('docs') && !strip.button('settings'), 'the shipped status strip has no Docs or Settings link');
     assert.equal(strip.timers.size, 0, 'the strip holds no update poll');
     current = status('ready');
     strip.push(strip.transport);
@@ -209,7 +211,7 @@ test('nothing is shown while up to date; a pushed ready release appears in the s
     const restart = strip.button(RESTART);
     assert.ok(restart && !restart.disabled && notice.contains(restart));
     assert.equal(strip.doc.querySelector('[role="dialog"], [aria-modal="true"]'), null, 'the notice never blocks the window');
-    assert.ok(strip.button('docs') && !strip.button('settings'), 'the strip keeps docs beside the notice without a Settings entry');
+    assert.ok(!strip.button('docs') && !strip.button('settings'), 'the strip keeps the notice without Docs or Settings links');
   } finally { strip.close(); }
 });
 

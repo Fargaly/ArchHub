@@ -330,12 +330,12 @@ def installed_stop_hook(install_root):
 
 
 def _render_hook_command(vendor, python, script, flag):
-    """Quoted forward-slash paths survive Claude Code's Git Bash on Windows. Codex runs
-    hook commands through PowerShell, where a leading quoted string is an expression,
-    not a command: the call operator makes any path, spaces included, run."""
+    """Quoted forward-slash paths survive Claude Code's Git Bash on Windows. Codex and
+    Gemini CLI run hook commands through PowerShell, where a leading quoted string is an
+    expression, not a command: the call operator makes any path, spaces included, run."""
     quote = lambda value: '"' + str(value).replace("\\", "/") + '"'
     command = quote(python) + " " + quote(script) + " --vendor " + flag
-    return "& " + command if vendor == "codex" else command
+    return "& " + command if vendor in ("codex", "gemini-cli") else command
 
 
 def render_stop_hook(vendor, *, install_root):
@@ -771,9 +771,9 @@ def _claude_bash_broken(hook, vendor):
 
 
 def _codex_powershell_broken(hook, vendor):
-    """Codex runs hooks through PowerShell, where a command that starts with a quoted
-    path is a ParserError; such a command is never a working equivalent."""
-    if vendor != "codex" or not isinstance(hook, dict):
+    """Codex and Gemini CLI run hooks through PowerShell, where a command that starts
+    with a quoted path is a ParserError; such a command is never a working equivalent."""
+    if vendor not in ("codex", "gemini-cli") or not isinstance(hook, dict):
         return False
     command = hook.get("command")
     return isinstance(command, str) and command.lstrip()[:1] in ('"', "'")

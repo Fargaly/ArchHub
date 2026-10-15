@@ -1,3 +1,4 @@
+const {settingsNavigator} = require('./settings_navigation_helpers.cjs');
 /* Design port courts: the workspace header, the sidebar account chip, the canvas chrome and the
    selection-panel composer, measured against the founder design bundle (archhub/project/studio-lm.jsx:
    WsHeader 1099-1150, NodesPanel footer 644-654, CanvasHint 1504-1517, CanvasToolbar 2042-2061,
@@ -89,9 +90,14 @@ async function mountStudio({account = null, workshops = [{root:'room-a', label:'
   win.eval('window.__studioRoot=ReactDOM.createRoot(document.getElementById("root")); ReactDOM.flushSync(()=>window.__studioRoot.render(React.createElement(StudioLM)));');
   const doc = win.document;
   const flush = action => win.ReactDOM.flushSync(action);
+  const settle = async (done = () => true, what = 'the React event reaches its owner') => {
+    await new Promise(resolve => win.setTimeout(resolve, 0));
+    for (let tick = 0; tick < 200 && !done(); tick += 1) await new Promise(resolve => win.setTimeout(resolve, 5));
+    assert.ok(done(), what);
+  };
   const buttons = (text, scope = doc) => [...scope.querySelectorAll('button')].filter(button => button.textContent.trim() === text);
   const close = () => { try { if (win.__studioRoot) flush(() => win.__studioRoot.unmount()); } finally { dom.window.close(); } };
-  return {win, doc, flush, buttons, close};
+  return {win, doc, flush, settle, buttons, close};
 }
 const px = value => { const n = parseFloat(value); assert.ok(Number.isFinite(n), 'a declared pixel size, got ' + JSON.stringify(value)); return n; };
 const segmentedControl = studio => {
@@ -162,19 +168,23 @@ test('sidebar account chip reads the account record, never a seeded person', asy
       assert.equal(signed.doc.body.textContent.includes(seeded), false, 'no seeded ' + seeded + ' on screen');
     }
     signed.flush(() => chip.click());
-    assert.ok([...signed.doc.querySelectorAll('span')].some(span => span.textContent === 'Settings'), 'the chip opens Settings on Account');
-    assert.equal(signed.doc.querySelectorAll('[data-tool-card]').length, 0, 'the chip lands on Account, not the Hub');
-    signed.flush(() => [...signed.doc.querySelectorAll('button')].find(button => button.textContent.trim() === '✕').click());
+    assert.ok(signed.doc.querySelector('[data-settings54-shell]'), 'the chip opens the Settings graph on Account');
+    assert.match(signed.doc.querySelector('[data-settings54-shell] main > div').textContent, /Settings\s*›\s*Account/,
+      'the chip lands on the Account node, not the Hub node');
+    signed.flush(() => signed.doc.querySelector('[aria-label="Close"]').click());
     signed.flush(() => signed.doc.querySelector('[title="Settings"]').click());
-    assert.equal(signed.doc.querySelectorAll('[data-tool-card]').length, 6, 'after an Account visit, the rail Settings opens on the Hub again');
+    const nav = settingsNavigator({doc:signed.doc, flush:signed.flush, settle:signed.settle});
+    const hub = await nav.tab('Hub');
+    assert.equal(hub.querySelectorAll('[data-tool-card]').length, 6, 'after an Account visit, the rail Settings still exposes the same Hub owner');
   } finally { signed.close(); }
   const out = await mountStudio();
   try {
     const chip = out.doc.querySelector('aside [aria-label="Account"]');
     assert.ok(chip && chip.textContent.includes('Sign in'), 'signed out, the chip is the way in');
     out.flush(() => chip.click());
-    assert.ok([...out.doc.querySelectorAll('span')].some(span => span.textContent === 'Settings'), 'signed out, the chip opens Settings');
-    assert.equal(out.doc.querySelectorAll('[data-tool-card]').length, 0, 'signed out, the chip lands on Account to sign in, not the Hub');
+    assert.ok(out.doc.querySelector('[data-settings54-shell]'), 'signed out, the chip opens Settings');
+    assert.match(out.doc.querySelector('[data-settings54-shell] main > div').textContent, /Settings\s*›\s*Account/,
+      'signed out, the chip lands on Account to sign in, not the Hub');
     assert.equal(out.doc.body.textContent.includes('Fargaly'), false, 'no seeded person when signed out');
   } finally { out.close(); }
 });
@@ -183,7 +193,7 @@ test('canvas chrome: no status chip idle or selected, the minimap at its design 
   const studio = await mountStudio();
   try {
     openCanvas(studio);
-    const mapLabel = [...studio.doc.querySelectorAll('div')].find(node => node.textContent === 'MAP' && !node.children.length);
+    const mapLabel = [...studio.doc.querySelectorAll('div')].find(node => node.textContent === 'Overview' && !node.children.length);
     assert.ok(mapLabel, 'the minimap is drawn');
     const map = mapLabel.parentElement;
     assert.equal([...studio.doc.querySelectorAll('[role="status"]')].some(node => node.textContent === 'Canvas'), false,
@@ -193,16 +203,26 @@ test('canvas chrome: no status chip idle or selected, the minimap at its design 
     studio.flush(() => node.click());
     assert.equal([...studio.doc.querySelectorAll('[role="status"]')].some(row => /selected$/.test(row.textContent.trim())), false,
       'a selection draws no status chip: the design canvas draws none, the card carries its own focus');
-    assert.deepEqual(['right', 'top', 'width', 'height'].map(key => px(map.style[key])), [14, 14, 170, 96],
+    assert.deepEqual(['right', 'bottom', 'width', 'height'].map(key => px(map.style[key])), [28, 24, 180, 110],
       'the minimap sits where the design puts it (design studio-lm.jsx:2090-2114)');
     const add = studio.doc.querySelector('button[aria-label="Add node"]');
     assert.ok(add, 'the toolbar add action exists');
     assert.equal(add.textContent.trim(), '\uff0b add node', 'the toolbar names its add action (design studio-lm.jsx:2055-2059)');
-    const first = [...studio.doc.querySelectorAll('span')].find(node => node.textContent === 'scroll ' + ARROW + ' zoom');
-    assert.ok(first, 'the hint strip is drawn');
-    assert.deepEqual([...first.parentElement.children].map(node => node.textContent),
-      ['scroll ' + ARROW + ' zoom', DOT, 'drag ' + ARROW + ' pan', DOT, 'right-click ' + ARROW + ' menu'],
-      'the hint strip carries exactly the design affordances (design studio-lm.jsx:1504-1517)');
+    const region = studio.doc.querySelector('[aria-label="Workflow canvas"]');
+    const transform = () => region.firstElementChild.style.transform;
+    const beforeZoom = transform();
+    // Native continuous wheel/mouse events commit asynchronously; observe the actual viewport transform.
+    studio.flush(() => region.dispatchEvent(new studio.win.WheelEvent('wheel', {bubbles:true, cancelable:true, deltaY:-100, clientX:200, clientY:150})));
+    await studio.settle(() => transform() !== beforeZoom, 'the real wheel handler changes the canvas transform');
+    assert.notEqual(transform(), beforeZoom, 'scroll still zooms after the old hint strip moved');
+    const beforePan = transform();
+    studio.flush(() => region.dispatchEvent(new studio.win.MouseEvent('mousedown', {bubbles:true, button:1, clientX:200, clientY:150})));
+    studio.flush(() => studio.doc.dispatchEvent(new studio.win.MouseEvent('mousemove', {bubbles:true, buttons:4, clientX:220, clientY:170})));
+    studio.flush(() => studio.doc.dispatchEvent(new studio.win.MouseEvent('mouseup', {bubbles:true, button:1, clientX:220, clientY:170})));
+    await studio.settle(() => transform() !== beforePan, 'the real middle-drag handler changes the canvas transform');
+    assert.notEqual(transform(), beforePan, 'middle drag still pans');
+    studio.flush(() => region.dispatchEvent(new studio.win.MouseEvent('contextmenu', {bubbles:true, cancelable:true, clientX:200, clientY:150})));
+    assert.ok(studio.doc.querySelector('[role="menu"][aria-label="Canvas actions"]'), 'right-click still opens the canvas menu');
   } finally { studio.close(); }
 });
 
@@ -215,21 +235,21 @@ test('C1: the canvas bottom / box adds nodes and opens the library only; it is n
     const field = box.querySelector('input[aria-label="Add a node"]');
     assert.ok(field, 'the box has one add-node field');
     assert.equal(box.querySelector('[data-model-indicator]'), null, 'no model in the box');
-    assert.deepEqual([...box.querySelectorAll('button')].map(b => b.textContent.trim()), ['library'], 'its only button is library');
+    assert.deepEqual([...box.querySelectorAll('button')].map(b => b.textContent.trim()), ['Ctrl K'], 'its only button opens the library and names its shortcut');
     assert.equal(studio.doc.querySelectorAll('input[aria-label="Ask selection"]').length, 1, 'still exactly one chat input');
     const sent = [];
     studio.win.fetch = (url, init) => { sent.push([String(url), init && init.method]); return new Promise(() => {}); };
     const setValue = Object.getOwnPropertyDescriptor(studio.win.HTMLInputElement.prototype, 'value').set;
     studio.flush(() => { setValue.call(field, '/wall'); field.dispatchEvent(new studio.win.Event('input', {bubbles:true})); });
     studio.flush(() => field.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true, cancelable:true})));
-    const search = [...studio.doc.querySelectorAll('input')].find(input => /Search… \(e\.g\./.test(input.placeholder));
-    assert.ok(search, 'Enter opens the Node library');
+    const search = [...studio.doc.querySelectorAll('input')].find(input => input.placeholder === 'Search nodes');
+    assert.ok(search, 'Enter opens the Library');
     assert.equal(search.value, 'wall', 'the library opens on what was typed, without the slash');
     assert.deepEqual(sent.filter(([, method]) => method && method !== 'GET'), [], 'the box sends nothing');
-    const close = [...studio.doc.querySelectorAll('button')].find(button => button.textContent === '✕' && button.closest('[style*="grid-template-columns: 180px"]'));
+    const close = [...studio.doc.querySelectorAll('button')].find(button => button.textContent === '✕' && button.closest('[style*="grid-template-columns: 248px"]'));
     if (close) studio.flush(() => close.click());
     studio.flush(() => box.querySelector('button').click());
-    assert.ok([...studio.doc.querySelectorAll('span')].some(node => node.textContent === 'Node library'), 'library opens the Node library');
+    assert.ok(studio.doc.querySelector('[data-node-library-overlay]'), 'library opens the Library');
   } finally { studio.close(); }
 });
 

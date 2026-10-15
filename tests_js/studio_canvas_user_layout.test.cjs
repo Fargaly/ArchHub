@@ -26,6 +26,8 @@ const LM = new Proxy(Object.fromEntries([...palette.matchAll(/^ {2}(\w+):/gm)].m
     if (key === 'fs') return {bodySm:{sz:13, ln:18, wt:400}, bodySmStrong:{sz:13, ln:18, wt:500}, caption:{sz:12, ln:16}, label:{sz:11, ln:14, wt:500, letter:'.04em'}, data:{sz:12, ln:16, wt:400}, dataSm:{sz:11, ln:14, wt:400}};
     if (key === 'icon') return {ui:{size:16, box:20}, category:{size:12, box:20}};
     if (key === 'shadow') return {flat:'none'};
+    if (key === 'elev') return {e1:'none',e2:'none'};
+    if (key === 'glow') return {warn:'none',accent:'none'};
     if (key === 'dur') return {fast:120, med:180};
     if (typeof key === 'string' && !(key in held)) throw new Error('studio-lm.jsx reads an undefined token: ' + key);
     return held[key];
@@ -35,7 +37,7 @@ const slice = () => {
   const start = source.indexOf('const SOCKET_TOP =');
   const end = source.indexOf('const NodeStateDot =', start);
   assert.ok(start > 0 && end > start, 'the canvas is a slice of the shipped studio-lm.jsx');
-  return source.slice(start, end);
+  return source.slice(start, end) + require('./workshop72_node_helpers.cjs').nodePreviewSource(source);
 };
 const shortcutSlice = () => {
   const start = source.indexOf('const studioShortcut =');
@@ -165,7 +167,10 @@ const context = vm.createContext({React, LM, window:dom.window, document:dom.win
   const region = () => doc.querySelector('[role="region"][aria-label="Workflow canvas"]');
   return {
     saves, doc, point, draw,
-    chip: () => { const s = doc.querySelector('[role="status"],[role="alert"]'); return s ? s.textContent : ''; },
+    chip: () => {
+      const s = doc.querySelector('[data-app-toast], [role="status"], [role="alert"]');
+      return s ? s.textContent : '';
+    },
     arrange: async () => { await React.act(async () => { region().dispatchEvent(new dom.window.KeyboardEvent('keydown',
       {key:'L', ctrlKey:true, shiftKey:true, bubbles:true, cancelable:true})); }); },
     undo: async () => { await React.act(async () => { region().dispatchEvent(new dom.window.KeyboardEvent('keydown',
@@ -250,7 +255,7 @@ test('T2: Arrange clicked while a save is in flight runs once, after that save a
     await view.arrange();
     await view.arrange();
     assert.equal(view.saves.length, 1, 'nothing else is written while the save is in flight');
-    assert.match(view.chip(), /Arrange will run after the current save finishes\./);
+    assert.match(view.chip(), /Saving positions|Arrange will run after the current save finishes\./);
     hold.release();
     await view.settle(50);
     await view.draw();

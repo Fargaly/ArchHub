@@ -398,18 +398,26 @@ def run_universal_pipeline(
 
 def _pipeline_plan(store, registry, authentication_context, only_roots):
     """Under the graph lock: the engine nodes, their enabled wires, graph engines."""
+    from .library_engines import (
+        MODEL_PICK_ENGINES,
+        canonical_engine_interface,
+        canonical_engine_parameters,
+    )
+
     snapshot = store.snapshot()
     owned = _owner_properties(snapshot, registry)
     projection = project_universal_canvas(
         store, registry, authentication_context=authentication_context
     )
     node_ids = {str(node["id"]) for node in projection.get("nodes", ())}
+    # Selection and property ownership do not admit execution. Only nodes in
+    # this caller's current projection may run; closed lenses stay closed.
     if only_roots is not None:
         node_ids &= {str(root) for root in only_roots}
-    from .library_engines import MODEL_PICK_ENGINES
     picked: list[str] = []
     stem_nodes = []
     projected_nodes = {str(node["id"]): node for node in projection.get("nodes", ())}
+    engines_by_id: dict[str, str] = {}
     for root in node_ids:
         rows = owned.get(root) or {}
         # A graph-held engine row wins; a node placed from a definition that
@@ -423,6 +431,7 @@ def _pipeline_plan(store, registry, authentication_context, only_roots):
             label: value for label, (_rel, value) in rows.items()
             if label not in _STRUCTURAL
         }
+        parameters = canonical_engine_parameters(engine, parameters)
         # A model card left blank runs on the composer pick the graph holds,
         # the one Send and BABOOM read; with no pick it keeps its refusal.
         if engine in MODEL_PICK_ENGINES and not str(
@@ -432,6 +441,7 @@ def _pipeline_plan(store, registry, authentication_context, only_roots):
                 picked.append(_composer_pick(snapshot, registry))
             if picked[0]:
                 parameters["model"] = picked[0]
+        engines_by_id[root] = engine
         stem_nodes.append(StemNode(root, engine, parameters))
     engine_roots = {node.root_id for node in stem_nodes}
     stem_wires = []
@@ -442,9 +452,29 @@ def _pipeline_plan(store, registry, authentication_context, only_roots):
             carried = _pipeline_wire_rows(wire)
             if carried is None:
                 continue
+            source_interface = canonical_engine_interface(
+                engines_by_id.get(source),
+                "source",
+                _pipeline_port_name(
+                    projected_nodes[source],
+                    wire.get("source_interface"),
+                    "source",
+                    wire["id"],
+                ),
+            )
+            target_interface = canonical_engine_interface(
+                engines_by_id.get(target),
+                "target",
+                _pipeline_port_name(
+                    projected_nodes[target],
+                    wire.get("target_interface"),
+                    "target",
+                    wire["id"],
+                ),
+            )
             stem_wires.append(StemWire(
-                source, _pipeline_port_name(projected_nodes[source], wire.get("source_interface"), "source", wire["id"]),
-                target, _pipeline_port_name(projected_nodes[target], wire.get("target_interface"), "target", wire["id"]),
+                source, source_interface,
+                target, target_interface,
                 **carried,
             ))
     return stem_nodes, stem_wires, _graph_engines(store, registry)
@@ -473,10 +503,16 @@ def _land_pipeline_statuses(store, registry, stem_nodes, evaluation, authenticat
                 authentication_context=authentication_context,
             )
         else:
-            create_universal_property(
-                store, registry, node.root_id, "status", answer,
-                authentication_context=authentication_context,
-            )
+            try:
+                create_universal_property(
+                    store, registry, node.root_id, "status", answer,
+                    mutation_route="/api/universal/run-graph",
+                    authentication_context=authentication_context,
+                )
+            except InvalidCell as exc:
+                if "properties can be added only to WIP resources" not in str(exc):
+                    raise
+                continue
         written += 1
     return written
 
@@ -949,7 +985,7 @@ def create_engine_node(
             values[label] = str(value)
     # The engine catalogue owns declared defaults for every placement surface.
     # Persist them as ordinary editable graph properties; UI cards need no copy.
-    from .library_engines import LIBRARY_ITEM_ENGINES
+    from .library_engines import LIBRARY_ITEM_ENGINES, LEGACY_LIBRARY_ITEM_ENGINES
     item = str(item or "").strip()
     if item:
         # The library card placed names itself: its defaults are the ones,
@@ -957,6 +993,16 @@ def create_engine_node(
         # level are all library.filter_field). The graph-held entry wins
         # over the seed constant once the library is installed.
         chosen = engine_library_entry(store.snapshot(), item) or LIBRARY_ITEM_ENGINES.get(item)
+        if chosen is not None and chosen.get("engine") != engine:
+            bindings = chosen.get("compatibility") or {}
+            legacy = bindings.get(engine)
+            if legacy is None and read_engine_library(store.snapshot()) is None:
+                candidate = LEGACY_LIBRARY_ITEM_ENGINES.get(item)
+                if candidate is not None and candidate.get("engine") == engine:
+                    legacy = candidate
+            if isinstance(legacy, Mapping) and legacy.get("engine") == engine:
+                chosen = {**legacy, "params": {
+                    **legacy.get("params", {}), **chosen.get("params", {})}}
         if chosen is None or chosen.get("engine") != engine:
             raise ValueError("library card %r does not run engine %r" % (item, engine))
         catalogue_items = [chosen]
@@ -965,8 +1011,15 @@ def create_engine_node(
         # constant answers only before the library is installed.
         installed = read_engine_library(store.snapshot())
         if installed is not None:
-            catalogue_items = [entry for group in installed for entry in group["items"]
-                               if entry.get("engine") == engine]
+            catalogue_items = []
+            for group in installed:
+                for entry in group["items"]:
+                    if entry.get("engine") == engine:
+                        catalogue_items.append(entry)
+                    elif engine in (entry.get("compatibility") or {}):
+                        legacy = entry["compatibility"][engine]
+                        catalogue_items.append({**legacy, "params": {
+                            **legacy.get("params", {}), **entry.get("params", {})}})
         else:
             catalogue_items = [entry for entry in LIBRARY_ITEM_ENGINES.values()
                                if entry.get("engine") == engine]
@@ -2648,7 +2701,7 @@ ENGINE_LIBRARY_ROOT = "app:engine-library:v1"
 _ENGINE_LIBRARY_ROLES = {
     name: "app:engine-library:role:%s:v1" % name
     for name in ("section", "entry", "label", "item", "title", "summary",
-                 "engine", "params")
+                 "engine", "params", "hidden", "compatibility")
 }
 
 
@@ -2664,7 +2717,8 @@ def _text_cell(root: str, text: str) -> Cell:
     return Cell(root, NULL_CELL_ID, NULL_CELL_ID, str(text).encode("utf-8"))
 
 
-def _entry_cells(item: str, title: str, summary: str, wiring) -> list:
+def _entry_cells(item: str, title: str, summary: str, wiring, *, hidden=False,
+                 compatibility=None) -> list:
     import json as _json
 
     roles = _ENGINE_LIBRARY_ROLES
@@ -2674,6 +2728,10 @@ def _entry_cells(item: str, title: str, summary: str, wiring) -> list:
         ("engine", wiring["engine"]),
         ("params", _json.dumps(wiring["params"], sort_keys=True)),
     )
+    if hidden:
+        fields += (("hidden", "true"),)
+    if compatibility:
+        fields += (("compatibility", _json.dumps(compatibility, sort_keys=True)),)
     cells = [_text_cell(entry + ":" + name, value) for name, value in fields]
     relation = compose_relation_cells(
         tuple((roles[name], entry + ":" + name) for name, _value in fields),
@@ -2683,14 +2741,16 @@ def _entry_cells(item: str, title: str, summary: str, wiring) -> list:
 
 
 def seed_engine_library(store, registry) -> int:
-    """Admitted migration: install the node library as graph relations.
+    """Install canonical cards and graph-held compatibility bindings atomically.
 
-    Installs what the seed lists and the graph does not hold yet, in ONE
-    commit; a card whose entry relation already exists is never touched
-    (an edit or a removal made on the graph stands). A graph holding every
-    entry makes no commit and returns 0. The caller declares the intent.
+    Existing engine/default/category records remain untouched. Hidden compatibility
+    fields are added once; removed membership and edited fields stay authoritative.
     """
-    from .library_engines import LIBRARY_ITEM_ENGINES, LIBRARY_PRESENTATION
+    import json as _json
+    from .library_engines import (
+        LIBRARY_ITEM_ENGINES, LIBRARY_PRESENTATION,
+        LEGACY_LIBRARY_ITEM_ENGINES, LEGACY_LIBRARY_PRESENTATION,
+    )
 
     roles = _ENGINE_LIBRARY_ROLES
     snapshot = store.snapshot()
@@ -2698,17 +2758,54 @@ def seed_engine_library(store, registry) -> int:
     replace: dict = {}
     added = 0
     root_members = []
-    if ENGINE_LIBRARY_ROOT not in snapshot.cells:
-        create.extend(_text_cell(role, name) for name, role in roles.items()
-                      if role not in snapshot.cells)
-    for category, rows in LIBRARY_PRESENTATION:
+    visible_ids = {item for _category, rows in LIBRARY_PRESENTATION for item, _title, _summary in rows}
+    legacy_rows = {item: (category, title, summary)
+                   for category, rows in LEGACY_LIBRARY_PRESENTATION
+                   for item, title, summary in rows}
+    sections = {category: list(rows) for category, rows in LIBRARY_PRESENTATION}
+    for item, wiring in LIBRARY_ITEM_ENGINES.items():
+        if item in visible_ids:
+            continue
+        category, title, summary = legacy_rows.get(item, ("compatibility", item, "Existing graph placement binding"))
+        sections.setdefault(category, []).append((item, title, summary))
+
+    def compatibility(item, wiring):
+        legacy = LEGACY_LIBRARY_ITEM_ENGINES.get(item)
+        if legacy is not None and legacy != wiring:
+            return {legacy["engine"]: {"engine": legacy["engine"], "params": dict(legacy["params"])}}
+        return {}
+
+    def preserve_metadata(item, hidden, bindings):
+        entry = engine_library_entry_root(item)
+        held = {m.role_id for m in read_relation(snapshot, entry, budget=64)}
+        fields = []
+        if hidden and roles["hidden"] not in held:
+            fields.append(("hidden", "true"))
+        if bindings and roles["compatibility"] not in held:
+            fields.append(("compatibility", _json.dumps(bindings, sort_keys=True)))
+        if not fields:
+            return
+        for name, value in fields:
+            create.append(_text_cell(entry + ":" + name, value))
+        patch = prepare_append_relation_members(snapshot, entry,
+            tuple((roles[name], entry + ":" + name) for name, _value in fields), budget=64)
+        create.extend(patch.create)
+        replace.update({cell.id: cell for cell in patch.replace})
+
+    for category, rows in sections.items():
         section = engine_library_section_root(category)
         new_entries = []
         for item, title, summary in rows:
             wiring = LIBRARY_ITEM_ENGINES.get(item)
-            if wiring is None or engine_library_entry_root(item) in snapshot.cells:
+            if wiring is None:
                 continue
-            create.extend(_entry_cells(item, title, summary, wiring))
+            hidden = item not in visible_ids
+            bindings = compatibility(item, wiring)
+            if engine_library_entry_root(item) in snapshot.cells:
+                preserve_metadata(item, hidden, bindings)
+                continue
+            create.extend(_entry_cells(item, title, summary, wiring,
+                hidden=hidden, compatibility=bindings))
             new_entries.append((roles["entry"], engine_library_entry_root(item)))
             added += 1
         if section not in snapshot.cells:
@@ -2716,27 +2813,23 @@ def seed_engine_library(store, registry) -> int:
                 continue
             create.append(_text_cell(section + ":label", category))
             create.extend(compose_relation_cells(
-                ((roles["label"], section + ":label"), *new_entries),
-                relation_id=section,
-            ).cells)
+                ((roles["label"], section + ":label"), *new_entries), relation_id=section).cells)
             root_members.append((roles["section"], section))
         elif new_entries:
-            patch = prepare_append_relation_members(
-                snapshot, section, new_entries, budget=100_000)
+            patch = prepare_append_relation_members(snapshot, section, new_entries, budget=100_000)
             create.extend(patch.create)
             replace.update({cell.id: cell for cell in patch.replace})
     if ENGINE_LIBRARY_ROOT not in snapshot.cells:
         if not root_members:
             return 0
-        create.extend(compose_relation_cells(
-            tuple(root_members), relation_id=ENGINE_LIBRARY_ROOT).cells)
+        create.extend(compose_relation_cells(tuple(root_members), relation_id=ENGINE_LIBRARY_ROOT).cells)
     elif root_members:
-        patch = prepare_append_relation_members(
-            snapshot, ENGINE_LIBRARY_ROOT, root_members, budget=100_000)
+        patch = prepare_append_relation_members(snapshot, ENGINE_LIBRARY_ROOT, root_members, budget=100_000)
         create.extend(patch.create)
         replace.update({cell.id: cell for cell in patch.replace})
     if not create and not replace:
         return 0
+    create.extend(_text_cell(role, name) for name, role in roles.items() if role not in snapshot.cells)
     store.commit(snapshot.revision, create=tuple(create), replace=tuple(replace.values()))
     return added
 
@@ -2758,8 +2851,32 @@ def _read_engine_library_entry(snapshot, entry_root: str):
         return None
     if not isinstance(params, dict):
         return None
-    return {"id": held["item"], "title": held["title"], "sub": held["summary"],
-            "engine": held["engine"], "params": {str(k): str(v) for k, v in params.items()}}
+    entry = {"id": held["item"], "title": held["title"], "sub": held["summary"],
+             "engine": held["engine"], "params": {str(k): str(v) for k, v in params.items()}}
+    if "hidden" in held:
+        try:
+            hidden = _json.loads(held["hidden"])
+        except ValueError:
+            return None
+        if type(hidden) is not bool:
+            return None
+        entry["hidden"] = hidden
+    if "compatibility" in held:
+        try:
+            compatibility = _json.loads(held["compatibility"])
+        except ValueError:
+            return None
+        if not isinstance(compatibility, dict):
+            return None
+        bindings = {}
+        for engine, binding in compatibility.items():
+            if (not isinstance(binding, dict) or binding.get("engine") != engine
+                    or not isinstance(binding.get("params"), dict)):
+                return None
+            bindings[str(engine)] = {"engine": str(engine), "params": {
+                str(k): str(v) for k, v in binding["params"].items()}}
+        entry["compatibility"] = bindings
+    return entry
 
 
 def read_engine_library(snapshot):
@@ -2769,7 +2886,7 @@ def read_engine_library(snapshot):
     category of a card is the section that holds it. A card whose engine
     this build does not run is marked noEngine, never dropped.
     """
-    from .library_engines import engine_sockets
+    from .library_engines import engine_sockets, engine_runs, library_item_ports
     from .pipeline_engines import PIPELINE_ENGINES
 
     if ENGINE_LIBRARY_ROOT not in snapshot.cells:
@@ -2792,7 +2909,8 @@ def read_engine_library(snapshot):
             entry["cat"] = label
             entry["sockets"] = {side: list(names)
                                 for side, names in engine_sockets(entry["engine"]).items()}
-            if entry["engine"] not in PIPELINE_ENGINES:
+            entry["ports"] = library_item_ports(entry["id"], entry["engine"], entry["title"])
+            if not engine_runs(entry["engine"], PIPELINE_ENGINES):
                 entry["noEngine"] = True
                 entry["reason"] = "engine %s is not in this build" % entry["engine"]
             items.append(entry)

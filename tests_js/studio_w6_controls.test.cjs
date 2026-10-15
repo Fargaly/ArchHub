@@ -76,7 +76,7 @@ test("W6b Settings renders no developer-only capability or no-wire host prose", 
   assert.match(hosts, /no wire in this build/i);
   assert.match(operations, /Ready/);
   assert.match(operations, /Needs /);
-  assert.match(hosts, /visibleHosts = LM_HOSTS\.filter/);
+  assert.match(hosts, /const visibleHosts = LM_HOSTS;/);
 });
 
 test("W6b Settings has no global disabled edit or dash-grid Team placeholders", () => {

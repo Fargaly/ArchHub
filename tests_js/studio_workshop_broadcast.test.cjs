@@ -42,11 +42,11 @@ test('a participant who is not in this Workshop is still refused', () => {
   assert.throws(() => sendBody('ghost'), /Choose a current participant/);
 });
 
-test('the composer opens addressed to the Workshop, not to one pre-picked agent', () => {
-  const view = read('nodelang/studio/studio-workshop.jsx');
-  assert.match(view, /<option value="">to: Workshop \(everyone\)<\/option>/);
-  assert.equal(view.includes("setTarget('model:' + modelAgent.root)"), false,
-    'opening a room no longer pre-addresses one model agent');
-  assert.equal(view.includes('Choose a participant before sending.'), false,
-    'sending without a pick is no longer refused');
+test('the composer has one reply/@agent field and no everyone selector while broadcast transport remains',()=>{
+  const view=read('nodelang/studio/studio-workshop.jsx');
+  assert.doesNotMatch(view,/<option value="">to: Workshop \(everyone\)<\/option>/);
+  assert.match(view,/Reply to \$\{replyName\}, or @ another agent/);
+  assert.match(view,/data-workshop-agent-picker/);
+  assert.match(view,/wsResolveAddress\(draft, replyTarget, aliases\)/);
+  assert.equal(view.includes('Choose a participant before sending.'),false);
 });

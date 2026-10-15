@@ -467,6 +467,100 @@ def test_composed_server_status_tool_works_for_latched_thread():
 
 # ---- recovery + stage-aware resume restores governed calls (Ping #2) ----
 
+def _connection_recovery_server():
+    from nodelang.native_agent_mcp import build_server
+
+    class ConnectionOwner(FakeOwner):
+        """Field-shape double; the real session's recovery guards stay unchanged."""
+
+        def owner_status(self):
+            return {**super().owner_status(), "failed_attempt": None,
+                    "current": {"fingerprint": "owner:" + self._identity.external_session_id}}
+
+        def recover_connection(self, *, expected_owner):
+            if self._bound or expected_owner != self.owner_status()["current"]["fingerprint"]:
+                raise MachineTransportError("No exact conditional native connection can be recovered")
+            return super().recover_connection(expected_owner=expected_owner)
+
+    built = []
+
+    def session_factory(environment):
+        owner = ConnectionOwner(environment, fail_connect=environment["ARCHHUB_EXTERNAL_SESSION_ID"] != "bound")
+        built.append(owner)
+        return owner
+
+    rt = dcb.DeferredCodexRuntime(
+        {"ARCHHUB_COORDINATION_VENDOR": "codex"}, session_factory=session_factory,
+        control_factory=FakeControl, supervisor_factory=FakeSupervisor)
+    return build_server(session=dcb.RoutingCodexOwner(rt)), rt, built
+
+
+def test_normal_server_connection_recovery_then_resume_keeps_connect_latched_owner():
+    from nodelang.native_agent_mcp import _CONNECTION_RECOVER_DOC, build_recovery_server
+
+    server, rt, built = _connection_recovery_server()
+    recover = server._tool_manager.get_tool("native.connection_recover")
+    resume = server._tool_manager.get_tool("native.owner_resume").fn
+    assert recover.parameters["required"] == ["expected_owner"]
+    with _thread("01a07b65"):
+        with pytest.raises(MachineTransportError, match="enrollment outcome unknown"):
+            rt.current()
+        binding = rt.recovery_binding("01a07b65")
+        retained = binding.owner
+        status = server._tool_manager.get_tool("native.owner_status").fn()
+        assert binding.failure["stage"] == "connect" and status["failed_attempt"] is None
+        assert resume()["resumed"] is False
+        recovery_server, _ = build_recovery_server(retained)
+        assert recover.description == recovery_server._tool_manager.get_tool(
+            "native.connection_recover").description == _CONNECTION_RECOVER_DOC
+        assert recover.fn(expected_owner=status["current"]["fingerprint"])["state"] == "recovered"
+        assert rt.latched_threads() == ("01a07b65",)
+        assert resume() == {"state": "bound", "resumed": True}
+        assert rt.current() is binding and binding.owner is retained
+        assert binding.control.call("register_session")["thread"] == "01a07b65"
+    assert built == [retained] and retained.connect_calls == 1
+    assert retained.recovered == 1 and retained.lease_started == 1
+    assert retained.close_calls == 0 and rt.latched_threads() == ()
+
+
+def test_normal_server_connection_recovery_wrong_fingerprint_keeps_latch():
+    server, rt, built = _connection_recovery_server()
+    with _thread("01a07b65"):
+        with pytest.raises(MachineTransportError):
+            rt.current()
+        binding = rt.recovery_binding("01a07b65")
+        failure = dict(binding.failure)
+        with pytest.raises(MachineTransportError, match="No exact conditional native connection"):
+            server._tool_manager.get_tool("native.connection_recover").fn(expected_owner="wrong")
+        assert server._tool_manager.get_tool("native.owner_resume").fn()["resumed"] is False
+        assert binding.failure == failure and rt.latched_threads() == ("01a07b65",)
+        assert binding.control is None and binding.supervisor is None
+    assert built == [binding.owner] and binding.owner.connect_calls == 1
+    assert binding.owner.recovered == 0 and binding.owner.lease_started == 0
+
+
+def test_normal_server_connection_recovery_leaves_ordinary_bound_session_unaffected():
+    server, rt, built = _connection_recovery_server()
+    recover = server._tool_manager.get_tool("native.connection_recover").fn
+    with _thread("bound"):
+        bound = rt.current()
+        with pytest.raises(MachineTransportError, match="No exact conditional native connection"):
+            recover(expected_owner=bound.owner.owner_status()["current"]["fingerprint"])
+        assert server._tool_manager.get_tool("native.owner_resume").fn() == {
+            "state": "bound", "resumed": False}
+    with _thread("01a07b65"):
+        with pytest.raises(MachineTransportError):
+            rt.current()
+        assert recover(expected_owner="owner:01a07b65")["state"] == "recovered"
+        assert server._tool_manager.get_tool("native.owner_resume").fn()["resumed"] is True
+    with _thread("bound"):
+        assert rt.current() is bound
+        assert bound.control.call("register_session")["thread"] == "bound"
+    assert built[0] is bound.owner and len(built) == 2
+    assert bound.owner.connect_calls == 1 and bound.owner.recovered == 0
+    assert bound.owner.lease_started == 1 and bound.owner.close_calls == 0
+
+
 def test_recovery_then_resume_restores_governed_calls():
     from nodelang.native_agent_mcp import build_server as build_installed_server
     rt = _runtime(fail_connect=True)

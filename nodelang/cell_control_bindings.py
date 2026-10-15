@@ -231,6 +231,7 @@ CONTROL_BINDING_SPECS = (
         (("form", "app:relation-form:interface:v3"),),
         ALWAYS,
     ),
+    # Match the presentation catalog's append-only persisted order.
     ControlBindingSpec(
         "app:control:canvas:remove-member",
         "composition",

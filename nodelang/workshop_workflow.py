@@ -311,6 +311,39 @@ def workflow_state(owner, browser, root, anchor, *, projection=None):
             "scope": workflow_scope, "scope_path": scope_path}
 
 
+def current_workflow_approval_identity(owner, browser, workflow, *, conversation=None):
+    """Return the current approved workflow revision and digest for a browser."""
+    if type(workflow) is not str or not workflow:
+        return None
+    snapshot = owner.universal_store.snapshot()
+    root = conversation
+    if root is None:
+        cell = snapshot.cells.get(workflow)
+        if cell is None:
+            return None
+        try:
+            value = json.loads(cell.atom.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            return None
+        if not isinstance(value, dict):
+            return None
+        root = value.get("conversation")
+    if type(root) is not str or not root:
+        return None
+    try:
+        state = workflow_state(owner, browser, root, workflow)
+    except InvalidCell:
+        return None
+    approval = state.get("approval")
+    if not isinstance(approval, dict) or approval.get("current") is not True:
+        return None
+    return {
+        "workflow": workflow,
+        "workflow_revision": approval.get("revision"),
+        "workflow_digest": state.get("digest"),
+    }
+
+
 def _reserved_draft_anchor(owner, browser, root, scope, message, projection):
     """Find a reserved draft's committed anchor through the canvas projection."""
     snapshot = owner.universal_store.snapshot()
@@ -443,6 +476,60 @@ def _draft_response(owner, browser, root, value):
             "digest": state["digest"], "approval": state["approval"], "revision": owner.universal_store.revision}
 
 
+def _reviewed_brain_write_arguments(state):
+    ops = []
+    for node in state["nodes"]:
+        if node["engine"] != "brain.write":
+            continue
+        params = {label: row["value"] for label, row in node["params"].items()
+                  if label not in _NOT_BEHAVIOR}
+        ops.extend(_brain_write_ops_from_params(params, node["root"]))
+    return {"ops": ops} if ops else None
+
+
+def _brain_write_ops_from_params(params, node_root):
+    if "arguments" in params:
+        try:
+            arguments = json.loads(params["arguments"])
+        except ValueError:
+            raise InvalidCell("Reviewed brain.write node %s has invalid JSON arguments" % node_root) from None
+        if type(arguments) is not dict or set(arguments) != {"ops"}:
+            raise InvalidCell("Reviewed brain.write node %s must carry only ops arguments" % node_root)
+        candidate = arguments["ops"]
+    elif "ops" in params:
+        try:
+            candidate = json.loads(params["ops"])
+        except ValueError:
+            raise InvalidCell("Reviewed brain.write node %s has invalid JSON ops" % node_root) from None
+    else:
+        raise InvalidCell("Reviewed brain.write node %s must carry serialized ops" % node_root)
+    if type(candidate) is not list or not 1 <= len(candidate) <= 25:
+        raise InvalidCell("Reviewed brain.write node %s must add 1 to 25 Brain facts" % node_root)
+    clean = []
+    for index, op in enumerate(candidate):
+        if type(op) is not dict or set(op) != {"op", "fragment"} or op.get("op") != "add":
+            raise InvalidCell("Reviewed brain.write op %d must be an add fragment" % (index + 1))
+        fragment = op.get("fragment")
+        if (type(fragment) is not dict or set(fragment) - {"id", "kind", "text"}
+                or type(fragment.get("id")) is not str or type(fragment.get("text")) is not str):
+            raise InvalidCell("Reviewed brain.write op %d has invalid fragment fields" % (index + 1))
+        if not fragment["id"] or not fragment["text"] or "\x00" in fragment["id"] or "\x00" in fragment["text"]:
+            raise InvalidCell("Reviewed brain.write op %d has empty or unsafe fact text" % (index + 1))
+        if "kind" in fragment and type(fragment["kind"]) is not str:
+            raise InvalidCell("Reviewed brain.write op %d has invalid fact kind" % (index + 1))
+        clean.append(json.loads(json.dumps(op, ensure_ascii=False)))
+    return clean
+
+
+def _brain_write_summary(arguments):
+    fragments = [op["fragment"] for op in arguments["ops"]]
+    preview = "; ".join(str(fragment["text"]).strip().replace("\n", " ")[:80]
+                        for fragment in fragments[:3])
+    suffix = "" if len(fragments) <= 3 else "; ..."
+    return "Adds %d fact%s to Brain: %s%s" % (
+        len(fragments), "" if len(fragments) == 1 else "s", preview, suffix)
+
+
 def approve_workflow(owner, browser, body, *, browser_guard):
     fields = {"action", "root", "scope", "workflow", "digest", "revision"}
     if type(body) is not dict or set(body) != fields or type(body["revision"]) is not int:
@@ -461,6 +548,7 @@ def approve_workflow(owner, browser, body, *, browser_guard):
             raise InvalidCell(state["reason"])
         if body["digest"] != state["digest"]:
             raise InvalidCell("The workflow changed since you reviewed it; review it again before approving")
+        brain_write_arguments = _reviewed_brain_write_arguments(state)
         decision = json.dumps({"kind": "workshop-workflow-approval", "version": 1, "digest": state["digest"],
             "approved_by": browser.subject_root, "revision": store.revision},
             sort_keys=True, separators=(",", ":"))
@@ -471,8 +559,34 @@ def approve_workflow(owner, browser, body, *, browser_guard):
             app.edit_universal_property(store, registry, state["approval"]["relation"], decision,
                 mutation_route="/api/universal/workshop", authentication_context=browser.context)
         approved = workflow_state(owner, browser, root, anchor)
-        return {"ok": True, "workflow": anchor, "digest": approved["digest"], "approval": approved["approval"],
-                "revision": store.revision}
+        payload = {"ok": True, "workflow": anchor, "digest": approved["digest"],
+                   "approval": approved["approval"], "revision": store.revision}
+        if brain_write_arguments is not None:
+            from .baboom_owner_grants import (
+                GRANT_ARGUMENT_KEY,
+                baboom_brain_write_arguments_digest,
+                baboom_brain_write_owner_approval_record,
+            )
+            with registry.authorization.broker.live_context(browser.context) as identity:
+                actor = identity.subject_root
+            payload["owner_brain_write"] = {
+                "arguments": brain_write_arguments,
+                "approval": baboom_brain_write_owner_approval_record(
+                    store,
+                    owner=registry.authorization.subject_root,
+                    actor=actor,
+                    session=browser.session_root,
+                    workflow=anchor,
+                    workflow_revision=approved["approval"]["revision"],
+                    scope=scope,
+                    approval_digest=approved["digest"],
+                    arguments=brain_write_arguments,
+                ),
+                "argument_key": GRANT_ARGUMENT_KEY,
+                "arguments_digest": baboom_brain_write_arguments_digest(brain_write_arguments),
+                "summary": _brain_write_summary(brain_write_arguments),
+            }
+        return payload
 
 
 def revoke_workflow(owner, browser, body, *, browser_guard):

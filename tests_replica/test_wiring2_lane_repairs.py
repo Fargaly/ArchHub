@@ -261,6 +261,18 @@ def test_f2_studio_reads_the_one_served_library(harness):
     assert "jget('/api/universal/node-library')" in _read("studio.html")
 
 
+def test_hosts_panel_uses_server_catalogue_without_page_local_fallback():
+    source = _read("studio.html")
+    body = source[source.index("window.ARCHHUB_LOAD_HOSTS = async () => {"):
+                  source.index("window.ARCHHUB_ASSISTANTS = {")]
+    assert "const scan = await jget('/api/universal/hosts');" in body
+    assert "hostCatalogue" not in body
+    assert "catch (error)" not in body
+    assert "revit.build_walls" not in body
+    assert "autocad" not in body
+    assert "CONNECTORS_NOT_BUILT.map" not in source
+
+
 def test_f2_signed_studio_never_sends_an_item_id_as_a_definition():
     source = _read("studio-lm.jsx")
     body = source[source.index("const addNodeFromLibrary = "):source.index("// Docs and Settings are mutually exclusive")]
@@ -287,6 +299,23 @@ def test_f3_card_and_presence_routes_read_one_source(harness, monkeypatch):
             "runtime": "baboom", "expires_at": _time.time() + 3600}
     seeded = harness.request("/api/universal/pipeline-seed", {})
     card = seeded["placed"]["BABOOM Presence"]
+
+    # Presence is a Cockpit card. Enter its real lens through the browser's
+    # admitted graph interaction before pressing Run; a closed lens is not
+    # executable merely because the seed returned its card's identity.
+    canvas = harness.request("/api/universal/canvas")
+    cockpit = server.universal_registry.map.domains["cockpit"]
+    binding = next(item for item in canvas["interaction_projection"]["bindings"]
+                   if item["control"] == cockpit)
+    harness.request("/api/universal/interaction", {
+        "interaction": binding["interaction"], "control": binding["control"],
+        "event": binding["event"],
+        "revision": canvas["interaction_projection"]["revision"],
+        "projection_mode": binding["acknowledgement_mode"],
+    })
+    entered = harness.request("/api/universal/canvas")
+    assert entered["scope"]["current"] == cockpit
+    assert card in {node["id"] for node in entered["nodes"]}
 
     def card_says():
         ran = harness.request("/api/universal/run-graph", {})

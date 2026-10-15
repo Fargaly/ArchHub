@@ -25,8 +25,37 @@ touch a host nobody chose.
 
 from __future__ import annotations
 
-def _read(op_id, host, label, description, output_type="row"):
-    """One read: no arguments beyond the instance, and no side effect."""
+def _input(id, label, kind, *, default="", required=False, help="", **metadata):
+    row = {
+        "id": id,
+        "label": label,
+        "type": kind,
+        "default": default,
+        "required": required,
+        "help": help,
+    }
+    row.update(metadata)
+    return row
+
+
+def _revit_session_input():
+    return _input(
+        "instance",
+        "Revit session",
+        "revit-document-picker",
+        help="Select an open Revit document.",
+        options_source="revit.open_documents",
+        option_label="document",
+        auto_select_single=True,
+        text_input=False,
+    )
+
+
+def _read(op_id, host, label, description, output_type="row", inputs=()):
+    """One read: host-appropriate inputs only, and no side effect."""
+    held_inputs = list(inputs)
+    if host == "revit":
+        held_inputs = [_revit_session_input(), *held_inputs]
     return {
         "op_id": op_id,
         "host": host,
@@ -35,16 +64,28 @@ def _read(op_id, host, label, description, output_type="row"):
         "description": description,
         "output_type": output_type,
         "destructive": False,
-        "inputs": [{
-            "id": "instance",
-            "label": "Session",
-            "type": "text",
-            "default": "",
-            "required": False,
-            "help": "Which running session to ask. Blank picks the one "
-                    "holding a document.",
-        }],
+        "inputs": held_inputs,
     }
+
+
+def _write(op_id, host, label, description, inputs, output_type="row"):
+    row = {
+        "op_id": op_id,
+        "host": host,
+        "kind": "write",
+        "label": label,
+        "description": description,
+        "output_type": output_type,
+        "destructive": True,
+        "inputs": list(inputs) + [_input(
+            "grant",
+            "Approval grant",
+            "approval-grant",
+            required=True,
+            help="Comes from the Approval gate.",
+        )],
+    }
+    return row
 
 
 REVIT_OPERATIONS = [
@@ -148,21 +189,55 @@ REVIT_OPERATIONS = [
           "Every dimension, its view, and whether its value was overridden."),
     _read("revit.list_legends", "revit", "Legends",
           "Every legend view."),
+    _write("revit.set_parameter_by_name", "revit", "Set parameter by name",
+           "Write one named parameter on approved elements.", (
+               _input("elements", "Elements", "element-rows", required=True),
+               _input("parameter", "Parameter", "parameter-name", required=True),
+               _input("value", "Parameter value", "parameter-value", required=True),
+           )),
+    _write("revit.create_sheets", "revit", "Create sheets",
+           "Create approved sheets from rows.", (
+               _input("rows", "Sheet rows", "sheet-rows", required=True),
+           )),
+    _write("revit.renumber_rename", "revit", "Renumber / rename",
+           "Renumber or rename approved elements.", (
+               _input("elements", "Elements", "element-rows", required=True),
+               _input("number_format", "Number format", "index-format"),
+               _input("name_format", "Name format", "index-format"),
+           )),
 ]
 
 OFFICE_OPERATIONS = [
     _read("excel.list_workbooks", "excel", "Open workbooks",
           "Every workbook open in the running Excel."),
     _read("excel.list_worksheets", "excel", "Worksheets",
-          "Every worksheet in the active workbook."),
+          "Every worksheet in the active workbook.", inputs=(
+              _input("workbook", "Workbook", "excel-workbook-picker"),
+          )),
     _read("word.list_documents", "word", "Open documents",
           "Every document open in the running Word."),
     _read("word.list_paragraphs", "word", "Paragraphs",
-          "Every paragraph in the active document."),
+          "Every paragraph in the active document.", inputs=(
+              _input("document", "Document", "word-document-picker"),
+          )),
     _read("powerpoint.list_presentations", "powerpoint", "Open presentations",
           "Every presentation open in the running PowerPoint."),
     _read("powerpoint.list_slides", "powerpoint", "Slides",
-          "Every slide in the active presentation."),
+          "Every slide in the active presentation.", inputs=(
+              _input("presentation", "Presentation", "powerpoint-presentation-picker"),
+          )),
+    # New operation records follow the complete released Office catalogue.
+    _read("excel.read_range", "excel", "Read range",
+          "Rows from a named range in a fixture workbook.", inputs=(
+              _input("file", "Workbook file", "local-file", required=True),
+              _input("sheet", "Sheet", "excel-worksheet", default="Sheet1"),
+              _input("range", "Range", "excel-range", required=True),
+          )),
+    _write("excel.write_range", "excel", "Write Excel / CSV",
+           "Rows written to an Excel or CSV file.", (
+               _input("rows", "Rows", "table-rows", required=True),
+               _input("format", "Format", "file-format", default="xlsx"),
+           )),
 ]
 
 HOST_OPERATION_RECORDS = REVIT_OPERATIONS + OFFICE_OPERATIONS

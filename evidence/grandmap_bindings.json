@@ -49,7 +49,8 @@
         "tests_replica/test_wire_group_param.py",
         "tests_replica/test_topsis_is_openable_group.py",
         "tests_replica/test_universal_interaction_server.py::test_group_and_ungroup_toolbar_bindings_preserve_selected_root_identities",
-        "tests_replica/test_home3_templates.py"
+        "tests_replica/test_home3_templates.py",
+        "tests_replica/test_tpl_starters.py"
       ]
     },
     "canvas_bump_graph": {
@@ -112,7 +113,8 @@
       "why": "the node catalogue is graph-held, one shape for every node",
       "tests": [
         "tests_replica/test_cell_catalog.py",
-        "tests_replica/test_cell_standard_library.py"
+        "tests_replica/test_cell_standard_library.py",
+        "tests_replica/test_tpl_starters.py"
       ]
     },
     "nodes_category_taxonomy": {

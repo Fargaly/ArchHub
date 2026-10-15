@@ -38,6 +38,10 @@ _OPERATORS = (">=", "<=", "!=", "==", ">", "<")
 _EMPTY_LIST = "nothing is wired in"
 
 ENGINE_INTERFACE_ALIASES = {
+    "shape.sort": {
+        "source": {"out": "items_out"},
+        "target": {"in": "items"},
+    },
     "revit.elements_of_category": {
         "source": {"els": "elements"},
     },

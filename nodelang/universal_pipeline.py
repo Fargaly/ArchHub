@@ -972,8 +972,9 @@ def create_engine_node(
     parameters as properties, ensure the pipeline interfaces.
     """
     from .pipeline_engines import PIPELINE_ENGINES
+    from .library_engines import engine_runs
     engine = str(engine or "").strip()
-    if engine not in PIPELINE_ENGINES:
+    if not engine_runs(engine, PIPELINE_ENGINES):
         raise ValueError("no engine named %r" % engine)
     title = str(title or engine).strip()[:80]
     projection = project_universal_canvas(store, registry, authentication_context=authentication_context)
@@ -1088,6 +1089,7 @@ def create_engine_template(store, registry, item, *, expected_scope=None,
     """
     import uuid
     from .pipeline_engines import PIPELINE_ENGINES
+    from .library_engines import engine_runs
     from .universal_application import group_universal_selection, set_universal_selection
 
     entry = next((entry for group in read_engine_library(store.snapshot()) or ()
@@ -1105,7 +1107,7 @@ def create_engine_template(store, registry, item, *, expected_scope=None,
                        or label.strip() in {"title", "position_x", "position_y", "color", "definition", "version"}
                        for label, value in part["params"].items())):
             raise InvalidCell("template child parameters exceed the placement boundary")
-        if part["engine"] not in PIPELINE_ENGINES:
+        if not engine_runs(part["engine"], PIPELINE_ENGINES):
             raise InvalidCell("template child engine is unavailable")
         if part.get("item"):
             held = engine_library_entry(store.snapshot(), part["item"])
@@ -1125,12 +1127,79 @@ def create_engine_template(store, registry, item, *, expected_scope=None,
                 "template_subject": subject, "template_size": str(len(parts)),
                 "template_runs": "0"}, authentication_context=authentication_context)
         children.append(created["root"])
+    for index, part in enumerate(parts):
+        feed = part.get("input")
+        if feed is None:
+            continue
+        source, target = children[feed["child"]], children[index]
+        def socket(root, side, name):
+            base = "app:pipeline-interface:%s:%s" % (root.rsplit(":", 1)[-1], side)
+            return base if name in ("out", "in") else base + ":" + name
+        _persist(lambda: connect_universal_roots(store, registry, source, target,
+            source_interface=socket(source, "source", feed["source"]),
+            target_interface=socket(target, "target", feed["target"]),
+            authentication_context=authentication_context), store=store)
     set_universal_selection(store, registry, children,
         authentication_context=authentication_context)
     root, revision = group_universal_selection(store, registry, title=entry["title"],
         authentication_context=authentication_context)
     return {"ok": True, "root": root, "children": children, "revision": revision,
             "title": entry["title"], "template": item}
+
+
+def edit_engine_template(store, registry, item, *, update=None, delete=False,
+                         authentication_context=None):
+    """Edit/detach an ordinary catalogue composition; preserve identity and usage."""
+    import json
+    from .library_engines import engine_runs
+    from .pipeline_engines import PIPELINE_ENGINES
+    project_universal_canvas(store, registry, authentication_context=authentication_context)
+    snapshot = store.snapshot()
+    groups = read_engine_library(snapshot) or ()
+    entry = next((row for group in groups for row in group['items']
+                  if row['id'] == item and row.get('children') and not row.get('hidden')), None)
+    if entry is None:
+        raise InvalidCell('stored composite template is unavailable')
+    root = engine_library_entry_root(item)
+    if delete:
+        replacements = []
+        for section in read_relation(snapshot, ENGINE_LIBRARY_ROOT, budget=256):
+            if section.role_id != _ENGINE_LIBRARY_ROLES['section']:
+                continue
+            incidences = [member.incidence_id for member in read_relation(snapshot, section.participant_id, budget=1024)
+                          if member.role_id == _ENGINE_LIBRARY_ROLES['entry'] and member.participant_id == root]
+            if incidences:
+                replacements.extend(prepare_remove_relation_members(snapshot, section.participant_id, incidences).replace)
+        store.commit(snapshot.revision, replace=tuple(replacements))
+    else:
+        if type(update) is not dict or set(update) != {'title', 'children'}:
+            raise InvalidCell('template edit requires title and children')
+        title, children = update['title'], update['children']
+        if type(title) is not str or not title.strip() or len(title.encode('utf-8')) > 256:
+            raise InvalidCell('template title exceeds the composition boundary')
+        # Parse through the SAME catalogue reader before committing any value.
+        cells = {cell.id: cell for cell in _entry_cells(item, title, entry['sub'],
+            {'engine':'', 'params':{}}, children=children)}
+        from .universal_cell import Snapshot
+        from collections import ChainMap
+        parsed = _read_engine_library_entry(Snapshot(snapshot.revision, ChainMap(cells, snapshot.cells)), root)
+        if parsed is None or not parsed.get('children'):
+            raise InvalidCell('template child definition is invalid')
+        for child in parsed['children']:
+            if (not engine_runs(child['engine'], PIPELINE_ENGINES)
+                    or len(child['title'].encode('utf-8')) > 256
+                    or any(not key.strip() or len(key.encode('utf-8')) > 512 or len(value.encode('utf-8')) > 65_536
+                           or key.strip() in {'title','position_x','position_y','color','definition','version'}
+                           for key,value in child['params'].items())):
+                raise InvalidCell('template child parameters exceed the placement boundary')
+            if child.get('item'):
+                held = engine_library_entry(snapshot, child['item'])
+                if held is None or held['engine'] != child['engine']:
+                    raise InvalidCell('template child library binding changed')
+        store.commit(snapshot.revision, replace=(
+            _text_cell(root+':title', title.strip()),
+            _text_cell(root+':children', json.dumps(children, sort_keys=True))))
+    return {'ok':True, 'template':item, 'revision':store.revision}
 
 
 def _template_instances(owned, *, subject=None):
@@ -1172,7 +1241,7 @@ def _record_template_runs(store, registry, succeeded, authentication_context):
 def read_home_templates(snapshot, registry, *, subject):
     """Read stored composite definitions and this account's completed usage."""
     entries = [entry for group in read_engine_library(snapshot) or ()
-               for entry in group["items"] if entry.get("children") and not entry.get("hidden")]
+               for entry in group["items"] if entry.get("children") and not entry.get("hidden") and not entry.get("noEngine")]
     if not entries:
         return []
     counts = {}
@@ -1189,9 +1258,10 @@ def read_home_templates(snapshot, registry, *, subject):
         counts[item] = counts.get(item, 0) + min(runs)
     templates = [{"id": entry["id"], "title": entry["title"], "sub": entry["sub"],
                   "children": entry["children"], "child_count": len(entry["children"]),
-                  "run_count": counts.get(entry["id"], 0)}
+                  "run_count": counts.get(entry["id"], 0),
+                  "scenario_frequency": entry.get("scenario_frequency", 0)}
                  for entry in entries]
-    return sorted(templates, key=lambda row: -row["run_count"])
+    return sorted(templates, key=lambda row: (-row["run_count"], -row["scenario_frequency"]))
 
 
 def seed_wall_pipeline(
@@ -2822,8 +2892,50 @@ ENGINE_LIBRARY_ROOT = "app:engine-library:v1"
 _ENGINE_LIBRARY_ROLES = {
     name: "app:engine-library:role:%s:v1" % name
     for name in ("section", "entry", "label", "item", "title", "summary",
-                 "engine", "params", "hidden", "compatibility", "children")
+                 "engine", "params", "hidden", "compatibility", "children", "scenario_frequency")
 }
+
+_STARTER_MARKER = "app:engine-library:usage-starters:v1"
+
+
+def _usage_starters():
+    """Runnable subchains from SCENARIOS-from-usage-2026-10-15; never full-job promises.
+
+    Frequencies are source scenario windows, NOT execution counters. These
+    records only install the ordinary catalogue; subsequent reads use Cells.
+    """
+    from .library_engines import LIBRARY_ITEM_ENGINES
+
+    def part(item, title, **params):
+        held = LIBRARY_ITEM_ENGINES[item]
+        return {"item": item, "title": title, "engine": held["engine"],
+                "params": {**held["params"], **params}}
+
+    def chain(item, title, frequency, source, columns, by, direction="asc"):
+        children = [source, part("s_sort", "Sort", by=by, direction=direction),
+                    part("d_schedule", "Table", columns=columns),
+                    part("w_watch", "Review")]
+        for index in range(1, len(children)):
+            children[index]["input"] = {"child": index - 1,
+                "source": "out", "target": "in"}
+        return item, title, frequency, children
+
+    return (
+        chain("tpl-sheet-register", "Sheet register review", 134,
+              part("r_sheets", "Sheets"), "number,name,id", "number"),
+        chain("tpl-model-table", "Model data → table", 66,
+              part("r_walls", "Model elements"), "name,type,level,id", "level"),
+        chain("tpl-notion-review", "Notion sources review", 30,
+              part("h_notion", "Notion search"), "title,url,id", "title"),
+        chain("tpl-cad-inventory", "CAD import inventory", 28,
+              part("r_views", "CAD imports", operation="revit.list_cad_imports"),
+              "name,id", "name"),
+        chain("tpl-inbox-review", "Inbox review table", 23,
+              part("h_outlook", "Inbox"), "subject,sender,received,unread", "received", "desc"),
+        chain("tpl-titleblocks", "Titleblock inventory", 22,
+              part("r_views", "Titleblocks", operation="revit.list_titleblocks"),
+              "family,name,id", "family"),
+    )
 
 
 def engine_library_section_root(category: str) -> str:
@@ -2839,7 +2951,7 @@ def _text_cell(root: str, text: str) -> Cell:
 
 
 def _entry_cells(item: str, title: str, summary: str, wiring, *, hidden=False,
-                 compatibility=None, children=None) -> list:
+                 compatibility=None, children=None, scenario_frequency=None) -> list:
     import json as _json
 
     roles = _ENGINE_LIBRARY_ROLES
@@ -2855,6 +2967,8 @@ def _entry_cells(item: str, title: str, summary: str, wiring, *, hidden=False,
         fields += (("compatibility", _json.dumps(compatibility, sort_keys=True)),)
     if children is not None:
         fields += (("children", _json.dumps(children, sort_keys=True)),)
+    if scenario_frequency is not None:
+        fields += (("scenario_frequency", str(scenario_frequency)),)
     cells = [_text_cell(entry + ":" + name, value) for name, value in fields]
     relation = compose_relation_cells(
         tuple((roles[name], entry + ":" + name) for name, _value in fields),
@@ -2872,8 +2986,9 @@ def seed_engine_library(store, registry) -> int:
     import json as _json
     from .library_engines import (
         LIBRARY_ITEM_ENGINES, LIBRARY_PRESENTATION,
-        LEGACY_LIBRARY_ITEM_ENGINES, LEGACY_LIBRARY_PRESENTATION,
+        LEGACY_LIBRARY_ITEM_ENGINES, LEGACY_LIBRARY_PRESENTATION, engine_runs,
     )
+    from .pipeline_engines import PIPELINE_ENGINES
 
     roles = _ENGINE_LIBRARY_ROLES
     snapshot = store.snapshot()
@@ -2942,6 +3057,36 @@ def seed_engine_library(store, registry) -> int:
             patch = prepare_append_relation_members(snapshot, section, new_entries, budget=100_000)
             create.extend(patch.create)
             replace.update({cell.id: cell for cell in patch.replace})
+    # One atomic marker, independent of memberships: a user's deletion stays
+    # deleted even when every starter has gone. Existing composites win.
+    if _STARTER_MARKER not in snapshot.cells:
+        create.append(_text_cell(_STARTER_MARKER, "usage-starters-v1"))
+        if not any(entry.get("children") and not entry.get("hidden") and not entry.get("noEngine")
+                   for group in read_engine_library(snapshot) or ()
+                   for entry in group["items"]):
+            section = engine_library_section_root("starter")
+            entries = []
+            for item, title, frequency, children in _usage_starters():
+                if engine_library_entry_root(item) in snapshot.cells:
+                    continue
+                if any(not engine_runs(child['engine'], PIPELINE_ENGINES)
+                       or (engine_library_entry(snapshot, child['item']) or LIBRARY_ITEM_ENGINES[child['item']])['engine'] != child['engine']
+                       for child in children):
+                    continue
+                create.extend(_entry_cells(item, title, "%d steps · edit on canvas" % len(children),
+                    {"engine": "", "params": {}}, children=children,
+                    scenario_frequency=frequency))
+                entries.append((roles["entry"], engine_library_entry_root(item)))
+                added += 1
+            if section not in snapshot.cells:
+                create.append(_text_cell(section + ":label", "starter"))
+                create.extend(compose_relation_cells(((roles["label"], section + ":label"),
+                    *entries), relation_id=section).cells)
+                root_members.append((roles["section"], section))
+            elif entries:
+                patch = prepare_append_relation_members(snapshot, section, entries, budget=100_000)
+                create.extend(patch.create)
+                replace.update({cell.id: cell for cell in patch.replace})
     if ENGINE_LIBRARY_ROOT not in snapshot.cells:
         if not root_members:
             return 0
@@ -2976,6 +3121,11 @@ def _read_engine_library_entry(snapshot, entry_root: str):
         return None
     entry = {"id": held["item"], "title": held["title"], "sub": held["summary"],
              "engine": held["engine"], "params": {str(k): str(v) for k, v in params.items()}}
+    if "scenario_frequency" in held:
+        try:
+            entry["scenario_frequency"] = max(0, int(held["scenario_frequency"]))
+        except ValueError:
+            return None
     if "children" in held:
         try:
             children = _json.loads(held["children"])
@@ -2983,8 +3133,9 @@ def _read_engine_library_entry(snapshot, entry_root: str):
             return None
         if type(children) is not list or not 2 <= len(children) <= 32:
             return None
-        for child in children:
-            if (type(child) is not dict or set(child) - {"item", "title", "engine", "params"}
+        from .library_engines import engine_sockets
+        for index, child in enumerate(children):
+            if (type(child) is not dict or set(child) - {"item", "title", "engine", "params", "input"}
                     or not all(type(child.get(key)) is str and child[key].strip()
                                for key in ("title", "engine"))
                     or type(child.get("params")) is not dict
@@ -2992,6 +3143,13 @@ def _read_engine_library_entry(snapshot, entry_root: str):
                     or any(type(key) is not str or type(value) is not str
                            for key, value in child["params"].items())):
                 return None
+            if "input" in child:
+                feed = child["input"]
+                if (type(feed) is not dict or set(feed) != {"child", "source", "target"}
+                        or type(feed["child"]) is not int or not 0 <= feed["child"] < index
+                        or feed["source"] not in engine_sockets(children[feed["child"]]["engine"])["source"]
+                        or feed["target"] not in engine_sockets(child["engine"])["target"]):
+                    return None
         entry["children"] = children
     if "hidden" in held:
         try:
@@ -3050,7 +3208,9 @@ def read_engine_library(snapshot):
             entry["sockets"] = {side: list(names)
                                 for side, names in engine_sockets(entry["engine"]).items()}
             entry["ports"] = library_item_ports(entry["id"], entry["engine"], entry["title"])
-            if not engine_runs(entry["engine"], PIPELINE_ENGINES):
+            runs = (all(engine_runs(child["engine"], PIPELINE_ENGINES) for child in entry["children"])
+                    if entry.get("children") else engine_runs(entry["engine"], PIPELINE_ENGINES))
+            if not runs:
                 entry["noEngine"] = True
                 entry["reason"] = "engine %s is not in this build" % entry["engine"]
             items.append(entry)

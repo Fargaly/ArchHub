@@ -10172,10 +10172,18 @@ class ApplicationServer:
                                 return
                             elif self.path == '/api/universal/node-create':
                                 if 'template' in body:
-                                    from .universal_pipeline import create_engine_template
-                                    if (set(body) - {'template', 'expected_scope'}
+                                    from .universal_pipeline import create_engine_template, edit_engine_template
+                                    if (set(body) - {'template', 'expected_scope', 'update', 'delete'}
                                             or type(body['template']) is not str or not body['template']):
                                         raise InvalidCell('template placement payload is invalid')
+                                    if 'update' in body or 'delete' in body:
+                                        if (set(body) not in ({'template','update'}, {'template','delete'})
+                                                or ('delete' in body and body['delete'] is not True)):
+                                            raise InvalidCell('template edit payload is invalid')
+                                        self._json(200, edit_engine_template(owner.universal_store,
+                                            owner.universal_registry, body['template'], update=body.get('update'),
+                                            delete=body.get('delete', False), authentication_context=binding.context))
+                                        return
                                     created = create_engine_template(owner.universal_store,
                                         owner.universal_registry, body['template'],
                                         expected_scope=body.get('expected_scope'),

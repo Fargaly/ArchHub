@@ -1312,6 +1312,13 @@
         }
         return result;
       },
+      async editHomeTemplate(id, change) {
+        const heldEpoch = epoch, generation = navGeneration;
+        const result = await post('/api/universal/node-create', {template:id, ...change});
+        if (epoch !== heldEpoch || navGeneration !== generation) fail('The workspace changed. Refresh templates.');
+        if (!result || result.ok !== true || result.template !== id) fail('Template edit was not confirmed.');
+        return result;
+      },
       async startHomeTemplate(id) {
         if (!text(id)) fail('Choose a template to start.');
         const heldEpoch = epoch;

@@ -79,6 +79,10 @@ def install_template(server, item, children=2, invalid_last=False):
 
 
 def test_home_templates_empty_is_real_library_read(home):
+    # Empty remains possible after the user deletes every installed starter.
+    rows = request(home, '/api/universal/node-library?templates=1')['templates']
+    for row in rows:
+        request(home, '/api/universal/node-create', {'template':row['id'], 'delete':True})
     before = home.universal_store.revision
     payload = request(home, '/api/universal/node-library?templates=1')
     assert payload['templates'] == []
@@ -88,7 +92,7 @@ def test_home_templates_empty_is_real_library_read(home):
 def test_template_start_creates_one_group_with_exact_stored_children(home):
     parts = install_template(home, 'Court package', 3)
     listing = request(home, '/api/universal/node-library?templates=1')['templates']
-    assert listing[0]['children'] == parts
+    assert next(row for row in listing if row['id'] == 'Court package')['children'] == parts
     before = request(home, '/api/universal/canvas')
     started = request(home, '/api/universal/node-create', {'template': 'Court package',
         'expected_scope': before['scope']['current']})
@@ -99,7 +103,8 @@ def test_template_start_creates_one_group_with_exact_stored_children(home):
     members = app.read_relation(home.universal_store.snapshot(), started['root'])
     inner = {m.participant_id for m in members if m.role_id == home.universal_registry.roles['member']}
     assert inner == set(started['children'])
-    assert request(home, '/api/universal/node-library?templates=1')['templates'][0]['run_count'] == 0
+    assert next(row for row in request(home, '/api/universal/node-library?templates=1')['templates']
+                if row['id'] == 'Court package')['run_count'] == 0
     revision = home.universal_store.revision
     request(home, '/api/universal/node-create', {'template': 'missing'}, expected=400)
     request(home, '/api/universal/node-create', {'template': 'Court package',
@@ -136,4 +141,5 @@ def test_template_order_counts_completed_runs_and_survives_fresh_projection(home
             app.set_universal_scope(home.universal_store, home.universal_registry,
                 home.universal_registry.canvas_root, authentication_context=context)
     listing = request(home, '/api/universal/node-library?templates=1')['templates']
-    assert [(row['id'], row['run_count']) for row in listing] == [('Most used', 3), ('Less used', 1)]
+    assert [(row['id'], row['run_count']) for row in listing[:2]] == [('Most used', 3), ('Less used', 1)]
+    assert all(row['run_count'] == 0 for row in listing[2:])

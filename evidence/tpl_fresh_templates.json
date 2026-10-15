@@ -1,0 +1,350 @@
+[
+  {
+    "id": "tpl-sheet-register",
+    "title": "Sheet register review",
+    "sub": "4 steps \u00b7 edit on canvas",
+    "children": [
+      {
+        "engine": "revit.read",
+        "item": "r_sheets",
+        "params": {
+          "operation": "revit.list_sheets"
+        },
+        "title": "Sheets"
+      },
+      {
+        "engine": "shape.sort",
+        "input": {
+          "child": 0,
+          "source": "out",
+          "target": "in"
+        },
+        "item": "s_sort",
+        "params": {
+          "by": "number",
+          "direction": "asc"
+        },
+        "title": "Sort"
+      },
+      {
+        "engine": "library.build_schedule",
+        "input": {
+          "child": 1,
+          "source": "out",
+          "target": "in"
+        },
+        "item": "d_schedule",
+        "params": {
+          "columns": "number,name,id"
+        },
+        "title": "Table"
+      },
+      {
+        "engine": "watch.preview",
+        "input": {
+          "child": 2,
+          "source": "out",
+          "target": "in"
+        },
+        "item": "w_watch",
+        "params": {
+          "as": "table"
+        },
+        "title": "Review"
+      }
+    ],
+    "child_count": 4,
+    "run_count": 0,
+    "scenario_frequency": 134
+  },
+  {
+    "id": "tpl-model-table",
+    "title": "Model data \u2192 table",
+    "sub": "4 steps \u00b7 edit on canvas",
+    "children": [
+      {
+        "engine": "revit.read",
+        "item": "r_walls",
+        "params": {
+          "operation": "revit.list_walls"
+        },
+        "title": "Model elements"
+      },
+      {
+        "engine": "shape.sort",
+        "input": {
+          "child": 0,
+          "source": "out",
+          "target": "in"
+        },
+        "item": "s_sort",
+        "params": {
+          "by": "level",
+          "direction": "asc"
+        },
+        "title": "Sort"
+      },
+      {
+        "engine": "library.build_schedule",
+        "input": {
+          "child": 1,
+          "source": "out",
+          "target": "in"
+        },
+        "item": "d_schedule",
+        "params": {
+          "columns": "name,type,level,id"
+        },
+        "title": "Table"
+      },
+      {
+        "engine": "watch.preview",
+        "input": {
+          "child": 2,
+          "source": "out",
+          "target": "in"
+        },
+        "item": "w_watch",
+        "params": {
+          "as": "table"
+        },
+        "title": "Review"
+      }
+    ],
+    "child_count": 4,
+    "run_count": 0,
+    "scenario_frequency": 66
+  },
+  {
+    "id": "tpl-notion-review",
+    "title": "Notion sources review",
+    "sub": "4 steps \u00b7 edit on canvas",
+    "children": [
+      {
+        "engine": "notion.search",
+        "item": "h_notion",
+        "params": {
+          "query": ""
+        },
+        "title": "Notion search"
+      },
+      {
+        "engine": "shape.sort",
+        "input": {
+          "child": 0,
+          "source": "out",
+          "target": "in"
+        },
+        "item": "s_sort",
+        "params": {
+          "by": "title",
+          "direction": "asc"
+        },
+        "title": "Sort"
+      },
+      {
+        "engine": "library.build_schedule",
+        "input": {
+          "child": 1,
+          "source": "out",
+          "target": "in"
+        },
+        "item": "d_schedule",
+        "params": {
+          "columns": "title,url,id"
+        },
+        "title": "Table"
+      },
+      {
+        "engine": "watch.preview",
+        "input": {
+          "child": 2,
+          "source": "out",
+          "target": "in"
+        },
+        "item": "w_watch",
+        "params": {
+          "as": "table"
+        },
+        "title": "Review"
+      }
+    ],
+    "child_count": 4,
+    "run_count": 0,
+    "scenario_frequency": 30
+  },
+  {
+    "id": "tpl-cad-inventory",
+    "title": "CAD import inventory",
+    "sub": "4 steps \u00b7 edit on canvas",
+    "children": [
+      {
+        "engine": "revit.read",
+        "item": "r_views",
+        "params": {
+          "operation": "revit.list_cad_imports"
+        },
+        "title": "CAD imports"
+      },
+      {
+        "engine": "shape.sort",
+        "input": {
+          "child": 0,
+          "source": "out",
+          "target": "in"
+        },
+        "item": "s_sort",
+        "params": {
+          "by": "name",
+          "direction": "asc"
+        },
+        "title": "Sort"
+      },
+      {
+        "engine": "library.build_schedule",
+        "input": {
+          "child": 1,
+          "source": "out",
+          "target": "in"
+        },
+        "item": "d_schedule",
+        "params": {
+          "columns": "name,id"
+        },
+        "title": "Table"
+      },
+      {
+        "engine": "watch.preview",
+        "input": {
+          "child": 2,
+          "source": "out",
+          "target": "in"
+        },
+        "item": "w_watch",
+        "params": {
+          "as": "table"
+        },
+        "title": "Review"
+      }
+    ],
+    "child_count": 4,
+    "run_count": 0,
+    "scenario_frequency": 28
+  },
+  {
+    "id": "tpl-inbox-review",
+    "title": "Inbox review table",
+    "sub": "4 steps \u00b7 edit on canvas",
+    "children": [
+      {
+        "engine": "outlook.inbox",
+        "item": "h_outlook",
+        "params": {
+          "count": "20"
+        },
+        "title": "Inbox"
+      },
+      {
+        "engine": "shape.sort",
+        "input": {
+          "child": 0,
+          "source": "out",
+          "target": "in"
+        },
+        "item": "s_sort",
+        "params": {
+          "by": "received",
+          "direction": "desc"
+        },
+        "title": "Sort"
+      },
+      {
+        "engine": "library.build_schedule",
+        "input": {
+          "child": 1,
+          "source": "out",
+          "target": "in"
+        },
+        "item": "d_schedule",
+        "params": {
+          "columns": "subject,sender,received,unread"
+        },
+        "title": "Table"
+      },
+      {
+        "engine": "watch.preview",
+        "input": {
+          "child": 2,
+          "source": "out",
+          "target": "in"
+        },
+        "item": "w_watch",
+        "params": {
+          "as": "table"
+        },
+        "title": "Review"
+      }
+    ],
+    "child_count": 4,
+    "run_count": 0,
+    "scenario_frequency": 23
+  },
+  {
+    "id": "tpl-titleblocks",
+    "title": "Titleblock inventory",
+    "sub": "4 steps \u00b7 edit on canvas",
+    "children": [
+      {
+        "engine": "revit.read",
+        "item": "r_views",
+        "params": {
+          "operation": "revit.list_titleblocks"
+        },
+        "title": "Titleblocks"
+      },
+      {
+        "engine": "shape.sort",
+        "input": {
+          "child": 0,
+          "source": "out",
+          "target": "in"
+        },
+        "item": "s_sort",
+        "params": {
+          "by": "family",
+          "direction": "asc"
+        },
+        "title": "Sort"
+      },
+      {
+        "engine": "library.build_schedule",
+        "input": {
+          "child": 1,
+          "source": "out",
+          "target": "in"
+        },
+        "item": "d_schedule",
+        "params": {
+          "columns": "family,name,id"
+        },
+        "title": "Table"
+      },
+      {
+        "engine": "watch.preview",
+        "input": {
+          "child": 2,
+          "source": "out",
+          "target": "in"
+        },
+        "item": "w_watch",
+        "params": {
+          "as": "table"
+        },
+        "title": "Review"
+      }
+    ],
+    "child_count": 4,
+    "run_count": 0,
+    "scenario_frequency": 22
+  }
+]

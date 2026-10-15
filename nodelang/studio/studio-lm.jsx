@@ -248,7 +248,7 @@ const CommandBar = ({ open, onClose, addNodeFromLibrary, onOpenSession, onChats 
   const match = text => !needle || String(text || '').toLowerCase().includes(needle);
   const rows = [];
   // The palette invokes the visible Home controls, retaining their one guarded handler.
-  for (const button of document.querySelectorAll('[data-home-page] [data-template-start], [data-home-page] [data-workshop-primary], [data-home-page] [data-approval-open-sheets], [data-home-result] button')) {
+  for (const button of document.querySelectorAll('[data-home-page] [data-template-start], [data-home-page] [data-template-edit], [data-home-page] [data-template-editor] button, [data-home-page] [data-workshop-primary], [data-home-page] [data-approval-open-sheets], [data-home-result] button')) {
     if (button.disabled) continue;
     const template = button.closest('[data-home-template]'), result = button.closest('[data-home-result]');
     const label = button.textContent.trim() + (template ? ' · '+template.querySelector('strong').textContent : result ? ' · '+result.textContent.replace(button.textContent,'').trim() : '');
@@ -1297,6 +1297,10 @@ const StudioLM = () => {
       if (newId) { setFocusId(newId); requestCanvasReveal([newId]); }
       return refreshed;
     };
+    if (libItem.children?.length && !libItem.noEngine && window.ARCHHUB_NODE_CREATE) {
+      return window.ARCHHUB_NODE_CREATE({template:libItem.id})
+        .then(revealCreated).catch(e => {window.alert('not created: '+(e?.message || e));return false;});
+    }
     if (window.ARCHHUB_STUDIO_AUTHORITY) {
       // A signed canvas places published definitions only. A card without one
       // is refused by name: its item id is not a definition id.
@@ -2867,10 +2871,24 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null,
   const mission = homeMissionProjection(workshopState,hub,sessions);
   const [templateView,setTemplateView] = React.useState({identity:null,rows:[]}), [templateError,setTemplateError] = React.useState('');
   const [startingTemplate,setStartingTemplate] = React.useState(null);
+  const [editingTemplate,setEditingTemplate] = React.useState(null);
   const templateBusy = React.useRef(false);
   const identity = JSON.stringify([workshopState?.canvas?.graph_id,workshopState?.canvas?.root,
     (workshopState?.topology?.canvas || workshopState?.canvas)?.authorization?.subject,(workshopState?.topology?.canvas || workshopState?.canvas)?.authorization?.session]);
   const templates = templateView.identity === identity ? templateView.rows : [];
+  const editTemplate = async (template, change) => {
+    if (templateBusy.current) return;
+    templateBusy.current=true;setStartingTemplate(template.id);setTemplateError('');
+    const viewIdentity=()=>{const state=window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot?.();const canvas=state?.topology?.canvas || state?.canvas;return JSON.stringify([canvas?.application_root || canvas?.graph_id,canvas?.scope?.current || canvas?.root,canvas?.authorization?.subject,canvas?.authorization?.session]);};
+    const startedView=viewIdentity(), owner=window.ARCHHUB_EXISTING_WORKSHOP;
+    try {
+      if(typeof owner?.editHomeTemplate !== 'function') throw new Error('Template editing is unavailable.');
+      await owner.editHomeTemplate(template.id,change);
+      const result=await owner.readHomeTemplates();
+      if(homeMounted.current && viewIdentity()===startedView){setTemplateView({identity,rows:result.templates});setEditingTemplate(null);}
+    }catch(error){if(homeMounted.current && viewIdentity()===startedView)setTemplateError(error?.message || 'Template edit was not confirmed.');}
+    finally{templateBusy.current=false;if(homeMounted.current)setStartingTemplate(null);}
+  };
   React.useEffect(() => {
     Promise.resolve(window.ARCHHUB_EXISTING_WORKSHOP?.refreshHomeWorkshops?.()).catch(() => {});
   },[identity,workshopState?.topology?.canvas?.revision || workshopState?.canvas?.revision,
@@ -2881,7 +2899,7 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null,
     const owner = window.ARCHHUB_EXISTING_WORKSHOP;
     if (typeof owner?.readHomeTemplates === 'function') owner.readHomeTemplates().then(result => {
       if (active) setTemplateView({identity,rows:(result?.templates || []).filter(row => row.child_count > 0)
-        .sort((a,b) => b.run_count - a.run_count || String(a.id).localeCompare(String(b.id)))});
+        .sort((a,b) => b.run_count - a.run_count || (b.scenario_frequency || 0) - (a.scenario_frequency || 0))});
     }).catch(error => {if(active) setTemplateError(error?.message || 'Templates unavailable');});
     return () => {active = false;};
   },[identity,workshopState?.topology?.canvas?.revision || workshopState?.canvas?.revision]);
@@ -2962,7 +2980,19 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null,
             {index > 0 && <i style={{width:10,height:2,background:LM.accent,opacity:.6,flex:'none'}}/>}<span style={{height:24,padding:'0 8px',borderRadius:6,background:LM.bgHover,fontSize:12,display:'inline-flex',alignItems:'center'}}>{child.title || child.engine}</span></React.Fragment>)}
             {template.child_count > 4 && <span style={{fontSize:12,color:LM.inkSoft}}>+{template.child_count - 4}</span>}</div>
           <div style={{display:'flex',alignItems:'center',gap:8}}><span style={{fontSize:12.5,color:LM.inkSoft,flex:1}}>{template.sub || `${template.child_count} steps`}</span>
+            <button type="button" data-template-edit={template.id} disabled={startingTemplate !== null} title="Edit template · Ctrl+K" aria-expanded={editingTemplate?.id===template.id && editingTemplate?.identity===identity}
+              onClick={()=>setEditingTemplate(editingTemplate?.id===template.id ? null : {...template,identity,children:template.children.map(child=>({...child,params:{...child.params}}))})} style={action}>Edit</button>
             <button type="button" data-template-start={template.id} disabled={startingTemplate !== null} title={'Start '+template.title+' · Ctrl+K'} onClick={()=>startTemplate(template)} style={action}>{startingTemplate===template.id ? 'Starting…' : 'Start'}</button></div>
+          {editingTemplate?.id===template.id && editingTemplate.identity===identity && <form data-template-editor="" onSubmit={event=>{event.preventDefault();editTemplate(template,{update:{title:editingTemplate.title,children:editingTemplate.children}});}}
+            onKeyDown={event=>{if(event.key==='Escape')setEditingTemplate(null);}} style={{display:'grid',gap:8}}>
+            <label style={{fontSize:12,display:'grid',gap:4}}>Template name<input aria-label="Template name" style={{background:LM.bgPanel,color:LM.ink,border:`1px solid ${LM.line}`,borderRadius:6,padding:7,fontFamily:LM.sans}} value={editingTemplate.title} onChange={event=>setEditingTemplate({...editingTemplate,title:event.target.value})}/></label>
+            {editingTemplate.children.map((child,index)=><fieldset key={index} style={{border:`1px solid ${LM.line}`,borderRadius:6,display:'grid',gap:6}}><legend>{child.title}</legend>
+              {Object.entries(child.params).map(([name,value])=><label key={name} style={{fontSize:12,display:'grid',gap:4}}>{name.replaceAll('_',' ')}<input aria-label={child.title+' '+name} style={{background:LM.bgPanel,color:LM.ink,border:`1px solid ${LM.line}`,borderRadius:6,padding:7,fontFamily:LM.sans}} value={value}
+                onChange={event=>setEditingTemplate({...editingTemplate,children:editingTemplate.children.map((row,i)=>i===index ? {...row,params:{...row.params,[name]:event.target.value}} : row)})}/></label>)}</fieldset>)}
+            <div style={{display:'flex',gap:8}}><button type="submit" disabled={startingTemplate!==null} title="Save template · Ctrl+K / Enter" style={action}>Save</button>
+              <button type="button" disabled={startingTemplate!==null} title="Delete template · Ctrl+K" data-template-delete={template.id} onClick={()=>editTemplate(template,{delete:true})} style={action}>Delete</button>
+              <button type="button" onClick={()=>setEditingTemplate(null)} title="Cancel · Ctrl+K / Escape" style={action}>Cancel</button></div>
+          </form>}
         </article>)}
       </div>{!templates.length && !templateError && <div style={{color:LM.inkSoft,fontSize:13}}>No saved composite templates.</div>}
     </section>

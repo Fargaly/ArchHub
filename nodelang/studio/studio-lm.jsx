@@ -66,7 +66,9 @@ const systemAllowed = (canvas, graph) => canvas?.authorization?.system_view === 
 const systemSessionId = (rootCanvas, gateCanvas, graph) => {
   const root = rootCanvas?.application_root || rootCanvas?.graph_id ||
     gateCanvas?.application_root || gateCanvas?.graph_id || '';
-  return root && systemAllowed(gateCanvas, graph) ? 'system:' + root : '';
+  // A child scope has no application cards. Admission must precede the root
+  // projection; the renderer still checks systemAllowed on the returned graph.
+  return root && gateCanvas?.authorization?.system_view === true ? 'system:' + root : '';
 };
 const systemGraphSession = id => ({ id, title:'ArchHub application', state:'idle', host:'archhub', when:'saved',
   file:'Application graph', last:'ArchHub application parts and registries.', model:'' });
@@ -1253,7 +1255,10 @@ const StudioLM = () => {
     // The System view is a mode of the application's root graph (as the old System tab was):
     // open the admitted root graph, then switch to the system view. The application root itself
     // is not an admitted graph, so it is never posted to graph-open.
-    const rootGraphId = (LM_SESSIONS.find(row => row && row.id && !String(row.id).startsWith('system:')) || {}).id || '';
+    const rootCanvas = authorityState?.canvas;
+    const projectedRoot = rootCanvas?.canvas_root || rootCanvas?.scope?.trail?.[0]?.root;
+    const rootGraphId = LM_SESSIONS.find(row => row.id === projectedRoot)?.id ||
+      (LM_SESSIONS.find(row => row && row.id && !String(row.id).startsWith('system:')) || {}).id || '';
     const graphId = isSystem ? rootGraphId : id;
     const viewFor = targetId => isSystem ? {...canvasWorkspaceView(viewScopeForSession(targetId || id)), mode:'system'} :
       canvasWorkspaceView(viewScopeForSession(targetId || id));
@@ -9069,6 +9074,12 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
       shortcuts:'Shortcuts', storage:'Storage', about:'About', system:'System'};
     chooseCapability(groupFromTab(key), names[key] || String(tabName || ''));
   };
+  const openSystemGraph = async () => {
+    setStatusMessage('');
+    const opened = await onOpenToolGraph?.('system');
+    if (opened?.ok) onClose?.();
+    else if (!opened?.stale) setStatusMessage(opened?.error || 'System graph is not admitted in this workspace.');
+  };
   const inspectorRows = () => {
     const capabilityBelongsToNode = selectedGroup.items.includes(activeCapability) ||
       (selectedGroup.id === 'appearance' && activeCapability === 'System');
@@ -9155,7 +9166,7 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
               <span style={{ fontSize:11, color:canOpenSystem ? LM.ok : LM.warn }}>{canOpenSystem ? 'Connected · live' : 'System graph unavailable'}</span><span style={{ flex:1 }}/>
               {statusMessage && <span role="status" style={{ fontSize:11, color:LM.inkSoft, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:260 }}>{statusMessage}</span>}
               {graphOpen && <button type="button" onClick={arrangeSystem} style={settings54Button(false, {border:'1px solid transparent', color:LM.ink})}>Arrange</button>}
-              <button type="button" onClick={() => setGraphOpen(value => !value)} aria-pressed={graphOpen} style={settings54Button(false)}>{graphOpen ? 'Back to Settings' : 'System graph'}</button>
+              <button type="button" onClick={openSystemGraph} style={settings54Button(false)}>System graph</button>
               <button type="button" onClick={onHome} title="Home (Alt+Home)" style={settings54Button(false)}>Home</button>
               <button type="button" aria-label="Close" data-close-button="" onClick={onClose} style={settings54Button(false)}>Close</button>
             </div>
@@ -9420,7 +9431,6 @@ const SettingsHub = ({ toolRows, onClose, onOpenTool, onOpenToolGraph, columns }
     onOpenToolGraph?.(id);
   };
   return <div style={{position:'relative'}}>
-    <SettingsMods compact/>
     <div data-tool-grid style={{ display:'grid', gap:8,
       gridTemplateColumns:columns ? `repeat(${columns}, minmax(0, 1fr))` : 'repeat(auto-fill, minmax(180px, 1fr))' }}>
       {toolRows.map(tool => <div key={tool.id} style={{display:'flex', minWidth:0}}

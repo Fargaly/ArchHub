@@ -53,6 +53,14 @@ def isolated_owner_probes(monkeypatch):
             worker.join(timeout=5)
             assert not worker.is_alive(), "the owned fake probe must finish before teardown"
 
+    close = ApplicationServer.close
+    def close_after_fake_probes(self, *args, **kwargs):
+        # Shutdown now drains probes before releasing the store. Release this
+        # fixture's intentionally blocked producers before entering that drain.
+        release()
+        return close(self, *args, **kwargs)
+    monkeypatch.setattr(ApplicationServer, 'close', close_after_fake_probes)
+
     yield {"started": started, "release": release}
     release()
 

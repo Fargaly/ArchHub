@@ -563,9 +563,10 @@ class _HeadRowReader:
         "SELECT link0, link1, atom, revision FROM current_cells WHERE cell_id = ?"
     )
 
-    def __init__(self, connection, lock=None, *, base_revision=None) -> None:
+    def __init__(self, connection, lock=None, *, base_revision=None, closing=None) -> None:
         self._connection = connection
         self._lock = lock if lock is not None else threading.RLock()
+        self._closing = closing if closing is not None else threading.Event()
         with self._lock:
             if base_revision is None:
                 base_revision = connection.execute("SELECT MAX(revision) FROM revisions").fetchone()[0]
@@ -695,15 +696,10 @@ class _HeadRowReader:
     @contextmanager
     def read_scope(self):
         """Use one read transaction for a bounded, pure graph traversal."""
+        self._require_open()
         with self._lock:
-            try:
-                owns_transaction = not self._connection.in_transaction
-            except sqlite3.ProgrammingError:
-                # A closed reader can still satisfy a fully cached traversal,
-                # as before batching. Cache misses keep their original error;
-                # never reopen the connection or catch errors from the walk.
-                yield
-                return
+            self._require_open()
+            owns_transaction = not self._connection.in_transaction
             try:
                 # An interrupted BEGIN can open SQLite's transaction before it
                 # raises. This scope owns that transaction and must release it.
@@ -720,8 +716,13 @@ class _HeadRowReader:
                         error.add_note("Read transaction cleanup failed: " + type(cleanup_error).__name__)
                 raise
 
+    def _require_open(self):
+        if self._closing.is_set():
+            raise InvalidCell('cell store reader is closing or closed')
+
     def read(self, cell_id):
         with self._lock:
+            self._require_open()
             cell = self._cache.get(cell_id)
             if cell is not None:
                 self._cache.move_to_end(cell_id)
@@ -745,6 +746,7 @@ class _HeadRowReader:
 
     def _prefetch_batch(self, batch):
         with self._lock:
+            self._require_open()
             wanted = list(dict.fromkeys(key for key in batch if key not in self._cache and key not in self._missing))
             if not wanted:
                 return
@@ -859,6 +861,7 @@ class _HeadRowReader:
                    + " AND ".join(clauses) + " ORDER BY cell_id LIMIT ?")
             params.append(self.BATCH_SIZE)
             with self._lock:
+                self._require_open()
                 cursor = self._connection.execute(sql, params)
                 try:
                     rows = cursor.fetchmany(self.BATCH_SIZE)
@@ -878,6 +881,7 @@ class _HeadRowReader:
                 yield str(cell_id)
                 continue
             with self._lock:
+                self._require_open()
                 exists = self._connection.execute(
                     "SELECT 1 FROM cell_versions WHERE cell_id = ? AND revision <= ? LIMIT 1",
                     (cell_id, self._base_revision),
@@ -893,6 +897,7 @@ class _HeadRowReader:
 
     def count(self):
         with self._lock:
+            self._require_open()
             unchanged = self._connection.execute(
                 "SELECT COUNT(*) FROM current_cells WHERE revision <= ?",
                 (self._base_revision,),
@@ -1219,6 +1224,7 @@ class _SqliteJournal:
         self._fault_injector = fault_injector
         self._owner_fence = InterprocessOwnerFence(self._path)
         self._connection = None
+        self._closing = threading.Event()
         try:
             self._io_lock = threading.RLock()
             self._connection = sqlite3.connect(
@@ -1622,7 +1628,8 @@ class _SqliteJournal:
                     ).fetchone()[0]),
                 ),
             )
-        reader = _HeadRowReader(self._connection, self._io_lock, base_revision=latest)
+        reader = _HeadRowReader(self._connection, self._io_lock, base_revision=latest,
+                                closing=self._closing)
         history = _SqliteHistoryReader(self, latest, previous.hex())
         return LoadedJournalHead(
             cells=_LazyHeadCellMap(reader, None, None, 0),
@@ -1691,16 +1698,20 @@ class _SqliteJournal:
         return connection
 
     def close(self) -> None:
-        try:
-            if self._connection is not None:
-                self._connection.close()
-                self._connection = None
-            accelerators = getattr(self, "_accelerator_connection", None)
-            if accelerators is not None:
-                accelerators.close()
-                self._accelerator_connection = None
-        finally:
-            self._owner_fence.close()
+        # read_scope holds this same lock through transaction cleanup. Refuse
+        # new traversals before waiting for the current one to release it.
+        self._closing.set()
+        with self._io_lock:
+            try:
+                if self._connection is not None:
+                    self._connection.close()
+                    self._connection = None
+                accelerators = getattr(self, "_accelerator_connection", None)
+                if accelerators is not None:
+                    accelerators.close()
+                    self._accelerator_connection = None
+            finally:
+                self._owner_fence.close()
 
     @property
     def path(self) -> str:
@@ -1774,22 +1785,27 @@ class _LazyRevisionCellMap(Mapping[str, Cell]):
     the revision from the (cell_id, revision) index instead.
     """
 
-    __slots__ = ("_connection", "_lock", "_revision", "_cache", "_missing")
+    __slots__ = ("_connection", "_lock", "_revision", "_cache", "_missing", "_closing")
 
-    def __init__(self, connection, lock, revision: int) -> None:
+    def __init__(self, connection, lock, revision: int, closing=None) -> None:
         self._connection = connection
         self._lock = lock
+        self._closing = closing if closing is not None else threading.Event()
         self._revision = int(revision)
         self._cache: dict[str, Cell] = {}
         self._missing: set[str] = set()
 
     def _read(self, key: str) -> "Cell | None":
+        if self._closing.is_set():
+            raise InvalidCell('cell store reader is closing or closed')
         held = self._cache.get(key)
         if held is not None:
             return held
         if key in self._missing:
             return None
         with self._lock:
+            if self._closing.is_set():
+                raise InvalidCell('cell store reader is closing or closed')
             row = self._connection.execute(
                 "SELECT link0, link1, atom FROM cell_versions "
                 "WHERE cell_id = ? AND revision <= ? ORDER BY revision DESC LIMIT 1",
@@ -1817,6 +1833,8 @@ class _LazyRevisionCellMap(Mapping[str, Cell]):
 
     def __iter__(self) -> Iterator[str]:
         with self._lock:
+            if self._closing.is_set():
+                raise InvalidCell('cell store reader is closing or closed')
             rows = self._connection.execute(
                 "SELECT DISTINCT cell_id FROM cell_versions WHERE revision <= ?",
                 (self._revision,),
@@ -1826,6 +1844,8 @@ class _LazyRevisionCellMap(Mapping[str, Cell]):
 
     def __len__(self) -> int:
         with self._lock:
+            if self._closing.is_set():
+                raise InvalidCell('cell store reader is closing or closed')
             return int(self._connection.execute(
                 "SELECT COUNT(DISTINCT cell_id) FROM cell_versions WHERE revision <= ?",
                 (self._revision,),
@@ -1903,7 +1923,8 @@ class _SqliteHistoryReader:
         """A past revision read cell by cell; see _LazyRevisionCellMap."""
         target = self._admit_revision(revision)
         return Snapshot(target, _LazyRevisionCellMap(
-            self._journal._connection, self._journal._io_lock, target
+            self._journal._connection, self._journal._io_lock, target,
+            closing=self._journal._closing
         ))
 
     def revisions_touching(self, root: str) -> tuple[int, ...]:
@@ -2802,10 +2823,10 @@ class CellStore:
         with self._lock:
             if self._stable_snapshot_depth:
                 raise InvalidCell("cannot close during a stable snapshot")
+            self._closed = True
             if self._journal is not None:
                 self._journal.close()
                 self._journal = None
-            self._closed = True
 
     @property
     def database_path(self) -> str | None:
@@ -2995,11 +3016,15 @@ class CellStore:
 
     def read(self, cell_id: str, *, revision: int | None = None) -> Cell:
         with self._lock:
+            if self._closed:
+                raise InvalidCell('cannot read a closed store')
             source = self._cells if revision is None else self.at(revision).cells
             return source[cell_id]
 
     def snapshot(self) -> Snapshot:
         with self._lock:
+            if self._closed:
+                raise InvalidCell('cannot read a closed store')
             return Snapshot(self._revision, self._cells)
 
     @contextmanager
@@ -3079,23 +3104,29 @@ class CellStore:
     def accepted_prefix_fingerprint(self, revision: int) -> tuple[int, int, str]:
         """Ask the history reader for the immutable prefix fingerprint."""
         with self._lock:
+            if self._closed:
+                raise InvalidCell('cannot read a closed store')
             reader = self._history_reader
-        counter = getattr(reader, "accepted_prefix_fingerprint", None)
-        if counter is None:
-            return (0, 0, "")
-        return counter(revision)
+            counter = getattr(reader, "accepted_prefix_fingerprint", None)
+            if counter is None:
+                return (0, 0, "")
+            return counter(revision)
 
     def chained_prefix_fingerprint(self, revision: int) -> tuple[int, int, str]:
         """Ask the history reader for the chained (v2) prefix fingerprint."""
         with self._lock:
+            if self._closed:
+                raise InvalidCell('cannot read a closed store')
             reader = self._history_reader
-        counter = getattr(reader, "chained_prefix_fingerprint", None)
-        if counter is None:
-            return (0, 0, "")
-        return counter(revision)
+            counter = getattr(reader, "chained_prefix_fingerprint", None)
+            if counter is None:
+                return (0, 0, "")
+            return counter(revision)
 
     def at(self, revision: int) -> Snapshot:
         with self._lock:
+            if self._closed:
+                raise InvalidCell('cannot read a closed store')
             if revision == self._revision:
                 return Snapshot(self._revision, self._cells)
             cached = self._historical_snapshots.get(revision)
@@ -3508,7 +3539,8 @@ class CellStore:
                 published = _LazyHeadCellMap(
                     _HeadRowReader(self._journal._connection,
                                    self._journal._io_lock,
-                                   base_revision=next_revision),
+                                   base_revision=next_revision,
+                                   closing=self._journal._closing),
                     base_count=base_count,
                 )
                 next_overlay_bytes = 0

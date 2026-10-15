@@ -25,6 +25,49 @@ import sys
 import threading
 import time
 import uuid
+
+
+def _start_background_refresh(owner, target, *, name, args=()):
+    """Admit a one-shot reader only while this server is running."""
+    guard = owner.__dict__.setdefault('_background_refresh_lock', threading.Lock())
+    with guard:
+        stop = owner.__dict__.setdefault('_background_refresh_stop', threading.Event())
+        if stop.is_set():
+            return False
+        workers = owner.__dict__.setdefault('_background_refresh_threads', set())
+
+        def run():
+            try:
+                if not stop.is_set():
+                    target(*args)
+            finally:
+                with guard:
+                    workers.discard(threading.current_thread())
+
+        worker = threading.Thread(target=run, name=name, daemon=True)
+        workers.add(worker)
+        try:
+            worker.start()
+        except BaseException:
+            workers.discard(worker)
+            raise
+        return True
+
+
+def _stop_background_refreshes(owner, timeout=10.0):
+    """Fence admission and drain readers; never close storage under a survivor."""
+    guard = owner.__dict__.setdefault('_background_refresh_lock', threading.Lock())
+    with guard:
+        owner.__dict__.setdefault('_background_refresh_stop', threading.Event()).set()
+        workers = tuple(owner.__dict__.get('_background_refresh_threads', ()))
+    deadline = time.monotonic() + timeout
+    for worker in workers:
+        if worker is not threading.current_thread():
+            worker.join(timeout=max(0.0, deadline - time.monotonic()))
+    if any(worker.is_alive() for worker in workers):
+        raise RuntimeError('background refresh did not stop; store teardown refused')
+
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
@@ -1354,11 +1397,10 @@ class _CleanAuthorityHttpServer:
         except Exception:  # noqa: BLE001 - unresolvable root: refused per request
             self.clean_workspace_root = None
         self.workspace_roots_boot = "checking"
-        threading.Thread(
+        _start_background_refresh(self,
             target=self._check_workspace_roots,
             name="archhub-workspace-roots-check",
-            daemon=True,
-        ).start()
+        )
         self.httpd = QuietThreadingHTTPServer((host, port), self._make_handler())
         self.thread = None
 
@@ -1383,7 +1425,6 @@ class _CleanAuthorityHttpServer:
         return list(probe_connectors())
 
     def _host_rows_or_none(self):
-        import threading as _threading
         import time as _time
         caches = self.__dict__.setdefault("_probe_caches", {})
         entry = caches.get("hosts")
@@ -1397,7 +1438,7 @@ class _CleanAuthorityHttpServer:
                 except Exception:
                     value = fresh[1]
                 caches["hosts"] = [_time.time(), value, False]
-            _threading.Thread(target=_run, name="archhub-probe-hosts", daemon=True).start()
+            _start_background_refresh(self, _run, name="archhub-probe-hosts")
         value = caches["hosts"][1]
         if not isinstance(value, list):
             return None
@@ -3428,6 +3469,7 @@ class _CleanAuthorityHttpServer:
 
     def close(self):
         self.activity.begin_shutdown()
+        _stop_background_refreshes(self)
         if self.thread is not None:
             self.httpd.shutdown()
             self.httpd.server_close()
@@ -12838,7 +12880,7 @@ class ApplicationServer:
     # daemon thread refreshes it, so a slow tasklist or a COM check can never
     # stall a frame past its lease (the companion blinked out while it waited).
     def _refresh_in_background(self, key: str, ttl: float, producer) -> object:
-        import threading as _th, time as _t
+        import time as _t
         caches = self.__dict__.setdefault("_probe_caches", {})
         entry = caches.get(key)
         now = _t.time()
@@ -12851,7 +12893,8 @@ class ApplicationServer:
                 except Exception:
                     value = fresh[1]
                 caches[key] = [_t.time(), value, False]
-            _th.Thread(target=_run, name="archhub-probe-" + key, daemon=True).start()
+            if not _start_background_refresh(self, _run, name="archhub-probe-" + key):
+                fresh[2] = False
         return caches[key][1]
 
     @staticmethod
@@ -14185,12 +14228,12 @@ class ApplicationServer:
                 self._baboom_pending_approvals_refreshing = True
             elif not self._baboom_pending_approvals_refreshing:
                 self._baboom_pending_approvals_refreshing = True
-                threading.Thread(
+                if not _start_background_refresh(self,
                     target=self._refresh_baboom_pending_founder_approvals,
                     args=(context, read_guard, revision),
                     name="archhub-baboom-pending-approvals",
-                    daemon=True,
-                ).start()
+                ):
+                    self._baboom_pending_approvals_refreshing = False
             else:
                 return None
         if not cache_only:
@@ -19970,7 +20013,9 @@ class ApplicationServer:
                 with guard:
                     running.discard(key)
 
-        threading.Thread(target=refresh, name="archhub-tool-hub-graphs", daemon=True).start()
+        if not _start_background_refresh(self, refresh, name="archhub-tool-hub-graphs"):
+            with guard:
+                running.discard(key)
 
     def _tool_hub_graph_sessions(self, binding) -> tuple[dict[str, object], ...]:
         cache = getattr(self, "_tool_hub_graph_sessions_cache", {}) or {}
@@ -20543,7 +20588,7 @@ class ApplicationServer:
                 self._projection_prewarm_stop.wait(5.0)
 
     def _start_projection_prewarm(self):
-        if self._projection_prewarm_thread is not None:
+        if self._projection_prewarm_stop.is_set() or self._projection_prewarm_thread is not None:
             return
         self._projection_prewarm_thread = threading.Thread(
             target=self._projection_prewarm_loop,
@@ -20696,6 +20741,11 @@ class ApplicationServer:
         Preparing that pair for a later startup is explicit: it adds a second
         physical copy and owner-prefix verification within the recovery budget.
         """
+        for name in ('_snapshot_stop', '_live_stop', '_projection_prewarm_stop'):
+            event = getattr(self, name, None)
+            if event is not None:
+                event.set()
+        _stop_background_refreshes(self)
         from . import app_brain
         from . import brain_cloud_runner
         brain_cloud_runner.stop()
@@ -20760,6 +20810,11 @@ class ApplicationServer:
             self._snapshot_thread.join(timeout=30)
             if self._snapshot_thread.is_alive():
                 raise RuntimeError('snapshot writer did not stop before final save')
+        for name in ('_universal_cloud_thread', '_live_thread',
+                     '_projection_prewarm_thread', 'thread'):
+            worker = getattr(self, name, None)
+            if worker is not None and worker.is_alive():
+                raise RuntimeError('worker did not stop; store teardown refused: ' + name)
         if recovery_directory is not None:
             for name in ("_universal_cloud_thread", "_live_thread",
                          "_projection_prewarm_thread", "thread", "_snapshot_thread"):

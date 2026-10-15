@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import copy
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import wraps
 import hashlib
@@ -1389,6 +1389,9 @@ class UniversalApplicationRegistry(VerifiedLazyRegistry):
     theme_system_root: str
     view_sessions: dict[str, ApplicationViewSession]
     lazy_scope_loader: object = None
+    # Derived reader wires have no graph identity to persist in a focus pointer.
+    # Their inspection is transient, scoped to this view and exact revision.
+    reader_selections: dict[str, tuple[int, str, str]] = field(default_factory=dict, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -13697,12 +13700,6 @@ def build_universal_application(
     root_properties.setdefault(_GOVERNED_WORK_REGISTRY_ROOT, []).extend(
         reference.relation_root for reference in governed_work_properties
     )
-    _ensure_system_tool_canvas_nodes(
-        store, roles, authorization, standard_library, map_registry,
-        application_root=application_root, canvas_root=canvas_root,
-        visibility_root=visibility_root, properties_lens_root=selection_lens_root,
-        default_color=initial_theme["ink_soft"],
-    )
     workshop_assignment_registry_root = (
         _ensure_application_workshop_assignment_registry(
             store,
@@ -20130,7 +20127,7 @@ def _system_canvas_app_part_root(
         return True
     return root_id in {
         _system_tool_canvas_root(tool_id)
-        for tool_id, _title, _engine, _tool, domain_key, _params
+        for tool_id, _title, _engine, _tool, domain_key
         in _SYSTEM_TOOL_CANVAS_NODES
         if domain_key is None
     }
@@ -20238,19 +20235,13 @@ _USER_PLACEMENT = "user"
 _CANVAS_CARD_PITCH = (260.0, 280.0)
 _CANVAS_PLACEMENT_COLUMNS = 6
 _SYSTEM_TOOL_CANVAS_NODES = (
-    ("tool_studio", "Studio", "tool.studio", "studio", None,
-     {}),
-    ("tool_workshop", "Workshop", "tool.workshop", "workshop", None,
-     {"stale_claim_after_idle_minutes": "30",
-      "archive_after_idle_days": "20", "tick_cadence_minutes": "5"}),
-    ("tool_brain", "Brain", "tool.brain", "brain", "brain",
-     {}),
-    ("tool_baboom", "BABOOM", "tool.baboom", "baboom", None,
-     {}),
+    ("tool_studio", "Studio", "tool.studio", "studio", None),
+    ("tool_workshop", "Workshop", "tool.workshop", "workshop", None),
+    ("tool_brain", "Brain", "tool.brain", "brain", "brain"),
+    ("tool_baboom", "BABOOM", "tool.baboom", "baboom", None),
     ("tool_connectors", "Connectors", "tool.connectors", "connectors",
-     "connectors", {}),
-    ("tool_cloud", "Cloud", "tool.cloud", "cloud", "cloud",
-     {}),
+     "connectors"),
+    ("tool_cloud", "Cloud", "tool.cloud", "cloud", "cloud"),
 )
 
 
@@ -20288,10 +20279,30 @@ def _application_relation_label(wire: Mapping[str, object], source: str, target:
     return "%s → %s" % (source, target)
 
 
-def _application_setting_row(row: Mapping[str, object]) -> dict[str, object]:
-    editor, constraints = _APPLICATION_SETTING_SPECS[str(row["label"])]
-    return {**row, "value": int(str(row["value"])), "editable": True, "editor": editor, "constraints": constraints,
-            "setting": {"kind": "property", "key": row["label"]}}
+def _application_reader_relations(registry, visible_roots):
+    """Code reads are a lens, never new facts in a user's saved graph."""
+    visible = set(visible_roots)
+    def owner(key):
+        if key == "governed_work":
+            return _GOVERNED_WORK_REGISTRY_ROOT
+        return (_system_tool_canvas_root(key) if key.startswith("tool_")
+                else registry.map.domains[key])
+    for provider, consumer, meaning, reader in _APPLICATION_SETTING_READS:
+        source, target = owner(provider), owner(consumer)
+        if source in visible and target in visible:
+            root = "app:relation:setting-reader:%s:%s" % (provider, consumer)
+            yield {"id": root, "source": source, "target": target,
+                   "label": meaning, "reader": reader,
+                   "source_incidence": root + ":source",
+                   "target_incidence": root + ":target"}
+
+
+def _application_setting_default(key: str) -> int:
+    return {
+        "stale_claim_after_idle_minutes": _WORKSHOP_BOARD_DEFAULT_STALE_CLAIM_MINUTES,
+        "archive_after_idle_days": _WORKSHOP_BOARD_DEFAULT_ARCHIVE_DAYS,
+        "tick_cadence_minutes": _WORKSHOP_BOARD_DEFAULT_TICK_CADENCE_MINUTES,
+    }[key]
 
 
 def _project_application_node_settings(
@@ -20306,11 +20317,19 @@ def _project_application_node_settings(
     baboom = baboom or {}
     app_nodes = {node["id"]: node for node in nodes if node.get("application")}
     for node in app_nodes.values():
-        node["params"] = [
-            _application_setting_row(row) for row in node.get("params", ())
-            if row.get("label") in _APPLICATION_SETTING_SPECS
-            and node["id"] == _system_tool_canvas_root("tool_workshop")
-        ]
+        node["params"] = []
+        if node["id"] == _system_tool_canvas_root("tool_workshop"):
+            for key, (editor, constraints) in _APPLICATION_SETTING_SPECS.items():
+                relation, value_root = _workshop_board_property_root(str(node["id"]), key)
+                node["params"].append({
+                    "label": key, "value": _workshop_board_int_param(
+                        snapshot, registry, key, default=_application_setting_default(key),
+                        lower=constraints["min"], upper=constraints["max"]),
+                    "owner": node["id"], "relation": relation,
+                    "value_root": value_root, "cell_id": value_root if _workshop_board_override_active(snapshot, registry, relation) else None,
+                    "editable": True, "editor": editor, "constraints": constraints,
+                    "setting": {"kind": "property", "key": key},
+                })
         node["engine"] = ""
         node["summary"] = ""
         node["subtitle"] = ""
@@ -20440,7 +20459,7 @@ def _ensure_system_tool_canvas_nodes(
         labels[key] = root
         return root
 
-    def stage_property(owner_root: str, namespace: str, key: str, value: object, *, read_only=False) -> str:
+    def stage_property(owner_root: str, namespace: str, key: str, value: object) -> str:
         token = "%s:%s:%s" % (_part(owner_root), _part(namespace), _part(key))
         value_root = "app:value:%s" % token
         relation_root = "app:property:%s" % token
@@ -20454,7 +20473,6 @@ def _ensure_system_tool_canvas_nodes(
             (roles["owner"], owner_root),
             (roles["value"], value_root),
             (roles["label"], label_root(key)),
-            *(((roles["read-only"], roles["read-only"]),) if read_only else ()),
         ), relation_id=relation_root)
         for cell in relation.cells:
             create[cell.id] = cell
@@ -20464,7 +20482,7 @@ def _ensure_system_tool_canvas_nodes(
     tool_roots: list[str] = []
     audience_tool_roots: list[str] = []
     property_roots: list[str] = []
-    for index, (tool_id, title, engine, tool_name, domain_key, params) in enumerate(
+    for index, (tool_id, title, engine, tool_name, domain_key) in enumerate(
         _SYSTEM_TOOL_CANVAS_NODES
     ):
         if tool_id in {"tool_connectors", "tool_cloud"}:
@@ -20491,32 +20509,6 @@ def _ensure_system_tool_canvas_nodes(
             stage_property(target_root, "canvas", "position_x", 60 + (index % 6) * 244),
             stage_property(target_root, "canvas", "position_y", 92 + (index // 6) * 174),
         ))
-        for key, value in params.items():
-            property_roots.append(stage_property(target_root, "field", key, value))
-
-    dependency_roots = []
-    def dependency_owner(key):
-        if key == "governed_work":
-            return "app:governed-work-registry"
-        return (_system_tool_canvas_root(key) if key.startswith("tool_")
-                else map_registry.domains[key])
-    for provider, consumer, meaning, reader in _APPLICATION_SETTING_READS:
-        source, target = dependency_owner(provider), dependency_owner(consumer)
-        if target not in snapshot.cells and target not in create:
-            # Governed Work is admitted later in a fresh build; its reader
-            # relation is attached by the second idempotent admission pass.
-            continue
-        root = "app:relation:setting-reader:%s:%s" % (provider, consumer)
-        dependency_roots.append(root)
-        if root not in snapshot.cells:
-            relation = compose_relation_cells((
-                (roles["source"], source), (roles["target"], target),
-            ), relation_id=root)
-            for cell in relation.cells:
-                create[cell.id] = cell
-        stage_property(root, "field", "reason", meaning, read_only=True)
-        stage_property(root, "field", "reader", reader, read_only=True)
-
     snapshot_for_patch = _candidate_snapshot_for_atomic_commit(
         snapshot, create=tuple(create.values())
     )
@@ -20542,7 +20534,6 @@ def _ensure_system_tool_canvas_nodes(
         (canvas_root, missing(canvas_root, [
             *((roles["member"], root) for root in audience_tool_roots),
             *((roles["property"], root) for root in new_property_roots),
-            *((roles["relation"], root) for root in dependency_roots),
         ])),
         (visibility_root, missing(visibility_root,
             [(roles["visible"], root) for root in audience_tool_roots])),
@@ -25201,6 +25192,20 @@ def _project_universal_canvas_interpreter(
             ):
                 wire.pop(key, None)
 
+    # Replace legacy stored reader metadata in the lens, without migrating it.
+    wires = [wire for wire in wires
+             if not str(wire["id"]).startswith("app:relation:setting-reader:")]
+    for reader in _application_reader_relations(registry, node_index):
+        root = reader["id"]
+        wires.append({
+            **reader, "selected": root == selected_root,
+            "context": selected_root in (root, reader["source"], reader["target"]),
+            "source_interface": None, "target_interface": None,
+            "authority_roots": [], "color": "#5fb3b3", "width": 1.35,
+            "dash": "", "directed": True, "nary": False,
+            "segment": root, "role": None, "params": [],
+        })
+
     # System sockets describe the actual reader relation incidences, rather
     # than every imported Grand Map adjacency or generic engine interface.
     for node in nodes:
@@ -28377,6 +28382,25 @@ def project_universal_canvas(
                 if isinstance(node, dict) and _is_system_tool_canvas_root(str(node.get("id") or "")):
                     node["selected"] = False
     nodes = projection.get("nodes")
+    view, _context = _view_session_for_context(registry, authentication_context)
+    reader_selection = registry.reader_selections.get(view.root_id)
+    if reader_selection is not None:
+        revision, scope, selected = reader_selection
+        if (revision == projection["revision"] and scope == projection["scope"]["current"]
+                and any(wire["id"] == selected for wire in projection["wires"])):
+            # Do not mutate an accelerator's cached canonical answer.
+            projection = copy.deepcopy(projection)
+            nodes = projection["nodes"]
+            projection["selected"] = selected
+            projection["selection"] = [selected]
+            projection["properties"] = []
+            for node in nodes:
+                node["selected"] = False
+            for wire in projection["wires"]:
+                wire["selected"] = wire["id"] == selected
+                wire["context"] = wire["selected"]
+        else:
+            registry.reader_selections.pop(view.root_id, None)
     if isinstance(nodes, list):
         judged = [
             node for node in nodes
@@ -37267,6 +37291,16 @@ def _workshop_board_property_root(owner_root: str, key: str) -> tuple[str, str]:
     return "app:property:%s" % token, "app:value:%s" % token
 
 
+def _workshop_board_override_active(snapshot, registry, relation_root):
+    # Legacy values were indexed by the canvas. New values belong to the
+    # Workshop owner; undo removes that membership without deleting history.
+    for owner in (_system_tool_canvas_root("tool_workshop"), registry.canvas_root):
+        if any(member.role_id == registry.roles["property"] and member.participant_id == relation_root
+               for member in read_relation(snapshot, owner, budget=100_000)):
+            return True
+    return False
+
+
 def _workshop_board_int_param(
     snapshot: Snapshot,
     registry: UniversalApplicationRegistry,
@@ -37278,7 +37312,7 @@ def _workshop_board_int_param(
 ) -> int:
     owner_root = _system_tool_canvas_root("tool_workshop")
     relation_root, _value_root = _workshop_board_property_root(owner_root, key)
-    if relation_root not in snapshot.cells:
+    if relation_root not in snapshot.cells or not _workshop_board_override_active(snapshot, registry, relation_root):
         return default
     members = read_relation(snapshot, relation_root, budget=16)
     value_root = _one_for_role(members, registry.roles["value"])
@@ -37301,13 +37335,30 @@ def _set_workshop_board_int_param(
     *,
     lower: int,
     upper: int,
+    view_session: ApplicationViewSession | None = None,
+    authentication_context: object | None = None,
+    mutation_route: str = "/api/universal/interaction",
 ) -> None:
     if type(value) is not int or not lower <= value <= upper:
         raise InvalidCell("Workshop board parameter is invalid")
     snapshot = store.snapshot()
     owner_root = _system_tool_canvas_root("tool_workshop")
     relation_root, value_root = _workshop_board_property_root(owner_root, key)
-    if relation_root in snapshot.cells:
+    active = relation_root in snapshot.cells and _workshop_board_override_active(snapshot, registry, relation_root)
+    if not active and value == _application_setting_default(key):
+        return
+    if active:
+        if snapshot.cells[value_root].atom == _atom(value):
+            return
+        if view_session is not None:
+            current = snapshot.cells[value_root]
+            _commit_universal_user_change(
+                store, registry, view_session, authentication_context, snapshot,
+                route=mutation_route, command_name="catalog.configure",
+                authorization_scope_root=owner_root,
+                replace=(Cell(current.id, current.link0, current.link1, _atom(value)),),
+            )
+            return
         set_property_atom(
             store,
             relation_root,
@@ -37316,28 +37367,36 @@ def _set_workshop_board_int_param(
         )
         return
     label_root = "app:label:%s" % _part(key)
-    create = [
-        Cell(value_root, NULL_CELL_ID, NULL_CELL_ID, _atom(value)),
-    ]
-    if label_root not in snapshot.cells:
-        create.append(Cell(label_root, NULL_CELL_ID, NULL_CELL_ID, _atom(key)))
-    relation = compose_relation_cells((
-        (registry.roles["owner"], owner_root),
-        (registry.roles["value"], value_root),
-        (registry.roles["label"], label_root),
-    ), relation_id=relation_root)
-    create.extend(relation.cells)
+    create = []
+    replace = []
+    if relation_root not in snapshot.cells:
+        create.append(Cell(value_root, NULL_CELL_ID, NULL_CELL_ID, _atom(value)))
+        if label_root not in snapshot.cells:
+            create.append(Cell(label_root, NULL_CELL_ID, NULL_CELL_ID, _atom(key)))
+        relation = compose_relation_cells((
+            (registry.roles["owner"], owner_root),
+            (registry.roles["value"], value_root),
+            (registry.roles["label"], label_root),
+        ), relation_id=relation_root)
+        create.extend(relation.cells)
+    elif snapshot.cells[value_root].atom != _atom(value):
+        current = snapshot.cells[value_root]
+        replace.append(Cell(current.id, current.link0, current.link1, _atom(value)))
     patch = prepare_append_relation_members(
-        snapshot,
-        registry.canvas_root,
-        ((registry.roles["property"], relation_root),),
-        budget=100_000,
+        snapshot, owner_root, ((registry.roles["property"], relation_root),), budget=100_000,
     )
-    store.commit(
-        snapshot.revision,
-        create=(*create, *patch.create),
-        replace=patch.replace,
-    )
+    create.extend(patch.create)
+    replace.extend(patch.replace)
+    # Settings are read by their stable owner IDs. Adding them to the canvas
+    # schema would make restore publish new interfaces on the next open.
+    if view_session is not None:
+        _commit_universal_user_change(
+            store, registry, view_session, authentication_context, snapshot,
+            route=mutation_route, command_name="catalog.configure",
+            authorization_scope_root=owner_root, create=create, replace=replace,
+        )
+    else:
+        store.commit(snapshot.revision, create=create, replace=replace)
 
 
 def _workshop_board_stale_claim_after_idle_minutes(
@@ -50357,6 +50416,15 @@ def ensure_universal_property_interactions(
     for row in projected_properties:
         if not isinstance(row, Mapping):
             continue
+        setting = row.get("setting", {})
+        key = setting.get("key")
+        workshop_root = _system_tool_canvas_root("tool_workshop")
+        if (setting.get("kind") == "property" and key in _APPLICATION_SETTING_SPECS
+                and row.get("owner") == workshop_root
+                and row.get("relation") == _workshop_board_property_root(workshop_root, key)[0]):
+            # Code-defined settings use the existing owner route, whether or
+            # not an override exists. Reading must never seed bindings.
+            continue
         if row.get("setting", {}).get("kind") in {"theme", "baboom", "generation", "composer-model", "mod-enabled", "mod-param", "host-enabled", "cloud-consent"}:
             # These are views of the existing appearance/model interactions,
             # not additional writable property relations.
@@ -52504,6 +52572,26 @@ def edit_universal_property(
     view_session, context = _view_session_for_context(
         registry, authentication_context
     )
+    owner = _system_tool_canvas_root("tool_workshop")
+    for key, (_editor, constraints) in _APPLICATION_SETTING_SPECS.items():
+        relation, value_root = _workshop_board_property_root(owner, key)
+        if relation_root != relation:
+            continue
+        _require_workshop_board_edit_admission(snapshot, registry, context)
+        visible, _relations, _properties = _session_canvas_roots(snapshot, registry, view_session)
+        if owner not in visible:
+            raise InvalidCell("property relation is outside the application lens")
+        try:
+            number = int(value)
+        except ValueError as exc:
+            raise InvalidCell("Workshop setting must be an integer") from exc
+        if str(number) != value.strip() or not constraints["min"] <= number <= constraints["max"]:
+            raise InvalidCell("Workshop setting is outside its bound")
+        _set_workshop_board_int_param(
+            store, registry, key, number, lower=constraints["min"], upper=constraints["max"],
+            view_session=view_session, authentication_context=context, mutation_route=mutation_route,
+        )
+        return value_root
     encoded = value.encode("utf-8")
     _authorize(
         snapshot,
@@ -52522,14 +52610,6 @@ def edit_universal_property(
     label_root = _one_for_role(members, registry.roles["label"])
     owner_root = _one_for_role(members, registry.roles["owner"])
     label = _text(snapshot, label_root) if label_root is not None else ""
-    if owner_root == _system_tool_canvas_root("tool_workshop") and label in _APPLICATION_SETTING_SPECS:
-        constraints = _APPLICATION_SETTING_SPECS[label][1]
-        try:
-            number = int(value)
-        except ValueError as exc:
-            raise InvalidCell("Workshop setting must be an integer") from exc
-        if str(number) != value.strip() or not constraints["min"] <= number <= constraints["max"]:
-            raise InvalidCell("Workshop setting is outside its bound")
     if label_root is not None and _text(snapshot, label_root) == "color":
         raise InvalidCell(
             "presentation color requires a personal WIP binding"
@@ -56447,6 +56527,17 @@ def apply_universal_canvas_gesture(
         # the relations this view holds and then only the nodes were checked,
         # so clicking a wire to select it answered 400 and the canvas simply
         # never selected one.
+        derived_readers = {row["id"] for row in _application_reader_relations(registry, visible_roots)}
+        if len(ordered) == 1 and ordered[0] in derived_readers:
+            if positions or viewport or focus_root not in (None, ordered[0]):
+                raise InvalidCell("application reader inspection cannot carry an edit")
+            if expected_scope is not None and expected_scope != scope_trail[-1]:
+                raise InvalidCell("canvas scope changed before reader inspection")
+            registry.reader_selections[view_session.root_id] = (
+                snapshot.revision, scope_trail[-1], ordered[0],
+            )
+            return snapshot.revision
+        registry.reader_selections.pop(view_session.root_id, None)
         visible = set(visible_roots) | set(relation_roots)
         if any(root_id not in visible for root_id in ordered):
             outside = [root for root in ordered if root not in visible]
@@ -56716,6 +56807,8 @@ def rewire_universal_connection(
     mutation_route: str = "/api/universal/interaction",
     authentication_context: object | None = None,
 ) -> int:
+    if str(incidence_id).startswith("app:relation:setting-reader:"):
+        raise InvalidCell("application reader relations describe code reads and cannot be rewired or disconnected")
     if type(mutation_route) is not str or not mutation_route.startswith("/"):
         raise InvalidCell("connection mutation route must be an absolute path")
     snapshot = store.dense_snapshot()

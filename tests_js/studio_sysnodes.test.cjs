@@ -67,7 +67,7 @@ async function mountSystem({projection=projectionFixture(),settings=true}={}) {
       const graph=win.eval('projectStudioCanvas(window.__rawCanvas)');projection={canvas:projection,graph};
     }
   }
-  const calls = {writes:[],opens:[],provider:[]};
+  const calls = {writes:[],opens:[],provider:[],propertyRoutes:[]};
   win.fetch = async url => ({ok:true,json:async()=>String(url).includes('/models')?{models:[]}: {ok:true}});
   win.ARCHHUB_THEME = {...seed};
   win.matchMedia = () => ({matches:false,addEventListener(){},removeEventListener(){}});
@@ -83,7 +83,7 @@ async function mountSystem({projection=projectionFixture(),settings=true}={}) {
     getSnapshot:snapshot,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn)},moveMany:async()=>({ok:true}),
     open:async id=>{calls.opens.push(id);return {ok:true,...projection}},
   };
-  win.ARCHHUB_SET_NODE_PROP = async(id,key,value)=>{
+  const persistOwnerProperty = async(id,key,value)=>{
     calls.writes.push({id,key,value});
     const row=projection.graph.nodes.find(n=>n.id===id)?.params?.find(p=>p.k===key);
     if(!row) throw new Error('no real setting '+id+':'+key);
@@ -91,6 +91,14 @@ async function mountSystem({projection=projectionFixture(),settings=true}={}) {
     projection.graph={...projection.graph,nodes:projection.graph.nodes.map(n=>n.id===id?{...n,params:n.params.map(p=>({...p}))}:n)};
     if(key==='accent') { win.ARCHHUB_THEME.accent=value;settingsState={...settingsState,configuration:{...settingsState.configuration,theme:{...settingsState.configuration.theme,accent:value}}};win.ArchHubTheme.apply(settingsState.configuration.theme); }
     listeners.forEach(fn=>fn());return {ok:true};
+  };
+  win.ARCHHUB_SET_NODE_PROP = persistOwnerProperty;
+  win.ARCHHUB_SET_PROP = async(relation,value)=>{
+    calls.propertyRoutes.push({relation,value});
+    const node=projection.graph.nodes.find(n=>(n.params||[]).some(p=>p.rel===relation));
+    const row=node?.params.find(p=>p.rel===relation);
+    assert.ok(row,'set-property resolves the projected owner relation');
+    return persistOwnerProperty(node.id,row.k,row.type==='number'?Number(value):value);
   };
   win.ARCHHUB_EXISTING_WORKSHOP.previewThemeToken=async(key,value)=>{
     const n=projection.graph.nodes.find(n=>(n.params||[]).some(p=>p.k===key || p.setting?.kind==='theme'&&p.setting.key===key));
@@ -164,6 +172,23 @@ async function mountSystem({projection=projectionFixture(),settings=true}={}) {
 }
 
 if(require.main===module) {
+test('SYSNODES2: default Workshop Properties uses its owner relation before any value cell exists',async()=>{
+  const relation='app:property:workshop-default-stale';
+  const projection={canvas:{graph_id:'app',application_root:'app',root:'app',revision:7,authorization:{system_view:true}},graph:{nodes:[
+    {id:'sys_workshop',application:true,live:true,title:'Workshop',group:'AI',cat:'logic',x:20,y:40,w:280,
+      params:[{k:'stale_claim_after_idle_minutes',label:'Stale claim',v:30,type:'number',rel:relation,
+        value_root:'not-materialized',cell_id:null,editable:true,setting:{kind:'property',key:'stale_claim_after_idle_minutes'}}]},
+  ],wires:[]}};
+  const s=await mountSystem({projection});try{
+    s.win.ARCHHUB_SET_NODE_PROP=()=>{throw Error('application setting must use its owner route');};
+    await s.select('sys_workshop');
+    const input=s.doc.querySelector('aside [data-sysnode-param="stale_claim_after_idle_minutes"] input');
+    await s.change(input,17,'input');
+    assert.deepEqual(s.calls.propertyRoutes,[{relation,value:'17'}]);
+    assert.equal(s.projection.graph.nodes[0].params[0].v,17);
+    assert.equal(s.doc.querySelector('aside [role=alert]'),null);
+  }finally{s.close();}
+});
 test('SYSNODES: editing generation preserves the canonical model route over a stale header cache',async()=>{
   const s=await mountSystem();try{
     delete s.win.ARCHHUB_MODEL_DEFAULTS_SAVE;

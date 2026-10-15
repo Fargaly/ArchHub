@@ -319,7 +319,10 @@ async function pmPersistValue(node, key, value) {
     const owner = window.ARCHHUB_EXISTING_WORKSHOP;
     const setting = row.setting;
     let saved;
-    if (setting.kind === 'theme') {
+    if (setting.kind === 'property') {
+      if (!row.rel || !window.ARCHHUB_SET_PROP) throw new Error('This setting has no available save binding.');
+      saved = await window.ARCHHUB_SET_PROP(row.rel, String(value));
+    } else if (setting.kind === 'theme') {
       if (!owner?.previewThemeToken) throw new Error('Theme settings are unavailable.');
       saved = await owner.previewThemeToken(setting.key, value);
     } else if (setting.kind === 'baboom') {

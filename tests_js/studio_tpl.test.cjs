@@ -68,7 +68,8 @@ test('real runs outrank frequency while frequency breaks zero and tied counts',a
  }finally{ui.close();}
 });
 
-test('fresh Home render beside the 082 plate',async()=>{
+const plate082=path.join(root,'design/ARCHHUB-CLD-DES-DSYS-082-2026-10-13_5.6b_home2.png');
+test('fresh Home render beside the 082 plate',{skip:!fs.existsSync(plate082) && 'the 082 plate image lives in the design handoff, not in the repo'},async()=>{
  const ui=await mountStudio({templates:fresh(),hosts:[],snapshot:{nativeWork:null}});
  let browser;
  try{

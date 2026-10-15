@@ -169,7 +169,8 @@ async function mountStudio(options = {}) {
   win.alert = message => calls.alerts.push(String(message));
   win.eval(read('nodelang/studio/studio-existing-workshop.js'));
   win.ARCHHUB_EXISTING_WORKSHOP = win.ArchHubExistingWorkshop.create({
-    get:async () => {
+    get:async url => {
+      if (url === '/api/universal/node-library?templates=1') return {ok:true,templates:[]};
       calls.canvas += 1;
       if (deferredCanvasRead) {
         const held = deferredCanvasRead;
@@ -293,9 +294,18 @@ function openWorkshopFromHub(studio) {
 }
 
 function assertHomeView(studio, detail) {
-  assert.ok(studio.button('+ new graph'), detail + ': Home create button is visible');
+  assert.ok(studio.doc.querySelector('[data-home-design="082"]'), detail + ': replacement Home is visible');
   assert.equal(studio.doc.querySelectorAll('[role="region"][aria-label="Workflow canvas"]').length, 0,
     detail + ': canvas is not visible');
+}
+
+function graphButton(studio, title) {
+  if (studio.doc.querySelector('[data-app-rail] [data-rail-panel="Chats"]')?.getAttribute('aria-current') !== 'true') {
+    studio.click(studio.doc.querySelector('[data-app-rail] [data-rail-panel="Chats"]'));
+  }
+  const found = [...studio.doc.querySelectorAll('[data-left-panel] button')].find(node => node.textContent.includes(title));
+  assert.ok(found, 'Chats exposes the authenticated graph: ' + title);
+  return found;
 }
 
 function showCanvas(studio) {
@@ -327,7 +337,7 @@ test('opening a session from Home applies the graph-open receipt in place: one c
     openHome(studio);
     await studio.settle();
     studio.calls.canvas = 0;
-    studio.click([...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Graph Beta')));
+    studio.click(graphButton(studio, 'Graph Beta'));
     await studio.settle();
     showCanvas(studio);
     await studio.settle();
@@ -346,7 +356,7 @@ test('opening a session from the Home rail applies the receipt; the chat compose
     studio.click(studio.byTitle('All sessions'));
     await studio.settle();
     studio.calls.canvas = 0;
-    studio.click([...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Graph Beta')));
+    studio.click(graphButton(studio, 'Graph Beta'));
     await studio.settle();
     showChat(studio);
     await studio.settle();
@@ -363,18 +373,12 @@ test('creating a new session opens the graph-create receipt in place without rel
   const studio = await mountStudio();
   try {
     await studio.settle();
-    openHome(studio);
-    await studio.settle();
-    studio.click(studio.button('+ new graph'));
-    const input = studio.doc.querySelector('input[aria-label="New graph name"]');
-    const set = Object.getOwnPropertyDescriptor(studio.win.HTMLInputElement.prototype, 'value').set;
-    studio.win.ReactDOM.flushSync(() => { set.call(input, 'Created Graph'); input.dispatchEvent(new studio.win.Event('input', {bubbles:true})); });
     studio.calls.canvas = 0;
-    studio.click(studio.button('Create'));
+    studio.click(studio.byTitle('New session'));
     await studio.settle();
     showCanvas(studio);
     await studio.settle();
-    assert.deepEqual(studio.calls.create, ['Created Graph']);
+    assert.deepEqual(studio.calls.create, ['New session']);
     assert.deepEqual(studio.calls.open, [], 'create receipt is not re-posted as graph-open');
     assert.equal(studio.calls.canvas, 1, 'one in-place canvas re-read after create');
     assert.equal(studio.navigationErrors.length, 0, 'no reload/assign/replace navigation');
@@ -483,24 +487,20 @@ test('New session create cannot overwrite Home after the create canvas refresh r
   } finally { studio.close(); }
 });
 
-test('Home create form cannot overwrite a session opened before graph-create resolves', async () => {
+test('Workspace graph creation cannot overwrite a session opened through Chats before graph-create resolves', async () => {
   const createGate = deferred();
   const studio = await mountStudio({createDeferred:createGate});
   try {
     await studio.settle();
-    openHome(studio);
+    studio.click(studio.byTitle('New session'));
     await studio.settle();
-    studio.click(studio.button('+ new graph'));
-    studio.type(studio.doc.querySelector('input[aria-label="New graph name"]'), 'Created Graph');
-    studio.click(studio.button('Create'));
-    await studio.settle();
-    studio.click([...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Graph Beta')));
+    studio.click(graphButton(studio, 'Graph Beta'));
     await studio.settle();
     createGate.resolve();
     await studio.settle();
     await studio.settle();
     showCanvas(studio);
-    assert.deepEqual(studio.calls.create, ['Created Graph'], 'Home create posts exactly once');
+    assert.deepEqual(studio.calls.create, ['New session'], 'Workspace create posts exactly once');
     assert.deepEqual(studio.calls.open, ['graph-b'], 'the clicked session is opened once');
     assert.match(studio.doc.body.textContent, /Graph Beta/);
     assert.match(studio.doc.body.textContent, /Beta node/);
@@ -515,7 +515,7 @@ test('Workshop tool wins over an earlier pending session open', async () => {
     await studio.settle();
     openHome(studio);
     await studio.settle();
-    studio.click([...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Graph Beta')));
+    studio.click(graphButton(studio, 'Graph Beta'));
     await studio.settle();
     openWorkshopFromHub(studio);
     await studio.settle();
@@ -540,9 +540,9 @@ test('a stale rejected graph open cannot clear a later successful graph open', a
     await studio.settle();
     openHome(studio);
     await studio.settle();
-    studio.click([...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Graph Alpha')));
+    studio.click(graphButton(studio, 'Graph Alpha'));
     await studio.settle();
-    studio.click([...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Graph Beta')));
+    studio.click(graphButton(studio, 'Graph Beta'));
     await studio.settle();
     showCanvas(studio);
     assert.match(studio.doc.body.textContent, /Graph Beta/);
@@ -562,7 +562,7 @@ test('a stale rejected graph open cannot clear Workshop', async () => {
     await studio.settle();
     openHome(studio);
     await studio.settle();
-    studio.click([...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Graph Beta')));
+    studio.click(graphButton(studio, 'Graph Beta'));
     await studio.settle();
     openWorkshopFromHub(studio);
     await studio.settle();
@@ -633,7 +633,7 @@ test('a failed canvas re-read after graph-open shows refresh control and does no
     await studio.settle();
     studio.failNextRead();
     studio.calls.canvas = 0;
-    studio.click([...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Graph Beta')));
+    studio.click(graphButton(studio, 'Graph Beta'));
     await studio.settle();
     assert.deepEqual(studio.calls.open, ['graph-b']);
     assert.equal(studio.calls.canvas, 1, 'one re-read attempt, never retried');
@@ -812,7 +812,7 @@ test('Studio header has no Chat Workshop System tabs, selection resets per sessi
     assert.match(studio.doc.querySelector('aside[aria-label="Selection inspector"]').textContent, /Alpha node/);
     openHome(studio);
     await studio.settle();
-    studio.click([...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Graph Beta')));
+    studio.click(graphButton(studio, 'Graph Beta'));
     await studio.settle();
     showCanvas(studio);
     await studio.settle();
@@ -834,7 +834,7 @@ test('leaving Workshop through Studio, session reopen, or New session restores c
     assert.ok(studio.doc.querySelector('[data-workshop-s1]'), 'Workshop is open');
 
     openHome(studio);
-    studio.click([...studio.doc.querySelectorAll('button')].find(node => node.textContent.includes('Graph Alpha')));
+    studio.click(graphButton(studio, 'Graph Alpha'));
     await studio.settle();
     assertCanvasSelectionOnly(studio, 'same session reopen from Workshop');
 

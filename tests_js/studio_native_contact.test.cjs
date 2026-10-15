@@ -30,7 +30,7 @@ const transcript = () => ({graph_id:'graph-a', root:'workshop-a', scope_root:'sc
   owner:'owner-a', view:'view-a', self:'owner-a', can_send:true, can_join:false, messages:[],
   participants:[{root:'owner-a', label:'Owner', attached:true}]});
 const selection = {app:'claude', session_id:'native-a'};
-const contact = {root:'contact-a', binding_digest:'a'.repeat(64), connected:true};
+const contact = {root:'contact-a', label:'Existing session', binding_digest:'a'.repeat(64), connected:true};
 const discovered = () => ({status:'ok', revision:4,
   workshop:{root:'workshop-a', scope:'scope-a', scope_path:['brain-a', 'scope-a']},
   rows:[{kind:'native-agent', app:'claude', session_id:'native-a', title:'Claude', connected:true,

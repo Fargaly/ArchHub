@@ -161,3 +161,9 @@ Status legend:
 - **claim**: `dafbde1` reports a retired payload as expired, never as null.
 - **gap**: the same verifier caught it. GET reported `payload_expired` for every record that failed the owner/entry/space/category check, as well as for a missing one. A record PRESENT under the key but bound to someone else is a broken bond, not retention, and calling it expiry hides it.
 - **resolution**: one identity check (`_deliberation_record_names`) serves the writer and the reader. Missing reads `payload_expired`; present-but-foreign reads `payload_integrity_failed`, and a replay against it is refused as an integrity failure, not as "reused". Court: `...::test_a_record_naming_another_entry_is_an_integrity_failure_not_expired` (red on `dafbde1`). **CLASS-OF-FAILURE: one "else" branch for two different failures; name each state the reader can actually be in.**
+
+### 2026-10-15 · HOME3 diagnostic court handoff overlap
+- **status**: closed
+- **claim**: diagnostic source UI and template rerun were scheduled as sequential work.
+- **gap**: crossing slot-release messages admitted both into the shared run-heavy queue, which permits two slots. No worker was stopped or replayed.
+- **resolution**: root owns every subsequent slot grant; final artifact courts run sequentially. Diagnostic source runs are not final-build evidence. See RESULT-HOME3.md and evidence/HOME3-source-navigation.txt.

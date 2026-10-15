@@ -64,7 +64,7 @@ _DRAFT_KEY = "workflow-draft:"
 _REVIEW_KEY = "artifact-review:"
 # Presentation the engines ignore; every other property is behavior and is approved.
 _LAYOUT = frozenset({"position_x", "position_y", "color"})
-_NOT_BEHAVIOR = _LAYOUT | {"status", "seed"}
+_NOT_BEHAVIOR = _LAYOUT | {"status", "seed", "template_runs"}
 _VERDICT = re.compile(r"^\s*VERDICT:\s*(pass|fail)\b", re.I)
 _ARTIFACT_LIMIT = 5000
 _LOG = logging.getLogger(__name__)
@@ -301,12 +301,17 @@ def workflow_state(owner, browser, root, anchor, *, projection=None):
         scope_path = workbench_path                              # the workbench, reachable by its catalog walk
     else:
         scope_path = None
+    package = None
+    package_nodes = [node for node in nodes if node["engine"] == "library.publish_package"]
+    if len(package_nodes) == 1:
+        from .nodeslib_v2_engines import package_preview
+        package = package_preview({name: row["value"] for name, row in package_nodes[0]["params"].items()})
     return {"root": anchor, "title": value.get("title") or "Workflow", "conversation": root,
             "members": members, "nodes": nodes, "wires": len(wires),
             # The workflow's own wiring (source, target) so the Workshop graph draws it, not the canvas.
             "edges": [[wire[0], wire[2]] for wire in wires], "digest": digest,
             "reason": reason, "approval": approval, "proposed_by": value.get("proposed_by"),
-            "source_message": value.get("source_message"),
+            "source_message": value.get("source_message"), "package": package,
             # The draft scope and the verified walk to it (None when it cannot be reached).
             "scope": workflow_scope, "scope_path": scope_path}
 
@@ -651,10 +656,20 @@ def execute_workflow(owner, browser, body, *, browser_guard):
                    **_bound_engines(owner, browser, root=root, scope=scope, anchor=anchor, digest=digest,
                                     guard=browser_guard, history=history, principal=principal,
                                     read_all=read_all, space=space)}
+        publications = []
+        package_engine = engines.get("library.publish_package")
+        if package_engine is not None:
+            def publish_package(params, feeds):
+                outputs, display = package_engine(params, feeds)
+                publications.append({"receipt": outputs["receipt"], "files": outputs["out"],
+                                     "destination": outputs["folder"]})
+                return outputs, display
+            engines["library.publish_package"] = publish_package
         result = run_universal_pipeline(store, registry, effect_engines=engines,
             authentication_context=browser.context, only_roots=state["members"])
+        publication = publications[0] if len(publications) == 1 else None
         record = {"kind": "workshop-workflow-run", "version": 1, "workflow": anchor, "approval": digest,
-                  "display": result["display"], "pending": result["pending"]}
+                  "display": result["display"], "pending": result["pending"], "publication": publication}
         encoded = json.dumps(record, sort_keys=True, separators=(",", ":"))[:7000]
         try:
             _append(owner, browser, root, space, encoded,
@@ -664,7 +679,8 @@ def execute_workflow(owner, browser, body, *, browser_guard):
             if str(exc) != "idempotency conflict":
                 raise
         return {"ok": True, "workflow": anchor, "approval": digest, "ran": result["ran"],
-                "display": result["display"], "pending": result["pending"], "revision": store.revision}
+                "display": result["display"], "pending": result["pending"], "publication": publication,
+                "revision": store.revision}
 
 
 def _bound_engines(owner, browser, *, root, scope, anchor, digest, guard, history, principal, read_all, space):

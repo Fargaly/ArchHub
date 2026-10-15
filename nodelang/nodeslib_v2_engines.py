@@ -407,6 +407,93 @@ def schedule_to_excel(params: Mapping[str, object], feeds: Mapping[str, object])
     return write_table_file({"path": str(path), "format": "xlsx", "grant": params.get("grant")}, {"rows": rows})
 
 
+def _package_request(params):
+    """The reviewed file set, read lazily; no files or thumbnails are invented."""
+    path = _local_output_path(params.get("path"), label="package path")
+    if path.is_symlink():
+        raise ValueError("package destination cannot be a symbolic link")
+    path = path.resolve()
+    if path.parent.name != "03.PUBLISHED":
+        raise ValueError("package path must be directly inside 03.PUBLISHED")
+    raw = params.get("sheets")
+    try:
+        sheets = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError as exc:
+        raise ValueError("package sheets must be a JSON list") from exc
+    if not isinstance(sheets, list) or not 1 <= len(sheets) <= 256:
+        raise ValueError("package requires 1 to 256 reviewed sheets")
+    checked, names = [], set()
+    for sheet in sheets:
+        if not isinstance(sheet, Mapping):
+            raise ValueError("package sheet must name a real file and digest")
+        name = sheet.get("name")
+        if (not isinstance(name, str) or not name or name in (".", "..")
+                or any(char in name for char in '/\\:') or name.casefold() in names):
+            raise ValueError("package sheet filename is invalid or duplicated")
+        names.add(name.casefold())
+        source = _local_output_path(sheet.get("path"), label="sheet source")
+        if source.is_symlink():
+            raise ValueError("package sheet source cannot be a symbolic link")
+        source = source.resolve()
+        digest = sheet.get("digest")
+        if not source.is_file():
+            raise ValueError("package sheet source is unavailable")
+        with source.open("rb") as stream:
+            actual = hashlib.file_digest(stream, "sha256").hexdigest()
+        if digest != actual:
+            raise ValueError("package sheet changed since review")
+        checked.append({"id": str(sheet.get("id") or name), "name": name,
+                        "path": str(source), "digest": digest})
+    return {"path": str(path), "sheets": checked}
+
+
+def package_preview(params):
+    """Project only a currently readable reviewed package from graph parameters."""
+    try:
+        request = _package_request(params)
+    except (ValueError, OSError):
+        return None
+    raw = params.get("sheets")
+    raw = json.loads(raw) if isinstance(raw, str) else raw
+    for sheet, source in zip(request["sheets"], raw):
+        # Thumbnail URLs belong to the producer; absence stays visibly unavailable.
+        thumbnail = source.get("thumbnail_url")
+        if isinstance(thumbnail, str) and thumbnail.startswith(("/", "data:image/")):
+            sheet["thumbnail_url"] = thumbnail
+    return {"destination": request["path"], "sheets": request["sheets"], "available": True}
+
+
+def publish_package(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Issue reviewed files through the SAME signed-grant verifier and file broker."""
+    params = _params_with_wired_grant(params, feeds)
+    request = _package_request(params)
+    path = Path(request["path"])
+    if path.exists():
+        raise ValueError("package is already published; issued files cannot be overwritten")
+    grant = params.get("file_grant") or params.get("grant") or params.get("permit")
+    if isinstance(grant, str):
+        try:
+            grant = json.loads(grant)
+        except ValueError as exc:
+            raise ValueError("package file grant must be JSON") from exc
+    verified = _require_file_grant({**params, "file_grant": grant},
+        operation="write_file", input_digest=_digest_payload(request))
+    if _FILE_WRITE_BROKER is None:
+        raise ValueError("governed file writer is not bound")
+    answer = _confirmed_write(_FILE_WRITE_BROKER({**request, "operation": "write_file",
+        "format": "package", "grant": verified, "input_digest": _digest_payload(request)}), "write_file")
+    files = []
+    for sheet in request["sheets"]:
+        published = path / sheet["name"]
+        if published.is_symlink() or not published.is_file():
+            raise ValueError("published sheet is unavailable; reconcile the broker receipt")
+        with published.open("rb") as stream:
+            if hashlib.file_digest(stream, "sha256").hexdigest() != sheet["digest"]:
+                raise ValueError("published sheet digest differs; reconcile the broker receipt")
+        files.append(str(published))
+    return {"out": files, "folder": str(path), "receipt": answer["receipt"]}, "%d sheets published" % len(files)
+
+
 def revit_export(params: Mapping[str, object], feeds: Mapping[str, object]):
     fmt = _text(params, "format", "dwg").casefold()
     if fmt not in ("dwg", "ifc"):

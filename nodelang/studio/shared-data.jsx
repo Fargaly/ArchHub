@@ -589,19 +589,22 @@ window.ARCHHUB_APPROVAL_REVIEW_ROWS = approval => {
 // DSYS-076/077: every approval surface uses this one thin view; callers retain
 // the existing producer's reviewed identity, decision route and receipt handling.
 window.ARCHHUB_APPROVAL_CARD = function ApprovalCard({approval = {}, onApprove, onDecline,
-    canApprove = true, canDecline = true, busy = false, surface = 'workshop', approveLabel = 'Approve', accent = true}) {
+    canApprove = true, canDecline = true, busy = false, surface = 'workshop', approveLabel = 'Approve', accent = true, variant}) {
   const A = window.AH;
   const [pending,setPending] = React.useState(false);
   const [error,setError] = React.useState('');
   const [expandedKey,setExpandedKey] = React.useState(null);
+  const [sheetsOpen,setSheetsOpen] = React.useState(false);
+  const [receiptLabel,setReceiptLabel] = React.useState('');
   const held = React.useRef({key:null,active:false,settled:false});
-  const key = [approval.id || approval.root,approval.input_digest || approval.digest || '',approval.state].join(':');
+  const key = [approval.id || approval.root,approval.input_digest || approval.digest || approval.workflow?.digest || '',approval.state].join(':');
   if (held.current.key !== key) held.current = {key,active:false,settled:false};
   const needsUser = approval.state === 'needs-user';
   const decide = async (callback,available) => {
     if (busy || !available || !callback || held.current.active || held.current.settled) return;
     held.current.active = true; setPending(true); setError('');
-    try { await callback(); held.current.settled = true; }
+    try { const result = await callback(); held.current.settled = true;
+      setError(result?.warning || ''); setReceiptLabel(result?.warning ? 'Approval recorded' : 'Issued'); }
     catch (failure) { setError(failure?.message || 'Decision could not be confirmed.'); }
     finally { held.current.active = false; setPending(false); }
   };
@@ -624,6 +627,26 @@ window.ARCHHUB_APPROVAL_CARD = function ApprovalCard({approval = {}, onApprove, 
   const subline = [surface === 'workshop' ? '' : approval.agent?.name || approval.agent_label || (typeof approval.agent === 'string' ? approval.agent : ''),
     approval.host,approval.document || approval.target,approval.scope,
     approval.unchanged_scope === true ? 'nothing else changes' : ''].filter(Boolean).join(' · ');
+  if (variant === 'set-approve') return <section data-approval-component="shared" data-approval-variant="set-approve"
+      data-approval-surface={surface} data-workshop-approval-card={approval.id || ''} data-approval-state={approval.state}
+      style={{borderRadius:14,background:'linear-gradient(180deg, #202027 0%, #1a1a20 100%)',
+        boxShadow:needsUser ? `0 0 0 1px ${A.warn}, 0 0 0 4px ${A.warn}22, 0 8px 28px rgba(0,0,0,.5)` : A.elev?.e1,
+        padding:18,display:'grid',gap:14,minWidth:0}}>
+    <header style={{display:'flex',alignItems:'center',gap:12}}>
+      {approval.agent_label && <span style={{width:34,height:34,borderRadius:9,display:'grid',placeItems:'center',background:A.accent,color:'#fff',fontSize:15,fontWeight:700,flex:'none'}}>{Array.from(approval.agent_label)[0]}</span>}
+      <div style={{flex:1,minWidth:0}}><div style={{fontSize:17,fontWeight:700}}>{approval.title}</div>
+        <div style={{fontSize:13,color:A.inkSoft,marginTop:2}}>{approval.package?.sheets?.length || 0} sheets{subline ? ' · '+subline : ''}</div></div>
+      <span style={{height:24,padding:'0 9px',borderRadius:999,background:`${A.warn}1f`,color:A.warn,fontSize:12,fontWeight:600,display:'inline-flex',alignItems:'center'}}>{held.current.settled ? receiptLabel : 'Needs your OK'}</span>
+    </header>
+    <window.ARCHHUB_PACKAGE_SHEETS sheets={approval.package?.sheets || []} compact/>
+    <div style={{fontSize:13,color:A.inkSoft,overflowWrap:'anywhere'}}>Package → {approval.package?.destination || 'Destination unavailable'}</div>
+    <div style={{display:'flex',gap:8}}><button type="button" data-workshop-primary="approve" title="Approve and issue · Ctrl+K" disabled={busy || pending || held.current.settled || !canApprove || !onApprove || !approval.package?.available}
+      onClick={()=>decide(onApprove,canApprove)} style={button(true)}>{held.current.settled ? receiptLabel : pending ? 'Issuing…' : approveLabel}</button>
+      <button type="button" data-approval-open-sheets="" title="Open sheets · Ctrl+K" aria-expanded={sheetsOpen} onClick={()=>setSheetsOpen(!sheetsOpen)} style={button(false)}>Open sheets</button></div>
+    {sheetsOpen && <div data-watch-preview="" data-package-watcher=""><div role="tablist" aria-label="Package Watcher"><button type="button" role="tab" aria-selected="true" style={button(false)}>PDF sheets</button></div>
+      <div role="tabpanel" aria-label="PDF sheets" style={{paddingTop:12}}><window.ARCHHUB_PACKAGE_SHEETS sheets={approval.package?.sheets || []}/></div></div>}
+    {error && <div role="alert" style={{fontSize:13,color:A.err}}>{error}</div>}
+  </section>;
   return <section tabIndex={-1} data-approval-component="shared" data-approval-surface={surface}
       data-workshop-approval-card={approval.id || approval.root || ''} data-workshop-approval-kind={approval.kind || previewKind || ''}
       data-approval-state={approval.state || 'unavailable'} style={{borderRadius:14,background:A.surf2 || A.bgPanel,
@@ -675,6 +698,22 @@ window.ARCHHUB_APPROVAL_CARD = function ApprovalCard({approval = {}, onApprove, 
   </section>;
 };
 
+// Package previews show only supplied sheet images and file identities; no invented drawing geometry.
+window.ARCHHUB_PACKAGE_SHEETS = ({sheets = [],compact = false}) => {
+  const A = window.AH;
+  const safe = url => typeof url === 'string' && /^(?:data:image\/(?:png|jpeg|webp);base64,|blob:|\/api\/)/.test(url);
+  return <div data-package-sheets="" style={{display:'flex',gap:10,alignItems:'center',flexWrap:compact ? 'nowrap' : 'wrap',overflow:compact ? 'hidden' : undefined}}>
+    {(compact ? sheets.slice(0,6) : sheets).map((sheet,index)=><figure data-package-sheet={sheet.id || sheet.path} key={sheet.id || sheet.path || index} title={sheet.name}
+      style={{margin:0,flex:'none',width:compact ? 86 : 160}}>
+      {safe(sheet.thumbnail_url) ? <img alt={sheet.name || 'Package sheet'} src={sheet.thumbnail_url} style={{display:'block',width:'100%',height:compact ? 60 : 112,objectFit:'contain',borderRadius:5,background:'#f4f1ea'}}/>
+        : <div data-sheet-preview-unavailable="" style={{height:compact ? 60 : 112,background:'#f4f1ea',borderRadius:5,color:'#68645d',fontSize:compact ? 10 : 12,display:'grid',placeItems:'center',padding:4,boxSizing:'border-box',textAlign:'center'}}>{sheet.name}<br/>Preview unavailable</div>}
+      {!compact && <figcaption style={{fontSize:12,color:A.inkSoft,overflowWrap:'anywhere',marginTop:6}}>{sheet.name}</figcaption>}
+    </figure>)}
+    {compact && sheets.length > 6 && <span style={{fontSize:13,color:A.inkSoft}}>+{sheets.length - 6}</span>}
+    {!sheets.length && <span style={{fontSize:13,color:A.inkSoft}}>Package sheets unavailable</span>}
+  </div>;
+};
+
 // One application rail, shared by Home, Workshop and every graph canvas.
 window.ARCHHUB_APP_RAIL = ({active = 'Home', waiting = 0, account = {}, workshop = false, compact = false, persistent = false, onNavigate}) => {
   const W = window.AH;
@@ -692,7 +731,7 @@ window.ARCHHUB_APP_RAIL = ({active = 'Home', waiting = 0, account = {}, workshop
     style={{width:compact ? 44 : 64,boxSizing:'border-box',background:W.bg,borderRight:`1px solid ${W.lineSoft}`,display:'grid',gridTemplateRows:'auto 1fr auto',paddingTop:compact ? 6 : 12,justifyItems:'center',gridColumn:'1',gridRow:workshop && !persistent ? undefined : '1 / span 2'}}>
     <div style={{display:'grid',gap:4}}>{[['⌂','Home'],['◌','Chats'],['◎','Workshop'],['⬡','Canvas'],['▦','Library'],['?','Docs']].map(([g,l])=>item(g,l))}</div><span/>
     <div style={{paddingBottom:10,display:'grid',gap:4,justifyItems:'center'}}>{item('⚙','Settings')}
-      <button type="button" data-workshop-account-avatar={workshop ? '' : undefined} aria-label="Account" title={account.email || 'Account'} onClick={()=>onNavigate?.('Account')}
+      <button type="button" data-rail-panel="Account" aria-current={active === 'Account' ? 'true' : undefined} data-workshop-account-avatar={workshop ? '' : undefined} aria-label="Account" title={account.email || 'Account'} onClick={()=>onNavigate?.('Account')}
         style={{width:32,height:32,padding:0,border:0,borderRadius:'50%',background:account.colour||account.color||account.avatar_color||W.userAv,color:W.onUserAv,display:'grid',placeItems:'center',fontFamily:W.sans,fontSize:12,fontWeight:700,cursor:'pointer'}}>{initials}</button>
     </div></nav>;
 };

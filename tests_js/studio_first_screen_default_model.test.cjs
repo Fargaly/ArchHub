@@ -186,8 +186,9 @@ test('ArchHub opens on the Home page, not inside the current graph', async () =>
   try {
     await studio.settle(() => studio.doc.querySelector('[data-home-page]'), 'the first screen is the Home page');
     assert.equal(studio.doc.querySelectorAll('[data-node-id]').length, 0, 'no graph canvas is open at boot');
-    const tab = [...studio.doc.querySelectorAll('button, [role="tab"]')].find(node => /ArchHub/.test(node.textContent));
-    assert.ok(tab, 'the current graph stays one click away');
+    studio.flush(()=>rail(studio.doc,'Chats').click());
+    const tab = [...studio.doc.querySelectorAll('[data-left-panel] button, [data-left-panel] [role="tab"]')].find(node => /ArchHub/.test(node.textContent));
+    assert.ok(tab, 'Chats retains the current graph');
     studio.flush(() => tab.click());
     await studio.settle(() => studio.doc.querySelector('[data-node-id]'), 'the retained graph opens from Home');
     assert.ok(studio.doc.querySelector('[data-ws-tab="graph-a"]'), 'the graph session header is shown');
@@ -237,7 +238,8 @@ test('Home wins over a deferred graph open started from the Home session list', 
   const studio = await mountStudio({home:true, graphOpen:async () => graphOpen.promise});
   try {
     await studio.settle(() => studio.doc.querySelector('[data-home-page]'), 'Home is visible');
-    const tab = [...studio.doc.querySelectorAll('button, [role="tab"]')].find(node => /ArchHub/.test(node.textContent));
+    studio.flush(()=>rail(studio.doc,'Chats').click());
+    const tab = [...studio.doc.querySelectorAll('[data-left-panel] button, [data-left-panel] [role="tab"]')].find(node => /ArchHub/.test(node.textContent));
     studio.flush(() => tab.click());
     studio.flush(() => rail(studio.doc, 'Library').click());
     await studio.settle(() => studio.doc.querySelector('input[placeholder^="Search"]'),

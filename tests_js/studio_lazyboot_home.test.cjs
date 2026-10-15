@@ -86,6 +86,7 @@ async function mountStudio({rawCanvas = captured, fullCanvas = rawCanvas.canvas_
     requestUrls.push(url);
     if (url === '/api/universal/canvas?screen=home') return Promise.resolve(canvas);
     if (url === '/api/universal/graphs?screen=home') return Promise.resolve(homeGraphs);
+    if (url === '/api/universal/node-library?templates=1') return Promise.resolve({ok:true,templates:[]});
     if (url === '/api/universal/application-update') return new Promise(() => {});
     if (url === '/api/universal/canvas') {
       if (holdCanvas) return new Promise((resolve, reject) => canvasReads.push({
@@ -162,10 +163,11 @@ async function mountStudio({rawCanvas = captured, fullCanvas = rawCanvas.canvas_
 
 const button = (doc, text) => [...doc.querySelectorAll('button')].find(row => row.textContent.trim() === text);
 const graphButton = doc => {
+  doc.defaultView.ReactDOM.flushSync(() => doc.querySelector('[data-app-rail] [data-rail-panel="Chats"]').click());
   const graph = homeGraphs.graphs.find(row => row.id === homeGraphs.current_graph) || homeGraphs.graphs[0];
-  assert.ok(graph.title, 'the graph index carries the existing Home card title');
-  const found = [...doc.querySelectorAll('[data-home-page] button')].find(row => row.textContent.includes(graph.title));
-  assert.ok(found, 'Home renders the current graph from the authenticated metadata index');
+  assert.ok(graph.title, 'the graph index carries the existing graph title');
+  const found = [...doc.querySelectorAll('[data-left-panel] button')].find(row => row.textContent.includes(graph.title));
+  assert.ok(found, 'Chats renders the current graph from the authenticated metadata index');
   return found;
 };
 
@@ -390,7 +392,7 @@ test('first Workspace open loads verified categories and wire metadata without c
   try {
     await ui.settle(() => ui.doc.querySelector('[data-home-page]'), 'cold Home mounts');
     assert.equal(ui.win.WorkshopView, undefined, 'Workshop stays unloaded');
-    assert.deepEqual([...ui.doc.querySelectorAll('[data-app-rail] [data-rail-panel]')].map(el => el.dataset.railPanel), ['Home','Chats','Workshop','Canvas','Library','Docs','Cockpit','Settings']);
+    assert.deepEqual([...ui.doc.querySelectorAll('[data-app-rail] button[aria-label]')].map(el => el.getAttribute('aria-label')), ['Home','Chats','Workshop','Canvas','Library','Docs','Settings','Account']);
     assert.equal(ui.doc.querySelectorAll('[data-app-rail]').length, 1);
     ui.flush(() => ui.doc.querySelector('[data-rail-panel="Chats"]').click());
     await ui.settle(() => ui.doc.querySelector('[data-left-panel]')?.textContent.includes('Chats'), 'one rail click opens the real conversations panel');

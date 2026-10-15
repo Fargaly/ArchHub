@@ -7534,7 +7534,7 @@ class ApplicationServer:
                     # The one node library (library_engines): every card,
                     # its engine, defaults and sockets. Studio holds no copy.
                     try:
-                        self._browser_session_binding()
+                        library_binding, _session_token = self._browser_session_binding()
                     except AuthorizationDenied as denied:
                         self._json(403, {'ok': False, 'error': str(denied)})
                         return
@@ -7542,8 +7542,14 @@ class ApplicationServer:
                     # relations (universal_pipeline.read_engine_library).
                     from .library_engines import engine_categories
                     from .universal_pipeline import (
-                        read_engine_library, wire_parameter_specs,
+                        read_engine_library, read_home_templates, wire_parameter_specs,
                     )
+                    if parse_qs(parsed.query) == {'templates': ['1']}:
+                        with owner.mutation_lock:
+                            templates = read_home_templates(owner.universal_store.snapshot(),
+                                owner.universal_registry, subject=library_binding.subject_root)
+                        self._json(200, {'ok': True, 'templates': templates})
+                        return
                     groups = read_engine_library(owner.universal_store.snapshot())
                     if groups is None:
                         self._json(503, {'ok': False, 'error':
@@ -10119,6 +10125,17 @@ class ApplicationServer:
                                 self._json(200, payload)
                                 return
                             elif self.path == '/api/universal/node-create':
+                                if 'template' in body:
+                                    from .universal_pipeline import create_engine_template
+                                    if (set(body) - {'template', 'expected_scope'}
+                                            or type(body['template']) is not str or not body['template']):
+                                        raise InvalidCell('template placement payload is invalid')
+                                    created = create_engine_template(owner.universal_store,
+                                        owner.universal_registry, body['template'],
+                                        expected_scope=body.get('expected_scope'),
+                                        authentication_context=binding.context)
+                                    self._json(200, created)
+                                    return
                                 from .universal_pipeline import create_engine_node
                                 created = create_engine_node(
                                     owner.universal_store, owner.universal_registry,

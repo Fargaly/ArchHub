@@ -2058,3 +2058,8 @@ revit_create_sheets = _nodeslib.revit_create_sheets
 revit_renumber_rename = _nodeslib.revit_renumber_rename
 write_table_file = _nodeslib.write_table_file
 approval_gate = _nodeslib.approval_gate
+
+# HOME3: the ordinary pipeline owns package publication; signed grants and the
+# existing file broker remain mandatory, including when run from Workshop.
+LIBRARY_ENGINES["library.publish_package"] = _nodeslib.publish_package
+ENGINE_SOCKETS["library.publish_package"] = {"source": ("out", "folder", "receipt"), "target": ("grant",)}

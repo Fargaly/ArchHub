@@ -45,6 +45,9 @@
     let conversationCreation = null, conversationWrite = null;
     const catalogReads = new Map();
     const workshopCache = new Map();
+    const workshopErrors = new Map();
+    const nativeContacts = new Map();
+    let homeRead = null;
     const WORKSHOP_CACHE_LIMIT = 16;
     let applicationUpdate = null, applicationUpdateError = '', applicationUpdatePending = '';
     let updateRead = null, updateWrite = null, updateEpoch = 0, updateWatchers = 0, updateTimer = null, updateReads = 0;
@@ -59,7 +62,14 @@
     const updateActive = () => ['checking', 'downloading', 'restarting'].includes(applicationUpdate?.state);
     const listeners = new Set(), reads = new Map(), sends = new Map(), creations = new Map();
     const publish = () => {
-      snapshot = {canvas, workshops, workshop, workshopPage:pageTarget, workshopNotice, nativeWork, workshopPresentation, workshopTaskDraft,
+      const authorization = activeAuthorization();
+      const workshopPages = [...workshopCache.entries()].filter(([key]) => {
+        const [subject, session, graph, scope,, before, feed] = JSON.parse(key);
+        return subject === authorization.subject && session === authorization.session && graph === canvas?.graph_id &&
+          scope === canvas?.root && before === null && feed === 'all';
+      }).map(([, page]) => page);
+      snapshot = {canvas, workshops, workshop, workshopPages, workshopErrors:Object.fromEntries(workshopErrors),
+        nativeContacts:Object.fromEntries(nativeContacts), workshopPage:pageTarget, workshopNotice, nativeWork, workshopPresentation, workshopTaskDraft,
         conversationCatalog, conversationCatalogPage, conversationCreation,
         applicationUpdate, applicationUpdateError, applicationUpdatePending,
         theme: {configuration:themeCanvas?.configuration || null, pending:!!themeWrite, error:themeError},
@@ -81,11 +91,16 @@
       if (!canvas || !workshops.some(row => row.root === root)) fail('This Workshop is no longer on the canvas.');
       return {graph:canvas.graph_id, scope:canvas.root, ...activeAuthorization(), epoch, membership:membershipEpoch};
     };
+    // Only an admitted canvas event advances this fence; accepting a Workshop page never does.
+    const workshopCanvasRevision = () => topologyCanvas && canvas && topologyCanvas.application_root === canvas.graph_id &&
+      topologyCanvas?.scope?.current === canvas?.root ? Math.max(topologyCanvas.revision, canvas.revision) : canvas?.revision;
     const workshopCacheKey = (stamp, root, before, feed) => JSON.stringify([
       stamp.subject, stamp.session, stamp.graph, stamp.scope, root, before, feed || 'all']);
-    const clearWorkshopCache = () => workshopCache.clear();
+    const clearWorkshopCache = () => {workshopCache.clear();workshopErrors.clear();nativeContacts.clear();};
     const pruneWorkshopCache = liveRoots => {
       const live = new Set(liveRoots);
+      for (const root of workshopErrors.keys()) if (!live.has(root)) workshopErrors.delete(root);
+      for (const root of nativeContacts.keys()) if (!live.has(root)) nativeContacts.delete(root);
       for (const key of workshopCache.keys()) {
         try { if (!live.has(JSON.parse(key)[4])) workshopCache.delete(key); }
         catch (_) { workshopCache.delete(key); }
@@ -100,7 +115,7 @@
       if (value && !value.error && value.root === root && value.scope_root === stamp.scope) {
         const key = workshopCacheKey(stamp, root, before, feed);
         workshopCache.delete(key); workshopCache.set(key, value);
-        while (workshopCache.size > WORKSHOP_CACHE_LIMIT) workshopCache.delete(workshopCache.keys().next().value);
+        while (workshopCache.size > Math.max(WORKSHOP_CACHE_LIMIT, workshops.length)) workshopCache.delete(workshopCache.keys().next().value);
       }
     };
     // Confirmed proposal decisions are part of the admitted Workshop projection,
@@ -506,37 +521,58 @@
     // open: true only when a person navigates to this conversation (retention
     // counts it as activity). Refresh polls, retries and error recovery never set it.
     async function readWorkshop(root, before = null, feed = (pageTarget?.root === root ? pageTarget.feed : 'all') || 'all',
-        feedInitialized = pageTarget?.root === root && pageTarget.feedInitialized === true, open = false) {
+        feedInitialized = pageTarget?.root === root && pageTarget.feedInitialized === true, open = false, background = false) {
       if (!['all', 'messages', 'activity'].includes(feed)) fail('Choose a valid Workshop feed.');
       const stamp = stampFor(root);
+      const canvasRevision = workshopCanvasRevision();
       const contentKnown = (workshop?.root === root && workshop.storage === 'conversation-content') ||
         (pageTarget?.root === root && pageTarget.storage === 'conversation-content');
       const cacheKey = workshopCacheKey(stamp, root, before, feed);
-      if (!pageTarget || pageTarget.root !== root || pageTarget.before !== before || pageTarget.feed !== feed ||
-          pageTarget.feedInitialized !== feedInitialized) {
+      if (!background && (!pageTarget || pageTarget.root !== root || pageTarget.before !== before || pageTarget.feed !== feed ||
+          pageTarget.feedInitialized !== feedInitialized)) {
         const cached = cachedWorkshop(cacheKey);
         pageTarget = {root, before, feed, feedInitialized,
           ...(contentKnown ? {storage:'conversation-content'} : {})}; pageEpoch += 1;
         workshop = cached || null; publish();
-      } else if ((!workshop || workshop.root !== root || workshop.scope_root !== stamp.scope) && workshopCache.has(cacheKey)) {
+      } else if (!background && (!workshop || workshop.root !== root || workshop.scope_root !== stamp.scope) && workshopCache.has(cacheKey)) {
         workshop = cachedWorkshop(cacheKey); publish();
       }
       const pageStamp = pageEpoch;
-      const isCurrent = () => current(stamp, root) && pageStamp === pageEpoch &&
-        pageTarget?.root === root && pageTarget.before === before && pageTarget.feed === feed;
-      const key = JSON.stringify([stamp.epoch, stamp.membership, pageStamp, root, before, feed, open === true]);
+      const isCurrent = () => current(stamp, root) && (!background || workshopCanvasRevision() === canvasRevision) && (background || pageStamp === pageEpoch &&
+        pageTarget?.root === root && pageTarget.before === before && pageTarget.feed === feed);
+      const key = JSON.stringify([stamp.epoch, stamp.membership, canvasRevision, background ? null : pageStamp, root, before, feed, open === true, background]);
       if (reads.has(key)) return reads.get(key);
-      const previous = workshop?.root === root && !workshop.error ? workshop : null;
+      const cached = background ? cachedWorkshop(cacheKey) : workshop;
+      const previous = cached?.root === root && !cached.error ? cached : null;
+      const acceptPage = value => {
+        const latest = workshopCache.get(cacheKey);
+        if (latest && latest.revision > value.revision) {
+          if (!background && workshop !== latest) {workshop = latest;publish();}
+          return latest;
+        }
+        // Background reads refresh a matching selected page, never navigate or replace its history cursor.
+        const visible = !background || pageTarget?.root === root && pageTarget.before === before && pageTarget.feed === feed;
+        const changed = latest !== value || (visible && workshop !== value) || workshopErrors.has(root);
+        if (visible) workshop = value;
+        workshopErrors.delete(root);
+        rememberWorkshop(stamp, root, before, feed, value);
+        if (changed) publish();
+        return value;
+      };
       const ordinary = previous?.storage === 'conversation-content';
       const operation = (async () => {
         try {
-          let result = await get('/api/universal/workshop?root=' + encodeURIComponent(root) +
+          const pageUrl = '/api/universal/workshop?root=' + encodeURIComponent(root) +
             '&scope=' + encodeURIComponent(stamp.scope) +
             (feed === 'all' ? '' : '&feed=' + feed) +
             (before === null ? '' : '&before=' + encodeURIComponent(before)) +
+            (open === true ? '&open=1' : '');
+          let result = await get(pageUrl +
             (previous ? '&after=' + previous.revision : '') +
-            (ordinary ? '&content_after=' + encodeURIComponent(previous.content_cursor) : '') +
-            (open === true ? '&open=1' : ''));
+            (ordinary ? '&content_after=' + encodeURIComponent(previous.content_cursor) : ''));
+          if (!isCurrent()) return null;
+          // Workflow approvals live in the graph even when the content cursor is unchanged.
+          if (result?.unchanged && ordinary && result.revision !== previous.revision) result = await get(pageUrl);
           if (!isCurrent()) return null;
           if (!result || result.ok === false) fail(result?.error || 'Workshop history was refused.');
           // This store owns the current roster, not session history. Retire dead
@@ -556,7 +592,7 @@
           if (result.graph_id !== stamp.graph || result.root !== root || result.scope_root !== stamp.scope ||
               !revision(result.revision) || result.revision < canvas.revision ||
               (previous && result.revision < previous.revision)) fail('Workshop history is stale or belongs to another scope.');
-          const decisions = workshop?.root === root && workshop.graph_id === stamp.graph && workshop.scope_root === stamp.scope
+          const decisions = !background && workshop?.root === root && workshop.graph_id === stamp.graph && workshop.scope_root === stamp.scope
             ? workshop.proposal_decisions : previous?.proposal_decisions;
           const content = result.storage === 'conversation-content';
           const modelAgent = result.model_agent ?? null;
@@ -583,15 +619,15 @@
                 fail('Workshop participant status is invalid.');
               }
               if (JSON.stringify(previous.participants) === JSON.stringify(result.participants) &&
-                  result.revision === previous.revision && !modelChanged && !assignmentsChanged) return previous;
-              workshop = {...previous, revision:result.revision, participants:result.participants,
-                model_agent:modelAgent, ...assignments, proposal_decisions:decisions || Object.create(null)}; publish(); return workshop;
+                  result.revision === previous.revision && !modelChanged && !assignmentsChanged) return acceptPage(previous);
+              return acceptPage({...previous, revision:result.revision, participants:result.participants,
+                model_agent:modelAgent, ...assignments, proposal_decisions:decisions || Object.create(null)});
             }
             if (result.revision !== previous.revision || modelChanged || assignmentsChanged) {
-              workshop = {...previous, revision:result.revision, model_agent:modelAgent, ...assignments,
-                proposal_decisions:decisions || Object.create(null)}; publish(); return workshop;
+              return acceptPage({...previous, revision:result.revision, model_agent:modelAgent, ...assignments,
+                proposal_decisions:decisions || Object.create(null)});
             }
-            return previous;
+            return acceptPage(previous);
           }
           if (!Array.isArray(result.messages) || !Array.isArray(result.participants) ||
               result.messages.length > 100 || (!content && before !== null)) fail('Workshop history is invalid.');
@@ -616,11 +652,13 @@
           const mergedMessages = mergeWorkshopMessages(previous, result);
           const next = {...result, messages:mergedMessages, model_agent:modelAgent, error:'',
             proposal_decisions:decisions || Object.create(null)};
-          if (previous && sameJson(previous, next)) return previous;
-          if (content) pageTarget = {...pageTarget, storage:'conversation-content'};
-          workshop = next; rememberWorkshop(stamp, root, before, feed, workshop); publish(); return workshop;
+          if (previous && sameJson(previous, next)) return acceptPage(previous);
+          if (content && !background && pageTarget.storage !== 'conversation-content') pageTarget = {...pageTarget, storage:'conversation-content'};
+          return acceptPage(next);
         } catch (error) {
           if (!isCurrent()) return null;
+          workshopErrors.set(root, error.message || String(error));
+          if (background) {publish();throw error;}
           const refusedPage = ordinary && /refresh|page|invalid|stale/.test(error.message || String(error));
           const admitted = workshop?.root === root && workshop.graph_id === stamp.graph && workshop.scope_root === stamp.scope && !workshop.error
             ? workshop : previous;
@@ -975,6 +1013,12 @@
               typeof row.session_id !== 'string' || typeof row.title !== 'string' || typeof row.connected !== 'boolean')) {
           fail('Native agent discovery returned an invalid result.');
         }
+        if (stamp && Array.isArray(result.contacts)) {
+          if (result.contacts.some(row => !row || !text(row.root) || typeof row.label !== 'string' || typeof row.connected !== 'boolean')) {
+            fail('Native contacts are invalid.');
+          }
+          nativeContacts.set(root, result.contacts); publish();
+        }
         return result;
       },
       async bindNativeContact(selection, node = null) {
@@ -1056,7 +1100,10 @@
       // lost response reads the same draft or review instead of making another.
       // Graph edits do not move the content cursor, so the page is re-read whole.
       async workshopWorkflow(root, action, fields) {
-        const stamp = stampFor(root), held = workshop;
+        const stamp = stampFor(root);
+        const cached = cachedWorkshop(workshopCacheKey(stamp, root, null, 'all'));
+        const selected = workshop?.root === root ? workshop : null;
+        const held = cached && (!selected || cached.revision > selected.revision) ? cached : selected;
         if (!held || held.root !== root || held.error || held.can_send !== true) {
           fail('Refresh this conversation before acting on its workflow.');
         }
@@ -1080,14 +1127,20 @@
           if (!text(fields.workflow)) fail('Choose the approved workflow to run.');
           body.idempotency_key = uuid();
         }
+        const isCurrent = () => current(stamp, root) && activeAuthorization().subject === stamp.subject &&
+          activeAuthorization().session === stamp.session;
+        if (!isCurrent()) fail('The conversation changed before its workflow action.');
         const result = await post('/api/universal/workshop', body);
         if (!result?.ok) fail(result?.error || 'The workflow action was refused.');
-        if (current(stamp, root)) {
-          workshop = null; pageEpoch += 1; publish();
-          await readWorkshop(root, null).catch(() => {});
+        if (isCurrent()) {
+          // Home can act on any admitted room without navigating away from the selected page.
+          await readWorkshop(root, null, 'all', false, false, true).catch(() => {});
+          if (isCurrent() && pageTarget?.root === root && (pageTarget.before !== null || pageTarget.feed !== 'all')) {
+            await readWorkshop(root, pageTarget.before, pageTarget.feed, pageTarget.feedInitialized).catch(() => {});
+          }
         }
         publish();
-        return result;
+        return {...result, navigation_current:isCurrent()};
       },
       // A workflow parameter is an ordinary graph property: the same governed
       // set-property route the inspector uses. Any behavioral edit invalidates
@@ -1241,6 +1294,39 @@
       restoreThemeRevision: root => changeTheme('restore', root),
       setBaboomStartup: value => changeTheme('baboom-startup', null, value),
       setComposerModel: (value, generation) => changeTheme('composer-model', null, value, generation),
+      async readHomeTemplates() {
+        const heldEpoch = epoch, generation = navGeneration;
+        const result = await get('/api/universal/node-library?templates=1');
+        if (epoch !== heldEpoch || navGeneration !== generation) return null;
+        if (!result || result.ok !== true || !Array.isArray(result.templates) || result.templates.some(row =>
+            !row || !text(row.id) || !text(row.title) || !Array.isArray(row.children) ||
+            !Number.isSafeInteger(row.run_count) || row.run_count < 0 || row.child_count !== row.children.length)) {
+          fail('Templates could not be read.');
+        }
+        return result;
+      },
+      async startHomeTemplate(id) {
+        if (!text(id)) fail('Choose a template to start.');
+        const heldEpoch = epoch;
+        if (!topologyCanvas || topologyRequiresRefresh) await api.refreshTopologyCanvas();
+        if (epoch !== heldEpoch) fail('The canvas changed. Choose the template again.');
+        const generation = navGeneration;
+        return runTopology(JSON.stringify(['home-template', id]), async (identity, command) => {
+          if (epoch !== heldEpoch || navGeneration !== generation) fail('The canvas changed. Choose the template again.');
+          const result = await command('/api/universal/node-create', {template:id, expected_scope:topologyCanvas.scope.current});
+          if (!result || result.ok !== true || !text(result.root) || result.template !== id ||
+              !revision(result.revision) || !Array.isArray(result.children) || !result.children.length ||
+              result.children.some(root => !text(root)) || new Set(result.children).size !== result.children.length) {
+            fail('Template creation is unconfirmed. Refresh the canvas before trying again.');
+          }
+          let warning = '';
+          if (epoch === heldEpoch && navGeneration === generation) {
+            try { await readTopology(identity); }
+            catch (_) { warning = 'Template started. Refresh the canvas to see its nodes.'; }
+          }
+          return {...result, accepted:true, warning, navigation_current:epoch === heldEpoch && navGeneration === generation};
+        });
+      },
       subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
       // Terminal nodes: one shell per session in a folder the application admits.
       async terminalStart(cwd) {
@@ -1730,7 +1816,7 @@
         if (scopeChanged) workshopTaskDraft = null;
         const authChanged = canvas && (authorizationKnown !== canvasAuthorizationKnown ||
           !sameJson(authorization, canvas.authorization || null));
-        if (authChanged) {clearWorkshopCache();workshopPresentation = null;workshopTaskDraft = null;}
+        if (scopeChanged || authChanged) {clearWorkshopCache();workshopPresentation = null;workshopTaskDraft = null;}
         if (workshops.some(row => !value.workshops.some(next => next.root === row.root))) membershipEpoch += 1;
         if (scopeChanged || authChanged || (conversationCatalogPage && !value.workshops.some(row => row.root === conversationCatalogPage.root)) ||
             value.revision > (conversationCatalog?.revision ?? canvas?.revision ?? -1)) {
@@ -1758,6 +1844,22 @@
         publish();
       },
       refreshWorkshop: root => readWorkshop(root, pageTarget?.root === root ? pageTarget.before : null),
+      async refreshHomeWorkshops() {
+        const heldRevision = workshopCanvasRevision();
+        const identity = JSON.stringify([epoch, membershipEpoch, heldRevision, workshops.map(row => row.root)]);
+        if (homeRead?.identity === identity) return homeRead.promise;
+        const operation = (async () => {
+          const heldEpoch = epoch, heldMembership = membershipEpoch;
+          for (const row of [...workshops]) {
+            if (epoch !== heldEpoch || membershipEpoch !== heldMembership || workshopCanvasRevision() !== heldRevision) return;
+            try { await readWorkshop(row.root, null, 'all', false, false, true); } catch (_) { /* Snapshot exposes refused owners. */ }
+            if (epoch !== heldEpoch || membershipEpoch !== heldMembership || workshopCanvasRevision() !== heldRevision) return;
+            try { await api.nativeAgents(row.root); } catch (_) { /* Discovery never invents presence. */ }
+          }
+        })();
+        homeRead = {identity, promise:operation};
+        try { return await operation; } finally { if (homeRead?.promise === operation) homeRead = null; }
+      },
       openWorkshop: root => readWorkshop(root, pageTarget?.root === root ? pageTarget.before : null,
         undefined, undefined, true),
       async loadOlderWorkshop(root) {

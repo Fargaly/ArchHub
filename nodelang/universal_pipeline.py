@@ -43,7 +43,8 @@ from .cell_protocols import prepare_remove_relation_members
 # Rows the graph keeps for its own bookkeeping: they name what a node IS
 # and what it last answered, never what its engine computes with, so they
 # are not handed to an engine as a parameter.
-_STRUCTURAL = {"engine", "status", "seed"}
+_STRUCTURAL = {"engine", "status", "seed", "template_id", "template_instance",
+               "template_subject", "template_size", "template_runs"}
 
 # The seed's own identity row. A human-readable title is not an identity:
 # the founder renames cards, and the grand map already publishes domains
@@ -381,6 +382,11 @@ def run_universal_pipeline(
             revalidate()
         written = _land_pipeline_statuses(
             store, registry, stem_nodes, evaluation, authentication_context)
+        succeeded = {node.root_id for node in stem_nodes
+                     if node.root_id in evaluation.display
+                     and node.root_id not in evaluation.pending
+                     and (evaluation.node_outputs or {}).get(node.root_id, {}).get("ok") is not False}
+        _record_template_runs(store, registry, succeeded, authentication_context)
         revision = store.revision
     # BABOOM's face reads this: how many cards ran and how many really
     # answered, from the run itself rather than a guess over the graph.
@@ -1071,6 +1077,121 @@ def create_engine_node(
         root, _revision = _persist(place, store=store)
     _persist(lambda: _ensure_pipeline_node_interfaces(store, registry, root, engine), store=store)
     return {"ok": True, "root": root, "engine": engine, "title": title}
+
+
+def create_engine_template(store, registry, item, *, expected_scope=None,
+                           authentication_context=None):
+    """Instantiate the library's composite through the existing placement/group owners.
+
+    Definitions live in the same library relation as single nodes. No Home
+    constants, second graph, or alternate group evaluator are introduced.
+    """
+    import uuid
+    from .pipeline_engines import PIPELINE_ENGINES
+    from .universal_application import group_universal_selection, set_universal_selection
+
+    entry = next((entry for group in read_engine_library(store.snapshot()) or ()
+                  for entry in group["items"] if entry["id"] == item), None)
+    parts = entry.get("children") if entry and not entry.get("hidden") else None
+    if not parts:
+        raise InvalidCell("stored composite template is unavailable")
+    if len(entry["title"].encode("utf-8")) > 256:
+        raise InvalidCell("template title exceeds the composition boundary")
+    # Validate the entire definition before the first placement has an effect.
+    for part in parts:
+        if (len(part["title"].encode("utf-8")) > 256
+                or any(not label.strip() or len(label.encode("utf-8")) > 512
+                       or len(value.encode("utf-8")) > 65_536
+                       or label.strip() in {"title", "position_x", "position_y", "color", "definition", "version"}
+                       for label, value in part["params"].items())):
+            raise InvalidCell("template child parameters exceed the placement boundary")
+        if part["engine"] not in PIPELINE_ENGINES:
+            raise InvalidCell("template child engine is unavailable")
+        if part.get("item"):
+            held = engine_library_entry(store.snapshot(), part["item"])
+            if held is None or held["engine"] != part["engine"]:
+                raise InvalidCell("template child library binding changed")
+    projection = project_universal_canvas(store, registry,
+        authentication_context=authentication_context)
+    if expected_scope is not None and expected_scope != projection["scope"]["current"]:
+        raise InvalidCell("template destination scope changed")
+    subject = projection["authorization"]["subject"]
+    token = uuid.uuid4().hex
+    children = []
+    for index, part in enumerate(parts):
+        created = create_engine_node(store, registry, title=part["title"],
+            engine=part["engine"], item=part.get("item"), x=180 + index * 280, y=180,
+            properties={**part["params"], "template_id": item, "template_instance": token,
+                "template_subject": subject, "template_size": str(len(parts)),
+                "template_runs": "0"}, authentication_context=authentication_context)
+        children.append(created["root"])
+    set_universal_selection(store, registry, children,
+        authentication_context=authentication_context)
+    root, revision = group_universal_selection(store, registry, title=entry["title"],
+        authentication_context=authentication_context)
+    return {"ok": True, "root": root, "children": children, "revision": revision,
+            "title": entry["title"], "template": item}
+
+
+def _template_instances(owned, *, subject=None):
+    instances = {}
+    for root, rows in owned.items():
+        values = {label: pair[1] for label, pair in rows.items()}
+        token = values.get("template_instance")
+        if (not token or not values.get("template_id")
+                or (subject is not None and values.get("template_subject") != subject)):
+            continue
+        instances.setdefault(token, []).append((root, rows, values))
+    return instances.values()
+
+
+def _record_template_runs(store, registry, succeeded, authentication_context):
+    """Count only a run in which every child of this instance really answered.
+
+    Each count is an ordinary graph property. Taking the minimum makes an
+    interrupted counter update conservative, and keeps starts at zero.
+    """
+    owned = _owner_properties(store.snapshot(), registry)
+    for children in _template_instances(owned):
+        try:
+            sizes = {int(values["template_size"]) for _, _, values in children}
+            counts = [int(values["template_runs"]) for _, _, values in children]
+        except (KeyError, ValueError):
+            continue
+        if (sizes != {len(children)} or min(counts) < 0
+                or len({values["template_id"] for _, _, values in children}) != 1
+                or not {root for root, _, _ in children} <= succeeded):
+            continue
+        count = str(min(counts) + 1)
+        for _, rows, _ in children:
+            edit_universal_property(store, registry, rows["template_runs"][0], count,
+                mutation_route="/api/universal/run-graph",
+                authentication_context=authentication_context)
+
+
+def read_home_templates(snapshot, registry, *, subject):
+    """Read stored composite definitions and this account's completed usage."""
+    entries = [entry for group in read_engine_library(snapshot) or ()
+               for entry in group["items"] if entry.get("children") and not entry.get("hidden")]
+    if not entries:
+        return []
+    counts = {}
+    for children in _template_instances(_owner_properties(snapshot, registry), subject=subject):
+        try:
+            templates = {values["template_id"] for _, _, values in children}
+            sizes = {int(values["template_size"]) for _, _, values in children}
+            runs = [int(values["template_runs"]) for _, _, values in children]
+        except (KeyError, ValueError):
+            continue
+        if len(templates) != 1 or sizes != {len(children)} or min(runs) < 0:
+            continue
+        item = next(iter(templates))
+        counts[item] = counts.get(item, 0) + min(runs)
+    templates = [{"id": entry["id"], "title": entry["title"], "sub": entry["sub"],
+                  "children": entry["children"], "child_count": len(entry["children"]),
+                  "run_count": counts.get(entry["id"], 0)}
+                 for entry in entries]
+    return sorted(templates, key=lambda row: -row["run_count"])
 
 
 def seed_wall_pipeline(
@@ -2701,7 +2822,7 @@ ENGINE_LIBRARY_ROOT = "app:engine-library:v1"
 _ENGINE_LIBRARY_ROLES = {
     name: "app:engine-library:role:%s:v1" % name
     for name in ("section", "entry", "label", "item", "title", "summary",
-                 "engine", "params", "hidden", "compatibility")
+                 "engine", "params", "hidden", "compatibility", "children")
 }
 
 
@@ -2718,7 +2839,7 @@ def _text_cell(root: str, text: str) -> Cell:
 
 
 def _entry_cells(item: str, title: str, summary: str, wiring, *, hidden=False,
-                 compatibility=None) -> list:
+                 compatibility=None, children=None) -> list:
     import json as _json
 
     roles = _ENGINE_LIBRARY_ROLES
@@ -2732,6 +2853,8 @@ def _entry_cells(item: str, title: str, summary: str, wiring, *, hidden=False,
         fields += (("hidden", "true"),)
     if compatibility:
         fields += (("compatibility", _json.dumps(compatibility, sort_keys=True)),)
+    if children is not None:
+        fields += (("children", _json.dumps(children, sort_keys=True)),)
     cells = [_text_cell(entry + ":" + name, value) for name, value in fields]
     relation = compose_relation_cells(
         tuple((roles[name], entry + ":" + name) for name, _value in fields),
@@ -2853,6 +2976,23 @@ def _read_engine_library_entry(snapshot, entry_root: str):
         return None
     entry = {"id": held["item"], "title": held["title"], "sub": held["summary"],
              "engine": held["engine"], "params": {str(k): str(v) for k, v in params.items()}}
+    if "children" in held:
+        try:
+            children = _json.loads(held["children"])
+        except ValueError:
+            return None
+        if type(children) is not list or not 2 <= len(children) <= 32:
+            return None
+        for child in children:
+            if (type(child) is not dict or set(child) - {"item", "title", "engine", "params"}
+                    or not all(type(child.get(key)) is str and child[key].strip()
+                               for key in ("title", "engine"))
+                    or type(child.get("params")) is not dict
+                    or ("item" in child and type(child["item"]) is not str)
+                    or any(type(key) is not str or type(value) is not str
+                           for key, value in child["params"].items())):
+                return None
+        entry["children"] = children
     if "hidden" in held:
         try:
             hidden = _json.loads(held["hidden"])

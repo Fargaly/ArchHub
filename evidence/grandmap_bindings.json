@@ -45,7 +45,8 @@
       "tests": [
         "tests_replica/test_wire_group_param.py",
         "tests_replica/test_topsis_is_openable_group.py",
-        "tests_replica/test_universal_interaction_server.py::test_group_and_ungroup_toolbar_bindings_preserve_selected_root_identities"
+        "tests_replica/test_universal_interaction_server.py::test_group_and_ungroup_toolbar_bindings_preserve_selected_root_identities",
+        "tests_replica/test_home3_templates.py"
       ]
     },
     "canvas_bump_graph": {
@@ -211,7 +212,8 @@
     "models_mode_gate": {
       "why": "a write by a model passes an approval gate first",
       "tests": [
-        "tests_replica/test_cell_cde_authority.py"
+        "tests_replica/test_cell_cde_authority.py",
+        "tests_replica/test_home3_package_publication.py"
       ]
     },
     "ui_theme_engine": {
@@ -365,7 +367,8 @@
     "connectors_approval_gate": {
       "why": "a write through an adapter passes an approval gate first",
       "tests": [
-        "tests_replica/test_cell_cde_authority.py"
+        "tests_replica/test_cell_cde_authority.py",
+        "tests_replica/test_home3_package_publication.py"
       ]
     },
     "nl_conn_effect_primitives": {

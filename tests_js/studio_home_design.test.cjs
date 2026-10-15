@@ -353,7 +353,7 @@ test('F1: Settings Hub card click opens that tool\'s Settings tab; Studio Hub ca
   } finally { studio.close(); }
 });
 
-test('F2: waiting popover is fed by the hub and shows Workshop approval metadata', async () => {
+test('082: the visible shared card is fed by the hub and preserves Workshop approval metadata', async () => {
   const studio = await mountStudio({waiting:[{
     id:'wait-a', producer:'workshop_gate', root:'room-a', work:'work-a', input_digest:'a'.repeat(64),
     summary:'Approve wall opening', who:'Claude',
@@ -362,12 +362,12 @@ test('F2: waiting popover is fed by the hub and shows Workshop approval metadata
   }]});
   try {
     await studio.settle(); await studio.settle();
-    assert.match(studio.doc.body.textContent, /Waiting for youApprove wall opening/);
-    studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-waiting-trigger="home"]').click());
     assert.match(studio.doc.body.textContent, /Approve wall opening/);
-    assert.match(studio.doc.body.textContent, /asked by Claude · for you · 09:14 · plan 8f2c · Nile_Tower\.rvt/);
-    assert.match(studio.doc.body.textContent, /1 of 2 · needs another member/);
-    assert.ok(studio.button('Open in Approvals'));
+    assert.ok(studio.doc.querySelector('[data-home-results] [data-approval-component="shared"]'));
+    assert.match(studio.doc.body.textContent, /Approve wall opening/);
+    assert.match(studio.doc.body.textContent, /1 needs your OK/);
+    assert.equal(studio.doc.querySelector('[data-home-design]').dataset.homeDesign,'082');
+    assert.equal(studio.doc.querySelectorAll('[data-home-results] [data-approval-component="shared"]').length,1);
   } finally { studio.close(); }
 });
 
@@ -378,8 +378,8 @@ test('F2U repair: Workshop waiting uses one shared digest approval and Review op
   }],nativeWork:{root:'room-a',scope:'scope-a',owner:'owner-a',view:'view-a',work:'work-a',state:'awaiting_approval',mode:'agent',review_text:'Approve wall opening',input_digest:'b'.repeat(64),approved:false}});
   try {
     await studio.settle(); await studio.settle();
-    studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-waiting-trigger="home"]').click());
-    const popover = studio.doc.querySelector('[data-waiting-popover]');
+    assert.ok(studio.doc.querySelector('[data-home-results] [data-approval-component="shared"]'));
+    const popover = studio.doc.querySelector('[data-home-results]');
     assert.ok(popover);
     const cards=popover.querySelectorAll('[data-approval-component="shared"]');assert.equal(cards.length,1);
     const buttons=[...cards[0].querySelectorAll('button')];
@@ -390,8 +390,7 @@ test('F2U repair: Workshop waiting uses one shared digest approval and Review op
     studio.win.ReactDOM.flushSync(()=>{buttons[0].click();buttons[0].click();});
     await studio.settle();await studio.settle();
     assert.deepEqual(studio.ownerCalls,[['approveNativeWork','room-a','b'.repeat(64)]],'shared approval binds the shown digest once');
-    studio.win.ReactDOM.flushSync(() => [...popover.querySelectorAll('button')]
-      .find(node => node.textContent.trim() === 'Open in Approvals').click());
+    studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-rail-panel="Workshop"]').click());
     await studio.settle();
     assert.ok(studio.doc.querySelector('[data-workshop-s1]'), 'Open in Approvals enters the S1 Workshop view');
     assert.match(studio.doc.body.textContent, /waits for you/);
@@ -406,7 +405,7 @@ test('F2U repair: social waiting keeps real decideSocialApproval controls', asyn
   }]});
   try {
     await studio.settle(); await studio.settle();
-    studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-waiting-trigger="home"]').click());
+    assert.ok(studio.doc.querySelector('[data-home-results] [data-approval-component="shared"]'));
     studio.win.ReactDOM.flushSync(() => studio.button('Approve').click());
     await studio.settle();
     assert.deepEqual(JSON.parse(JSON.stringify(studio.ownerCalls)), [
@@ -421,7 +420,7 @@ test('F2R owner decisions: unsupported waiting producers are refused and not mar
   }]});
   try {
     await studio.settle(); await studio.settle();
-    studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-waiting-trigger="home"]').click());
+    assert.ok(studio.doc.querySelector('[data-home-results] [data-approval-component="shared"]'));
     const approve=studio.button('Approve');
     assert.equal(approve.disabled,true,'unknown producer has no admitted decision route');
     assert.equal(approve.title,'Not available yet');
@@ -632,23 +631,16 @@ test('Home # host chip opens known host starters when no host is live', async ()
   } finally { studio.close(); }
 });
 
-test('Home Sessions header creates a new graph through ARCHHUB_GRAPH_CREATE', async () => {
-  const studio = await mountStudio();
-  try {
-    await studio.settle(); await studio.settle();
-    const before = studio.doc.querySelectorAll('form').length;
-    studio.win.ReactDOM.flushSync(() => studio.button('+ new graph').click());
-    const input = studio.doc.querySelector('input[aria-label="New graph name"]');
-    assert.ok(input, '+ new graph opens the inline name field');
-    const set = Object.getOwnPropertyDescriptor(studio.win.HTMLInputElement.prototype, 'value').set;
-    studio.win.ReactDOM.flushSync(() => { set.call(input, 'Site options'); input.dispatchEvent(new studio.win.Event('input', {bubbles:true})); });
-    studio.win.ReactDOM.flushSync(() => studio.button('Create').click());
+test('082 replaces the Sessions grid while Chats keeps the real graph list', async () => {
+  const studio=await mountStudio();try {
+    await studio.settle();await studio.settle();
+    assert.equal(studio.button('+ new graph'),undefined,'067 inline graph form is removed');
+    assert.equal(studio.doc.querySelectorAll('[data-home-page] form').length,1);
+    studio.win.ReactDOM.flushSync(()=>studio.doc.querySelector('[data-rail-panel="Chats"]').click());
     await studio.settle();
-    assert.deepEqual(studio.graphCreates, ['Site options']);
-    assert.equal(before, 1, 'Home has only the session-start form before the inline graph field opens');
-  } finally { studio.close(); }
+    assert.match(studio.doc.body.textContent,/Mine|Scheduled|Workflow/,'saved graph navigation belongs to Chats');
+  }finally{studio.close();}
 });
-
 
 test('LAZYONREL Chat shares the drive-aware Office-collapsed host total', async () => {
   const studio = await mountStudio({exposeInspector:true,hosts:[

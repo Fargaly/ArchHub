@@ -71,6 +71,7 @@ _PLACEMENTS = {
     "library.draft_email": ({"to": "eng@firm.example.test"}, {}),
     "library.vision": ({"prompt": "what is this"}, {}),
     "library.publish_pdf": ({"sheets": "A101"}, {}),
+    "library.publish_package": ({}, None),
     "library.tag_rooms": ({}, {}),
     "library.place_tags": ({"category": "Doors"}, {}),
     "library.place_on_sheet": ({"sheet": "A101", "views": "Level 1"}, {}),
@@ -91,7 +92,7 @@ _STREAM_ENGINES = [
                     # empty answers are courted in test_five_more_cards_run.
                     "library.think", "library.match_skill", "library.embed",
                     "library.notify", "library.draft_email", "library.vision",
-                    "library.publish_pdf", "library.tag_rooms",
+                    "library.publish_pdf", "library.publish_package", "library.tag_rooms",
                     "library.place_tags", "library.place_on_sheet",
                     "host.read")
 ]
@@ -135,13 +136,16 @@ def test_the_terminal_card_refuses_outside_the_application():
     assert "inside the ArchHub application" in str(refusal.value)
 
 
-def test_every_added_engine_answers_the_shared_shape(tmp_path):
+def test_every_added_engine_answers_the_shared_shape(tmp_path, monkeypatch):
     """(params, feeds) in, (outputs mapping, one display line) out."""
     assert set(_PLACEMENTS) | set(_APPROVAL_GATED) | set(_SERVER_BOUND) == set(LIBRARY_ENGINES), (
         "every engine needs a placement in this court")
     for name, (params, wired) in _PLACEMENTS.items():
         if name == "library.save_skill":
             params = dict(params, path=str(tmp_path / "saved" / "SKILL.md"))
+        elif name == "library.publish_package":
+            from tests_replica.test_home3_package_publication import package
+            params, _, _, _, _ = package(tmp_path, monkeypatch)
         answer = _answered(name, params, wired)
         assert isinstance(answer, tuple) and len(answer) == 2, name
         outputs, display = answer

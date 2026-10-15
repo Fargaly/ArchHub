@@ -29,7 +29,7 @@ async function mount() {
     function Harness(){const [tabs,setTabs]=React.useState(['a']);const [active,setActive]=React.useState('a');const [screen,setScreen]=React.useState('Canvas');
       const session=screen==='Canvas'?{id:active,title:'Session'}:null;const frameCrumbs=['ArchHub',screen];
       const goHome=()=>setScreen('Home');const navigate=name=>setScreen(name);
-      return <Frame rail={screen} onHome={goHome} onPanel={()=>navigate('Library')} onWorkshop={()=>navigate('Workshop')} onCanvas={()=>navigate('Canvas')} onSettings={()=>navigate('Settings')} account={{}} top={${topProp}}>
+      return <Frame rail={screen} onHome={goHome} onChats={()=>navigate('Chats')} onDocs={()=>navigate('Docs')} onAccount={()=>navigate('Account')} onPanel={()=>navigate('Library')} onWorkshop={()=>navigate('Workshop')} onCanvas={()=>navigate('Canvas')} onSettings={()=>navigate('Settings')} account={{}} top={${topProp}}>
         <main data-workspace-main="" style={{height:'100%',display:'grid',gridTemplateRows:'36px 1fr'}}>
           {session?<WsHeader session={session} openTabs={tabs} sessionRows={tabs.map(id=>({id,title:id==='a'?'First session':'New session',state:'idle'}))} setOpenId={setActive} closeTab={()=>{}} onHome={goHome} onNewSession={()=>{setTabs([...tabs,'b']);setActive('b');}}/>:<h1>{screen}</h1>}
         </main></Frame>}
@@ -50,10 +50,10 @@ test('RELGATEFIX G2 physical + is unobscured and opens a second active tab',asyn
 test('RELGATEFIX one rail exposes and routes Home Workshop Canvas Library Settings',async()=>{
   const {browser,page}=await mount();try{
     const labels=()=>page.locator('nav [data-rail-panel]').evaluateAll(els=>els.map(el=>el.getAttribute('data-rail-panel')));
-    assert.deepEqual(await labels(),['Home','Workshop','Canvas','Library','Settings']);
-    for(const name of ['Home','Workshop','Canvas','Library','Settings']){
+    assert.deepEqual(await labels(),['Home','Chats','Workshop','Canvas','Library','Docs','Settings','Account']);
+    for(const name of ['Home','Chats','Workshop','Canvas','Library','Docs','Settings','Account']){
       await page.locator('nav [data-rail-panel="'+name+'"]').click();
-      assert.deepEqual(await labels(),['Home','Workshop','Canvas','Library','Settings']);
+      assert.deepEqual(await labels(),['Home','Chats','Workshop','Canvas','Library','Docs','Settings','Account']);
       assert.equal(await page.locator('nav').count(),1);
       assert.equal(await page.locator('nav [data-rail-panel="'+name+'"]').getAttribute('aria-current'),'true');
     }

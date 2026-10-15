@@ -120,6 +120,9 @@ async function openSettings({permissionRows, permissionReadFails = false, expose
   assert.ok(opener, 'actual Settings control exists');
   flush(() => opener.click());
   await settle();
+  // Graph-specific courts explicitly enter the graph; the Settings landing has controls.
+  flush(() => [...doc.querySelectorAll('[data-settings54-shell] button')].find(b => b.textContent.trim() === 'System graph').click());
+  await settle();
   const close = () => { try { if (win.__studioRoot) flush(() => win.__studioRoot.unmount()); } finally { dom.window.close(); } };
   return {win, doc, flush, settle, calls, close};
 }

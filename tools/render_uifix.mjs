@@ -15,6 +15,9 @@ const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{
 const projection = {
   canvas:{graph_id:'graph-a', application_root:'graph-a', root:'scope-a', scope:{current:'scope-a'}, revision:4, authorization:{system_view:true,subject:'owner-a',session:'view-a'}},
   graph:{nodes:[
+    {id:'render-number',title:'Number',cat:'data',engine:'data.constant',x:120,y:100,w:240,params:[{k:'value',label:'Value',v:42,type:'number'}]},
+    {id:'render-text',title:'Text',cat:'data',engine:'data.constant',x:440,y:100,w:240,params:[{k:'value',label:'Value',v:'Render fixture',type:'text'}]},
+    {id:'render-done',title:'Completed value',cat:'data',engine:'data.constant',x:120,y:350,w:240,state:'done',result_summary:'42',params:[{k:'value',label:'Value',v:42,type:'number'}]},
     {id:'sys_account', application:true, title:'Account', group:'Account', cat:'logic', x:20, y:44, w:240,
       params:[{k:'identity', label:'Identity', v:'local', editable:false}]},
     {id:'sys_connections', application:true, title:'Connections', group:'Connections', cat:'tools', x:320, y:44, w:240,
@@ -84,15 +87,19 @@ await page.evaluate(() => {
   ReactDOM.flushSync(() => window.__studioRoot.render(React.createElement(StudioLM)));
 });
 await page.locator('[title="Settings"]').click();
-await page.locator('[data-settings54-node-id="sys_appearance"]').click();
+await page.locator('[data-settings54-landing]').waitFor();
 await page.waitForTimeout(500);
-await page.screenshot({ path:path.join(root, 'evidence/UIFIX-Settings-1496x959.png'), fullPage:false });
+await page.screenshot({ path:path.join(root, 'evidence/UIFIX-p2-Settings-1496x959.png'), fullPage:false });
 await page.locator('[data-settings54-shell] button', {hasText:'Home'}).click();
 await page.locator('[data-app-rail] [aria-label="Workshop"]').click();
 await page.locator('[data-workshop72]').waitFor();
 await page.locator('[data-workshop-agents]').getByText('Claude Code', {exact:true}).waitFor();
 await page.waitForTimeout(250);
-await page.screenshot({path:path.join(root, 'evidence/UIFIX-Workshop-1496x959.png'), fullPage:false});
+await page.screenshot({path:path.join(root, 'evidence/UIFIX-p2-Workshop-1496x959.png'), fullPage:false});
+await page.locator('[data-app-rail] [aria-label="Canvas"]').click();
+await page.locator('[role="region"][aria-label="Workflow canvas"]').waitFor();
+await page.locator('[data-node-id="render-number"]').waitFor();
+await page.screenshot({path:path.join(root, 'evidence/UIFIX-p2-Canvas-1496x959.png'), fullPage:false});
 console.log(JSON.stringify({viewport:page.viewportSize(), rail:await page.locator('[data-app-rail]').count(),
-  status:await page.locator('[data-app-status]').count(), renders:['UIFIX-Settings-1496x959.png','UIFIX-Workshop-1496x959.png'], fixture:'tests_js/workshop72_fixture.cjs; Settings projection in this script', source:'compiled manifest '+manifest.files.length+' files'}));
+  status:await page.locator('[data-app-status]').count(), renders:['UIFIX-p2-Settings-1496x959.png','UIFIX-p2-Workshop-1496x959.png','UIFIX-p2-Canvas-1496x959.png'], fixture:'tests_js/workshop72_fixture.cjs; Settings projection in this script', source:'compiled manifest '+manifest.files.length+' files'}));
 await browser.close();

@@ -129,6 +129,8 @@ test('the Settings sidebar is the DSYS-065 six-group graph rail and retains the 
     assert.equal(dialog.getAttribute('aria-label'), 'Settings');
     assert.deepEqual([...dialog.querySelectorAll('[data-settings54-group-title]')].map(node => node.textContent.trim()),
       ['Account', 'Connections', 'AI', 'Permissions', 'Appearance', 'Storage & About']);
+    s.flush(() => [...dialog.querySelectorAll('button')].find(b => b.textContent.trim() === 'System graph').click());
+    await s.settle();
     assert.equal(dialog.querySelectorAll('[data-settings54-node-card]').length >= 5, true,
       'System graph cards are the visible Settings surface');
     assert.deepEqual([dialog.style.width, dialog.style.height], ['100%', '100%'],

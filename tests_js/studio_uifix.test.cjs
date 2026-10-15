@@ -102,9 +102,10 @@ test('UIFIX: actual Studio rail clicks retain DOM identity while canvas and Work
     assert.equal(ui.doc.querySelector('[data-app-status]'),status,name);
     assert.equal(ui.doc.querySelectorAll('[data-app-rail]').length,1,name);};
   try {
-    await click('Workshop');
+    await click('Canvas');
     assert.ok(ui.doc.querySelector('[data-workspace-canvas-loading]'));
     ui.flush(() => releaseCanvas()); await settle();
+    await click('Workshop');
     assert.ok(ui.doc.querySelector('[data-workspace-frame] [data-workshop-loading]'));
     ui.flush(() => releaseWorkshop(originalWorkshop)); await settle();
     assert.ok(ui.doc.querySelector('[data-workshop72]'));

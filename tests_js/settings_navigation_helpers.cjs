@@ -29,7 +29,7 @@ function settingsNavigator({doc, flush, settle, waitFor}) {
     const button = await capability(label);
     flush(() => button.click());
     await settle();
-    const panel = shell.querySelector('aside:last-of-type > .ah-scroll');
+    const panel = shell.querySelector('[data-settings54-landing]') || shell.querySelector('aside:last-of-type > .ah-scroll');
     assert.ok(panel, label + ' owner renders in the Settings inspector');
     return panel;
   };

@@ -80,7 +80,7 @@ test('DSYS-060 app frame owns the one Studio shell grid', () => {
 
 test('DSYS-060 rail, panel head, search and breadcrumb primitives are the shared plate parts', () => {
   assert.match(source, /const AppRail = window\.ARCHHUB_APP_RAIL/, 'the frame reuses the Workshop v3 rail');
-  assert.match(source, /Home:onHome, Workshop:onWorkshop, Canvas:onCanvas/, 'the shared rail routes all primary surfaces');
+  assert.match(source, /Home:onHome, Chats:onChats, Workshop:onWorkshop, Canvas:onCanvas/, 'the shared rail routes all primary surfaces');
   assert.doesNotMatch(source, /const RailItem =|const IconRail =|const RailIcon =/, 'the old rail implementations are deleted');
   assert.match(source, /const PanelHead = \(/, 'PanelHead primitive is shared');
   assert.match(source, /fontSize:16,\s*fontWeight:600/, 'PanelHead title is Inter 16/600');

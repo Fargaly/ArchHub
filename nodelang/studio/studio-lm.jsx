@@ -147,12 +147,12 @@ const Search = ({ ph, children }) => (
     <span>⌕</span>{children || <span>{ph}</span>}<span style={{ flex:1 }}/><span style={{ fontSize:11 }}>Ctrl K</span>
   </div>
 );
-const Frame = ({ rail, left, top, children, insp, status, onHome, onPanel, onSettings, onWorkshop, onCanvas, account, workshopWindow = false }) => {
+const Frame = ({ rail, left, top, children, insp, status, onHome, onPanel, onSettings, onWorkshop, onCanvas, onChats, onDocs, onCockpit, account, workshopWindow = false }) => {
   const AppRail = window.ARCHHUB_APP_RAIL;
   const waiting = workshopWaitingItems(useWorkshopProjection()).length;
   const hasLeft = !!left;
   const contentColumn = hasLeft ? '3 / -1' : '2 / -1';
-  const railWidth = rail === 'Settings' ? 44 : 64;
+  const railWidth = 64;
   return (
     <section data-app-frame="" style={{
       width:'100%', height:'100%', background:LM.bgDeep, color:LM.ink, fontFamily:LM.sans,
@@ -161,8 +161,8 @@ const Frame = ({ rail, left, top, children, insp, status, onHome, onPanel, onSet
       gridTemplateRows:'36px minmax(0, 1fr) 22px',
       overflow:'hidden', position:'relative',
     }}>
-      <AppRail persistent workshop={workshopWindow} active={rail || 'Home'} compact={rail === 'Settings'} waiting={waiting} account={account} onNavigate={name => {
-        const route = {Home:onHome, Workshop:onWorkshop, Canvas:onCanvas, Library:() => onPanel?.('nodes'), Settings:onSettings, Account:onSettings}[name];
+      <AppRail persistent workshop={workshopWindow} active={rail || 'Home'} waiting={waiting} account={account} onNavigate={name => {
+        const route = {Home:onHome, Chats:onChats, Workshop:onWorkshop, Canvas:onCanvas, Library:() => onPanel?.('nodes'), Docs:onDocs, Cockpit:onCockpit, Settings:onSettings, Account:onSettings}[name];
         route?.();
       }}/>
 
@@ -1102,6 +1102,12 @@ const StudioLM = () => {
       const liveSessions = Array.isArray(window.ARCHHUB_LIVE?.sessions) ? window.ARCHHUB_LIVE.sessions : [];
       const graphId = openId || window.ARCHHUB_LIVE?.currentGraph || visibleSessions[0]?.id ||
         liveSessions[0]?.id || LM_SESSIONS[0]?.id || workshopState?.canvas?.graph_id || '';
+      if (options.window) {
+        setOpenId(null);
+        setWorkspaceSelection(canvasWorkspaceView(viewScope));
+        setToolView({id:'workshop', root:room?.root || WORKSHOP_UNAVAILABLE_ROOT, focus:options.focus || null});
+        return;
+      }
       if (graphId) {
         const authorization = (workshopState?.topology?.canvas || workshopState?.canvas)?.authorization || {};
         const conversationRoot = room?.root || WORKSHOP_UNAVAILABLE_ROOT;
@@ -1337,8 +1343,8 @@ const StudioLM = () => {
   };
 
   // Docs and Settings are mutually exclusive — they share a z-index, so opening one closes the other.
-  // A named Settings node lasts one opening; every other way in opens the System graph.
-  const openSettings = (v, tab) => { if (v) setDocsOpen(false); setSettingsTab(v && tab ? tab : 'system'); setSettingsOpen(v); };
+  // Settings lands on its designed controls. The System graph is an explicit destination.
+  const openSettings = (v, tab) => { if (v) setDocsOpen(false); setSettingsTab(v && tab ? tab : 'theme'); setSettingsOpen(v); };
   const openDocs = (v) => {
     if (v) {
       openSettings(false);
@@ -1398,7 +1404,7 @@ const StudioLM = () => {
     };
   }, []);
 
-  const frameRail = settingsOpen ? 'Settings' : docsOpen ? 'Docs' : ['nodes', 'skills', 'search'].includes(panel) ? 'Library' :
+  const frameRail = settingsOpen ? 'Settings' : docsOpen ? 'Docs' : panel === 'chats' ? 'Chats' : ['nodes', 'skills', 'search'].includes(panel) ? 'Library' :
     toolView?.id === 'workshop' || (session && workspaceView.mode === 'chat' && workspaceView.conversationRoot) ? 'Workshop' :
     session ? 'Canvas' : 'Home';
   const frameCrumbs = session ? ['ArchHub', session.title || 'Graph'] :
@@ -1407,7 +1413,9 @@ const StudioLM = () => {
     <Frame workshopWindow={(!!session && workspaceView.mode === 'chat' && !!workspaceView.conversationRoot) || (!session && toolView?.id === 'workshop')}
       rail={frameRail} onHome={goHome} onPanel={value => { setSettingsOpen(false); setDocsOpen(false); setLibraryOpen(false); setPanel(value); }}
       onSettings={() => openSettings(true)} account={account}
-      onWorkshop={() => { setSettingsOpen(false); setDocsOpen(false); setLibraryOpen(false); setPanel(null); openTool('workshop'); }}
+      onChats={() => { setSettingsOpen(false); setDocsOpen(false); setLibraryOpen(false); setToolView(null); setPanel('chats'); }}
+      onDocs={() => openDocs(true)} onCockpit={() => { setSettingsOpen(false); setDocsOpen(false); setPanel(null); openTool('cockpit'); }}
+      onWorkshop={() => { setSettingsOpen(false); setDocsOpen(false); setLibraryOpen(false); setPanel(null); openTool('workshop', {window:true}); }}
       onCanvas={() => { setPanel(null); setSettingsOpen(false); setDocsOpen(false); openTool('studio'); }}
       left={panel && !workshopContext ? <Sidebar
         panel={panel} setPanel={setPanel}
@@ -4326,7 +4334,7 @@ const canvasStatusColor = node => canvasNeedsUser(node) ? LM.warn :
   /done|complete|ready|success/.test(node?.state || node?.status || '') ? LM.ok :
   /running|working/.test(node?.state || node?.status || '') ? LM.accent : LM.inkSoft;
 const canvasStatusText = node => {
-  const value=String(node?.status || node?.state || 'Not available yet');
+  const value=String(node?.status || node?.state || '');
   return /^(?:open|planned|queued|claimed)$/i.test(value) ? 'ready to start' : value.replaceAll('_',' ');
 };
 const canvasAgentRecord = node => {
@@ -6607,11 +6615,11 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
           onUse={s.connectable && onSocket ? () => onSocket(s, 'out') : undefined}
           onDragStart={s.connectable && onSocket ? e => onSocketDrag?.(e, s, 'out') : undefined}/>)}
       </div>}
-      <footer data-node-footer-status="" style={{display:'flex', alignItems:'center', gap:8, padding:'9px 14px',
+      {(agent?.taskTitle || n.result_summary || n.status || n.state || agent?.state || agent?.live_state) && <footer data-node-footer-status="" style={{display:'flex', alignItems:'center', gap:8, padding:'9px 14px',
         borderTop:`1px solid ${LM.lineSoft}`, fontSize:12.5, color:canvasStatusColor(n)}}>
         <i aria-hidden="true" style={{width:7,height:7,borderRadius:'50%',background:canvasStatusColor(n)}}/>
         {[agent?.taskTitle,n.result_summary || canvasStatusText({...n,state:n.state || agent?.state || agent?.live_state})].filter(Boolean).join(' · ')}
-      </footer>
+      </footer>}
     </div>
   );
 };
@@ -8880,14 +8888,14 @@ const Settings54Card = ({ node, view, selected, connected, action }) => {
 };
 const Settings = props => {
   const canvasRead = useDeferredCanvas();
-  if (canvasRead.pending || canvasRead.error) return <div data-settings-canvas-loading="" role="dialog" style={{position:'absolute', top:0, bottom:22, left:44, right:0, zIndex:60, padding:24, background:LM.bg, color:LM.ink}}>
+  if (canvasRead.pending || canvasRead.error) return <div data-settings-canvas-loading="" role="dialog" style={{position:'absolute', top:0, bottom:22, left:64, right:0, zIndex:60, padding:24, background:LM.bg, color:LM.ink}}>
     {canvasRead.error ? <><p role="alert">The canvas could not be loaded: {canvasRead.error}</p>
       <button onClick={canvasRead.retry}>Retry</button></> : <p role="status">Loading your settings…</p>}
     <button onClick={props.onClose}>Close</button>
   </div>;
   return <SettingsLoaded {...props}/>;
 };
-const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSignOut, initialTab = 'hub', onOpenTool, onOpenToolGraph }) => {
+const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSignOut, initialTab = 'theme', onOpenTool, onOpenToolGraph }) => {
   const providers = useProviderStatus();
   const workshopState = useWorkshopProjection();
   const release = releaseStatus(workshopState);
@@ -8927,7 +8935,8 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
   const [selectedId, setSelectedId] = React.useState(() => settings54FindNodeForGroup(initialGroup, systemNodes)?.id || '');
   const [query, setQuery] = React.useState('');
   const [statusMessage, setStatusMessage] = React.useState('');
-  const [activeCapability, setActiveCapability] = React.useState(initialGroup.items[0] || 'Hub');
+  const [activeCapability, setActiveCapability] = React.useState(initialGroup.items[0] || 'Theme');
+  const [graphOpen, setGraphOpen] = React.useState(false);
   const selectedGroup = SETTINGS54_GROUPS.find(group => group.id === selectedGroupId) || initialGroup;
   React.useEffect(() => {
     const capabilityMap = {hub:'Hub', hosts:'Hosts', providers:'Providers', connections:'Connections', account:'Account', profile:'Profile', team:'Team',
@@ -9113,14 +9122,14 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
   };
   return (
     <div onClick={onClose} style={{
-      position:'absolute', top:0, bottom:22, left:44, right:0, background:LM.bgDeep, zIndex:60,
+      position:'absolute', top:0, bottom:22, left:64, right:0, background:LM.bgDeep, zIndex:60,
       display:'grid',
     }}>
       <div data-settings54-shell="" role="dialog" aria-modal="true" aria-label="Settings" onClick={e => e.stopPropagation()} style={{
         width:'100%', height:'100%', background:LM.bgDeep, color:LM.ink, overflow:'hidden',
         display:'grid', gridTemplateRows:'1fr', fontFamily:LM.sans,
       }}>
-        <div style={{ display:'grid', gridTemplateColumns:'248px minmax(0,1fr) 320px', minHeight:0 }}>
+        <div style={{ display:'grid', gridTemplateColumns:graphOpen ? '248px minmax(0,1fr) 320px' : '248px minmax(0,1fr)', minHeight:0 }}>
           <aside style={{ background:LM.bgPanel, borderRight:`1px solid ${LM.line}`, display:'grid', gridTemplateRows:'44px auto 1fr', minWidth:0 }}>
             <div style={{ display:'flex', alignItems:'center', padding:'0 12px', borderBottom:`1px solid ${LM.lineSoft}`, fontSize:16, fontWeight:600 }}>Settings</div>
             <label style={{ margin:10, height:32, borderRadius:5, background:LM.bgSoft, border:`1px solid ${LM.line}`, display:'flex', alignItems:'center', gap:8, padding:'0 10px', color:LM.inkSoft }}>
@@ -9160,11 +9169,12 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
               <span style={{ fontSize:12, color:LM.inkSoft }}>Settings <span style={{ margin:'0 6px' }}>›</span><span style={{ color:LM.ink }}>{activeCapability === 'Properties' ? 'System' : activeCapability || selectedGroup.title}</span></span>
               <span style={{ fontSize:11, color:canOpenSystem ? LM.ok : LM.warn }}>{canOpenSystem ? 'Connected · live' : 'System graph unavailable'}</span><span style={{ flex:1 }}/>
               {statusMessage && <span role="status" style={{ fontSize:11, color:LM.inkSoft, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:260 }}>{statusMessage}</span>}
-              <button type="button" onClick={arrangeSystem} style={settings54Button(false, {border:'1px solid transparent', color:LM.ink})}>Arrange</button>
+              {graphOpen && <button type="button" onClick={arrangeSystem} style={settings54Button(false, {border:'1px solid transparent', color:LM.ink})}>Arrange</button>}
+              <button type="button" onClick={() => setGraphOpen(value => !value)} aria-pressed={graphOpen} style={settings54Button(false)}>{graphOpen ? 'Back to Settings' : 'System graph'}</button>
               <button type="button" onClick={onHome} title="Home (Alt+Home)" style={settings54Button(false)}>Home</button>
               <button type="button" aria-label="Close" data-close-button="" onClick={onClose} style={settings54Button(false)}>Close</button>
             </div>
-            <div ref={graphPane} data-settings54-graph="" data-settings54-focus={selectedId} style={{ position:'relative', background:LM.bgCanvas || LM.bgDeep, overflow:'hidden',
+            {!graphOpen ? <div data-settings54-landing="" className="ah-scroll" style={{overflow:'auto', padding:'20px 24px 24px', background:LM.bgPanel}}>{inspectorRows()}</div> : <div ref={graphPane} data-settings54-graph="" data-settings54-focus={selectedId} style={{ position:'relative', background:LM.bgCanvas || LM.bgDeep, overflow:'hidden',
               backgroundImage:`radial-gradient(${LM.line} 1px, transparent 1px)`, backgroundSize:'24px 24px' }}>
               {!selectedNode && <div data-settings54-no-live-node="" style={{ position:'absolute', left:24, top:24, zIndex:1, maxWidth:360,
                 border:`1px dashed ${LM.line}`, borderRadius:6, background:LM.bgPanel, color:LM.inkSoft, padding:'10px 12px', fontSize:13 }}>
@@ -9188,9 +9198,9 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
                     connected={nodeWireState(node)} action={() => { userSelection.current = {tab:initialTab, manual:true}; setSelectedId(node.id); setActiveCapability('Properties'); }}/>;
                 })}
               </div>
-            </div>
+            </div>}
           </main>
-          <aside style={{ background:LM.bgPanel, minHeight:0, overflow:'hidden', display:'grid', gridTemplateRows:'auto auto auto 1fr' }}>
+          {graphOpen && <aside style={{ background:LM.bgPanel, minHeight:0, overflow:'hidden', display:'grid', gridTemplateRows:'auto auto auto 1fr' }}>
             <div style={{ display:'flex', gap:8, padding:12, alignItems:'center' }}>
               <Settings54Tile glyph={selectedView?.glyph || selectedGroup.glyph} color={selectedView?.color || selectedGroup.color}/>
               <div style={{ minWidth:0 }}>
@@ -9212,7 +9222,7 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
               {!!(selectedNode?.params || []).length && <span style={{ display:'inline-flex', height:20, alignItems:'center', padding:'0 8px', borderRadius:999, border:`1px solid ${LM.line}`, fontSize:11, color:LM.inkSoft }}>{(selectedNode.params || []).length} parameters</span>}
             </div>}
             <div className="ah-scroll" style={{ overflow:'auto', minHeight:0 }}>{inspectorRows()}</div>
-          </aside>
+          </aside>}
         </div>
       </div>
     </div>

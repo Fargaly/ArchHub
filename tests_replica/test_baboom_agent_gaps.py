@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from nodelang import app_brain
-from nodelang.agent_composer import _baboom_tool_specs
+from tests_replica.test_goose_brain import packaged
 from nodelang.baboom_owner_grants import (
     GRANT_ARGUMENT_KEY,
     APPROVAL_PREFIX,
@@ -34,10 +34,13 @@ def _run(script, host, grant=None):
 
     return run_agentic_tool_loop(
         model_turn,
-        _baboom_tool_specs(
-            context_block='CANVAS CONTEXT\n{"nodes":[{"id":"n1","label":"Host"}]}',
-            host_reader=host,
-        ),
+        # These are fixtures for the retained Workshop owner's grant/readback
+        # contract. BABOOM no longer exposes brain.write; Goose's MCP surface
+        # and its zero-write permission court are in test_goose_brain.py.
+        {"brain.context": ToolSpec("brain.context", lambda name, args: host(name, args)) if host else
+            ToolSpec("brain.context", lambda *_: {"ok": False, "status": "unavailable", "error": "owner unavailable"}),
+         "brain.write": ToolSpec("brain.write", lambda name, args: host(name, args), mutates=True,
+            verify=lambda _name, _args, _result: host("brain.context", {}))},
         [{"role": "user", "content": "test"}],
         grant_checker=grant,
         max_steps=8,
@@ -114,17 +117,16 @@ def test_brain_write_uses_the_graph_brain_ops_contract(graph_brain):
     assert any(row["body"] == "Project code P-999" for row in facts)
 
 
-def test_brain_write_rejects_text_payload_shape(graph_brain):
+def test_brain_write_rejects_text_payload_shape(graph_brain, packaged):
     store, registry = graph_brain
-    bridge = _baboom_owner_tool_bridge(store, registry)
-
-    result = _run([
-        {"tool_calls": [_call("brain.write", {"text": "project code P-999"})]},
-        {"answer": "done"},
-    ], host=bridge, grant=lambda _name, _args: True)
-
-    assert result["steps"][0]["status"] == "refused"
-    assert "requires ops" in result["steps"][0]["summary"]
+    from nodelang.goose_adapter import GooseAdapter, GooseRefused
+    # Brain writes were removed from BABOOM, including malformed text writes.
+    # The engine cannot bypass that restriction with a permission request.
+    packaged.mode[0] = "permission"
+    packaged.runtime.start()
+    with pytest.raises(GooseRefused, match="No action was approved"):
+        GooseAdapter(packaged.runtime).ask("Remember project code P-999", "", "openrouter/free")
+    assert packaged.calls == []
 
 
 def test_approved_brain_write_passes_once(graph_brain):

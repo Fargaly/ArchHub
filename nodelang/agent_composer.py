@@ -14,8 +14,6 @@ from typing import Callable, Mapping
 
 from .model_router import ModelRouteRefused, route_chat
 from .cell_authorization import AuthorizationDenied
-from .native_agentic_loop import ToolSpec, run_agentic_tool_loop
-from .native_workshop_tools import WORKSHOP_TASK_TOOL_NAMES
 from .universal_cell import InvalidCell
 
 # There is no built-in default model. One was hidden here for months
@@ -25,22 +23,6 @@ from .universal_cell import InvalidCell
 # a pick, the composer says what to pick instead of guessing.
 _DEFAULT_MODEL = os.environ.get("ARCHHUB_AGENT_MODEL", "").strip()
 _NO_AGENT_NODE = object()
-_BABOOM_AGENTIC_STEP_CAP = 12
-_OPENROUTER_FREE_TOOL_MODELS = frozenset({
-    "dots-studio/dots-3-note-preview:free",
-    "cohere/north-mini-code:free",
-    "nvidia/nemotron-3.5-lightning:free",
-})
-_BABOOM_LOCAL_TOOL_NAMES = frozenset({
-    "brain.context",
-    "brain.write",
-    "graph.read",
-    "host.ping",
-})
-_BABOOM_HIDDEN_TOOL_NAMES = frozenset(WORKSHOP_TASK_TOOL_NAMES) | (_BABOOM_LOCAL_TOOL_NAMES - {
-    "graph.read",
-    "host.ping",
-})
 NO_MODEL_CHOSEN = (
     "No model chosen. Pick one in the studio header (the picker), or set "
     "ARCHHUB_AGENT_MODEL to a route such as openrouter/free."
@@ -81,11 +63,10 @@ turn a tool request into a canvas draft.
 """
 
 _SYSTEM += """
-When tools are available, read brain.context before planning. Use graph.read or
-the canvas context for current state. Use brain.write only for facts the founder
-asked the Brain to remember, and rely on the tool readback before mentioning a
-write as complete. Other host, plan and Skill writes are not available in this
-chat; prepare editable Work through JSON actions instead."""
+Read the supplied authorised context before planning. For host visibility use
+archhub-hosts hosts_state; it is read-only. No direct Brain, host, filesystem,
+plan or Skill writes are available here. Prepare editable Work through JSON
+actions and the existing shared Approve card instead."""
 
 _SYSTEM += """
 For a requested text review, analysis or planning task, use work: it creates
@@ -223,67 +204,6 @@ def _answer_via(answer: Mapping[str, object]) -> dict[str, str]:
     return {"family": family, "model": model, "provider": provider}
 
 
-def _model_supports_tools(model: str) -> bool:
-    route = str(model or "").strip()
-    if route == "openrouter/free":
-        return True
-    if route.startswith(("lmstudio/", "ollama/")):
-        return True
-    if route.startswith("openrouter/"):
-        route = route[len("openrouter/"):]
-    return route in _OPENROUTER_FREE_TOOL_MODELS
-
-
-def baboom_hidden_tool_names() -> tuple[str, ...]:
-    return tuple(sorted(_BABOOM_HIDDEN_TOOL_NAMES))
-
-
-def _baboom_tool_specs(*, context_block: str = "", host_reader=None) -> dict[str, ToolSpec]:
-    def host_call(action: str, arguments: Mapping[str, object]) -> object:
-        if host_reader is None:
-            return {"ok": False, "status": "unavailable",
-                    "error": "%s owner unavailable. Retry from an owned Workshop context." % action}
-        return host_reader(action, dict(arguments))
-
-    def run(name, arguments):
-        if name == "host.ping":
-            if host_reader is not None:
-                return host_reader("ping", arguments)
-            return {"ok": True, "pong": True}
-        if name == "graph.read":
-            prefix = "CANVAS CONTEXT\n"
-            if not context_block.startswith(prefix):
-                return {"ok": False, "status": "failed", "error": "graph context is unavailable"}
-            return {"ok": True, "graph": json.loads(context_block[len(prefix):].split("\nRecent conversation content", 1)[0])}
-        if name == "brain.context":
-            return host_call("brain.context", arguments)
-        if name == "brain.write":
-            ops = arguments.get("ops")
-            if not isinstance(ops, (list, tuple)):
-                return {"ok": False, "status": "refused",
-                        "error": "brain.write requires ops with add fragments"}
-            return host_call("brain.write", arguments)
-        raise InvalidCell("%s is not wired in this BABOOM chat context" % name)
-
-    def verify(name, arguments, _result):
-        if name == "brain.write":
-            return host_call("brain.context", {})
-        return {"ok": True, "checked": name}
-
-    tools = {
-        "graph.read": ToolSpec("graph.read", run, mutates=False),
-        "host.ping": ToolSpec("host.ping", run, mutates=False),
-    }
-    if host_reader is not None:
-        tools.update({"brain.context": ToolSpec("brain.context", run, mutates=False),
-            "brain.write": ToolSpec("brain.write", run, mutates=True, verify=verify)})
-    return tools
-
-
-def run_baboom_tool_loop(model_turn, tools, messages, **options) -> dict[str, object]:
-    return run_agentic_tool_loop(model_turn, tools, messages, **options)
-
-
 def _chat(
     prompt: str,
     context_block: str,
@@ -303,47 +223,21 @@ def _chat(
     of substituting, and its refusal is one sentence fit to show a person.
     """
     try:
-        generation_options = {"max_tokens": 900, "temperature": 0}
-        generation_options.update(_generation_options(generation))
-        messages = [
-                {"role": "system", "content": _SYSTEM},
-                {"role": "user",
-                 "content": context_block + chr(10) + chr(10) + "FOUNDER: " + prompt},
-            ]
-        tools = _baboom_tool_specs(context_block=context_block, host_reader=host_reader)
-
-        last_answer = {}
-
-        def turn(rows, tool_schemas):
-            nonlocal last_answer
-            last_answer = route_chat(
-                model,
-                rows,
-                free_only=model == "openrouter/free" or model.endswith(":free"),
-                tools=tool_schemas,
-                **generation_options,
-                **({"before_dispatch":before_dispatch} if before_dispatch is not None else {}),
-            )
-            return last_answer
-
-        loop = run_baboom_tool_loop(
-            turn, tools, messages,
-            max_steps=_BABOOM_AGENTIC_STEP_CAP,
-            model_supports_tools=_model_supports_tools(model),
-            grant_checker=grant_checker,
-            is_halted=is_halted,
-            halt_generation=halt_generation,
-        )
-        via = _answer_via(last_answer if isinstance(last_answer, Mapping) else
-                          {"family": "", "model": model, "provider": ""})
-        return {"text": str(loop["answer"]), "steps": list(loop.get("steps") or ()), "via": via}
-    except (InvalidCell, AuthorizationDenied):
+        options = {"max_tokens": 900, "temperature": 0}
+        options.update(_generation_options(generation))
+        answer = route_chat(model, [
+            {"role": "system", "content": _SYSTEM},
+            {"role": "user", "content": context_block + "\n\nUser: " + prompt},
+        ], free_only=model == "openrouter/free" or model.endswith(":free"),
+            **options, **({"before_dispatch": before_dispatch} if before_dispatch else {}))
+        return {"text": str(answer.get("text") or ""), "steps": [], "via": _answer_via(answer)}
+    except (InvalidCell, AuthorizationDenied, ModelRouteRefused):
         raise
     except Exception:
         raise ModelRouteRefused("The model provider did not answer. Try again when it is available.") from None
 
 
-def _baboom_loop_answer_text(raw: str) -> str:
+def _answer_text(raw: str) -> str:
     text = str(raw or "").strip()
     if not text:
         return ""
@@ -492,6 +386,7 @@ def run_agent_composer(
     is_halted: Callable[[], bool] | None = None,
     halt_generation: Callable[[], object] | None = None,
     preview_only: bool = False,
+    chat=None,
 ) -> dict[str, object]:
     """Read and edit under the caller's lock; wait for the model outside it.
 
@@ -538,12 +433,12 @@ def run_agent_composer(
         chat_kwargs["host_reader"] = host_reader
     if grant_checker is not None:
         chat_kwargs["grant_checker"] = grant_checker
-    routed_answer = _chat(prompt.strip(), context_block, chosen, **chat_kwargs)
+    routed_answer = (chat or _chat)(prompt.strip(), context_block, chosen, **chat_kwargs)
     via = routed_answer.get("via") if isinstance(routed_answer, Mapping) else None
     steps = list(routed_answer.get("steps") or ()) if isinstance(routed_answer, Mapping) else []
     raw = str(routed_answer.get("text") if isinstance(routed_answer, Mapping) else routed_answer)
     if steps:
-        result = {"answer": _baboom_loop_answer_text(raw), "applied": [], "steps": steps}
+        result = {"answer": _answer_text(raw), "applied": [], "steps": steps}
         if isinstance(via, Mapping):
             result["via"] = dict(via)
         return result

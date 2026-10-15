@@ -280,7 +280,7 @@ class ExistingWorkshopNativeHost:
         self._native = None  # Retained physical owner; graph holds task authority.
 
     def run_shared_tool_loop(self, model_turn, tools, messages, **options):
-        """Workshop tool turns use the same bounded loop as BABOOM."""
+        """Workshop tool turns use the retained bounded native loop."""
         specs = {
             name: spec if isinstance(spec, ToolSpec) else ToolSpec(name, spec)
             for name, spec in dict(tools).items()

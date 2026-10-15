@@ -1,4 +1,6 @@
 """BABOOM5 acceptance at the native host, shared core and mounted Qt seams."""
+from tests_replica.test_goose_brain import packaged
+from pathlib import Path
 import time
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -385,7 +387,7 @@ def test_closed_app_control_uses_the_installer_shortcut_without_launching(monkey
         window.close()
 
 
-def test_ask_over_fake_transport_uses_the_existing_router_loop_and_shows_steps(monkeypatch, tmp_path):
+def test_ask_over_fake_transport_uses_goose_and_shows_host_result(monkeypatch, tmp_path, packaged):
     from nodelang import agent_composer, application_server, universal_application, pipeline_engines
     from nodelang.native_agentic_loop import observe_steps
     from tests_replica.test_agent_composer_action_gate import _Store
@@ -397,13 +399,9 @@ def test_ask_over_fake_transport_uses_the_existing_router_loop_and_shows_steps(m
     owner._read_agent_model = lambda: "openrouter/free"
     monkeypatch.setattr(universal_application, "project_universal_canvas", lambda *_, **__: {"nodes": [], "catalog": [], "revision": 1})
     monkeypatch.setattr(pipeline_engines, "brain_recall", lambda *_: ({"out": ""}, ""))
-    calls = []
-    def route(model, messages, **kwargs):
-        calls.append(model)
-        if len(calls) == 1:
-            return {"tool_calls": [{"id": "one", "name": "host.ping", "arguments": {}}]}
-        return {"text": "ArchHub tools are available."}
-    monkeypatch.setattr(agent_composer, "route_chat", route)
+    from nodelang.goose_adapter import GooseAdapter
+    packaged.runtime.start()
+    owner.goose_brain = GooseAdapter(packaged.runtime)
     def respond(*, utterance, on_progress):
         with observe_steps(on_progress):
             return application_server.answer_open_question(owner, utterance, None,
@@ -413,10 +411,11 @@ def test_ask_over_fake_transport_uses_the_existing_router_loop_and_shows_steps(m
         window.start_projection()
         window._say("What can you see?")
         _wait(app, lambda: not window._busy)
-        assert calls == ["openrouter/free", "openrouter/free"]
-        assert "ArchHub tools are available." in window._report.text()
-        assert "host.ping" in window._report.text()
-        assert window._steps["host.ping"]["status"] == "ok"
+        assert packaged.calls == [("GET", "/api/universal/hosts", {})]
+        assert "court-fixture.3dm" in window._report.text()
+        assert "hosts_state" in window._report.text()
+        assert window._steps["hosts_state"]["status"] == "ok"
+        window.grab().save(str(Path(__file__).resolve().parents[1] / "evidence/GOOSE-face.png"))
     finally:
         window.stop_projection()
         window.close()

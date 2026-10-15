@@ -32,6 +32,9 @@
 #ifndef NodeLicensePath
 #error Build with installer/build_release.ps1: NodeLicensePath is required.
 #endif
+#ifndef GoosePayloadPath
+#error Build with installer/build_release.ps1: pinned GoosePayloadPath is required.
+#endif
 ; Every desktop wheel for CPython 3.14 win_amd64, fetched by build_release.ps1
 ; from requirements.txt; colleague_setup.py installs from it with --no-index.
 #ifndef WheelhousePath
@@ -93,6 +96,10 @@ Name: "connectassistants"; Description: "Connect my AI assistants to ArchHub (ad
 [Files]
 Source: "{#NodeRuntimePath}"; DestDir: "{app}\runtime"; DestName: "node.exe"; Flags: ignoreversion; Check: NodeRuntimeNeedsInstall
 Source: "{#NodeLicensePath}"; DestDir: "{app}\runtime"; DestName: "Node-LICENSE.txt"; Flags: ignoreversion
+Source: "{#GoosePayloadPath}\*"; DestDir: "{app}\runtime\goose"; Flags: recursesubdirs ignoreversion
+Source: "..\NOTICE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\packaging\windows\licenses\Goose-Apache-2.0.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
+Source: "..\packaging\windows\licenses\Hermes-MIT.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
 Source: "..\nodelang\*"; DestDir: "{app}\nodelang"; Excludes: "{#PayloadExcludes}"; Flags: recursesubdirs ignoreversion
 Source: "..\launch_archhub_test.py"; DestDir: "{app}"; Flags: ignoreversion
 ; The graph owner task is re-registered from the installed copy (RefreshCleanCoordinationTask).

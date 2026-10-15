@@ -553,9 +553,15 @@ def _real_client_error(monkeypatch, scenario):
     """What nodelang.application_machine_transport.UniversalRuntimeClient raises."""
     import json
     from nodelang import application_machine_transport as amt
+    # Exercise the real bounded response loop without spending four minutes
+    # busy-polling a fake pipe. This changes no production timeout.
+    monkeypatch.setattr(amt, "_default_machine_response_timeout", lambda *_: 0.05)
 
-    descriptor = SimpleNamespace(status="starting" if scenario == "not-active" else "active",
-                                 runtime_id="a" * 32, pipe="court-pipe", key_id="k", key_version=1)
+    descriptor = amt.RuntimeDescriptor(status="starting" if scenario == "not-active" else "active",
+        runtime_id="a" * 32, pipe="court-pipe", key_id="k", key_version=1,
+        process_id=1, started_at="court", stopped_at="", application_root="app:court",
+        agent_session_root="", workshop_root="workshop:court", work_registry_root="work:court",
+        database="court.sqlite3", signature="court")
 
     class Connection:
         def send_bytes(self, raw):

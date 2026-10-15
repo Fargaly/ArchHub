@@ -1600,6 +1600,15 @@ def _keep_attaching():
             # froze the window for seconds while the Studio loaded. A failed
             # inspection leaves None and land() refuses exactly as before.
             try:
+                from nodelang.goose_runtime import start_goose_for_baboom
+                start_goose_for_baboom(server, host,
+                    app_root=Path(__file__).resolve().parent, state_dir=state_dir,
+                    cancellation_event=_baboom_stop)
+            except Exception as refusal:
+                # Keep the face available so a missing package is visible. The
+                # ask boundary refuses; it never falls back to the retired loop.
+                print("  BABOOM     : Goose unavailable (%s)" % type(refusal).__name__, flush=True)
+            try:
                 from nodelang.baboom_native_runtime import prepare_baboom_native_atlas
                 _baboom_attachment.prepared_atlas = prepare_baboom_native_atlas()
             except Exception:
@@ -1872,6 +1881,9 @@ def _finish_application_shutdown():
     if cloud_relay is not None:
         cloud_relay.request_stop()
     _baboom_stop.set()
+    goose_runtime = getattr(server, "goose_runtime", None)
+    if goose_runtime is not None:
+        goose_runtime.close()
     _update_stop.set()
     _cloud_publish_stop_event = globals().get("_cloud_publish_stop")
     if _cloud_publish_stop_event is not None:

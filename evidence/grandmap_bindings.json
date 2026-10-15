@@ -204,6 +204,14 @@
         "tests_replica/test_sysnodes.py::test_model_options_persist_in_existing_owner_asset_and_reach_request_builder"
       ]
     },
+    "models_tool_engine": {
+      "why": "BABOOM's adopted Goose ACP engine reaches the existing read-only host MCP; isolated fake-agent proof only",
+      "tests": [
+        "tests_replica/test_goose_brain.py::test_fake_goose_reads_actual_mcp_tool_and_returns_host_result",
+        "tests_replica/test_goose_brain.py::test_permission_cannot_spoof_safe_read_using_title",
+        "tests_replica/test_baboom5.py::test_ask_over_fake_transport_uses_goose_and_shows_host_result"
+      ]
+    },
     "models_registry": {
       "why": "the model set is declared, not scattered in code",
       "tests": [
@@ -754,7 +762,6 @@
     "users_pkce_exchange": "no kernel court yet",
     "users_brain_provision": "no kernel court yet",
     "users_account_chip": "no kernel court yet - account surface not migrated",
-    "models_tool_engine": "no kernel court yet",
     "models_agent_step": "no kernel court yet",
     "cockpit_keyword_router": "no kernel court yet",
     "brain_fact_store": "brain.db is the old store - the graph is the store now, no court asserts the migration",

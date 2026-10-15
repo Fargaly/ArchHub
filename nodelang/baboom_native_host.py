@@ -14,6 +14,7 @@ import json
 import threading
 import time
 from dataclasses import dataclass
+from contextlib import contextmanager
 from types import MappingProxyType
 from typing import Callable, Mapping, Protocol
 
@@ -72,6 +73,9 @@ class BaboomNativeTransport(Protocol):
         ...
 
     def execute_baboom_command(self, *, utterance: str) -> dict[str, object]:
+        ...
+
+    def read_hosts_state(self) -> dict[str, object]:
         ...
 
     def record_baboom_activity(self, *, app: str) -> dict[str, object]:
@@ -319,6 +323,25 @@ class BaboomNativeHost:
     def _require_not_stopped(self) -> None:
         if self._stop.is_set():
             raise RuntimeError("BABOOM is stopped; no new request was sent")
+
+    @contextmanager
+    def bound_client(self):
+        """Read-only MCP uses the companion's existing signed runtime client."""
+        self._require_not_stopped()
+        with self._lock:
+            if not self._connected:
+                raise RuntimeError("BABOOM native host is not explicitly connected")
+            transport = self._transport
+        class HostRead:
+            def request(self, method, path, body):
+                if (method, path, body) != ("GET", "/api/universal/hosts", {}):
+                    raise RuntimeError("only hosts_state is admitted")
+                return transport.read_hosts_state()
+        yield HostRead()
+        self._require_not_stopped()
+        with self._lock:
+            if transport is not self._transport or not self._connected:
+                raise RuntimeError("BABOOM connection changed during the host read")
 
     def resolve_input(self, utterance: str) -> Mapping[str, object]:
         """Resolve typed input through the graph-held command catalog only.

@@ -78,7 +78,7 @@ def _admitted_work(client, host: str) -> str:
     return work["root"]
 
 
-def register_host_tools(server, control) -> None:
+def register_host_tools(server, control, *, read_only=False) -> None:
     """Add the host tools to a native server bound to ``control``."""
 
     def read(run: Callable[[], dict]) -> dict:
@@ -126,6 +126,9 @@ def register_host_tools(server, control) -> None:
         """Every host connector's live state; the same read as hosts.status."""
         with control.bound_client() as client:
             return client.request("GET", "/api/universal/hosts", {})
+
+    if read_only:
+        return
 
     @server.tool(name="revit_ping")
     def revit_ping() -> dict:

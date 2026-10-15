@@ -116,9 +116,9 @@ def _two_turns():
     return model, tools, calls, executed
 
 
-def test_workshop_and_baboom_run_two_turns_through_the_same_shared_loop():
+def test_workshop_runs_two_turns_through_its_shared_native_loop():
     model, tools, baboom_calls, baboom_executed = _two_turns()
-    baboom = agent_composer.run_baboom_tool_loop(
+    baboom = native_agentic_loop.run_agentic_tool_loop(
         model, tools, [{"role": "user", "content": "go"}], max_steps=12)
 
     model, tools, workshop_calls, workshop_executed = _two_turns()
@@ -128,7 +128,6 @@ def test_workshop_and_baboom_run_two_turns_through_the_same_shared_loop():
     workshop = host.run_shared_tool_loop(
         model, tools, [{"role": "user", "content": "go"}], max_steps=12)
 
-    assert agent_composer.run_agentic_tool_loop is native_agentic_loop.run_agentic_tool_loop
     assert existing_workshop_native_host.run_agentic_tool_loop is native_agentic_loop.run_agentic_tool_loop
     assert baboom["answer"] == workshop["answer"] == "done"
     assert baboom["model_turns"] == workshop["model_turns"] == 3
@@ -150,7 +149,7 @@ def test_text_json_tool_call_runs_and_strips_visible_json():
             return {"text": 'I will check.\n\n{"tool":"host.ping","arguments":{"probe":"programs"}}'}
         return {"text": "ArchHub can see the host probe."}
 
-    result = agent_composer.run_baboom_tool_loop(
+    result = native_agentic_loop.run_agentic_tool_loop(
         model,
         {"host.ping": native_agentic_loop.ToolSpec(
             "host.ping", lambda name, args: {"ok": True, "name": name, "args": args})},
@@ -174,7 +173,7 @@ def test_name_parameters_check_programs_alias_never_leaks_raw_json():
             return {"text": '{"name":"check_programs","parameters":{}}'}
         return {"text": "Program visibility was checked."}
 
-    result = agent_composer.run_baboom_tool_loop(
+    result = native_agentic_loop.run_agentic_tool_loop(
         model,
         {"host.ping": native_agentic_loop.ToolSpec(
             "host.ping", lambda _name, _args: {"ok": True, "programs": []})},
@@ -335,23 +334,8 @@ def test_agentic_loop_reports_uncertain_tool_result_as_failure():
 
 
 def test_baboom_hides_unimplemented_tools_and_reads_real_context():
-    context = "CANVAS CONTEXT\n" + json.dumps({"revision": 7, "nodes": [{"id": "n"}]})
-    host_calls = []
-    tools = agent_composer._baboom_tool_specs(
-        context_block=context,
-        host_reader=lambda name, args: host_calls.append((name, args)) or {"ok": True, "pong": True},
-    )
-
-    assert set(agent_composer._baboom_tool_specs(context_block=context)) == {"graph.read", "host.ping"}
-    assert set(tools) == {"graph.read", "host.ping", "brain.context", "brain.write"}
-    assert tools["brain.context"].mutates is False
-    assert tools["brain.write"].mutates is True
-    assert "host.read" not in tools
-    assert "native.work_submit" in agent_composer.baboom_hidden_tool_names()
-    assert tools["graph.read"].mutates is False
-    assert tools["host.ping"].run("host.ping", {"probe": "now"}) == {"ok": True, "pong": True}
-    assert host_calls == [("ping", {"probe": "now"})]
-    assert tools["graph.read"].run("graph.read", {})["graph"]["revision"] == 7
+    from tests_replica.test_goose_brain import test_read_only_host_extension_reuses_existing_tool
+    test_read_only_host_extension_reuses_existing_tool()
 
 
 class _Answer(io.BytesIO):

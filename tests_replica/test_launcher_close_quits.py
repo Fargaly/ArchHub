@@ -43,41 +43,6 @@ def _visible_archhub_windows_for_pid(pid):
     return handles
 
 
-def _process_ids_by_name(name):
-    kernel32 = ctypes.windll.kernel32
-    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
-    snapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
-    if snapshot == wintypes.HANDLE(-1).value:
-        return set()
-
-    class PROCESSENTRY32W(ctypes.Structure):
-        _fields_ = [
-            ("dwSize", wintypes.DWORD),
-            ("cntUsage", wintypes.DWORD),
-            ("th32ProcessID", wintypes.DWORD),
-            ("th32DefaultHeapID", ctypes.c_void_p),
-            ("th32ModuleID", wintypes.DWORD),
-            ("cntThreads", wintypes.DWORD),
-            ("th32ParentProcessID", wintypes.DWORD),
-            ("pcPriClassBase", wintypes.LONG),
-            ("dwFlags", wintypes.DWORD),
-            ("szExeFile", wintypes.WCHAR * 260),
-        ]
-
-    entry = PROCESSENTRY32W()
-    entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
-    found = set()
-    try:
-        ok = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
-        while ok:
-            if entry.szExeFile.lower() == name.lower():
-                found.add(entry.th32ProcessID)
-            ok = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
-    finally:
-        kernel32.CloseHandle(snapshot)
-    return found
-
-
 def _kill_process(pid):
     kernel32 = ctypes.windll.kernel32
     kernel32.OpenProcess.restype = wintypes.HANDLE
@@ -144,12 +109,12 @@ def _job_kill_on_close(process_handle):
     return job
 
 
-def _kill_descendants_of(pid):
+def _child_process_ids(pid):
     kernel32 = ctypes.windll.kernel32
     kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
     snapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
     if snapshot == wintypes.HANDLE(-1).value:
-        return
+        return []
 
     class PROCESSENTRY32W(ctypes.Structure):
         _fields_ = [
@@ -176,7 +141,22 @@ def _kill_descendants_of(pid):
             ok = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
     finally:
         kernel32.CloseHandle(snapshot)
-    for child in children:
+    return children
+
+
+def _owned_process_ids(pid):
+    result = {pid}
+    pending = [pid]
+    while pending:
+        for child in _child_process_ids(pending.pop()):
+            if child not in result:
+                result.add(child)
+                pending.append(child)
+    return result
+
+
+def _kill_descendants_of(pid):
+    for child in _child_process_ids(pid):
         _kill_descendants_of(child)
         _kill_process(child)
 
@@ -185,7 +165,6 @@ def test_launcher_real_shell_wm_close_exits_subprocess_within_10s(tmp_path):
     if sys.platform != "win32":
         pytest.skip("real WM_CLOSE court is Windows-only")
     pytest.importorskip("PyQt6")
-    existing_webengine = _process_ids_by_name("QtWebEngineProcess.exe")
     script = textwrap.dedent(
         """
         import os
@@ -197,6 +176,10 @@ def test_launcher_real_shell_wm_close_exits_subprocess_within_10s(tmp_path):
             schema_version = 1
 
             def start(self):
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(0, lambda: (
+                    Path(os.environ["ARCHHUB_TEST_STATE_DIR"]) / "event-loop-ready"
+                ).write_text("ready", encoding="utf-8"))
                 return self
 
             def document_url_for(self, _schema):
@@ -218,6 +201,9 @@ def test_launcher_real_shell_wm_close_exits_subprocess_within_10s(tmp_path):
         "LOCALAPPDATA": str(tmp_path),
         "QTWEBENGINE_CHROMIUM_FLAGS": "--disable-gpu --single-process --no-sandbox",
         "QT_OPENGL": "software",
+        # The companion courts use offscreen in this pytest process. This
+        # subprocess owns only FakeRuntime and must expose its own HWND.
+        "QT_QPA_PLATFORM": "windows",
     }
     proc = subprocess.Popen([sys.executable, "-c", script], cwd=ROOT, env=env)
     job = _job_kill_on_close(int(proc._handle))
@@ -226,16 +212,23 @@ def test_launcher_real_shell_wm_close_exits_subprocess_within_10s(tmp_path):
         try:
             deadline = time.monotonic() + 10.0
             while time.monotonic() < deadline:
-                windows = _visible_archhub_windows_for_pid(proc.pid)
-                if windows:
+                # A Windows venv executable may delegate to its base Python.
+                # Only this owned process tree may supply the fake window.
+                windows = [window for pid in _owned_process_ids(proc.pid)
+                           for window in _visible_archhub_windows_for_pid(pid)]
+                if windows and (tmp_path / "event-loop-ready").is_file():
                     break
                 if proc.poll() is not None:
                     raise AssertionError("real shell exited before an ArchHub HWND appeared")
                 time.sleep(0.1)
             assert windows, "real shell did not expose a visible ArchHub HWND"
+            assert (tmp_path / "event-loop-ready").is_file(), "fake shell event loop did not start"
             started = time.monotonic()
+            post_message = ctypes.windll.user32.PostMessageW
+            post_message.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+            post_message.restype = wintypes.BOOL
             for hwnd, _title in windows:
-                ctypes.windll.user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+                assert post_message(hwnd, WM_CLOSE, 0, 0), "owned HWND refused WM_CLOSE"
             code = proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             titles = ", ".join(title for _, title in windows) if windows else "none"
@@ -251,5 +244,3 @@ def test_launcher_real_shell_wm_close_exits_subprocess_within_10s(tmp_path):
         if job:
             ctypes.windll.kernel32.CloseHandle(job)
         _kill_descendants_of(proc.pid)
-        for pid in _process_ids_by_name("QtWebEngineProcess.exe") - existing_webengine:
-            _kill_process(pid)

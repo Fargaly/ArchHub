@@ -7,6 +7,8 @@ param(
     [string]$OutputDirectory,
     [string]$IsccPath,
     [string]$NodePath,
+    # Fetched by 717 with founder OK. This build never downloads Goose.
+    [string]$GooseArchivePath,
     [string]$PythonPath,
     [switch]$PrepareCandidateManifest,
     [string]$LocalCandidateManifest,
@@ -21,6 +23,10 @@ param(
 # Build only the selected colleague installer. No installed state, builder-home
 # skills, PyInstaller runtime, or implicit sibling checkout enters this package.
 $ErrorActionPreference = 'Stop'
+if (-not $GooseArchivePath -or -not (Test-Path -LiteralPath $GooseArchivePath -PathType Leaf)) {
+    throw 'Supply the pinned Goose CLI archive via -GooseArchivePath; no separate installation or automatic download.'
+}
+$GooseArchivePath = (Resolve-Path -LiteralPath $GooseArchivePath).Path
 $utf8 = [Text.UTF8Encoding]::new($false, $true)
 $builtAt = [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture)
 $selectedRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
@@ -108,6 +114,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
         if ($Path.StartsWith('nodelang/studio/compiled/', [StringComparison]::OrdinalIgnoreCase)) { return $false }
         if ($Path -cin @(
             'launch_archhub_test.py', 'colleague_setup.py', 'requirements.txt',
+            'NOTICE', 'packaging/windows/goose-pin.json', 'packaging/windows/stage_goose.py',
             'package.json', 'packaging/compile_studio.cjs',
             'installer/ArchHub.iss', 'installer/ArchHub.bat', 'installer/ArchHub.vbs',
             'installer/legacy_sweep.iss', 'installer/legacy_v1_files.iss', 'installer/host_file_staging.iss',
@@ -115,6 +122,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
             'packaging/windows/install_clean_coordination_task.ps1',
             'packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',
             'packaging/windows/licenses/ArchHub-components-MIT.txt',
+            'packaging/windows/licenses/Goose-Apache-2.0.txt', 'packaging/windows/licenses/Hermes-MIT.txt',
             'app/secrets_store.py', 'app/credential_lock.py', 'app/__init__.py', 'archhub.ico',
             'bridges/rhino/archhub_mcp.py', 'bridges/blender/archhub_mcp/__init__.py',
             'bridges/sources/max_mcp/max_mcp_startup.py',
@@ -702,7 +710,10 @@ if ($BrokerReviewPath) {
 } elseif (-not $candidate) {
     throw 'Release refused: a shipped host broker is unreviewed.'
 }
-& $compiler "/DBuildId=$BuildId" "/DRequirementsSha256=$requirementsSha" "/DBuildMetadataPath=$buildMetadataPath" "/DNodeRuntimePath=$node" "/DNodeLicensePath=$nodeLicense" "/DWheelhousePath=$wheelhouse" "/DHostPayloadPath=$hostPayload" "/O$output" $installer
+$goosePayload = Join-Path $output 'goose-payload'
+& $PythonPath -E -s (Join-Path $selectedRoot 'packaging/windows/stage_goose.py') $GooseArchivePath $goosePayload
+if ($LASTEXITCODE -ne 0) { throw 'Pinned Goose staging failed; no installer was compiled.' }
+& $compiler "/DBuildId=$BuildId" "/DRequirementsSha256=$requirementsSha" "/DBuildMetadataPath=$buildMetadataPath" "/DNodeRuntimePath=$node" "/DNodeLicensePath=$nodeLicense" "/DGoosePayloadPath=$goosePayload" "/DWheelhousePath=$wheelhouse" "/DHostPayloadPath=$hostPayload" "/O$output" $installer
 if ($LASTEXITCODE -ne 0) { throw "Selected installer compilation failed with exit code $LASTEXITCODE." }
 if ((Get-FileHash -LiteralPath $node -Algorithm SHA256).Hash.ToLowerInvariant() -cne $nodeRuntimeSha) {
     throw 'Node runtime changed during installer compilation; retain artifact for inspection only.'

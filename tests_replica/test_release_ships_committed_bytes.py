@@ -18,7 +18,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "installer" / "build_release.ps1"
-PWSH = shutil.which("pwsh")
+# These courts execute two portable snapshot functions, not a release build.
+# Prefer the installed system host over an AppX pwsh activation in a Job Object.
+PWSH = shutil.which("powershell") or shutil.which("pwsh")
 
 
 def _install_delete():
@@ -77,7 +79,7 @@ try {
     return json.loads(result.stdout.strip().splitlines()[-1])
 
 
-@pytest.mark.skipif(PWSH is None, reason="PowerShell 7 builds releases")
+@pytest.mark.skipif(PWSH is None, reason="PowerShell runs snapshot helper courts")
 def test_a_crlf_copy_of_an_lf_blob_is_refused_and_git_bytes_pass(tmp_path):
     repo = tmp_path / "checkout"
     repo.mkdir()
@@ -103,7 +105,7 @@ def test_a_crlf_copy_of_an_lf_blob_is_refused_and_git_bytes_pass(tmp_path):
     assert _judge(tmp_path, repo, ["kept.py", "drifted.py"]) == {"ok": True}
 
 
-@pytest.mark.skipif(PWSH is None, reason="PowerShell 7 builds releases")
+@pytest.mark.skipif(PWSH is None, reason="PowerShell runs snapshot helper courts")
 def test_a_candidates_reviewed_change_and_new_files_are_not_held_to_head(tmp_path):
     repo = tmp_path / "checkout"
     repo.mkdir()

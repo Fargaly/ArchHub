@@ -5556,6 +5556,7 @@ def _answer_open_question(owner, utterance, context, payload, *, revalidate=None
     """
     from .agent_composer import run_agent_composer
     from .pipeline_engines import brain_recall
+    from .goose_adapter import GooseAdapter
     utterance = str(utterance)
     try:
         context_text = str(brain_recall({"prompt": utterance}, {})[0]["out"])
@@ -5587,6 +5588,7 @@ def _answer_open_question(owner, utterance, context, payload, *, revalidate=None
         revalidate=current_authority,
         host_reader=_baboom_owner_tool_bridge(owner, authentication_context=context),
         preview_only=True,
+        chat=getattr(owner, "goose_brain", GooseAdapter(None)).ask,
         grant_checker=_baboom_owner_grant_checker(
             owner, authentication_context=context, browser=browser),
     )

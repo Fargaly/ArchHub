@@ -1,0 +1,14 @@
+ArchHub BABOOM agent integration
+
+Goose v1.54.0 - Copyright 2024 Block, Inc. - Apache License 2.0.
+https://github.com/block/goose (redirects to aaif-goose/goose)
+Adopted as a separately packaged, unmodified CLI agent engine over ACP/MCP.
+ArchHub supplies its own adapter, launcher lifecycle and interface.
+See licenses/Goose-Apache-2.0.txt in the install, or packaging/windows/licenses/ in source.
+The packaging process must retain upstream binary distribution notices.
+
+Hermes Agent - Copyright (c) 2025 Nous Research - MIT License.
+https://github.com/NousResearch/hermes-agent
+Design attribution: task-to-skill creation/refinement and FTS5 session recall.
+No Hermes executable, auto-execute mode or source code is bundled by this patch.
+See licenses/Hermes-MIT.txt in the install, or packaging/windows/licenses/ in source.

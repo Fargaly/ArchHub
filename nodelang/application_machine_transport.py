@@ -3958,6 +3958,21 @@ class UniversalRuntimeClient:
                 **({"on_progress": on_progress} if on_progress is not None else {}),
             )
 
+    def read_hosts_state(self) -> dict[str, object]:
+        """One signed read while this client's outer BABOOM ask is in flight.
+
+        The ask holds _request_lock across its response. Its Goose extension
+        must not wait on that same lock to read. No session renewal, enrollment
+        or arbitrary route is allowed here; _request_once still verifies the
+        pinned owner, signs the exact request and verifies its response.
+        """
+        self._check_cancelled()
+        if (not self.agent_session_root or not self._agent_session_token
+                or self._agent_session_access != "full"
+                or time.time() >= self._agent_session_expires_at):
+            raise MachineTransportError("a current bound session is required for host reads")
+        return self._request_once("GET", "/api/universal/hosts", {}, response_timeout_seconds=5.0)
+
     def _request_once(
         self,
         method: str,

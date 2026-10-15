@@ -181,14 +181,14 @@ def test_a_graph_from_an_older_build_takes_the_pick_across_restarts_and_a_clear_
 
 
 def test_admitted_keyed_providers_are_listed_and_never_promise_an_unkeyed_openrouter():
-    # 2026-09-28: Google has its own route now; Anthropic stays admitted, not routed.
+    # Keyed providers with direct routes stay available independently of OpenRouter.
     held = {"anthropic": "a-key-" + "a" * 30, "google": "g-key-" + "g" * 30, "nvidia": "n-key-" + "n" * 30}
     rows = model_router.provider_rows(environ={}, secrets_loader=lambda name: held.get(name, ""),
         cloud_session=None, local_probe=lambda host, port: False)
     by = {row["id"]: row for row in rows}
     assert by["openrouter"]["state"] == "no key"
-    assert by["anthropic"]["state"] == "keyed, not routed", by
-    assert "add an OpenRouter key" in by["anthropic"]["source"] and "reached through" not in by["anthropic"]["source"]
+    assert by["anthropic"]["state"] == "keyed", by
+    assert by["anthropic"]["source"] == "secrets store"
     assert by["google"]["state"] == "keyed" and by["google"]["source"] == "secrets store"
     assert by["openai"]["state"] == "no key"
     assert by["nvidia"]["state"] == "keyed" and by["nvidia"]["source"] == "secrets store"
@@ -196,7 +196,7 @@ def test_admitted_keyed_providers_are_listed_and_never_promise_an_unkeyed_openro
     by = {row["id"]: row for row in model_router.provider_rows(environ={},
         secrets_loader=lambda name: held.get(name, ""), cloud_session=None, local_probe=lambda host, port: False)}
     assert by["openrouter"]["state"] == "keyed"
-    assert "reached through OpenRouter" in by["anthropic"]["source"]
+    assert by["anthropic"]["state"] == "keyed" and by["anthropic"]["source"] == "secrets store"
     for secret in held.values():
         assert secret not in json.dumps(rows)
 

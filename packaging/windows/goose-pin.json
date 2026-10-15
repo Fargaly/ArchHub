@@ -1,0 +1,7 @@
+{
+  "version": "1.54.0",
+  "url": "https://github.com/aaif-goose/goose/releases/download/v1.54.0/goose-x86_64-pc-windows-msvc.zip",
+  "sha256": "5c39bc91c3eadc231847e21a8a469e778431084437b233a63a950fee22db6239",
+  "license": "Apache-2.0",
+  "license_url": "https://raw.githubusercontent.com/block/goose/v1.54.0/LICENSE"
+}

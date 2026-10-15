@@ -46,7 +46,8 @@ def test_open_question_answers_brain_first_then_model(monkeypatch):
         return ({"out": "fact one\nfact two\n"}, "2 lines")
 
     def fake_composer(store, registry, prompt, *, model, effect_engines, authentication_context,
-                      mutation_lock, revalidate, host_reader, grant_checker, preview_only):
+                      mutation_lock, revalidate, host_reader, grant_checker, preview_only, chat):
+        assert callable(chat)
         assert preview_only is True
         seen["prompt"], seen["model"] = prompt, model
         revalidate()

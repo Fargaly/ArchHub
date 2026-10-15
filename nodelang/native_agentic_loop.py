@@ -1,4 +1,4 @@
-"""Shared bounded model/tool loop for BABOOM and native Workshop turns."""
+"""Bounded model/tool loop for native Workshop turns; BABOOM uses Goose."""
 from __future__ import annotations
 
 import ast

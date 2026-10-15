@@ -128,14 +128,14 @@ def test_settings_offers_linkedin_sign_in_and_the_page_never_holds_the_token():
     studio = Path(signin.__file__).resolve().parent / "studio"
     page = (studio / "studio-lm.jsx").read_text(encoding="utf-8")
     transport = (studio / "studio-existing-workshop.js").read_text(encoding="utf-8")
-    assert "<SettingsLinkedInSignIn transport={transport} compact/>" in page
+    assert "const SettingsConnections =" in page and "window.SocialConnections = SettingsConnections" in page
     assert "get('/api/universal/social-linkedin-app')" in transport
     assert "saveLinkedInApp" not in transport
     assert "post('/api/universal/social-linkedin-signin', {})" in transport
     assert "get('/api/universal/social-linkedin-signin')" in transport
     assert "post('/api/universal/social-linkedin-finish', {})" in transport, "finish sends no token"
     assert "result.account_binding !== 'provider-verified'" in transport
-    user_settings = page[page.index("const SettingsLinkedInSignIn"):page.index("const SocialConnectButton")]
+    user_settings = page[page.index("const SocialProviderConnection"):page.index("const SettingsConnections")]
     assert "CLIENT ID" not in user_settings and "CLIENT SECRET" not in user_settings
     assert "Save LinkedIn app" not in user_settings
 

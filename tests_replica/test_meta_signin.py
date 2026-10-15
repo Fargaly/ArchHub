@@ -200,15 +200,15 @@ def test_settings_offers_meta_sign_in_and_the_page_never_holds_the_token():
     studio = Path(signin.__file__).resolve().parent / "studio"
     page = (studio / "studio-lm.jsx").read_text(encoding="utf-8")
     transport = (studio / "studio-existing-workshop.js").read_text(encoding="utf-8")
-    assert "<SettingsMetaSignIn transport={transport}/>" in page
+    assert "const SettingsConnections =" in page and "window.SocialConnections = SettingsConnections" in page
     assert "get('/api/universal/social-meta-app')" in transport
     assert "saveMetaApp" not in transport
     assert "post('/api/universal/social-meta-signin', {})" in transport
     assert "get('/api/universal/social-meta-signin')" in transport
     assert "post('/api/universal/social-meta-finish', {page_id})" in transport, "finish sends no token"
     assert "result.account_binding !== 'provider-verified'" in transport
-    assert "Use {page.name || page.id}" in page
-    user_settings = page[page.index("const SettingsMetaSignIn"):page.index("const SocialConnectionRow")]
+    assert "Use {account.name || account.display_name}" in page
+    user_settings = page[page.index("const SocialProviderConnection"):page.index("const SettingsConnections")]
     assert "APP ID" not in user_settings and "APP SECRET" not in user_settings
     assert "Save Meta app" not in user_settings and "Meta app" not in user_settings
 

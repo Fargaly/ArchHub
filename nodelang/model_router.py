@@ -2957,6 +2957,19 @@ _SOCIAL_BINDINGS = ("provider-verified", "operator-declared")
 _SOCIAL_ENTRY_PREFIX = "social-"
 
 
+def _social_account_id_valid(provider, account_id):
+    from .social_connectors import _GRAPH_ID, _LINKEDIN_PERSON, _META_USER
+    return type(account_id) is str and bool(
+        (provider == "linkedin" and _LINKEDIN_PERSON.fullmatch(account_id))
+        or (provider == "meta" and (_GRAPH_ID.fullmatch(account_id) or _META_USER.fullmatch(account_id)))
+        or (provider in ("whatsapp", "x") and re.fullmatch(r"[0-9]{1,32}", account_id))
+        or (provider == "tiktok" and re.fullmatch(r"[A-Za-z0-9._-]{1,256}", account_id)))
+
+
+def _social_display_name_valid(value):
+    return type(value) is str and 1 <= len(value) <= 256 and not any(ord(c) < 32 for c in value)
+
+
 def _social_record(value):
     """The social account record held in one protected value, or None if it is not one.
 
@@ -2973,8 +2986,10 @@ def _social_record(value):
     if record.get("format") == _SOCIAL_CREDENTIAL_FORMAT and set(record) == {"format", "provider", "account_id", "token"}:
         return {**record, "account_binding": "operator-declared"}
     if (record.get("format") == _SOCIAL_VERIFIED_FORMAT
-            and set(record) == {"format", "provider", "account_id", "token", "account_binding"}
-            and record["account_binding"] in _SOCIAL_BINDINGS):
+            and set(record) in ({"format", "provider", "account_id", "token", "account_binding"},
+                                {"format", "provider", "account_id", "token", "account_binding", "display_name"})
+            and record["account_binding"] in _SOCIAL_BINDINGS
+            and ("display_name" not in record or _social_display_name_valid(record["display_name"]))):
         return record
     return None
 
@@ -2996,20 +3011,20 @@ def save_social_credential(body, *, before_replace=None, verified=False):
     (token rotation); a declared rotation of a verified account is recorded as
     declared. No graph, settings index, alias or worker changes.
     """
-    from .social_connectors import _GRAPH_ID, _LINKEDIN_PERSON, _META_USER, _VAULT_ENTRY
+    from .social_connectors import _VAULT_ENTRY
 
     if before_replace is not None and not callable(before_replace):
         raise TypeError("before_replace must be callable")
-    if type(body) is not dict or set(body) != {"vault_entry", "provider", "account_id", "token"}:
+    if (type(body) is not dict or set(body) not in (
+            {"vault_entry", "provider", "account_id", "token"},
+            {"vault_entry", "provider", "account_id", "token", "display_name"})
+            or ("display_name" in body and (verified is not True
+                or not _social_display_name_valid(body["display_name"])))):
         raise ProviderCredentialError("invalid_social_credential")
     name, provider, account_id, token = body["vault_entry"], body["provider"], body["account_id"], body["token"]
-    account_ok = type(account_id) is str and (
-        _LINKEDIN_PERSON.fullmatch(account_id)
-        if provider == "linkedin"
-        else (_GRAPH_ID.fullmatch(account_id) or _META_USER.fullmatch(account_id))
-    )
+    account_ok = _social_account_id_valid(provider, account_id)
     if (type(name) is not str or not name.startswith(_SOCIAL_ENTRY_PREFIX) or not _VAULT_ENTRY.fullmatch(name)
-            or type(provider) is not str or provider not in ("linkedin", "meta")
+            or type(provider) is not str or provider not in ("linkedin", "meta", "whatsapp", "x", "tiktok")
             or type(account_id) is not str
             or not account_ok
             or type(token) is not str or not 1 <= len(token) <= 16384
@@ -3020,6 +3035,8 @@ def save_social_credential(body, *, before_replace=None, verified=False):
     record = {"format": _SOCIAL_CREDENTIAL_FORMAT, "provider": provider, "account_id": account_id, "token": token}
     if verified is True:
         record = {**record, "format": _SOCIAL_VERIFIED_FORMAT, "account_binding": binding}
+        if "display_name" in body:
+            record["display_name"] = body["display_name"]
     value = json.dumps(record, separators=(",", ":"), sort_keys=True, ensure_ascii=True)
     def put(entries):
         if name in entries:
@@ -3050,20 +3067,16 @@ def revoke_social_credential(body, *, before_replace=None):
     callback. The same protected mutation protocol as saves preserves every
     other entry, and the owner's callback rechecks admission before replacement.
     """
-    from .social_connectors import _GRAPH_ID, _LINKEDIN_PERSON, _META_USER, _VAULT_ENTRY
+    from .social_connectors import _VAULT_ENTRY
 
     if before_replace is not None and not callable(before_replace):
         raise TypeError("before_replace must be callable")
     if type(body) is not dict or set(body) != {"vault_entry", "provider", "account_id"}:
         raise ProviderCredentialError("invalid_social_revocation")
     name, provider, account_id = body["vault_entry"], body["provider"], body["account_id"]
-    account_ok = type(account_id) is str and (
-        _LINKEDIN_PERSON.fullmatch(account_id)
-        if provider == "linkedin"
-        else (_GRAPH_ID.fullmatch(account_id) or _META_USER.fullmatch(account_id))
-    )
+    account_ok = _social_account_id_valid(provider, account_id)
     if (type(name) is not str or not name.startswith(_SOCIAL_ENTRY_PREFIX) or not _VAULT_ENTRY.fullmatch(name)
-            or type(provider) is not str or provider not in ("linkedin", "meta")
+            or type(provider) is not str or provider not in ("linkedin", "meta", "whatsapp", "x", "tiktok")
             or type(account_id) is not str
             or not account_ok):
         raise ProviderCredentialError("invalid_social_revocation")
@@ -3109,6 +3122,7 @@ def list_social_credentials():
             "account_id": record["account_id"],
             "vault_entry": name,
             "account_binding": record["account_binding"],
+            **({"display_name": record["display_name"]} if "display_name" in record else {}),
             "vault_reference": "dpapi://ArchHub/" + name,
         })
     items.sort(key=lambda item: (item["provider"], item["vault_entry"], item["account_id"]))

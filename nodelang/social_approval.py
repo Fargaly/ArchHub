@@ -65,8 +65,9 @@ def _sent(snapshot, registry, delegation_root) -> bool:
 def _account_binding(operation: str, account_id: str, vault_entry: str) -> str:
     """The stored binding of the account a post names (custody's own record), or "unknown"."""
     from .social_custody import social_account_binding
+    from .social_connectors import OPERATIONS
     try:
-        return social_account_binding(provider="linkedin" if operation.startswith("linkedin.") else "meta",
+        return social_account_binding(provider=OPERATIONS[operation][0],
                                       account_id=account_id, vault_entry=vault_entry)
     except Exception:
         return "unknown"

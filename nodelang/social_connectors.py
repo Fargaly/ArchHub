@@ -1,4 +1,4 @@
-"""LinkedIn, Facebook Pages and Instagram through their official APIs.
+"""Six social networks through their official APIs and one approval path.
 
 Pure request preparation and response normalization, the server-side
 resolver that rebuilds one request from a Work's graph-held inputs, and a
@@ -22,11 +22,14 @@ from collections.abc import Mapping
 LINKEDIN_API = "https://api.linkedin.com"
 LINKEDIN_VERSION = "202608"
 GRAPH_API = "https://graph.facebook.com/v25.0"
-PROVIDER_ORIGINS = {"linkedin": "api.linkedin.com", "meta": "graph.facebook.com"}
+PROVIDER_ORIGINS = {"linkedin": "api.linkedin.com", "meta": "graph.facebook.com",
+                    "whatsapp": "graph.facebook.com", "x": "api.x.com",
+                    "tiktok": "open.tiktokapis.com"}
 MAX_INPUT_BYTES = 256 * 1024  # the bound cell_connector_execution enforces
 MAX_RESPONSE_BYTES = 1024 * 1024
 MAX_COUNT = 25
-TEXT_LIMITS = {"linkedin": 3000, "facebook": 5000, "instagram": 2200}
+TEXT_LIMITS = {"linkedin": 3000, "facebook": 5000, "instagram": 2200,
+               "whatsapp": 4096, "x": 280, "tiktok": 2200}
 UNCERTAIN = object()  # executor answer: dispatch may have happened, no response
 
 # operation -> (provider, effect, method, proposed data class). Identity and
@@ -48,6 +51,10 @@ OPERATIONS = {
     "instagram.container_create": ("meta", "write", "POST", "public-text"),
     "instagram.container_status": ("meta", "read", "GET", "internal-metadata"),
     "instagram.media_publish": ("meta", "write", "POST", "public-text"),
+    "whatsapp.message": ("whatsapp", "write", "POST", "internal-text"),
+    "x.post": ("x", "write", "POST", "public-text"),
+    "x.reply": ("x", "write", "POST", "public-text"),
+    "tiktok.video_post": ("tiktok", "write", "POST", "public-text"),
 }
 
 _GRAPH_ID = re.compile(r"[0-9]{1,32}(?:_[0-9]{1,32})?")
@@ -567,15 +574,93 @@ def prepare_instagram_media_publish(binding: AccountBinding, ig_user_id: str,
                     form={"creation_id": container_id})
 
 
+# ------------------------------------------------------ WhatsApp / X / TikTok --
+
+def prepare_whatsapp_message(binding: AccountBinding, to: str, text: str,
+                             reply_to: str = "") -> PreparedRequest:
+    """Official Cloud API text/reply, never an unofficial WhatsApp client."""
+    phone_id = _graph_id(binding.account_id, "phone_number_id")
+    if type(to) is not str or not re.fullmatch(r"[1-9][0-9]{5,14}", to):
+        raise Refusal("invalid_input", "WhatsApp recipient must be an international phone number")
+    body = {"messaging_product": "whatsapp", "recipient_type": "individual", "to": to,
+            "type": "text", "text": {"preview_url": False, "body": _text(text, "whatsapp")}}
+    if reply_to:
+        if type(reply_to) is not str or not re.fullmatch(r"[A-Za-z0-9._=+/:-]{1,256}", reply_to):
+            raise Refusal("invalid_input", "WhatsApp reply message id is invalid")
+        body["context"] = {"message_id": reply_to}
+    return _prepare(binding, "whatsapp.message", GRAPH_API + "/%s/messages" % phone_id,
+                    json_body=body)
+
+
+def normalize_whatsapp_message(prepared: PreparedRequest, status, headers, body) -> dict:
+    data, _ = _decode(prepared, status, headers, body)
+    messages = data.get("messages")
+    message_id = messages[0].get("id") if (type(messages) is list and messages
+                                            and type(messages[0]) is dict) else None
+    if type(message_id) is not str or not 1 <= len(message_id) <= 256:
+        raise Refusal("uncertain", "WhatsApp returned no message id; reconcile before retrying")
+    return _ok(message_id=message_id, delivery_state="accepted")
+
+
+def prepare_x_post(binding: AccountBinding, text: str) -> PreparedRequest:
+    return _prepare(binding, "x.post", "https://api.x.com/2/tweets",
+                    json_body={"text": _text(text, "x")})
+
+
+def prepare_x_reply(binding: AccountBinding, post_id: str, text: str) -> PreparedRequest:
+    post_id = _graph_id(post_id, "post_id")
+    return _prepare(binding, "x.reply", "https://api.x.com/2/tweets",
+                    json_body={"text": _text(text, "x"), "reply": {"in_reply_to_tweet_id": post_id}})
+
+
+def normalize_x_created(prepared: PreparedRequest, status, headers, body) -> dict:
+    data, _ = _decode(prepared, status, headers, body)
+    post_id = data.get("data", {}).get("id") if type(data.get("data")) is dict else None
+    if type(post_id) is not str or not re.fullmatch(r"[0-9]{1,32}", post_id):
+        raise Refusal("uncertain", "X returned no post id; reconcile before retrying")
+    return _ok(post_id=post_id)
+
+
+def prepare_tiktok_video_post(binding: AccountBinding, video_url: str, title: str,
+                               privacy_level: str, disable_comment: bool = True,
+                               disable_duet: bool = True, disable_stitch: bool = True) -> PreparedRequest:
+    """Direct Post init. Privacy is explicitly selected from the creator's choices.
+
+    A publish id means processing started, never that a video is already public.
+    The URL domain must be verified in the publisher's TikTok developer app.
+    """
+    if (type(privacy_level) is not str or privacy_level not in
+            {"PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY"}):
+        raise Refusal("invalid_input", "TikTok privacy_level must be one of the creator's available choices")
+    if any(type(flag) is not bool for flag in (disable_comment, disable_duet, disable_stitch)):
+        raise Refusal("invalid_input", "TikTok interaction choices must be booleans")
+    return _prepare(binding, "tiktok.video_post", "https://open.tiktokapis.com/v2/post/publish/video/init/",
+                    json_body={"post_info": {"title": _text(title, "tiktok", "title"),
+                        "privacy_level": privacy_level, "disable_comment": disable_comment,
+                        "disable_duet": disable_duet, "disable_stitch": disable_stitch},
+                        "source_info": {"source": "PULL_FROM_URL", "video_url": _https_url(video_url, "video_url")}})
+
+
+def normalize_tiktok_publish(prepared: PreparedRequest, status, headers, body) -> dict:
+    data, _ = _decode(prepared, status, headers, body)
+    error = data.get("error")
+    if type(error) is not dict or error.get("code") != "ok":
+        raise Refusal("provider_error", "TikTok did not accept the publish request",
+                      provider_code=_provider_code({"error": error}))
+    publish_id = data.get("data", {}).get("publish_id") if type(data.get("data")) is dict else None
+    if type(publish_id) is not str or not 1 <= len(publish_id) <= 256:
+        raise Refusal("uncertain", "TikTok returned no publish id; reconcile before retrying")
+    return _ok(publish_id=publish_id, publish_state="processing")
+
+
 # ------------------------------------------------------------ Work-root binding --
 
 _VAULT_ENTRY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 _WORK_INPUT_FIELDS = frozenset({"operation", "account_id", "vault_entry", "arguments"})
 
 # Operations whose whole request one Work holds: preparer, required arguments,
-# optional arguments, normalizer. instagram.media and image publishing need
-# values from earlier admitted steps (linked account, container) that the
-# runtime does not record per Work yet, so they are not listed.
+# optional arguments, normalizer. Instagram publishing is a sequence of exact
+# approved Works; each stage records its verified prior-stage ids in graph inputs.
 WORK_OPERATIONS = {
     "linkedin.profile": (prepare_linkedin_profile, (), (), normalize_linkedin_profile),
     "linkedin.post": (prepare_linkedin_post, ("text",), ("visibility",), normalize_linkedin_created),
@@ -588,6 +673,14 @@ WORK_OPERATIONS = {
     "instagram.account": (prepare_instagram_account, (), (), normalize_instagram_account),
     "instagram.comments": (prepare_instagram_comments, ("media_id",), ("count",), normalize_instagram_comments),
     "instagram.reply": (prepare_instagram_reply, ("comment_id", "message"), (), normalize_graph_created),
+    "instagram.container_create": (prepare_instagram_container, ("ig_user_id", "image_url"), ("caption",), normalize_graph_created),
+    "instagram.container_status": (prepare_instagram_container_status, ("container_id",), (), normalize_instagram_container_status),
+    "instagram.media_publish": (prepare_instagram_media_publish, ("ig_user_id", "container_id"), (), normalize_graph_created),
+    "whatsapp.message": (prepare_whatsapp_message, ("to", "text"), ("reply_to",), normalize_whatsapp_message),
+    "x.post": (prepare_x_post, ("text",), (), normalize_x_created),
+    "x.reply": (prepare_x_reply, ("post_id", "text"), (), normalize_x_created),
+    "tiktok.video_post": (prepare_tiktok_video_post, ("video_url", "title", "privacy_level"),
+                          ("disable_comment", "disable_duet", "disable_stitch"), normalize_tiktok_publish),
 }
 
 

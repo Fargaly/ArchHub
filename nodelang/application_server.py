@@ -7505,6 +7505,26 @@ class ApplicationServer:
                     from .cloud_signin import current_status
                     self._json(200, {'ok': True, **current_status()})
                     return
+                if parsed.path in ('/api/universal/social-connections', '/api/universal/social-connection'):
+                    try:
+                        binding, _session_token = self._browser_session_binding()
+                        owner.require_universal_http_route('GET', parsed.path, authentication_context=binding.context)
+                        if binding.subject_root != owner.universal_registry.authorization.subject_root:
+                            raise AuthorizationDenied('Connections belong to this application owner')
+                        from . import social_connections
+                        if parsed.path.endswith('/social-connections'):
+                            payload = {'items': social_connections.rows()}
+                        else:
+                            query = parse_qs(parsed.query)
+                            payload = {'connection': social_connections.connection(query.get('provider', [''])[0])}
+                        self._json(200, {'ok': True, **payload})
+                    except AuthorizationDenied as denied:
+                        self._json(403, {'ok': False, 'error': str(denied)})
+                    except ValueError as refused:
+                        self._json(400, {'ok': False, 'error': str(refused)})
+                    except Exception:
+                        self._json(503, {'ok': False, 'error': 'Social connection status unavailable; sign in to ArchHub cloud and retry.'})
+                    return
                 if parsed.path == '/api/universal/social-linkedin-signin':
                     # What Settings polls while LinkedIn's consent page is open. No token.
                     try:
@@ -8555,7 +8575,7 @@ class ApplicationServer:
                                      '/api/universal/social-linkedin-app', '/api/universal/social-linkedin-signin',
                                      '/api/universal/social-linkedin-finish', '/api/universal/social-meta-app',
                                      '/api/universal/social-meta-signin', '/api/universal/social-meta-finish',
-                                     '/api/universal/notion-connect'):
+                                     '/api/universal/notion-connect', '/api/universal/social-connection'):
                         from .model_router import ProviderCredentialError, save_provider_key
                         social_enrollment = self.path == '/api/universal/social-credential'
                         social_removal = self.path == '/api/universal/social-credential-remove'
@@ -8581,7 +8601,22 @@ class ApplicationServer:
                                     raise AuthorizationDenied('Credential changes require this application owner')
                             with owner.mutation_lock, owner.universal_registry.authorization.broker.live_context(credential_context):
                                 require_credential_admission()
-                                if self.path == '/api/universal/social-linkedin-app':
+                                if self.path == '/api/universal/social-connection':
+                                    from . import social_connections
+                                    if type(body) is not dict or not {'provider', 'action'} <= set(body) <= {'provider', 'action', 'account_id'}:
+                                        raise ValueError('Connections accept only provider sign-in actions; keys and tokens are not accepted')
+                                    provider, action = body['provider'], body['action']
+                                    if action == 'start' and set(body) == {'provider', 'action'}:
+                                        row = social_connections.start(provider)
+                                    elif action == 'cancel' and set(body) == {'provider', 'action'}:
+                                        row = social_connections.cancel(provider)
+                                    elif action == 'finish':
+                                        row = social_connections.finish(owner, {key: value for key, value in body.items() if key != 'action'},
+                                            require_admission=require_credential_admission)
+                                    else:
+                                        raise ValueError('Choose start, finish or cancel provider sign-in')
+                                    payload = {'ok': True, 'connection': row}
+                                elif self.path == '/api/universal/social-linkedin-app':
                                     raise InvalidCell('LinkedIn app configuration belongs to ArchHub cloud')
                                 elif self.path == '/api/universal/social-meta-app':
                                     raise InvalidCell('Meta app configuration belongs to ArchHub cloud')
@@ -8698,6 +8733,8 @@ class ApplicationServer:
                         except InvalidCell:
                             self._json(400, {'ok': False, 'error_code': 'credential_reference_invalid',
                                 'error': 'The credential reference does not match this application custody.'})
+                        except (ValueError, SocialGrantNotReady) as refused:
+                            self._json(400, {'ok': False, 'error': str(refused)})
                         except LinkedInNotReady as waiting:
                             self._json(409, {'ok': False, 'error_code': 'linkedin_not_ready', 'error': str(waiting)})
                         except MetaNotReady as waiting:

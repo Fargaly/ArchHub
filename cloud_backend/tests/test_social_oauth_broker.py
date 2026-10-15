@@ -10,6 +10,266 @@ import pytest
 NONCE = "desktop-nonce-000000000001"
 
 
+def _social3_config(monkeypatch):
+    import config
+    for name in ("LINKEDIN_OAUTH_CLIENT_ID", "META_OAUTH_APP_ID", "X_OAUTH_CLIENT_ID", "TIKTOK_OAUTH_CLIENT_KEY"):
+        monkeypatch.setattr(config, name, "fake-publisher-app", raising=False)
+    for name in ("LINKEDIN_OAUTH_CLIENT_SECRET", "META_OAUTH_APP_SECRET", "X_OAUTH_CLIENT_SECRET", "TIKTOK_OAUTH_CLIENT_SECRET"):
+        monkeypatch.setattr(config, name, "fake-cloud-secret", raising=False)
+    monkeypatch.setattr(config, "WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID", "fake-coexistence-config", raising=False)
+    for provider in ("linkedin", "instagram", "facebook", "whatsapp", "x", "tiktok"):
+        redirect = "https://api.archhub.io/oauth/" + provider + "/callback"
+        monkeypatch.setattr(config, provider.upper() + "_OAUTH_REDIRECT", redirect, raising=False)
+        monkeypatch.setattr(config, provider.upper() + "_OAUTH_REDIRECT_ALLOWLIST", frozenset({redirect}) if provider == "linkedin" else redirect, raising=False)
+        monkeypatch.setattr(config, provider.upper() + "_OAUTH_REVIEW_PENDING", "", raising=False)
+
+
+def _social3_start(client, provider, token):
+    return client.get("/oauth/" + provider + "/start", params={
+        "return_url": "http://127.0.0.1:48720/oauth/return", "nonce": NONCE + "-" + provider},
+        headers={"Authorization": "Bearer " + token, "X-ArchHub-Device-Session": "social3-device"})
+
+
+@pytest.mark.parametrize("provider,host,scope", [
+    ("instagram", "www.facebook.com", "instagram_content_publish"),
+    ("facebook", "www.facebook.com", "pages_manage_posts"),
+    ("linkedin", "www.linkedin.com", "w_member_social"),
+    ("whatsapp", "www.facebook.com", "whatsapp_business_messaging"),
+    ("x", "x.com", "tweet.write"),
+    ("tiktok", "www.tiktok.com", "video.publish"),
+])
+def test_social3_authorize_urls_and_one_time_fake_callback(client, monkeypatch, provider, host, scope):
+    import hashlib
+    import social_oauth
+    _social3_config(monkeypatch)
+    token = _token_for(provider + "@social3.test")
+    started = _social3_start(client, provider, token)
+    assert started.status_code == 200, started.text
+    url = urllib.parse.urlsplit(started.json()["auth_url"])
+    assert url.hostname == host
+    query = urllib.parse.parse_qs(url.query)
+    assert query["response_type"] == ["code"]
+    assert scope in query["scope"][0]
+    assert query["client_key" if provider == "tiktok" else "client_id"] == ["fake-publisher-app"]
+    assert query["redirect_uri"] == ["https://api.archhub.io/oauth/" + provider + "/callback"]
+    state = query["state"][0]
+    if provider == "x":
+        assert len(state) <= 500
+        verifier = social_oauth._pkce(social_oauth._unsign(state))
+        assert query["code_challenge_method"] == ["S256"]
+        assert query["code_challenge"] == [social_oauth._b64(hashlib.sha256(verifier.encode()).digest())]
+        assert verifier not in state and verifier not in url.query
+    if provider == "tiktok":
+        assert "code_challenge" not in query  # TikTok's confidential Web flow.
+        assert "," in query["scope"][0]
+    if provider == "whatsapp":
+        assert query["config_id"] == ["fake-coexistence-config"]
+        assert json.loads(query["extras"][0])["featureType"] == "whatsapp_business_app_onboarding"
+    monkeypatch.setattr(social_oauth, "_exchange", lambda *args: {"access_token": "fake-provider-token"})
+    monkeypatch.setattr(social_oauth, "_profile", lambda *args: {"id": "12345", "sub": "person", "open_id": "tiktok-open-id", "username": "founder", "name": "Founder"})
+    monkeypatch.setattr(social_oauth, "_pages", lambda token: {"data": [{"id": "6789", "name": "Page", "access_token": "fake-page-token"}]})
+    monkeypatch.setattr(social_oauth, "_instagram", lambda *args: {"instagram_business_account": {"id": "9876", "username": "founder"}})
+    callback = client.get("/oauth/" + provider + "/callback", params={"code": "fake-code", "state": state}, follow_redirects=False)
+    assert callback.status_code == 302, callback.text
+    assert "fake-provider-token" not in callback.headers["location"]
+    grant = urllib.parse.parse_qs(urllib.parse.urlsplit(callback.headers["location"]).query)["grant"][0]
+    headers = {"Authorization": "Bearer " + token, "X-ArchHub-Device-Session": "social3-device"}
+    consumed = client.post("/oauth/" + provider + "/consume", json={"grant": grant}, headers=headers)
+    assert consumed.status_code == 200, consumed.text
+    assert consumed.json()["name"] == "founder"
+    assert consumed.json()["access_token"] == "fake-provider-token"
+    assert client.post("/oauth/" + provider + "/consume", json={"grant": grant}, headers=headers).status_code == 400
+    assert client.get("/oauth/" + provider + "/callback", params={"code": "fake-code", "state": state}, follow_redirects=False).status_code == 400
+
+
+@pytest.mark.parametrize("provider,label", [("instagram", "Meta"), ("facebook", "Meta"), ("linkedin", "LinkedIn"), ("whatsapp", "Meta"), ("x", "X"), ("tiktok", "TikTok")])
+def test_social3_named_missing_app_and_review_blockers(client, monkeypatch, provider, label):
+    import config
+    _social3_config(monkeypatch)
+    token = _token_for(provider + "-blocked@social3.test")
+    identifier = "META_OAUTH_APP_ID" if provider in ("instagram", "facebook", "whatsapp") else "TIKTOK_OAUTH_CLIENT_KEY" if provider == "tiktok" else provider.upper() + "_OAUTH_CLIENT_ID"
+    monkeypatch.setattr(config, identifier, "")
+    missing = client.get("/oauth/" + provider + "/status", headers={"Authorization": "Bearer " + token}).json()
+    assert missing["state"] == "missing"
+    assert missing["blocker"] == label + " developer app not created (cloud client id missing)"
+    monkeypatch.setattr(config, identifier, "fake-publisher-app")
+    monkeypatch.setattr(config, provider.upper() + "_OAUTH_REVIEW_APPROVED", "1", raising=False)
+    monkeypatch.setattr(config, provider.upper() + "_OAUTH_REVIEW_PENDING", "exact_publish_permission", raising=False)
+    blocked = client.get("/oauth/" + provider + "/status", headers={"Authorization": "Bearer " + token}).json()
+    assert blocked["state"] == "blocked"
+    assert blocked["blocker"] == label + " app review: exact_publish_permission pending"
+    assert blocked["review_state"] == "pending"
+    assert blocked["publish_blocker"] == blocked["blocker"]
+    assert _social3_start(client, provider, token).status_code == 503
+
+
+def test_whatsapp_phone_identity_comes_from_granted_waba_not_pasted_id(monkeypatch):
+    import social_oauth
+    _social3_config(monkeypatch)
+    def fake_graph(url, token):
+        if "/debug_token?" in url:
+            return {"data": {"granular_scopes": [{"scope": "whatsapp_business_management", "target_ids": ["123"]}]}}
+        assert "/123/phone_numbers?" in url and token == "fake-business-token"
+        return {"data": [{"id": "456", "display_phone_number": "+123456"}]}
+    monkeypatch.setattr(social_oauth, "_get_json", fake_graph)
+    assert social_oauth._whatsapp_profile("fake-business-token") == {"id": "456", "name": "+123456"}
+
+
+def test_whatsapp_never_guesses_between_multiple_granted_business_phones(monkeypatch):
+    import social_oauth
+    _social3_config(monkeypatch)
+    def fake_graph(url, token):
+        if "/debug_token?" in url:
+            return {"data": {"granular_scopes": [{"scope": "whatsapp_business_management", "target_ids": ["123", "789"]}]}}
+        return {"data": [{"id": "456" if "/123/" in url else "987"}]}
+    monkeypatch.setattr(social_oauth, "_get_json", fake_graph)
+    with pytest.raises(social_oauth.SocialOAuthError, match="whatsapp_multiple_phone_numbers"):
+        social_oauth._whatsapp_profile("fake-business-token")
+
+
+def test_x_real_exchange_uses_basic_auth_and_pkce_verifier(monkeypatch):
+    import contextlib
+    import io
+    import base64
+    import social_oauth
+    _social3_config(monkeypatch)
+    monkeypatch.setattr(social_oauth, "_exchange", None)
+    monkeypatch.setattr(social_oauth, "_profile", None)
+    requests = []
+    def fake_urlopen(request, timeout):
+        requests.append(request)
+        if request.full_url.endswith("/oauth2/token"):
+            form = urllib.parse.parse_qs(request.data.decode())
+            assert form["code_verifier"] == ["fake-per-attempt-verifier"]
+            assert form["client_id"] == ["fake-publisher-app"]
+            assert "client_secret" not in form
+            assert request.get_header("Authorization") == "Basic " + base64.b64encode(b"fake-publisher-app:fake-cloud-secret").decode()
+            payload = {"access_token": "fake-x-token", "scope": "tweet.read tweet.write users.read offline.access"}
+        else:
+            assert request.full_url == "https://api.x.com/2/users/me"
+            assert request.get_header("Authorization") == "Bearer fake-x-token"
+            payload = {"data": {"id": "12345", "username": "founder", "name": "Founder"}}
+        return contextlib.closing(io.BytesIO(json.dumps(payload).encode()))
+    monkeypatch.setattr(social_oauth.urllib.request, "urlopen", fake_urlopen)
+    grant = social_oauth.exchange_and_profile("x", "fake-code", verifier="fake-per-attempt-verifier")
+    assert grant == {"provider": "x", "account_id": "12345", "name": "founder", "access_token": "fake-x-token"}
+    assert len(requests) == 2
+
+
+def test_tiktok_real_web_exchange_uses_client_key_and_nested_open_id(monkeypatch):
+    import contextlib
+    import io
+    import social_oauth
+    _social3_config(monkeypatch)
+    monkeypatch.setattr(social_oauth, "_exchange", None)
+    monkeypatch.setattr(social_oauth, "_profile", None)
+    def fake_urlopen(request, timeout):
+        if request.full_url == "https://open.tiktokapis.com/v2/oauth/token/":
+            form = urllib.parse.parse_qs(request.data.decode())
+            assert form["client_key"] == ["fake-publisher-app"]
+            assert form["client_secret"] == ["fake-cloud-secret"]
+            assert "client_id" not in form and "code_verifier" not in form
+            payload = {"access_token": "fake-tiktok-token", "scope": "user.info.basic,video.publish,video.upload"}
+        else:
+            assert request.full_url.startswith("https://open.tiktokapis.com/v2/user/info/?fields=")
+            assert request.get_header("Authorization") == "Bearer fake-tiktok-token"
+            payload = {"data": {"user": {"open_id": "tiktok-open-id", "display_name": "founder"}}}
+        return contextlib.closing(io.BytesIO(json.dumps(payload).encode()))
+    monkeypatch.setattr(social_oauth.urllib.request, "urlopen", fake_urlopen)
+    grant = social_oauth.exchange_and_profile("tiktok", "fake-code")
+    assert grant["account_id"] == "tiktok-open-id" and grant["name"] == "founder"
+
+
+@pytest.mark.parametrize("denial", [False, True])
+def test_provider_permission_failure_returns_nonce_bound_local_error_without_secrets(client, monkeypatch, denial):
+    import social_oauth
+    _social3_config(monkeypatch)
+    token = _token_for("permission-failure@social3.test")
+    started = _social3_start(client, "instagram", token).json()
+    state = urllib.parse.parse_qs(urllib.parse.urlsplit(started["auth_url"]).query)["state"][0]
+    monkeypatch.setattr(social_oauth, "_exchange", lambda *args: {"access_token": "fake-secret-token", "scope": "instagram_basic"})
+    answer = client.get("/oauth/instagram/callback", params={"state": state,
+        **({"error": "access_denied", "error_description": "instagram_content_publish fake-secret-token"} if denial else {"code": "fake-code"})}, follow_redirects=False)
+    assert answer.status_code == 302
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(answer.headers["location"]).query)
+    assert query["provider"] == ["instagram"] and query["nonce"] == [NONCE + "-instagram"]
+    assert "instagram_content_publish" in query["error"][0]
+    assert "fake-secret-token" not in answer.headers["location"]
+    assert "grant" not in query
+
+
+def test_configured_app_does_not_claim_unverified_publishing_review(client, monkeypatch):
+    import config
+    _social3_config(monkeypatch)
+    token = _token_for("review-unknown@social3.test")
+    headers = {"Authorization": "Bearer " + token}
+    monkeypatch.setattr(config, "INSTAGRAM_OAUTH_REVIEW_APPROVED", "", raising=False)
+    answer = client.get("/oauth/instagram/status", headers=headers).json()
+    assert answer["state"] == "configured" and answer["review_state"] == "unverified"
+    assert answer["publish_blocker"] == "Meta app review: instagram_content_publish, instagram_manage_comments approval not verified"
+    monkeypatch.setattr(config, "INSTAGRAM_OAUTH_REVIEW_APPROVED", "1", raising=False)
+    assert "publish_blocker" not in client.get("/oauth/instagram/status", headers=headers).json()
+
+
+def test_whatsapp_launch_serves_signed_sdk_coexistence_page_without_credentials(client, monkeypatch):
+    _social3_config(monkeypatch)
+    token = _token_for("embedded@social3.test")
+    started = _social3_start(client, "whatsapp", token).json()
+    launch = urllib.parse.urlsplit(started["browser_url"])
+    assert launch.path == "/oauth/whatsapp/embedded"
+    page = client.get(launch.path + "?" + launch.query)
+    assert page.status_code == 200
+    assert page.headers["cache-control"] == "no-store"
+    html = page.text
+    assert 'src="https://connect.facebook.net/en_US/sdk.js"' in html
+    assert '"appId":"fake-publisher-app"' in html
+    assert '"configId":"fake-coexistence-config"' in html
+    assert "FB.init(" in html and "FB.login(" in html
+    assert "response_type: 'code'" in html and "override_default_response_type: true" in html
+    assert "featureType: 'whatsapp_business_app_onboarding'" in html
+    assert "target.searchParams.set('state', settings.state)" in html
+    assert "target.searchParams.set('code', code)" in html
+    assert '"callback":"https://api.archhub.io/oauth/whatsapp/callback"' in html
+    assert "fake-cloud-secret" not in html and "fake-provider-token" not in html
+    assert "<input" not in html
+    assert client.get(launch.path, params={"state": "tampered-state"}).status_code == 400
+    linkedin = _social3_start(client, "linkedin", token).json()
+    wrong_state = urllib.parse.parse_qs(urllib.parse.urlsplit(linkedin["auth_url"]).query)["state"][0]
+    assert client.get(launch.path, params={"state": wrong_state}).status_code == 400
+
+
+def test_whatsapp_real_sdk_code_exchange_and_phone_discovery_use_fake_graph(monkeypatch):
+    import contextlib
+    import io
+    import social_oauth
+    _social3_config(monkeypatch)
+    monkeypatch.setattr(social_oauth, "_exchange", None)
+    monkeypatch.setattr(social_oauth, "_profile", None)
+    monkeypatch.setattr(social_oauth, "_whatsapp", None)
+    urls = []
+    def fake_urlopen(request, timeout):
+        urls.append(request.full_url)
+        if request.full_url.endswith("/oauth/access_token"):
+            form = urllib.parse.parse_qs(request.data.decode())
+            assert form["client_id"] == ["fake-publisher-app"]
+            assert form["client_secret"] == ["fake-cloud-secret"]
+            assert form["code"] == ["sdk-business-code"]
+            assert "redirect_uri" not in form
+            payload = {"access_token": "fake-business-token"}
+        elif "/debug_token?" in request.full_url:
+            assert request.get_header("Authorization") == "Bearer fake-publisher-app|fake-cloud-secret"
+            payload = {"data": {"granular_scopes": [{"scope": "whatsapp_business_management", "target_ids": ["123"]}]}}
+        else:
+            assert "/123/phone_numbers?" in request.full_url
+            assert request.get_header("Authorization") == "Bearer fake-business-token"
+            payload = {"data": [{"id": "456", "display_phone_number": "+123456"}]}
+        return contextlib.closing(io.BytesIO(json.dumps(payload).encode()))
+    monkeypatch.setattr(social_oauth.urllib.request, "urlopen", fake_urlopen)
+    grant = social_oauth.exchange_and_profile("whatsapp", "sdk-business-code")
+    assert grant == {"provider": "whatsapp", "account_id": "456", "name": "+123456", "access_token": "fake-business-token"}
+    assert len(urls) == 3
+
+
 @pytest.fixture
 def client():
     from fastapi.testclient import TestClient
@@ -36,7 +296,8 @@ def test_linkedin_status_is_missing_until_cloud_publisher_app_is_configured(clie
     answer = client.get("/oauth/linkedin/status",
                         headers={"Authorization": "Bearer " + token})
     assert answer.status_code == 200
-    assert answer.json() == {"ok": True, "provider": "linkedin", "state": "missing"}
+    assert answer.json() == {"ok": True, "provider": "linkedin", "state": "missing",
+                             "blocker": "LinkedIn developer app not created (cloud client id missing)"}
 
 
 def test_linkedin_start_uses_cloud_config_and_never_returns_secret(client, monkeypatch):

@@ -247,6 +247,12 @@ const CommandBar = ({ open, onClose, addNodeFromLibrary, onOpenSession, onChats 
   const needle = q.trim().toLowerCase();
   const match = text => !needle || String(text || '').toLowerCase().includes(needle);
   const rows = [];
+  for (const button of document.querySelectorAll('[data-social-provider] button')) {
+    if (button.disabled) continue;
+    const provider = button.closest('[data-social-provider]');
+    const label = button.textContent.trim() + ' · ' + provider.getAttribute('data-social-name');
+    if (match(label)) rows.push({group:'Connections',icon:'⌁',color:LM.accent,label,run:()=>button.click()});
+  }
   // The palette invokes the visible Home controls, retaining their one guarded handler.
   for (const button of document.querySelectorAll('[data-home-page] [data-template-start], [data-home-page] [data-template-edit], [data-home-page] [data-template-editor] button, [data-home-page] [data-workshop-primary], [data-home-page] [data-approval-open-sheets], [data-home-result] button')) {
     if (button.disabled) continue;
@@ -9994,9 +10000,6 @@ const SettingsPermissions = ({ account, onTab, compact=false }) => {
     {typeof SettingsSocialApprovals !== 'undefined' && <div style={{ padding:'10px 12px', borderBottom:`1px solid ${LM.lineSoft}` }}>
       <SettingsSocialApprovals transport={transport}/>
     </div>}
-    {typeof SettingsSocialEnrollment !== 'undefined' && <div style={{ padding:'10px 12px', borderBottom:`1px solid ${LM.lineSoft}` }}>
-      <SettingsSocialEnrollment transport={transport} onAccount={() => onTab && onTab('Account')}/>
-    </div>}
     {hasPermissionBackend && <div style={{ display:'grid', gridTemplateColumns:'minmax(0, 1fr) repeat(3, auto)', gap:8, alignItems:'center',
       padding:'6px 12px', borderBottom:`1px solid ${LM.lineSoft}`, fontSize:11, color:LM.inkSoft }}>
       <span>Actor</span><span>Read</span><span>Write</span><span>Send</span>
@@ -10120,6 +10123,9 @@ const SettingsSocialApprovals = ({transport}) => {
     if (operation.startsWith('instagram.')) return 'Instagram';
     if (operation.startsWith('facebook.')) return 'Facebook';
     if (operation.startsWith('linkedin.')) return 'LinkedIn';
+    if (operation.startsWith('whatsapp.')) return 'WhatsApp Business';
+    if (operation.startsWith('x.')) return 'X';
+    if (operation.startsWith('tiktok.')) return 'TikTok';
     return 'provider';
   };
   if (!transport?.listSocialApprovals || (!items.length && !message)) return null;
@@ -10198,154 +10204,7 @@ const SettingsConnectedSocialAccounts = ({transport}) => {
   </div>;
 };
 
-// Sign in with LinkedIn (social_linkedin_signin). The publisher app is owned by
-// ArchHub/Cockpit; Settings only opens provider sign-in when that owner exists.
-const SettingsLinkedInSignIn = ({transport, compact = false}) => {
-  const alive = React.useRef(true), timer = React.useRef(null);
-  const [busy, setBusy] = React.useState(false), [message, setMessage] = React.useState(''), [failed, setFailed] = React.useState(false);
-  const [appSaved, setAppSaved] = React.useState(false), [appState, setAppState] = React.useState('');
-  React.useEffect(() => {
-    let active = true;
-    if (!transport?.linkedInAppStatus) return () => { active = false; };
-    transport.linkedInAppStatus()
-      .then(status => { if (active && alive.current) { setAppSaved(status?.state === 'saved'); setAppState(status?.state || ''); } })
-      .catch(error => { if (active && alive.current) say(error.message, true); });
-    return () => { active = false; };
-  }, [transport]);
-  React.useEffect(() => () => { alive.current = false; clearTimeout(timer.current); }, []);
-  const say = (text, bad = false) => { if (alive.current) { setMessage(text); setFailed(bad); } };
-  const poll = async () => {
-    try {
-      const status = await transport.linkedInSignInStatus();
-      if (status.phase === 'ready') {
-        const saved = await transport.finishLinkedInSignIn();
-        say('Connected ' + (status.name || 'your LinkedIn account') + ' (' + saved.account_id + '). LinkedIn confirmed this account. Reference: ' + saved.vault_entry + '.');
-        setBusy(false); return;
-      }
-      if (status.phase === 'failed') { say(status.error || 'LinkedIn sign-in failed.', true); setBusy(false); return; }
-      if (alive.current) timer.current = setTimeout(poll, 1500);
-    } catch (error) { say(error.message, true); setBusy(false); }
-  };
-  const signIn = async () => {
-    setBusy(true); say('Finish in the LinkedIn page that opened, then return here.');
-    try { await transport.startLinkedInSignIn(); say('Finish in the LinkedIn page that opened.'); await poll(); }
-    catch (error) { say(error.message, true); if (alive.current) setBusy(false); }
-  };
-  const cancel = async () => {
-    clearTimeout(timer.current);
-    try { await transport.cancelLinkedInSignIn(); say('LinkedIn sign-in cancelled.'); }
-    catch (error) { say(error.message, true); }
-    finally { if (alive.current) setBusy(false); }
-  };
-  const available = !!(appSaved && transport?.startLinkedInSignIn);
-  // 'missing' means this machine is not signed in to the ArchHub cloud that brokers LinkedIn.
-  const needsSignIn = !available && appState === 'missing';
-  if (compact) return <SocialConnectButton label="Connect LinkedIn" available={available} busy={busy}
-    unavailableLabel={needsSignIn ? 'Sign in to ArchHub to connect' : 'Connect from Account'}
-    onClick={signIn} note={needsSignIn ? 'This connection goes through your ArchHub account. Sign in under Settings › Account, then connect here.' : 'Open Settings › Account before connecting LinkedIn.'} message={message} failed={failed}/>;
-  return <div style={{padding:'12px 14px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, marginBottom:10}}>
-    <div style={{fontSize:13, fontWeight:500}}>Sign in with LinkedIn</div>
-    <div style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, marginTop:2, marginBottom:12, letterSpacing:'0.04em'}}>Posts go to your personal LinkedIn profile, and only after you approve each one.</div>
-    <div>
-      <button type="button" disabled={!available || busy} onClick={signIn} style={smallBtn(available)}>{busy ? 'Waiting for LinkedIn...' : (available ? 'Connect LinkedIn' : (needsSignIn ? 'Sign in to ArchHub to connect' : 'Connect from Account'))}</button>
-      {needsSignIn && <p role="status" style={{fontSize:12, color:LM.inkSoft}}>This connection goes through your ArchHub account. Sign in under Settings › Account, then connect here.</p>}
-      {busy && transport?.cancelLinkedInSignIn && <button type="button" onClick={cancel} style={{...smallBtn(), marginTop:7}}>Cancel sign-in</button>}
-      {message && <p role={failed ? 'alert' : 'status'} style={{fontSize:12, overflowWrap:'anywhere', color:failed ? LM.err : LM.ok}}>{message}</p>}
-    </div>
-  </div>;
-};
-
-const SocialConnectButton = ({label, available, busy, onClick, note, message, failed, unavailableLabel = 'Connect from Account'}) => {
-  const [open, setOpen] = React.useState(false);
-  return <div style={{display:'inline-flex', flexDirection:'column', gap:6, alignItems:'flex-start'}}>
-    <button type="button" onClick={() => available ? onClick() : setOpen(!open)}
-      style={smallBtn(available)}>{busy ? 'Connecting...' : (available ? label : unavailableLabel)}</button>
-    {!available && open && <div role="status" style={{fontSize:12, color:LM.inkSoft, maxWidth:420}}>{note}</div>}
-    {message && <div role={failed ? 'alert' : 'status'} style={{fontSize:12, color:failed ? LM.err : LM.ok, maxWidth:420, overflowWrap:'anywhere'}}>{message}</div>}
-  </div>;
-};
-
-const SettingsMetaSignIn = ({transport}) => {
-  const alive = React.useRef(true), timer = React.useRef(null);
-  const [message, setMessage] = React.useState(''), [failed, setFailed] = React.useState(false), [busy, setBusy] = React.useState(false);
-  const [appSaved, setAppSaved] = React.useState(false), [appState, setAppState] = React.useState('');
-  const [pages, setPages] = React.useState([]), [connected, setConnected] = React.useState(null);
-  React.useEffect(() => {
-    let active = true;
-    if (!transport?.metaAppStatus) return () => { active = false; };
-    transport.metaAppStatus()
-      .then(status => { if (active && alive.current) { setAppSaved(status?.state === 'saved'); setAppState(status?.state || ''); } })
-      .catch(error => { if (active && alive.current) say(error.message, true); });
-    return () => { active = false; };
-  }, [transport]);
-  React.useEffect(() => () => { alive.current = false; clearTimeout(timer.current); }, []);
-  const say = (text, bad = false) => { if (alive.current) { setMessage(text); setFailed(bad); } };
-  const poll = async () => {
-    try {
-      const status = await transport.metaSignInStatus();
-      if (status.phase === 'ready') {
-        setPages(Array.isArray(status.pages) ? status.pages : []);
-        say(status.pages?.length ? 'Choose the Facebook Page to use.' : 'Meta returned no Pages for this account.', !status.pages?.length);
-        setBusy(false); return;
-      }
-      if (status.phase === 'failed') { say(status.error || 'Meta sign-in failed.', true); setBusy(false); return; }
-      if (alive.current) timer.current = setTimeout(poll, 1500);
-    } catch (error) { say(error.message, true); setBusy(false); }
-  };
-  const signIn = async () => {
-    setBusy(true); say('Finish in the Meta page that opened, then return here.');
-    try { await transport.startMetaSignIn(); say('Finish in the Meta page that opened.'); await poll(); }
-    catch (error) { say(error.message, true); if (alive.current) setBusy(false); }
-  };
-  const cancel = async () => {
-    clearTimeout(timer.current);
-    try { await transport.cancelMetaSignIn(); say('Meta sign-in cancelled.'); }
-    catch (error) { say(error.message, true); }
-    finally { if (alive.current) setBusy(false); }
-  };
-  const usePage = async page => {
-    setBusy(true);
-    try {
-      const saved = await transport.finishMetaSignIn({page_id:page.id});
-      const next = {page:{id:saved.account_id, name:page.name, vault_entry:saved.vault_entry}, instagram:saved.instagram || page.instagram || null};
-      setConnected(next); setPages([]);
-      say('Connected ' + page.name + (next.instagram?.username ? ' and Instagram @' + next.instagram.username : '') + '.');
-    } catch (error) { say(error.message, true); }
-    finally { if (alive.current) setBusy(false); }
-  };
-  const disconnect = async () => {
-    if (!connected || !transport?.removeLocalSocialAccount) return;
-    setBusy(true);
-    try {
-      if (connected.instagram?.vault_entry && connected.instagram?.account_id) {
-        await transport.removeLocalSocialAccount({provider:'meta', account_id:connected.instagram.account_id, vault_entry:connected.instagram.vault_entry});
-      }
-      await transport.removeLocalSocialAccount({provider:'meta', account_id:connected.page.id, vault_entry:connected.page.vault_entry});
-      setConnected(null); say('Disconnected Meta credentials on this machine.');
-    } catch (error) { say(error.message, true); }
-    finally { if (alive.current) setBusy(false); }
-  };
-  const available = !!(appSaved && transport?.startMetaSignIn);
-  const needsSignIn = !available && appState === 'missing';
-  return <div style={{display:'inline-flex', flexDirection:'column', gap:6, alignItems:'flex-start'}}>
-    <button type="button" onClick={available ? signIn : undefined}
-      style={smallBtn(available)}>{busy ? 'Connecting...' : (available ? 'Connect Facebook / Instagram' : (needsSignIn ? 'Sign in to ArchHub to connect' : 'Connect from Account'))}</button>
-    {needsSignIn && <div role="status" style={{fontSize:12, color:LM.inkSoft, maxWidth:420}}>This connection goes through your ArchHub account. Sign in under Settings › Account, then connect here.</div>}
-    {!!pages.length && <div style={{display:'flex', flexDirection:'column', gap:6, maxWidth:440}}>
-      {pages.map(page => <button key={page.id} type="button" disabled={busy} onClick={() => usePage(page)} style={smallBtn(true)}>
-        Use {page.name || page.id}{page.instagram?.username ? ' + Instagram @' + page.instagram.username : ''}
-      </button>)}
-    </div>}
-    {connected && <div style={{display:'flex', gap:7, flexWrap:'wrap', alignItems:'center', maxWidth:440}}>
-      <span style={{fontSize:12, color:LM.ok}}>Connected {connected.page.name || connected.page.id}{connected.instagram?.username ? ' + Instagram @' + connected.instagram.username : ''}</span>
-      <button type="button" disabled={busy || !transport?.removeLocalSocialAccount} onClick={disconnect} style={smallBtn()}>Disconnect</button>
-    </div>}
-    {busy && transport?.cancelMetaSignIn && <button type="button" onClick={cancel} style={smallBtn()}>Cancel sign-in</button>}
-    {message && <div role={failed ? 'alert' : 'status'} style={{fontSize:12, color:failed ? LM.err : LM.ok, maxWidth:420, overflowWrap:'anywhere'}}>{message}</div>}
-  </div>;
-};
-
-const SocialConnectionRow = ({icon, name, detail, control, onAccount}) => (
+const SocialConnectionRow = ({icon, name, detail, control}) => (
   <div style={{display:'grid', gridTemplateColumns:'24px minmax(0,1fr) auto', alignItems:'center', gap:10,
     padding:'10px 0', borderTop:`1px solid ${LM.lineSoft}`}}>
     <span style={{width:24, height:24, borderRadius:LM.rad.sm, background:LM.bgSoft, color:LM.ink,
@@ -10354,7 +10213,7 @@ const SocialConnectionRow = ({icon, name, detail, control, onAccount}) => (
       <div style={{fontSize:13, fontWeight:500}}>{name}</div>
       <div style={{fontSize:11.5, color:LM.inkSoft, lineHeight:1.35}}>{detail}</div>
     </div>
-    {control || <button type="button" onClick={() => onAccount && onAccount()} style={smallBtn(false)}>Connect from Account</button>}
+    {control}
   </div>
 );
 
@@ -10371,10 +10230,14 @@ const SettingsMcpClientRow = ({provider}) => {
   const [busy, setBusy] = React.useState(false);
   const [message, setMessage] = React.useState('');
   const [failed, setFailed] = React.useState(false);
-  const connect = async () => {
+  const connect = async (mode = 'client') => {
     setBusy(true); setMessage(''); setFailed(false);
     try {
-      if (transport?.installMcpClient) {
+      if (mode === 'workspace') {
+        if (!transport?.connectNotion) throw new Error('Notion workspace sign-in is unavailable in this Studio session.');
+        const result = await transport.connectNotion();
+        setMessage(result.label || 'Notion sign-in opened.'); return;
+      } else if (transport?.installMcpClient) {
         await transport.installMcpClient(provider);
       } else if (typeof window.open === 'function') {
         window.open(target.fallback, '_blank', 'noopener,noreferrer');
@@ -10388,52 +10251,135 @@ const SettingsMcpClientRow = ({provider}) => {
   };
   return <SocialConnectionRow icon={target.icon} name={target.name} detail="ArchHub remote MCP"
     control={<div style={{display:'flex', flexDirection:'column', alignItems:'flex-end', gap:6}}>
-      <button type="button" disabled={busy} onClick={connect} style={smallBtn(true)}>
+      <button type="button" disabled={busy} onClick={() => connect()} style={smallBtn(true)}>
         {busy ? 'Opening...' : target.button}
       </button>
+      {provider === 'notion' && <button type="button" disabled={busy || !transport?.connectNotion} onClick={() => connect('workspace')} style={smallBtn()}>Connect Notion</button>}
       {message && <span role={failed ? 'alert' : 'status'} style={{fontSize:11.5, color:failed ? LM.err : LM.ok, maxWidth:240, textAlign:'right'}}>{message}</span>}
     </div>}/>;
 };
 
-const SettingsConnections = () => (
-  <section aria-label="Connections" style={{display:'flex', flexDirection:'column', gap:14}}>
-    <div style={{fontFamily:LM.serif, fontSize:22, letterSpacing:'-0.01em'}}>Connections</div>
-    <div style={{padding:`${LM.sp.md}px ${LM.sp.lg}px`, background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg}}>
+const SOCIAL_NETWORKS = [
+  {provider:'instagram', name:'Instagram', icon:'◎'},
+  {provider:'facebook', name:'Facebook', icon:'f'},
+  {provider:'linkedin', name:'LinkedIn', icon:'in'},
+  {provider:'whatsapp', name:'WhatsApp Business', icon:'◉'},
+  {provider:'x', name:'X', icon:'𝕏'},
+  {provider:'tiktok', name:'TikTok', icon:'♪'},
+];
+
+const SocialProviderConnection = ({network, initial, transport}) => {
+  const [row, setRow] = React.useState(initial);
+  const alive = React.useRef(true), generation = React.useRef(0), timer = React.useRef(null);
+  React.useEffect(() => { alive.current = true; return () => { alive.current = false; generation.current++; clearTimeout(timer.current); }; }, []);
+  const fail = (error, fence) => {
+    if (alive.current && generation.current === fence) setRow(previous => ({...previous,state:'blocked',can_connect:true,blocker:error?.message || 'Cloud connection status unavailable'}));
+  };
+  const accept = async (next, fence) => {
+    if (!alive.current || generation.current !== fence) return;
+    if (!next?.state) throw new Error('Cloud connection status unavailable');
+    setRow(previous => ({...previous,...next}));
+    const accounts = next.accounts || [];
+    if (next.state === 'ready' || (next.state === 'choosing' && accounts.length === 1)) {
+      const account = accounts[0];
+      const saved = await transport.finishSocialConnection(network.provider,account ? account.account_id || account.id : undefined);
+      if (alive.current && generation.current === fence) setRow(previous => ({...previous,...saved}));
+    } else if (next.state === 'connecting') {
+      timer.current = setTimeout(() => poll(fence), 1500);
+    }
+  };
+  const poll = async fence => {
+    try { await accept(await transport.socialConnectionStatus(network.provider),fence); }
+    catch (error) { fail(error,fence); }
+  };
+  const connect = async () => {
+    const fence = ++generation.current;
+    clearTimeout(timer.current);
+    setRow(previous => ({...previous,state:'connecting',blocker:''}));
+    try {
+      const started = await transport.startSocialConnection(network.provider);
+      await accept(started,fence);
+      if (started.state === 'connecting' && alive.current && generation.current === fence) {
+        clearTimeout(timer.current); await poll(fence);
+      }
+    } catch (error) { fail(error,fence); }
+  };
+  const choose = async account => {
+    const fence = ++generation.current;
+    setRow(previous => ({...previous,state:'connecting'}));
+    try { await accept(await transport.finishSocialConnection(network.provider,account.account_id || account.id),fence); }
+    catch (error) { fail(error,fence); }
+  };
+  const cancel = async () => {
+    const fence = ++generation.current;
+    clearTimeout(timer.current);
+    try { await accept(await transport.cancelSocialConnection(network.provider),fence); }
+    catch (error) { fail(error,fence); }
+  };
+  React.useEffect(() => {
+    const fence = ++generation.current;
+    clearTimeout(timer.current); setRow(initial);
+    if (initial.state === 'connecting') poll(fence);
+    else if (initial.state === 'ready' || (initial.state === 'choosing' && initial.accounts?.length === 1)) {
+      accept(initial,fence).catch(error => fail(error,fence));
+    }
+  }, [initial,transport]);
+  const pending = row.state === 'connecting' || row.state === 'choosing' || row.state === 'ready';
+  const blocked = row.state === 'blocked' && !row.can_connect;
+  const label = row.state === 'connected' ? 'Reconnect' : row.state === 'connecting' ? 'Connecting…' : 'Connect';
+  const rawName = row.username || row.display_name;
+  const displayName = rawName && rawName !== row.account_id && ['instagram','x'].includes(network.provider) && !rawName.startsWith('@') ? '@'+rawName : rawName;
+  const waitingReview = row.publish_blocker || (row.review_state && row.review_state !== 'approved');
+  const status = row.state === 'connected' ? 'Connected as ' + (displayName || 'provider-confirmed account')
+    : row.state === 'connecting' ? 'Connecting… Finish in the provider window.'
+    : row.state === 'choosing' ? 'Choose your account' : row.state === 'loading' ? 'Reading connection status…'
+    : row.state === 'blocked' ? '' : 'Not connected';
+  return <div data-social-provider={network.provider} data-social-name={network.name}>
+    <SocialConnectionRow icon={network.icon} name={network.name}
+      detail={<span><span role="status" style={{display:'block',color:row.state === 'connected' ? LM.ok : LM.inkSoft}}>{status}</span>
+        {waitingReview && <span role="status" style={{display:'block',marginTop:3,color:LM.inkSoft}}>Waiting for {network.name} approval</span>}
+        {(row.blocker || row.publish_blocker) && <span role="status" style={{display:'block',marginTop:3,color:LM.inkSoft,overflowWrap:'anywhere'}}>{row.blocker || row.publish_blocker}</span>}</span>}
+      control={<div style={{display:'flex',flexDirection:'column',gap:6,alignItems:'flex-end'}}>
+        <button type="button" onClick={connect} disabled={pending || blocked || row.state === 'loading'}
+          title={(row.blocker && blocked ? row.blocker + ' · ' : '') + 'Connect ' + network.name + ' · Ctrl+K / Enter'}
+          aria-label={label + ' ' + network.name} style={{...smallBtn(!blocked),minWidth:94}}>{label}</button>
+        {pending && <button type="button" onClick={cancel} title={'Cancel '+network.name+' sign-in · Ctrl+K / Enter'} style={smallBtn()}>Cancel</button>}
+        {row.state === 'choosing' && (row.accounts || []).map(account => <button type="button" key={account.account_id || account.id}
+          onClick={() => choose(account)} title={'Use '+(account.name || account.display_name)+' · Ctrl+K / Enter'} style={smallBtn(true)}>Use {account.name || account.display_name}</button>)}
+      </div>}/>
+  </div>;
+};
+
+const SettingsConnections = ({transport = window.ARCHHUB_EXISTING_WORKSHOP}) => {
+  const [rows,setRows] = React.useState(null), [error,setError] = React.useState('');
+  React.useEffect(() => {
+    let active = true;
+    const load = async () => {
+      try {
+        if (!transport?.listSocialConnections) throw new Error('ArchHub cloud connection broker unavailable');
+        const next = await transport.listSocialConnections();
+        if (!Array.isArray(next)) throw new Error('Cloud connection status unavailable');
+        if (active) setRows(next);
+      } catch (failure) { if (active) setError(failure.message || 'Cloud connection status unavailable'); }
+    };
+    load(); return () => { active = false; };
+  }, [transport]);
+  return <section aria-label="Connections" style={{display:'flex',flexDirection:'column',gap:14,maxWidth:850}}>
+    <div><div style={{fontFamily:LM.serif,fontSize:22,letterSpacing:'-0.01em'}}>Connections</div>
+      <p style={{fontSize:12,color:LM.inkSoft,lineHeight:1.5,margin:'6px 0 0'}}>Your accounts, connected through each provider's own sign-in. Agents draft; you approve every send.</p></div>
+    <div style={{padding:`${LM.sp.md}px ${LM.sp.lg}px`,background:LM.bg,border:`1px solid ${LM.line}`,borderRadius:LM.rad.lg}}>
+      {SOCIAL_NETWORKS.map(network => <SocialProviderConnection key={network.provider} network={network} transport={transport}
+        initial={rows?.find(row => row.provider === network.provider) || {provider:network.provider,state:error || rows ? 'blocked' : 'loading',blocker:error || (rows ? network.name + ' cloud connection status unavailable' : '')}}/>)}
+    </div>
+    <SettingsSocialApprovals transport={transport}/>
+    <div style={{padding:`${LM.sp.md}px ${LM.sp.lg}px`,background:LM.bg,border:`1px solid ${LM.line}`,borderRadius:LM.rad.lg}}>
+      <div style={{fontSize:12,color:LM.inkSoft}}>Other apps</div>
       <SettingsMcpClientRow provider="notion"/>
       <SettingsMcpClientRow provider="gemini"/>
     </div>
-  </section>
-);
-
-const SettingsNotionSignIn = ({transport}) => {
-  const [busy, setBusy] = React.useState(false), [message, setMessage] = React.useState(''), [failed, setFailed] = React.useState(false);
-  const connect = async () => {
-    setBusy(true); setMessage(''); setFailed(false);
-    try { const result = await transport.connectNotion(); setMessage(result.label || 'Notion is connected.'); }
-    catch (error) { setMessage(error.message); setFailed(true); }
-    finally { setBusy(false); }
-  };
-  const available = !!transport?.connectNotion;
-  return <SocialConnectButton label="Connect Notion" available={available} busy={busy}
-    onClick={connect} note="Open Settings › Account before connecting Notion." message={message} failed={failed}/>;
+  </section>;
 };
-
-const SettingsSocialEnrollment = ({transport, onAccount}) => {
-  const [message, setMessage] = React.useState('');
-  return <div style={{padding:`${LM.sp.md}px ${LM.sp.lg}px`, background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg}}>
-    <div style={{fontSize:LM.fs.bodySm.sz, fontWeight:LM.fs.bodySmStrong.wt}}>Connections</div>
-    <div style={{fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.inkSoft, marginTop:LM.sp.xs, marginBottom:LM.sp.xs, letterSpacing:LM.fs.label.letter}}>Connect through each provider's sign-in.</div>
-    <SocialConnectionRow icon="in" name="LinkedIn" detail="Draft posts you approve."
-      control={<SettingsLinkedInSignIn transport={transport} compact/>}/>
-    <SocialConnectionRow icon="f" name="Facebook and Instagram" detail="Post to your page and business account."
-      control={<SettingsMetaSignIn transport={transport}/>}/>
-    <SocialConnectionRow icon="N" name="Notion" detail="Uses Notion's own sign-in."
-      control={<SettingsNotionSignIn transport={transport}/>}/>
-    <SocialConnectionRow icon="O" name="Outlook" detail="Connects through the existing mail owner when available." onAccount={onAccount}/>
-    <SocialConnectionRow icon="D" name="Dropbox" detail="Uses the existing local Dropbox owner when available." onAccount={onAccount}/>
-    {message && <p role="status" style={{fontSize:12, overflowWrap:'anywhere', color:LM.ok}}>{message}</p>}
-  </div>;
-};
+window.SocialConnections = SettingsConnections;
 
 // The design's per-row "manage" / "connect" button opens what that provider actually offers here:
 // OpenRouter takes a key into this machine's secrets store, the ArchHub cloud is keyed by signing
@@ -10530,7 +10476,7 @@ const ProviderManage = ({ p, providers, onTab }) => {
 const SettingsProviders = ({ providers, onTab }) => {
   const { rows, error, loading, transport } = providers;
   const [managing, setManaging] = React.useState(null);
-  const [social, setSocial] = React.useState(false);
+
   const tone = (state) => state === 'keyed' ? LM.ok : state === 'running' ? LM.cyan :
     state === 'key invalid' ? LM.err : LM.inkSoft;
   const off = state => state === 'no key' || state === 'not running' || state === 'not installed';
@@ -10570,20 +10516,6 @@ const SettingsProviders = ({ providers, onTab }) => {
         {error ? 'Provider status was not read: ' + error : 'Reading the providers on this machine\u2026'}</SettingsEmpty>}
       {rows && rows.length === 0 && <SettingsEmpty>No provider is registered on this machine.</SettingsEmpty>}
     </div>
-    {/* Connections for connector nodes are not in the design. They sit behind the
-        design's own dashed "+ ..." affordance (drawn in Settings › Hosts), below the drawn list. */}
-    <button onClick={() => setSocial(!social)} aria-expanded={social} style={{
-      marginTop:LM.sp.lg, padding:`${LM.sp.sm}px ${LM.sp.md}px`, border:`1px dashed ${LM.line}`, background:'transparent',
-      borderRadius:LM.rad.md, color:LM.accent, fontFamily:LM.sans, fontSize:LM.fs.caption.sz, cursor:'pointer',
-      display:'inline-flex', alignItems:'center', gap:LM.sp.sm, width:'fit-content',
-    }}>
-      <span>{social ? '\u2212' : '+'}</span> Connections…
-    </button>
-    {social && <div style={{ marginTop:10 }}>
-      <SettingsConnectedSocialAccounts transport={transport}/>
-      <SettingsSocialApprovals transport={transport}/>
-      <SettingsSocialEnrollment transport={transport} onAccount={() => onTab && onTab('Account')}/>
-    </div>}
   </div>
   );
 };

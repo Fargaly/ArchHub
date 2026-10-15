@@ -1638,6 +1638,20 @@ _BABOOM_CONNECTOR_ADAPTER_SPECS = (
          "network:graph.facebook.com", "internal-text"),
         ("instagram.reply", "Instagram comment reply publisher", "publish-comment-reply",
          "network:graph.facebook.com", "public-text"),
+        ("instagram.container_create", "Instagram image draft container", "prepare-image-container",
+         "network:graph.facebook.com", "public-text"),
+        ("instagram.container_status", "Instagram image processing reader", "read-image-processing",
+         "network:graph.facebook.com", "internal-metadata"),
+        ("instagram.media_publish", "Instagram approved image publisher", "publish-approved-image",
+         "network:graph.facebook.com", "public-text"),
+        ("whatsapp.message", "WhatsApp Business message publisher", "send-business-message",
+         "network:graph.facebook.com", "internal-text"),
+        ("x.post", "X post publisher", "publish-post",
+         "network:api.x.com", "public-text"),
+        ("x.reply", "X reply publisher", "publish-reply",
+         "network:api.x.com", "public-text"),
+        ("tiktok.video_post", "TikTok video publisher", "publish-video",
+         "network:open.tiktokapis.com", "public-text"),
     )
 )
 _MCP_BROKER_PROTOCOL_PREFIX = "app:mcp-broker:v1"
@@ -3614,6 +3628,9 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/theme-publish", "publish"),
     ("POST", "/api/universal/authority-issue", "manage-policy"),
     ("POST", "/api/universal/authority-revoke", "manage-policy"),
+    ("GET", "/api/universal/social-connections", "read"),
+    ("GET", "/api/universal/social-connection", "read"),
+    ("POST", "/api/universal/social-connection", "manage-policy"),
 )
 _FOUNDER_BABOOM_CAPABILITY_REPORT_VERSION = (
     "founder-local-baboom-capability-report"

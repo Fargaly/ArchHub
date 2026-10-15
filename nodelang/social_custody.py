@@ -25,7 +25,7 @@ SOCIAL_VERIFIED_FORMAT = "archhub-social-credential-2"
 _RECORD_FIELDS = frozenset({"format", "provider", "account_id", "token"})
 _VERIFIED_FIELDS = _RECORD_FIELDS | {"account_binding"}
 _BINDINGS = frozenset({"provider-verified", "operator-declared"})
-_PROVIDERS = frozenset({"linkedin", "meta"})
+_PROVIDERS = frozenset({"linkedin", "meta", "whatsapp", "x", "tiktok"})
 
 
 def require_social_vault_reference(snapshot, vault_entry):
@@ -78,8 +78,12 @@ def _bound_record(provider, account_id, vault_entry):
     fields = set(record) if type(record) is dict else set()
     if (type(record) is not dict
             or not ((fields == _RECORD_FIELDS and record["format"] == SOCIAL_CREDENTIAL_FORMAT)
-                    or (fields == _VERIFIED_FIELDS and record["format"] == SOCIAL_VERIFIED_FORMAT
-                        and record["account_binding"] in _BINDINGS))
+                    or (fields in (_VERIFIED_FIELDS, _VERIFIED_FIELDS | {"display_name"})
+                        and record["format"] == SOCIAL_VERIFIED_FORMAT
+                        and record["account_binding"] in _BINDINGS
+                        and ("display_name" not in record or
+                             (type(record["display_name"]) is str and 1 <= len(record["display_name"]) <= 256
+                              and not any(ord(c) < 32 for c in record["display_name"])))))
             or type(record["provider"]) is not str or type(record["account_id"]) is not str
             or type(token) is not str or not 1 <= len(token) <= 16384
             or any(ord(char) < 33 or ord(char) > 126 for char in token)):

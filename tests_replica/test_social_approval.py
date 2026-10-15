@@ -105,6 +105,9 @@ def test_the_card_and_routes_are_wired():
     assert ("GET", "/api/universal/social-approvals") in declared and ("POST", "/api/universal/social-approve") in declared
     studio = Path(social_approval.__file__).resolve().parent / "studio"
     page = (studio / "studio-lm.jsx").read_text(encoding="utf-8")
-    assert "<SettingsSocialApprovals transport={transport}/>" in page and "Approve this post" in page and ">Deny<" in page
+    # The shared card replaced the retired inline labels. Mounted approve/deny
+    # payload behavior is checked in tests_js/studio_social3_review.test.cjs.
+    assert "<SettingsSocialApprovals transport={transport}/>" in page
+    assert "window.ARCHHUB_APPROVAL_CARD" in page
     transport = (studio / "studio-existing-workshop.js").read_text(encoding="utf-8")
     assert "post('/api/universal/social-approve', {delegation, input_digest, decision})" in transport

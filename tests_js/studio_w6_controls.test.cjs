@@ -22,28 +22,23 @@ test("W6 Settings Theme rows are real pickers and instant accent controls", () =
   assert.equal(theme.includes("Save accent"), false, "accent applies from the swatch flow, not a form save");
 });
 
-test("W6 social accounts expose OAuth buttons, never raw access-token enrollment", () => {
-  const social = slice("const SettingsSocialEnrollment = ", "// The design's per-row");
-  const meta = slice("const SettingsMetaSignIn = ", "const SettingsSocialEnrollment = ");
-  const transport = fs.readFileSync(path.join(root, "nodelang/studio/studio-existing-workshop.js"), "utf8");
-  assert.match(source, /Connect LinkedIn/);
-  assert.match(source, /Connect Facebook \/ Instagram/);
-  assert.match(meta, /metaAppStatus/);
-  assert.match(meta, /startMetaSignIn/);
-  assert.match(meta, /metaSignInStatus/);
-  assert.match(meta, /finishMetaSignIn/);
-  assert.match(meta, /Use \{page\.name \|\| page\.id\}/);
-  assert.match(meta, /\+ Instagram @/);
-  assert.match(meta, /removeLocalSocialAccount/);
-  assert.match(transport, /get\('\/api\/universal\/social-meta-app'\)/);
-  assert.match(transport, /social-meta-signin/);
-  assert.match(transport, /social-meta-finish/);
-  assert.match(transport, /post\('\/api\/universal\/social-meta-finish', \{page_id\}\)/);
-  for (const dead of ["ACCESS TOKEN", "REFERENCE NAME", "Save account", "removeLocalSocialAccount", "enrollSocialAccount"]) {
-    assert.equal(social.includes(dead), false, dead + " is not shown in the user flow");
-  }
+test("W6 social accounts expose OAuth buttons, never raw access-token enrollment", async () => {
+  const {mount,providers,names} = require('./social3_surface_helpers.cjs');
+  const s = await mount();
+  try {
+    assert.equal(s.doc.querySelectorAll('[data-social-provider]').length,6,'one row per supported social network');
+    for(const [i,provider] of providers.entries()) {
+      const row=s.doc.querySelector(`[data-social-provider="${provider}"]`);
+      assert.ok(row.textContent.includes(names[i]));
+      await s.click(row.querySelector('button'));
+      assert.match(row.textContent,/Connected as @founder/,'provider callback identity is visible');
+    }
+    assert.deepEqual(s.calls.start,providers,'each OAuth button invokes the existing broker');
+    assert.deepEqual(s.calls.finish.map(row=>row[0]),providers,'each callback completes through the existing custody owner');
+    assert.equal(s.doc.querySelectorAll('input,textarea,select').length,0,'no keys, tokens, IDs or enrollment fields');
+    for(const dead of ['ACCESS TOKEN','REFERENCE NAME','Save account']) assert.equal(s.doc.body.textContent.includes(dead),false);
+  } finally {s.close();}
 });
-
 test("W6 Providers OpenCode can be selected as local chat route", () => {
   const manage = slice("const ProviderManage = ", "const SettingsProviders = ");
   assert.match(manage, /p\.id === 'opencode'/);

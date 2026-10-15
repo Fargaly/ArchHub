@@ -220,7 +220,9 @@
       "why": "a write by a model passes an approval gate first",
       "tests": [
         "tests_replica/test_cell_cde_authority.py",
-        "tests_replica/test_home3_package_publication.py"
+        "tests_replica/test_home3_package_publication.py",
+        "tests_replica/test_social3_send.py",
+        "tests_replica/test_social3_review.py"
       ]
     },
     "ui_theme_engine": {
@@ -407,7 +409,9 @@
     "brain_secrets": {
       "why": "the graph holds only where a secret lives and who has custody; a value-looking reference is refused and resolution writes nothing back",
       "tests": [
-        "tests_replica/test_cell_brain_secrets.py"
+        "tests_replica/test_cell_brain_secrets.py",
+        "tests_replica/test_social3_oauth.py",
+        "tests_replica/test_social3_send.py"
       ]
     },
     "brain_reflexion": {
@@ -708,6 +712,20 @@
       "why": "the capabilities the brain offers are installed into the same graph the running application serves, and a court builds the real application and asserts it can reach every one",
       "tests": [
         "tests_replica/test_cell_capabilities.py"
+      ]
+    },
+    "connectors_op_node": {
+      "why": "Social Connections and its six provider operations reuse the node/Work connector path; this binding covers the social scope only.",
+      "tests": [
+        "tests_replica/test_social3_send.py",
+        "tests_replica/test_social3_connections.py"
+      ]
+    },
+    "connectors_probe": {
+      "why": "Six social rows project custody, real broker phase and exact external blockers; social scope only.",
+      "tests": [
+        "tests_replica/test_social3_connections.py",
+        "tests_replica/test_social3_review.py"
       ]
     }
   },

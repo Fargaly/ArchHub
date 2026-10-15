@@ -18,6 +18,7 @@ from .cloud_signin import cloud_session_path, read_cloud_session
 
 WAIT_SECONDS = 600.0
 _CURRENT: dict[str, "CloudSocialAttempt"] = {}
+PROVIDERS = frozenset({"linkedin", "meta", "instagram", "facebook", "whatsapp", "x", "tiktok"})
 
 
 def _request(method: str, url: str, *, bearer: str, body: Optional[dict] = None,
@@ -66,6 +67,15 @@ class _ReturnHandler(BaseHTTPRequestHandler):
             return
         provider = (query.get("provider") or [""])[0]
         grant = (query.get("grant") or [""])[0]
+        error = (query.get("error") or [""])[0]
+        if error:
+            nonce = (query.get("nonce") or [""])[0]
+            if provider != getattr(self.server, "provider", "") or not secrets.compare_digest(nonce, getattr(self.server, "nonce", "")):
+                self._html(400, "<h1>Social sign-in failed</h1><p>Return did not match this attempt.</p>")
+                return
+            self.server.error = error[:200]
+            self._html(200, "<h1>Social sign-in needs attention</h1><p>Return to ArchHub to see the provider permission required.</p>")
+            return
         if provider != getattr(self.server, "provider", "") or not grant:
             self.server.error = "social grant return did not match this attempt"
             self._html(400, "<h1>Social sign-in failed</h1><p>Retry from ArchHub.</p>")
@@ -97,6 +107,7 @@ class CloudSocialAttempt:
         self._page_secrets: dict[str, dict] = {}
         self._pages: dict[str, dict] = {}
         self._cancel = False
+        self._server: Optional[HTTPServer] = None
         self.thread: Optional[threading.Thread] = None
 
     @property
@@ -150,6 +161,26 @@ class CloudSocialAttempt:
                 selected["instagram_token"] = secret["instagram_token"]
             return selected
 
+    def select_account(self, account_id: str) -> tuple[str, str]:
+        with self._lock:
+            if self.provider not in ("instagram", "facebook") or self._state["phase"] != "select_account":
+                raise SocialGrantNotReady("no provider accounts are waiting")
+            self._select_account_locked(account_id)
+        return self.take()
+
+    def _select_account_locked(self, account_id: str) -> None:
+        for page_id, page in self._pages.items():
+            secret = self._page_secrets.get(page_id, {})
+            account = page.get("instagram", {}) if self.provider == "instagram" else page
+            token = secret.get("instagram_token") if self.provider == "instagram" else secret.get("page_token")
+            if account.get("id") == account_id and isinstance(token, str) and token:
+                self._token_to_store = token
+                self._state.update(phase="ready", account_id=account_id,
+                                   name=str(account.get("username") or account.get("name") or ""))
+                self._page_secrets, self._pages = {}, {}
+                return
+        raise SocialGrantNotReady("the selected provider account is not waiting")
+
     def _set(self, **patch) -> None:
         with self._lock:
             self._state.update(patch)
@@ -161,11 +192,26 @@ class CloudSocialAttempt:
 
     def _run(self) -> None:
         try:
+            self._run_exchange()
+        except Exception:
+            # Never expose urllib exception strings: they can contain a grant
+            # or a provider credential. Every transport failure terminates the
+            # attempt visibly instead of leaving it spinning for ten minutes.
+            self._fail("Cloud social OAuth broker unavailable; retry provider sign-in")
+        finally:
+            if self._server is not None:
+                self._server.server_close()
+                self._server = None
+
+    def _run_exchange(self) -> None:
+        try:
             server = HTTPServer(("127.0.0.1", self._port), _ReturnHandler)
         except OSError:
             self._fail("local social grant return port is busy; retry")
             return
+        self._server = server
         server.provider, server.grant, server.error, server.timeout = self.provider, "", "", 0.5
+        server.nonce = self._nonce
         code, payload = self._http(
             "GET",
             self._base + "/oauth/" + self.provider + "/start?" + urllib.parse.urlencode({
@@ -178,14 +224,29 @@ class CloudSocialAttempt:
         url = str(payload.get("auth_url") or "")
         if code != 200 or not url:
             server.server_close()
-            self._fail("Coming soon")
+            detail = payload.get("detail") if isinstance(payload.get("detail"), dict) else payload
+            self._fail(str(detail.get("blocker") or detail.get("error") or "Cloud social OAuth broker unavailable"))
             return
+        if self.provider == "whatsapp" and payload.get("browser_url"):
+            launch = urllib.parse.urlsplit(str(payload["browser_url"]))
+            origin = urllib.parse.urlsplit(self._base)
+            if (launch.scheme != "https" or (launch.scheme, launch.netloc) != (origin.scheme, origin.netloc)
+                    or launch.path != "/oauth/whatsapp/embedded" or launch.fragment or launch.username):
+                self._fail("WhatsApp Embedded Signup launch did not match the ArchHub cloud")
+                return
+            url = str(payload["browser_url"])
         opener = self._opener
         if opener is None:
             import webbrowser
             opener = webbrowser.open
         self._set(phase="waiting")
-        threading.Thread(target=lambda: opener(url), name="archhub-social-browser", daemon=True).start()
+        def open_browser():
+            try:
+                if opener(url) is False:
+                    server.error = "The system browser could not open provider sign-in; retry"
+            except Exception:
+                server.error = "The system browser could not open provider sign-in; retry"
+        threading.Thread(target=open_browser, name="archhub-social-browser", daemon=True).start()
         started = time.monotonic()
         try:
             while not server.grant and not server.error:
@@ -207,16 +268,30 @@ class CloudSocialAttempt:
                                    headers={"X-ArchHub-Device-Session": self._device_session})
         token = granted.get("access_token")
         account_id = granted.get("account_id")
-        if code != 200 or not isinstance(token, str) or not isinstance(account_id, str):
+        if code != 200 or not isinstance(token, str) or not token or not isinstance(account_id, str) or not account_id:
             self._fail("social grant could not be consumed")
             return
         with self._lock:
-            if self.provider == "meta":
+            if self.provider in ("meta", "instagram", "facebook"):
                 pages = [page for page in granted.get("pages", []) if isinstance(page, dict) and isinstance(page.get("id"), str)]
                 secrets_by_page = granted.get("page_secrets") if isinstance(granted.get("page_secrets"), dict) else {}
                 self._page_secrets = {pid: secret for pid, secret in secrets_by_page.items() if isinstance(pid, str) and isinstance(secret, dict)}
                 self._pages = {page["id"]: page for page in pages}
                 self._state.update(phase="ready", account_id=account_id, name=str(granted.get("name") or ""), pages=pages)
+                if self.provider != "meta":
+                    accounts = []
+                    for page in pages:
+                        account = page.get("instagram", {}) if self.provider == "instagram" else page
+                        secret = self._page_secrets.get(page["id"], {})
+                        token_key = "instagram_token" if self.provider == "instagram" else "page_token"
+                        if account.get("id") and secret.get(token_key):
+                            accounts.append({"id": account["id"], "name": str(account.get("username") or account.get("name") or "")})
+                    if len(accounts) == 1:
+                        self._select_account_locked(accounts[0]["id"])
+                    elif accounts:
+                        self._state.update(phase="select_account", accounts=accounts, account_id="", name="")
+                    else:
+                        self._state.update(phase="failed", error=self.provider + " publishable account missing; grant the requested Page and business account permissions")
             else:
                 self._token_to_store = token
                 self._state.update(phase="ready", account_id=account_id, name=str(granted.get("name") or ""))
@@ -233,18 +308,22 @@ def _session(path: Optional[Path]) -> tuple[str, str]:
 def status(provider: str, *, path: Optional[Path] = None,
            http: Callable[..., tuple[int, dict]] = _request) -> dict:
     token, base = _session(path)
-    if provider not in ("linkedin", "meta") or not token:
-        return {"state": "missing"}
+    if provider not in PROVIDERS or not token:
+        return {"state": "missing", "blocker": "Sign in to the ArchHub cloud first."}
     code, payload = http("GET", f"{base}/oauth/{provider}/status", bearer=token)
     if code != 200 or payload.get("state") != "configured":
-        return {"state": "missing"}
-    return {"state": "saved", "source": "archhub-cloud"}
+        return {"state": payload.get("state", "missing"), "blocker": payload.get("blocker") or "Cloud social OAuth broker unavailable",
+                **({"publish_blocker": payload["publish_blocker"], "review_state": payload.get("review_state", "unverified")}
+                   if payload.get("publish_blocker") else {})}
+    return {"state": "saved", "source": "archhub-cloud",
+            **({"publish_blocker": payload["publish_blocker"], "review_state": payload.get("review_state", "unverified")}
+               if payload.get("publish_blocker") else {})}
 
 
 def start(provider: str, *, path: Optional[Path] = None,
           opener=None, http: Callable[..., tuple[int, dict]] = _request) -> dict:
     token, base = _session(path)
-    if provider not in ("linkedin", "meta") or not token:
+    if provider not in PROVIDERS or not token:
         return {"phase": "failed", "error": "Sign in to the ArchHub cloud first."}
     current = _CURRENT.get(provider)
     if current and current.active:
@@ -277,6 +356,13 @@ def take_verified(provider: str) -> tuple[str, str]:
     if attempt is None:
         raise SocialGrantNotReady("no verified social account is waiting")
     return attempt.take()
+
+
+def take_verified_account(provider: str, account_id: str) -> tuple[str, str]:
+    attempt = _CURRENT.get(provider)
+    if attempt is None:
+        raise SocialGrantNotReady("no verified social account is waiting")
+    return attempt.select_account(account_id)
 
 
 def take_verified_page(page_id: str) -> dict:

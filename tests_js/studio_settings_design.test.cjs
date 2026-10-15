@@ -69,24 +69,25 @@ async function openSettings({account = null, socialAccounts = [], socialApproval
     listSocialApprovals:async () => socialApprovals.map(row => ({...row})),
     decideSocialApproval:async ({delegation, input_digest, decision}) => ({
       ok:true, delegation, input_digest, decision:decision === 'approve' ? 'approved' : 'denied'}),
-    linkedInAppStatus:async () => linkedInAppSaved ? {ok:true, state:'saved', client_id:'86abc123xyz'} : {ok:true, state:'missing'},
-    startLinkedInSignIn:async () => {
-      calls.linkedInStarts += 1;
-      return {ok:true, phase:'waiting', redirect_uri:'http://127.0.0.1:48720/linkedin/callback'};
+    listSocialConnections:async () => ['instagram','facebook','linkedin','whatsapp','x','tiktok'].map(provider => ({
+      provider, state:(provider === 'linkedin' ? linkedInAppSaved : ['instagram','facebook'].includes(provider) ? metaAppSaved : true) ? 'not_connected' : 'blocked',
+      blocker:provider === 'linkedin' ? 'LinkedIn developer app not created' : 'Meta developer app not created',
+    })),
+    startSocialConnection:async provider => {
+      if(provider === 'linkedin') calls.linkedInStarts += 1;
+      if(provider === 'facebook') calls.metaStarts += 1;
+      return {provider,state:'connecting',blocker:''};
     },
-    cancelLinkedInSignIn:async () => ({ok:true, phase:'cancelled'}),
-    linkedInSignInStatus:async () => linkedInReady ? {ok:true, phase:'ready', name:'Founder'} : {ok:true, phase:'waiting'},
-    finishLinkedInSignIn:async () => { calls.linkedInFinishes += 1; return {ok:true, account_id:'urn:li:person:founder', vault_entry:'social-linkedin-founder'}; },
-    metaAppStatus:async () => metaAppSaved ? {ok:true, state:'saved'} : {ok:true, state:'missing'},
-    startMetaSignIn:async () => {
-      calls.metaStarts += 1;
-      return {ok:true, phase:'waiting', redirect_uri:'http://127.0.0.1:48721/meta/callback'};
+    socialConnectionStatus:async provider => provider === 'linkedin'
+      ? {provider,state:linkedInReady ? 'ready' : 'connecting'}
+      : {provider,state:metaReady ? 'choosing' : 'connecting',accounts:[{id:'112233445566778',name:'ArchHub Page'},{id:'9988',name:'Other Page'}]},
+    finishSocialConnection:async (provider,account_id) => {
+      if(provider === 'linkedin') calls.linkedInFinishes += 1;
+      if(provider === 'facebook') calls.metaFinishes += 1;
+      return {provider,state:'connected',display_name:'@Founder',account_id};
     },
-    cancelMetaSignIn:async () => ({ok:true, phase:'cancelled'}),
-    metaSignInStatus:async () => metaReady ? {ok:true, phase:'ready', pages:[{id:'112233445566778', name:'ArchHub Page'}]} : {ok:true, phase:'waiting'},
-    finishMetaSignIn:async ({page_id}) => { calls.metaFinishes += 1; return {ok:true, state:'enrolled', provider:'meta', account_id:page_id,
-      vault_entry:'social-meta-page-' + page_id, account_binding:'provider-verified'}; },
-    connectNotion:async () => { calls.notionStarts += 1; return {ok:true, label:'Notion is connected'}; },
+    cancelSocialConnection:async provider => ({provider,state:'not_connected'}),
+    connectNotion:async () => {calls.notionStarts += 1;return {ok:true,label:'Notion is connected'};},
     installMcpClient:async provider => { calls.clientMcp.push(provider); return {ok:true, provider}; },
     watchApplicationUpdate:() => { calls.watch += 1; return () => {}; },
     refreshApplicationUpdate:async () => {}, applicationUpdateAction:async () => {},
@@ -232,25 +233,26 @@ test('Providers draws the registry in the design rows: masked key, state pill, m
     s.flush(() => s.buttons(panel, 'manage')[0].click());
     assert.equal(!!panel.querySelector('input[aria-label="OpenRouter API key"]'), false, 'OpenRouter manage does not open a paste field');
     assert.equal(s.buttons(panel, 'Save OpenRouter key').length, 0, 'OpenRouter key save is not in user Settings');
-    const social = [...panel.querySelectorAll('button')].find(button => button.textContent.includes('Connections'));
-    assert.ok(social, 'social credentials sit behind the design dashed affordance');
-    s.flush(() => social.click());
-    await s.settle();
-    assert.equal(panel.querySelectorAll('input[type="password"], input[name="client_id"], input[name="client_secret"], input[name="app_id"], input[name="app_secret"]').length, 0,
+    assert.equal(panel.querySelector('[data-social-provider]'),null,'Providers has no duplicate social connect surface');
+    const connections = await s.tab('Connections');
+    assert.equal(connections.querySelectorAll('input[type="password"], input[name="client_id"], input[name="client_secret"], input[name="app_id"], input[name="app_secret"]').length, 0,
       'user Settings has no app ids, secrets or password fields');
     assert.equal(s.buttons(panel, 'Save LinkedIn app').length, 0, 'LinkedIn app setup is not in user Settings');
     assert.equal(s.buttons(panel, 'Meta app').length, 0, 'Meta app setup is not in user Settings');
-    assert.ok(panel.textContent.includes('Connections'), 'the panel renders Connections rows');
-    for (const label of ['LinkedIn', 'Facebook and Instagram', 'Notion', 'Outlook', 'Dropbox']) {
-      assert.ok(panel.textContent.includes(label), label + ' row is shown');
+    assert.ok(connections.textContent.includes('Connections'), 'the panel renders Connections rows');
+    for (const label of ['Instagram','Facebook','LinkedIn','WhatsApp Business','X','TikTok','Notion','Gemini']) {
+      assert.ok(connections.textContent.includes(label), label + ' row is shown');
     }
-    assert.ok(s.buttons(panel, 'Connect LinkedIn').length === 1, 'LinkedIn connects through an OAuth button');
-    assert.ok(s.buttons(panel, 'Connect Facebook / Instagram').length === 1, 'Meta connects through an OAuth button');
-    assert.ok(s.buttons(panel, 'Connect Notion').length === 1, 'Notion connects through notion.connect');
-    s.flush(() => s.buttons(panel, 'Connect Notion')[0].click());
+    assert.ok([...connections.querySelectorAll('[data-social-provider=linkedin] button')].length === 1, 'LinkedIn connects through an OAuth button');
+    assert.ok([...connections.querySelectorAll('[data-social-provider=facebook] button')].length === 1, 'Meta connects through an OAuth button');
+    assert.ok(s.buttons(connections,'Add ArchHub to Notion').length===1,'Notion uses its existing MCP client connection');
+    s.flush(() => s.buttons(connections,'Add ArchHub to Notion')[0].click());
     await s.settle();
-    assert.equal(s.calls.notionStarts, 1, 'Notion button calls the existing owner route');
-    assert.equal(!!panel.querySelector('input[name="token"]'), false, 'no raw access-token field is shown');
+    assert.deepEqual(s.calls.clientMcp,['notion'],'Notion calls the single existing MCP install owner');
+    s.flush(() => s.buttons(connections,'Connect Notion')[0].click());
+    await s.settle();
+    assert.equal(s.calls.notionStarts,1,'Notion workspace sign-in retains its existing owner route');
+    assert.equal(!!connections.querySelector('input[name="token"]'), false, 'no raw access-token field is shown');
   } finally { s.close(); }
 });
 
@@ -262,9 +264,7 @@ test('Connections render stored accounts and disconnect by exact saved identity'
     {provider:'meta', account_id:'meta:user:older', vault_entry:'social-meta-legacy', account_binding:'operator-declared'},
   ]});
   try {
-    const panel = await s.tab('Providers');
-    s.flush(() => [...panel.querySelectorAll('button')].find(button => button.textContent.includes('Connections')).click());
-    await s.settle();
+    const panel = await s.tab('Permissions');
     assert.ok(panel.textContent.includes('Connected accounts'), 'stored credentials have a visible list');
     for (const label of ['LinkedIn', 'Facebook Page', 'Instagram', 'Meta']) {
       assert.ok(panel.textContent.includes(label), label + ' account row is shown');
@@ -281,36 +281,27 @@ test('Connections render stored accounts and disconnect by exact saved identity'
   } finally { s.close(); }
 });
 
-test('Connections show account-route controls before a LinkedIn app is configured', async () => {
+test('Connections name the cloud app blocker before a LinkedIn app is configured', async () => {
   const s = await openSettings({linkedInAppSaved:false});
   try {
-    const panel = await s.tab('Providers');
-    s.flush(() => [...panel.querySelectorAll('button')].find(button => button.textContent.includes('Connections')).click());
-    await s.settle();
-    assert.equal(s.buttons(panel, 'Connect LinkedIn').length, 0, 'LinkedIn connect waits for the saved app');
+    const panel = await s.tab('Connections');
+    assert.equal(panel.querySelector('[data-social-provider=linkedin] button').disabled,true,'LinkedIn connect waits for the cloud app');
     assert.equal(panel.querySelectorAll('input[type="password"], input[name="client_id"], input[name="client_secret"]').length, 0,
       'LinkedIn app fields are not shown');
-    assert.ok(s.buttons(panel, 'Sign in to ArchHub to connect').length >= 2,
-      'signed out, LinkedIn and Meta say a cloud sign-in is needed (not "coming soon"), never a form');
-    assert.match(panel.textContent, /Sign in under Settings › Account, then connect here\./, 'the row says where to sign in');
-    assert.ok(s.buttons(panel, 'Connect from Account').length >= 1, 'a provider with no broker points at the account route');
+    assert.match(panel.textContent,/LinkedIn developer app not created/,'the row names the cloud administrator blocker');
+    assert.match(panel.textContent,/Meta developer app not created/,'Meta names its own missing app');
     assert.equal(/coming soon/i.test(panel.textContent), false, 'Connections show no stub wording');
     assert.equal(/Continue with Google|Signed in as/.test(s.doc.body.textContent), false, 'the account block is not on Providers');
-    s.flush(() => s.buttons(panel, 'Connect from Account')[0].click());
-    await s.settle();
-    assert.ok(s.doc.querySelector('[data-settings-tab="account"], [data-tab="account"]') ||
-      /Continue with Google|Signed in as/.test(s.doc.body.textContent), 'Connect from Account opens Settings › Account');
+    assert.equal(s.buttons(panel,'Connect from Account').length,0,'the replaced fallback route is absent');
   } finally { s.close(); }
 });
 
 test('Connections connect LinkedIn after a LinkedIn app is saved', async () => {
   const s = await openSettings({linkedInAppSaved:true, linkedInReady:true});
   try {
-    const panel = await s.tab('Providers');
-    s.flush(() => [...panel.querySelectorAll('button')].find(button => button.textContent.includes('Connections')).click());
-    await s.settle();
+    const panel = await s.tab('Connections');
     assert.equal(!!panel.querySelector('input[name="client_id"]'), false, 'saved LinkedIn app hides setup fields');
-    const connect = s.buttons(panel, 'Connect LinkedIn');
+    const connect = [...panel.querySelectorAll('[data-social-provider=linkedin] button')];
     assert.equal(connect.length, 1, 'saved LinkedIn app exposes connect');
     s.flush(() => connect[0].click());
     await s.settle();
@@ -322,10 +313,8 @@ test('Connections connect LinkedIn after a LinkedIn app is saved', async () => {
 test('Connections connect Meta by polling for Pages and finishing the selected Page', async () => {
   const s = await openSettings({metaAppSaved:true, metaReady:true});
   try {
-    const panel = await s.tab('Providers');
-    s.flush(() => [...panel.querySelectorAll('button')].find(button => button.textContent.includes('Connections')).click());
-    await s.settle();
-    const connect = s.buttons(panel, 'Connect Facebook / Instagram');
+    const panel = await s.tab('Connections');
+    const connect = [...panel.querySelectorAll('[data-social-provider=facebook] button')];
     assert.equal(connect.length, 1, 'saved Meta app exposes connect');
     s.flush(() => connect[0].click());
     await s.settle();
@@ -347,12 +336,15 @@ test('Social approval account confirmation names the provider being approved', a
     {delegation:'app:baboom-connector-delegation:ig', work:'w3', operation:'instagram.media_publish', account_id:'17841412345678901',
       input_digest:'d3', review_text:'Instagram post', expires_at:9999999999, account_binding:'provider-verified'},
   ];
+  for(const [provider,operation] of [['whatsapp','message'],['x','post'],['tiktok','video_post']]) approvals.push({
+    delegation:'app:baboom-connector-delegation:'+provider,work:'w-'+provider,operation:provider+'.'+operation,
+    account_id:'verified-'+provider,input_digest:'d-'+provider,review_text:'Provider draft',expires_at:9999999999,account_binding:'provider-verified',
+  });
   const s = await openSettings({socialApprovals:approvals});
   try {
-    const panel = await s.tab('Providers');
-    s.flush(() => [...panel.querySelectorAll('button')].find(button => button.textContent.includes('Connections')).click());
-    await s.settle();
-    for (const label of ['account confirmed by LinkedIn', 'account confirmed by Facebook', 'account confirmed by Instagram']) {
+    const panel = await s.tab('Connections');
+    for (const label of ['account confirmed by LinkedIn','account confirmed by Facebook','account confirmed by Instagram',
+      'account confirmed by WhatsApp Business','account confirmed by X','account confirmed by TikTok']) {
       assert.ok(panel.textContent.includes(label), label);
     }
   } finally { s.close(); }

@@ -58,6 +58,28 @@
     // not. A read that began before a bump must not publish its now-stale result over the new view.
     let navGeneration = 0;
     let providerRead = null, providerSave = null;
+    const socialNetwork = provider => {
+      if (!['instagram','facebook','linkedin','whatsapp','x','tiktok'].includes(provider)) fail('Choose a supported social network.');
+      return provider;
+    };
+    const socialConnectionRow = row => {
+      socialNetwork(row?.provider);
+      if (!['not_connected','connecting','connected','blocked','choosing','ready'].includes(row.state)) fail('Connection status unavailable.');
+      return {provider:row.provider, name:String(row.name || ''), state:row.state,
+        display_name:String(row.display_name || ''), blocker:String(row.blocker || ''), can_connect:row.can_connect === true,
+        review_state:String(row.review_state || ''), publish_blocker:String(row.publish_blocker || ''),
+        account_id:row.account_id, custody_provider:row.custody_provider, vault_entry:row.vault_entry,
+        accounts:Array.isArray(row.accounts) ? row.accounts.map(account => ({id:String(account.id),name:String(account.name || '')})) : []};
+    };
+    const socialConnectionAction = async (provider, action, account_id) => {
+      socialNetwork(provider);
+      const body = {provider,action};
+      if (account_id !== undefined) body.account_id = account_id;
+      const result = await post('/api/universal/social-connection', body);
+      if (result?.ok !== true) fail(result?.error || 'Provider sign-in could not be confirmed.');
+      return socialConnectionRow(result.connection);
+    };
+
     let themeCanvas = null, themeWrite = null, themeError = '';
     const updateActive = () => ['checking', 'downloading', 'restarting'].includes(applicationUpdate?.state);
     const listeners = new Set(), reads = new Map(), sends = new Map(), creations = new Map();
@@ -1403,7 +1425,7 @@
       },
       async enrollSocialAccount({provider, account_id, vault_entry, token}) {
         if (providerSave) fail('Wait for the current credential save to finish.');
-        if (!['linkedin', 'meta'].includes(provider) || !text(account_id) || account_id.length > 256 ||
+        if (!['linkedin', 'meta', 'whatsapp', 'x', 'tiktok'].includes(provider) || !text(account_id) || account_id.length > 256 ||
             typeof vault_entry !== 'string' || !/^social-[A-Za-z0-9._-]+$/.test(vault_entry) || vault_entry.length > 128 ||
             typeof token !== 'string' || !token || token.length > 16384) {
           fail('Enter a social- reference, provider account ID and access token.');
@@ -1429,7 +1451,7 @@
       },
       async removeLocalSocialAccount({provider, account_id, vault_entry}) {
         if (providerSave) fail('Wait for the current credential change to finish.');
-        if (!['linkedin', 'meta'].includes(provider) || !text(account_id) || account_id.length > 256 ||
+        if (!['linkedin', 'meta', 'whatsapp', 'x', 'tiktok'].includes(provider) || !text(account_id) || account_id.length > 256 ||
             typeof vault_entry !== 'string' || !/^social-[A-Za-z0-9._-]+$/.test(vault_entry) || vault_entry.length > 128) {
           fail('Enter the social- reference and its exact provider account ID.');
         }
@@ -1449,17 +1471,37 @@
         providerSave = operation;
         try { return await operation; } finally { providerSave = null; }
       },
+      async listSocialConnections() {
+        const result = await get('/api/universal/social-connections');
+        if (result?.ok !== true || !Array.isArray(result.items)) fail('Social connections are unavailable.');
+        return result.items.map(socialConnectionRow);
+      },
+      async startSocialConnection(provider) {
+        return socialConnectionAction(provider, 'start');
+      },
+      async socialConnectionStatus(provider) {
+        socialNetwork(provider);
+        const result = await get('/api/universal/social-connection?provider=' + encodeURIComponent(provider));
+        if (result?.ok !== true) fail(result?.error || 'Connection status unavailable.');
+        return socialConnectionRow(result.connection);
+      },
+      async finishSocialConnection(provider, account_id) {
+        return socialConnectionAction(provider, 'finish', account_id);
+      },
+      async cancelSocialConnection(provider) {
+        return socialConnectionAction(provider, 'cancel');
+      },
       async listLocalSocialAccounts() {
         const result = await get('/api/universal/social-credentials');
         if (result?.ok !== true || !Array.isArray(result.items)) fail('Saved social accounts are unavailable.');
         return result.items.map(item => {
-          if (!['linkedin', 'meta'].includes(item?.provider) || !text(item.account_id) ||
+          if (!['linkedin', 'meta', 'whatsapp', 'x', 'tiktok'].includes(item?.provider) || !text(item.account_id) ||
               typeof item.vault_entry !== 'string' || !/^social-[A-Za-z0-9._-]+$/.test(item.vault_entry) ||
               !['provider-verified', 'operator-declared'].includes(item.account_binding)) {
             fail('Saved social accounts are unavailable.');
           }
           return {provider:item.provider, account_id:item.account_id, vault_entry:item.vault_entry,
-            account_binding:item.account_binding};
+            account_binding:item.account_binding, ...(item.display_name ? {display_name:item.display_name} : {})};
         });
       },
       // Sign in with LinkedIn: the cloud-owned publisher app opens LinkedIn's consent page.

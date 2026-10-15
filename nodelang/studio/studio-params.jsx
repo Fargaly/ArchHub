@@ -907,10 +907,13 @@ function ApplicationNodeParameters({node, compact = false}) {
       } else throw new Error('This action is unavailable in the current connection.');
     } catch (failure) { setError(failure.message || 'The action could not be confirmed.'); }
   };
+  // Connections is one capability: the Settings surface is also this node's parameters.
+  const connections = node.application && String(node.title || node.name || '').toLowerCase() === 'connections';
   return <div data-application-parameters={node.id} data-node-inspector={compact ? undefined : 'true'}
     onMouseDown={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}
-    onKeyDown={event => event.stopPropagation()}
+    onKeyDown={event => { if (!(connections && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k')) event.stopPropagation(); }}
     onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()} style={{minWidth:0}}>
+    {connections && window.SocialConnections && <window.SocialConnections/>}
     {node.liveState && <div data-sysnode-live-state style={{padding:'6px 8px', fontSize:11, color:PM.inkSoft}}>
       {Object.entries(node.liveState).map(([key,value]) => key + ': ' + String(value)).join(' · ')}
     </div>}

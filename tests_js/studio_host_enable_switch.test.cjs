@@ -33,6 +33,7 @@ function extractSettings(source) {
     extractFunction(source, 'hostRunningState'),
     extractFunction(source, 'isOfficeHost'),
     extractFunction(source, 'hostConnectorRows'),
+    extractFunction(source, 'hostCatalogueRows'),
     extractFunction(source, 'hostTally'),
     extractFunction(source, 'HostEnableSwitch'),
     extractFunction(source, 'hostPanelStateWord'),

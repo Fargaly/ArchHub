@@ -118,7 +118,7 @@ async function mountStrip(server) {
   const catalogue = jsx.slice(jsx.indexOf('\nconst catalogueStates ='), jsx.indexOf('\nconst withLiveCatalogue ='));
   assert.match(catalogue, /const useCatalogueVersion = /, 'the status strip subscribes through the real catalogue owner');
   const shared = toolHub + '\n' + catalogue + '\n' + [
-    'LM_HOSTS', 'hostTally', 'modelRoute', 'useRestartConfirmation',
+    'LM_HOSTS', 'hostRunningState', 'isOfficeHost', 'hostConnectorRows', 'hostCatalogueRows', 'hostTally', 'modelRoute', 'useRestartConfirmation',
     'waitingLine', 'waitingMeta', 'WaitingButton', 'smallBtn',
   ].filter(name => jsx.includes('\nconst ' + name + ' = '))
     .map(name => definition(jsx, name)).join('\n');

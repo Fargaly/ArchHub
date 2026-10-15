@@ -212,21 +212,26 @@ if (typeof window !== 'undefined') {
 //   on_fail     — what downstream receives when the rule blocks: nothing, or an empty list.
 //   enabled     — mute the connection without deleting it.
 // ONE definition, on the server (universal_pipeline.WIRE_PARAMETER_SPECS), served with the
-// node library; studio.html sets window.WIRE_PARAMS from it before Studio mounts. The founder's
+// node library; Studio loads it on first graph/library open. The founder's
 // handover: a connection means the same thing in the cockpit and in Studio -- both read that
 // one list, and nothing here types it again.
 const WIRE_SPECS = (typeof window !== 'undefined' && window.WIRE_PARAMS) || [];
 const WIRE_ROW_TYPE = { toggle: 'toggle', menu: 'select', text: 'text', number: 'slider' };
 
-Object.assign(PM_OPTS, Object.fromEntries(
-  WIRE_SPECS.filter(spec => spec.opts).map(spec => [spec.k, spec.opts])));
-Object.assign(PM_META, Object.fromEntries(
-  WIRE_SPECS.map(spec => [spec.k, Object.assign(
-    { label: spec.label, help: spec.help },
-    spec.unit ? { unit: spec.unit } : {},
-    spec.hard ? { hard: spec.hard } : {})])));
-
-const WIRE_DEFAULTS = Object.fromEntries(WIRE_SPECS.map(spec => [spec.k, spec.def]));
+const WIRE_DEFAULTS = {};
+const refreshWireMetadata = () => {
+  Object.assign(PM_OPTS, Object.fromEntries(
+    WIRE_SPECS.filter(spec => spec.opts).map(spec => [spec.k, spec.opts])));
+  Object.assign(PM_META, Object.fromEntries(
+    WIRE_SPECS.map(spec => [spec.k, Object.assign(
+      { label: spec.label, help: spec.help },
+      spec.unit ? { unit: spec.unit } : {},
+      spec.hard ? { hard: spec.hard } : {})])));
+  for (const key of Object.keys(WIRE_DEFAULTS)) delete WIRE_DEFAULTS[key];
+  Object.assign(WIRE_DEFAULTS, Object.fromEntries(WIRE_SPECS.map(spec => [spec.k, spec.def])));
+};
+refreshWireMetadata();
+if (typeof window.addEventListener === 'function') window.addEventListener('archhub:library-refresh', refreshWireMetadata);
 
 const wireHeld = (w) => Object.fromEntries(
   (w.params || []).map(p => [p.k, p])

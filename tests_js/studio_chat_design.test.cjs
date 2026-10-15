@@ -535,7 +535,7 @@ for (const gesture of ['empty canvas click', 'Esc']) {
     let studio = await mountStudio({beforeRender});
     const panel = () => studio.doc.querySelector('aside[aria-label="Selection inspector"]');
     const assertGraph = (expectedPrimary = 'wire-a') => {
-      assert.equal(studio.exact('GRAPH', panel()).length, 1, 'the inspector targets GRAPH');
+      assert.equal(studio.exact('Graph', panel()).length, 1, 'the inspector targets GRAPH');
       assert.equal(studio.exact('p11 saved graph message', panel()).length, 1, 'saved graph history is visible');
       assert.equal(panel().querySelector('[data-chat-local]'), null, 'history is owner readback');
       assert.deepEqual(selection, [], 'the owner holds an empty selection');

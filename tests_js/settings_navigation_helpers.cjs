@@ -7,7 +7,7 @@ const GROUP_FOR_CAPABILITY = Object.freeze({
   System:'Appearance', Storage:'Storage & About', About:'Storage & About',
 });
 
-function settingsNavigator({doc, flush, settle}) {
+function settingsNavigator({doc, flush, settle, waitFor}) {
   const shell = doc.querySelector('[data-settings54-shell]');
   assert.ok(shell, 'actual Settings shell exists');
   const sidebar = shell.querySelector('[data-settings54-nav]');
@@ -20,6 +20,7 @@ function settingsNavigator({doc, flush, settle}) {
     assert.ok(title, label + ' belongs to a Settings group');
     flush(() => title.closest('button').click());
     await settle();
+    if (waitFor) await waitFor(() => capabilityButtons(label)[0], 'the admitted Settings selection exposes ' + label);
     const button = capabilityButtons(label)[0];
     assert.ok(button, 'the group has the ' + label + ' capability');
     return button;

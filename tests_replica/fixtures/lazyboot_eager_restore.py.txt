@@ -1,0 +1,1952 @@
+@with_restore_relation_projection_scope
+def restore_universal_application(
+    map_path: str | Path,
+    store: CellStore,
+    *,
+    key_provider: SigningKeyProvider,
+    court_workspace_root: str | Path | None = None,
+    runtime_compliance_runner: Callable[
+        [CourtInvocation], CourtResult
+    ] | None = None,
+) -> tuple[CellStore, UniversalApplicationRegistry]:
+    """Recover the live application registry from one durable Cell graph."""
+    snapshot = store.snapshot()
+    application_root = "app:archhub"
+    if application_root not in snapshot.cells:
+        raise InvalidCell("durable universal application root is missing")
+    if _project_legacy_baboom_execution_catalog_entry(snapshot) is not None:
+        raise InvalidCell(
+            "legacy duplicate BABOOM Agent Body requires a controlled graph "
+            "migration before normal restore"
+        )
+    presentation_vocabulary = (
+        Cell(
+            "app:role:presentation-binding",
+            NULL_CELL_ID,
+            NULL_CELL_ID,
+            b"presentation-binding",
+        ),
+        Cell(
+            "app:role:contract",
+            NULL_CELL_ID,
+            NULL_CELL_ID,
+            b"contract",
+        ),
+        Cell(
+            "app:role:previous",
+            NULL_CELL_ID,
+            NULL_CELL_ID,
+            b"previous",
+        ),
+        Cell(
+            "app:role:migration",
+            NULL_CELL_ID,
+            NULL_CELL_ID,
+            b"migration",
+        ),
+        Cell(
+            _PRESENTATION_FALLBACK_MODE_ROOT,
+            NULL_CELL_ID,
+            NULL_CELL_ID,
+            b"fallback when the versioned value is empty",
+        ),
+        Cell(
+            _PRESENTATION_COLOR_CONTRACT_ROOT,
+            NULL_CELL_ID,
+            NULL_CELL_ID,
+            b"empty fallback or six-digit sRGB color",
+        ),
+    )
+    missing_presentation_vocabulary = tuple(
+        cell for cell in presentation_vocabulary
+        if cell.id not in snapshot.cells
+    )
+    if missing_presentation_vocabulary:
+        store.commit(
+            snapshot.revision, create=missing_presentation_vocabulary
+        )
+        snapshot = store.snapshot()
+    map_registry = project_grand_map_cells(snapshot, map_path)
+    roles = dict(map_registry.roles)
+    roles.update({
+        name: "app:role:%s" % name
+        for name in (
+            "focus", "selected", "available", "authority", "seed",
+            "property", "relation", "lens", "catalog", "read-only",
+            "visible", "binding-mode", "presentation-binding", "contract",
+            "previous", "migration",
+        )
+    })
+    if any(root_id not in snapshot.cells for root_id in roles.values()):
+        raise InvalidCell("persisted application role vocabulary is incomplete")
+
+    relation_composer_protocol = _ensure_relation_composer_protocol_graph(
+        store, member_role_id=roles["member"]
+    )
+    snapshot = store.snapshot()
+
+    assembly = project_assembly_protocol(snapshot, "app:assembly-protocol")
+    _ensure_standard_library_state_machine_protocol_roles(store)
+    snapshot = store.snapshot()
+    legacy_standard_library = _project_migratable_standard_library(
+        snapshot, assembly
+    )
+    adapter = project_adapter_protocol(snapshot, "app:adapter-protocol")
+    composer = project_composer_protocol(snapshot, "app:composer-protocol")
+    authorization = _restore_application_authorization(store, key_provider)
+    ensure_tenant_release_descriptor_protocol(
+        store, prefix="app:tenant-configuration-protocol"
+    )
+    snapshot = store.snapshot()
+    tenant_configuration_protocol = project_tenant_configuration_protocol(
+        snapshot, prefix="app:tenant-configuration-protocol"
+    )
+    attestation = project_attestation_protocol(
+        snapshot, "app:attestation-protocol"
+    )
+    tenant_authority_court_root = "app:court:tenant-authority"
+    verify_court_definition(
+        snapshot, attestation, tenant_authority_court_root
+    )
+    attestation_broker = CourtAttestationBroker(
+        key_provider=key_provider,
+        key_id="archhub.local.court-attestation",
+    )
+    attestation_broker.admit_court(
+        snapshot,
+        attestation,
+        tenant_authority_court_root,
+        _tenant_authority_court_runner(frozenset((
+            legacy_standard_library.lifecycle_protocol.states["shared"],
+            legacy_standard_library.lifecycle_protocol.states["published"],
+        ))),
+    )
+    authority_migration = _migrate_universal_authorities_current(
+        store,
+        assembly,
+        legacy_standard_library,
+        adapter,
+        composer,
+        tenant_configuration_protocol,
+        authorization,
+        attestation,
+        attestation_broker,
+        tenant_authority_court_root,
+        roles,
+        models_domain_root=map_registry.domains["models"],
+    )
+    standard_library = authority_migration.standard_library
+    cognition_protocol = authority_migration.cognition_protocol
+    cognition_definitions = authority_migration.cognition_definitions
+    adapter_catalog_root = authority_migration.adapter_catalog_root
+    device_custody_adapter_root = (
+        authority_migration.device_custody_adapter_root
+    )
+    composer_authority = authority_migration.composer_authority
+    snapshot = store.snapshot()
+    _ensure_node_library_sections(
+        store,
+        assembly,
+        roles,
+        standard_library,
+        cognition_definitions,
+        library_root="app:node-library",
+    )
+    snapshot = store.snapshot()
+    tenant_title_relation = "app:property:%s:field:title" % _part(
+        authorization.tenant_root
+    )
+    if tenant_title_relation not in snapshot.cells:
+        tenant_title_value = "app:value:%s:field:title" % _part(
+            authorization.tenant_root
+        )
+        title_relation = compose_relation_cells(
+            (
+                (roles["owner"], authorization.tenant_root),
+                (roles["value"], tenant_title_value),
+                (roles["label"], "app:label:title"),
+            ),
+            relation_id=tenant_title_relation,
+        )
+        canvas_patch = prepare_append_relation_members(
+            snapshot,
+            "app:canvas",
+            ((roles["property"], tenant_title_relation),),
+            budget=100_000,
+        )
+        lens_patch = prepare_append_relation_members(
+            snapshot,
+            "app:properties-lens",
+            ((roles["scope"], tenant_title_relation),),
+            budget=100_000,
+        )
+        store.commit(
+            snapshot.revision,
+            create=(
+                Cell(
+                    tenant_title_value,
+                    NULL_CELL_ID,
+                    NULL_CELL_ID,
+                    b"ArchHub founder workspace",
+                ),
+                *title_relation.cells,
+                *canvas_patch.create,
+                *lens_patch.create,
+            ),
+            replace=(*canvas_patch.replace, *lens_patch.replace),
+        )
+        snapshot = store.snapshot()
+    cloud_route_protocol = project_cloud_route_protocol(
+        snapshot, prefix="app:cloud-route-protocol"
+    )
+    existing_route_keys = {
+        "%s %s" % (route.method, route.path_template)
+        for route in list_cloud_routes(snapshot, cloud_route_protocol)
+    }
+    missing_route_specs = tuple(
+        spec for spec in _APPLICATION_HTTP_ROUTE_SPECS
+        if "%s %s" % spec[:2] not in existing_route_keys
+    )
+    if missing_route_specs:
+        restored_route_roots = []
+        for method, path_template, action_name in missing_route_specs:
+            restored_route_roots.append(build_cloud_route(
+                store,
+                cloud_route_protocol,
+                route_id="app:http-route:%s:%s" % (
+                    method.lower(), _part(path_template)
+                ),
+                method=method,
+                path_template=path_template,
+                action_root=authorization.protocol.actions[action_name],
+                object_root=authorization.route_scope_root,
+                interface_root="app:ui-protocol:root",
+                purpose_root=authorization.purpose_root,
+                audience_root=authorization.audience_root,
+                classification_root=authorization.classification_root,
+                lifecycle_state_root=(
+                    standard_library.lifecycle_protocol.states["published"]
+                ),
+                resource_lineage_roots=(
+                    authorization.scope_root,
+                    authorization.route_scope_root,
+                ),
+            ))
+        route_snapshot = store.snapshot()
+        application_patch = prepare_append_relation_members(
+            route_snapshot,
+            application_root,
+            (
+                (roles["member"], route_root)
+                for route_root in restored_route_roots
+            ),
+            budget=100_000,
+        )
+        store.commit(
+            route_snapshot.revision,
+            create=application_patch.create,
+            replace=application_patch.replace,
+        )
+        snapshot = store.snapshot()
+        cloud_route_protocol = project_cloud_route_protocol(
+            snapshot, prefix="app:cloud-route-protocol"
+        )
+    projected_routes = {
+        "%s %s" % (route.method, route.path_template): route.root_id
+        for route in list_cloud_routes(snapshot, cloud_route_protocol)
+    }
+    expected_route_keys = {
+        "%s %s" % (method, path)
+        for method, path, _ in _APPLICATION_HTTP_ROUTE_SPECS
+    }
+    expected_active_route_keys = (
+        expected_route_keys - _RETIRED_APPLICATION_HTTP_ROUTE_KEYS
+    )
+    website_route_keys = {
+        "GET %s" % path for path in PUBLIC_WEBSITE_ROUTES
+    }
+    active_route_keys = (
+        set(projected_routes) - _RETIRED_APPLICATION_HTTP_ROUTE_KEYS
+    )
+    core_website_route_keys = {
+        "GET %s" % path for path in CORE_WEBSITE_ROUTES
+    }
+    if active_route_keys not in (
+        expected_active_route_keys,
+        expected_active_route_keys | website_route_keys,
+        expected_active_route_keys | core_website_route_keys,
+    ):
+        raise InvalidCell("persisted application HTTP route graph drifted")
+    active_projected_routes = {
+        key: root
+        for key, root in projected_routes.items()
+        if key not in _RETIRED_APPLICATION_HTTP_ROUTE_KEYS
+    }
+    ensure_cloud_session_protocol(
+        store, prefix="app:cloud-session-protocol"
+    )
+    snapshot = store.snapshot()
+    cloud_session_protocol = project_cloud_session_protocol(
+        snapshot, prefix="app:cloud-session-protocol"
+    )
+    browser_session_prefix = "app:browser-session-protocol"
+    browser_session_root = browser_session_prefix + ":root"
+    if browser_session_root in snapshot.cells:
+        browser_session_protocol = project_browser_session_protocol(
+            snapshot, prefix=browser_session_prefix
+        )
+    else:
+        browser_session_protocol = bootstrap_browser_session_protocol(
+            store, prefix=browser_session_prefix
+        )
+        snapshot = store.snapshot()
+    application_browser_members = [
+        member.participant_id for member in read_relation(
+            snapshot, application_root, budget=100_000
+        )
+        if member.role_id == roles["member"]
+        and member.participant_id == browser_session_protocol.root_id
+    ]
+    if not application_browser_members:
+        browser_protocol_patch = prepare_append_relation_members(
+            snapshot,
+            application_root,
+            ((roles["member"], browser_session_protocol.root_id),),
+            budget=100_000,
+        )
+        store.commit(
+            snapshot.revision,
+            create=browser_protocol_patch.create,
+            replace=browser_protocol_patch.replace,
+        )
+        snapshot = store.snapshot()
+    elif len(application_browser_members) != 1:
+        raise InvalidCell(
+            "persisted browser-session protocol membership drifted"
+        )
+    ownership_prefix = "app:exclusive-ownership-protocol"
+    ownership_root = ownership_prefix + ":root"
+    if ownership_root in snapshot.cells:
+        ownership_protocol = project_ownership_protocol(
+            snapshot, prefix=ownership_prefix
+        )
+    else:
+        ownership_protocol = bootstrap_ownership_protocol(
+            store, prefix=ownership_prefix
+        )
+        snapshot = store.snapshot()
+    application_ownership_members = [
+        member.participant_id for member in read_relation(
+            snapshot, application_root, budget=100_000
+        )
+        if member.role_id == roles["member"]
+        and member.participant_id == ownership_protocol.root_id
+    ]
+    if not application_ownership_members:
+        ownership_protocol_patch = prepare_append_relation_members(
+            snapshot,
+            application_root,
+            ((roles["member"], ownership_protocol.root_id),),
+            budget=100_000,
+        )
+        store.commit(
+            snapshot.revision,
+            create=ownership_protocol_patch.create,
+            replace=ownership_protocol_patch.replace,
+        )
+        snapshot = store.snapshot()
+    elif len(application_ownership_members) != 1:
+        raise InvalidCell(
+            "persisted ownership protocol membership drifted"
+        )
+    value_graph_prefix = "app:value-graph-protocol"
+    value_graph_root = value_graph_prefix + ":root"
+    if value_graph_root in snapshot.cells:
+        value_graph_protocol = project_value_graph_protocol(
+            snapshot, prefix=value_graph_prefix
+        )
+    else:
+        value_graph_protocol = bootstrap_value_graph_protocol(
+            store, prefix=value_graph_prefix
+        )
+        snapshot = store.snapshot()
+    application_value_graph_members = [
+        member.participant_id for member in read_relation(
+            snapshot, application_root, budget=100_000
+        )
+        if member.role_id == roles["member"]
+        and member.participant_id == value_graph_protocol.root_id
+    ]
+    if not application_value_graph_members:
+        value_graph_protocol_patch = prepare_append_relation_members(
+            snapshot,
+            application_root,
+            ((roles["member"], value_graph_protocol.root_id),),
+            budget=100_000,
+        )
+        store.commit(
+            snapshot.revision,
+            create=value_graph_protocol_patch.create,
+            replace=value_graph_protocol_patch.replace,
+        )
+        snapshot = store.snapshot()
+    elif len(application_value_graph_members) != 1:
+        raise InvalidCell(
+            "persisted value-graph protocol membership drifted"
+        )
+    device_custody_prefix = "app:device-custody-protocol"
+    device_custody_root = device_custody_prefix + ":root"
+    if device_custody_root in snapshot.cells:
+        device_custody_protocol = project_device_custody_protocol(
+            snapshot, prefix=device_custody_prefix
+        )
+    else:
+        device_custody_protocol = bootstrap_device_custody_protocol(
+            store, prefix=device_custody_prefix
+        )
+        snapshot = store.snapshot()
+    application_device_members = [
+        member.participant_id for member in read_relation(
+            snapshot, application_root, budget=100_000
+        )
+        if member.role_id == roles["member"]
+        and member.participant_id == device_custody_protocol.root_id
+    ]
+    if not application_device_members:
+        device_protocol_patch = prepare_append_relation_members(
+            snapshot,
+            application_root,
+            ((roles["member"], device_custody_protocol.root_id),),
+            budget=100_000,
+        )
+        store.commit(
+            snapshot.revision,
+            create=device_protocol_patch.create,
+            replace=device_protocol_patch.replace,
+        )
+        snapshot = store.snapshot()
+    elif len(application_device_members) != 1:
+        raise InvalidCell(
+            "persisted device-custody protocol membership drifted"
+        )
+    runtime_presence_prefix = "app:runtime-presence-protocol"
+    runtime_presence_root = runtime_presence_prefix + ":root"
+    if runtime_presence_root in snapshot.cells:
+        runtime_presence_protocol = project_runtime_presence_protocol(
+            snapshot, prefix=runtime_presence_prefix, store=store
+        )
+    else:
+        runtime_presence_protocol = bootstrap_runtime_presence_protocol(
+            store, prefix=runtime_presence_prefix
+        )
+        snapshot = store.snapshot()
+    application_runtime_presence_members = [
+        member.participant_id for member in read_relation(
+            snapshot, application_root, budget=100_000
+        )
+        if member.role_id == roles["member"]
+        and member.participant_id == runtime_presence_protocol.root_id
+    ]
+    if not application_runtime_presence_members:
+        runtime_presence_patch = prepare_append_relation_members(
+            snapshot,
+            application_root,
+            ((roles["member"], runtime_presence_protocol.root_id),),
+            budget=100_000,
+        )
+        store.commit(
+            snapshot.revision,
+            create=runtime_presence_patch.create,
+            replace=runtime_presence_patch.replace,
+        )
+        snapshot = store.snapshot()
+    elif len(application_runtime_presence_members) != 1:
+        raise InvalidCell(
+            "persisted runtime-presence protocol membership drifted"
+        )
+    baboom_activity_prefix = "app:baboom-activity-protocol"
+    baboom_activity_root = baboom_activity_prefix + ":root"
+    if baboom_activity_root in snapshot.cells:
+        baboom_activity_protocol = project_baboom_activity_protocol(
+            snapshot,
+            prefix=baboom_activity_prefix,
+            activity_storage=runtime_presence_protocol.lease_storage,
+            store=store,
+        )
+    else:
+        baboom_activity_protocol = bootstrap_baboom_activity_protocol(
+            store,
+            prefix=baboom_activity_prefix,
+            activity_storage=runtime_presence_protocol.lease_storage,
+        )
+        snapshot = store.snapshot()
+    application_baboom_activity_members = [
+        member.participant_id for member in read_relation(
+            snapshot, application_root, budget=100_000
+        )
+        if member.role_id == roles["member"]
+        and member.participant_id == baboom_activity_protocol.root_id
+    ]
+    if not application_baboom_activity_members:
+        baboom_activity_patch = prepare_append_relation_members(
+            snapshot,
+            application_root,
+            ((roles["member"], baboom_activity_protocol.root_id),),
+            budget=100_000,
+        )
+        store.commit(
+            snapshot.revision,
+            create=baboom_activity_patch.create,
+            replace=baboom_activity_patch.replace,
+        )
+        snapshot = store.snapshot()
+    elif len(application_baboom_activity_members) != 1:
+        raise InvalidCell(
+            "persisted BABOOM activity protocol membership drifted"
+        )
+    baboom_meeting_notes_prefix = "app:baboom-meeting-notes-protocol"
+    baboom_meeting_notes_root = baboom_meeting_notes_prefix + ":root"
+    if baboom_meeting_notes_root in snapshot.cells:
+        baboom_meeting_notes_protocol = project_baboom_meeting_notes_protocol(
+            snapshot, prefix=baboom_meeting_notes_prefix
+        )
+    else:
+        baboom_meeting_notes_protocol = bootstrap_baboom_meeting_notes_protocol(
+            store, prefix=baboom_meeting_notes_prefix
+        )
+        snapshot = store.snapshot()
+    application_baboom_meeting_notes_members = [
+        member.participant_id for member in read_relation(
+            snapshot, application_root, budget=100_000
+        )
+        if member.role_id == roles["member"]
+        and member.participant_id == baboom_meeting_notes_protocol.root_id
+    ]
+    if not application_baboom_meeting_notes_members:
+        baboom_meeting_notes_patch = prepare_append_relation_members(
+            snapshot,
+            application_root,
+            ((roles["member"], baboom_meeting_notes_protocol.root_id),),
+            budget=100_000,
+        )
+        store.commit(
+            snapshot.revision,
+            create=baboom_meeting_notes_patch.create,
+            replace=baboom_meeting_notes_patch.replace,
+        )
+        snapshot = store.snapshot()
+    elif len(application_baboom_meeting_notes_members) != 1:
+        raise InvalidCell(
+            "persisted BABOOM meeting-notes protocol membership drifted"
+        )
+    baboom_meeting_note_publication_prefix = (
+        "app:baboom-meeting-note-publication-protocol"
+    )
+    baboom_meeting_note_publication_root = (
+        baboom_meeting_note_publication_prefix + ":root"
+    )
+    if baboom_meeting_note_publication_root in snapshot.cells:
+        baboom_meeting_note_publication_protocol = (
+            project_baboom_meeting_note_publication_protocol(
+                snapshot, prefix=baboom_meeting_note_publication_prefix
+            )
+        )
+    else:
+        baboom_meeting_note_publication_protocol = (
+            bootstrap_baboom_meeting_note_publication_protocol(
+                store, prefix=baboom_meeting_note_publication_prefix
+            )
+        )
+        snapshot = store.snapshot()
+    application_baboom_meeting_note_publication_members = [
+        member.participant_id for member in read_relation(
+            snapshot, application_root, budget=100_000
+        )
+        if member.role_id == roles["member"]
+        and member.participant_id == baboom_meeting_note_publication_protocol.root_id
+    ]
+    if not application_baboom_meeting_note_publication_members:
+        baboom_meeting_note_publication_patch = prepare_append_relation_members(
+            snapshot,
+            application_root,
+            ((roles["member"], baboom_meeting_note_publication_protocol.root_id),),
+            budget=100_000,
+        )
+        store.commit(
+            snapshot.revision,
+            create=baboom_meeting_note_publication_patch.create,
+            replace=baboom_meeting_note_publication_patch.replace,
+        )
+        snapshot = store.snapshot()
+    elif len(application_baboom_meeting_note_publication_members) != 1:
+        raise InvalidCell(
+            "persisted BABOOM meeting-note publication protocol membership drifted"
+        )
+    compliance_root = _RUNTIME_COMPLIANCE_PROTOCOL_PREFIX + ":root"
+    if compliance_root in snapshot.cells:
+        compliance_protocol = project_compliance_protocol(
+            snapshot, prefix=_RUNTIME_COMPLIANCE_PROTOCOL_PREFIX
+        )
+    else:
+        compliance_protocol = bootstrap_compliance_protocol(
+            store, prefix=_RUNTIME_COMPLIANCE_PROTOCOL_PREFIX
+        )
+        snapshot = store.snapshot()
+    application_compliance_members = [
+        member.participant_id for member in read_relation(
+            snapshot, application_root, budget=100_000
+        )
+        if member.role_id == roles["member"]
+        and member.participant_id in {
+            compliance_protocol.root_id,
+            compliance_protocol.registry_root,
+        }
+    ]
+    if len(application_compliance_members) != len(
+        set(application_compliance_members)
+    ):
+        raise InvalidCell("persisted compliance membership is duplicated")
+    if set(application_compliance_members) != {
+        compliance_protocol.root_id,
+        compliance_protocol.registry_root,
+    }:
+        missing_compliance_roots = tuple(
+            root for root in (
+                compliance_protocol.root_id,
+                compliance_protocol.registry_root,
+            )
+            if root not in application_compliance_members
+        )
+        compliance_patch = prepare_append_relation_members(
+            snapshot,
+            application_root,
+            (
+                (roles["member"], root)
+                for root in missing_compliance_roots
+            ),
+            budget=100_000,
+        )
+        store.commit(
+            snapshot.revision,
+            create=compliance_patch.create,
+            replace=compliance_patch.replace,
+        )
+        snapshot = store.snapshot()
+    work_handoff_prefix = "app:work-handoff-protocol"
+    work_handoff_root = work_handoff_prefix + ":root"
+    if work_handoff_root in snapshot.cells:
+        work_handoff_protocol = project_work_handoff_protocol(
+            snapshot, prefix=work_handoff_prefix
+        )
+    else:
+        work_handoff_protocol = bootstrap_work_handoff_protocol(
+            store, prefix=work_handoff_prefix
+        )
+        snapshot = store.snapshot()
+    application_work_handoff_members = [
+        member.participant_id for member in read_relation(
+            snapshot, application_root, budget=100_000
+        )
+        if member.role_id == roles["member"]
+        and member.participant_id == work_handoff_protocol.root_id
+    ]
+    if not application_work_handoff_members:
+        work_handoff_patch = prepare_append_relation_members(
+            snapshot,
+            application_root,
+            ((roles["member"], work_handoff_protocol.root_id),),
+            budget=100_000,
+        )
+        store.commit(
+            snapshot.revision,
+            create=work_handoff_patch.create,
+            replace=work_handoff_patch.replace,
+        )
+        snapshot = store.snapshot()
+    elif len(application_work_handoff_members) != 1:
+        raise InvalidCell(
+            "persisted work-handoff protocol membership drifted"
+        )
+    work_claim_transfer_prefix = "app:work-claim-transfer-protocol"
+    work_claim_transfer_root = work_claim_transfer_prefix + ":root"
+    if work_claim_transfer_root in snapshot.cells:
+        work_claim_transfer_protocol = project_work_claim_transfer_protocol(
+            snapshot, prefix=work_claim_transfer_prefix
+        )
+    else:
+        work_claim_transfer_protocol = bootstrap_work_claim_transfer_protocol(
+            store, prefix=work_claim_transfer_prefix
+        )
+        snapshot = store.snapshot()
+    application_work_claim_transfer_members = [
+        member.participant_id for member in read_relation(
+            snapshot, application_root, budget=100_000
+        )
+        if member.role_id == roles["member"]
+        and member.participant_id == work_claim_transfer_protocol.root_id
+    ]
+    if not application_work_claim_transfer_members:
+        work_claim_transfer_patch = prepare_append_relation_members(
+            snapshot,
+            application_root,
+            ((roles["member"], work_claim_transfer_protocol.root_id),),
+            budget=100_000,
+        )
+        store.commit(
+            snapshot.revision,
+            create=work_claim_transfer_patch.create,
+            replace=work_claim_transfer_patch.replace,
+        )
+        snapshot = store.snapshot()
+    elif len(application_work_claim_transfer_members) != 1:
+        raise InvalidCell(
+            "persisted work-claim-transfer protocol membership drifted"
+        )
+    cde_signing_prefix = "app:cde-signing-authority-protocol"
+    cde_signing_root = cde_signing_prefix + ":root"
+    if cde_signing_root in snapshot.cells:
+        cde_signing_protocol = project_signing_authority_protocol(
+            snapshot, prefix=cde_signing_prefix
+        )
+    else:
+        cde_signing_protocol = bootstrap_signing_authority_protocol(
+            store, prefix=cde_signing_prefix
+        )
+        snapshot = store.snapshot()
+    cde_write_storage = ensure_store_cde_storage(store)
+    cde_write_prefix = "app:cde-write-authority-protocol"
+    cde_write_root = cde_write_prefix + ":root"
+    if cde_write_root in snapshot.cells:
+        cde_write_authority_protocol = project_cde_write_authority_protocol(
+            snapshot, prefix=cde_write_prefix, store=store, operational_storage=cde_write_storage
+        )
+    else:
+        cde_write_authority_protocol = bootstrap_cde_write_authority_protocol(
+            store, prefix=cde_write_prefix, operational_storage=cde_write_storage
+        )
+        snapshot = store.snapshot()
+    cde_authority_roots = {
+        cde_signing_protocol.root_id,
+        cde_write_authority_protocol.root_id,
+    }
+    application_cde_authority_members = [
+        member.participant_id for member in read_relation(
+            snapshot, application_root, budget=100_000
+        )
+        if member.role_id == roles["member"]
+        and member.participant_id in cde_authority_roots
+    ]
+    if len(application_cde_authority_members) != len(
+        set(application_cde_authority_members)
+    ):
+        raise InvalidCell("persisted CDE authority membership is duplicated")
+    missing_cde_authority_roots = tuple(
+        root for root in cde_authority_roots
+        if root not in application_cde_authority_members
+    )
+    if missing_cde_authority_roots:
+        cde_authority_patch = prepare_append_relation_members(
+            snapshot,
+            application_root,
+            (
+                (roles["member"], root)
+                for root in sorted(missing_cde_authority_roots)
+            ),
+            budget=100_000,
+        )
+        store.commit(
+            snapshot.revision,
+            create=cde_authority_patch.create,
+            replace=cde_authority_patch.replace,
+        )
+        snapshot = store.snapshot()
+    native_authentication_protocol = project_native_authentication_protocol(
+        snapshot, prefix="app:native-authentication-protocol"
+    )
+    attention_root = _ATTENTION_PROTOCOL_PREFIX + ":root"
+    if attention_root in snapshot.cells:
+        attention_protocol = open_attention_protocol(
+            snapshot, prefix=_ATTENTION_PROTOCOL_PREFIX
+        )
+    else:
+        attention_protocol = bootstrap_attention_protocol(
+            store, prefix=_ATTENTION_PROTOCOL_PREFIX
+        )
+        snapshot = store.snapshot()
+    attention_policy_root, attention_priority_roots = (
+        _ensure_application_attention_policy(
+            store, attention_protocol, authorization
+        )
+    )
+    snapshot = store.snapshot()
+    focus_reason_cells = tuple(
+        Cell(root_id, NULL_CELL_ID, NULL_CELL_ID, label.encode("utf-8"))
+        for root_id, label in (
+            (_FOCUS_REASON_INITIAL, "Initial application focus"),
+            (_FOCUS_REASON_GESTURE, "Direct user manipulation"),
+            (_FOCUS_REASON_COMPOSITION, "Composition changed"),
+            (_FOCUS_REASON_SCOPE, "Visible scope changed"),
+        )
+        if root_id not in snapshot.cells
+    )
+    application_member_roots = {
+        member.participant_id for member in read_relation(
+            snapshot, application_root, budget=100_000
+        )
+        if member.role_id == roles["member"]
+    }
+    missing_attention_members = tuple(
+        root for root in (
+            attention_protocol.root_id,
+            _FOCUS_REASON_INITIAL,
+            _FOCUS_REASON_GESTURE,
+            _FOCUS_REASON_COMPOSITION,
+            _FOCUS_REASON_SCOPE,
+        )
+        if root not in application_member_roots
+    )
+    if focus_reason_cells or missing_attention_members:
+        attention_application_patch = prepare_append_relation_members(
+            snapshot,
+            application_root,
+            (
+                (roles["member"], root)
+                for root in missing_attention_members
+            ),
+            budget=100_000,
+        )
+        store.commit(
+            snapshot.revision,
+            create=(*focus_reason_cells, *attention_application_patch.create),
+            replace=attention_application_patch.replace,
+        )
+        snapshot = store.snapshot()
+    rule_protocol_root = "app:rule-protocol:root"
+    if rule_protocol_root in snapshot.cells:
+        rule_protocol = project_rule_protocol(snapshot, rule_protocol_root)
+    else:
+        rule_protocol = bootstrap_rule_protocol(
+            store, prefix="app:rule-protocol"
+        )
+        snapshot = store.snapshot()
+    transaction_protocol_root = "app:transaction-protocol:root"
+    if transaction_protocol_root in snapshot.cells:
+        transaction_protocol = project_transaction_protocol(
+            snapshot, transaction_protocol_root
+        )
+    else:
+        transaction_protocol = bootstrap_transaction_protocol(
+            store, prefix="app:transaction-protocol"
+        )
+        snapshot = store.snapshot()
+    change_history_protocol = bootstrap_change_history_protocol(
+        store, prefix="app:change-history-protocol"
+    )
+    snapshot = store.snapshot()
+    interaction_protocol_root = "app:interaction-protocol:root"
+    if interaction_protocol_root in snapshot.cells:
+        interaction_protocol = project_interaction_protocol(
+            snapshot, interaction_protocol_root
+        )
+    else:
+        interaction_protocol = bootstrap_interaction_protocol(
+            store, prefix="app:interaction-protocol"
+        )
+        snapshot = store.snapshot()
+    canvas_interaction_policy_protocol_root = (
+        "app:canvas-interaction-policy-protocol:root"
+    )
+    if canvas_interaction_policy_protocol_root in snapshot.cells:
+        canvas_interaction_policy_protocol = (
+            project_canvas_interaction_policy_protocol(
+                snapshot, prefix="app:canvas-interaction-policy-protocol"
+            )
+        )
+    else:
+        canvas_interaction_policy_protocol = (
+            bootstrap_canvas_interaction_policy_protocol(
+                store, prefix="app:canvas-interaction-policy-protocol"
+            )
+        )
+        snapshot = store.snapshot()
+    application_members = {
+        member.participant_id for member in read_relation(
+            snapshot, application_root, budget=100_000
+        )
+        if member.role_id == roles["member"]
+    }
+    missing_protocol_roots = tuple(
+        root for root in (
+            rule_protocol.root_id,
+            transaction_protocol.root_id,
+            change_history_protocol.root_id,
+            interaction_protocol.root_id,
+            canvas_interaction_policy_protocol.root_id,
+        )
+        if root not in application_members
+    )
+    if missing_protocol_roots:
+        protocol_patch = prepare_append_relation_members(
+            snapshot,
+            application_root,
+            (
+                (roles["member"], root)
+                for root in missing_protocol_roots
+            ),
+            budget=100_000,
+        )
+        store.commit(
+            snapshot.revision,
+            create=protocol_patch.create,
+            replace=protocol_patch.replace,
+        )
+        snapshot = store.snapshot()
+    ui = project_ui_protocol(snapshot, "app:ui-protocol")
+    theme_prefix = "app:presentation:theme:"
+    theme_roots = {
+        root[len(theme_prefix):]: root
+        for root in _ids_with_prefix(snapshot.cells, theme_prefix)
+        if ":" not in root[len(theme_prefix):]
+    }
+    if not theme_roots:
+        raise InvalidCell("persisted application theme vocabulary is missing")
+    presentation = ApplicationPresentationBuild(
+        "app:ui:root",
+        "app:presentation:stylesheet",
+        MappingProxyType(theme_roots),
+    )
+    icon_catalog = ensure_archhub_icon_catalog(store)
+    control_catalog = ensure_archhub_control_catalog(store, icon_catalog)
+    control_bindings = ensure_archhub_control_binding_catalog(
+        store, control_catalog
+    )
+    _presentation_roots = {
+        presentation.ui_root,
+        presentation.stylesheet_root,
+        *presentation.theme_roots.values(),
+    }
+    if any(root_id not in snapshot.cells for root_id in _presentation_roots):
+        raise InvalidCell("persisted application presentation is incomplete")
+    website = ensure_universal_website(
+        store,
+        application_root=application_root,
+        application_member_role=roles["member"],
+        ui_protocol=ui,
+        cloud_route_protocol=cloud_route_protocol,
+        map_registry=map_registry,
+        published_lifecycle_root=(
+            standard_library.lifecycle_protocol.states["published"]
+        ),
+        read_action_root=authorization.protocol.actions["read"],
+        adopt=True,
+    )
+    snapshot = store.snapshot()
+    projected_routes = {
+        "%s %s" % (route.method, route.path_template): route.root_id
+        for route in list_cloud_routes(snapshot, cloud_route_protocol)
+    }
+    active_route_keys = set(projected_routes) - _RETIRED_APPLICATION_HTTP_ROUTE_KEYS
+    # A website adopts the current definition through its own revision
+    # path above. A graph that still holds an earlier published revision
+    # is read as it stands, exactly as the check before the website build
+    # reads it, and is never refused for holding the pages it published.
+    if active_route_keys not in (
+        expected_active_route_keys | website_route_keys,
+        expected_active_route_keys | core_website_route_keys,
+    ):
+        raise InvalidCell("persisted public website route graph drifted")
+    active_projected_routes = {
+        key: root
+        for key, root in projected_routes.items()
+        if key not in _RETIRED_APPLICATION_HTTP_ROUTE_KEYS
+    }
+    inspector_lens_roots = _ensure_inspector_lens_graph(
+        store, roles, authorization, application_root
+    )
+    (
+        properties_presentation_protocol,
+        properties_presenter_protocol,
+        view_template_protocol,
+        properties_panel_roots,
+        properties_component_roots,
+    ) = _ensure_properties_presentation_graph(
+        store,
+        roles,
+        authorization,
+        inspector_lens_roots,
+        application_root=application_root,
+        attention_protocol=attention_protocol,
+        assembly_protocol=assembly,
+        lifecycle_root=standard_library.lifecycle_protocol.root_id,
+        attestation_protocol=attestation,
+        ui_protocol=ui,
+    )
+    _ensure_design_system_graph(
+        store,
+        roles,
+        map_registry,
+        presentation,
+        icon_catalog,
+        control_catalog,
+        control_bindings,
+        properties_presenter_protocol,
+        application_root=application_root,
+    )
+    _issue_resource_audience_bindings(
+        store,
+        authorization,
+        resource_roots=(_DESIGN_SYSTEM_ROOT, _THEME_SYSTEM_ROOT),
+        lifecycle_root=standard_library.lifecycle_protocol.states["shared"],
+        owner_root=authorization.subject_root,
+        administrator_root=authorization.subject_root,
+    )
+    snapshot = store.snapshot()
+
+    attestation = project_attestation_protocol(
+        snapshot, "app:attestation-protocol"
+    )
+    theme_court_root = "app:court:theme-share"
+    theme_publish_court_root = "app:court:theme-publish-browser"
+    tenant_authority_court_root = "app:court:tenant-authority"
+    resource_lifecycle_court_root = "app:court:resource-lifecycle"
+    work_completion_court_root = "app:court:work-completion"
+    runtime_ownership_court_root = "app:court:runtime-ownership"
+    runtime_compliance_court_root = _RUNTIME_COMPLIANCE_COURT_ROOT
+    if runtime_ownership_court_root not in snapshot.cells:
+        authorization_policy = verify_authorization_policy(
+            snapshot, authorization.protocol, authorization.policy_root
+        )
+        build_court_definition(
+            store,
+            attestation,
+            court_id=runtime_ownership_court_root,
+            name="Runtime exclusive ownership court",
+            builder_id=(
+                "https://archhub.local/builder/runtime-ownership-court"
+            ),
+            runner_version="1.0.0",
+            policy_digest=_text(
+                store.snapshot(), authorization_policy.digest_root
+            ),
+            checks=_RUNTIME_OWNERSHIP_COURT_CHECKS,
+        )
+        snapshot = store.snapshot()
+    if runtime_compliance_court_root not in snapshot.cells:
+        authorization_policy = verify_authorization_policy(
+            snapshot, authorization.protocol, authorization.policy_root
+        )
+        build_court_definition(
+            store,
+            attestation,
+            court_id=runtime_compliance_court_root,
+            name="Runtime write compliance court",
+            builder_id=(
+                "https://archhub.local/builder/runtime-compliance-court"
+            ),
+            runner_version="1.0.0",
+            policy_digest=_text(
+                store.snapshot(), authorization_policy.digest_root
+            ),
+            checks=_RUNTIME_COMPLIANCE_CHECKS,
+        )
+        snapshot = store.snapshot()
+    runtime_court_members = tuple(
+        member for member in read_relation(
+            snapshot, application_root, budget=100_000
+        )
+        if member.role_id == roles["member"]
+        and member.participant_id == runtime_ownership_court_root
+    )
+    if len(runtime_court_members) > 1:
+        raise InvalidCell("runtime ownership court membership is duplicated")
+    if not runtime_court_members:
+        court_patch = prepare_append_relation_members(
+            snapshot,
+            application_root,
+            ((roles["member"], runtime_ownership_court_root),),
+            budget=100_000,
+        )
+        store.commit(
+            snapshot.revision,
+            create=court_patch.create,
+            replace=court_patch.replace,
+        )
+        snapshot = store.snapshot()
+    runtime_compliance_court_members = tuple(
+        member for member in read_relation(
+            snapshot, application_root, budget=100_000
+        )
+        if member.role_id == roles["member"]
+        and member.participant_id == runtime_compliance_court_root
+    )
+    if len(runtime_compliance_court_members) > 1:
+        raise InvalidCell("runtime compliance court membership is duplicated")
+    if not runtime_compliance_court_members:
+        compliance_court_patch = prepare_append_relation_members(
+            snapshot,
+            application_root,
+            ((roles["member"], runtime_compliance_court_root),),
+            budget=100_000,
+        )
+        store.commit(
+            snapshot.revision,
+            create=compliance_court_patch.create,
+            replace=compliance_court_patch.replace,
+        )
+        snapshot = store.snapshot()
+    verify_court_definition(snapshot, attestation, theme_court_root)
+    verify_court_definition(snapshot, attestation, theme_publish_court_root)
+    verify_court_definition(snapshot, attestation, tenant_authority_court_root)
+    verify_court_definition(
+        snapshot, attestation, resource_lifecycle_court_root
+    )
+    verify_court_definition(
+        snapshot, attestation, work_completion_court_root
+    )
+    verify_court_definition(
+        snapshot, attestation, runtime_ownership_court_root
+    )
+    verify_court_definition(
+        snapshot, attestation, runtime_compliance_court_root
+    )
+    attestation_broker = CourtAttestationBroker(
+        key_provider=key_provider,
+        key_id="archhub.local.court-attestation",
+    )
+    attestation_broker.admit_court(
+        snapshot,
+        attestation,
+        tenant_authority_court_root,
+        _tenant_authority_court_runner(frozenset((
+            standard_library.lifecycle_protocol.states["shared"],
+            standard_library.lifecycle_protocol.states["published"],
+        ))),
+    )
+    attestation_broker.admit_court(
+        snapshot,
+        attestation,
+        theme_court_root,
+        _theme_court_runner(frozenset(theme_roots)),
+    )
+    attestation_broker.admit_court(
+        snapshot,
+        attestation,
+        resource_lifecycle_court_root,
+        _resource_lifecycle_court_runner(frozenset((
+            standard_library.lifecycle_protocol.states["wip"],
+            standard_library.lifecycle_protocol.states["shared"],
+            standard_library.lifecycle_protocol.states["published"],
+            standard_library.lifecycle_protocol.states["archived"],
+        ))),
+    )
+    attestation_broker.admit_court(
+        snapshot,
+        attestation,
+        work_completion_court_root,
+        ArtifactVerificationCourt(
+            court_workspace_root or _workspace_root_for_map(map_path)
+        ).run,
+    )
+    attestation_broker.admit_court(
+        snapshot,
+        attestation,
+        runtime_ownership_court_root,
+        _runtime_ownership_court_runner(store),
+    )
+    attestation_broker.admit_court(
+        snapshot,
+        attestation,
+        runtime_compliance_court_root,
+        runtime_compliance_runner or _unavailable_runtime_compliance_runner,
+    )
+    browser_publish_court = BrowserPublishCourt()
+    attestation_broker.admit_court(
+        snapshot,
+        attestation,
+        theme_publish_court_root,
+        browser_publish_court.run,
+    )
+    cloud_session_protocol = _ensure_replay_policy_lifecycle(
+        store,
+        assembly,
+        standard_library,
+        cloud_session_protocol,
+        authorization.subject_root,
+    )
+    snapshot = store.snapshot()
+
+    canvas_root = "app:canvas"
+    core_values = _ensure_core_values_authority_current(
+        store,
+        roles,
+        authorization,
+        map_registry,
+        standard_library,
+        adapter_catalog_root,
+        attestation,
+        resource_lifecycle_court_root,
+        theme_court_root,
+        theme_publish_court_root,
+        tenant_authority_court_root,
+        cloud_route_protocol,
+        browser_session_protocol,
+        device_custody_protocol,
+        composer_authority,
+        ui,
+        _text(snapshot, presentation.theme_roots["ink_soft"]),
+    )
+    core_value_obligation_roots = _ensure_core_value_obligations(
+        store,
+        attention_protocol,
+        attention_policy_root,
+        attention_priority_roots,
+        core_values,
+        authorization,
+        application_root=application_root,
+        member_role=roles["member"],
+    )
+    snapshot = store.snapshot()
+    top_level_roots = (*map_registry.domains.values(), core_values.root_id)
+    existing_canvas_members = read_relation(
+        snapshot, canvas_root, budget=100_000
+    )
+    existing_relation_roots = tuple(
+        member.participant_id for member in existing_canvas_members
+        if member.role_id == roles["relation"]
+    )
+    _ensure_canvas_domain_interfaces(
+        store,
+        assembly,
+        roles,
+        application_root,
+        tuple(top_level_roots),
+        existing_relation_roots,
+    )
+    _ensure_canvas_domain_public_interfaces(
+        store,
+        assembly,
+        roles,
+        application_root,
+        tuple(top_level_roots),
+        existing_relation_roots,
+    )
+    # The design's core rule: a wire ends ON a socket -- one knob map is the
+    # single authority for the sockets drawn and the wire endpoints. The
+    # migration above covered the TOP level only, so every entered scope drew
+    # its wires with no sockets to land on and nothing inside a domain could
+    # ever be re-wired. Walk each drawable level once and give its relations
+    # the same exact interfaces. Idempotent: the per-level guard reads the
+    # snapshot and skips levels whose interfaces already exist, so a warm
+    # boot pays one membership scan per level and writes nothing.
+    _ensure_nested_scope_canvas_interfaces(
+        store,
+        assembly,
+        roles,
+        application_root,
+        tuple(top_level_roots),
+        # On the restore path the merged application root_properties is
+        # assembled further down; the imported map's own mapping is the
+        # part the nested walk needs here.
+        map_registry.root_properties,
+    )
+    _ensure_governed_work_scope_interfaces(
+        store,
+        assembly,
+        application_root,
+        tuple(map_registry.domains.values()),
+    )
+    _ensure_canvas_card_presentation(
+        store,
+        roles,
+        authorization,
+        application_root,
+        canvas_root,
+        tuple(top_level_roots),
+        _text(snapshot, presentation.theme_roots["ink_soft"]),
+    )
+    system_tool_roots = _ensure_system_tool_canvas_nodes(
+        store,
+        roles,
+        authorization,
+        standard_library,
+        map_registry,
+        application_root=application_root,
+        canvas_root=canvas_root,
+        visibility_root=authorization.session.root_id + ":visibility",
+        properties_lens_root="app:properties-lens",
+        default_color=_text(snapshot, presentation.theme_roots["ink_soft"]),
+    )
+    top_level_roots = tuple(dict.fromkeys((*top_level_roots, *system_tool_roots)))
+    _migrate_canvas_current_level(
+        store,
+        roles,
+        authorization,
+        assembly,
+        application_root=application_root,
+        library_root="app:node-library",
+        canvas_root=canvas_root,
+    )
+    _migrate_brain_control_receipts_into_brain_scope(
+        store,
+        assembly,
+        roles,
+        authorization,
+        application_root=application_root,
+        canvas_root=canvas_root,
+        brain_root=map_registry.domains["brain"],
+        knowledge_branch_definition_root=(
+            standard_library.governed_domains.definitions[
+                "knowledge-branch"
+            ].definition_root
+        ),
+    )
+    snapshot = store.snapshot()
+    canvas_members = read_relation(snapshot, canvas_root, budget=100_000)
+    visible_roots = tuple(
+        member.participant_id for member in canvas_members
+        if member.role_id == roles["member"]
+    )
+    relation_roots = tuple(
+        member.participant_id for member in canvas_members
+        if member.role_id == roles["relation"]
+    )
+    root_properties: dict[str, list[str]] = {
+        root: list(properties)
+        for root, properties in map_registry.root_properties.items()
+    }
+    property_refs: dict[str, PropertyRef] = {}
+    persisted_property_roots = tuple(dict.fromkeys((
+        *(root for roots in map_registry.root_properties.values() for root in roots),
+        *(
+            member.participant_id for member in canvas_members
+            if member.role_id == roles["property"]
+        ),
+    )))
+    for root in persisted_property_roots:
+        reference = _project_property_reference(snapshot, roles, root)
+        members = read_relation(snapshot, root, budget=16)
+        owner = _one_for_role(members, roles["owner"])
+        if owner is None:
+            raise InvalidCell("persisted application property has no owner")
+        owner_properties = root_properties.setdefault(owner, [])
+        if root not in owner_properties:
+            owner_properties.append(root)
+        property_refs[root] = reference
+    position_properties: dict[str, Mapping[str, PropertyRef]] = {}
+    for root in visible_roots:
+        by_name = {
+            _text(snapshot, property_refs[property_root].label_root): property_refs[property_root]
+            for property_root in root_properties.get(root, ())
+            if property_root in property_refs
+        }
+        if "position_x" not in by_name or "position_y" not in by_name:
+            raise InvalidCell("persisted canvas position is incomplete")
+        position_properties[root] = MappingProxyType({
+            "position_x": by_name["position_x"],
+            "position_y": by_name["position_y"],
+        })
+
+    theme_binding_modes = MappingProxyType({
+        name: "app:theme-binding-mode:%s" % name
+        for name in ("personal", "direct-release", "audience-release")
+    })
+    if any(root_id not in snapshot.cells for root_id in theme_binding_modes.values()):
+        raise InvalidCell("persisted theme binding vocabulary is incomplete")
+    application_members = read_relation(
+        snapshot, application_root, budget=100_000
+    )
+    tenant_authority = published_tenant_authority(
+        snapshot,
+        tenant_configuration_protocol,
+        assembly,
+        standard_library.lifecycle_protocol,
+        authorization.protocol,
+        authorization.identity_protocol,
+        authorization.relationship_broker,
+        tenant_root=authorization.tenant_root,
+    )
+    tenant_release_selection = current_tenant_release_selection(
+        snapshot,
+        tenant_configuration_protocol,
+        authorization.identity_protocol,
+        authorization.relationship_broker,
+        authorization.tenant_root,
+    )
+    tenant_role_relationship_roots = (
+        authority_migration.tenant_role_relationship_roots
+    )
+    if len(tenant_role_relationship_roots) != 4:
+        raise InvalidCell(
+            "active tenant role authority relationships are incomplete"
+        )
+    session_roots = []
+    for member in application_members:
+        if member.role_id != roles["member"]:
+            continue
+        candidate = member.participant_id
+        try:
+            candidate_members = read_relation(
+                snapshot, candidate, budget=100_000
+            )
+        except InvalidCell:
+            continue
+        if _members_are_application_view_session(
+            candidate_members, roles, authorization
+        ):
+            session_roots.append(candidate)
+    session_roots = tuple(session_roots)
+    for session_root in session_roots:
+        _ensure_view_scope_trail(
+            store,
+            roles,
+            session_root,
+            application_root=application_root,
+            canvas_root=canvas_root,
+        )
+        _ensure_view_composition_graph(
+            store,
+            roles,
+            session_root,
+            application_root=application_root,
+        )
+        _ensure_view_inspector_lens(
+            store,
+            roles,
+            session_root,
+            inspector_lens_roots,
+            application_root=application_root,
+        )
+        _ensure_view_properties_panel(
+            store,
+            roles,
+            properties_presentation_protocol,
+            session_root,
+            properties_panel_roots,
+            application_root=application_root,
+        )
+    snapshot = store.snapshot()
+    views = {
+        view.subject_root: view
+        for view in (
+            _project_application_view_session(
+                snapshot,
+                roles,
+                authorization,
+                root,
+                theme_binding_modes,
+                inspector_lens_roots,
+                properties_presentation_protocol,
+                properties_panel_roots,
+            )
+            for root in session_roots
+        )
+    }
+    for view in views.values():
+        _ensure_persistent_view_focus(
+            store,
+            roles,
+            attention_protocol,
+            authorization,
+            view,
+        )
+    snapshot = store.snapshot()
+    views = {
+        view.subject_root: view
+        for view in (
+            _project_application_view_session(
+                snapshot,
+                roles,
+                authorization,
+                root,
+                theme_binding_modes,
+                inspector_lens_roots,
+                properties_presentation_protocol,
+                properties_panel_roots,
+            )
+            for root in session_roots
+        )
+    }
+    try:
+        founder_view = views[authorization.subject_root]
+    except KeyError as exc:
+        raise InvalidCell("persisted founder view session is missing") from exc
+    canvas_interaction_policy = build_canvas_interaction_policy(
+        store,
+        canvas_interaction_policy_protocol,
+        policy_id="app:canvas-interaction-policy:v1",
+        canvas_root=canvas_root,
+        evidence_roots=(
+            "evidence:pointer-events-capture",
+            "evidence:cssom-view-client-rect",
+            "evidence:autocad-window-crossing-selection",
+            "evidence:konva-pointer-relative-zoom",
+        ),
+    )
+    snapshot = store.snapshot()
+
+    def missing_policy_members(relation_root: str, pairs):
+        existing = tuple(
+            (member.role_id, member.participant_id)
+            for member in read_relation(snapshot, relation_root, budget=100_000)
+        )
+        return tuple(pair for pair in pairs if pair not in existing)
+
+    policy_patches = [
+        prepare_append_relation_members(
+            snapshot, relation_root, members, budget=100_000
+        )
+        for relation_root, members in (
+            (
+                application_root,
+                missing_policy_members(application_root, (
+                    (roles["member"], canvas_interaction_policy.root_id),
+                )),
+            ),
+            (
+                founder_view.root_id,
+                missing_policy_members(founder_view.root_id, (
+                    (roles["member"], canvas_interaction_policy_protocol.root_id),
+                    (roles["member"], canvas_interaction_policy.root_id),
+                )),
+            ),
+            (
+                canvas_root,
+                missing_policy_members(canvas_root, (
+                    (roles["authority"], canvas_interaction_policy.root_id),
+                )),
+            ),
+        )
+        if members
+    ]
+    if policy_patches:
+        store.commit(
+            snapshot.revision,
+            create=tuple(
+                cell for patch in policy_patches for cell in patch.create
+            ),
+            replace=tuple(
+                cell for patch in policy_patches for cell in patch.replace
+            ),
+        )
+        snapshot = store.snapshot()
+    try:
+        models_domain_root = map_registry.domains["models"]
+    except KeyError as exc:
+        raise InvalidCell("Grand Map lacks the Models & Agents domain") from exc
+    try:
+        connectors_domain_root = map_registry.domains["connectors"]
+    except KeyError as exc:
+        raise InvalidCell("Grand Map lacks the Connectors domain") from exc
+    (
+        baboom_model_execution_protocol,
+        baboom_model_execution_adapter_catalog_root,
+        baboom_model_provider_roots,
+    ) = _ensure_baboom_model_execution_authority(
+        store,
+        adapter,
+        roles,
+        models_domain_root,
+        application_root,
+    )
+    baboom_cognition_adapter_catalog_root = (
+        _ensure_baboom_cognition_planner_authority(
+            store,
+            adapter,
+            roles,
+            models_domain_root,
+            application_root,
+        )
+    )
+    (
+        baboom_connector_execution_protocol,
+        baboom_connector_execution_adapter_catalog_root,
+        baboom_connector_provider_roots,
+    ) = _ensure_baboom_connector_execution_authority(
+        store,
+        adapter,
+        roles,
+        connectors_domain_root,
+        application_root,
+    )
+    (
+        mcp_broker_protocol,
+        mcp_broker_adapter_catalog_root,
+        mcp_broker_adapter_roots,
+    ) = _ensure_mcp_broker_authority(
+        store,
+        adapter,
+        roles,
+        connectors_domain_root,
+        application_root,
+    )
+    agent_roots = (
+        _AGENT_BODY_PROTOCOL_ROOT,
+        _AGENT_BODY_POLICY_ROOT,
+        _AGENT_BODY_ROOT,
+        _AGENT_SESSION_ROOT,
+        _AGENT_CONTROL_ROOT,
+    )
+    present_agent_roots = tuple(
+        root for root in agent_roots if root in store.snapshot().cells
+    )
+    if present_agent_roots and len(present_agent_roots) != len(agent_roots):
+        raise InvalidCell("persisted application Agent Body is partial")
+    agent_body = (
+        _project_application_agent_body(
+            store,
+            authorization,
+            founder_view,
+            roles,
+            models_domain_root,
+            cognition_protocol,
+            cognition_definitions,
+            application_root,
+        )
+        if present_agent_roots
+        else _build_application_agent_body(
+            store,
+            authorization,
+            founder_view,
+            roles,
+            standard_library.lifecycle_protocol.states["wip"],
+            models_domain_root,
+            cognition_protocol,
+            cognition_definitions,
+            application_root,
+        )
+    )
+    agent_surface = _ensure_application_agent_surface(
+        store,
+        roles,
+        agent_body,
+        _text(store.snapshot(), presentation.theme_roots["ink_soft"]),
+        canvas_root,
+        founder_view.properties_lens_root,
+    )
+    for owner_root, references in agent_surface.items():
+        root_properties.setdefault(owner_root, []).extend(
+            reference.relation_root for reference in references
+        )
+
+    (
+        deliberation_protocol,
+        workshop_category_roots,
+        workshop_phase_roots,
+        workshop_requirement_roots,
+        workshop_properties,
+    ) = _ensure_application_workshop(
+        store,
+        roles,
+        map_registry,
+        authorization,
+        founder_view,
+        application_root=application_root,
+        lifecycle_root=standard_library.lifecycle_protocol.states["wip"],
+        initial_color=_text(
+            store.snapshot(), presentation.theme_roots["ink_soft"]
+        ),
+    )
+    root_properties.setdefault(_WORKSHOP_ROOT, []).extend(
+        reference.relation_root for reference in workshop_properties
+    )
+    brain_control_category_roots = _ensure_application_brain_control_ledger(
+        store,
+        roles,
+        map_registry,
+        authorization,
+        deliberation_protocol,
+        application_root=application_root,
+        lifecycle_root=standard_library.lifecycle_protocol.states["wip"],
+    )
+    workshop_work_wire_root, governed_work_properties = (
+        _ensure_application_governed_work_registry(
+            store,
+            roles,
+            map_registry,
+            assembly,
+            standard_library,
+            authorization,
+            founder_view,
+            application_root=application_root,
+            canvas_root=canvas_root,
+            lifecycle_root=standard_library.lifecycle_protocol.states["wip"],
+            initial_color=_text(
+                store.snapshot(), presentation.theme_roots["ink_soft"]
+            ),
+        )
+    )
+    relation_roots = tuple(dict.fromkeys((
+        *relation_roots,
+        workshop_work_wire_root,
+    )))
+    root_properties.setdefault(_GOVERNED_WORK_REGISTRY_ROOT, []).extend(
+        reference.relation_root for reference in governed_work_properties
+    )
+    workshop_assignment_registry_root = (
+        _ensure_application_workshop_assignment_registry(
+            store,
+            roles,
+            map_registry,
+            authorization,
+            attention_protocol,
+            application_root=application_root,
+            lifecycle_root=standard_library.lifecycle_protocol.states["wip"],
+        )
+    )
+    baboom_map_node = _baboom_application_agent_body_anchor(
+        map_registry, models_domain_root
+    )
+    baboom_body = _ensure_baboom_application_agent_body(
+        store,
+        authorization,
+        founder_view,
+        roles,
+        standard_library.lifecycle_protocol.states["wip"],
+        models_domain_root,
+        _GOVERNED_WORK_REGISTRY_ROOT,
+        baboom_map_node,
+        application_root,
+    )
+    baboom_execution_control_root = _ensure_baboom_execution_capability_control(
+        store,
+        authorization,
+        founder_view,
+        roles,
+        baboom_body,
+        models_domain_root,
+        _GOVERNED_WORK_REGISTRY_ROOT,
+        baboom_map_node,
+        application_root,
+    )
+    harness_bodies = _ensure_harness_application_agent_bodies(
+        store,
+        authorization,
+        founder_view,
+        roles,
+        standard_library.lifecycle_protocol.states["wip"],
+        models_domain_root,
+        _GOVERNED_WORK_REGISTRY_ROOT,
+        baboom_map_node,
+        application_root,
+    )
+    agent_body_catalog = _ensure_application_agent_body_catalog(
+        store,
+        authorization,
+        roles,
+        map_registry,
+        models_domain_root,
+        application_root,
+        agent_body,
+        baboom_body,
+        baboom_execution_control_root,
+        harness_bodies,
+    )
+    baboom_command_catalog = _ensure_baboom_command_catalog(
+        store,
+        roles,
+        models_domain_root,
+        application_root,
+    )
+    (
+        governed_work_claim_binding_protocol_root,
+        governed_work_claim_binding_roles,
+        governed_work_claim_binding_registry_root,
+    ) = _ensure_governed_work_claim_binding_authority(
+        store,
+        roles,
+        map_registry,
+        authorization,
+        assembly,
+        standard_library,
+        agent_body_catalog,
+        application_root=application_root,
+        lifecycle_root=standard_library.lifecycle_protocol.states["wip"],
+    )
+    workshop_workbench_root, workbench_properties = (
+        _ensure_application_workshop_workbench(
+            store,
+            roles,
+            map_registry,
+            authorization,
+            founder_view,
+            application_root=application_root,
+            lifecycle_root=standard_library.lifecycle_protocol.states["wip"],
+            initial_color=_text(
+                store.snapshot(), presentation.theme_roots["ink_soft"]
+            ),
+        )
+    )
+    root_properties.setdefault(workshop_workbench_root, []).extend(
+        reference.relation_root for reference in workbench_properties
+    )
+    migrated_scope_interfaces = _migrate_legacy_canvas_scope_interfaces(
+        store,
+        assembly,
+        roles,
+        application_root,
+        workshop_workbench_root,
+    )
+    (
+        relation_contract_protocol,
+        relation_form_protocol,
+        relation_forms,
+    ) = _ensure_application_relation_form_authority(
+        store,
+        roles,
+        composer,
+        assembly,
+        application_root=application_root,
+        canvas_root="app:canvas",
+        application_http_route_roots=active_projected_routes,
+    )
+
+    registry = UniversalApplicationRegistry(
+        roles=MappingProxyType(roles),
+        map=map_registry,
+        core_values=core_values,
+        assembly_protocol=assembly,
+        standard_library=standard_library,
+        adapter_protocol=adapter,
+        adapter_catalog_root=adapter_catalog_root,
+        device_custody_adapter_root=device_custody_adapter_root,
+        baboom_model_execution_protocol=baboom_model_execution_protocol,
+        baboom_model_execution_adapter_catalog_root=(
+            baboom_model_execution_adapter_catalog_root
+        ),
+        baboom_model_provider_roots=baboom_model_provider_roots,
+        baboom_cognition_adapter_catalog_root=(
+            baboom_cognition_adapter_catalog_root
+        ),
+        baboom_connector_execution_protocol=baboom_connector_execution_protocol,
+        baboom_connector_execution_adapter_catalog_root=(
+            baboom_connector_execution_adapter_catalog_root
+        ),
+        baboom_connector_provider_roots=baboom_connector_provider_roots,
+        mcp_broker_protocol=mcp_broker_protocol,
+        mcp_broker_adapter_catalog_root=mcp_broker_adapter_catalog_root,
+        mcp_broker_adapter_roots=mcp_broker_adapter_roots,
+        attestation_protocol=attestation,
+        compliance_protocol=compliance_protocol,
+        resource_lifecycle_court_root=resource_lifecycle_court_root,
+        work_completion_court_root=work_completion_court_root,
+        runtime_ownership_court_root=runtime_ownership_court_root,
+        runtime_compliance_court_root=runtime_compliance_court_root,
+        theme_court_root=theme_court_root,
+        theme_publish_court_root=theme_publish_court_root,
+        attestation_broker=attestation_broker,
+        browser_publish_court=browser_publish_court,
+        composer_protocol=composer,
+        composer_authority=composer_authority,
+        authority_migration_root=authority_migration.migration_root,
+        authorization=authorization,
+        agent_body=agent_body,
+        agent_body_catalog=agent_body_catalog,
+        baboom_command_catalog=baboom_command_catalog,
+        tenant_configuration_protocol=tenant_configuration_protocol,
+        tenant_authority_court_root=tenant_authority_court_root,
+        tenant_authority=tenant_authority,
+        tenant_release_selection=tenant_release_selection,
+        tenant_role_relationship_roots=tenant_role_relationship_roots,
+        cloud_route_protocol=cloud_route_protocol,
+        application_http_route_roots=MappingProxyType(active_projected_routes),
+        cloud_session_protocol=cloud_session_protocol,
+        browser_session_protocol=browser_session_protocol,
+        ownership_protocol=ownership_protocol,
+        value_graph_protocol=value_graph_protocol,
+        device_custody_protocol=device_custody_protocol,
+        runtime_presence_protocol=runtime_presence_protocol,
+        baboom_activity_protocol=baboom_activity_protocol,
+        baboom_meeting_notes_protocol=baboom_meeting_notes_protocol,
+        baboom_meeting_note_publication_protocol=(
+            baboom_meeting_note_publication_protocol
+        ),
+        work_handoff_protocol=work_handoff_protocol,
+        work_claim_transfer_protocol=work_claim_transfer_protocol,
+        cde_signing_protocol=cde_signing_protocol,
+        cde_write_authority_protocol=cde_write_authority_protocol,
+        native_authentication_protocol=native_authentication_protocol,
+        attention_protocol=attention_protocol,
+        attention_policy_root=attention_policy_root,
+        attention_priority_roots=attention_priority_roots,
+        core_value_obligation_roots=core_value_obligation_roots,
+        deliberation_protocol=deliberation_protocol,
+        workshop_root=_WORKSHOP_ROOT,
+        workshop_category_roots=workshop_category_roots,
+        workshop_phase_roots=workshop_phase_roots,
+        workshop_requirement_roots=workshop_requirement_roots,
+        brain_control_ledger_root=_BRAIN_CONTROL_LEDGER_ROOT,
+        brain_control_category_roots=brain_control_category_roots,
+        governed_work_registry_root=_GOVERNED_WORK_REGISTRY_ROOT,
+        workshop_work_wire_root=workshop_work_wire_root,
+        workshop_assignment_registry_root=workshop_assignment_registry_root,
+        workshop_workbench_root=workshop_workbench_root,
+        governed_work_claim_binding_protocol_root=(
+            governed_work_claim_binding_protocol_root
+        ),
+        governed_work_claim_binding_roles=governed_work_claim_binding_roles,
+        governed_work_claim_binding_registry_root=(
+            governed_work_claim_binding_registry_root
+        ),
+        rule_protocol=rule_protocol,
+        transaction_protocol=transaction_protocol,
+        change_history_protocol=change_history_protocol,
+        interaction_protocol=interaction_protocol,
+        canvas_interaction_policy_protocol=(
+            canvas_interaction_policy_protocol
+        ),
+        canvas_interaction_policy_root=canvas_interaction_policy.root_id,
+        ui_protocol=ui,
+        presentation=presentation,
+        icon_protocol=icon_catalog.protocol,
+        icon_catalog_root=icon_catalog.catalog_root,
+        icon_source_root=icon_catalog.source_root,
+        icon_roots=icon_catalog.icon_roots,
+        control_presentation_protocol=control_catalog.protocol,
+        control_catalog_root=control_catalog.catalog_root,
+        control_roots=control_catalog.control_roots,
+        control_binding_protocol=control_bindings.protocol,
+        control_binding_catalog_root=control_bindings.catalog_root,
+        control_binding_roots=control_bindings.binding_roots,
+        website=website,
+        application_root=application_root,
+        primitive_root="app:primitive:universal-cell",
+        library_root="app:node-library",
+        canvas_root=canvas_root,
+        properties_lens_root=founder_view.properties_lens_root,
+        selection_state_root=founder_view.selection_state_root,
+        focus_incidence=founder_view.focus_incidence,
+        selection_incidences=founder_view.selection_incidences,
+        visible_roots=visible_roots,
+        container_roots=(application_root, "app:node-library"),
+        relation_roots=relation_roots,
+        root_properties=MappingProxyType({
+            root: tuple(dict.fromkeys(properties))
+            for root, properties in root_properties.items()
+        }),
+        position_properties=MappingProxyType(position_properties),
+        viewport_properties=founder_view.viewport_properties,
+        theme_binding_modes=theme_binding_modes,
+        inspector_lens_roots=inspector_lens_roots,
+        properties_presentation_protocol=properties_presentation_protocol,
+        properties_presenter_protocol=properties_presenter_protocol,
+        view_template_protocol=view_template_protocol,
+        relation_composer_protocol=relation_composer_protocol,
+        relation_contract_protocol=relation_contract_protocol,
+        relation_form_protocol=relation_form_protocol,
+        relation_form_roots=MappingProxyType({
+            name: binding.root_id for name, binding in relation_forms.items()
+        }),
+        properties_presentation_root=_PROPERTIES_PRESENTATION_ROOT,
+        properties_panel_roots=properties_panel_roots,
+        properties_component_roots=properties_component_roots,
+        design_system_root=_DESIGN_SYSTEM_ROOT,
+        theme_system_root=_THEME_SYSTEM_ROOT,
+        view_sessions=views,
+    )
+    _append_migrated_visibility_interfaces(
+        store,
+        registry,
+        migrated_scope_interfaces,
+    )
+    _ensure_visibility_scope_projections(store, registry)
+    return store, registry

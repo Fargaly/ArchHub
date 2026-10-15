@@ -7,6 +7,7 @@ Every batch is written to the user's conversation archive before it is deleted,
 and nothing here writes a graph revision.
 """
 from contextlib import contextmanager
+import copy
 import math
 import sqlite3
 import time
@@ -163,7 +164,16 @@ def _user_is_active(owner):
 
 
 def maintain_conversation_retention(service, *, authentication_context,
-        after_conversation_id=None, cancellation_event=None, timeout_seconds=2.0):
+        after_conversation_id=None, cancellation_event=None, timeout_seconds=2.0, dry_run=False):
+    """Explicit bounded archive maintenance, optionally a read-only inventory.
+
+    A dry run shares the ordinary authority and preservation guards. It does
+    not activate a schema, update observed activity, rebuild/export archives,
+    record a pass or change content. Its cursor covers the same eight rooms;
+    callers can continue until the cursor wraps to inventory a whole store.
+    """
+    if type(dry_run) is not bool:
+        raise ValueError('retention maintenance dry-run flag is invalid')
     if authentication_context is None:
         raise AuthorizationDenied('retention maintenance requires explicit process authentication')
     if (type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds)
@@ -183,20 +193,23 @@ def maintain_conversation_retention(service, *, authentication_context,
 
     result = dict(status='idle', inspected=0, protected=0, archived=0, purged=0, exported=0,
         next_conversation_id=after_conversation_id)
+    if dry_run:
+        result.update(dry_run=True, eligible=[])
     if _user_is_active(service._owner):
         # Never on the click path: a pass holds the owner lock for its budget.
         result = {**result, 'status':'waiting-for-idle'}
     else:
-        if getattr(service, "_archive_rebuild", None):
+        if not dry_run and getattr(service, "_archive_rebuild", None):
             _rebuild_indexes(service, cancelled)
             deadline = time.monotonic() + timeout_seconds
         try:
             result = _maintain(service, authentication_context, after_conversation_id,
-                deadline, cancelled, check, result)
+                deadline, cancelled, check, result, dry_run=dry_run)
         except (TimeoutError, sqlite3.OperationalError):
             result = {**result, 'status':'deferred'}
-    _record_run(service, result)
-    if getattr(service, "_retention_observed", None) is not None:
+    if not dry_run:
+        _record_run(service, result)
+    if not dry_run and getattr(service, "_retention_observed", None) is not None:
         service._retention_observed.flush()   # outside the owner lock
     return result
 
@@ -231,7 +244,8 @@ def _room_admission(service, owner, store, registry, authority, snapshot, histor
         authentication_context=authentication_context, principal=identity.subject_root, machine=False)
 
 
-def _maintain(service, authentication_context, after_conversation_id, deadline, cancelled, check, result):
+def _maintain(service, authentication_context, after_conversation_id, deadline, cancelled, check, result,
+              *, dry_run=False):
     owner = service._owner
     with _short_lock(owner.mutation_lock, check):
         service._require_live_owner()
@@ -242,6 +256,8 @@ def _maintain(service, authentication_context, after_conversation_id, deadline, 
         with _short_lock(authority.broker._lock, check), authority.broker.live_context(authentication_context):
             with _short_lock(store._lock, check), store.stable_snapshot() as snapshot:
                 _authorize(service, snapshot, authentication_context)
+                if dry_run:
+                    result['policy'] = retention_policy(service)
                 check()
                 history = service._history
                 if history is None:
@@ -251,6 +267,8 @@ def _maintain(service, authentication_context, after_conversation_id, deadline, 
                     _configured_target(service, history)
                     version = history._db.execute('PRAGMA user_version').fetchone()[0]
                     if version == _RETENTION_VERSION:
+                        if dry_run:
+                            return {**result, 'status':'needs-page-protection'}
                         # An install created before draft protection: enable it once,
                         # at an idle pass. Its existing rooms stay protected until
                         # their drafts are resolved; rooms created later are born tracked.
@@ -259,7 +277,13 @@ def _maintain(service, authentication_context, after_conversation_id, deadline, 
                     if version != PAGE_PROTECTION_VERSION:
                         return {**result, 'status':'not-enabled'}
                     directory = archive_directory(service._path)
-                    observed = _observed_clock(service)
+                    if dry_run:
+                        # Advance a disposable copy: dry-run observations must not
+                        # help a later maintenance pass earn its inactivity time.
+                        original = getattr(service, '_retention_observed', None)
+                        observed = copy.copy(original) if original is not None else _ObservedClock(directory)
+                    else:
+                        observed = _observed_clock(service)
                     observed.advance(history._retention_now())
                     # Seek the primary key. Never filter an unbounded table scan
                     # for eligible rows; protected rows still advance this cursor.
@@ -274,7 +298,12 @@ def _maintain(service, authentication_context, after_conversation_id, deadline, 
                         result['next_conversation_id'] = root
                         try:
                             status = history.retention_status(root)
-                            observed_idle = observed.observed_idle(root, status['activity_revision'])
+                            if dry_run:
+                                anchor = observed.anchors.get(root)
+                                observed_idle = (observed.total - anchor[1] if anchor is not None
+                                    and anchor[0] == status['activity_revision'] else 0.0)
+                            else:
+                                observed_idle = observed.observed_idle(root, status['activity_revision'])
                             if (status['last_activity_at'] is None
                                     or history._retention_now() - status['last_activity_at'] < _RETENTION_SECONDS
                                     or observed_idle < _RETENTION_SECONDS):
@@ -314,6 +343,22 @@ def _maintain(service, authentication_context, after_conversation_id, deadline, 
                             guard()
                             with admit_conversation_retention(owner, snapshot, root,
                                     before_commit=guard, check_budget=check) as commit_guard:
+                                if dry_run:
+                                    commit_guard()
+                                    # The report samples at most one batch's rows,
+                                    # with UTF-8 content payload bytes (not
+                                    # an estimate of filesystem space reclaimed).
+                                    batch = history._db.execute(
+                                        'SELECT length(CAST(content AS BLOB)) FROM messages '
+                                        'WHERE conversation_id=? ORDER BY sequence DESC LIMIT ?',
+                                        (root, MESSAGES_PER_PURGE)).fetchall()
+                                    result['eligible'].append(dict(conversation_id=root,
+                                        would_archive=status['archived_at'] is None,
+                                        sample_messages=len(batch),
+                                        sample_message_limit=MESSAGES_PER_PURGE,
+                                        sample_content_bytes=sum(row[0] for row in batch),
+                                        archive_file=str(archive)))
+                                    continue
                                 if status['archived_at'] is None:
                                     status = history.archive(root, **cas(status), protected=False, before_commit=commit_guard)
                                     result['archived'] += 1

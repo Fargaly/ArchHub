@@ -161,7 +161,10 @@ test('Hosts counts use the same Office-collapsed rows in badge, card and Setting
     const hub = await s.tab('Hub');
     assert.ok(hub.textContent.includes('2/2 hosts running.'), 'Hub Connectors card uses collapsed Office rows');
     const hostsPanel = await s.tab('Hosts');
-    assert.match(hostsPanel.querySelector('[data-connectors-bar]').textContent, /2 of 2 running/);
+    assert.match(hostsPanel.querySelector('[data-connectors-bar]').textContent, /2\/2 running/);
+    const office = [...hostsPanel.querySelectorAll('[data-connector-row]')].find(row => /Office/.test(row.textContent));
+    assert.ok(office, 'Office aggregate is rendered');
+    assert.equal(office.querySelector('[data-host-state]').textContent, 'Running', 'separate tally aggregation keeps Office classified as built and running');
   } finally { s.close(); }
 });
 
@@ -419,4 +422,20 @@ test('DP-CLOUD: the tier the graph holds sits in the identity row, with no price
     if (identity) assert.equal(/\$\d/.test(identity.textContent), false, 'no price');
     assert.equal(/\$\d/.test(panel.textContent), false, 'no price anywhere in the Cloud window');
   } finally { s.close(); }
+});
+
+
+test('LAZYONREL late System projection preserves the user chosen Settings capability', async () => {
+  const s = await openSettings();
+  try {
+    await s.tab('Hosts');
+    assert.ok(s.doc.querySelector('[data-connectors-bar]'), 'Hosts is selected before the delayed projection');
+    s.flush(() => {
+      s.win.ARCHHUB_LIVE.graph.nodes.push({id:'late-system', application:true, title:'Appearance', group:'Appearance', cat:'logic', params:[]});
+      s.win.__studioRoot.render(s.win.React.createElement(s.win.StudioLM));
+    });
+    await s.settle();
+    assert.ok(s.doc.querySelector('[data-settings54-capability-nav="connections"]'), 'late nodes retain the user chosen group');
+    assert.ok(s.doc.querySelector('[data-connectors-bar]'), 'late nodes retain Hosts instead of restoring initialTab');
+  } finally {s.close();}
 });

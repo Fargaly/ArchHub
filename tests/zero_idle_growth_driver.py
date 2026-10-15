@@ -31,6 +31,24 @@ from nodelang import universal_cell  # noqa: E402
 from nodelang.application_server import ApplicationServer  # noqa: E402
 from nodelang.cell_secret_keys import MemorySigningKeyProvider  # noqa: E402
 
+# Replica courts own their graph and IPC endpoint, but never personal Brain,
+# host connectors or cloud sign-in. Keep those observation producers local.
+from nodelang import cloud_signin, pipeline_engines  # noqa: E402
+
+
+def _refuse_live_probe(*args, **kwargs):
+    raise AssertionError("zero-idle replica court cannot probe live services")
+
+
+pipeline_engines._brain_call = _refuse_live_probe
+pipeline_engines.probe_connectors = _refuse_live_probe
+ApplicationServer._probe_brain = staticmethod(lambda: {"ok": True, "facts": 7})
+ApplicationServer._probe_hosts = staticmethod(lambda: [])
+cloud_signin.sign_in_state = lambda *args, **kwargs: {
+    "state": "signed_out", "signed_in": False, "email": "",
+    "expires_at": None, "founder": False,
+}
+
 try:  # absent in releases before the commit gate
     from nodelang import commit_intent
 except ImportError:

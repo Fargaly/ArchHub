@@ -98,7 +98,14 @@ async function mountStudio(options = {}) {
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
   for (const file of manifest.files) {
-    if (file.source !== 'mount.jsx') win.eval(read('nodelang/studio/compiled/' + file.output));
+    if (file.source !== 'mount.jsx') {
+      let code = read('nodelang/studio/compiled/' + file.output);
+      if (options.exposeInspector && file.source === 'studio-lm.jsx') {
+        assert.ok(code.includes('window.StudioLM=StudioLM;'), 'actual compiled Studio export exists');
+        code = code.replace('window.StudioLM=StudioLM;', 'window.__InferenceInspector=InferenceInspector;window.StudioLM=StudioLM;');
+      }
+      win.eval(code);
+    }
   }
   win.eval('window.__studioRoot=ReactDOM.createRoot(document.getElementById("root")); ReactDOM.flushSync(()=>window.__studioRoot.render(React.createElement(StudioLM)));');
   const home = [...win.document.querySelectorAll('button')].find(node => node.title === 'All sessions');
@@ -284,7 +291,7 @@ test('F6a: host count stays in Connectors and Hosts badge; the status strip name
     const hub = await openSettingsHub(studio);
     const nav = settingsNavigator({doc:studio.doc, flush:action => studio.win.ReactDOM.flushSync(action), settle:studio.settle});
     const hosts = await nav.tab('Hosts');
-    assert.match(hosts.querySelector('[data-connectors-bar]').textContent, /2 of 4 running/, 'Hosts owner carries the same 2/4 count');
+    assert.match(hosts.querySelector('[data-connectors-bar]').textContent, /2\/4 running/, 'Hosts owner carries the same 2/4 count');
   } finally { studio.close(); }
 });
 
@@ -311,7 +318,7 @@ test('F6a v3: the mounted Studio reads the Hosts list; status never shows 0/0', 
     const hub = await openSettingsHub(studio);
     const nav = settingsNavigator({doc:studio.doc, flush:action => studio.win.ReactDOM.flushSync(action), settle:studio.settle});
     const hosts = await nav.tab('Hosts');
-    assert.match(hosts.querySelector('[data-connectors-bar]').textContent, /2 of 4 running/, 'Hosts owner agrees with the folded Office count');
+    assert.match(hosts.querySelector('[data-connectors-bar]').textContent, /2\/4 running/, 'Hosts owner agrees with the folded Office count');
     assert.ok(hub, 'Settings opened');
   } finally { studio.close(); }
 });
@@ -648,4 +655,30 @@ test('Home Sessions header creates a new graph through ARCHHUB_GRAPH_CREATE', as
     assert.deepEqual(studio.graphCreates, ['Site options']);
     assert.equal(before, 1, 'Home has only the session-start form before the inline graph field opens');
   } finally { studio.close(); }
+});
+
+
+test('LAZYONREL Chat shares the drive-aware Office-collapsed host total', async () => {
+  const studio = await mountStudio({exposeInspector:true,hosts:[
+    {id:'revit', name:'Revit', drive:'host.read', state:'connected', detail:'connected'},
+    {id:'excel', name:'Excel', drive:'host.read', state:'connected', detail:'connected'},
+    {id:'word', name:'Word', drive:'host.read', state:'installed', detail:'installed'},
+    {id:'future', name:'Future host', drive:'', state:'connected', detail:'answering without a connector'},
+  ]});
+  try {
+    const target = studio.doc.createElement('div'); studio.doc.body.appendChild(target);
+    studio.win.__chatCountTarget = target;
+    studio.win.eval('window.__chatCountRoot=ReactDOM.createRoot(window.__chatCountTarget); ReactDOM.flushSync(()=>window.__chatCountRoot.render(React.createElement(window.__InferenceInspector,{model:{name:"Court",vendor:"fake",col:"#ffffff"},setPickerOpen:()=>{}})));');
+    const panel = target.querySelector('[data-chat-connectors]');
+    assert.equal(panel.firstElementChild.textContent.trim(), 'CONNECTORS · 2', 'Chat counts Revit and one Office aggregate through the shared tally');
+    assert.ok(panel.textContent.includes('Excel') && panel.textContent.includes('Word'), 'Office keeps both program names');
+    const office = [...panel.children].find(row => row.textContent.includes('Excel') && row.textContent.includes('Word'));
+    assert.equal(office.lastElementChild.textContent, 'Connected', 'the running Office aggregate stays connected in Chat');
+    const green = studio.doc.createElement('span'); green.style.color = studio.win.AH.ok;
+    assert.equal(office.lastElementChild.style.color, green.style.color, 'connected Office uses the live host tone');
+    assert.equal(panel.textContent.includes('Future host'), false, 'an explicitly unwired answering probe never becomes a Chat connector');
+  } finally {
+    if (studio.win.__chatCountRoot) studio.win.ReactDOM.flushSync(() => studio.win.__chatCountRoot.unmount());
+    studio.close();
+  }
 });

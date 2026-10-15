@@ -68,15 +68,30 @@ test("W6 no visible button is left without an action in the swept shell areas", 
 
 test("W6b Settings renders no developer-only capability or no-wire host prose", () => {
   const hosts = slice("const SettingsHosts = ", "// ──────────────────────── MODEL PICKER");
+  const hostCatalogue = slice("const hostCatalogueRows = ", "const hostTally = ");
   const operations = slice("const SettingsOperations = ", "// -- Workspaces:");
   for (const dead of ["COURT", "UNAVAILABLE", "PROVEN BY A COURT", "courts do not"]) {
     assert.equal(hosts.includes(dead) || operations.includes(dead), false, dead + " must not reach Settings");
   }
   assert.match(operations, /tests_replica\|court/);
-  assert.match(hosts, /no wire in this build/i);
+  const rows = [
+    {id:'wired', drive:'host.read', state:'off', detail:'not running'},
+    {id:'unwired', drive:'', detail:'no wire in this build'},
+    {id:'absent', drive:'', detail:'not found on this machine'},
+    {id:'needs-key', drive:'', detail:'add a token to connect'},
+    {id:'listening', drive:'', detail:'answering on :9999'},
+    {id:'legacy-visible', detail:'installed'},
+    {id:'legacy-unwired', detail:'no wire in this build'},
+  ];
+  const visible = new Function('window', 'LM_HOSTS', hostCatalogue + '\nreturn hostCatalogueRows();')(
+    {ARCHHUB_HOSTS_READ:true}, rows);
+  assert.deepEqual(visible.map(row => row.id), ['wired', 'legacy-visible'],
+    'Settings hides every explicitly unwired probe state and retains the legacy no-wire filter');
+  assert.equal(rows.length, 7, 'display filtering does not delete probe evidence');
   assert.match(operations, /Ready/);
   assert.match(operations, /Needs /);
   assert.match(hosts, /const visibleHosts = LM_HOSTS;/);
+  assert.match(hosts, /const tally = hostTally\(\)/, 'Hosts uses the same admitted total as every other view');
 });
 
 test("W6b Settings has no global disabled edit or dash-grid Team placeholders", () => {

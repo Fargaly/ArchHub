@@ -458,12 +458,12 @@ class ApplicationConversationContent:
             authentication_context=authentication_context, timeout_seconds=timeout_seconds)
 
     def maintain_retention(self, *, authentication_context, after_conversation_id=None,
-                           cancellation_event=None, timeout_seconds=2.0):
+                           cancellation_event=None, timeout_seconds=2.0, dry_run=False):
         """Internal bounded maintenance; never activates or clears unknown history."""
         from .conversation_retention_maintenance import maintain_conversation_retention
         return maintain_conversation_retention(self, authentication_context=authentication_context,
             after_conversation_id=after_conversation_id, cancellation_event=cancellation_event,
-            timeout_seconds=timeout_seconds)
+            timeout_seconds=timeout_seconds, dry_run=dry_run)
 
     def retention_overview(self, *, authentication_context):
         """Settings: the retention policy, the last pass and archived conversations."""

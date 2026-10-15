@@ -1,16 +1,19 @@
 """The real Grand Map authority on the universal-cell kernel."""
 from collections.abc import Mapping
 import json
+import pytest
 
 from nodelang.cell_protocols import (
     inspect_properties,
     open_scoped_composition,
     prepare_append_relation_members,
+    prepare_remove_relation_members,
     read_relation,
     set_property_atom,
 )
 from nodelang.map_import import resolve_map_path
-from nodelang.universal_cell import NULL_CELL_ID, Cell, CellStore, Snapshot
+from nodelang.universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell, Snapshot
+from nodelang.lazy_application_registry import DeferredRegistryField
 from nodelang.universal_map_import import (
     import_grand_map_cells,
     project_grand_map_cells,
@@ -190,6 +193,53 @@ def test_restart_projection_indexes_cell_roots_once_not_once_per_property():
     assert restored.nodes == imported.nodes
     assert sum(len(refs) for refs in restored.root_properties.values()) > 3000
     assert counted.full_iterations <= 4
+
+
+def test_lazy_home_keeps_node_index_deferred_and_first_node_read_verifies_latest_domain_scope():
+    store, imported = _built()
+    demanded_revisions = []
+
+    def current_snapshot():
+        snapshot = store.snapshot()
+        demanded_revisions.append(snapshot.revision)
+        return snapshot
+
+    restored = project_grand_map_cells(store.snapshot(), lazy=True,
+                                       snapshot_provider=current_snapshot)
+    node_field = object.__getattribute__(restored, 'nodes')
+    assert isinstance(node_field, DeferredRegistryField) and node_field.group._values is None
+    assert restored.domains == imported.domains
+    for root in restored.domains.values():
+        assert restored.root_properties[root] == imported.root_properties[root]
+    assert node_field.group._values is None       # Home reads no full node index
+
+    node_root = imported.nodes['ui_design_tokens']
+    property_root = imported.properties['ui_design_tokens'][0]
+    domain_root = imported.domains['ui']
+    snapshot = store.snapshot()
+    incidence = next(member.incidence_id for member in read_relation(snapshot, domain_root)
+                     if member.role_id == imported.roles['scope']
+                     and member.participant_id == property_root)
+    removal = prepare_remove_relation_members(snapshot, domain_root, (incidence,))
+    store.commit(snapshot.revision, replace=removal.replace)
+    message = 'Grand Map node properties leave their domain scope'
+    with pytest.raises(InvalidCell, match=message):
+        project_grand_map_cells(store.snapshot())
+    demanded_revisions.clear()
+    with pytest.raises(InvalidCell, match=message):
+        restored.root_properties[node_root]
+    assert demanded_revisions == [store.revision]
+    assert node_field.group._values is None       # failed verification can retry
+
+    snapshot = store.snapshot()
+    repair = prepare_append_relation_members(snapshot, domain_root,
+        ((imported.roles['scope'], property_root),))
+    store.commit(snapshot.revision, create=repair.create, replace=repair.replace)
+    demanded_revisions.clear()
+    latest = project_grand_map_cells(store.snapshot())
+    assert restored.root_properties[node_root] == latest.root_properties[node_root]
+    assert restored.nodes == latest.nodes
+    assert demanded_revisions == [store.revision]  # retry reads the current revision
 
 
 def test_map_projection_coexists_with_other_protocols_on_the_same_domain():

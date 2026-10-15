@@ -217,10 +217,11 @@ test('W8b Router removal retains one-click Settings routing without a catalogue 
     assert.deepEqual(routes,['settings']);assert.deepEqual(fetches,[]);
     assert.equal(ui.doc.querySelector('select[aria-label="Workshop model"]'),null);
     const source=read('nodelang/studio/studio.html'), saved=[];
-    const ctx=vm.createContext({window:{ARCHHUB_EXISTING_WORKSHOP:{setComposerModel:async value=>{saved.push(value);return{configuration_state:{composer_model:{value}}};}}}});
+    const hydration=[];
+    const ctx=vm.createContext({window:{ARCHHUB_LOAD_CANVAS:async()=>{hydration.push('canvas');},ARCHHUB_EXISTING_WORKSHOP:{setComposerModel:async value=>{saved.push(value);return{configuration_state:{composer_model:{value}}};}}}});
     vm.runInContext(source.slice(source.indexOf('    window.ARCHHUB_AGENT_SELECT ='),source.indexOf('    let graphRunPromise =')),ctx);
     assert.equal(await ctx.window.ARCHHUB_AGENT_SELECT('ollama/llama3'),'ollama/llama3');
-    assert.deepEqual(saved,['ollama/llama3']);
+    assert.deepEqual(saved,['ollama/llama3']);assert.deepEqual(hydration,['canvas'], 'model selection crosses the real lazy canvas barrier once');
   }finally{await ui.close();}
 });
 test('W8d Relay removal preserves the real cloud publish consent read and exact toggle authority',async()=>{

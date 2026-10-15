@@ -28,6 +28,9 @@ from urllib.parse import quote
 import uuid
 import weakref
 from weakref import WeakKeyDictionary
+from .lazy_application_registry import (
+    DeferredRegistryGroup, VerifiedLazyMapping, VerifiedLazyRegistry, VerifiedLazyViews,
+)
 
 _APPLICATION_HALTED = threading.Event()
 
@@ -1262,7 +1265,7 @@ class UniversalCdeWriteAdmission:
 
 
 @dataclass(frozen=True, slots=True)
-class UniversalApplicationRegistry:
+class UniversalApplicationRegistry(VerifiedLazyRegistry):
     roles: Mapping[str, str]
     map: UniversalMapRegistry
     core_values: CoreValuesAuthority
@@ -1385,6 +1388,7 @@ class UniversalApplicationRegistry:
     design_system_root: str
     theme_system_root: str
     view_sessions: dict[str, ApplicationViewSession]
+    lazy_scope_loader: object = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -9772,12 +9776,15 @@ def resolve_universal_baboom_utterance(
     clean = utterance.strip()
     if not clean or len(clean.encode("utf-8")) > 2_048:
         raise InvalidCell("BABOOM command utterance is outside its bound")
+    # The original catalogue reader may accept its compatibility migration on
+    # first demand. Authorize the resolved vocabulary against that same head.
+    catalog = registry.baboom_command_catalog
     snapshot = store.snapshot()
     _require_application_authorization(
         snapshot,
         registry,
         "inspect",
-        registry.baboom_command_catalog.root_id,
+        catalog.root_id,
         authentication_context=authentication_context,
     )
     spoken = re.sub(
@@ -9786,7 +9793,7 @@ def resolve_universal_baboom_utterance(
     normalized = spoken.casefold().rstrip("?.!")
     intent = "open-question"
     payload = clean
-    for entry in registry.baboom_command_catalog.entries.values():
+    for entry in catalog.entries.values():
         if normalized in entry.aliases:
             intent = entry.intent
             if intent in {"remember", "restart-to-update", "agent-message", "agent-interrupt"}:
@@ -9879,7 +9886,7 @@ def resolve_universal_baboom_utterance(
                 intent = "agent-interrupt"
                 payload = json.dumps({"target": interrupt.group(1), "reason": (interrupt.group(2) or "").strip()}, separators=(",", ":"))
     return {
-        "catalog": registry.baboom_command_catalog.root_id,
+        "catalog": catalog.root_id,
         "intent": intent,
         "payload": payload,
         "revision": snapshot.revision,
@@ -11719,6 +11726,9 @@ def bind_universal_runtime_agent_body_device_custody(
     authentication_context: object | None = None,
 ) -> int:
     """Add one approved active custody root to a device-proof runtime entry."""
+    # First verified access may publish compatibility migrations. Pin the
+    # mutation snapshot only after the deferred catalogue has been restored.
+    registry.agent_body_catalog
     snapshot = store.snapshot()
     entry = _agent_body_catalog_entry_for_runtime(snapshot, registry, runtime)
     if entry.credential_mode != "device-proof":
@@ -14875,6 +14885,7 @@ def _migrate_canvas_current_level(
     application_root: str,
     library_root: str,
     canvas_root: str,
+    lazy: bool = False,
 ) -> int:
     """Remove container lenses from the canvas while retaining their graph cells.
 
@@ -14898,6 +14909,8 @@ def _migrate_canvas_current_level(
         if application_member.role_id != roles["member"]:
             continue
         session_root = application_member.participant_id
+        if lazy and not _is_application_view_root(session_root, authorization):
+            continue
         try:
             session_members = read_relation(
                 snapshot, session_root, budget=100_000
@@ -15090,6 +15103,7 @@ def _migrate_brain_control_receipts_into_brain_scope(
     canvas_root: str,
     brain_root: str,
     knowledge_branch_definition_root: str,
+    deferred_scope_roots: tuple[str, ...] = (),
 ) -> int:
     """Move legacy Brain receipt assemblies under the Brain composition.
 
@@ -15100,7 +15114,8 @@ def _migrate_brain_control_receipts_into_brain_scope(
     """
     snapshot = store.snapshot()
     canvas_members = read_relation(snapshot, canvas_root, budget=100_000)
-    brain_members = read_relation(snapshot, brain_root, budget=100_000)
+    brain_members = (() if deferred_scope_roots else
+                     read_relation(snapshot, brain_root, budget=100_000))
     part_role = assembly.role("part")
     provenance_role = assembly.role("provenance")
 
@@ -15111,6 +15126,8 @@ def _migrate_brain_control_receipts_into_brain_scope(
         if member.role_id == roles["member"]
     )
     for candidate_root in candidate_roots:
+        if candidate_root in deferred_scope_roots:
+            continue
         try:
             instance_members = read_relation(
                 snapshot, candidate_root, budget=100_000
@@ -15144,6 +15161,8 @@ def _migrate_brain_control_receipts_into_brain_scope(
     receipt_roots = frozenset(receipt_roots)
     if not receipt_roots:
         return 0
+    if deferred_scope_roots:
+        brain_members = read_relation(snapshot, brain_root, budget=100_000)
     interface_role = assembly.role("interface")
     receipt_interfaces = frozenset(
         item.participant_id
@@ -15357,6 +15376,32 @@ def _migrate_brain_control_receipts_into_brain_scope(
     return len(receipt_members)
 
 
+def _is_application_view_root(root, authorization):
+    if root == authorization.session.root_id:
+        return True
+    prefix = "app:view-session:"
+    if not root.startswith(prefix):
+        return False
+    # The provisioner encodes the complete subject with _part(...). A literal
+    # colon after that encoded subject names a view-owned metadata relation,
+    # also registered in application membership, rather than another view.
+    subject_part = root[len(prefix):]
+    return bool(subject_part) and ":" not in subject_part
+
+
+@with_restore_relation_projection_scope
+def _restore_on_first_use(factory):
+    # First-open compatibility migrations retain the same declared publication
+    # intent as startup. This grants no read/write authority: their original
+    # verified graph projectors and admission checks still run in full.
+    from . import commit_intent
+    with commit_intent.declare(
+        commit_intent.MIGRATION, actor="app:archhub",
+        reason="verified application compatibility migration on first open",
+    ):
+        return factory()
+
+
 @with_restore_relation_projection_scope
 def restore_universal_application(
     map_path: str | Path,
@@ -15367,6 +15412,7 @@ def restore_universal_application(
     runtime_compliance_runner: Callable[
         [CourtInvocation], CourtResult
     ] | None = None,
+    lazy: bool = False,
 ) -> tuple[CellStore, UniversalApplicationRegistry]:
     """Recover the live application registry from one durable Cell graph."""
     snapshot = store.snapshot()
@@ -15425,7 +15471,9 @@ def restore_universal_application(
             snapshot.revision, create=missing_presentation_vocabulary
         )
         snapshot = store.snapshot()
-    map_registry = project_grand_map_cells(snapshot, map_path)
+    map_registry = project_grand_map_cells(
+        snapshot, map_path, lazy=lazy, snapshot_provider=store.snapshot,
+    )
     roles = dict(map_registry.roles)
     roles.update({
         name: "app:role:%s" % name
@@ -16340,25 +16388,31 @@ def restore_universal_application(
         attestation_protocol=attestation,
         ui_protocol=ui,
     )
-    _ensure_design_system_graph(
-        store,
-        roles,
-        map_registry,
-        presentation,
-        icon_catalog,
-        control_catalog,
-        control_bindings,
-        properties_presenter_protocol,
-        application_root=application_root,
-    )
-    _issue_resource_audience_bindings(
-        store,
-        authorization,
-        resource_roots=(_DESIGN_SYSTEM_ROOT, _THEME_SYSTEM_ROOT),
-        lifecycle_root=standard_library.lifecycle_protocol.states["shared"],
-        owner_root=authorization.subject_root,
-        administrator_root=authorization.subject_root,
-    )
+    def restore_design_system():
+        _ensure_design_system_graph(
+            store,
+            roles,
+            map_registry,
+            presentation,
+            icon_catalog,
+            control_catalog,
+            control_bindings,
+            properties_presenter_protocol,
+            application_root=application_root,
+        )
+        _issue_resource_audience_bindings(
+            store,
+            authorization,
+            resource_roots=(_DESIGN_SYSTEM_ROOT, _THEME_SYSTEM_ROOT),
+            lifecycle_root=standard_library.lifecycle_protocol.states["shared"],
+            owner_root=authorization.subject_root,
+            administrator_root=authorization.subject_root,
+        )
+        return {"ready": True}
+
+    design_group = DeferredRegistryGroup(lambda: _restore_on_first_use(restore_design_system))
+    if not lazy:
+        design_group.get("ready")
     snapshot = store.snapshot()
 
     attestation = project_attestation_protocol(
@@ -16597,17 +16651,18 @@ def restore_universal_application(
     # the same exact interfaces. Idempotent: the per-level guard reads the
     # snapshot and skips levels whose interfaces already exist, so a warm
     # boot pays one membership scan per level and writes nothing.
-    _ensure_nested_scope_canvas_interfaces(
-        store,
-        assembly,
-        roles,
-        application_root,
-        tuple(top_level_roots),
-        # On the restore path the merged application root_properties is
-        # assembled further down; the imported map's own mapping is the
-        # part the nested walk needs here.
-        map_registry.root_properties,
-    )
+    if not lazy:
+        _ensure_nested_scope_canvas_interfaces(
+            store,
+            assembly,
+            roles,
+            application_root,
+            tuple(top_level_roots),
+            # On the restore path the merged application root_properties is
+            # assembled further down; the imported map's own mapping is the
+            # part the nested walk needs here.
+            map_registry.root_properties,
+        )
     _ensure_governed_work_scope_interfaces(
         store,
         assembly,
@@ -16644,6 +16699,7 @@ def restore_universal_application(
         application_root=application_root,
         library_root="app:node-library",
         canvas_root=canvas_root,
+        lazy=lazy,
     )
     _migrate_brain_control_receipts_into_brain_scope(
         store,
@@ -16658,6 +16714,7 @@ def restore_universal_application(
                 "knowledge-branch"
             ].definition_root
         ),
+        deferred_scope_roots=tuple(top_level_roots) if lazy else (),
     )
     snapshot = store.snapshot()
     canvas_members = read_relation(snapshot, canvas_root, budget=100_000)
@@ -16670,12 +16727,12 @@ def restore_universal_application(
         if member.role_id == roles["relation"]
     )
     root_properties: dict[str, list[str]] = {
-        root: list(properties)
-        for root, properties in map_registry.root_properties.items()
+        root: list(map_registry.root_properties.get(root, ()))
+        for root in (visible_roots if lazy else map_registry.root_properties)
     }
     property_refs: dict[str, PropertyRef] = {}
     persisted_property_roots = tuple(dict.fromkeys((
-        *(root for roots in map_registry.root_properties.values() for root in roots),
+        *(root for roots in root_properties.values() for root in roots),
         *(
             member.participant_id for member in canvas_members
             if member.role_id == roles["property"]
@@ -16739,10 +16796,19 @@ def restore_universal_application(
             "active tenant role authority relationships are incomplete"
         )
     session_roots = []
+    deferred_view_roots = []
     for member in application_members:
         if member.role_id != roles["member"]:
             continue
         candidate = member.participant_id
+        # Application membership includes ledgers, receipts and catalogues.
+        # A view is provisioned under this protocol namespace; validate its
+        # complete relation below, never probe every unrelated member as a view.
+        if lazy and not _is_application_view_root(candidate, authorization):
+            continue
+        if lazy and candidate != authorization.session.root_id:
+            deferred_view_roots.append(candidate)
+            continue
         try:
             candidate_members = read_relation(
                 snapshot, candidate, budget=100_000
@@ -16938,212 +17004,270 @@ def restore_universal_application(
         connectors_domain_root,
         application_root,
     )
-    agent_roots = (
-        _AGENT_BODY_PROTOCOL_ROOT,
-        _AGENT_BODY_POLICY_ROOT,
-        _AGENT_BODY_ROOT,
-        _AGENT_SESSION_ROOT,
-        _AGENT_CONTROL_ROOT,
-    )
-    present_agent_roots = tuple(
-        root for root in agent_roots if root in store.snapshot().cells
-    )
-    if present_agent_roots and len(present_agent_roots) != len(agent_roots):
-        raise InvalidCell("persisted application Agent Body is partial")
-    agent_body = (
-        _project_application_agent_body(
+    registry = None
+
+    def restore_primary_agent():
+        agent_roots = (
+            _AGENT_BODY_PROTOCOL_ROOT,
+            _AGENT_BODY_POLICY_ROOT,
+            _AGENT_BODY_ROOT,
+            _AGENT_SESSION_ROOT,
+            _AGENT_CONTROL_ROOT,
+        )
+        present_agent_roots = tuple(
+            root for root in agent_roots if root in store.snapshot().cells
+        )
+        if present_agent_roots and len(present_agent_roots) != len(agent_roots):
+            raise InvalidCell("persisted application Agent Body is partial")
+        agent_body = (
+            _project_application_agent_body(
+                store,
+                authorization,
+                founder_view,
+                roles,
+                models_domain_root,
+                cognition_protocol,
+                cognition_definitions,
+                application_root,
+            )
+            if present_agent_roots
+            else _build_application_agent_body(
+                store,
+                authorization,
+                founder_view,
+                roles,
+                standard_library.lifecycle_protocol.states["wip"],
+                models_domain_root,
+                cognition_protocol,
+                cognition_definitions,
+                application_root,
+            )
+        )
+        agent_surface = _ensure_application_agent_surface(
             store,
+            roles,
+            agent_body,
+            _text(store.snapshot(), presentation.theme_roots["ink_soft"]),
+            canvas_root,
+            founder_view.properties_lens_root,
+        )
+        for owner_root, references in agent_surface.items():
+            root_properties.setdefault(owner_root, []).extend(
+                reference.relation_root for reference in references
+            )
+        if registry is not None:
+            registry.root_properties.invalidate()
+        return {'agent_body': agent_body}
+
+    # Installed transport needs the primary verified session identity. That
+    # first use must not restore the Workshop or the other agent catalogues.
+    agent_group = DeferredRegistryGroup(lambda: _restore_on_first_use(restore_primary_agent))
+
+    def restore_workshop_and_agents():
+        nonlocal relation_roots
+        agent_body = agent_group.get('agent_body')
+
+        (
+            deliberation_protocol,
+            workshop_category_roots,
+            workshop_phase_roots,
+            workshop_requirement_roots,
+            workshop_properties,
+        ) = _ensure_application_workshop(
+            store,
+            roles,
+            map_registry,
             authorization,
             founder_view,
-            roles,
-            models_domain_root,
-            cognition_protocol,
-            cognition_definitions,
-            application_root,
+            application_root=application_root,
+            lifecycle_root=standard_library.lifecycle_protocol.states["wip"],
+            initial_color=_text(
+                store.snapshot(), presentation.theme_roots["ink_soft"]
+            ),
         )
-        if present_agent_roots
-        else _build_application_agent_body(
+        root_properties.setdefault(_WORKSHOP_ROOT, []).extend(
+            reference.relation_root for reference in workshop_properties
+        )
+        brain_control_category_roots = _ensure_application_brain_control_ledger(
+            store,
+            roles,
+            map_registry,
+            authorization,
+            deliberation_protocol,
+            application_root=application_root,
+            lifecycle_root=standard_library.lifecycle_protocol.states["wip"],
+        )
+        workshop_work_wire_root, governed_work_properties = (
+            _ensure_application_governed_work_registry(
+                store,
+                roles,
+                map_registry,
+                assembly,
+                standard_library,
+                authorization,
+                founder_view,
+                application_root=application_root,
+                canvas_root=canvas_root,
+                lifecycle_root=standard_library.lifecycle_protocol.states["wip"],
+                initial_color=_text(
+                    store.snapshot(), presentation.theme_roots["ink_soft"]
+                ),
+            )
+        )
+        relation_roots = tuple(dict.fromkeys((
+            *relation_roots,
+            workshop_work_wire_root,
+        )))
+        root_properties.setdefault(_GOVERNED_WORK_REGISTRY_ROOT, []).extend(
+            reference.relation_root for reference in governed_work_properties
+        )
+        workshop_assignment_registry_root = (
+            _ensure_application_workshop_assignment_registry(
+                store,
+                roles,
+                map_registry,
+                authorization,
+                attention_protocol,
+                application_root=application_root,
+                lifecycle_root=standard_library.lifecycle_protocol.states["wip"],
+            )
+        )
+        baboom_map_node = _baboom_application_agent_body_anchor(
+            map_registry, models_domain_root
+        )
+        baboom_body = _ensure_baboom_application_agent_body(
             store,
             authorization,
             founder_view,
             roles,
             standard_library.lifecycle_protocol.states["wip"],
             models_domain_root,
-            cognition_protocol,
-            cognition_definitions,
+            _GOVERNED_WORK_REGISTRY_ROOT,
+            baboom_map_node,
             application_root,
         )
-    )
-    agent_surface = _ensure_application_agent_surface(
-        store,
-        roles,
-        agent_body,
-        _text(store.snapshot(), presentation.theme_roots["ink_soft"]),
-        canvas_root,
-        founder_view.properties_lens_root,
-    )
-    for owner_root, references in agent_surface.items():
-        root_properties.setdefault(owner_root, []).extend(
-            reference.relation_root for reference in references
+        baboom_execution_control_root = _ensure_baboom_execution_capability_control(
+            store,
+            authorization,
+            founder_view,
+            roles,
+            baboom_body,
+            models_domain_root,
+            _GOVERNED_WORK_REGISTRY_ROOT,
+            baboom_map_node,
+            application_root,
         )
-
-    (
-        deliberation_protocol,
-        workshop_category_roots,
-        workshop_phase_roots,
-        workshop_requirement_roots,
-        workshop_properties,
-    ) = _ensure_application_workshop(
-        store,
-        roles,
-        map_registry,
-        authorization,
-        founder_view,
-        application_root=application_root,
-        lifecycle_root=standard_library.lifecycle_protocol.states["wip"],
-        initial_color=_text(
-            store.snapshot(), presentation.theme_roots["ink_soft"]
-        ),
-    )
-    root_properties.setdefault(_WORKSHOP_ROOT, []).extend(
-        reference.relation_root for reference in workshop_properties
-    )
-    brain_control_category_roots = _ensure_application_brain_control_ledger(
-        store,
-        roles,
-        map_registry,
-        authorization,
-        deliberation_protocol,
-        application_root=application_root,
-        lifecycle_root=standard_library.lifecycle_protocol.states["wip"],
-    )
-    workshop_work_wire_root, governed_work_properties = (
-        _ensure_application_governed_work_registry(
+        harness_bodies = _ensure_harness_application_agent_bodies(
+            store,
+            authorization,
+            founder_view,
+            roles,
+            standard_library.lifecycle_protocol.states["wip"],
+            models_domain_root,
+            _GOVERNED_WORK_REGISTRY_ROOT,
+            baboom_map_node,
+            application_root,
+        )
+        agent_body_catalog = _ensure_application_agent_body_catalog(
+            store,
+            authorization,
+            roles,
+            map_registry,
+            models_domain_root,
+            application_root,
+            agent_body,
+            baboom_body,
+            baboom_execution_control_root,
+            harness_bodies,
+        )
+        baboom_command_catalog = _ensure_baboom_command_catalog(
+            store,
+            roles,
+            models_domain_root,
+            application_root,
+        )
+        (
+            governed_work_claim_binding_protocol_root,
+            governed_work_claim_binding_roles,
+            governed_work_claim_binding_registry_root,
+        ) = _ensure_governed_work_claim_binding_authority(
             store,
             roles,
             map_registry,
+            authorization,
             assembly,
             standard_library,
-            authorization,
-            founder_view,
-            application_root=application_root,
-            canvas_root=canvas_root,
-            lifecycle_root=standard_library.lifecycle_protocol.states["wip"],
-            initial_color=_text(
-                store.snapshot(), presentation.theme_roots["ink_soft"]
-            ),
-        )
-    )
-    relation_roots = tuple(dict.fromkeys((
-        *relation_roots,
-        workshop_work_wire_root,
-    )))
-    root_properties.setdefault(_GOVERNED_WORK_REGISTRY_ROOT, []).extend(
-        reference.relation_root for reference in governed_work_properties
-    )
-    workshop_assignment_registry_root = (
-        _ensure_application_workshop_assignment_registry(
-            store,
-            roles,
-            map_registry,
-            authorization,
-            attention_protocol,
+            agent_body_catalog,
             application_root=application_root,
             lifecycle_root=standard_library.lifecycle_protocol.states["wip"],
         )
-    )
-    baboom_map_node = _baboom_application_agent_body_anchor(
-        map_registry, models_domain_root
-    )
-    baboom_body = _ensure_baboom_application_agent_body(
-        store,
-        authorization,
-        founder_view,
-        roles,
-        standard_library.lifecycle_protocol.states["wip"],
-        models_domain_root,
-        _GOVERNED_WORK_REGISTRY_ROOT,
-        baboom_map_node,
-        application_root,
-    )
-    baboom_execution_control_root = _ensure_baboom_execution_capability_control(
-        store,
-        authorization,
-        founder_view,
-        roles,
-        baboom_body,
-        models_domain_root,
-        _GOVERNED_WORK_REGISTRY_ROOT,
-        baboom_map_node,
-        application_root,
-    )
-    harness_bodies = _ensure_harness_application_agent_bodies(
-        store,
-        authorization,
-        founder_view,
-        roles,
-        standard_library.lifecycle_protocol.states["wip"],
-        models_domain_root,
-        _GOVERNED_WORK_REGISTRY_ROOT,
-        baboom_map_node,
-        application_root,
-    )
-    agent_body_catalog = _ensure_application_agent_body_catalog(
-        store,
-        authorization,
-        roles,
-        map_registry,
-        models_domain_root,
-        application_root,
-        agent_body,
-        baboom_body,
-        baboom_execution_control_root,
-        harness_bodies,
-    )
-    baboom_command_catalog = _ensure_baboom_command_catalog(
-        store,
-        roles,
-        models_domain_root,
-        application_root,
-    )
-    (
-        governed_work_claim_binding_protocol_root,
-        governed_work_claim_binding_roles,
-        governed_work_claim_binding_registry_root,
-    ) = _ensure_governed_work_claim_binding_authority(
-        store,
-        roles,
-        map_registry,
-        authorization,
-        assembly,
-        standard_library,
-        agent_body_catalog,
-        application_root=application_root,
-        lifecycle_root=standard_library.lifecycle_protocol.states["wip"],
-    )
-    workshop_workbench_root, workbench_properties = (
-        _ensure_application_workshop_workbench(
-            store,
-            roles,
-            map_registry,
-            authorization,
-            founder_view,
-            application_root=application_root,
-            lifecycle_root=standard_library.lifecycle_protocol.states["wip"],
-            initial_color=_text(
-                store.snapshot(), presentation.theme_roots["ink_soft"]
-            ),
+        workshop_workbench_root, workbench_properties = (
+            _ensure_application_workshop_workbench(
+                store,
+                roles,
+                map_registry,
+                authorization,
+                founder_view,
+                application_root=application_root,
+                lifecycle_root=standard_library.lifecycle_protocol.states["wip"],
+                initial_color=_text(
+                    store.snapshot(), presentation.theme_roots["ink_soft"]
+                ),
+            )
         )
-    )
-    root_properties.setdefault(workshop_workbench_root, []).extend(
-        reference.relation_root for reference in workbench_properties
-    )
-    migrated_scope_interfaces = _migrate_legacy_canvas_scope_interfaces(
-        store,
-        assembly,
-        roles,
-        application_root,
-        workshop_workbench_root,
+        root_properties.setdefault(workshop_workbench_root, []).extend(
+            reference.relation_root for reference in workbench_properties
+        )
+        if registry is not None:
+            object.__setattr__(registry, "relation_roots", relation_roots)
+            registry.root_properties.invalidate()
+        return {
+            'agent_body': agent_body,
+            'deliberation_protocol': deliberation_protocol,
+            'workshop_category_roots': workshop_category_roots,
+            'workshop_phase_roots': workshop_phase_roots,
+            'workshop_requirement_roots': workshop_requirement_roots,
+            'brain_control_category_roots': brain_control_category_roots,
+            'workshop_work_wire_root': workshop_work_wire_root,
+            'workshop_assignment_registry_root': workshop_assignment_registry_root,
+            'baboom_body': baboom_body,
+            'baboom_execution_control_root': baboom_execution_control_root,
+            'harness_bodies': harness_bodies,
+            'agent_body_catalog': agent_body_catalog,
+            'baboom_command_catalog': baboom_command_catalog,
+            'governed_work_claim_binding_protocol_root': governed_work_claim_binding_protocol_root,
+            'governed_work_claim_binding_roles': governed_work_claim_binding_roles,
+            'governed_work_claim_binding_registry_root': governed_work_claim_binding_registry_root,
+            'workshop_workbench_root': workshop_workbench_root,
+        }
+
+    work_group = DeferredRegistryGroup(lambda: _restore_on_first_use(restore_workshop_and_agents))
+    if not lazy:
+        work_group.get("agent_body")
+    agent_body = agent_group.field('agent_body') if lazy else work_group.get('agent_body')
+    # Retention/content reads need only verified protocol vocabulary, never
+    # Workshop compatibility migrations. Restore that small grammar eagerly.
+    deliberation_protocol = (bootstrap_deliberation_protocol(
+        store, prefix=_DELIBERATION_PROTOCOL_PREFIX,
+    ) if lazy else work_group.get('deliberation_protocol'))
+    workshop_category_roots = work_group.field('workshop_category_roots') if lazy else work_group.get('workshop_category_roots')
+    workshop_phase_roots = work_group.field('workshop_phase_roots') if lazy else work_group.get('workshop_phase_roots')
+    workshop_requirement_roots = work_group.field('workshop_requirement_roots') if lazy else work_group.get('workshop_requirement_roots')
+    brain_control_category_roots = work_group.field('brain_control_category_roots') if lazy else work_group.get('brain_control_category_roots')
+    workshop_work_wire_root = work_group.field('workshop_work_wire_root') if lazy else work_group.get('workshop_work_wire_root')
+    workshop_assignment_registry_root = work_group.field('workshop_assignment_registry_root') if lazy else work_group.get('workshop_assignment_registry_root')
+    baboom_body = work_group.field('baboom_body') if lazy else work_group.get('baboom_body')
+    baboom_execution_control_root = work_group.field('baboom_execution_control_root') if lazy else work_group.get('baboom_execution_control_root')
+    harness_bodies = work_group.field('harness_bodies') if lazy else work_group.get('harness_bodies')
+    agent_body_catalog = work_group.field('agent_body_catalog') if lazy else work_group.get('agent_body_catalog')
+    baboom_command_catalog = work_group.field('baboom_command_catalog') if lazy else work_group.get('baboom_command_catalog')
+    governed_work_claim_binding_protocol_root = work_group.field('governed_work_claim_binding_protocol_root') if lazy else work_group.get('governed_work_claim_binding_protocol_root')
+    governed_work_claim_binding_roles = work_group.field('governed_work_claim_binding_roles') if lazy else work_group.get('governed_work_claim_binding_roles')
+    governed_work_claim_binding_registry_root = work_group.field('governed_work_claim_binding_registry_root') if lazy else work_group.get('governed_work_claim_binding_registry_root')
+    workshop_workbench_root = work_group.field('workshop_workbench_root') if lazy else work_group.get('workshop_workbench_root')
+
+    migrated_scope_interfaces = () if lazy else _migrate_legacy_canvas_scope_interfaces(
+        store, assembly, roles, application_root, workshop_workbench_root,
     )
     (
         relation_contract_protocol,
@@ -17158,6 +17282,62 @@ def restore_universal_application(
         canvas_root="app:canvas",
         application_http_route_roots=active_projected_routes,
     )
+
+    if lazy:
+        def project_view(subject):
+            candidate = "app:view-session:" + _part(subject)
+            if candidate not in deferred_view_roots:
+                raise KeyError(subject)
+            current = store.snapshot()
+            members = read_relation(current, candidate, budget=100_000)
+            if not _members_are_application_view_session(members, roles, authorization):
+                raise InvalidCell("persisted view session protocol drifted")
+            if _one_for_role(members, authorization.session_owner_role_root) != subject:
+                raise InvalidCell("persisted view session owner drifted")
+            _ensure_view_scope_trail(store, roles, candidate,
+                                     application_root=application_root, canvas_root=canvas_root)
+            _ensure_view_composition_graph(store, roles, candidate,
+                                          application_root=application_root)
+            _ensure_view_inspector_lens(store, roles, candidate, inspector_lens_roots,
+                                       application_root=application_root)
+            _ensure_view_properties_panel(store, roles, properties_presentation_protocol,
+                                          candidate, properties_panel_roots,
+                                          application_root=application_root)
+            view = _project_application_view_session(
+                store.snapshot(), roles, authorization, candidate, theme_binding_modes,
+                inspector_lens_roots, properties_presentation_protocol, properties_panel_roots,
+            )
+            _ensure_persistent_view_focus(store, roles, attention_protocol, authorization, view)
+            view = _project_application_view_session(
+                store.snapshot(), roles, authorization, candidate, theme_binding_modes,
+                inspector_lens_roots, properties_presentation_protocol, properties_panel_roots,
+            )
+            trail = _read_view_scope_trail_structure(store.snapshot(), registry, view)
+            # Theme ownership and other view-metadata reads must not open an
+            # unrelated saved canvas. The original canonical canvas owner
+            # admits, hydrates and reconciles a nested scope on its first open.
+            if trail[-1] == canvas_root:
+                _ensure_view_visibility_scope_projection(store, registry, view)
+            return view
+
+        def view_keys():
+            keys = [authorization.subject_root]
+            for candidate in deferred_view_roots:
+                members = read_relation(store.snapshot(), candidate, budget=100_000)
+                if not _members_are_application_view_session(members, roles, authorization):
+                    raise InvalidCell("persisted view session protocol drifted")
+                keys.append(_one_for_role(members, authorization.session_owner_role_root))
+            return tuple(keys)
+
+        views = VerifiedLazyViews(
+            views, lambda subject: _restore_on_first_use(lambda: project_view(subject)),
+            keys=view_keys,
+        )
+
+        def load_properties(root):
+            if root in root_properties:
+                return tuple(dict.fromkeys(root_properties[root]))
+            return map_registry.root_properties[root]
 
     registry = UniversalApplicationRegistry(
         roles=MappingProxyType(roles),
@@ -17278,10 +17458,13 @@ def restore_universal_application(
         visible_roots=visible_roots,
         container_roots=(application_root, "app:node-library"),
         relation_roots=relation_roots,
-        root_properties=MappingProxyType({
-            root: tuple(dict.fromkeys(properties))
-            for root, properties in root_properties.items()
-        }),
+        root_properties=(
+            VerifiedLazyMapping({}, load_properties, keys=lambda: tuple(dict.fromkeys(
+                (*root_properties, *map_registry.root_properties)
+            ))) if lazy else MappingProxyType({
+                root: tuple(dict.fromkeys(properties)) for root, properties in root_properties.items()
+            })
+        ),
         position_properties=MappingProxyType(position_properties),
         viewport_properties=founder_view.viewport_properties,
         theme_binding_modes=theme_binding_modes,
@@ -17302,12 +17485,57 @@ def restore_universal_application(
         theme_system_root=_THEME_SYSTEM_ROOT,
         view_sessions=views,
     )
-    _append_migrated_visibility_interfaces(
-        store,
-        registry,
-        migrated_scope_interfaces,
-    )
-    _ensure_visibility_scope_projections(store, registry)
+    if lazy:
+        scope_lock = threading.RLock()
+        opened_scopes = set()
+
+        def load_scope(scope_root, opening_view=None):
+            if scope_root == canvas_root:
+                return
+            with scope_lock:
+                if scope_root in opened_scopes:
+                    return
+                if scope_root in map_registry.domains.values():
+                    # Opening even an empty/malformed Map domain must retain
+                    # all original role, wire and scope-membership checks.
+                    map_registry.nodes
+                if scope_root in (_DESIGN_SYSTEM_ROOT, _THEME_SYSTEM_ROOT):
+                    design_group.get("ready")
+                if scope_root in (_WORKSHOP_ROOT, _GOVERNED_WORK_REGISTRY_ROOT,
+                                  _WORKSHOP_WORKBENCH_ROOT, _AGENT_CONTROL_ROOT):
+                    work_group.get("agent_body")
+                _ensure_nested_scope_canvas_interfaces(
+                    store, assembly, roles, application_root, (scope_root,),
+                    registry.root_properties,
+                )
+                migrated = _migrate_legacy_canvas_scope_interfaces(
+                    store, assembly, roles, application_root, scope_root,
+                )
+                if migrated:
+                    active_views = {view.root_id: view for view in _loaded_application_views(registry)}
+                    if opening_view is not None:
+                        active_views[opening_view.root_id] = opening_view
+                    _append_migrated_visibility_interfaces(
+                        store, registry, migrated, view_sessions=tuple(active_views.values()),
+                    )
+                opened_scopes.add(scope_root)
+
+        object.__setattr__(registry, "lazy_scope_loader", lambda scope, view=None:
+                           _restore_on_first_use(lambda: load_scope(scope, view)))
+    if migrated_scope_interfaces:
+        _append_migrated_visibility_interfaces(
+            store,
+            registry,
+            migrated_scope_interfaces,
+        )
+    if lazy:
+        # Home does not display the last saved canvas. Preserve its verified
+        # trail and defer its scope/index reconciliation to a canvas read.
+        trail = _read_view_scope_trail_structure(store.snapshot(), registry, founder_view)
+        if trail[-1] == canvas_root:
+            _ensure_visibility_scope_projections(store, registry)
+    else:
+        _ensure_visibility_scope_projections(store, registry)
     return store, registry
 
 
@@ -18224,6 +18452,8 @@ def _append_migrated_visibility_interfaces(
     store: CellStore,
     registry: UniversalApplicationRegistry,
     interface_roots: tuple[str, ...],
+    *,
+    view_sessions=None,
 ) -> None:
     """Publish only interfaces created by the bounded restore migration."""
     if not interface_roots:
@@ -18243,7 +18473,7 @@ def _append_migrated_visibility_interfaces(
     replace: dict[str, Cell] = {}
     staged = snapshot
     interface_role = registry.assembly_protocol.role("interface")
-    for view_session in registry.view_sessions.values():
+    for view_session in (registry.view_sessions.values() if view_sessions is None else view_sessions):
         members = read_relation(
             staged, view_session.visibility_root, budget=100_000
         )
@@ -19936,7 +20166,10 @@ def _user_canvas_root(
             member.participant_id for member in members
             if member.role_id == registry.roles["member"]
         ]
-        return bool(children) and all(
+        # A newly created blank graph has the same personal composition
+        # seed, authority and signed visibility as a populated group. It
+        # contains no application-owned child to exclude from the lens.
+        return all(
             _user_canvas_root(
                 snapshot, registry, child, seen, level_root=root_id
             )
@@ -21331,11 +21564,16 @@ def _visibility_closure(
     ))
 
 
+def _loaded_application_views(registry):
+    views = registry.view_sessions
+    return views.loaded_values() if isinstance(views, VerifiedLazyMapping) else views.values()
+
+
 def _ensure_visibility_scope_projections(
     store: CellStore,
     registry: UniversalApplicationRegistry,
 ) -> None:
-    for view_session in registry.view_sessions.values():
+    for view_session in _loaded_application_views(registry):
         _ensure_view_visibility_scope_projection(store, registry, view_session)
 
 
@@ -21347,6 +21585,7 @@ def _session_canvas_roots(
     authority_snapshot: VerifiedAuthoritySnapshot | None = None,
     include_trail: bool = False,
     include_interfaces: bool = False,
+    root_only: bool = False,
 ) -> tuple:
     """Project only canvas roots explicitly assigned to this view session."""
     cache = _SESSION_CANVAS_ROOTS_CACHE.get()
@@ -21357,6 +21596,7 @@ def _session_canvas_roots(
         view_session.root_id,
         include_trail,
         include_interfaces,
+        root_only,
         id(authority_snapshot),
     )
     if cache is not None and cache_key in cache:
@@ -21427,6 +21667,23 @@ def _session_canvas_roots(
         tuple(dict.fromkeys((*assigned, *exposure_compositions))),
         authority_snapshot=verified,
     )
+    if root_only:
+        # Home names root-level graphs under the same signed visibility,
+        # exposure and resource-audience checks. Saved nested members are
+        # admitted by the original canvas owner when that canvas is opened.
+        trail = _read_view_scope_trail_structure(snapshot, registry, view_session)
+        scoped = _apply_view_scope_exposure(
+            snapshot, registry, view_session, registry.canvas_root, top_scope[:3],
+        )
+        interfaces = top_scope[3] if scoped == top_scope[:3] else None
+        result = (
+            (*scoped, interfaces, trail) if include_interfaces and include_trail
+            else (*scoped, interfaces) if include_interfaces
+            else (*scoped, trail) if include_trail else scoped
+        )
+        if cache is not None:
+            cache[cache_key] = result
+        return result
     trail = _read_view_scope_trail(
         snapshot,
         registry,
@@ -23835,7 +24092,7 @@ def _project_universal_canvas_interpreter(
             ),
             tuple(
                 (view.root_id, member.role_id, member.participant_id)
-                for view in registry.view_sessions.values()
+                for view in _loaded_application_views(registry)
                 for member in read_relation(
                     surface_snapshot,
                     view.visibility_root,
@@ -27783,6 +28040,90 @@ def _remember_canvas_answer(
         )
 
 
+@with_relation_projection_scope
+@with_catalog_verification_scope
+def project_universal_home_frame(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    *,
+    authentication_context: object | None = None,
+) -> dict[str, object]:
+    """Read the authenticated Home frame without opening the saved canvas.
+
+    The saved scope is personal view metadata here. Its members, history and
+    callable canvas controls remain admitted by their original first-open
+    owners; this frame issues no interaction lease and never changes the trail.
+    """
+    if authentication_context is None:
+        raise AuthorizationDenied("Home frame requires an explicit authenticated context")
+    view, context = _view_session_for_context(registry, authentication_context)
+    authority = registry.authorization
+    with authority.broker.live_context(context):
+        snapshot = store.snapshot()
+        verify_released_catalog_stable(
+            store, snapshot, registry.assembly_protocol,
+            registry.standard_library.catalog_root,
+        )
+        verified = verify_relationship_authority_snapshot(
+            snapshot, authority.identity_protocol, authority.relationship_broker,
+            now=time.time(),
+        )
+        _require_application_authorization(
+            snapshot, registry, "read", authority.shell_scope_root,
+            authentication_context=context, authority_snapshot=verified,
+        )
+        _require_application_authorization(
+            snapshot, registry, "inspect", view.root_id,
+            authentication_context=context, authority_snapshot=verified,
+            resource_lineage_roots=(authority.personal_view_scope_root,),
+        )
+        identity = authority.broker.resolve(context)
+        if identity.subject_root != view.subject_root:
+            raise AuthorizationDenied("Home frame application view changed")
+        trail = _read_view_scope_trail_structure(snapshot, registry, view)
+        theme, metadata = read_universal_theme(
+            store, registry, authentication_context=context,
+        )
+        _, _, personal_heads = _theme_revision(snapshot, registry, view)
+        if store.revision != snapshot.revision:
+            raise InvalidCell("Home frame graph revision changed")
+        return {
+            "revision": snapshot.revision,
+            "application_root": registry.application_root,
+            "canvas_root": registry.canvas_root,
+            "canvas_deferred": True,
+            "scope": {
+                "current": trail[-1],
+                "parent": trail[-2] if len(trail) > 1 else None,
+                "trail": [{"root": root, "current": root == trail[-1]} for root in trail],
+            },
+            "authorization": {
+                "subject": identity.subject_root,
+                "subject_label": _text(snapshot, identity.subject_root),
+                "session": view.root_id,
+                "system_view": view.subject_root == authority.subject_root,
+            },
+            "configuration": {
+                **metadata,
+                "theme": theme,
+                "theme_fields": [{
+                    "key": name, "value": value,
+                    "token_root": registry.presentation.theme_roots[name],
+                    "control": _appearance_control_root(
+                        view.subject_root, registry.presentation.theme_roots[name],
+                        _APPEARANCE_OPERATION_ROOTS["theme-preview"],
+                    ),
+                    "event_fact_input": _EVENT_FACT_ROOTS["submitted_value"],
+                } for name, value in theme.items()],
+                "personal_wip_heads": list(personal_heads),
+                "history": [],
+                "history_deferred": True,
+            },
+            "nodes": [], "wires": [],
+            "interaction_projection": {"revision": snapshot.revision, "bindings": []},
+        }
+
+
 def project_universal_canvas(
     store: CellStore,
     registry: UniversalApplicationRegistry,
@@ -27833,6 +28174,48 @@ def project_universal_canvas(
     return projection
 
 
+@with_relation_projection_scope
+def _restore_saved_scope_before_canvas_projection(store, registry, authentication_context):
+    """Admit the saved view through existing readers before first-use repair."""
+    if registry.lazy_scope_loader is None:
+        return
+    view, context = _view_session_for_context(registry, authentication_context)
+    snapshot = store.snapshot()
+    trail = _read_view_scope_trail_structure(snapshot, registry, view)
+    if trail[-1] == registry.canvas_root:
+        return
+    verify_released_catalog_stable(
+        store, snapshot, registry.assembly_protocol,
+        registry.standard_library.catalog_root,
+    )
+    authority = registry.authorization
+    verified = verify_relationship_authority_snapshot(
+        snapshot, authority.identity_protocol, authority.relationship_broker,
+        now=time.time(),
+    )
+    _require_application_authorization(
+        snapshot, registry, "read", authority.shell_scope_root,
+        authentication_context=context, authority_snapshot=verified,
+    )
+    _require_application_authorization(
+        snapshot, registry, "inspect", view.root_id,
+        authentication_context=context, authority_snapshot=verified,
+        resource_lineage_roots=(authority.personal_view_scope_root,),
+    )
+    # This original reader admits signed visibility grants, resource audience,
+    # composition exposures, and each direct edge of the saved scope trail.
+    visible, _, _, admitted_trail = _session_canvas_roots(
+        snapshot, registry, view, authority_snapshot=verified, include_trail=True,
+    )
+    for root in visible:
+        _require_application_authorization(
+            snapshot, registry, "read", root, authentication_context=context,
+            authority_snapshot=verified, resource_lineage_roots=admitted_trail[1:],
+        )
+    registry.lazy_scope_loader(admitted_trail[-1], view)
+    _ensure_view_visibility_scope_projection(store, registry, view)
+
+
 def _project_universal_canvas_answer(
     store: CellStore,
     registry: UniversalApplicationRegistry,
@@ -27840,6 +28223,7 @@ def _project_universal_canvas_answer(
     authentication_context: object | None = None,
 ) -> dict[str, object]:
     """The canvas answer itself: interpreter, accelerator or position delta."""
+    _restore_saved_scope_before_canvas_projection(store, registry, authentication_context)
     if not canvas_accelerator_enabled():
         return _project_universal_canvas_interpreter(
             store,
@@ -29308,10 +29692,10 @@ def read_universal_theme(
     *,
     authentication_context: object | None = None,
 ) -> tuple[dict[str, str], dict[str, object]]:
-    snapshot = store.snapshot()
     view_session, context = _view_session_for_context(
         registry, authentication_context
     )
+    snapshot = store.snapshot()
     _require_application_authorization(
         snapshot,
         registry,
@@ -31234,6 +31618,8 @@ def _register_universal_governed_work(
     instance_root: str,
 ) -> str:
     """Attach one exact work assembly through a visible registry membership wire."""
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.workshop_workbench_root
     snapshot = store.snapshot()
     definition_root = registry.standard_library.governed_domains.definitions[
         "governed-work"
@@ -31739,6 +32125,8 @@ def begin_universal_runtime_agent_session(
         )
     ):
         raise InvalidCell("runtime Agent Session identity is invalid")
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     snapshot = store.snapshot()
     if session_root in snapshot.cells:
         raise InvalidCell("runtime Agent Session identity already exists")
@@ -31964,6 +32352,8 @@ def create_universal_governed_work(
         raise InvalidCell("governed work interface has two competing sources")
     from .existing_workshop_project_revision import validate_work_hosts
     validate_work_hosts(structured_references.get("requirements"))
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.workshop_workbench_root
     snapshot = store.snapshot()
     if any(
         type(root) is not str or not root or root not in snapshot.cells
@@ -33101,10 +33491,10 @@ def project_universal_device_handoffs(
     primary-graph facts. This endpoint is a read lens over that one state; it
     neither mirrors command metadata nor uses an external relay queue.
     """
-    snapshot = store.snapshot()
     _view_session, context = _view_session_for_context(
         registry, authentication_context
     )
+    snapshot = store.snapshot()
     _require_application_authorization(
         snapshot,
         registry,
@@ -33348,6 +33738,8 @@ def create_universal_device_handoff_work_for_device_ref(
     resolution, current custody state, source-session proof, and resulting
     custody-root policy all remain in the Universal Cell application.
     """
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     if (
         type(target_device_ref) is not str
         or not _FOUNDER_DEVICE_CUSTODY_REF.fullmatch(target_device_ref)
@@ -33508,6 +33900,8 @@ def initiate_universal_baboom_work_claim_transfer(
     content_service=None,
 ) -> dict[str, object]:
     """Release one claimed Work into an exact target-custody reservation."""
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     if (
         type(transfer_key) is not str
         or not re.fullmatch(r"[0-9a-f]{64}", transfer_key)
@@ -33724,10 +34118,10 @@ def project_universal_baboom_work_claim_transfers(
     authentication_context: object | None = None,
 ) -> dict[str, object]:
     """Project custody-scoped continuation state without Work content or roots."""
-    snapshot = store.snapshot()
     _view_session, context = _view_session_for_context(
         registry, authentication_context
     )
+    snapshot = store.snapshot()
     _require_application_authorization(
         snapshot,
         registry,
@@ -33839,6 +34233,8 @@ def cancel_universal_baboom_work_claim_transfer(
     authentication_context: object | None = None,
 ) -> dict[str, object]:
     """Cancel one source-owned continuation and restore ordinary Work claiming."""
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     if (
         type(transfer_key) is not str
         or not re.fullmatch(r"[0-9a-f]{64}", transfer_key)
@@ -34215,10 +34611,10 @@ def project_universal_governed_work(
     authentication_context: object | None = None,
 ) -> tuple[dict[str, object], ...]:
     """Project the ordered work registry without creating a second ledger."""
-    snapshot = store.snapshot()
     view_session, context = _view_session_for_context(
         registry, authentication_context
     )
+    snapshot = store.snapshot()
     _require_application_authorization(
         snapshot,
         registry,
@@ -34359,10 +34755,12 @@ def project_universal_governed_work_index(
     authentication_context: object | None = None,
 ) -> dict[str, object]:
     """Project the lightweight idempotency index from the work registry."""
-    snapshot = store.snapshot()
     _view_session, context = _view_session_for_context(
         registry, authentication_context
     )
+    # A deferred personal view may finish a verified compatibility migration
+    # on first use. Bind the index to that accepted head, not its prior head.
+    snapshot = store.snapshot()
     _require_application_authorization(
         snapshot,
         registry,
@@ -34720,6 +35118,8 @@ def record_universal_baboom_activity(
     The capsule cannot create Work, modify Focus, invoke a model, or authorize
     an effect; it is an expiring observation for the shared founder lens.
     """
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     if type(app) is not str:
         raise InvalidCell("BABOOM activity app is invalid")
     snapshot = store.snapshot()
@@ -34792,6 +35192,8 @@ def record_universal_baboom_meeting_notes(
     separate, explicitly approved physical effects. The session only grants
     BABOOM an active presentation and a narrow, expiring stewardship scope.
     """
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     if action not in {"start", "stop"}:
         raise InvalidCell("BABOOM meeting-notes action is not released")
     snapshot = store.snapshot()
@@ -34933,6 +35335,8 @@ def record_universal_baboom_steward_signal(
     This path records an already-redacted Steward signal only. It cannot create
     Work, mutate Focus, invoke a capability, or broaden a model context.
     """
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     fingerprint, source, summary = _normalise_universal_baboom_steward_signal(
         fingerprint, source, summary
     )
@@ -35149,6 +35553,8 @@ def list_universal_workshop_assignments(
     """List graph-held shared assignments; no process task ledger is read."""
     if work_root is not None and (type(work_root) is not str or not work_root):
         raise InvalidCell("Workshop assignment work filter is invalid")
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.workshop_assignment_registry_root
     snapshot = store.snapshot()
     _require_application_authorization(
         snapshot,
@@ -35191,6 +35597,8 @@ def assign_universal_workshop_work(
         or not agent_session_root
     ):
         raise InvalidCell("Workshop assignment identities are invalid")
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.workshop_assignment_registry_root
     snapshot = store.snapshot()
     _view_session, context = _view_session_for_context(
         registry, authentication_context
@@ -35464,6 +35872,8 @@ def append_universal_workshop_entry(
     graph message or wiring. Unbound legacy spaces retain their prior behavior
     until all consumers and migration are ready for one governed cutover.
     """
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.workshop_category_roots
     snapshot = store.snapshot()
     if expected_revision is not None and snapshot.revision != expected_revision:
         from .cell_authorization import RefusedWithoutEffect
@@ -35974,6 +36384,8 @@ def capture_universal_workshop_file_source(
     and only a path the Work's graph-held CDE container names (allowed_paths).
     Only the digest and locator enter the graph; the bytes are never returned.
     """
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     snapshot = store.snapshot()
     if not _registered_governed_work_root(snapshot, registry, work_root):
         raise InvalidCell("source capture requires one registered governed Work")
@@ -36219,6 +36631,8 @@ def transition_universal_governed_work(
     content_service=None,
 ) -> tuple[str, int]:
     """Apply the agent-admitted work transitions with graph-derived ownership."""
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     event = event.strip().lower() if type(event) is str else ""
     if event not in {"claim", "release", "block", "resume", "submit"}:
         raise InvalidCell("work transition is outside the agent allowlist")
@@ -37401,6 +37815,8 @@ def _baboom_execution_work_context(
     required_state: str = "claimed",
     purpose: str = "model delegation",
 ) -> tuple[AgentSessionProjection, AgentBodyCatalogEntry, Mapping[str, object]]:
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     if required_state not in {"claimed", "blocked"} or not purpose:
         raise InvalidCell("BABOOM execution Work context is invalid")
     snapshot = store.snapshot()
@@ -37426,6 +37842,8 @@ def _runtime_work_planning_context(
     purpose: str,
 ) -> tuple[AgentSessionProjection, AgentBodyCatalogEntry, Mapping[str, object]]:
     """Admit only draft planning for an active catalogue-bound Work owner."""
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     snapshot = store.snapshot()
     session = _runtime_agent_session(snapshot, registry, agent_session_root)
     entry = _agent_body_catalog_entry_for_session(snapshot, registry, session)
@@ -37894,6 +38312,8 @@ def _baboom_workshop_coordination_payload(
     snapshot reused by each admitted provider until relevant source content
     changes.
     """
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     status = project_universal_governed_work_status(
         store, registry, authentication_context=authentication_context
     )
@@ -38218,6 +38638,8 @@ def _ensure_baboom_cognition_model_identity(
     model_root: str,
     revision_root: str,
 ) -> None:
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body
     snapshot = store.snapshot()
     if identity_root in snapshot.cells:
         members = read_relation(snapshot, identity_root, budget=128)
@@ -39258,6 +39680,8 @@ def record_universal_baboom_cognition_proposal(
     receipt, or transition the Work. The receipt path performs those distinct
     actions after this proposal has been accepted into the Cognition graph.
     """
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     if (
         type(cognition_request_root) is not str
         or not cognition_request_root
@@ -39586,6 +40010,8 @@ def register_universal_mcp_server(
     authentication_context: object | None = None,
 ) -> tuple[McpServerProjection, int]:
     """Enroll one local MCP configuration by opaque fingerprint only."""
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     if (
         type(transport) is not str
         or type(config_digest) is not str
@@ -39884,6 +40310,8 @@ def approve_universal_baboom_connector_execution(
     authentication_context: object | None = None,
 ) -> tuple[ConnectorDelegationProjection, int]:
     """Consume one founder gesture for a persisted connector request."""
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     snapshot = store.snapshot()
     founder_session = _runtime_agent_session(
         snapshot, registry, founder_agent_session_root
@@ -40273,6 +40701,8 @@ def approve_universal_baboom_model_execution(
     authentication_context: object | None = None,
 ) -> tuple[ModelDelegationProjection, int]:
     """Consume an explicit founder gesture for one persisted delegation."""
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     snapshot = store.snapshot()
     founder_session = _runtime_agent_session(
         snapshot, registry, founder_agent_session_root
@@ -40327,6 +40757,8 @@ def authorize_universal_baboom_model_execution(
     content_service=None,
 ) -> tuple[ModelDelegationProjection, str]:
     """Recheck the exact released adapter grant before issuing a live token."""
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     delegation = read_model_delegation(
         store.snapshot(),
         registry.baboom_model_execution_protocol,
@@ -40632,6 +41064,8 @@ def _failed_baboom_model_execution_recovery_context(
     AgentSessionProjection,
 ]:
     """Resolve one failed receipt only against its exact BABOOM-owned Work."""
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     if type(receipt_root) is not str or not receipt_root:
         raise InvalidCell("model execution recovery receipt is invalid")
     snapshot = store.snapshot()
@@ -41038,6 +41472,8 @@ def verify_universal_runtime_handoff_work(
     authentication_context: object | None = None,
 ) -> Mapping[str, object]:
     """Verify one accepted Work as the exact authority to release a worker."""
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     if (
         type(work_root) is not str
         or not work_root
@@ -41316,6 +41752,8 @@ def adjudicate_universal_governed_work(
     artifact_review_verifier=None,
 ) -> dict[str, object]:
     """Rerun one submitted work gate in the independent application court."""
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     snapshot = store.snapshot()
     view_session, context = _view_session_for_context(
         registry, authentication_context
@@ -41632,6 +42070,8 @@ def project_universal_runtime_handoff_readiness(
     Callers that can race graph mutations must hold the application mutation
     lock while obtaining the Work index and this projection.
     """
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     if work_index is None:
         work_index = project_universal_governed_work_index(
             store, registry, authentication_context=authentication_context
@@ -41813,6 +42253,8 @@ def project_universal_baboom_context(
     non-executing suggestion so an untrusted local model cannot receive titles,
     descriptions, values, receipts, identities, or arbitrary entry content.
     """
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.workshop_category_roots
     if work_index is None:
         work_index = project_universal_governed_work_index(
             store, registry, authentication_context=authentication_context
@@ -42572,6 +43014,8 @@ def project_universal_founder_model_council_report(
     Work. Each included review has already passed the proposal/receipt/provider
     checks used by the sealed model coordination brief.
     """
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     status = project_universal_governed_work_status(
         store, registry, authentication_context=authentication_context
     )
@@ -42706,6 +43150,8 @@ def project_universal_founder_baboom_steward_briefing(
     come from one database snapshot. The desktop only transports and renders
     this admitted lens.
     """
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.workshop_category_roots
     snapshot = store.snapshot()
     space = read_deliberation_space(snapshot, registry.deliberation_protocol, registry.workshop_root)
     if space.content_store_root is not None and _workshop_read is None:
@@ -42792,6 +43238,8 @@ def project_universal_founder_workshop_report(
     material so the report cannot become a copied Workshop authority or a
     prompt-ready export of the deliberation graph.
     """
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.workshop_category_roots
     snapshot = store.snapshot()
     # Read the tail, never the whole space. This lens renders eight entries;
     # reading every entry so eight could be sliced off the end cost seconds
@@ -42950,6 +43398,8 @@ def project_universal_founder_device_custody_report(
     roots, Agent Session roots, timestamps, or revocation text. `device_ref`
     is an opaque selector accepted only by the paired revocation operation.
     """
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     snapshot = store.snapshot()
     records = _founder_device_custody_records(
         snapshot, registry, now=time.time()
@@ -42991,6 +43441,8 @@ def revoke_universal_founder_device_custody(
     Cell remains the durable authority fact, while the canonical reason code
     avoids using a sensitive diagnostic note as a cross-device control record.
     """
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     if (
         type(device_ref) is not str
         or not _FOUNDER_DEVICE_CUSTODY_REF.fullmatch(device_ref)
@@ -43222,6 +43674,8 @@ def _read_universal_current_bound_work(
     include_requirements: bool = False,
     work_root: str | None = None,
 ) -> tuple[Mapping[str, object] | None, int]:
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     snapshot = store.snapshot()
     session = _runtime_agent_session(snapshot, registry, agent_session_root)
     view_session, context = _view_session_for_context(
@@ -43451,6 +43905,8 @@ def read_universal_baboom_current_claimed_work(
     authentication_context: object | None = None,
 ) -> tuple[Mapping[str, object] | None, int]:
     """Read the exact claimed Work for BABOOM's execution session."""
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     snapshot = store.snapshot()
     session = _runtime_agent_session(snapshot, registry, agent_session_root)
     entry = _agent_body_catalog_entry_for_session(snapshot, registry, session)
@@ -43489,6 +43945,8 @@ def claim_next_universal_governed_work(
     content_service=None,
 ) -> dict[str, object]:
     """Atomically choose and claim the graph's highest-priority open work."""
+    # Resolve verified first-use migrations before pinning this operation's head.
+    registry.agent_body_catalog
     require_universal_runtime_compliance(
         store,
         registry,
@@ -43609,6 +44067,8 @@ def record_workshop_work_event(
         from .conversation_content import workshop_message_identity
         if authentication_context is None:
             raise AuthorizationDenied("Work notice requires its authenticated caller")
+        # Resolve verified first-use migrations before pinning this operation's head.
+        registry.workshop_category_roots
         snapshot = store.snapshot()
         _require_workshop_message_source(snapshot, registry, agent_session_root,
             authentication_context)
@@ -43742,10 +44202,10 @@ def project_universal_value_graph(
     """Project one visible value through its registered open graph."""
     if type(root_id) is not str or not root_id:
         raise InvalidCell("value-graph projection root is invalid")
-    snapshot = store.snapshot()
     view_session, context = _view_session_for_context(
         registry, authentication_context
     )
+    snapshot = store.snapshot()
     visible_roots, _, _ = _session_canvas_roots(
         snapshot, registry, view_session
     )
@@ -47879,6 +48339,14 @@ def _set_universal_scope_execution(
             raise InvalidCell("scope target is outside the active graph level")
         if not _relation_members_or_none(snapshot, target_root):
             raise InvalidCell("scope target is a terminal cell")
+        if registry.lazy_scope_loader is not None:
+            registry.lazy_scope_loader(target_root)
+            if store.revision != snapshot.revision:
+                return _set_universal_scope_execution(
+                    store, registry, target_root,
+                    expected_revision=store.revision,
+                    authentication_context=authentication_context,
+                )
         next_roots, next_relations, next_properties = _nested_canvas_scope(
             snapshot, registry, target_root
         )
@@ -56231,6 +56699,7 @@ __all__ = [
     "build_universal_application",
     "restore_universal_application",
     "project_universal_canvas",
+    "project_universal_home_frame",
     "project_universal_machine_canvas",
     "project_universal_runtime_handoff_readiness",
     "project_universal_baboom_context",

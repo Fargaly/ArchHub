@@ -174,7 +174,7 @@ test('WORKSHOP-72 actual app Frame and Workspace remove duplicate rails, tabs, i
   win.WorkshopView=()=>React.createElement('section',{'data-actual-workshop-window':''},'Workshop');
   const source=read('nodelang/studio/studio-lm.jsx');
   vm.runInContext(transformSync(slice(source,'const Frame =','const isHistoryNode =')+
-    slice(source,'const LazyWorkshopWindow =','const modelRoute =')+'\nglobalThis.Frame=Frame;globalThis.Workspace=Workspace;',{loader:'jsx'}).code,context);
+    slice(source,'const useNodeLibrary =','// ─── Library panel')+slice(source,'const useDeferredCanvas =','const modelRoute =')+'\nglobalThis.Frame=Frame;globalThis.Workspace=Workspace;',{loader:'jsx'}).code,context);
   const root=createRoot(win.document.getElementById('root'));
   try{
     await React.act(async()=>root.render(React.createElement(context.Frame,{workshopWindow:true},

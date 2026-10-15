@@ -12,7 +12,10 @@ import json
 from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
-from urllib.parse import quote
+from urllib.parse import quote, unquote
+from .lazy_application_registry import (
+    DeferredRegistryGroup, VerifiedLazyMapping, VerifiedLazyRegistry,
+)
 
 from .cell_protocols import CellBatch, read_relation
 from .universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell, ids_with_prefix
@@ -26,7 +29,7 @@ class PropertyRef:
 
 
 @dataclass(frozen=True, slots=True)
-class UniversalMapRegistry:
+class UniversalMapRegistry(VerifiedLazyRegistry):
     roles: Mapping[str, str]
     nodes: Mapping[str, str]
     properties: Mapping[str, tuple[str, ...]]
@@ -237,6 +240,9 @@ def import_grand_map_cells(
 def project_grand_map_cells(
     snapshot,
     path: str | Path | None = None,
+    *,
+    lazy: bool = False,
+    snapshot_provider=None,
 ) -> UniversalMapRegistry:
     """Rebuild the Grand Map index from its persisted Cell authority.
 
@@ -264,9 +270,10 @@ def project_grand_map_cells(
     if missing_roles:
         raise InvalidCell("persisted Grand Map role vocabulary is incomplete")
 
-    def scalar(root_id: str, label: str) -> str:
+    def scalar(root_id: str, label: str, source=None) -> str:
+        source = snapshot if source is None else source
         try:
-            cell = snapshot.cells[root_id]
+            cell = source.cells[root_id]
         except KeyError as exc:
             raise InvalidCell("Grand Map %s root is missing" % label) from exc
         if cell.link0 != NULL_CELL_ID or cell.link1 != NULL_CELL_ID:
@@ -276,8 +283,9 @@ def project_grand_map_cells(
         except UnicodeDecodeError as exc:
             raise InvalidCell("Grand Map %s is not UTF-8" % label) from exc
 
-    def property_ref(relation_root: str) -> tuple[str, PropertyRef]:
-        members = read_relation(snapshot, relation_root, budget=32)
+    def property_ref(relation_root: str, source=None) -> tuple[str, PropertyRef]:
+        source = snapshot if source is None else source
+        members = read_relation(source, relation_root, budget=32)
         by_role = {
             role: tuple(
                 member.participant_id
@@ -295,7 +303,7 @@ def project_grand_map_cells(
         value_root = by_role[roles["value"]][0]
         label_root = by_role[roles["label"]][0]
         if any(
-            root not in snapshot.cells
+            root not in source.cells
             for root in (owner_root, value_root, label_root)
         ):
             raise InvalidCell("Grand Map property references missing Cells")
@@ -312,6 +320,71 @@ def project_grand_map_cells(
     domain_roots = tuple(member.participant_id for member in map_members)
     if not domain_roots or len(domain_roots) != len(set(domain_roots)):
         raise InvalidCell("persisted Grand Map domains are missing or duplicated")
+
+    if lazy:
+        # These are protocol identity indexes, not imported JSON authority.
+        # Every property still passes the same relation/scalar verifier above.
+        def owner_refs(owner):
+            current = snapshot_provider() if snapshot_provider is not None else snapshot
+            if owner.startswith("gm:domain:"):
+                key = "domain:" + unquote(owner[len("gm:domain:"):])
+            elif owner.startswith("gm:node:"):
+                key = unquote(owner[len("gm:node:"):])
+            else:
+                raise KeyError(owner)
+            prefix = "gm:property:" + _part(key) + ":"
+            refs = []
+            for root in ids_with_prefix(current.cells, prefix):
+                if ":incidence:" in root or ":chain:" in root:
+                    continue
+                actual_owner, ref = property_ref(root, current)
+                if actual_owner != owner:
+                    raise InvalidCell("Grand Map property owner index drifted")
+                refs.append(ref)
+            if not refs:
+                raise KeyError(owner)
+            return tuple(refs)
+
+        domains = {}
+        home_properties = {}
+        for domain_root in domain_roots:
+            refs = owner_refs(domain_root)
+            fields = {scalar(ref.label_root, "property label"):
+                      scalar(ref.value_root, "property value") for ref in refs}
+            if set(fields) != {"key", "title"}:
+                raise InvalidCell("Grand Map domain identity properties drifted")
+            key = fields["key"]
+            if not key or key in domains or domain_root != "gm:domain:" + _part(key):
+                raise InvalidCell("Grand Map domain key is missing or duplicated")
+            domains[key] = domain_root
+            home_properties[domain_root] = tuple(ref.relation_root for ref in refs)
+
+        def full_index():
+            current = snapshot_provider() if snapshot_provider is not None else snapshot
+            full = project_grand_map_cells(current)
+            return {name: getattr(full, name) for name in (
+                "nodes", "properties", "root_properties", "params", "wires", "cross_relations",
+            )}
+
+        group = DeferredRegistryGroup(full_index)
+        return UniversalMapRegistry(
+            roles=MappingProxyType(roles),
+            domains=MappingProxyType(domains), grand_map_root=grand_map_root,
+            nodes=group.field("nodes"), properties=group.field("properties"),
+            params=group.field("params"), wires=group.field("wires"),
+            cross_relations=group.field("cross_relations"),
+            root_properties=VerifiedLazyMapping(
+                home_properties,
+                # Node property reads must retain the full projector's check
+                # that every authoritative property is inside its domain.
+                # An opened Map/node screen pays this catalogue validation;
+                # Home's already verified domain identity properties do not.
+                lambda root: group.get("root_properties")[root]
+                if root.startswith("gm:node:") else
+                tuple(ref.relation_root for ref in owner_refs(root)),
+                keys=lambda: tuple(group.get("root_properties")),
+            ),
+        )
 
     nodes: dict[str, str] = {}
     properties: dict[str, tuple[str, ...]] = {}

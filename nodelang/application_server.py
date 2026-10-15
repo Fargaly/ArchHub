@@ -157,6 +157,7 @@ from .universal_application import (
     promote_universal_theme_to_published,
     promote_universal_theme_to_shared,
     project_universal_canvas,
+    project_universal_home_frame,
     project_universal_scope_transition,
     project_universal_grand_map_work,
     project_universal_roma_requirement_tree_index,
@@ -4994,6 +4995,7 @@ def prepare_shared_universal_runtime(
                 key_provider=key_provider,
                 court_workspace_root=court_workspace_root,
                 runtime_compliance_runner=runtime_compliance_runner,
+                lazy=True,
             )
         else:
             selected_store, registry = build_universal_application(
@@ -6601,6 +6603,7 @@ class ApplicationServer:
                                 runtime_compliance_runner=(
                                     runtime_compliance_runner
                                 ),
+                                lazy=True,
                             )
                         )
                     else:
@@ -7339,8 +7342,26 @@ class ApplicationServer:
                         binding, _session_token = self._browser_session_binding()
                         owner.require_universal_http_route(
                             'GET', parsed.path, authentication_context=binding.context)
-                        payload = owner.conversation_content.retention_overview(
-                            authentication_context=binding.context)
+                        query = parse_qs(parsed.query, keep_blank_values=True)
+                        if set(query) - {'dry_run', 'after_conversation_id'}:
+                            raise InvalidCell('conversation retention query is invalid')
+                        dry_run = query.get('dry_run', ['false'])
+                        if dry_run not in (['true'], ['false']):
+                            raise InvalidCell('conversation retention dry_run requires true or false')
+                        cursor = query.get('after_conversation_id')
+                        if cursor is not None and (len(cursor) != 1 or not cursor[0]):
+                            raise InvalidCell('conversation retention cursor is invalid')
+                        if dry_run == ['true']:
+                            if binding.subject_root != owner.universal_registry.authorization.subject_root:
+                                raise AuthorizationDenied('conversation retention requires its authenticated founder')
+                            payload = owner.conversation_content.maintain_retention(
+                                authentication_context=binding.context, dry_run=True,
+                                after_conversation_id=None if cursor is None else cursor[0])
+                        else:
+                            if cursor is not None:
+                                raise InvalidCell('conversation retention cursor requires dry_run=true')
+                            payload = owner.conversation_content.retention_overview(
+                                authentication_context=binding.context)
                         self._json(200, {'ok': True, **payload})
                     except (AuthorizationDenied, PermissionError) as denied:
                         self._json(403, {'ok': False, 'error': str(denied)})
@@ -7814,6 +7835,14 @@ class ApplicationServer:
                 if parsed.path == '/api/universal/canvas':
                     if not self._universal_route('GET', parsed.path, binding):
                         return
+                    if parse_qs(parsed.query, keep_blank_values=True) == {'screen': ['home']}:
+                        with owner.mutation_lock:
+                            projection = project_universal_home_frame(
+                                owner.universal_store, owner.universal_registry,
+                                authentication_context=binding.context,
+                            )
+                        self._json(200, {'ok': True, **projection})
+                        return
                     # The projection takes the graph lock itself, and only for
                     # its short revision-checked tail (00911b3 pattern).
                     if owner._brain_export_active:
@@ -7840,7 +7869,9 @@ class ApplicationServer:
                     from .universal_graphs import project_graph_index
                     with owner.mutation_lock:
                         payload = project_graph_index(owner.universal_store,
-                            owner.universal_registry, authentication_context=binding.context)
+                            owner.universal_registry, authentication_context=binding.context,
+                            include_canvas=(parse_qs(parsed.query, keep_blank_values=True)
+                                            != {'screen': ['home']}))
                         read_at = owner.universal_store.revision
                     owner._remember_tool_hub_graph_sessions(binding, payload, read_at)
                     self._json(200, payload)
@@ -9660,6 +9691,67 @@ class ApplicationServer:
                                 )
                         self._json(200, payload)
                         return
+                    if self.path == '/api/universal/skills':
+                        # Read-only catalogue hydration must not wait for an unrelated
+                        # canvas/Workshop mutation. Browser, CSRF and route authority
+                        # have already been checked above, exactly as for Brain export.
+                        # The shared library any mounted agent
+                        # reads: catalogue, one skill's full text,
+                        # or the composed thinking chain.
+                        from .pipeline_engines import (
+                            skill_read,
+                            skills_catalogue,
+                            thinking_chain,
+                        )
+                        want = str(body.get('want') or 'catalogue')
+                        params = {
+                            'match': str(body.get('match') or ''),
+                            'skill': str(body.get('skill') or ''),
+                            'topic': str(body.get('topic') or ''),
+                        }
+                        if want == 'read' and params['skill'].startswith('mod:'):
+                            from .domains.selfext import mods_rows
+                            _, mod_id, tutorial = (params['skill'].split(':', 2) + ['', ''])[:3]
+                            for row in mods_rows(owner.universal_store)['rows']:
+                                if row['id'] == mod_id and tutorial in row.get('tutorials', []):
+                                    self._json(200, {'ok': True, 'answer': 'mod tutorial', 'result': '# %s\n\n%s\n' % (tutorial, row['name'])})
+                                    return
+                        engine = {
+                            'catalogue': skills_catalogue,
+                            'read': skill_read,
+                            'chain': thinking_chain,
+                        }.get(want)
+                        if engine is None:
+                            self._json(400, {
+                                'ok': False,
+                                'error': 'want must be catalogue, '
+                                         'read, or chain',
+                            })
+                            return
+                        try:
+                            produced, answer = engine(params, {})
+                            if want == 'catalogue':
+                                from .domains.selfext import mods_rows
+                                out = list(produced.get('out') or [])
+                                for row in mods_rows(owner.universal_store)['rows']:
+                                    for tutorial in row.get('tutorials', []):
+                                        out.append({
+                                            'name': 'mod:%s:%s' % (row['id'], tutorial),
+                                            'source': 'mods',
+                                            'description': '%s · %s' % (row['name'], tutorial),
+                                            'path': '',
+                                        })
+                                produced = dict(produced, out=out)
+                            self._json(200, {
+                                'ok': True, 'answer': answer,
+                                'result': produced.get('out'),
+                            })
+                        except Exception as refusal:  # noqa: BLE001
+                            self._json(200, {
+                                'ok': False,
+                                'error': str(refusal)[:200],
+                            })
+                        return
                     if self.path == '/api/universal/brain-export':
                         if not self._brain_owner_admitted(owner, binding):
                             return
@@ -9917,64 +10009,6 @@ class ApplicationServer:
                                     str(body.get('tier') or ''),
                                 )
                                 self._json(200, {'ok': True, 'tier': tier})
-                                return
-                            elif self.path == '/api/universal/skills':
-                                # The shared library any mounted agent
-                                # reads: catalogue, one skill's full text,
-                                # or the composed thinking chain.
-                                from .pipeline_engines import (
-                                    skill_read,
-                                    skills_catalogue,
-                                    thinking_chain,
-                                )
-                                want = str(body.get('want') or 'catalogue')
-                                params = {
-                                    'match': str(body.get('match') or ''),
-                                    'skill': str(body.get('skill') or ''),
-                                    'topic': str(body.get('topic') or ''),
-                                }
-                                if want == 'read' and params['skill'].startswith('mod:'):
-                                    from .domains.selfext import mods_rows
-                                    _, mod_id, tutorial = (params['skill'].split(':', 2) + ['', ''])[:3]
-                                    for row in mods_rows(owner.universal_store)['rows']:
-                                        if row['id'] == mod_id and tutorial in row.get('tutorials', []):
-                                            self._json(200, {'ok': True, 'answer': 'mod tutorial', 'result': '# %s\n\n%s\n' % (tutorial, row['name'])})
-                                            return
-                                engine = {
-                                    'catalogue': skills_catalogue,
-                                    'read': skill_read,
-                                    'chain': thinking_chain,
-                                }.get(want)
-                                if engine is None:
-                                    self._json(400, {
-                                        'ok': False,
-                                        'error': 'want must be catalogue, '
-                                                 'read, or chain',
-                                    })
-                                    return
-                                try:
-                                    produced, answer = engine(params, {})
-                                    if want == 'catalogue':
-                                        from .domains.selfext import mods_rows
-                                        out = list(produced.get('out') or [])
-                                        for row in mods_rows(owner.universal_store)['rows']:
-                                            for tutorial in row.get('tutorials', []):
-                                                out.append({
-                                                    'name': 'mod:%s:%s' % (row['id'], tutorial),
-                                                    'source': 'mods',
-                                                    'description': '%s · %s' % (row['name'], tutorial),
-                                                    'path': '',
-                                                })
-                                        produced = dict(produced, out=out)
-                                    self._json(200, {
-                                        'ok': True, 'answer': answer,
-                                        'result': produced.get('out'),
-                                    })
-                                except Exception as refusal:  # noqa: BLE001
-                                    self._json(200, {
-                                        'ok': False,
-                                        'error': str(refusal)[:200],
-                                    })
                                 return
                             elif self.path == '/api/universal/brain-forget':
                                 if not self._brain_owner_admitted(owner, binding):

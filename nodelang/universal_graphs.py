@@ -4,18 +4,24 @@ from .cell_protocols import read_relation
 from .universal_cell import InvalidCell
 
 
-def project_graph_index(store, registry, *, authentication_context=None):
+def project_graph_index(store, registry, *, authentication_context=None, include_canvas=True):
     """List the root and top-level compositions admitted to this exact view."""
-    # The normal projection settles indexes and checks the viewer, signed
-    # resource grants, and current scope before any graph name is disclosed.
-    canvas = app.project_universal_canvas(
+    if type(include_canvas) is not bool:
+        raise InvalidCell("graph index canvas selector must be boolean")
+    # Full opens retain the canonical projection. Home admits only its frame
+    # and root-level signed graph index; nested scope checks wait for its open.
+    projector = app.project_universal_canvas if include_canvas else app.project_universal_home_frame
+    canvas = projector(
         store, registry, authentication_context=authentication_context)
-    snapshot = store.dense_snapshot()
+    snapshot = store.dense_snapshot() if include_canvas else store.snapshot()
     view, _ = app._view_session_for_context(registry, authentication_context)
-    app._session_canvas_roots(snapshot, registry, view)
-    top = app._visibility_scope_projection(snapshot, registry, view)[:3]
-    visible, _, _ = app._apply_view_scope_exposure(
-        snapshot, registry, view, registry.canvas_root, top)
+    roots = app._session_canvas_roots(snapshot, registry, view, root_only=not include_canvas)
+    if include_canvas:
+        top = app._visibility_scope_projection(snapshot, registry, view)[:3]
+        visible, _, _ = app._apply_view_scope_exposure(
+            snapshot, registry, view, registry.canvas_root, top)
+    else:
+        visible = roots[0]
     compositions = tuple(root for root in visible
                          if app._is_universal_composition(snapshot, registry, root))
     admitted = frozenset(compositions)

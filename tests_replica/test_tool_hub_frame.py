@@ -1,8 +1,60 @@
 import json
+import threading
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+import pytest
+
 from nodelang.application_server import ApplicationServer
+
+
+@pytest.fixture(autouse=True)
+def isolated_owner_probes(monkeypatch):
+    """Exercise the real cache/state projection with deterministic local fakes.
+
+    First-read STARTING is a scheduled-probe state, not a promise about how
+    quickly a real machine's Brain or hosts answer. Hold these fake producers
+    until explicitly released, and never consult personal cloud sign-in.
+    """
+    from nodelang import cloud_signin, pipeline_engines
+
+    released = threading.Event()
+    started = {key: threading.Event() for key in ("brain", "hosts")}
+    workers = []
+    guard = threading.Lock()
+
+    def producer(key, value):
+        with guard:
+            workers.append(threading.current_thread())
+        started[key].set()
+        released.wait()
+        return value
+
+    def refuse_live_probe(*_args, **_kwargs):
+        raise AssertionError("this court must not probe live Brain or host services")
+
+    monkeypatch.setattr(pipeline_engines, "_brain_call", refuse_live_probe)
+    monkeypatch.setattr(pipeline_engines, "probe_connectors", refuse_live_probe)
+    monkeypatch.setattr(ApplicationServer, "_probe_brain", staticmethod(
+        lambda: producer("brain", {"ok": True, "facts": 7})))
+    monkeypatch.setattr(ApplicationServer, "_probe_hosts", staticmethod(
+        lambda: producer("hosts", [{"id": "fixture-host", "name": "Fixture host",
+            "state": "connected", "detail": "Court fixture", "enabled": True}])))
+    monkeypatch.setattr(cloud_signin, "sign_in_state", lambda *_args, **_kwargs: {
+        "state": "signed_out", "signed_in": False, "email": "",
+        "expires_at": None, "founder": False,
+    })
+
+    def release():
+        released.set()
+        with guard:
+            active = tuple(workers)
+        for worker in active:
+            worker.join(timeout=5)
+            assert not worker.is_alive(), "the owned fake probe must finish before teardown"
+
+    yield {"started": started, "release": release}
+    release()
 
 
 def _get_json(server, path):
@@ -26,7 +78,7 @@ def _get_status(server, path):
         return exc.code
 
 
-def test_frame_hub_endpoints_are_on_the_application_port_and_own_only_hub_files():
+def test_frame_hub_endpoints_are_on_the_application_port_and_own_only_hub_files(isolated_owner_probes):
     server = ApplicationServer(fresh=True).start()
     try:
         status, tools = _get_json(server, "/tools")
@@ -47,6 +99,23 @@ def test_frame_hub_endpoints_are_on_the_application_port_and_own_only_hub_files(
             "tools.json", "wires.json", "waiting.json", "activity.log",
         ]
         assert not {"hosts", "sessions", "brain", "approvals"} & set(tools)
+
+        assert isolated_owner_probes["started"]["brain"].wait(timeout=5)
+        assert isolated_owner_probes["started"]["hosts"].wait(timeout=5)
+        isolated_owner_probes["release"]()
+        status, ready_tools = _get_json(server, "/tools")
+        assert status == 200
+        ready = {row["id"]: row for row in ready_tools["tools"]}
+        assert ready["brain"]["state"] == "running"
+        assert ready["brain"]["stat_line"] == "7 facts in local Brain."
+        assert ready["connectors"]["state"] == "running"
+        assert ready["connectors"]["stat_line"] == "1/1 hosts running."
+        assert ready["connectors"]["hosts"] == [{
+            "id": "fixture-host", "name": "Fixture host", "state": "connected",
+            # No native host-enable owner is attached to this application
+            # fixture; the original annotation must remain fail-closed.
+            "detail": "Court fixture", "enabled": False,
+        }]
 
         status, wires = _get_json(server, "/wires")
         assert status == 200

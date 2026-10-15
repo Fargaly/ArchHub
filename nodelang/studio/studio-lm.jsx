@@ -298,6 +298,11 @@ const HistoryBody = ({ n }) => {
 
 
 const CommandBar = ({ open, onClose, addNodeFromLibrary, onOpenSession }) => {
+  useNodeLibrary(open);
+  useCatalogueVersion();
+  React.useEffect(() => {
+    if (open && !catalogueStates.get('ARCHHUB_LOAD_SKILLS')?.read) loadCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS);
+  }, [open]);
   const projected = useStudioProjection();
   const library = withHistoryLibrary(window.AH_LIBRARY || projected?.library || LM_LIBRARY);
   const [q, setQ] = React.useState('');
@@ -722,9 +727,7 @@ const StudioLM = () => {
   React.useEffect(() => {
     const read = () => { if (!window.ARCHHUB_HOSTS_READ) loadCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS); };
     read();
-    // SKILLS-ONE v2 (installed 2248): the Skills panel opened mid-read and said "0 SAVED" while Search,
-    // a moment later, counted 83. Read the saved skills once at start; the panel and Search share the list.
-    loadCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS);
+    // Saved skills share one list, first read by Skills or Search.
     const timer = setInterval(() => { if (window.ARCHHUB_HOSTS_READ) clearInterval(timer); else read(); }, 10000);
     return () => clearInterval(timer);
   }, []);
@@ -1707,14 +1710,24 @@ const hostConnectorRows = (rows = LM_HOSTS) => {
   } : null;
   return list.flatMap(row => !isOfficeHost(row) ? [row] : row === office[0] ? [officeRow] : []);
 };
+const hostCatalogueRows = (rows = window.ARCHHUB_HOSTS_READ || LM_HOSTS.length || typeof window.ARCHHUB_LOAD_HOSTS === 'function'
+    ? LM_HOSTS : (window.ARCHHUB_LIVE?.connectors || LM_HOSTS)) => {
+  // Current probes name an executable drive, or explicitly name no drive.
+  // An absent/unconfigured catalogue entry also has no drive, but its detail
+  // says "not found"/"add a token" rather than "no wire". Count the contract,
+  // not that changing prose. Older hosted projections omit drive entirely.
+  return rows.filter(row => Object.prototype.hasOwnProperty.call(row || {}, 'drive')
+    ? typeof row.drive === 'string' && !!row.drive.trim()
+    : !/no wire in this build/i.test(String(row?.detail || '')));
+};
 // One host count for the Connectors card, the status bar and the Hosts badge: every Settings row,
 // with Office collapsed the same way everywhere.
-const hostTally = (rows = LM_HOSTS) => {
+const hostTally = (rows = window.ARCHHUB_HOSTS_READ || LM_HOSTS.length || typeof window.ARCHHUB_LOAD_HOSTS === 'function' ? LM_HOSTS : (window.ARCHHUB_LIVE?.connectors || LM_HOSTS)) => {
   // The Hosts list itself (studio.html fills it and ARCHHUB_LIVE.connectors from the same probe rows).
   // With no host reader at all there is nothing to wait for: the empty list is the answer.
   const list = hostConnectorRows(rows);
   const read = window.ARCHHUB_HOSTS_READ === true || list.length > 0 || typeof window.ARCHHUB_LOAD_HOSTS !== 'function';
-  const builtRows = list.filter(row => row?.connector_built !== false && !/no wire in this build|no connector yet/i.test(String(row?.detail || '')));
+  const builtRows = hostConnectorRows(hostCatalogueRows(rows)).filter(row => row?.connector_built !== false && !/no wire in this build|no connector yet/i.test(String(row?.detail || '')));
   return {
     running:builtRows.filter(hostRunningState).length,
     total:builtRows.length,
@@ -2137,7 +2150,7 @@ const toolRowsFromOwners = ({workshopState, account, personal, hub}) => {
     workshop:{stat:plural(projects, 'project') + ' · ' + plural(tasks, 'task'), wire:waiting.length ? plural(waiting.length, 'waiting') : 'no waiting work'},
     brain:{stat:plural(LM_MEMORY.length, 'fact'), wire:plural((window.BRAIN_STRATA || []).length, 'stratum', 'strata')},
     baboom:{stat:'Starts with Windows: ' + (baboomOn ? 'on' : 'off'), wire:baboom?.source ? String(baboom.source) : 'Personal Settings'},
-    connectors:{stat:String(connectorsTally.running) + '/' + String(connectorsTally.total) + ' hosts running.', wire:plural((window.ARCHHUB_LIVE?.connectors || []).length, 'connector')},
+    connectors:{stat:String(connectorsTally.running) + '/' + String(connectorsTally.total) + ' hosts running.', wire:plural(connectorsTally.total, 'connector')},
     cloud:{stat:signedIn ? String(account.email || 'signed in') : 'signed out', wire:window.ARCHHUB_CLOUD_SESSION ? 'cloud session owner' : 'no device list owner'},
   };
   const baboomToggle = {
@@ -2161,6 +2174,7 @@ const toolRowsFromOwners = ({workshopState, account, personal, hub}) => {
     const baboomRuntime = ownerLine || 'No signed runtime attached.';
     const statLine = row.id === 'baboom'
       ? [baboomRuntime, stats.baboom.stat].filter(Boolean).join(' · ')
+      : tally ? ownerLine
       : normalizedState === 'off' ? (row.off_sentence || stats[row.id]?.stat || ownerLine || '') : ownerLine;
     return {
       ...row,
@@ -2275,6 +2289,23 @@ const panelIconBtn = () => ({
   display:'grid', placeItems:'center',
 });
 
+const useNodeLibrary = (enabled = true) => {
+  const [, refresh] = React.useState(0);
+  React.useEffect(() => {
+    const changed = () => refresh(value => value + 1);
+    window.addEventListener('archhub:library-refresh', changed);
+    return () => window.removeEventListener('archhub:library-refresh', changed);
+  }, []);
+  React.useEffect(() => {
+    if (enabled && typeof window.AH_LOAD_LIBRARY === 'function') window.AH_LOAD_LIBRARY().catch(() => {});
+  }, [enabled]);
+  const retry = React.useCallback(() => {
+    if (typeof window.AH_LOAD_LIBRARY === 'function') window.AH_LOAD_LIBRARY(true).catch(() => {});
+  }, []);
+  return {loading:enabled && (window.AH_LIBRARY_LOADING === true ||
+    (typeof window.AH_LOAD_LIBRARY === 'function' && !window.AH_LIBRARY_LOADED && !window.AH_LIBRARY_ERROR)), retry};
+};
+
 // ─── Library panel — primary drag source ───
 const LIBRARY_FAMILIES = [
   {id:'all', label:'All', cats:null},
@@ -2380,6 +2411,7 @@ const LibraryTile = ({ cat, group, open, onToggle }) => (
   </button>
 );
 const NodesPanel = ({ addNodeFromLibrary, onHome, account, onAccount, onSwitchPanel, onOpenRuns }) => {
+  const libraryRead = useNodeLibrary();
   const projected = useStudioProjection();
   const workshopState = useWorkshopProjection();
   const hub = useToolHubProjection();
@@ -2442,9 +2474,11 @@ const NodesPanel = ({ addNodeFromLibrary, onHome, account, onAccount, onSwitchPa
       </div>
 
       <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'0 6px 8px', minHeight:0 }}>
+        {libraryRead.loading && <div role="status" style={{padding:'8px 12px'}}>Loading nodes…</div>}
         {!library.length && window.AH_LIBRARY_ERROR && (
           <div role="alert" style={{ padding:'8px 12px', fontFamily:LM.sans, fontSize:12, color:LM.err, lineHeight:1.5 }}>
             {'The node library could not be loaded: ' + window.AH_LIBRARY_ERROR}
+            {' '}<button type="button" onClick={libraryRead.retry}>Retry</button>
           </div>
         )}
         <NodeLibraryGroups library={groups} q={q} openCats={openCats} onToggle={toggleCat} onAdd={addFromLibrary}
@@ -2693,6 +2727,10 @@ const RunsPanel = ({ onHome, onOpenTask }) => {
 
 // ─── Global search panel ───
 const SearchPanel = ({ onHome }) => {
+  useCatalogueVersion();
+  React.useEffect(() => {
+    if (!catalogueStates.get('ARCHHUB_LOAD_SKILLS')?.read) loadCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS);
+  }, []);
   // Scope counts are read from what this Studio holds; a scope nothing counts draws no number.
   const projected = useStudioProjection();
   const live = window.ARCHHUB_LIVE || {};
@@ -3196,6 +3234,24 @@ const SessionCard = ({ s, onOpen }) => {
 };
 
 // ──────────────────────── WORKSPACE ────────────────────────
+const useDeferredCanvas = () => {
+  const loader = window.ARCHHUB_LOAD_CANVAS;
+  const deferred = window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot()?.topology?.canvas?.canvas_deferred === true;
+  const [state, setState] = React.useState(() => ({pending:!!loader && deferred, error:''}));
+  const [attempt, setAttempt] = React.useState(0);
+  React.useEffect(() => {
+    if (typeof loader !== 'function') return;
+    let active = true;
+    setState({pending:deferred, error:''});
+    Promise.resolve().then(loader).then(() => {
+      if (active) setState({pending:false, error:''});
+    }, error => {
+      if (active) setState({pending:false, error:error?.message || 'Canvas reading was refused.'});
+    });
+    return () => {active = false;};
+  }, [loader, attempt]);
+  return {...state, retry:() => setAttempt(value => value + 1)};
+};
 // Loading this face is the only point where its code enters Studio.
 const LazyWorkshopWindow = props => {
   const [View, setView] = React.useState(() => window.WorkshopView || null);
@@ -3215,6 +3271,8 @@ const LazyWorkshopWindow = props => {
       background:LM.bgDeep, color:LM.inkSoft, fontFamily:LM.sans, fontSize:13}}>{error || 'Opening Workshop…'}</div>;
 };
 const Workspace = ({ session, account, model, readiness = null, onReadinessStale, onModelReadRetry, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, setPickerOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, themeEpoch = 0, onHome, onDocs, onNewSession, onSettings, onAccount, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
+  const canvasRead = useDeferredCanvas();
+  useNodeLibrary();
   const authorityState = useStudioProjection();
   const graph = authorityState?.graph || LM_GRAPH;
   const historyDecorator = typeof decorateHistoryNode === 'function' ? decorateHistoryNode : node => node;
@@ -3240,6 +3298,10 @@ const Workspace = ({ session, account, model, readiness = null, onReadinessStale
       unavailable_reason:view.notice || workshopUnavailableText(workshopState?.canvas?.unavailable)} : null);
   const graphScopeKey = JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas)]);
   const workshopWindow = effectiveMode === 'chat' && !!workshop;
+  if (canvasRead.pending || canvasRead.error) return <main data-workspace-canvas-loading="" style={{gridColumn:'2', gridRow:'1', padding:24, color:LM.inkSoft}}>
+    {canvasRead.error ? <><p role="alert">The canvas could not be loaded: {canvasRead.error}</p>
+      <button onClick={canvasRead.retry}>Retry</button></> : <p role="status">Loading your workspace…</p>}
+  </main>;
   if (view.pending) return <main style={{gridColumn:'2', gridRow:'1', padding:24, color:LM.inkSoft}}>
     <p role="status">{view.notice}</p>
   </main>;
@@ -3474,9 +3536,9 @@ const chatStages = graph => {
 };
 // Connectors are exactly what answered a probe. Green only for a host the product can DRIVE:
 // seeing a process or a port is not a connection (founder rule: nothing green that is not wired).
-const chatConnectors = () => (window.ARCHHUB_LIVE?.connectors || []).map(c => ({
-  id:c.id, name:c.name, state:c.state, word:hostStateWord(c), detail:c.detail,
-  col:hostStateTone(c),
+const chatConnectors = () => hostTally().builtRows.map(c => ({
+  id:c.id, name:c.name, state:c.state, word:c.officeAggregate && hostRunningState(c) ? 'Connected' : hostStateWord(c), detail:c.detail,
+  col:c.officeAggregate && hostRunningState(c) ? LM.ok : hostStateTone(c),
 }));
 
 // ─── Calm chat view (default) — restores original Studio's generous rhythm ───
@@ -7874,11 +7936,15 @@ const useLibraryRefreshEpoch = () => {
 
 
 const NodeLibrary = ({ onClose, addNodeFromLibrary, initialQuery = '' }) => {
+  const libraryRead = useNodeLibrary();
   useLibraryRefreshEpoch();
   const library = libraryDisplayGroups(librarySource(useStudioProjection()));
   const [filter, setFilter] = React.useState('all');
   const [q, setQ] = React.useState(initialQuery);
   const [openCats, setOpenCats] = React.useState(() => Object.fromEntries(library.map(group => [group.cat, true])));
+  React.useEffect(() => {
+    setOpenCats(held => Object.fromEntries(library.map(group => [group.cat, held[group.cat] !== false])));
+  }, [library.map(group => group.cat).join('\u0000')]);
   const addFromLibrary = React.useCallback(item => {
     if (addNodeFromLibrary) addNodeFromLibrary(item);
     onClose();
@@ -7923,6 +7989,11 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary, initialQuery = '' }) => {
         </div>
 
         <div className="ah-scroll" style={{ gridColumn:'2', gridRow:'2', overflow:'auto', padding:'14px 18px' }}>
+          {libraryRead.loading && <div role="status">Loading nodes…</div>}
+          {!library.length && window.AH_LIBRARY_ERROR && <div role="alert">
+            {'The node library could not be loaded: ' + window.AH_LIBRARY_ERROR}
+            {' '}<button type="button" onClick={libraryRead.retry}>Retry</button>
+          </div>}
           <NodeLibraryGroups library={groups} q={q} openCats={openCats} onToggle={toggleCat} onAdd={addFromLibrary}/>
         </div>
       </div>
@@ -8886,7 +8957,16 @@ const Settings54Card = ({ node, view, selected, connected, action }) => {
     </span>
   </button>;
 };
-const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub', onOpenTool, onOpenToolGraph }) => {
+const Settings = props => {
+  const canvasRead = useDeferredCanvas();
+  if (canvasRead.pending || canvasRead.error) return <div data-settings-canvas-loading="" role="dialog" style={{position:'fixed', inset:40, zIndex:1000, padding:24, background:LM.bg, color:LM.ink}}>
+    {canvasRead.error ? <><p role="alert">The canvas could not be loaded: {canvasRead.error}</p>
+      <button onClick={canvasRead.retry}>Retry</button></> : <p role="status">Loading your settings…</p>}
+    <button onClick={props.onClose}>Close</button>
+  </div>;
+  return <SettingsLoaded {...props}/>;
+};
+const SettingsLoaded = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub', onOpenTool, onOpenToolGraph }) => {
   const providers = useProviderStatus();
   const workshopState = useWorkshopProjection();
   const release = releaseStatus(workshopState);
@@ -8922,6 +9002,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
   };
   const initialGroup = groupFromTab(initialTab);
   const [selectedGroupId, setSelectedGroupId] = React.useState(initialGroup.id);
+  const userSelection = React.useRef({tab:initialTab, manual:false});
   const [selectedId, setSelectedId] = React.useState(() => settings54FindNodeForGroup(initialGroup, systemNodes)?.id || '');
   const [query, setQuery] = React.useState('');
   const [statusMessage, setStatusMessage] = React.useState('');
@@ -8931,7 +9012,8 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
     const capabilityMap = {hub:'Hub', hosts:'Hosts', providers:'Providers', connections:'Connections', account:'Account', profile:'Profile', team:'Team',
       memory:'Brain', brain:'Brain', baboom:'BABOOM', models:'Models', permissions:'Permissions', workspaces:'Workspaces',
       theme:'Theme', shortcuts:'Shortcuts', storage:'Storage', about:'About', system:'System'};
-    if (initialTab) {
+    if (userSelection.current.tab !== initialTab) userSelection.current = {tab:initialTab, manual:false};
+    if (initialTab && !userSelection.current.manual) {
       const group = groupFromTab(initialTab);
       const node = settings54FindNodeForGroup(group, systemNodes);
       setSelectedGroupId(group.id);
@@ -8960,12 +9042,14 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
     out: systemWires.some(wire => wire.from?.[0] === node.id),
   }), [systemWires]);
   const chooseGroup = group => {
+    userSelection.current = {tab:initialTab, manual:true};
     const node = settings54FindNodeForGroup(group, systemNodes);
     setSelectedGroupId(group.id);
     setSelectedId(node?.id || '');
     setActiveCapability(group.items[0] || group.title);
   };
   const chooseCapability = (group, label) => {
+    userSelection.current = {tab:initialTab, manual:true};
     const node = systemNodes.find(item =>
       settings54NodeGroup(item) === group.id &&
       settings54NodeTitle(item).toLowerCase().includes(String(label || '').toLowerCase())) ||
@@ -8975,6 +9059,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
     setActiveCapability(label);
   };
   const findSetting = value => {
+    userSelection.current = {tab:initialTab, manual:true};
     setQuery(value);
     const match = systemNodes.find(node => settings54MatchNode(node, value));
     if (match) {
@@ -9063,11 +9148,11 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
     const capabilityPanel = () => {
       if (showingProperties) return null;
       if (activeCapability === 'Hub') return <SettingsHub toolRows={toolRows} onClose={onClose} onOpenTool={onOpenTool} onOpenToolGraph={onOpenToolGraph} columns={3}/>;
-      if (activeCapability === 'System') return <SettingsSystem graph={authorityState?.graph || LM_GRAPH} projection={authorityState} onClose={onClose} onOpenToolGraph={onOpenToolGraph} onBackToSettings={() => setActiveCapability('Hub')}/>;
+      if (activeCapability === 'System') return <SettingsSystem graph={authorityState?.graph || LM_GRAPH} projection={authorityState} onClose={onClose} onOpenToolGraph={onOpenToolGraph} onBackToSettings={() => openCompatibilityTab('hub')}/>;
       if (activeCapability === 'Account') return <SettingsAccount account={account} setAccount={setAccount} onSignOut={onSignOut}/>;
       if (activeCapability === 'Brain') return <SettingsMemory store={store} patch={patch}/>;
       if (activeCapability === 'BABOOM') return <SettingsBaboom onOpenToolGraph={onOpenToolGraph} onClose={onClose}/>;
-      if (activeCapability === 'Team') return <SettingsTeam account={account} onAccount={() => setActiveCapability('Account')}/>;
+      if (activeCapability === 'Team') return <SettingsTeam account={account} onAccount={() => openCompatibilityTab('account')}/>;
       if (activeCapability === 'Profile') return <SettingsProfile/>;
       if (activeCapability === 'Permissions') return <SettingsPermissions account={account} onTab={openCompatibilityTab}/>;
       if (activeCapability === 'Workspaces') return <SettingsWorkspaces/>;
@@ -9134,8 +9219,13 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
                     </span>
                   </button>
                   {active && <div data-settings54-capability-nav={group.id} style={{ display:'flex', flexWrap:'wrap', gap:4, padding:'0 4px 4px 34px' }}>
-                    {group.items.map(item => <button key={item} type="button" onClick={() => chooseCapability(group, item)}
-                      style={settings54Button(activeCapability === item, {height:22, padding:'0 7px', fontSize:11, maxWidth:'100%'})}>{item}</button>)}
+                    {group.items.map(item => <React.Fragment key={item}>
+                      <button type="button" onClick={() => chooseCapability(group, item)}
+                        style={settings54Button(activeCapability === item, {height:22, padding:'0 7px', fontSize:11, maxWidth:'100%'})}>{item}</button>
+                      {item === 'Hosts' && <span data-settings-host-total={hostTally().total} style={{fontSize:11, color:LM.inkSoft, alignSelf:'center'}}>
+                        {hostTally().read ? hostTally().running + '/' + hostTally().total + ' running' : 'checking hosts'}
+                      </span>}
+                    </React.Fragment>)}
                     {group.id === 'appearance' && <button type="button" onClick={() => chooseCapability(group, 'System')}
                       style={settings54Button(activeCapability === 'System', {height:22, padding:'0 7px', fontSize:11})}>System</button>}
                   </div>}
@@ -9172,7 +9262,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
                 {graphNodes.map(node => {
                   const view = graphViews.get(node.id) || settings54NodeView(node, 0);
                   return <Settings54Card key={node.id} node={node} view={view} selected={node.id === selectedId}
-                    connected={nodeWireState(node)} action={() => { setSelectedId(node.id); setActiveCapability('Properties'); }}/>;
+                    connected={nodeWireState(node)} action={() => { userSelection.current = {tab:initialTab, manual:true}; setSelectedId(node.id); setActiveCapability('Properties'); }}/>;
                 })}
               </div>
             </div>
@@ -9188,7 +9278,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut, initialTab = 'hub',
             <div style={{ display:'flex', gap:2, padding:'0 12px', borderBottom:`1px solid ${LM.line}` }}>
               {['Chat', 'Properties'].map((tabName, index) => {
                 const active = tabName === 'Properties' && (activeCapability === 'Properties' || !!query.trim());
-                return <button key={tabName} type="button" disabled={tabName === 'Chat'} onClick={() => tabName === 'Properties' && setActiveCapability('Properties')}
+                return <button key={tabName} type="button" disabled={tabName === 'Chat'} onClick={() => { if (tabName === 'Properties') { userSelection.current = {tab:initialTab, manual:true}; setActiveCapability('Properties'); } }}
                   style={{ height:32, display:'grid', placeItems:'center', padding:'0 10px', fontSize:13, fontFamily:LM.sans,
                     color:active ? LM.ink : LM.inkSoft, border:0, borderBottom:`2px solid ${active ? LM.accent : 'transparent'}`,
                     background:'transparent', cursor:tabName === 'Properties' ? 'pointer' : 'default', opacity:tabName === 'Chat' ? .65 : 1 }}>{tabName}</button>;
@@ -10926,6 +11016,7 @@ const SettingsStorage = () => (
 // registry. The "updated" line's link opens the release update controls.
 const SettingsAbout = ({ providers, release }) => {
   const [updates, setUpdates] = React.useState(false);
+  const hosts = hostTally();
   React.useEffect(() => {
     const transport = window.ARCHHUB_EXISTING_WORKSHOP;
     return transport?.watchApplicationUpdate ? transport.watchApplicationUpdate() : undefined;
@@ -10942,7 +11033,7 @@ const SettingsAbout = ({ providers, release }) => {
       <div><span style={{ color:LM.inkSoft }}>version    </span> {release?.current_build || 'reading\u2026'}</div>
       <div><span style={{ color:LM.inkSoft }}>license    </span> {'\u2014'}</div>
       <div><span style={{ color:LM.inkSoft }}>server     </span> {window.location.host || window.location.origin} &#xb7; running</div>
-      <div><span style={{ color:LM.inkSoft }}>hosts      </span> {LM_HOSTS.length} configured &#xb7; {LM_HOSTS.filter(h=>h.state!=='off').length} live</div>
+      <div data-about-host-total={hosts.total}><span style={{ color:LM.inkSoft }}>hosts      </span> {hosts.read ? <>{hosts.total} configured &#xb7; {hosts.running} live</> : 'checking hosts'}</div>
       <div><span style={{ color:LM.inkSoft }}>providers  </span> {rows ? (answering.length ? answering.join(', ') : 'none connected') : providers?.error ? 'not read' : 'reading\u2026'}</div>
       <div><span style={{ color:LM.inkSoft }}>updated    </span> {release?.updated_to ? 'to ' + release.updated_to : (label || 'reading\u2026')} &#xb7; <span role="button" tabIndex={0} aria-expanded={updates}
         onClick={toggle} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } }}
@@ -11408,7 +11499,7 @@ const SettingsHosts = () => {
   const connectorRows = hostConnectorRows(visibleHosts);
   const speckle = visibleHosts.find(h => /speckle/i.test(String(h.name || h.id || '')));
   // Built-vs-coming uses hostTally's shared "no wire in this build" / "no connector yet" filter.
-  const tally = hostTally(connectorRows);
+  const tally = hostTally();
   const builtRows = tally.builtRows;
   const coming = tally.coming;
   const running = tally.running;
@@ -11424,7 +11515,7 @@ const SettingsHosts = () => {
       <div data-connectors-bar="" style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, padding:`${LM.sp.sm}px ${LM.sp.md}px`,
         background:LM.bgPanel, borderBottom:`1px solid ${LM.line}` }}>
         <b style={{ fontWeight:LM.fs.bodySmStrong.wt, fontSize:LM.fs.bodySm.sz }}>Connectors</b>
-        <span style={tagStyle(LM.inkSoft)}>{running} of {builtRows.length} running{coming ? ` \u00b7 ${coming} coming` : ''}</span>
+        <span data-host-total={tally.total} style={tagStyle(LM.inkSoft)}>{running}/{builtRows.length} running{coming ? ` \u00b7 ${coming} coming` : ''}</span>
         <span style={{ flex:1 }}/>
         {speckle && <span style={tagStyle(LM.inkSoft)}>Speckle {'·'} {hostDetail(speckle)}</span>}
         {/* a live control on every state: re-read the hosts probe (never an inert action) */}
@@ -11434,7 +11525,7 @@ const SettingsHosts = () => {
       </div>
       <div style={{ display:'grid', gap:LM.sp.sm, padding:LM.sp.lg }}>
       {connectorRows.flatMap(h => {
-        const built = builtRows.includes(h);
+        const built = builtRows.some(row => row.id === h.id);
         const word = built ? hostPanelStateWord(h) : 'no connector yet';
         const col = built ? hostPanelStateTone(h) : LM.inkSoft;
         const rows = [(

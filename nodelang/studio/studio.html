@@ -202,6 +202,7 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
     // (configuration.composer_model), saved through the interaction route
     // the other owner settings use; '' clears it.
     window.ARCHHUB_AGENT_SELECT = async model => {
+      await window.ARCHHUB_LOAD_CANVAS();
       const workshop = window.ARCHHUB_EXISTING_WORKSHOP;
       if (!workshop || typeof workshop.setComposerModel !== 'function') throw new Error('This connection cannot save a model selection.');
       return (await workshop.setComposerModel(model))?.configuration_state?.composer_model?.value;
@@ -209,7 +210,7 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
     let graphRunPromise = null;
     window.ARCHHUB_RUN = () => {
       if (graphRunPromise) return Promise.reject(new Error('The graph is already running. Wait for it to finish, then run again.'));
-      graphRunPromise = jpost('/api/universal/run-graph', {}).then(result => {
+      graphRunPromise = window.ARCHHUB_LOAD_CANVAS().then(() => jpost('/api/universal/run-graph', {})).then(result => {
         window.ARCHHUB_LAST_RUN = result;
         return result;
       }).finally(() => { graphRunPromise = null; });
@@ -222,7 +223,10 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
     window.ARCHHUB_WORKSHOP_TRANSCRIPT = (node, scope, before) =>
       jget('/api/universal/workshop-transcript?node=' + encodeURIComponent(node) +
         '&scope=' + encodeURIComponent(scope) + (before ? '&before=' + encodeURIComponent(before) : ''));
-    window.ARCHHUB_GRAPH_CREATE = title => jpost('/api/universal/graph-create', {title});
+    window.ARCHHUB_GRAPH_CREATE = async title => {
+      await window.ARCHHUB_LOAD_CANVAS();
+      return jpost('/api/universal/graph-create', {title});
+    };
     window.ARCHHUB_GRAPH_OPEN = root => jpost('/api/universal/graph-open', {root});
     window.ARCHHUB_SCOPE_OPEN = async targets => {
       const path = Array.isArray(targets) ? targets : [targets];
@@ -294,8 +298,10 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       jpost('/api/universal/brain-edit', {id, text});
     window.ARCHHUB_BRAIN_PUBLISH = id =>
       jpost('/api/universal/brain-publish', {id});
-    window.ARCHHUB_NODE_CREATE = spec =>
-      jpost('/api/universal/node-create', spec);
+    window.ARCHHUB_NODE_CREATE = async spec => {
+      await window.ARCHHUB_LOAD_CANVAS();
+      return jpost('/api/universal/node-create', spec);
+    };
     window.ARCHHUB_RETRACT = root =>
       jpost('/api/universal/retract', {root});
     window.ARCHHUB_REVEAL = what =>
@@ -363,7 +369,7 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       session: {type:'text', help:'Revit port to build into (e.g. 48884)'},
       prompt: {type:'text', help:'What to recall from the brain'},
     };
-    const canvas = await jget('/api/universal/canvas');
+    const canvas = await jget('/api/universal/canvas?screen=home');
     // Read the bound view's theme before tokens and dependent modules evaluate.
     window.ARCHHUB_THEME = canvas.configuration?.theme ?? null;
     // Release updates use this authenticated transport even on canvases without a Workshop.
@@ -382,6 +388,22 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
     if (canvas.workshop_scope) {
       window.ARCHHUB_EXISTING_WORKSHOP.setCanvas(canvas.workshop_scope);
     }
+    let canvasRead = null;
+    window.ARCHHUB_LOAD_CANVAS = () => {
+      if (canvasRead) return canvasRead;
+      const owner = window.ARCHHUB_EXISTING_WORKSHOP;
+      const current = owner?.getSnapshot()?.topology?.canvas;
+      if (current && current.canvas_deferred !== true && owner.getSnapshot()?.theme?.configuration) return Promise.resolve(current);
+      canvasRead = jget('/api/universal/canvas').then(value => {
+        if (!value || value.canvas_deferred === true) throw new Error('The canvas did not return its current graph.');
+        owner.setTopologyCanvas(value);
+        if (!owner.setThemeCanvas(value)) throw new Error('The canvas did not return its current theme.');
+        window.ARCHHUB_THEME = value.configuration.theme;
+        if (window.ARCHHUB_LIVE) window.ARCHHUB_LIVE.graph = owner.getSnapshot().topology.graph;
+        return value;
+      }).finally(() => { canvasRead = null; });
+      return canvasRead;
+    };
     let hosts = [], connectors = [];
     window.ARCHHUB_LOAD_HOSTS = async () => {
       const scan = await jget('/api/universal/hosts');
@@ -440,22 +462,50 @@ window.ARCHHUB_REFRESH_NODE_LIBRARY = async () => {
       String((await jpost('/api/universal/skills', {want:'read', skill:String(name || '')})).result || '');
     // The one node library, served by the graph (library_engines). Studio
     // keeps no copy: the Nodes panel, card categories and placement read it.
-    // A library that cannot be read (a refusal, the 503 of a graph whose
-    // library is not installed yet, a network fault) must not cost the whole
-    // Studio: it mounts with an empty library and the Nodes panel says why.
+    // Home needs no catalogue; first open shares the authenticated read and its refusal.
     let nodeLibrary = {};
+    let nodeLibraryFlight = null;
+    window.AH_LIBRARY = [];
+    window.AH_ENGINE_CATEGORIES = {};
+    window.WIRE_PARAMS = [];
+    window.AH_LIBRARY_LOADED = false;
+    window.AH_LIBRARY_LOADING = false;
     window.AH_LIBRARY_ERROR = '';
     window.WIRE_PARAMS_ERROR = '';
-    try {
-      nodeLibrary = await jget('/api/universal/node-library');
-    } catch (error) {
-      nodeLibrary = {};
-      window.AH_LIBRARY_ERROR = window.WIRE_PARAMS_ERROR = (error && error.message) || String(error);
-    }
-    window.AH_LIBRARY = nodeLibrary.groups || [];
-    window.AH_ENGINE_CATEGORIES = nodeLibrary.categories || {};
-    // The wire rows are served too (universal_pipeline.WIRE_PARAMETER_SPECS); no copy here.
-    window.WIRE_PARAMS = nodeLibrary.wire_parameters || [];
+    window.AH_LOAD_LIBRARY = (refresh = false) => {
+      if (nodeLibraryFlight) return nodeLibraryFlight;
+      if (window.AH_LIBRARY_LOADED && !refresh) return Promise.resolve(nodeLibrary);
+      window.AH_LIBRARY_LOADING = true;
+      window.AH_LIBRARY_ERROR = window.WIRE_PARAMS_ERROR = '';
+      window.dispatchEvent(new CustomEvent('archhub:library-refresh'));
+      nodeLibraryFlight = (async () => {
+        try {
+          if (typeof window.ARCHHUB_LOAD_CANVAS === 'function') await window.ARCHHUB_LOAD_CANVAS();
+          nodeLibrary = await jget('/api/universal/node-library');
+          window.AH_LIBRARY = nodeLibrary.groups || [];
+          window.AH_ENGINE_CATEGORIES = nodeLibrary.categories || {};
+          // Wire rows have the same graph authority, loaded with the catalogue.
+          window.WIRE_PARAMS.splice(0, window.WIRE_PARAMS.length, ...(nodeLibrary.wire_parameters || []));
+          window.AH_LIBRARY_LOADED = true;
+          return nodeLibrary;
+        } catch (error) {
+          window.AH_LIBRARY_ERROR = window.WIRE_PARAMS_ERROR = (error && error.message) || String(error);
+          throw error;
+        } finally {
+          window.AH_LIBRARY_LOADING = false;
+          nodeLibraryFlight = null;
+          window.dispatchEvent(new CustomEvent('archhub:library-refresh'));
+        }
+      })();
+      return nodeLibraryFlight;
+    };
+    window.ARCHHUB_REFRESH_NODE_LIBRARY = () => window.AH_LOAD_LIBRARY(true);
+    window.addEventListener('archhub:library-refresh', () => {
+      if (!window.AH_LIBRARY_LOADED || window.AH_LIBRARY_LOADING) return;
+      const owner = window.ARCHHUB_EXISTING_WORKSHOP;
+      const current = owner?.getSnapshot()?.topology?.canvas;
+      if (current) owner.setTopologyCanvas(current);
+    });
     function projectStudioCanvas(canvas) {
     // engine -> card category, served with the library; nothing guessed here.
     const held = (typeof window !== 'undefined' && window.AH_ENGINE_CATEGORIES) || {};
@@ -483,7 +533,7 @@ window.ARCHHUB_REFRESH_NODE_LIBRARY = async () => {
         if (at >= 0) rows[at] = row; else rows.push(row);
       }
       nodes.push({
-        id:n.id, cat:CATS(engine), title:n.label || n.id, sub:engine || 'Graph node',
+        id:n.id, cat:held[engine] || n.category || CATS(engine), title:n.label || n.id, sub:engine || 'Graph node',
         // The engine lets the node menu's Duplicate place the same card; openable lets it open the node.
         engine, openable: n.openable === true, composition: n.composition === true, memberCount: Number.isSafeInteger(n.member_count) ? n.member_count : null,
         members:Array.isArray(n.members) ? n.members.map(member => ({
@@ -529,7 +579,7 @@ window.ARCHHUB_REFRESH_NODE_LIBRARY = async () => {
     }
     window.ARCHHUB_EXISTING_WORKSHOP.setTopologyCanvas(canvas);
     const {nodes, wires} = window.ARCHHUB_EXISTING_WORKSHOP.getSnapshot().topology.graph;
-    const graphIndex = await jget('/api/universal/graphs');
+    const graphIndex = await jget('/api/universal/graphs?screen=home');
     window.ARCHHUB_LIVE = {
       sessions: graphIndex.graphs,
       currentGraph: graphIndex.current_graph,

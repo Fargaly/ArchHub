@@ -150,9 +150,9 @@ test('Library Skills opens a real skill file and Add to canvas uses the graph no
 test('Command bar searches all saved skills and keeps open on an unavailable skill route', async () => {
   const studio = await mountStudio();
   try {
-    await studio.settle(() => studio.win.ARCHHUB_LIVE.skills.length === SKILLS.length, 'skills loaded for command bar');
     studio.flush(() => studio.win.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'k', ctrlKey:true, bubbles:true})));
     await studio.settle(() => studio.doc.querySelector('[data-command-bar]'), 'command bar opened');
+    await studio.settle(() => studio.win.ARCHHUB_LIVE.skills.length === SKILLS.length, 'skills loaded for command bar');
     const command = studio.doc.querySelector('[data-command-bar]');
     for (const skill of SKILLS) assert.ok(command.textContent.includes(skill.name), 'command bar includes saved skill: ' + skill.name);
 
@@ -234,14 +234,15 @@ test('SKILLS-ONE: the Skills panel lists the same skills Search counts, and the 
 // catalogue's real shape (name, source, description, path; no id/args/runs/when).
 const REAL_ROWS = Array.from({length:83}, (_, i) => ({name:'skill-' + i, source:i % 2 ? 'claude' : 'codex',
   description:'What skill ' + i + ' does.', path:'C:/skills/skill-' + i + '/SKILL.md'}));
-test('SKILLS-ONE v2: saved skills are read at start, so the panel opens on the list Search counts', async () => {
+test('SKILLS-ONE v2: first Skills open reads the shared list Search counts', async () => {
   let calls = 0;
   const studio = await mountPreservedSkills(async () => { calls += 1; return REAL_ROWS.map(row => ({...row})); });
   try {
     for (let i = 0; i < 4; i += 1) await studio.settle();
-    assert.equal(calls, 1, 'Studio reads the saved skills once at start, before the panel opens');
+    assert.equal(calls, 0, 'Home does not read saved skills before their first open');
     await openRail(studio, 'Skills');
     const panel = studio.doc.querySelector('[data-left-panel]');
+    await waitFor(studio, () => studio.doc.querySelectorAll('[data-skill-row]').length === 83, 'first Skills open reads the shared list');
     assert.equal(calls, 1, 'opening the panel does not read the list again');
     assert.equal(panel.textContent.includes('Loading catalogue'), false, 'no loading line over a list already read');
     assert.equal(panel.querySelector('[data-skills-count]').textContent.trim(), '83 SAVED');

@@ -7,6 +7,7 @@ its conversation; restore re-imports the file; no pass writes a graph revision;
 the launcher and geometry logs are capped.
 """
 import json
+import copy
 from pathlib import Path
 import secrets
 import sqlite3
@@ -24,6 +25,39 @@ from nodelang.log_rotation import RotatingLog, rotate
 DAY = 86400.0
 ROOM = "app:test:room"
 OWNER = ("session", "subject", "view", "tenant", "assurance")
+
+
+def _isolate_retention_producers(monkeypatch):
+    from nodelang import cloud_signin, pipeline_engines
+    from nodelang.application_server import ApplicationServer
+
+    def refuse_live_probe(*args, **kwargs):
+        raise AssertionError('retention replica court cannot probe live services')
+
+    monkeypatch.setattr(pipeline_engines, '_brain_call', refuse_live_probe)
+    monkeypatch.setattr(pipeline_engines, 'probe_connectors', refuse_live_probe)
+    monkeypatch.setattr(ApplicationServer, '_probe_brain', staticmethod(lambda: {'ok': True, 'facts': 7}))
+    monkeypatch.setattr(ApplicationServer, '_probe_hosts', staticmethod(lambda: []))
+    monkeypatch.setattr(cloud_signin, 'sign_in_state', lambda *args, **kwargs: {
+        'state': 'signed_out', 'signed_in': False, 'email': '',
+        'expires_at': None, 'founder': False,
+    })
+
+
+@pytest.fixture(autouse=True)
+def isolated_retention_producers(monkeypatch):
+    _isolate_retention_producers(monkeypatch)
+
+
+def test_retention_dry_run_requires_explicit_authentication_and_boolean_flag():
+    from nodelang.cell_authorization import AuthorizationDenied
+    from nodelang.conversation_retention_maintenance import maintain_conversation_retention
+    # Refuse before examining even a service: dry-run is an admitted owner
+    # operation, not a way around the conversation's private read authority.
+    with pytest.raises(AuthorizationDenied, match='explicit process authentication'):
+        maintain_conversation_retention(None, authentication_context=None, dry_run=True)
+    with pytest.raises(ValueError, match='dry-run flag'):
+        maintain_conversation_retention(None, authentication_context=object(), dry_run='yes')
 
 
 def _history(tmp_path, clock):
@@ -342,18 +376,24 @@ def application(tmp_path_factory):
     from nodelang.cell_secret_keys import MemorySigningKeyProvider
     root = tmp_path_factory.mktemp("retention-app")
     patch = pytest.MonkeyPatch()
+    _isolate_retention_producers(patch)
     patch.setenv("ARCHHUB_GRAND_MAP_PATH", str(Path(app.__file__).parent / "data/public_runtime_map.json"))
     keys = MemorySigningKeyProvider("archhub.local.relationship-authority", secrets.token_bytes(32))
     keys.add_key("archhub.local.court-attestation", secrets.token_bytes(32))
-    server = ApplicationServer(universal_state_path=root / "graph.sqlite3", universal_key_provider=keys,
-        universal_workspace_root=root, enable_machine_transport=False,
-        enable_universal_cloud_gateway=False, enable_machine_projection_prewarm=False,
-        live_watch=False).start()
+    server = None
     try:
+        server = ApplicationServer(universal_state_path=root / "graph.sqlite3", universal_key_provider=keys,
+            universal_workspace_root=root, enable_machine_transport=False,
+            enable_universal_cloud_gateway=False, enable_brain_cloud_sync=False,
+            enable_machine_projection_prewarm=False, live_watch=False)
+        server.start()
         yield server
     finally:
-        server.close()
-        patch.undo()
+        try:
+            if server is not None:
+                server.close()
+        finally:
+            patch.undo()
 
 
 def _sweep(service, context, limit=40):
@@ -366,6 +406,60 @@ def _sweep(service, context, limit=40):
         if cursor is None and result["status"] != "changed":
             break
     return results
+
+
+def test_first_lazy_retention_dry_run_never_hydrates_work_or_writes_cells(tmp_path, monkeypatch):
+    from nodelang import universal_application as app
+    from nodelang import conversation_retention_maintenance as maintenance
+    from nodelang.application_server import ApplicationServer
+    from nodelang.cell_secret_keys import MemorySigningKeyProvider
+    from nodelang.lazy_application_registry import DeferredRegistryField
+    from nodelang.map_import import resolve_map_path
+    monkeypatch.setenv('ARCHHUB_GRAND_MAP_PATH', str(Path(app.__file__).parent / 'data/public_runtime_map.json'))
+    keys = MemorySigningKeyProvider('archhub.local.relationship-authority', b't' * 32)
+    keys.add_key('archhub.local.court-attestation', b'u' * 32)
+    server = ApplicationServer(universal_state_path=tmp_path / 'graph.sqlite3',
+        universal_key_provider=keys, universal_workspace_root=tmp_path,
+        enable_machine_transport=False, enable_universal_cloud_gateway=False,
+        enable_machine_projection_prewarm=False, live_watch=False)
+    original = server.universal_registry
+    try:
+        store, service = server.universal_store, server.conversation_content
+        history = service._history
+        clock = [2_300_000_000.0]
+        monkeypatch.setattr(history, '_retention_clock', lambda: clock[0])
+        monkeypatch.setattr(maintenance, '_monotonic', lambda: clock[0])
+        _fill(history, original.workshop_root)
+        _sweep(service, original.authorization.session.context(minimum_validity_seconds=5))
+        clock[0] += 21 * DAY
+        _, lazy = app.restore_universal_application(resolve_map_path(), store,
+            key_provider=keys, lazy=True)
+        work = object.__getattribute__(lazy, 'workshop_workbench_root')
+        assert isinstance(work, DeferredRegistryField) and work.group._values is None
+        server.universal_registry = lazy
+        graph_before = _graph_counts(server)
+        content_before = history._db.serialize()
+        archive_root = archive_directory(service._path)
+        archives_before = {p.relative_to(archive_root): p.read_bytes()
+                           for p in archive_root.rglob('*') if p.is_file()}
+
+        def forbidden(*args, **kwargs):
+            pytest.fail('a retention dry-run must not hydrate Work or commit Cells')
+
+        with monkeypatch.context() as read_only:
+            read_only.setattr(work.group, 'factory', forbidden)
+            read_only.setattr(store, 'commit', forbidden)
+            report = service.maintain_retention(
+                authentication_context=lazy.authorization.session.context(minimum_validity_seconds=5),
+                dry_run=True)
+        assert [item['conversation_id'] for item in report['eligible']] == [original.workshop_root]
+        assert work.group._values is None
+        assert _graph_counts(server) == graph_before and history._db.serialize() == content_before
+        assert {p.relative_to(archive_root): p.read_bytes()
+                for p in archive_root.rglob('*') if p.is_file()} == archives_before
+    finally:
+        server.universal_registry = original
+        server.close()
 
 
 def _graph_counts(server):
@@ -429,6 +523,22 @@ def test_idle_retention_archives_only_eligible_rooms_keeps_work_and_writes_no_gr
     # with its wall clock, and a first sweep sees each room's current activity.
     from nodelang import conversation_retention_maintenance as maintenance
     monkeypatch.setattr(maintenance, "_monotonic", lambda: clock[0], raising=False)
+    initial_observed = getattr(service, '_retention_observed', None)
+    initial_observed_state = copy.deepcopy(initial_observed.__dict__) if initial_observed is not None else None
+    initial_history = history._db.serialize()
+    initial_archive_root = archive_directory(service._path)
+    initial_files = {p.relative_to(initial_archive_root): p.read_bytes()
+                     for p in initial_archive_root.rglob('*') if p.is_file()}
+    first_report = service.maintain_retention(
+        authentication_context=registry.authorization.session.context(minimum_validity_seconds=5),
+        dry_run=True)
+    assert first_report['eligible'] == []
+    assert getattr(service, '_retention_observed', None) is initial_observed
+    if initial_observed is not None:
+        assert initial_observed.__dict__ == initial_observed_state
+    assert history._db.serialize() == initial_history
+    assert {p.relative_to(initial_archive_root): p.read_bytes()
+            for p in initial_archive_root.rglob('*') if p.is_file()} == initial_files
     _sweep(service, registry.authorization.session.context(minimum_validity_seconds=5))
     clock[0] += 19 * DAY
     history.append(recent, author="founder", content="still going", idempotency_key="recent-late")
@@ -453,6 +563,65 @@ def test_idle_retention_archives_only_eligible_rooms_keeps_work_and_writes_no_gr
     baseline = _graph_counts(server)
     revision = store.revision
     context = registry.authorization.session.context(minimum_validity_seconds=5)
+    # Dry-run shares admission and inactivity checks without earning activity
+    # time, changing database bytes or touching the archive/index files.
+    content_before = history._db.serialize()
+    changes_before = history._db.total_changes
+    observed_before = copy.deepcopy(service._retention_observed.__dict__)
+    last_run_before = copy.deepcopy(service._retention_last_run)
+    archive_root = archive_directory(service._path)
+    archive_before = {p.relative_to(archive_root): p.read_bytes()
+                      for p in archive_root.rglob('*') if p.is_file()}
+    writes = {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE,
+              sqlite3.SQLITE_CREATE_TABLE, sqlite3.SQLITE_DROP_TABLE, sqlite3.SQLITE_ALTER_TABLE}
+    history._db.set_authorizer(lambda action, *_: sqlite3.SQLITE_DENY
+                               if action in writes else sqlite3.SQLITE_OK)
+    dry_results, dry_cursor = [], None
+    try:
+        for _ in range(40):
+            query = '/api/universal/conversation-retention?dry_run=true'
+            if dry_cursor is not None:
+                query += '&after_conversation_id=' + quote(dry_cursor, safe='')
+            status, report = _request(server, query)
+            assert status == 200, report
+            dry_results.append(report)
+            dry_cursor = report['next_conversation_id']
+            if dry_cursor is None:
+                break
+    finally:
+        history._db.set_authorizer(None)
+    candidates = [item for report in dry_results for item in report['eligible']]
+    assert [item['conversation_id'] for item in candidates] == [old], dry_results
+    assert candidates[0]['sample_messages'] == 5 and candidates[0]['sample_message_limit'] == 100
+    assert candidates[0]['sample_content_bytes'] == sum(len(s.encode('utf-8'))
+        for s in ['first'] + ['message %d' % i for i in range(1, 5)])
+    assert candidates[0]['would_archive'] is True
+    assert all(report['archived'] == report['purged'] == report['exported'] == 0 for report in dry_results)
+    assert any(report['protected'] for report in dry_results)   # finished Work stays protected
+    assert history._db.serialize() == content_before and history._db.total_changes == changes_before
+    assert service._retention_observed.__dict__ == observed_before
+    assert service._retention_last_run == last_run_before
+    assert {p.relative_to(archive_root): p.read_bytes()
+            for p in archive_root.rglob('*') if p.is_file()} == archive_before
+    assert store.revision == revision and _graph_counts(server) == baseline
+    for query in ('dry_run=True', 'dry_run=1', 'dry_run=', 'dry_run=true&dry_run=false',
+                  'dry_run=true&after_conversation_id=', 'dry_run=false&after_conversation_id=room'):
+        status, refused = _request(server, '/api/universal/conversation-retention?' + query)
+        assert status == 409 and refused['ok'] is False, refused
+    status, normal = _request(server, '/api/universal/conversation-retention?dry_run=false')
+    assert status == 200 and 'eligible' not in normal and normal['policy']['inactive_days'] == 20
+    with pytest.raises(HTTPError) as unauthenticated:
+        urlopen(Request(server.url + '/api/universal/conversation-retention?dry_run=true'), timeout=60)
+    assert unauthenticated.value.code == 403
+    # Even a cached founder context may not elevate a different browser
+    # binding's subject into the explicit founder maintenance operation.
+    real_resolver = server._resolve_browser_session
+    with monkeypatch.context() as different_subject:
+        different_subject.setattr(server, '_resolve_browser_session',
+            lambda *args, **kwargs: dataclasses.replace(real_resolver(*args, **kwargs),
+                                                       subject_root='court:other-member'))
+        status, refused = _request(server, '/api/universal/conversation-retention?dry_run=true')
+    assert status == 403 and 'authenticated founder' in refused['error']
     cursor, results = None, []
     for _ in range(40):
         result = service.maintain_retention(authentication_context=context, after_conversation_id=cursor)
@@ -526,6 +695,11 @@ def test_an_install_created_before_draft_protection_is_upgraded_at_an_idle_pass(
         monkeypatch.setattr(history, "_retention_clock", lambda: clock[0])
         _fill(history, registry.workshop_root)
         context = registry.authorization.session.context(minimum_validity_seconds=5)
+        before_dry_run = history._db.serialize()
+        report = service.maintain_retention(authentication_context=context, dry_run=True)
+        assert report['status'] == 'needs-page-protection' and report['eligible'] == []
+        assert history._db.serialize() == before_dry_run
+        assert history._db.execute('PRAGMA user_version').fetchone()[0] == 4
         # A backup taken BEFORE the upgrade (v4, tombstones without a content digest).
         backup = service.backup_recovery(tmp_path / "backups", authentication_context=context,
                                          timeout_seconds=60.0)

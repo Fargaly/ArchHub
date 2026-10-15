@@ -28,6 +28,9 @@ from nodelang.universal_application import (
     preview_universal_theme,
     promote_universal_theme_to_shared,
     project_universal_canvas,
+    project_universal_governed_work_index,
+    project_universal_governed_work,
+    project_universal_runtime_handoff_readiness,
     provision_universal_view_session,
     read_universal_theme,
     reset_universal_presentation_color,
@@ -40,6 +43,7 @@ from nodelang.universal_application import (
     ungroup_universal_composition,
 )
 from nodelang.universal_cell import NULL_CELL_ID, Cell, CellStore
+from nodelang.lazy_application_registry import VerifiedLazyViews
 
 
 def test_restore_evolves_legacy_relation_composer_protocol_with_registry_role(
@@ -621,6 +625,9 @@ def test_full_application_registry_state_and_revocation_reopen_without_rebuild(
     assert restored.visible_roots == (
         *restored.map.domains.values(),
         restored.core_values.root_id,
+        "app:system-tool:tool_studio",
+        "app:system-tool:tool_workshop",
+        "app:system-tool:tool_baboom",
         restored.governed_work_registry_root,
     )
     assert len(restored.relation_roots) == len(expected_wire_roots)
@@ -658,6 +665,122 @@ def test_full_application_registry_state_and_revocation_reopen_without_rebuild(
             reopened, restored, authentication_context=member_context
         )
     reopened.close()
+
+
+def test_lazy_registry_provisions_and_reopens_member_saved_nested_scope(tmp_path):
+    path = tmp_path / 'lazy-personal-views.sqlite3'
+    provider = MemorySigningKeyProvider('archhub.local.relationship-authority', b'v' * 32)
+    provider.add_key('archhub.local.court-attestation', b'w' * 32)
+    store, registry = build_universal_application(resolve_map_path(), CellStore(path),
+                                                   key_provider=provider)
+    store.close()
+    store = CellStore(path)
+    try:
+        store, registry = restore_universal_application(resolve_map_path(), store,
+            key_provider=provider, lazy=True)
+        assert isinstance(registry.view_sessions, VerifiedLazyViews)
+        member_root = 'test:durable:lazy-member'
+        store.commit(store.revision, create=(
+            Cell(member_root, NULL_CELL_ID, NULL_CELL_ID, b'Lazy durable member'),))
+        domain = registry.map.domains['ui']
+        view, _ = provision_universal_view_session(store, registry, member_root,
+                                                  visible_roots=(domain,))
+        assert registry.view_sessions[member_root] is view
+        assert member_root in tuple(registry.view_sessions)
+        authority = registry.authorization
+        context = authority.broker.mint_authenticated_context(member_root,
+            tenant_root=authority.tenant_root, assurance_root=authority.assurance_root,
+            lifetime_seconds=120)
+        set_universal_scope(store, registry, domain, authentication_context=context)
+        before = project_universal_canvas(store, registry, authentication_context=context)
+        expected_identity = (view.root_id, view.subject_root, view.settings_root, view.scope_trail_root)
+        expected_nodes = tuple(node['id'] for node in before['nodes'])
+        expected_scope = before['scope']['current']
+    finally:
+        store.close()
+
+    reopened = CellStore(path)
+    try:
+        reopened, restored = restore_universal_application(resolve_map_path(), reopened,
+            key_provider=provider, lazy=True)
+        assert [view.subject_root for view in restored.view_sessions.loaded_values()] == [
+            restored.authorization.subject_root]
+        authority = restored.authorization
+        context = authority.broker.mint_authenticated_context(member_root,
+            tenant_root=authority.tenant_root, assurance_root=authority.assurance_root,
+            lifetime_seconds=120)
+        after = project_universal_canvas(reopened, restored, authentication_context=context)
+        reopened_view = restored.view_sessions[member_root]
+        assert (reopened_view.root_id, reopened_view.subject_root, reopened_view.settings_root,
+                reopened_view.scope_trail_root) == expected_identity
+        assert after['scope']['current'] == expected_scope == domain
+        assert tuple(node['id'] for node in after['nodes']) == expected_nodes
+        assert member_root in tuple(restored.view_sessions)
+        assert restored.view_sessions[member_root] is reopened_view
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize('first_projector', [project_universal_governed_work_index, project_universal_governed_work])
+def test_first_lazy_view_migration_binds_work_index_and_readiness_to_latest_revision(tmp_path, monkeypatch, first_projector):
+    path = tmp_path / 'lazy-work-index.sqlite3'
+    provider = MemorySigningKeyProvider('archhub.local.relationship-authority', b'p' * 32)
+    provider.add_key('archhub.local.court-attestation', b'q' * 32)
+    store, registry = build_universal_application(resolve_map_path(), CellStore(path),
+                                                   key_provider=provider)
+    reviewer_root = 'test:durable:work-reviewer'
+    store.commit(store.revision, create=(
+        Cell(reviewer_root, NULL_CELL_ID, NULL_CELL_ID, b'Durable Work reviewer'),))
+    view, _ = provision_universal_view_session(store, registry, reviewer_root,
+        principal_root=registry.authorization.principal_root,
+        # A member cannot place the founder's WIP Work registry in its canvas.
+        # Use the admitted public domains; the existing Work read grant is
+        # exercised by the first-use projector below.
+        visible_roots=registry.visible_roots[:2])
+    store.close()
+    reopened = CellStore(path)
+    try:
+        reopened, restored = restore_universal_application(resolve_map_path(), reopened,
+            key_provider=provider, lazy=True)
+        assert reviewer_root not in {item.subject_root for item in restored.view_sessions.loaded_values()}
+        original = universal_application_module._ensure_view_composition_graph
+        migrated = []
+
+        def first_use_migration(current_store, roles, session_root, **kwargs):
+            # A compatibility step runs inside the original deferred migration
+            # owner. Its accepted graph change precedes the Work projection.
+            if session_root == view.root_id and not migrated:
+                current_store.commit(current_store.revision, create=(Cell(
+                    'test:fixture:lazy-view-compatibility', NULL_CELL_ID, NULL_CELL_ID, b'verified fixture migration'),))
+                migrated.append(current_store.revision)
+            return original(current_store, roles, session_root, **kwargs)
+
+        monkeypatch.setattr(universal_application_module, '_ensure_view_composition_graph', first_use_migration)
+        original_read = universal_application_module._require_application_authorization
+        admitted_heads = []
+
+        def verified_read(snapshot, current_registry, action, root, **kwargs):
+            if action == 'read' and root == current_registry.governed_work_registry_root:
+                admitted_heads.append((snapshot.revision, reopened.revision))
+            return original_read(snapshot, current_registry, action, root, **kwargs)
+
+        monkeypatch.setattr(universal_application_module, '_require_application_authorization', verified_read)
+        authority = restored.authorization
+        context = authority.broker.mint_authenticated_context(reviewer_root,
+            tenant_root=authority.tenant_root, assurance_root=authority.assurance_root,
+            lifetime_seconds=120)
+        before = reopened.revision
+        first = first_projector(reopened, restored, authentication_context=context)
+        assert migrated and reopened.revision > before
+        assert admitted_heads and all(bound == current for bound, current in admitted_heads)
+        index = first if first_projector is project_universal_governed_work_index else \
+            project_universal_governed_work_index(reopened, restored, authentication_context=context)
+        assert index['revision'] == reopened.revision
+        readiness = project_universal_runtime_handoff_readiness(reopened, restored,
+            authentication_context=context, work_index=index)
+        assert readiness['revision'] == reopened.revision
+    finally:
+        reopened.close()
 
 
 def test_personal_presentation_binding_reopens_with_identity_history_and_reset(

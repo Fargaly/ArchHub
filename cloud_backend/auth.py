@@ -100,9 +100,8 @@ def exchange_code(*, code: str, code_verifier: str
         # enforced: db.issue_token stamped tokens.expires_at to the
         # same created_at + TOKEN_TTL_SECONDS window. We surface that
         # exact horizon to the client so its cached expiry matches the
-        # server's — no drift, no immortal tokens. Client refreshes by
-        # re-running sign-in once expired (no refresh endpoint, to keep
-        # the API surface tight).
+        # server's. The desktop renews a still-current session before this
+        # horizon; expired or revoked sessions require Google again.
         "expires_at": int(time.time()) + db.TOKEN_TTL_SECONDS,
         "plan": user["plan"],
     }

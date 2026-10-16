@@ -497,6 +497,14 @@ def google_callback(request: Request, code: str = "", state: str = "",
     return RedirectResponse(url=return_url, status_code=302)
 
 
+@app.post("/v1/auth/refresh")
+def refresh_session(authorization: str | None = Header(None)) -> dict:
+    expires = db.refresh_token(_bearer(authorization))
+    if expires is None:
+        raise HTTPException(status_code=401, detail="invalid_token")
+    return {"expires_at": expires}
+
+
 @app.post("/v1/auth/logout")
 async def logout(req: Request,
                  authorization: str | None = Header(None)) -> dict:

@@ -17,10 +17,20 @@ import pytest
 from nodelang import brain_cloud_runner as runner
 
 
+@pytest.fixture(autouse=True)
+def isolated_verified_account(monkeypatch):
+    from app import secrets_store
+    from nodelang import cloud_session
+    monkeypatch.setattr(secrets_store, "_MEMORY_KEYS", {})
+    monkeypatch.setattr(cloud_session, "_account_verdicts", {})
+
+
 def _sign_in(appdata, email="member@studio.test"):
     (appdata / "ArchHub" / "brain").mkdir(parents=True, exist_ok=True)
     (appdata / "ArchHub" / "brain" / "cloud.json").write_text(
         json.dumps({"email": email, "token": "court"}), encoding="utf-8")
+    from nodelang.cloud_session import remember_verified_account
+    remember_verified_account({"token": "court"}, 200, {"email": email})
 
 
 def test_signed_out_nothing_is_sent(tmp_path):

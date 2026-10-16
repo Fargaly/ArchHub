@@ -36,6 +36,11 @@ def _fresh_founder_answers(monkeypatch):
     """The founder answer lives in process memory only; each court starts empty."""
     monkeypatch.setattr(cloud_signin, "_FOUNDER", {})
     monkeypatch.setattr(cloud_signin, "_PROBED", {})
+    from app import secrets_store
+    from nodelang import cloud_session
+    monkeypatch.setattr(secrets_store, "_MEMORY_KEYS", {})
+    monkeypatch.setattr(cloud_session, "_account_verdicts", {})
+    monkeypatch.setattr(cloud_signin, "_REFRESH_ATTEMPTS", {})
 
 
 def _record(tmp_path: Path, **fields) -> Path:
@@ -138,6 +143,7 @@ def test_a_the_companion_reads_the_one_session_record(tmp_path, monkeypatch):
     appdata, local = tmp_path / "roaming", tmp_path / "local"
     _record(appdata, expires_at=4_000_000_000)
     monkeypatch.setenv("APPDATA", str(appdata))
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(appdata / "ArchHub"))
     monkeypatch.setenv("LOCALAPPDATA", str(local))
     cloud = _Cloud({"/founder/api/browser-code": (
         200, {"claim_url": "https://api.archhub.io/founder/claim?code=c1"})})
@@ -199,14 +205,35 @@ def test_a_a_forged_host_never_receives_the_session(tmp_path, monkeypatch):
                     "/v1/auth/logout": (200, {})})
     cloud_signin.session_summary(path, now=1_900_000_000, http=cloud)
     cloud_signin.cockpit_link(path, now=1_900_000_000, http=cloud)
-    monkeypatch.setattr(cloud_relay, "DEFAULT_BASE", cloud_relay.DEFAULT_BASE)
-    assert cloud_relay.cockpit_url(tmp_path).startswith("https://api.archhub.io/")
+    monkeypatch.setattr(cloud_signin, "http_json", cloud)
+    monkeypatch.setattr(cloud_signin, "cloud_session_path", lambda: path)
+    assert cloud_relay.cockpit_url(tmp_path) == "https://api.archhub.io/founder/claim?code=z"
+    # STAGE2B retired desktop.createWindow. The surviving companion opens the
+    # same account-bound cockpit link without constructing a second Qt owner.
+    import webbrowser
+    from PyQt6.QtWidgets import QApplication
+    from nodelang.baboom_native_host import BaboomNativeHost
+    from nodelang.baboom_native_runtime import create_baboom_native_projection
+    from tests_replica.test_baboom_native_companion import _Transport
+    application = QApplication.instance() or QApplication([])
+    opened = []
+    monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url))
+    host = BaboomNativeHost(_Transport(), external_session_id="instfix2-cockpit",
+        device_credential_provider=lambda challenge: {})
+    host.connect()
+    window = create_baboom_native_projection(host)
+    try:
+        window._open_cockpit()
+        assert opened == ["https://api.archhub.io/founder/claim?code=z"]
+    finally:
+        window.stop_projection()
+        window.close()
+        host.stop()
+        application.processEvents()
     cloud_signin.sign_out(path, http=cloud, wait=True)
     hosts = {url.split("/", 3)[2] for _m, url, _h in cloud.calls}
     assert hosts == {"api.archhub.io"}, hosts
     assert cloud_signin.pinned_base({"cloud_base_url": "https://archhub-cloud.fly.dev/"}) ==         "https://archhub-cloud.fly.dev"
-    desktop = (ROOT / "nodelang" / "desktop.py").read_text(encoding="utf-8")
-    assert "def createWindow" in desktop, "window.open must open an ArchHub window, not nothing"
 
 
 # ---- (b) Settings > Account says the real state --------------------------------
@@ -319,6 +346,7 @@ def test_d_a_forged_cloud_json_sends_nothing_off_the_pinned_hosts(tmp_path, monk
     path = _record(appdata, token=evil_bearer, expires_at=4_000_000_000,
                    cloud_base_url="https://evil.example")
     monkeypatch.setenv("APPDATA", str(appdata))
+    monkeypatch.setenv("ARCHHUB_TEST_STATE_DIR", str(appdata / "ArchHub"))
     sent: list = []
 
     def urlopen(request, timeout=None, **_kw):

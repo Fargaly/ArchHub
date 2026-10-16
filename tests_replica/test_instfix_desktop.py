@@ -56,3 +56,22 @@ def test_tray_toggle_is_the_same_graph_property_read_by_the_launcher():
     assert store.revision == changed
     app.edit_universal_property(store, registry, row["relation"], "false")
     assert app.read_universal_keep_running_in_tray(store.snapshot(), registry) is False
+
+
+def test_workshop_runtime_uses_typed_defaults_and_wired_feed_precedence():
+    from nodelang.pipeline_engines import tool_settings
+    from nodelang.universal_application import _application_setting_default
+    result, _ = tool_settings({'tool': 'workshop'}, {})
+    settings = result['out']
+    assert settings['keep_running_in_tray'] is False
+    for name in ('stale_claim_after_idle_minutes', 'archive_after_idle_days'):
+        assert type(settings[name]) is int
+        assert settings[name] == _application_setting_default(name)
+    result, _ = tool_settings({'tool': 'workshop', 'keep_running_in_tray': True}, {'keep_running_in_tray': False})
+    assert result['out']['keep_running_in_tray'] is False
+    result, _ = tool_settings({'tool': 'workshop'}, {'keep_running_in_tray': True})
+    assert result['out']['keep_running_in_tray'] is True
+    with pytest.raises(ValueError, match='must be a boolean'):
+        tool_settings({'tool': 'workshop', 'keep_running_in_tray': 'yes'}, {})
+    with pytest.raises(ValueError):
+        tool_settings({'tool': 'workshop', 'archive_after_idle_days': True}, {})

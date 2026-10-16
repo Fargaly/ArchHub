@@ -896,12 +896,17 @@ def create_baboom_native_companion_window(
             self._send.clicked.connect(self._submit_input)
             self._send.hide()
             self._open = QToolButton(self)
-            self._open.setText("Open ArchHub")
+            self._open.setText("↗")
             self._open.setAccessibleName("Open ArchHub")
-            self._open.setStyleSheet("background:%s;color:%s;border:0;padding:0 8px;font-size:13px;"
+            self._open.setToolTip("Open ArchHub")
+            self._open.setStyleSheet("background:%s;color:%s;border:0;padding:0;font-size:16px;"
                 % (_theme["accent"], _theme["on_fill"]))
             self._open.clicked.connect(self._open_archhub)
             self._open.hide()
+            self._connection_status = QLabel("", self)
+            self._connection_status.setAccessibleName("ArchHub connection status")
+            self._connection_status.setStyleSheet("background:%s;border-radius:4px;" % _theme["warn"])
+            self._connection_status.hide()
             # The confirm control carries the action in words, not a glyph, and a
             # labelled Cancel sits beside it so the founder always reads what he is
             # pressing and always has a way out. Confirm is the primary: the accent
@@ -1134,12 +1139,16 @@ def create_baboom_native_companion_window(
                 if self._response_received_at else float("inf"))
             stale = (controller.host_silent_seconds > _FRAME_GRACE_SECONDS
                 or controller._host.connection_state in {"closed", "reconnecting"}) and response_age > _FRAME_GRACE_SECONDS and not self._busy
-            offline_line = ("ArchHub is closed." if controller._host.connection_state == "closed"
-                else "Reconnecting to ArchHub…")
-            report = (offline_line
+            closed = controller._host.connection_state == "closed"
+            long_outage = stale and not closed and controller.host_silent_seconds >= _FRAME_SILENCE_SECONDS
+            report = (("ArchHub is still reconnecting…" if long_outage else None)
                       if stale else self._transient_report or frame.report)
-            self._open.setVisible(stale)
+            self._open.setVisible(stale and closed)
+            self._connection_status.setVisible(stale)
+            self._connection_status.setToolTip("ArchHub is closed" if closed else "Reconnecting automatically")
             if stale:
+                self._interaction_requested = False
+                self._input.hide()
                 self._pending_task_utterance = None
                 self._confirm.hide()
                 self._cancel.hide()
@@ -1150,7 +1159,7 @@ def create_baboom_native_companion_window(
             if report is None and self._interaction_requested:
                 report = "Ask ArchHub…"
             self._face_showing = False
-            if report is None and not self._input.isVisible():
+            if report is None and not self._input.isVisible() and not stale:
                 # Nothing being said: the face shows the graph, live.
                 snapshot = controller.latest_snapshot
                 context = dict(getattr(snapshot, "context", {}) or {}) if snapshot is not None else {}
@@ -1165,7 +1174,8 @@ def create_baboom_native_companion_window(
                     # appears on click; an all-clear bubble adds no information.
                     report = None
                     self._face_showing = False
-            layout = self._layout_for_report(frame, screen, report)
+            layout = (replace(frame.layout, message=None) if stale and not long_outage
+                      else self._layout_for_report(frame, screen, report))
             self._frame = frame
             self._layout = layout
             self._sprite = render_baboom_native_sprite(self._atlas, frame)
@@ -1185,8 +1195,6 @@ def create_baboom_native_companion_window(
             # row in the window bounds while the buttons are up.
             if self._confirm.isVisible() and layout.message is not None:
                 bottom = max(bounds.bottom, message.bottom) + 34
-            if stale and layout.message is not None:
-                bottom = max(bottom, message.bottom + 34)
             self._origin = QPoint(left, top)
             window_rect = QRect(left, top, right - left, bottom - top)
             # Qt caches what it last SET; Windows holds what the window really
@@ -1257,6 +1265,10 @@ def create_baboom_native_companion_window(
                 bounds.x - left, bounds.y - top, bounds.width, bounds.height
             )
             self._sprite_rect = sprite_rect
+            self._connection_status.setGeometry(sprite_rect.center().x() + 12, sprite_rect.top() + 12, 8, 8)
+            self._open.setGeometry(sprite_rect.right() - 24, sprite_rect.top() + 4, 24, 24)
+            self._connection_status.raise_()
+            self._open.raise_()
             if layout.message is None or report is None:
                 self._report.hide()
                 self._input.hide()
@@ -1288,7 +1300,6 @@ def create_baboom_native_companion_window(
                     self._report.setGeometry(panel_rect)
                     self._report.show()
                 self._input.setGeometry(message_rect)
-                self._open.setGeometry(message_rect.x(), message_rect.bottom() + 4, 122, 28)
                 if self._approval is not None and self._approval.isVisible():
                     self._approval.setGeometry(message_rect)
                     self._report.hide()

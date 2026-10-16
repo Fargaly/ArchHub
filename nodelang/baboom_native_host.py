@@ -20,6 +20,7 @@ from typing import Callable, Mapping, Protocol
 
 from .cell_activity import FOREGROUND_APP_LABELS
 from .application_machine_transport import (
+    MachineNoResponse,
     MachineTransportError,
     validate_baboom_native_frame_payload,
 )
@@ -168,8 +169,8 @@ class BaboomNativeHost:
         """Whether an enrollment request left this host; unknown counts as sent."""
         return bool(getattr(self._transport, "enrollment_sent", True))
 
-    def connect(self) -> BaboomNativeSnapshot:
-        """Explicitly enroll/renew one approved BABOOM presence capability."""
+    def connect(self) -> BaboomNativeSnapshot | None:
+        """Enroll once; a slow first projection must not discard that session."""
         if not self._transport.agent_session_root:
             self._transport.bind_agent_session(
                 runtime="baboom",
@@ -178,7 +179,16 @@ class BaboomNativeHost:
             )
         with self._lock:
             self._connected = True
-        return self.poll(response_timeout_seconds=_FIRST_FRAME_SECONDS)
+        try:
+            return self.poll(response_timeout_seconds=_FIRST_FRAME_SECONDS)
+        except MachineNoResponse:
+            # Enrollment above returned its signed capability. The first
+            # display read is independent: let the existing heartbeat obtain
+            # the next frame, without replaying enrollment, an ask or an act.
+            with self._lock:
+                self._last_error = "MachineNoResponse"
+                self.connection_state = "connecting"
+            return None
 
     def poll(
         self, *, response_timeout_seconds: float = _STEADY_FRAME_SECONDS
@@ -429,19 +439,23 @@ class BaboomNativeHost:
         return MappingProxyType(dict(result))
 
     def _run(self) -> None:
+        failures = 0
         while not self._stop.is_set():
             try:
                 self.poll()
+                failures = 0
             except Exception as exc:
                 # No command is retried. The next display tick rechecks the
                 # owner and may admit a verified successor, never a duplicate.
                 with self._lock:
                     self._last_error = type(exc).__name__
-                    self.connection_state = ("closed" if "runtime is not active" in str(exc)
-                        else "reconnecting")
+                    if not isinstance(exc, MachineNoResponse):
+                        self.connection_state = ("closed" if "runtime is not active" in str(exc)
+                            else "reconnecting")
+                failures = min(failures + 1, 5)
             # Frame leases last twelve seconds. A thirty-second heartbeat left
             # a healthy app looking disconnected for most of every interval.
-            self._stop.wait(min(2.0, self._heartbeat_seconds))
+            self._stop.wait(min(30.0, min(2.0, self._heartbeat_seconds) * 2 ** max(0, failures - 1)))
 
     def _record_actionable_signal(self, context: Mapping[str, object]) -> str | None:
         if not self._emit_steward_signals:

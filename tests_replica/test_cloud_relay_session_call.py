@@ -283,6 +283,9 @@ def test_start_cloud_relay_wires_the_real_session_caller_and_lists_sessions(
     monkeypatch.setattr("nodelang.cloud_relay.PINNED_BASES", (cloud,))
     monkeypatch.setattr(CloudRelay, "start", lambda self: self)
 
+    from nodelang.cloud_session import remember_verified_account
+    remember_verified_account({"token": "t", "cloud_base_url": cloud}, 200, {"email": "owner-a@example.com"})
+
     relay = start_cloud_relay(appdata=appdata, state_dir=state,
                               respond=lambda _text: {}, execute=lambda _text: {},
                               session_transport=_SessionTransport())
@@ -324,6 +327,8 @@ def test_application_relay_lifecycle_starts_after_consent_and_rebinds_on_account
     }), encoding="utf-8")
     cloud_publish_consent.record_cloud_publish_consent(
         owner._cloud_relay_state_dir, account="owner-a@example.com")
+    from nodelang.cloud_session import remember_verified_account
+    remember_verified_account({"token": "t", "cloud_base_url": cloud}, 200, {"email": "owner-a@example.com"})
     first = owner._restart_cloud_relay()
 
     assert first is owner.cloud_relay
@@ -335,6 +340,7 @@ def test_application_relay_lifecycle_starts_after_consent_and_rebinds_on_account
     }), encoding="utf-8")
     cloud_publish_consent.record_cloud_publish_consent(
         owner._cloud_relay_state_dir, account="owner-b@example.com")
+    remember_verified_account({"token": "t2", "cloud_base_url": cloud}, 200, {"email": "owner-b@example.com"})
     second = owner._restart_cloud_relay()
 
     assert second is owner.cloud_relay and second is not first

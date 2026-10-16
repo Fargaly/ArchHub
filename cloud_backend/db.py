@@ -1555,6 +1555,20 @@ def issue_token(user_id: str, *,
     return token
 
 
+def refresh_token(token: str) -> Optional[int]:
+    """Extend one live account session atomically; never revive a dead token."""
+    now = int(time.time())
+    with connect() as con:
+        row = con.execute(
+            "UPDATE tokens SET expires_at = MAX(expires_at, ?)"
+            " WHERE token = ? AND expires_at > ?"
+            " AND user_id IN (SELECT id FROM users WHERE suspended_at IS NULL)"
+            " RETURNING expires_at",
+            (now + TOKEN_TTL_SECONDS, token_digest(token), now),
+        ).fetchone()
+    return int(row["expires_at"]) if row is not None else None
+
+
 def user_for_token(token: str) -> Optional[dict]:
     """Resolve a bearer token to its user, enforcing server-side expiry.
 

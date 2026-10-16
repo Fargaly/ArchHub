@@ -378,7 +378,10 @@ def test_closed_app_control_uses_the_installer_shortcut_without_launching(monkey
         host.connection_state = "closed"
         window.start_projection()
         assert window._open.isVisible()
-        assert window._report.text() == "ArchHub is closed."
+        assert not window._report.isVisible()
+        assert window._connection_status.isVisible()
+        assert window._connection_status.toolTip() == "ArchHub is closed"
+        assert window._open.accessibleName() == "Open ArchHub"
         window._open.click()
         from pathlib import Path
         assert [Path(value) for value in opened] == [shortcut]

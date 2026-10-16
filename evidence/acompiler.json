@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "base_revision": "e2e8a991cb7b4837e865d3017b8d0a3bb6a365f0",
+  "base_revision": "a4e99959cec61863713eda0b76340a0f1f07adac",
   "counts": {
     "E0001": {
       "cmd": 0,
@@ -330,5 +330,5 @@
     "tools/archhub-compiler/licenses/tree-sitter-toml-ng-0.7.0-LICENSE.txt": "b727eee929bee836e8102cecf749a795b199f291b58c885bcd81cae727ac5a46",
     "tools/archhub-compiler/licenses/tree-sitter-typescript-0.23.2-LICENSE.txt": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559"
   },
-  "method": "activation re-baseline 2026-10-16 by 717: clean git archive of main e2e8a991cb7b4837e865d3017b8d0a3bb6a365f0 scanned with this compiler; growth since 3edcfc55 came from landings made before the gate ran at every commit; from here every commit and build is ratcheted against this"
+  "method": "activation re-baseline 2026-10-16 by 717: clean git archive of main e2e8a991cb7b4837e865d3017b8d0a3bb6a365f0 scanned with this compiler; growth since 3edcfc55 came from landings made before the gate ran at every commit; from here every commit and build is ratcheted against this; base moved to a4e99959 (same counts: that commit only removed a lane markdown brief) so build admission owns one change set"
 }

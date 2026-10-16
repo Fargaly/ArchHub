@@ -317,6 +317,7 @@ namespace RevitMCPCore
                 var first = winners[0];
                 // Same identity alone is insufficient: unsigned assemblies may
                 // carry different bytes. Only identical copies are interchangeable.
+                bool ambiguous = false;
                 if (winners.Count > 1)
                 {
                     using (var sha = System.Security.Cryptography.SHA256.Create())
@@ -329,9 +330,18 @@ namespace RevitMCPCore
                             using (var stream = File.OpenRead(other.Path)) otherDigest = sha.ComputeHash(stream);
                             if (!string.Equals(first.Identity.FullName, other.Identity.FullName,
                                 StringComparison.OrdinalIgnoreCase) || !digest.SequenceEqual(otherDigest))
-                                throw new InvalidOperationException("Ambiguous assembly " + group.Key);
+                                ambiguous = true;
                         }
                     }
+                }
+                if (ambiguous)
+                {
+                    // Conflicting copies that are only other add-ins' private
+                    // dependencies (Revit 2027.3 ships Autodesk.Extensions twice)
+                    // are not referenced; a script never needs them. A conflict in
+                    // the API pins, the runtime or Revit's own directory still refuses.
+                    if (priority >= 3) continue;
+                    throw new InvalidOperationException("Ambiguous assembly " + group.Key);
                 }
                 result.Add(first.Path);
             }

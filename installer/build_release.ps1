@@ -57,7 +57,9 @@ $selectedInputs = @(
     'package.json', 'packaging/compile_studio.cjs',
     'app/secrets_store.py', 'app/credential_lock.py', 'app/__init__.py', 'bridges', 'archhub.ico',
     'packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',
-    'packaging/windows/licenses/ArchHub-components-MIT.txt'
+    'packaging/windows/licenses/ArchHub-components-MIT.txt',
+    'packaging/windows/stage_goose.py', 'packaging/windows/goose-pin.json',
+    'packaging/windows/licenses/Goose-Apache-2.0.txt', 'packaging/windows/licenses/Hermes-MIT.txt'
 ) + $acompilerInputs
 
 function Assert-TrackedInputs([string]$Checkout, [string[]]$Inputs) {

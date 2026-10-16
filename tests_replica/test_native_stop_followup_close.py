@@ -60,6 +60,14 @@ def test_an_unreachable_peer_closes_the_request_as_unreachable(tmp_path):
     assert _stop(tmp_path, entries, 1000) is None
 
 
+def test_a_stale_peer_pipe_closes_the_request_as_unreachable(tmp_path):
+    # A restarted peer leaves a dead pipe: the transport reports ENOINBOX/stale, not "reachable".
+    entries = (_send(0, BRIDGE, ASK, ASK_ID)
+               + _send(300, BRIDGE, "re " + ASK_ID + ": CLOSED, no reply needed.", None, success=False,
+                       note="No running session has registered an inbox at the pipe (ENOINBOX: no-key) - this socket path is stale.") + TAIL)
+    assert _stop(tmp_path, entries, 1000) is None
+
+
 def test_closing_another_msg_id_does_not_close_this_one(tmp_path):
     entries = _send(0, BRIDGE, ASK, ASK_ID) + _send(300, BRIDGE, "re some-other-id: CLOSED.", "x") + TAIL
     assert _stop(tmp_path, entries, 1000)["decision"] == "block"

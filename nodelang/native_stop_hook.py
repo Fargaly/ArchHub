@@ -1113,7 +1113,7 @@ def followup_items(entries, now, *, registry=()):
                     result = _tool_result(block.get('content'))
                     if result.get('success') is True:
                         closes.append((to, said_at, message))
-                    elif 'reachable' in json.dumps(result).casefold():
+                    elif any(word in json.dumps(result).casefold() for word in ('reachable', 'enoinbox', 'socket path is stale')):
                         unreachable.append((to, said_at))
                 if type(block) is dict and block.get('type') == 'tool_result' and block.get('tool_use_id') in pending:
                     to, sent_at = pending.pop(block['tool_use_id'])

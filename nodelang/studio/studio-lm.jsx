@@ -593,6 +593,7 @@ const STUDIO_SHORTCUT_BINDINGS = Object.freeze([
   studioShortcut({id:'close-overlays', label:'Close settings, docs, or catalogue', scope:'global', display:'Esc', menu:'Esc', action:'close-overlays', combos:[{key:'Escape', anyModifiers:true}]}),
   studioShortcut({id:'canvas-open-menu', label:'Open canvas menu', scope:'canvas', display:'Menu / Shift+F10', menu:'⇧F10', action:'open-canvas-menu', combos:[{key:'ContextMenu'}, {key:'F10', shift:true}]}),
   studioShortcut({id:'canvas-select-all', label:'Select all nodes', scope:'canvas', display:'Ctrl/Cmd+A', menu:'⌘A', action:'select-all-nodes', combos:[{key:'a', ctrlOrMeta:true}]}),
+  studioShortcut({id:'canvas-group', label:'Group selected nodes', scope:'canvas', display:'Ctrl/Cmd+G', menu:'⌘G', action:'group-selection', combos:[{key:'g', ctrlOrMeta:true}]}),
   studioShortcut({id:'canvas-add-node', label:'Add node from library', scope:'canvas', display:'Ctrl/Cmd+L', menu:'⌘L', action:'add-node-library', combos:[{key:'l', ctrlOrMeta:true}]}),
   studioShortcut({id:'canvas-fit-graph', label:'Fit graph to view', scope:'canvas', display:'Ctrl/Cmd+0', menu:'⌘0', action:'fit-graph', combos:[{key:'0', ctrlOrMeta:true}]}),
   studioShortcut({id:'canvas-zoom-100', label:'Zoom to 100%', scope:'canvas', display:'Ctrl/Cmd+1', menu:'⌘1', action:'zoom-100', combos:[{key:'1', ctrlOrMeta:true}]}),
@@ -6133,6 +6134,8 @@ const NodeCanvas = ({ libraryMode = false, focusId, setFocusId, pendingReveal = 
   // action; a row this build has no action for is drawn disabled and says why.
   const canvasMenuItems = [
     {i:'＋', t:'Add node…', k:studioShortcutMenu('canvas-add-node'), shortcutId:'canvas-add-node', action:() => setLibraryOpen(true), disabled:blocked, why:busyWhy},
+    ...(selected.size >= 2 ? [{i:'⊞', t:'Group selection → grand node', k:studioShortcutMenu('canvas-group'), shortcutId:'canvas-group',
+      action:composeCurrentSelection, disabled:!composer || blocked || menuBusy, why:!composer ? 'Grouping needs the live graph' : menuWhyBusy}] : []),
     {i:'⎘', t:'Paste', k:'⌘V', disabled:true, why:'Copying and pasting nodes is not available in this build'},
     {sep:true},
     {i:'⌴', t:'Fit graph to view', k:studioShortcutMenu('canvas-fit-graph'), shortcutId:'canvas-fit-graph', action:() => fitIds(allIds), disabled:!allIds.length, why:noNodesWhy},
@@ -6164,7 +6167,7 @@ const NodeCanvas = ({ libraryMode = false, focusId, setFocusId, pendingReveal = 
   // on the group's boundary ports.
   const nodeMenuItems = [
     ...(selected.size >= 2 ? [{i:'⊞', t:'Group selection → grand node', accent:true,
-      action:() => composeGroup('group', [...selected], 'Grouped ' + selected.size + ' nodes into one node.'),
+      action:composeCurrentSelection,
       disabled:!composer || blocked || menuBusy, why:!composer ? 'Grouping needs the live graph' : menuWhyBusy}, {sep:true}] : []),
     {i:'▶', t:'Run graph', action:() => menuRun(), disabled:typeof window.ARCHHUB_RUN !== 'function' || menuBusy,
       why:menuBusy ? menuWhyBusy : 'Running is not available in this connection'},
@@ -6373,7 +6376,7 @@ const NodeCanvas = ({ libraryMode = false, focusId, setFocusId, pendingReveal = 
         background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md,
         boxShadow:'0 10px 24px rgba(0,0,0,.35)',
       }}>
-        <window.AH_DS.Btn type="button" onClick={composeCurrentSelection}
+        <window.AH_DS.Btn type="button" onClick={composeCurrentSelection} title="Group selected nodes · Ctrl+G"
           disabled={!composer || layoutBusy || layoutNeedsRefresh || authorityState?.requires_refresh || menuBusy} style={window.AH_DS.styles.button(false ? 'primary' : 'secondary', true)}>
           Group {selected.size} nodes <kbd style={kbd()}>Ctrl+G</kbd>
         </window.AH_DS.Btn>
@@ -6626,6 +6629,34 @@ const NodeRenderer = ({ libraryMode = false, n: held, x = held.x, y = held.y, se
       ins={(n.ins||[]).map(port=>({l:port.label||port.id,t:port.t,list:!!port.list,f:!!port.connected,onUse:port.connectable&&onSocket?()=>onSocket(port,'in'):null,onDragStart:port.connectable&&onSocketDrag?event=>onSocketDrag(event,port,'in'):null}))}
       outs={(n.outs||[]).map(port=>({l:port.label||port.id,t:port.t,list:!!port.list,f:!!port.connected,onUse:port.connectable&&onSocket?()=>onSocket(port,'out'):null,onDragStart:port.connectable&&onSocketDrag?event=>onSocketDrag(event,port,'out'):null}))}/>
   </div>;
+  if (groupCard) return <window.AH_DS.Node ref={cardRef} className="lm-node" data-node-id={n.id} data-group={n.group || undefined}
+    data-group-card="true" data-selected={selected ? 'true' : undefined} data-focused={focused ? 'true' : undefined}
+    role="group" tabIndex={0} aria-label={(n.title || n.id) + ' node'} aria-haspopup="menu" aria-keyshortcuts="Shift+F10"
+    onClick={handleClick} onDoubleClick={onOpen} onContextMenu={onContextMenu} onKeyDown={handleKeyDown}
+    glyph="◎" gc={cat.col} title={title} sub={subtitle} w={cardW} stacked selected={lit}
+    headerProps={{onMouseDown:onDragStart, style:{cursor:'move'}}}
+    headerEnd={onExpand && <window.AH_DS.Btn sm title="Ungroup · expand the group back into its nodes" aria-label={'Expand ' + (n.title || 'group')}
+      onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onExpand(); }}>Ungroup</window.AH_DS.Btn>}
+    style={{position:'absolute', left:n.x, top:n.y, color:LM.ink, fontFamily:LM.sans, opacity:dimmed ? .42 : 1, zIndex:lit ? 3 : 2}}
+    foot={<span data-boundary-sockets><span data-member-count={groupMembers.length}>{groupMembers.length} {groupMembers.length === 1 ? 'node' : 'nodes'}</span>
+      {' · boundary sockets · ' + (n.ins || []).filter(s => !s.member).length + ' in · ' + (n.outs || []).filter(s => !s.member).length + ' out'}</span>}
+    portBand={rows > 0 && <div ref={bandRef} data-port-band="" style={{position:'relative', height:PORT_BAND_PAD * 2 + rows * SOCKET_STEP, borderTop:`1px solid ${LM.lineSoft}`}}>
+      {['in', 'out'].flatMap(side => (side === 'in' ? n.ins || [] : n.outs || []).map((s, i) => <Socket key={side + s.id}
+        id={s.id} side={side} i={i} t={s.t} label={s.label} list={!!s.list || !!s.multiple} half={cardW / 2} plate connected={s.derived === true}
+        onUse={s.connectable && onSocket ? () => onSocket(s, side) : undefined}
+        onDragStart={s.connectable && onSocket ? e => onSocketDrag?.(e, s, side) : undefined}/>))}
+    </div>}
+    chip={<div data-member-chips style={{display:'flex', flexWrap:'wrap', gap:6}}>{groupMembers.map(member => {
+      const id = typeof member === 'string' ? member : member.id;
+      const name = typeof member === 'string' ? member : member.title || member.label || id;
+      return <span key={id} data-member-chip={id} data-member-drag={memberDragTrace[id] || undefined} draggable={false}
+        onDragStart={e => e.preventDefault()} onPointerDown={onMemberLeave ? e => startMemberDrag(member, e) : undefined}
+        onMouseDown={onMemberLeave ? e => startMemberDrag(member, e) : undefined}
+        style={{height:24, display:'inline-flex', alignItems:'center', gap:6, padding:'0 8px 0 4px', border:`1px solid ${LM.line}`, borderRadius:6,
+          background:LM.bgSoft, color:LM.ink, fontSize:12, cursor:onMemberLeave ? 'grab' : 'default'}}>
+        <span aria-hidden="true" style={{width:16, height:16, borderRadius:4, background:cat.col, color:LM.onFill, display:'grid', placeItems:'center', fontSize:LM_FS_LABEL.sz}}>{String(name || '?').slice(0, 1).toUpperCase()}</span>{name}
+      </span>;
+    })}</div>}/>;
   return (
     <div ref={cardRef} className="lm-node" data-node-id={n.id} data-group={n.group || undefined}
       data-canvas-card-skin="078" data-agent-node={agent ? n.id : undefined}
@@ -6648,12 +6679,6 @@ const NodeRenderer = ({ libraryMode = false, n: held, x = held.x, y = held.y, se
         transition:`border-color ${LM.dur.fast}ms, outline-color ${LM.dur.fast}ms, opacity ${LM.dur.med}ms, width ${LM.dur.med}ms`,
         zIndex: lit ? 3 : 2,
       }}>
-      {groupCard && <>
-        <div data-stacked-edge="1" style={{position:'absolute', inset:0, transform:'translate(5px, 5px)', border:`1px solid ${LM.line}`,
-          ...canvasCardSurface(), opacity:1, zIndex:-1, pointerEvents:'none'}}/>
-        <div data-stacked-edge="2" style={{position:'absolute', inset:0, transform:'translate(10px, 10px)', border:`1px solid ${LM.line}`,
-          ...canvasCardSurface(), opacity:.6, zIndex:-2, pointerEvents:'none'}}/>
-      </>}
       {/* Title bar — drag handle */}
       <div onMouseDown={onDragStart}
         style={{
@@ -6668,12 +6693,6 @@ const NodeRenderer = ({ libraryMode = false, n: held, x = held.x, y = held.y, se
           <div data-node-card-title="" title={title} style={{ fontFamily:LM.sans, fontSize:14, fontWeight:700, color:LM.ink, lineHeight:'18px', overflowWrap:'anywhere' }}>{title}</div>
           <div data-node-card-subtitle="" title={subtitle} style={{ fontFamily:LM.sans, fontSize:12, color:LM.inkSoft, lineHeight:'16px', overflowWrap:'anywhere' }}>{subtitle}</div>
         </div>
-        {groupCard && Number.isSafeInteger(n.memberCount) && <span data-member-count={n.memberCount} style={{
-          fontFamily:LM.sans, fontSize:LM_FS_LABEL.sz, fontWeight:LM_FS_LABEL.wt, color:LM.inkSoft, whiteSpace:'nowrap'}}>{n.memberCount} {n.memberCount === 1 ? 'node' : 'nodes'}</span>}
-        {onExpand && groupCard && <window.AH_DS.Btn type="button" aria-label={'Expand ' + (n.title || 'group')} title="Expand the group back into its nodes"
-          onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onExpand(); }} style={{
-          padding:`0 ${LM.sp.sm}px`, border:`1px solid ${LM.line}`, borderRadius:LM.rad.control, background:'transparent',
-          color:LM.inkSoft, fontFamily:LM.sans, fontSize:LM_FS_LABEL.sz, cursor:'pointer'}}>⊞ expand</window.AH_DS.Btn>}
         {n.state && <NodeStateDot s={n.state}/>}
         {n.ms && !n.state && <span style={{ fontFamily:LM.sans, fontSize:LM_FS_LABEL.sz, color:LM.inkSoft }}>{n.ms}</span>}
         {isAi && !agent && (
@@ -6695,24 +6714,6 @@ const NodeRenderer = ({ libraryMode = false, n: held, x = held.x, y = held.y, se
           fontSize:11, color:LM.inkSoft}}>
           <div><strong style={{fontSize:LM_FS_LABEL.sz, color:LM.inkSoft, textTransform:'uppercase'}}>Accepts</strong><br/>{(n.ins || []).length || 0} sockets</div>
           <div><strong style={{fontSize:LM_FS_LABEL.sz, color:LM.inkSoft, textTransform:'uppercase'}}>Emits</strong><br/>{(n.outs || []).length || 0} sockets</div>
-        </div>}
-        {groupCard && <div data-boundary-sockets style={{fontFamily:LM.mono, fontSize:LM_FS_DATASM.sz, color:LM.inkSoft, marginTop:6}}>
-          boundary sockets · {(n.ins?.length || 0)} in · {(n.outs?.length || 0)} out
-        </div>}
-        {groupCard && groupMembers.length > 0 && <div data-member-chips style={{display:'flex', flexWrap:'wrap', gap:6, marginTop:8}}>
-          {groupMembers.map(member => {
-            const id = typeof member === 'string' ? member : member.id || member.title || member.label;
-            const name = typeof member === 'string' ? member : member.title || member.label || member.id;
-            return <span key={id || name} data-member-chip={id || name} data-member-drag={memberDragTrace[id || name] || undefined} draggable={false} onDragStart={e => e.preventDefault()}
-              onPointerDown={onMemberLeave ? e => startMemberDrag(member, e) : undefined}
-              onMouseDown={onMemberLeave ? e => startMemberDrag(member, e) : undefined} style={{height:24, display:'inline-flex',
-              alignItems:'center', gap:5, padding:'0 7px', border:`1px solid ${LM.line}`, borderRadius:6, background:LM.bgSoft,
-              fontSize:12, color:LM.ink, cursor:onMemberLeave ? 'grab' : 'default'}}>
-              <span aria-hidden="true" style={{width:16, height:16, borderRadius:4, display:'grid', placeItems:'center',
-                background:cat.col + '22', color:cat.col, fontSize:LM_FS_LABEL.sz}}>{String(name || '?').slice(0, 1).toUpperCase()}</span>
-              {name}
-            </span>;
-          })}
         </div>}
         <div data-node-preview-slot="" style={{minHeight:n.preview || (n.params || []).length ? 0 : 32, borderRadius:8, overflow:'hidden'}}>
           {!agent && <NodeBody n={n} expanded={expanded} onToggleExpand={onToggleExpand} watchActions={watchActions}/>}
@@ -6796,8 +6797,8 @@ const Socket = ({ id, side, i, t, label, list = false, onUse, onDragStart, half 
         display:'block', padding:0, margin:0, flexShrink:0, cursor: onUse ? 'crosshair' : 'default',
         width: SOCKET_R*2, height: SOCKET_R*2, ...shapeStyle,
         background: socketShape === 'any' ? 'transparent' : col,
-        border:`2px solid #17171c`, boxShadow:'none',
-      }}/>
+        border:`2px solid #17171c`, boxShadow:'none', ...(plate ? {background:'transparent', border:0, transform:'none', display:'grid', placeItems:'center'} : {}),
+      }}>{plate && <window.AH_DS.Socket t={t} list={list} filled={connected} size={SOCKET_R * 2}/>}</window.AH_DS.Btn>
       {/* An input's and an output's label share one row: each gets half the card, never the other's half. */}
       <span title={label || undefined} style={{
           fontFamily:LM.sans, fontSize:12.5, color:LM.inkSoft, letterSpacing:0,
@@ -7829,7 +7830,7 @@ const CanvasToolbar = ({ compact = false, zoom, setZoom, onFit, fitLabel, onArra
       style={compact?window.AH_DS.styles.button('primary',true):{height:30,padding:'0 12px',border:waiting>0?`1px solid ${LM.line}`:0,borderRadius:8,fontFamily:LM.sans,fontSize:13,fontWeight:600,color:waiting>0?LM.ink:'#fff',background:waiting>0?'#26262d':`linear-gradient(180deg, ${LM.accentHi || LM.accent}, ${LM.accent})`,boxShadow:waiting>0?'0 1px 0 rgba(255,255,255,.06) inset':`0 1px 0 rgba(255,255,255,.25) inset, 0 4px 14px ${LM.accent}44`,cursor:'pointer'}}>{compact?'Run':'▶ Run'}</window.AH_DS.Btn>
   </div>
   <div data-no-pan style={{
-    position:'absolute', left:compact?16:40, bottom:compact?'42%':28, display:'flex', gap:LM.sp.xs,
+    position:'absolute', left:compact?16:40, bottom:compact?'42%':84, display:'flex', gap:LM.sp.xs,
     ...canvasCardSurface(), border:`1px solid ${LM.line}`, borderRadius:compact?6:10, padding:compact?3:LM.sp.xs,
   }}>
     <window.AH_DS.Btn onClick={(e) => { e.stopPropagation(); setZoom(z => Math.max(0.3, +(z - 0.1).toFixed(2))); }} title="Zoom out" aria-label="Zoom out" style={{...window.AH_DS.styles.button("ghost", true),width:'auto',padding:'0 6px',fontFamily:LM.sans,fontSize:13}}>{compact?'−':'Zoom out'}</window.AH_DS.Btn>

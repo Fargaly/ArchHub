@@ -26,6 +26,7 @@ const EXPECTED_SHORTCUTS = [
   ['close-overlays', 'Close settings, docs, or catalogue', 'Global', 'Esc'],
   ['canvas-open-menu', 'Open canvas menu', 'Canvas', 'Menu / Shift+F10'],
   ['canvas-select-all', 'Select all nodes', 'Canvas', 'Ctrl/Cmd+A'],
+  ['canvas-group', 'Group selected nodes', 'Canvas', 'Ctrl/Cmd+G'],
   ['canvas-add-node', 'Add node from library', 'Canvas', 'Ctrl/Cmd+L'],
   ['canvas-fit-graph', 'Fit graph to view', 'Canvas', 'Ctrl/Cmd+0'],
   ['canvas-zoom-100', 'Zoom to 100%', 'Canvas', 'Ctrl/Cmd+1'],

@@ -94,20 +94,24 @@
       style={hit ? { display:'inline-grid', placeItems:'center', width:20, height:20 } : { display:'inline-block' }}>{shape}</span>;
   }
 
-  function Node({ glyph, gc, title, sub, ins = [], outs = [], foot, footc, chip, sel, selected, run,
-    w = 224, edge, dashed, children, style, bandRef, onHeaderMouseDown, ...props }) {
-    return <div {...props} style={{ position:'relative', width:w, background:A.bgPanel,
+  const Node = React.forwardRef(function Node({ glyph, gc, title, sub, ins = [], outs = [], foot, footc, chip, sel, selected, run,
+    w = 224, edge, dashed, children, style, bandRef, onHeaderMouseDown, stacked, headerProps, headerEnd, portBand, ...props }, ref) {
+    return <div {...props} ref={ref} style={{ position:'relative', width:w, background:A.bgPanel,
       border:`1px ${dashed ? 'dashed' : 'solid'} ${A.line}`, borderRadius:6,
       borderLeft:edge === 'l' ? `4px solid ${gc}` : undefined, borderRight:edge === 'r' ? `4px solid ${gc}` : undefined,
       outline:sel || selected ? `2px solid ${A.accent}` : 'none', outlineOffset:2,
       boxShadow:run ? `0 0 0 1px ${A.accent}` : 'none', ...style }}>
-      <div onMouseDown={onHeaderMouseDown} style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 10px' }}>
+      {stacked && [5, 10].map((offset, i) => <span key={offset} data-stacked-edge={i + 1} style={{position:'absolute', inset:0,
+        transform:`translate(${offset}px, ${offset}px)`, border:`1px solid ${A.line}`, borderRadius:6,
+        background:A.bgPanel, opacity:i ? .6 : 1, zIndex:-1 - i, pointerEvents:'none'}}/>)}
+      <div {...headerProps} onMouseDown={headerProps?.onMouseDown || onHeaderMouseDown} style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 10px', ...headerProps?.style }}>
         <span aria-hidden="true" style={{ width:20, height:20, borderRadius:5, background:gc, color:A.onFill,
           display:'grid', placeItems:'center', font:`600 12px ${A.sans}`, flex:'none' }}>{glyph}</span>
         <div style={{ minWidth:0, flex:1 }}><div style={{ fontSize:13, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{title}</div>
           <div style={{ fontSize:11, color:A.inkSoft, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{sub}</div></div>
-        <span aria-hidden="true" style={{ width:8, height:8, borderRadius:'50%', background:footc || A.inkSoft, flex:'none' }}/>
+        {headerEnd}<span aria-hidden="true" style={{ width:8, height:8, borderRadius:'50%', background:footc || A.inkSoft, flex:'none' }}/>
       </div>
+      {portBand}
       {Math.max(ins.length, outs.length) > 0 && <div ref={bandRef} data-port-band="" style={{ display:'grid', gridTemplateColumns:'1fr 1fr', borderTop:`1px solid ${A.line}`, padding:'4px 0' }}>
         <div>{ins.map(p => <div key={p.l} style={{ position:'relative', height:22, display:'flex', alignItems:'center', padding:'0 12px', fontSize:12 }}>
           <span style={{ position:'absolute', left:-11, top:1 }}><Socket t={p.t} list={p.list} filled={p.f} hit aria-label={`Connect input ${p.l}`} title={`Connect input ${p.l}`} role={p.onUse?'button':undefined} tabIndex={p.onUse?0:undefined} onClick={p.onUse} onMouseDown={e=>e.stopPropagation()} onKeyDown={e=>{if(p.onUse&&(e.key==='Enter'||e.key===' ')){e.preventDefault();p.onUse(e);}}} onPointerDown={p.onDragStart}/></span>{p.l}</div>)}</div>
@@ -117,7 +121,7 @@
       {children}{chip && <div style={{ padding:'0 10px 6px' }}>{chip}</div>}
       <div style={{ borderTop:`1px solid ${A.line}`, padding:'5px 10px', fontSize:11, color:footc || A.inkSoft }}>{foot}</div>
     </div>;
-  }
+  });
 
   function Card({ title, children, style, variant, as:Tag = 'div', ...props }) {
     if (title !== undefined) return <Node {...props} title={title} style={style}>{children}</Node>;

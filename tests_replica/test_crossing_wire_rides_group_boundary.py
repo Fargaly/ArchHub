@@ -10,6 +10,16 @@ from nodelang.universal_application import (
 )
 
 
+
+def _user_cards(store, registry):
+    """Exercise grouping on the launcher's user cards, not System domains."""
+    from nodelang.universal_pipeline import seed_wall_pipeline
+    seed_wall_pipeline(store, registry)
+    nodes = {node['label']: node['id'] for node in project_universal_canvas(store, registry)['nodes']}
+    return dict(zip(('brain', 'ui', 'canvas', 'nodes'),
+                    (nodes[title] for title in ('Sketch Lines', 'CAD Lines', 'Line Watcher', 'Revit Walls'))))
+
+
 def test_a_wire_crossing_a_group_edge_rides_its_boundary_and_returns():
     """Pre-existing on 6e167b6 (test_group_and_ungroup_are_lossless...):
     grouping gm:domain:ui with gm:domain:canvas dropped the wire
@@ -30,8 +40,8 @@ def test_a_wire_crossing_a_group_edge_rides_its_boundary_and_returns():
             for wire in canvas["wires"]
         }
 
-    domains = registry.map.domains
-    selected = (domains["ui"], domains["canvas"])
+    cards = _user_cards(store, registry)
+    selected = (cards["ui"], cards["canvas"])
     before = wires(project_universal_canvas(store, registry))
     crossing = {
         wire_id for wire_id, wire in before.items()
@@ -64,6 +74,44 @@ def _wires(canvas):
     }
 
 
+def test_grouping_the_first_run_pipeline_keeps_live_ports_and_undo():
+    """F3: the cards the launcher seeds must group, move out, and undo."""
+    from nodelang.universal_application import (
+        remove_universal_composition_member, undo_universal_change,
+    )
+    from nodelang.universal_pipeline import seed_wall_pipeline
+
+    store, registry = build_universal_application(resolve_map_path())
+    try:
+        seed_wall_pipeline(store, registry)
+        before = project_universal_canvas(store, registry)
+        roots = tuple(next(node['id'] for node in before['nodes']
+                           if node['label'] == title)
+                      for title in ('Sketch Lines', 'Line Watcher'))
+        set_universal_selection(store, registry, roots, focus_root=roots[-1])
+        group, _ = group_universal_selection(store, registry)
+        grouped = project_universal_canvas(store, registry)
+        card = next(node for node in grouped['nodes'] if node['id'] == group)
+        assert {member['id'] for member in card['members']} == set(roots)
+        ports = {port['id'] for port in card['ports'] if port.get('derived')}
+        assert ports
+        assert any(wire['source'] == group and wire['source_interface'] in ports
+                   for wire in grouped['wires'])
+        remove_universal_composition_member(store, registry, group, roots[0])
+        released = project_universal_canvas(store, registry)
+        remaining = next(node for node in released['nodes'] if node['id'] == group)
+        assert [member['id'] for member in remaining['members']] == [roots[1]]
+        assert any(node['id'] == roots[0] for node in released['nodes'])
+        assert {port['id'] for port in remaining['ports']} != {port['id'] for port in card['ports']}
+        undo_universal_change(store, registry)
+        restored = project_universal_canvas(store, registry)
+        card = next(node for node in restored['nodes'] if node['id'] == group)
+        assert {member['id'] for member in card['members']} == set(roots)
+        assert _wires(restored) == _wires(grouped)
+    finally:
+        store.close()
+
+
 def _drawn(store, registry):
     revision = store.revision
     canvas = project_universal_canvas(store, registry)
@@ -79,9 +127,9 @@ def test_a_wire_into_a_card_two_groups_deep_rides_the_outer_boundary():
     from nodelang.universal_application import ungroup_universal_composition
 
     store, registry = build_universal_application(resolve_map_path())
-    domains = registry.map.domains
-    inner_pair = (domains["brain"], domains["ui"])
-    outer_extra = domains["canvas"]
+    cards = _user_cards(store, registry)
+    inner_pair = (cards["brain"], cards["ui"])
+    outer_extra = cards["canvas"]
     before = _wires(_drawn(store, registry))
     deep = set(inner_pair) | {outer_extra}
     crossing = {
@@ -124,16 +172,16 @@ def test_reading_after_ungrouping_the_outer_group_writes_nothing():
     from nodelang.universal_application import ungroup_universal_composition
 
     store, registry = build_universal_application(resolve_map_path())
-    domains = registry.map.domains
+    cards = _user_cards(store, registry)
     set_universal_selection(
-        store, registry, (domains["brain"], domains["ui"]),
-        focus_root=domains["ui"],
+        store, registry, (cards["brain"], cards["ui"]),
+        focus_root=cards["ui"],
     )
     inner, _ = group_universal_selection(store, registry, title="Inner")
     project_universal_canvas(store, registry)
     set_universal_selection(
-        store, registry, (inner, domains["canvas"]),
-        focus_root=domains["canvas"],
+        store, registry, (inner, cards["canvas"]),
+        focus_root=cards["canvas"],
     )
     outer, _ = group_universal_selection(store, registry, title="Outer")
     project_universal_canvas(store, registry)

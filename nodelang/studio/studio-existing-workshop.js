@@ -1597,8 +1597,13 @@
       selectTopology(root, roots = null) {
         const clearing = root === null && Array.isArray(roots) && roots.length === 0;
         const heldRoots = [...new Set((Array.isArray(roots) ? roots : [root]).filter(text))];
-        const runSelection = () => runTopology(JSON.stringify(['select', root, heldRoots]), async (identity, command) => {
+        const generation = navGeneration, selectionIdentity = topologyCanvas && topologyIdentity(topologyCanvas);
+        const runSelection = () => {
+          if (generation !== navGeneration || !topologyCanvas || topologyIdentity(topologyCanvas) !== selectionIdentity) return refuse('The canvas scope changed. Choose the nodes again.');
+          if (topologyWrite) return topologyWrite.promise.catch(() => {}).then(runSelection);
+          return runTopology(JSON.stringify(['select', root, heldRoots]), async (identity, command) => {
           const value = await readTopology(identity);
+          if (generation !== navGeneration || topologyIdentity(topologyCanvas) !== selectionIdentity) fail('The canvas scope changed. Choose the nodes again.');
           // Work the canvas does not draw is still selectable for its Workshop review.
           const hiddenWork = Array.isArray(value.hidden_work) ? value.hidden_work : [];
           const visible = [...value.nodes, ...value.wires, ...hiddenWork];
@@ -1616,12 +1621,13 @@
               (clearing ? !Array.isArray(result.selection) || result.selection.length !== 0 : result.selected !== root) ||
               heldRoots.some(held => !projectedRoots.includes(held)) ||
               !revision(result.revision) || result.revision < value.revision ||
-              topologyIdentity(topologyCanvas) !== identity) {
+              topologyIdentity(topologyCanvas) !== identity || generation !== navGeneration) {
             fail('The selected node needs reconciliation in its original canvas.');
           }
           return acceptTopology(result);
-        });
-        return topologyWrite ? topologyWrite.promise.catch(() => {}).then(runSelection) : runSelection();
+          });
+        };
+        return runSelection();
       },
       moveTopologyNodes(positions, expectedRevision = topologyCanvas?.revision, expectedPositions = null, placement = null) {
         const arrange = placement === 'arrange';
@@ -1723,10 +1729,15 @@
         return runTopology(JSON.stringify(['compose', operation, held]), async (identity, command) => {
           if (operation !== 'group' && operation !== 'ungroup') fail('Only group and ungroup are composition operations.');
           if (operation === 'group' ? held.length < 2 : held.length !== 1) fail(operation === 'group' ? 'A group needs at least two nodes.' : 'Expand one group at a time.');
-          const value = await readTopology(identity);
+          const value = topologyCanvas;
+          const generation = navGeneration;
           if (held.some(root => !value.nodes.some(node => node.id === root))) fail('A grouped node is no longer on this canvas.');
-          const selected = acceptTopology(await command('/api/universal/gesture', {roots:held, focus:held[0], expected_scope:value.scope.current}));
-          if (topologyIdentity(selected) !== identity) fail('The canvas scope changed. Choose the nodes again.');
+          // The selection reply already carries the current Group lease. Use it
+          // once; the server still checks its revision before committing.
+          const confirmed = Array.isArray(value.selection) && value.selection.length === held.length && held.every(root => value.selection.includes(root));
+          const selected = confirmed ? value : await command('/api/universal/gesture', {roots:held, focus:held[0], expected_scope:value.scope.current});
+          if (topologyIdentity(selected) !== identity || navGeneration !== generation) fail('The canvas scope changed. Choose the nodes again.');
+          if (!confirmed) acceptTopology(selected);
           const controls = (selected.configuration?.design_system?.control_catalog?.controls || [])
             .filter(control => control.applicable === true && control.activation?.arguments?.operation === operation);
           if (controls.length !== 1) fail(operation === 'group' ? 'Group is not available for these nodes.' : 'Expand is not available for this group.');
@@ -1735,12 +1746,12 @@
             fail('Refresh the canvas to obtain the group control.');
           }
           const result = await command('/api/universal/interaction', {interaction:bindings[0].interaction, control:controls[0].owner,
-            event:bindings[0].event, revision:selected.revision, projection_mode:bindings[0].acknowledgement_mode});
-          if (!result || result.ok === false || !revision(result.committed_revision) || result.committed_revision <= selected.revision) {
+            event:bindings[0].event, revision:selected.revision});
+          if (!result || result.ok === false || !revision(result.revision) || result.revision <= selected.revision ||
+              topologyIdentity(result) !== identity || navGeneration !== generation) {
             fail(result?.error || 'The group change needs reconciliation.');
           }
-          const latest = await readTopology(identity);
-          if (latest.revision < result.committed_revision) fail('The group change is not visible in the refreshed graph.');
+          const latest = acceptTopology(result);
           if (operation === 'group' && !latest.nodes.some(node => node.composition === true &&
               held.every(root => (node.members || []).some(member => member.id === root)))) {
             fail('The created group card is not visible in the refreshed graph. Refresh before grouping again.');

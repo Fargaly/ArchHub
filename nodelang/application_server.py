@@ -9272,12 +9272,6 @@ class ApplicationServer:
                                 owner._cached_browser_canvas_projection(
                                     binding, body['revision']
                                 )
-                                if projection_mode in (
-                                    _INTERACTION_DELTA_MODE,
-                                    _TOPOLOGY_DELTA_MODE,
-                                    _RECEIPT_MODE,
-                                )
-                                else None
                             )
                             if (
                                 projection_mode in (
@@ -9645,6 +9639,13 @@ class ApplicationServer:
                                         == CAPABILITY_SCOPE
                                         and scope_materialization is not None
                                     )
+                                    # Composition already owns mutation_lock.
+                                    # Build once there, without optimistic
+                                    # read-only retries for its new controls.
+                                    else owner._project_interaction_canvas_scoped(
+                                        binding
+                                    )
+                                    if interaction.action_root == CAPABILITY_COMPOSITION
                                     else owner.project_interaction_canvas(
                                         binding
                                     )

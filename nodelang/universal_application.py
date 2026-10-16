@@ -46925,6 +46925,15 @@ def _composition_boundary_cells(
     internal = []
     boundaries = []
     cells: list[Cell] = []
+    interface_role = registry.assembly_protocol.role("interface")
+    existing = {}
+    for member in _relation_members_or_none(snapshot, composition_root) or ():
+        if member.role_id == interface_role:
+            held = read_relation(snapshot, member.participant_id, budget=256)
+            identity = tuple(next(row.participant_id for row in held if row.role_id == registry.roles[role])
+                             for role in ("relation", "authority"))
+            existing[identity] = member.participant_id
+    token = 0
     for relation_root in relation_roots:
         members = read_relation(snapshot, relation_root, budget=256)
         source_member = next((
@@ -46959,12 +46968,16 @@ def _composition_boundary_cells(
             raise InvalidCell(
                 "composition crossing lacks an exact declared interface"
             )
-        token = len(boundaries)
+        retained = existing.get((relation_root, endpoint.incidence_id))
+        if retained:
+            boundaries.append(retained)
+            continue
+        while "%s:boundary:%s" % (composition_root, token) in snapshot.cells:
+            token += 1
         boundary_root = "%s:boundary:%s" % (composition_root, token)
+        token += 1
         cells.extend(_derived_boundary_cells(
-            registry,
-            composition_root,
-            boundary_root,
+            registry, composition_root, boundary_root,
             side=side,
             seed_interface_root=str(endpoint_interface["id"]),
             incidence_root=endpoint.incidence_id,
@@ -47290,6 +47303,8 @@ def _compose_universal_selection(
         str(wire["id"])
         for wire in projection.get("wires", ())
         if isinstance(wire, Mapping) and type(wire.get("id")) is str
+        # Code-reader edges are a projected lens, never stored relations.
+        and not wire["id"].startswith("app:relation:setting-reader:")
     ))
     selected = () if empty else tuple(
         root for root in visible_roots
@@ -47331,8 +47346,7 @@ def _compose_universal_selection(
             "selected card(s) belong to the application" % len(held)
         )
     _authorize(
-        snapshot,
-        registry,
+        snapshot, registry,
         "catalog.configure",
         object_root=view_session.root_id,
         authentication_context=context,
@@ -47353,12 +47367,7 @@ def _compose_universal_selection(
     selected_set = frozenset(selected)
     internal_relations, boundary_roots, boundary_cells = (
         _composition_boundary_cells(
-            snapshot,
-            registry,
-            composition_root,
-            relation_roots,
-            visible_roots,
-            selected_set,
+            snapshot, registry, composition_root, relation_roots, visible_roots, selected_set,
         )
     )
     nodes_by_root = {str(node["id"]): node for node in projected_nodes}
@@ -47397,10 +47406,7 @@ def _compose_universal_selection(
     property_cells = []
     for key, value, read_only in property_specs:
         reference, cells = _compose_property(
-            registry,
-            composition_root,
-            key,
-            value,
+            registry, composition_root, key, value,
             read_only=read_only,
         )
         property_refs.append(reference)
@@ -47485,8 +47491,7 @@ def _compose_universal_selection(
                 # can see.
                 member.role_id == composition_interface_role
                 and _canvas_interface_owner_in(
-                    snapshot,
-                    registry,
+                    snapshot, registry,
                     member.participant_id,
                     selected_set,
                 )
@@ -47502,8 +47507,7 @@ def _compose_universal_selection(
                 # leaves the property pointing at nothing.
                 member.role_id == registry.roles["property"]
                 and _property_owner_in(
-                    snapshot,
-                    registry,
+                    snapshot, registry,
                     member.participant_id,
                     departing_roots,
                 )
@@ -47515,9 +47519,7 @@ def _compose_universal_selection(
         )
         if retired_visible:
             visibility_removal = prepare_remove_relation_members(
-                snapshot,
-                scope_relation_root,
-                retired_visible,
+                snapshot, scope_relation_root, retired_visible,
                 budget=100_000,
             )
             visibility_removal_replace = visibility_removal.replace
@@ -47525,8 +47527,7 @@ def _compose_universal_selection(
                 snapshot, replace=visibility_removal_replace
             )
     property_scope_patch = prepare_append_relation_members(
-        staged,
-        scope_relation_root,
+        staged, scope_relation_root,
         (
             *visible_additions,
             *((registry.roles["property"], ref.relation_root)
@@ -47542,11 +47543,7 @@ def _compose_universal_selection(
     )
     previous_entry, exposure_create, exposure_replace = (
         _prepare_exposure_activation(
-            snapshot,
-            registry,
-            view_session,
-            parent_root,
-            entry_root,
+            snapshot, registry, view_session, parent_root, entry_root,
         )
     )
     history_root = "app:composition-history:%s" % token
@@ -47591,9 +47588,7 @@ def _compose_universal_selection(
     relationship_broker = authority.relationship_broker
     read_root = authority.protocol.actions["read"]
     audience_grant = prepare_authority_relationship_grant(
-        snapshot,
-        identity,
-        relationship_broker,
+        snapshot, identity, relationship_broker,
         relationship_broker.mint_from_trusted_administrator(actor_root),
         relationship_id=_fresh_relationship_id(
             snapshot, _resource_audience_binding_root(composition_root)
@@ -47650,9 +47645,7 @@ def _compose_universal_selection(
                 continue
             visibility_revocations.append(
                 prepare_authority_relationship_revocation(
-                    snapshot,
-                    identity,
-                    relationship_broker,
+                    snapshot, identity, relationship_broker,
                     relationship_broker.mint_from_trusted_administrator(
                         actor_root
                     ),
@@ -47665,16 +47658,13 @@ def _compose_universal_selection(
                 )
             )
     projection_grant = prepare_authority_relationship_grant(
-        snapshot,
-        identity,
-        relationship_broker,
+        snapshot, identity, relationship_broker,
         relationship_broker.mint_from_trusted_administrator(actor_root),
         relationship_id=_fresh_relationship_id(
             snapshot,
             _projection_grant_root(
                 view_session.subject_root,
-                composition_root,
-                entry_root,
+                composition_root, entry_root,
             ),
         ),
         source_root=authority.resource_reader_principal_root,
@@ -47702,9 +47692,7 @@ def _compose_universal_selection(
             ),
         )
         canvas_projection_grant = prepare_authority_relationship_grant(
-            authority_staged,
-            identity,
-            relationship_broker,
+            authority_staged, identity, relationship_broker,
             relationship_broker.mint_from_trusted_administrator(actor_root),
             relationship_id=_fresh_relationship_id(
                 snapshot,
@@ -47727,10 +47715,7 @@ def _compose_universal_selection(
         )
     # The other groups the new entry still shows stay granted through it.
     exposed_group_grants = _prepare_exposed_group_grants(
-        snapshot,
-        registry,
-        view_session,
-        entry_root,
+        snapshot, registry, view_session, entry_root,
         tuple(
             root_id for root_id in after_roots
             if root_id != composition_root
@@ -47777,9 +47762,7 @@ def _compose_universal_selection(
         *(cell.id for cell in session_patch.create),
     )
     selection_transition = _prepare_selection_transition(
-        snapshot,
-        registry,
-        view_session,
+        snapshot, registry, view_session,
         (composition_root,),
         composition_root,
         reason_root=_FOCUS_REASON_COMPOSITION,
@@ -47830,11 +47813,7 @@ def _compose_universal_selection(
             snapshot, registry, view_session, create_cells, replacements
         )
     revision = _commit_universal_user_change(
-        store,
-        registry,
-        view_session,
-        context,
-        snapshot,
+        store, registry, view_session, context, snapshot,
         route="/api/universal/interaction",
         command_name="catalog.configure",
         authorization_scope_root=view_session.root_id,
@@ -48295,8 +48274,7 @@ def remove_universal_composition_member(
     ):
         raise InvalidCell("remove-member target is not a visible WIP composition")
     _authorize(
-        snapshot,
-        registry,
+        snapshot, registry,
         "catalog.configure",
         object_root=composition_root,
         authentication_context=context,
@@ -48355,6 +48333,31 @@ def remove_universal_composition_member(
     )
     staged = overlay_read_snapshot(snapshot, replace=group_patch.replace)
 
+    interface_role = registry.assembly_protocol.role("interface")
+    candidates = tuple(dict.fromkeys((
+        *(wire["id"] for wire in projection.get("wires", ())
+          if not wire["id"].startswith("app:relation:setting-reader:")),
+        *(row.participant_id for row in composition_members if row.role_id == registry.roles["relation"]),
+    )))
+    internal, boundaries, boundary_cells = _composition_boundary_cells(
+        staged, registry, composition_root, candidates,
+        tuple(root for root in visible_roots if root != composition_root) + children,
+        frozenset(remaining_children),
+    )
+    desired = {(interface_role, root) for root in boundaries} | {(registry.roles["relation"], root) for root in internal}
+    retired = tuple(row.incidence_id for row in composition_members
+                    if row.role_id in (interface_role, registry.roles["relation"])
+                    and (row.role_id, row.participant_id) not in desired)
+    group_patch = prepare_remove_relation_members(
+        snapshot, composition_root, member_incidence_ids + retired, budget=100_000)
+    staged = overlay_read_snapshot(snapshot, create=boundary_cells, replace=group_patch.replace)
+    held = {(row.role_id, row.participant_id) for row in read_relation(staged, composition_root, budget=100_000)}
+    boundary_patch = prepare_append_relation_members(
+        staged, composition_root, sorted(desired - held), budget=100_000)
+    group_create, group_replace = _fold_patch_cells(
+        (*boundary_cells, *boundary_patch.create), {cell.id: cell for cell in group_patch.replace}, boundary_patch.replace)
+    staged = overlay_read_snapshot(snapshot, create=group_create, replace=tuple(group_replace.values()))
+
     if parent_root == registry.canvas_root:
         interface_role = registry.assembly_protocol.role("interface")
         member_set = frozenset((member_root,))
@@ -48410,11 +48413,7 @@ def remove_universal_composition_member(
     actor_root = registry.authorization.broker.resolve(context).subject_root
     previous_entry, exposure_create, exposure_replace = (
         _prepare_exposure_activation(
-            snapshot,
-            registry,
-            view_session,
-            parent_root,
-            entry_root,
+            snapshot, registry, view_session, parent_root, entry_root,
         )
     )
     history_root = "app:composition-history:%s" % token
@@ -48435,6 +48434,7 @@ def remove_universal_composition_member(
         budget=100_000,
     )
     base_create = (
+        *group_create,
         *exposure.cells,
         *exposure_create,
         *history_cells,
@@ -48453,10 +48453,7 @@ def remove_universal_composition_member(
     relationship_broker = authority.relationship_broker
     read_root = authority.protocol.actions["read"]
     projection_grants = _prepare_exposed_group_grants(
-        snapshot,
-        registry,
-        view_session,
-        entry_root,
+        snapshot, registry, view_session, entry_root,
         tuple(after_roots),
         pending_roots=base_ids,
     )
@@ -48476,9 +48473,7 @@ def remove_universal_composition_member(
         )
         if not _relationship_is_active(snapshot, authority, grant_root):
             grant = prepare_authority_relationship_grant(
-                authority_staged,
-                identity,
-                relationship_broker,
+                authority_staged, identity, relationship_broker,
                 relationship_broker.mint_from_trusted_administrator(
                     actor_root
                 ),
@@ -48528,16 +48523,12 @@ def remove_universal_composition_member(
         if remaining_children else (member_root,)
     )
     selection_transition = _prepare_selection_transition(
-        snapshot,
-        registry,
-        view_session,
-        selection_roots,
-        member_root,
+        snapshot, registry, view_session, selection_roots, member_root,
         reason_root=_FOCUS_REASON_COMPOSITION,
         pending_roots=pending_roots,
         scope_root=parent_root,
     )
-    replacements = {cell.id: cell for cell in group_patch.replace}
+    replacements = dict(group_replace)
     for cell in (
         *visibility_patch.replace,
         *exposure_replace,
@@ -48562,11 +48553,7 @@ def remove_universal_composition_member(
             snapshot, registry, view_session, create_cells, replacements
         )
     revision = _commit_universal_user_change(
-        store,
-        registry,
-        view_session,
-        context,
-        snapshot,
+        store, registry, view_session, context, snapshot,
         route="/api/universal/interaction",
         command_name="catalog.configure",
         authorization_scope_root=composition_root,

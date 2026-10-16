@@ -64,8 +64,8 @@ test('parameter rows use DSYS 4.6 one-row controls and hide internal params', ()
   assert.match(params, /const PARAM_LABEL_COL = 96;/);
   assert.match(params, /const PARAM_ROW_H = 32;/);
   assert.match(paramRow, /data-param-row="true"/);
-  assert.match(paramRow, /gridTemplateColumns:spec\.fixed \? [^\n]+ : `\$\{PARAM_LABEL_COL\}px minmax\(0,1fr\) auto`/);
-  assert.match(paramRow, /minHeight:PARAM_ROW_H/);
+  assert.match(paramRow, /gridTemplateColumns:plate\?'96px minmax\(0,1fr\) auto':spec\.fixed \? [^\n]+ : `\$\{PARAM_LABEL_COL\}px minmax\(0,1fr\) auto`/);
+  assert.match(paramRow, /minHeight:plate\?32:PARAM_ROW_H/);
   assert.match(paramRow, /humanParamLabel/);
   assert.match(paramRow, /data-param-control="true"/);
   assert.match(paramRow, /disabled:\s*false/);
@@ -107,7 +107,10 @@ test('node-card lane does not ship plate sample data in changed Studio JSX', () 
 
 test('node-card controls are one-click routes or local state changes', () => {
   const surfaces = [renderer, socket, liveBody, watchPreview, paramRow].join('\n');
-  const buttons = [...surfaces.matchAll(/<button\b/g)].map(match => surfaces.slice(match.index, surfaces.indexOf('</button>', match.index) + 9));
+  const buttons = [...surfaces.matchAll(/<(button|window\.AH_DS\.Btn)\b/g)].map(match => {
+    const closing = '</' + match[1] + '>';
+    return surfaces.slice(match.index, surfaces.indexOf(closing, match.index) + closing.length);
+  });
   assert.ok(buttons.length > 0, 'changed surfaces expose controls');
   for (const button of buttons) {
     assert.match(button, /onClick=\{/, 'button has a one-click action: ' + button);

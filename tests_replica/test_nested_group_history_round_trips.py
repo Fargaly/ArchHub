@@ -12,6 +12,8 @@ import json
 
 import pytest
 
+from tests_replica.test_crossing_wire_rides_group_boundary import _user_cards
+
 from nodelang.cell_secret_keys import MemorySigningKeyProvider
 from nodelang.map_import import resolve_map_path
 from nodelang.universal_application import (
@@ -50,7 +52,11 @@ def test_three_nested_groups_and_ungroups_undo_and_redo_all_the_way(tmp_path):
         resolve_map_path(), CellStore(path), key_provider=_provider()
     )
     try:
-        domains = registry.map.domains
+        cards = _user_cards(store, registry)
+        # Start history on the persisted-app registry, as the real launcher does.
+        store, registry = restore_universal_application(
+            resolve_map_path(), store, key_provider=_provider(), lazy=True
+        )
 
         # Undo returns to the moment before a gesture (with the selection
         # the user had set); redo returns to the moment right after it.
@@ -63,9 +69,9 @@ def test_three_nested_groups_and_ungroups_undo_and_redo_all_the_way(tmp_path):
             forward.append(_drawn(store, registry))
             return root
 
-        inner = group((domains["brain"], domains["ui"]), "Inner")
-        middle = group((inner, domains["canvas"]), "Middle")
-        outer = group((middle, domains["nodes"]), "Outer")
+        inner = group((cards["brain"], cards["ui"]), "Inner")
+        middle = group((inner, cards["canvas"]), "Middle")
+        outer = group((middle, cards["nodes"]), "Outer")
         for root in (outer, middle, inner):
             states.append(_drawn(store, registry))
             ungroup_universal_composition(store, registry, root)
@@ -80,7 +86,7 @@ def test_three_nested_groups_and_ungroups_undo_and_redo_all_the_way(tmp_path):
     finally:
         store.close()
     store, registry = restore_universal_application(
-        resolve_map_path(), CellStore(path), key_provider=_provider()
+        resolve_map_path(), CellStore(path), key_provider=_provider(), lazy=True
     )
     try:
         assert _drawn(store, registry) == last
@@ -266,17 +272,17 @@ def test_founder_undo_and_redo_never_touch_a_member_view(tmp_path):
                            sort_keys=True),
             )
 
+        cards = _user_cards(store, registry)
         held = member_state()
-        domains = registry.map.domains
         set_universal_selection(
-            store, registry, (domains["brain"], domains["ui"]),
-            focus_root=domains["ui"],
+            store, registry, (cards["brain"], cards["ui"]),
+            focus_root=cards["ui"],
         )
         inner, _ = group_universal_selection(store, registry, title="Inner")
         assert member_state() == held
         set_universal_selection(
-            store, registry, (inner, domains["canvas"]),
-            focus_root=domains["canvas"],
+            store, registry, (inner, cards["canvas"]),
+            focus_root=cards["canvas"],
         )
         middle, _ = group_universal_selection(store, registry, title="Middle")
         assert member_state() == held

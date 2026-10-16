@@ -214,6 +214,7 @@ async function mount({focusId = null, history = null, nodes = NODES(), wires = W
             durable.selection = ['group-node']; durable.selected = 'group-node';
           }
           durable.revision += 1; controls();
+          if (!body.membership) return {...structuredClone(durable), ok:true, created_root:'group-node'};
           return {ok:true, projection_mode:'receipt-v1', base_revision:base, committed_revision:durable.revision,
             created_root:body.membership ? undefined : 'group-node'};
         }
@@ -413,6 +414,21 @@ test('M3e: the visible Group button sends the current two-card selection after a
     await view.click(view.groupButton());
     assert.deepEqual(view.calls.filter(call => call[0] === 'gesture'), [['gesture', ['a', 'b']]]);
   } finally { await view.close(); }
+});
+
+test('GROUP3 Ctrl+G uses the visible Group owner and leaves editing fields alone', async () => {
+  const view = await mount({nodes:NODES().slice(0,2), wires:[], topologyTransport:{}});
+  try {
+    await view.click(view.card('a')); await view.mouse(view.card('b'), 'click', {shiftKey:true});
+    const field=view.doc.createElement('input'); view.region().appendChild(field);
+    const editing=await view.key(field,{key:'g',ctrlKey:true});
+    assert.equal(editing.defaultPrevented,false);
+    assert.equal(view.calls.filter(call=>call[0]==='post'&&call[1].endsWith('/interaction')).length,0);
+    const pressed=await view.key(view.region(),{key:'g',ctrlKey:true}); await view.settle(120);
+    assert.equal(pressed.defaultPrevented,true);
+    assert.equal(view.calls.filter(call=>call[0]==='post'&&call[1].endsWith('/interaction')).length,1);
+    assert.equal(view.card('group-node').querySelectorAll('[data-member-chip]').length,2);
+  } finally {await view.close();}
 });
 
 test('UPD2 p9: click A then Shift B keeps two drawn selections and Group with the real gesture selection response', async () => {

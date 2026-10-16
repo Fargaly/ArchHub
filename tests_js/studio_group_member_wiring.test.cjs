@@ -25,6 +25,83 @@ const canvas = (rev, wires = []) => ({application_root:'application-a', revision
     acknowledgement_mode:'receipt-v1', projection_mode:'topology-delta-v1',
     event_facts:[{input:'fact-index', value_kind:'number', minimum:0, maximum:0}]}]}});
 
+test('Group uses the confirmed selection lease once, then confirms the created card', async () => {
+  const ctx = vm.createContext({URLSearchParams, TextEncoder}); vm.runInContext(adapter, ctx);
+  let current = {...canvas(1), nodes:[{id:'a'}, {id:'b'}], selected:'b', selection:['a','b'],
+    configuration:{design_system:{control_catalog:{controls:[{owner:'group', applicable:true, activation:{arguments:{operation:'group'}}}]}}},
+    interaction_projection:{revision:1, bindings:[{control:'group', interaction:'compose', event:'activate', acknowledgement_mode:'receipt-v1'}]}};
+  const calls = [];
+  const api = ctx.ArchHubExistingWorkshop.create({
+    pendingStorage:{getItem:() => null, setItem:() => {}},
+    get:async url => { calls.push(['GET',url]); return current; },
+    post:async (url, body) => {
+      calls.push(['POST',url]); assert.equal(body.revision,1);
+      assert.equal(body.control,'group');
+      current = {...current, revision:2, interaction_projection:{revision:2, bindings:[]},
+        nodes:[{id:'created', composition:true, members:[{id:'a'},{id:'b'}]}]};
+      return {...current, ok:true, created_root:'created'};
+    }});
+  api.setTopologyCanvas(current);
+  await api.composeTopology('group',['a','b']);
+  assert.deepEqual(calls,[['POST','/api/universal/interaction']], 'the one command returns its authoritative card without extra reads or selection writes');
+  assert.equal(api.getSnapshot().topology.canvas.nodes[0].id,'created');
+});
+
+test('clear, click A and Shift-B queued together all reach the selection owner', async () => {
+  const ctx = vm.createContext({URLSearchParams, TextEncoder}); vm.runInContext(adapter, ctx);
+  let current = {...canvas(1), nodes:[{id:'a'},{id:'b'}], selection:[], selected:null};
+  let release, began;
+  const hold = new Promise(resolve => {release=resolve;});
+  const ready = new Promise(resolve => {began=resolve;});
+  const posted = [];
+  const api = ctx.ArchHubExistingWorkshop.create({pendingStorage:{getItem:() => null, setItem:() => {}},
+    get:async () => current,
+    post:async (url, body) => {
+      assert.equal(url,'/api/universal/gesture'); posted.push([...body.roots]);
+      if(posted.length===1){began(); await hold;}
+      current={...current, revision:current.revision+1, selection:[...body.roots], selected:body.focus,
+        interaction_projection:{revision:current.revision+1, bindings:[]}};
+      return current;
+    }});
+  api.setTopologyCanvas(current);
+  const clear=api.selectTopology(null,[]); await ready;
+  const settled=Promise.allSettled([clear,api.selectTopology('a',['a']),api.selectTopology('b',['a','b'])]);
+  release(); const results=await settled;
+  assert.deepEqual(results.map(row=>row.status),['fulfilled','fulfilled','fulfilled']);
+  assert.deepEqual(posted,[[],['a'],['a','b']]);
+  assert.deepEqual([...api.getSnapshot().topology.canvas.selection],['a','b']);
+});
+
+for (const phase of ['read','reply']) test('selection refuses an away-and-back during its ' + phase, async () => {
+  const ctx=vm.createContext({URLSearchParams,TextEncoder}); vm.runInContext(adapter,ctx);
+  const before={...canvas(1),nodes:[{id:'a'},{id:'b'}],selection:[],selected:null};
+  let release,began; const hold=new Promise(resolve=>{release=resolve;}); const ready=new Promise(resolve=>{began=resolve;});
+  const posted=[];
+  const api=ctx.ArchHubExistingWorkshop.create({pendingStorage:{getItem:()=>null,setItem:()=>{}},
+    get:async()=>{if(phase==='read'){began();await hold;} return before;},
+    post:async(url,body)=>{posted.push(url);if(phase==='reply'){began();await hold;}
+      return {...before,revision:2,selection:body.roots,selected:body.focus,interaction_projection:{revision:2,bindings:[]}};}});
+  api.setTopologyCanvas(before); const selecting=api.selectTopology('a',['a']);
+  const refused=assert.rejects(selecting,/scope changed|original canvas/); await ready;
+  api.setTopologyCanvas({...before,scope:{current:'elsewhere'}}); api.setTopologyCanvas(before); release(); await refused;
+  assert.equal(posted.length,phase==='read'?0:1,'a stale read never posts, and an already-posted command is never replayed');
+  assert.equal(api.getSnapshot().topology.canvas.revision,1,'a stale reply never overwrites the returned view');
+});
+
+test('Group refuses a fallback selection reply after navigating away and back', async () => {
+  const ctx=vm.createContext({URLSearchParams,TextEncoder}); vm.runInContext(adapter,ctx);
+  const before={...canvas(1),nodes:[{id:'a'},{id:'b'}],selection:[],selected:null};
+  let release,began; const hold=new Promise(resolve=>{release=resolve;}); const ready=new Promise(resolve=>{began=resolve;});
+  const posted=[];
+  const api=ctx.ArchHubExistingWorkshop.create({pendingStorage:{getItem:()=>null,setItem:()=>{}},
+    post:async(url)=>{posted.push(url);began();await hold;return {...before,revision:2,selection:['a','b'],selected:'a'};}});
+  api.setTopologyCanvas(before); const grouping=api.composeTopology('group',['a','b']);
+  const refused=assert.rejects(grouping,/scope changed/); await ready;
+  api.setTopologyCanvas({...before,scope:{current:'elsewhere'}}); api.setTopologyCanvas(before); release(); await refused;
+  assert.deepEqual(posted,['/api/universal/gesture'],'a stale selection must never issue the composition command');
+  assert.equal(api.getSnapshot().topology.canvas.revision,1,'the stale selection reply is never published');
+});
+
 test('the adapter wires a member port through its owner and confirms the wire the group draws', async () => {
   const ctx = vm.createContext({URLSearchParams, TextEncoder});
   vm.runInContext(adapter, ctx);

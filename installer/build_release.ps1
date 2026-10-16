@@ -756,7 +756,7 @@ if ($BrokerReviewPath) {
 $goosePayload = Join-Path $output 'goose-payload'
 & $PythonPath -E -s (Join-Path $selectedRoot 'packaging/windows/stage_goose.py') $GooseArchivePath $goosePayload
 if ($LASTEXITCODE -ne 0) { throw 'Pinned Goose staging failed; no installer was compiled.' }
-& $compiler "/DBuildId=$BuildId" "/DRequirementsSha256=$requirementsSha" "/DBuildMetadataPath=$buildMetadataPath" "/DNodeRuntimePath=$node" "/DNodeLicensePath=$nodeLicense" "/DGoosePayloadPath=$goosePayload" "/DWheelhousePath=$wheelhouse" "/DHostPayloadPath=$hostPayload" "/O$output" $installer
+& $compiler "/DBuildId=$BuildId" "/DRequirementsSha256=$requirementsSha" "/DBuildMetadataPath=$buildMetadataPath" "/DNodeRuntimePath=$node" "/DNodeLicensePath=$nodeLicense" "/DGoosePayloadPath=$goosePayload" "/DCompilerPayloadPath=$(Join-Path $selectedRoot 'runtime/acompiler')" "/DWheelhousePath=$wheelhouse" "/DHostPayloadPath=$hostPayload" "/O$output" $installer
 if ($LASTEXITCODE -ne 0) { throw "Selected installer compilation failed with exit code $LASTEXITCODE." }
 if ((Get-FileHash -LiteralPath $node -Algorithm SHA256).Hash.ToLowerInvariant() -cne $nodeRuntimeSha) {
     throw 'Node runtime changed during installer compilation; retain artifact for inspection only.'

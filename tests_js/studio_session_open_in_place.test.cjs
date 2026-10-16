@@ -277,18 +277,23 @@ async function mountStudio(options = {}) {
   const close = () => { try { win.ReactDOM.flushSync(() => win.__studioRoot.unmount()); } finally { dom.window.close(); } };
   const button = label => [...win.document.querySelectorAll('button')].find(node => node.textContent.trim() === label);
   const buttonIncludes = label => [...win.document.querySelectorAll('button')].find(node => node.textContent.includes(label));
-  const byTitle = title => [...win.document.querySelectorAll('button')].find(node => node.title === title);
+  const sessionMenu=()=>{
+    const toggle=win.document.querySelector('[data-session-header] button[title^="Sessions"]');
+    if(toggle?.getAttribute('aria-expanded')!=='true')win.ReactDOM.flushSync(()=>toggle.click());
+    return win.document.querySelector('[data-session-menu]');
+  };
+  const byTitle = title => title==='New session' ? [...sessionMenu().querySelectorAll('button')].find(node=>node.textContent.trim()==='New session') : [...win.document.querySelectorAll('button')].find(node => node.title === title);
   const click = node => win.ReactDOM.flushSync(() => node.click());
-  const tabCount = () => win.document.querySelectorAll('button[title="Close tab"]').length;
-  const transform = () => win.document.querySelector('[role="region"][aria-label="Workflow canvas"]')?.firstElementChild?.style.transform || '';
+  const tabCount=()=>{const menu=sessionMenu(),count=menu.querySelectorAll('button[aria-label^="Close "]').length;win.ReactDOM.flushSync(()=>win.document.querySelector('[data-session-header] button[title^="Sessions"]').click());return count;};
+  const transform = () => [...(win.document.querySelector('[role="region"][aria-label="Workflow canvas"]')?.children || [])].find(node=>node.style.transform.startsWith('translate3d('))?.style.transform || '';
   const byTitleStarts = title => [...win.document.querySelectorAll('button')].find(node => String(node.title || '').startsWith(title));
   const type = (input, value) => {
-    const set = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set;
+    const set = Object.getOwnPropertyDescriptor(input.tagName==='TEXTAREA'?win.HTMLTextAreaElement.prototype:win.HTMLInputElement.prototype, 'value').set;
     win.ReactDOM.flushSync(() => { set.call(input, value); input.dispatchEvent(new win.Event('input', {bubbles:true})); });
   };
   return {win, doc:win.document, calls, navigationErrors, button, buttonIncludes, byTitle, byTitleStarts, click, type, settle, close,
     failNextRead:() => { failRead = true; }, deferNextCanvasRead:promise => { deferredCanvasRead = promise; },
-    tabCount, transform};
+    tabCount, transform, sessionMenu};
 }
 
 function openHome(studio) {
@@ -339,7 +344,7 @@ function assertCanvasSelectionOnly(studio, detail) {
   assert.ok(studio.doc.querySelector('[role="region"][aria-label="Workflow canvas"]'), detail + ': canvas is visible');
   assert.equal(studio.doc.querySelectorAll('[role="tablist"][aria-label="Workshop tabs"]').length, 0,
     detail + ': Workshop tabs are gone');
-  assert.equal(studio.doc.querySelectorAll('input[aria-label="Ask selection"]').length, 1,
+  assert.equal(studio.doc.querySelectorAll('textarea[aria-label="Ask selection"]').length, 1,
     detail + ': one selection composer is mounted');
   assert.equal(studio.doc.querySelectorAll('[data-model-indicator]').length, 1,
     detail + ': one model indicator is mounted');
@@ -348,7 +353,7 @@ function assertCanvasSelectionOnly(studio, detail) {
 function showChat(studio) {
   const chat = [...studio.doc.querySelectorAll('button')].find(node => node.textContent.trim() === 'Chat');
   if (chat) studio.click(chat);
-  assert.ok(studio.doc.querySelector('input[aria-label="Ask selection"]'), 'selection-panel chat composer exists');
+  assert.ok(studio.doc.querySelector('textarea[aria-label="Ask selection"]'), 'selection-panel chat composer exists');
 }
 
 test('opening a session from Home applies the graph-open receipt in place: one canvas re-read, no reload', async () => {
@@ -440,7 +445,7 @@ test('opening a session from the Home rail applies the receipt; the chat compose
     assert.equal(studio.calls.canvas, 1, 'the same page re-reads its canvas once; the receipt canvas is not applied');
     assert.equal(studio.navigationErrors.length, 0, 'no reload/assign/replace navigation');
     assert.match(studio.doc.body.textContent, /Graph Beta/);
-    assert.equal(studio.doc.querySelectorAll('input[aria-label="Ask selection"]').length, 1,
+    assert.equal(studio.doc.querySelectorAll('textarea[aria-label="Ask selection"]').length, 1,
       'the moved chat composer is the one selection-panel input');
   } finally { studio.close(); }
 });
@@ -463,7 +468,7 @@ test('creating a new session opens the graph-create receipt in place without rel
   } finally { studio.close(); }
 });
 
-test('clicking the workspace + creates a second graph tab in place and keeps the first tab', async () => {
+test('Sessions menu New session creates a second graph tab in place and keeps the first tab', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle();
@@ -478,12 +483,12 @@ test('clicking the workspace + creates a second graph tab in place and keeps the
     assert.equal(studio.calls.canvas, 1, 'one in-place canvas re-read after create');
     assert.equal(studio.tabCount(), 2, 'the first graph tab remains and the created graph opens as a second tab');
     assert.equal(studio.navigationErrors.length, 0, 'no reload/assign/replace navigation');
-    assert.match(studio.doc.body.textContent, /Graph Alpha/);
-    assert.match(studio.doc.body.textContent, /Created Graph/);
+    assert.match(studio.sessionMenu().textContent, /Graph Alpha/);
+    assert.match(studio.sessionMenu().textContent, /Created Graph/);
   } finally { studio.close(); }
 });
 
-test('workspace + opens a graph-create rows-only receipt as the active New session tab', async () => {
+test('Sessions menu New session opens a graph-create rows-only receipt as the active New session tab', async () => {
   const newId = 'app:composition:new-session';
   const row = {id:newId, title:'New session', state:'idle', host:'archhub', when:'saved', file:'Graph composition', last:'0 nodes', model:''};
   const studio = await mountStudio({
@@ -503,14 +508,15 @@ test('workspace + opens a graph-create rows-only receipt as the active New sessi
     await studio.settle();
     assert.deepEqual(studio.calls.create, ['New session']);
     assert.equal(studio.tabCount(), 2, 'the created graph opens as a second tab');
-    const tab = studio.doc.querySelector('[data-ws-tab="' + newId + '"]');
-    assert.ok(tab, 'created graph is present in the session strip');
-    assert.equal(tab.getAttribute('aria-current'), 'page', 'created graph is the active tab');
-    assert.match(tab.textContent, /New session/);
+    const tab=studio.sessionMenu().querySelector('button[aria-label="Close New session"]')?.parentElement.querySelector('button');
+    assert.ok(tab,'created graph is present in the Sessions menu');
+    assert.equal(studio.win.ARCHHUB_EXISTING_WORKSHOP.getSnapshot().topology.canvas.scope.current,newId,'created graph is the active owner scope');
+    assert.equal(studio.doc.querySelector('[data-session-header] button[title^="Sessions"]').textContent.trim(),'New session','breadcrumb names the active graph');
+    assert.match(tab.textContent,/New session/);
   } finally { studio.close(); }
 });
 
-test('after a create whose canvas refresh fails, the workspace + never posts a second create', async () => {
+test('after a create whose canvas refresh fails, the Sessions menu New session never posts a second create', async () => {
   const studio = await mountStudio();
   try {
     await studio.settle();
@@ -563,7 +569,7 @@ test('New session create cannot overwrite Home after the create canvas refresh r
   } finally { studio.close(); }
 });
 
-test('Workspace graph creation cannot overwrite a session opened through Chats before graph-create resolves', async () => {
+test('Sessions-menu graph creation cannot overwrite a session opened through Chats before graph-create resolves', async () => {
   const createGate = deferred();
   const studio = await mountStudio({createDeferred:createGate});
   try {
@@ -730,7 +736,7 @@ test('right panel follows node selection with Properties first and one scoped co
     await studio.settle();
     showCanvas(studio);
     await studio.settle();
-    assert.equal(studio.doc.querySelectorAll('input[aria-label="Ask selection"]').length, 1,
+    assert.equal(studio.doc.querySelectorAll('textarea[aria-label="Ask selection"]').length, 1,
       'the Studio session view has exactly one ask/reply/message composer');
     studio.click(studio.doc.querySelector('.lm-node[data-node-id="node-a"]'));
     await studio.settle();
@@ -748,7 +754,7 @@ test('right panel follows node selection with Properties first and one scoped co
     assert.deepEqual([...panel.querySelectorAll('section[aria-label="Properties"], section[aria-label="Chat"], section[aria-label="Runs"]')]
       .map(section => section.getAttribute('aria-label')), ['Chat']);
     assert.match(panel.querySelector('[data-model-indicator]')?.textContent || '', /Alpha node/);
-    assert.match(studio.doc.querySelector('input[aria-label="Ask selection"]').placeholder, /ask about this node/i);
+    assert.match(studio.doc.querySelector('textarea[aria-label="Ask selection"]').placeholder, /ask about this node/i);
   } finally { studio.close(); }
 });
 
@@ -761,9 +767,9 @@ test('empty selection sends graph target through the real bridge, and node selec
     const panel = () => studio.doc.querySelector('aside[aria-label="Selection inspector"]');
     assert.match(panel().textContent, /GRAPH/i);
     assert.match(panel().textContent, /Fresh Profile Graph/);
-    assert.equal(studio.doc.querySelectorAll('input[aria-label="Ask selection"]').length, 1,
+    assert.equal(studio.doc.querySelectorAll('textarea[aria-label="Ask selection"]').length, 1,
       'exactly one composer is mounted');
-    let input = studio.doc.querySelector('input[aria-label="Ask selection"]');
+    let input = studio.doc.querySelector('textarea[aria-label="Ask selection"]');
     studio.type(input, 'graph hello');
     studio.flush = callback => studio.win.ReactDOM.flushSync(callback);
     studio.flush(() => input.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
@@ -780,8 +786,10 @@ test('empty selection sends graph target through the real bridge, and node selec
     studio.click(studio.doc.querySelector('.lm-node[data-node-id="line-watcher"]'));
     await studio.settle();
     assert.match(panel().textContent, /Line Watcher/);
-    assert.match(panel().querySelector('[data-model-indicator]')?.textContent || '', /Line Watcher.*openrouter\/free/);
-    input = studio.doc.querySelector('input[aria-label="Ask selection"]');
+    studio.click([...panel().querySelectorAll('[role="tab"]')].find(tab=>tab.textContent.trim()==='Chat'));
+    await studio.settle();
+    assert.match(panel().querySelector('[data-model-indicator]')?.textContent || '', /Line Watcher/);
+    input = studio.doc.querySelector('textarea[aria-label="Ask selection"]');
     studio.type(input, 'node hello');
     studio.flush(() => input.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
     await studio.settle();
@@ -819,7 +827,7 @@ test('composer timeout renders an error line with retry', async () => {
     await studio.settle();
     showCanvas(studio);
     await studio.settle();
-    const input = studio.doc.querySelector('input[aria-label="Ask selection"]');
+    const input = studio.doc.querySelector('textarea[aria-label="Ask selection"]');
     studio.type(input, 'graph hello');
     studio.flush = callback => studio.win.ReactDOM.flushSync(callback);
     studio.flush(() => input.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
@@ -847,7 +855,8 @@ test('right panel treats a session node as chat first, and empty selection as th
     await studio.settle();
     assert.deepEqual([...panel().querySelectorAll('section[aria-label="Properties"], section[aria-label="Chat"], section[aria-label="Runs"]')]
       .map(section => section.getAttribute('aria-label')), ['Properties']);
-    assert.match(panel().querySelector('[data-model-indicator]')?.textContent || '', /Graph Alpha|ArchHub/i);
+    assert.equal(panel().querySelector('[data-model-indicator]'),null,'Properties does not mount the Chat-only composer');
+    assert.match(panel().textContent,/Graph Alpha/);
     studio.click(studio.doc.querySelector('.lm-node[data-node-id="session-a"]'));
     await studio.settle();
     assert.match(panel().textContent, /Door tags L3/);
@@ -856,7 +865,7 @@ test('right panel treats a session node as chat first, and empty selection as th
     assert.equal(panel().querySelector('[role="tab"][aria-selected="true"]')?.textContent.trim(), 'Chat');
     assert.deepEqual([...panel().querySelectorAll('section[aria-label="Properties"], section[aria-label="Chat"], section[aria-label="Runs"]')]
       .map(section => section.getAttribute('aria-label')), ['Chat']);
-    assert.match(studio.doc.querySelector('input[aria-label="Ask selection"]').placeholder, /reply in this session/i);
+    assert.match(studio.doc.querySelector('textarea[aria-label="Ask selection"]').placeholder, /reply in this session/i);
   } finally { studio.close(); }
 });
 

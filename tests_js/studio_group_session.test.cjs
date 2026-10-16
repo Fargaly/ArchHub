@@ -24,7 +24,7 @@ function shortcutSlice() {
 
 function canvasSlice() {
   const start = lmSource.indexOf('const SOCKET_TOP =');
-  const end = lmSource.indexOf('const NodeStateDot =', start);
+  const end = lmSource.indexOf('const Socket =', start);
   assert.ok(start > 0 && end > start);
   return lmSource.slice(start, end) + require('./workshop72_node_helpers.cjs').nodePreviewSource(lmSource);
 }

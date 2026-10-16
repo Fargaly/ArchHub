@@ -2619,6 +2619,8 @@ def _ensure_baboom_connector_execution_authority(
     roles: Mapping[str, str],
     connectors_domain_root: str,
     application_root: str,
+    *,
+    adopt: bool = True,
 ) -> tuple[BaboomConnectorExecutionProtocol, str, Mapping[str, str]]:
     """Release the bounded connector effects that BABOOM may request.
 
@@ -2626,9 +2628,39 @@ def _ensure_baboom_connector_execution_authority(
     raw meeting/note payload stay in the local connector runtime and are never
     imported into the Universal Cell graph.
     """
+    if not adopt and _BABOOM_CONNECTOR_EXECUTION_PROTOCOL_PREFIX + ":root" not in store.snapshot().cells:
+        raise InvalidCell("persisted BABOOM connector execution protocol is missing")
     protocol = bootstrap_baboom_connector_execution_protocol(
         store, prefix=_BABOOM_CONNECTOR_EXECUTION_PROTOCOL_PREFIX
     )
+    if not adopt:
+        snapshot = store.snapshot()
+        catalog = verify_adapter_catalog(snapshot, adapter_protocol, _ADAPTER_CATALOG_V5)
+        specs = _BABOOM_CONNECTOR_ADAPTER_SPECS
+        expected = tuple(spec[1] for spec in specs)
+        # Catalogue releases append contracts. Only a complete released prefix is
+        # admissible; a missing/reordered binding is corruption, not a migration.
+        added_providers = {
+            "social-instagram-container-create", "social-instagram-container-status",
+            "social-instagram-media-publish", "social-whatsapp-message",
+            "social-x-post", "social-x-reply", "social-tiktok-video-post",
+        }
+        legacy = tuple(spec[1] for spec in specs if spec[0] not in added_providers)
+        if catalog.adapter_roots not in (legacy, expected):
+            raise InvalidCell("BABOOM connector execution adapter catalog drifted")
+        providers = {}
+        for provider, adapter_root, _name, action, location, datatypes, operation in specs:
+            if adapter_root not in catalog.adapter_roots:
+                continue
+            root = _BABOOM_CONNECTOR_PROVIDER_PREFIX + provider
+            projection = read_connector_provider(snapshot, protocol, adapter_protocol, root)
+            if (projection.adapter_root != adapter_root or projection.operation != operation
+                    or _text(snapshot, projection.action_root) != action
+                    or _text(snapshot, projection.location_root) != location
+                    or {_text(snapshot, item) for item in projection.datatype_roots} != set(datatypes)):
+                raise InvalidCell("BABOOM connector provider release binding drifted")
+            providers[provider] = root
+        return protocol, _ADAPTER_CATALOG_V5, MappingProxyType(providers)
     adapter_roots = []
     provider_roots: dict[str, str] = {}
     for provider, adapter_root, name, action, location, datatypes, operation in (
@@ -15647,58 +15679,6 @@ def restore_universal_application(
     cloud_route_protocol = project_cloud_route_protocol(
         snapshot, prefix="app:cloud-route-protocol"
     )
-    existing_route_keys = {
-        "%s %s" % (route.method, route.path_template)
-        for route in list_cloud_routes(snapshot, cloud_route_protocol)
-    }
-    missing_route_specs = tuple(
-        spec for spec in _APPLICATION_HTTP_ROUTE_SPECS
-        if "%s %s" % spec[:2] not in existing_route_keys
-    )
-    if missing_route_specs:
-        restored_route_roots = []
-        for method, path_template, action_name in missing_route_specs:
-            restored_route_roots.append(build_cloud_route(
-                store,
-                cloud_route_protocol,
-                route_id="app:http-route:%s:%s" % (
-                    method.lower(), _part(path_template)
-                ),
-                method=method,
-                path_template=path_template,
-                action_root=authorization.protocol.actions[action_name],
-                object_root=authorization.route_scope_root,
-                interface_root="app:ui-protocol:root",
-                purpose_root=authorization.purpose_root,
-                audience_root=authorization.audience_root,
-                classification_root=authorization.classification_root,
-                lifecycle_state_root=(
-                    standard_library.lifecycle_protocol.states["published"]
-                ),
-                resource_lineage_roots=(
-                    authorization.scope_root,
-                    authorization.route_scope_root,
-                ),
-            ))
-        route_snapshot = store.snapshot()
-        application_patch = prepare_append_relation_members(
-            route_snapshot,
-            application_root,
-            (
-                (roles["member"], route_root)
-                for route_root in restored_route_roots
-            ),
-            budget=100_000,
-        )
-        store.commit(
-            route_snapshot.revision,
-            create=application_patch.create,
-            replace=application_patch.replace,
-        )
-        snapshot = store.snapshot()
-        cloud_route_protocol = project_cloud_route_protocol(
-            snapshot, prefix="app:cloud-route-protocol"
-        )
     projected_routes = {
         "%s %s" % (route.method, route.path_template): route.root_id
         for route in list_cloud_routes(snapshot, cloud_route_protocol)
@@ -15707,8 +15687,61 @@ def restore_universal_application(
         "%s %s" % (method, path)
         for method, path, _ in _APPLICATION_HTTP_ROUTE_SPECS
     }
-    expected_active_route_keys = (
-        expected_route_keys - _RETIRED_APPLICATION_HTTP_ROUTE_KEYS
+    # Both released route sets remain valid. Opening an older graph is a read;
+    # adding the social surface is part of an explicit release, never restore.
+    expected_active_route_keys = expected_route_keys - _RETIRED_APPLICATION_HTTP_ROUTE_KEYS
+    social_route_keys = {
+        "GET /api/universal/social-connections",
+        "GET /api/universal/social-connection",
+        "POST /api/universal/social-connection",
+    }
+    # Exact 9eefd814 release shape used by the durable-history court. Missing
+    # arbitrary current routes remains an integrity failure.
+    post_20260923_route_keys = {
+        'GET /api/universal/assistant-registration',
+        'GET /api/universal/cloud-publish-consent',
+        'GET /api/universal/conversation-retention',
+        'GET /api/universal/private-root-grant',
+        'GET /api/universal/social-approvals',
+        'GET /api/universal/social-connection',
+        'GET /api/universal/social-connections',
+        'GET /api/universal/social-credentials',
+        'GET /api/universal/social-linkedin-app',
+        'GET /api/universal/social-linkedin-signin',
+        'GET /api/universal/social-meta-app',
+        'GET /api/universal/social-meta-signin',
+        'GET /api/universal/terminal',
+        'GET /api/universal/workshop-transcript',
+        'POST /api/universal/assistant-registration',
+        'POST /api/universal/brain-publish',
+        'POST /api/universal/cloud-publish-consent',
+        'POST /api/universal/cockpit-link',
+        'POST /api/universal/conversation-archive-open',
+        'POST /api/universal/conversation-restore',
+        'POST /api/universal/host-enabled',
+        'POST /api/universal/notion-connect',
+        'POST /api/universal/social-approve',
+        'POST /api/universal/social-connection',
+        'POST /api/universal/social-linkedin-app',
+        'POST /api/universal/social-linkedin-finish',
+        'POST /api/universal/social-linkedin-signin',
+        'POST /api/universal/social-meta-app',
+        'POST /api/universal/social-meta-finish',
+        'POST /api/universal/social-meta-signin',
+        'POST /api/universal/terminal',
+        'POST /api/universal/work-stale-claim-release',
+        'POST /api/universal/workshop-board/archive-idle',
+        'POST /api/universal/workshop-board/release-dead-claims',
+        'POST /api/universal/workshop-board/restore-archived',
+        'POST /api/universal/workshop-board/sweep',
+        'POST /api/universal/workshop-board/tick',
+        'POST /api/universal/workshop-work-assign',
+        'POST /api/universal/workspace-roots',
+    }
+    released_route_sets = (
+        expected_active_route_keys,
+        expected_active_route_keys - social_route_keys,
+        expected_active_route_keys - post_20260923_route_keys,
     )
     website_revision_route_keys = tuple(
         {"GET %s" % path for path in paths}
@@ -15718,8 +15751,8 @@ def restore_universal_application(
         set(projected_routes) - _RETIRED_APPLICATION_HTTP_ROUTE_KEYS
     )
     if active_route_keys not in (
-        expected_active_route_keys,
-        *(expected_active_route_keys | keys for keys in website_revision_route_keys),
+        *released_route_sets,
+        *(routes | keys for routes in released_route_sets for keys in website_revision_route_keys),
     ):
         raise InvalidCell("persisted application HTTP route graph drifted")
     active_projected_routes = {
@@ -16383,7 +16416,7 @@ def restore_universal_application(
             standard_library.lifecycle_protocol.states["published"]
         ),
         read_action_root=authorization.protocol.actions["read"],
-        adopt=True,
+        adopt=False,
     )
     snapshot = store.snapshot()
     projected_routes = {
@@ -16391,12 +16424,10 @@ def restore_universal_application(
         for route in list_cloud_routes(snapshot, cloud_route_protocol)
     }
     active_route_keys = set(projected_routes) - _RETIRED_APPLICATION_HTTP_ROUTE_KEYS
-    # A website adopts the current definition through its own revision
-    # path above. A graph that still holds an earlier published revision
-    # is read as it stands, exactly as the check before the website build
-    # reads it, and is never refused for holding the pages it published.
+    # Restore verifies the persisted published website without adopting a
+    # new definition. Publication is an explicit act through its revision path.
     if active_route_keys not in (
-        *(expected_active_route_keys | keys for keys in website_revision_route_keys),
+        *(routes | keys for routes in released_route_sets for keys in website_revision_route_keys),
     ):
         raise InvalidCell("persisted public website route graph drifted")
     active_projected_routes = {
@@ -17029,6 +17060,7 @@ def restore_universal_application(
         roles,
         connectors_domain_root,
         application_root,
+        adopt=False,
     )
     (
         mcp_broker_protocol,

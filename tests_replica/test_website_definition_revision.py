@@ -1,9 +1,9 @@
-"""W6: a graph opens on the newer code and adopts the website as a revision.
+"""W6: opening reads the published website; explicit adoption records a revision.
 
 SPEC 4.5 holds an instance to the contract it was published with until an
 explicit adoption. A graph published before the docs pages holds the seven
-core routes or the later five guides. The code that now declares eighteen opens that graph, adopts the
-newer revision through the website revision path, records what it adopted,
+core routes or the later five guides. New code reads those pages without writing.
+An explicit adoption publishes the newer revision and records what it adopted,
 and leaves the seven published pages exactly the Cells that published them:
 they stay readable as the earlier revision. A website changed by hand is not
 a published revision. It is refused for that edit, and the clean graph beside
@@ -63,6 +63,20 @@ def _published_before_the_docs_pages(provider, guide_keys=()):
     return store, registry
 
 
+def _adopt(store, registry):
+    return cell_website.ensure_universal_website(
+        store,
+        application_root=registry.application_root,
+        application_member_role=registry.roles["member"],
+        ui_protocol=registry.ui_protocol,
+        cloud_route_protocol=registry.cloud_route_protocol,
+        map_registry=registry.map,
+        published_lifecycle_root=registry.website.lifecycle_root,
+        read_action_root=registry.website.read_action_root,
+        adopt=True,
+    )
+
+
 @pytest.mark.parametrize("guide_keys", [(), cell_website.GUIDE_KEYS], ids=["core-7", "guides-12"])
 def test_an_earlier_revision_opens_adopts_and_keeps_the_pages_it_published(guide_keys):
     provider = _provider()
@@ -72,10 +86,16 @@ def test_an_earlier_revision_opens_adopts_and_keeps_the_pages_it_published(guide
         for path, root in registry.website.page_roots.items()
     }
 
+    revision = store.revision
     store, restored = restore_universal_application(
         PUBLIC_MAP_PATH, store, key_provider=provider,
     )
-
+    assert store.revision == revision
+    assert set(restored.website.route_roots) == set(registry.website.route_roots)
+    _adopt(store, restored)
+    store, restored = restore_universal_application(
+        PUBLIC_MAP_PATH, store, key_provider=provider,
+    )
     assert set(restored.website.route_roots) == set(PUBLIC_WEBSITE_ROUTES)
     # The pages the earlier revision published are the same Cells, untouched.
     for path, cell in published.items():
@@ -129,6 +149,7 @@ def test_an_earlier_revision_opens_adopts_and_keeps_the_pages_it_published(guide
 def test_a_second_boot_adopts_nothing_a_second_time():
     provider = _provider()
     store, registry = _published_before_the_docs_pages(provider)
+    _adopt(store, registry)
     store, restored = restore_universal_application(
         PUBLIC_MAP_PATH, store, key_provider=provider,
     )
@@ -166,8 +187,12 @@ def test_a_hand_edited_website_is_refused_while_the_clean_graph_opens():
     assert "public website route graph drifted" not in str(refused.value)
     assert website_definition_revisions(edited.snapshot()) == ()
 
-    clean, _ = _published_before_the_docs_pages(provider)
+    clean, original = _published_before_the_docs_pages(provider)
+    revision = clean.revision
     clean, restored = restore_universal_application(
         PUBLIC_MAP_PATH, clean, key_provider=provider,
     )
-    assert set(restored.website.route_roots) == set(PUBLIC_WEBSITE_ROUTES)
+    assert clean.revision == revision
+    assert set(restored.website.route_roots) == set(original.website.route_roots)
+    adopted = _adopt(clean, restored)
+    assert set(adopted.route_roots) == set(PUBLIC_WEBSITE_ROUTES)

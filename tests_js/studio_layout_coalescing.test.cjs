@@ -35,7 +35,7 @@ const LM = new Proxy(Object.fromEntries([...palette.matchAll(/^ {2}(\w+):/gm)].m
 
 const slice = () => {
   const start = source.indexOf('const SOCKET_TOP =');
-  const end = source.indexOf('const NodeStateDot =', start);
+  const end = source.indexOf('const Socket =', start);
   assert.ok(start > 0 && end > start, 'the canvas is a slice of the shipped studio-lm.jsx');
   return source.slice(start, end) + require('./workshop72_node_helpers.cjs').nodePreviewSource(source);
 };

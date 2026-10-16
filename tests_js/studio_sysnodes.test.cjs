@@ -7,14 +7,14 @@ const {execFileSync} = require('node:child_process');
 const {createHash} = require('node:crypto');
 const root = path.resolve(__dirname, '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
-const sources = ['tokens.jsx','design-canvas.jsx','shared-data.jsx','studio-suite.jsx','param-types.jsx','studio-params.jsx','studio-mobile.jsx','studio-account.jsx','node-registry.jsx','brain-model.jsx','workshop-board.jsx','studio-workshop.jsx','studio-lm.jsx'];
+const sources = ['tokens.jsx','ds/index.jsx','design-canvas.jsx','shared-data.jsx','studio-suite.jsx','param-types.jsx','studio-params.jsx','studio-mobile.jsx','studio-account.jsx','node-registry.jsx','brain-model.jsx','workshop-board.jsx','studio-workshop.jsx','studio-lm.jsx'];
 const seedText = read('nodelang/universal_presentation_seed.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
 const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)].map(m => [m[1],m[2]]));
 let scripts;
 function applicationScripts() {
   if (scripts) return scripts;
   const manifestPath = path.join(root,'nodelang/studio/compiled/manifest.json');
-  if (fs.existsSync(manifestPath) && !process.env.SYSNODES_RED_BASE) {
+  if (fs.existsSync(manifestPath) && !process.env.SYSNODES_RED_BASE && process.env.ARCHHUB_STUDIO_SOURCE_COURT !== '1') {
     const manifest = JSON.parse(fs.readFileSync(manifestPath));
     scripts = sources.map(source => {
       const entry = manifest.files.find(row => row.source === source);
@@ -23,14 +23,9 @@ function applicationScripts() {
       return read('nodelang/studio/compiled/'+entry.output);
     });
   } else {
-    // RED before the one final build: same vendored compiler/options, no generated files.
-    const Babel = {};
-    vm.runInNewContext(read('nodelang/studio/vendor/babel.js'),{exports:Babel,module:{exports:Babel}});
-    scripts = sources.map(source => Babel.transform(process.env.SYSNODES_RED_BASE ? execFileSync('git',['show',process.env.SYSNODES_RED_BASE+':nodelang/studio/'+source],{cwd:root,encoding:'utf8',maxBuffer:4*1024*1024}) : read('nodelang/studio/'+source),{
-      presets:['react','env'],plugins:['transform-class-properties','transform-object-rest-spread','transform-flow-strip-types'],targets:{},sourceMaps:false,filename:source
-    }).code);
+    scripts = sources.map(source => require('esbuild').transformSync(process.env.SYSNODES_RED_BASE ? execFileSync('git',['show',process.env.SYSNODES_RED_BASE+':nodelang/studio/'+source],{cwd:root,encoding:'utf8',maxBuffer:4*1024*1024}) : read('nodelang/studio/'+source),{loader:'jsx'}).code);
   }
-  scripts[sources.indexOf('studio-lm.jsx')]=scripts[sources.indexOf('studio-lm.jsx')].replace(/window\.StudioLM\s*=\s*StudioLM;/, 'window.NodeCanvas=NodeCanvas;window.NodeRail=NodeRail;window.Settings=Settings;window.ScopeComposer=ScopeComposer;window.StudioLM = StudioLM;');
+  scripts[sources.indexOf('studio-lm.jsx')]=scripts[sources.indexOf('studio-lm.jsx')].replace(/window\.StudioLM\s*=\s*StudioLM;/, 'window.SystemSettingsNav=SystemSettingsNav;window.SystemGraphStates=SystemGraphStates;window.NodeCanvas=NodeCanvas;window.NodeRail=NodeRail;window.Settings=Settings;window.ScopeComposer=ScopeComposer;window.StudioLM = StudioLM;');
   return scripts;
 }
 function projectionFixture() {
@@ -297,7 +292,7 @@ test('SYSNODES: Properties and Settings edit one canonical colour cell in both d
     await s.change(control(),'#228844');
     assert.equal(owner.params.find(p=>p.k==='accent').v,'#228844','Properties writes owner source');
     assert.equal(s.win.AH.accent,'#228844','production theme token projection recolours live');
-    assert.equal(s.doc.querySelector('[data-node-id="'+owner.id+'"]').style.borderColor,'rgb(34, 136, 68)','selected real card repaints accent');
+    assert.equal(s.doc.querySelector('[data-node-id="'+owner.id+'"]').style.outlineColor,'rgb(34, 136, 68)','selected real card repaints accent');
     s.win.__courtRender('settings');await s.settle();
     const {settingsNavigator}=require('./settings_navigation_helpers.cjs');
     const nav=settingsNavigator(s);await nav.tab('Theme');

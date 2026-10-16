@@ -82,7 +82,15 @@ test('PASS4 Watch hides only card sizing; Floor sizing and parameter/action auth
     await ui.click(buttons[1]);
     assert.equal(ui.win.ARCHHUB_WATCH_EXPORTS.length,1);assert.equal(ui.win.ARCHHUB_WATCH_EXPORTS[0].node,'watch-real');
     assert.equal(ui.win.ARCHHUB_WATCH_EXPORTS[0].text,'"Item","Value"\n"A-17","9"');
+    const sizes=[];ui.win.pmPersistValue=(owner,key,value)=>{sizes.push([owner.id,key,value]);return {ok:true};};
+    await ui.act(()=>ui.doc.querySelector('[data-watch-well]').dispatchEvent(new ui.win.MouseEvent('mouseup',{bubbles:true})));
+    assert.equal(sizes.length,0,'canvas percentage width never persists a resize');
     node.cat='logic';await ui.draw({node:{...node,preview:null}});assert.ok(ui.doc.querySelector('[data-node-inline-param="watchSize"]'),'other category params unchanged');
+    vm.runInContext('NodeBody=props=>React.createElement(WatchPreview,{node:props.n,inspector:true});',ui.context);
+    await ui.draw({node:{...node,cat:'watch'}});
+    const inspectorWell=ui.doc.querySelector('[data-watch-well]');inspectorWell.style.width='300px';inspectorWell.style.height='180px';
+    await ui.act(()=>inspectorWell.dispatchEvent(new ui.win.MouseEvent('mouseup',{bubbles:true})));
+    assert.deepEqual(sizes,[['watch-real','watchSize','300x180']],'inspector resize retains the existing property writer');
   }finally{await ui.close();}
 });
 

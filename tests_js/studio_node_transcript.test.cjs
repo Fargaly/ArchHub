@@ -28,7 +28,7 @@ const conversationSlice = () => slice('const NodeModelConversation =', '// One c
   "\nconst CHAT_TURN_EVENT = 'archhub:chat-turn';\n";
 // Add the real rail gate and its nearby dependencies when a test mounts NodeRail.
 const railSlice = () => slice('const NodeModelConversation =', '\nconst ConversationRail =');
-const canvasSlice = () => slice('const SOCKET_TOP =', '\nconst NodeStateDot =') + require('./workshop72_node_helpers.cjs').nodePreviewSource(source);
+const canvasSlice = () => slice('const SOCKET_TOP =', '\nconst Socket =') + require('./workshop72_node_helpers.cjs').nodePreviewSource(source);
 const refreshSlice = () => slice('const studioRefreshCanvasInPlace =', '\nconst StudioLM =');
 const shortcutSlice = () => slice('const studioShortcut =', '\n// An ordinary canvas edit');
 
@@ -39,6 +39,7 @@ const REAL_HELPERS = [
   source.slice(source.indexOf('const nodeModelRow ='), source.indexOf('const modelDisplayName ='))
 ].join('\n');
 const RAIL_HELPERS = [
+  slice('const isWorkshopGraphNode =', 'const GraphWorkshopFace ='),
   source.match(/const modelRoute = [^\n]+/)[0],
   source.slice(source.indexOf('const nodeModelRow ='), source.indexOf('// ─── Chat lane data seam ───'))
 ].join('\n');
@@ -80,7 +81,7 @@ async function mountEnv(fn, opts = {}) {
   const exports = opts.withRail ? '\nglobalThis.Conv = NodeModelConversation; globalThis.Rail = NodeRail;'
     : '\nglobalThis.Conv = NodeModelConversation;';
   const helpers = opts.withRail ? source.slice(source.indexOf('const watchPreviewFor ='), source.indexOf('const WATCH_TABLE_ROWS =')) + RAIL_HELPERS : REAL_HELPERS;
-  vm.runInContext(transformSync(helpers + componentSlice + exports,
+  vm.runInContext(transformSync((opts.withRail ? slice('const useWorkshopProjection =','const studioCanvasScope =') : '') + helpers + componentSlice + exports,
     {loader:'jsx', format:'cjs'}).code, context);
   const root = createRoot(win.document.getElementById('root'));
   try { await fn({React, win, root, context}); }
@@ -120,6 +121,7 @@ async function mountForkRail(kind, createResult) {
     return result;
   };
   win.ARCHHUB_EXISTING_WORKSHOP = {
+    subscribe:() => () => {},
     getSnapshot:() => ({topology:snapshot}),
     refreshTopologyCanvas:async () => { refreshes += 1; return snapshot; },
   };
@@ -154,7 +156,7 @@ async function mountForkRail(kind, createResult) {
     {loader:'jsx', format:'cjs'}).code, context);
   win.NodeInspector = context.NodeInspector;
   const freeSlot = slice('const studioFreeSlot =', 'const studioRefreshCanvasInPlace =');
-  vm.runInContext(transformSync(refreshSlice() + shortcutSlice() + freeSlot + canvasSlice() + '\nglobalThis.NodeCanvas = NodeCanvas;',
+  vm.runInContext(transformSync(slice('const useWorkshopProjection =','const studioCanvasScope =') + refreshSlice() + shortcutSlice() + freeSlot + canvasSlice() + '\nglobalThis.NodeCanvas = NodeCanvas;',
     {loader:'jsx', format:'cjs'}).code, context);
   vm.runInContext(transformSync(RAIL_HELPERS + rails + '\nglobalThis.NodeRail = NodeRail; globalThis.ConversationRail = ConversationRail;',
     {loader:'jsx', format:'cjs'}).code, context);
@@ -284,12 +286,16 @@ test('NodeRail shows the transcript + Continue for a model-less room node', asyn
     await React.act(async () => root.render(React.createElement(context.Rail,
       {node:room, scope:'app:workshop', openConversation:r => opened.push(r)})));
     await tick(React);
+    const chat=[...win.document.querySelectorAll('button')].find(button=>button.textContent==='Chat');
+    if(chat)await React.act(async()=>chat.click());
+    await tick(React);
     const text = win.document.getElementById('root').textContent;
     assert.ok(calls.length >= 1 && calls[0].node === 'assembly-instance:room', 'the room node transcript is read');
     assert.match(text, /PROPOSE a workflow\./, 'the transcript renders for a model-less node');
     assert.match(text, /Here is my proposal\./);
     assert.match(text, /Latest messages only/, 'has_older shows the honest history hint');
-    assert.equal(win.document.querySelector('#root textarea'), null, 'a model-less node shows no model composer');
+    assert.equal(win.document.querySelectorAll('#root textarea[data-stub="inlineask"]').length, 0, 'a model-less node shows no model-bound composer');
+    assert.equal(win.document.querySelectorAll('#root textarea').length, 1, 'the shared selection composer remains available');
     const cont = [...win.document.querySelectorAll('button')].find(b => /full history in the workshop/i.test(b.textContent));
     assert.ok(cont, 'with older history, a labelled full-history link is present');
     await React.act(async () => cont.click());

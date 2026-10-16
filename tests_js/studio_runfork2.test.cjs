@@ -53,6 +53,8 @@ test('item 1: ' + (libraryMode ? 'Library' : 'Canvas') + ' Rerun uses the signed
   const pending = new Promise((resolve, reject) => { resolveRun = resolve; rejectRun = reject; });
   const calls = [];
   const v = await mount(params + '\n' +
+    slice('const useWorkshopProjection =', 'const studioCanvasScope =') +
+    slice('const isWorkshopGraphNode =', 'const GraphWorkshopFace =') +
     slice('const watchPreviewFor =', 'const WATCH_TABLE_ROWS =') +
     slice('const isSessionInspectorNode =', '// One chat, two parts') +
     slice('const InspectorTabs =', '// ─── Conversation rail') +

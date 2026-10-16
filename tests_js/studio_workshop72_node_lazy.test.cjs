@@ -33,14 +33,17 @@ test('WORKSHOP-72 mounted node uses the plate header, width, tile stack and real
     const face=ui.doc.querySelector('[data-workshop-node-face]');
     assert.equal(ui.win.getComputedStyle(face).lineHeight,'normal');
     assert.equal(ui.win.getComputedStyle(ui.container.firstElementChild).width,'320px');
-    assert.equal(ui.win.getComputedStyle(face).borderRadius,'10px');
+    assert.equal(ui.win.getComputedStyle(face).borderRadius,'6px');
     assert.equal(face.getAttribute('data-workshop-id'),'room-real');
     assert.equal(ui.doc.querySelector('[data-workshop-node-title]').textContent,'Label selected elements');
     assert.equal(ui.doc.querySelectorAll('[data-workshop-node-member]').length,2);
     assert.deepEqual([...ui.doc.querySelectorAll('[data-workshop-node-member]')].map(tile=>tile.dataset.workshopParticipantRoot),
       ['agent-real-a','agent-real-b'],'only actual assigned agent and actual reviewer form the task stack');
-    assert.deepEqual([...ui.doc.querySelectorAll('[data-workshop-node-member]')].map(tile=>tile.textContent),
+    assert.deepEqual([...ui.doc.querySelectorAll('[data-workshop-node-member] [data-agent-initial]')].map(tile=>tile.textContent),
       ['C','X'],'shared agent initials reproduce the window and plate');
+    assert.deepEqual([...ui.doc.querySelectorAll('[data-workshop-node-member]')].map(tile=>tile.getAttribute('aria-label')),['Claude Code','Codex']);
+    assert.match(face.querySelector('[data-workshop-node-agent-stack]').textContent,/Claude Code.*Codex/);
+    assert.ok(face.querySelector('[data-port-band]').compareDocumentPosition(face.querySelector('[data-workshop-node-agent-stack]')) & 4,'named member chips follow the port band');
     assert.equal(ui.doc.querySelector('[data-workshop-node-status]').textContent,'Waits for you · 7 labels');
     assert.equal(ui.doc.querySelectorAll('textarea,input,select').length,0);
     assert.equal(ui.doc.querySelectorAll('button:not([data-socket-port])').length,1);

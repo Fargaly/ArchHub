@@ -74,7 +74,7 @@ const PM_META = {
   temperature:{ label: 'temperature' }, 'top-p': { label: 'top-p' },
   'max tokens': { label: 'max tokens' }, 'system prompt': { label: 'system prompt' },
 };
-const humanParamLabel = (spec, labels) => (labels && labels[spec.k]) || spec.label || (PM_META[spec.k] || {}).label || String(spec.k || '').replace(/_+/g, ' ').replace(/-+/g, ' ');
+const humanParamLabel = (spec, labels = {}) => (labels && labels[spec.k]) || spec.label || (PM_META[spec.k] || {}).label || String(spec.k || '').replace(/_+/g, ' ').replace(/-+/g, ' ');
 const pmLabel = humanParamLabel;
 const INTERNAL_PARAM_KEYS = new Set(['source_digest', 'seed', 'image_path', 'session']);
 if (typeof window !== 'undefined') window.ARCHHUB_INTERNAL_PARAM_KEYS = INTERNAL_PARAM_KEYS;
@@ -879,7 +879,7 @@ function TerminalPanel({ node }) {
 
 // Application settings use the same typed rows as canvas nodes, with values
 // re-read from the owner projection. Only in-flight input is held locally.
-function ApplicationParameter({node, row}) {
+function ApplicationParameter({node, row, compact = false}) {
   const [draft, setDraft] = React.useState(null);
   const [error, setError] = React.useState('');
   const [notice, setNotice] = React.useState('');
@@ -900,18 +900,32 @@ function ApplicationParameter({node, row}) {
       .catch(failure => { if (version === pending.current) setError(failure.message || 'The setting was not saved.'); })
       .finally(() => { if (version === pending.current) setDraft(null); });
   };
-  return <div data-sysnode-cell={row.cell_id || row.value_root || row.rel || undefined} data-value-root={row.value_root || undefined} data-sysnode-param={row.k}>
-    {row.editable === true ? <ParamRow node={node} spec={spec} val={shown} def={row.v} onChange={write}/>
-      : <div data-param-key={row.k} style={{display:'flex', gap:8, justifyContent:'space-between', padding:'7px 8px', fontSize:12, color:PM.inkSoft}}>
-        <span>{humanParamLabel(row)}</span><span>{String(row.v ?? '')}</span></div>}
+  if(compact && row.editable===true && ['select','enum','color','text','number','toggle'].includes(type)) {
+    const inline={minWidth:0,width:'100%',height:20,padding:0,border:0,background:'transparent',color:PM.inkSoft,fontFamily:PM.mono,fontSize:11,textAlign:'right',appearance:'none'};
+    return <div data-sysnode-cell={row.cell_id || row.value_root || row.rel || undefined} data-value-root={row.value_root || undefined} data-sysnode-param={row.k}>
+      <window.AH_DS.Row k={humanParamLabel(row)} style={{gridTemplateColumns:'minmax(0,1fr) minmax(0,1fr)',minHeight:24,padding:'0 10px'}}>
+        {['select','enum'].includes(type) && spec.opts?.length ? <window.AH_DS.Select aria-label={humanParamLabel(row)} value={value} onChange={e=>write(e.target.value)} style={inline}>{spec.opts.map(option=>{const v=Array.isArray(option)?option[0]:option;return <option key={v} value={v}>{v}</option>;})}</window.AH_DS.Select> : type==='toggle' ? <window.AH_DS.Toggle checked={shown} label={humanParamLabel(row)} onChange={write} style={{justifySelf:'end'}}/> : type==='color' ? <span style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:5}}><window.AH_DS.TextField type="color" aria-label={humanParamLabel(row)} value={value} onChange={e=>write(e.target.value)} style={{...inline,width:18,height:18}}/><span style={{fontFamily:PM.mono,fontSize:11}}>{String(value).toUpperCase()}</span></span> : <window.AH_DS.TextField type={type==='number'?'number':'text'} aria-label={humanParamLabel(row)} value={value ?? ''} onChange={e=>write(type==='number'?Number(e.target.value):e.target.value)} style={inline}/>}
+      </window.AH_DS.Row>
+      {error && <div role="alert">{error}</div>}{notice && <div role="status">{notice}</div>}
+    </div>;
+  }
+  return <div data-sysnode-cell={row.cell_id || row.value_root || row.rel || undefined} data-value-root={row.value_root || undefined} data-sysnode-param={row.k} style={{position:'relative',paddingRight:row.editable===true && (row.default!==undefined || row.def!==undefined) && String(value)!==String(row.default!==undefined?row.default:row.def)?44:0}}>
+    {row.editable===true && (type==='select' || type==='enum') && spec.opts?.length ? <window.AH_DS.Row k={humanParamLabel(row)}>
+      {row.k==='theme' ? <window.AH_DS.Segmented label={humanParamLabel(row)} options={spec.opts} value={value} onChange={write}/> : <window.AH_DS.Select aria-label={humanParamLabel(row)} value={value} onChange={e=>write(e.target.value)} style={{width:'100%',height:26,background:PM.bgSoft,border:`1px solid ${PM.line}`,borderRadius:5,color:PM.ink,padding:'0 8px'}}>{spec.opts.map(option=>{const v=Array.isArray(option)?option[0]:option,l=Array.isArray(option)?option[1]:option;return <option key={v} value={v}>{l}</option>;})}</window.AH_DS.Select>}
+    </window.AH_DS.Row> : row.editable === true ? <ParamRow node={node} spec={spec} val={shown} def={row.default!==undefined ? row.default : row.def!==undefined ? row.def : row.v} onChange={write}/>
+      : <window.AH_DS.Row data-param-key={row.k} k={humanParamLabel(row)}><span style={{fontFamily:PM.mono,fontSize:12,color:PM.inkSoft}}>{String(row.v ?? '')}</span></window.AH_DS.Row>}
+    {row.editable === true && (row.default!==undefined || row.def!==undefined) && String(value)!==String((row.default!==undefined ? row.default : row.def)) && <window.AH_DS.Btn sm kind="ghost" aria-label={'Reset '+humanParamLabel(row)} style={{position:'absolute',right:4,top:'50%',transform:'translateY(-50%)',padding:'0 4px',fontSize:11}} onClick={()=>write((row.default!==undefined ? row.default : row.def))}>Reset</window.AH_DS.Btn>}
     {error && <div role="alert" style={{padding:'3px 8px', fontSize:12, color:PM.err}}>{error}</div>}
     {notice && <div role="status" style={{padding:'3px 8px', fontSize:12, color:PM.inkSoft}}>{notice}</div>}
   </div>;
 }
-function ApplicationNodeParameters({node, compact = false}) {
+function ApplicationNodeParameters({node, compact = false, footer = false, status}) {
   const [error, setError] = React.useState('');
   const [expanded, setExpanded] = React.useState(false);
+  const [changedOnly,setChangedOnly] = React.useState(false);
   const params = node.params || [];
+  const changed=params.filter(row=>row.changed || (row.default!==undefined || row.def!==undefined) && String(row.v)!==String((row.default!==undefined ? row.default : row.def)));
+  const shown=changedOnly && !compact ? changed : params;
   const open = async action => {
     setError('');
     try {
@@ -926,20 +940,22 @@ function ApplicationNodeParameters({node, compact = false}) {
   };
   // Connections is one capability: the Settings surface is also this node's parameters.
   const connections = node.application && String(node.title || node.name || '').toLowerCase() === 'connections';
+  const actions=<>{(node.actions || []).map(action => <window.AH_DS.Btn sm key={action.id} type="button" data-sysnode-action={action.id}
+    onClick={() => open(action)} title={action.label + ' · Enter'} style={{...pmBtn(),margin:footer?0:'6px 8px',width:footer?'auto':'calc(100% - 16px)',height:footer?22:undefined}}>{action.label}</window.AH_DS.Btn>)}{error && <span role="alert">{error}</span>}</>;
+  if(footer)return <span data-application-footer="" onMouseDown={event=>event.stopPropagation()} onClick={event=>event.stopPropagation()} style={{display:'flex',alignItems:'center',gap:8}}><span style={{flex:1,minWidth:0}}>{status}</span>{actions}</span>;
   return <div data-application-parameters={node.id} data-node-inspector={compact ? undefined : 'true'}
     onMouseDown={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}
     onKeyDown={event => { if (!(connections && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k')) event.stopPropagation(); }}
     onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()} style={{minWidth:0}}>
-    {connections && window.SocialConnections && <window.SocialConnections/>}
-    {node.liveState && <div data-sysnode-live-state style={{padding:'6px 8px', fontSize:11, color:PM.inkSoft}}>
-      {Object.entries(node.liveState).map(([key,value]) => key + ': ' + String(value)).join(' · ')}
-    </div>}
-    {(compact && !expanded ? params.slice(0,3) : params).map(row => <ApplicationParameter key={row.k} node={node} row={row}/>)}
-    {compact && params.length > 3 && <button type="button" onClick={() => setExpanded(!expanded)}
+    {!compact && <div style={{display:'flex',gap:6,padding:'8px 12px'}}><window.AH_DS.Btn sm kind="ghost" aria-pressed={!changedOnly} onClick={()=>setChangedOnly(false)}>All</window.AH_DS.Btn><window.AH_DS.Btn sm kind="ghost" aria-pressed={changedOnly} onClick={()=>setChangedOnly(true)}>Changed only · {changed.length}</window.AH_DS.Btn></div>}
+    {connections && !compact && window.SocialConnections && <window.SocialConnections/>}
+    {Object.entries(node.liveState || {}).filter(([key])=>!params.some(row=>row.k===key)).map(([key,value])=><window.AH_DS.Row key={key} data-sysnode-live-state={key} k={humanParamLabel({k:key,label:key.replaceAll('_',' ').replace(/^./,c=>c.toUpperCase())})}>{String(value ?? '')}</window.AH_DS.Row>)}
+    {!params.length && node.liveState?.members==null && Number.isInteger(node.memberCount) && <window.AH_DS.Row k="Nodes">{node.memberCount}</window.AH_DS.Row>}
+    {(compact && !expanded ? params.slice(0,3) : shown).map(row => <ApplicationParameter key={row.k} node={node} row={row} compact={compact}/>)}
+    {compact && params.length > 3 && <window.AH_DS.Btn sm kind="ghost" type="button" onClick={() => setExpanded(!expanded)}
       aria-expanded={expanded} title="Show all settings · Enter" style={{...pmBtn(), margin:6}}>
-      {expanded ? 'Fewer settings' : '+' + (params.length - 3) + ' settings'}</button>}
-    {(node.actions || []).map(action => <button key={action.id} type="button" data-sysnode-action={action.id}
-      onClick={() => open(action)} title={action.label + ' · Enter'} style={{...pmBtn(), margin:'6px 8px', width:'calc(100% - 16px)'}}>{action.label}</button>)}
+      {expanded ? 'Fewer settings' : '+' + (params.length - 3) + ' settings'}</window.AH_DS.Btn>}
+    {!compact && actions}
     {error && <div role="alert" style={{padding:8, fontSize:12, color:PM.err}}>{error}</div>}
   </div>;
 }

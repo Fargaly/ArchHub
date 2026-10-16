@@ -82,56 +82,53 @@
   function Socket({ t = 'elements', type, list, filled, size = 10, hit, style, ...props }) {
     const dataType = type || t;
     const c = A[TYPE[dataType] || 'inkSoft'];
-    const shape = dataType === 'event'
+    const shape = dataType === 'event' && !list
       ? <svg width={size + 2} height={size + 2} style={{ display:'block', ...style }}><path d={`M1 1 L${size + 1} ${size / 2 + 1} L1 ${size + 1} Z`} fill={filled ? c : A.bgPanel} stroke={c} strokeWidth="2" strokeLinejoin="round"/></svg>
       : <span style={{ display:'block', width:size, height:size, boxSizing:'border-box',
         background:dataType === 'any' ? undefined : filled ? c : A.bgPanel,
         border:`2px ${dataType === 'any' ? 'dashed' : 'solid'} ${c}`,
         borderRadius:dataType !== 'any' && list ? 2 : '50%',
         transform:dataType !== 'any' && list ? 'rotate(45deg) scale(.86)' : 'none', ...style }}/>;
-    return <span {...props} title={props.title || `${dataType}${list ? ' list' : ''}`} role={props.role || 'img'}
+    return <span data-ds-socket="" {...props} title={props.title || `${dataType}${list ? ' list' : ''}`} role={props.role || 'img'}
       aria-label={props['aria-label'] || `${dataType}${list ? ' list' : ''}${filled ? ', wired' : ', unwired'}`}
       style={hit ? { display:'inline-grid', placeItems:'center', width:20, height:20 } : { display:'inline-block' }}>{shape}</span>;
   }
 
   const Node = React.forwardRef(function Node({ glyph, gc, title, sub, ins = [], outs = [], foot, footc, chip, sel, selected, run,
-    w = 224, edge, dashed, children, style, bandRef, onHeaderMouseDown, stacked, headerProps, headerEnd, portBand, ...props }, ref) {
-    return <div {...props} ref={ref} style={{ position:'relative', width:w, background:A.bgPanel,
+    w = 224, edge, dashed, children, style, bandRef, nodeRef, onHeaderMouseDown, headerExtra, headerEnd, headerProps, subtitleProps, stacked, portBand, renderPort, portsAfterContent = false, ...props }, forwardedRef) {
+    const band = Math.max(ins.length, outs.length) > 0 && <div ref={bandRef} data-port-band="" style={{position:'relative',display:'grid',gridTemplateColumns:'1fr 1fr',height:renderPort ? Math.max(ins.length,outs.length)*22+8 : undefined,boxSizing:'border-box',borderTop:`1px solid ${A.line}`,padding:'4px 0'}}>
+      {[['in',ins],['out',outs]].map(([side,ports])=><div key={side}>{ports.map((p,i)=>renderPort ? <React.Fragment key={p.id || p.l}>{renderPort(p,i,side)}</React.Fragment> :
+        <div key={p.id || p.l} style={{position:'relative',height:22,display:'flex',alignItems:'center',justifyContent:side==='out'?'flex-end':undefined,padding:'0 12px',fontSize:12}}>
+          <span style={{position:'absolute',[side==='in'?'left':'right']:-11,top:1}}><Socket {...p.socketProps} t={p.t} list={p.list} filled={p.f} hit aria-label={`Connect ${side==='in'?'input':'output'} ${p.l}`} title={`Connect ${side==='in'?'input':'output'} ${p.l}`} role={p.onUse?'button':undefined} tabIndex={p.onUse?0:undefined} onClick={p.onUse} onMouseDown={e=>e.stopPropagation()} onKeyDown={e=>{if(p.onUse&&(e.key==='Enter'||e.key===' ')){e.preventDefault();p.onUse(e);}}} onPointerDown={p.onDragStart}/></span>{p.l}</div>)}</div>)}
+    </div>;
+    return <div ref={nodeRef || forwardedRef} data-ds-node="" {...props} style={{ position:'relative', width:w, background:A.bgPanel,
       border:`1px ${dashed ? 'dashed' : 'solid'} ${A.line}`, borderRadius:6,
       borderLeft:edge === 'l' ? `4px solid ${gc}` : undefined, borderRight:edge === 'r' ? `4px solid ${gc}` : undefined,
-      outline:sel || selected ? `2px solid ${A.accent}` : 'none', outlineOffset:2,
+      outline:sel || selected ? `2px solid ${A.accent}` : 'none', outlineColor:sel || selected ? A.accent : undefined, outlineOffset:2,
       boxShadow:run ? `0 0 0 1px ${A.accent}` : 'none', ...style }}>
-      {stacked && [5, 10].map((offset, i) => <span key={offset} data-stacked-edge={i + 1} style={{position:'absolute', inset:0,
-        transform:`translate(${offset}px, ${offset}px)`, border:`1px solid ${A.line}`, borderRadius:6,
-        background:A.bgPanel, opacity:i ? .6 : 1, zIndex:-1 - i, pointerEvents:'none'}}/>)}
-      <div {...headerProps} onMouseDown={headerProps?.onMouseDown || onHeaderMouseDown} style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 10px', ...headerProps?.style }}>
-        <span aria-hidden="true" style={{ width:20, height:20, borderRadius:5, background:gc, color:A.onFill,
+      {stacked && [5,10].map((offset,i)=><span key={offset} data-stacked-edge={i+1} style={{position:'absolute',inset:0,transform:`translate(${offset}px,${offset}px)`,border:`1px solid ${A.line}`,borderRadius:6,background:A.bgPanel,opacity:i?.6:1,zIndex:-1-i,pointerEvents:'none'}}/>)}
+      <div {...headerProps} onMouseDown={headerProps?.onMouseDown || onHeaderMouseDown} style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 10px',...headerProps?.style }}>
+        <span data-category-tile="" aria-hidden="true" style={{ width:20, height:20, borderRadius:5, background:gc, color:A.onFill,
           display:'grid', placeItems:'center', font:`600 12px ${A.sans}`, flex:'none' }}>{glyph}</span>
-        <div style={{ minWidth:0, flex:1 }}><div style={{ fontSize:13, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{title}</div>
-          <div style={{ fontSize:11, color:A.inkSoft, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{sub}</div></div>
-        {headerEnd}<span aria-hidden="true" style={{ width:8, height:8, borderRadius:'50%', background:footc || A.inkSoft, flex:'none' }}/>
+        <div style={{ minWidth:0, flex:1 }}><div data-node-card-title="" title={typeof title==='string'?title:undefined} style={{ fontSize:13, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{title}</div>
+          <div {...subtitleProps} data-node-card-subtitle="" style={{ fontSize:11, color:A.inkSoft, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{sub}</div></div>
+        {headerExtra || headerEnd}
+        <span aria-hidden="true" style={{ width:8, height:8, borderRadius:'50%', background:footc || A.inkSoft, flex:'none' }}/>
       </div>
-      {portBand}
-      {Math.max(ins.length, outs.length) > 0 && <div ref={bandRef} data-port-band="" style={{ display:'grid', gridTemplateColumns:'1fr 1fr', borderTop:`1px solid ${A.line}`, padding:'4px 0' }}>
-        <div>{ins.map(p => <div key={p.l} style={{ position:'relative', height:22, display:'flex', alignItems:'center', padding:'0 12px', fontSize:12 }}>
-          <span style={{ position:'absolute', left:-11, top:1 }}><Socket t={p.t} list={p.list} filled={p.f} hit aria-label={`Connect input ${p.l}`} title={`Connect input ${p.l}`} role={p.onUse?'button':undefined} tabIndex={p.onUse?0:undefined} onClick={p.onUse} onMouseDown={e=>e.stopPropagation()} onKeyDown={e=>{if(p.onUse&&(e.key==='Enter'||e.key===' ')){e.preventDefault();p.onUse(e);}}} onPointerDown={p.onDragStart}/></span>{p.l}</div>)}</div>
-        <div>{outs.map(p => <div key={p.l} style={{ position:'relative', height:22, display:'flex', alignItems:'center', justifyContent:'flex-end', padding:'0 12px', fontSize:12 }}>
-          {p.l}<span style={{ position:'absolute', right:-11, top:1 }}><Socket t={p.t} list={p.list} filled={p.f} hit aria-label={`Connect output ${p.l}`} title={`Connect output ${p.l}`} role={p.onUse?'button':undefined} tabIndex={p.onUse?0:undefined} onClick={p.onUse} onMouseDown={e=>e.stopPropagation()} onKeyDown={e=>{if(p.onUse&&(e.key==='Enter'||e.key===' ')){e.preventDefault();p.onUse(e);}}} onPointerDown={p.onDragStart}/></span></div>)}</div>
-      </div>}
-      {children}{chip && <div style={{ padding:'0 10px 6px' }}>{chip}</div>}
-      <div style={{ borderTop:`1px solid ${A.line}`, padding:'5px 10px', fontSize:11, color:footc || A.inkSoft }}>{foot}</div>
+      {portBand || (!portsAfterContent && band)}{children}{chip && <div style={{ padding:'0 10px 6px' }}>{chip}</div>}{portsAfterContent && band}
+      <div data-node-footer-status="" style={{ borderTop:`1px solid ${A.line}`, padding:'5px 10px', fontSize:11, color:footc || A.inkSoft }}>{foot}</div>
     </div>;
   });
 
   function Card({ title, children, style, variant, as:Tag = 'div', ...props }) {
     if (title !== undefined) return <Node {...props} title={title} style={style}>{children}</Node>;
-    return <Tag data-ds-card="" {...props} style={{ background:variant === 'settings' ? 'linear-gradient(180deg, #1c1c22 0%, #17171c 100%)' : A.bgPanel,
-      border:`1px solid ${A.line}`, borderRadius:variant === 'settings' ? 14 : 6,
-      ...(variant === 'settings' ? { boxShadow:'0 1px 0 rgba(255,255,255,.04) inset, 0 1px 2px rgba(0,0,0,.4)' } : {}),
+    return <Tag data-ds-card="" {...props} style={{ background:['settings','home'].includes(variant) ? 'linear-gradient(180deg, #1c1c22 0%, #17171c 100%)' : A.bgPanel,
+      border:`1px solid ${A.line}`, borderRadius:variant === 'settings' ? 14 : variant==='home'?12:6,
+      ...(['settings','home'].includes(variant) ? { boxShadow:'0 1px 0 rgba(255,255,255,.04) inset, 0 1px 2px rgba(0,0,0,.4)' } : {}),
       overflow:'hidden', ...style }}>{children}</Tag>;
   }
 
-  function Rail({ children, g, glyph, l, label, on, active, badge, as:Tag = 'nav', style, ...props }) {
+  function Rail({ children, g, glyph, l, label, on, active, badge, variant, as:Tag = 'nav', style, ...props }) {
     const text = label ?? l;
     const selected = active ?? on;
     if (text === undefined) return <Tag {...props} style={{ background:A.bg, borderRight:`1px solid ${A.lineSoft}`,
@@ -139,8 +136,8 @@
     return <button {...props} type="button" title={props.title || text} aria-label={props['aria-label'] || text}
       aria-current={selected ? 'page' : undefined} style={{ width:44, height:52, display:'grid', placeItems:'center', alignContent:'center',
         gap:2, position:'relative', color:selected ? A.ink : A.inkSoft, border:0, padding:0, background:'transparent', fontFamily:A.sans, cursor:'pointer', ...style }}>
-      {selected && <i aria-hidden="true" style={{ position:'absolute', left:0, top:12, bottom:12, width:2, background:A.accent, borderRadius:2 }}/>}
-      <span aria-hidden="true" style={{ width:28, height:28, borderRadius:6, display:'grid', placeItems:'center', background:selected ? A.bgHover : 'transparent', fontSize:15 }}>{glyph ?? g}</span>
+      {selected && variant!=='home' && <i aria-hidden="true" style={{ position:'absolute', left:0, top:12, bottom:12, width:2, background:A.accent, borderRadius:2 }}/>}
+      <span aria-hidden="true" style={{ width:variant==='home'?36:28, height:variant==='home'?30:28, borderRadius:variant==='home'?8:6, display:'grid', placeItems:'center', background:selected ? A.bgHover : 'transparent', fontSize:15 }}>{glyph ?? g}</span>
       <span style={{ fontSize:11, lineHeight:'13px' }}>{text}</span>
       {badge && <span style={{ position:'absolute', right:6, top:6, minWidth:14, height:14, borderRadius:7, background:A.warn,
         color:A.onFill, fontSize:10, fontWeight:600, display:'grid', placeItems:'center' }}>{badge}</span>}{children}
@@ -148,9 +145,9 @@
   }
 
   // Plate composer shell; caller owns inputs, submit handlers and conversation state.
-  function Composer({ children, as:Tag = 'div', w, style, ...props }) {
+  function Composer({ children, as:Tag = 'div', w, variant, style, ...props }) {
     return <Tag data-ds-composer="" {...props} style={{ width:w, margin:'0 auto', border:`1px solid ${A.line}`, borderRadius:10,
-      background:A.bgPanel, padding:'12px 14px', display:'grid', gap:10, ...style }}>{children}</Tag>;
+      background:variant==='home'?'linear-gradient(180deg, #202027 0%, #1a1a20 100%)':A.bgPanel, padding:'12px 14px', display:'grid', gap:10, ...(variant==='home'?{borderRadius:14,boxShadow:'0 1px 0 rgba(255,255,255,.05) inset, 0 8px 24px rgba(0,0,0,.45)'}:{}), ...style }}>{children}</Tag>;
   }
 
   function EmptyState({ glyph = '◌', title = 'Nothing here yet', detail, children, action, onRetry,
@@ -169,6 +166,15 @@
     const Tag = multiline ? 'textarea' : 'input';
     return <Tag ref={ref} {...props} style={{minWidth:0,border:0,background:'transparent',color:A.ink,fontFamily:A.sans,fontSize:13,outline:'none',...style}}/>;
   });
+  function Segmented({options,value,onChange,label}) {
+    const name = React.useId(), [focused,setFocused] = React.useState(null);
+    return <span role="radiogroup" aria-label={label} style={{display:'inline-flex',height:26,border:`1px solid ${A.line}`,borderRadius:5,overflow:'hidden'}}>{options.map(option=>{
+      const v=Array.isArray(option)?option[0]:option,l=Array.isArray(option)?option[1]:option;
+      return <label key={v} style={{position:'relative',display:'inline-flex',alignItems:'center',padding:'0 4px',fontSize:11,cursor:'pointer',outline:focused===v?`1px solid ${A.accent}`:undefined,outlineOffset:-2,background:value===v?A.accentSoft:'transparent',color:value===v?A.accentHi:A.inkSoft}}>
+        <input type="radio" name={name} value={v} checked={value===v} onChange={()=>onChange(v)} onFocus={()=>setFocused(v)} onBlur={()=>setFocused(null)} aria-label={String(l)}
+          style={{position:'absolute',inset:0,opacity:0,width:'100%',height:'100%',margin:0,cursor:'pointer'}}/>{l}</label>;
+    })}</span>;
+  }
   function Select(props) { return <select {...props}/>; }
   function Frame({as:Tag = 'div', style, children, ...props}) {
     return <Tag data-ds-frame="" {...props} style={{display:'grid',minHeight:0,overflow:'hidden',color:A.ink,fontFamily:A.sans,...style}}>{children}</Tag>;
@@ -199,7 +205,7 @@
       {!params.length && <EmptyState compact glyph={null} title="No parameters in this selection"/>}
       {['Pin output','Disable'].map((label,index)=>{const p=params.find(row=>row.k===(index?'disabled':'pin_output'));return !p && <Row key={label} label={label}><span style={{display:'flex',alignItems:'center',gap:8}}><Toggle label={label+' unavailable'} disabled/><span style={{fontSize:11,color:A.inkSoft}}>Unavailable</span></span></Row>;})}
       <div style={section}><span style={cap}>Ports</span>{ports.map(p=><span key={p.side+':'+p.id} style={{display:'flex',alignItems:'center',gap:8,fontSize:12}}>
-        <Socket t={p.t} list={p.list} filled={p.connected}/>{p.label || p.id} · {p.t || 'unknown'}{p.list?' list':''}</span>)}</div>
+        <Socket {...p.socketProps} t={p.t} list={p.list} filled={p.connected}/>{p.label || p.id} · {p.t || 'unknown'}{p.list?' list':''}</span>)}</div>
       <div style={section}><div style={{display:'flex',alignItems:'center',gap:8}}><span style={cap}>Output</span><span style={{flex:1}}/>
         {['Table','JSON'].map(f=><Btn key={f} sm kind="ghost" aria-pressed={format===f} onClick={()=>setFormat(f)} style={{padding:'0 7px',background:format===f?A.accentSoft:'transparent'}}>{f}</Btn>)}</div>
         <div style={{background:A.bgSoft,border:`1px solid ${A.lineSoft}`,borderRadius:5,padding:'6px 8px',font:`400 11px/17px ${A.mono}`,color:A.inkSoft}}>
@@ -220,5 +226,5 @@
       return 'The application could not complete this request. Refresh the view and retry.';
     return text.replace(/not available yet/gi, 'Unavailable');
   };
-  window.AH_DS = Object.freeze({ errorText, Btn, Toggle, Row, Card, Rail, Node, Socket, Composer, EmptyState, TextField, Select, Frame, Avatar, Properties, SelectionHeader, avatar, dot, chip, styles });
+  window.AH_DS = Object.freeze({ errorText, Btn, Toggle, Row, Card, Rail, Node, Socket, Composer, EmptyState, TextField, Select, Segmented, Frame, Avatar, Properties, SelectionHeader, avatar, dot, chip, styles });
 })();

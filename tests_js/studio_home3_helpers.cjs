@@ -11,7 +11,7 @@ const seedText = read('nodelang/universal_presentation_seed.py').match(/^THEME =
 const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)].map(m => [m[1], m[2]]));
 
 async function mountStudio(options = {}) {
-  const sources=['tokens.jsx','design-canvas.jsx','shared-data.jsx','studio-suite.jsx','param-types.jsx','studio-params.jsx','studio-mobile.jsx','studio-account.jsx','node-registry.jsx','brain-model.jsx','workshop-board.jsx','studio-workshop.jsx','studio-lm.jsx'];
+  const sources=['tokens.jsx','ds/index.jsx','design-canvas.jsx','shared-data.jsx','studio-suite.jsx','param-types.jsx','studio-params.jsx','studio-mobile.jsx','studio-account.jsx','node-registry.jsx','brain-model.jsx','workshop-board.jsx','studio-workshop.jsx','studio-lm.jsx'];
   const sourceMode=process.env.HOME3_SOURCE==='1';
   const manifest = sourceMode ? {files:sources.map(source=>({source}))} : JSON.parse(read('nodelang/studio/compiled/manifest.json'));
   const held = manifest.files.find(file => file.source === 'studio-lm.jsx');
@@ -70,7 +70,7 @@ async function mountStudio(options = {}) {
   const graph = {nodes:[{id:'tool-a', title:'Tool node', cat:'ai', x:40, y:40, w:220, h:120, params:[], outs:[]}],
     wires:[{id:'wire-a', from:['tool-a','out'], to:['tool-a','in']}]};
   if(options.nativeWork)graph.nodes.push({id:options.nativeWork.work,title:'Approve wall opening',status:'awaiting_approval',params:[]});
-  const snapshot = {canvas:{graph_id:'graph-a', root:'scope-a', revision:7, authorization},
+  let snapshot = {canvas:{graph_id:'graph-a', root:'scope-a', revision:7, authorization},
     workshops:[{root:'room-a', label:'General Workshop', is_general:true}],
     workshop:{root:'room-a',graph_id:'graph-a',scope_root:'scope-a',messages:[],participants:[],workflows:[]},
     nativeWork:options.nativeWork || {state:'awaiting_approval', work:'Layer choice', review_text:'Pick a layer', approved:false},
@@ -130,7 +130,7 @@ async function mountStudio(options = {}) {
   const settle = () => new Promise(resolve => win.setTimeout(resolve, 60));
   const setAccount = rec => accountCalls.push(['setAccount', rec]);
   const onSignOut = () => accountCalls.push(['onSignOut']);
-  return {win, doc:win.document, update:mutate=>{mutate(snapshot);listeners.forEach(fn=>fn());},button, graphCreates, fileClicks, agentCalls, ownerCalls, accountCalls, setAccount, onSignOut, settle, close};
+  return {win, doc:win.document, update:mutate=>{mutate(snapshot);snapshot={...snapshot};listeners.forEach(fn=>fn());},button, graphCreates, fileClicks, agentCalls, ownerCalls, accountCalls, setAccount, onSignOut, settle, close};
 }
 
 

@@ -65,10 +65,10 @@ async function mount() {
   const {createRoot} = require('react-dom/client');
   const {transformSync} = require('esbuild');
   const start = source.indexOf('const SOCKET_TOP =');
-  const end = source.indexOf('const NodeStateDot =', start);
+  const end = source.indexOf('const Socket =', start);
   const socketStart = source.indexOf('const Socket = (', end);
   const socketEnd = source.indexOf('const ASK_SCALE =', socketStart);
-  assert.ok(start > 0 && end > start && socketStart > end && socketEnd > socketStart,
+  assert.ok(start > 0 && end > start && socketStart === end && socketEnd > socketStart,
     'the canvas, node card and socket are slices of the shipped studio-lm.jsx');
   const dom = new JSDOM('<div id="root"></div>');
   Object.defineProperty(dom.window.HTMLElement.prototype, 'offsetTop', {configurable:true,
@@ -127,7 +127,8 @@ test('sockets sit in a port band below the title and summary, one row per port, 
       const band = element.querySelector('[data-port-band]');
       assert.ok(band && band.parentElement === element, 'the card has its own port band: ' + node.id);
       const footer = element.querySelector('[data-node-footer-status]');
-      assert.equal(band.nextElementSibling, footer, 'band is last for an unmeasured state, or immediately precedes its supplied status footer');
+      assert.ok(band.previousElementSibling?.querySelector('[data-node-card-title]'),'plate port band follows the header');
+      assert.ok(footer && element.lastElementChild===footer,'shared status footer follows the body');
       const rows = Math.max(node.ins.length, node.outs.length);
       assert.equal(band.style.height, (PAD * 2 + rows * STEP) + 'px', 'one row per port pair: ' + node.id);
       const sides = [['in', node.ins, 'left'], ['out', node.outs, 'right']];
@@ -136,12 +137,12 @@ test('sockets sit in a port band below the title and summary, one row per port, 
           const button = socket(doc, node.id, (side === 'in' ? 'Connect input ' : 'Connect output ') + port.label);
           assert.ok(button, 'the socket is drawn: ' + node.id + ' ' + port.label);
           const holder = button.parentElement;
-          assert.ok(holder.parentElement === band, 'the socket lives in the band, never over the content: ' + port.label);
+          assert.ok(holder.parentElement.parentElement === band, 'the socket lives in the band, never over the content: ' + port.label);
           assert.equal(holder.style.position, 'absolute');
           assert.equal(holder.style.top, (rowCentre(index) - RADIUS - 1) + 'px', 'row ' + index + ' of ' + node.id);
           assert.equal(holder.style[edge], (-RADIUS - 1) + 'px', 'on the ' + edge + ' edge: ' + port.label);
           assert.equal(button.style.width, 2 * RADIUS + 'px');
-          assert.equal(button.style.borderRadius, '50%');
+          assert.equal(button.querySelector('[data-ds-socket] > span')?.style.borderRadius, '50%');
         });
       }
     }
@@ -171,15 +172,15 @@ test('title and human summary sit in the DSYS card header, never exposing engine
       assert.ok(tile, 'the DSYS category tile is drawn: ' + node.id);
       const rows = [...tile.parentElement.querySelectorAll('div')];
       const title = rows.find(row => row.textContent === node.title && !row.children.length);
-      const sub = rows.find(row => row.textContent && row !== title && !row.children.length && row.style.fontSize === '12px');
+      const sub = rows.find(row => row.textContent && row !== title && !row.children.length && row.style.fontSize === '11px');
       assert.ok(title && sub, 'the card draws its title and human summary: ' + node.id);
       assert.ok(title.parentElement === sub.parentElement, 'title and summary share the header stack');
-      assert.equal(title.style.fontSize, '14px');
-      assert.equal(title.style.fontWeight, '700');
-      assert.equal(sub.style.fontSize, '12px');
+      assert.equal(title.style.fontSize, '13px');
+      assert.equal(title.style.fontWeight, '600');
+      assert.equal(sub.style.fontSize, '11px');
       for (const [element, what] of [[title, 'title'], [sub, 'summary']]) {
-        assert.notEqual(element.style.whiteSpace, 'nowrap', 'the ' + what + ' of ' + node.id + ' is not clamped');
-        assert.equal(element.style.textOverflow, '', 'the ' + what + ' of ' + node.id + ' is not ellipsized');
+        assert.equal(element.style.whiteSpace, 'nowrap', 'the ' + what + ' of ' + node.id + ' is not clamped');
+        assert.equal(element.style.textOverflow, 'ellipsis', 'the ' + what + ' of ' + node.id + ' is not ellipsized');
       }
       assert.doesNotMatch(sub.textContent, /\b[a-z]+(?:\.[a-z_]+)+\b/, 'summary hides engine id text');
       assert.equal(title.getAttribute('title'), node.title, 'the full title stays reachable as the tooltip');

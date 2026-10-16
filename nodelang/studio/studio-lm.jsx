@@ -10,6 +10,8 @@
 
 (() => {
 
+const Icon = window.Icon;
+const ReactDOM = window.ReactDOM;
 const LM = window.AH;  // tokens.jsx — single source of truth
 LM.fs = LM.fs || {};
 LM.fs.label = LM.fs.label || {sz:11, ln:14, wt:500, letter:'.04em'};
@@ -118,7 +120,7 @@ const Frame = ({ rail, left, top, children, insp, status, onHome, onPanel, onSet
   const waiting = workshopWaitingItems(useWorkshopProjection()).length;
   const hasLeft = !!left;
   const contentColumn = hasLeft ? '3 / -1' : '2 / -1';
-  const railWidth = rail === 'Library' ? 44 : 64;
+  const railWidth = hasLeft || rail === 'Library' ? 44 : 64;
   return (
     <section data-app-frame="" style={{
       width:'100%', height:'100%', background:LM.bgDeep, color:LM.ink, fontFamily:LM.sans,
@@ -127,7 +129,7 @@ const Frame = ({ rail, left, top, children, insp, status, onHome, onPanel, onSet
       gridTemplateRows:'36px minmax(0, 1fr) 22px',
       overflow:'hidden', position:'relative',
     }}>
-      <AppRail persistent compact={rail === 'Library'} workshop={workshopWindow} active={rail || 'Home'} waiting={waiting} account={account} onNavigate={name => {
+      <AppRail persistent compact={railWidth===44} workshop={workshopWindow} active={rail || 'Home'} waiting={waiting} account={account} onNavigate={name => {
         const route = {Home:onHome, Chats:onChats, Workshop:onWorkshop, Canvas:onCanvas, Library:() => onPanel?.('nodes'), Docs:onDocs, Cockpit:onCockpit, Settings:onSettings, Account:onAccount || onSettings}[name];
         route?.();
       }}/>
@@ -252,7 +254,7 @@ const CommandBar = ({ open, onClose, addNodeFromLibrary, onOpenSession, onChats 
   for (const button of document.querySelectorAll('[data-home-page] [data-template-start], [data-home-page] [data-template-edit], [data-home-page] [data-template-editor] button, [data-home-page] [data-workshop-primary], [data-home-page] [data-approval-open-sheets], [data-home-result] button')) {
     if (button.disabled) continue;
     const template = button.closest('[data-home-template]'), result = button.closest('[data-home-result]');
-    const label = button.textContent.trim() + (template ? ' · '+template.querySelector('strong').textContent : result ? ' · '+result.textContent.replace(button.textContent,'').trim() : '');
+    const label = button.textContent.trim() + (template ? ' · '+(template.querySelector('[data-template-edit]')?.textContent || '') : result ? ' · '+result.textContent.replace(button.textContent,'').trim() : '');
     if (match(label)) rows.push({group:'Home',icon:'⌂',color:LM.inkSoft,label,run:()=>button.click()});
   }
   for (const group of library) {
@@ -1239,7 +1241,8 @@ const StudioLM = () => {
     };
   }, []);
 
-  const frameRail = settingsOpen ? (settingsTab === 'account' ? 'Account' : 'Settings') : docsOpen ? 'Docs' : panel === 'chats' ? 'Chats' : ['nodes', 'skills', 'search'].includes(panel) ? 'Library' :
+  const systemView = String(session?.id || '').startsWith('system:');
+  const frameRail = systemView ? 'Settings' : settingsOpen ? (settingsTab === 'account' ? 'Account' : 'Settings') : docsOpen ? 'Docs' : panel === 'chats' ? 'Chats' : ['nodes', 'skills', 'search'].includes(panel) ? 'Library' :
     toolView?.id === 'workshop' || (session && workspaceView.mode === 'chat' && workspaceView.conversationRoot) ? 'Workshop' :
     session ? 'Canvas' : 'Home';
   return (
@@ -1251,8 +1254,8 @@ const StudioLM = () => {
       onCockpit={() => openTool('cockpit')}
       onWorkshop={() => { setSettingsOpen(false); setDocsOpen(false); setLibraryOpen(false); setPanel(null); openTool('workshop', {window:true}); }}
       onCanvas={() => { setPanel(null); setSettingsOpen(false); setDocsOpen(false); openTool('studio'); }}
-      left={panel && !workshopContext ? <Sidebar
-        panel={panel} setPanel={setPanel}
+      left={systemView ? <SystemSettingsNav selectedId={focusId} onSelect={setFocusId} onOpen={tab=>openSettings(true,tab)}/> : (panel || session && workspaceView.mode==='canvas') && !workshopContext ? <Sidebar
+        panel={panel || 'chats'} setPanel={setPanel}
         openId={openId} onOpen={openSession}
         onHome={goHome} onSettings={() => openSettings(true)} onAccount={() => openSettings(true, 'account')} onDocs={() => openDocs(true)}
         onOpenTool={openTool}
@@ -1356,7 +1359,7 @@ const StudioLM = () => {
         @keyframes lmDash  { to { stroke-dashoffset: -16 } }
         @keyframes lmSlideIn { from { transform: translateX(8px); opacity: 0 } to { transform: translateX(0); opacity: 1 } }
         @keyframes lmPop    { from { transform: scale(.92); opacity: 0 } to { transform: scale(1); opacity: 1 } }
-        .lm-home-draft::placeholder { color: ${LM.inkSoft}; font-style: italic; opacity: 1 }
+        .lm-home-draft::placeholder { color: ${LM.inkSoft}; font-style: normal; opacity: 1 }
       `}</style>
     </Frame>
   );
@@ -1367,11 +1370,11 @@ const Sidebar = ({ panel, setPanel, openId, onOpen, onHome, onSettings, onAccoun
   workshopContext, railOnly, wsSel, setWsSel, onAddAgent, onWorkshopTarget, account }) => (
   <aside style={{
     height:'100%',
-    display:'grid', gridTemplateRows:railOnly || panel === 'nodes' ? '1fr' : '36px minmax(0, 1fr)',
+    display:'grid', gridTemplateRows:railOnly || ['nodes','chats'].includes(panel) ? '1fr' : '36px minmax(0, 1fr)',
     background:LM.bgPanel, borderRight:`1px solid ${LM.line}`,
     overflow:'hidden', minHeight:0,
   }}>
-    {!railOnly && panel !== 'nodes' && <div aria-label="Library tabs" style={{
+    {!railOnly && !['nodes','chats'].includes(panel) && <div aria-label="Library tabs" style={{
       display:'grid', gridTemplateColumns:'repeat(3, 1fr)', alignItems:'stretch',
       padding:'4px 6px', gap:4, borderBottom:`1px solid ${LM.lineSoft}`,
     }}>
@@ -1964,7 +1967,6 @@ const ToolOffPanel = ({ tool }) => {
 const ChatsPanel = ({ openId, onOpen, onNew, onHome, account, onAccount }) => (
   <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
     <PanelHead title="Chats">
-      <PanelHomeButton onHome={onHome || onNew}/>
       <window.AH_DS.Btn title="New chat" onClick={onNew} style={window.AH_DS.styles.button("ghost", true)}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
       </window.AH_DS.Btn>
@@ -2525,7 +2527,7 @@ const kbd = () => ({
 
 // ──────────────────────── HOME · DSYS-082 ────────────────────────
 const homeMissionProjection = (state, hub, sessions = LM_SESSIONS, hosts = LM_HOSTS) => {
-  const approvals = new Map(), agents = new Map(), results = new Map(), inFlight = new Map();
+  const approvals = new Map(), agents = new Map(), members = new Map(), results = new Map(), inFlight = new Map();
   const descriptors = state?.workshops || [];
   const project = window.ARCHHUB_WORKSHOP_MODEL;
   for (const descriptor of descriptors) {
@@ -2554,6 +2556,7 @@ const homeMissionProjection = (state, hub, sessions = LM_SESSIONS, hosts = LM_HO
     if (model.approval) approvals.set(model.approval.work || model.approval.id,
       {...model.approval, home_root:descriptor.root, home_native:model.native});
     for (const member of model.members || []) {
+      members.set(member.id, member);
       const active = (model.tasks || []).filter(task => task.owner === member.id &&
         !['done','completed','settled','published','failed','error','archived','planned','open','queued'].includes(task.state));
       const working = ['working','run','running','executing'].includes(member.state || member.liveState);
@@ -2572,7 +2575,7 @@ const homeMissionProjection = (state, hub, sessions = LM_SESSIONS, hosts = LM_HO
       home_native:held?.home_native, rows:held?.rows || item.changes || item.approval_rows || []});
   }
   const liveAgents = [...agents.values()];
-  return {approvals:[...approvals.values()], agents:liveAgents, inFlight:[...inFlight.values()],
+  return {approvals:[...approvals.values()], agents:liveAgents, members:[...members.values()], inFlight:[...inFlight.values()],
     results:[...results.values()].sort((a,b) => String(b.completed_at || b.done_at || b.updated_at || '').localeCompare(String(a.completed_at || a.done_at || a.updated_at || ''))),
     hosts:hosts.filter(Boolean), baboom:(hub?.tools || []).find(row => row.id === 'baboom') || null,
     unavailable:Object.keys(state?.workshopErrors || {}).length > 0 || !!state?.workshop?.error || !!state?.error,
@@ -2628,13 +2631,13 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null,
   const [attachments, setAttachments] = React.useState([]);
   const [attachmentError, setAttachmentError] = React.useState('');
   const [hostMenuOpen, setHostMenuOpen] = React.useState(false);
+  const [composerToolsOpen,setComposerToolsOpen] = React.useState(false);
   const fileInputRef = React.useRef(null);
   const [starting, setStarting] = React.useState(false);
   const [startError, setStartError] = React.useState('');
   const startBusy = React.useRef(false), acceptedSession = React.useRef(null);
   const homeMounted = React.useRef(true);
   const hub = useToolHubProjection();
-  const waitingItems = Array.isArray(hub?.waiting) ? hub.waiting : [];
   const blocked = !native ? routeReadiness(modelRoute(model), readiness, model?.pending === true) : null;
   const offers = new Set((blocked && blocked.actions) || []);
   React.useEffect(() => {homeMounted.current = true; return () => {homeMounted.current = false;};}, []);
@@ -2723,6 +2726,7 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null,
   const mission = homeMissionProjection(workshopState,hub,sessions);
   const [templateView,setTemplateView] = React.useState({identity:null,rows:[]}), [templateError,setTemplateError] = React.useState('');
   const [startingTemplate,setStartingTemplate] = React.useState(null);
+  const [templateAttempt,setTemplateAttempt] = React.useState(0);
   const [editingTemplate,setEditingTemplate] = React.useState(null);
   const templateBusy = React.useRef(false);
   const identity = JSON.stringify([workshopState?.canvas?.graph_id,workshopState?.canvas?.root,
@@ -2747,14 +2751,14 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null,
     JSON.stringify((workshopState?.workshops || []).map(row=>row.root))]);
   React.useEffect(() => {
     let active = true;
-    setTemplateError('');
+    setTemplateError('');setTemplateView({identity:null,rows:[]});
     const owner = window.ARCHHUB_EXISTING_WORKSHOP;
     if (typeof owner?.readHomeTemplates === 'function') owner.readHomeTemplates().then(result => {
       if (active) setTemplateView({identity,rows:(result?.templates || []).filter(row => row.child_count > 0)
         .sort((a,b) => b.run_count - a.run_count || (b.scenario_frequency || 0) - (a.scenario_frequency || 0))});
     }).catch(error => {if(active) setTemplateError(error?.message || 'Templates unavailable');});
     return () => {active = false;};
-  },[identity,workshopState?.topology?.canvas?.revision || workshopState?.canvas?.revision]);
+  },[identity,workshopState?.topology?.canvas?.revision || workshopState?.canvas?.revision,templateAttempt]);
   const startTemplate = async template => {
     if (templateBusy.current) return;
     templateBusy.current = true; setStartingTemplate(template.id); setTemplateError('');
@@ -2781,26 +2785,21 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null,
   };
   const ApprovalCard = window.ARCHHUB_APPROVAL_CARD;
   const openWork = row => row.home_root ? onOpenTool?.('workshop',{window:true,root:row.home_root,focus:row.work || row.id}) : onOpen?.(workshopState?.canvas?.graph_id);
-  const face = row => <span style={{width:30,height:30,borderRadius:8,background:row?.col || LM.bgHover,
-    color:LM.ink,display:'grid',placeItems:'center',fontSize:13,fontWeight:700,flex:'none'}}>{row?.ini || Array.from(row?.name || row?.owner_name || '?')[0]}</span>;
-  const surface = {borderRadius:12,background:'linear-gradient(180deg, #1c1c22 0%, #17171c 100%)',
-    boxShadow:'0 1px 0 rgba(255,255,255,.04) inset, 0 1px 2px rgba(0,0,0,.4)',border:`1px solid ${LM.line}`};
-  const action = {height:30,padding:'0 12px',borderRadius:8,fontSize:13,fontWeight:600,
-    background:LM.bgHover,color:LM.ink,border:`1px solid ${LM.line}`,cursor:'pointer'};
+  const action = window.AH_DS.styles.workshopButton(false,true);
   return (
-  <main className="ah-scroll" data-home-page="" data-home-design="082" style={{
+  <window.AH_DS.Frame as="main" className="ah-scroll" data-home-page="" data-home-design="082" style={{
     height:'100%',boxSizing:'border-box',overflow:'auto',minHeight:0,minWidth:0,
     padding:'26px 40px 22px',display:'flex',flexDirection:'column',gap:22,
     background:'radial-gradient(1200px 500px at 30% -10%, #1a1a22 0%, #0c0c0f 60%)',
   }}>
     <header style={{display:'flex',alignItems:'center',gap:14}}>
       <div><h1 data-home-heading="" style={{fontSize:24,lineHeight:1.3,fontWeight:700,margin:0}}>{mission.loading ? 'Reading your agents’ work…' : mission.unavailable && !mission.inFlight.length ? 'Workshop updates unavailable' : mission.inFlight.length
-        ? `Your agents are finishing ${mission.inFlight.length} things for you` : 'No tasks in flight'}</h1>
+        ? `Your agents are finishing ${mission.inFlight.length} ${mission.inFlight.length===1?'thing':'things'} for you` : 'No tasks in flight'}</h1>
         <div style={{fontSize:13.5,color:LM.inkSoft,marginTop:4}}>{mission.unavailable ? 'Some Workshop updates are unavailable' :
           `${mission.approvals.length ? mission.approvals.length + ' needs your OK' : 'Nothing needs you'} · ${mission.agents.filter(row=>row.working).length} working`}</div></div>
-      <span style={window.AH_DS.styles.fill}/>{mission.agents.length > 0 && <div data-home-presence="" style={{...surface,display:'flex',alignItems:'center',gap:10,padding:'8px 12px',fontSize:13}}>
-        {mission.agents.slice(0,3).map(row=><span key={row.id} title={row.name}>{face(row)}</span>)}
-        <span style={window.AH_DS.styles.muted}>{mission.agents.filter(row=>row.working).length} working</span></div>}
+      <span style={window.AH_DS.styles.fill}/>{mission.agents.length > 0 && <window.AH_DS.Card variant="home" data-home-presence="" style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',fontSize:13}}>
+        {mission.agents.slice(0,3).map(row=><span key={row.id} title={row.name}><window.AH_DS.Avatar agent={row} size={22} ring={row.working?LM.accent:null}/></span>)}
+        <span style={window.AH_DS.styles.muted}>{mission.agents.filter(row=>row.working).length} working</span></window.AH_DS.Card>}
     </header>
     <section data-home-results="" aria-label="Your agents' work" style={{display:'grid',gridTemplateColumns:'minmax(0,1.45fr) minmax(0,1fr)',gap:16}}>
       <div style={{minWidth:0}}>{card ? <ApprovalCard key={card.id + ':' + (card.input_digest || card.workflow?.digest || '')} approval={card}
@@ -2808,45 +2807,49 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null,
         canApprove={homeDecisionAvailable(card,window.ARCHHUB_EXISTING_WORKSHOP,'approve')}
         canDecline={homeDecisionAvailable(card,window.ARCHHUB_EXISTING_WORKSHOP,'decline')}
         onApprove={()=>decide('approve')} onDecline={()=>decide('decline')}/>
-        : <div data-home-empty-approval="" style={{...surface,padding:18,fontSize:14,color:LM.inkSoft}}>Nothing needs your approval.</div>}
+        : null}
         {decisionStatus?.identity===identity && <div data-home-decision-receipt="" role={decisionStatus.warning ? 'alert' : 'status'} style={{fontSize:13,color:decisionStatus.warning ? LM.warn : LM.ok,marginTop:12}}>{decisionStatus.text}</div>}
         {mission.approvals.length > 1 && <window.AH_DS.Btn type="button" title="More approvals · Ctrl+K" onClick={()=>openWork(card)} style={{...action,marginTop:10}}>View {mission.approvals.length - 1} more in Workshop</window.AH_DS.Btn>}</div>
       <div style={{display:'grid',gap:12,alignContent:'start',minWidth:0}}>
-        {mission.results.slice(0,2).map(row=><article key={row.work} data-home-result={row.work} style={{...surface,padding:14,display:'grid',gridTemplateColumns:'30px minmax(0,1fr) auto',gap:12,alignItems:'center'}}>
-          {face(mission.agents.find(agent=>agent.id===row.owner))}<div><div style={{fontSize:14.5,fontWeight:700}}>{row.title}</div>
+        {mission.results.slice(0,2).map(row=><window.AH_DS.Card as="article" variant="home" key={row.work} data-home-result={row.work} style={{padding:14,display:'grid',gridTemplateColumns:'30px minmax(0,1fr) auto',gap:12,alignItems:'center'}}>
+          <window.AH_DS.Avatar agent={mission.members.find(agent=>agent.id===row.owner) || {name:row.owner_name}} size={30}/><div><div style={{fontSize:14.5,fontWeight:700}}>{row.title}</div>
           <div style={{fontSize:12.5,color:LM.inkSoft,marginTop:2}}>{row.result_summary || row.latest?.text || row.state}</div></div>
-          <window.AH_DS.Btn type="button" title="Open result · Ctrl+K" onClick={()=>openWork(row)} style={action}>Open result</window.AH_DS.Btn></article>)}
-        {!mission.results.length && <div data-home-empty-results="" style={{...surface,padding:14,fontSize:13,color:LM.inkSoft}}>No completed results yet.</div>}
+          <window.AH_DS.Btn type="button" title="Open result · Ctrl+K" onClick={()=>openWork(row)} style={action}>Open result</window.AH_DS.Btn></window.AH_DS.Card>)}
         {mission.inFlight.filter(row=>!mission.approvals.some(a=>a.work===row.work)).slice(0,1).map(row=><window.AH_DS.Btn key={row.work} type="button" data-home-finishing={row.work}
           title="Open work · Ctrl+K" onClick={()=>openWork(row)} style={{...action,height:'auto',textAlign:'left',borderStyle:'dashed',background:'transparent',padding:'12px 14px',fontWeight:400,color:LM.inkSoft}}>{row.title} · {row.state}</window.AH_DS.Btn>)}
       </div>
+      {!card && !mission.results.length && !mission.inFlight.length && <window.AH_DS.EmptyState data-home-work-state="" compact glyph={null}
+        error={mission.unavailable} title={mission.loading ? 'Reading your agents’ work…' : mission.unavailable ? 'Workshop updates unavailable' : 'What should the agents do?'}
+        detail={mission.loading ? 'Your work appears here as soon as it answers.' : mission.unavailable ? 'Read your work again to continue.' : 'Start a task below. Results and approvals will appear here.'}
+        onRetry={mission.unavailable ? ()=>window.ARCHHUB_EXISTING_WORKSHOP?.refreshHomeWorkshops?.() : undefined} style={{gridColumn:'1 / -1'}}/>}
     </section>
     <section data-home-templates="" style={{display:'grid',gap:12,alignContent:'start'}}>
       <div style={{display:'flex',alignItems:'baseline',gap:10}}><h2 style={{fontSize:16,fontWeight:700,margin:0}}>Start something</h2>
         <span style={{fontSize:13,color:LM.inkSoft}}>your most-run work, one click · each is a node you can open</span></div>
-      {templateError && <div role="alert" style={{color:LM.warn}}>{templateError}</div>}
+      <window.AH_DS.EmptyState compact glyph={null} error={!!templateError} title={templateError ? "Templates unavailable" : "Reading templates…"} detail={templateError} onRetry={()=>setTemplateAttempt(value=>value+1)} style={{display:templateError || templateView.identity!==identity ? undefined : 'none'}}/>
       <div style={{display:'grid',gridTemplateColumns:'repeat(3, minmax(0,1fr))',gap:12}}>
-        {templates.map(template=><article key={template.id} data-home-template={template.id} style={{...surface,padding:14,display:'grid',gap:10}}>
-          <div style={{display:'flex',alignItems:'baseline',gap:8}}><strong style={{fontSize:14.5,flex:1}}>{template.title}</strong><span data-template-runs="" style={{fontSize:12,color:LM.inkSoft}}>{template.run_count > 0 ? `ran ${template.run_count}×` : <window.AH_DS.EmptyState compact glyph={null} title="Not run yet" style={{padding:0,gap:0}}/>}</span></div>
+        {templates.map(template=><window.AH_DS.Card as="article" variant="home" key={template.id} data-home-template={template.id} style={{padding:14,display:'grid',gap:10}}>
+          <div style={{display:'flex',alignItems:'baseline',gap:8}}><window.AH_DS.Btn kind="ghost" data-template-edit={template.id} disabled={startingTemplate!==null}
+              title={'Open '+template.title+' · Ctrl+K'} aria-expanded={editingTemplate?.id===template.id && editingTemplate?.identity===identity}
+              onClick={()=>setEditingTemplate(editingTemplate?.id===template.id?null:{...template,identity,children:template.children.map(child=>({...child,params:{...child.params}}))})}
+              style={{padding:0,height:'auto',fontSize:14.5,fontWeight:700,flex:1,justifyContent:'flex-start'}}>{template.title}</window.AH_DS.Btn><span data-template-runs="" style={{fontSize:12,color:LM.inkSoft}}>{template.run_count > 0 ? `ran ${template.run_count}×` : null}</span></div>
           <div style={{display:'flex',alignItems:'center',gap:4,overflow:'hidden',whiteSpace:'nowrap'}}>{template.children.slice(0,4).map((child,index)=><React.Fragment key={child.id || index}>
             {index > 0 && <i style={{width:10,height:2,background:LM.accent,opacity:.6,flex:'none'}}/>}<span style={{height:24,padding:'0 8px',borderRadius:6,background:LM.bgHover,fontSize:12,display:'inline-flex',alignItems:'center'}}>{child.title || child.engine}</span></React.Fragment>)}
             {template.child_count > 4 && <span style={{fontSize:12,color:LM.inkSoft}}>+{template.child_count - 4}</span>}</div>
           <div style={window.AH_DS.styles.flex}><span style={{fontSize:12.5,color:LM.inkSoft,flex:1}}>{template.sub || `${template.child_count} steps`}</span>
-            <window.AH_DS.Btn type="button" data-template-edit={template.id} disabled={startingTemplate !== null} title={'Edit '+template.title+' · Ctrl+K'} aria-expanded={editingTemplate?.id===template.id && editingTemplate?.identity===identity}
-              onClick={()=>setEditingTemplate(editingTemplate?.id===template.id ? null : {...template,identity,children:template.children.map(child=>({...child,params:{...child.params}}))})} style={action}>Edit</window.AH_DS.Btn>
             <window.AH_DS.Btn type="button" data-template-start={template.id} disabled={startingTemplate !== null} title={'Start '+template.title+' · Ctrl+K'} onClick={()=>startTemplate(template)} style={action}>{startingTemplate===template.id ? 'Starting…' : 'Start'}</window.AH_DS.Btn></div>
           {editingTemplate?.id===template.id && editingTemplate.identity===identity && <form data-template-editor="" onSubmit={event=>{event.preventDefault();editTemplate(template,{update:{title:editingTemplate.title,children:editingTemplate.children}});}}
             onKeyDown={event=>{if(event.key==='Escape')setEditingTemplate(null);}} style={{display:'grid',gap:8}}>
-            <label style={{fontSize:12,display:'grid',gap:4}}>Template name<input aria-label="Template name" style={{background:LM.bgPanel,color:LM.ink,border:`1px solid ${LM.line}`,borderRadius:6,padding:7,fontFamily:LM.sans}} value={editingTemplate.title} onChange={event=>setEditingTemplate({...editingTemplate,title:event.target.value})}/></label>
+            <label style={{fontSize:12,display:'grid',gap:4}}>Template name<window.AH_DS.TextField aria-label="Template name" style={{background:LM.bgPanel,color:LM.ink,border:`1px solid ${LM.line}`,borderRadius:6,padding:7,fontFamily:LM.sans}} value={editingTemplate.title} onChange={event=>setEditingTemplate({...editingTemplate,title:event.target.value})}/></label>
             {editingTemplate.children.map((child,index)=><fieldset key={index} style={{border:`1px solid ${LM.line}`,borderRadius:6,display:'grid',gap:6}}><legend>{child.title}</legend>
-              {Object.entries(child.params).map(([name,value])=><label key={name} style={{fontSize:12,display:'grid',gap:4}}>{name.replaceAll('_',' ')}<input aria-label={child.title+' '+name} style={{background:LM.bgPanel,color:LM.ink,border:`1px solid ${LM.line}`,borderRadius:6,padding:7,fontFamily:LM.sans}} value={value}
+              {Object.entries(child.params).map(([name,value])=><label key={name} style={{fontSize:12,display:'grid',gap:4}}>{name.replaceAll('_',' ')}<window.AH_DS.TextField aria-label={child.title+' '+name} style={{background:LM.bgPanel,color:LM.ink,border:`1px solid ${LM.line}`,borderRadius:6,padding:7,fontFamily:LM.sans}} value={value}
                 onChange={event=>setEditingTemplate({...editingTemplate,children:editingTemplate.children.map((row,i)=>i===index ? {...row,params:{...row.params,[name]:event.target.value}} : row)})}/></label>)}</fieldset>)}
             <div style={{display:'flex',gap:8}}><window.AH_DS.Btn type="submit" disabled={startingTemplate!==null} title="Save template · Ctrl+K / Enter" style={action}>Save</window.AH_DS.Btn>
               <window.AH_DS.Btn type="button" disabled={startingTemplate!==null} title="Delete template · Ctrl+K" data-template-delete={template.id} onClick={()=>editTemplate(template,{delete:true})} style={action}>Delete</window.AH_DS.Btn>
               <window.AH_DS.Btn type="button" onClick={()=>setEditingTemplate(null)} title="Cancel · Ctrl+K / Escape" style={action}>Cancel</window.AH_DS.Btn></div>
           </form>}
-        </article>)}
-      </div>{!templates.length && !templateError && <div style={{color:LM.inkSoft,fontSize:13}}>No saved composite templates.</div>}
+        </window.AH_DS.Card>)}
+      </div>{!templates.length && !templateError && templateView.identity===identity && <window.AH_DS.EmptyState compact glyph={null} title="No saved composite templates."/>}
     </section>
     <div data-home-composer="" style={{marginTop:'auto',alignSelf:'center',width:'min(100%, 850px)'}}>
     {blocked && <div data-home-model-state="" role="status" style={{
@@ -2863,20 +2866,19 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null,
         padding:'4px 9px', background:'transparent', color:LM.ink, border:`1px solid ${LM.line}`,
         borderRadius:LM.rad.sm, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Choose a model</window.AH_DS.Btn>}
     </div>}
-    <form onSubmit={startSession} style={{
-      background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.xl,
-      padding:'12px 14px', marginBottom:0, marginTop:10, boxShadow:LM.elev?.e2,
-    }}>
+    <window.AH_DS.Composer as="form" variant="home" onSubmit={startSession} style={{marginTop:10}}>
       <div style={{ display:'flex', alignItems:'center', gap:10 }}>
         <ModelStrip compact inline model={native ? {...model,name:native.title || native.app,vendor:native.app} : model} setPickerOpen={setPickerOpen}/>
-        <div style={{ flex:1, minWidth:0 }}>
-          <textarea aria-label="Start a new session" placeholder={'Ask for anything, or @ an agent…'} className="lm-home-draft"
+        <div style={{flex:1,minWidth:0,position:'relative',paddingRight:26}}>
+          <window.AH_DS.TextField multiline aria-label="Start a new session" placeholder={'Ask for anything, or @ an agent…'} className="lm-home-draft"
             value={draft} onChange={event => setDraft(event.target.value)} disabled={starting}
             onKeyDown={event => {if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent?.isComposing) startSession(event);}}
             rows={1} maxLength={12000} style={{width:'100%', boxSizing:'border-box', resize:'none', display:'block',
               background:'transparent', border:0, outline:'none', color:LM.ink, fontFamily:LM.sans, fontSize:15,
               letterSpacing:'-0.01em', lineHeight:1.4, padding:'2px 0'}}/>
-          <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:10, minWidth:0, position:'relative', flexWrap:'wrap' }}>
+          <div style={{position:'absolute',right:0,top:0}}>
+            <window.AH_DS.Btn sm kind="ghost" aria-label="More composer actions" title="More actions · Ctrl+K" aria-expanded={composerToolsOpen} onClick={()=>setComposerToolsOpen(value=>!value)}>+</window.AH_DS.Btn>
+            <div hidden={!composerToolsOpen} data-home-composer-actions="" style={{position:'absolute',bottom:32,right:0,zIndex:10,background:LM.bgPanel,border:`1px solid ${LM.line}`,borderRadius:8,padding:8,whiteSpace:'nowrap'}}>
             <HomeChip mono onClick={() => setLibraryOpen(true)}>/ node</HomeChip>
             <HomeChip mono onClick={() => setPanel('skills')}>@ skill</HomeChip>
             <HomeChip mono onClick={() => setHostMenuOpen(open => !open)}># host</HomeChip>
@@ -2902,24 +2904,21 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null,
                   <span style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.accent, letterSpacing:'0.06em', textTransform:'uppercase'}}>Start</span>
                 </window.AH_DS.Btn>)}
             </div>}
-            {attachments.map(file => <Chip key={file.name + ':' + file.size} mono>{file.name}</Chip>)}
+            </div>{attachments.map(file => <Chip key={file.name + ':' + file.size} mono>{file.name}</Chip>)}
           </div>
         </div>
-        <window.AH_DS.Btn type="submit" disabled={starting || !draft.trim()} style={{
-          padding:'7px 12px', background:LM.bgHover, color:LM.ink,
-          border:`1px solid ${LM.line}`, borderRadius:8, fontFamily:LM.sans, fontSize:13, fontWeight:600,
-          cursor:'pointer', display:'inline-flex', alignItems:'center', gap:7, flexShrink:0,
-        }}>
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={LM.ink} strokeWidth="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        <span style={{fontSize:11,border:`1px solid ${LM.line}`,borderRadius:4,padding:'1px 5px',color:LM.inkSoft}}>Ctrl K</span>
+        <window.AH_DS.Btn sm kind="ghost" disabled title="Voice input is unavailable in this connection" aria-label="Voice input"><Icon name="mic" size={14}/></window.AH_DS.Btn>
+        <window.AH_DS.Btn variant="workshop" sm type="submit" disabled={starting || !draft.trim()}>
           {starting ? 'Starting\u2026' : 'Send'}
         </window.AH_DS.Btn>
       </div>
       {startError && <p role="alert" style={{color:LM.warn,marginBottom:0}}>{startError}</p>}
       {attachmentError && <p role="alert" style={{color:LM.warn,marginBottom:0}}>{attachmentError}</p>}
-    </form>
+    </window.AH_DS.Composer>
     </div>
     {sessionError && <p role="alert" style={{color:LM.warn,margin:0}}>{sessionError} <window.AH_DS.Btn type="button" onClick={()=>window.location.reload()}>Refresh graphs</window.AH_DS.Btn></p>}
-  </main>
+  </window.AH_DS.Frame>
   );
 };
 
@@ -3133,6 +3132,7 @@ const LazyWorkshopWindow = props => {
 };
 
 const Workspace = ({ libraryMode = false, session, account, model, readiness = null, onReadinessStale, onModelReadRetry, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, setPickerOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, themeEpoch = 0, onHome, onChats, onCockpit, onDocs, onNewSession, onSettings, onAccount, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
+  const [toolbarHost,setToolbarHost]=React.useState(null);
   const canvasRead = useDeferredCanvas();
   useNodeLibrary();
   const authorityState = useStudioProjection();
@@ -3144,7 +3144,8 @@ const Workspace = ({ libraryMode = false, session, account, model, readiness = n
   const wireIdx = authorityState ? graph.wires.findIndex(wire => wire.id === focusId) : (String(focusId).indexOf('wire:') === 0 ? +String(focusId).slice(5) : -1);
   const focusNode = wireIdx >= 0
     ? window.wireAsNode(graph.wires[wireIdx], wireIdx, allNodes)
-    : allNodes.find(n => n.id === focusId);
+    : allNodes.find(n => n.id === focusId && (typeof n.application!=='boolean' || n.application === (String(session?.id || '').startsWith('system:') || view.mode==='system'))) ||
+      ((String(session?.id || '').startsWith('system:') || view.mode==='system') ? allNodes.find(n=>n.application) : null);
   const {mode, conversationRoot, target} = view;
   const effectiveMode = String(session?.id || '').startsWith('system:') ? 'system' : mode;
   const setMode = mode => updateView({mode});
@@ -3176,7 +3177,7 @@ const Workspace = ({ libraryMode = false, session, account, model, readiness = n
       gridTemplateRows:workshopWindow || libraryMode ? '1fr' : '36px 1fr',
     }}>
       {!workshopWindow && !libraryMode && <WsHeader
-        session={session} model={model} openTabs={openTabs}
+        toolbarRef={setToolbarHost} session={session} model={model} openTabs={openTabs}
         sessionRows={sessionRows}
         setOpenId={setOpenId} closeTab={closeTab} mode={effectiveMode} setMode={setMode}
         workshops={workshops} conversationRoot={workshop?.root || ''} conversationNotice={view.notice}
@@ -3186,7 +3187,7 @@ const Workspace = ({ libraryMode = false, session, account, model, readiness = n
         setPickerOpen={setPickerOpen} onHome={onHome} onNewSession={onNewSession}
         onSettings={onSettings}
         systemAllowed={systemAllowed(authorityState?.canvas, graph)}
-        systemArrangeSummary={systemArrangeSummary}/>}
+        systemArrangeSummary={systemArrangeSummary} projection={authorityState}/>}
       {effectiveMode === 'chat' && workshop ? (
         <LazyWorkshopWindow embedded key={JSON.stringify([session.id, workshopState.canvas.graph_id,
           workshopState.canvas.root, workshop.root])} state={workshopState} descriptor={workshop} account={account} target={target}
@@ -3197,7 +3198,7 @@ const Workspace = ({ libraryMode = false, session, account, model, readiness = n
           sel={wsSel} setSel={setWsSel}/>
       ) : (
         <>
-          <NodeCanvas libraryMode={libraryMode} key={JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas), effectiveMode === 'system'])} system={effectiveMode === 'system'} focusId={focusId} setFocusId={setFocusId} pendingReveal={pendingCanvasReveal} clearPendingReveal={clearPendingCanvasReveal} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model} onViewportChange={updateCanvasViewport} fitOnOpen={!libraryMode} onSystemArrangeSummary={setSystemArrangeSummary} themeEpoch={themeEpoch}/>
+          <NodeCanvas toolbarHost={toolbarHost} libraryMode={libraryMode} key={JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas), effectiveMode === 'system'])} system={effectiveMode === 'system'} focusId={focusId} setFocusId={setFocusId} pendingReveal={pendingCanvasReveal} clearPendingReveal={clearPendingCanvasReveal} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model} onViewportChange={updateCanvasViewport} fitOnOpen={!libraryMode} onSystemArrangeSummary={setSystemArrangeSummary} themeEpoch={themeEpoch}/>
           <NodeRail libraryMode={libraryMode} node={focusNode} hiddenWork={!focusNode && authorityState?.canvas?.selection_hidden === true}
             graph={graph} canvas={authorityState?.canvas} session={session} sessionRows={sessionRows}
             model={model} setPickerOpen={setPickerOpen} readiness={readiness}
@@ -4062,128 +4063,30 @@ const chooseWorkshopMode = (key, {mode, conversationRoot = '', workshops = [], s
 };
 
 // Workspace header uses workspace tabs and one compact conversation menu.
-const WsHeader = ({ session, model, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, mode, setMode, setPickerOpen, onHome, onNewSession, onSettings, systemAllowed = false,
-  systemArrangeSummary = null,
+const WsHeader = ({ toolbarRef, session, model, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, mode, setMode, setPickerOpen, onHome, onNewSession, onSettings, systemAllowed = false,
+  systemArrangeSummary = null, projection = null,
   workshops = [], conversationRoot = '', setConversationRoot, workshopModel, conversationNotice = '',
   workshopUnavailable = '' }) => {
-  if (mode === 'system') return (
-  <div data-system-graph="" data-system-header="" style={{
-    gridColumn:'1 / -1', gridRow:'1',
-    borderBottom:`1px solid ${LM.line}`, background:LM.bgDeep,
-    padding:'0 10px 0 6px', display:'flex', alignItems:'center', gap:7, minWidth:0,
-  }}>
-    <window.AH_DS.Btn onClick={onHome} title="All sessions" aria-label="Home" data-home-button style={{
-      height:26, padding:'0 8px 0 6px', border:0, borderRadius:LM.rad.sm,
-      background:'transparent', color:LM.inkSoft, cursor:'pointer',
-      display:'flex', alignItems:'center', gap:6, flexShrink:0,
-      fontFamily:LM.sans, fontSize:12, fontWeight:500,
-    }}>
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-      <span>Home</span>
-    </window.AH_DS.Btn>
-    <span style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft}}>›</span>
-    <window.AH_DS.Btn type="button" onClick={onSettings} style={({...window.AH_DS.styles.button('ghost', true), color:undefined ? LM.ink : LM.inkSoft, borderColor:undefined ? LM.accent : LM.line})}>Settings</window.AH_DS.Btn>
-    <span style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft}}>›</span>
-    <window.AH_DS.Btn type="button" onClick={onSettings} style={({...window.AH_DS.styles.button('ghost', true), color:undefined ? LM.ink : LM.inkSoft, borderColor:undefined ? LM.accent : LM.line})}>System</window.AH_DS.Btn>
-    <span style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft}}>›</span>
-    <span style={{...({...window.AH_DS.styles.button('ghost', true), color:true ? LM.ink : LM.inkSoft, borderColor:true ? LM.accent : LM.line}), cursor:'default'}}>ArchHub application</span>
-    <div style={window.AH_DS.styles.fill}/>
-    {systemArrangeSummary && <span style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.ok, border:`1px solid ${LM.ok}55`, borderRadius:LM.rad.sm, padding:'3px 8px'}}>
-      arranged · {systemArrangeSummary.cards} nodes · {systemArrangeSummary.overlaps} overlaps · {systemArrangeSummary.clipped} clipped · {systemArrangeSummary.crossings} ≈ crossings
-    </span>}
-    <span style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, padding:'3px 8px'}}>
-      Esc · back to Settings
-    </span>
-  </div>
-  );
-  return (
-  <div style={{
-    gridColumn:'1 / -1', gridRow:'1',
-    borderBottom:`1px solid ${LM.line}`, background:LM.bgDeep,
-    padding:'0 10px 0 6px', display:'flex', alignItems:'center', gap:6, minWidth:0,
-  }}>
-    <window.AH_DS.Btn onClick={onHome} title="All sessions" aria-label="Home" data-home-button style={{
-      height:26, padding:'0 8px 0 6px', border:0, borderRadius:LM.rad.sm,
-      background:'transparent', color:LM.inkSoft, cursor:'pointer',
-      display:'flex', alignItems:'center', gap:6, flexShrink:0,
-      fontFamily:LM.sans, fontSize:12, fontWeight:500,
-    }}
-    onMouseEnter={e => e.currentTarget.style.background = LM.bgSoft}
-    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-      <span>Home</span>
-    </window.AH_DS.Btn>
-
-    <div style={{ flex:1, minWidth:0, display:'flex', alignItems:'center', gap:2, overflow:'hidden' }}>
-      {openTabs.map(id => {
-        const s = sessionRows.find(x => x.id === id);
-        if (!s) return null;
-        const a = session.id === id;
-        const sm = LM_STATE_META[s.state];
-        return <WsTab key={id} s={s} a={a} sm={sm} onClick={() => setOpenId(id)} onClose={(e) => { e.stopPropagation(); closeTab(id); }}/>;
-      })}
-      {/* New session after the tabs (design studio-lm.jsx:1123-1129). */}
-      <window.AH_DS.Btn type="button" onClick={onNewSession || onHome} title="New session" aria-label="New session" style={{
-        width:26, height:26, padding:0, border:0, borderRadius:LM.rad.sm,
-        background:'transparent', color:LM.inkSoft, cursor:'pointer', flexShrink:0,
-        display:'grid', placeItems:'center', fontSize:14,
-      }}
-      onMouseEnter={e => e.currentTarget.style.background = LM.bgSoft}
-      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>+</window.AH_DS.Btn>
-    </div>
-
-    {conversationNotice && <span role="status" title={conversationNotice} style={{fontSize:11,
-      color:LM.inkSoft, maxWidth:220, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
-      {conversationNotice}</span>}
-    {/* The update icons stay in the header (founder, 2026-09-18: "just bring the update icons back").
-        Settings > About keeps the full controls; the restart still needs the confirming second click. */}
-    <ApplicationUpdateControls compact/>
-  </div>
-  );
+  const [sessionsOpen,setSessionsOpen] = React.useState(false);
+  if (mode === 'system') return <window.AH_DS.Frame as="header" data-system-graph="" data-system-header=""
+    style={{gridColumn:'1 / -1',gridRow:'1',display:'flex',alignItems:'center',gap:8,padding:'0 12px',background:LM.bg,borderBottom:`1px solid ${LM.lineSoft}`,userSelect:'none'}}>
+    <window.AH_DS.Btn sm kind="ghost" onClick={onSettings} title="Back to Settings · Esc">Settings</window.AH_DS.Btn>
+    <span>▸</span><strong>System</strong><span style={{fontSize:11,color:LM.inkSoft}}>{projection?.error?'Unavailable':projection?.pending?'Reading…':projection?.canvas?'live':''}</span><span style={window.AH_DS.styles.fill}/><span ref={toolbarRef}/>
+  </window.AH_DS.Frame>;
+  return <window.AH_DS.Frame as="header" data-session-header="" style={{gridColumn:'1 / -1',gridRow:'1',display:'flex',alignItems:'center',gap:8,padding:'0 12px',background:LM.bg,borderBottom:`1px solid ${LM.lineSoft}`,userSelect:'none',overflow:'visible',position:'relative',zIndex:10}}>
+    {session?.project && <><span style={{color:LM.inkSoft}}>{session.project}</span><span>▸</span></>}
+    <window.AH_DS.Btn sm kind="ghost" title="Sessions · Ctrl+K" aria-expanded={sessionsOpen} onClick={()=>setSessionsOpen(value=>!value)}>{session?.title || 'Canvas'}</window.AH_DS.Btn>
+    {sessionsOpen && <window.AH_DS.Card data-session-menu="" style={{position:'absolute',top:36,left:12,minWidth:248,zIndex:20,padding:6}}>
+      {openTabs.map(id=>{const row=sessionRows.find(s=>s.id===id);return row && <div key={id} style={{display:'flex'}}>
+        <window.AH_DS.Btn sm kind="ghost" onClick={()=>{setOpenId(id);setSessionsOpen(false);}}>{row.title}</window.AH_DS.Btn>
+        <window.AH_DS.Btn sm kind="ghost" title={'Close '+row.title} aria-label={'Close '+row.title} onClick={()=>closeTab(id)}>×</window.AH_DS.Btn></div>;})}
+      <window.AH_DS.Btn sm kind="ghost" onClick={onNewSession || onHome}>New session</window.AH_DS.Btn>
+      <window.AH_DS.Btn sm kind="ghost" onClick={onHome}>Home</window.AH_DS.Btn>
+    </window.AH_DS.Card>}
+    <span style={window.AH_DS.styles.fill}/>{conversationNotice && <span role="status">{conversationNotice}</span>}<span ref={toolbarRef}/><ApplicationUpdateControls compact/>
+  </window.AH_DS.Frame>;
 };
 
-
-
-const WsTab = ({ s, a, sm, onClick, onClose }) => {
-  const [h, setH] = React.useState(false);
-  return (
-    <div
-      onClick={onClick}
-      onMouseEnter={() => setH(true)}
-      onMouseLeave={() => setH(false)}
-      data-ws-tab={s.id}
-      aria-current={a ? 'page' : undefined}
-      className={a ? 'active' : undefined}
-      style={{
-        display:'flex', alignItems:'center', gap:7,
-        padding:'0 8px 0 9px', height:28, borderRadius:LM.rad.sm,
-        background: a ? LM.bgPanel : (h ? LM.bgSoft : 'transparent'),
-        border:`1px solid ${a ? LM.line : 'transparent'}`,
-        borderBottom: a ? `1px solid ${LM.bgPanel}` : `1px solid transparent`,
-        cursor:'pointer', minWidth:0, flexShrink:0,
-        position:'relative', top: a ? 1 : 0,
-      }}>
-      <span style={{
-        width:6, height:6, borderRadius:'50%', background: sm.col, flexShrink:0,
-        boxShadow: sm.pulse ? `0 0 0 2px ${sm.col}22` : 'none',
-        animation: sm.pulse ? 'lmPulse 1.2s infinite' : 'none',
-      }}/>
-      <span style={{
-        fontFamily:LM.sans, fontSize:12, color: a ? LM.ink : LM.inkSoft,
-        fontWeight: a ? 500 : 400,
-        maxWidth:160, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
-      }}>{s.title}</span>
-      <window.AH_DS.Btn onClick={onClose} title="Close tab" style={{
-        width:14, height:14, padding:0, border:0, borderRadius:LM.rad.xs,
-        background:'transparent', color:LM.inkSoft, cursor:'pointer',
-        display: a || h ? 'grid' : 'none', placeItems:'center',
-        opacity: a ? 1 : 0.7, fontSize:11, lineHeight:1,
-      }}
-      onMouseEnter={e => { e.currentTarget.style.background = LM.bgHover; e.currentTarget.style.color = LM.ink; }}
-      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = LM.inkSoft; }}>×</window.AH_DS.Btn>
-    </div>
-  );
-};
 
 
 
@@ -4606,7 +4509,7 @@ const writeCanvasLayoutTrace = (scope, burst) => {
   } catch (error) { /* a session with no storage still draws and still saves the canvas */ }
 };
 
-const NodeCanvas = ({ libraryMode = false, focusId, setFocusId, pendingReveal = null, clearPendingReveal = null, setLibraryOpen, userNodes = [], addNodeFromLibrary, model, system = false, onViewportChange = null, fitOnOpen = false, onSystemArrangeSummary = null, themeEpoch = 0 }) => {
+const NodeCanvas = ({ toolbarHost, libraryMode = false, focusId, setFocusId, pendingReveal = null, clearPendingReveal = null, setLibraryOpen, userNodes = [], addNodeFromLibrary, model, system = false, onViewportChange = null, fitOnOpen = false, onSystemArrangeSummary = null, themeEpoch = 0 }) => {
   const authorityState = useStudioProjection();
   const workshopSnapshot = typeof useWorkshopProjection === 'function' ? useWorkshopProjection() : null;
   const workshopDescriptor = workshopSnapshot?.workshops?.find(row=>row.root===workshopSnapshot.workshop?.root);
@@ -4693,6 +4596,7 @@ const NodeCanvas = ({ libraryMode = false, focusId, setFocusId, pendingReveal = 
   const dragRef = React.useRef(null);
   const wireDragRef = React.useRef(null);
   const suppressWireClick = React.useRef(false);
+  const canvasRequestState = authorityState?.error ? 'error' : !graph.nodes.length && authorityState?.pending ? 'waiting' : graph.nodes.length ? 'loaded' : 'empty';
   const wrapRef = React.useRef(null);
   const saveRef = React.useRef(null);
   // What a burst of drags holds until the canvas goes still, and whether the chip
@@ -5199,7 +5103,7 @@ const NodeCanvas = ({ libraryMode = false, focusId, setFocusId, pendingReveal = 
   React.useEffect(() => {
     const finishWireDrag = (drag, target, event) => {
       suppressWireClick.current = true;
-      window.setTimeout(() => { suppressWireClick.current = false; }, 250);
+
       setWirePreview(null);
       const completion = wireDragCompletion(drag, target);
       if (!completion) {
@@ -5243,10 +5147,12 @@ const NodeCanvas = ({ libraryMode = false, focusId, setFocusId, pendingReveal = 
     const onKeyDown = e => {
       if (e.key !== 'Escape') return;
       if (!wireDragRef.current && !wireStartRef.current && document.querySelector('[role="dialog"],[role="menu"]')) return;
+      const cancellingWire=!!wireDragRef.current || !!wireStartRef.current;
+      if (wireDragRef.current) suppressWireClick.current=true;
       wireDragRef.current = null;
       setWirePreview(null);
       setWireStartState(null);
-      setCanvasSelectedIds([]); setPickedId(null); setFocusId(null, []);
+      if(!cancellingWire){setCanvasSelectedIds([]);setPickedId(null);setFocusId(null,[]);}
       e.preventDefault(); e.stopPropagation();
     };
     const onMove = (e) => {
@@ -5720,18 +5626,6 @@ const NodeCanvas = ({ libraryMode = false, focusId, setFocusId, pendingReveal = 
     }
     return true;
   };
-  const allIdsKey = allIds.join('|');
-  const systemAutoArrangeKey = React.useMemo(() => (
-    showingSystem && allIdsKey ? JSON.stringify([scopeKey, allIdsKey, graph.wires.length]) : ''
-  ), [showingSystem, scopeKey, allIdsKey, graph.wires.length]);
-  const systemAutoArrangeDone = React.useRef('');
-  React.useEffect(() => {
-    if (!systemAutoArrangeKey || systemAutoArrangeDone.current === systemAutoArrangeKey) return;
-    if (!allIds.length || !allIds.every(id => Number.isFinite(cardHeights[id]))) return;
-    arrangeIds(allIds, {fitAfter:true, silent:true}).then(arranged => {
-      if (arranged) systemAutoArrangeDone.current = systemAutoArrangeKey;
-    });
-  }, [systemAutoArrangeKey, allIdsKey, cardHeights, layoutNeedsRefresh, canSaveLayout]);
   // Undo / Redo are the graph's own history (07a1364), not a positions-only reset: every recorded change on
   // this canvas -- a move, an Arrange, a new card, a wire, a value -- is taken back by the same route.
   const history = authorityState?.canvas?.action_history;
@@ -6007,6 +5901,8 @@ const NodeCanvas = ({ libraryMode = false, focusId, setFocusId, pendingReveal = 
     <div
       ref={wrapRef}
       tabIndex={0} role="region" aria-label="Workflow canvas" aria-haspopup="menu" aria-keyshortcuts="Shift+F10"
+      onPointerDownCapture={()=>{suppressWireClick.current=false;}}
+      onKeyDownCapture={event=>{if(event.key==='Enter'||event.key===' ')suppressWireClick.current=false;}}
       onMouseDown={onCanvasMouseDown}
       onContextMenu={onContextMenu}
       onKeyDown={onCanvasKeyDown}
@@ -6022,10 +5918,17 @@ const NodeCanvas = ({ libraryMode = false, focusId, setFocusId, pendingReveal = 
         // The dot grid is fixed: shifting it on every pan repainted the whole canvas (canvas-perf).
         backgroundSize:`${20*zoom}px ${20*zoom}px`,
         cursor: dragRef.current?.mode === 'pan' ? 'grabbing' : 'grab',
-        userSelect: dragRef.current ? 'none' : 'auto',
+        userSelect:'none',
         outline: dropTarget ? `1px dashed ${LM.accent}66` : undefined,
         outlineOffset:-1,
       }}>
+      {canvasRequestState === 'error' && <window.AH_DS.EmptyState data-canvas-state="error" error
+        title="Canvas unavailable" detail={authorityState.error} onRetry={refreshCanvas} style={{position:'absolute',inset:60}}/>}
+      {canvasRequestState === 'waiting' && <window.AH_DS.EmptyState data-canvas-state="waiting"
+        title="Reading your workspace…" style={{position:'absolute',inset:60}}/>}
+      {canvasRequestState === 'empty' && <window.AH_DS.EmptyState data-canvas-state="empty"
+        title="Build your graph" detail="Add a node to start, or open a session from Chats."
+        action={<window.AH_DS.Btn onClick={()=>setLibraryOpen(true)}>Add node</window.AH_DS.Btn>} style={{position:'absolute',inset:60}}/>}
       <div style={{
         // One composited layer: pan and zoom are a single transform, never left/top (canvas-perf).
         position:'absolute', left:0, top:0, willChange:'transform',
@@ -6128,12 +6031,6 @@ const NodeCanvas = ({ libraryMode = false, focusId, setFocusId, pendingReveal = 
             'Unnamed connection'}: {wire.reason}</li>)}</ul>
         {unresolvedWires.length > 20 && <p>{unresolvedWires.length - 20} more connections are affected.</p>}
       </details>}
-      {!allNodes.length && !showingSystem && <p data-no-pan role="note" style={{position:'absolute', left:'50%', top:'42%',
-        transform:'translate(-50%, -50%)', margin:0, maxWidth:360, textAlign:'center', fontSize:12.5,
-        lineHeight:1.5, color:LM.inkSoft}}>
-        This canvas holds only what you place on it. Add a node from the library (⌘L).
-        {systemAllowed(authorityState?.canvas, projectedGraph) ? " The application's own parts open from Settings > System." : ''}
-      </p>}
       {/* Below the minimap (MiniMap: right 14, top 14, 96 tall), never over it. The design canvas draws no status chip:
           only a save in flight, a refusal or a half-made wire draws one. Refresh is also in a node's own menu. */}
       {overlapCount > 1 && canSaveLayout && !layoutBusy && <div data-no-pan data-overlap-chip={overlapCount} role="group" aria-label={overlapCount + ' cards overlap'} style={{
@@ -6184,10 +6081,18 @@ const NodeCanvas = ({ libraryMode = false, focusId, setFocusId, pendingReveal = 
           style={window.AH_DS.styles.button(false ? 'primary' : 'secondary', true)}>Select connected</window.AH_DS.Btn>
       </div>}
 
-      <CanvasToolbar compact={libraryMode} onRun={() => menuRun()} runDisabled={typeof window.ARCHHUB_RUN !== 'function' || menuBusy || blocked}
-        title={authorityState?.canvas?.scope?.label || authorityState?.canvas?.label || ''}
-        project={authorityState?.canvas?.project_label || ''} waiting={graph.nodes.filter(node=>canvasNeedsUser(node)||typeof isWorkshopGraphNode==='function'&&isWorkshopGraphNode(node)&&workshopModel?.needs_user).length}
-        status={workshopSnapshot?.nativeWork?.state === 'executing' || workshopModel?.members?.some(row=>row.presence==='working') ? 'Running' : ''}
+      {canvasRequestState === 'loaded' && !system && !libraryMode && allIds.length>0 && <window.AH_DS.Card data-canvas-scope-frame="" style={{position:'absolute',inset:'14px 14px 110px',top:toolbarHost?14:50,background:'transparent',borderRadius:10,overflow:'visible',pointerEvents:'none'}}>
+        <div style={{position:'absolute',top:-12,left:12,right:8,display:'flex',alignItems:'center',gap:8,fontSize:12}}>
+          <span style={{background:LM.bgCanvas,padding:'0 8px'}}><strong>{authorityState?.canvas?.scope?.label || authorityState?.canvas?.label || 'Canvas'}</strong> · {allIds.length} nodes · {graph.wires.length} wires</span>
+          {graph.nodes.some(node=>node.state==='running') && <span data-canvas-live-state="" style={{background:LM.accent+'1f',color:LM.accent,borderRadius:999,padding:'2px 8px'}}>{graph.nodes.filter(node=>node.state==='running').length} running</span>}
+          {graph.nodes.some(node=>canvasNeedsUser(node) || typeof isWorkshopGraphNode==='function' && isWorkshopGraphNode(node) && workshopModel?.needs_user) && <span data-canvas-needs-user="" style={{background:LM.warn+'1f',color:LM.warn,borderRadius:999,padding:'2px 8px'}}>{graph.nodes.filter(node=>canvasNeedsUser(node) || typeof isWorkshopGraphNode==='function' && isWorkshopGraphNode(node) && workshopModel?.needs_user).length} waits for you</span>}
+          <span style={window.AH_DS.styles.fill}/><window.AH_DS.Btn sm kind="ghost" style={{pointerEvents:'auto'}} disabled={!composer || blocked} onClick={()=>composeGroup('group',allIds,'Collapsed this scope into one group.')} title="Collapse group · Ctrl+K">⊞ Collapse</window.AH_DS.Btn>
+        </div>
+      </window.AH_DS.Card>}
+      <CanvasToolbar host={toolbarHost} compact={true} system={system} onRun={() => menuRun()} runDisabled={typeof window.ARCHHUB_RUN !== 'function' || menuBusy || blocked}
+        title={system ? '' : authorityState?.canvas?.scope?.label || authorityState?.canvas?.label || ''}
+        project={system ? '' : authorityState?.canvas?.project_label || ''} waiting={system ? 0 : graph.nodes.filter(node=>canvasNeedsUser(node)||typeof isWorkshopGraphNode==='function'&&isWorkshopGraphNode(node)&&workshopModel?.needs_user).length}
+        status={!system && (workshopSnapshot?.nativeWork?.state === 'executing' || workshopModel?.members?.some(row=>row.presence==='working')) ? 'Running' : ''}
         undo={{run:() => runHistory('undo'), disabled:blocked || menuBusy || !canUndo, why:undoWhy}}
         redo={{run:() => runHistory('redo'), disabled:blocked || menuBusy || !canRedo, why:redoWhy}}
         zoom={zoom} setZoom={(updater) => {
@@ -6200,10 +6105,8 @@ const NodeCanvas = ({ libraryMode = false, focusId, setFocusId, pendingReveal = 
         arrangeDisabled={layoutNeedsRefresh || !canSaveLayout || !allIds.length}
         arrangeWhy={layoutWhy(noNodesWhy)}
         fitLabel={selected.size ? 'Fit selection' : 'Fit all nodes'} setLibraryOpen={setLibraryOpen}/>
-      {!libraryMode && <MiniMap pan={pan} zoom={zoom} positions={positions} allNodes={allNodes.map(node=>({...node,
-        w:node.w || (typeof isWorkshopGraphNode==='function'&&isWorkshopGraphNode(node)?320:nodeIsWatch(node)?260:NODE_CARD_W),
-        h:cardHeights[node.id] || node.h}))}/>}
-      <CanvasAddBox compact={libraryMode} setLibraryOpen={setLibraryOpen}/>
+
+      <CanvasAddBox compact={system || libraryMode} setLibraryOpen={setLibraryOpen}/>
       {ctxMenu && <CanvasMenu x={ctxMenu.x} y={ctxMenu.y} maxHeight={ctxMenu.maxHeight}
         opener={ctxMenu.opener} items={ctxMenu.nodeId ? nodeMenuItems : ctxMenu.wireId ? wireMenuItems : canvasMenuItems}
         label={ctxMenu.nodeId ? 'Node actions' : ctxMenu.wireId ? 'Wire actions' : 'Canvas actions'} onClose={closeContextMenu}/>}
@@ -6408,138 +6311,69 @@ const NodeRenderer = ({ libraryMode = false, n: held, x = held.x, y = held.y, se
     const watch = new ResizeObserver(report); watch.observe(card);
     return () => watch.disconnect();
   }, [rows, onPortBand]);
-  if (workshopCard) return <div ref={cardRef} className="lm-node" data-node-id={n.id}
-    data-group={n.group || undefined} data-selected={selected ? 'true' : undefined}
-    data-focused={focused ? 'true' : undefined} onClick={handleClick} onContextMenu={onContextMenu}
-    tabIndex={0} role="group" aria-label="Workshop node" onKeyDown={handleKeyDown}
-    data-canvas-card-skin="078" style={{position:'absolute', left:n.x, top:n.y, width:cardW, ...canvasCardSurface(),
-      color:LM.ink, fontFamily:LM.sans, opacity:dimmed ? .42 : 1,
-      outline:focused ? LM.selection.outline : 'none', outlineColor:LM.accent, zIndex:lit ? 3 : 2}}>
-    <GraphWorkshopFace n={n} onDragStart={onDragStart} bandRef={bandRef} onPortBand={onPortBand}
-      onSocket={onSocket} onSocketDrag={onSocketDrag} startMemberDrag={onMemberLeave ? startMemberDrag : null}
-      memberDragTrace={memberDragTrace}/>
-  </div>;
-  if(libraryMode && !sessionCard && !groupCard && !agent) return <div ref={cardRef} className="lm-node" data-node-id={n.id} data-library-canvas-node=""
-    onClick={handleClick} onDoubleClick={onOpen} onContextMenu={onContextMenu} tabIndex={0} onKeyDown={handleKeyDown}
-    style={{position:'absolute',left:n.x,top:n.y,width:cardW}}>
-    <window.AH_DS.Node title={nodeCardTitle(n)} sub={nodeCardSubtitle(n)} glyph={cat.icon} gc={cat.col} w={cardW} selected={selected||focused}
-      bandRef={bandRef} onHeaderMouseDown={onDragStart} foot={n.result_summary || n.status || n.state || 'Not run'}
-      ins={(n.ins||[]).map(port=>({l:port.label||port.id,t:port.t,list:!!port.list,f:!!port.connected,onUse:port.connectable&&onSocket?()=>onSocket(port,'in'):null,onDragStart:port.connectable&&onSocketDrag?event=>onSocketDrag(event,port,'in'):null}))}
-      outs={(n.outs||[]).map(port=>({l:port.label||port.id,t:port.t,list:!!port.list,f:!!port.connected,onUse:port.connectable&&onSocket?()=>onSocket(port,'out'):null,onDragStart:port.connectable&&onSocketDrag?event=>onSocketDrag(event,port,'out'):null}))}/>
-  </div>;
-  if (groupCard) return <window.AH_DS.Node ref={cardRef} className="lm-node" data-node-id={n.id} data-group={n.group || undefined}
-    data-group-card="true" data-selected={selected ? 'true' : undefined} data-focused={focused ? 'true' : undefined}
-    role="group" tabIndex={0} aria-label={(n.title || n.id) + ' node'} aria-haspopup="menu" aria-keyshortcuts="Shift+F10"
+  if (workshopCard) return <GraphWorkshopFace n={n} nodeRef={cardRef} rootProps={{className:'lm-node','data-node-id':n.id,'data-library-canvas-node':libraryMode?'':undefined,'data-group':n.group || undefined,'data-selected':selected?'true':undefined,'data-focused':focused?'true':undefined,onClick:handleClick,onContextMenu,onKeyDown:handleKeyDown,tabIndex:0,role:'group','aria-label':'Workshop node',style:{position:'absolute',left:n.x,top:n.y,width:cardW,opacity:dimmed?.42:1,zIndex:lit?3:2,outline:focused?LM.selection.outline:'none',outlineColor:LM.accent}}}
+    onDragStart={onDragStart} bandRef={bandRef} onSocket={onSocket} onSocketDrag={onSocketDrag}
+    startMemberDrag={onMemberLeave?startMemberDrag:null} memberDragTrace={memberDragTrace}/>;
+  return <window.AH_DS.Node nodeRef={cardRef} bandRef={bandRef} className="lm-node" data-node-id={n.id} data-library-canvas-node={libraryMode?'':undefined}
+    data-group={n.group || undefined} data-canvas-card-skin="061" data-agent-node={agent ? n.id : undefined}
+    data-node-state={canvasNeedsUser(n) ? 'needs-user' : n.state || n.status || 'unavailable'}
+    data-session-card={sessionCard ? 'true' : undefined} data-group-card={groupCard ? 'true' : undefined}
+    data-selected={selected ? 'true' : undefined} data-focused={focused ? 'true' : undefined}
     onClick={handleClick} onDoubleClick={onOpen} onContextMenu={onContextMenu} onKeyDown={handleKeyDown}
-    glyph="◎" gc={cat.col} title={title} sub={subtitle} w={cardW} stacked selected={lit}
-    headerProps={{onMouseDown:onDragStart, style:{cursor:'move'}}}
-    headerEnd={onExpand && <window.AH_DS.Btn sm title="Ungroup · expand the group back into its nodes" aria-label={'Expand ' + (n.title || 'group')}
-      onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onExpand(); }}>Ungroup</window.AH_DS.Btn>}
-    style={{position:'absolute', left:n.x, top:n.y, color:LM.ink, fontFamily:LM.sans, opacity:dimmed ? .42 : 1, zIndex:lit ? 3 : 2}}
-    foot={<span data-boundary-sockets><span data-member-count={groupMembers.length}>{groupMembers.length} {groupMembers.length === 1 ? 'node' : 'nodes'}</span>
-      {' · boundary sockets · ' + (n.ins || []).filter(s => !s.member).length + ' in · ' + (n.outs || []).filter(s => !s.member).length + ' out'}</span>}
-    portBand={rows > 0 && <div ref={bandRef} data-port-band="" style={{position:'relative', height:PORT_BAND_PAD * 2 + rows * SOCKET_STEP, borderTop:`1px solid ${LM.lineSoft}`}}>
-      {['in', 'out'].flatMap(side => (side === 'in' ? n.ins || [] : n.outs || []).map((s, i) => <Socket key={side + s.id}
-        id={s.id} side={side} i={i} t={s.t} label={s.label} list={!!s.list || !!s.multiple} half={cardW / 2} plate connected={s.derived === true}
-        onUse={s.connectable && onSocket ? () => onSocket(s, side) : undefined}
-        onDragStart={s.connectable && onSocket ? e => onSocketDrag?.(e, s, side) : undefined}/>))}
-    </div>}
-    chip={<div data-member-chips style={{display:'flex', flexWrap:'wrap', gap:6}}>{groupMembers.map(member => {
-      const id = typeof member === 'string' ? member : member.id;
-      const name = typeof member === 'string' ? member : member.title || member.label || id;
-      return <span key={id} data-member-chip={id} data-member-drag={memberDragTrace[id] || undefined} draggable={false}
-        onDragStart={e => e.preventDefault()} onPointerDown={onMemberLeave ? e => startMemberDrag(member, e) : undefined}
-        onMouseDown={onMemberLeave ? e => startMemberDrag(member, e) : undefined}
-        style={{height:24, display:'inline-flex', alignItems:'center', gap:6, padding:'0 8px 0 4px', border:`1px solid ${LM.line}`, borderRadius:6,
-          background:LM.bgSoft, color:LM.ink, fontSize:12, cursor:onMemberLeave ? 'grab' : 'default'}}>
-        <span aria-hidden="true" style={{width:16, height:16, borderRadius:4, background:cat.col, color:LM.onFill, display:'grid', placeItems:'center', fontSize:LM_FS_LABEL.sz}}>{String(name || '?').slice(0, 1).toUpperCase()}</span>{name}
-      </span>;
-    })}</div>}/>;
-  return (
-    <div ref={cardRef} className="lm-node" data-node-id={n.id} data-group={n.group || undefined}
-      data-canvas-card-skin="078" data-agent-node={agent ? n.id : undefined}
-      data-node-state={canvasNeedsUser(n) ? 'needs-user' : n.state || n.status || 'unavailable'}
-      data-session-card={sessionCard ? 'true' : undefined} data-group-card={groupCard ? 'true' : undefined}
-      data-selected={selected ? 'true' : undefined}
-      data-focused={focused ? 'true' : undefined} onClick={handleClick} onDoubleClick={onOpen} onContextMenu={onContextMenu}
-      tabIndex={0} role="group" aria-label={(n.title || n.id) + ' node'} aria-haspopup="menu" aria-keyshortcuts="Shift+F10" onKeyDown={handleKeyDown}
-      style={{
-        position:'absolute', left:n.x, top:n.y, width:cardW, minHeight:n.h,
-        ...canvasCardSurface(canvasNeedsUser(n)),
-        borderStyle:'solid',
-        borderWidth: '1px',
-        // Selected and focused cards use the one accent; focus adds a 2px ring. No hover motion.
-        borderColor: lit ? LM.accent : LM.line,
-        color:LM.ink, fontFamily:LM.sans,
-        cursor: 'default', outline:focused ? LM.selection.outline : 'none',
-        outlineColor:focused ? LM.accent : 'transparent', outlineOffset:focused ? LM.selection.outlineOffset : 0,
-        opacity: dimmed ? 0.42 : 1,
-        transition:`border-color ${LM.dur.fast}ms, outline-color ${LM.dur.fast}ms, opacity ${LM.dur.med}ms, width ${LM.dur.med}ms`,
-        zIndex: lit ? 3 : 2,
-      }}>
-      {/* Title bar — drag handle */}
-      <div onMouseDown={onDragStart}
-        style={{
-          padding:'12px 14px 10px', display:'flex', alignItems:'center', gap:10,
-          borderBottom:`1px solid ${LM.lineSoft}`,
-          background: lit ? LM.bgSoft : 'transparent',
-          cursor:'move',
-          borderTopLeftRadius:LM.rad.node, borderTopRightRadius:LM.rad.node,
-        }}>
-        <span data-category-tile="" data-node-status-ring={n.state || n.status || 'unavailable'} style={{ width:30, height:30, borderRadius:8, background:cat.col + '26', color:cat.col, boxShadow:`0 0 0 2px ${canvasStatusColor(n)}`, display:'grid', placeItems:'center', fontFamily:LM.sans, fontSize:15, fontWeight:600, flex:'none' }}>{agent ? String(title).slice(0,1).toUpperCase() : cat.icon}</span>
-        <div style={{ minWidth:0, flex:1 }}>
-          <div data-node-card-title="" title={title} style={{ fontFamily:LM.sans, fontSize:14, fontWeight:700, color:LM.ink, lineHeight:'18px', overflowWrap:'anywhere' }}>{title}</div>
-          <div data-node-card-subtitle="" title={subtitle} style={{ fontFamily:LM.sans, fontSize:12, color:LM.inkSoft, lineHeight:'16px', overflowWrap:'anywhere' }}>{subtitle}</div>
-        </div>
-        {n.state && <NodeStateDot s={n.state}/>}
-        {n.ms && !n.state && <span style={{ fontFamily:LM.sans, fontSize:LM_FS_LABEL.sz, color:LM.inkSoft }}>{n.ms}</span>}
-        {isAi && !agent && (
-          <window.AH_DS.Btn onClick={(e) => { e.stopPropagation(); onToggleExpand(); }} title={expanded ? 'Collapse' : 'Expand & search'} aria-label={expanded ? 'Collapse' : 'Expand & search'} style={{
-            width:18, height:18, padding:0, border:0, borderRadius:LM.rad.xs,
-            background:'transparent', color:LM.inkSoft, cursor:'pointer',
-            display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:LM_FS_DATASM.sz, marginLeft:2,
-          }}
-          onMouseEnter={e => { e.currentTarget.style.background = LM.bgHover; e.currentTarget.style.color = LM.ink; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = LM.inkSoft; }}>
-            {expanded ? '↖' : '⤢'}
-          </window.AH_DS.Btn>
-        )}
-      </div>
-
+    tabIndex={0} role="group" aria-label={(n.title || n.id) + ' node'} aria-haspopup="menu" aria-keyshortcuts="Shift+F10"
+    title={title} sub={subtitle} glyph={agent ? String(title).slice(0,1).toUpperCase() : cat.icon} gc={cat.col}
+    w={cardW} edge={n.edge} stacked={groupCard} selected={lit} run={n.state==='running'} onHeaderMouseDown={onDragStart}
+    ins={n.ins || []} outs={n.outs || []}
+    renderPort={(s,i,side)=><Socket key={side+'-'+s.id} id={s.id} side={side} i={i} t={s.t} label={s.label}
+      list={!!s.list || !!s.multiple} half={cardW/2} connected={!!s.connected}
+      onUse={s.connectable && onSocket ? ()=>onSocket(s,side) : undefined}
+      onDragStart={s.connectable && onSocketDrag ? e=>onSocketDrag(e,s,side) : undefined}/>}
+    footc={canvasStatusColor(n)} foot={n.application ? <window.ApplicationNodeParameters node={n} compact footer status={n.result_summary || canvasStatusText(n)}/> : [agent?.taskTitle,n.result_summary || canvasStatusText({...n,state:n.state || agent?.state || agent?.live_state})].filter(Boolean).join(' · ') || 'Not run'}
+    style={{position:'absolute',left:n.x,top:n.y,width:cardW,minHeight:n.h,color:LM.ink,fontFamily:LM.sans,
+      opacity:dimmed ? .42 : 1,zIndex:lit?3:2,userSelect:'none'}}
+    headerExtra={<>
+      {groupCard && Number.isSafeInteger(n.memberCount) && <span data-member-count={n.memberCount}>{n.memberCount} nodes</span>}
+      {onExpand && groupCard && <window.AH_DS.Btn sm kind="ghost" aria-label={'Expand '+(n.title || 'group')} title="Expand group · Enter"
+        onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();onExpand();}}>Ungroup</window.AH_DS.Btn>}
+      {isAi && !agent && !n.application && <window.AH_DS.Btn sm kind="ghost" title={expanded?'Collapse':'Expand & search'} aria-label={expanded?'Collapse':'Expand & search'}
+        onClick={e=>{e.stopPropagation();onToggleExpand?.();}}>{expanded?'↖':'⤢'}</window.AH_DS.Btn>}
+    </>}>
       {/* Body */}
-      <div style={{ padding:'0 14px 8px' }}>
+      <div style={{ padding:n.application ? 0 : '0 10px 8px' }}>
         {sessionCard && <div data-session-ports style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:8,
           fontSize:11, color:LM.inkSoft}}>
           <div><strong style={{fontSize:LM_FS_LABEL.sz, color:LM.inkSoft, textTransform:'uppercase'}}>Accepts</strong><br/>{(n.ins || []).length || 0} sockets</div>
           <div><strong style={{fontSize:LM_FS_LABEL.sz, color:LM.inkSoft, textTransform:'uppercase'}}>Emits</strong><br/>{(n.outs || []).length || 0} sockets</div>
         </div>}
-        <div data-node-preview-slot="" style={{minHeight:n.preview || (n.params || []).length ? 0 : 32, borderRadius:8, overflow:'hidden'}}>
+        {groupCard && <div data-boundary-sockets style={{fontFamily:LM.mono, fontSize:LM_FS_DATASM.sz, color:LM.inkSoft, marginTop:6}}>
+          boundary sockets · {(n.ins?.length || 0)} in · {(n.outs?.length || 0)} out
+        </div>}
+        {groupCard && groupMembers.length > 0 && <div data-member-chips style={{display:'flex', flexWrap:'wrap', gap:6, marginTop:8}}>
+          {groupMembers.map(member => {
+            const id = typeof member === 'string' ? member : member.id || member.title || member.label;
+            const name = typeof member === 'string' ? member : member.title || member.label || member.id;
+            return <span key={id || name} data-member-chip={id || name} data-member-drag={memberDragTrace[id || name] || undefined} draggable={false} onDragStart={e => e.preventDefault()}
+              onPointerDown={onMemberLeave ? e => startMemberDrag(member, e) : undefined}
+              onMouseDown={onMemberLeave ? e => startMemberDrag(member, e) : undefined} style={{height:24, display:'inline-flex',
+              alignItems:'center', gap:5, padding:'0 7px', border:`1px solid ${LM.line}`, borderRadius:6, background:LM.bgSoft,
+              fontSize:12, color:LM.ink, cursor:onMemberLeave ? 'grab' : 'default'}}>
+              <span aria-hidden="true" style={{width:16, height:16, borderRadius:4, display:'grid', placeItems:'center',
+                background:cat.col + '22', color:cat.col, fontSize:LM_FS_LABEL.sz}}>{String(name || '?').slice(0, 1).toUpperCase()}</span>
+              {name}
+            </span>;
+          })}
+        </div>}
+        <div data-node-preview-slot="" style={{minHeight:0, borderRadius:8, overflow:'hidden'}}>
           {!agent && <NodeBody n={n} expanded={expanded} onToggleExpand={onToggleExpand} watchActions={watchActions}/>}
           {!nodeIsWatch(n) && nodePlanPreviewFor(n) ? <NodePlanPreview node={n}/> : !nodeIsWatch(n) && n.preview && typeof WatchPreview === 'function' &&
             (n.preview.kind === 'image' && n.preview.state === 'ready' ? <WatchImage value={n.preview.value}/> : <WatchPreview node={n} actions={watchActions}/>)}
           {agent && !n.preview && n.result != null && <span style={{fontSize:12.5,color:LM.inkSoft}}>{typeof n.result === 'object' ? JSON.stringify(n.result) : String(n.result)}</span>}
-          {!n.application && !nodeIsWatch(n) && !n.preview && !n.result && !(n.params || []).some(row=>!window.ARCHHUB_INTERNAL_PARAM_KEYS?.has(row.k)) && !n.status && !(window.ARCHHUB_LAST_RUN?.lines?.[n.id]?.length) &&
+          {!n.application && !nodeIsWatch(n) && !n.preview && !n.result && !(n.params || []).some(row=>!window.ARCHHUB_INTERNAL_PARAM_KEYS?.has(row.k)) && !n.status && !n.state && !n.result_summary && !(window.ARCHHUB_LAST_RUN?.lines?.[n.id]?.length) &&
             <span aria-disabled="true" style={{fontSize:12.5, color:LM.inkSoft}}>Unavailable</span>}
         </div>
       </div>
 
-      {/* Sockets: their own band below the content, one row per port pair */}
-      {rows > 0 && <div ref={bandRef} data-port-band="" style={{ position:'relative',
-        height:PORT_BAND_PAD * 2 + rows * SOCKET_STEP, borderTop:`1px solid ${LM.lineSoft}` }}>
-        {n.ins?.map((s, i) => <Socket key={'in-'+s.id} id={s.id} side="in" i={i} t={s.t} label={s.label} list={!!s.list || !!s.multiple} half={cardW / 2}
-          onUse={s.connectable && onSocket ? () => onSocket(s, 'in') : undefined}
-          onDragStart={s.connectable && onSocket ? e => onSocketDrag?.(e, s, 'in') : undefined}/>)}
-        {n.outs?.map((s, i) => <Socket key={'out-'+s.id} id={s.id} side="out" i={i} t={s.t} label={s.label} list={!!s.list || !!s.multiple} half={cardW / 2}
-          onUse={s.connectable && onSocket ? () => onSocket(s, 'out') : undefined}
-          onDragStart={s.connectable && onSocket ? e => onSocketDrag?.(e, s, 'out') : undefined}/>)}
-      </div>}
-      {(agent?.taskTitle || n.result_summary || n.status || n.state || agent?.state || agent?.live_state) && <footer data-node-footer-status="" style={{display:'flex', alignItems:'center', gap:8, padding:'9px 14px',
-        borderTop:`1px solid ${LM.lineSoft}`, fontSize:12.5, color:canvasStatusColor(n)}}>
-        <i aria-hidden="true" style={{width:7,height:7,borderRadius:'50%',background:canvasStatusColor(n)}}/>
-        {[agent?.taskTitle,n.result_summary || canvasStatusText({...n,state:n.state || agent?.state || agent?.live_state})].filter(Boolean).join(' · ')}
-      </footer>}
-    </div>
-  );
+  </window.AH_DS.Node>;
 };
 
 // A card re-renders only when what it draws changed: its node record, its place, or its focus, dim and
@@ -6547,29 +6381,10 @@ const NodeRenderer = ({ libraryMode = false, n: held, x = held.x, y = held.y, se
 const MemoNodeRenderer = React.memo(NodeRenderer, (a, b) => a.n === b.n && a.x === b.x && a.y === b.y &&
   a.themeEpoch === b.themeEpoch && a.libraryMode === b.libraryMode &&
   a.focused === b.focused && a.selected === b.selected && a.dimmed === b.dimmed && a.expanded === b.expanded && !!a.onOpen === !!b.onOpen && !!a.onExpand === !!b.onExpand && a.onMemberLeave === b.onMemberLeave);
-const NodeStateDot = ({ s }) => {
-  const col = s === 'running' ? LM.accent : s === 'queued' ? LM.inkSoft : LM.ok;
-  return (
-    <span style={{ display:'flex', alignItems:'center', gap:5 }}>
-      <span style={{
-        width:6, height:6, borderRadius:'50%', background: col,
-        boxShadow: s === 'running' ? `0 0 0 2px ${col}22` : 'none',
-        animation: s === 'running' ? 'lmPulse 1.2s infinite' : 'none',
-      }}/>
-      <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:col, letterSpacing:'0.1em', textTransform:'uppercase' }}>{s}</span>
-    </span>
-  );
-};
 
 const Socket = ({ id, side, i, t, label, list = false, onUse, onDragStart, half = 110, connected = false, plate = false }) => {
   const col = WIRE[t] || window.PM_WIRE?.[t] || (window.pmType && window.pmType(t)?.col) || LM.inkSoft;
-  // DSYS-078 skins the socket; the graph's type and connection route stay intact.
-  const socketShape = list ? 'diamond' : socketShapeOf(t, false) === 'any' ? 'any' : 'circle';
-  const shapeStyle = socketShape === 'diamond'
-      ? {borderRadius:2, transform:'rotate(45deg) scale(.86)'}
-      : socketShape === 'any'
-        ? {borderRadius:'50%', borderStyle:'dashed', background:'transparent'}
-        : {borderRadius:'50%'};
+  const socketShape = list ? 'diamond' : socketShapeOf(t, false);
   // The dot is a button, so a connectable port starts or finishes a wire; a port that cannot be connected stays inert.
   return (
     <div style={{
@@ -6579,7 +6394,7 @@ const Socket = ({ id, side, i, t, label, list = false, onUse, onDragStart, half 
       flexDirection: side === 'in' ? 'row' : 'row-reverse',
       pointerEvents: onUse ? 'auto' : 'none',
     }}>
-      <window.AH_DS.Btn type="button" aria-label={(side === 'out' ? 'Connect output ' : 'Connect input ') + label}
+      <window.AH_DS.Btn type="button" role="button" aria-label={(side === 'out' ? 'Connect output ' : 'Connect input ') + label}
         title={(side === 'out' ? 'Connect output ' : 'Connect input ') + label}
         data-studio-socket={onUse ? 'true' : undefined}
         data-socket-side={side}
@@ -6591,12 +6406,11 @@ const Socket = ({ id, side, i, t, label, list = false, onUse, onDragStart, half 
         data-socket-shape={socketShape}
         data-socket-connected={connected ? 'true' : 'false'}
         disabled={!onUse} onPointerDown={onDragStart} onMouseDown={e => e.stopPropagation()}
+        onKeyDown={e=>{if(onUse&&(e.key==='Enter'||e.key===' ')){e.preventDefault();e.stopPropagation();onUse();}}}
         onClick={e => { e.stopPropagation(); if (onUse) onUse(); }} style={{
         display:'block', padding:0, margin:0, flexShrink:0, cursor: onUse ? 'crosshair' : 'default',
-        width: SOCKET_R*2, height: SOCKET_R*2, ...shapeStyle,
-        background: socketShape === 'any' ? 'transparent' : col,
-        border:`2px solid #17171c`, boxShadow:'none', ...(plate ? {background:'transparent', border:0, transform:'none', display:'grid', placeItems:'center'} : {}),
-      }}>{plate && <window.AH_DS.Socket t={t} list={list} filled={connected} size={SOCKET_R * 2}/>}</window.AH_DS.Btn>
+        width: SOCKET_R*2, height: SOCKET_R*2, border:0, background:'transparent', boxShadow:'none',
+      }}><window.AH_DS.Socket t={t==='trigger'?'event':t || 'any'} list={list} filled={connected} size={10} style={{borderColor:col}}/></window.AH_DS.Btn>
       {/* An input's and an output's label share one row: each gets half the card, never the other's half. */}
       <span title={label || undefined} style={{
           fontFamily:LM.sans, fontSize:12.5, color:LM.inkSoft, letterSpacing:0,
@@ -6862,14 +6676,14 @@ const WatchWell = ({ node, preview, mode, state, inspector, actions }) => {
   const size = watchSizeValue(node);
   const [w, h] = size.split('x').map(Number);
   const onMouseUp = event => {
-    if (!event.currentTarget?.style) return;
+    if (!inspector || !event.currentTarget?.style) return;
     const nextW = parseInt(event.currentTarget.style.width, 10);
     const nextH = parseInt(event.currentTarget.style.height, 10);
     if (Number.isFinite(nextW) && Number.isFinite(nextH)) watchPersistParam(node, 'watchSize', `${nextW}x${nextH}`);
   };
   return <div data-watch-well="" data-watch-size={size} onMouseUp={onMouseUp} style={{
-    minWidth:220, maxHeight:480,
-    width:w, height:h, overflow:'auto', resize:inspector ? 'both' : 'none',
+    minWidth:inspector ? 220 : 0, maxWidth:inspector ? undefined : '100%', maxHeight:480,
+    width:inspector ? w : '100%', height:h, overflow:'auto', resize:inspector ? 'both' : 'none',
     border:`1px solid ${LM.lineSoft}`, background:LM.bgDeep || LM.bg, color:LM.ink,
     borderRadius:5, display:'grid', gridTemplateRows:'1fr auto'
   }}>
@@ -6916,7 +6730,7 @@ const WatchFoot = ({ node, preview, mode, state, actions = {} }) => {
   if (stateAction) actionList.push(stateAction);
   if (ready && actions.showInRevit) actionList.push(['Show in Revit', actions.showInRevit]);
   if (ready && (mode === 'table' || preview?.kind === 'table')) actionList.push(['Export CSV', () => watchExportCsv(node, preview)]);
-  return <div data-watch-actions="" style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:6, padding:'5px 6px', borderTop:`1px solid ${LM.lineSoft}`}}>
+  return <div data-watch-actions="" style={{display:'flex', flexWrap:'wrap', alignItems:'center', justifyContent:'space-between', gap:6, padding:'5px 6px', borderTop:`1px solid ${LM.lineSoft}`}}>
     <span data-watch-caption="" style={{fontFamily:LM.sans, fontSize:13, color:LM.inkMuted}}>{watchFootText(preview, mode, state)}</span>
     <span style={{display:'flex', gap:4, flexWrap:'wrap', justifyContent:'flex-end'}}>
       {actionList.map(([label, handler]) => <window.AH_DS.Btn key={label} type="button" onClick={handler} style={window.AH_DS.styles.button("secondary", true)}>{label}</window.AH_DS.Btn>)}
@@ -7063,7 +6877,7 @@ const isWorkshopGraphNode = n => {
   return (Array.isArray(descriptors) && descriptors.some(row => row?.root === n.id || row?.node_root === n.id)) ||
     n.cat === 'workshop' || n.kind === 'workshop';
 };
-const GraphWorkshopFace = ({ n, onDragStart, bandRef, onSocket, onSocketDrag, startMemberDrag, memberDragTrace = {} }) => {
+const GraphWorkshopFace = ({ n, nodeRef, rootProps={}, onDragStart, bandRef, onSocket, onSocketDrag, startMemberDrag, memberDragTrace = {} }) => {
   const state = useWorkshopProjection();
   const root = n.conversation_root || n.workshop_root || n.id;
   const descriptor = (state?.workshops || []).find(row => row.root === root || row.node_root === n.id) ||
@@ -7087,55 +6901,32 @@ const GraphWorkshopFace = ({ n, onDragStart, bandRef, onSocket, onSocketDrag, st
     window.dispatchEvent(new window.CustomEvent('archhub:reach-conversation', {
       detail:review ? {root:descriptor.root, work:approval?.work || approval?.id} : descriptor.root}));
   };
-  const rows = Math.max(n.ins?.length || 0, n.outs?.length || 0);
-  return <window.AH_DS.Card as="section" data-workshop-node-face="" data-workshop-id={descriptor?.root || ''}
-    data-canvas-card-skin="078" data-workshop-node-state={model?.needs_user ? 'needs-user' : model?.status?.text}
+  return <window.AH_DS.Node nodeRef={nodeRef} data-ds-card="" data-workshop-node-face="" data-workshop-id={descriptor?.root || ''}
+    data-canvas-card-skin="061" data-workshop-node-state={model?.needs_user?'needs-user':model?.status?.text}
     data-workshop-approval={approval?.work || approval?.id || undefined} onDoubleClick={openWindow}
-    style={{background:LM.bgPanel,borderRadius:10,overflow:'visible', border:`1px solid ${approval ? LM.warn : LM.line}`, boxSizing:'border-box', lineHeight:'normal'}}>
-    <style>{`[data-workshop-node-face] * {box-sizing:content-box;} [data-workshop-node-face] button {box-sizing:border-box;}`}</style>
-    <div onMouseDown={onDragStart} style={{display:'flex', gap:10, alignItems:'center', padding:'12px 14px', cursor:'move'}}>
-      <i data-node-status-ring={model?.needs_user ? 'needs-user' : model?.status?.text} style={{width:24, height:24, borderRadius:6, background:LM.purple, color:LM.onFill,
-        display:'grid', placeItems:'center', fontStyle:'normal', fontSize:13, flex:'none'}}>◎</i>
-      <div style={{flex:1, minWidth:0}}><div style={{fontSize:14, fontWeight:600}}>Workshop</div>
-        <div data-workshop-node-title="" style={{fontSize:12, color:LM.inkSoft, overflow:'hidden',
-          textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{model?.title || 'Unavailable'}</div></div>
-      <span data-workshop-node-agent-stack="" style={{display:'flex',gap:0}}>{members.map((member, index) => {
+    glyph="◎" gc={LM.purple} title="Workshop" subtitleProps={{'data-workshop-node-title':''}} sub={n.subtitle || model?.title || 'Unavailable'} w={n.w || 260}
+    onHeaderMouseDown={onDragStart} bandRef={bandRef} ins={n.ins || []} outs={n.outs || []}
+    renderPort={(port,index,side)=><Socket id={port.id} side={side} i={index} t={port.t} label={port.label} list={!!port.list || !!port.multiple}
+      half={(n.w || 260)/2} connected={!!port.connected} onUse={port.connectable && onSocket?()=>onSocket(port,side):undefined}
+      onDragStart={port.connectable && onSocketDrag?event=>onSocketDrag(event,port,side):undefined}/>}
+    chip={<span data-workshop-node-agent-stack="" style={{display:'flex',flexWrap:'wrap',gap:6,paddingTop:4}}>{members.map(member => {
         const participant = member.row?.root || member.root || member.id;
         const id = member.graph_member_id || participant;
         const canDrag = !!startMemberDrag && canMoveMember && !!member.graph_member_id && member.graph_group_id === n.id;
         const name = member.name || member.label || member.row?.label || 'Unavailable';
-        return <i key={id} data-workshop-node-member={id} data-member-drag={memberDragTrace[id] || undefined}
+        return <span key={id} data-workshop-node-member={id} data-member-drag={memberDragTrace[id] || undefined}
           data-workshop-participant-root={participant} data-workshop-member-draggable={canDrag ? 'true' : 'false'}
-          title={canDrag ? name : name + ' · Unavailable'} role="img" aria-label={name} aria-disabled={!canDrag} draggable={false} onDragStart={event => event.preventDefault()}
+          title={canDrag ? name : name + ' · Unavailable'} aria-label={name} aria-disabled={!canDrag} draggable={false} onDragStart={event => event.preventDefault()}
           onPointerDown={canDrag ? event => startMemberDrag({...member, id}, event) : undefined}
           onMouseDown={event => {event.stopPropagation(); if (canDrag) startMemberDrag({...member, id}, event);}}
           data-agent-presence={member.presence || member.liveState || 'unavailable'}
-          style={{width:20, height:20, borderRadius:5, background:member.col || member.c || member.color || LM.purple, color:LM.onFill,
-            boxShadow:'none',
-            display:'grid', placeItems:'center', fontStyle:'normal', fontSize:11, fontWeight:700, flex:'none',
-            marginLeft:index ? -4 : 0, cursor:canDrag ? 'grab' : 'default'}}>{member.ini || name.slice(0,1).toUpperCase()}</i>;
-      })}</span>
-    </div>
-    {rows > 0 && <div ref={bandRef} data-port-band="" data-workshop-node-ports=""
-      style={{position:'relative', height:PORT_BAND_PAD * 2 + rows * SOCKET_STEP}}>
-      {(n.ins || []).map((port, index) => <Socket key={'in-' + port.id} id={port.id} side="in" i={index}
-        t={port.t} label={port.label} list={!!port.list || !!port.multiple} half={(n.w || 320)/2} plate
-        onUse={port.connectable && onSocket ? () => onSocket(port, 'in') : undefined}
-        onDragStart={port.connectable && onSocket ? event => onSocketDrag?.(event, port, 'in') : undefined}/>)}
-      {(n.outs || []).map((port, index) => <Socket key={'out-' + port.id} id={port.id} side="out" i={index}
-        t={port.t} label={port.label} list={!!port.list || !!port.multiple} half={(n.w || 320)/2} plate
-        onUse={port.connectable && onSocket ? () => onSocket(port, 'out') : undefined}
-        onDragStart={port.connectable && onSocket ? event => onSocketDrag?.(event, port, 'out') : undefined}/>)}
-    </div>}
-    <footer style={{display:'flex', alignItems:'center', gap:8, padding:'10px 14px', borderTop:`1px solid ${LM.lineSoft}`}}>
-      <i aria-hidden="true" style={{width:8, height:8, borderRadius:'50%', background:color, flex:'none'}}/>
-      <span data-workshop-node-status="" style={{fontSize:13, fontWeight:400, color, flex:1}}>{approval && Number.isSafeInteger(model?.count) ? `Waits for you · ${model.count}${model.output_label ? ' ' + model.output_label : ''}` : <>{model?.status?.text || 'Unavailable'}{outputCount}</>}</span>
+          style={{display:'inline-flex',alignItems:'center',gap:5,padding:'3px 5px',borderRadius:4,background:LM.bgSoft,color:LM.ink,fontSize:12,cursor:canDrag?'grab':'default'}}>
+          <window.AH_DS.Avatar data-agent-initial="" agent={{name,ini:member.ini || name.slice(0,1).toUpperCase(),col:member.col || member.c || member.color || LM.purple}} size={16}/>{name}</span>;
+      })}</span>} footc={color} foot={<span style={{display:'flex',alignItems:'center',gap:8}}>      <span data-workshop-node-status="" style={{fontSize:13, fontWeight:400, color, flex:1}}>{approval && Number.isSafeInteger(model?.count) ? `Waits for you · ${model.count}${model.output_label ? ' ' + model.output_label : ''}` : <>{model?.status?.text || 'Unavailable'}{outputCount}</>}</span>
       {approval && <window.AH_DS.Btn type="button" data-workshop-node-review="" onMouseDown={event => event.stopPropagation()}
         onClick={event => openWindow(event, true)} disabled={!descriptor?.root || !(approval.work || approval.id)}
         style={{border:reviewPrimary?0:`1px solid ${LM.line}`, borderRadius:5, background:reviewPrimary?LM.accent:LM.bgHover, color:reviewPrimary?LM.onFill:LM.ink,boxShadow:'none',
-          height:26, display:'inline-flex', alignItems:'center', fontFamily:LM.sans, fontSize:13, fontWeight:500, padding:'0 10px', cursor:'pointer'}}>Review</window.AH_DS.Btn>}
-    </footer>
-  </window.AH_DS.Card>;
+          height:26, display:'inline-flex', alignItems:'center', fontFamily:LM.sans, fontSize:13, fontWeight:500, padding:'0 10px', cursor:'pointer'}}>Review</window.AH_DS.Btn>}</span>} {...rootProps} style={{borderColor:approval?LM.warn:LM.line,lineHeight:'normal',...rootProps.style}}/>;
 };
 // Host locations and crop coordinates are projected data; never invent plan rooms or marks.
 const nodePlanPreviewFor = node => {
@@ -7609,26 +7400,28 @@ const StagePreview = () => (
 );
 
 // ─── canvas toolbar (TOP-LEFT) ───
-const CanvasToolbar = ({ compact = false, zoom, setZoom, onFit, fitLabel, onArrange, arrangeDisabled = false, arrangeWhy = 'Arrange', setLibraryOpen, undo, redo, onRun, runDisabled = true, title = '', project = '', status = '', waiting = 0 }) => {
+const CanvasToolbar = ({ host, compact = false, system = false, zoom, setZoom, onFit, fitLabel, onArrange, arrangeDisabled = false, arrangeWhy = 'Arrange', setLibraryOpen, undo, redo, onRun, runDisabled = true, title = '', project = '', status = '', waiting = 0 }) => {
   const history = [['Undo', '\u21b6', undo], ['Redo', '\u21b7', redo]].filter(([, , held]) => held).map(([label, icon, held]) => (
     <window.AH_DS.Btn key={label} disabled={held.disabled} onClick={(e) => { e.stopPropagation(); held.run(); }}
       title={label} aria-label={label} aria-description={held.disabled ? held.why : undefined}
       style={{...window.AH_DS.styles.button("ghost", true), cursor:held.disabled ? 'default' : 'pointer', color:LM.inkSoft}}>{icon}</window.AH_DS.Btn>
   ));
-  return <>
-  <div data-canvas-topbar="" data-no-pan style={{position:'absolute',left:0,right:0,top:0,height:compact?36:56,
-    display:'flex',alignItems:'center',gap:compact?10:14,padding:compact?'0 12px':'0 24px',borderBottom:`1px solid ${LM.lineSoft}`,background:'#0f0f13'}}>
-    {project&&<span style={{fontSize:13,color:LM.inkSoft}}>{project} ›</span>}<span style={{fontSize:compact?12:17,fontWeight:compact?500:700}}>{title}</span>
-    {status&&<span data-canvas-live-state="" style={{borderRadius:999,padding:'4px 9px',background:LM.accent+'1f',color:LM.accent,fontSize:12,fontWeight:600}}>{status}</span>}
-    {waiting>0&&<span data-canvas-needs-user="" style={{borderRadius:999,padding:'4px 9px',background:LM.warn+'1f',color:LM.warn,fontSize:12,fontWeight:600}}>{waiting} needs you</span>}<span style={window.AH_DS.styles.fill}/>
-    {compact && history}
+  const topbar = (
+  <div data-canvas-topbar="" data-no-pan style={{position:host?'static':'absolute',left:0,right:0,top:0,height:compact?36:56,
+    display:'flex',alignItems:'center',gap:compact?10:14,padding:compact?'0 12px':'0 24px',borderBottom:host?0:`1px solid ${LM.lineSoft}`,background:host?'transparent':'#0f0f13'}}>
+    {!host && !system && <><span style={{fontSize:compact?12:17,fontWeight:compact?500:700}}>{title}</span></>}
+    {!host&&!system&&status&&<span data-canvas-live-state="" style={{borderRadius:999,padding:'4px 9px',background:LM.accent+'1f',color:LM.accent,fontSize:12,fontWeight:600}}>{status}</span>}
+    {!host&&!system&&waiting>0&&<span data-canvas-needs-user="" style={{borderRadius:999,padding:'4px 9px',background:LM.warn+'1f',color:LM.warn,fontSize:12,fontWeight:600}}>{waiting} needs you</span>}<span style={window.AH_DS.styles.fill}/>
+    {/* History remains in the canvas menu and keyboard shortcuts. */}
     <window.AH_DS.Btn disabled={arrangeDisabled} onClick={event => {event.stopPropagation(); onArrange();}}
       title={arrangeDisabled ? arrangeWhy : 'Arrange'} aria-label="Arrange" style={{...window.AH_DS.styles.button(compact?"ghost":"secondary", true),height:compact?26:30,fontSize:13}}>Arrange</window.AH_DS.Btn>
-    <window.AH_DS.Btn data-canvas-run-primary="" disabled={runDisabled} onClick={event => {event.stopPropagation(); onRun?.();}}
-      style={compact?window.AH_DS.styles.button('primary',true):{height:30,padding:'0 12px',border:waiting>0?`1px solid ${LM.line}`:0,borderRadius:8,fontFamily:LM.sans,fontSize:13,fontWeight:600,color:waiting>0?LM.ink:'#fff',background:waiting>0?'#26262d':`linear-gradient(180deg, ${LM.accentHi || LM.accent}, ${LM.accent})`,boxShadow:waiting>0?'0 1px 0 rgba(255,255,255,.06) inset':`0 1px 0 rgba(255,255,255,.25) inset, 0 4px 14px ${LM.accent}44`,cursor:'pointer'}}>{compact?'Run':'▶ Run'}</window.AH_DS.Btn>
+    {!system && <window.AH_DS.Btn data-canvas-run-primary="" disabled={runDisabled} onClick={event => {event.stopPropagation(); onRun?.();}}
+      style={compact?window.AH_DS.styles.button('primary',true):{height:30,padding:'0 12px',border:waiting>0?`1px solid ${LM.line}`:0,borderRadius:8,fontFamily:LM.sans,fontSize:13,fontWeight:600,color:waiting>0?LM.ink:'#fff',background:waiting>0?'#26262d':`linear-gradient(180deg, ${LM.accentHi || LM.accent}, ${LM.accent})`,boxShadow:waiting>0?'0 1px 0 rgba(255,255,255,.06) inset':`0 1px 0 rgba(255,255,255,.25) inset, 0 4px 14px ${LM.accent}44`,cursor:'pointer'}}>Run</window.AH_DS.Btn>}
   </div>
+  );
+  return <>{host?ReactDOM.createPortal(topbar,host):topbar}
   <div data-no-pan style={{
-    position:'absolute', left:compact?16:40, bottom:compact?'42%':84, display:'flex', gap:LM.sp.xs,
+    position:'absolute', left:compact?16:40, bottom:system?16:compact?110:28, display:'flex', gap:LM.sp.xs,
     ...canvasCardSurface(), border:`1px solid ${LM.line}`, borderRadius:compact?6:10, padding:compact?3:LM.sp.xs,
   }}>
     <window.AH_DS.Btn onClick={(e) => { e.stopPropagation(); setZoom(z => Math.max(0.3, +(z - 0.1).toFixed(2))); }} title="Zoom out" aria-label="Zoom out" style={{...window.AH_DS.styles.button("ghost", true),width:'auto',padding:'0 6px',fontFamily:LM.sans,fontSize:13}}>{compact?'−':'Zoom out'}</window.AH_DS.Btn>
@@ -7696,7 +7489,7 @@ const CanvasAddBox = ({ compact = false, setLibraryOpen }) => {
   }};document.addEventListener('keydown',key);return()=>document.removeEventListener('keydown',key);},[setLibraryOpen]);
   const open = () => { setLibraryOpen(q.replace(/^\/+/, '').trim() || true); setQ(''); };
   return (
-    <div data-no-pan data-canvas-add style={{
+    <window.AH_DS.Composer data-no-pan data-canvas-add style={{
       position:'absolute', left:'50%', bottom:compact?16:24, transform:'translateX(-50%)',
       width:compact?440:520, maxWidth:'70%', height:compact?36:44, background:compact?LM.bgPanel:LM.surf2, border:`1px solid ${LM.line}`,
       borderRadius:compact?8:12, boxShadow:LM.elev.e2, padding:compact?'0 12px':'0 14px',
@@ -7708,7 +7501,7 @@ const CanvasAddBox = ({ compact = false, setLibraryOpen }) => {
         onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); open(); } else if (e.key === 'Escape') setQ(''); }}
         style={{ flex:1, minWidth:0, background:'transparent', border:0, outline:'none', color:LM.ink, fontFamily:LM.sans, fontSize:13 }}/>
       <window.AH_DS.Btn type="button" aria-label="Open node library" onClick={e => { e.stopPropagation(); setLibraryOpen(true); }} style={{fontFamily:LM.sans,fontSize:11,color:LM.inkSoft,border:`1px solid ${LM.line}`,borderRadius:4,padding:'1px 5px',background:'transparent',cursor:'pointer'}}>Ctrl K</window.AH_DS.Btn>
-    </div>
+    </window.AH_DS.Composer>
   );
 };
 
@@ -7936,20 +7729,13 @@ const formatNodeConversationTime = iso => {
     : when.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); } catch (e) { return ''; }
 };
 // One transcript turn, read only. The sender label, an optional kind tag (reply/tool) and the body.
-const NodeTranscriptRow = ({ row }) => (
-  <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
-    <div style={{ display:'flex', alignItems:'baseline', gap:7 }}>
-      <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, letterSpacing:'0.08em', color: row.is_me ? LM.accent : LM.inkSoft }}>{row.who}</span>
-      {row.kind && row.kind !== 'message' ? (
-        <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.1em', textTransform:'uppercase' }}>{row.kind}</span>
-      ) : null}
-      <div style={window.AH_DS.styles.fill}/>
-      <time dateTime={row.time} style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft }}>{formatNodeConversationTime(row.time)}</time>
-    </div>
-    <div style={{ fontFamily:LM.serif, fontSize:13, lineHeight:1.5, color:LM.ink, whiteSpace:'pre-wrap', overflowWrap:'anywhere', maxHeight:150, overflow:'auto' }}>{row.text}</div>
-    {typeof BaboomToolSteps === 'function' ? <BaboomToolSteps steps={row.steps}/> : null}
-  </div>
-);
+const NodeTranscriptRow = ({row}) => <div style={{display:'grid',gridTemplateColumns:'20px minmax(0,1fr)',gap:8,fontSize:13,lineHeight:'19px'}}>
+  <window.AH_DS.Avatar agent={{name:row.who || 'Unavailable',col:row.is_me?LM.userAv:LM.accent}} size={20}/>
+  <div><span style={{fontWeight:600}}>{row.who}</span> <time dateTime={row.time} style={{fontSize:11,color:LM.inkSoft}}>{formatNodeConversationTime(row.time)}</time>
+    {row.kind && row.kind!=='message' && <span style={{fontSize:11,color:LM.inkSoft}}> · {row.kind}</span>}
+    <div style={{fontFamily:LM.sans,fontSize:13,lineHeight:'19px',whiteSpace:'pre-wrap',overflowWrap:'anywhere',maxHeight:150,overflow:'auto'}}>{row.text}</div>
+    {typeof BaboomToolSteps==='function'?<BaboomToolSteps steps={row.steps}/>:null}</div>
+</div>;
 const graphInspectorNode = (canvas, graph, session, sessionRows = []) => {
   const scope = canvas?.scope || {};
   const graphId = scope.current || canvas?.root || session?.id || 'current';
@@ -8149,7 +7935,7 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
     announceChatTurn({target:turn.target, requestId:turn.requestId, said:turn.said, model:turn.model, phase:'pending'});
     void drainQueue();
   };
-  return <div style={{ borderTop:`1px solid ${LM.lineSoft}`, padding:'10px 12px 12px', display:'flex', flexDirection:'column', gap:8, minWidth:0 }}>
+  return <window.AH_DS.Composer style={{width:'100%',margin:0,border:0,borderRadius:0, borderTop:`1px solid ${LM.lineSoft}`, padding:'10px 12px 12px', display:'flex', flexDirection:'column', gap:8, minWidth:0 }}>
     {settingProposal && window.ARCHHUB_APPROVAL_CARD && React.createElement(window.ARCHHUB_APPROVAL_CARD, {
       surface:'sysnodes', approval:{...settingProposal, state:'needs-user', agent:'ArchHub',
         changes:[{label:settingProposal.key, now:String(settingProposal.before), after:String(settingProposal.value)}],
@@ -8207,23 +7993,22 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
       </div>
     </div>}
     <window.AH_DS.Btn type="button" data-model-indicator="" onClick={() => setPickerOpen && setPickerOpen(true)}
-      title={'→ ' + target.name + ' · ' + modelName}
+      title={'Choose agent for '+target.name+' · Ctrl+K'}
       style={{ alignSelf:'flex-start', maxWidth:'100%', minWidth:0, display:'flex', alignItems:'center', gap:6, padding:'5px 9px',
         background:LM.bg, border:`1px solid ${LM.accent}66`, borderRadius:LM.rad.sm, color:LM.accent,
         fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, cursor:'pointer' }}>
-      <span style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{'→ ' + target.name + ' · ' + modelName}</span>
+      <span style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{'to '+target.name}</span>
       <span aria-hidden="true">▾</span>
     </window.AH_DS.Btn>
-    <div style={{ display:'flex', alignItems:'center', gap:7, background:LM.bg, border:`1px solid ${LM.accent}66`, borderRadius:7, padding:'8px 10px' }}>
-      <input data-sysnodes-chat={target.kind === 'graph' || target.node?.application ? '' : undefined} aria-label="Ask selection" value={text} onChange={e => updateText(e.target.value)}
-        onKeyDown={e => { if (e.key === 'Enter') ask(); }} placeholder={placeholder}
-        style={{ flex:1, minWidth:0, background:'transparent', border:0, outline:0, color:LM.ink,
-          fontFamily:LM.serif, fontSize:13, fontStyle:'italic' }}/>
-      <window.AH_DS.Btn onClick={ask} disabled={!text.trim()} style={{ padding:'4px 11px', background:LM.accent,
+    <div style={{display:'grid',gap:8}}>
+      <window.AH_DS.TextField multiline data-sysnodes-chat={target.kind === 'graph' || target.node?.application ? '' : undefined} aria-label="Ask selection" value={text} onChange={e => updateText(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) {e.preventDefault();ask();} }} placeholder={placeholder}
+        style={{width:'100%',minHeight:56,resize:'vertical',minWidth:0,background:LM.bgSoft,border:`1px solid ${LM.line}`,borderRadius:5,padding:'8px 10px',outline:0,color:LM.ink,fontFamily:LM.sans,fontSize:13}}/>
+      <window.AH_DS.Btn onClick={ask} disabled={!text.trim()} style={{alignSelf:'end',justifySelf:'end', padding:'4px 11px', background:LM.accent,
         color:(window.AH && window.AH.onFill) || '#180f08', border:0, borderRadius:LM.rad.sm,
         fontSize:11.5, fontWeight:500, cursor:!text.trim() ? 'default' : 'pointer' }}>{asking ? (text.trim() ? 'Queue' : 'Waiting…') : 'Send'}</window.AH_DS.Btn>
     </div>
-  </div>;
+  </window.AH_DS.Composer>;
 };
 const InspectorTabs = ({ labels, active, onSelect, plate = false }) => <div role="tablist" aria-label="Selection inspector tabs" style={{ display:'flex', gap:plate?2:6, flexWrap:'wrap',borderBottom:plate?`1px solid ${LM.line}`:undefined,padding:plate?'0 12px':undefined }}>
   {labels.map(label => {
@@ -8264,17 +8049,19 @@ const NodeRail = ({ libraryMode = false, node, hiddenWork = false, workshopRoom 
       <div><window.AH_DS.Btn primary disabled={!workshopRoom} onClick={onOpenWorkshop}>Open the Workshop</window.AH_DS.Btn></div>
     </aside>
   );
+  const workshopState=useWorkshopProjection();
   const inspectedNode = node ? aiNodeWithMovedParams(node) : graphInspectorNode(canvas, graph, session, sessionRows);
   const execution = window.useInspectorRun ? window.useInspectorRun(inspectedNode.id) : null;
   const sessionNode = isSessionInspectorNode(inspectedNode);
   const cat = studioCategory(inspectedNode.cat);
   const groupNode = !!inspectedNode.composition && !inspectedNode.application;
-  const labels = groupNode ? ['Interface', 'Exposed parameters', 'Chat'] : libraryMode ? ['Chat','Properties', ...(hasRunsPanel(inspectedNode, graph, execution) ? ['Runs'] : [])] : [sessionNode || inspectedNode.graphNode ? 'Chat' : 'Properties',
-    sessionNode || inspectedNode.graphNode ? 'Properties' : 'Chat',
+  const workshopNode = typeof isWorkshopGraphNode==='function' && isWorkshopGraphNode(inspectedNode) && !inspectedNode.application;
+  const labels = groupNode ? ['Interface', 'Exposed parameters', 'Chat'] : inspectedNode.application || workshopNode ? ['Chat','Properties'] : libraryMode ? ['Chat','Properties', ...(hasRunsPanel(inspectedNode, graph, execution) ? ['Runs'] : [])] : [sessionNode || inspectedNode.graphNode || workshopNode ? 'Chat' : 'Properties',
+    sessionNode || inspectedNode.graphNode || workshopNode ? 'Properties' : 'Chat',
     ...(hasRunsPanel(inspectedNode, graph, execution) ? ['Runs'] : [])];
   const roomConversationNode = inspectedNode.cat === 'ai' && inspectedNode.has_conversation && !nodeModelRow(inspectedNode);
   const defaultInspectorTab = groupNode ? 'Interface' :
-    sessionNode || inspectedNode.graphNode || roomConversationNode ? 'Chat' : 'Properties';
+    sessionNode || inspectedNode.graphNode || roomConversationNode || workshopNode ? 'Chat' : 'Properties';
   const [activeTab, setActiveTab] = React.useState(defaultInspectorTab);
   React.useEffect(() => setActiveTab(defaultInspectorTab), [defaultInspectorTab, inspectedNode.id]);
   const visibleTab = labels.includes(activeTab) ? activeTab : defaultInspectorTab;
@@ -8288,7 +8075,7 @@ const NodeRail = ({ libraryMode = false, node, hiddenWork = false, workshopRoom 
   const target = {kind:inspectedNode.graphNode ? 'graph' : sessionNode ? 'session' : 'node',
     id:inspectedNode.id, graphId:inspectedNode.graph_id || '', name:inspectedNode.title,
     node:inspectedNode.graphNode ? null : inspectedNode};
-  const properties = <section aria-label="Properties"><window.NodeInspector key={inspectedNode.id} node={inspectedNode} onFork={forkThroughCanvas} plate={libraryMode} preview={watchPreviewFor(inspectedNode)}
+  const properties = <section aria-label="Properties"><window.NodeInspector key={inspectedNode.id} node={inspectedNode} onFork={forkThroughCanvas} plate={true} preview={watchPreviewFor(inspectedNode)}
     watchActions={{...(window.ARCHHUB_WATCH_ACTIONS?.get(inspectedNode.id) || {}),runToHere:typeof window.ARCHHUB_RUN_TO_HERE==='function'?()=>window.ARCHHUB_RUN_TO_HERE(inspectedNode.id):null}} onExport={()=>{
       const csv=watchExportCsv(inspectedNode,watchPreviewFor(inspectedNode));const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
       const link=document.createElement('a');link.href=url;link.download=(inspectedNode.title || 'output')+'.csv';link.click();setTimeout(()=>URL.revokeObjectURL(url),0);
@@ -8305,9 +8092,10 @@ const NodeRail = ({ libraryMode = false, node, hiddenWork = false, workshopRoom 
     </div>
   </section>;
   const groupParameters = <section aria-label="Exposed parameters"><window.NodeInspector key={inspectedNode.id + ':group-params'} node={inspectedNode} onFork={forkThroughCanvas}/></section>;
+  const selectionDescriptor=isWorkshopGraphNode(inspectedNode)?(workshopState?.workshops || []).find(row=>row.root===(inspectedNode.conversation_root || inspectedNode.workshop_root || inspectedNode.id)):null;
   const chat = <section aria-label={visibleTab === 'Chat' ? 'Chat' : undefined}>{inspectedNode.live ?
     <NodeModelConversation key={inspectedNode.id + ':conversation'} node={inspectedNode} scope={scope} openConversation={openConversation} active={visibleTab === 'Chat'}/> :
-    <p role="status" style={{ margin:0, fontSize:12, lineHeight:1.5, color:LM.inkSoft }}>No conversation yet.</p>}</section>;
+    <window.AH_DS.EmptyState compact glyph={null} title="Ask about this selection" detail="Message below, or @ an agent."/>}</section>;
   return (
     <aside aria-label="Selection inspector" style={{
       gridColumn:'2', gridRow:libraryMode?'1':'2',
@@ -8315,28 +8103,18 @@ const NodeRail = ({ libraryMode = false, node, hiddenWork = false, workshopRoom 
       overflow:'hidden', minHeight:0, minWidth:0,
       // One column, never wider than the 320px track: a long chip or value ellipsizes instead of
       // widening the panel past the window edge (founder window, 2026-10-12).
-      display:'grid', gridTemplateRows:libraryMode&&visibleTab!=='Chat'?'1fr':'1fr auto', gridTemplateColumns:'minmax(0, 1fr)',
+      display:'grid', gridTemplateRows:visibleTab!=='Chat'?'1fr':'1fr auto', gridTemplateColumns:'minmax(0, 1fr)',
     }}>
-      <div className="ah-scroll" style={{ overflowY:'auto', overflowX:'hidden', minWidth:0, padding:libraryMode?0:'14px 16px 20px', display:'flex', flexDirection:'column', gap:libraryMode?0:LM.sp.lg }}>
-        {libraryMode ? <window.AH_DS.SelectionHeader glyph={cat.icon} color={cat.col} title={inspectedNode.title} subtitle={inspectedNode.sub || inspectedNode.description}/> : <div>
-          <div style={{ display:'flex', alignItems:'center', gap:7 }}>
-            <span style={{ color:cat.col }}>{cat.icon}</span>
-            <span style={{ fontFamily:LM.sans, fontSize:11, fontWeight:600, color:LM.inkSoft, letterSpacing:0 }}>
-              {inspectedNode.application ? 'Application' : inspectedNode.graphNode ? 'Graph' : cat.label}</span>
-          </div>
-          <div style={{ fontFamily:LM.sans, fontSize:16, fontWeight:600, letterSpacing:0, marginTop:5, lineHeight:'20px' }}>
-            {inspectedNode.title}
-          </div>
-          {!inspectedNode.application && inspectedNode.sub && <div style={{ fontFamily:LM.sans, fontSize:11, fontWeight:600, color:LM.inkSoft, marginTop:5, letterSpacing:0 }}>{inspectedNode.sub}</div>}
-        </div>}
-        <InspectorTabs plate={libraryMode} labels={labels} active={visibleTab} onSelect={setActiveTab}/>
+      <div className="ah-scroll" style={{ overflowY:'auto', overflowX:'hidden', minWidth:0, padding:0, display:'flex', flexDirection:'column', gap:0 }}>
+        <window.AH_DS.SelectionHeader glyph={cat.icon} color={cat.col} title={inspectedNode.title} subtitle={inspectedNode.subtitle || inspectedNode.sub || inspectedNode.description}/>
+        <InspectorTabs plate={true} labels={labels} active={visibleTab} onSelect={setActiveTab}/>
         {visibleTab === 'Interface' && groupInterface}
         {visibleTab === 'Exposed parameters' && groupParameters}
-        <div hidden={visibleTab !== 'Chat'}>{chat}</div>
+        <div hidden={visibleTab !== 'Chat'} style={{padding:12}}>{chat}{visibleTab==='Chat' && selectionDescriptor && window.ARCHHUB_WORKSHOP_SELECTION_APPROVAL && React.createElement(window.ARCHHUB_WORKSHOP_SELECTION_APPROVAL,{state:workshopState,descriptor:selectionDescriptor})}</div>
         {visibleTab === 'Properties' && properties}
         {visibleTab === 'Runs' && <InspectorRuns node={inspectedNode} graph={graph} execution={execution}/>}
       </div>
-      {(!libraryMode || visibleTab==='Chat') && <ScopeComposer target={target} model={model} setPickerOpen={setPickerOpen} readiness={readiness} onSend={() => setActiveTab('Chat')}
+      {visibleTab==='Chat' && <ScopeComposer target={target} model={model} setPickerOpen={setPickerOpen} readiness={readiness} onSend={() => setActiveTab('Chat')}
         onReadinessStale={onReadinessStale} onModelReadRetry={onModelReadRetry} onAccount={onAccount}/>}
     </aside>
   );
@@ -8620,10 +8398,6 @@ const settings54ParamKey = row => row?.k || row?.key || row?.label || row?.name 
 const settings54ParamLabel = row => row?.label || row?.name || row?.k || row?.key || '';
 const settings54ParamValue = row => row?.v ?? row?.value ?? row?.current ?? '';
 const settings54SystemNodes = graph => (graph?.nodes || []).filter(node => node?.application === true);
-const settings54SystemWires = (graph, nodes) => {
-  const ids = new Set(nodes.map(node => node.id));
-  return (graph?.wires || []).filter(wire => ids.has(wire.from?.[0]) && ids.has(wire.to?.[0]));
-};
 const settings54NodeGroup = node => {
   const text = [node?.group, node?.title, node?.sub, node?.engine, node?.id].filter(Boolean).join(' ').toLowerCase();
   if (/account|profile|team/.test(text)) return 'account';
@@ -8645,15 +8419,20 @@ const settings54MatchNode = (node, query) => {
   return [settings54NodeTitle(node), node?.sub, node?.group, node?.engine, ...(node?.params || []).map(settings54ParamLabel)]
     .some(value => String(value || '').toLowerCase().includes(q));
 };
-const settings54NodeView = (node, index) => {
-  const cat = studioCategory(node?.cat || 'logic');
-  return {
-    glyph: cat.icon || String(settings54NodeTitle(node)).slice(0, 1).toUpperCase(),
-    color: LM.accent,
-    x: Number.isFinite(node?.x) ? node.x : 40 + (index % 3) * 300,
-    y: Number.isFinite(node?.y) ? node.y : 76 + Math.floor(index / 3) * 206,
-    w: node?.w || 240,
-  };
+const SystemSettingsNav = ({onOpen,selectedId,onSelect}) => {
+  const projection=useStudioProjection(), [query,setQuery]=React.useState('');
+  const nodes=settings54SystemNodes(projection?.graph || LM_GRAPH);
+  const selected=nodes.find(node=>node.id===(selectedId || projection?.selected));
+  const active=selected && settings54NodeGroup(selected);
+  const matches=nodes.filter(node=>settings54MatchNode(node,query));
+  return <window.AH_DS.Frame as="aside" data-system-settings-nav="" style={{height:'100%',background:LM.bgPanel,gridTemplateRows:'44px 52px 1fr'}}>
+    <PanelHead title="Settings"/><div style={{padding:'10px 8px'}}><window.AH_DS.TextField value={query} onChange={e=>setQuery(e.target.value)} placeholder="Find a setting" aria-label="Find a setting"/></div>
+    <div style={{display:'grid',alignContent:'start',gap:3,padding:'0 6px'}}>{query.trim() ? matches.length ? matches.map(node=><window.AH_DS.Btn key={node.id} kind="ghost" onClick={()=>onSelect?.(node.id)}>{settings54NodeTitle(node)}</window.AH_DS.Btn>) : <window.AH_DS.EmptyState title="No settings found"/> : SETTINGS54_GROUPS.map(group=><window.AH_DS.Btn key={group.id} kind="ghost"
+      title={group.title+' · Ctrl+K'} aria-current={group.id===active?'page':undefined} onClick={()=>onOpen(group.items[0].toLowerCase())}
+      style={{height:56,justifyContent:'flex-start',textAlign:'left',gap:10,background:group.id===active?LM.bgHover:'transparent'}}>
+      <Settings54Tile glyph={group.glyph} color={group.color}/><span><strong style={{display:'block',fontSize:13}}>{group.title}</strong><span style={{display:'block',fontSize:11,color:LM.inkSoft}}>{settings54GroupSub(group)}</span></span>
+    </window.AH_DS.Btn>)}</div>
+  </window.AH_DS.Frame>;
 };
 const settings54GroupSub = group => ({account:'Account · Profile · Team', connections:'Hosts · AI accounts · apps', ai:'Models · Brain', permissions:'what agents may do · Workspaces', appearance:'Theme · Shortcuts', storage:'disk · version · updates'})[group.id];
 
@@ -8717,45 +8496,6 @@ const Settings54ParamRow = ({ label, children, changed, hint, onReset }) => (
     <span style={window.AH_DS.styles.flex}>{children}</span>
   </window.AH_DS.Row>
 );
-const Settings54Socket = props => <window.AH_DS.Socket {...props}/>;
-const settings54PortLabel = port => port?.label || port?.l || port?.id || '';
-const settings54PortId = port => port?.id || port?.k || port?.label || port?.l || '';
-const Settings54Card = ({ node, view, selected, connected, action }) => {
-  const name = settings54NodeTitle(node);
-  const ins = node?.ins || [], outs = node?.outs || [], rows = Math.max(ins.length, outs.length);
-  const preview = node.preview?.text ?? node.preview?.summary ?? node.result;
-  return <div role="group" tabIndex={0} aria-label={name + ' node'} onKeyDown={e => {
-    if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); action(); }
-  }} data-settings54-node-card={name} data-settings54-node-id={node.id} data-canvas-card-skin="065"
-    data-node-state={canvasNeedsUser(node) ? 'needs-user' : node.state || node.status || 'unavailable'} onClick={action} style={{ position:'absolute', left:view.x, top:view.y, width:view.w || 224, padding:0,
-    textAlign:'left', background:LM.bgPanel, borderRadius:6, boxShadow:'none', border:`1px solid ${selected ? LM.accent : LM.line}`,
-    outline:selected ? `1px solid ${LM.accent}` : 'none', color:LM.ink, fontFamily:LM.sans, cursor:'pointer', overflow:'hidden' }}>
-    <span style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 10px' }}>
-      <span><Settings54Tile glyph={view.glyph} color={view.color} size={20}/></span>
-      <span style={{ minWidth:0, flex:1 }}>
-        <span style={{ display:'block', fontSize:13, fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{name}</span>
-        <span style={{ display:'block', fontSize:11, color:LM.inkSoft, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{node.subtitle || node.description || view.subtitle || 'System'}</span>
-      </span>
-      <span style={{ width:8, height:8, borderRadius:'50%', background:(connected.in || connected.out) ? LM.ok : LM.inkSoft }}/>
-    </span>
-    {preview != null && <span data-node-preview-slot="" style={{display:'block',minHeight:32,margin:'0 14px 8px',
-      borderRadius:8,fontSize:12.5,color:LM.inkSoft,overflow:'hidden'}}>
-      {typeof preview === 'object' ? JSON.stringify(preview) : String(preview)}
-    </span>}
-    {rows > 0 && <span data-settings54-ports="" style={{ display:'grid', gridTemplateColumns:'1fr 1fr', borderTop:`1px solid ${LM.line}`, padding:'4px 0' }}>
-      <span>{ins.map(port => <span key={settings54PortId(port)} style={{ position:'relative', height:22, display:'flex', alignItems:'center', padding:'0 12px', fontSize:12 }}>
-        <span data-settings54-port={node.id + ':' + settings54PortId(port)} style={{ position:'absolute', left:-6, top:6 }}><Settings54Socket t={port.t} list={port.list} filled={connected.in}/></span>{settings54PortLabel(port)}
-      </span>)}</span>
-      <span>{outs.map(port => <span key={settings54PortId(port)} style={{ position:'relative', height:22, display:'flex', alignItems:'center', justifyContent:'flex-end', padding:'0 12px', fontSize:12 }}>
-        {settings54PortLabel(port)}<span data-settings54-port={node.id + ':' + settings54PortId(port)} style={{ position:'absolute', right:-6, top:6 }}><Settings54Socket t={port.t} list={port.list} filled={connected.out}/></span>
-      </span>)}</span>
-    </span>}
-    <window.ApplicationNodeParameters node={node} compact/>
-    <span data-settings54-footer="" style={{ display:'block', borderTop:`1px solid ${LM.line}`, padding:'5px 10px', fontSize:11, color:LM.inkSoft }}>
-      {node.status || node.state || ((connected.in || connected.out) ? 'connected projection' : 'unavailable')}
-    </span>
-  </div>;
-};
 const Settings = props => {
   const canvasRead = useDeferredCanvas();
   if (canvasRead.pending || canvasRead.error) return <div data-settings-canvas-loading="" role="dialog" style={{position:'absolute', top:0, bottom:22, left:64, right:0, zIndex:60, padding:24, background:LM.bg, color:LM.ink}}>
@@ -8775,7 +8515,6 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
   const authorityState = useStudioProjection();
   const projectedGraph = authorityState?.graph || LM_GRAPH;
   const systemNodes = settings54SystemNodes(projectedGraph);
-  const systemWires = settings54SystemWires(projectedGraph, systemNodes);
   const canOpenSystem = systemAllowed(authorityState?.canvas, projectedGraph);
   const projectionRevision = authorityState?.canvas?.revision ?? workshopState?.canvas?.revision ?? '';
   useLiveCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS);
@@ -8806,7 +8545,6 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
   const [query, setQuery] = React.useState('');
   const [statusMessage, setStatusMessage] = React.useState('');
   const [activeCapability, setActiveCapability] = React.useState(initialGroup.items[0] || 'Theme');
-  const [graphOpen, setGraphOpen] = React.useState(false);
   const selectedGroup = SETTINGS54_GROUPS.find(group => group.id === selectedGroupId) || initialGroup;
   React.useEffect(() => {
     const capabilityMap = {hub:'Hub', hosts:'Hosts', providers:'Providers', connections:'Connections', account:'Account', profile:'Profile', team:'Team',
@@ -8832,30 +8570,6 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
     group.title.toLowerCase().includes(query.trim().toLowerCase()) ||
     group.items.some(item => item.toLowerCase().includes(query.trim().toLowerCase())) ||
     settings54GroupNodes(group, systemNodes).some(node => settings54MatchNode(node, query)));
-  const graphItems = systemNodes.filter(node => settings54MatchNode(node, query));
-  const graphNodes = graphItems.length || query.trim() ? graphItems : systemNodes;
-  const graphViews = new Map(graphNodes.map((node, index) => [node.id, settings54NodeView(node, index)]));
-  const selectedView = selectedNode ? graphViews.get(selectedNode.id) || settings54NodeView(selectedNode, 0) : null;
-  const graphPane = React.useRef(null);
-  const [graphWidth, setGraphWidth] = React.useState(0);
-  React.useLayoutEffect(() => {
-    const pane = graphPane.current;
-    if (!pane) return;
-    const measure = () => setGraphWidth(pane.clientWidth);
-    measure();
-    if (typeof ResizeObserver !== 'function') return;
-    const observer = new ResizeObserver(measure); observer.observe(pane);
-    return () => observer.disconnect();
-  }, []);
-  const minX = Math.min(0, ...[...graphViews.values()].map(view => view.x));
-  const minY = Math.min(0, ...[...graphViews.values()].map(view => view.y));
-  const graphExtent = Math.max(1, ...[...graphViews.values()].map(view => view.x + view.w - minX));
-  const graphScale = graphWidth ? Math.min(1, Math.max(0, graphWidth - 60) / graphExtent) : 1;
-  const graphFocus = {x:30 - minX * graphScale, y:70 - minY * graphScale};
-  const nodeWireState = React.useCallback(node => ({
-    in: systemWires.some(wire => wire.to?.[0] === node.id),
-    out: systemWires.some(wire => wire.from?.[0] === node.id),
-  }), [systemWires]);
   const chooseGroup = group => {
     userSelection.current = {tab:initialTab, manual:true};
     const node = settings54FindNodeForGroup(group, systemNodes);
@@ -8924,28 +8638,6 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
     return <input aria-label={label} title={title} defaultValue={String(value)} disabled={unavailable} onBlur={event => writeParam(node, row, event.target.value)}
       style={{ height:26, width:'100%', background:LM.bgSoft, color:LM.ink, border:`1px solid ${LM.line}`, borderRadius:LM.rad.control, fontFamily:LM.sans, fontSize:12, padding:'0 8px', opacity:unavailable ? .55 : 1 }}/>;
   };
-  const arrangeSystem = async () => {
-    if (!systemNodes.length) { setStatusMessage('System projection is not available.'); return; }
-    const ids = systemNodes.map(node => node.id);
-    const positions = Object.fromEntries(systemNodes.map((node, index) => [node.id, {
-      x:Number.isFinite(node.x) ? node.x : 40 + (index % 3) * 300,
-      y:Number.isFinite(node.y) ? node.y : 76 + Math.floor(index / 3) * 206,
-    }]));
-    const sizes = Object.fromEntries(systemNodes.map(node => [node.id, {w:node.w || 240, h:Math.max(110, 86 + (node.params || []).slice(0, 3).length * 24)}]));
-    const next = canvasArrangePositions(ids, positions, sizes, ids, systemWires);
-    const changed = Object.fromEntries(Object.entries(next).filter(([id, point]) => point.x !== positions[id]?.x || point.y !== positions[id]?.y));
-    if (!Object.keys(changed).length) { setStatusMessage('Arrangement is already current.'); return; }
-    const before = Object.fromEntries(Object.keys(changed).map(id => [id, positions[id]]));
-    const revision = authorityState?.canvas?.revision;
-    try {
-      if (window.ARCHHUB_STUDIO_AUTHORITY?.moveMany) await window.ARCHHUB_STUDIO_AUTHORITY.moveMany(changed, revision, before, 'arrange');
-      else if (window.ARCHHUB_EXISTING_WORKSHOP?.moveTopologyNodes) await window.ARCHHUB_EXISTING_WORKSHOP.moveTopologyNodes(changed, revision, before, 'arrange');
-      else throw new Error('Unavailable');
-      setStatusMessage('Arranged ' + Object.keys(changed).length + ' System nodes');
-    } catch (error) {
-      setStatusMessage(error.message || 'Arrange failed.');
-    }
-  };
   const openCompatibilityTab = tabName => {
     const key = String(tabName || '').toLowerCase();
     const names = {hub:'Hub', hosts:'Hosts', providers:'Providers', connections:'Connections',
@@ -9006,7 +8698,7 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
         width:'100%', height:'100%', background:LM.bgDeep, color:LM.ink, overflow:'hidden',
         display:'grid', gridTemplateRows:'1fr', fontFamily:LM.sans,
       }}>
-        <div style={{ display:'grid', gridTemplateColumns:graphOpen ? '248px minmax(0,1fr) 320px' : '248px minmax(0,1fr)', minHeight:0 }}>
+        <div style={{ display:'grid', gridTemplateColumns:'248px minmax(0,1fr)', minHeight:0 }}>
           <aside style={{ background:LM.bgPanel, borderRight:`1px solid ${LM.line}`, display:'grid', gridTemplateRows:'44px auto 1fr', minWidth:0 }}>
             <div style={{ display:'flex', alignItems:'center', padding:'0 12px', borderBottom:`1px solid ${LM.lineSoft}`, fontSize:16, fontWeight:600 }}>Settings</div>
             <label style={{ margin:10, height:32, borderRadius:5, background:LM.bgSoft, border:`1px solid ${LM.line}`, display:'flex', alignItems:'center', gap:8, padding:'0 10px', color:LM.inkSoft }}>
@@ -9046,60 +8738,14 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
               <span style={{ fontSize:12, color:LM.inkSoft }}>Settings <span style={{ margin:'0 6px' }}>›</span><span style={{ color:LM.ink }}>{activeCapability === 'Properties' ? 'System' : activeCapability || selectedGroup.title}</span></span>
               <span style={{ fontSize:11, color:canOpenSystem ? LM.ok : LM.warn }}>{canOpenSystem ? 'Connected · live' : 'System graph unavailable'}</span><span style={window.AH_DS.styles.fill}/>
               {statusMessage && <span role="status" style={{ fontSize:11, color:LM.inkSoft, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:260 }}>{statusMessage}</span>}
-              {graphOpen && <window.AH_DS.Btn type="button" onClick={arrangeSystem} style={({...window.AH_DS.styles.button('secondary', true), borderColor:false ? LM.accent : LM.line, ...{border:'1px solid transparent', color:LM.ink}})}>Arrange</window.AH_DS.Btn>}
+
               <window.AH_DS.Btn type="button" onClick={openSystemGraph} style={({...window.AH_DS.styles.button('secondary', true), borderColor:false ? LM.accent : LM.line, ...{}})}>System graph</window.AH_DS.Btn>
               <window.AH_DS.Btn type="button" onClick={onHome} title="Home (Alt+Home)" style={({...window.AH_DS.styles.button('secondary', true), borderColor:false ? LM.accent : LM.line, ...{}})}>Home</window.AH_DS.Btn>
               <window.AH_DS.Btn type="button" aria-label="Close" data-close-button="" onClick={onClose} style={({...window.AH_DS.styles.button('secondary', true), borderColor:false ? LM.accent : LM.line, ...{}})}>Close</window.AH_DS.Btn>
             </div>
-            {!graphOpen ? <div data-settings54-landing="" className="ah-scroll" style={{overflow:'auto', padding:'20px 24px 24px', background:LM.bgPanel}}>{inspectorRows()}</div> : <div ref={graphPane} data-settings54-graph="" data-settings54-focus={selectedId} style={{ position:'relative', background:LM.bgCanvas || LM.bgDeep, overflow:'hidden',
-              backgroundImage:`radial-gradient(${LM.line} 1px, transparent 1px)`, backgroundSize:'24px 24px' }}>
-              {!selectedNode && <div data-settings54-no-live-node="" style={{ position:'absolute', left:24, top:24, zIndex:1, maxWidth:360,
-                border:`1px dashed ${LM.line}`, borderRadius:6, background:LM.bgPanel, color:LM.inkSoft, padding:'10px 12px', fontSize:13 }}>
-                No live node for {selectedGroup.title} yet
-              </div>}
-              <div style={{ position:'absolute', left:graphFocus.x, top:graphFocus.y, width:graphExtent, height:520, transform:`scale(${graphScale})`, transformOrigin:'top left' }}>
-                <svg style={{ position:'absolute', inset:0, width:'100%', height:'100%', overflow:'visible', pointerEvents:'none' }}>
-                  {systemWires.map((wire, index) => {
-                    const from = graphViews.get(wire.from?.[0]), to = graphViews.get(wire.to?.[0]);
-                    if (!from || !to) return null;
-                    const x1 = from.x + (from.w || 240), y1 = from.y + 60, x2 = to.x, y2 = to.y + 60;
-                    const dx = Math.max(40, Math.abs(x2 - x1) * 0.44);
-                    return <path key={wire.id || index} data-settings54-wire={wire.from?.[0] + ':' + (wire.from?.[1] || '') + '->' + wire.to?.[0] + ':' + (wire.to?.[1] || '')}
-                      d={`M${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`} fill="none"
-                      stroke={LM.inkSoft} strokeWidth="2" strokeLinecap="round"/>;
-                  })}
-                </svg>
-                {graphNodes.map(node => {
-                  const view = graphViews.get(node.id) || settings54NodeView(node, 0);
-                  return <Settings54Card key={node.id} node={node} view={view} selected={node.id === selectedId}
-                    connected={nodeWireState(node)} action={() => { userSelection.current = {tab:initialTab, manual:true}; setSelectedId(node.id); setActiveCapability('Properties'); }}/>;
-                })}
-              </div>
-            </div>}
+            <div data-settings54-landing="" className="ah-scroll" style={{overflow:'auto',padding:'20px 24px 24px',background:LM.bgPanel}}>{inspectorRows()}</div>
           </main>
-          {graphOpen && <aside style={{ background:LM.bgPanel, minHeight:0, overflow:'hidden', display:'grid', gridTemplateRows:'auto auto auto 1fr' }}>
-            <div style={{ display:'flex', gap:8, padding:12, alignItems:'center' }}>
-              <Settings54Tile glyph={selectedView?.glyph || selectedGroup.glyph} color={selectedView?.color || selectedGroup.color}/>
-              <div style={{ minWidth:0 }}>
-                <div style={{ fontSize:15, fontWeight:600 }}>{selectedNode ? settings54NodeTitle(selectedNode) : selectedGroup.title}</div>
-                <div style={{ fontSize:12, color:LM.inkSoft }}>{selectedNode?.sub || selectedNode?.group || selectedNode?.id || 'No live node selected'}</div>
-              </div>
-            </div>
-            <div style={{ display:'flex', gap:2, padding:'0 12px', borderBottom:`1px solid ${LM.line}` }}>
-              {['Properties'].map((tabName, index) => {
-                const active = tabName === 'Properties' && (activeCapability === 'Properties' || !!query.trim());
-                return <window.AH_DS.Btn key={tabName} type="button" disabled={tabName === 'Chat'} onClick={() => { if (tabName === 'Properties') { userSelection.current = {tab:initialTab, manual:true}; setActiveCapability('Properties'); } }}
-                  style={{ height:32, display:'grid', placeItems:'center', padding:'0 10px', fontSize:13, fontFamily:LM.sans,
-                    color:active ? LM.ink : LM.inkSoft, border:0, borderBottom:`2px solid ${active ? LM.accent : 'transparent'}`,
-                    background:'transparent', cursor:tabName === 'Properties' ? 'pointer' : 'default', opacity:tabName === 'Chat' ? .65 : 1 }}>{tabName}</window.AH_DS.Btn>;
-              })}
-            </div>
-            {settings54NodeGroup(selectedNode) !== 'permissions' && <div style={{ display:'flex', gap:6, padding:'8px 12px' }}>
-              <span style={{ display:'inline-flex', height:20, alignItems:'center', padding:'0 8px', borderRadius:999, border:`1px solid ${LM.line}`, fontSize:11, color:LM.inkSoft }}>All</span>
-              {!!(selectedNode?.params || []).length && <span style={{ display:'inline-flex', height:20, alignItems:'center', padding:'0 8px', borderRadius:999, border:`1px solid ${LM.line}`, fontSize:11, color:LM.inkSoft }}>{(selectedNode.params || []).length} parameters</span>}
-            </div>}
-            <div className="ah-scroll" style={{ overflow:'auto', minHeight:0 }}>{inspectorRows()}</div>
-          </aside>}
+
         </div>
       </div>
     </div>
@@ -9282,12 +8928,13 @@ const SettingsSystem = ({ graph, projection, onClose, onOpenToolGraph, onBackToS
   </div>;
 };
 const SystemGraphStates = ({ state, error = '', pinnedCount = 0, movedCount = 0, onReadAgain, onBackToSettings, onAddNode, onUnpinAndArrange }) => (
-  <div data-system-graph-states style={{display:'grid', gridTemplateColumns:'1fr', gap:10}}>
-    {state === 'loading' && <section data-system-loading><h3>Reading the application graph...</h3><p>The canvas draws as soon as the graph answers. Cards appear in place; nothing jumps when they arrive.</p></section>}
-    {state === 'empty' && <section data-system-empty><h3>This group has no nodes yet.</h3><p>A group is a node made of smaller nodes. Add nodes here, or select nodes on the parent canvas and press Group (Ctrl+G).</p><window.AH_DS.Btn onClick={onAddNode}>Add node</window.AH_DS.Btn><window.AH_DS.Btn onClick={onBackToSettings}>Back to ArchHub application</window.AH_DS.Btn></section>}
-    {state === 'error' && <section data-system-error><h3>The application graph could not be read.</h3><p>{error || 'Nothing was changed. The last arranged layout is kept.'}</p><window.AH_DS.Btn onClick={onReadAgain}>Read again</window.AH_DS.Btn><window.AH_DS.Btn onClick={onBackToSettings}>Back to Settings</window.AH_DS.Btn></section>}
-    {state === 'refused' && <section data-system-refused><h3>Arrange kept {pinnedCount} pinned {pinnedCount === 1 ? 'card' : 'cards'} in place.</h3><p>{pinnedCount} {pinnedCount === 1 ? 'card is' : 'cards are'} hand-placed. Arrange moved {movedCount}.</p><window.AH_DS.Btn onClick={onUnpinAndArrange}>Open System graph</window.AH_DS.Btn><window.AH_DS.Btn onClick={onBackToSettings}>Keep</window.AH_DS.Btn></section>}
-  </div>
+  <window.AH_DS.EmptyState data-system-graph-states="" compact error={state==='error'}
+    data-system-loading={state==='loading'?true:undefined} data-system-empty={state==='empty'?true:undefined}
+    data-system-error={state==='error'?true:undefined} data-system-refused={state==='refused'?true:undefined}
+    title={state==='loading'?'Reading the application graph…':state==='empty'?'This group has no nodes yet.':state==='refused'?`Arrange kept ${pinnedCount} pinned cards in place.`:'The application graph could not be read.'}
+    detail={state==='error'?error || 'Nothing was changed. Your layout is kept.':state==='refused'?`Arrange moved ${movedCount}.`:undefined}
+    action={<><window.AH_DS.Btn onClick={state==='empty'?onAddNode:state==='refused'?onUnpinAndArrange:onReadAgain} disabled={state==='loading'}>{state==='empty'?'Add node':state==='refused'?'Open System graph':'Read again'}</window.AH_DS.Btn>
+      <window.AH_DS.Btn onClick={onBackToSettings}>Back to Settings</window.AH_DS.Btn></>}/>
 );
 const SettingsHub = ({ toolRows, onClose, onOpenTool, columns }) => {
   const [confirmOff, setConfirmOff] = React.useState(null);
@@ -11825,7 +11472,7 @@ const StatusBar = ({ session, model, setDocsOpen, onOpenWaitingTask }) => {
   const hostStripState = hostReadFailed ? 'failed' : hostReadInFlight ? 'checking' : connectedHost ? 'connected' : 'empty';
   const modelLabel = model?.tag === 'free' || /(^|\/)free$/i.test(modelRoute(model))
     ? ['free models', model?.provider || model?.vendor || 'OpenRouter'].filter(Boolean).join(' · ')
-    : [modelRoute(model), model?.vendor || model?.provider].filter(Boolean).join(' · ');
+    : [model?.name,model?.vendor || model?.provider].filter(Boolean).join(' · ');
   const [stopError, setStopError] = React.useState('');
   const postStopControl = (path, expectedStopped) => {
     const session = window.__archhubSession || {};
@@ -11915,9 +11562,9 @@ const StatusBar = ({ session, model, setDocsOpen, onOpenWaitingTask }) => {
           <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
           <StripItem onClick={handleResume}>Resume</StripItem>
         </>
-      ) : (
+      ) : runningCount>0 ? (
         <StripItem onClick={handleStop} accent={LM.err}>Stop</StripItem>
-      )}
+      ) : null}
       {stopError && <>
         <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
         <StripItem accent={LM.err}>{stopError}</StripItem>

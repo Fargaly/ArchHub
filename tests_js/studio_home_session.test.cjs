@@ -112,10 +112,10 @@ test('Home refuses a saved result after its authentication changed',async()=>{
 });
 test('Home form and Enter invoke the same submission handler',()=>{
   const home=jsx.slice(jsx.indexOf('const Home ='));
-  assert.match(home,/<form onSubmit=\{startSession\}/);
-  assert.match(home,/<textarea[\s\S]*?onChange=\{event => setDraft\(event.target.value\)\}/);
+  assert.match(home,/<window\.AH_DS\.Composer as="form"[^>]*onSubmit=\{startSession\}/);
+  assert.match(home,/<window\.AH_DS\.TextField multiline[\s\S]*?onChange=\{event => setDraft\(event.target.value\)\}/);
   assert.match(home,/onKeyDown=\{event => \{if \(event.key === 'Enter'[\s\S]*?startSession\(event\)/);
-  assert.match(home,/<button type="submit" disabled=\{starting \|\| !draft.trim\(\)\}/);
+  assert.match(home,/<window\.AH_DS\.Btn[^>]*type="submit" disabled=\{starting \|\| !draft.trim\(\)\}/);
 });
 function studioFixture() {
   const start=jsx.indexOf('onStarted={async (result,');const end=jsx.indexOf('\n            }}/>}',start);

@@ -142,12 +142,12 @@ async function mountStudio() {
     bubbles:true, cancelable:true, button:0, buttons:type === 'pointerup' ? 0 : 1,
     clientX:x, clientY:y, pointerId:7, pointerType:'mouse',
   }));
-  const drag = async (target, endX, endY) => {
+  const drag = async (target, endX, endY, emitClick = true) => {
     const start = target.getBoundingClientRect();
     firePointer(target, 'pointerdown', start.left + 6, start.top + 6);
     firePointer(win.document, 'pointermove', start.left + 26, start.top + 6);
     firePointer(win.document, 'pointerup', endX, endY);
-    target.click();
+    if(emitClick)target.click();
     await settle(); await settle();
   };
   const dragCancelWithEscape = async target => {
@@ -238,4 +238,18 @@ test('click-click wiring still uses the same connect route', async () => {
     assert.equal(studio.calls.posts[0].url, '/api/universal/interaction');
     assert.deepEqual(studio.calls.posts[0].body.event_facts, [{input:'choice', value:0}]);
   } finally { studio.close(); }
+});
+
+
+test('keyboard wiring works on the first activation after an outside drop without a click',async()=>{
+  const studio=await mountStudio();
+  try{
+    await studio.drag(studio.socket('Connect output out'),900,700,false);
+    assert.equal(studio.calls.posts.length,0);
+    const activate=async label=>{studio.socket(label).dispatchEvent(new studio.win.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));await new Promise(resolve=>studio.win.setTimeout(resolve,100));};
+    await activate('Connect output out');await activate('Connect input in');
+    assert.equal(studio.calls.posts.length,1);
+    assert.equal(studio.calls.posts[0].url,'/api/universal/interaction');
+    assert.deepEqual(studio.calls.posts[0].body.event_facts,[{input:'choice',value:0}]);
+  }finally{studio.close();}
 });

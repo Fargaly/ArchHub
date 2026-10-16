@@ -32,16 +32,16 @@ async function mountWorkshopNode({state, node, libraryMode = false, onMemberLeav
   const hooks = slice(source, 'const useWorkshopProjection =', 'const studioCanvasScope =');
   const constants = slice(source, 'const SOCKET_TOP =', 'const nodeCardTitle =');
   const renderer = slice(source, 'const NodeRenderer =', '// A card re-renders only when what it draws changed');
-  const stateDot = slice(source, 'const NodeStateDot =', 'const Socket =');
   const face = slice(source, 'const isWorkshopGraphNode =', 'const NodeBody =');
   const socket = slice(source, 'const Socket =', '// \u2500\u2500\u2500 per-category body content');
   Object.assign(context, {LM:win.AH, WIRE:{}, studioCategory:() => ({col:win.AH.purple}),
     nodeCardTitle:n => n.title || 'Workshop', nodeCardSubtitle:() => '',
     isSessionNodeShape:() => false, NodeBody:() => null,
     socketTypeLabel:t => t, socketShapeOf:(t,list) => list ? 'diamond' : t === 'trigger' ? 'triangle' : 'circle'});
+  win.ApplicationNodeParameters=({status}) => status || null; // Isolated NodeBody dependency; full owner/write courts mount Studio.
   const previewSource = slice(source,'const nodeIsWatch =','const visibleNodeParams =') +
     slice(source,'const watchPreviewFor =','const WATCH_TABLE_ROWS =');
-  vm.runInContext(transformSync(hooks + constants + previewSource + renderer + stateDot + socket + face + '\nglobalThis.NodeRenderer = NodeRenderer;', {loader:'jsx'}).code, context);
+  vm.runInContext(transformSync(hooks + constants + previewSource + renderer + socket + face + '\nglobalThis.NodeRenderer = NodeRenderer;', {loader:'jsx'}).code, context);
   const container = win.document.getElementById('root'), root = createRoot(container);
   const act = fn => React.act(async () => {await fn();});
   let heldNode = node;

@@ -2,6 +2,53 @@
 // Tasks/messages/approvals are projections of the existing authority; DSYS-078 uses the same selector.
 (() => {
 const W = window.AH;
+const workshopDecisionAvailable = (context,card,operation,choice) => {
+    const {authority,scope,acceptedDecisions} = context;
+    const key = [scope,card?.kind,card?.id,card?.kind === 'native' ? operation?.input_digest : card?.workflow?.digest || card?.input_digest || ''].join('|');
+    if (!card || acceptedDecisions.current.has(key)) return false;
+    if (choice === 'approve' && Number.isFinite(operation?.review_expires_at) && operation.review_expires_at <= Date.now()/1000) return false;
+    return choice === 'approve' ? card.kind === 'proposal' ? typeof authority?.bindWorkProposals === 'function' :
+      card.kind === 'native' ? typeof authority?.approveNativeWork === 'function' && !!operation?.input_digest :
+        card.kind === 'workflow' && typeof authority?.workshopWorkflow === 'function' && !!card.workflow?.digest :
+      card.kind === 'proposal' ? typeof authority?.declineWorkProposals === 'function' :
+        card.kind === 'native' && operation?.mode === 'agent' && typeof authority?.nativeWorkAction === 'function';
+};
+const workshopRefresh = context => Promise.resolve().then(async () => {
+    await context.authority.refreshTopologyCanvas?.();
+    await context.authority.refreshWorkshop?.(context.descriptor.root);
+}).then(() => context.onRefreshError(''), failure => context.onRefreshError(
+    'Decision recorded. Refresh failed: ' + (failure?.message || 'Connection unavailable.')));
+const workshopDecide = async (context,choice,card,operation) => {
+    const {authority,scope,acceptedDecisions,descriptor} = context;
+    if (!workshopDecisionAvailable({authority,scope,acceptedDecisions},card,operation,choice)) throw new Error('This review is no longer available. Refresh before deciding.');
+    const key = [scope,card.kind,card.id,card.kind === 'native' ? operation?.input_digest : card.workflow?.digest || card.input_digest || ''].join('|');
+    let receipt;
+    if (card.kind === 'proposal') {
+      const message = card.proposal.decision?.find(row => row.action === (choice === 'approve' ? 'approve-proposal' : 'decline-proposal'))?.message;
+      if (!message) throw new Error('Read this proposal before deciding.');
+      receipt = await (choice === 'approve' ? approveWorkProposal(authority, descriptor.root, message)
+        : declineWorkProposal(authority, descriptor.root, message));
+    } else if (card.kind === 'native') {
+      if (choice === 'approve') receipt = await authority.approveNativeWork(descriptor.root, operation.input_digest);
+      else receipt = await authority.nativeWorkAction(descriptor.root, 'stop_native', operation.work);
+    } else if (choice === 'approve') receipt = await authority.workshopWorkflow(descriptor.root, 'workflow-approve',
+      {workflow:card.workflow.root, digest:card.workflow.digest});
+    if (!receipt || receipt.ok===false) throw new Error(receipt?.error || 'The decision was not confirmed by its owner.');
+    acceptedDecisions.current.add(key);
+    await workshopRefresh(context);
+};
+window.ARCHHUB_WORKSHOP_SELECTION_APPROVAL = function WorkshopSelectionApproval({state,descriptor}) {
+  const acceptedDecisions=React.useRef(new Set()),[busy,setBusy]=React.useState(false),[error,setError]=React.useState(''),[refreshError,setRefreshError]=React.useState('');
+  const authority=window.ARCHHUB_STUDIO_AUTHORITY || window.ARCHHUB_EXISTING_WORKSHOP,scope=JSON.stringify([state?.canvas?.graph_id,state?.canvas?.root,descriptor.root]);
+  const model=window.ARCHHUB_WORKSHOP_MODEL({state,descriptor}),card=model?.approval;
+  if(!card)return null;
+  const context={authority,scope,acceptedDecisions,descriptor,onRefreshError:setRefreshError};
+  const decide=async choice=>{if(busy)return;setBusy(true);setError('');try{await workshopDecide(context,choice,card,model.native).then(undefined,failure=>{setError(failure.message);throw failure;});}finally{setBusy(false);}};
+  return <><window.ARCHHUB_APPROVAL_CARD approval={card} variant="selection" surface="selection" approveLabel="Approve" busy={busy}
+    canApprove={workshopDecisionAvailable(context,card,model.native,'approve')} canDecline={workshopDecisionAvailable(context,card,model.native,'decline')}
+    onApprove={()=>decide('approve')} onDecline={()=>decide('decline')}/>{error&&<window.AH_DS.EmptyState compact error title="Decision unavailable" detail={error} onRetry={()=>workshopRefresh(context)}/>}
+    {refreshError&&<window.AH_DS.EmptyState compact error title="Refresh unavailable" detail={refreshError} onRetry={()=>workshopRefresh(context)}/>}</>;
+};
 const derive = build => window.ArchHubTheme ? window.ArchHubTheme.derive(build) : build(W);
 
 // Projects stays hidden until the project backend lands. Legacy "tasks" opens the Board.
@@ -617,6 +664,7 @@ const WorkshopView = ({ state, descriptor, target = '', setTarget = () => {}, se
   React.useLayoutEffect(() => {
     scroll.current.update(viewport.current, scope + '|' + (activeTask?.work || ''), !!transcript && !transcript.error, !!state?.workshopPage?.before);
   }, [scope, activeTask?.work, transcript?.content_cursor, messages.length]);
+  const [decisionRefresh,setDecisionRefresh]=React.useState('');
   const run = async action => {
     if (busyRef.current) return;
     busyRef.current = true; setBusy(true); setError('');
@@ -645,33 +693,9 @@ const WorkshopView = ({ state, descriptor, target = '', setTarget = () => {}, se
     if (current()) { setTarget(address.target); setDraft(''); }
   });
   const approval = model.approval;
-  const decisionAvailable = (card,operation,choice) => {
-    const key = [scope,card?.kind,card?.id,card?.kind === 'native' ? operation?.input_digest : card?.workflow?.digest || card?.input_digest || ''].join('|');
-    if (!card || acceptedDecisions.current.has(key)) return false;
-    if (choice === 'approve' && Number.isFinite(operation?.review_expires_at) && operation.review_expires_at <= Date.now()/1000) return false;
-    return choice === 'approve' ? card.kind === 'proposal' ? typeof authority?.bindWorkProposals === 'function' :
-      card.kind === 'native' ? typeof authority?.approveNativeWork === 'function' && !!operation?.input_digest :
-        card.kind === 'workflow' && typeof authority?.workshopWorkflow === 'function' && !!card.workflow?.digest :
-      card.kind === 'proposal' ? typeof authority?.declineWorkProposals === 'function' :
-        card.kind === 'native' && operation?.mode === 'agent' && typeof authority?.nativeWorkAction === 'function';
-  };
-  const decide = (choice,card = approval,operation = native) => run(async () => {
-    if (!decisionAvailable(card,operation,choice)) return;
-    const key = [scope,card.kind,card.id,card.kind === 'native' ? operation?.input_digest : card.workflow?.digest || card.input_digest || ''].join('|');
-    if (card.kind === 'proposal') {
-      const message = card.proposal.decision?.find(row => row.action === (choice === 'approve' ? 'approve-proposal' : 'decline-proposal'))?.message;
-      if (!message) throw new Error('Read this proposal before deciding.');
-      await (choice === 'approve' ? approveWorkProposal(authority, descriptor.root, message)
-        : declineWorkProposal(authority, descriptor.root, message));
-    } else if (card.kind === 'native') {
-      if (choice === 'approve') await authority.approveNativeWork(descriptor.root, operation.input_digest);
-      else await authority.nativeWorkAction(descriptor.root, 'stop_native', operation.work);
-    } else if (choice === 'approve') await authority.workshopWorkflow(descriptor.root, 'workflow-approve',
-      {workflow:card.workflow.root, digest:card.workflow.digest});
-    acceptedDecisions.current.add(key);
-    try { await authority.refreshTopologyCanvas?.(); await authority.refreshWorkshop?.(descriptor.root); }
-    catch (_) { /* A refresh failure never replays an accepted decision. */ }
-  });
+  const decisionContext={authority,scope,acceptedDecisions,descriptor,onRefreshError:setDecisionRefresh};
+  const decisionAvailable=(card,operation,choice)=>workshopDecisionAvailable(decisionContext,card,operation,choice);
+  const decide=(choice,card=approval,operation=native)=>run(()=>workshopDecide(decisionContext,choice,card,operation));
   const openCanvas = () => run(async () => {
     const workflow = (transcript?.workflows || []).find(row => row.root === activeTask?.work ||
       row.members?.includes(activeTask?.work) || row.nodes?.some(node => node.root === activeTask?.work)) || null;
@@ -779,6 +803,7 @@ const WorkshopView = ({ state, descriptor, target = '', setTarget = () => {}, se
       {hasThread && <WorkshopAgentPicker aliases={aliases} target={replyTarget} label={replyName} onSelect={setTarget} disabled={!aliases.length||busy}
         avatar={tile(agents.find(a=>a.id===replyTarget)||lead,16,null)}/>}<span style={{flex:1}}/>
       <window.AH_DS.Btn variant="workshop" type="button" aria-label="Send" data-workshop-send="" data-workshop-primary="" disabled={busy||transcript?.can_send!==true||!draft.trim()||(!replyTarget&&!draft.trim().startsWith('@'))} onClick={send} style={button(!!draft.trim()&&!approval&&!model.status.waiting,true)}>Send</window.AH_DS.Btn></div>
+      {decisionRefresh&&<window.AH_DS.EmptyState compact error title="Refresh unavailable" detail={decisionRefresh} onRetry={()=>workshopRefresh(decisionContext)}/>}
       {(error||transcript?.error)&&<div role="alert" style={{fontSize:13,color:W.err}}>{window.AH_DS.errorText(error||transcript.error)}</div>}</window.AH_DS.Composer>;
   return <window.AH_DS.Frame as="main" data-workshop-s1="" data-workshop72="" data-workshop-v3="" data-screen-label="5.1v3_workshop" data-workshop-id={model.id}
     style={{gridColumn:'1 / -1',gridRow:'1 / -1',minHeight:0,overflow:'hidden',display:'grid',width:'100%',height:'100%',gridTemplateRows:embedded ? '1fr' : `1fr ${K.status}px`,background:K.background,color:W.ink,fontFamily:W.sans,margin:0}}>

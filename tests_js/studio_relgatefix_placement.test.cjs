@@ -41,7 +41,7 @@ async function mount() {
     setTimeout:win.setTimeout.bind(win), clearTimeout:win.clearTimeout.bind(win)});
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../nodelang/studio/tokens.jsx'), 'utf8'), context);
   context.LM = win.AH;
-  const canvas = part('const SOCKET_TOP =', 'const NodeStateDot =') + require('./workshop72_node_helpers.cjs').nodePreviewSource(source);
+  const canvas = part('const SOCKET_TOP =', 'const Socket =') + require('./workshop72_node_helpers.cjs').nodePreviewSource(source);
   vm.runInContext(transformSync(part('const studioShortcut =', 'const studioRefreshCanvasInPlace =') +
     part('const studioRefreshCanvasInPlace =', '\nconst StudioLM =') + canvas + '\nglobalThis.NodeCanvas = NodeCanvas;', {loader:'jsx'}).code, context);
   const root = createRoot(win.document.getElementById('root'));

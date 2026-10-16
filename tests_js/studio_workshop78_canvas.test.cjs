@@ -24,21 +24,22 @@ function fixture() {
   return {node,state};
 }
 
-test('DSYS-078 mounts a surf + e2 skin and preview slot on every graph card category', async () => {
+test('SCREENS2 DSYS-061 mounts the shared plate skin and preview slot on every graph card category', async () => {
   const fx = fixture(), ui = await mountWorkshopNode(fx);
   try {
     for (const cat of ['read','logic','filter','watch','output','host','ai']) {
       const node = {id:'real-' + cat,cat,title:'Graph supplied title',x:10,y:20,params:[],ins:[],outs:[],state:'working'};
       await ui.draw({node});
       const card = ui.doc.querySelector('.lm-node');
-      assert.equal(card.dataset.canvasCardSkin,'078');
-      assert.match(card.style.background,/linear-gradient/);
-      assert.equal(card.style.boxShadow,ui.win.AH.elev.e2);
+      assert.equal(card.dataset.canvasCardSkin,'061');
+      assert.ok(card.hasAttribute('data-ds-node'));
+      assert.equal(card.style.background,'rgb(21, 21, 26)');
+      assert.equal(card.style.borderRadius,'6px');
       assert.equal(ui.doc.querySelectorAll('[data-node-preview-slot]').length,1);
-      assert.equal(ui.doc.querySelector('[data-category-tile]').style.width,'30px');
-      assert.equal(ui.doc.querySelector('[data-node-card-title]').style.fontSize,'14px');
-      assert.equal(ui.doc.querySelector('[data-node-card-title]').style.fontWeight,'700');
-      assert.equal(ui.doc.querySelector('[data-node-card-subtitle]').style.fontSize,'12px');
+      assert.equal(ui.doc.querySelector('[data-category-tile]').style.width,'20px');
+      assert.equal(ui.doc.querySelector('[data-node-card-title]').style.fontSize,'13px');
+      assert.equal(ui.doc.querySelector('[data-node-card-title]').style.fontWeight,'600');
+      assert.equal(ui.doc.querySelector('[data-node-card-subtitle]').style.fontSize,'11px');
       assert.equal(ui.doc.querySelector('[data-node-footer-status]').textContent,'working');
     }
   } finally {await ui.close();}
@@ -126,13 +127,15 @@ test('DSYS-078 doubles only real list wires and keeps their endpoint interfaces'
   assert.match(source,/onRun=\{\(\) => menuRun\(\)\}/);
 });
 
-test('DSYS-078 scalar event ports are round and list event ports diamond without changing graph type',async()=>{
+test('SCREENS2 plate scalar event ports are triangular and list event ports diamond without changing graph type',async()=>{
   const fx=fixture();fx.node.ins=[{id:'event-in',label:'run',t:'trigger',connectable:true}];
   fx.node.outs=[{id:'event-out',label:'events',t:'trigger',list:true,connectable:true}];
   const ui=await mountWorkshopNode(fx);
   try{
     const input=ui.doc.querySelector('[data-socket-port="event-in"]'),output=ui.doc.querySelector('[data-socket-port="event-out"]');
-    assert.equal(input.dataset.socketShape,'circle');assert.equal(output.dataset.socketShape,'diamond');
+    assert.equal(input.dataset.socketShape,'triangle');assert.equal(output.dataset.socketShape,'diamond');
+    assert.ok(input.querySelector('[data-ds-socket] svg'));assert.equal(output.querySelector('[data-ds-socket] svg'),null);
+    assert.match(output.querySelector('[data-ds-socket] > span').style.transform,/rotate\(45deg\)/);
     assert.equal(input.dataset.socketType,'trigger');assert.equal(output.dataset.socketType,'trigger');
     assert.equal(input.style.width,'11px');assert.equal(output.style.width,'11px');
   }finally{await ui.close();}
@@ -147,33 +150,21 @@ test('DSYS-076 every existing Home/status/social approval decision uses the shar
   }
 });
 
-test('DSYS-078 Settings system canvas mounts the same skin, preview, 30px ring, parameters and live footer', async () => {
-  const ui = await mountWorkshopNode(fixture()), React = require('react'), {createRoot} = require('react-dom/client');
-  const container = ui.doc.createElement('div');ui.doc.body.appendChild(container);const root = createRoot(container);
-  try {
-    const source = read('nodelang/studio/studio-lm.jsx'), {transformSync} = require('esbuild');
+test('SCREENS2 System canvas shares the plate Node, real params and live footer', async()=>{
+  const ui=await mountWorkshopNode(fixture());
+  try{
+    const {transformSync}=require('esbuild');
     vm.runInContext(transformSync(read('nodelang/studio/param-types.jsx'),{loader:'jsx'}).code,ui.context);
-    // Keep the real parameter module's local bindings isolated from the canvas source slice,
-    // while retaining its actual ApplicationNodeParameters export and readonly row behavior.
     vm.runInContext(transformSync('(function(){\n'+read('nodelang/studio/studio-params.jsx')+'\n})();',{loader:'jsx'}).code,ui.context);
-    const helpers = ['settings54NodeTitle','settings54ParamKey','settings54ParamLabel','settings54ParamValue']
-      .map(name => source.match(new RegExp('const ' + name + ' = [^\\n]+'))[0]).join('\n');
-    vm.runInContext(transformSync(helpers + '\n' + slice(source,'const Settings54Tile =','const Settings54Seg =') +
-      slice(source,'const Settings54Socket =','const Settings =') + '\nglobalThis.Settings54Card=Settings54Card;', {loader:'jsx'}).code,ui.context);
-    let opened = 0;
-    const node = {id:'settings-real',title:'Graph-owned Settings',state:'ready',params:[{k:'density',label:'Density',v:'Compact'}],
-      preview:{text:'Real preview receipt'},ins:[],outs:[{id:'settings-value',t:'text',label:'value'}]};
-    await ui.act(() => root.render(React.createElement(ui.context.Settings54Card,{node,view:{x:10,y:20,glyph:'S',color:ui.win.AH.accent},
-      connected:{in:false,out:true},selected:false,action:() => opened++})));
-    const card = container.querySelector('[data-settings54-node-card]');
-    assert.equal(card.dataset.canvasCardSkin,'065');assert.equal(card.style.background,ui.win.getComputedStyle(Object.assign(ui.doc.createElement('div'),{style:'background:'+ui.win.AH.bgPanel})).background);
-    assert.equal(card.style.boxShadow,'none');
-    assert.equal(card.querySelector('[data-node-preview-slot]').textContent,'Real preview receipt');
-    assert.equal(card.querySelector('[aria-hidden=true]').style.width,'20px');
-    assert.equal(card.querySelector('[data-settings54-footer]').textContent,'ready');
+    ui.context.NodeBody=({n})=>require('react').createElement(ui.win.ApplicationNodeParameters,{node:n,compact:true});
+    await ui.draw({node:{id:'settings-real',application:true,live:true,cat:'logic',title:'Graph-owned Settings',state:'ready',
+      params:[{k:'density',label:'Density',v:'Compact',editable:false}],liveState:{status:'available'},ins:[],outs:[],x:10,y:20}});
+    const card=ui.doc.querySelector('[data-ds-node]');assert.ok(card);
+    assert.equal(card.querySelector('[data-category-tile]').style.width,'20px');
+    assert.equal(card.querySelector('[data-node-footer-status]').textContent,'ready');
     assert.ok(card.textContent.includes('DensityCompact'));
-    await ui.click(card);assert.equal(opened,1);
-  } finally {await ui.act(() => root.unmount());await ui.close();}
+    assert.match(card.querySelector('[data-sysnode-live-state]').textContent,/Statusavailable/);
+  }finally{await ui.close();}
 });
 
 test('DSYS-078 Fit measures mounted cards when the real projection omits optional width', async () => {

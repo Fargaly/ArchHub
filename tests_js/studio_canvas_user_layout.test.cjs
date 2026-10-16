@@ -35,7 +35,7 @@ const LM = new Proxy(Object.fromEntries([...palette.matchAll(/^ {2}(\w+):/gm)].m
 
 const slice = () => {
   const start = source.indexOf('const SOCKET_TOP =');
-  const end = source.indexOf('const NodeStateDot =', start);
+  const end = source.indexOf('const Socket =', start);
   assert.ok(start > 0 && end > start, 'the canvas is a slice of the shipped studio-lm.jsx');
   return source.slice(start, end) + require('./workshop72_node_helpers.cjs').nodePreviewSource(source);
 };
@@ -155,6 +155,10 @@ const context = vm.createContext({React, LM, window:dom.window, document:dom.win
     setTimeout:dom.window.setTimeout.bind(dom.window), clearTimeout:dom.window.clearTimeout.bind(dom.window)});
   vm.runInContext(transformSync(shortcutSlice() + slice() + '\nglobalThis.NodeCanvas = NodeCanvas;',
     {loader:'jsx', format:'cjs'}).code, context);
+  const parameterSource = fs.readFileSync(path.join(root,'nodelang/studio/studio-params.jsx'),'utf8');
+  const appParameters = parameterSource.slice(parameterSource.indexOf('function ApplicationNodeParameters('),parameterSource.indexOf('function ApplicationAwareInspector('));
+  context.PM=LM;
+  vm.runInContext(transformSync(appParameters+'\nwindow.ApplicationNodeParameters=ApplicationNodeParameters;',{loader:'jsx'}).code,context);
   const reactRoot = createRoot(dom.window.document.getElementById('root'));
   const props = {focusId:null, setFocusId:() => {}, setLibraryOpen:() => {}, userNodes:[],
     addNodeFromLibrary:() => {}, model:null, system};
@@ -324,9 +328,15 @@ test('the canvas draws the user\'s cards; the application\'s open only as the fo
   } finally { await founder.close(); }
   const systemTab = await mount({systemView:true, system:true, nodes:MARKED(), wires});
   try {
+    await systemTab.settle(30);
+    assert.equal(systemTab.saves.length, 0, 'opening System must not persist its layout');
     assert.deepEqual(cards(systemTab), ['app:agent-session:a', 'gm:domain:ui'], 'the System tab draws the application\'s parts');
     assert.equal(systemTab.doc.querySelectorAll('[data-canvas-frame]').length, 0, 'System draws node cards, not frames');
     assert.equal(systemTab.doc.querySelectorAll('.lm-wires path[stroke="transparent"]').length, 1, 'their wire is drawn with them');
+    await systemTab.arrange();
+    await systemTab.settle(30);
+    assert.equal(systemTab.saves.length, 1, 'explicit Arrange still persists exactly once');
+    assert.equal(systemTab.saves[0].placement, 'arrange');
   } finally { await systemTab.close(); }
   const notFounder = await mount({systemView:false, system:true, nodes:MARKED(), wires});
   try {
@@ -337,8 +347,9 @@ test('the canvas draws the user\'s cards; the application\'s open only as the fo
 test('an empty canvas says it holds only what the user places', async () => {
   const view = await mount({nodes:INTERNALS, systemView:true});
   try {
-    const note = view.doc.querySelector('[role="note"]');
-    assert.match(note.textContent, /This canvas holds only what you place on it\./);
-    assert.match(note.textContent, /Settings > System/);
+    const note = view.doc.querySelector('[data-canvas-state="empty"]');
+    assert.match(note.textContent, /Build your graph/);
+    assert.equal(view.doc.querySelectorAll('.lm-node[data-node-id]').length,0);
+    assert.ok([...note.querySelectorAll('button')].some(button=>button.textContent==='Add node'),'empty canvas retains a visible recovery action');
   } finally { await view.close(); }
 });

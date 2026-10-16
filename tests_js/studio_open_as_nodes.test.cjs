@@ -154,7 +154,7 @@ test('the workflow-card handler walks its own workflow scope and ignores selecti
 
 // ── wfAct refreshes the topology after an accepted mutation (stale-snapshot root cause) ──
 test('inline workflow approval refreshes topology after the accepted existing mutation',()=>{
-  const start=source.indexOf('  const decide =');const body=source.slice(start,source.indexOf('  const openCanvas =',start));
+  const start=source.indexOf('const workshopRefresh =');const body=source.slice(start,source.indexOf('window.ARCHHUB_WORKSHOP_SELECTION_APPROVAL',start));
   assert.ok(start>0);assert.match(body,/authority\.workshopWorkflow\(descriptor\.root, 'workflow-approve'/);
   assert.match(body,/refreshTopologyCanvas\?\.\(\)/);
 });
@@ -426,7 +426,8 @@ test('RUNTIME removed workflow-card approval cannot POST or replay from S1', asy
 test('RUNTIME inline approval keeps an accepted workflow receipt when topology refresh fails', async () => {
   const {posts, errors} = await mountForApprove({execute:true});
   assert.deepEqual(posts, ['workflow-approve'], 'one accepted mutation POST, never replayed after failed refresh');
-  assert.deepEqual(errors, [], 'a failed refresh does not report the accepted action as failed');
+  assert.equal(errors.length,1,'failed read is visible after acceptance');
+  assert.match(errors[0],/Decision recorded.*Refresh failed/,'refresh warning preserves the accepted receipt');
 });
 
 for(const action of ['workflow-approve','workflow-revoke','workflow-draft']){
@@ -450,7 +451,7 @@ async function mountCanvasReveal(options = {}) {
   const {transformSync} = require('esbuild');
   const lmSource = fs.readFileSync(path.join(path.dirname(file), 'studio-lm.jsx'), 'utf8');
   const start = lmSource.indexOf('const SOCKET_TOP =');
-  const end = lmSource.indexOf('const NodeStateDot =', start);
+  const end = lmSource.indexOf('const Socket =', start);
   const shortcutStart = lmSource.indexOf('const studioShortcut =');
   const shortcutEnd = lmSource.indexOf('// An ordinary canvas edit', shortcutStart);
   assert.ok(start > 0 && end > start, 'NodeCanvas is a slice of shipped studio-lm.jsx');

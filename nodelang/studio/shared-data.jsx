@@ -531,6 +531,7 @@ const Icon = ({ name, size=16, stroke=1.6, color='currentColor' }) => {
     default:         return null;
   }
 };
+window.Icon = Icon;
 
 // Hook: typewriter for fake LLM streaming
 function useTypewriter(text, speed=14, deps=[]) {
@@ -627,6 +628,15 @@ window.ARCHHUB_APPROVAL_CARD = function ApprovalCard({approval = {}, onApprove, 
   const subline = [surface === 'workshop' ? '' : approval.agent?.name || approval.agent_label || (typeof approval.agent === 'string' ? approval.agent : ''),
     approval.host,approval.document || approval.target,approval.scope,
     approval.unchanged_scope === true ? 'nothing else changes' : ''].filter(Boolean).join(' · ');
+  if(variant==='selection') return <window.AH_DS.Card data-approval-component="shared" data-approval-surface={surface} data-workshop-approval-card={approval.id || ''} data-approval-state={approval.state}
+    style={{border:`1px solid ${A.warn}aa`,borderRadius:8,padding:10,display:'grid',gap:8,background:'transparent',fontSize:13}}>
+    <span>{approval.title || approval.summary || 'Review this change'}</span>
+    <div style={{display:'flex',gap:8}}><window.AH_DS.Btn sm primary disabled={busy||pending||held.current.settled||!canApprove||!onApprove} onClick={()=>decide(onApprove,canApprove)}>{held.current.settled?'Approved':pending?'Approving…':approveLabel}</window.AH_DS.Btn>
+      <window.AH_DS.Btn sm aria-expanded={expanded} onClick={()=>setExpandedKey(expanded?null:key)}>Ask why</window.AH_DS.Btn><span style={{flex:1}}/>
+      <window.AH_DS.Btn sm kind="ghost" disabled={busy||pending||held.current.settled||!canDecline||!onDecline} onClick={()=>decide(onDecline,canDecline)}>Decline</window.AH_DS.Btn></div>
+    {expanded&&<div style={{fontSize:12,color:A.inkSoft}}>{subline}{approval.summary&&<p>{approval.summary}</p>}{rows.map((row,i)=><window.AH_DS.Row key={row.id || i} k={row.label}>{row.now} → {row.after}</window.AH_DS.Row>)}</div>}
+    {error&&<div role="alert">{error}</div>}
+  </window.AH_DS.Card>;
   if (variant === 'set-approve') return <section data-approval-component="shared" data-approval-variant="set-approve"
       data-approval-surface={surface} data-workshop-approval-card={approval.id || ''} data-approval-state={approval.state}
       style={{borderRadius:14,background:'linear-gradient(180deg, #202027 0%, #1a1a20 100%)',
@@ -718,20 +728,16 @@ window.ARCHHUB_PACKAGE_SHEETS = ({sheets = [],compact = false}) => {
 window.ARCHHUB_APP_RAIL = ({active = 'Home', waiting = 0, account = {}, workshop = false, compact = false, persistent = false, empty = false, onNavigate}) => {
   const W = window.AH;
   const initials = account.initials || String(account.name || account.email || '?').trim().split(/\s+/).map(word => Array.from(word)[0]).slice(0, 2).join('').toUpperCase();
-  const item = (g, label) => <window.AH_DS.Btn key={label} type="button" role="link" aria-label={label}
-    title={label === 'Home' ? 'All sessions' : label === 'Chats' ? 'Chats · Ctrl+K, search Chats' : label} aria-keyshortcuts={label === 'Settings' ? 'Control+,' : undefined}
-    data-rail-panel={label} data-rail-home={label === 'Home' ? '' : undefined}
-    aria-current={active === label ? 'true' : undefined} onClick={() => onNavigate?.(label)}
-    style={{width:empty ? 56 : compact ? 44 : 64,height:empty || compact ? 52 : 58,padding:0,border:0,background:'transparent',fontFamily:W.sans,display:'grid',placeItems:'center',alignContent:'center',gap:4,position:'relative',color:active===label?W.ink:W.inkSoft,cursor:'pointer'}}>
-    <span style={{width:36,height:30,borderRadius:8,display:'grid',placeItems:'center',fontSize:16,background:active===label?W.bgHover:'transparent',boxShadow:active===label?W.elev?.e1:'none'}}>{g}</span>
-    <span style={{fontSize:compact ? 10 : 11,fontWeight:active===label?600:500}}>{label}</span>
-    {label==='Workshop'&&waiting>0&&<b style={{position:'absolute',top:3,right:10,minWidth:18,height:18,borderRadius:9,background:W.warn,color:W.onFill,fontSize:11,fontWeight:700,display:'grid',placeItems:'center'}}>{waiting}</b>}
-  </window.AH_DS.Btn>;
+  const item = (g,label) => <window.AH_DS.Rail key={label} g={g} label={label} active={active===label} variant={compact?'controls':'home'}
+    role="link" title={label==='Home'?'All sessions':label} aria-label={label}
+    aria-keyshortcuts={label==='Settings'?'Control+,':undefined} data-rail-panel={label} data-rail-home={label==='Home'?'':undefined}
+    badge={label==='Home' && waiting>0 ? waiting : undefined} onClick={()=>onNavigate?.(label)}
+    style={{width:empty?56:compact?44:64,height:empty||compact?52:58,display:persistent&&label==='Docs'?'none':undefined}}/>;
   return <window.AH_DS.Rail data-app-rail="" data-workshop72-rail={workshop ? '' : undefined} aria-label="Main navigation"
     style={{width:empty ? 56 : compact ? 44 : 64,boxSizing:'border-box',background:W.bg,borderRight:`1px solid ${W.lineSoft}`,display:'grid',gridTemplateRows:'auto 1fr auto',paddingTop:compact ? 6 : 12,justifyItems:'center',gridColumn:'1',gridRow:workshop && !persistent ? undefined : '1 / span 2'}}>
     <div style={{display:'grid',gap:compact?2:4}}>{(persistent ? [['⌂','Home'],['◌','Chats'],['◎','Workshop'],['⬡','Canvas'],['▦','Library'],['?','Docs']] : empty ? [['⌂','Home'],['◎','Workshop'],['▦','Library'],['?','Docs']] : compact ? [['◌','Chats'],['▦','Library'],['?','Docs'],['◫','Cockpit']] : workshop ? [['⌂','Home'],['◎','Workshop'],['⬡','Canvas'],['▦','Library'],['?','Docs']] : [['⌂','Home'],['◌','Chats'],['◎','Workshop'],['⬡','Canvas'],['▦','Library'],['?','Docs']]).map(([g,l])=>item(g,l))}</div><span/>
     <div style={{paddingBottom:10,display:'grid',gap:4,justifyItems:'center'}}>{item('⚙','Settings')}
       {!empty && <window.AH_DS.Btn type="button" data-rail-panel="Account" aria-current={active === 'Account' ? 'true' : undefined} data-workshop-account-avatar={workshop ? '' : undefined} aria-label="Account" title={account.email || 'Account'} onClick={()=>onNavigate?.('Account')}
-        style={{width:compact?28:32,height:compact?28:32,padding:0,border:0,borderRadius:'50%',background:account.colour||account.color||account.avatar_color||W.userAv,color:W.onUserAv,display:'grid',placeItems:'center',fontFamily:W.sans,fontSize:12,fontWeight:700,cursor:'pointer'}}>{initials}</window.AH_DS.Btn>}
+        style={{display:active==='Home'?'none':'grid',width:compact?28:32,height:compact?28:32,padding:0,border:0,borderRadius:'50%',background:account.colour||account.color||account.avatar_color||W.userAv,color:W.onUserAv,placeItems:'center',fontFamily:W.sans,fontSize:12,fontWeight:700,cursor:'pointer'}}>{initials}</window.AH_DS.Btn>}
     </div></window.AH_DS.Rail>;
 };

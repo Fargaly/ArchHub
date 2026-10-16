@@ -140,12 +140,20 @@ def register_host_tools(server, control, *, read_only=False) -> None:
         """Active Revit document info from the add-in."""
         return read(lambda: _broker("revit", "/info", port=port))
 
+    @server.tool(name="revit_open_document")
+    def revit_open_document(path: str, activate: bool = True, view: str | None = None,
+                            port: int | None = None) -> dict:
+        """Open and activate a model (UNC supported), optionally a named view. Works at Home; no model write."""
+        return read(lambda: _broker("revit", "/open", {"path": path, "activate": activate, "view": view},
+                                    port, EXEC_WAIT_LIMIT))
+
     @server.tool(name="revit_execute_csharp")
     def revit_execute_csharp(code: str, transaction_name: str = "ArchHub",
-                             port: int | None = None) -> dict:
-        """Execute C# live in Revit (globals UIApp, UIDoc, Doc; set `result`). Needs Work admitting revit."""
+                             port: int | None = None, transaction: bool = True) -> dict:
+        """C# with UIApp/UIDoc/Doc and result. Doc is null at Home; transaction:false for app calls. Needs Work."""
         return effect("revit", lambda: _broker("revit", "/exec",
-                      {"code": code, "transaction_name": transaction_name}, port, EXEC_WAIT_LIMIT))
+                      {"code": code, "transaction_name": transaction_name,
+                       **({"transaction": False} if not transaction else {})}, port, EXEC_WAIT_LIMIT))
 
     @server.tool(name="revit_screenshot")
     def revit_screenshot(output_path: str = SCREENSHOT_PATH, width_px: int = 1920,

@@ -1,19 +1,7 @@
-"""Reach a running Revit, or say honestly that none is there.
+"""Discover Revit sessions and use the one signed broker, without a model cache.
 
-This is the narrow admitted bridge for one host. It knows two things: how
-to find the Revit sessions that are actually listening, and how to ask one
-of them a question. It holds no catalogue -- what may be asked is declared
-in the graph -- and it performs no signing, because deciding that an
-effect is permitted is not the same job as carrying it out.
-
-Every session Revit opens raises its own listener on its own port, so a
-machine with four models open is four hosts, not one. Discovery is a scan
-of the published range rather than a remembered port: a port remembered
-from last time is a port that belongs to whatever is listening now.
-
-The listener answers on `localhost` and refuses `127.0.0.1` outright --
-its URL reservation is registered for the name, and the kernel rejects
-the address before the add-in ever sees it.
+Use localhost: the listener's URL reservation rejects 127.0.0.1.
+Each session owns its port. Capabilities and approval belong to the graph.
 """
 from __future__ import annotations
 
@@ -1079,7 +1067,7 @@ def broker_call(service: str, route: str, body: Mapping[str, object] | None = No
                 *, port: int | None = None, timeout: float = _PING_TIMEOUT) -> dict:
     """One signed call to the one live Revit ("revit") or AutoCAD ("acad") broker.
 
-    More than one live session of that identity needs ``port``; none is refused.
+    More than one live session needs ``port``; /open also accepts Home sessions.
     """
     rows = [row for row in broker_sessions(service) if port is None or row["port"] == port]
     name = "AutoCAD" if service == "acad" else "Revit"
@@ -1091,7 +1079,7 @@ def broker_call(service: str, route: str, body: Mapping[str, object] | None = No
             len(rows), name, ", ".join(str(row["port"]) for row in rows)))
     answer = _call(rows[0]["port"], route, body, timeout=timeout)
     return {"ok": answer.get("status") == "ok", "port": rows[0]["port"],
-            "document": rows[0].get("document"), **answer}
+            "document": answer.get("title") if route == "/open" else rows[0].get("document"), **answer}
 
 
 def _execute(session: Mapping[str, object], script: str, transaction: str,

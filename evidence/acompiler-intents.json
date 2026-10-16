@@ -2831,6 +2831,28 @@
         "evidence/instfix2-cleanup.txt",
         "evidence/instfix2-compiler-build.txt"
       ]
+    },
+    "REVITOPEN": {
+      "scope": [
+        "bridges/sources/revit_mcp_core/RevitMCPCore.cs",
+        "nodelang/clean_revit_adapter.py",
+        "nodelang/native_host_tools.py",
+        "tests_replica/test_revit_open.py",
+        "tests_replica/test_native_host_tools.py",
+        "tests_replica/revit_open_fixture/",
+        "evidence/revitopen/",
+        "evidence/acompiler-intents.json",
+        "READ-PROOF.md",
+        "PROGRESS.md",
+        "plan.md",
+        "tasks.json",
+        "notes.md",
+        "RESULT-REVITOPEN.md",
+        "REVITOPEN.patch",
+        "REVITOPEN.patch.sha256",
+        "REGISTER.md"
+      ],
+      "source": "BRIEF-REVITOPEN.md; inputs/founder-blocker.md; founder dispatch 2026-10-16"
     }
   }
 }

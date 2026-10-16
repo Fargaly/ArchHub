@@ -7,7 +7,7 @@
 // What lives here (hot-reloadable):
 //   * HTTP listener + route dispatch
 //   * Session-registry file writer + heartbeat
-//   * /info /exec /screenshot /reload route handlers
+//   * /info /open /exec /screenshot /reload route handlers
 //   * ScriptCompiler invocation (AgDR-0025 subprocess csc)
 //   * Per-Core sha256 reported via /ping
 //
@@ -257,6 +257,10 @@ namespace RevitMCPCore
                 case "/exec":
                     return await ExecAsync(body).ConfigureAwait(false);
 
+                case "/open":
+                    if (method != "POST") return OpenResult(null, "Use POST for /open.");
+                    return await OpenAsync(body).ConfigureAwait(false);
+
                 case "/screenshot":
                     return await ScreenshotAsync(body).ConfigureAwait(false);
 
@@ -268,22 +272,68 @@ namespace RevitMCPCore
             }
         }
 
+        // App-level work runs through the shim's ExternalEvent, never Idling
+        // or a transaction. Pass the user-visible path unchanged (especially UNC).
+        private async Task<string> OpenAsync(string body)
+        {
+            string path, view = null;
+            try
+            {
+                using var json = JsonDocument.Parse(body);
+                path = json.RootElement.GetProperty("path").GetString();
+                if (string.IsNullOrWhiteSpace(path)) return OpenResult(null, "Missing 'path'.");
+                if (json.RootElement.TryGetProperty("activate", out var activate) && !activate.GetBoolean())
+                    return OpenResult(null, "/open requires activate:true.");
+                if (json.RootElement.TryGetProperty("view", out var v)) view = v.GetString();
+            }
+            catch (Exception ex) { return OpenResult(null, "Bad JSON: " + ex.Message); }
+            return await _submit(a =>
+            {
+                UIDocument opened = null;
+                try
+                {
+                    var app = (UIApplication)a;
+                    using (var modelPath = ModelPathUtils.ConvertUserVisiblePathToModelPath(path))
+                    using (var options = new OpenOptions())
+                        opened = app.OpenAndActivateDocument(modelPath, options, false);
+                    if (!string.IsNullOrEmpty(view))
+                    {
+                        var matches = new FilteredElementCollector(opened.Document).OfClass(typeof(View))
+                            .Cast<View>().Where(v => !v.IsTemplate && v.Name == view).ToList();
+                        if (matches.Count != 1)
+                            return OpenResult(opened, "View name must match exactly one non-template view: " + view);
+                        opened.ActiveView = matches[0];
+                    }
+                    return OpenResult(opened, null);
+                }
+                catch (Exception ex) { return OpenResult(opened, ex.GetType().Name + ": " + ex.Message); }
+            }).ConfigureAwait(false);
+        }
+
+        private static string OpenResult(UIDocument opened, string error) =>
+            JsonSerializer.Serialize(new {
+                status = error == null ? "ok" : "error", title = opened?.Document.Title,
+                path = opened?.Document.PathName, active_view = opened?.ActiveView?.Name, error
+            });
+
         // ─── /exec ───────────────────────────────────────────────
 
         private async Task<string> ExecAsync(string body)
         {
             string code = null, txName = "MCP exec";
+            bool transaction = true;
             try
             {
                 using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body);
                 code = doc.RootElement.TryGetProperty("code", out var c) ? c.GetString() : null;
                 txName = doc.RootElement.TryGetProperty("transaction_name", out var t)
                             ? t.GetString() : "MCP exec";
+                if (doc.RootElement.TryGetProperty("transaction", out var mode)) transaction = mode.GetBoolean();
             }
             catch (Exception ex) { return JsonError("Bad JSON: " + ex.Message); }
             if (string.IsNullOrEmpty(code)) return JsonError("Missing 'code'.");
 
-            return await _submit(a => RunCSharpScript((UIApplication)a, code, txName))
+            return await _submit(a => RunCSharpScript((UIApplication)a, code, txName, transaction))
                               .ConfigureAwait(false);
         }
 
@@ -348,7 +398,7 @@ namespace RevitMCPCore
             return result;
         }
 
-        private string RunCSharpScript(UIApplication app, string code, string txName)
+        private string RunCSharpScript(UIApplication app, string code, string txName, bool transaction)
         {
             var ctx = new ScriptContext
             {
@@ -356,7 +406,6 @@ namespace RevitMCPCore
                 UIDoc = app.ActiveUIDocument,
                 Doc   = app.ActiveUIDocument?.Document,
             };
-            if (ctx.Doc == null) return JsonError("No active document.");
 
             // AgDR-0031 — pass EVERY loaded assembly as a reference, not a
             // hardcoded 6-entry list.  On .NET 8 (Revit 2025+) csc enforces
@@ -405,9 +454,12 @@ namespace RevitMCPCore
                 "Autodesk.Revit.DB", "Autodesk.Revit.UI",
             };
 
-            using (var tx = new Transaction(ctx.Doc, txName))
+            // Home-screen scripts have Doc/UIDoc = null. With a document open,
+            // transaction:false explicitly admits application-level API calls.
+            using (var tx = transaction && ctx.Doc != null ? new Transaction(ctx.Doc, txName) : null)
             {
-                try { tx.Start(); } catch { }
+                try { tx?.Start(); }
+                catch (Exception ex) { return JsonError("Transaction start failed: " + ex.Message); }
                 ScriptResult sr;
                 try
                 {
@@ -421,19 +473,21 @@ namespace RevitMCPCore
                 }
                 catch (Exception ex)
                 {
-                    try { if (tx.HasStarted()) tx.RollBack(); } catch { }
+                    try { if (tx != null && tx.HasStarted()) tx.RollBack(); }
+                    catch (Exception rollback) { return JsonError("ScriptCompiler crash: " + ex.Message + "; rollback failed: " + rollback.Message); }
                     return JsonError("ScriptCompiler crash: " + ex.Message);
                 }
                 if (sr.Status == "ok")
                 {
-                    if (tx.HasStarted() && tx.GetStatus() == TransactionStatus.Started)
+                    if (tx != null && tx.HasStarted() && tx.GetStatus() == TransactionStatus.Started)
                         tx.Commit();
                     var resultJson = SerializeResult(ctx.result ?? sr.Result);
                     return "{\"status\":\"ok\",\"result\":" + resultJson
                          + ",\"compiler\":\"subprocess_csc\""
                          + ",\"cache_hit\":" + (sr.CacheHit ? "true" : "false") + "}";
                 }
-                try { if (tx.HasStarted()) tx.RollBack(); } catch { }
+                try { if (tx != null && tx.HasStarted()) tx.RollBack(); }
+                catch (Exception ex) { return JsonError("Script failed: " + sr.Error + "; rollback failed: " + ex.Message); }
                 return "{\"status\":\"error\",\"error_code\":\"" + sr.Status
                      + "\",\"error\":\"" + JsonEscape(sr.Error ?? "unknown") + "\"}";
             }

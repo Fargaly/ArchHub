@@ -25,6 +25,7 @@ from nodelang import native_agent_mcp as native
 from nodelang.application_machine_transport import MachineTransportError
 
 ARCHHUB_HOSTS_TOOLS = {
+    "revit_open_document",
     "revit_ping", "revit_info", "revit_execute_csharp", "revit_screenshot",
     "acad_ping", "acad_info", "acad_execute_csharp",
     "max_ping", "max_info", "max_execute_python", "max_execute_maxscript",
@@ -147,6 +148,36 @@ def test_revit_and_autocad_exec_go_through_the_signed_broker_of_that_host(rig):
         ("broker", 48884, "/exec", {"code": "result = 1;", "transaction_name": "ArchHub"}, 240.0),
         ("broker", 48885, "/exec", {"code": "result = 2;", "transaction_name": "ArchHub"}, 240.0),
     ]
+
+
+def test_revit_open_from_home_is_an_owner_bound_read_with_explicit_session(rig):
+    rig.client.claimed = None
+    rig.sessions[:] = [{**REVIT, "document": None}, ACAD]
+    path = r"\\fixture-server\models\A project\model.rvt"
+    tool(rig, "revit_open_document", {"path": path, "view": "Plan", "port": 48884})
+    assert rig.host_calls == [("broker", 48884, "/open",
+                               {"path": path, "activate": True, "view": "Plan"}, 240.0)]
+    assert rig.held == [True]
+
+
+def test_revit_app_exec_keeps_existing_effect_admission(rig):
+    tool(rig, "revit_execute_csharp", {"code": "open", "transaction": False})
+    assert rig.host_calls == [("broker", 48884, "/exec",
+                               {"code": "open", "transaction_name": "ArchHub", "transaction": False}, 240.0)]
+    rig.client.claimed = None
+    with pytest.raises(Exception, match="No task is claimed"):
+        tool(rig, "revit_execute_csharp", {"code": "open", "transaction": False})
+    assert len(rig.host_calls) == 1
+
+
+def test_revit_open_never_guesses_between_home_sessions_or_bypasses_owner(rig):
+    rig.sessions[:] = [{**REVIT, "document": None}, {**REVIT, "port": 48887, "document": None}]
+    with pytest.raises(Exception, match="name one with port"):
+        tool(rig, "revit_open_document", {"path": "fixture.rvt"})
+    rig.owner.valid = False
+    with pytest.raises(Exception, match="native owner changed"):
+        tool(rig, "revit_open_document", {"path": "fixture.rvt", "port": 48884})
+    assert rig.host_calls == []
 
 
 def test_a_max_only_machine_never_sends_revit_or_autocad_code_to_max(rig):

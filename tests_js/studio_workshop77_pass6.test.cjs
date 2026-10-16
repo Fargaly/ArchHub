@@ -63,7 +63,7 @@ test('PASS6 canvas Review owns the accent; labelled zoom and history retain thei
     // A second waiting Workshop keeps its route, but only the first owns the accent.
     const second={...f.node,id:'room-b',conversation_root:f.node.id};f.state.topology.graph.nodes.push(second);f.state.workshops.push({root:'room-b',label:'Second room'});
     await ui.act(()=>root.render(React.createElement(ui.context.P6Face,{n:second})));assert.equal(accents(ui.doc).length,1);
-    assert.equal(holder.querySelector('[data-workshop-node-review]').style.backgroundColor,'rgb(38, 38, 45)');
+    assert.equal(holder.querySelector('[data-workshop-node-review]').style.backgroundColor,'rgb(34, 34, 42)','secondary Review uses the shared plate hover token');
     Object.assign(ui.context,{ASK_SCALE:{node:{field:13,send:{padding:'0 8px',radius:6,size:13}}},modelRoute:()=>null,nodeModelRoute:()=>null});
     vm.runInContext(transformSync(slice(source,'const InlineAsk =','const useLastRunEpoch =')+'\nglobalThis.P6InlineAsk=InlineAsk;', {loader:'jsx'}).code,ui.context);
     await ui.act(()=>root.render(React.createElement(ui.context.P6InlineAsk,{scale:'node'})));

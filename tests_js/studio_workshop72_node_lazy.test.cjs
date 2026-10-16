@@ -32,8 +32,8 @@ test('WORKSHOP-72 mounted node uses the plate header, width, tile stack and real
     const appStyle=ui.doc.createElement('style');appStyle.textContent='* {box-sizing:border-box;}';ui.doc.head.append(appStyle);ui.container.style.lineHeight='1.5';
     const face=ui.doc.querySelector('[data-workshop-node-face]');
     assert.equal(ui.win.getComputedStyle(face).lineHeight,'normal');
-    assert.equal(ui.win.getComputedStyle(ui.container.firstElementChild).width,'300px');
-    assert.equal(ui.win.getComputedStyle(face).borderRadius,'12px');
+    assert.equal(ui.win.getComputedStyle(ui.container.firstElementChild).width,'320px');
+    assert.equal(ui.win.getComputedStyle(face).borderRadius,'10px');
     assert.equal(face.getAttribute('data-workshop-id'),'room-real');
     assert.equal(ui.doc.querySelector('[data-workshop-node-title]').textContent,'Label selected elements');
     assert.equal(ui.doc.querySelectorAll('[data-workshop-node-member]').length,2);
@@ -41,11 +41,11 @@ test('WORKSHOP-72 mounted node uses the plate header, width, tile stack and real
       ['agent-real-a','agent-real-b'],'only actual assigned agent and actual reviewer form the task stack');
     assert.deepEqual([...ui.doc.querySelectorAll('[data-workshop-node-member]')].map(tile=>tile.textContent),
       ['C','X'],'shared agent initials reproduce the window and plate');
-    assert.equal(ui.doc.querySelector('[data-workshop-node-status]').textContent,'7 labels wait for you');
+    assert.equal(ui.doc.querySelector('[data-workshop-node-status]').textContent,'Waits for you · 7 labels');
     assert.equal(ui.doc.querySelectorAll('textarea,input,select').length,0);
     assert.equal(ui.doc.querySelectorAll('button:not([data-socket-port])').length,1);
     const review=ui.doc.querySelector('[data-workshop-node-review]');
-    assert.equal(ui.win.getComputedStyle(review).height,'30px');
+    assert.equal(ui.win.getComputedStyle(review).height,'26px');
     assert.equal(ui.win.getComputedStyle(review).fontSize,'13px');
     assert.equal(ui.calls.length,0,'rendering the canvas neither fetches agents nor opens/sends a conversation');
   } finally {await ui.close();}
@@ -59,7 +59,7 @@ test('WORKSHOP-72 typed node ports are the actual graph interfaces and call the 
     assert.deepEqual(ports.map(el=>el.dataset.socketShape),['diamond','diamond']);
     await ui.click(ports[0]);
     assert.equal(ui.calls[0][0],'socket');assert.equal(ui.calls[0][1].id,'elements-in');assert.equal(ui.calls[0][2],'in');
-    assert.equal(ui.doc.querySelector('[data-workshop-node-status]').textContent,'7 reports wait for you');
+    assert.equal(ui.doc.querySelector('[data-workshop-node-status]').textContent,'Waits for you · 7 reports');
   } finally {await ui.close();}
 });
 test('WORKSHOP-72 Review reaches the same window identity at its approval; double-click opens that window', async () => {
@@ -93,7 +93,7 @@ test('WORKSHOP-72 node and window selector read one store and update from its re
     assert.equal(ui.doc.querySelector('[data-workshop-node-face]').dataset.workshopApproval,projection.approval.work);
     fx.state.nativeWork={...fx.state.nativeWork,result_count:9};
     await ui.draw({state:fx.state});
-    assert.equal(ui.doc.querySelector('[data-workshop-node-status]').textContent,'9 labels wait for you');
+    assert.equal(ui.doc.querySelector('[data-workshop-node-status]').textContent,'Waits for you · 9 labels');
     assert.equal(ui.model().count,9);
   } finally {await ui.close();}
 });
@@ -213,17 +213,17 @@ test('WORKSHOP-72 no-graph Workshop tool opens the same lazy window with an hone
     assert.equal(win.document.querySelector('[data-unavailable-workshop]').textContent,'Not available yet');
   }finally{await React.act(async()=>root.unmount());win.close();global.window=oldWindow;global.document=oldDocument;delete global.IS_REACT_ACT_ENVIRONMENT;}
 });
-test('WORKSHOP-72 wire endpoints and group bounds use the actual 300px Workshop card width',()=>{
+test('WORKSHOP-72 wire endpoints and group bounds use the actual 320px Workshop card width',()=>{
   const source=read('nodelang/studio/studio-lm.jsx');
   const box=slice(source,'const canvasNodeBox =','const isSessionNodeShape =');
   const context=vm.createContext({isWorkshopGraphNode:n=>n.cat==='workshop'});
   vm.runInContext(box+'\nglobalThis.box=canvasNodeBox;',context);
   const node=fixture().node;
-  assert.equal(context.box(node,{}).w,300);
+  assert.equal(context.box(node,{}).w,320);
   const sourceLine=source.match(/const sourceWidth = ([\s\S]*?);/)[1];
   const width=vm.runInNewContext(sourceLine,{fromNode:node,isWorkshopGraphNode:n=>n.cat==='workshop',expanded:{},
     NODE_CARD_W:224,nodeIsWatch:()=>false});
-  assert.equal(width,300,'output wire begins at the face right edge rather than the generic card width');
+  assert.equal(width,320,'output wire begins at the face right edge rather than the generic card width');
 });
 test('WORKSHOP-72 mere transcript participation cannot fabricate a draggable graph membership',async()=>{
   const fx=fixture();fx.node.members=[];
@@ -285,7 +285,7 @@ test('WORKSHOP-72 an admitted uncategorized workbench renders the real face thro
   try{
     assert.ok(ui.doc.querySelector('[data-workshop-node-face]'));
     assert.equal(ui.doc.querySelector('[data-workshop-node-face]').dataset.workshopId,'room-real');
-    assert.equal(ui.win.getComputedStyle(ui.container.firstElementChild).width,'300px');
+    assert.equal(ui.win.getComputedStyle(ui.container.firstElementChild).width,'320px');
     await ui.mouse(ui.doc.querySelector('[data-workshop-node-face]'),'dblclick',60,90);
     assert.equal(ui.navigation[0],'room-real');
     fx.state.workshops=[];fx.node.title='Workshop';fx.node.has_conversation=true;

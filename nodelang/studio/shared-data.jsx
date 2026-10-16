@@ -715,23 +715,23 @@ window.ARCHHUB_PACKAGE_SHEETS = ({sheets = [],compact = false}) => {
 };
 
 // One application rail, shared by Home, Workshop and every graph canvas.
-window.ARCHHUB_APP_RAIL = ({active = 'Home', waiting = 0, account = {}, workshop = false, compact = false, persistent = false, onNavigate}) => {
+window.ARCHHUB_APP_RAIL = ({active = 'Home', waiting = 0, account = {}, workshop = false, compact = false, persistent = false, empty = false, onNavigate}) => {
   const W = window.AH;
   const initials = account.initials || String(account.name || account.email || '?').trim().split(/\s+/).map(word => Array.from(word)[0]).slice(0, 2).join('').toUpperCase();
-  const item = (g, label) => <button key={label} type="button" role="link" aria-label={label}
+  const item = (g, label) => <window.AH_DS.Btn key={label} type="button" role="link" aria-label={label}
     title={label === 'Home' ? 'All sessions' : label === 'Chats' ? 'Chats · Ctrl+K, search Chats' : label} aria-keyshortcuts={label === 'Settings' ? 'Control+,' : undefined}
     data-rail-panel={label} data-rail-home={label === 'Home' ? '' : undefined}
     aria-current={active === label ? 'true' : undefined} onClick={() => onNavigate?.(label)}
-    style={{width:compact ? 44 : 64,height:58,padding:0,border:0,background:'transparent',fontFamily:W.sans,display:'grid',placeItems:'center',alignContent:'center',gap:4,position:'relative',color:active===label?W.ink:W.inkSoft,cursor:'pointer'}}>
+    style={{width:empty ? 56 : compact ? 44 : 64,height:empty || compact ? 52 : 58,padding:0,border:0,background:'transparent',fontFamily:W.sans,display:'grid',placeItems:'center',alignContent:'center',gap:4,position:'relative',color:active===label?W.ink:W.inkSoft,cursor:'pointer'}}>
     <span style={{width:36,height:30,borderRadius:8,display:'grid',placeItems:'center',fontSize:16,background:active===label?W.bgHover:'transparent',boxShadow:active===label?W.elev?.e1:'none'}}>{g}</span>
     <span style={{fontSize:compact ? 10 : 11,fontWeight:active===label?600:500}}>{label}</span>
     {label==='Workshop'&&waiting>0&&<b style={{position:'absolute',top:3,right:10,minWidth:18,height:18,borderRadius:9,background:W.warn,color:W.onFill,fontSize:11,fontWeight:700,display:'grid',placeItems:'center'}}>{waiting}</b>}
-  </button>;
+  </window.AH_DS.Btn>;
   return <window.AH_DS.Rail data-app-rail="" data-workshop72-rail={workshop ? '' : undefined} aria-label="Main navigation"
-    style={{width:compact ? 44 : 64,boxSizing:'border-box',background:W.bg,borderRight:`1px solid ${W.lineSoft}`,display:'grid',gridTemplateRows:'auto 1fr auto',paddingTop:compact ? 6 : 12,justifyItems:'center',gridColumn:'1',gridRow:workshop && !persistent ? undefined : '1 / span 2'}}>
-    <div style={{display:'grid',gap:4}}>{[['⌂','Home'],['◌','Chats'],['◎','Workshop'],['⬡','Canvas'],['▦','Library'],['?','Docs']].map(([g,l])=>item(g,l))}</div><span/>
+    style={{width:empty ? 56 : compact ? 44 : 64,boxSizing:'border-box',background:W.bg,borderRight:`1px solid ${W.lineSoft}`,display:'grid',gridTemplateRows:'auto 1fr auto',paddingTop:compact ? 6 : 12,justifyItems:'center',gridColumn:'1',gridRow:workshop && !persistent ? undefined : '1 / span 2'}}>
+    <div style={{display:'grid',gap:compact?2:4}}>{(empty ? [['⌂','Home'],['◎','Workshop'],['▦','Library'],['?','Docs']] : compact ? [['◌','Chats'],['▦','Library'],['?','Docs'],['◫','Cockpit']] : workshop ? [['⌂','Home'],['◎','Workshop'],['⬡','Canvas'],['▦','Library'],['?','Docs']] : [['⌂','Home'],['◌','Chats'],['◎','Workshop'],['⬡','Canvas'],['▦','Library'],['?','Docs']]).map(([g,l])=>item(g,l))}</div><span/>
     <div style={{paddingBottom:10,display:'grid',gap:4,justifyItems:'center'}}>{item('⚙','Settings')}
-      <button type="button" data-rail-panel="Account" aria-current={active === 'Account' ? 'true' : undefined} data-workshop-account-avatar={workshop ? '' : undefined} aria-label="Account" title={account.email || 'Account'} onClick={()=>onNavigate?.('Account')}
-        style={{width:32,height:32,padding:0,border:0,borderRadius:'50%',background:account.colour||account.color||account.avatar_color||W.userAv,color:W.onUserAv,display:'grid',placeItems:'center',fontFamily:W.sans,fontSize:12,fontWeight:700,cursor:'pointer'}}>{initials}</button>
+      {!empty && <window.AH_DS.Btn type="button" data-rail-panel="Account" aria-current={active === 'Account' ? 'true' : undefined} data-workshop-account-avatar={workshop ? '' : undefined} aria-label="Account" title={account.email || 'Account'} onClick={()=>onNavigate?.('Account')}
+        style={{width:compact?28:32,height:compact?28:32,padding:0,border:0,borderRadius:'50%',background:account.colour||account.color||account.avatar_color||W.userAv,color:W.onUserAv,display:'grid',placeItems:'center',fontFamily:W.sans,fontSize:12,fontWeight:700,cursor:'pointer'}}>{initials}</window.AH_DS.Btn>}
     </div></window.AH_DS.Rail>;
 };

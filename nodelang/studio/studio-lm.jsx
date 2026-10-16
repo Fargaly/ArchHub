@@ -119,12 +119,12 @@ const Search = ({ ph, children }) => (
     <span>⌕</span>{children || <span>{ph}</span>}<span style={window.AH_DS.styles.fill}/><span style={{ fontSize:11 }}>Ctrl K</span>
   </div>
 );
-const Frame = ({ rail, left, top, children, insp, status, onHome, onPanel, onSettings, onWorkshop, onCanvas, onChats, onDocs, onAccount, account, workshopWindow = false }) => {
+const Frame = ({ rail, left, top, children, insp, status, onHome, onPanel, onSettings, onWorkshop, onCanvas, onChats, onDocs, onCockpit, onAccount, account, workshopWindow = false }) => {
   const AppRail = window.ARCHHUB_APP_RAIL;
   const waiting = workshopWaitingItems(useWorkshopProjection()).length;
   const hasLeft = !!left;
   const contentColumn = hasLeft ? '3 / -1' : '2 / -1';
-  const railWidth = 64;
+  const railWidth = rail === 'Library' ? 44 : 64;
   return (
     <section data-app-frame="" style={{
       width:'100%', height:'100%', background:LM.bgDeep, color:LM.ink, fontFamily:LM.sans,
@@ -133,8 +133,8 @@ const Frame = ({ rail, left, top, children, insp, status, onHome, onPanel, onSet
       gridTemplateRows:'36px minmax(0, 1fr) 22px',
       overflow:'hidden', position:'relative',
     }}>
-      <AppRail persistent workshop={workshopWindow} active={rail || 'Home'} waiting={waiting} account={account} onNavigate={name => {
-        const route = {Home:onHome, Chats:onChats, Workshop:onWorkshop, Canvas:onCanvas, Library:() => onPanel?.('nodes'), Docs:onDocs, Settings:onSettings, Account:onAccount || onSettings}[name];
+      <AppRail persistent compact={rail === 'Library'} workshop={workshopWindow} active={rail || 'Home'} waiting={waiting} account={account} onNavigate={name => {
+        const route = {Home:onHome, Chats:onChats, Workshop:onWorkshop, Canvas:onCanvas, Library:() => onPanel?.('nodes'), Docs:onDocs, Cockpit:onCockpit, Settings:onSettings, Account:onAccount || onSettings}[name];
         route?.();
       }}/>
 
@@ -1422,10 +1422,11 @@ const StudioLM = () => {
     session ? 'Canvas' : 'Home';
   return (
     <Frame workshopWindow={(!!session && workspaceView.mode === 'chat' && !!workspaceView.conversationRoot) || (!session && toolView?.id === 'workshop')}
-      rail={frameRail} onHome={goHome} onPanel={value => { beginNavigation(); setSettingsOpen(false); setDocsOpen(false); setLibraryOpen(false); setToolView(null); setPanel(value); }}
+      rail={frameRail} onHome={goHome} onPanel={value => { beginNavigation(); setSettingsOpen(false); setDocsOpen(false); setLibraryOpen(false); setToolView(null); setPanel(value); if(value === 'nodes') { setWorkspaceSelection(canvasWorkspaceView(viewScope)); if(!session && visibleSessions[0]?.id) openSession(visibleSessions[0].id); } }}
       onSettings={() => openSettings(true)} onAccount={() => openSettings(true,'account')} account={account}
       onChats={() => { goHome(); setPanel('chats'); }}
       onDocs={() => openDocs(true)}
+      onCockpit={() => openTool('cockpit')}
       onWorkshop={() => { setSettingsOpen(false); setDocsOpen(false); setLibraryOpen(false); setPanel(null); openTool('workshop', {window:true}); }}
       onCanvas={() => { setPanel(null); setSettingsOpen(false); setDocsOpen(false); openTool('studio'); }}
       left={panel && !workshopContext ? <Sidebar
@@ -1446,7 +1447,7 @@ const StudioLM = () => {
         ? <ToolMainView view={toolView} account={account} setAccount={setAccount} onSignOut={signOut} onSettings={openSettings}
             onHome={goHome} onChats={() => { goHome(); setPanel('chats'); }} onCockpit={() => openTool('cockpit')} onDocs={() => openDocs(true)} onLibrary={() => setLibraryOpen(true)} updateView={setToolView}/>
         : session
-        ? <Workspace
+        ? <Workspace libraryMode={panel === 'nodes'}
             session={session} account={account} model={displayedModel} readiness={readiness} onReadinessStale={readReadiness}
             onModelReadRetry={readInitialModel}
             updateCanvasViewport={updateCanvasViewport}
@@ -1524,7 +1525,7 @@ const StudioLM = () => {
         onAddSkillToCanvas={skill => addNodeFromLibrary(studioSkillLibraryItem(skill))}/>
       {docsOpen && <Docs onClose={() => setDocsOpen(false)} onHome={goHome}/>}
       {libraryOpen && <NodeLibrary onClose={() => setLibraryOpen(false)} addNodeFromLibrary={addNodeFromLibrary}
-        initialQuery={typeof libraryOpen === 'string' ? libraryOpen : ''}/>}
+        initialQuery={typeof libraryOpen === 'string' ? libraryOpen : ''} onSwitchPanel={value=>{setLibraryOpen(false);setPanel(value);}}/>}
       <CommandBar open={commandOpen} onClose={() => setCommandOpen(false)}
         addNodeFromLibrary={addNodeFromLibrary} onOpenSession={openSession} onChats={() => { goHome(); setPanel('chats'); }}/>
       <style>{`
@@ -1544,11 +1545,11 @@ const Sidebar = ({ panel, setPanel, openId, onOpen, onHome, onSettings, onAccoun
   workshopContext, railOnly, wsSel, setWsSel, onAddAgent, onWorkshopTarget, account }) => (
   <aside style={{
     height:'100%',
-    display:'grid', gridTemplateRows:railOnly ? '1fr' : '36px minmax(0, 1fr)',
+    display:'grid', gridTemplateRows:railOnly || panel === 'nodes' ? '1fr' : '36px minmax(0, 1fr)',
     background:LM.bgPanel, borderRight:`1px solid ${LM.line}`,
     overflow:'hidden', minHeight:0,
   }}>
-    {!railOnly && <div aria-label="Library tabs" style={{
+    {!railOnly && panel !== 'nodes' && <div aria-label="Library tabs" style={{
       display:'grid', gridTemplateColumns:'repeat(3, 1fr)', alignItems:'stretch',
       padding:'4px 6px', gap:4, borderBottom:`1px solid ${LM.lineSoft}`,
     }}>
@@ -2261,7 +2262,7 @@ const librarySearchText = (group, item) => [group.cat, studioCategory(group.cat)
   .join(' ').toLowerCase();
 const libraryTotal = groups => visibleLibraryGroups(groups).reduce((n, group) => n + group.items.length, 0);
 const librarySource = projected => {
-  if (Array.isArray(window.AH_LIBRARY) && window.AH_LIBRARY.length) return visibleLibraryGroups(window.AH_LIBRARY);
+  if (Array.isArray(window.AH_LIBRARY)) return visibleLibraryGroups(window.AH_LIBRARY);
   if (Array.isArray(projected?.library) && projected.library.length) return visibleLibraryGroups(projected.library);
   return [];
 };
@@ -2338,33 +2339,45 @@ const LibraryTile = ({ cat, group, open, onToggle }) => (
     <span style={{ color:LM.inkSoft, fontSize:11 }}>{(group.items || []).length}</span>
   </window.AH_DS.Btn>
 );
-const NodesPanel = ({ addNodeFromLibrary, onHome, account, onAccount, onSwitchPanel, onOpenRuns }) => {
+const NodesPanel = ({ addNodeFromLibrary, onHome, account, onAccount, onSwitchPanel, onOpenRuns, initialQuery = '' }) => {
   const libraryRead = useNodeLibrary();
   const projected = useStudioProjection();
   const workshopState = useWorkshopProjection();
   const hub = useToolHubProjection();
   const runsWaiting = Array.isArray(hub?.waiting) ? hub.waiting.length : workshopWaitingItems(workshopState).length;
   const library = libraryDisplayGroups(librarySource(projected));
-  const [q, setQ] = React.useState('');
+  const [q, setQ] = React.useState(initialQuery);
   const [family, setFamily] = React.useState('all');
   const [openCats, setOpenCats] = React.useState(() => ({shape:true}));
   const [selectedId, setSelectedId] = React.useState('');
+  const [insertBusy, setInsertBusy] = React.useState(false), [insertError, setInsertError] = React.useState('');
+  const admission = React.useRef({busy:false,live:true,last:null});
+  React.useEffect(()=>{admission.current.live=true;return()=>{admission.current.live=false;};},[]);
   const addRef = React.useRef(addNodeFromLibrary);
   addRef.current = addNodeFromLibrary;
-  const addFromLibrary = React.useCallback(item => addRef.current(item), []);
+  const addFromLibrary = React.useCallback(async item => {
+    const held=admission.current;
+    if(held.busy || !held.live || !addRef.current)return false;
+    held.busy=true;held.last=item;setInsertBusy(true);setInsertError('');
+    try {
+      const result=await addRef.current(item);
+      if(result===false && held.live)setInsertError('The node was not added. Retry or choose another node.');
+      return result;
+    } catch(error) {if(held.live)setInsertError(window.AH_DS.errorText(error.message || 'The node could not be added.'));return false;}
+    finally {held.busy=false;if(held.live)setInsertBusy(false);}
+  }, []);
   const toggleCat = React.useCallback(cat => setOpenCats(o => ({ ...o, [cat]: !o[cat] })), []);
   const groups = libraryVisibleGroups(library, family, q);
   return (
-    <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
-      <PanelHead title="Nodes"><PanelHomeButton onHome={onHome}/><window.AH_DS.Btn title="Collapse all" onClick={() => setOpenCats({})} style={window.AH_DS.styles.button("ghost", true)}>−</window.AH_DS.Btn></PanelHead>
+    <window.AH_DS.Frame data-library-panel="" style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
       <div style={{ display:'flex', gap:4, padding:'10px 10px 0' }}>
         {[
-          ['Library', 'nodes', () => onSwitchPanel && onSwitchPanel('nodes')],
-          ['Graphs', 'chats', () => onSwitchPanel && onSwitchPanel('chats')],
-          ['Skills', 'skills', () => onSwitchPanel && onSwitchPanel('skills')],
-          ['Runs', 'runs', () => onOpenRuns ? onOpenRuns() : onSwitchPanel && onSwitchPanel('runs')],
+          ['Library', 'nodes', onSwitchPanel ? () => onSwitchPanel('nodes') : null],
+          ['Graphs', 'chats', onSwitchPanel ? () => onSwitchPanel('chats') : null],
+          ['Skills', 'skills', onSwitchPanel ? () => onSwitchPanel('skills') : null],
+          ['Runs', 'runs', onOpenRuns || (onSwitchPanel ? () => onSwitchPanel('runs') : null)],
         ].map(([tab, route, act]) => (
-          <window.AH_DS.Btn key={tab} type="button" data-library-tab={route} onClick={act} style={{ height:28, display:'inline-flex', alignItems:'center', gap:5, padding:'0 7px',
+          <window.AH_DS.Btn key={tab} type="button" data-library-tab={route} onClick={act} disabled={!act && route !== 'nodes'} style={{ height:28, display:'inline-flex', alignItems:'center', gap:5, padding:'0 7px',
             borderRadius:5, fontFamily:LM.sans, fontSize:13,
             background:route === 'nodes' ? LM.accentDim : 'transparent',
             color:route === 'nodes' ? LM.accent : LM.inkSoft, border:0, cursor:'pointer' }}>
@@ -2379,7 +2392,7 @@ const NodesPanel = ({ addNodeFromLibrary, onHome, account, onAccount, onSwitchPa
           background:LM.bgSoft, border:`1px solid ${LM.line}`, borderRadius:5,
         }}>
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={LM.inkSoft} strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={`Search ${libraryTotal(groups)} nodes`} style={{
+          <window.AH_DS.TextField autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={`Search ${libraryTotal(groups)} nodes`} style={{
             flex:1, minWidth:0, border:0, background:'transparent', color:LM.ink, fontSize:13, outline:'none', fontFamily:LM.sans,
           }}/>
           <span style={{ color:LM.inkSoft, fontSize:11 }}>/</span>
@@ -2401,20 +2414,20 @@ const NodesPanel = ({ addNodeFromLibrary, onHome, account, onAccount, onSwitchPa
         ))}
       </div>
 
+      {insertError && <window.AH_DS.EmptyState compact glyph={null} error title="Node not added" detail={insertError} onRetry={()=>addFromLibrary(admission.current.last)}/>}
       <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'0 6px 8px', minHeight:0 }}>
         {(libraryRead.loading || libraryRead.error || !library.length) && <window.AH_DS.EmptyState glyph={null} title={libraryRead.loading ? "Reading nodes…" : libraryRead.error ? "Library unavailable" : !library.length ? "No nodes yet" : ""} error={!!libraryRead.error} detail={libraryRead.error} onRetry={libraryRead.error || !library.length ? libraryRead.retry : undefined}/>}
 
         <NodeLibraryGroups library={groups} q={q} openCats={openCats} onToggle={toggleCat} onAdd={addFromLibrary}
-          selectedId={selectedId} onSelect={setSelectedId}/>
+          selectedId={selectedId} onSelect={setSelectedId} disabled={insertBusy}/>
       </div>
 
-      <AccountChip account={account} onOpen={onAccount}/>
-    </div>
+    </window.AH_DS.Frame>
   );
 };
 
 // The library rows re-render on every owner publish; memoizing keeps drag/search calm.
-const NodeLibraryGroups = React.memo(({ library, q, openCats, onToggle, onAdd, selectedId = '', onSelect = null }) => (
+const NodeLibraryGroups = React.memo(({ library, q, openCats, onToggle, onAdd, selectedId = '', onSelect = null, disabled = false }) => (
   <>
         {library.map((group, index) => {
           const c = studioCategory(group.cat);
@@ -2432,7 +2445,7 @@ const NodeLibraryGroups = React.memo(({ library, q, openCats, onToggle, onAdd, s
               {open && (
                 <div style={{ display:'flex', flexDirection:'column', gap:1, paddingLeft:34 }}>
                   {items.map(it => <NodeLibItem key={it.id} it={it} cat={c} catId={group.cat}
-                    selected={selectedId === it.id}
+                    selected={selectedId === it.id} disabled={disabled}
                     onAdd={() => { onSelect && onSelect(it.id); onAdd({ ...it, cat:it.rawCat || group.cat }); }}/>)}
                 </div>
               )}
@@ -2442,7 +2455,7 @@ const NodeLibraryGroups = React.memo(({ library, q, openCats, onToggle, onAdd, s
   </>
 ));
 
-const NodeLibItem = ({ it, cat, catId, selected = false, onAdd }) => {
+const NodeLibItem = ({ it, cat, catId, selected = false, onAdd, disabled = false }) => {
   const [h, setH] = React.useState(false);
   const onDragStart = (e) => {
     e.dataTransfer.effectAllowed = 'copy';
@@ -2456,7 +2469,8 @@ const NodeLibItem = ({ it, cat, catId, selected = false, onAdd }) => {
   const outlined = h || selected;
   return (
     <window.AH_DS.Btn type="button"
-      draggable="true"
+      disabled={disabled}
+      draggable={!disabled}
       onDragStart={onDragStart}
       onDragEnd={() => { delete window.__archhubDraggingLibraryTitle; }}
       onClick={onAdd}
@@ -2471,8 +2485,6 @@ const NodeLibItem = ({ it, cat, catId, selected = false, onAdd }) => {
         transition:`background ${LM.dur.fast}ms, border-color ${LM.dur.fast}ms`,
         color:LM.ink, fontFamily:LM.sans, textAlign:'left',
       }}>
-      <span style={{ width:8, height:8, boxSizing:'border-box', background:LM.bgPanel, border:`2px solid ${cat.col}`,
-        borderRadius:2, transform:'rotate(45deg) scale(.86)', flexShrink:0 }}/>
       <div style={{ flex:1, minWidth:0, lineHeight:1.2 }}>
         <div style={{ fontFamily:LM.sans, fontSize:13, color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{title}</div>
         <div style={{ fontFamily:LM.sans, fontSize:11, color:LM.inkSoft, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{sub}</div>
@@ -2481,7 +2493,7 @@ const NodeLibItem = ({ it, cat, catId, selected = false, onAdd }) => {
         title={ports.map(port => port.label + ' · ' + port.name).join('\n')}
         style={{ display:'inline-flex', alignItems:'center', justifyContent:'flex-end', gap:3, minWidth:38,
           color:LM.inkSoft, fontSize:12, flexShrink:0 }}>
-        {ports.slice(0, 4).map((port, index) => <span key={port.dir + port.name + index}>{port.glyph}</span>)}
+        {ports.slice(0, 4).map((port, index) => <React.Fragment key={port.dir + port.name + index}>{index > 0 && ports[index-1].dir !== port.dir && <span aria-hidden="true">→</span>}<span>{port.glyph}</span></React.Fragment>)}
       </span>
     </window.AH_DS.Btn>
   );
@@ -3306,7 +3318,7 @@ const LazyWorkshopWindow = props => {
     style={{gridColumn:'1 / -1',gridRow:'1 / -1',background:LM.bgDeep}}/>;
 };
 
-const Workspace = ({ session, account, model, readiness = null, onReadinessStale, onModelReadRetry, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, setPickerOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, themeEpoch = 0, onHome, onChats, onCockpit, onDocs, onNewSession, onSettings, onAccount, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
+const Workspace = ({ libraryMode = false, session, account, model, readiness = null, onReadinessStale, onModelReadRetry, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, setPickerOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, themeEpoch = 0, onHome, onChats, onCockpit, onDocs, onNewSession, onSettings, onAccount, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
   const canvasRead = useDeferredCanvas();
   useNodeLibrary();
   const authorityState = useStudioProjection();
@@ -3347,9 +3359,9 @@ const Workspace = ({ session, account, model, readiness = null, onReadinessStale
       height:'100%',
       display:'grid',
       gridTemplateColumns:workshopWindow ? 'minmax(0, 1fr)' : 'minmax(0, 1fr) 320px',
-      gridTemplateRows:workshopWindow ? '1fr' : '36px 1fr',
+      gridTemplateRows:workshopWindow || libraryMode ? '1fr' : '36px 1fr',
     }}>
-      {!workshopWindow && <WsHeader
+      {!workshopWindow && !libraryMode && <WsHeader
         session={session} model={model} openTabs={openTabs}
         sessionRows={sessionRows}
         setOpenId={setOpenId} closeTab={closeTab} mode={effectiveMode} setMode={setMode}
@@ -3371,8 +3383,8 @@ const Workspace = ({ session, account, model, readiness = null, onReadinessStale
           sel={wsSel} setSel={setWsSel}/>
       ) : (
         <>
-          <NodeCanvas key={JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas), effectiveMode === 'system'])} system={effectiveMode === 'system'} focusId={focusId} setFocusId={setFocusId} pendingReveal={pendingCanvasReveal} clearPendingReveal={clearPendingCanvasReveal} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model} onViewportChange={updateCanvasViewport} fitOnOpen onSystemArrangeSummary={setSystemArrangeSummary} themeEpoch={themeEpoch}/>
-          <NodeRail node={focusNode} hiddenWork={!focusNode && authorityState?.canvas?.selection_hidden === true}
+          <NodeCanvas libraryMode={libraryMode} key={JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas), effectiveMode === 'system'])} system={effectiveMode === 'system'} focusId={focusId} setFocusId={setFocusId} pendingReveal={pendingCanvasReveal} clearPendingReveal={clearPendingCanvasReveal} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model} onViewportChange={updateCanvasViewport} fitOnOpen={!libraryMode} onSystemArrangeSummary={setSystemArrangeSummary} themeEpoch={themeEpoch}/>
+          <NodeRail libraryMode={libraryMode} node={focusNode} hiddenWork={!focusNode && authorityState?.canvas?.selection_hidden === true}
             graph={graph} canvas={authorityState?.canvas} session={session} sessionRows={sessionRows}
             model={model} setPickerOpen={setPickerOpen} readiness={readiness}
             onReadinessStale={onReadinessStale} onModelReadRetry={onModelReadRetry} onAccount={onAccount}
@@ -4735,7 +4747,7 @@ const canvasLayoutBurstMoves = burst => Object.entries(burst?.next || {})
   .filter(([id, point]) => burst.before[id]?.x !== point.x || burst.before[id]?.y !== point.y);
 const canvasNodeBox = (node, positions, heights = {}) => {
   const p = positions[node.id] || node;
-  const w = (typeof isWorkshopGraphNode === 'function' && isWorkshopGraphNode(node)) ? 300 : Number.isFinite(node.w) ? node.w : 220;
+  const w = (typeof isWorkshopGraphNode === 'function' && isWorkshopGraphNode(node)) ? (node.w || 320) : Number.isFinite(node.w) ? node.w : 220;
   const h = Number.isFinite(heights[node.id]) ? heights[node.id] : Number.isFinite(node.h) ? node.h : 110;
   return {id:node.id, x:p.x, y:p.y, w, h, group:node.group || ''};
 };
@@ -4795,7 +4807,7 @@ const writeCanvasLayoutTrace = (scope, burst) => {
   } catch (error) { /* a session with no storage still draws and still saves the canvas */ }
 };
 
-const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingReveal = null, setLibraryOpen, userNodes = [], addNodeFromLibrary, model, system = false, onViewportChange = null, fitOnOpen = false, onSystemArrangeSummary = null, themeEpoch = 0 }) => {
+const NodeCanvas = ({ libraryMode = false, focusId, setFocusId, pendingReveal = null, clearPendingReveal = null, setLibraryOpen, userNodes = [], addNodeFromLibrary, model, system = false, onViewportChange = null, fitOnOpen = false, onSystemArrangeSummary = null, themeEpoch = 0 }) => {
   const authorityState = useStudioProjection();
   const workshopSnapshot = typeof useWorkshopProjection === 'function' ? useWorkshopProjection() : null;
   const workshopDescriptor = workshopSnapshot?.workshops?.find(row=>row.root===workshopSnapshot.workshop?.root);
@@ -5128,8 +5140,8 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   const workshopCanvas = graph.nodes.some(node => typeof isWorkshopGraphNode === 'function' && isWorkshopGraphNode(node));
   const openFitPending = React.useRef(workshopCanvas || (fitOnOpen && !CANVAS_VIEWS.has(scopeKey)));
   const workshopOpenFitCompleted = React.useRef(false);
-  const [pan, setPan] = React.useState(() => readCanvasView(scopeKey).pan);
-  const [zoom, setZoom] = React.useState(() => readCanvasView(scopeKey).zoom);
+  const [pan, setPan] = React.useState(() => libraryMode && !CANVAS_VIEWS.has(scopeKey) ? {x:0,y:36} : readCanvasView(scopeKey).pan);
+  const [zoom, setZoom] = React.useState(() => libraryMode && !CANVAS_VIEWS.has(scopeKey) ? 1 : readCanvasView(scopeKey).zoom);
   const viewportTransformRef = React.useRef({pan, zoom});
   viewportTransformRef.current = {pan, zoom};
   React.useEffect(() => { CANVAS_VIEWS.set(scopeKey, {pan, zoom}); }, [scopeKey, pan, zoom]);
@@ -5563,7 +5575,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
         'The projection did not supply both port interfaces.' : 'A supplied port interface is absent from its node.'});
       return null;
     }
-    const sourceWidth = (typeof isWorkshopGraphNode === 'function' && isWorkshopGraphNode(fromNode)) ? 300 : fromNode.cat === 'ai' && expanded[fromNode.id] ? Math.max(520, fromNode.w || NODE_CARD_W) :
+    const sourceWidth = (typeof isWorkshopGraphNode === 'function' && isWorkshopGraphNode(fromNode)) ? (fromNode.w || 320) : fromNode.cat === 'ai' && expanded[fromNode.id] ? Math.max(520, fromNode.w || NODE_CARD_W) :
       Number.isFinite(fromNode.w) && fromNode.w >= 120 ? fromNode.w : nodeIsWatch(fromNode) ? 260 : NODE_CARD_W;
     const x1 = fromNode.x + sourceWidth, y1 = fromNode.y + portY(portBands[fromNode.id], fromIdx);
     const x2 = toNode.x,                y2 = toNode.y + portY(portBands[toNode.id], toIdx);
@@ -5843,7 +5855,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   // and offers Arrange, the one user-initiated write that lays them out by the same measured sizes.
   const overlapCount = (() => {
     if (!allNodes.length || !allNodes.every(node => Number.isFinite(cardHeights[node.id]))) return 0;
-    const boxes = allNodes.map(node => ({id:node.id, ...(positions[node.id] || node), w:(typeof isWorkshopGraphNode === 'function' && isWorkshopGraphNode(node)) ? 300 : node.w || 220, h:cardHeights[node.id]}));
+    const boxes = allNodes.map(node => ({id:node.id, ...(positions[node.id] || node), w:(typeof isWorkshopGraphNode === 'function' && isWorkshopGraphNode(node)) ? (node.w || 320) : node.w || 220, h:cardHeights[node.id]}));
     const hit = new Set();
     for (let a = 0; a < boxes.length; a += 1) for (let b = a + 1; b < boxes.length; b += 1) {
       const p = boxes[a], q = boxes[b];
@@ -6202,7 +6214,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       onDragLeave={onDragLeave}
       onDrop={onDrop}
       style={{
-        gridColumn:'1', gridRow:'2', position:'relative', overflow:'hidden',
+        gridColumn:'1', gridRow:libraryMode?'1':'2', position:'relative', overflow:'hidden',
         height:'100%', minHeight:0,
         background:LM.bgCanvas,
         backgroundImage:`radial-gradient(${LM.lineHair} 1px, transparent 1px)`,
@@ -6278,7 +6290,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
           const pos = positions[n.id] || { x: n.x, y: n.y };
           const on = cardHandlers(n.id);
           return (
-            <MemoNodeRenderer
+            <MemoNodeRenderer libraryMode={libraryMode}
               key={n.id}
               n={n} x={pos.x} y={pos.y}
               themeEpoch={themeEpoch}
@@ -6371,7 +6383,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
           style={window.AH_DS.styles.button(false ? 'primary' : 'secondary', true)}>Select connected</window.AH_DS.Btn>
       </div>}
 
-      <CanvasToolbar onRun={() => menuRun()} runDisabled={typeof window.ARCHHUB_RUN !== 'function' || menuBusy || blocked}
+      <CanvasToolbar compact={libraryMode} onRun={() => menuRun()} runDisabled={typeof window.ARCHHUB_RUN !== 'function' || menuBusy || blocked}
         title={authorityState?.canvas?.scope?.label || authorityState?.canvas?.label || ''}
         project={authorityState?.canvas?.project_label || ''} waiting={graph.nodes.filter(node=>canvasNeedsUser(node)||typeof isWorkshopGraphNode==='function'&&isWorkshopGraphNode(node)&&workshopModel?.needs_user).length}
         status={workshopSnapshot?.nativeWork?.state === 'executing' || workshopModel?.members?.some(row=>row.presence==='working') ? 'Running' : ''}
@@ -6387,10 +6399,10 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
         arrangeDisabled={layoutNeedsRefresh || !canSaveLayout || !allIds.length}
         arrangeWhy={layoutWhy(noNodesWhy)}
         fitLabel={selected.size ? 'Fit selection' : 'Fit all nodes'} setLibraryOpen={setLibraryOpen}/>
-      <MiniMap pan={pan} zoom={zoom} positions={positions} allNodes={allNodes.map(node=>({...node,
-        w:node.w || (typeof isWorkshopGraphNode==='function'&&isWorkshopGraphNode(node)?300:nodeIsWatch(node)?260:NODE_CARD_W),
-        h:cardHeights[node.id] || node.h}))}/>
-      <CanvasAddBox setLibraryOpen={setLibraryOpen}/>
+      {!libraryMode && <MiniMap pan={pan} zoom={zoom} positions={positions} allNodes={allNodes.map(node=>({...node,
+        w:node.w || (typeof isWorkshopGraphNode==='function'&&isWorkshopGraphNode(node)?320:nodeIsWatch(node)?260:NODE_CARD_W),
+        h:cardHeights[node.id] || node.h}))}/>}
+      <CanvasAddBox compact={libraryMode} setLibraryOpen={setLibraryOpen}/>
       {ctxMenu && <CanvasMenu x={ctxMenu.x} y={ctxMenu.y} maxHeight={ctxMenu.maxHeight}
         opener={ctxMenu.opener} items={ctxMenu.nodeId ? nodeMenuItems : ctxMenu.wireId ? wireMenuItems : canvasMenuItems}
         label={ctxMenu.nodeId ? 'Node actions' : ctxMenu.wireId ? 'Wire actions' : 'Canvas actions'} onClose={closeContextMenu}/>}
@@ -6479,14 +6491,14 @@ const CanvasMenu = ({ x, y, maxHeight, opener, items, label, onClose }) => {
 };
 
 // ─── nodes dispatcher ───
-const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimmed, expanded, onToggleExpand, onDragStart, onFocus, onSocket, onSocketDrag, onOpen, onContextMenu, onKeyDown, onPortBand, onExpand, onMemberLeave, screenToCanvasPoint, watchActions }) => {
+const NodeRenderer = ({ libraryMode = false, n: held, x = held.x, y = held.y, selected, focused, dimmed, expanded, onToggleExpand, onDragStart, onFocus, onSocket, onSocketDrag, onOpen, onContextMenu, onKeyDown, onPortBand, onExpand, onMemberLeave, screenToCanvasPoint, watchActions }) => {
   const n = held.x === x && held.y === y ? held : {...held, x, y};
   if (typeof window !== 'undefined' && window.__archhubCardRenders) window.__archhubCardRenders[held.id] = (window.__archhubCardRenders[held.id] || 0) + 1;
   const cat = studioCategory(n.cat);
   // AI nodes can expand horizontally for full conversation + search
   const isAi = n.cat === 'ai';
   const workshopCard = !n.application && typeof isWorkshopGraphNode === 'function' && isWorkshopGraphNode(n);
-  const cardW = workshopCard ? 300 : (isAi && expanded) ? Math.max(520, n.w || NODE_CARD_W) :
+  const cardW = workshopCard ? (n.w || 320) : (isAi && expanded) ? Math.max(520, n.w || NODE_CARD_W) :
     Number.isFinite(n.w) && n.w >= 120 ? n.w : nodeIsWatch(n) ? 260 : NODE_CARD_W;
   const agent = n.application ? null : canvasAgentRecord(n);
   const title = agent?.label || agent?.name || nodeCardTitle(n);
@@ -6605,6 +6617,14 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
     <GraphWorkshopFace n={n} onDragStart={onDragStart} bandRef={bandRef} onPortBand={onPortBand}
       onSocket={onSocket} onSocketDrag={onSocketDrag} startMemberDrag={onMemberLeave ? startMemberDrag : null}
       memberDragTrace={memberDragTrace}/>
+  </div>;
+  if(libraryMode && !sessionCard && !groupCard && !agent) return <div ref={cardRef} className="lm-node" data-node-id={n.id} data-library-canvas-node=""
+    onClick={handleClick} onDoubleClick={onOpen} onContextMenu={onContextMenu} tabIndex={0} onKeyDown={handleKeyDown}
+    style={{position:'absolute',left:n.x,top:n.y,width:cardW}}>
+    <window.AH_DS.Node title={nodeCardTitle(n)} sub={nodeCardSubtitle(n)} glyph={cat.icon} gc={cat.col} w={cardW} selected={selected||focused}
+      bandRef={bandRef} onHeaderMouseDown={onDragStart} foot={n.result_summary || n.status || n.state || 'Not run'}
+      ins={(n.ins||[]).map(port=>({l:port.label||port.id,t:port.t,list:!!port.list,f:!!port.connected,onUse:port.connectable&&onSocket?()=>onSocket(port,'in'):null,onDragStart:port.connectable&&onSocketDrag?event=>onSocketDrag(event,port,'in'):null}))}
+      outs={(n.outs||[]).map(port=>({l:port.label||port.id,t:port.t,list:!!port.list,f:!!port.connected,onUse:port.connectable&&onSocket?()=>onSocket(port,'out'):null,onDragStart:port.connectable&&onSocketDrag?event=>onSocketDrag(event,port,'out'):null}))}/>
   </div>;
   return (
     <div ref={cardRef} className="lm-node" data-node-id={n.id} data-group={n.group || undefined}
@@ -6726,7 +6746,7 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
 // A card re-renders only when what it draws changed: its node record, its place, or its focus, dim and
 // expansion. Its handlers are stable (NodeCanvas cardHandlers), so a drag re-renders the moving card only.
 const MemoNodeRenderer = React.memo(NodeRenderer, (a, b) => a.n === b.n && a.x === b.x && a.y === b.y &&
-  a.themeEpoch === b.themeEpoch &&
+  a.themeEpoch === b.themeEpoch && a.libraryMode === b.libraryMode &&
   a.focused === b.focused && a.selected === b.selected && a.dimmed === b.dimmed && a.expanded === b.expanded && !!a.onOpen === !!b.onOpen && !!a.onExpand === !!b.onExpand && a.onMemberLeave === b.onMemberLeave);
 const NodeStateDot = ({ s }) => {
   const col = s === 'running' ? LM.accent : s === 'queued' ? LM.inkSoft : LM.ok;
@@ -7269,18 +7289,18 @@ const GraphWorkshopFace = ({ n, onDragStart, bandRef, onSocket, onSocketDrag, st
       detail:review ? {root:descriptor.root, work:approval?.work || approval?.id} : descriptor.root}));
   };
   const rows = Math.max(n.ins?.length || 0, n.outs?.length || 0);
-  return <section data-workshop-node-face="" data-workshop-id={descriptor?.root || ''}
+  return <window.AH_DS.Card as="section" data-workshop-node-face="" data-workshop-id={descriptor?.root || ''}
     data-canvas-card-skin="078" data-workshop-node-state={model?.needs_user ? 'needs-user' : model?.status?.text}
     data-workshop-approval={approval?.work || approval?.id || undefined} onDoubleClick={openWindow}
-    style={{...canvasCardSurface(model?.needs_user === true), border:`1px solid ${LM.line}`, boxSizing:'border-box', lineHeight:'normal'}}>
+    style={{background:LM.bgPanel,borderRadius:10,overflow:'visible', border:`1px solid ${approval ? LM.warn : LM.line}`, boxSizing:'border-box', lineHeight:'normal'}}>
     <style>{`[data-workshop-node-face] * {box-sizing:content-box;} [data-workshop-node-face] button {box-sizing:border-box;}`}</style>
     <div onMouseDown={onDragStart} style={{display:'flex', gap:10, alignItems:'center', padding:'12px 14px', cursor:'move'}}>
-      <i data-node-status-ring={model?.needs_user ? 'needs-user' : model?.status?.text} style={{width:30, height:30, borderRadius:8, background:LM.purple, color:LM.onFill,
-        boxShadow:`0 0 0 2px ${color}`, display:'grid', placeItems:'center', fontStyle:'normal', fontSize:15, flex:'none'}}>◎</i>
-      <div style={{flex:1, minWidth:0}}><div style={{fontSize:14, fontWeight:700}}>Workshop</div>
+      <i data-node-status-ring={model?.needs_user ? 'needs-user' : model?.status?.text} style={{width:24, height:24, borderRadius:6, background:LM.purple, color:LM.onFill,
+        display:'grid', placeItems:'center', fontStyle:'normal', fontSize:13, flex:'none'}}>◎</i>
+      <div style={{flex:1, minWidth:0}}><div style={{fontSize:14, fontWeight:600}}>Workshop</div>
         <div data-workshop-node-title="" style={{fontSize:12, color:LM.inkSoft, overflow:'hidden',
           textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{model?.title || 'Unavailable'}</div></div>
-      <span data-workshop-node-agent-stack="" style={{display:'flex',gap:6}}>{members.map((member, index) => {
+      <span data-workshop-node-agent-stack="" style={{display:'flex',gap:0}}>{members.map((member, index) => {
         const participant = member.row?.root || member.root || member.id;
         const id = member.graph_member_id || participant;
         const canDrag = !!startMemberDrag && canMoveMember && !!member.graph_member_id && member.graph_group_id === n.id;
@@ -7291,46 +7311,32 @@ const GraphWorkshopFace = ({ n, onDragStart, bandRef, onSocket, onSocketDrag, st
           onPointerDown={canDrag ? event => startMemberDrag({...member, id}, event) : undefined}
           onMouseDown={event => {event.stopPropagation(); if (canDrag) startMemberDrag({...member, id}, event);}}
           data-agent-presence={member.presence || member.liveState || 'unavailable'}
-          style={{width:26, height:26, borderRadius:8, background:member.col || member.c || member.color || LM.purple, color:LM.onFill,
-            boxShadow:`0 0 0 2px ${member.presence === 'needs-user' || member.liveState === 'needs-user' ? LM.warn : member.presence === 'ready' || member.verified ? LM.ok : LM.inkSoft}`,
+          style={{width:20, height:20, borderRadius:5, background:member.col || member.c || member.color || LM.purple, color:LM.onFill,
+            boxShadow:'none',
             display:'grid', placeItems:'center', fontStyle:'normal', fontSize:11, fontWeight:700, flex:'none',
-            marginLeft:0, cursor:canDrag ? 'grab' : 'default'}}>{member.ini || name.slice(0,1).toUpperCase()}</i>;
+            marginLeft:index ? -4 : 0, cursor:canDrag ? 'grab' : 'default'}}>{member.ini || name.slice(0,1).toUpperCase()}</i>;
       })}</span>
-    </div>
-    <div data-node-preview-slot="" data-workshop-node-steps="" style={{margin:'0 16px', borderRadius:10,
-      background:LM.bgDeep, border:`1px solid ${LM.lineSoft}`, overflow:'hidden'}}>
-      {(model?.steps || []).length ? model.steps.map((step,index) => {
-        const waits = ['needs-user','waiting','awaiting_approval','paused'].includes(step.state);
-        const done = ['done','complete','completed','success'].includes(step.state);
-        const stepColor = waits ? LM.warn : done ? LM.ok : LM.inkSoft;
-        return <div key={step.id || step.root || index} data-workshop-node-step={step.id || step.root || index}
-          style={{display:'grid', gridTemplateColumns:'18px 1fr auto', gap:8, padding:'6px 10px',
-            borderTop:index ? `1px solid ${LM.lineSoft}` : 0, fontSize:13}}>
-          <span style={{color:stepColor}}>{done ? '✓' : waits ? '⏸' : '○'}</span><span>{step.title || 'Unavailable'}</span>
-          <span style={{color:stepColor,fontSize:12}}>{step.result ?? (waits ? 'needs you' : step.duration || '')}</span>
-        </div>;
-      }) : <div aria-disabled="true" style={{padding:'8px 10px',fontSize:12.5,color:LM.inkSoft}}>Unavailable</div>}
     </div>
     {rows > 0 && <div ref={bandRef} data-port-band="" data-workshop-node-ports=""
       style={{position:'relative', height:PORT_BAND_PAD * 2 + rows * SOCKET_STEP}}>
       {(n.ins || []).map((port, index) => <Socket key={'in-' + port.id} id={port.id} side="in" i={index}
-        t={port.t} label={port.label} list={!!port.list || !!port.multiple} half={150} plate
+        t={port.t} label={port.label} list={!!port.list || !!port.multiple} half={(n.w || 320)/2} plate
         onUse={port.connectable && onSocket ? () => onSocket(port, 'in') : undefined}
         onDragStart={port.connectable && onSocket ? event => onSocketDrag?.(event, port, 'in') : undefined}/>)}
       {(n.outs || []).map((port, index) => <Socket key={'out-' + port.id} id={port.id} side="out" i={index}
-        t={port.t} label={port.label} list={!!port.list || !!port.multiple} half={150} plate
+        t={port.t} label={port.label} list={!!port.list || !!port.multiple} half={(n.w || 320)/2} plate
         onUse={port.connectable && onSocket ? () => onSocket(port, 'out') : undefined}
         onDragStart={port.connectable && onSocket ? event => onSocketDrag?.(event, port, 'out') : undefined}/>)}
     </div>}
     <footer style={{display:'flex', alignItems:'center', gap:8, padding:'10px 14px', borderTop:`1px solid ${LM.lineSoft}`}}>
       <i aria-hidden="true" style={{width:8, height:8, borderRadius:'50%', background:color, flex:'none'}}/>
-      <span data-workshop-node-status="" style={{fontSize:13.5, fontWeight:600, color, flex:1}}>{approval && Number.isSafeInteger(model?.count) ? `${model.count}${model.output_label ? ' ' + model.output_label : ''} wait for you` : <>{model?.status?.text || 'Unavailable'}{outputCount}</>}</span>
+      <span data-workshop-node-status="" style={{fontSize:13, fontWeight:400, color, flex:1}}>{approval && Number.isSafeInteger(model?.count) ? `Waits for you · ${model.count}${model.output_label ? ' ' + model.output_label : ''}` : <>{model?.status?.text || 'Unavailable'}{outputCount}</>}</span>
       {approval && <window.AH_DS.Btn type="button" data-workshop-node-review="" onMouseDown={event => event.stopPropagation()}
         onClick={event => openWindow(event, true)} disabled={!descriptor?.root || !(approval.work || approval.id)}
-        style={{border:reviewPrimary?0:`1px solid ${LM.line}`, borderRadius:8, background:reviewPrimary?`linear-gradient(180deg, ${LM.accentHi || LM.accent}, ${LM.accent})`:'#26262d', color:reviewPrimary?'#fff':LM.ink,boxShadow:reviewPrimary?`0 1px 0 rgba(255,255,255,.25) inset, 0 4px 14px ${LM.accent}44`:'none',
-          height:30, display:'inline-flex', alignItems:'center', fontFamily:LM.sans, fontSize:13, fontWeight:600, padding:'0 12px', cursor:'pointer'}}>Review</window.AH_DS.Btn>}
+        style={{border:reviewPrimary?0:`1px solid ${LM.line}`, borderRadius:5, background:reviewPrimary?LM.accent:LM.bgHover, color:reviewPrimary?LM.onFill:LM.ink,boxShadow:'none',
+          height:26, display:'inline-flex', alignItems:'center', fontFamily:LM.sans, fontSize:13, fontWeight:500, padding:'0 10px', cursor:'pointer'}}>Review</window.AH_DS.Btn>}
     </footer>
-  </section>;
+  </window.AH_DS.Card>;
 };
 // Host locations and crop coordinates are projected data; never invent plan rooms or marks.
 const nodePlanPreviewFor = node => {
@@ -7804,41 +7810,43 @@ const StagePreview = () => (
 );
 
 // ─── canvas toolbar (TOP-LEFT) ───
-const CanvasToolbar = ({ zoom, setZoom, onFit, fitLabel, onArrange, arrangeDisabled = false, arrangeWhy = 'Arrange', setLibraryOpen, undo, redo, onRun, runDisabled = true, title = '', project = '', status = '', waiting = 0 }) => (<>
-  <div data-canvas-topbar="" data-no-pan style={{position:'absolute',left:0,right:0,top:0,height:56,
-    display:'flex',alignItems:'center',gap:14,padding:'0 24px',borderBottom:`1px solid ${LM.lineSoft}`,background:'#0f0f13'}}>
-    {project&&<span style={{fontSize:13,color:LM.inkSoft}}>{project} ›</span>}<span style={{fontSize:17,fontWeight:700}}>{title}</span>
+const CanvasToolbar = ({ compact = false, zoom, setZoom, onFit, fitLabel, onArrange, arrangeDisabled = false, arrangeWhy = 'Arrange', setLibraryOpen, undo, redo, onRun, runDisabled = true, title = '', project = '', status = '', waiting = 0 }) => {
+  const history = [['Undo', '\u21b6', undo], ['Redo', '\u21b7', redo]].filter(([, , held]) => held).map(([label, icon, held]) => (
+    <window.AH_DS.Btn key={label} disabled={held.disabled} onClick={(e) => { e.stopPropagation(); held.run(); }}
+      title={label} aria-label={label} aria-description={held.disabled ? held.why : undefined}
+      style={{...window.AH_DS.styles.button("ghost", true), cursor:held.disabled ? 'default' : 'pointer', color:LM.inkSoft}}>{icon}</window.AH_DS.Btn>
+  ));
+  return <>
+  <div data-canvas-topbar="" data-no-pan style={{position:'absolute',left:0,right:0,top:0,height:compact?36:56,
+    display:'flex',alignItems:'center',gap:compact?10:14,padding:compact?'0 12px':'0 24px',borderBottom:`1px solid ${LM.lineSoft}`,background:'#0f0f13'}}>
+    {project&&<span style={{fontSize:13,color:LM.inkSoft}}>{project} ›</span>}<span style={{fontSize:compact?12:17,fontWeight:compact?500:700}}>{title}</span>
     {status&&<span data-canvas-live-state="" style={{borderRadius:999,padding:'4px 9px',background:LM.accent+'1f',color:LM.accent,fontSize:12,fontWeight:600}}>{status}</span>}
     {waiting>0&&<span data-canvas-needs-user="" style={{borderRadius:999,padding:'4px 9px',background:LM.warn+'1f',color:LM.warn,fontSize:12,fontWeight:600}}>{waiting} needs you</span>}<span style={window.AH_DS.styles.fill}/>
+    {compact && history}
     <window.AH_DS.Btn disabled={arrangeDisabled} onClick={event => {event.stopPropagation(); onArrange();}}
-      title={arrangeDisabled ? arrangeWhy : 'Arrange'} aria-label="Arrange" style={{...window.AH_DS.styles.button("secondary", true),height:30,fontSize:13}}>Arrange</window.AH_DS.Btn>
+      title={arrangeDisabled ? arrangeWhy : 'Arrange'} aria-label="Arrange" style={{...window.AH_DS.styles.button(compact?"ghost":"secondary", true),height:compact?26:30,fontSize:13}}>Arrange</window.AH_DS.Btn>
     <window.AH_DS.Btn data-canvas-run-primary="" disabled={runDisabled} onClick={event => {event.stopPropagation(); onRun?.();}}
-      style={{height:30,padding:'0 12px',border:waiting>0?`1px solid ${LM.line}`:0,borderRadius:8,fontFamily:LM.sans,fontSize:13,fontWeight:600,color:waiting>0?LM.ink:'#fff',background:waiting>0?'#26262d':`linear-gradient(180deg, ${LM.accentHi || LM.accent}, ${LM.accent})`,boxShadow:waiting>0?'0 1px 0 rgba(255,255,255,.06) inset':`0 1px 0 rgba(255,255,255,.25) inset, 0 4px 14px ${LM.accent}44`,cursor:'pointer'}}>{'▶ Run'}</window.AH_DS.Btn>
+      style={compact?window.AH_DS.styles.button('primary',true):{height:30,padding:'0 12px',border:waiting>0?`1px solid ${LM.line}`:0,borderRadius:8,fontFamily:LM.sans,fontSize:13,fontWeight:600,color:waiting>0?LM.ink:'#fff',background:waiting>0?'#26262d':`linear-gradient(180deg, ${LM.accentHi || LM.accent}, ${LM.accent})`,boxShadow:waiting>0?'0 1px 0 rgba(255,255,255,.06) inset':`0 1px 0 rgba(255,255,255,.25) inset, 0 4px 14px ${LM.accent}44`,cursor:'pointer'}}>{compact?'Run':'▶ Run'}</window.AH_DS.Btn>
   </div>
   <div data-no-pan style={{
-    position:'absolute', left:40, bottom:28, display:'flex', gap:LM.sp.xs,
-    ...canvasCardSurface(), border:`1px solid ${LM.line}`, borderRadius:10, padding:LM.sp.xs,
+    position:'absolute', left:compact?16:40, bottom:compact?'42%':28, display:'flex', gap:LM.sp.xs,
+    ...canvasCardSurface(), border:`1px solid ${LM.line}`, borderRadius:compact?6:10, padding:compact?3:LM.sp.xs,
   }}>
-    <window.AH_DS.Btn onClick={(e) => { e.stopPropagation(); setZoom(z => Math.max(0.3, +(z - 0.1).toFixed(2))); }} title="Zoom out" aria-label="Zoom out" style={{...window.AH_DS.styles.button("ghost", true),width:'auto',padding:'0 6px',fontFamily:LM.sans,fontSize:13}}>Zoom out</window.AH_DS.Btn>
+    <window.AH_DS.Btn onClick={(e) => { e.stopPropagation(); setZoom(z => Math.max(0.3, +(z - 0.1).toFixed(2))); }} title="Zoom out" aria-label="Zoom out" style={{...window.AH_DS.styles.button("ghost", true),width:'auto',padding:'0 6px',fontFamily:LM.sans,fontSize:13}}>{compact?'−':'Zoom out'}</window.AH_DS.Btn>
     <div data-canvas-zoom="" style={{ ...window.AH_DS.styles.button("ghost", true), width:48, color:LM.ink, background:LM.bg, fontFamily:LM.sans, fontSize:13, cursor:'default' }}>
       {Math.round(zoom * 100)}%
     </div>
-    <window.AH_DS.Btn onClick={(e) => { e.stopPropagation(); setZoom(z => Math.min(2, +(z + 0.1).toFixed(2))); }} title="Zoom in" aria-label="Zoom in" style={{...window.AH_DS.styles.button("ghost", true),width:'auto',padding:'0 6px',fontFamily:LM.sans,fontSize:13}}>Zoom in</window.AH_DS.Btn>
-    <window.AH_DS.Btn onClick={(e) => { e.stopPropagation(); onFit(); }} title={fitLabel} aria-label={fitLabel} style={{...window.AH_DS.styles.button("ghost", true),width:'auto',padding:'0 6px',fontFamily:LM.sans,fontSize:13}}>Fit</window.AH_DS.Btn>
-    <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
-    {[['Undo', '\u21b6', undo], ['Redo', '\u21b7', redo]].filter(([, , held]) => held).map(([label, icon, held]) => (
-      <window.AH_DS.Btn key={label} disabled={held.disabled} onClick={(e) => { e.stopPropagation(); held.run(); }}
-        title={label} aria-label={label} aria-description={held.disabled ? held.why : undefined}
-        style={{...window.AH_DS.styles.button("ghost", true), cursor:held.disabled ? 'default' : 'pointer', color:held.disabled ? LM.inkSoft : LM.inkSoft}}>{icon}</window.AH_DS.Btn>
-    ))}
+    <window.AH_DS.Btn onClick={(e) => { e.stopPropagation(); setZoom(z => Math.min(2, +(z + 0.1).toFixed(2))); }} title="Zoom in" aria-label="Zoom in" style={{...window.AH_DS.styles.button("ghost", true),width:'auto',padding:'0 6px',fontFamily:LM.sans,fontSize:13}}>{compact?'+':'Zoom in'}</window.AH_DS.Btn>
+    <window.AH_DS.Btn onClick={(e) => { e.stopPropagation(); onFit(); }} title={fitLabel} aria-label={fitLabel} style={{...window.AH_DS.styles.button("ghost", true),width:'auto',padding:'0 6px',fontFamily:LM.sans,fontSize:13}}>{compact?'⤢':'Fit'}</window.AH_DS.Btn>
+    {!compact && <><div style={{ width:1, background:LM.line, margin:'0 2px' }}/>{history}
     <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
     <window.AH_DS.Btn onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} title="Add node" aria-label="Add node" style={{
       padding:'0 10px', height:22, border:0, background:'transparent', cursor:'pointer',
       color:LM.accent, fontFamily:LM.sans, fontSize:12, fontWeight:600, letterSpacing:0,
       display:'flex', alignItems:'center', gap:LM.sp.xs,
-    }}>{'\uff0b add node'}</window.AH_DS.Btn>
-  </div></>
-);
+    }}>{'\uff0b add node'}</window.AH_DS.Btn></>}
+  </div></>;
+};
 
 
 
@@ -7882,7 +7890,7 @@ const FloatingComposer = ({ setLibraryOpen, model, node }) => {
 // ─── add-node box (BOTTOM CENTER) ───
 // Founder 2026-10-12 (C1): the canvas keeps the design's bottom '/' box for adding nodes and opening
 // the library ONLY. It has no model, sends nothing, and is not a chat: the one chat is the right panel.
-const CanvasAddBox = ({ setLibraryOpen }) => {
+const CanvasAddBox = ({ compact = false, setLibraryOpen }) => {
   const [q, setQ] = React.useState('');
   React.useEffect(()=>{const key=event=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){
     event.preventDefault();setLibraryOpen(true);
@@ -7890,13 +7898,13 @@ const CanvasAddBox = ({ setLibraryOpen }) => {
   const open = () => { setLibraryOpen(q.replace(/^\/+/, '').trim() || true); setQ(''); };
   return (
     <div data-no-pan data-canvas-add style={{
-      position:'absolute', left:'50%', bottom:24, transform:'translateX(-50%)',
-      width:520, maxWidth:'70%', height:44, background:LM.surf2, border:`1px solid ${LM.line}`,
-      borderRadius:12, boxShadow:LM.elev.e2, padding:'0 14px',
+      position:'absolute', left:'50%', bottom:compact?16:24, transform:'translateX(-50%)',
+      width:compact?440:520, maxWidth:'70%', height:compact?36:44, background:compact?LM.bgPanel:LM.surf2, border:`1px solid ${LM.line}`,
+      borderRadius:compact?8:12, boxShadow:LM.elev.e2, padding:compact?'0 12px':'0 14px',
       display:'flex', alignItems:'center', gap:LM.sp.sm,
     }}>
       <span aria-hidden="true" style={{ color:LM.accent, fontFamily:LM.mono, fontSize:13 }}>/</span>
-      <input aria-label="Add a node" value={q} placeholder="Add a node, or ask the Workshop…"
+      <window.AH_DS.TextField aria-label="Add a node" value={q} placeholder={compact?'Add node':'Add a node, or ask the Workshop…'}
         onChange={e => setQ(e.target.value)}
         onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); open(); } else if (e.key === 'Escape') setQ(''); }}
         style={{ flex:1, minWidth:0, background:'transparent', border:0, outline:'none', color:LM.ink, fontFamily:LM.sans, fontSize:13 }}/>
@@ -7957,81 +7965,23 @@ const useLibraryRefreshEpoch = () => {
 };
 
 
-const NodeLibrary = ({ onClose, addNodeFromLibrary, initialQuery = '' }) => {
-  const libraryRead = useNodeLibrary();
-  useLibraryRefreshEpoch();
-  const library = libraryDisplayGroups(librarySource(useStudioProjection()));
-  const [filter, setFilter] = React.useState('all');
-  const [q, setQ] = React.useState(initialQuery);
-  const [openCats, setOpenCats] = React.useState(() => Object.fromEntries(library.map(group => [group.cat, true])));
-  React.useEffect(() => {
-    setOpenCats(held => Object.fromEntries(library.map(group => [group.cat, held[group.cat] !== false])));
-  }, [library.map(group => group.cat).join('\u0000')]);
-  const addFromLibrary = React.useCallback(item => {
-    if (addNodeFromLibrary) addNodeFromLibrary(item);
-    onClose();
-  }, [addNodeFromLibrary, onClose]);
-  const toggleCat = React.useCallback(cat => setOpenCats(o => ({ ...o, [cat]: !o[cat] })), []);
-  const modCount = library.reduce((count, group) => count + group.items.filter(item => item.mod).length, 0);
-  const sourceGroups = filter === 'mods' ? library.map(group => ({...group, items:group.items.filter(item => item.mod)})).filter(group => group.items.length) : filter === 'all' ? library : library.filter(g => g.cat === filter);
-  const groups = libraryVisibleGroups(sourceGroups, 'all', q);
+const NodeLibrary = ({ onClose, addNodeFromLibrary, initialQuery = '', onSwitchPanel }) => {
+  const live=React.useRef(true);
+  React.useEffect(()=>{live.current=true;const escape=event=>{if(event.key==='Escape')onClose();};document.addEventListener('keydown',escape);return()=>{live.current=false;document.removeEventListener('keydown',escape);};},[]);
   return (
-    <div data-node-library-overlay="" onClick={onClose} style={{
-      position:'absolute', inset:0, background:'rgba(0,0,0,.55)', zIndex:60,
-      display:'grid', placeItems:'center',
-    }}>
-      <div role="dialog" aria-modal="true" aria-label="Node library" onClick={e => e.stopPropagation()} style={{
-        width:780, maxWidth:'94%', height:540, maxHeight:'88%',
-        background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.dialog,
-        overflow:'hidden', boxShadow:LM.shadow.dialog,
-        display:'grid', gridTemplateColumns:'248px 1fr', gridTemplateRows:'48px 1fr',
-      }}>
-        <div style={{ gridColumn:'1 / -1', gridRow:'1', borderBottom:`1px solid ${LM.line}`, padding:'0 14px', display:'flex', alignItems:'center', gap:10 }}>
-          <span style={{ fontFamily:LM.sans, fontSize:15, fontWeight:600 }}>Library</span>
-          <span style={{ fontFamily:LM.sans, fontSize:12, color:LM.inkSoft }}>{libraryTotal(library)} nodes</span>
-          <div style={window.AH_DS.styles.fill}/>
-          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search nodes" style={{
-            padding:'6px 11px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
-            color:LM.ink, fontFamily:LM.sans, fontSize:12.5, outline:'none', width:280,
-          }}/>
-          <window.AH_DS.Btn onClick={onClose} style={{
-            width:24, height:24, padding:0, border:`1px solid ${LM.line}`, background:'transparent',
-            borderRadius:LM.rad.control, cursor:'pointer', color:LM.inkSoft, fontSize:LM.icon.ui.size,
-          }}>✕</window.AH_DS.Btn>
-        </div>
-
-        {/* Categories */}
-        <div style={{ gridColumn:'1', gridRow:'2', borderRight:`1px solid ${LM.line}`, padding:`${LM.sp.md}px ${LM.sp.sm}px`, overflow:'auto' }}>
-          <LibCatBtn id="all" label="All" active={filter==='all'} onSelect={setFilter}/>
-          {modCount > 0 && <LibCatBtn id="mods" label={`From mods · ${modCount}`} active={filter==='mods'} onSelect={setFilter}/>}
-          {library.map(group => {
-            const c = studioCategory(group.cat);
-            return <LibCatBtn key={group.cat} id={group.cat} label={c.label[0] + c.label.slice(1).toLowerCase()} icon={c.icon} col={c.col} active={filter===group.cat} onSelect={setFilter}/>;
-          })}
-        </div>
-
-        <div className="ah-scroll" style={{ gridColumn:'2', gridRow:'2', overflow:'auto', padding:'14px 18px' }}>
-          {(libraryRead.loading || libraryRead.error || !library.length) && <window.AH_DS.EmptyState glyph={null} title={libraryRead.loading ? "Reading nodes…" : libraryRead.error ? "Library unavailable" : !library.length ? "No nodes yet" : ""} error={!!libraryRead.error} detail={libraryRead.error} onRetry={libraryRead.error || !library.length ? libraryRead.retry : undefined}/>}
-
-          <NodeLibraryGroups library={groups} q={q} openCats={openCats} onToggle={toggleCat} onAdd={addFromLibrary}/>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const LibCatBtn = ({ id, label, icon, col, active, onSelect }) => (
-  <window.AH_DS.Btn onClick={() => onSelect(id)} style={{
-    width:'100%', padding:`${LM.sp.sm}px ${LM.sp.md}px`, borderRadius:LM.rad.control, border:0,
-    background: active ? LM.bgSoft : 'transparent',
-    color: active ? LM.ink : LM.inkSoft,
-    textAlign:'left', cursor:'pointer', fontFamily:LM.sans, fontSize:LM.fs.bodySm.sz,
-    display:'flex', alignItems:'center', gap:LM.sp.sm, marginBottom:1,
-  }}>
-    {icon && <span style={{ color:col, width:LM.icon.category.box, textAlign:'center', fontFamily:LM.sans, fontSize:LM.icon.category.size }}>{icon}</span>}
-    <span style={window.AH_DS.styles.fill}>{label}</span>
-  </window.AH_DS.Btn>
+  <div data-node-library-overlay="" onClick={onClose} style={{position:'absolute',inset:0,background:'rgba(0,0,0,.55)',zIndex:60,display:'grid',placeItems:'center'}}>
+    <window.AH_DS.Card role="dialog" aria-modal="true" aria-label="Node library" onClick={event=>event.stopPropagation()}
+      style={{fontFamily:LM.sans,width:320,maxWidth:'94%',height:660,maxHeight:'88%',display:'grid',gridTemplateRows:'auto minmax(0,1fr)',boxShadow:LM.shadow.dialog}}>
+      <window.AH_DS.Btn sm kind="ghost" aria-label="Close library" title="Close library (Escape)" onClick={onClose} style={{justifySelf:'end'}}>Close</window.AH_DS.Btn>
+      <NodesPanel initialQuery={initialQuery} onSwitchPanel={onSwitchPanel} addNodeFromLibrary={async item=>{
+        const result=await addNodeFromLibrary?.(item);
+        if(result!==false && live.current)onClose();
+        return result;
+      }}/>
+    </window.AH_DS.Card>
+  </div>
 );
+};
 
 // ──────────────────────── NODE RAIL ────────────────────────
 const NodeModelConversation = ({node, scope = '', openConversation, active = true}) => {
@@ -8476,13 +8426,13 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
     </div>
   </div>;
 };
-const InspectorTabs = ({ labels, active, onSelect }) => <div role="tablist" aria-label="Selection inspector tabs" style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+const InspectorTabs = ({ labels, active, onSelect, plate = false }) => <div role="tablist" aria-label="Selection inspector tabs" style={{ display:'flex', gap:plate?2:6, flexWrap:'wrap',borderBottom:plate?`1px solid ${LM.line}`:undefined,padding:plate?'0 12px':undefined }}>
   {labels.map(label => {
     const selected = active === label;
     return <window.AH_DS.Btn key={label} type="button" role="tab" aria-selected={selected ? 'true' : 'false'}
       onClick={() => onSelect(label)} style={{
-      padding:'4px 9px', border:0, borderRadius:LM.rad.sm, background:selected ? LM.accentDim : 'transparent',
-      color:selected ? LM.accent : LM.inkSoft, fontFamily:LM.sans, fontSize:11.5, cursor:'pointer' }}>{label}</window.AH_DS.Btn>;
+      padding:plate?'0 10px':'4px 9px',height:plate?32:undefined,border:0,borderBottom:plate?`2px solid ${selected?LM.accent:'transparent'}`:undefined,borderRadius:plate?0:LM.rad.sm,background:plate?'transparent':selected?LM.accentDim:'transparent',
+      color:selected ? plate?LM.ink:LM.accent : LM.inkSoft, fontFamily:LM.sans, fontSize:11.5, cursor:'pointer' }}>{label}</window.AH_DS.Btn>;
   })}
 </div>;
 const InspectorRuns = ({ node, graph }) => {
@@ -8499,13 +8449,13 @@ const forkThroughCanvas = node => {
   if (typeof duplicate !== 'function') throw new Error('Fork is unavailable in this view.');
   return duplicate(node);
 };
-const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop, scope = '', openConversation,
+const NodeRail = ({ libraryMode = false, node, hiddenWork = false, workshopRoom = '', onOpenWorkshop, scope = '', openConversation,
   graph = null, canvas = null, session = null, sessionRows = [], model, setPickerOpen, readiness = null,
   onReadinessStale, onModelReadRetry, onAccount }) => {
   // Work lives in the Workshop. A selection the canvas does not draw points there instead of an empty panel.
   if (!node && hiddenWork) return (
-    <aside role="status" style={{ gridColumn:'2', gridRow:'2', background:LM.bgPanel, borderLeft:`1px solid ${LM.line}`,
-      padding:'14px 16px 20px', display:'flex', flexDirection:'column', gap:LM.sp.md }}>
+    <aside role="status" style={{ gridColumn:'2', gridRow:libraryMode?'1':'2', background:LM.bgPanel, borderLeft:`1px solid ${LM.line}`,
+      padding:libraryMode?'12px':'14px 16px 20px', display:'flex', flexDirection:'column', gap:LM.sp.md }}>
       <div style={{ fontFamily:LM.serif, fontSize:19, lineHeight:1.1, color:LM.ink }}>Selected Work is in the Workshop</div>
       <div style={{ fontSize:12, lineHeight:1.5, color:LM.inkSoft }}>
         {workshopRoom ? 'Work is reviewed and edited in the Workshop, not on this canvas.' : 'No Workshop conversation is in this scope.'}</div>
@@ -8516,7 +8466,7 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
   const sessionNode = isSessionInspectorNode(inspectedNode);
   const cat = studioCategory(inspectedNode.cat);
   const groupNode = !!inspectedNode.composition && !inspectedNode.application;
-  const labels = groupNode ? ['Interface', 'Exposed parameters', 'Chat'] : [sessionNode || inspectedNode.graphNode ? 'Chat' : 'Properties',
+  const labels = groupNode ? ['Interface', 'Exposed parameters', 'Chat'] : libraryMode ? ['Chat','Properties'] : [sessionNode || inspectedNode.graphNode ? 'Chat' : 'Properties',
     sessionNode || inspectedNode.graphNode ? 'Properties' : 'Chat',
     ...(hasRunsPanel(inspectedNode, graph) ? ['Runs'] : [])];
   const roomConversationNode = inspectedNode.cat === 'ai' && inspectedNode.has_conversation && !nodeModelRow(inspectedNode);
@@ -8535,7 +8485,11 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
   const target = {kind:inspectedNode.graphNode ? 'graph' : sessionNode ? 'session' : 'node',
     id:inspectedNode.id, graphId:inspectedNode.graph_id || '', name:inspectedNode.title,
     node:inspectedNode.graphNode ? null : inspectedNode};
-  const properties = <section aria-label="Properties"><window.NodeInspector key={inspectedNode.id} node={inspectedNode} onFork={forkThroughCanvas}/></section>;
+  const properties = <section aria-label="Properties"><window.NodeInspector key={inspectedNode.id} node={inspectedNode} onFork={forkThroughCanvas} plate={libraryMode} preview={watchPreviewFor(inspectedNode)}
+    watchActions={{...(window.ARCHHUB_WATCH_ACTIONS?.get(inspectedNode.id) || {}),runToHere:typeof window.ARCHHUB_RUN_TO_HERE==='function'?()=>window.ARCHHUB_RUN_TO_HERE(inspectedNode.id):null}} onExport={()=>{
+      const csv=watchExportCsv(inspectedNode,watchPreviewFor(inspectedNode));const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+      const link=document.createElement('a');link.href=url;link.download=(inspectedNode.title || 'output')+'.csv';link.click();setTimeout(()=>URL.revokeObjectURL(url),0);
+    }}/></section>;
   const groupInterface = <section aria-label="Interface" style={{display:'flex', flexDirection:'column', gap:10}}>
     <div style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.14em'}}>INTERFACE · computed from crossing wires</div>
     {[...(inspectedNode.ins || []).map(port => ['in', port]), ...(inspectedNode.outs || []).map(port => ['out', port])].map(([dir, port]) => (
@@ -8553,15 +8507,15 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
     <p role="status" style={{ margin:0, fontSize:12, lineHeight:1.5, color:LM.inkSoft }}>No conversation yet.</p>}</section>;
   return (
     <aside aria-label="Selection inspector" style={{
-      gridColumn:'2', gridRow:'2',
+      gridColumn:'2', gridRow:libraryMode?'1':'2',
       background:LM.bgPanel, borderLeft:`1px solid ${LM.line}`,
       overflow:'hidden', minHeight:0, minWidth:0,
       // One column, never wider than the 320px track: a long chip or value ellipsizes instead of
       // widening the panel past the window edge (founder window, 2026-10-12).
-      display:'grid', gridTemplateRows:'1fr auto', gridTemplateColumns:'minmax(0, 1fr)',
+      display:'grid', gridTemplateRows:libraryMode&&visibleTab!=='Chat'?'1fr':'1fr auto', gridTemplateColumns:'minmax(0, 1fr)',
     }}>
-      <div className="ah-scroll" style={{ overflowY:'auto', overflowX:'hidden', minWidth:0, padding:'14px 16px 20px', display:'flex', flexDirection:'column', gap:LM.sp.lg }}>
-        <div>
+      <div className="ah-scroll" style={{ overflowY:'auto', overflowX:'hidden', minWidth:0, padding:libraryMode?0:'14px 16px 20px', display:'flex', flexDirection:'column', gap:libraryMode?0:LM.sp.lg }}>
+        {libraryMode ? <window.AH_DS.SelectionHeader glyph={cat.icon} color={cat.col} title={inspectedNode.title} subtitle={inspectedNode.sub || inspectedNode.description}/> : <div>
           <div style={{ display:'flex', alignItems:'center', gap:7 }}>
             <span style={{ color:cat.col }}>{cat.icon}</span>
             <span style={{ fontFamily:LM.sans, fontSize:11, fontWeight:600, color:LM.inkSoft, letterSpacing:0 }}>
@@ -8571,16 +8525,16 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
             {inspectedNode.title}
           </div>
           {!inspectedNode.application && inspectedNode.sub && <div style={{ fontFamily:LM.sans, fontSize:11, fontWeight:600, color:LM.inkSoft, marginTop:5, letterSpacing:0 }}>{inspectedNode.sub}</div>}
-        </div>
-        <InspectorTabs labels={labels} active={visibleTab} onSelect={setActiveTab}/>
+        </div>}
+        <InspectorTabs plate={libraryMode} labels={labels} active={visibleTab} onSelect={setActiveTab}/>
         {visibleTab === 'Interface' && groupInterface}
         {visibleTab === 'Exposed parameters' && groupParameters}
         <div hidden={visibleTab !== 'Chat'}>{chat}</div>
         {visibleTab === 'Properties' && properties}
         {visibleTab === 'Runs' && <InspectorRuns node={inspectedNode} graph={graph}/>}
       </div>
-      <ScopeComposer target={target} model={model} setPickerOpen={setPickerOpen} readiness={readiness} onSend={() => setActiveTab('Chat')}
-        onReadinessStale={onReadinessStale} onModelReadRetry={onModelReadRetry} onAccount={onAccount}/>
+      {(!libraryMode || visibleTab==='Chat') && <ScopeComposer target={target} model={model} setPickerOpen={setPickerOpen} readiness={readiness} onSend={() => setActiveTab('Chat')}
+        onReadinessStale={onReadinessStale} onModelReadRetry={onModelReadRetry} onAccount={onAccount}/>}
     </aside>
   );
 };

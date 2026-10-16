@@ -2,7 +2,7 @@ const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const vm = require('node:vm');
+const vm = require('./studio_ds_context.cjs');
 
 const root = path.resolve(__dirname, '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
@@ -12,6 +12,7 @@ function createHarness() {
   const calls = [];
   const events = [];
   const React = {
+    forwardRef:fn => fn,
     createElement(type, props, ...children) {
       return {type, props:props || {}, children:children.flat(Infinity)};
     },
@@ -115,7 +116,7 @@ test('WS-022 court: real board lanes retain blocked recovery in WIP and founder 
   assert.match(html, /data-workshop-lane="done"/);
   assert.match(html, /data-workshop-lane="archived"/);
   assert.doesNotMatch(html, /data-workshop-lane="claimed"|data-workshop-lane="blocked"|Claimed|Blocked|no agent|host unknown|CDE/);
-  assert.match(flat(html), /Planned 3 .* WIP 2 .* In review 3 .* Done 9 .* Archived 1/);
+  assert.match(flat(html), /PLANNED 3 .* WIP 2 .* IN REVIEW 3 .* DONE 9 .* ARCHIVED 1/);
   assert.doesNotMatch(flat(html), /Archive after|archive_after_idle_days/);
   assert.match(flat(html), /Collect requirements Workshop step 1 of 3/);
   assert.match(flat(html), /Approve connector Codex Codex waiting for your approval .* Approve Decline/);

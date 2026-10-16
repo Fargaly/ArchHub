@@ -314,6 +314,9 @@ test('graph composer judges a selected node by its own model: a node model witho
       readiness:answer('ready', 'cloud/archhub-free', fam('no_key', 'ready'))}});
   try {
     await settle(studio.win); await settle(studio.win);
+    click(studio, buttonIn(studio.doc.querySelector('[aria-label="Selection inspector"]'), 'Chat'));
+    assert.equal(buttonIn(studio.doc.querySelector('[aria-label="Selection inspector"]'), 'Chat').getAttribute('aria-selected'), 'true');
+    await settle(studio.win); await settle(studio.win);
     const card = studio.doc.querySelector('[data-chat-no-model]');
     assert.ok(card, 'the composer pick is ready, but the node shown asks OpenRouter without a key');
     assert.match(card.textContent, /needs an OpenRouter key/);
@@ -325,6 +328,9 @@ test('graph composer with a selected node with no model says no model, never the
     models:{ok:true, groups:[], selected_route:'cloud/archhub-free', default_route:'',
       readiness:answer('no_key', 'cloud/archhub-free', fam('ready', 'no_key'))}});
   try {
+    await settle(studio.win); await settle(studio.win);
+    click(studio, buttonIn(studio.doc.querySelector('[aria-label="Selection inspector"]'), 'Chat'));
+    assert.equal(buttonIn(studio.doc.querySelector('[aria-label="Selection inspector"]'), 'Chat').getAttribute('aria-selected'), 'true');
     await settle(studio.win); await settle(studio.win);
     const card = studio.doc.querySelector('[data-chat-no-model]');
     assert.ok(card, 'a blank node model is said');

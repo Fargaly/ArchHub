@@ -80,11 +80,11 @@ test('LIBRARY-64 rows show human names only and never engine ids as chrome text'
 });
 
 test('LIBRARY-64 every row adds a node in one click and keeps drag payloads', () => {
-  const item = slice('const NodeLibItem = ({ it, cat, catId, selected = false, onAdd }) => {', '// ─── Skills panel');
+  const item = slice('const NodeLibItem = ({ it, cat, catId, selected = false, onAdd, disabled = false }) => {', '// ─── Skills panel');
   assert.match(item, /<window\.AH_DS\.Btn type="button"/);
   assert.match(item, /onClick=\{onAdd\}/);
   assert.doesNotMatch(item, /onDoubleClick/);
-  assert.match(item, /draggable="true"/);
+  assert.match(item, /draggable=\{!disabled\}/);
   assert.match(item, /application\/x-lm-node/);
   assert.match(item, /\.\.\.it, cat: catId/);
 });
@@ -164,9 +164,9 @@ test('LIBRARY-64 p4 row ports equal the served canonical interface for every row
 
 test('LIBRARY-64 p3 tabs route to live panels and the runs badge is not hardcoded', () => {
   assert.match(librarySurface, /data-library-tab=\{route\}/);
-  assert.match(librarySurface, /onSwitchPanel && onSwitchPanel\('chats'\)/);
-  assert.match(librarySurface, /onSwitchPanel && onSwitchPanel\('skills'\)/);
-  assert.match(librarySurface, /onSwitchPanel && onSwitchPanel\('runs'\)/);
+  assert.match(librarySurface, /onSwitchPanel \? \(\) => onSwitchPanel\('chats'\)/);
+  assert.match(librarySurface, /onSwitchPanel \? \(\) => onSwitchPanel\('skills'\)/);
+  assert.match(librarySurface, /onSwitchPanel \? \(\) => onSwitchPanel\('runs'\)/);
   assert.match(librarySurface, /runsWaiting > 0/);
   assert.doesNotMatch(librarySurface, />3<\/span>/);
 });

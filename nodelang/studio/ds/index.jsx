@@ -6,6 +6,9 @@
     event:'cyan', file:'ok', any:'inkSoft', view:'cyan' };
   const button = (kind = 'secondary', sm = false, variant = 'controls') => {
     const setting = variant === 'settings';
+    if (variant === 'workshop') return {display:'inline-flex',alignItems:'center',gap:7,height:sm?30:36,padding:sm?'0 12px':'0 16px',borderRadius:8,
+      fontFamily:A.sans,fontSize:sm?13:14,fontWeight:600,cursor:'pointer',background:kind==='primary'?`linear-gradient(180deg, ${A.accentHi || A.accent}, ${A.accent})`:A.workshop.buttonBackground,
+      color:kind==='primary'?'#fff':A.ink,boxShadow:kind==='primary'?`0 1px 0 rgba(255,255,255,.25) inset, 0 4px 14px ${A.accent}44`:'0 1px 0 rgba(255,255,255,.06) inset',border:kind==='primary'?0:`1px solid ${A.line}`};
     const palette = {
       primary:[A.accent, setting ? '#fff' : A.onFill, A.accent], secondary:[setting ? '#26262d' : A.bgHover, A.ink, A.line],
       ghost:['transparent', setting ? A.inkSoft : A.ink, 'transparent'], danger:['transparent', A.err, 'transparent']
@@ -16,7 +19,7 @@
       whiteSpace:'nowrap', background:palette[0], color:palette[1],
       border:setting && (kind === 'primary' || kind === 'ghost') ? 0 : `1px solid ${palette[2]}` };
   };
-  const styles = Object.freeze({ button, flex:{ display:'flex', alignItems:'center', gap:8 },
+  const styles = Object.freeze({ button, workshopButton:(primary, small) => button(primary?'primary':'secondary',small,'workshop'), flex:{ display:'flex', alignItems:'center', gap:8 },
     fill:{ flex:1 }, get muted() { return { color:A.inkSoft }; } });
 
   // Native buttons supply Enter/Space, disabled semantics and form behaviour.
@@ -41,7 +44,7 @@
         boxShadow:focus ? `0 0 0 2px ${A.bgDeep}, 0 0 0 4px ${A.accent}` : 'none',
         transform:state === 'pressed' && !off ? 'translateY(1px)' : 'none',
         ...(icon ? { minWidth:sm ? 26 : 32, padding:0 } : {}), ...style,
-        ...(off ? { border:`1px dashed ${A.line}`, color:A.inkSoft, background:'transparent' } : {}) }}>
+        ...(off && variant !== 'workshop' ? { border:`1px dashed ${A.line}`, color:A.inkSoft, background:'transparent' } : {}) }}>
       {loading && <span aria-hidden="true" style={{ width:12, height:12, borderRadius:'50%', border:`2px solid ${base.color}`, borderRightColor:'transparent', display:'inline-block' }}/>}
       {icon || children}
     </button>;
@@ -66,13 +69,13 @@
     </button>;
   }
 
-  function Row({ k, label, children, changed, hint, onReset, style, ...props }) {
-    return <div {...props} style={{ display:'grid', gridTemplateColumns:'96px 1fr auto', alignItems:'center', gap:8,
+  function Row({ k, label, children, changed, hint, onReset, style, raw = false, rowRef, ...props }) {
+    return <div ref={rowRef} {...props} style={{ display:'grid', gridTemplateColumns:'96px 1fr auto', alignItems:'center', gap:8,
       minHeight:32, padding:'0 12px', borderTop:`1px solid ${A.lineSoft}`, ...style }}>
-      <span style={{ fontSize:13, color:A.inkSoft, display:'flex', alignItems:'center', gap:6 }}>
+      {raw ? children : <><span style={{ fontSize:13, color:A.inkSoft, display:'flex', alignItems:'center', gap:6 }}>
         {changed && <i aria-hidden="true" style={{ width:6, height:6, borderRadius:'50%', background:A.accent, display:'inline-block' }}/>}{label ?? k}</span>
       <div style={{ display:'grid', gap:2, padding:'4px 0' }}>{children}{hint && <span style={{ fontSize:11, color:A.inkSoft }}>{hint}</span>}</div>
-      {changed ? <Btn sm kind="ghost" onClick={onReset} disabled={!onReset} style={{ fontSize:12, color:A.inkSoft, textDecoration:'underline' }}>Reset</Btn> : <span/>}
+      {changed ? <Btn sm kind="ghost" onClick={onReset} disabled={!onReset} style={{ fontSize:12, color:A.inkSoft, textDecoration:'underline' }}>Reset</Btn> : <span/>}</>}
     </div>;
   }
 
@@ -92,36 +95,36 @@
   }
 
   function Node({ glyph, gc, title, sub, ins = [], outs = [], foot, footc, chip, sel, selected, run,
-    w = 224, edge, dashed, children, style, ...props }) {
+    w = 224, edge, dashed, children, style, bandRef, onHeaderMouseDown, ...props }) {
     return <div {...props} style={{ position:'relative', width:w, background:A.bgPanel,
       border:`1px ${dashed ? 'dashed' : 'solid'} ${A.line}`, borderRadius:6,
       borderLeft:edge === 'l' ? `4px solid ${gc}` : undefined, borderRight:edge === 'r' ? `4px solid ${gc}` : undefined,
       outline:sel || selected ? `2px solid ${A.accent}` : 'none', outlineOffset:2,
       boxShadow:run ? `0 0 0 1px ${A.accent}` : 'none', ...style }}>
-      <div style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 10px' }}>
+      <div onMouseDown={onHeaderMouseDown} style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 10px' }}>
         <span aria-hidden="true" style={{ width:20, height:20, borderRadius:5, background:gc, color:A.onFill,
           display:'grid', placeItems:'center', font:`600 12px ${A.sans}`, flex:'none' }}>{glyph}</span>
         <div style={{ minWidth:0, flex:1 }}><div style={{ fontSize:13, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{title}</div>
           <div style={{ fontSize:11, color:A.inkSoft, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{sub}</div></div>
         <span aria-hidden="true" style={{ width:8, height:8, borderRadius:'50%', background:footc || A.inkSoft, flex:'none' }}/>
       </div>
-      {Math.max(ins.length, outs.length) > 0 && <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', borderTop:`1px solid ${A.line}`, padding:'4px 0' }}>
+      {Math.max(ins.length, outs.length) > 0 && <div ref={bandRef} data-port-band="" style={{ display:'grid', gridTemplateColumns:'1fr 1fr', borderTop:`1px solid ${A.line}`, padding:'4px 0' }}>
         <div>{ins.map(p => <div key={p.l} style={{ position:'relative', height:22, display:'flex', alignItems:'center', padding:'0 12px', fontSize:12 }}>
-          <span style={{ position:'absolute', left:-11, top:1 }}><Socket t={p.t} list={p.list} filled={p.f} hit/></span>{p.l}</div>)}</div>
+          <span style={{ position:'absolute', left:-11, top:1 }}><Socket t={p.t} list={p.list} filled={p.f} hit aria-label={`Connect input ${p.l}`} title={`Connect input ${p.l}`} role={p.onUse?'button':undefined} tabIndex={p.onUse?0:undefined} onClick={p.onUse} onMouseDown={e=>e.stopPropagation()} onKeyDown={e=>{if(p.onUse&&(e.key==='Enter'||e.key===' ')){e.preventDefault();p.onUse(e);}}} onPointerDown={p.onDragStart}/></span>{p.l}</div>)}</div>
         <div>{outs.map(p => <div key={p.l} style={{ position:'relative', height:22, display:'flex', alignItems:'center', justifyContent:'flex-end', padding:'0 12px', fontSize:12 }}>
-          {p.l}<span style={{ position:'absolute', right:-11, top:1 }}><Socket t={p.t} list={p.list} filled={p.f} hit/></span></div>)}</div>
+          {p.l}<span style={{ position:'absolute', right:-11, top:1 }}><Socket t={p.t} list={p.list} filled={p.f} hit aria-label={`Connect output ${p.l}`} title={`Connect output ${p.l}`} role={p.onUse?'button':undefined} tabIndex={p.onUse?0:undefined} onClick={p.onUse} onMouseDown={e=>e.stopPropagation()} onKeyDown={e=>{if(p.onUse&&(e.key==='Enter'||e.key===' ')){e.preventDefault();p.onUse(e);}}} onPointerDown={p.onDragStart}/></span></div>)}</div>
       </div>}
       {children}{chip && <div style={{ padding:'0 10px 6px' }}>{chip}</div>}
       <div style={{ borderTop:`1px solid ${A.line}`, padding:'5px 10px', fontSize:11, color:footc || A.inkSoft }}>{foot}</div>
     </div>;
   }
 
-  function Card({ title, children, style, variant, ...props }) {
+  function Card({ title, children, style, variant, as:Tag = 'div', ...props }) {
     if (title !== undefined) return <Node {...props} title={title} style={style}>{children}</Node>;
-    return <div {...props} style={{ background:variant === 'settings' ? 'linear-gradient(180deg, #1c1c22 0%, #17171c 100%)' : A.bgPanel,
+    return <Tag data-ds-card="" {...props} style={{ background:variant === 'settings' ? 'linear-gradient(180deg, #1c1c22 0%, #17171c 100%)' : A.bgPanel,
       border:`1px solid ${A.line}`, borderRadius:variant === 'settings' ? 14 : 6,
       ...(variant === 'settings' ? { boxShadow:'0 1px 0 rgba(255,255,255,.04) inset, 0 1px 2px rgba(0,0,0,.4)' } : {}),
-      overflow:'hidden', ...style }}>{children}</div>;
+      overflow:'hidden', ...style }}>{children}</Tag>;
   }
 
   function Rail({ children, g, glyph, l, label, on, active, badge, as:Tag = 'nav', style, ...props }) {
@@ -142,7 +145,7 @@
 
   // Plate composer shell; caller owns inputs, submit handlers and conversation state.
   function Composer({ children, as:Tag = 'div', w, style, ...props }) {
-    return <Tag {...props} style={{ width:w, margin:'0 auto', border:`1px solid ${A.line}`, borderRadius:10,
+    return <Tag data-ds-composer="" {...props} style={{ width:w, margin:'0 auto', border:`1px solid ${A.line}`, borderRadius:10,
       background:A.bgPanel, padding:'12px 14px', display:'grid', gap:10, ...style }}>{children}</Tag>;
   }
 
@@ -158,6 +161,54 @@
     </div>;
   }
 
+  const TextField = React.forwardRef(function TextField({multiline, style, ...props}, ref) {
+    const Tag = multiline ? 'textarea' : 'input';
+    return <Tag ref={ref} {...props} style={{minWidth:0,border:0,background:'transparent',color:A.ink,fontFamily:A.sans,fontSize:13,outline:'none',...style}}/>;
+  });
+  function Select(props) { return <select {...props}/>; }
+  function Frame({as:Tag = 'div', style, children, ...props}) {
+    return <Tag data-ds-frame="" {...props} style={{display:'grid',minHeight:0,overflow:'hidden',color:A.ink,fontFamily:A.sans,...style}}>{children}</Tag>;
+  }
+  function Avatar({agent, size = 28, ring, style, ...props}) {
+    return <span data-workshop-avatar={agent?.id || ''} {...props} style={{position:'relative',width:size,height:size,flex:'none',display:'inline-block',...style}}>
+      <i style={{position:'absolute',inset:0,borderRadius:size/3.5,background:`linear-gradient(180deg, ${agent?.col || A.purple}, ${agent?.col || A.purple}cc)`,color:'#fff',display:'grid',placeItems:'center',fontStyle:'normal',fontSize:Math.max(11,size*.44),fontWeight:700,boxShadow:'0 1px 0 rgba(255,255,255,.25) inset'}}>
+        {agent?.ini || Array.from(String(agent?.name || '').trim())[0]?.toUpperCase() || '?'}</i>
+      {ring && <i data-presence-ring="" style={{position:'absolute',inset:-3,borderRadius:size/3.5+3,border:`2px solid ${ring}`,boxShadow:`0 0 10px ${ring}66`}}/>}
+    </span>;
+  }
+  const avatar = (agent, size, ring) => <Avatar agent={agent} size={size} ring={ring === undefined ? agent?.presence==='needs-user'?A.warn:agent?.presence==='working'?A.accent:null : ring}/>;
+  const dot = color => <i style={{width:8,height:8,borderRadius:'50%',background:color,boxShadow:`0 0 8px ${color}aa`,display:'inline-block',flex:'none'}}/>;
+  const chip = (label,color) => <span style={{display:'inline-flex',alignItems:'center',gap:6,height:24,padding:'0 9px',borderRadius:999,background:`${color}1f`,color,fontSize:12,fontWeight:600}}>{label}</span>;
+  function SelectionHeader({glyph, color, title, subtitle}) {
+    return <header style={{display:'flex',alignItems:'center',gap:8,padding:12,minHeight:56}}><i style={{width:20,height:20,borderRadius:4,background:color,color:A.onFill,display:'grid',placeItems:'center',fontStyle:'normal',flex:'none'}}>{glyph}</i><div><div style={{fontSize:14,fontWeight:600}}>{title}</div>{subtitle&&<div style={{fontSize:12,color:A.inkSoft}}>{subtitle}</div>}</div></header>;
+  }
+  // Plate 064 Properties anatomy; values and all effects remain owned by the existing inspector.
+  function Properties({params = [], parameterRows, ports = [], preview, actions = {}, onExport, examples = [], error}) {
+    const [format,setFormat] = React.useState('Table');
+    const value = preview?.value;
+    const rows = Array.isArray(value) ? value : Array.isArray(value?.rows) ? value.rows : [];
+    const show = item => item == null ? '' : typeof item === 'object' ? JSON.stringify(item) : String(item);
+    const section = {padding:12,display:'grid',gap:8,borderTop:`1px solid ${A.lineSoft}`};
+    const cap = {fontSize:11,color:A.inkSoft,letterSpacing:'.04em',textTransform:'uppercase'};
+    return <div data-library-properties="" style={{display:'grid',alignContent:'start'}}>
+      {parameterRows}
+      {!params.length && <EmptyState compact glyph={null} title="No parameters in this selection"/>}
+      {['Pin output','Disable'].map((label,index)=>{const p=params.find(row=>row.k===(index?'disabled':'pin_output'));return !p && <Row key={label} label={label}><span style={{display:'flex',alignItems:'center',gap:8}}><Toggle label={label+' unavailable'} disabled/><span style={{fontSize:11,color:A.inkSoft}}>Unavailable</span></span></Row>;})}
+      <div style={section}><span style={cap}>Ports</span>{ports.map(p=><span key={p.side+':'+p.id} style={{display:'flex',alignItems:'center',gap:8,fontSize:12}}>
+        <Socket t={p.t} list={p.list} filled={p.connected}/>{p.label || p.id} · {p.t || 'unknown'}{p.list?' list':''}</span>)}</div>
+      <div style={section}><div style={{display:'flex',alignItems:'center',gap:8}}><span style={cap}>Output</span><span style={{flex:1}}/>
+        {['Table','JSON'].map(f=><Btn key={f} sm kind="ghost" aria-pressed={format===f} onClick={()=>setFormat(f)} style={{padding:'0 7px',background:format===f?A.accentSoft:'transparent'}}>{f}</Btn>)}</div>
+        <div style={{background:A.bgSoft,border:`1px solid ${A.lineSoft}`,borderRadius:5,padding:'6px 8px',font:`400 11px/17px ${A.mono}`,color:A.inkSoft}}>
+          {value == null ? 'Output unavailable. Run this node to read its result.' : format==='JSON' ? <pre style={{margin:0,whiteSpace:'pre-wrap'}}>{JSON.stringify(value,null,2)}</pre> : rows.slice(0,3).map((r,i)=><div key={i}>{typeof r==='object'&&r!==null?Object.values(r).map(show).join(' · '):show(r)}</div>)}
+          {rows.length>3&&<div>+ {rows.length-3} more rows</div>}</div>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}><Btn sm disabled={!actions.runToHere} onClick={actions.runToHere} title={actions.runToHere?'Run to here':'Node execution unavailable'}>Run to here</Btn>
+          <Btn sm kind="ghost" disabled={!actions.showInRevit} onClick={actions.showInRevit}>Show in Revit</Btn><Btn sm kind="ghost" disabled={value==null || !onExport} onClick={onExport}>Export CSV</Btn></div>
+      </div>
+      <div style={section}><span style={cap}>Last run</span><span style={{fontSize:12}}>{preview?.executed_at || preview?.last_run || 'Unavailable'}</span></div>
+      <div style={section}><span style={cap}>Examples</span>{examples.length ? examples.map(e=><Btn key={e.id || e.label} sm disabled={!e.run} onClick={e.run}>{e.label}</Btn>) : <span style={{fontSize:12,color:A.inkSoft}}>No examples in this catalogue entry.</span>}</div>
+      {error && <EmptyState compact glyph={null} error title="Could not save" detail={error} onRetry={actions.retry}/>}
+    </div>;
+  }
   const errorText = value => {
     const text = String(value || 'The request could not be completed.');
     if (/relation root is missing/i.test(text)) return 'The selection changed. Select the nodes again and retry.';
@@ -165,5 +216,5 @@
       return 'The application could not complete this request. Refresh the view and retry.';
     return text.replace(/not available yet/gi, 'Unavailable');
   };
-  window.AH_DS = Object.freeze({ errorText, Btn, Toggle, Row, Card, Rail, Node, Socket, Composer, EmptyState, styles });
+  window.AH_DS = Object.freeze({ errorText, Btn, Toggle, Row, Card, Rail, Node, Socket, Composer, EmptyState, TextField, Select, Frame, Avatar, Properties, SelectionHeader, avatar, dot, chip, styles });
 })();

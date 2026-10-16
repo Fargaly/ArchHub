@@ -12,7 +12,7 @@ function slice(source, start, end) {
 }
 const nodePreviewSource = source => slice(source,'const watchPreviewFor =','const WATCH_TABLE_ROWS =') +
   slice(source,'const nodePlanPreviewFor =','const NodeBody =');
-async function mountWorkshopNode({state, node, onMemberLeave, screenToCanvasPoint, onSocket, onSocketDrag, onOpen, onFocus} = {}) {
+async function mountWorkshopNode({state, node, libraryMode = false, onMemberLeave, screenToCanvasPoint, onSocket, onSocketDrag, onOpen, onFocus} = {}) {
   const {JSDOM} = await import('jsdom');
   const dom = new JSDOM('<div id="root"></div>', {url:'http://127.0.0.1/', pretendToBeVisual:true});
   const win = dom.window, previous = {window:global.window, document:global.document};
@@ -45,7 +45,7 @@ async function mountWorkshopNode({state, node, onMemberLeave, screenToCanvasPoin
   const container = win.document.getElementById('root'), root = createRoot(container);
   const act = fn => React.act(async () => {await fn();});
   let heldNode = node;
-  const props = () => ({n:heldNode, onPortBand:() => {}, onSocket:onSocket || ((...args) => calls.push(['socket',...args])),
+  const props = () => ({n:heldNode, libraryMode, onPortBand:() => {}, onSocket:onSocket || ((...args) => calls.push(['socket',...args])),
     onSocketDrag, onMemberLeave:onMemberLeave || ((...args) => calls.push(['memberLeave',...args])),
     screenToCanvasPoint:screenToCanvasPoint || ((x,y) => ({x,y})),
     onDragStart:() => calls.push(['dragStart']), onFocus:onFocus || (() => {}), onOpen, selected:false, focused:false});

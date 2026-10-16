@@ -265,6 +265,7 @@ test('mounted missing-target Fix focuses and opens the existing document picker 
   win.eval(fs.readFileSync(path.join(__dirname, '../nodelang/studio/vendor/react.js'), 'utf8'));
   win.eval(fs.readFileSync(path.join(__dirname, '../nodelang/studio/vendor/react-dom.js'), 'utf8'));
   win.eval(fs.readFileSync(path.join(__dirname, '../nodelang/studio/compiled/tokens.js'), 'utf8'));
+  win.eval(fs.readFileSync(path.join(__dirname, '../nodelang/studio/compiled/ds-index.js'), 'utf8'));
   win.eval(fs.readFileSync(path.join(__dirname, '../nodelang/studio/compiled/param-types.js'), 'utf8'));
   win.eval(fs.readFileSync(path.join(__dirname, '../nodelang/studio/compiled/studio-params.js'), 'utf8'));
   const node = {id:'node-mounted-fix', live:false, params:[
@@ -346,7 +347,7 @@ test('another caller cannot start or adopt an in-flight graph execution request'
   const end = html.indexOf('window.ARCHHUB_SET_PROP', start);
   assert.ok(start >= 0 && end > start);
   let calls = 0, finish;
-  const ctx = {window:{},jpost: () => { calls++; return new Promise(resolve => finish=resolve); }};
+  const ctx = {window:{ARCHHUB_LOAD_CANVAS:async()=>{}},jpost: () => { calls++; return new Promise(resolve => finish=resolve); }};
   vm.runInNewContext(html.slice(start,end),ctx);
   const first = ctx.window.ARCHHUB_RUN();
   const second = ctx.window.ARCHHUB_RUN();
@@ -354,6 +355,7 @@ test('another caller cannot start or adopt an in-flight graph execution request'
   assert.equal(calls,1);
   finish({display:{}}); await first;
   const later = ctx.window.ARCHHUB_RUN();
+  await tick();
   assert.equal(calls,2);
   finish({display:{}}); await later;
 });
@@ -363,7 +365,7 @@ test('inspector cannot mark newer saved parameters executed by another controls 
   const start = html.indexOf('let graphRunPromise = null;');
   const end = html.indexOf('window.ARCHHUB_SET_PROP', start);
   let finish;
-  const ctx = {window:{},jpost: () => new Promise(resolve => finish=resolve)};
+  const ctx = {window:{ARCHHUB_LOAD_CANVAS:async()=>{}},jpost: () => new Promise(resolve => finish=resolve)};
   vm.runInNewContext(html.slice(start,end),ctx);
   const olderRun = ctx.window.ARCHHUB_RUN();
   ctx.window.ARCHHUB_SET_PROP = async () => ({ok:true});

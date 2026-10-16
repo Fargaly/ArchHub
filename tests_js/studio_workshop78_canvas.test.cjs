@@ -52,22 +52,21 @@ test('DSYS-078 warning glow follows needs-user state and disappears after the re
   try {
     const face = () => ui.doc.querySelector('[data-workshop-node-face]');
     assert.equal(face().dataset.workshopNodeState,'needs-user');
-    assert.ok(face().style.boxShadow.includes(ui.win.AH.glow.warn));
-    assert.ok(face().style.boxShadow.includes(ui.win.AH.elev.e2));
-    assert.equal(ui.doc.querySelector('[data-workshop-node-status]').textContent,'4 results wait for you');
+    assert.equal(face().style.borderColor,'rgb(229, 178, 90)','plate 073 uses a warning hairline');
+    assert.equal(ui.doc.querySelector('[data-workshop-node-status]').textContent,'Waits for you · 4 results');
     fx.state.nativeWork = {...fx.state.nativeWork,state:'complete',approved:true};
     await ui.draw({state:fx.state});
-    assert.equal(face().style.boxShadow,ui.win.AH.elev.e2);
+    assert.equal(face().style.borderColor,'rgb(38, 38, 46)','resolved face returns to the standard hairline');
     assert.equal(ui.doc.querySelector('[data-workshop-node-review]'),null);
     assert.equal(ui.doc.querySelector('[data-workshop-node-status]').textContent,'complete');
   } finally {await ui.close();}
 });
 
-test('DSYS-078 Workshop preview is the same source plan and real ports remain 11px typed graph interfaces', async () => {
-  const ui = await mountWorkshopNode(fixture());
+test('DSYS-073 compact Workshop keeps plan in the shared model and real ports remain 11px typed graph interfaces', async () => {
+  const fx=fixture(),ui = await mountWorkshopNode(fx);
   try {
-    assert.equal(ui.doc.querySelector('[data-workshop-node-step]').textContent,'✓Read selected objectsRead receipt');
-    assert.equal(ui.doc.querySelectorAll('[data-node-preview-slot]').length,1);
+    assert.equal(ui.model().steps[0].title,'Read selected objects');
+    assert.equal(ui.doc.querySelectorAll('[data-node-preview-slot]').length,0,'073 replaces the expanded preview DOM');
     const ports = [...ui.doc.querySelectorAll('[data-socket-port]')];
     assert.deepEqual(ports.map(port => [port.dataset.socketPort,port.dataset.socketShape,port.style.width]),
       [['items-in','diamond','11px'],['result-out','diamond','11px']]);

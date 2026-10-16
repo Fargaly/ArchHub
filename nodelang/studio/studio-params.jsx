@@ -433,9 +433,10 @@ async function pmFlushParameters() {
 // shape a user-added one has, so one row component renders both.
 const pmNorm = (p) => {
   const meta = PM_META[p.k] || {};
-  const type = meta.type || (p.type === 'slider' || p.type === 'number' ? 'number' : p.type === 'select' || p.type === 'menu' ? 'menu' : p.type === 'color' || p.type === 'colour' ? 'colour' : p.type === 'textarea' ? 'textarea' : p.type === 'path' ? 'path' : 'text');
+  const declared = window.PM_ALIAS?.[p.type] || p.type;
+  const type = meta.type || (PM_TYPES?.[declared] ? declared : p.type === 'slider' || p.type === 'number' ? 'number' : p.type === 'select' || p.type === 'menu' ? 'menu' : p.type === 'color' || p.type === 'colour' ? 'colour' : p.type === 'textarea' ? 'textarea' : p.type === 'path' ? 'path' : 'text');
   return {
-    k: p.k, label: meta.label || p.label, type,
+    k: p.k, label: meta.label || p.label, type, list:p.list,
     min: p.min, max: p.max, step: p.step, opts: p.opts || PM_OPTS[p.k], page: 'Main', builtin: true,
     unit: meta.unit, hard: meta.hard, help: meta.help,
   };
@@ -527,7 +528,7 @@ const pmChip = (on) => ({
 // ON the line; the key, type, range and help are reference material and live in the tooltip
 // and the ⋯ menu. State is now read from the left edge: accent = you changed it, cyan = a
 // wire drives it, nothing = default.
-function ParamRow({ node, spec, labels, val, def, wired, onChange, onRevert, onPromote, onUnwire, onRename, onDelete }) {
+function ParamRow({ plate = false, node, spec, labels, val, def, wired, onChange, onRevert, onPromote, onUnwire, onRename, onDelete }) {
   const rowRef = React.useRef(null);
   const [menu, setMenu] = React.useState(false);
   const [open, setOpen] = React.useState(false);
@@ -604,75 +605,78 @@ function ParamRow({ node, spec, labels, val, def, wired, onChange, onRevert, onP
     <span title={'Driven by ' + wired} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, maxWidth: 118, fontFamily: PM.mono, fontSize: PM_FS.dataSm.sz, color: wired === 'unconnected' ? PM.warn : T.col, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
       ← {wired}
     </span>
+  ) : plate && node.engine==='shape.filter' && spec.k==='mode' ? (
+    <span role="group" aria-label="Keep" style={{display:'flex'}}>{['keep','drop'].map(value=><window.AH_DS.Btn sm key={value} aria-pressed={val===value} onClick={()=>pick(value)}
+      style={{padding:'0 7px',borderRadius:3,background:val===value?PM.accentSoft:'transparent',color:val===value?PM.accent:PM.ink}}>{value==='keep'?'matching':'not matching'}</window.AH_DS.Btn>)}</span>
   ) : spec.fixed && spec.type === 'number' ? (
-    <input aria-label={label} type="number" value={val ?? ''} min={spec.min} max={spec.max} step={spec.step || 'any'}
+    <window.AH_DS.TextField aria-label={label} type="number" value={val ?? ''} min={spec.min} max={spec.max} step={spec.step || 'any'}
       onChange={e => { if (e.target.value !== '' && Number.isFinite(+e.target.value)) onChange(+e.target.value); }}
       style={{width:'100%', minWidth:0, boxSizing:'border-box', background:PM.bg, color:PM.ink, border:`1px solid ${PM.line}`, borderRadius:4, padding:'4px 7px'}}/>
   ) : spec.fixed && spec.type === 'colour' ? (
-    <input aria-label={label} type="color" value={String(val)} onChange={e => onChange(e.target.value)}
+    <window.AH_DS.TextField aria-label={label} type="color" value={String(val)} onChange={e => onChange(e.target.value)}
       style={{width:40, height:26, border:`1px solid ${PM.line}`, borderRadius:4, background:PM.bg, padding:2}}/>
   ) : spec.fixed && menuOptions.length ? (
-    <select aria-label={label} value={String(val)} onChange={e => onChange(e.target.value)}
+    <window.AH_DS.Select aria-label={label} value={String(val)} onChange={e => onChange(e.target.value)}
       style={{width:'100%', minWidth:0, background:PM.bg, color:PM.ink, border:`1px solid ${PM.line}`, borderRadius:4, padding:'4px 7px'}}>
       {menuOptions.map(o => <option key={Array.isArray(o) ? o[0] : o} value={Array.isArray(o) ? o[0] : o}>{Array.isArray(o) ? o[1] : o}</option>)}
-    </select>
+    </window.AH_DS.Select>
   ) : dataOnly ? (
-    <button onClick={onPromote} title={T.label + ' can only arrive on a wire — expose a socket'}
-      style={{ padding: '3px 8px', borderRadius: 4, border: `1px dashed ${PM.line}`, background: 'transparent', color: PM.inkSoft, cursor: 'pointer', fontFamily: PM.mono, fontSize: PM_FS.label.sz }}>expose</button>
+    <window.AH_DS.Btn onClick={onPromote} title={T.label + ' can only arrive on a wire — expose a socket'}
+      style={{ padding: '3px 8px', borderRadius: 4, border: `1px dashed ${PM.line}`, background: 'transparent', color: PM.inkSoft, cursor: 'pointer', fontFamily: PM.mono, fontSize: PM_FS.label.sz }}>expose</window.AH_DS.Btn>
   ) : isNum ? (
     <ScrubValue value={val} step={spec.step} unit={spec.unit} hard={spec.hard} min={spec.min} max={spec.max} onChange={onChange}/>
   ) : spec.type === 'toggle' ? (
-    <button onClick={() => onChange(!val)} role="switch" aria-label={label} aria-checked={!!val} title={label + ' — ' + (val ? 'on' : 'off')}
+    <window.AH_DS.Btn onClick={() => onChange(!val)} role="switch" aria-label={label} aria-checked={!!val} title={label + ' — ' + (val ? 'on' : 'off')}
       style={{ background: 'transparent', border: 0, padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
       <span style={{ width: 30, height: 16, borderRadius: 999, position: 'relative', background: val ? PM.accent : PM.lineSoft, transition: 'background .15s' }}>
         <span style={{ position: 'absolute', top: 1, left: val ? 15 : 1, width: 14, height: 14, borderRadius: '50%', background: PM.ink, transition: 'left .15s' }}/>
       </span>
-    </button>
+    </window.AH_DS.Btn>
   ) : spec.type === 'colour' ? (
-    <button onClick={() => setOpen(o => !o)} title="Choose colour"
+    <window.AH_DS.Btn onClick={() => setOpen(o => !o)} title="Choose colour"
       style={{ width: 104, height: 24, borderRadius: 4, border: `1px solid ${open ? PM.accent : PM.line}`, background: String(val) || PM.bg, cursor: 'pointer' }}/>
   ) : spec.type === 'textarea' ? (
-    <textarea value={val == null ? '' : val} onChange={e => onChange(e.target.value)} placeholder="value..."
+    <window.AH_DS.TextField multiline value={val == null ? '' : val} onChange={e => onChange(e.target.value)} placeholder="value..."
       rows={3} style={{ width: 128, minHeight: 58, boxSizing: 'border-box', padding: '5px 7px', borderRadius: 4,
         border: `1px solid ${PM.line}`, background: PM.bg, color: PM.ink, fontFamily: PM.mono, fontSize: 11,
         outline: 'none', resize: 'vertical' }}/>
   ) : levelState && levelState.disabled ? (
     <span style={{ display:'inline-flex', alignItems:'center', gap:6, minWidth:0 }}>
-      <button disabled onClick={() => {}} title={levelState.reason}
+      <window.AH_DS.Btn disabled onClick={() => {}} title={levelState.reason}
         style={{ width: 104, boxSizing: 'border-box', padding: '4px 7px', borderRadius: 4, border: `1px dashed ${PM.line}`, background: PM.bg, color: PM.inkSoft, fontFamily: PM.sans, fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', cursor:'not-allowed' }}>
         {String(val || 'No levels')}
-      </button>
+      </window.AH_DS.Btn>
       <span role="status" style={{ fontFamily:PM.sans, fontSize:11, color:PM.inkSoft, lineHeight:'14px' }}>{levelState.reason}</span>
-      {((levelState.fix && levelState.fix.target === 'document-picker' && hasDocumentPicker) || (!levelState.fix && typeof window !== 'undefined' && typeof window.ARCHHUB_LOAD_HOSTS === 'function')) && <button onClick={refreshLevels} disabled={busy} style={pmChip(false)}>{levelState.fix?.label || 'Fix'}</button>}
+      {((levelState.fix && levelState.fix.target === 'document-picker' && hasDocumentPicker) || (!levelState.fix && typeof window !== 'undefined' && typeof window.ARCHHUB_LOAD_HOSTS === 'function')) && <window.AH_DS.Btn onClick={refreshLevels} disabled={busy} style={pmChip(false)}>{levelState.fix?.label || 'Fix'}</window.AH_DS.Btn>}
     </span>
   ) : (menuOptions && menuOptions.length) ? (
-    <button onClick={() => setOpen(o => !o)} title={label + ' — ' + menuOptions.length + ' options'}
+    <window.AH_DS.Btn onClick={() => setOpen(o => !o)} title={label + ' — ' + menuOptions.length + ' options'}
       style={{ width: 104, boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, padding: '4px 7px', borderRadius: 4, cursor: 'pointer', border: `1px solid ${open ? PM.accent : PM.line}`, background: PM.bg, color: PM.ink, fontFamily: PM.mono, fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden' }}>
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{String(val)}</span>
       <span style={{ color: PM.inkSoft, fontSize: PM_FS.dataSm.sz }}>{open ? '▴' : '▾'}</span>
-    </button>
+    </window.AH_DS.Btn>
   ) : spec.type === 'path' ? (
-    <button onClick={choosePath} disabled={busy} title={val ? String(val) : label + ' — file path'}
+    <window.AH_DS.Btn onClick={choosePath} disabled={busy} title={val ? String(val) : label + ' — file path'}
       style={{ maxWidth: 160, boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 7, padding: '4px 7px', borderRadius: 4, cursor: busy ? 'wait' : 'pointer', border: `1px solid ${PM.line}`, background: PM.bg, color: PM.ink, fontFamily: PM.sans, fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden' }}>
       <span data-param-file-chip="" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{pmFileChip(val)}</span>
       <span style={{ color: PM.inkSoft, fontFamily: PM.mono, fontSize: PM_FS.dataSm.sz }}>file</span>
-    </button>
+    </window.AH_DS.Btn>
   ) : (
-    <input aria-label={label} value={val == null ? '' : val} onChange={e => onChange(e.target.value)} placeholder="value…"
-      style={{ width:spec.fixed ? '100%' : 104, boxSizing: 'border-box', padding: '4px 7px', borderRadius: 4, border: `1px solid ${PM.line}`, background: PM.bg, color: PM.ink, fontFamily: PM.mono, fontSize: 11, outline: 'none' }}/>
+    <window.AH_DS.TextField aria-label={label} value={val == null ? '' : val} onChange={e => onChange(e.target.value)} placeholder="value…"
+      style={{ width:plate || spec.fixed ? '100%' : 104, minWidth:0, boxSizing: 'border-box', padding: '4px 7px', borderRadius: 4, border: `1px solid ${PM.line}`, background: PM.bg, color: PM.ink, fontFamily: PM.mono, fontSize: 11, outline: 'none' }}/>
   );
 
   return (
-    <div ref={rowRef} data-param-row="true" data-param-key={spec.k} style={{ display:'grid', gridTemplateColumns:spec.fixed ? 'minmax(60px,1fr) minmax(0,1fr)' : `${PARAM_LABEL_COL}px minmax(0,1fr) auto`, alignItems:'center', gap:8, minHeight:PARAM_ROW_H, borderLeft: `2px solid ${wired ? PM.cyan : changed ? PM.accent : 'transparent'}`, padding:'0 8px', borderBottom: `1px solid ${PM.lineHair}` }}>
+    <window.AH_DS.Row raw rowRef={rowRef} data-param-row="true" data-param-key={spec.k} style={{ display:'grid', gridTemplateColumns:plate?'96px minmax(0,1fr) auto':spec.fixed ? 'minmax(60px,1fr) minmax(0,1fr)' : `${PARAM_LABEL_COL}px minmax(0,1fr) auto`, alignItems:'center', gap:8, minHeight:plate?32:PARAM_ROW_H,borderTop:plate?`1px solid ${PM.lineSoft}`:0, borderLeft:plate?0:`2px solid ${wired ? PM.cyan : changed ? PM.accent : 'transparent'}`, padding:plate?'0 12px':'0 8px', borderBottom:plate?0:`1px solid ${PM.lineHair}` }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth:0 }}>
-        {!spec.fixed && <button onClick={() => (wired ? onUnwire() : onPromote())}
+        {!spec.fixed && (!plate || wired) && <window.AH_DS.Btn onClick={() => (wired ? onUnwire() : onPromote())}
           title={wired ? 'Unwire — return to a local value' : 'Expose as a ' + T.label.toLowerCase() + ' input socket'}
           style={{ border: 0, background: 'transparent', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
           <Socket type={spec.type} list={spec.list} filled={!!wired}/>
-        </button>}
+        </window.AH_DS.Btn>}
 
         {naming ? (
-          <input autoFocus value={naming} onChange={e => setNaming(e.target.value)}
+          <window.AH_DS.TextField autoFocus value={naming} onChange={e => setNaming(e.target.value)}
             onBlur={() => { onRename(naming.trim() || label); setNaming(''); }}
             onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setNaming(''); }}
             style={{ flex: 1, minWidth: 0, padding: '2px 5px', borderRadius: 3, border: `1px solid ${PM.accent}`, background: PM.bg, color: PM.ink, fontFamily: PM.sans, fontSize: 12.5, outline: 'none' }}/>
@@ -685,9 +689,9 @@ function ParamRow({ node, spec, labels, val, def, wired, onChange, onRevert, onP
       </div>
       <div style={{ display:spec.fixed ? 'none' : 'flex', alignItems:'center', justifyContent:'flex-end', gap:6 }}>
         {soft && <span title={'Beyond the usual range — hard limit ' + (spec.hard ? spec.hard[1] : '—')} style={{ color: PM.warn, fontFamily: PM.mono, fontSize: 11 }}>⚠</span>}
-        {!spec.fixed && changed && <button onClick={onRevert} title={'Revert to default · ' + def} style={{ border: 0, background: 'transparent', color: PM.accent, cursor: 'pointer', fontFamily: PM.mono, fontSize: 12, padding: 0 }}>↺</button>}
-        {!spec.fixed && <button onClick={() => setMenu(m => !m)} title="Row actions"
-          style={{ border: 0, background: 'transparent', color: menu ? PM.ink : PM.inkSoft, cursor: 'pointer', fontFamily: PM.mono, fontSize: 12, padding: '0 1px', flexShrink: 0 }}>⋯</button>}
+        {!spec.fixed && changed && <window.AH_DS.Btn onClick={onRevert} title={'Revert to default · ' + def} style={{ border: 0, background: 'transparent', color: PM.accent, cursor: 'pointer', fontFamily: PM.mono, fontSize: 12, padding: 0 }}>{plate?'Reset':'↺'}</window.AH_DS.Btn>}
+        {!spec.fixed && <window.AH_DS.Btn onClick={() => setMenu(m => !m)} title="Row actions"
+          style={{ border: 0, background: 'transparent', color: menu ? PM.ink : PM.inkSoft, cursor: 'pointer', fontFamily: PM.mono, fontSize: 12, padding: '0 1px', flexShrink: 0 }}>⋯</window.AH_DS.Btn>}
       </div>
 
       {notice && <div role="status" style={{ gridColumn:'2 / 4', fontFamily:PM.sans, fontSize:11, color:PM.inkSoft, paddingBottom:7 }}>{notice}</div>}
@@ -695,27 +699,27 @@ function ParamRow({ node, spec, labels, val, def, wired, onChange, onRevert, onP
       {open && (spec.type === 'colour' ? (
         <div style={{ gridColumn:'2 / 4', display: 'flex', gap: 5, paddingBottom: 9 }}>
           {[PM.accent, PM.cyan, PM.ok, PM.warn, PM.purple, PM.inkSoft].map(c => (
-            <button key={c} onClick={() => pick(c)} title={c} style={{ width: 22, height: 22, borderRadius: 4, background: c, cursor: 'pointer', border: `2px solid ${String(val).toLowerCase() === c.toLowerCase() ? PM.ink : 'transparent'}` }}/>
+            <window.AH_DS.Btn key={c} onClick={() => pick(c)} title={c} style={{ width: 22, height: 22, borderRadius: 4, background: c, cursor: 'pointer', border: `2px solid ${String(val).toLowerCase() === c.toLowerCase() ? PM.ink : 'transparent'}` }}/>
           ))}
         </div>
       ) : (
         <div style={{ gridColumn:'2 / 4', display: 'flex', flexWrap: 'wrap', gap: 4, paddingBottom: 9 }}>
-          {menuOptions.map(o => <button key={o} onClick={() => pick(o)} style={pmChip(val === o)}>{o}</button>)}
+          {menuOptions.map(o => <window.AH_DS.Btn key={o} onClick={() => pick(o)} style={pmChip(val === o)}>{o}</window.AH_DS.Btn>)}
         </div>
       ))}
 
       {menu && (
         <div style={{ gridColumn:'1 / 4', display: 'flex', flexWrap: 'wrap', gap: 4, paddingBottom: 9 }}>
-          <button onClick={() => { setNaming(label); setMenu(false); }} style={pmChip(false)}>✎ rename label</button>
-          {!dataOnly && <button onClick={() => { onRevert(); setMenu(false); }} style={pmChip(false)}>↺ reset</button>}
-          {!wired && <button onClick={() => { onPromote(); setMenu(false); }} style={pmChip(false)}>⇄ expose</button>}
-          {!spec.builtin && <button onClick={() => { onDelete(); setMenu(false); }} style={Object.assign({}, pmChip(false), { color: PM.err, borderColor: PM.err })}>⌫ remove</button>}
+          <window.AH_DS.Btn onClick={() => { setNaming(label); setMenu(false); }} style={pmChip(false)}>✎ rename label</window.AH_DS.Btn>
+          {!dataOnly && <window.AH_DS.Btn onClick={() => { onRevert(); setMenu(false); }} style={pmChip(false)}>↺ reset</window.AH_DS.Btn>}
+          {!wired && <window.AH_DS.Btn onClick={() => { onPromote(); setMenu(false); }} style={pmChip(false)}>⇄ expose</window.AH_DS.Btn>}
+          {!spec.builtin && <window.AH_DS.Btn onClick={() => { onDelete(); setMenu(false); }} style={Object.assign({}, pmChip(false), { color: PM.err, borderColor: PM.err })}>⌫ remove</window.AH_DS.Btn>}
           <span style={{ flexBasis: '100%', fontFamily: PM.sans, fontSize: 11, color: PM.inkSoft, lineHeight: 1.5 }}>
             {label} stays compatible with saved runs. {T.label}{spec.list ? ' list' : ''}{isNum ? ' · ' + spec.min + '–' + spec.max : ''}
           </span>
         </div>
       )}
-    </div>
+    </window.AH_DS.Row>
   );
 }
 
@@ -929,7 +933,7 @@ function ApplicationNodeParameters({node, compact = false}) {
 function ApplicationAwareInspector(props) {
   return props.node.application ? <ApplicationNodeParameters node={props.node}/> : <CoreNodeInspector {...props}/>;
 }
-function NodeInspector({ node, onFork, watchActions = {} }) {
+function NodeInspector({ node, onFork, watchActions = {}, plate = false, preview, onExport }) {
   const visibleParams = React.useMemo(() => (node.params || []).filter(row =>
     !INTERNAL_PARAM_KEYS.has(String(row.k || row.label || '').toLowerCase()) &&
     !(PM_META[String(row.k || '').toLowerCase()] || {}).internal), [node.id]);
@@ -1118,7 +1122,17 @@ function NodeInspector({ node, onFork, watchActions = {} }) {
     setAdding(false);
   };
 
+  const renderParam = spec => React.createElement(ParamRow,{key:spec.k,plate,node,
+    spec:plate&&node.engine==='shape.filter'?{...spec,label:spec.k==='predicate'?'Rule':spec.k==='mode'?'Keep':spec.label}:spec,
+    labels,val:vals[spec.k],def:allDefs[spec.k],wired:wired[spec.k],onChange:v=>set(spec.k,v),onRevert:()=>set(spec.k,allDefs[spec.k]),
+    onPromote:()=>setWired(w=>({...w,[spec.k]:'graph input'})),onUnwire:()=>setWired(w=>{const n={...w};delete n[spec.k];return n;}),
+    onRename:lbl=>setLabels(l=>({...l,[spec.k]:lbl})),onDelete:()=>discardCustom(spec.k)});
   return (
+    plate ? <window.AH_DS.Properties params={onPage} parameterRows={<>{pages.length>1&&<div role="group" aria-label="Parameter pages" style={{display:'flex',gap:4,padding:8}}>{pages.map(pg=><window.AH_DS.Btn sm key={pg} aria-pressed={page===pg} onClick={()=>setPage(pg)}>{pg}</window.AH_DS.Btn>)}</div>}{onPage.map(renderParam)}</>}
+    ports={[...(node.ins||[]).map(p=>({...p,side:'in'})),...(node.outs||[]).map(p=>({...p,side:'out'}))]}
+    preview={preview} onExport={onExport} examples={node.examples || []}
+    error={persistence.runError || Array.from(persistence.errors.values()).join(' · ')}
+    actions={{...watchActions,retry:()=>{for(const key of persistence.errors.keys())set(key,rec.vals[key]);}}}/> :
     <div data-node-inspector="true" style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       {node.endpointError && <div role="alert" style={{fontSize:12, color:PM.warn, overflowWrap:'anywhere'}}>
         {node.endpointError} Endpoint compatibility cannot be determined from this projection.
@@ -1185,15 +1199,7 @@ function NodeInspector({ node, onFork, watchActions = {} }) {
         )}
 
         <div style={{ display: 'flex', flexDirection: 'column', borderTop: `1px solid ${PM.lineHair}` }}>
-          {onPage.map(spec => (
-            <ParamRow key={spec.k} node={node} spec={spec} labels={labels} val={vals[spec.k]} def={allDefs[spec.k]} wired={wired[spec.k]}
-              onChange={v => set(spec.k, v)}
-              onRevert={() => set(spec.k, allDefs[spec.k])}
-              onPromote={() => setWired(w => Object.assign({}, w, { [spec.k]: 'graph input' }))}
-              onUnwire={() => setWired(w => { const n = Object.assign({}, w); delete n[spec.k]; return n; })}
-              onRename={lbl => setLabels(l => Object.assign({}, l, { [spec.k]: lbl }))}
-              onDelete={() => discardCustom(spec.k)}/>
-          ))}
+          {onPage.map(renderParam)}
           {onPage.length === 0 && (
             <div style={{ padding: '14px 11px', borderRadius: PM.rad.md, border: `1px dashed ${PM.line}`, fontFamily: PM.serif, fontStyle: 'italic', fontSize: 13.5, color: PM.inkSoft }}>
               {pages.length > 1 ? 'Nothing on this page yet.' : 'This node takes no parameters — add one below.'}

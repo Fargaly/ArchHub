@@ -305,6 +305,10 @@ test('DS-PORT every rail destination renders pairwise distinct real content and 
     const discovered=[...ui.doc.querySelectorAll('[data-app-rail] [data-rail-panel]')].map(n=>n.dataset.railPanel).sort();
     assert.deepEqual(discovered,[...destinations].sort(),'every actual rail control is exercised');
     for (const label of destinations) {
+      // Plates have different rails. Start each route from the full Home rail rather than
+      // requiring Library/Workshop to repeat destinations their plates omit.
+      if(!ui.doc.querySelector('[data-app-rail] [aria-label="Home"]')) await ui.click('Chats');
+      await ui.click('Home');
       await ui.click(label);
       assertClean(ui.doc,label);
       const text = visibleText(ui.doc);

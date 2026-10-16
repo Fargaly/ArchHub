@@ -4,11 +4,11 @@ const W = window.AH;
 const h = React.createElement;
 
 const laneSpec = [
-  ['planned', 'Planned', task => task.boardLane === 'planned'],
+  ['planned', 'PLANNED', task => task.boardLane === 'planned'],
   ['wip', 'WIP', task => task.boardLane === 'wip'],
-  ['review', 'In review', task => task.boardLane === 'review'],
-  ['done', 'Done', task => task.boardLane === 'done'],
-  ['archived', 'Archived', task => task.boardLane === 'archived'],
+  ['review', 'IN REVIEW', task => task.boardLane === 'review'],
+  ['done', 'DONE', task => task.boardLane === 'done'],
+  ['archived', 'ARCHIVED', task => task.boardLane === 'archived'],
 ];
 const stop = event => event && typeof event.stopPropagation === 'function' && event.stopPropagation();
 const line = task => task.tools?.t || task.status || task.lead || '';
@@ -49,12 +49,7 @@ const SharedTaskApproval = ({task,onDecide}) => {
 const labelStyle = {fontFamily:W.mono, fontSize:14, letterSpacing:'0.12em', color:W.inkMuted};
 const chipStyle = {fontFamily:W.mono, fontSize:13, letterSpacing:'0.02em', paddingTop:3, paddingBottom:3,
   paddingLeft:6, paddingRight:6, borderRadius:W.rad?.xs || 3, borderWidth:1, borderStyle:'solid', borderColor:W.line, color:W.inkSoft};
-const buttonStyle = primary => ({paddingTop:3, paddingBottom:3, paddingLeft:9, paddingRight:9, borderRadius:W.rad?.sm || 5, cursor:'pointer',
-  fontFamily:W.sans, fontSize:14, letterSpacing:0,
-  background:primary ? W.accent : 'transparent', borderWidth:1, borderStyle:'solid', borderColor:primary ? W.accent : W.line,
-  color:primary ? W.onFill : W.inkSoft});
-
-const BoardCard = ({task, onSelect, onDecide}) => h('article', {
+const BoardCard = ({task, onSelect, onDecide}) => h(window.AH_DS.Card, {as:'article',
   'data-workshop-board-card':task.work,
   onClick:() => onSelect && onSelect(task.work),
   style:{background:W.bgPanel, borderWidth:1, borderStyle:'solid', borderColor:approvalBlocked(task) || task.state === 'block' ? W.err : W.line,
@@ -74,12 +69,12 @@ const BoardCard = ({task, onSelect, onDecide}) => h('article', {
       routeButtons(task).length ? [
         choicesHaveApproval(task) ? h('div',{key:'approval',onClick:stop},h(SharedTaskApproval,{task,onDecide})) : null,
         ...routeButtons(task).filter(choice => !approvalChoice(choice)).map((choice,index) =>
-          h('button',{key:choice.label || choice.action,type:'button',style:buttonStyle(index === 0),
+          h(window.AH_DS.Btn,{key:choice.label || choice.action,type:'button',kind:index===0?'primary':'secondary',sm:true,
             onClick:event => {stop(event);onDecide && onDecide(task.work,choice);}},decisionLabel(choice))),
       ]
         : [
           h('span', {key:'waits', style:{fontSize:13, color:W.inkSoft}}, 'waits for you'),
-          h('button', {key:'review', type:'button', style:buttonStyle(true),
+          h(window.AH_DS.Btn, {key:'review', type:'button', kind:'primary',sm:true,
             onClick:event => { stop(event); onSelect && onSelect(task.work); }}, 'Review'),
         ])
     : null,
@@ -114,7 +109,7 @@ const WorkshopAgentsView = ({agents}) => {
   const rows = (agents || []).filter(agent => agent.verified === true && visibleName(agent.name));
   return h('section', {'aria-label':'Workshop agents list',
     style:{display:'flex', flexDirection:'column', gap:W.sp?.md || 12, minWidth:0}}, [
-    ...rows.map(agent => h('article', {key:agent.id || agent.name,
+    ...rows.map(agent => h(window.AH_DS.Card, {as:'article',key:agent.id || agent.name,
       style:{background:W.bgPanel, borderWidth:1, borderStyle:'solid', borderColor:W.line, borderRadius:W.rad?.lg || 8,
         padding:20, display:'grid', gap:8}}, [
       h('div', {key:'name', style:{display:'flex', gap:W.sp?.sm || 8, flexWrap:'wrap', alignItems:'center'}}, [
@@ -189,7 +184,7 @@ const WorkshopTaskPage = ({task, agent, onDecide, details}) => {
       approvalBlocked(task) && task.decision ? h('div', {key:'actions', style:{display:'grid',gap:W.sp?.sm || 8}},[
         choicesHaveApproval(task) ? h(SharedTaskApproval,{key:'approval',task,onDecide}) : null,
         ...task.decision.filter(choice => !approvalChoice(choice)).map((choice,index) =>
-          h('button',{key:choice.label || choice.action,type:'button',style:buttonStyle(index === 0),
+          h(window.AH_DS.Btn,{key:choice.label || choice.action,type:'button',kind:index===0?'primary':'secondary',sm:true,
             onClick:() => onDecide && onDecide(task.work,choice)},decisionLabel(choice))),
       ]) : null,
     ]),

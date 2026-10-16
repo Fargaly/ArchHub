@@ -496,7 +496,7 @@ function Read-StudioBuild {
     $sha = [Security.Cryptography.SHA256]::Create()
     try { $digest = ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() }
     finally { $sha.Dispose() }
-    return [pscustomobject]@{ Bytes = $bytes; Sha256 = $digest; TotalBytes = $total; Files = 10 }
+    return [pscustomobject]@{ Bytes = $bytes; Sha256 = $digest; TotalBytes = $total; Files = $names.Count }
 }
 
 $sourceRevision = (& git -C $selectedRoot rev-parse HEAD).Trim()

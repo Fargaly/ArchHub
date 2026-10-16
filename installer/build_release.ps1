@@ -91,17 +91,25 @@ function Assert-TrackedInputs([string]$Checkout, [string[]]$Inputs) {
 # selected<TAB>nodelang/__init__.py<TAB>123<TAB>64 lowercase hex
 # Only listed files are copied. Retain a failed output intact for inspection;
 # this helper never removes a previous candidate, state, or source directory.
+# Directories already proven plain in this build. The leaf is always re-checked;
+# an ancestor directory is walked once instead of once per file (528 files x ~12
+# levels made the snapshot exceed its 180 s budget on a loaded machine).
+$plainDirectories = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 function Assert-PlainAncestors([string]$Path) {
     $cursor = [IO.Path]::GetFullPath($Path)
+    $walked = [Collections.Generic.List[string]]::new()
     while ($cursor) {
+        if ($plainDirectories.Contains($cursor)) { break }
         $item = Get-Item -LiteralPath $cursor -Force -ErrorAction Stop
         if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
             throw "Candidate paths cannot contain symlinks or junctions: $cursor"
         }
+        if ($item.PSIsContainer) { $walked.Add($cursor) }
         $parent = [IO.Path]::GetDirectoryName($cursor)
         if ($parent -eq $cursor) { break }
         $cursor = $parent
     }
+    foreach ($directory in $walked) { [void]$plainDirectories.Add($directory) }
 }
 
 function Test-Below([string]$Path, [string]$Root) {

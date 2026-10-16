@@ -20,6 +20,9 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 
 class CompilerFailure(RuntimeError):
     """The gate cannot establish a valid compiler result."""
@@ -264,6 +267,31 @@ def _validate_report(report, root, artifact=False):
     return report
 
 
+def check_conduct(root, context, *, revision="HEAD", compiler_command=None, timeout=None):
+    """Admit one trusted hook/watchdog envelope through the existing INTENT pass."""
+    root = Path(root).resolve()
+    command = list(compiler_command) if compiler_command is not None else _command(root)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".json", delete=False) as stream:
+            json.dump(context, stream)
+            temporary = stream.name
+        result = subprocess.run(command + ["conduct", "--root", str(root), "--revision", revision,
+            "--context", temporary], capture_output=True, text=True, encoding="utf-8",
+            timeout=node_timeout(timeout), env=_environment(compiler_command))
+        if result.returncode not in (0, 1):
+            raise CompilerFailure("conduct admission failed: " + result.stderr.strip()[-1000:])
+        report = _validate_report(json.loads(result.stdout), root)
+        if (result.returncode == 0) != (not report["diagnostics"]):
+            raise CompilerFailure("conduct exit status disagrees with diagnostics")
+        return {**report, "ok": not report["diagnostics"]}
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        raise CompilerFailure(str(exc)) from exc
+    finally:
+        if temporary:
+            Path(temporary).unlink(missing_ok=True)
+
+
 def scan_model(root, *, overlay=None, revision=None, context=None, compiler_command=None, timeout=None, build_options=None):
     """Build current compiler sources with Cargo, then scan the complete model."""
     root = Path(root).resolve()
@@ -428,6 +456,29 @@ def change_context(root, selected, candidate, revision, context, *, patch_scope=
         history=historical.get("history", []),
         deviation_state=historical.get("authors", {}).get(author, {}).get("deviation_state", {}),
         day=datetime.now(timezone.utc).date().isoformat())
+    events = list(supplied.get("conduct_events", [])) if isinstance(supplied.get("conduct_events", []), list) else None
+    for path in selected:
+        name = Path(path).name
+        if not (name.startswith("RESULT-") and name.endswith(".md") or name.endswith(".founder.md")):
+            continue
+        after = candidate.get(path)
+        if after is None and (Path(root) / path).is_file():
+            after = (Path(root) / path).read_text(encoding="utf-8")
+        if after is None:
+            continue
+        if events is None:
+            continue  # malformed supplied events remain visible to the compiler
+        if name.endswith(".founder.md"):
+            events.append({"kind": "report", "channel": "founder", "text": after})
+        else:
+            ledger_text = candidate.get("tasks.json") if "tasks.json" in selected else None
+            if ledger_text is None:
+                ledger_text = git(root, "show", f"{revision}:tasks.json").decode("utf-8")
+            ledger = json.loads(ledger_text or "{}")
+            events.append({"kind": "lane_result", "done": bool(re.search(r"(?mi)^State:\s*DONE\s*$", after)),
+                "ledger": {"next_task": ledger.get("next_task"), "owner": ledger.get("owner")}})
+    if events is not None and events:
+        supplied["conduct_events"] = events
     supplied["alert_state"] = supplied["deviation_state"].get("alert_state", {})
     return supplied
 

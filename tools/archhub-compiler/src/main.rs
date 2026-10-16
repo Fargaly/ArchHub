@@ -12,6 +12,37 @@ use std::{
 
 fn run() -> Result<bool, String> {
     let args: Vec<String> = env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("conduct") {
+        let mut root = None;
+        let mut context_path = None;
+        let mut revision = "HEAD".to_string();
+        let mut i = 1;
+        while i < args.len() {
+            let key = &args[i];
+            i += 1;
+            let value = args.get(i).ok_or("conduct option requires a value")?;
+            match key.as_str() {
+                "--root" => root = Some(PathBuf::from(value)),
+                "--context" => context_path = Some(value),
+                "--revision" => revision = value.clone(),
+                _ => return Err(format!("unknown conduct argument `{key}`")),
+            }
+            i += 1;
+        }
+        let context: serde_json::Value = serde_json::from_slice(
+            &fs::read(context_path.ok_or("conduct requires --context")?).map_err(|e| e.to_string())?
+        ).map_err(|e| e.to_string())?;
+        if !context["conduct_events"].as_array().is_some_and(|a| !a.is_empty()) {
+            return Err("conduct requires nonempty conduct_events".into());
+        }
+        let authority = intent::repository_authority(&root.ok_or("conduct requires --root")?, &revision)?;
+        let mut report = compile(&[], None);
+        // Runtime conduct has no pending source diff and therefore no source
+        // deviation metrics. Git/artifact paths still run their full pipeline.
+        report.extend(intent::check_with_authority(&context, &[], &authority));
+        println!("{}", serde_json::to_string(&report).map_err(|e| e.to_string())?);
+        return Ok(report.diagnostics.is_empty());
+    }
     if args.first().map(String::as_str) == Some("--explain") {
         let code = args.get(1).ok_or("--explain requires an error code")?;
         println!(

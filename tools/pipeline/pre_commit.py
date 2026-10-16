@@ -53,6 +53,10 @@ def main(argv=None):
             context["author"] = strict_check.git(args.root, "var", "GIT_AUTHOR_IDENT").decode("utf-8").split("<", 1)[0].strip()
         admitted_tree = strict_check.git(args.root, "write-tree").decode().strip()
         result = strict_check.check_changed(args.root, context=context)
+        if "conduct_events" in context and not result.get("selected"):
+            conduct = strict_check.check_conduct(args.root, context)
+            result["diagnostics"].extend(conduct["diagnostics"])
+            result["ok"] = result["ok"] and conduct["ok"]
         if (args.phase == "pre-commit" and args.paired_hook and not context.get("intent")
                 and any(item["code"] == "E0100" for item in result["diagnostics"])):
             # Git obtains the final edited message after pre-commit. The paired

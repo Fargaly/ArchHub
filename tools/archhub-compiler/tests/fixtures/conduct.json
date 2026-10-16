@@ -1,0 +1,107 @@
+[
+  {
+    "rule": "R100",
+    "red": {
+      "kind": "operation",
+      "effect": "keyboard",
+      "presence": {
+        "state": "active",
+        "age_seconds": 0
+      }
+    },
+    "green": {
+      "kind": "operation",
+      "effect": "keyboard",
+      "presence": {
+        "state": "away",
+        "age_seconds": 0
+      }
+    }
+  },
+  {
+    "rule": "R104",
+    "red": {
+      "kind": "dispatch",
+      "agent": "codex",
+      "capability": "build",
+      "reviewer": "codex"
+    },
+    "green": {
+      "kind": "dispatch",
+      "agent": "codex",
+      "capability": "build",
+      "reviewer": "claude"
+    }
+  },
+  {
+    "rule": "R108",
+    "red": {
+      "kind": "report",
+      "channel": "founder",
+      "text": "Ratchet court passes on 2026-10-17"
+    },
+    "green": {
+      "kind": "report",
+      "channel": "founder",
+      "text": "The app opens and your settings are saved."
+    }
+  },
+  {
+    "rule": "R102",
+    "red": {
+      "kind": "lane_result",
+      "done": false,
+      "ledger": {
+        "next_task": ""
+      }
+    },
+    "green": {
+      "kind": "lane_result",
+      "done": false,
+      "ledger": {
+        "next_task": "Finish the scoped compiler check",
+        "owner": "codex"
+      }
+    }
+  },
+  {
+    "rule": "R106",
+    "red": {
+      "kind": "question",
+      "channel": "founder",
+      "reason": "config",
+      "text": "Which port should I use?"
+    },
+    "green": {
+      "kind": "question",
+      "channel": "founder",
+      "reason": "intent",
+      "text": "Should this apply to the whole team or only you?"
+    }
+  },
+  {
+    "rule": "R110",
+    "red": {
+      "kind": "regression",
+      "must_pass": [
+        "tests/test_zero_idle_growth.py::test_an_old_graph_opened_by_new_code_does_not_grow_while_idle",
+        "tests/test_zero_idle_growth.py::test_old_change_records_undo_and_redo_on_an_old_graph_with_new_code"
+      ],
+      "results": {
+        "tests/test_zero_idle_growth.py::test_an_old_graph_opened_by_new_code_does_not_grow_while_idle": "skip",
+        "tests/test_zero_idle_growth.py::test_old_change_records_undo_and_redo_on_an_old_graph_with_new_code": "pass"
+      }
+    },
+    "green": {
+      "kind": "regression",
+      "must_pass": [
+        "tests/test_zero_idle_growth.py::test_an_old_graph_opened_by_new_code_does_not_grow_while_idle",
+        "tests/test_zero_idle_growth.py::test_old_change_records_undo_and_redo_on_an_old_graph_with_new_code"
+      ],
+      "results": {
+        "tests/test_zero_idle_growth.py::test_an_old_graph_opened_by_new_code_does_not_grow_while_idle": "pass",
+        "tests/test_zero_idle_growth.py::test_old_change_records_undo_and_redo_on_an_old_graph_with_new_code": "pass"
+      }
+    }
+  }
+]

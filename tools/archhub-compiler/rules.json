@@ -186,6 +186,191 @@
     }
   },
   "machine_rules": {
+    "conduct": {
+      "R100": {
+        "source": "inputs/MASTER-REQUESTS-3-MONTHS-2026-10-16.md#R100",
+        "count": 67,
+        "effects": [
+          "screen",
+          "keyboard",
+          "app_close",
+          "heavy_foreground"
+        ],
+        "allowed_presence": [
+          "idle",
+          "away"
+        ],
+        "max_presence_age_seconds": 5,
+        "tool_markers": [
+          "cua",
+          "chrome",
+          "playwright",
+          "screenshot",
+          "computer",
+          "pyautogui",
+          "sendkeys",
+          "keyboard",
+          "mcp__chrome__click",
+          "mcp__chrome__type"
+        ],
+        "command_markers": [
+          "taskkill",
+          "stop-process",
+          "pyautogui",
+          "sendkeys",
+          "pytest",
+            "python -m pytest",
+            "python.exe -m pytest",
+            "python3 -m pytest",
+          "cargo test",
+          "cargo build",
+          "npm run build"
+        ],
+        "source_calls": [
+          "pyautogui.",
+          "keyboard.",
+          "mouse.",
+          "sendkeys",
+          "setforegroundwindow",
+          "closemainwindow",
+          "stop-process",
+          "taskkill",
+          "pkill",
+          "killall"
+        ],
+        "launch_calls": [
+          "subprocess.run",
+          "subprocess.call",
+          "subprocess.popen",
+          "os.system",
+          "execsync",
+          "spawn",
+          "exec_command",
+          "start-process"
+        ],
+        "heavy_commands": [
+          "pytest",
+          "python -m pytest",
+          "python.exe -m pytest",
+          "python3 -m pytest",
+          "cargo test",
+          "cargo build",
+          "npm run build",
+          "taskkill",
+          "stop-process"
+        ],
+        "literal_reference_commands": ["echo", "git grep"],
+        "literal_reference_flags": ["-n", "-i", "-F", "-w", "-l", "-c", "--"],
+        "guard_conditions": [
+          "founder_away()",
+          "idle_or_away()",
+          "founderAway()",
+          "idleOrAway()"
+        ],
+        "pattern": "operation",
+        "message": "Protect the working machine.",
+        "severity": "ERROR",
+        "fix": "Wait for fresh idle/away admission before a foreground effect."
+      },
+      "R104": {
+        "source": "inputs/MASTER-REQUESTS-3-MONTHS-2026-10-16.md#R104",
+        "count": 56,
+        "capabilities": {
+          "codex": [
+            "build",
+            "review",
+            "design"
+          ],
+          "claude": [
+            "coordinate",
+            "review"
+          ],
+          "antigravity": [
+            "review",
+            "design"
+          ],
+          "opencode": [
+            "build",
+            "review"
+          ]
+        },
+        "pattern": "dispatch",
+        "message": "Assign work by capability with independent review.",
+        "severity": "ERROR",
+        "fix": "Choose a registered builder capability and a different capable reviewer."
+      },
+      "R108": {
+        "source": "inputs/MASTER-REQUESTS-3-MONTHS-2026-10-16.md#R108",
+        "count": 45,
+        "banned_text": [
+          "tomorrow",
+          "monday",
+          "tuesday",
+          "wednesday",
+          "thursday",
+          "friday",
+          "saturday",
+          "sunday",
+          "ratchet",
+          "lane",
+          "court",
+          "queued",
+          "ETA",
+          "E010",
+          "handoff",
+          "sha256",
+          "next I will",
+          "next I\u2019ll",
+          "next I'll"
+        ],
+        "pattern": "report",
+        "message": "Show the result in plain English.",
+        "severity": "ERROR",
+        "fix": "Remove process jargon and dates/ETAs from the founder channel."
+      },
+      "R102": {
+        "source": "inputs/MASTER-REQUESTS-3-MONTHS-2026-10-16.md#R102",
+        "count": 43,
+        "requires": [
+          "ledger.next_task",
+          "ledger.owner"
+        ],
+        "pattern": "lane_result",
+        "message": "Keep unfinished work owned and moving.",
+        "severity": "ERROR",
+        "fix": "Record the owned next task in the ledger before returning a result."
+      },
+      "R106": {
+        "tool_markers": [
+          "askuserquestion",
+          "request_user_input",
+          "ask_user"
+        ],
+        "source": "inputs/MASTER-REQUESTS-3-MONTHS-2026-10-16.md#R106",
+        "count": 39,
+        "allowed_reasons": [
+          "intent",
+          "safety"
+        ],
+        "pattern": "question",
+        "message": "The request is the decision.",
+        "severity": "ERROR",
+        "fix": "Resolve implementation details; ask only an intent or safety question."
+      },
+      "R110": {
+        "source": "inputs/MASTER-REQUESTS-3-MONTHS-2026-10-16.md#R110",
+        "count": 21,
+        "must_pass": [
+          "tests/test_zero_idle_growth.py::test_an_old_graph_opened_by_new_code_does_not_grow_while_idle",
+          "tests/test_zero_idle_growth.py::test_old_change_records_undo_and_redo_on_an_old_graph_with_new_code"
+        ],
+        "manifest": "evidence/must_pass.json",
+        "pattern": "regression",
+        "message": "Keep every released requirement passing.",
+        "severity": "ERROR",
+        "fix": "Repair the failed/missing must_pass case; a skip is not a pass."
+      }
+    },
     "banned_user_text": [
       "Not available yet",
       "coming soon",
@@ -240,6 +425,21 @@
       "url": "https://github.com/microsoft/TypeScript/blob/v5.9.3/src/compiler/checker.ts",
       "license": "Apache-2.0",
       "fit": "checkTypeAssignableTo, hasCorrectArity and getMinArgumentCount learned from pinned source; explicit primitive contracts and arity, no external tsc"
+    },
+    {
+      "url": "https://www.openpolicyagent.org/docs/policy-language",
+      "license": "Apache-2.0",
+      "fit": "declarative typed-event deny predicates in the existing INTENT pass; no copied code"
+    },
+    {
+      "url": "https://github.com/danger/danger-js",
+      "license": "MIT",
+      "fit": "change-set and commit-context admission with actionable diagnostics; no external Danger runtime"
+    },
+    {
+      "url": "https://docs.semgrep.dev/writing-rules/rule-syntax",
+      "license": "learn-only documentation",
+      "fit": "pattern, message, severity and fix fields in compiler policy data; no Semgrep code copied"
     }
   ],
   "intent_registration": "F62/F76 compiler ledger rows are registered by evidence/acompiler-intents.json; ACOMPILER remains a legacy session-record identity."

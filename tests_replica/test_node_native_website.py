@@ -12,7 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from nodelang.application import build_archhub_application  # noqa: E402
 from nodelang.application_server import ApplicationServer  # noqa: E402
 from nodelang.core import relation_sources, relation_targets, validate_store  # noqa: E402
-from nodelang.ui_runtime import activate_ui, project_document  # noqa: E402
+from nodelang.cell_website import PUBLIC_WEBSITE_ROUTES  # noqa: E402
+from nodelang.ui_runtime import project_document  # noqa: E402
 
 
 @pytest.fixture(scope='module')
@@ -33,25 +34,23 @@ def test_website_is_a_session_node_wired_to_application(website):
     assert validate_store(store) is True
 
 
-def test_website_hero_is_the_live_product_graph_not_a_static_mockup(website):
+def test_legacy_website_is_only_references_to_canonical_publication(website):
     store, reg = website
     page = project_document(store, reg['app'], reg['website']['ui_root'])
-    assert 'class="website-root"' in page
-    assert 'class="website-hero"' in page
-    assert 'The built environment, operated as a living graph.' in page
-    assert 'One graph. Every domain.' in page
-    assert len(reg['website']['preview_cards']) == 6
-    assert page.count('data-relation=') >= 6
-    assert 'height:min(900px,92vh)' in page
-    assert '12.PRODUCTION' not in page
+    for route in PUBLIC_WEBSITE_ROUTES:
+        assert 'href="%s"' % route in page
+    assert 'website-hero' not in page
+    assert 'website-graph-card' not in page
+    assert 'The built environment, operated as a living graph.' not in page
+    assert 'preview_cards' not in reg['website']
 
 
-def test_website_domain_action_enters_same_application_graph(website):
-    store, reg = build_archhub_application()
-    node_id, card = next(iter(reg['website']['preview_cards'].items()))
-    activate_ui(store, card)
-    assert store.pull(reg['mode']) == 'workspace'
-    assert store.pull(reg['focus']) == node_id
+def test_share_omits_retired_mock_website_preview_and_export(website):
+    store, reg = website
+    page = project_document(store, reg['app'], reg['ui_root'])
+    assert 'Preview website' not in page
+    assert 'Export website graph' not in page
+    assert 'website-hero' not in store.pull(store.nodes[reg['app']]['params']['stylesheet'])
 
 
 def test_http_server_serves_the_universal_app_and_website_lenses(website):
@@ -68,6 +67,9 @@ def test_http_server_serves_the_universal_app_and_website_lenses(website):
         assert 'class="archhub-app"' in app
         assert 'class="site-shell"' in web
         assert 'class="archhub-app"' not in web
+        with urllib.request.urlopen(server.url + '/assets/tutorials/home-templates.png', timeout=10) as capture:
+            assert capture.headers.get_content_type() == 'image/png'
+            assert capture.read() == (Path(__file__).parents[1] / 'nodelang/data/website/tutorials/home-templates.png').read_bytes()
         assert 'Drafted, not generated.' in web
         # The Grand Map domain grid came off the public home on
         # 2026-09-17; the design the home answers to has no such
@@ -90,9 +92,7 @@ def test_http_server_serves_the_universal_app_and_website_lenses(website):
 def test_every_public_route_is_a_wired_page_node(website):
     store, reg = website
     web = reg['website']
-    assert set(web['routes']) == {
-        '/website', '/website/features', '/website/pricing', '/website/changelog',
-        '/website/security', '/website/community', '/website/signin'}
-    assert len(web['route_relations']) == 6
+    assert set(web['routes']) == set(PUBLIC_WEBSITE_ROUTES)
+    assert len(web['route_relations']) == len(PUBLIC_WEBSITE_ROUTES) - 1
     assert all(store.nodes[rid]['kind'] == 'wire'
                for rid in web['route_relations'].values())

@@ -1,0 +1,49 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.3, pytest-9.0.3, pluggy-1.6.0 -- C:\Users\fargaly\AppData\Local\ArchHub\.venv\Scripts\python.exe
+rootdir: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\coh3
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collecting ... collected 33 items
+
+tests_replica/test_website_live_findings.py::test_finding_1_every_page_links_the_released_build_the_graph_offers PASSED [  3%]
+tests_replica/test_website_live_findings.py::test_the_export_seals_the_download_it_links PASSED [  6%]
+tests_replica/test_website_live_findings.py::test_every_download_link_reads_the_artifact_cell_and_follows_its_edit PASSED [  9%]
+tests_replica/test_website_live_findings.py::test_a_graph_without_a_released_build_links_no_download_and_is_not_exported[draft] PASSED [ 12%]
+tests_replica/test_website_live_findings.py::test_a_graph_without_a_released_build_links_no_download_and_is_not_exported[absent] PASSED [ 15%]
+tests_replica/test_website_live_findings.py::test_an_address_that_can_move_or_names_another_build_is_refused[https://github.com/Fargaly/ArchHub/releases/latest/download/ArchHub-Setup-0.exe] PASSED [ 18%]
+tests_replica/test_website_live_findings.py::test_an_address_that_can_move_or_names_another_build_is_refused[https://github.com/Fargaly/ArchHub/releases/download/build-y/ArchHub-Setup-0.exe] PASSED [ 21%]
+tests_replica/test_website_live_findings.py::test_an_address_that_can_move_or_names_another_build_is_refused[http://github.com/Fargaly/ArchHub/releases/download/build-x/ArchHub-Setup-0.exe] PASSED [ 24%]
+tests_replica/test_website_live_findings.py::test_an_artifact_is_held_with_its_sha256_and_offered_only_when_released PASSED [ 27%]
+tests_replica/test_website_live_findings.py::test_an_offered_artifact_whose_address_was_swapped_is_refused_on_read PASSED [ 30%]
+tests_replica/test_website_live_findings.py::test_an_existing_website_graph_is_read_not_rebuilt PASSED [ 33%]
+tests_replica/test_website_live_findings.py::test_finding_2_the_primary_call_is_the_download_and_sign_in_is_secondary PASSED [ 36%]
+tests_replica/test_website_live_findings.py::test_the_hero_lede_names_only_hosts_the_operation_catalogue_offers PASSED [ 39%]
+tests_replica/test_website_live_findings.py::test_finding_3_every_page_loads_the_fonts_from_this_site PASSED [ 42%]
+tests_replica/test_website_live_findings.py::test_finding_3_the_written_site_carries_the_font_files_and_licences PASSED [ 45%]
+tests_replica/test_website_live_findings.py::test_finding_4_every_retired_address_is_a_redirect_to_a_live_page PASSED [ 48%]
+tests_replica/test_website_live_findings.py::test_finding_5_the_brain_portal_link_is_the_live_security_page PASSED [ 51%]
+tests_replica/test_website_live_findings.py::test_finding_6_every_page_links_the_favicon_and_the_share_image PASSED [ 54%]
+tests_replica/test_website_live_findings.py::test_finding_6_a_brand_file_that_changed_after_export_is_refused PASSED [ 57%]
+tests_replica/test_website_live_findings.py::test_every_suffix_the_site_serves_has_a_content_type PASSED [ 60%]
+tests_replica/test_website_live_findings.py::test_finding_7_the_phone_nav_wraps_and_scrolls_away PASSED [ 63%]
+tests_replica/test_website_live_findings.py::test_finding_8_the_hero_is_the_node_canvas_not_the_grand_map_grid PASSED [ 66%]
+tests_replica/test_website_live_findings.py::test_finding_8_the_trust_strip_counts_the_host_operation_catalogue PASSED [ 69%]
+tests_replica/test_website_live_findings.py::test_finding_8_every_catalogue_host_has_a_declared_label PASSED [ 72%]
+tests_replica/test_website_live_findings.py::test_finding_8_every_footer_links_github_and_no_dead_docs PASSED [ 75%]
+tests_replica/test_website_live_findings.py::test_every_external_link_the_website_emits_is_read_from_the_graph PASSED [ 78%]
+tests_replica/test_website_live_findings.py::test_the_renderer_admits_only_the_exact_external_links_it_is_given PASSED [ 81%]
+tests_replica/test_website_live_findings.py::test_a_bound_attribute_renders_the_cell_it_names_and_is_never_also_copied PASSED [ 84%]
+tests_replica/test_website_live_findings.py::test_every_subpage_says_what_the_code_does_in_voice PASSED [ 87%]
+tests_replica/test_website_live_findings.py::test_offer_download_refuses_an_artifact_download_offers_would_refuse PASSED [ 90%]
+tests_replica/test_website_live_findings.py::test_a_broken_offer_refuses_its_pages_but_never_the_website_read PASSED [ 93%]
+tests_replica/test_website_live_findings.py::test_finding_2_the_changelog_page_lists_the_released_build PASSED [ 96%]
+tests_replica/test_website_live_findings.py::test_finding_9_headless_render_navigation_and_trust_strip_at_breakpoints PASSED [100%]
+
+============================== warnings summary ===============================
+..\..\..\..\..\..\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\AppData\Local\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================== 33 passed, 1 warning in 151.98s (0:02:31) ==================

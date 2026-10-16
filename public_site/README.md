@@ -1,7 +1,8 @@
 # ArchHub public website export
 
-The website has one source: the Cell website in `nodelang/cell_website.py`,
-exported by `nodelang/site_export.py`. `site-export.json` is the sealed
+The website and user documentation have one generator:
+`nodelang/site_export.py`, projecting the Cell website, catalogue and capability
+data. `site-export.json` is the sealed
 static projection it writes; it is generated, never edited by hand. This
 README is the one hand-maintained, tracked file here: the exporter writes
 no README.
@@ -10,7 +11,14 @@ no README.
 origin)` writes exactly `<output>/site-export.json`, `<output>/.gitignore`
 and `<output>/dist/` holding `index.html`, `features/index.html`,
 `pricing/index.html`, `changelog/index.html`, `security/index.html`,
-`community/index.html`, `signin/index.html`, `assets/site.css`,
+`community/index.html`, `signin/index.html`, and the live documentation pages
+`docs/getting-started/index.html`, `docs/composer-canvas/index.html`,
+`docs/brain/index.html`, `docs/account-web/index.html`, `docs/connectors/index.html`,
+and six `docs/tutorial-*/index.html` pages generated from the same starter
+catalogue that seeds Home. Each tutorial uses the installed Home capture at
+`assets/tutorials/home-templates.png`, copied unchanged from RIG2. It shows all
+six entry points and no completed results; it is not execution evidence.
+Static assets include `assets/site.css`,
 `assets/fonts.css`, `404.html`, `robots.txt`, `sitemap.xml`, one redirect
 page for each retired address of the old site, the brand files
 `favicon.ico`, `favicon.svg` and `og.png`, and the font files and their
@@ -44,8 +52,9 @@ address that does not name its revision, such as a `releases/latest` link,
 is refused. A graph whose website already exists is read, not rebuilt, so it
 keeps the pages it was built with.
 
-The retired addresses are the pages the old site answered at (`/docs/` and
-its five guides, `/gallery/`, `/account/`, `/brain/`); BusyBox httpd has no
+The five documentation guides are live pages. `/docs/` redirects to the
+getting-started guide; `/gallery/`, `/account/` and `/brain/` are retired
+addresses. BusyBox httpd has no
 redirect directive, so each one is a static page that refreshes to the
 closest live page and names it as canonical.
 

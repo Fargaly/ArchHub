@@ -28,12 +28,13 @@ from nodelang.cell_voice import lint  # noqa: E402
 from nodelang.map_import import PUBLIC_MAP_PATH  # noqa: E402
 from nodelang.universal_application import build_universal_application  # noqa: E402
 from nodelang.universal_cell import CellStore  # noqa: E402
-from nodelang.website_docs_text import DOCS_PAGES  # noqa: E402
+from nodelang.site_export import documentation_pages, documentation_build_id
+DOCS_PAGES = documentation_pages()  # noqa: E402
 
 ORIGIN = "https://archhub.io"
 OFFER = dict(BETA_OFFER)
-# The five pages the retired Astro docs collection answered at, pinned here.
-DOCS_KEYS = ("getting-started", "composer-canvas", "brain", "account-web", "connectors")
+# Existing guides plus six catalogue-derived tutorials share one route registry.
+DOCS_KEYS = cell_website.DOCS_PAGE_KEYS
 
 
 def _digest(record):
@@ -88,8 +89,9 @@ def test_every_docs_page_renders_its_title_lede_and_every_heading(documents):
         page = documents["/website/docs/%s" % key]
         assert '<h1 class="site-page-title">%s</h1>' % title in page, key
         assert '<p class="site-page-lede">%s</p>' % description in page, key
-        for heading in re.findall(r"^## (.+)$", text, re.MULTILINE):
-            assert '<h2 class="site-doc-h2">%s</h2>' % heading in page, (key, heading)
+        for marks, heading in re.findall(r"^(#{2,3}) (.+)$", text, re.MULTILINE):
+            level = len(marks)
+            assert '<h%d class="site-doc-h%d">%s</h%d>' % (level, level, heading, level) in page, (key, heading)
         assert page.count('class="site-doc-link"') == len(DOCS_KEYS), key
         assert 'aria-current="page">%s</a>' % title in page, key
         assert "<script" not in page, key
@@ -139,11 +141,34 @@ def test_a_website_graph_built_before_the_docs_pages_still_opens(monkeypatch):
     assert set(pages) == set(cell_website.CORE_WEBSITE_ROUTES)
 
 
+def test_five_guide_revision_adopts_tutorials_once_without_rewriting_guides(monkeypatch):
+    original = cell_website._docs_pages
+    with monkeypatch.context() as scoped:
+        scoped.setattr(cell_website, '_docs_pages', lambda: {
+            key: value for key, value in original().items() if key in cell_website.GUIDE_KEYS})
+        store, registry = build_universal_application(PUBLIC_MAP_PATH, CellStore())
+    old_pages = dict(registry.website.page_roots)
+    assert set(old_pages) == set(cell_website.CORE_WEBSITE_ROUTES + cell_website.GUIDE_WEBSITE_ROUTES)
+    def reopen():
+        return cell_website.ensure_universal_website(
+            store, application_root=registry.application_root,
+            application_member_role=registry.roles['member'], ui_protocol=registry.ui_protocol,
+            cloud_route_protocol=registry.cloud_route_protocol, map_registry=registry.map,
+            published_lifecycle_root=registry.website.lifecycle_root,
+            read_action_root=registry.website.read_action_root, adopt=True)
+    current = reopen()
+    assert set(current.route_roots) == set(cell_website.PUBLIC_WEBSITE_ROUTES)
+    assert all(current.page_roots[path] == root for path, root in old_pages.items())
+    revision = store.revision
+    assert reopen().page_roots == current.page_roots
+    assert store.revision == revision
+
+
 def test_the_home_holds_the_design_sections_in_design_order(documents):
     page = documents["/website"]
     order = [
         'class="site-hero"', 'class="site-trust"', "Canvas. Composer.",
-        'class="site-heal-panel"', "A graph you can ", "Memory that grows with the ",
+        "A graph you can ",
         'class="site-boundary-section"', 'class="site-sec-head-title">What it costs<',
         'class="site-closing"', 'class="site-footer"',
     ]
@@ -164,14 +189,14 @@ def test_the_calculator_frame_names_the_offer_and_no_price(documents):
 
 def test_the_heal_section_holds_the_idle_frame_and_no_invented_figure(documents):
     page = documents["/website"]
-    start = page.index('class="site-heal-panel"')
-    frame = re.sub(r"<[^>]+>", " ", page[start:page.index("A graph you can ", start)])
-    assert "Idle. The connection is nominal." in frame
-    assert not re.search(r"[0-9]", frame.replace("LAST 7 DAYS", ""))
+    assert 'class="site-heal-panel"' not in page
+    assert 'data-heal=' not in page
+    assert 'manual restarts' not in page
+    assert 'Tower-A' not in page
 
 
 def test_each_subpage_holds_the_design_section_it_names(documents):
-    assert 'class="site-heal-panel"' in documents["/website/features"]
+    assert 'class="site-heal-panel"' not in documents["/website/features"]
     assert "Canvas. Composer." in documents["/website/features"]
     assert 'class="site-sec-head-title">What it costs<' in documents["/website/pricing"]
     assert 'class="site-boundary-section"' in documents["/website/security"]

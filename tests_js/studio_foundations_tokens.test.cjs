@@ -94,6 +94,14 @@ test('DS-FOUNDATIONS Ping 2 reduced motion changes all token transition duration
 
 test('DS-FOUNDATIONS shared controls consume tokens and do not alpha-disable', () => {
   const source = read('nodelang/studio/studio-lm.jsx');
+  const designSystem = read('nodelang/studio/ds/index.jsx');
+  const sharedButton = designSystem.slice(designSystem.indexOf('  const button ='), designSystem.indexOf('  function Toggle('));
+  assert.ok(sharedButton.length > 0, 'shared buttons are checked at their current owner');
+  assert.match(designSystem, /const A = window\.AH/);
+  assert.match(sharedButton, /A\.rad\?\.sm/);
+  assert.match(sharedButton, /A\.sans/);
+  assert.match(sharedButton, /const off = !!\(disabled \|\| dis\)/);
+  assert.match(sharedButton, /disabled=\{off\}/);
   const workshop = read('nodelang/studio/studio-workshop.jsx');
   const between = (from, to) => source.slice(source.indexOf(from), source.indexOf(to, source.indexOf(from)));
   const betweenWorkshop = (from, to) => workshop.slice(workshop.indexOf(from), workshop.indexOf(to, workshop.indexOf(from)));
@@ -103,13 +111,12 @@ test('DS-FOUNDATIONS shared controls consume tokens and do not alpha-disable', (
     return source.slice(start, source.indexOf(to, start));
   };
   const shared = [
-    between('const smallBtn =', 'const HoverBtn ='),
-    between('const toolBtn =', '// ─── floating composer'),
+    sharedButton,
     between('const LibCatBtn =', '// ──────────────────────── NODE RAIL'),
     between('const SettingsGenerationControl =', '// ── Models:'),
     between('const pickerGroupLabel =', 'const DISCOVERY_DEADLINE_MS'),
     betweenAfter('const ModelPicker =', '  const note =', '  const onFill ='),
-    between('const dCode =', 'const DOC_FIRST_RUN_ROWS ='),
+    between('const DP =', 'const buildDocsProjection ='),
     between('const ApplicationUpdateNotice =', 'window.StudioLM ='),
     betweenWorkshop('const Lbl =', 'const wsCleanTitle ='),
   ].join('\n');
@@ -186,6 +193,7 @@ test('DS-FOUNDATIONS P9 text below 13px does not use inkMuted', () => {
     .filter(name => name.endsWith('.jsx'))
     .filter(name => name !== 'tokens.jsx')
     .map(name => path.join(studioDir, name));
+  files.push(path.join(studioDir, 'ds', 'index.jsx'));
   for (const file of files) {
     const source = fs.readFileSync(file, 'utf8');
     for (const style of styleObjects(source)) {

@@ -1,0 +1,52 @@
+[
+  {
+    "route": "/website/docs/getting-started",
+    "phrase": "Home templates",
+    "present": true
+  },
+  {
+    "route": "/website/docs/getting-started",
+    "phrase": "Settings and System graph",
+    "present": true
+  },
+  {
+    "route": "/website/docs/getting-started",
+    "phrase": "Connections",
+    "present": true
+  },
+  {
+    "route": "/website/docs/getting-started",
+    "phrase": "Start places a template",
+    "present": true
+  },
+  {
+    "route": "/website/docs/getting-started",
+    "phrase": "Edit changes the stored template",
+    "present": true
+  },
+  {
+    "route": "/website/docs/brain",
+    "phrase": "BABOOM",
+    "present": true
+  },
+  {
+    "route": "/website/docs/brain",
+    "phrase": "Goose 1.54.0",
+    "present": true
+  },
+  {
+    "route": "/website/docs/brain",
+    "phrase": "OpenRouter",
+    "present": true
+  },
+  {
+    "route": "/website/docs/brain",
+    "phrase": "Ollama",
+    "present": true
+  },
+  {
+    "route": "/website/docs/brain",
+    "phrase": "missing or changed package",
+    "present": true
+  }
+]

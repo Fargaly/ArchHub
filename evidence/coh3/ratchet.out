@@ -1,0 +1,16 @@
+| count | value | main | verdict |
+|---|---|---|---|
+| local_button_helpers | 10 | 10 | held |
+| inline_styles | 2000 | 2011 | dropped |
+| http_servers | 5 | 5 | held |
+| graph_authorities | 1 | 1 | held |
+| revit_adapters | 2 | 2 | held |
+| baboom_loops | 2 | 2 | held |
+| settings_stores | 3 | 3 | held |
+| model_routers | 1 | 1 | held |
+| memory_stores | 0 | 0 | held |
+| unimported_modules | 39 | 39 | held |
+| placeholder_strings | 50 | 53 | dropped |
+| dead_params_known | 4 | 4 | held |
+| loc_nodelang | 319077 | 319360 | dropped |
+RATCHET PASS

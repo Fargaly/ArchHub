@@ -1,0 +1,13 @@
+{
+  "source": "C:\\Users\\fargaly\\00.ARCHUB\\70.HANDOFFS\\archhub-integrated-repair-20260909\\tools\\queue.log",
+  "events": [
+    "00:30:09 [277940] WAIT  coh3",
+    "00:30:09 [277940] RUN   coh3 (waited 0s; job memory cap 8192MB)",
+    "00:50:10 [277940] TIMEOUT coh3 after 20 min; every process in its job stopped"
+  ],
+  "progress_file": "coh3-py.txt",
+  "progress_sha256": "60c1d07db7e0200b3be68cad2535cba85162280f8561ac40caef07fbce4ddd33",
+  "progress_creation_time": "2026-10-16T00:30:10.0607149+04:00",
+  "progress_length": 39,
+  "conclusion": "Earlier COH3 job was terminated by the existing 20-minute whole-job gate. No individual-test deadlock is established by the progress markers. Final runner isolates complete files without increasing any timeout."
+}

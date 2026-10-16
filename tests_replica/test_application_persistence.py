@@ -81,6 +81,7 @@ def test_snapshot_round_trip_keeps_the_single_graph_and_focus(tmp_path):
     assert len(restored.nodes) == len(store.nodes)
     assert restored_registry['app'] == registry['app']
     assert restored_registry['website']['session'] == registry['website']['session']
+    assert restored_registry['website']['routes'] == registry['website']['routes']
 
 
 def test_server_mutations_survive_a_real_server_restart(

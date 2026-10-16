@@ -2,7 +2,7 @@
    full-bleed screens that open inside the Studio (Skill split view, connector diagnostic), measured on the
    whole compiled Studio mounted in an in-memory DOM over an existing-graph shape. Design contract:
    ArchHub App.html artboards "Studio · Settings · Docs", "Loading", "Skill JSON · split view" and
-   "Self-healing inspector"; docs search entries are generated from rendered docs, brain-model.jsx,
+   "Self-healing inspector"; docs search entries are generated from canonical rendered tutorials,
    the node catalogue and the host registry. Seeded artboard values (ratings, installs, PIDs, uptimes, heal history) must not ship;
    live rows replace them and an unmeasured cell draws the design's '—'.
    No application, provider, network or graph file is touched. */
@@ -14,6 +14,7 @@ const vm = require('node:vm');
 const {createHash} = require('node:crypto');
 const root = path.resolve(__dirname, '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
+const documentation = require('./docs_source.cjs');
 
 const seedText = read('nodelang/universal_presentation_seed.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
 const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)].map(m => [m[1], m[2]]));
@@ -44,7 +45,7 @@ function projected() {
   return JSON.parse(context.graph);
 }
 
-async function mountStudio({update = {state:'idle', current_build:BUILD}, prepare = () => {}} = {}) {
+async function mountStudio({update = {state:'idle', current_build:BUILD}, prepare = () => {}, documentationData = documentation} = {}) {
   const manifest = JSON.parse(read('nodelang/studio/compiled/manifest.json'));
   for (const source of ['studio-lm.jsx', 'studio-suite.jsx', 'studio-account.jsx']) {
     const held = manifest.files.find(file => file.source === source);
@@ -61,7 +62,7 @@ async function mountStudio({update = {state:'idle', current_build:BUILD}, prepar
   const listeners = new Set();
   const authorization = {subject:'owner-a', session:'view-a'};
   let snapshot = {canvas:{graph_id:'graph-a', root:'scope-a', authorization}, workshops:[], applicationUpdate:update,
-    topology:{canvas:{application_root:'graph-a', scope:{current:'scope-a'}, authorization, revision:7}, graph, selected:null}};
+    topology:{canvas:{application_root:'graph-a', scope:{current:'scope-a'}, authorization, revision:7, documentation:documentationData}, graph, selected:null}};
   win.ARCHHUB_EXISTING_WORKSHOP = {
     getSnapshot:() => snapshot,
     subscribe:listener => { listeners.add(listener); return () => listeners.delete(listener); },
@@ -91,13 +92,14 @@ const buttonsIn = element => [...element.querySelectorAll('button')];
 const screen = studio => studio.doc.querySelector('[data-studio-screen]');
 const key = (studio, init) => studio.flush(() => studio.win.dispatchEvent(new studio.win.KeyboardEvent('keydown', {bubbles:true, ...init})));
 
-test('docs: the version slot names the running build; search and Docs > Brain are the design, derived from brain-model.jsx', async () => {
+test('docs: the version slot names the running build; search and Docs > Brain use the generated tutorial', async () => {
   const studio = await mountStudio();
   try {
     key(studio, {key:'/', ctrlKey:true});
     const title = [...studio.doc.querySelectorAll('span')].find(node => node.textContent === 'Documentation');
     assert.ok(title, 'ctrl+/ opens the Documentation overlay');
     const header = title.parentElement;
+    assert.equal(studio.doc.querySelector('[data-docs-build]').textContent, 'Build ' + BUILD, 'body names same running build');
     assert.equal(title.nextElementSibling.textContent, 'STUDIO \u00b7 ' + BUILD, 'the design slot "STUDIO \u00b7 v1.4" names the running build');
     const input = header.querySelector('input[placeholder="Search the docs\u2026"]');
     assert.ok(input, 'the docs search box is drawn');
@@ -108,16 +110,25 @@ test('docs: the version slot names the running build; search and Docs > Brain ar
     const hits = [...panel.querySelectorAll('button')].map(button => button.textContent);
     assert.ok(hits.some(text => text.startsWith('PAGEBrain')), 'the derived brain page is a hit: ' + hits.join(' | '));
     studio.flush(() => { setter.call(input, ''); input.dispatchEvent(new studio.win.Event('input', {bubbles:true})); });
-    const nav = [...studio.doc.querySelectorAll('button')].find(button => button.textContent === 'Brain4 strata');
+    const nav = [...studio.doc.querySelectorAll('button')].find(button => button.textContent === 'Brain');
     assert.ok(nav, 'the Docs nav carries the design Brain row');
     studio.flush(() => nav.click());
     const body = nav.parentElement.nextElementSibling;
-    for (const heading of ['FOUR STRATA', 'THREE LAKES, NOT ONE CASCADE', 'GATES', 'YOUR KEY']) {
-      assert.ok(body.textContent.includes(heading), 'Docs > Brain draws ' + heading);
+    const page = documentation.tutorials.find(page => page.id === 'brain');
+    const tutorial = body.querySelector('[data-docs-tutorial="brain"]');
+    assert.ok(tutorial, 'Brain renders the canonical generated tutorial');
+    assert.ok(tutorial.textContent.includes(page.title), 'Brain shows the generated title');
+    assert.ok(tutorial.textContent.includes(page.description), 'Brain shows the generated description');
+    for (const part of page.text.split(/(?:^|\n)## /)) {
+      const end = part.indexOf('\n');
+      const heading = end < 0 ? part : part.slice(0, end);
+      const text = (end < 0 ? part : part.slice(end + 1)).trim();
+      assert.ok(tutorial.textContent.includes(text), 'Brain section body comes from generated docs');
+      if (part !== page.text.split(/(?:^|\n)## /)[0])
+        assert.ok(tutorial.textContent.includes(heading), 'Brain section heading comes from generated docs');
     }
-    for (const stratum of studio.win.BRAIN_STRATA) {
-      assert.ok(body.textContent.includes(stratum.n + ' \u00b7 ' + stratum.one), 'Docs > Brain reads the stratum ' + stratum.n + ' from brain-model.jsx');
-    }
+    assert.doesNotMatch(body.textContent, /FOUR STRATA|THREE LAKES, NOT ONE CASCADE|YOUR KEY|consents\.log|facts\.db/,
+      'unsupported architecture documentation is absent');
   } finally { studio.close(); }
   const unversioned = await mountStudio({update:null});
   try {
@@ -133,7 +144,7 @@ test('docs: Nodes and Connectors are generated from catalogue and host registry,
     {id:'doc-proof-node', title:'Doc proof node', sub:'second catalogue entry'},
   ]}];
   const hosts = [{id:'rhino', name:'Rhino', port:'48892', state:'connected', detail:'live registry row'}];
-  const studio = await mountStudio({prepare:win => {
+  const studio = await mountStudio({documentationData:{...documentation, nodes:catalogue.flatMap(group => group.items.map(item => ({id:item.id, category:group.cat, title:item.title, detail:item.sub})))}, prepare:win => {
     win.AH_LIBRARY = catalogue;
     win.ARCHHUB_LIVE.hosts.push(...hosts);
     win.ARCHHUB_HOSTS_READ = true;
@@ -145,8 +156,8 @@ test('docs: Nodes and Connectors are generated from catalogue and host registry,
     await studio.settle(() => studio.doc.body.textContent.includes('Documentation'), 'docs opened');
     assert.doesNotMatch(studio.doc.body.textContent, /Routerready/);
     assert.doesNotMatch(studio.doc.body.textContent, /Relaypublish allowed/);
-    const nodes = [...studio.doc.querySelectorAll('button')].find(button => button.textContent === 'Nodes3 nodes');
-    assert.ok(nodes, 'Nodes badge is generated from the catalogue plus History');
+    const nodes = [...studio.doc.querySelectorAll('button')].find(button => button.textContent === 'Nodes2 nodes');
+    assert.ok(nodes, 'Nodes badge is generated from the generated documentation');
     studio.flush(() => nodes.click());
     const nodePanel = studio.doc.querySelector('[data-docs-node-catalogue]');
     const customGroup = nodePanel.querySelector('[data-docs-node-category="Custom"]');
@@ -163,6 +174,33 @@ test('docs: Nodes and Connectors are generated from catalogue and host registry,
     assert.ok(connectors, 'Connectors badge is generated from the host registry');
     studio.flush(() => connectors.click());
     assert.match(studio.doc.querySelector('[data-docs-connectors]').textContent, /RhinoConnected \u00b7 port 48892 \u00b7 live registry row/);
+  } finally { studio.close(); }
+});
+
+test('docs: Getting started renders the shared tutorial without a second prose store', async () => {
+  const studio = await mountStudio();
+  try {
+    key(studio, {key:'/', ctrlKey:true});
+    const page = documentation.tutorials.find(page => page.id === 'getting-started');
+    const panel = studio.doc.querySelector('[data-docs-tutorial="getting-started"]');
+    assert.ok(panel, 'shared tutorial is visible inside the app');
+    for (const part of page.text.split(/(?:^|\n)## /)) {
+      const end = part.indexOf('\n');
+      const body = (end < 0 ? part : part.slice(end + 1)).trim();
+      assert.ok(panel.textContent.includes(body), 'tutorial section is rendered verbatim from its source');
+    }
+    assert.doesNotMatch(studio.doc.body.textContent, /Sessions are files|exactly once|replayed — never half-applied/);
+  } finally { studio.close(); }
+});
+
+test('docs: an answered empty host registry has zero hosts, not one placeholder host', async () => {
+  const studio = await mountStudio({prepare:win => { win.ARCHHUB_HOSTS_READ = true; }});
+  try {
+    key(studio, {key:'/', ctrlKey:true});
+    const nav = [...studio.doc.querySelectorAll('button')].find(button => button.textContent === 'Connectors0 hosts');
+    assert.ok(nav, 'badge counts registry entries, excluding the empty-state row');
+    studio.flush(() => nav.click());
+    assert.match(studio.doc.querySelector('[data-docs-connectors]').textContent, /No hosts available/);
   } finally { studio.close(); }
 });
 

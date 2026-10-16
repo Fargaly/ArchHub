@@ -2,7 +2,7 @@
 
 SPEC 4.5 holds an instance to the contract it was published with until an
 explicit adoption. A graph published before the docs pages holds the seven
-core routes. The code that now declares twelve opens that graph, adopts the
+core routes or the later five guides. The code that now declares eighteen opens that graph, adopts the
 newer revision through the website revision path, records what it adopted,
 and leaves the seven published pages exactly the Cells that published them:
 they stay readable as the earlier revision. A website changed by hand is not
@@ -47,20 +47,26 @@ def _provider():
     return provider
 
 
-def _published_before_the_docs_pages(provider):
+def _published_before_the_docs_pages(provider, guide_keys=()):
     """One application graph exactly as the earlier definition published it."""
+    pages = cell_website._docs_pages()
     with pytest.MonkeyPatch.context() as scoped:
-        scoped.setattr(cell_website, "_docs_pages", lambda: {})
+        scoped.setattr(cell_website, "_docs_pages", lambda: {
+            key: pages[key] for key in guide_keys
+        })
         store, registry = build_universal_application(
             PUBLIC_MAP_PATH, CellStore(), key_provider=provider,
         )
-    assert set(registry.website.route_roots) == set(CORE_WEBSITE_ROUTES)
+    assert set(registry.website.route_roots) == set(CORE_WEBSITE_ROUTES) | {
+        "/website/docs/" + key for key in guide_keys
+    }
     return store, registry
 
 
-def test_an_earlier_revision_opens_adopts_and_keeps_the_pages_it_published():
+@pytest.mark.parametrize("guide_keys", [(), cell_website.GUIDE_KEYS], ids=["core-7", "guides-12"])
+def test_an_earlier_revision_opens_adopts_and_keeps_the_pages_it_published(guide_keys):
     provider = _provider()
-    store, registry = _published_before_the_docs_pages(provider)
+    store, registry = _published_before_the_docs_pages(provider, guide_keys)
     published = {
         path: store.read(root)
         for path, root in registry.website.page_roots.items()
@@ -76,7 +82,7 @@ def test_an_earlier_revision_opens_adopts_and_keeps_the_pages_it_published():
         assert restored.website.page_roots[path] == cell.id
         assert store.read(cell.id) == cell
     records = website_definition_revisions(store.snapshot())
-    assert len(records) == 2, records
+    assert len(records) == len(cell_website.WEBSITE_DEFINITION_REVISIONS) == 3, records
     assert records[0].startswith("website definition revision 1")
     assert "routes: %s" % ",".join(CORE_WEBSITE_ROUTES) in records[0]
     assert records[1].startswith("website definition revision 2")
@@ -85,7 +91,13 @@ def test_an_earlier_revision_opens_adopts_and_keeps_the_pages_it_published():
         path for path in PUBLIC_WEBSITE_ROUTES
         if path not in CORE_WEBSITE_ROUTES
     )
-    assert "adopted: %s" % ",".join(adopted) in records[1]
+    for number, record in enumerate(records[1:], 2):
+        previous = cell_website.WEBSITE_DEFINITION_REVISIONS[number - 2]
+        paths = cell_website.WEBSITE_DEFINITION_REVISIONS[number - 1]
+        delta = tuple(path for path in paths if path not in previous and path not in published)
+        assert record.startswith('website definition revision %d' % number)
+        assert 'previous: app:website:definition:revision:%d' % (number - 1) in record
+        assert 'adopted: %s' % (','.join(delta) or '-') in record
 
     home = project_universal_website_document(
         store, restored.website, "/website",
@@ -104,6 +116,14 @@ def test_an_earlier_revision_opens_adopts_and_keeps_the_pages_it_published():
             cloud_route_protocol=restored.cloud_route_protocol,
         )
         assert "site-doc-body" in page
+
+    revision = store.revision
+    store, again = restore_universal_application(
+        PUBLIC_MAP_PATH, store, key_provider=provider,
+    )
+    assert store.revision == revision
+    assert set(again.website.route_roots) == set(PUBLIC_WEBSITE_ROUTES)
+    assert website_definition_revisions(store.snapshot()) == records
 
 
 def test_a_second_boot_adopts_nothing_a_second_time():

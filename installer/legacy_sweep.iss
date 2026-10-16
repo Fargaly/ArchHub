@@ -123,6 +123,48 @@ begin
   end;
 end;
 
+{ Archive only the exact public v1 documentation bytes named by the manifest.
+  Unknown or edited files, metadata for current builds, links, checkouts and
+  an existing archive are never overwritten. No recursive directory move. }
+procedure ArchiveLegacyDocFile(const Root, Rel, ExpectedSHA256: String);
+var
+  Target, Dir, Rest: String;
+  Cut: Integer;
+  Version: AnsiString;
+begin
+  if (not LegacyEndsWith(Root, '\ArchHub')) or
+     (Pos('archhub-test', Lowercase(Root)) > 0) or
+     (not LegacyPlainDir(Root)) or LegacyHoldsGit(Root + '\app') then exit;
+  if (Pos('..', Rel) > 0) or (Pos(':', Rel) > 0) or
+     ((Rel <> 'README.md') and (Rel <> 'QUICKSTART.md') and
+      (Rel <> 'VERSION') and (Copy(Rel, 1, 5) <> 'docs\')) then exit;
+  if not LegacyPlainPath(Root, Rel) then exit;
+  if Rel = 'VERSION' then
+    if (not LoadStringFromFile(Root + '\VERSION', Version)) or
+       (not LegacyIsV1Version(String(Version))) then exit;
+  if CompareText(GetSHA256OfFile(Root + '\' + Rel), ExpectedSHA256) <> 0 then exit;
+  Target := Root + '\.retired-v1-docs\' + Rel;
+  if FileExists(Target) or DirExists(Target) then exit;
+  Dir := Root;
+  Rest := '.retired-v1-docs\' + Rel;
+  Cut := Pos('\', Rest);
+  while Cut > 0 do
+  begin
+    Dir := Dir + '\' + Copy(Rest, 1, Cut - 1);
+    if not DirExists(Dir) then
+      if not CreateDir(Dir) then exit;
+    if not LegacyPlainDir(Dir) then exit;
+    Rest := Copy(Rest, Cut + 1, Length(Rest));
+    Cut := Pos('\', Rest);
+  end;
+  if RenameFile(Root + '\' + Rel, Target) then
+    Log('Archived retired v1 documentation: ' + Rel)
+  else
+    Log('Kept retired v1 documentation; archive move failed: ' + Rel);
+end;
+
+#include "legacy_doc_files.iss"
+
 function LegacyManifestsIn(const Base, Target: String): Boolean;
 var
   Years, Manifests: TFindRec;

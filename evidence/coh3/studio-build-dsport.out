@@ -1,0 +1,5 @@
+
+> build:studio
+> node --max-old-space-size=512 packaging/compile_studio.cjs
+
+{"ok":true,"action":"compile","files":15,"output_bytes":1727706,"manifest_sha256":"44de3b8243aa400546a720e4b0edfb6acd5239312f0d787a4d6f0113cf41ba15","babel_version":"7.29.0"}

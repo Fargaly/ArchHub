@@ -1,0 +1,20 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.3, pytest-9.0.3, pluggy-1.6.0 -- C:\Users\fargaly\AppData\Local\ArchHub\.venv\Scripts\python.exe
+rootdir: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\coh3
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collecting ... collected 4 items
+
+tests_replica/test_website_definition_revision.py::test_an_earlier_revision_opens_adopts_and_keeps_the_pages_it_published[core-7] PASSED
+tests_replica/test_website_definition_revision.py::test_an_earlier_revision_opens_adopts_and_keeps_the_pages_it_published[guides-12] PASSED
+tests_replica/test_website_definition_revision.py::test_a_second_boot_adopts_nothing_a_second_time PASSED
+tests_replica/test_website_definition_revision.py::test_a_hand_edited_website_is_refused_while_the_clean_graph_opens PASSED
+
+============================== warnings summary ===============================
+..\..\..\..\..\..\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\AppData\Local\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=================== 4 passed, 1 warning in 78.83s (0:01:18) ===================

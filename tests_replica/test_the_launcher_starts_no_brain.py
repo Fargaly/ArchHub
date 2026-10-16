@@ -19,7 +19,8 @@ def test_the_launcher_starts_no_brain():
 def test_the_public_docs_describe_no_brain_service_on_this_machine():
     """The retired personal-brain daemon listened on 127.0.0.1:8473; the
     website must not send users looking for it."""
-    from nodelang.website_docs_text import DOCS_PAGES
+    from nodelang.site_export import documentation_pages
+    DOCS_PAGES = documentation_pages()
     for key, (title, lede, body) in DOCS_PAGES.items():
         text = "\n".join((title, lede, body))
         assert "8473" not in text, key

@@ -5,6 +5,7 @@ from typing import Mapping
 
 from .clean_design_catalogue import read_design_catalogue
 from .universal_cell import InvalidCell
+from .site_export import project_documentation
 from .clean_scope_interactions import CleanScopeInteractions
 from .clean_visual_authority import (
     CleanVisualSystem,
@@ -1681,7 +1682,7 @@ def project_clean_visual_canvas(
     from .cell_view_template import view_template_projection_scope
 
     with view_template_projection_scope(authority.store):
-        return _project_clean_visual_canvas_unscoped(
+        projection = _project_clean_visual_canvas_unscoped(
             authority,
             visual,
             lens,
@@ -1694,3 +1695,7 @@ def project_clean_visual_canvas(
             can_redo=can_redo,
             door_label=door_label,
         )
+    # Tutorials are a disposable projection of the same source the website
+    # renders. Reading them must never add documentation cells or revisions.
+    projection["documentation"] = project_documentation(catalogue=projection.get("catalog", []))
+    return projection

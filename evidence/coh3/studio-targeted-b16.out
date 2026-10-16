@@ -1,0 +1,31 @@
+✔ docs: the version slot names the running build; search and Docs > Brain use the generated tutorial (7530.0819ms)
+✔ docs: Nodes and Connectors are generated from catalogue and host registry, without Router and Relay status rows (330.8026ms)
+✔ docs: Getting started renders the shared tutorial without a second prose store (297.557ms)
+✔ docs: an answered empty host registry has zero hosts, not one placeholder host (269.5773ms)
+✔ boot: the splash is the design held moment, and its line reads what answered (1114.9369ms)
+✔ skill split view: a catalogue row opens its own file, measured, with no seeded rating and no dead control (250.3134ms)
+✔ connector diagnostic: the chain is the host scan state, Check now scans again, and nothing unmeasured is invented (287.0324ms)
+✔ docs search has no hand-written DOC_INDEX parallel store (11.1422ms)
+✔ docs page removes invented local API and status claims (10.7286ms)
+✔ docs catalogue rows avoid raw engine ids and developer wording (14.6486ms)
+✔ docs render node catalogue as grouped category tiles (11.2929ms)
+✔ website docs describe provider connection without paste instructions (3.0233ms)
+✔ DS-FOUNDATIONS §3 tokens are the single product source (8.1473ms)
+✔ DS-FOUNDATIONS B1 studio text has no numeric font size below 11px (10.7268ms)
+✔ DS-FOUNDATIONS B2 selection outline derives from the live accent (5.7771ms)
+✔ DS-FOUNDATIONS Ping 2 reduced motion changes all token transition durations (5.9654ms)
+✔ DS-FOUNDATIONS shared controls consume tokens and do not alpha-disable (13.9837ms)
+✔ DS-FOUNDATIONS P9 text below 13px does not use inkMuted (170.9841ms)
+✔ DS-FOUNDATIONS P9 BABOOM summary and pre do not use font sizes below 11px (6.1534ms)
+[models] read attempt 1: ok in 136ms (selected model route)
+[models] read attempt 1: ok in 94ms (selected model route)
+✔ Settings Shortcuts renders the explicit handled shortcut list and filters it (7955.0931ms)
+✔ global keydown actions are driven by the exported shortcut table (820.2669ms)
+ℹ tests 21
+ℹ suites 0
+ℹ pass 21
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 32083.8659

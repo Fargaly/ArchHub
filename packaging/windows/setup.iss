@@ -51,7 +51,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: checkedonce
 
 [Files]
-Source: "{#BundleDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#BundleDir}\*"; DestDir: "{app}"; Excludes: "\README.md,\QUICKSTART.md,\VERSION,\docs\*,\archive\*"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "Launch-ArchHub.vbs"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]

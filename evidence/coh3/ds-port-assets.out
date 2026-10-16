@@ -1,0 +1,22 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.3, pytest-9.0.3, pluggy-1.6.0 -- C:\Users\fargaly\AppData\Local\ArchHub\.venv\Scripts\python.exe
+rootdir: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\coh3
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collecting ... collected 6 items
+
+tests/test_ds_port_assets.py::test_actual_studio_asset_owner_serves_shared_design_system[ds/index.jsx] PASSED [ 16%]
+tests/test_ds_port_assets.py::test_actual_studio_asset_owner_serves_shared_design_system[compiled/ds-index.js] PASSED [ 33%]
+tests/test_ds_port_assets.py::test_actual_studio_asset_owner_refuses_traversal_and_archived_modules[../AUTHORITY.md] PASSED [ 50%]
+tests/test_ds_port_assets.py::test_actual_studio_asset_owner_refuses_traversal_and_archived_modules[ds/../../AUTHORITY.md] PASSED [ 66%]
+tests/test_ds_port_assets.py::test_actual_studio_asset_owner_refuses_traversal_and_archived_modules[compiled/../ds/index.jsx] PASSED [ 83%]
+tests/test_ds_port_assets.py::test_actual_studio_asset_owner_refuses_traversal_and_archived_modules[archive/atlas-engine.jsx] PASSED [100%]
+
+============================== warnings summary ===============================
+..\..\..\..\..\..\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\AppData\Local\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 6 passed, 1 warning in 3.20s =========================

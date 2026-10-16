@@ -1,0 +1,26 @@
+[
+  {
+    "File": "SETUP.txt",
+    "Identical": true
+  },
+  {
+    "File": "SETUP.bat",
+    "Identical": true
+  },
+  {
+    "File": "GAPS.md",
+    "Identical": true
+  },
+  {
+    "File": "NODE-LANGUAGE-VISUAL-GUIDE.md",
+    "Identical": true
+  },
+  {
+    "File": "NODE-LANGUAGE-100-LAYER-ARCHITECTURE.md",
+    "Identical": true
+  },
+  {
+    "File": "INTERACTION-LOCALITY-AUTHORITY-PLAN.md",
+    "Identical": true
+  }
+]

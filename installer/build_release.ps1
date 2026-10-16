@@ -101,7 +101,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
     foreach ($part in $Path.Split('/')) {
         if (-not $part -or $part.StartsWith('.') -or $part.EndsWith('.') -or
             $part -match '^(?i:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)' -or
-            $part -match '^(?i:__pycache__|node_modules|build|dist|state|backups|sessions|tests|tests_replica|venv)$') {
+            $part -match '^(?i:__pycache__|node_modules|build|dist|state|backups|sessions|tests|tests_replica|venv|archive)$') {
             return $false
         }
     }
@@ -117,7 +117,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
             'NOTICE', 'packaging/windows/goose-pin.json', 'packaging/windows/stage_goose.py',
             'package.json', 'packaging/compile_studio.cjs',
             'installer/ArchHub.iss', 'installer/ArchHub.bat', 'installer/ArchHub.vbs',
-            'installer/legacy_sweep.iss', 'installer/legacy_v1_files.iss', 'installer/host_file_staging.iss',
+            'installer/legacy_sweep.iss', 'installer/legacy_v1_files.iss', 'installer/legacy_doc_files.iss', 'installer/host_file_staging.iss',
             'installer/build_release.ps1', 'packaging/windows/Test-SourcePortability.ps1',
             'packaging/windows/install_clean_coordination_task.ps1',
             'packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',

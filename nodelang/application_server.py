@@ -1245,6 +1245,17 @@ def _site_font_asset(name):
     return (BRAND_DIR / FONT_DIR / face).read_bytes(), "font/woff2"
 
 
+def _site_tutorial_asset(path):
+    # Exact public capture only; no filesystem path from the caller is opened.
+    if path != '/assets/tutorials/home-templates.png':
+        raise FileNotFoundError('tutorial screenshot not found')
+    from .site_export import SiteExportError, _brand_bytes
+    try:
+        return _brand_bytes(path.removeprefix('/')), 'image/png'
+    except SiteExportError as exc:
+        raise FileNotFoundError('tutorial screenshot not found') from exc
+
+
 class _CleanAuthorityHttpServer:
     """Bounded clean-graph browser consumer without a second store."""
 
@@ -4362,10 +4373,12 @@ class _CleanAuthorityHttpServer:
                     self.wfile.write(body)
                     return
                 request_path = self.path.split("?", 1)[0]
-                if request_path.startswith("/assets/fonts/") or request_path == "/assets/fonts.css":
+                if (request_path.startswith("/assets/fonts/") or request_path == "/assets/fonts.css"
+                        or request_path == '/assets/tutorials/home-templates.png'):
                     # Public OFL faces the canvas page and the Studio name; no key, no session.
                     try:
-                        body, kind = (_site_font_asset("fonts.css")
+                        body, kind = (_site_tutorial_asset(request_path)
+                            if request_path == '/assets/tutorials/home-templates.png' else _site_font_asset("fonts.css")
                             if request_path == "/assets/fonts.css" else owner._clean_font_asset(
                                 request_path[len("/assets/fonts/"):]))
                     except FileNotFoundError:
@@ -7335,10 +7348,13 @@ class ApplicationServer:
                 if (
                     parsed.path == '/assets/fonts.css'
                     or parsed.path.startswith('/assets/fonts/')
+                    or parsed.path == '/assets/tutorials/home-templates.png'
                 ):
                     # The public OFL faces the Studio names; no session.
                     try:
-                        raw, kind = _site_font_asset(parsed.path[len('/assets/'):])
+                        raw, kind = (_site_tutorial_asset(parsed.path)
+                            if parsed.path == '/assets/tutorials/home-templates.png'
+                            else _site_font_asset(parsed.path[len('/assets/'):]))
                     except FileNotFoundError:
                         self._json(404, {'ok': False, 'error': 'font not found'})
                         return
@@ -19746,6 +19762,8 @@ class ApplicationServer:
                 self.universal_registry, projection,
                 snapshot=self.universal_store.snapshot(), subject_root=binding.subject_root,
                 authentication_context=binding.context)
+            from .site_export import project_documentation
+            projection['documentation'] = project_documentation(catalogue=projection.get('catalog', []))
             projected_binding = _BrowserCanvasProjectionBinding(
                 binding.session_root,
                 binding.subject_root,

@@ -1,0 +1,9 @@
+{
+  "file": "tests_replica/test_website_truth.py",
+  "before_source_commit": "3e2521b10e63ffe3d4c3f866475a2d1267e4c392",
+  "after_source_commit": "bbf9effdaf2b21df1b21d55e8729435fc806c14b",
+  "before_worktree_sha256": "f3231a4bff22b881e7094beccf69873d84378221d6b0b1d498a99409b26ec05d",
+  "before_git_blob_sha256": "47abd085d3cf0713ee7508d7556c0a65dc86cfead0942b959409487ec08a9515",
+  "after_worktree_sha256": "47abd085d3cf0713ee7508d7556c0a65dc86cfead0942b959409487ec08a9515",
+  "finding": "Same canonical Git bytes before and after rebase; prior worktree hash used mixed line endings under text=auto eol=lf."
+}

@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ArchHub — the graph-first AI workspace for AEC</title>
+<meta name="description" content="ArchHub is a graph-first AI desktop workspace for architects, engineers, and contractors. The Composer drives a node graph that wires the tools you already use — Revit, AutoCAD, Rhino, Speckle, Excel. Runs with or without an agent. Local-first. MIT, free in open beta." />
+<!--
+  PROTOTYPE — website-update-2026-06-20
+  Self-contained landing page the founder opens + reacts to (PROTOTYPE-FIRST).
+  Conveys the TRUE product per the audit. NO fabricated features / metrics /
+  testimonials. Tokens mirror Base.astro / tokens.jsx (terracotta #d97757,
+  Instrument Serif + Inter + JetBrains Mono, dark theme, no emoji).
+  Fixes vs the live site:
+   - CTA now offers a REAL path: "Download (GitHub Releases)" + "Sign in".
+   - Honest pricing line: free in open beta (per README / PRICING_STATUS.md).
+   - "Runs with or without an agent" made explicit (Plan / Auto / YOLO + manual).
+   - Self-heal shown as a BEHAVIOUR, not invented counters (no 47 / 340ms).
+   - 19 real connectors listed by name; offline-first Speckle wires called out.
+-->
+<style>
+  :root{
+    --bg:#0e0e11; --bg-panel:#15151a; --bg-soft:#1c1c23; --bg-deep:#0a0a0d;
+    --ink:#ece8e0; --ink-soft:#9b938a; --ink-muted:#5e574f; --ink-dim:#3a3530;
+    --line:#26262e; --line-soft:#1e1e24;
+    --accent:#d97757; --accent-soft:#3a2018; --accent-hi:#e8896a;
+    --ok:#7ec18e; --warn:#e5b25a; --err:#e6705f; --cyan:#5fb3b3; --purple:#a98cd6;
+    --serif:'Instrument Serif',Georgia,serif;
+    --sans:'Inter',system-ui,sans-serif;
+    --mono:'JetBrains Mono',ui-monospace,monospace;
+    --arch:'Architects Daughter','Comic Sans MS',cursive;
+    --page:1200px;
+  }
+  *,*::before,*::after{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;line-height:1.5;overflow-x:hidden}
+  a{color:inherit;text-decoration:none}
+  ::selection{background:var(--accent-soft);color:var(--accent-hi)}
+  .wrap{max-width:var(--page);margin:0 auto;padding:0 40px}
+  .mono{font-family:var(--mono)}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--accent)}
+  .serif{font-family:var(--serif);font-weight:400;letter-spacing:-.025em}
+  .ital{font-style:italic;color:var(--accent)}
+  .dim{display:flex;align-items:center;gap:0;width:100%;color:var(--ink-dim)}
+  .dim .tick{width:1px;height:9px;background:var(--line)}
+  .dim .rule{flex:1;height:1px;background:var(--line)}
+  .dim .label{font-family:var(--mono);font-size:10px;letter-spacing:.16em;color:var(--ink-muted);padding:0 12px;white-space:nowrap}
+
+  /* nav */
+  header.nav{position:sticky;top:0;z-index:50;background:rgba(14,14,17,.82);backdrop-filter:blur(12px);border-bottom:1px solid var(--line-soft)}
+  .nav .row{display:flex;align-items:center;gap:28px;height:64px}
+  .brand{display:flex;align-items:center;gap:9px}
+  .brand .word{font-family:var(--arch);font-size:20px;text-transform:uppercase;letter-spacing:.02em;line-height:1;color:var(--ink)}
+  .brand .word .ital{font-style:normal;color:var(--accent)}
+  .nav-links{display:flex;gap:22px;flex:1}
+  .nav-links a{font-size:13.5px;color:var(--ink-soft);transition:color .15s}
+  .nav-links a:hover{color:var(--ink)}
+  .ver{font-family:var(--mono);font-size:10.5px;color:var(--ink-muted);letter-spacing:.06em}
+  .btn{font-family:var(--sans);font-size:13.5px;font-weight:500;padding:8px 16px;border-radius:6px;cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--ink);transition:.15s;display:inline-flex;align-items:center;gap:6px}
+  .btn:hover{border-color:var(--ink-muted)}
+  .btn-primary{background:var(--accent);border-color:var(--accent);color:#160d08;font-weight:600}
+  .btn-primary:hover{background:var(--accent-hi);border-color:var(--accent-hi)}
+  .btn.lg{padding:11px 20px;font-size:14.5px}
+
+  section{display:block}
+  .sec{padding:96px 0}
+
+  /* hero */
+  .hero{position:relative;padding:96px 0 72px;border-bottom:1px solid var(--line-soft);
+    background-image:radial-gradient(var(--line-soft) 1px,transparent 1px);background-size:22px 22px}
+  .hgrid{display:grid;grid-template-columns:1.12fr .98fr;gap:56px;align-items:center}
+  h1.title{font-family:var(--serif);font-weight:400;font-size:84px;line-height:.9;letter-spacing:-.04em;margin:18px 0 0}
+  .lede{font-family:var(--serif);font-size:23px;font-style:italic;color:var(--ink-soft);letter-spacing:-.01em;line-height:1.4;margin-top:24px;max-width:540px}
+  .cta-row{display:flex;gap:12px;margin-top:32px;flex-wrap:wrap}
+  .fineprint{font-family:var(--mono);font-size:11px;color:var(--ink-muted);letter-spacing:.04em;margin-top:18px;line-height:1.7}
+
+  /* canvas card */
+  .canvas-card{background:var(--bg-panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 40px 100px rgba(0,0,0,.55)}
+  .canvas-head{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--line);background:var(--bg-soft)}
+  .canvas-head .cdot{width:8px;height:8px;border-radius:50%;background:var(--ink-dim)}
+  .canvas-head .path{flex:1;text-align:center;font-family:var(--mono);font-size:10px;color:var(--ink-muted)}
+  .canvas-body{position:relative;height:386px;background:var(--bg-deep);
+    background-image:radial-gradient(var(--line) 1px,transparent 1px);background-size:22px 22px}
+  .node{position:absolute;width:184px;background:var(--bg-panel);border:1px solid var(--line);border-radius:7px;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+  .node .nh{display:flex;align-items:center;gap:7px;padding:6px 10px;border-bottom:1px solid var(--line);background:var(--bg-soft)}
+  .node .nh .dot{width:6px;height:6px;border-radius:50%}
+  .node .nh .cat{font-family:var(--mono);font-size:8.5px;letter-spacing:.16em}
+  .node .nh .st{margin-left:auto;font-family:var(--mono);font-size:8.5px;letter-spacing:.12em}
+  .node .nb{padding:8px 10px}
+  .node .nb .nt{font-size:12px;font-weight:500;color:var(--ink)}
+  .node .nb .ns{font-family:var(--mono);font-size:9px;color:var(--ink-muted);margin-top:1px}
+  .node .port{display:flex;align-items:center;gap:6px;margin-top:7px;justify-content:flex-end}
+  .node .port span{font-family:var(--mono);font-size:9.5px;color:var(--ink-soft)}
+  .node .port i{width:7px;height:7px;border-radius:50%}
+  .cap{font-family:var(--mono);font-size:10px;color:var(--ink-muted);letter-spacing:.08em;margin-top:10px;text-align:center}
+
+  /* trust strip */
+  .trust{border-bottom:1px solid var(--line-soft);padding:26px 0}
+  .trow{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .trust .lab{font-family:var(--mono);font-size:11px;color:var(--ink-muted);letter-spacing:.16em}
+  .trust .host{font-family:var(--serif);font-size:19px;color:var(--ink-soft);letter-spacing:.01em}
+  .trust .count{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink-muted)}
+  .trust .count b{color:var(--accent);font-weight:600}
+
+  /* what-it-is */
+  .lead2{font-family:var(--serif);font-size:30px;line-height:1.28;letter-spacing:-.02em;max-width:840px;margin:18px 0 0}
+  .lead2 b{color:var(--accent);font-style:italic;font-weight:400}
+
+  /* pillars */
+  .pillars{display:grid;grid-template-columns:repeat(3,1fr);gap:0;border-top:1px solid var(--line);margin-top:40px}
+  .pillar{padding:28px 28px 32px;border-right:1px solid var(--line);position:relative}
+  .pillar:last-child{border-right:0}
+  .pillar .pn{font-family:var(--mono);font-size:10.5px;color:var(--ink-muted);letter-spacing:.16em}
+  .pillar .glyph{font-family:var(--serif);font-size:46px;color:var(--accent);line-height:1;margin:18px 0 14px}
+  .pillar h3{font-family:var(--serif);font-size:30px;letter-spacing:-.02em;margin:0 0 10px;font-weight:400}
+  .pillar p{font-size:14.5px;color:var(--ink-soft);line-height:1.6;margin:0}
+
+  /* capabilities grid */
+  .caps{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-top:40px}
+  .ccard{background:var(--bg-panel);border:1px solid var(--line);border-radius:10px;padding:24px 24px 26px}
+  .ccard .ci{font-family:var(--serif);font-size:30px;color:var(--accent);line-height:1}
+  .ccard h4{font-family:var(--serif);font-size:24px;letter-spacing:-.018em;font-weight:400;margin:12px 0 8px}
+  .ccard p{font-size:14px;color:var(--ink-soft);line-height:1.6;margin:0}
+  .ccard .tagrow{margin-top:12px;display:flex;gap:6px;flex-wrap:wrap}
+  .tagrow .tg{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;color:var(--ink-soft);border:1px solid var(--line);border-radius:999px;padding:3px 9px}
+
+  /* modes */
+  .modes{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:28px}
+  .mode{background:var(--bg-soft);border:1px solid var(--line);border-radius:8px;padding:18px 18px 20px}
+  .mode .mt{font-family:var(--mono);font-size:11px;letter-spacing:.14em;color:var(--accent)}
+  .mode .md{font-size:13.5px;color:var(--ink-soft);line-height:1.55;margin-top:8px}
+  .mode .mg{font-family:var(--mono);font-size:9.5px;color:var(--ink-muted);letter-spacing:.06em;margin-top:10px}
+
+  /* how it works */
+  .steps{display:grid;grid-template-columns:repeat(4,1fr);gap:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-top:40px}
+  .step{padding:26px 22px 30px;border-right:1px solid var(--line)}
+  .step:last-child{border-right:0}
+  .step .sn{font-family:var(--serif);font-size:40px;color:var(--accent);line-height:1}
+  .step h4{font-family:var(--sans);font-size:15px;font-weight:600;margin:14px 0 6px}
+  .step p{font-size:13px;color:var(--ink-soft);line-height:1.55;margin:0}
+
+  /* connectors full list */
+  .conn-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:32px}
+  .conn{display:flex;align-items:center;gap:9px;background:var(--bg-panel);border:1px solid var(--line);border-radius:7px;padding:11px 13px}
+  .conn .cd{width:7px;height:7px;border-radius:50%;background:var(--accent);flex:none}
+  .conn .cn{font-size:13px;color:var(--ink)}
+
+  /* self-heal (behaviour, not invented counters) */
+  .heal{background:var(--bg-panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-top:40px}
+  .heal-grid{display:grid;grid-template-columns:1.02fr 1fr}
+  .heal-left{padding:40px;border-right:1px solid var(--line)}
+  .heal-left h3{font-family:var(--serif);font-size:42px;line-height:1.02;letter-spacing:-.03em;margin:14px 0 14px;font-weight:400}
+  .heal-left p{font-size:14.5px;color:var(--ink-soft);line-height:1.6;margin:0}
+  .statuses{display:flex;flex-direction:column;gap:8px;margin-top:24px;padding-top:22px;border-top:1px solid var(--line)}
+  .statuses .srow{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:11.5px}
+  .statuses .srow i{width:8px;height:8px;border-radius:50%;flex:none}
+  .statuses .srow .sl{color:var(--ink-soft)}
+  .statuses .srow .sx{margin-left:auto;color:var(--ink-muted);font-size:10px}
+  .heal-right{padding:28px;background:var(--bg-deep)}
+  .log{background:#0b0b0e;border:1px solid var(--line-soft);border-radius:7px;padding:12px 15px}
+  .logline{display:grid;grid-template-columns:62px 70px 1fr;gap:9px;align-items:baseline;padding:6px 0;border-bottom:1px dashed var(--line-soft)}
+  .logline:last-child{border-bottom:0}
+  .logline .lt{font-family:var(--mono);font-size:10px;color:var(--ink-muted)}
+  .logline .lw{font-family:var(--mono);font-size:10px;letter-spacing:.1em}
+  .logline .lm{font-family:var(--mono);font-size:11px;color:var(--ink-soft);line-height:1.4}
+  .heal-foot{margin-top:14px;font-family:var(--serif);font-style:italic;font-size:16px;color:var(--ink-soft)}
+
+  /* split */
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;margin-top:40px}
+  .split-h{font-family:var(--serif);font-weight:400;font-size:46px;line-height:1.04;letter-spacing:-.03em;margin:14px 0 0}
+  .feat-list{list-style:none;padding:0;margin:24px 0 0}
+  .feat-list li{display:flex;gap:14px;padding:16px 0;border-top:1px solid var(--line)}
+  .feat-list li .fi{font-family:var(--serif);font-size:22px;color:var(--accent);font-style:italic;min-width:30px}
+  .feat-list li .ft b{font-family:var(--sans);font-size:15px;font-weight:600;color:var(--ink);display:block;margin-bottom:3px}
+  .feat-list li .ft span{font-size:13.5px;color:var(--ink-soft);line-height:1.55}
+  .skill{background:var(--bg-deep);border:1px solid var(--line);border-radius:10px;padding:20px 22px;font-family:var(--mono);font-size:12.5px;line-height:1.75;color:var(--ink-soft);margin:0;white-space:pre-wrap;overflow-x:auto}
+  .skill .key{color:var(--cyan)} .skill .str{color:var(--ok)} .skill .pun{color:var(--ink-muted)}
+  .note{font-family:var(--mono);font-size:10px;color:var(--ink-muted);letter-spacing:.1em;margin-top:10px}
+
+  /* security */
+  .sec-dark{background:var(--bg-deep);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .sec-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:36px}
+  .scard{background:var(--bg-panel);border:1px solid var(--line);border-radius:10px;padding:22px}
+  .scard .si{font-family:var(--serif);font-size:34px;color:var(--accent);line-height:1}
+  .scard h4{font-family:var(--serif);font-size:23px;letter-spacing:-.018em;font-weight:400;margin:14px 0 8px}
+  .scard p{font-size:13.5px;color:var(--ink-soft);line-height:1.55;margin:0}
+
+  /* closing */
+  .closing{padding:120px 0;text-align:center;border-top:1px solid var(--line-soft);
+    background-image:radial-gradient(var(--line-soft) 1px,transparent 1px);background-size:22px 22px}
+  .closing h2{font-family:var(--serif);font-weight:400;font-size:80px;line-height:.95;letter-spacing:-.04em;margin:0 0 12px}
+  .closing p{font-family:var(--serif);font-style:italic;font-size:22px;color:var(--ink-soft);margin:0 auto 32px;max-width:580px}
+
+  /* footer */
+  footer.site{padding:56px 0 64px;border-top:1px solid var(--line-soft)}
+  .foot{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr;gap:32px}
+  .foot .tag{font-family:var(--serif);font-style:italic;font-size:17px;color:var(--ink-soft);max-width:320px;line-height:1.4;margin-top:14px}
+  .foot .col h5{font-family:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--ink-muted);margin:0 0 12px;font-weight:400}
+  .foot .col a{display:block;font-size:13.5px;color:var(--ink-soft);padding:4px 0;transition:color .15s}
+  .foot .col a:hover{color:var(--ink)}
+  .foot-base{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-top:44px;padding-top:24px;border-top:1px solid var(--line-soft);font-family:var(--mono);font-size:10.5px;color:var(--ink-muted);letter-spacing:.06em}
+  .foot-base code{color:var(--ink-soft)}
+
+  @media (max-width:980px){
+    .hgrid,.heal-grid,.split{grid-template-columns:1fr}
+    .heal-left{border-right:0;border-bottom:1px solid var(--line)}
+    h1.title{font-size:62px}
+    .pillars,.sec-cards,.caps,.modes{grid-template-columns:1fr}
+    .pillar{border-right:0;border-bottom:1px solid var(--line)}
+    .steps{grid-template-columns:1fr 1fr}
+    .step{border-bottom:1px solid var(--line)}
+    .closing h2{font-size:50px}
+    .nav-links{display:none}
+    .foot{grid-template-columns:1fr 1fr}
+  }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<header class="nav">
+  <div class="wrap row">
+    <a class="brand" href="#top" aria-label="ArchHub home">
+      <svg width="26" height="26" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+        <path d="M10 56 V32 a22 22 0 0 1 44 0 V56" stroke="#d97757" stroke-width="4.5" stroke-linecap="square"/>
+        <circle cx="32" cy="22" r="5.2" fill="#0e0e11" stroke="#d97757" stroke-width="2.4"/>
+        <circle cx="32" cy="22" r="1.8" fill="#d97757"/>
+        <path d="M6 58 H58" stroke="#d97757" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <span class="word">Arch<span class="ital">Hub</span></span>
+    </a>
+    <nav class="nav-links">
+      <a href="#what">What it is</a>
+      <a href="#capabilities">Capabilities</a>
+      <a href="#connectors">Connectors</a>
+      <a href="#how">How it works</a>
+      <a href="#security">Security</a>
+    </nav>
+    <span class="ver">19 connectors · MIT · open beta</span>
+    <a class="btn" href="#get">Sign in</a>
+    <a class="btn btn-primary" href="#get">Download</a>
+  </div>
+</header>
+
+<!-- HERO -->
+<section class="hero" id="top">
+  <div class="wrap hgrid">
+    <div>
+      <div class="eyebrow">● Graph-first AI workspace · for AEC</div>
+      <h1 class="title">Drafted,<br/><span class="ital">not generated.</span></h1>
+      <p class="lede">One canvas wires the tools you already use — Revit, AutoCAD, Rhino, Speckle, Excel. The Composer drives a node graph; you approve the line before it's drawn. Your work stays on your machine. Your knowledge stays yours.</p>
+      <div class="cta-row">
+        <a class="btn btn-primary lg" href="#get">Download for Windows</a>
+        <a class="btn lg" href="#get">Sign in to your firm</a>
+      </div>
+      <div class="fineprint">
+        Open source · MIT · free in open beta · bring your own model key<br/>
+        Windows installer · macOS &amp; Linux from source · runs with or without an agent
+      </div>
+    </div>
+
+    <!-- node-canvas preview · inline SVG + DOM placeholder, captioned -->
+    <div>
+      <div class="canvas-card">
+        <div class="canvas-head">
+          <span class="cdot"></span><span class="cdot"></span><span class="cdot"></span>
+          <span class="path">canvas · Tower-A_central.rvt · /studio</span>
+        </div>
+        <div class="canvas-body">
+          <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none" aria-hidden="true">
+            <path d="M198 92 C 244 92, 252 150, 300 150" stroke="#5fb3b3" stroke-width="1.5" fill="none" opacity="0.85"/>
+            <path d="M198 116 C 252 116, 252 252, 78 252" stroke="#a98cd6" stroke-width="1.5" fill="none" opacity="0.7"/>
+            <path d="M482 150 C 514 150, 504 252, 544 252" stroke="#d97757" stroke-width="1.5" fill="none" opacity="0.85"/>
+          </svg>
+          <div class="node" style="left:14px;top:54px">
+            <div class="nh"><i class="dot" style="background:#5fb3b3"></i><span class="cat" style="color:#5fb3b3">HOST · REVIT</span><span class="st" style="color:#7ec18e">LIVE</span></div>
+            <div class="nb">
+              <div class="nt">Revit 2025</div>
+              <div class="ns">Tower-A_central.rvt · L03</div>
+              <div class="port"><span>active view</span><i style="background:#5fb3b3"></i></div>
+              <div class="port"><span>selection · 23 walls</span><i style="background:#5fb3b3"></i></div>
+            </div>
+          </div>
+          <div class="node" style="left:300px;top:108px">
+            <div class="nh"><i class="dot" style="background:#a98cd6"></i><span class="cat" style="color:#a98cd6">AI · COMPOSER</span><span class="st" style="color:#d97757">PLAN</span></div>
+            <div class="nb">
+              <div class="nt">Schedule wall types</div>
+              <div class="ns">your model key · review gated</div>
+              <div class="port"><span>intent</span><i style="background:#a98cd6"></i></div>
+            </div>
+          </div>
+          <div class="node" style="left:14px;top:250px">
+            <div class="nh"><i class="dot" style="background:#d97757"></i><span class="cat" style="color:#d97757">ANNOTATE</span><span class="st" style="color:#7ec18e">DONE</span></div>
+            <div class="nb"><div class="nt">Auto-dimension</div><div class="ns">37 dims · replayable</div></div>
+          </div>
+          <div class="node" style="left:490px;top:250px">
+            <div class="nh"><i class="dot" style="background:#7ec18e"></i><span class="cat" style="color:#7ec18e">OUTPUT</span><span class="st" style="color:#7ec18e">DONE</span></div>
+            <div class="nb"><div class="nt">Plot sheet set</div><div class="ns">A.101 → A.112 · PDF</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="cap">PLACEHOLDER — illustrative canvas mock, not a live screenshot</div>
+    </div>
+  </div>
+</section>
+
+<!-- TRUST STRIP -->
+<div class="trust">
+  <div class="wrap trow">
+    <span class="lab">DRIVES</span>
+    <span class="host">Revit</span>
+    <span class="host">AutoCAD</span>
+    <span class="host">Rhino</span>
+    <span class="host">3ds&nbsp;Max</span>
+    <span class="host">Blender</span>
+    <span class="host">Speckle</span>
+    <span class="host">Excel</span>
+    <span class="host">Outlook</span>
+    <span class="host">Procore</span>
+    <span class="host">Notion</span>
+    <span class="count"><b>19</b> connectors · the hosts you already run</span>
+  </div>
+</div>
+
+<!-- WHAT IT IS -->
+<section class="sec wrap" id="what">
+  <div class="eyebrow" style="margin-bottom:10px">What ArchHub is</div>
+  <h2 class="serif" style="font-size:54px;line-height:1;margin:0">A drafting table <span class="ital">for AI.</span></h2>
+  <p class="lead2">A desktop workspace where every action is a <b>node on one canvas</b> — hosts, AI turns, filters, connector ops, wired together. The <b>Composer</b> proposes edits to that graph; you approve each line before it is drawn. The graph is parametric and replayable: nudge a value, and the chain downstream re-cooks. It runs <b>with or without an agent</b> — drive it by hand, or let the Composer drive.</p>
+
+  <div class="pillars">
+    <div class="pillar">
+      <div class="pn">01 · THE SURFACE</div>
+      <div class="glyph">◈</div>
+      <h3>Canvas</h3>
+      <p>Every action is a node; every node is replayable. Drag a parameter and the chain downstream re-runs. Nothing happens that you can't see, trace, or undo. Always directly editable — right-click, drag-rewire, edit params inline.</p>
+    </div>
+    <div class="pillar">
+      <div class="pn">02 · THE HAND</div>
+      <div class="glyph">✎</div>
+      <h3>Composer</h3>
+      <p>Talk to the project. The Composer proposes edits to the graph; you approve the line before it's drawn. Every write to a host is approval-gated by default and reversible. The canvas is the materialised, inspectable result.</p>
+    </div>
+    <div class="pillar">
+      <div class="pn">03 · THE MEMORY</div>
+      <div class="glyph">❖</div>
+      <h3>Brain</h3>
+      <p>Persistent cross-session memory and reusable Skills that grow with your firm. Save any thread as a Skill — plain JSON you own, versioned in your own GitHub repo. No marketplace, no lock-in.</p>
+    </div>
+  </div>
+</section>
+
+<div class="wrap"><div class="dim"><span class="tick"></span><span class="rule"></span><span class="label">KEY CAPABILITIES</span><span class="rule"></span><span class="tick"></span></div></div>
+
+<!-- CAPABILITIES -->
+<section class="sec wrap" id="capabilities">
+  <div class="eyebrow" style="margin-bottom:10px">Key capabilities</div>
+  <h2 class="serif" style="font-size:52px;line-height:1;margin:0">What it does <span class="ital">for you.</span></h2>
+
+  <div class="caps">
+    <div class="ccard">
+      <div class="ci">◇</div>
+      <h4>A graph you can audit</h4>
+      <p>Not a chat transcript you have to trust. Every connection is typed and logged; re-run any node from any upstream state and the same inputs always draw the same line.</p>
+      <div class="tagrow"><span class="tg">REPLAYABLE</span><span class="tg">PARAMETRIC</span><span class="tg">TYPED WIRES</span></div>
+    </div>
+    <div class="ccard">
+      <div class="ci">⌂</div>
+      <h4>Local-first, bring your own key</h4>
+      <p>The canvas, the graph, and your files stay on your machine. Point ArchHub at your own provider — Anthropic, OpenAI, Google — or a local Ollama. Cloud is opt-in, for sign-in and collaboration only.</p>
+      <div class="tagrow"><span class="tg">ON-DISK</span><span class="tg">BYO MODEL</span><span class="tg">OLLAMA OK</span></div>
+    </div>
+    <div class="ccard">
+      <div class="ci">⟲</div>
+      <h4>Self-healing connectors</h4>
+      <p>The connector watches the host, reconnects on its own without restarts, and reports honest status — live, loaded-but-dead, missing, unauthorized — rather than fabricating data when a host is offline.</p>
+      <div class="tagrow"><span class="tg">NO RESTARTS</span><span class="tg">HONEST STATUS</span></div>
+    </div>
+    <div class="ccard">
+      <div class="ci">❖</div>
+      <h4>Skills are JSON you own</h4>
+      <p>Save any workflow as a Skill — copy-paste shareable, diff-able, synced through your own private GitHub. Delete ArchHub tomorrow and your Skills are still plain files on disk.</p>
+      <div class="tagrow"><span class="tg">OWN YOUR REPO</span><span class="tg">NO LOCK-IN</span></div>
+    </div>
+    <div class="ccard">
+      <div class="ci">⇄</div>
+      <h4>Offline-first Speckle wires</h4>
+      <p>Every wire is a Speckle send/receive segment with an on-disk transport by default — no server, no Docker, no account, fully offline. Cloud Speckle is opt-in for collaboration when you want it.</p>
+      <div class="tagrow"><span class="tg">NO SERVER</span><span class="tg">OFFLINE</span><span class="tg">OPT-IN CLOUD</span></div>
+    </div>
+    <div class="ccard">
+      <div class="ci">⌘</div>
+      <h4>Cloud sign-in for firms</h4>
+      <p>Sign in for identity, plan tier, and multi-seat firm membership. The cloud holds references, not your resolved secrets or drawings — your account chip shows status without ever syncing your files.</p>
+      <div class="tagrow"><span class="tg">SSO / EMAIL</span><span class="tg">MULTI-SEAT</span><span class="tg">REFERENCES ONLY</span></div>
+    </div>
+  </div>
+
+  <!-- runs with or without an agent -->
+  <div style="margin-top:48px">
+    <div class="eyebrow" style="margin-bottom:6px">Runs with or without an agent</div>
+    <p style="font-size:15px;color:var(--ink-soft);max-width:680px;margin:6px 0 0;line-height:1.6">Drive the canvas by hand, or hand the wheel to the Composer. You choose how much autonomy it gets — and every write to a host stays reversible.</p>
+    <div class="modes">
+      <div class="mode">
+        <div class="mt">PLAN · DEFAULT</div>
+        <div class="md">The Composer proposes; you approve every write before it touches a host. Reads run freely. The safe default.</div>
+        <div class="mg">GATED WRITES · GATED PLAN</div>
+      </div>
+      <div class="mode">
+        <div class="mt">AUTO</div>
+        <div class="md">Reads run automatically; writes are still gated for your approval. For when you trust the read path but want the last word on changes.</div>
+        <div class="mg">AUTO READS · GATED WRITES</div>
+      </div>
+      <div class="mode">
+        <div class="mt">YOLO · OPT-IN</div>
+        <div class="md">The agent runs end-to-end. Fully opt-in, and every action is reversible through immutable Versions, so you can always receive the previous state.</div>
+        <div class="mg">AUTO EVERYTHING · REVERSIBLE</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="wrap"><div class="dim"><span class="tick"></span><span class="rule"></span><span class="label">SELF-HEALING CONNECTORS</span><span class="rule"></span><span class="tick"></span></div></div>
+
+<!-- SELF-HEAL (behaviour, no invented metrics) -->
+<section class="sec wrap" id="heal">
+  <div class="heal">
+    <div class="heal-grid">
+      <div class="heal-left">
+        <div class="eyebrow">Self-healing connectors</div>
+        <h3>Your CAD <span class="ital">tells us</span> when it breaks. We listen.</h3>
+        <p>No restarts. No "please relaunch Revit." The connector watches the host, reconnects on its own, and tells you what it did. And when a host is genuinely offline, it reports an honest status instead of fabricating data.</p>
+        <div class="statuses">
+          <div class="srow"><i style="background:var(--ok)"></i><span class="sl">live</span><span class="sx">host reachable, session bound</span></div>
+          <div class="srow"><i style="background:var(--warn)"></i><span class="sl">loaded_dead</span><span class="sx">add-in loaded, RPC not answering</span></div>
+          <div class="srow"><i style="background:var(--ink-muted)"></i><span class="sl">missing</span><span class="sx">host not running</span></div>
+          <div class="srow"><i style="background:var(--err)"></i><span class="sl">unauthorized</span><span class="sx">reachable, no permission</span></div>
+        </div>
+      </div>
+      <div class="heal-right">
+        <div class="log">
+          <div class="logline"><span class="lt">14:23:08</span><span class="lw" style="color:var(--warn)">WATCH</span><span class="lm">RPC failed to ack heartbeat (3 retries)</span></div>
+          <div class="logline"><span class="lt">14:23:09</span><span class="lw" style="color:var(--ink-soft)">DIAG</span><span class="lm">likely GC pause in worksharing</span></div>
+          <div class="logline"><span class="lt">14:23:09</span><span class="lw" style="color:var(--cyan)">ACTION</span><span class="lm">re-issuing handshake · grace window</span></div>
+          <div class="logline"><span class="lt">14:23:11</span><span class="lw" style="color:var(--ok)">OK</span><span class="lm">handshake acknowledged</span></div>
+          <div class="logline"><span class="lt">14:23:11</span><span class="lw" style="color:var(--ok)">RESTORE</span><span class="lm">session rebound · selection preserved</span></div>
+          <div class="logline"><span class="lt">14:23:11</span><span class="lw" style="color:var(--ink-soft)">USER</span><span class="lm">recovery silent · no restart needed</span></div>
+        </div>
+        <div class="heal-foot">You didn't notice. That's the point.</div>
+        <div class="cap" style="text-align:left">PLACEHOLDER — illustrative recovery log, not a recorded session</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="wrap"><div class="dim"><span class="tick"></span><span class="rule"></span><span class="label">SKILLS YOU OWN</span><span class="rule"></span><span class="tick"></span></div></div>
+
+<!-- BRAIN / SKILLS SPLIT -->
+<section class="sec wrap" id="brain">
+  <div class="split">
+    <div>
+      <pre class="skill"><span class="pun">{</span>
+  <span class="key">"name"</span><span class="pun">:</span> <span class="str">"Sketch to production"</span><span class="pun">,</span>
+  <span class="key">"version"</span><span class="pun">:</span> <span class="str">"1.4.2"</span><span class="pun">,</span>
+  <span class="key">"owns"</span><span class="pun">:</span> <span class="str">"studio@your-firm"</span><span class="pun">,</span>
+  <span class="key">"steps"</span><span class="pun">:</span> <span class="pun">[</span><span class="str">"read"</span><span class="pun">,</span> <span class="str">"extract"</span><span class="pun">,</span> <span class="str">"build"</span><span class="pun">,</span>
+    <span class="str">"dimension"</span><span class="pun">,</span> <span class="str">"schedule"</span><span class="pun">,</span> <span class="str">"plot"</span><span class="pun">]</span><span class="pun">,</span>
+  <span class="key">"synced"</span><span class="pun">:</span> <span class="str">"github.com/your-firm/skills"</span>
+<span class="pun">}</span></pre>
+      <div class="note">PLAIN JSON · NO PROPRIETARY FORMAT · VERSIONED IN YOUR REPO</div>
+    </div>
+    <div>
+      <div class="eyebrow">The brain</div>
+      <h2 class="split-h">Memory that grows with the <span class="ital">firm</span>, not the vendor.</h2>
+      <ul class="feat-list">
+        <li><span class="fi">❖</span><span class="ft"><b>Skills are JSON you own</b><span>Save any thread as a Skill. Copy-paste shareable, diff-able, synced through your own private GitHub.</span></span></li>
+        <li><span class="fi">⌥</span><span class="ft"><b>Persistent across projects</b><span>The Brain remembers your standards — sheet naming, dimension styles, detail libraries — and reuses them on the next project.</span></span></li>
+        <li><span class="fi">↗</span><span class="ft"><b>No marketplace lock-in</b><span>Nothing lives behind our login. Delete ArchHub tomorrow and your Skills are still plain files on disk.</span></span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<div class="wrap"><div class="dim"><span class="tick"></span><span class="rule"></span><span class="label">19 REAL CONNECTORS</span><span class="rule"></span><span class="tick"></span></div></div>
+
+<!-- CONNECTORS FULL LIST -->
+<section class="sec wrap" id="connectors">
+  <div class="eyebrow" style="margin-bottom:10px">Connectors</div>
+  <h2 class="serif" style="font-size:52px;line-height:1;margin:0">The hosts you <span class="ital">already run.</span></h2>
+  <p style="font-size:15px;color:var(--ink-soft);max-width:680px;margin:14px 0 0;line-height:1.6">Nineteen first-party connectors on a uniform contract — design, modelling, office, and field tools, wired to the same canvas. Each reports honest status and never fabricates data when its host is offline.</p>
+  <div class="conn-grid">
+    <div class="conn"><span class="cd"></span><span class="cn">Revit</span></div>
+    <div class="conn"><span class="cd"></span><span class="cn">AutoCAD</span></div>
+    <div class="conn"><span class="cd"></span><span class="cn">Rhino</span></div>
+    <div class="conn"><span class="cd"></span><span class="cn">Blender</span></div>
+    <div class="conn"><span class="cd"></span><span class="cn">3ds Max</span></div>
+    <div class="conn"><span class="cd"></span><span class="cn">Speckle</span></div>
+    <div class="conn"><span class="cd"></span><span class="cn">Excel</span></div>
+    <div class="conn"><span class="cd"></span><span class="cn">Word</span></div>
+    <div class="conn"><span class="cd"></span><span class="cn">PowerPoint</span></div>
+    <div class="conn"><span class="cd"></span><span class="cn">Outlook</span></div>
+    <div class="conn"><span class="cd"></span><span class="cn">Teams</span></div>
+    <div class="conn"><span class="cd"></span><span class="cn">Notion</span></div>
+    <div class="conn"><span class="cd"></span><span class="cn">Procore</span></div>
+    <div class="conn"><span class="cd"></span><span class="cn">Dropbox</span></div>
+    <div class="conn"><span class="cd"></span><span class="cn">Photoshop</span></div>
+    <div class="conn"><span class="cd"></span><span class="cn">Illustrator</span></div>
+    <div class="conn"><span class="cd"></span><span class="cn">InDesign</span></div>
+    <div class="conn"><span class="cd"></span><span class="cn">ComfyUI</span></div>
+    <div class="conn"><span class="cd"></span><span class="cn">DashScope</span></div>
+  </div>
+</section>
+
+<div class="wrap"><div class="dim"><span class="tick"></span><span class="rule"></span><span class="label">HOW IT WORKS</span><span class="rule"></span><span class="tick"></span></div></div>
+
+<!-- HOW IT WORKS -->
+<section class="sec wrap" id="how">
+  <div class="eyebrow" style="margin-bottom:10px">How it works</div>
+  <h2 class="serif" style="font-size:52px;line-height:1;margin:0">From host to <span class="ital">output.</span></h2>
+  <div class="steps">
+    <div class="step">
+      <div class="sn">1</div>
+      <h4>Wire a host</h4>
+      <p>Drop a Revit, Rhino, AutoCAD, or Excel node on the canvas. ArchHub probes the host and shows its honest live status.</p>
+    </div>
+    <div class="step">
+      <div class="sn">2</div>
+      <h4>Ask the Composer</h4>
+      <p>Describe the work in plain language. The Composer drafts a chain of nodes and shows you the line before it draws it.</p>
+    </div>
+    <div class="step">
+      <div class="sn">3</div>
+      <h4>Approve the line</h4>
+      <p>Review the proposed graph. In Plan mode, every write waits for your nod. Tune a parameter and the chain re-cooks downstream.</p>
+    </div>
+    <div class="step">
+      <div class="sn">4</div>
+      <h4>Replay &amp; reuse</h4>
+      <p>Output to a sheet set, a file, or another host. Save the chain as a Skill in your own repo, and run it on the next project.</p>
+    </div>
+  </div>
+</section>
+
+<!-- SECURITY -->
+<section class="sec-dark">
+  <div class="wrap sec" id="security" style="padding:88px 0">
+    <div class="eyebrow" style="margin-bottom:14px">Local-first by default</div>
+    <h2 class="serif" style="font-size:54px;line-height:1;margin:0">Your work happens here. <span class="ital">Your knowledge stays yours.</span></h2>
+    <div class="sec-cards">
+      <div class="scard">
+        <div class="si">⌂</div>
+        <h4>Runs on your machine</h4>
+        <p>The canvas, the graph, and your files never leave your desktop unless you wire an output that says so. No silent uploads.</p>
+      </div>
+      <div class="scard">
+        <div class="si">⚿</div>
+        <h4>Bring your own key</h4>
+        <p>Point ArchHub at your own model provider — or a local Ollama. We never see your prompts, your drawings, or your bill.</p>
+      </div>
+      <div class="scard">
+        <div class="si">{ }</div>
+        <h4>Open by license</h4>
+        <p>MIT desktop client. Auditable connectors. If you can't read what a node does, it doesn't belong on your canvas.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CLOSING / GET -->
+<section class="closing" id="get">
+  <div class="wrap">
+    <div class="eyebrow" style="margin-bottom:20px">Free in open beta</div>
+    <h2>Sit down at the<br/><span class="ital">drafting table.</span></h2>
+    <p>Download the Windows installer, or build from source for macOS and Linux. Sign in to bring your firm. Bring your own model key — no credit card.</p>
+    <div class="cta-row" style="justify-content:center">
+      <a class="btn btn-primary lg" href="https://github.com/Fargaly/ArchHub/releases" rel="noopener">Download for Windows</a>
+      <a class="btn lg" href="#get">Sign in to your firm</a>
+      <a class="btn lg" href="https://github.com/Fargaly/ArchHub" rel="noopener">View source on GitHub</a>
+    </div>
+    <div class="fineprint" style="text-align:center">Installer is a signed GitHub Release · macOS &amp; Linux from source · MIT</div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer class="site">
+  <div class="wrap">
+    <div class="foot">
+      <div>
+        <a class="brand" href="#top" aria-label="ArchHub home">
+          <svg width="26" height="26" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+            <path d="M10 56 V32 a22 22 0 0 1 44 0 V56" stroke="#d97757" stroke-width="4.5" stroke-linecap="square"/>
+            <circle cx="32" cy="22" r="5.2" fill="#0e0e11" stroke="#d97757" stroke-width="2.4"/>
+            <circle cx="32" cy="22" r="1.8" fill="#d97757"/>
+            <path d="M6 58 H58" stroke="#d97757" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          <span class="word">Arch<span class="ital">Hub</span></span>
+        </a>
+        <div class="tag">A drafting table for AI. Built in the open. MIT, forever.</div>
+      </div>
+      <div class="col">
+        <h5>PRODUCT</h5>
+        <a href="#what">What it is</a>
+        <a href="#capabilities">Capabilities</a>
+        <a href="#connectors">Connectors</a>
+        <a href="#how">How it works</a>
+      </div>
+      <div class="col">
+        <h5>COMPANY</h5>
+        <a href="#security">Security</a>
+        <a href="https://github.com/Fargaly/ArchHub" rel="noopener">GitHub</a>
+        <a href="#get">Download</a>
+      </div>
+      <div class="col">
+        <h5>OPEN</h5>
+        <a href="https://github.com/Fargaly/ArchHub" rel="noopener">Source · MIT</a>
+        <a href="https://github.com/Fargaly/ArchHub/releases" rel="noopener">Releases</a>
+        <a href="#get">Sign in</a>
+      </div>
+    </div>
+    <div class="foot-base">
+      <span>© 2026 ARCHHUB · MIT LICENSE · 19 connectors · free in open beta</span>
+      <span>PROTOTYPE · <code>website-update-2026-06-20</code></span>
+      <span>DRAFTED, NOT GENERATED ★</span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

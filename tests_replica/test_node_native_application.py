@@ -393,7 +393,8 @@ def test_production_rail_search_share_and_settings_are_real_node_surfaces(applic
     assert store.pull(reg['sidebar_panel']) == 'share'
     page = project_document(store, reg['app'], reg['ui_root'])
     assert 'data-download="%s"' % reg['app'] in page
-    assert 'data-navigate="/website"' in page
+    assert 'Preview website' not in page
+    assert 'Export website graph' not in page
 
     settings_action = next(nid for nid, node in store.nodes.items()
                            if node['kind'] == 'ui' and node['title'] == 'Settings action')
@@ -438,7 +439,8 @@ def test_visible_ports_create_an_authoritative_relation_and_bezier_projection():
             server.url + '/api/activate', method='POST',
             headers={'Content-Type': 'application/json',
                      'X-ArchHub-Session': server.browser_session_token},
-            data=json.dumps({'ui_id': ui_id}).encode('utf-8'))
+            # Graph facts and the explicit Bezier projection are checked below.
+            data=json.dumps({'ui_id': ui_id, 'projection': False}).encode('utf-8'))
         return json.loads(urllib.request.urlopen(request, timeout=10).read())
 
     try:
@@ -499,16 +501,18 @@ def test_canvas_pan_zoom_and_fit_are_graph_state_not_static_toolbar_text():
                        if node['kind'] == 'ui' and node['title'] == 'Zoom in')
         fit = next(nid for nid, node in store.nodes.items()
                    if node['kind'] == 'ui' and node['title'] == 'Fit canvas')
-        post('/api/activate', {'ui_id': zoom_in})
+        # This court inspects the legacy graph and renders it explicitly below.
+        # Do not also build an unused document response projection per gesture.
+        post('/api/activate', {'ui_id': zoom_in, 'projection': False})
         assert store.pull(reg['canvas_view']['zoom']) == pytest.approx(1.1)
 
         post('/api/edit', {'ui_id': next(nid for nid, node in store.nodes.items()
                                          if node['kind'] == 'ui'
                                          and node['title'] == 'Node canvas'),
-                           'port': 'view.pan_x', 'value': '125'})
+                           'port': 'view.pan_x', 'value': '125', 'projection': False})
         assert store.pull(reg['canvas_view']['pan_x']) == pytest.approx(125)
 
-        post('/api/activate', {'ui_id': fit})
+        post('/api/activate', {'ui_id': fit, 'projection': False})
         assert store.pull(reg['canvas_view']['zoom']) == pytest.approx(.72)
         assert store.pull(reg['canvas_view']['pan_x']) == pytest.approx(18)
         page = project_document(store, reg['app'], reg['ui_root'])
@@ -533,7 +537,7 @@ def test_new_node_flow_creates_one_universal_node_and_all_live_lenses():
         return json.loads(urllib.request.urlopen(request, timeout=10).read())
 
     try:
-        post('/api/activate', {'ui_id': reg['new_node_button']})
+        post('/api/activate', {'ui_id': reg['new_node_button'], 'projection': False})
         assert store.pull(reg['mode']) == 'create'
         edit_ui_binding(store, next(nid for nid, node in store.nodes.items()
                                     if node['kind'] == 'ui'
@@ -543,8 +547,8 @@ def test_new_node_flow_creates_one_universal_node_and_all_live_lenses():
                                     if node['kind'] == 'ui'
                                     and node['title'] == 'New node value input'),
                         '{"level":"L02","area":812.5}')
-        post('/api/activate', {'ui_id': reg['kind_buttons']['value']})
-        created = post('/api/activate', {'ui_id': reg['create_submit']})['touched']
+        post('/api/activate', {'ui_id': reg['kind_buttons']['value'], 'projection': False})
+        created = post('/api/activate', {'ui_id': reg['create_submit'], 'projection': False})['touched']
 
         assert store.nodes[created]['kind'] == 'value'
         assert store.nodes[created]['title'] == 'Area Schedule'
@@ -576,7 +580,7 @@ def test_multi_selection_groups_nodes_without_deleting_the_members():
             server.url + '/api/activate', method='POST',
             headers={'Content-Type': 'application/json',
                      'X-ArchHub-Session': server.browser_session_token},
-            data=json.dumps({'ui_id': ui_id}).encode('utf-8'))
+            data=json.dumps({'ui_id': ui_id, 'projection': False}).encode('utf-8'))
         return json.loads(urllib.request.urlopen(request, timeout=10).read())
 
     first, second = list(reg['cards'])[:2]

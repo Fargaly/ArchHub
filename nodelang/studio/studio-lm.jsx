@@ -11706,17 +11706,8 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
 // ──────────────────────── DOCS ────────────────────────
 // Lives INSIDE the app shell — same overlay geometry, nav width and type scale as Settings,
 // so this is the screen the end user actually gets, only the content differs.
-const dCode = window.ArchHubTheme.derive((LM) => ({ fontFamily:LM.mono, fontSize:LM.fs.data.sz, lineHeight:LM.fs.data.ln + 'px', background:LM.bgDeep, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.control, padding:`${LM.sp.md}px ${LM.sp.lg}px`, color:LM.inkSoft, overflowX:'auto', whiteSpace:'pre', margin:`0 0 ${LM.sp.lg}px` }));
 const DP = ({ children, ...rest }) => <p {...rest} style={{ fontFamily:LM.sans, fontSize:LM.fs.body.sz, lineHeight:LM.fs.body.ln + 'px', color:LM.inkSoft, margin:`0 0 ${LM.sp.lg}px`, textWrap:'pretty' }}>{children}</p>;
 const DSub = ({ children }) => <div style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.inkSoft, letterSpacing:LM.fs.label.letter, margin:`${LM.sp.xl}px 0 ${LM.sp.md}px` }}>{children}</div>;
-const DCode = ({ children }) => <pre style={dCode}>{children}</pre>;
-const DKey = ({ children }) => <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', background:LM.bgSoft, border:`1px solid ${LM.line}`, borderRadius:LM.rad.chip, padding:`1px ${LM.sp.xs}px`, color:LM.ink }}>{children}</span>;
-const DNote = ({ children }) => (
-  <div style={{ display:'flex', gap:LM.sp.sm, background:LM.bgSoft, border:`1px solid ${LM.line}`, borderLeft:`2px solid ${LM.accent}`, borderRadius:LM.rad.control, padding:`${LM.sp.md}px ${LM.sp.md}px`, margin:`0 0 ${LM.sp.lg}px` }}>
-    <span style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.accent, letterSpacing:LM.fs.label.letter, flexShrink:0, marginTop:2 }}>NOTE</span>
-    <span style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.inkSoft }}>{children}</span>
-  </div>
-);
 const DRows = ({ rows }) => (
   <div style={{ display:'flex', flexDirection:'column', border:`1px solid ${LM.line}`, borderRadius:LM.rad.control, overflow:'hidden', margin:`0 0 ${LM.sp.lg}px` }}>
     {rows.map((r, i) => (
@@ -11728,18 +11719,13 @@ const DRows = ({ rows }) => (
   </div>
 );
 
-const docsNodeGroups = library => {
+const docsNodeGroups = nodes => {
   const groups = [];
-  for (const group of withHistoryLibrary(library || [])) {
-    const cat = group.cat || group.label || 'Nodes';
-    const fallback = group.description || group.sub || '';
-    const rows = [];
-    for (const item of group.items || []) {
-      const title = item.title || item.name || 'Untitled node';
-      const detail = item.sub || item.description || fallback;
-      rows.push({title, detail});
-    }
-    if (rows.length) groups.push({cat, rows});
+  for (const row of nodes || []) {
+    const cat = row.category || 'Nodes';
+    let group = groups.find(item => item.cat === cat);
+    if (!group) { group = {cat, rows:[]}; groups.push(group); }
+    group.rows.push({id:row.id, title:row.title, detail:row.detail});
   }
   return groups;
 };
@@ -11755,12 +11741,12 @@ const DNodeGroups = ({ groups = [] }) => (
         <div style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:meta.col, marginBottom:LM.sp.xs }}>{meta.label || group.cat}</div>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(180px, 1fr))', gap:LM.sp.sm }}>
           {(group.rows || []).map(row => (
-            <div key={row.title} data-docs-node-tile="" style={{ border:`1px solid ${LM.line}`, borderLeft:`3px solid ${meta.col}`, borderRadius:LM.rad.control, background:LM.bgDeep, padding:`${LM.sp.sm}px ${LM.sp.md}px`, minHeight:78 }}>
+            <div key={row.id || row.title} data-docs-node-tile="" data-docs-node-id={row.id} style={{ border:`1px solid ${LM.line}`, borderLeft:`3px solid ${meta.col}`, borderRadius:LM.rad.control, background:LM.bgDeep, padding:`${LM.sp.sm}px ${LM.sp.md}px`, minHeight:78 }}>
               <div style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, marginBottom:4 }}>
                 <span aria-hidden="true" style={{ width:LM.icon.category.box, height:LM.icon.category.box, borderRadius:LM.rad.sm, background:meta.col, color:LM.onFill, display:'grid', placeItems:'center', fontFamily:LM.sans, fontSize:LM.icon.category.size, fontWeight:700, flex:'0 0 auto' }}>{meta.icon}</span>
-                <div style={{ fontFamily:LM.sans, fontSize:13, lineHeight:'18px', fontWeight:600, color:LM.ink, minWidth:0 }}>{row.title}</div>
+                <div data-docs-node-title="" style={{ fontFamily:LM.sans, fontSize:13, lineHeight:'18px', fontWeight:600, color:LM.ink, minWidth:0 }}>{row.title}</div>
               </div>
-              <div style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.inkSoft }}>{row.detail}</div>
+              <div data-docs-node-detail="" style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.inkSoft }}>{row.detail}</div>
             </div>
           ))}
         </div>
@@ -11777,72 +11763,51 @@ const docsConnectorRows = hosts => {
     if (row.detail || row.file) parts.push(row.detail || row.file);
     return [connectorLabel(row), parts.filter(Boolean).join(' · ')];
   });
-  return rows.length ? rows : [['Checking hosts', hostTally().read ? 'No hosts are available yet.' : 'Looking for local host apps.']];
+  return rows.length ? rows : [[hostTally().read ? 'No hosts available' : 'Checking hosts', hostTally().read ? 'No hosts are available yet.' : 'Looking for local host apps.']];
 };
-const DOC_FIRST_RUN_ROWS = [
-  ['1 · Connect a host', 'Studio scans for Revit, Rhino, Blender and a Speckle token. Anything it finds appears in Settings → Hosts.'],
-  ['2 · Pick a model', 'Free models work out of the box. Settings → Providers signs in to a provider, or uses a local LM Studio / Ollama. Credentials stay on this machine, never in a project file.'],
-  ['3 · Open a session', 'A session is one canvas plus its chat. Sessions are files — commit them, diff them, share them.'],
-  ['4 · Place a node', 'Open the node library, then place a node on the canvas.'],
-];
-const DOC_NAVIGATION_ROWS = [
-  ['Pan',           'Move the empty canvas, or hold Space while moving.'],
-  ['Zoom',          'Use the zoom control in the toolbar.'],
-  ['Focus a node',  'Select a node, then open its interior.'],
-  ['Multi-select',  'Select a box of nodes, or add nodes one at a time.'],
-  ['Run',           'Run starts from the focused node and includes everything it depends on.'],
-];
-const DOC_SKILL_ROWS = [
-  ['inputs / outputs', 'typed ports'],
-  ['params', 'editable settings'],
-  ['requires', 'host or model requirements'],
-  ['version', 'schema version'],
-  ['dry_run', 'preview without writing'],
-];
-const DOC_HEAL_ROWS = [
-  ['transport', 'connection dropped'],
-  ['version drift', 'schema mismatch'],
-  ['auth', 'token expired'],
-  ['host busy', 'modal dialog'],
-  ['crash', 'host restarted'],
-];
-const docsBrainIndex = () => {
-  const page = 'Brain';
-  return [
-    {s:'brain', k:'page', t:page, d:'memory'},
-    ...['FOUR STRATA', 'THREE LAKES, NOT ONE CASCADE', 'GATES', 'YOUR KEY'].map(t => ({s:'brain', k:'section', t, d:page})),
-    ...(window.BRAIN_STRATA || []).map(x => ({s:'brain', k:'topic', t:x.n + ' · ' + x.one, d:page})),
-    ...(window.BRAIN_LAKES  || []).map(x => ({s:'brain', k:'topic', t:x.n + ' brain', d:page})),
-    ...(window.BRAIN_GATES  || []).map(x => ({s:'brain', k:'topic', t:x.label, d:page})),
-  ];
-};
-const buildDocsProjection = ({library, hosts}) => {
-  const nodeGroups = docsNodeGroups(library);
+const buildDocsProjection = ({documentation = {}, hosts}) => {
+  const tutorials = documentation.tutorials || [];
+  const nodeGroups = docsNodeGroups(documentation.nodes || []);
   const nodeRows = docsNodeIndexRows(nodeGroups);
   const connectorRows = docsConnectorRows(hosts);
   const sections = DOC_SECTIONS.map(row => row[0] === 'canvas' ? ['canvas', 'Nodes', plural(nodeRows.length, 'node')]
-    : row[0] === 'connectors' ? ['connectors', 'Connectors', hostTally().read ? plural(connectorRows.length, 'host') : 'checking']
-    : row);
+    : row[0] === 'connectors' ? ['connectors', 'Connectors', hostTally().read ? plural((hosts || []).length, 'host') : 'checking']
+    : row).concat(tutorials.filter(page => !['getting-started', 'composer-canvas', 'connectors', 'brain'].includes(page.id))
+      .map(page => [page.id, page.title, '']));
   const index = sections.map(row => ({s:row[0], k:'page', t:row[1], d:row[2] || ''})).concat(
-    DOC_FIRST_RUN_ROWS.map(row => ({s:'start', k:'topic', t:row[0], d:'Getting started'})),
-    DOC_NAVIGATION_ROWS.map(row => ({s:'canvas', k:'topic', t:row[0], d:'Navigation'})),
-    DOC_SKILL_ROWS.map(row => ({s:'skills', k:'topic', t:row[0], d:'Skill shape'})),
-    DOC_HEAL_ROWS.map(row => ({s:'healing', k:'topic', t:row[0], d:'Repair strategies'})),
+    tutorials.flatMap(page => docsTutorialSections(page).map(section => ({s:docsTutorialSection(page.id), k:'topic', t:section.title || page.title, d:section.text}))),
     nodeRows.map(row => ({s:'canvas', k:'topic', t:row.title, d:row.cat})),
-    connectorRows.map(row => ({s:'connectors', k:'topic', t:row[0], d:'Connectors'})),
-    docsBrainIndex()
+    connectorRows.map(row => ({s:'connectors', k:'topic', t:row[0], d:'Connectors'}))
   );
   return {nodeGroups, nodeRows, connectorRows, index, sections};
 };
 
 const DOC_SECTIONS = [
-  ['start',      'Getting started', 'install'],
-  ['canvas',     'Canvas & nodes',  '9 categories'],
-  ['connectors', 'Connectors',      '4 hosts'],
-  ['skills',     'Skills as JSON',  'you own them'],
-  ['brain',      'Brain',           '4 strata'],
-  ['healing',    'Self-healing',    'internals'],
+  ['start', 'Getting started', ''],
+  ['canvas', 'Nodes', ''],
+  ['connectors', 'Connectors', ''],
+  ['brain', 'Brain', ''],
 ];
+const docsTutorialSection = id => ({'getting-started':'start', 'composer-canvas':'canvas', connectors:'connectors', brain:'brain'}[id] || id);
+const docsTutorialSections = page => String(page?.text || '').split(/(?:^|\n)## /).map((part, index) => {
+  if (!index) return {title:'', text:part.trim()};
+  const end = part.indexOf('\n');
+  return {title:end < 0 ? part : part.slice(0, end), text:end < 0 ? '' : part.slice(end + 1).trim()};
+});
+const DocsTutorial = ({ page, skipCatalogue = false }) => page ? (
+  <div data-docs-tutorial={page.id}>
+    <SHead title={page.title} sub={page.description}/>
+    {docsTutorialSections(page).filter(section => !skipCatalogue || section.title !== 'Node catalogue').map((section, index) => (
+      <section key={index}>
+        {section.title && <DSub>{section.title}</DSub>}
+        <DP data-docs-install={section.title === 'Install' ? '' : undefined}
+          data-docs-strip={section.title === 'Studio' ? '' : undefined}>
+          <span style={{whiteSpace:'pre-wrap'}}>{section.text}</span>
+        </DP>
+      </section>
+    ))}
+  </div>
+) : <DP>Documentation is loading.</DP>;
 
 const DOC_KIND = { page:'PAGE', section:'SECTION', topic:'TOPIC', key:'KEY', cli:'CLI' };
 
@@ -11857,9 +11822,11 @@ const Docs = ({ onClose, onHome }) => {
   const [sec, setSec] = React.useState('start');
   const build = docsBuild();
   const authorityState = useStudioProjection();
-  const library = withHistoryLibrary(authorityState?.library || LM_LIBRARY);
   useLiveCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS);
-  const projection = buildDocsProjection({library, hosts:LM_HOSTS});
+  const documentation = authorityState?.canvas?.documentation || {};
+  const tutorials = documentation.tutorials || [];
+  const tutorial = id => tutorials.find(page => page.id === id);
+  const projection = buildDocsProjection({documentation, hosts:LM_HOSTS});
   // SEARCH uses the same section and row data rendered by these pages, plus live catalogue rows.
   const [q, setQ] = React.useState('');
   const [cur, setCur] = React.useState(0);
@@ -11963,145 +11930,30 @@ const Docs = ({ onClose, onHome }) => {
           ))}
         </div>
         <div className="ah-scroll" style={{ gridColumn:'2', gridRow:'2', overflow:'auto', padding:`20px ${LM.sp.xl}px ${LM.sp.xl}px` }}>
-          {sec === 'start'      && <DocsStart/>}
-          {sec === 'canvas'     && <DocsCanvas nodeGroups={projection.nodeGroups}/>}
-          {sec === 'connectors' && <DocsConnectors connectorRows={projection.connectorRows}/>}
-          {sec === 'skills'     && <DocsSkills/>}
-          {sec === 'brain'      && <DocsBrain/>}
-          {sec === 'healing'    && <DocsHealing/>}
+          {build && <DP data-docs-build="">Build {build}</DP>}
+          {sec === 'start'      && <DocsTutorial page={tutorial('getting-started')}/>}
+          {sec === 'canvas'     && <DocsCanvas nodeGroups={projection.nodeGroups} page={tutorial('composer-canvas')}/>}
+          {sec === 'connectors' && <DocsConnectors connectorRows={projection.connectorRows} page={tutorial('connectors')}/>}
+          {sec === 'brain'      && <DocsTutorial page={tutorial('brain')}/>}
+          {!['start', 'canvas', 'connectors', 'brain'].includes(sec) && <DocsTutorial page={tutorial(sec)}/>}
         </div>
       </div>
     </div>
   );
 };
 
-const DocsStart = () => (
-  <div>
-    <SHead title="Getting started" sub="ArchHub runs as a local server next to your CAD/BIM host. Nothing leaves your machine unless a node asks it to."/>
-    <DSub>INSTALL</DSub>
-    <DP data-docs-install="">Download the Windows installer from <code style={{ fontFamily:LM.mono, fontSize:12 }}>archhub.io</code> and run it. ArchHub starts its local server by itself and updates itself when a new release is out; the strip at the bottom offers the restart.</DP>
-    <DP data-docs-strip="">The strip at the bottom of Studio shows the connected program, document, running work, waiting work, and the command hint. The model/provider sits on the right when a model is selected.</DP>
-    <DSub>FIRST RUN</DSub>
-    <DRows rows={DOC_FIRST_RUN_ROWS}/>
-    <DNote>ArchHub is local-first. Sessions, skills and the brain live on this machine. The only outbound traffic is the model call a node makes; Settings → Permissions shows which agents can act.</DNote>
-    <DSub>SHORTCUTS</DSub>
-    <DP><DKey>⌘K</DKey> command palette · <DKey>⌘L</DKey> node library · <DKey>⌘↵</DKey> run focused node · <DKey>⌘,</DKey> settings · <DKey>⌘/</DKey> these docs</DP>
-  </div>
-);
-
-const DocsCanvas = ({ nodeGroups = [] }) => (
+const DocsCanvas = ({ nodeGroups = [], page }) => (
   <div>
     <SHead title="Nodes" sub="The node list below matches the Node library."/>
-    <DP>Every entry here is a placeable catalogue item. If a node appears in the library, it appears on this page with its category and detail.</DP>
-    <DSub>CATALOGUE NODES</DSub>
     <DNodeGroups groups={nodeGroups}/>
-    <DSub>WIRES ARE TYPED</DSub>
-    <DP>A wire carries a signal type — <code style={{ fontFamily:LM.mono, fontSize:12 }}>element · geometry · data · text · number · bool · file · model</code>. Studio refuses a connection whose types can't reconcile, and colors the wire by type so you can read a graph without opening a single node.</DP>
-    <DSub>GROUPING</DSub>
-    <DP>Select nodes and group them. The group is itself a node: it collapses to one box, exposes the ports its members left unconnected, and can be grouped again. That is the whole compositional rule — there is no second mechanism to learn.</DP>
-    <DNote>A saved group is a <b style={{ color:LM.ink }}>skill</b>. A saved canvas is a <b style={{ color:LM.ink }}>workflow</b>. Neither is a new kind of thing — both are nodes you named and kept.</DNote>
-    <DSub>NAVIGATION</DSub>
-    <DRows rows={DOC_NAVIGATION_ROWS}/>
+    <DocsTutorial page={page} skipCatalogue/>
   </div>
 );
-
-const DocsConnectors = ({ connectorRows = [] }) => (
+const DocsConnectors = ({ connectorRows = [], page }) => (
   <div>
     <SHead title="Connectors" sub="These rows match Settings > Hosts."/>
-    <DP>A connector row appears when the running app has a host to show. The state word, port and detail match Settings and the bottom strip.</DP>
-    <DSub>HOST REGISTRY</DSub>
-    <div data-docs-connectors="">
-      <DRows rows={connectorRows}/>
-    </div>
-    <DNote>When the host probe has not answered, this page says it is checking. It does not substitute a fixed support list.</DNote>
-  </div>
-);
-
-const DocsSkills = () => (
-  <div>
-    <SHead title="Skills as JSON you own" sub="A skill is a saved group of nodes, serialised as plain JSON in your project. No proprietary format, no lock-in, no hidden state."/>
-    <DP>Skills live in <code style={{ fontFamily:LM.mono, fontSize:12 }}>skills/</code> next to your session files. They are diffable, reviewable in a pull request, and portable between machines. Editing the JSON by hand is a supported workflow, not a hack — Studio reloads a skill the moment its file changes.</DP>
-    <DSub>SHAPE</DSub>
-    <DCode>{`{
-  "id": "tag-unnamed-rooms",
-  "title": "Tag unnamed rooms",
-  "version": "1.2.0",
-  "inputs":  [{ "k": "host",  "type": "model" },
-              { "k": "level", "type": "text", "default": "L01" }],
-  "outputs": [{ "k": "tagged", "type": "element" },
-              { "k": "report", "type": "data" }],
-  "params":  [{ "k": "prefix", "type": "text", "v": "RM-" },
-              { "k": "dry_run", "type": "bool", "v": true }],
-  "nodes":   [ /* the member nodes, same schema as a session */ ],
-  "wires":   [ { "a": "read_rooms:out", "b": "filter_unnamed:in" } ],
-  "requires": { "host": "revit>=2022", "model": "any" }
-}`}</DCode>
-    <DSub>RULES</DSub>
-    <DRows rows={[
-      ['inputs / outputs', 'Derived from member ports left unconnected. Promote a param to a port to expose it.'],
-      ['params',           'Cells surfaced on the collapsed node. Defaults live here; overrides live in the session.'],
-      ['requires',         'A capability claim. If the host cannot satisfy it, the node reports blocked instead of failing mid-run.'],
-      ['version',          'Semver. A session pins the version it was authored against; upgrades are explicit.'],
-      ['dry_run',          'Convention, not magic — a skill that writes to a host should offer it.'],
-    ]}/>
-    <DNote>Because a skill is a node, a skill can contain skills. Nesting is how a firm builds a standard: small verified skills at the bottom, an office-wide workflow at the top.</DNote>
-  </div>
-);
-
-const DocsBrain = () => {
-  const strata = window.BRAIN_STRATA || [];
-  const gates  = window.BRAIN_GATES || [];
-  const keys   = window.BRAIN_KEYS || {};
-  const paths  = window.BRAIN_PATHS || {};
-  return (
-  <div>
-    <SHead title="The Brain" sub="Not a store of facts &#x2014; the layer that governs what kinds of things exist, how they relate, and how they are filed."/>
-    <DP>The brain is what makes the second session smarter than the first, but it does not mainly hold things. It holds the shape things take. That distinction is the whole design: <b style={{ color:LM.ink, fontWeight:500 }}>the shape can be shared, the contents cannot</b> &#x2014; which is how an office can publish how it works without a single client fact leaving.</DP>
-    <DSub>FOUR STRATA</DSub>
-    <DRows rows={strata.map(s => [
-      s.n + ' \u00b7 ' + s.one,
-      s.holds + ' Example: \u201c' + s.eg + '\u201d. ' + (s.travels === 'never past firm' ? 'Stays inside the firm.' : 'Can travel ' + s.travels + '.'),
-    ])}/>
-    <DP>The top three are how a practice thinks. The bottom one is what it knows. A gate does not ask &#x201c;may this travel?&#x201d; so much as &#x201c;is this structure, or an instance wearing structure&#x2019;s clothes?&#x201d; Every fact is classified on the way in, and <b style={{ color:LM.ink, fontWeight:500 }}>anything the ontology cannot place defaults to sealed</b> &#x2014; it has no release path at all.</DP>
-    <DSub>THREE LAKES, NOT ONE CASCADE</DSub>
-    <DCode>{`personal     yours \u00b7 opened by your login \u00b7 invisible to the firm
-firm         owned by your office's own admin \u00b7 shared inside it
-community    structure only \u00b7 no instances, ever \u00b7 cleartext by design`}</DCode>
-    <DP>They are separate bodies of water, not layers of one pool. Nothing flows by default; each crossing has a named decider, a consent record and a way back.</DP>
-    <DSub>GATES</DSub>
-    <DRows rows={gates.map(g => [g.label, 'Decided by ' + g.decider + ' \u00b7 default ' + g.def + '. Passes: ' + g.passes + (g.never !== '\u2014' ? '. Never: ' + g.never : '')])}/>
-    <DSub>YOUR KEY</DSub>
-    <DP>{keys.how}</DP>
-    <DP>{keys.recovery} {keys.cost}</DP>
-    <DCode>{`${paths.personal || ''}
-  facts.db       encrypted \u00b7 key wrapped by your login
-  sealed/        classes with no upload path
-  consents.log   append-only \u00b7 what crossed, when, why`}</DCode>
-    <DNote>Settings &#x2192; Brain shows the same strata, the same gates and the same classification this page describes &#x2014; both read <code style={{ fontFamily:LM.mono, fontSize:12 }}>brain-model.jsx</code>. If they ever disagree, that is a bug, not a difference of framing.</DNote>
-  </div>
-  );
-};
-const DocsHealing = () => (
-  <div>
-    <SHead title="Self-healing internals" sub="A graph that stops the moment a host hiccups is not usable in practice. Self-healing is the loop that keeps a long run alive."/>
-    <DSub>THE LOOP</DSub>
-    <DCode>{`detect      miss 3 heartbeats (6s) → mark degraded
-quarantine  pause the node, hold its inputs, do NOT fail downstream
-diagnose    classify: transport · version drift · auth · host busy · crash
-repair      apply the strategy for that class (below)
-verify      re-handshake + replay the held inputs
-resume      or escalate to the founder after 3 failed attempts`}</DCode>
-    <DSub>REPAIR STRATEGIES</DSub>
-    <DRows rows={[
-      ['transport',      'Reconnect with backoff — 1s, 2s, 4s, 8s. Most drops resolve here.'],
-      ['version drift',  'Renegotiate to the schema subset both sides know; log what was given up.'],
-      ['auth',           'Refresh the token from the keychain. If it is genuinely expired, escalate — never prompt mid-run.'],
-      ['host busy',      'The user is in a modal dialog. Wait, do not retry; retrying is what corrupts transactions.'],
-      ['crash',          'Relaunch the add-in, reopen the document read-only, verify, then re-acquire write.'],
-    ]}/>
-    <DSub>GUARANTEES</DSub>
-    <DP>Held inputs are replayed exactly once. A write that was in flight when a host died is rolled back by the host transaction, then replayed — never half-applied. Every attempt writes an audit line with its class, duration and outcome, so a heal is a fact you can read afterwards rather than a claim.</DP>
-    <DNote>Escalation is a feature. After three failed repairs the node stops trying and surfaces in the founder view with its full diagnosis attached. Silent infinite retry is the failure mode this design exists to avoid.</DNote>
+    <div data-docs-connectors=""><DRows rows={connectorRows}/></div>
+    <DocsTutorial page={page}/>
   </div>
 );
 

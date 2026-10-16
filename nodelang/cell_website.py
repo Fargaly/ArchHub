@@ -32,7 +32,6 @@ from .cell_website_meta import (
 from .clean_host_catalogue_source import HOST_OPERATION_RECORDS
 from .universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell, Snapshot
 from .universal_map_import import UniversalMapRegistry
-from .website_docs_text import DOCS_PAGES
 
 
 # The pages every website graph holds. A graph built before the docs pages
@@ -47,7 +46,13 @@ CORE_WEBSITE_ROUTES = (
     "/website/signin",
 )
 # One page per docs text; the public site serves /website/docs/x at /docs/x/.
-DOCS_WEBSITE_ROUTES = tuple("/website/docs/%s" % key for key in DOCS_PAGES)
+GUIDE_KEYS = ("getting-started", "composer-canvas", "brain", "account-web", "connectors")
+TUTORIAL_KEYS = tuple("tutorial-" + key for key in (
+    "sheet-register", "model-table", "notion-review", "cad-inventory", "inbox-review", "titleblocks",
+))
+DOCS_PAGE_KEYS = GUIDE_KEYS + TUTORIAL_KEYS
+GUIDE_WEBSITE_ROUTES = tuple("/website/docs/%s" % key for key in GUIDE_KEYS)
+DOCS_WEBSITE_ROUTES = tuple("/website/docs/%s" % key for key in DOCS_PAGE_KEYS)
 PUBLIC_WEBSITE_ROUTES = CORE_WEBSITE_ROUTES + DOCS_WEBSITE_ROUTES
 
 WEBSITE_ROOT = "app:website"
@@ -193,9 +198,6 @@ WEBSITE_CSS = r"""
 .site-pillar-index{margin:0;font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-muted)}
 .site-pillar-title{font-family:var(--serif);font-size:30px;letter-spacing:-.02em;margin:22px 0 10px;font-weight:400}
 .site-pillar-body{font-size:14.5px;color:var(--ink-soft);line-height:1.6;margin:0}
-.site-heal{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:40px}
-.site-heal-title{font-family:var(--serif);font-size:58px;line-height:1;letter-spacing:-.035em;margin:0 0 14px;font-weight:400;max-width:760px}
-.site-heal-kicker{font-family:var(--serif);font-style:italic;font-size:16px;color:var(--ink-soft);margin:28px 0 0;padding-top:24px;border-top:1px solid var(--line)}
 .site-split{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center}
 .site-split-title{font-family:var(--serif);font-size:52px;line-height:1.02;letter-spacing:-.03em;margin:0;font-weight:400}
 .site-feat-list{list-style:none;padding:0;margin:24px 0 0}
@@ -209,10 +211,6 @@ WEBSITE_CSS = r"""
 .site-chain-node{display:flex;align-items:baseline;gap:14px;padding:12px 14px;border:1px solid var(--line);border-radius:7px;background:var(--panel)}.site-chain-node+.site-chain-node{margin-top:10px}
 .site-chain-kind{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);min-width:96px}
 .site-chain-name{font-family:var(--serif);font-size:18px}
-.site-skill{background:var(--bg-deep);border:1px solid var(--line);border-radius:10px;padding:20px 22px;font-family:var(--mono);font-size:12.5px;line-height:1.75;color:var(--ink-soft)}
-.site-skill-line{display:block}.site-skill-line-in{padding-left:1.5em}.site-skill-line-deep{padding-left:3em}
-.site-skill-key{color:var(--cyan)}.site-skill-str{color:var(--ok)}.site-skill-pun{color:var(--ink-muted)}
-.site-skill-note{margin:14px 0 0;font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-muted)}
 .site-boundary-section{background:var(--bg-deep);border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:88px 0}
 .site-boundary{display:grid;grid-template-columns:1fr 96px 1fr;align-items:stretch;margin-top:30px}
 .site-boundary-side{padding:22px 24px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
@@ -249,32 +247,10 @@ WEBSITE_CSS = r"""
 .site-foot-head{margin:0 0 12px;font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-muted);font-weight:500}
 .site-foot-link{display:block;font-size:13.5px;color:var(--ink-soft);padding:4px 0}.site-foot-link:hover{color:var(--ink)}
 .site-foot-base{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px 20px;margin-top:44px;padding-top:24px;border-top:1px solid var(--line-soft);font-family:var(--mono);font-size:11px;color:var(--ink-muted);letter-spacing:.06em;text-transform:uppercase}
-.site-heal-panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
-.site-heal-grid{display:grid;grid-template-columns:1.02fr 1fr}
-.site-heal-left{padding:40px;border-right:1px solid var(--line)}
-.site-heal-left .site-heal-title{margin:14px 0}
-.site-heal-lede{font-family:var(--serif);font-style:italic;font-size:20px;color:var(--ink-soft);line-height:1.4;margin:0;max-width:460px}
-.site-heal-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:28px 0 0;padding:24px 0 0;border-top:1px solid var(--line);list-style:none}
-.site-heal-k{display:block;font-family:var(--serif);font-size:42px;color:var(--accent);letter-spacing:-.03em;line-height:1}
-.site-heal-v{display:block;font-size:13px;color:var(--ink);margin-top:5px}
-.site-heal-vs{display:block;font-family:var(--mono);font-size:11px;color:var(--ink-muted);letter-spacing:.08em;margin-top:2px}
-.site-heal-right{padding:28px;background:var(--bg-deep)}
-.site-heal-status{margin:0 0 16px;font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--ok)}
-.site-diff{display:grid;grid-template-columns:1fr auto 1fr;gap:14px;align-items:center;margin-bottom:18px}
-.site-diff-box{background:var(--soft);border:1px solid var(--line);border-radius:7px;padding:13px 15px}
-.site-diff-label{display:block;font-family:var(--mono);font-size:11px;letter-spacing:.14em;margin-bottom:7px;font-weight:500}
-.site-diff-before .site-diff-label{color:var(--err)}.site-diff-after .site-diff-label{color:var(--ok)}
-.site-diff-line{display:flex;justify-content:space-between;margin-top:6px;font-family:var(--mono);font-size:11px;color:var(--ink-soft)}
-.site-diff-before .site-diff-value{color:var(--err)}.site-diff-after .site-diff-value{color:var(--ok)}
-.site-diff-key{color:var(--ink-soft)}
-.site-diff-arrow{font-family:var(--serif);font-style:italic;font-size:30px;color:var(--accent)}
-.site-heal-log{background:#0b0b0e;border:1px solid var(--line-soft);border-radius:7px;padding:10px 15px;min-height:172px}
-.site-heal-idle{font-family:var(--serif);font-style:italic;font-size:14px;color:var(--ink-soft);padding:12px 0;margin:0}
-.site-heal-foot{margin:12px 0 0;padding:0;border-top:0;text-align:right}
 .site-sec-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:20px;margin-bottom:40px}
 .site-sec-head-title{font-family:var(--serif);font-size:56px;line-height:1;letter-spacing:-.03em;margin:0;font-weight:400}
 .site-sec-head-sub{font-family:var(--serif);font-style:italic;font-size:22px;color:var(--ink-soft)}
-@media(max-width:1100px){.site-heal-grid{grid-template-columns:1fr}.site-heal-left{border-right:0;border-bottom:1px solid var(--line)}}
+
 .site-doc-layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:56px;margin-top:54px;border-top:1px solid var(--line);padding-top:36px}
 .site-doc-index{list-style:none;margin:0;padding:0}
 .site-doc-nav{position:sticky;top:88px;align-self:start}
@@ -282,7 +258,9 @@ WEBSITE_CSS = r"""
 .site-doc-link{display:block;padding:7px 0 7px 12px;border-left:2px solid var(--line);font-size:13.5px;color:var(--ink-soft)}.site-doc-link:hover{color:var(--ink)}.site-doc-link[aria-current="page"]{color:var(--ink);border-left-color:var(--accent)}
 .site-doc-body{max-width:760px}
 .site-doc-h2{font-family:var(--serif);font-size:32px;line-height:1.1;letter-spacing:-.02em;margin:44px 0 14px;font-weight:400}.site-doc-body>.site-doc-h2:first-child{margin-top:0}
+.site-doc-h3{font-family:var(--sans);font-size:16px;line-height:1.4;margin:24px 0 10px;font-weight:600}
 .site-doc-p{margin:0 0 14px;font-size:15px;line-height:1.7;color:var(--ink-soft)}
+.site-tutorial-screenshot{display:block;color:var(--accent);margin:20px 0}.site-tutorial-image{display:block;max-width:100%;height:auto;border:1px solid var(--line);border-radius:8px}
 .site-doc-list{margin:0 0 16px;padding:0;list-style:none}
 .site-doc-item{position:relative;padding:4px 0 4px 26px;font-size:15px;line-height:1.65;color:var(--ink-soft)}
 .site-doc-item::before{content:"";position:absolute;left:8px;top:16px;width:7px;height:1px;background:var(--accent)}
@@ -306,14 +284,9 @@ WEBSITE_CSS = r"""
 .site-host-idle{font-family:var(--serif);font-style:italic;font-size:15px;color:var(--ink-soft)}
 .site-hd-head{display:flex;align-items:baseline;gap:14px}.site-hd-name{font-family:var(--serif);font-size:22px;color:var(--ink)}.site-hd-sig{font-family:var(--mono);font-size:11px;color:var(--ink-muted)}
 .site-hd-ops{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.site-hd-op{padding:3px 8px;border:1px solid var(--line);border-radius:4px;font-family:var(--mono);font-size:11px;color:var(--ink-soft)}
-.site-heal-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.site-heal-bar .site-heal-status{margin:0}
-.site-heal-btn{padding:7px 14px;border:1px solid var(--line);border-radius:6px;background:var(--soft);color:var(--ink);font:inherit;font-size:12.5px;cursor:pointer}.site-heal-btn:disabled{opacity:.6;cursor:default}
-.site-logline{display:grid;grid-template-columns:62px 68px 1fr;gap:10px;padding:5px 0;border-bottom:1px solid var(--line-soft);font-family:var(--mono);font-size:11px}.site-lt{color:var(--ink-muted)}.site-lm{color:var(--ink)}
-.site-dv-bad{color:var(--err)}.site-dv-good{color:var(--ok)}.site-dv-pending{color:var(--ink-muted)}
-.site-heal-footer{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-top:12px}.site-heal-clock{font-family:var(--mono);font-size:12px;letter-spacing:.08em;color:var(--ink-muted)}
 .site-price-note{max-width:640px;margin:-16px 0 0;font-size:15px;line-height:1.6;color:var(--ink-soft)}
 @media(max-width:1100px){.site-nav{position:static;height:auto;min-height:64px;padding:10px 18px;flex-wrap:wrap;gap:8px 12px}.site-nav-links{order:3;width:100%;flex-wrap:wrap;gap:0 18px;margin:0}.site-nav-link{white-space:nowrap}.site-access{margin-left:auto;padding:8px 12px}.site-access+.site-access{margin-left:0}.site-trust-note{margin-left:0;flex-basis:100%}.site-hero{grid-template-columns:1fr}.site-hero-art{padding:0 7vw 72px}.site-title{font-size:68px}.site-split,.site-boundary,.site-boundary-foot,.site-foot-grid{grid-template-columns:1fr}.site-boundary-gap{height:60px}.site-boundary-wire{width:2px;height:100%;background:linear-gradient(180deg,var(--ok),var(--accent))}.site-page-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:760px){.site-nav{position:static;height:auto;min-height:64px;padding:10px 18px;flex-wrap:wrap;gap:8px 12px}.site-nav-links{order:3;width:100%;flex-wrap:wrap;gap:0 18px;margin:0}.site-nav-link{white-space:nowrap}.site-access{margin-left:auto;padding:8px 12px}.site-access+.site-access{margin-left:0}.site-hero-copy{padding:72px 24px 56px}.site-title{font-size:48px}.site-lede{font-size:19px}.site-hero-art{padding:0 24px 56px}.site-canvas-body{padding:22px 16px 26px}.site-canvas-body{height:auto;padding:18px 14px}.site-node{position:relative;left:auto;top:auto;width:100%}.site-node+.site-node{margin-top:16px}.site-canvas-hint{position:static;display:block;margin-top:12px}.site-wires{display:none}.site-trust-n{font-size:36px}.site-trust-note{margin-left:0}.site-section{padding:56px 0}.site-section-title,.site-heal-title,.site-split-title{font-size:38px}.site-pillar-grid{grid-template-columns:1fr}.site-pillar{border-right:0;border-bottom:1px solid var(--line)}.site-heal{padding:24px}.site-closing{padding:72px 0}.site-closing-title{font-size:48px}.site-page-main{padding:56px 24px 70px}.site-page-grid{grid-template-columns:1fr}.site-page-card{border-right:0}.site-page-title{font-size:40px}.site-footer{padding:40px 24px 48px}}
+@media(max-width:760px){.site-nav{position:static;height:auto;min-height:64px;padding:10px 18px;flex-wrap:wrap;gap:8px 12px}.site-nav-links{order:3;width:100%;flex-wrap:wrap;gap:0 18px;margin:0}.site-nav-link{white-space:nowrap}.site-access{margin-left:auto;padding:8px 12px}.site-access+.site-access{margin-left:0}.site-hero-copy{padding:72px 24px 56px}.site-title{font-size:48px}.site-lede{font-size:19px}.site-hero-art{padding:0 24px 56px}.site-canvas-body{padding:22px 16px 26px}.site-canvas-body{height:auto;padding:18px 14px}.site-node{position:relative;left:auto;top:auto;width:100%}.site-node+.site-node{margin-top:16px}.site-canvas-hint{position:static;display:block;margin-top:12px}.site-wires{display:none}.site-trust-n{font-size:36px}.site-trust-note{margin-left:0}.site-section{padding:56px 0}.site-section-title,.site-split-title{font-size:38px}.site-pillar-grid{grid-template-columns:1fr}.site-pillar{border-right:0;border-bottom:1px solid var(--line)}.site-closing{padding:72px 0}.site-closing-title{font-size:48px}.site-page-main{padding:56px 24px 70px}.site-page-grid{grid-template-columns:1fr}.site-page-card{border-right:0}.site-page-title{font-size:40px}.site-footer{padding:40px 24px 48px}}
 """
 
 _UNSAFE_CSS = ("</style", "@import", "url(", "expression(", "javascript:")
@@ -443,9 +416,7 @@ def project_website_protocol(snapshot: Snapshot) -> WebsiteProtocol:
 OFFER_DEFAULT_DISPLAY = "Free during beta"
 
 PRIVACY_SENTENCE = (
-    "When cloud sync is on, ArchHub keeps a copy of your brain on our servers "
-    "so it can reach your other devices and your firm. That copy is not "
-    "end-to-end encrypted, and ArchHub's systems can read it."
+    "Brain cloud sync is not active in this build. No brain upload is offered here."
 )
 
 
@@ -562,7 +533,8 @@ _CODE_MARK = chr(96)
 
 def _docs_pages():
     """The docs texts a new website graph receives, keyed by page."""
-    return DOCS_PAGES
+    from .site_export import documentation_pages
+    return documentation_pages()
 
 
 def _page_specs(offer_display=OFFER_DEFAULT_DISPLAY, releases=()):
@@ -594,10 +566,10 @@ def _page_specs(offer_display=OFFER_DEFAULT_DISPLAY, releases=()):
         ),
         "/website/community": (
             "Share with your firm, on your terms",
-            "Community in ArchHub starts inside a firm: groups you join with a code, and shared brain entries that wait for your judgement before they count. A public network is not open yet.",
+            "Firm groups and peer review are not available from the app window in this build. A public network is not open.",
             (
-                ("01", "Groups with single-use codes", "The owner of a group issues join codes. The graph keeps only a fingerprint of each code, and a code that has been used cannot be used again.", "OWNER ISSUES CODES"),
-                ("02", "Nothing lands unreviewed", "Entries that arrive from a peer are held in quarantine with their origin attached, and stay out of your brain until a judgement admits them. A rejection is kept, so the same claim is not argued twice.", "QUARANTINE BEFORE MERGE"),
+                ("01", "Firm groups are not available", "Group enrollment is not offered from this app build.", "OWNER ISSUES CODES"),
+                ("02", "Peer review is not available", "Peer entries cannot be admitted from the app window in this build.", "QUARANTINE BEFORE MERGE"),
                 ("STATUS", "No public network yet", "Sharing beyond your firm is not open. When it is, this page will say so.", "FIRM SHARING FIRST"),
             ),
         ),
@@ -655,7 +627,7 @@ def _site_navigation(element, path: str, token: str, release_label: str) -> str:
         "a", "site-access", text="Sign in", attrs=access_attributes,
     )
     create = element(
-        "a", "site-access site-access-primary", text="Create account",
+        "a", "site-access site-access-primary", text="Sign in from the app",
         attrs={"href": "/website/signin"},
     )
     version = (
@@ -692,6 +664,9 @@ def _docs_blocks(element, text: str) -> tuple[str, ...]:
     while index < len(lines):
         line = lines[index]
         if not line.strip():
+            index += 1
+        elif line.startswith("### "):
+            blocks.append(element("h3", "site-doc-h3", text=line[4:]))
             index += 1
         elif line.startswith("## "):
             blocks.append(element("h2", "site-doc-h2", text=line[3:]))
@@ -753,7 +728,7 @@ def _docs_blocks(element, text: str) -> tuple[str, ...]:
         else:
             paragraph = []
             while index < len(lines) and lines[index].strip() and not (
-                lines[index].startswith(("## ", "|", "- "))
+                lines[index].startswith(("## ", "### ", "|", "- "))
                 or _DOC_STEP.match(lines[index])
             ):
                 paragraph.append(lines[index].strip())
@@ -776,6 +751,8 @@ def _compose_docs_pages(
     wanted=None,
 ) -> None:
     """Compose one page per docs text; wanted limits which pages are built."""
+    from .site_export import documentation_build_id
+    docs_build = documentation_build_id()
     docs = _docs_pages()
     for key, (doc_title, description, text) in docs.items():
         path = "/website/docs/%s" % key
@@ -798,7 +775,7 @@ def _compose_docs_pages(
         main = element(
             "main", "site-page-main", children=(
                 element("header", "site-page-header", children=(
-                    element("p", "site-kicker", text="ArchHub / docs"),
+                    element("p", "site-kicker", text="Documentation build %s" % docs_build),
                     element("h1", "site-page-title", text_root=title_root),
                     element("p", "site-page-lede", text=description),
                 )),
@@ -812,7 +789,13 @@ def _compose_docs_pages(
                     ),
                     element(
                         "article", "site-doc-body",
-                        children=_docs_blocks(element, text),
+                        children=(*_docs_blocks(element, text), *(
+                            (element("a", "site-tutorial-screenshot",
+                                text="Installed Home: six starter templates; no completed results yet.",
+                                attrs={"href": "/assets/tutorials/home-templates.png",
+                                       "title": "Installed Home: six starter templates; no completed results yet."}),)
+                            if key in TUTORIAL_KEYS else ()
+                        )),
                     ),
                 )),
             ),
@@ -820,7 +803,7 @@ def _compose_docs_pages(
         )
         page_roots[path] = element(
             "div", "site-shell", children=(
-                _site_navigation(element, path, token, release_label), main, footer,
+                _site_navigation(element, path, token, docs_build), main, footer,
             ),
             root_id="app:website:page:%s" % token,
         )
@@ -982,7 +965,7 @@ def build_universal_website(
                 element("div", "site-foot-base", children=(
                     element("span", text="\u00a9 2026 ArchHub"),
                     *(
-                        (element("span", text="Built from %s" % release_label),)
+                        (element("span", text="Download release %s" % release_label),)
                         if release_label else ()
                     ),
                     element("span", text="Drafted, not generated"),
@@ -1008,9 +991,9 @@ def build_universal_website(
         element(
             "p", "site-lede",
             text=(
-                "One canvas wires the tools you already use: %s. The AI edits "
-                "the graph; you approve the line. Your work stays local. Your "
-                "knowledge stays yours."
+                "One canvas wires the tools you already use: %s. The composer drafts "
+                "graph edits for review. A draft stays inert until graph execution "
+                "starts. Your knowledge stays yours."
             ) % ", ".join(HOST_LABELS.get(host, host) for host, _ in host_counts),
         ),
         element("div", "site-actions", children=(
@@ -1095,14 +1078,14 @@ def build_universal_website(
                             ),
                             canvas_node(
                                 "review", "review", "Review", "You",
-                                "Approve the line", (
+                                "Review the draft", (
                                     ("proposal", "data-in", "proposal", "proposal"),
-                                    ("drawn on approval", "data-out", "approved", "approval"),
+                                    ("inert until run", "data-out", "approved", "approval"),
                                 ),
                             ),
                             element(
                                 "li", "site-canvas-hint", attrs={"data-hint": "hero"},
-                                text="Nodes, ports and approvals stay visible on the canvas",
+                                text="Illustration: nodes and typed ports on a canvas",
                             ),
                         ),
                     ),
@@ -1190,9 +1173,9 @@ def build_universal_website(
                         element("p", "site-pillar-body", text=body),
                     ))
                     for index, role, title, body in (
-                        ("01", "The surface", "Canvas", "Every action is a node; every node is replayable. Parameters are graph state, so downstream work can rerun from the change. Nothing happens that you can't see, trace, or undo."),
-                        ("02", "The hand", "Composer", "Talk to the project. The AI proposes edits to the graph; you approve the line before it's drawn. Set out, don't ask out: review is the default, not an afterthought."),
-                        ("03", "The memory", "Brain", "Persistent memory and reusable skills that grow with your firm. Save any thread as a skill: a graph-held assembly you own, with the work it was learned from and the evidence that earned it. No marketplace lock-in."),
+                        ("01", "The surface", "Canvas", "Nodes and typed wires describe graph work. Undo last layout restores node positions only. Graph edits have no undo or redo."),
+                        ("02", "The hand", "Composer", "The composer drafts graph edits on the canvas. Review the nodes, wires and properties before starting graph execution."),
+                        ("03", "The memory", "Brain", "Brain entries live in the local graph. The app does not create or promote skills from a conversation. Cloud sync and firm sharing are not active in this build."),
                     )
                 )),
             )),
@@ -1200,96 +1183,6 @@ def build_universal_website(
         root_id="app:website:pillars",
     )
 
-    def diff_box(label: str, side: str) -> str:
-        """One side of the design's before and after frame, before any break."""
-        return element("div", "site-diff-box site-diff-%s" % side, children=(
-            element("span", "site-diff-label", text=label),
-            *(
-                element("div", "site-diff-line", children=(
-                    element("span", "site-diff-key", text=key),
-                    element(
-                        "span", "site-diff-value", text="-",
-                        attrs={"data-" + side[0]: str(index)},
-                    ),
-                ))
-                for index, key in enumerate(("handshake", "rpc port", "session"), 1)
-            ),
-        ))
-
-    # The design animates a break and its recovery with a script; the export
-    # admits no script, so the page holds the design's first, idle frame.
-    self_heal = element(
-        "section", "site-section", children=(
-            element("div", "site-wrap", children=(
-                element("div", "site-heal-panel", children=(
-                    element("div", "site-heal-grid", children=(
-                        element("div", "site-heal-left", children=(
-                            element("p", "site-kicker", text="Self-healing connectors"),
-                            accent_line("h2", "site-heal-title", (
-                                ("Your CAD ", False), ("tells us", True),
-                                (" when it breaks. We listen.", False),
-                            )),
-                            element(
-                                "p", "site-heal-lede",
-                                text='No restarts. No "please relaunch Revit." The connector watches the host, reconnects on its own, and tells you what it did.',
-                            ),
-                            element("ul", "site-heal-stats", children=tuple(
-                                element("li", children=(
-                                    element("span", "site-heal-k", text="-"),
-                                    element("span", "site-heal-v", text=name),
-                                    element("span", "site-heal-vs", text=window),
-                                ))
-                                for name, window in (
-                                    ("manual restarts", "LAST 7 DAYS"),
-                                    ("recovered sessions", "LAST 7 DAYS"),
-                                    ("median recovery", "ALL HOSTS"),
-                                )
-                            )),
-                        )),
-                        element("div", "site-heal-right", attrs={"data-heal": "timeline"}, children=(
-                            element("div", "site-heal-bar", children=(
-                                element(
-                                    "p", "site-heal-status", text="Connection healthy",
-                                    attrs={"data-heal-status": "status"},
-                                ),
-                                element(
-                                    "button", "site-heal-btn",
-                                    text="Break the connection \u21ba",
-                                    attrs={"type": "button", "data-heal-play": "play"},
-                                ),
-                            )),
-                            element("div", "site-diff", children=(
-                                diff_box("BEFORE", "before"),
-                                element("span", "site-diff-arrow", text="\u2192"),
-                                diff_box("AFTER", "after"),
-                            )),
-                            element("div", "site-heal-log", attrs={"data-heal-log": "log"}, children=(
-                                element(
-                                    "p", "site-heal-idle",
-                                    text="Idle. The connection is nominal. Break it and watch what happens.",
-                                ),
-                            )),
-                            element("div", "site-heal-footer", children=(
-                                element(
-                                    "span", "site-heal-clock", text="illustration",
-                                    attrs={"data-heal-clock": "clock"},
-                                ),
-                                element(
-                                    "span", "site-heal-kicker site-heal-foot",
-                                    text="You didn't notice. That's the point.",
-                                    attrs={"data-heal-kicker": "kicker"},
-                                ),
-                            )),
-                        )),
-                    )),
-                )),
-            )),
-        ),
-        root_id="app:website:self-heal",
-    )
-
-    # The founder removed the design's calculator (2026-09-17): the section
-    # keeps its head and states the offer the graph holds.
     pricing = element(
         "section", "site-section", attrs={"aria-label": "Pricing"}, children=(
             element("div", "site-wrap", children=(
@@ -1317,7 +1210,7 @@ def build_universal_website(
                             (", not a transcript you have to trust.", False),
                         )),
                         feature_list((
-                            ("01", "Replayable by construction", "Re-run any node from any upstream state. The same inputs always draw the same line."),
+                            ("01", "Replayable by construction", "Graph execution follows the connected nodes and shows each result. Model and external host responses can vary."),
                             ("02", "Parametric, not one-shot", "Chat stays an indexed conversation. Only an admitted workflow re-runs downstream from its node."),
                             ("03", "Auditable wires", "Every connection is typed."),
                         )),
@@ -1326,7 +1219,7 @@ def build_universal_website(
                         "aside", "site-chain-card",
                         attrs={"aria-label": "A chain of nodes"},
                         children=(
-                            element("div", "site-chain-head", text="sketch to sheet set, as nodes"),
+                            element("div", "site-chain-head", text="Illustration: a chain of nodes"),
                             element("ul", "site-chain", children=tuple(
                                 element("li", "site-chain-node", children=(
                                     element("span", "site-chain-kind", text=kind),
@@ -1348,56 +1241,6 @@ def build_universal_website(
         root_id="app:website:graph-split",
     )
 
-    skill_lines = (
-        ("", (("pun", "{"),)),
-        ("in", (("key", '"name"'), ("pun", ": "), ("str", '"Sketch to production"'), ("pun", ","))),
-        ("in", (("key", '"purpose"'), ("pun", ": "), ("str", '"sketch to sheet set"'), ("pun", ","))),
-        ("in", (("key", '"steps"'), ("pun", ": ["), ("str", '"read"'), ("pun", ", "), ("str", '"extract"'), ("pun", ", "), ("str", '"build"'), ("pun", ","))),
-        ("deep", (("str", '"dimension"'), ("pun", ", "), ("str", '"schedule"'), ("pun", ", "), ("str", '"plot"'), ("pun", "],"))),
-        ("in", (("key", '"learned_from"'), ("pun", ": "), ("str", '"Tower-A, issue 04"'), ("pun", ","))),
-        ("in", (("key", '"released"'), ("pun", ": "), ("str", "true"))),
-        ("", (("pun", "}"),)),
-    )
-    skill_card = element("div", "site-skill", children=tuple(
-        element(
-            "span",
-            "site-skill-line" if not indent else "site-skill-line site-skill-line-" + indent,
-            children=tuple(
-                element("span", "site-skill-" + kind, text=text)
-                for kind, text in tokens
-            ),
-        )
-        for indent, tokens in skill_lines
-    ))
-    brain_split = element(
-        "section", "site-section", children=(
-            element("div", "site-wrap", children=(
-                element("div", "site-split", children=(
-                    element("div", children=(
-                        skill_card,
-                        dots("p", "site-skill-note", (
-                            "Held in your brain", "Purpose, work and evidence",
-                            "Recall is by purpose, out of the graph",
-                        )),
-                    )),
-                    element("div", children=(
-                        element("p", "site-kicker", text="The brain"),
-                        accent_line("h2", "site-split-title", (
-                            ("Memory that grows with the ", False), ("firm", True),
-                            (", not the vendor.", False),
-                        )),
-                        feature_list((
-                            ("01", "Skills you own", "Save any thread as a skill. Each one carries its purpose, the work it was learned from and the evidence that earned it; a skill without evidence is never promoted."),
-                            ("02", "Persistent across projects", "The Brain remembers your standards, from sheet naming to dim styles to detail libraries, and reuses them on the next tower."),
-                            ("03", "No marketplace lock-in", "Recall comes out of your own graph, not a marketplace. There is no index and no cache in between: the brain that holds a skill is the brain that recalls it."),
-                        )),
-                    )),
-                )),
-            )),
-        ),
-        root_id="app:website:brain-split",
-    )
-
     boundary = element(
         "section", "site-boundary-section", children=(
             element("div", "site-wrap", children=(
@@ -1408,7 +1251,7 @@ def build_universal_website(
                 )),
                 element(
                     "p", "site-lede",
-                    text="What stays on your machine, and what crosses when a node asks or when you turn cloud sync on.",
+                    text="What stays on your machine and what crosses when a node asks. Brain cloud sync is not active in this build.",
                 ),
                 element("div", "site-boundary", children=(
                     element("div", "site-boundary-side site-boundary-inside", children=(
@@ -1436,9 +1279,9 @@ def build_universal_website(
                         ), "site-boundary-item site-boundary-out"),
                         element(
                             "p", "site-boundary-tag site-boundary-tag-sync",
-                            text="Leaves, when cloud sync is on",
+                            text="Brain cloud sync is not active in this build",
                         ),
-                        boundary_rows((("Your brain", PRIVACY_SENTENCE),)),
+                        boundary_rows((("Cloud sync", PRIVACY_SENTENCE),)),
                     )),
                 )),
                 element("div", "site-boundary-foot", children=(
@@ -1459,7 +1302,7 @@ def build_universal_website(
     closing = element(
         "section", "site-closing", children=(
             element("div", "site-wrap", children=(
-                element("p", "site-kicker", text="Plotted on Friday, not promised"),
+                element("p", "site-kicker", text="Explore the canvas"),
                 accent_line("h2", "site-closing-title", (
                     ("Sit down at the ", False), ("drafting table.", True),
                 ), accent_class="site-title-ital"),
@@ -1481,12 +1324,8 @@ def build_universal_website(
             complete_hero,
             trust,
             pillars,
-            divider(("Self-healing connectors",)),
-            self_heal,
             divider(("Every step is a node",)),
             graph_split,
-            divider(("The brain", "Skills you own")),
-            brain_split,
             boundary,
             pricing,
             closing,
@@ -1519,7 +1358,7 @@ def build_universal_website(
                 root_id="app:website:page-card:%s:%s" % (token, index),
             ))
         design_sections = {
-            "/website/features": (pillars, self_heal, graph_split),
+            "/website/features": (pillars, graph_split),
             "/website/pricing": (pricing,),
             "/website/security": (boundary,),
         }.get(path, ())
@@ -1725,6 +1564,7 @@ def read_universal_website(
     route_roots = _many(members, protocol.role("route"))
     if len(route_roots) not in (
         len(PUBLIC_WEBSITE_ROUTES), len(CORE_WEBSITE_ROUTES),
+        len(CORE_WEBSITE_ROUTES + GUIDE_WEBSITE_ROUTES),
     ):
         raise InvalidCell("website route count drifted")
     routes = {}
@@ -1766,7 +1606,7 @@ def read_universal_website(
         pages[path] = page_root
         cloud_routes[path] = http_root
         titles[path] = title_root
-    if set(routes) not in (set(PUBLIC_WEBSITE_ROUTES), set(CORE_WEBSITE_ROUTES)):
+    if set(routes) not in tuple(set(paths) for paths in WEBSITE_DEFINITION_REVISIONS):
         raise InvalidCell("website public route set drifted")
 
     binding_roots = _many(members, protocol.role("domain-binding"))
@@ -1808,7 +1648,9 @@ def read_universal_website(
 # The route sets this graph has ever published, oldest first. A persisted
 # website matches exactly one of them. Anything else was changed by hand,
 # outside the revision path, and is refused rather than repaired.
-WEBSITE_DEFINITION_REVISIONS = (CORE_WEBSITE_ROUTES, PUBLIC_WEBSITE_ROUTES)
+WEBSITE_DEFINITION_REVISIONS = (
+    CORE_WEBSITE_ROUTES, CORE_WEBSITE_ROUTES + GUIDE_WEBSITE_ROUTES, PUBLIC_WEBSITE_ROUTES,
+)
 WEBSITE_REVISION_PREFIX = "app:website:definition:revision"
 
 
@@ -1914,7 +1756,7 @@ def adopt_website_definition_revision(
         wanted=frozenset(wanted),
     )
     previous_root = None
-    for number in range(1, index + 1):
+    for number in range(1, target + 1):
         root_id = "%s:%d" % (WEBSITE_REVISION_PREFIX, number)
         if root_id not in snapshot.cells:
             scalar(root_id, _website_revision_record(
@@ -1922,16 +1764,11 @@ def adopt_website_definition_revision(
                 previous=previous_root,
                 base_revision=snapshot.revision,
                 routes=WEBSITE_DEFINITION_REVISIONS[number - 1],
-                adopted=(),
+                adopted=tuple(path for path in WEBSITE_DEFINITION_REVISIONS[number - 1]
+                              if number > index and path in wanted
+                              and path not in WEBSITE_DEFINITION_REVISIONS[number - 2]),
             ))
         previous_root = root_id
-    scalar("%s:%d" % (WEBSITE_REVISION_PREFIX, target), _website_revision_record(
-        target,
-        previous=previous_root,
-        base_revision=snapshot.revision,
-        routes=WEBSITE_DEFINITION_REVISIONS[target - 1],
-        adopted=wanted,
-    ))
     ui.commit()
 
     cloud_route_roots = {}

@@ -611,7 +611,7 @@ def test_finding_7_the_phone_nav_wraps_and_scrolls_away(documents):
     for path, document in documents.items():
         assert (
             '<a class="site-access site-access-primary" href="/website/signin">'
-            "Create account</a>"
+            "Sign in from the app</a>"
         ) in document, path
 
 
@@ -744,7 +744,7 @@ SUBPAGE_COPY = {
     )),
     "/website/security": ("Nothing runs without a reason you can see", ()),
     "/website/community": ("Share with your firm, on your terms", (
-        "Groups with single-use codes", "Nothing lands unreviewed",
+        "Firm groups are not available", "Peer review is not available",
         "No public network yet",
     )),
     "/website/signin": ("Sign in from the desktop app", (

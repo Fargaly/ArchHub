@@ -7,6 +7,7 @@ const {createHash} = require('node:crypto');
 
 const root = path.resolve(__dirname, '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
+const documentation = require('./docs_source.cjs');
 const seedText = read('nodelang/universal_presentation_seed.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
 const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)].map(m => [m[1], m[2]]));
 
@@ -57,7 +58,7 @@ async function mountStudio() {
   win.ARCHHUB_LIVE = {sessions:[], currentGraph:null, hosts:[], connectors:[], graph:{nodes:[], wires:[]}, memory:[], skills:[]};
   win.matchMedia = () => ({matches:false, addEventListener() {}, removeEventListener() {}});
   win.ARCHHUB_EXISTING_WORKSHOP = {
-    getSnapshot:() => ({canvas:null, workshops:[], applicationUpdate:{state:'idle', current_build:'20261012-rail-z'},
+    getSnapshot:() => ({canvas:null, workshops:[], topology:{canvas:{documentation}}, applicationUpdate:{state:'idle', current_build:'20261012-rail-z'},
       theme:{configuration:{theme:{...seed}}, pending:false, error:''}}),
     subscribe:() => () => {},
     watchApplicationUpdate:() => () => {},

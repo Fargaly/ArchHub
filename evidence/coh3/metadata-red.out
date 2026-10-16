@@ -1,0 +1,19 @@
+F                                                                        [100%]
+================================== FAILURES ===================================
+______ test_source_docs_never_borrow_a_different_installations_metadata _______
+tests_replica\test_website_truth.py:149: in test_source_docs_never_borrow_a_different_installations_metadata
+    assert site_export.documentation_build_id() == 'unavailable'
+E   AssertionError: assert '19990101-0000-abcdef0' == 'unavailable'
+E     
+E     - unavailable
+E     + 19990101-0000-abcdef0
+============================== warnings summary ===============================
+..\..\..\..\..\..\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\AppData\Local\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests_replica/test_website_truth.py::test_source_docs_never_borrow_a_different_installations_metadata
+1 failed, 25 deselected, 1 warning in 4.01s

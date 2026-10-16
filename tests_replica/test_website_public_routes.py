@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from nodelang.site_export import documentation_build_id
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -32,9 +33,7 @@ from nodelang.universal_application import (  # noqa: E402
 PACKAGING = Path(__file__).resolve().parents[1] / "packaging" / "website"
 
 PRIVACY_SENTENCE = (
-    "When cloud sync is on, ArchHub keeps a copy of your brain on our servers "
-    "so it can reach your other devices and your firm. That copy is not "
-    "end-to-end encrypted, and ArchHub's systems can read it."
+    "Brain cloud sync is not active in this build. No brain upload is offered here."
 )
 FORBIDDEN = tuple(re.compile(pattern) for pattern in (
     r"\$[0-9]",
@@ -75,13 +74,10 @@ HOME_DESIGN_TEXT = (
     'class="site-pillar-title">Canvas<',
     'class="site-pillar-title">Composer<',
     'class="site-pillar-title">Brain<',
-    "Self-healing connectors",
     "Replayable by construction",
-    "Skills you own",
-    "Recall is by purpose, out of the graph",
     "Inside your machine",
     "Leaves, when a node asks",
-    "Leaves, when cloud sync is on",
+    "Brain cloud sync is not active in this build",
     "drafting table.",
 )
 
@@ -162,7 +158,7 @@ def test_public_docs_do_not_publish_stale_instruction_or_build_text(documents):
         "current released build",
     ):
         assert forbidden not in document
-    assert "pinned verified build 20260916-2130-e733a13" in document
+    assert "build %s" % documentation_build_id() in document
 
 
 def test_sealed_public_export_never_promises_provider_keys():
@@ -197,7 +193,7 @@ def test_sealed_public_export_do_not_publish_stale_instruction_or_build_text():
         "current released build",
     ):
         assert forbidden not in export
-    assert "pinned verified build 20260916-2130-e733a13" in export
+    assert "build %s" % documentation_build_id() in export
 
 
 def test_the_home_draws_no_grand_map_domain_grid(application, documents):
@@ -223,7 +219,8 @@ def test_every_link_stays_inside_the_public_routes(documents, path):
     # every page offers both.
     hrefs = set(re.findall(r'href="([^"]*)"', documents[path]))
     assert hrefs
-    assert hrefs - set(PUBLIC_WEBSITE_ROUTES) == {INSTALLER, REPOSITORY}
+    screenshot = {'/assets/tutorials/home-templates.png'} if '/docs/tutorial-' in path else set()
+    assert hrefs - set(PUBLIC_WEBSITE_ROUTES) == {INSTALLER, REPOSITORY} | screenshot
 
 
 @pytest.mark.parametrize("path", PUBLIC_WEBSITE_ROUTES)
@@ -261,3 +258,16 @@ def test_the_httpd_conf_names_the_not_found_page():
 
 def test_the_fly_manifest_listens_on_the_httpd_port():
     assert re.search(r"internal_port\s*=\s*3000\b", _packaging_text("fly.toml"))
+
+
+def test_p4_chat_and_wire_claims_match_the_source_and_sealed_export(documents):
+    payload = json.loads((Path(__file__).resolve().parents[1] / "public_site" / "site-export.json").read_text(encoding="utf-8"))
+    for home in (documents["/website"], payload["routes"]["/website"]["html"]):
+        assert "Chat stays an indexed conversation. Only an admitted workflow re-runs downstream from its node." in home
+        assert "Every connection is typed." in home
+        for forbidden in (
+            "Every chat turn becomes a parameter",
+            "records exactly what passed",
+            "Every connection is typed and logged",
+        ):
+            assert forbidden not in home

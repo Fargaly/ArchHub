@@ -1,0 +1,56 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.3, pytest-9.0.3, pluggy-1.6.0 -- C:\Users\fargaly\AppData\Local\ArchHub\.venv\Scripts\python.exe
+rootdir: C:\Users\fargaly\AppData\Local\Temp\claude\C--Users-fargaly-00-ARCHUB\71743447-6dd5-4050-bc4f-d228f7a1d91e\scratchpad\coh3
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collecting ... collected 40 items
+
+tests_replica/test_clean_server_visual_projection.py::test_clean_server_canvas_uses_existing_graph_visual_descriptors PASSED
+tests_replica/test_clean_server_visual_projection.py::test_clean_server_scope_interaction_enters_child_scope_with_same_visual_contract PASSED
+tests_replica/test_clean_server_visual_projection.py::test_clean_server_scope_entry_persists_for_the_same_browser_session XFAIL
+tests_replica/test_clean_server_visual_projection.py::test_clean_visual_projection_uses_graph_held_panels_properties_and_catalogue_contracts PASSED
+tests_replica/test_clean_server_visual_projection.py::test_clean_visual_projection_removes_deleted_panels_without_python_fallback PASSED
+tests_replica/test_clean_server_visual_projection.py::test_clean_visual_projection_rewiring_changes_target PASSED
+tests_replica/test_clean_server_visual_projection.py::test_clean_visual_projection_adds_zero_cells_and_preserves_root_and_revision PASSED
+tests_replica/test_clean_server_visual_projection.py::test_clean_visual_projection_requires_generic_relation_revision_for_selection PASSED
+tests_replica/test_clean_server_visual_projection.py::test_clean_visual_projection_generic_relation_revision_adds_removes_reorders_and_replays PASSED
+tests_replica/test_clean_server_visual_projection.py::test_clean_visual_projection_requires_graph_held_node_presentation_contract PASSED
+tests_replica/test_clean_server_visual_projection.py::test_clean_visual_projection_requires_public_interface_metadata_for_visible_sockets PASSED
+tests_replica/test_clean_server_visual_projection.py::test_clean_visual_projection_requires_graph_held_view_session_viewport_and_tokens PASSED
+tests_replica/test_clean_server_visual_projection.py::test_clean_visual_projection_view_session_revision_changes_viewport_tokens_and_reopens PASSED
+tests_replica/test_clean_server_visual_projection.py::test_clean_visual_projection_requires_graph_held_property_identity_and_public_value_revision PASSED
+tests_replica/test_clean_server_visual_projection.py::test_clean_visual_projection_requires_graph_held_panel_definition_roots_and_applicability PASSED
+tests_replica/test_clean_server_visual_projection.py::test_installed_visual_system_can_be_revised_onto_a_graph PASSED
+tests_replica/test_clean_server_visual_projection.py::test_host_execution_runs_only_what_the_graph_declares PASSED
+tests_replica/test_clean_server_visual_projection.py::test_a_control_does_what_the_graph_says_it_does PASSED
+tests_replica/test_clean_server_visual_projection.py::test_host_adapters_attach_and_never_launch PASSED
+tests_replica/test_clean_server_visual_projection.py::test_attention_and_state_survive_a_restart PASSED
+tests_replica/test_clean_server_visual_projection.py::test_deleting_the_fast_path_does_not_change_the_answer PASSED
+tests_replica/test_clean_server_visual_projection.py::test_the_canvas_shows_nothing_the_scope_does_not_hold PASSED
+tests_replica/test_clean_server_visual_projection.py::test_rewiring_the_catalogue_changes_the_canvas PASSED
+tests_replica/test_clean_server_visual_projection.py::test_every_lens_resolves_the_same_roots PASSED
+tests_replica/test_clean_server_visual_projection.py::test_relations_are_exact_not_decorative PASSED
+tests_replica/test_clean_server_visual_projection.py::test_everything_persisted_is_one_cell_shape PASSED
+tests_replica/test_clean_server_visual_projection.py::test_the_inspector_has_no_dead_tab PASSED
+tests_replica/test_clean_server_visual_projection.py::test_an_effect_and_its_receipt_survive_conflict_and_restart PASSED
+tests_replica/test_clean_server_visual_projection.py::test_application_dispatch_covers_every_declared_operation PASSED
+tests_replica/test_clean_server_visual_projection.py::test_the_operation_catalogue_can_be_revised_not_only_declared PASSED
+tests_replica/test_clean_server_visual_projection.py::test_a_definition_with_nothing_to_compose_can_be_placed PASSED
+tests_replica/test_clean_server_visual_projection.py::test_every_published_definition_is_placeable_in_the_scope_shown PASSED
+tests_replica/test_clean_server_visual_projection.py::test_an_effect_says_which_node_asked_for_it PASSED
+tests_replica/test_clean_server_visual_projection.py::test_a_node_shows_what_it_returned_and_not_what_another_node_did PASSED
+tests_replica/test_clean_server_visual_projection.py::test_a_result_row_shows_every_field_the_host_returned PASSED
+tests_replica/test_clean_server_visual_projection.py::test_publishing_a_card_without_binding_it_is_detectable PASSED
+tests_replica/test_clean_server_visual_projection.py::test_a_run_that_answers_with_too_much_is_capped_and_says_so PASSED
+tests_replica/test_clean_server_visual_projection.py::test_a_capped_result_says_what_it_left_out_where_it_is_read PASSED
+tests_replica/test_clean_server_visual_projection.py::test_rebinding_cannot_silently_rewrite_the_whole_graph PASSED
+tests_replica/test_clean_server_visual_projection.py::test_rebinding_unchanged_bindings_writes_almost_nothing PASSED
+
+============================== warnings summary ===============================
+..\..\..\..\..\..\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\AppData\Local\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============ 39 passed, 1 xfailed, 1 warning in 1188.34s (0:19:48) ============

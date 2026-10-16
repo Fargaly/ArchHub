@@ -136,6 +136,16 @@ Type: files; Name: "{app}\ArchHub-silent.cmd"
 Type: files; Name: "{app}\installer\install_gui.ps1"
 Type: files; Name: "{app}\installer\make_shortcuts.ps1"
 Type: files; Name: "{app}\installer\setup.iss"
+; The public website has one owner: cell_website + site_export. Retire the
+; unused legacy marketing builder when upgrading an existing installation.
+Type: files; Name: "{app}\nodelang\website.py"
+Type: files; Name: "{app}\nodelang\website.pyc"
+Type: files; Name: "{app}\nodelang\website.pyo"
+Type: files; Name: "{app}\nodelang\__pycache__\website.*.pyc"
+Type: files; Name: "{app}\nodelang\website_docs_text.py"
+Type: files; Name: "{app}\nodelang\website_docs_text.pyc"
+Type: files; Name: "{app}\nodelang\website_docs_text.pyo"
+Type: files; Name: "{app}\nodelang\__pycache__\website_docs_text.*.pyc"
 ; Exact retired implementation only. Keep the current connector owner,
 ; credentials, databases and unrelated installed files intact on upgrade.
 Type: files; Name: "{app}\nodelang\cell_baboom_connector_execution.py"
@@ -358,6 +368,9 @@ begin
   begin
     { v1.x left its whole code tree beside this one; sweep it once, guarded. }
     SweepLegacyV1(ExpandConstant('{app}'));
+    { These stale files were never payloads of this package. Preserve exact
+      known v1 bytes in an archive; do not remove unknown/user-edited docs. }
+    ArchiveLegacyDocs(ExpandConstant('{app}'));
     { A running Revit/AutoCAD/3ds Max holds its broker: set it aside, never abort. }
     RetireLockedHostFiles(ExpandConstant('{app}'), '{#BuildId}');
     ReadyPath := ExpandConstant('{app}\.archhub-ready');

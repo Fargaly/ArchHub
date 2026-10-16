@@ -1,5 +1,4 @@
-/* ArchHub website interactions: the design's hero canvas, host picker and
-   self-heal timeline, ported from ArchHub Website.html onto the markup the
+/* ArchHub website interactions: the design's hero canvas, host picker, ported from ArchHub Website.html onto the markup the
    Cell website renders. This is the only script the site serves; the export
    admits it by its exact sha256. It reads data-* hooks and never fetches. */
 (function () {
@@ -154,73 +153,4 @@
     });
   })();
 
-  // Self-heal timeline: an illustration of a recovery, played on request and
-  // once when the panel first scrolls into view.
-  (function () {
-    var block = document.querySelector('[data-heal]');
-    if (!block) return;
-    var btn = block.querySelector('[data-heal-play]');
-    var statusEl = block.querySelector('[data-heal-status]');
-    var logEl = block.querySelector('[data-heal-log]');
-    var clockEl = block.querySelector('[data-heal-clock]');
-    var kicker = block.querySelector('[data-heal-kicker]');
-    if (!btn || !statusEl || !logEl || !clockEl || !kicker) return;
-    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    var steps = [
-      { t: 0, w: 'WATCH', c: 'warn', mark: '\u25b2 ', m: 'RPC failed to ack heartbeat (3 retries)', status: ['Connection lost', 'err'], before: [1, 'timeout'] },
-      { t: 620, w: 'DIAG', c: 'soft', m: 'the host stopped answering on its port', before: [2, 'closed'] },
-      { t: 1050, w: 'ACTION', c: 'cyan', mark: '\u2192 ', m: 're-issuing handshake \u00b7 800ms grace', status: ['Recovering', 'warn'], before: [3, 'orphaned'] },
-      { t: 2180, w: 'OK', c: 'ok', mark: '\u2713 ', m: 'handshake acknowledged', after: [1, 'ok'] },
-      { t: 2560, w: 'RESTORE', c: 'ok', mark: '\u2713 ', m: 'session rebound', after: [2, 'open'], status: ['Recovered', 'ok'] },
-      { t: 2900, w: 'USER', c: 'soft', m: 'no notification shown \u00b7 recovery silent', after: [3, 'restored'] }
-    ];
-    var COL = { warn: 'var(--warn)', ok: 'var(--ok)', cyan: 'var(--cyan)', soft: 'var(--ink-soft)', err: 'var(--err)' };
-    var stamp = function (ms) { return '+' + (ms / 1000).toFixed(2) + 's'; };
-    var timers = [];
-    function span(cls, text, color) {
-      var s = document.createElement('span'); s.className = cls; s.textContent = text;
-      if (color) s.style.color = color;
-      return s;
-    }
-    function play() {
-      timers.forEach(clearTimeout); timers = [];
-      while (logEl.firstChild) logEl.removeChild(logEl.firstChild);
-      btn.disabled = true; btn.textContent = 'recovering\u2026';
-      kicker.style.color = 'var(--ink-soft)';
-      Array.prototype.forEach.call(block.querySelectorAll('[data-b],[data-a]'), function (el) {
-        el.textContent = '-'; el.className = 'site-diff-value site-dv-pending';
-      });
-      var speed = reduce ? 0 : 1;
-      steps.forEach(function (s) {
-        timers.push(setTimeout(function () {
-          var row = document.createElement('div');
-          row.className = 'site-logline';
-          row.appendChild(span('site-lt', stamp(s.t)));
-          row.appendChild(span('site-lw', s.w, COL[s.c]));
-          var msg = span('site-lm', '');
-          if (s.mark) msg.appendChild(span('', s.mark, COL[s.c]));
-          msg.appendChild(document.createTextNode(s.m));
-          row.appendChild(msg);
-          logEl.appendChild(row);
-          if (s.status) { statusEl.textContent = s.status[0]; statusEl.style.color = COL[s.status[1]]; }
-          if (s.before) { var b = block.querySelector('[data-b="' + s.before[0] + '"]'); if (b) { b.textContent = s.before[1]; b.className = 'site-diff-value site-dv-bad'; } }
-          if (s.after) { var a = block.querySelector('[data-a="' + s.after[0] + '"]'); if (a) { a.textContent = s.after[1]; a.className = 'site-diff-value site-dv-good'; } }
-          clockEl.textContent = 'illustration \u00b7 ' + stamp(s.t);
-        }, s.t * speed));
-      });
-      timers.push(setTimeout(function () {
-        clockEl.textContent = 'illustration \u00b7 recovered without a restart';
-        kicker.style.color = 'var(--accent)';
-        btn.disabled = false; btn.textContent = 'Break it again \u21ba';
-      }, reduce ? 0 : 3150));
-    }
-    btn.addEventListener('click', play);
-    var seen = false;
-    if ('IntersectionObserver' in window) {
-      var io = new IntersectionObserver(function (es) {
-        es.forEach(function (e) { if (e.isIntersecting && !seen) { seen = true; play(); io.disconnect(); } });
-      }, { threshold: 0.45 });
-      io.observe(block);
-    }
-  })();
 })();

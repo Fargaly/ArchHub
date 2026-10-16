@@ -36,7 +36,7 @@ from .map_import import (PUBLIC_MAP_PATH, import_grand_map,
                          load_local_authority_config, resolve_map_path)
 from .ui_runtime import (connect_ui_action, connect_ui_binding, connect_ui_child,
                          connect_ui_download)
-from .website import WEBSITE_CSS, build_website
+from .cell_website import PUBLIC_WEBSITE_ROUTES
 
 
 # The palette is transcribed from the design system's single source of truth
@@ -709,6 +709,55 @@ def project_container_on_canvas(store, container_id):
     return [item['card'] for item in projected]
 
 
+def _website_publication_reference(store, app_id):
+    """Keep snapshot identity and wiring; link only to the canonical website.
+
+    HTTP rendering belongs to the universal website/site_export owner. This
+    legacy session records publication references, never another site or copy.
+    """
+    root = _el(store, 'nav', 'Public website publication references',
+               attrs={'aria-label': 'Public website routes'})
+    route_pages = {}
+    for order, route in enumerate(PUBLIC_WEBSITE_ROUTES):
+        anchor = _el(store, 'a', 'Website route reference: ' + route,
+                     text=route, attrs={'href': route})
+        connect_ui_child(store, root, anchor, order=order)
+        if route == '/website':
+            continue
+        route_param = _param(store, 'page route', route)
+        page = store.add('group', 'Website route reference: ' + route,
+                         inner=[route_param, anchor], params={'route': route_param})
+        route_pages[route] = {'page': page, 'ui_root': anchor, 'route': route_param}
+    website = store.add('session', 'ArchHub Website',
+        inner=[root] + [page['page'] for page in route_pages.values()],
+        params={
+            'ui_root': _reference_param(store, 'website root', root),
+            'route': _param(store, 'website route', '/website'),
+            'privacy_tier': _param(store, 'website graph privacy tier', 'T1 INTERNAL'),
+            'publication_tier': _param(store, 'website publication tier', 'T0 PUBLIC'),
+            **{'route:' + route: _reference_param(
+                store, 'website route root: ' + route, page['ui_root'])
+                for route, page in route_pages.items()},
+        })
+    route_relations = {route: store.relation([
+        {'role': 'source', 'direction': 'out', 'node_id': page['page'],
+         'port_id': 'page', 'cardinality': 'one'},
+        {'role': 'target', 'direction': 'in', 'node_id': website,
+         'port_id': route, 'cardinality': 'one'},
+    ], title='Website route membership') for route, page in route_pages.items()}
+    app_relation = store.relation([
+        {'role': 'source', 'direction': 'out', 'node_id': app_id,
+         'port_id': 'product', 'cardinality': 'one'},
+        {'role': 'target', 'direction': 'in', 'node_id': website,
+         'port_id': 'public_surface', 'cardinality': 'one'},
+    ], title='Application publishes website')
+    return {'session': website, 'ui_root': root,
+            'routes': {'/website': root, **{route: page['ui_root']
+                       for route, page in route_pages.items()}},
+            'route_pages': route_pages, 'route_relations': route_relations,
+            'app_relation': app_relation}
+
+
 def build_archhub_application(store=None):
     from .core import Store
 
@@ -1199,7 +1248,7 @@ def build_archhub_application(store=None):
     brain_result = _param(store, 'Brain health result', {'status': 'NOT RUN'})
     hook_result = _param(store, 'Hook coverage result', {'status': 'NOT RUN'})
     governance_result = _param(store, 'Governance court result', {'status': 'NOT RUN'})
-    stylesheet = _param(store, 'application stylesheet', STYLESHEET + WEBSITE_CSS)
+    stylesheet = _param(store, 'application stylesheet', STYLESHEET)
     theme_params = {name: _param(store, name, value) for name, value in THEME.items()}
     state = store.add('group', 'Application state',
                       inner=[focus, container, container_title, container_stack,
@@ -2000,8 +2049,7 @@ def build_archhub_application(store=None):
     _children(store, status, status_left, status_table, status_relation, status_count,
               status_message)
 
-    website = build_website(store, grand=grand, mode_param=mode,
-                            focus_param=focus, app_id=app)
+    website = _website_publication_reference(store, app)
     website_resource_relation = connect_resource(
         store, resources, 'website-publication', website['session'],
         target_port='published_site')
@@ -2073,19 +2121,6 @@ def build_archhub_application(store=None):
              'port_id': 'public_surface', 'cardinality': 'one'},
         ], title='Website Community route reaches Community authority'),
     ])
-    website_preview = _el(store, 'button', 'Share: Preview website',
-                          text='Preview website', cls='share-row',
-                          attrs={'type': 'button', 'data-navigate': '/website'})
-    _action(store, website_preview,
-            {'op': 'set', 'id': focus, 'path': ['body', 'floor', 'value'],
-             'value': website['session']}, 'Preview website')
-    connect_ui_child(store, share_list, website_preview, order=3)
-    website_export = _el(store, 'button', 'Share: Export website graph',
-                         text='Export website graph', cls='share-row',
-                         attrs={'type': 'button'})
-    connect_ui_download(store, website['session'], website_export)
-    connect_ui_child(store, share_list, website_export, order=4)
-    share_rows[website['session']] = website_export
     ui_root_param = store.add('param', 'UI root', floor={'op': 'reference', 'target': root})
     app_params = dict(store.nodes[app]['params'])
     app_params['ui_root'] = ui_root_param

@@ -27,7 +27,7 @@ DOMAIN_TARGETS = {
                   'nodelang/application_server.py'],
                  'tests_replica/test_application_persistence.py'),
     'selfext': (['nodelang/domains/selfext.py'], 'tests_domains/test_selfext.py'),
-    'website': (['nodelang/website.py'], 'tests_replica/test_node_native_website.py'),
+    'website': (['nodelang/cell_website.py', 'nodelang/site_export.py'], 'tests_replica/test_node_native_website.py'),
     'users': (['nodelang/domains/users.py'], 'tests_domains/test_users.py'),
     'monetization': (['nodelang/domains/monetization.py'],
                      'tests_domains/test_monetization.py'),

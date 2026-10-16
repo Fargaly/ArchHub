@@ -5,12 +5,12 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 const studio = () => fs.readFileSync(path.join(root, 'nodelang/studio/studio-lm.jsx'), 'utf8');
-const websiteDocs = () => fs.readFileSync(path.join(root, 'nodelang/website_docs_text.py'), 'utf8');
+const websiteDocs = () => fs.readFileSync(path.join(root, 'nodelang/site_export.py'), 'utf8');
 
 test('docs search has no hand-written DOC_INDEX parallel store', () => {
   const source = studio();
   assert.doesNotMatch(source, /\bconst\s+DOC_INDEX\b/);
-  assert.match(source, /const buildDocsProjection = \(\{library, hosts\}\) =>/);
+  assert.match(source, /const buildDocsProjection = \(\{documentation = \{\}, hosts\}\) =>/);
   assert.match(source, /sections\.map\(row => \(\{s:row\[0\], k:'page'/);
   assert.match(source, /nodeRows\.map\(row => \(\{s:'canvas', k:'topic'/);
   assert.match(source, /connectorRows\.map\(row => \(\{s:'connectors', k:'topic'/);
@@ -33,7 +33,7 @@ test('docs page removes invented local API and status claims', () => {
 
 test('docs catalogue rows avoid raw engine ids and developer wording', () => {
   const source = studio();
-  assert.match(source, /const docsNodeGroups = library =>/);
+  assert.match(source, /const docsNodeGroups = nodes =>/);
   assert.match(source, /<DNodeGroups groups=\{nodeGroups\}\/>/);
   assert.match(source, /data-docs-node-category=\{group\.cat\}/);
   assert.match(source, /data-docs-node-tile=""/);
@@ -84,5 +84,5 @@ test('website docs describe provider connection without paste instructions', () 
     assert.doesNotMatch(source, new RegExp(forbidden.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
   assert.match(source, /Provider accounts are connected from Settings, Providers\./);
-  assert.match(source, /pinned verified build 20260916-2130-e733a13/);
+  assert.doesNotMatch(source, /pinned verified build 20260916-2130-e733a13/);
 });

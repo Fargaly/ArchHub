@@ -36,6 +36,20 @@ from nodelang.unified_authority import (
     revise_definition,
     revise_instance,
 )
+from nodelang.site_export import project_documentation
+
+
+@pytest.fixture(autouse=True)
+def _close_clean_runtime_stores(request, monkeypatch):
+    """Close every authority this test provisions, including assertion paths."""
+    original = provision_clean_runtime
+
+    def tracked(*args, **kwargs):
+        built = original(*args, **kwargs)
+        request.addfinalizer(built.location.authority.store.close)
+        return built
+
+    monkeypatch.setattr(__name__ + ".provision_clean_runtime", tracked)
 
 
 def _map_source() -> bytes:
@@ -397,6 +411,7 @@ def test_clean_server_canvas_uses_existing_graph_visual_descriptors(tmp_path):
         assert canvas["graph_id"] == built.location.authority.manifest.graph_id
         assert canvas["root"] == built.grand_map.root_id
         assert canvas["revision"] == built.location.authority.store.revision
+        assert canvas["documentation"] == project_documentation(catalogue=canvas["catalog"])
         assert canvas["authorization"]["browser_sessions"] == [
             {"root": issued.root_id}
         ]
@@ -774,14 +789,26 @@ def test_clean_visual_projection_adds_zero_cells_and_preserves_root_and_revision
 ):
     built, _provider = _provision_clean_runtime(tmp_path)
     try:
-        projected, lens, snapshot_before, snapshot_after = _project_current_visual(
-            built
+        session = _issue_visual_session(built)
+        projected, lens, snapshot_before, snapshot_after = _project_current_visual_for_session(
+            built, session
         )
         assert snapshot_after.revision == snapshot_before.revision
         assert set(snapshot_after.cells) == set(snapshot_before.cells)
         assert projected["graph_id"] == lens["graph_id"]
         assert projected["revision"] == lens["revision"]
         assert projected["root"] == lens["scope_root"]
+        expected_docs = project_documentation(catalogue=projected["catalog"])
+        assert projected["documentation"] == expected_docs
+        # Client-side edits affect only the disposable projection. The next
+        # read comes from the website tutorial source without a graph write.
+        projected["documentation"]["tutorials"][0]["text"] = "hand-edited tutorial"
+        repeated, _, repeated_before, repeated_after = _project_current_visual_for_session(
+            built, session
+        )
+        assert repeated["documentation"] == expected_docs
+        assert repeated_after.revision == repeated_before.revision
+        assert set(repeated_after.cells) == set(repeated_before.cells)
     finally:
         built.location.authority.store.close()
 
@@ -2686,61 +2713,118 @@ def test_an_effect_and_its_receipt_survive_conflict_and_restart(tmp_path):
         reopened.authority.store.close()
 
 
-def test_no_declared_operation_is_a_dead_button():
-    """What the catalogue offers is exactly what an adapter can carry out.
+def test_application_dispatch_covers_every_declared_operation(monkeypatch):
+    """Application catalogue operations have real adapter or engine dispatch.
 
-    A button that refuses is worse than a button that is absent. The
-    person who pressed it now has to work out whether their model is
-    wrong, their session is wrong, or the program never could do this at
-    all -- and only the last one is true. This is how a working program
-    becomes a demo: not by breaking, but by offering.
-
-    So the two sides are held equal in both directions. Nothing may be
-    declared without an adapter behind it, and no adapter may hold a
-    script for something the catalogue never declared, because power
-    nobody declared is power nobody reviewed.
+    The desktop launcher supplies PIPELINE_ENGINES to ApplicationServer.
+    Revit operations and Office reads use the host adapters; the Excel file
+    writer is a registered pipeline engine. This checks those application
+    paths, not the alternate clean_coordination_service host-only dispatcher.
+    Nothing declared lacks an implementation, and these implementations
+    expose no undeclared operation. No real host or filesystem writer runs.
     """
+    import ast
+    from types import SimpleNamespace
+
+    from nodelang.application_server import ApplicationServer
     from nodelang import clean_office_adapter, clean_revit_adapter
+    from nodelang import host_brokers, nodeslib_v2_engines
     from nodelang.clean_host_catalogue_source import HOST_OPERATION_RECORDS
     from nodelang.clean_host_operations import compose_host_operations
+    from nodelang.pipeline_engines import PIPELINE_ENGINES
 
+    # Inspect the real launcher wiring without importing/running the desktop.
+    launcher = ast.parse((Path(__file__).resolve().parents[1]
+                          / "launch_archhub_test.py").read_text(encoding="utf-8"))
+    launches = [node for node in ast.walk(launcher)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "ApplicationServer"]
+    assert len(launches) == 1
+    dispatch_arg = next(keyword.value for keyword in launches[0].keywords
+                        if keyword.arg == "pipeline_effect_engines")
+    assert isinstance(dispatch_arg, ast.Name) and dispatch_arg.id == "PIPELINE_ENGINES"
+    # Execute the real server's engine-selection method over the launcher table.
+    # No server constructor, store, service or host is started.
+    selected = ApplicationServer._effect_engines_with_mods_store(SimpleNamespace(
+        pipeline_effect_engines=PIPELINE_ENGINES, universal_store=None))
     catalogue = compose_host_operations(HOST_OPERATION_RECORDS)
     declared = {str(entry["op_id"]) for entry in catalogue["operations"]}
+    # Office direct engines are the application's other dispatch entry point;
+    # generic engines for unrelated node catalogues are outside this catalogue.
+    office_engines = {
+        op for op in host_brokers.ENGINES
+        if op.split(".", 1)[0] in {"excel", "word", "powerpoint"}
+    }
     carried_out = (
         set(clean_revit_adapter._READS)
+        | set(clean_revit_adapter._REVIT_WRITE_OPS)
         | set(clean_office_adapter._OPEN_READS)
         | set(clean_office_adapter._INSIDE_READS)
+        | office_engines
     )
     assert declared, "the catalogue declares nothing at all"
     assert not (declared - carried_out), (
-        "declared with no adapter behind it: %s"
+        "declared with no adapter or application engine: %s"
         % sorted(declared - carried_out)
     )
     assert not (carried_out - declared), (
-        "an adapter carries out what the catalogue never declared: %s"
+        "an adapter or Office engine carries out an undeclared operation: %s"
         % sorted(carried_out - declared)
     )
+    for op in office_engines:
+        assert callable(PIPELINE_ENGINES.get(op)), op
+        assert PIPELINE_ENGINES[op] is host_brokers.ENGINES[op], op
+        assert selected[op] is host_brokers.ENGINES[op], op
+    assert PIPELINE_ENGINES["excel.write_range"] is host_brokers.excel_write_range
 
+    requests = {
+        "revit.set_parameter_by_name": {
+            "elements": [{"id": 7}], "name": "Comments", "value": "court"},
+        "revit.create_sheets": {"rows": [{"number": "A101", "name": "Plan"}]},
+        "revit.renumber_rename": {
+            "elements": [{"id": 7}], "number_pattern": "A-{index:03d}",
+            "name_pattern": ""},
+    }
+    assert set(requests) == set(clean_revit_adapter._REVIT_WRITE_OPS)
+    reached = []
+
+    def forbidden_effect(*args, **kwargs):
+        reached.append((args, kwargs))
+        raise AssertionError("ungated write reached a host or file effect")
+
+    monkeypatch.setattr(clean_revit_adapter, "live_sessions", forbidden_effect)
+    monkeypatch.setattr(clean_revit_adapter, "_call", forbidden_effect)
+    monkeypatch.setattr(nodeslib_v2_engines, "_FILE_WRITE_BROKER", forbidden_effect)
+    monkeypatch.setattr(nodeslib_v2_engines, "_REVIT_BROKER", forbidden_effect)
     for entry in catalogue["operations"]:
-        assert entry["kind"] == "read", (
-            "%s is declared as %r; this build offers reads only"
-            % (entry["op_id"], entry["kind"])
-        )
-        assert entry["destructive"] is False, (
-            "%s is a read and must not be marked destructive"
-            % entry["op_id"]
-        )
-        assert str(entry["label"]).strip(), (
-            "%s has no label to show" % entry["op_id"]
-        )
-        assert str(entry["description"]).strip(), (
-            "%s has no description to show" % entry["op_id"]
-        )
+        op = entry["op_id"]
+        assert str(entry["label"]).strip(), "%s has no label to show" % op
+        assert str(entry["description"]).strip(), "%s has no description to show" % op
+        assert entry["kind"] in {"read", "write"}, (op, entry["kind"])
+        if op.startswith("revit."):
+            script = clean_revit_adapter._script_for(op, requests.get(op, {}))
+            assert isinstance(script, str) and script.strip(), (
+                "%s has no executable adapter script" % op)
+        if entry["kind"] == "read":
+            assert entry["destructive"] is False, (
+                "%s is a read and must not be marked destructive" % op)
+            continue
+        assert entry["destructive"] is True, (
+            "%s is a write and must be marked destructive" % op)
+        grant = [field for field in entry["inputs"] if field["id"] == "grant"]
+        assert len(grant) == 1 and grant[0]["type"] == "approval-grant", op
+        assert grant[0]["required"] is True, op
+        if op in requests:
+            with pytest.raises(ValueError, match="host write requires an approval grant"):
+                clean_revit_adapter.invoke(op, requests[op])
+            with pytest.raises(ValueError, match="host write requires an approval grant"):
+                selected[op](requests[op], requests[op])
+        else:
+            assert op in office_engines, op
+            with pytest.raises(ValueError, match="file write requires a governed file grant"):
+                selected[op]({"format": "csv"}, {"rows": [{"a": 1}]})
+        assert reached == [], "%s reached an effect without a grant" % op
 
-    # Which machine a host reaches is named where the runtime is stood
-    # up, not here. What this court can hold is that the catalogue never
-    # names a host the adapters cannot answer for -- proven above by the
-    # two sets being equal, operation by operation.
     assert set(catalogue["hosts"]) == {
         str(entry["op_id"]).split(".", 1)[0]
         for entry in catalogue["operations"]
@@ -3420,22 +3504,18 @@ def test_rebinding_unchanged_bindings_writes_almost_nothing(tmp_path):
         )
 
     publish("Rebind probe")
-    before = authority.store.snapshot().revision
+    before_cells = len(authority.store.snapshot().cells)
     revise_clean_scope_interactions(
         authority, built.browser, scope,
         caller=caller, command_id=str(_uuid.uuid4()), cell_limit=None,
     )
-    first = authority.store.snapshot().revision
+    first_cells = len(authority.store.snapshot().cells)
     assert unbound_published_definitions(authority, scope, caller=caller) == ()
 
-    def written(from_revision, to_revision):
-        store = authority.store
-        return sum(
-            len(store.at(r).cells) - len(store.at(r - 1).cells)
-            for r in range(from_revision + 1, to_revision + 1)
-        )
-
-    grew_binding = written(before, first)
+    # The old sum of adjacent historical counts telescopes to this exact
+    # difference. Counting lazy historical maps rescanned the whole journal
+    # for every revision; the current snapshot already knows its cell count.
+    grew_binding = first_cells - before_cells
 
     # Nothing has changed since, so a second revise has nothing to write.
     # It is refused as a no-op, which is the honest answer -- or it writes
@@ -3448,8 +3528,7 @@ def test_rebinding_unchanged_bindings_writes_almost_nothing(tmp_path):
     except Exception as exc:
         assert "already carry this source" in str(exc), exc
     else:
-        second = authority.store.snapshot().revision
-        grew_again = written(first, second)
+        grew_again = len(authority.store.snapshot().cells) - first_cells
         assert grew_again <= max(64, grew_binding // 4), (
             "rebinding unchanged bindings still rewrote the graph: "
             "%d cells against %d for the first bind"

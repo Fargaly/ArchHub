@@ -20,13 +20,14 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import nodelang.site_export as site_export  # noqa: E402
+from nodelang.site_export import documentation_build_id
 from nodelang.cell_accounts import BETA_OFFER  # noqa: E402
 from nodelang.map_import import PUBLIC_MAP_PATH  # noqa: E402
 from nodelang.universal_application import build_universal_application  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 # Pinned here, never borrowed from the code under court.
-SITE_SCRIPT_SHA256 = "4e7a942421c969557a068fe537491b77eae7315c3890588f8c4de8596605840a"
+SITE_SCRIPT_SHA256 = "b79720a5b81f81d8043a0525d3e09fc04622f658540d45a39d82a006c8e461e5"
 SCRIPT_TAG = '<script src="/assets/site.js" defer></script>'
 SCRIPT_FILE = REPO / "nodelang" / "data" / "website" / "site.js"
 REVISION = "build-20261013-0307-2d0d9ae"
@@ -111,7 +112,7 @@ def test_the_graph_document_stays_scriptless():
 
 def test_the_script_is_the_design_interactions_and_reaches_nothing_outside():
     text = SCRIPT_FILE.read_text(encoding="ascii")
-    for hook in ("[data-canvas]", "[data-hosts]", "[data-host-detail]", "[data-heal]"):
+    for hook in ("[data-canvas]", "[data-hosts]", "[data-host-detail]"):
         assert hook in text
     for banned in ("fetch(", "XMLHttpRequest", "eval(", "import(", "localStorage",
                    "document.cookie", "WebSocket", "session #"):
@@ -124,9 +125,9 @@ def test_the_pages_carry_the_hooks_the_script_reads(export):
     assert 'data-canvas="hero"' in home
     assert home.count('data-node="') == 3
     assert 'data-hosts="catalogue"' in home and 'data-host-detail="catalogue"' in home
-    assert 'data-heal="timeline"' in home and 'data-heal-play="play"' in home
+    assert 'data-heal="timeline"' not in home and 'data-heal-play="play"' not in home
     features = _page(export, "/website/features")
-    assert 'data-heal="timeline"' in features
+    assert 'data-heal="timeline"' not in features
 
 
 def test_the_pricing_calculator_is_gone(export):
@@ -149,14 +150,15 @@ def test_every_page_has_the_design_header_and_footer(export):
         assert 'class="site-logo"' in nav, route
         labels = re.findall(r'<a class="site-nav-link"[^>]*>([^<]*)</a>', nav)
         assert tuple(labels) == NAV, route
-        assert '<span class="site-ver">%s</span>' % REVISION in nav, route
+        expected_build = documentation_build_id() if "/docs/" in route else REVISION
+        assert '<span class="site-ver">%s</span>' % expected_build in nav, route
         assert re.search(r'<a class="site-access"[^>]*>Sign in</a>', nav), route
-        assert '<a class="site-access site-access-primary" href="/signin/">Create account</a>' in nav, route
+        assert '<a class="site-access site-access-primary" href="/signin/">Sign in from the app</a>' in nav, route
         footer = page[page.index('<footer class="site-footer">'):]
         assert 'class="site-logo"' in footer, route
         heads = re.findall(r'<p class="site-foot-head">([^<]*)</p>', footer)
         assert heads == ["Product", "Company", "Open"], route
-        assert "<span>Built from %s</span>" % REVISION in footer, route
+        assert "<span>Download release %s</span>" % REVISION in footer, route
         for untrue in ("v0.27.0", "MIT", "b11bdc8", "Discord"):
             assert untrue not in page, (route, untrue)
 
@@ -165,7 +167,8 @@ def test_features_and_security_open_with_the_design_sections_only(export):
     features = _page(export, "/website/features")
     main = features[features.index("<main"):features.index("</main>")]
     assert "site-page-card" not in main
-    assert "Canvas. Composer. " in main and "Your CAD " in main and "A graph you can " in main
+    assert "Canvas. Composer. " in main and "A graph you can " in main
+    assert "Your CAD " not in main and "site-heal" not in main
     assert '<header class="site-page-header site-sr">' in main
     security = _page(export, "/website/security")
     main = security[security.index("<main"):security.index("</main>")]

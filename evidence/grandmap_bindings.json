@@ -353,19 +353,23 @@
         "tests_replica/test_node_native_website.py",
         "tests_replica/test_universal_website.py",
         "tests_replica/test_website_live_findings.py",
-        "tests_replica/test_website_docs_pages.py"
+        "tests_replica/test_website_docs_pages.py",
+        "tests_replica/test_website_package_docs.py"
       ]
     },
     "website_content_source": {
       "why": "page content comes from graph facts",
       "tests": [
-        "tests_replica/test_universal_website.py"
+        "tests_replica/test_universal_website.py",
+        "tests_replica/test_done_needs_docs.py",
+        "tests_replica/test_website_truth.py"
       ]
     },
     "website_build_info": {
       "why": "what shipped is stamped from the exact revision",
       "tests": [
-        "tests_replica/test_browser_publish_court.py"
+        "tests_replica/test_browser_publish_court.py",
+        "tests_replica/test_website_truth.py"
       ]
     },
     "connectors_broker": {

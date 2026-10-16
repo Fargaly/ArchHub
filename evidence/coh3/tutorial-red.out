@@ -1,0 +1,44 @@
+FFFFF                                                                    [100%]
+================================== FAILURES ===================================
+__________ test_six_tutorials_follow_the_installed_starter_catalogue __________
+tests_replica\test_website_truth.py:92: in test_six_tutorials_follow_the_installed_starter_catalogue
+    assert len(tutorials) == len(starters) == 6
+E   AssertionError: assert 0 == 6
+E    +  where 0 = len({})
+E    +  and   6 = len((('tpl-sheet-register', 'Sheet register review', 134, [{'engine': 'revit.read', 'item': 'r_sheets', 'params': {'operat...preview', 'input': {'child': 2, 'source': 'out', 'target': 'in'}, 'item': 'w_watch', 'params': {'as': 'table'}, ...}])))
+_ test_new_unproven_release_claims_are_refused[<p>Bring <b>your own</b> key</p>] _
+tests_replica\test_website_truth.py:112: in test_new_unproven_release_claims_are_refused
+    with pytest.raises(site_export.SiteExportError, match='untrue public claim'):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE <class 'nodelang.site_export.SiteExportError'>
+___ test_new_unproven_release_claims_are_refused[<p>Paste your API key</p>] ___
+tests_replica\test_website_truth.py:112: in test_new_unproven_release_claims_are_refused
+    with pytest.raises(site_export.SiteExportError, match='untrue public claim'):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE <class 'nodelang.site_export.SiteExportError'>
+____ test_new_unproven_release_claims_are_refused[<p>Goose is running</p>] ____
+tests_replica\test_website_truth.py:112: in test_new_unproven_release_claims_are_refused
+    with pytest.raises(site_export.SiteExportError, match='untrue public claim'):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE <class 'nodelang.site_export.SiteExportError'>
+_________ test_retired_docs_archive_is_not_an_active_handwritten_copy _________
+tests_replica\test_website_package_docs.py:44: in test_retired_docs_archive_is_not_an_active_handwritten_copy
+    assert not (ROOT / name).exists(), name
+E   AssertionError: SETUP.txt
+E   assert not True
+E    +  where True = exists()
+E    +    where exists = (WindowsPath('C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/71743447-6dd5-4050-bc4f-d228f7a1d91e/scratchpad/coh3') / 'SETUP.txt').exists
+============================== warnings summary ===============================
+..\..\..\..\..\..\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434
+  C:\Users\fargaly\AppData\Local\ArchHub\.venv\Lib\site-packages\_pytest\config\__init__.py:1434: PytestConfigWarning: Unknown config option: cache_dir
+  
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests_replica/test_website_truth.py::test_six_tutorials_follow_the_installed_starter_catalogue
+FAILED tests_replica/test_website_truth.py::test_new_unproven_release_claims_are_refused[<p>Bring <b>your own</b> key</p>]
+FAILED tests_replica/test_website_truth.py::test_new_unproven_release_claims_are_refused[<p>Paste your API key</p>]
+FAILED tests_replica/test_website_truth.py::test_new_unproven_release_claims_are_refused[<p>Goose is running</p>]
+FAILED tests_replica/test_website_package_docs.py::test_retired_docs_archive_is_not_an_active_handwritten_copy
+5 failed, 22 deselected, 1 warning in 12.36s

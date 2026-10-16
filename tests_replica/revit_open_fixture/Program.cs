@@ -57,6 +57,8 @@ internal static class Program
         Transaction.RefuseStart = input.TryGetProperty("fail_start", out var start) && start.GetBoolean();
         Transaction.StartResult = input.TryGetProperty("start_status", out var ss) ? Enum.Parse<TransactionStatus>(ss.GetString()) : TransactionStatus.Started;
         Transaction.CommitResult = input.TryGetProperty("commit_status", out var cs) ? Enum.Parse<TransactionStatus>(cs.GetString()) : TransactionStatus.Committed;
+        Transaction.RollbackResult = input.TryGetProperty("rollback_status", out var rs) ? Enum.Parse<TransactionStatus>(rs.GetString()) : TransactionStatus.RolledBack;
+        Transaction.ThrowOnRollback = input.TryGetProperty("fail_rollback", out var fr) && fr.GetBoolean();
         var route = typeof(CoreEntry).GetMethod("RouteAsync", BindingFlags.NonPublic | BindingFlags.Instance);
         var task = (Task<string>)route.Invoke(Create(app), new object[] {
             input.GetProperty("route").GetString(), input.GetProperty("body").GetRawText(),

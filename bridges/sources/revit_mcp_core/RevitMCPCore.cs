@@ -483,9 +483,7 @@ namespace RevitMCPCore
                 }
                 catch (Exception ex)
                 {
-                    try { if (tx != null && tx.HasStarted()) tx.RollBack(); }
-                    catch (Exception rollback) { return JsonError("ScriptCompiler crash: " + ex.Message + "; rollback failed: " + rollback.Message); }
-                    return JsonError("ScriptCompiler crash: " + ex.Message);
+                    return JsonError("ScriptCompiler crash: " + ex.Message + RollBackOutcome(tx));
                 }
                 if (sr.Status == "ok")
                 {
@@ -495,18 +493,32 @@ namespace RevitMCPCore
                         // change) or Pending (failure handling still open). Neither is success.
                         var committed = tx.Commit();
                         if (committed != TransactionStatus.Committed)
-                            return JsonError("Revit did not commit the change (" + committed + "); the model was not modified.");
+                            return JsonError(committed == TransactionStatus.Pending
+                                ? "Revit has not completed the change (Pending); its outcome is unresolved."
+                                : "Revit did not commit the change (" + committed + "); it was rolled back.");
                     }
                     var resultJson = SerializeResult(ctx.result ?? sr.Result);
                     return "{\"status\":\"ok\",\"result\":" + resultJson
                          + ",\"compiler\":\"subprocess_csc\""
                          + ",\"cache_hit\":" + (sr.CacheHit ? "true" : "false") + "}";
                 }
-                try { if (tx != null && tx.HasStarted()) tx.RollBack(); }
-                catch (Exception ex) { return JsonError("Script failed: " + sr.Error + "; rollback failed: " + ex.Message); }
                 return "{\"status\":\"error\",\"error_code\":\"" + sr.Status
-                     + "\",\"error\":\"" + JsonEscape(sr.Error ?? "unknown") + "\"}";
+                     + "\",\"error\":\"" + JsonEscape((sr.Error ?? "unknown") + RollBackOutcome(tx)) + "\"}";
             }
+        }
+
+        // RollBack can also finish without throwing and without completing (Pending):
+        // the caller must see the exact outcome next to the original error.
+        private static string RollBackOutcome(Transaction tx)
+        {
+            if (tx == null || !tx.HasStarted()) return "";
+            try
+            {
+                var rolledBack = tx.RollBack();
+                return rolledBack == TransactionStatus.RolledBack ? ""
+                    : "; rollback did not complete (" + rolledBack + "); the transaction outcome is unresolved";
+            }
+            catch (Exception rollback) { return "; rollback failed: " + rollback.Message; }
         }
 
         // ─── /screenshot ─────────────────────────────────────────

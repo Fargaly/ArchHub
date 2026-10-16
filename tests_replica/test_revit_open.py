@@ -176,3 +176,18 @@ def test_transaction_that_did_not_start_never_runs_the_script(fixture_exe):
     result = run(fixture_exe, "/exec", {"code": "probe"}, active=True, start_status="RolledBack")
     assert result["answer"]["status"] == "error" and "did not start" in result["answer"]["error"]
     assert result["Calls"] == result["Starts"] == result["Commits"] == 0
+
+
+@pytest.mark.parametrize("code", ["throw", "fail"])
+@pytest.mark.parametrize("state,expected", [({"rollback_status": "Pending"}, "rollback did not complete (Pending)"),
+                                            ({"fail_rollback": True}, "rollback failed: fixture rollback refused")])
+def test_incomplete_or_failed_rollback_is_reported_with_the_original_error(fixture_exe, code, state, expected):
+    # Broker review R3: RollBack can return Pending without throwing; never discard it.
+    result = run(fixture_exe, "/exec", {"code": code}, active=True, **state)
+    assert result["answer"]["status"] == "error" and expected in result["answer"]["error"]
+    assert result["Rollbacks"] == 1 and result["Commits"] == 0
+
+
+def test_pending_commit_is_reported_as_unresolved_not_as_unmodified(fixture_exe):
+    result = run(fixture_exe, "/exec", {"code": "probe"}, active=True, commit_status="Pending")
+    assert "unresolved" in result["answer"]["error"] and "not modified" not in result["answer"]["error"]

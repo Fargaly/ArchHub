@@ -38,14 +38,15 @@ namespace Autodesk.Revit.DB
     {
         public static int Starts, Commits, Rollbacks;
         public static bool RefuseStart;
-        public static TransactionStatus StartResult = TransactionStatus.Started, CommitResult = TransactionStatus.Committed;
+        public static TransactionStatus StartResult = TransactionStatus.Started, CommitResult = TransactionStatus.Committed, RollbackResult = TransactionStatus.RolledBack;
+        public static bool ThrowOnRollback;
         private Document doc; private bool started;
         public Transaction(Document d, string name) { doc = d ?? throw new Exception("null transaction document"); }
         public TransactionStatus Start() { if (RefuseStart) throw new Exception("fixture start refused"); if (StartResult != TransactionStatus.Started) return StartResult; Starts++; started = doc.IsModifiable = true; return StartResult; }
         public bool HasStarted() => started;
         public TransactionStatus GetStatus() => started ? TransactionStatus.Started : TransactionStatus.Committed;
         public TransactionStatus Commit() { Commits++; started = doc.IsModifiable = false; return CommitResult; }
-        public void RollBack() { Rollbacks++; started = doc.IsModifiable = false; }
+        public TransactionStatus RollBack() { Rollbacks++; if (ThrowOnRollback) { started = false; throw new Exception("fixture rollback refused"); } started = doc.IsModifiable = false; return RollbackResult; }
         public void Dispose() { if (started) RollBack(); }
     }
     public enum ExportRange { SetOfViews }

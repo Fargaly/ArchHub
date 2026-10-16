@@ -360,11 +360,14 @@ test('cold graph panel rereads its durable message after leaving, reopening, and
     const panel = () => ui.doc.querySelector('aside[aria-label="Selection inspector"]');
     await ui.wait(() => panel()?.textContent.includes(report.graph.message), 'first cold graph transcript arrives');
     const firstReads = ui.requests.filter(row => row.url.includes('/workshop-transcript?')).length;
-    ui.click(ui.doc.querySelector('button[title="Chats"]'));
+    ui.click(ui.doc.querySelector('button[aria-label="Chats"]'));
     ui.click(ui.doc.querySelector('button[aria-label="Home"]'));
-    await ui.wait(() => !panel(), 'Home unmounts the graph conversation');
-    const card = [...ui.doc.querySelectorAll('[data-home-page] button')].find(row => row.textContent.includes(ui.graphTitle));
-    ui.click(card);
+    await ui.wait(() => ui.doc.querySelector('[data-home-page]') && !panel(), 'Home unmounts the graph conversation');
+    // Home 082 keeps saved graphs in Chats, rather than the retired Home grid.
+    ui.click(ui.doc.querySelector('button[aria-label="Chats"]'));
+    const card = () => [...ui.doc.querySelectorAll('[data-left-panel] button')].find(row => row.textContent.includes(ui.graphTitle));
+    await ui.wait(card, 'Chats lists the saved graph after leaving Home');
+    ui.click(card());
     await ui.wait(() => panel()?.textContent.includes(report.graph.message), 'reopened graph message arrives from transcript readback');
     assert.ok(ui.requests.filter(row => row.url.includes('/workshop-transcript?')).length > firstReads, 'reopen actually rereads history');
     const memberCard = ui.doc.querySelector('.lm-node[data-node-id="' + report.group.root + '"]');

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import sqlite3
 import time
 from typing import Callable, Iterable
 import uuid
@@ -102,30 +103,12 @@ def _atomic_text(path: Path, value: str) -> None:
 
 
 class _AcceptedSnapshotProof:
-    """Remember that this exact history already proved its bootstrap digest.
-
-    Opening the authority rebuilt the accepted snapshot from every stored
-    version and hashed all of it -- three hundred and fifty thousand cells
-    on the founder's graph, minutes of work, on every single start, to
-    re-confirm a fact about a revision that can never change.
-
-    The store is append-only, so the accepted prefix is immutable: if the
-    rows that compose it are the same rows, the digest is the same digest.
-    The proof therefore records the digest together with a fingerprint of
-    that prefix -- how many versions exist at or before the accepted
-    revision, and the newest row among them. Any rewrite of history moves
-    those numbers and the full verification runs again. Nothing is skipped
-    on a graph that has changed underneath us.
-    """
+    """Cache verified prefix digests; any changed row fingerprint re-verifies."""
 
     def __init__(self, generation: Path) -> None:
         self._path = generation / "accepted-proof.json"
 
-    # Proof strings carry which prefix formula made them: "v2-" marks the
-    # chained digest (only the rows of the revisions since the last
-    # recorded link are hashed); a bare digest is the v1 fold over every
-    # row, kept verifiable so a proof recorded before the change still
-    # stands once -- after which the chained form is recorded instead.
+    # v2 chains appended revisions; legacy bare digests remain verifiable.
     @staticmethod
     def _content(store, revision: int, like):
         if like is not None and like.split(":")[-1].startswith("v2-"):
@@ -184,16 +167,7 @@ class _AcceptedSnapshotProof:
             pass
 
     def head_floor_revision(self, store) -> int | None:
-        """The revision whose head this generation already audited whole.
-
-        Re-auditing rebuilds one full snapshot per revision back to the
-        beginning, so a graph that has been worked on pays its entire
-        history again on every start to re-prove revisions it proved
-        yesterday. The recorded head says which revision was audited over
-        which append-only prefix; if that prefix still has the same row
-        count and the same newest row, the audit below it still stands and
-        the walk only has to cover what was appended since.
-        """
+        """Reuse an audited head only while its full prefix fingerprint matches."""
         try:
             held = json.loads(self._path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -288,6 +262,102 @@ def open_current_authority(
     except (OSError, UnicodeError) as exc:
         raise InvalidCell("unified authority pointer is unreadable") from exc
     return _open_generation(runtime_root, generation_id, key_provider)
+
+
+def authority_generation_census(location: AuthorityLocation) -> dict[str, object]:
+    """Offline SQL census, without materializing the current or historical graph.
+
+    Cells have no physical kind column. Role incidences and declared shapes are
+    graph-derived categories; atom shapes cover all physical current Cells.
+    This intentionally expensive diagnostic is never called by boot.
+    """
+    connection = sqlite3.connect(location.database_path.as_uri() + "?mode=ro", uri=True)
+    try:
+        connection.execute("BEGIN")
+        atom_shapes = dict(connection.execute(
+            "SELECT CASE WHEN length(atom) = 0 THEN 'empty' ELSE 'payload' END, "
+            "COUNT(*) FROM current_cells GROUP BY 1"
+        ))
+        roles = {root: name for name, root in location.authority.roles.items()}
+        placeholders = ",".join("?" for _ in roles)
+        role_counts = {
+            roles[root]: count for root, count in connection.execute(
+                "SELECT link0, COUNT(*) FROM current_cells WHERE link0 IN ("
+                + placeholders + ") GROUP BY link0", tuple(roles),
+            )
+        }
+        shapes = {root: name for name, root in location.authority.shapes.items()}
+        shape_counts = {
+            shapes.get(root, root): count for root, count in connection.execute(
+                "SELECT link1, COUNT(*) FROM current_cells WHERE link0 = ? GROUP BY link1",
+                (location.authority.role("conforms-to"),),
+            )
+        }
+        return {
+            "cell_count": sum(atom_shapes.values()),
+            "version_cell_count": connection.execute("SELECT COUNT(*) FROM cell_versions").fetchone()[0],
+            "revision_count": connection.execute("SELECT COUNT(*) FROM revisions").fetchone()[0],
+            "page_count": connection.execute("PRAGMA page_count").fetchone()[0],
+            "free_pages": connection.execute("PRAGMA freelist_count").fetchone()[0],
+            "atom_shapes": atom_shapes, "role_counts": role_counts, "shape_counts": shape_counts,
+        }
+    finally:
+        connection.close()
+
+
+def vacuum_authority_fixture(
+    source_root: str | os.PathLike[str],
+    destination_root: str | os.PathLike[str],
+    key_provider: SigningKeyProvider,
+) -> AuthorityLocation:
+    """Verify/select a compacted *offline fixture copy*, preserving all history.
+
+    The empty destination is a new physical runtime with the same signed graph
+    UUID, not a new graph. No source selection or data is rewritten. Proof and
+    accelerator sidecars are regenerated: VACUUM may renumber implicit rowids.
+    This is explicit maintenance only, never part of opening the application.
+    """
+    source, destination = _canonical_root(source_root), _canonical_root(destination_root)
+    if source == destination or source in destination.parents or destination in source.parents:
+        raise InvalidCell("fixture source and destination must be disjoint")
+    live = default_runtime_root().resolve()
+    if any(path == live or live in path.parents or path in live.parents for path in (source, destination)):
+        raise InvalidCell("fixture maintenance refuses the live runtime")
+    if destination.exists():
+        raise InvalidCell("fixture destination must not already exist")
+    # Serialize CURRENT with existing provisioning and refuse a running source
+    # CellStore. Both fences are released on every interrupted maintenance path.
+    provisioning_fence = InterprocessOwnerFence(str(source / ".provision"))
+    try:
+        generation_id = _generation_id((source / CURRENT_NAME).read_text(encoding="ascii"))
+        _generation, database, manifest_path = _generation_paths(source, generation_id)
+        source_fence = InterprocessOwnerFence(str(database))
+        try:
+            manifest_text = manifest_path.read_text(encoding="utf-8")
+            manifest = BootstrapManifest.from_json(manifest_text)
+            if manifest.graph_id != generation_id:
+                raise InvalidCell("generation folder and signed graph identity differ")
+            destination.mkdir(parents=True, exist_ok=False)
+            generation, copied_database, copied_manifest = _generation_paths(destination, generation_id)
+            generation.mkdir(parents=True, exist_ok=False)
+            connection = sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)
+            try:
+                connection.execute("PRAGMA synchronous=FULL")
+                connection.execute("VACUUM INTO ?", (str(copied_database),))
+            finally:
+                connection.close()
+            _atomic_text(copied_manifest, manifest_text)
+            verified = _open_generation(destination, generation_id, key_provider)
+            try:
+                _atomic_text(destination / CURRENT_NAME, generation_id)
+            except Exception:
+                verified.authority.store.close()
+                raise
+            return verified
+        finally:
+            source_fence.close()
+    finally:
+        provisioning_fence.close()
 
 
 def _complete_unselected_generations(
@@ -527,7 +597,9 @@ if __name__ == "__main__":
 
 __all__ = [
     "AuthorityLocation",
+    "authority_generation_census",
     "default_runtime_root",
     "open_current_authority",
     "provision_unified_authority",
+    "vacuum_authority_fixture",
 ]

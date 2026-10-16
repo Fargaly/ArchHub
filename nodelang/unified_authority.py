@@ -4312,38 +4312,8 @@ def revoke_session(
 
 
 _CATALOGUE_NAME_INDEX: "WeakValueDictionary | dict" = {}
-
-
-def _published_names(
-    authority: UnifiedAuthority,
-    caller: CallerCommandCapability,
-) -> Mapping[str, tuple[str, ...]]:
-    """Every published catalogue definition, by name, read once.
-
-    Installers ask this question a definition at a time -- the base
-    catalogue alone asks it thirty-one times -- and each ask walked the
-    whole catalogue. Asking a hundred definitions their NAME by building a
-    hundred whole projections reads every parameter, interface and
-    evidence root of each: 40ms apiece for a few bytes of answer, and 25.7s
-    of a start once the projections were no longer left in a cache by
-    somebody else's walk.
-
-    The index is built once per graph state, for THIS caller: every
-    definition in it passed the same authorization the full read performs,
-    so nothing is answered here that a full read would have refused.
-    """
-    snapshot = authority.store.snapshot()
-    key = (
-        id(snapshot.cells),
-        getattr(caller, "actor_root", ""),
-        getattr(caller, "session_root", ""),
-    )
-    held = _CATALOGUE_NAME_INDEX.get(key)
-    if held is not None and held[0] is snapshot.cells:
-        return held[1]
-    warm = getattr(snapshot.cells, "prefetch_region", None)
-    if warm is not None:
-        warm(authority.manifest.catalogue_root)
+def _catalogue_names_from_snapshot(authority, snapshot):
+    """Derive names from graph structure; authorization stays at lookup."""
     published: dict[str, list[str]] = {}
     for member in read_relation(
         snapshot, authority.manifest.catalogue_root, budget=COMMAND_BUDGET
@@ -4351,14 +4321,6 @@ def _published_names(
         if member.role_id != authority.role("definition"):
             continue
         try:
-            _authorize_semantic_read(
-                authority,
-                snapshot,
-                caller,
-                object_root=member.participant_id,
-                scope_root=authority.manifest.catalogue_root,
-                budget=COMMAND_BUDGET,
-            )
             revision_root = _definition_revision_root(
                 authority, snapshot, member.participant_id
             )
@@ -4380,12 +4342,44 @@ def _published_names(
         if lifecycle != "published" or type(held_name) is not str:
             continue
         published.setdefault(held_name, []).append(member.participant_id)
-    index = MappingProxyType({
+    return MappingProxyType({
         held_name: tuple(roots) for held_name, roots in published.items()
     })
+
+
+def _published_name_index(authority):
+    snapshot = authority.store.snapshot()
+    key = id(snapshot.cells)
+    held = _CATALOGUE_NAME_INDEX.get(key)
+    if held is not None and held[0] is snapshot.cells:
+        return held[1]
+    index = _catalogue_names_from_snapshot(authority, snapshot)
     _CATALOGUE_NAME_INDEX.clear()
     _CATALOGUE_NAME_INDEX[key] = (snapshot.cells, index)
     return index
+
+
+def _admitted_catalogue_roots(authority, caller, roots):
+    snapshot = authority.store.snapshot()
+    admitted = []
+    for root in roots:
+        try:
+            _authorize_semantic_read(
+                authority, snapshot, caller, object_root=root,
+                scope_root=authority.manifest.catalogue_root, budget=COMMAND_BUDGET,
+            )
+        except InvalidCell:
+            continue
+        admitted.append(root)
+    return tuple(admitted)
+
+
+def _published_names(authority, caller):
+    """Keep the existing bulk-reader API filtered by current caller policy."""
+    return MappingProxyType({
+        name: admitted for name, roots in _published_name_index(authority).items()
+        if (admitted := _admitted_catalogue_roots(authority, caller, roots))
+    })
 
 
 def published_definition_named(
@@ -4394,17 +4388,10 @@ def published_definition_named(
     *,
     caller: CallerCommandCapability,
 ) -> str | None:
-    """The root of the one PUBLISHED catalogue definition called ``name``.
-
-    An installer that re-runs its exact commands at every boot only to find
-    the receipts it left re-projects each command at its original revision
-    -- on the founder's graph, 16 s and 37 s at every start for definitions
-    that were published weeks ago. The catalogue the audited head holds
-    already answers the question. None when the name is absent or held by
-    more than one published definition, so the caller falls back to its
-    exact replay and nothing is guessed.
-    """
-    found = list(_published_names(authority, caller).get(name, ()))
+    """One current, caller-authorized PUBLISHED definition, else None."""
+    found = _admitted_catalogue_roots(
+        authority, caller, _published_name_index(authority).get(name, ()),
+    )
     if len(found) != 1:
         return None
     return found[0]

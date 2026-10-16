@@ -184,11 +184,19 @@ test('Home renders and its Nodes control responds before the first catalogue req
     assert.ok(studio.doc.querySelector('[data-home-page] form'), 'Home composer is mounted');
     studio.flush(() => studio.doc.querySelector('[data-rail-panel="Library"]').click());
     await studio.settle(() => studio.libraryReads.length === 1, 'first Nodes open requests the catalogue');
-    const panel = studio.doc.querySelector('[data-left-panel]');
-    assert.ok(panel.textContent.includes('Loading nodes'), 'first open shows pending state');
-    assert.ok(studio.doc.querySelector('[data-home-page]'), 'Home remains mounted and responsive while Nodes reads');
+    let panel = studio.doc.querySelector('[data-left-panel]');
+    assert.match(panel.textContent, /(?:Loading|Reading) nodes/, 'first open shows pending state');
+    studio.flush(() => studio.doc.querySelector('[data-app-rail] [data-rail-panel="Home"]').click());
+    await studio.settle(() => studio.doc.querySelector('[data-home-page]'), 'Home responds while the catalogue remains unresolved');
+    assert.equal(studio.libraryReads.length, 1, 'returning Home does not restart the pending read');
+    studio.flush(() => studio.doc.querySelector('[data-rail-panel="Library"]').click());
+    await studio.settle(() => {
+      panel = studio.doc.querySelector('[data-left-panel]');
+      return panel && /(?:Loading|Reading) nodes/.test(panel.textContent);
+    }, 'Library reopens on the same pending catalogue');
+    assert.equal(studio.libraryReads.length, 1, 'Library reopening reuses the pending read');
     studio.libraryReads[0].resolve(served);
-    await studio.settle(() => !panel.textContent.includes('Loading nodes'), 'Nodes catalogue loaded');
+    await studio.settle(() => !/(?:Loading|Reading) nodes/.test(panel.textContent), 'Nodes catalogue loaded');
     const input = panel.querySelector('input');
     assert.equal(input.placeholder, 'Search ' + visibleCount + ' nodes');
     studio.flush(() => {
@@ -248,7 +256,7 @@ for (const failure of ['refused', 'missing']) test('first Workspace ' + failure 
     await studio.settle(() => studio.doc.querySelector('[data-workspace-canvas-loading] [role="alert"]'), 'the refusal is visible');
     assert.equal(studio.doc.querySelector('main:not([data-home-page]):not([data-workspace-canvas-loading])'), null);
     const refusal = studio.doc.querySelector('[data-workspace-canvas-loading]');
-    assert.ok(refusal.textContent.includes('The canvas could not be loaded:'));
+    assert.match(refusal.textContent, /(?:The canvas could not be loaded:|Canvas unavailable)/);
     if (failure === 'refused') assert.ok(refusal.textContent.includes('scope read refused'));
     studio.flush(() => button(refusal, 'Retry').click());
     await studio.settle(() => studio.canvasReads.length === 2, 'Retry performs a fresh verified read');
@@ -309,9 +317,10 @@ test('Home node overlay preserves refusal, Retry, complete catalogue rows, and c
     studio.flush(() => button(studio.doc, '/ node').click());
     await studio.settle(() => studio.libraryReads.length === 1, 'overlay first open requests the catalogue');
     studio.libraryReads[0].reject(new Error('library endpoint refused'));
-    await studio.settle(() => [...studio.doc.querySelectorAll('[role="alert"]')].find(row => row.textContent.includes('node library')), 'refusal is visible');
+    await studio.settle(() => [...studio.doc.querySelectorAll('[role="alert"]')].find(row => row.textContent.includes('library endpoint refused')), 'refusal is visible');
     const overlay = [...studio.doc.querySelectorAll('[role="dialog"]')].find(row => row.querySelector('input[placeholder^="Search"]'));
-    assert.ok(overlay.textContent.includes('The node library could not be loaded: library endpoint refused'));
+    assert.match(overlay.textContent, /(?:The node library could not be loaded:|Library unavailable)/);
+    assert.ok(overlay.textContent.includes('library endpoint refused'));
     studio.flush(() => button(overlay, 'Retry').click());
     await studio.settle(() => studio.libraryReads.length === 2, 'Retry requests the same verified endpoint');
     studio.libraryReads[1].resolve(served);

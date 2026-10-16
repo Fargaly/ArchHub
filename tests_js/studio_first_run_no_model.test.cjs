@@ -25,7 +25,7 @@ function projected(raw) {
   return JSON.parse(context.graph);
 }
 
-async function mountStudio({models, signin, select, raw, selected = null, home = false} = {}) {
+async function mountStudio({models, signin, select, raw, selected = null, home = false, authority, hub} = {}) {
   const manifest = JSON.parse(read('nodelang/studio/compiled/manifest.json'));
   for (const source of ['studio-lm.jsx', 'studio-account.jsx']) {
     const held = manifest.files.find(file => file.source === source);
@@ -52,9 +52,14 @@ async function mountStudio({models, signin, select, raw, selected = null, home =
   const owner = {getSnapshot:() => snapshot, subscribe:() => () => {}, watchApplicationUpdate:() => () => {}};
   win.ARCHHUB_EXISTING_WORKSHOP = new Proxy(owner, {get:(target, key) => key in target || typeof key !== 'string' ||
     key === 'then' ? target[key] : () => new Promise(() => {})});
+  if (authority) win.ARCHHUB_STUDIO_AUTHORITY = authority;
+  if (hub) win.ARCHHUB_TOOL_HUB = hub;
   win.ARCHHUB_LIVE = {sessions:[{id:'graph-a', title:'ArchHub', state:'idle', file:'Graph composition'}],
     currentGraph:'graph-a', hosts:[], connectors:[], graph, memory:[], skills:[]};
   if (!home) win.ARCHHUB_BOOT = {...(win.ARCHHUB_BOOT || {}), open_graph:win.ARCHHUB_LIVE.currentGraph};
+  win.addEventListener('archhub-home-ready', () => {
+    win.__homeReadyHasDOM = !!win.document.querySelector('[data-home-page]');
+  });
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
   for (const file of manifest.files) {
@@ -87,6 +92,104 @@ const answer = (state, route, families) => ({state, route, actions:state === 're
 const NO_MODEL = answer('no_model', '', fam());
 const JARGON = /OPENROUTER_API_KEY|ARCHHUB_CLOUD_TOKEN|secrets store/;
 const click = (studio, node) => studio.flush(() => node.dispatchEvent(new studio.win.MouseEvent('click', {bubbles:true})));
+
+test('BOOT2 Home accepts clicks while graph warm-up remains pending', async () => {
+  let loads = 0;
+  const snapshot = {canvas:{projection:'home', graph_id:'graph-a', root:'scope-a', revision:7,
+    authorization:{subject:'owner-a',session:'view-a'}, scope:{current:'scope-a'}, nodes:[],
+    warmup:{state:'almost_ready'}}, graph:{nodes:[],wires:[]}, library:[], workshops:[]};
+  const authority = {getSnapshot:() => snapshot, subscribe:() => () => {},
+    load:() => {loads += 1; return new Promise(() => {});}};
+  const studio = await mountStudio({home:true, authority,
+    models:{ok:true, groups:[], selected_route:'', default_route:'', readiness:NO_MODEL}});
+  try {
+    await settle(studio.win);
+    assert.ok(studio.doc.querySelector('[data-home-page]'));
+    assert.equal(studio.win.__homeReadyHasDOM, true, 'Home-ready is emitted after Home commits to the DOM');
+    assert.equal([...studio.doc.querySelectorAll('div')].some(node => node.style.zIndex === '200' &&
+      node.style.inset === '0'), false, 'no decorative boot overlay blocks the committed Home');
+    const choose = buttonIn(studio.doc.querySelector('[data-home-page]'), 'Choose a model');
+    assert.ok(choose && !choose.disabled);
+    click(studio, choose);
+    await settle(studio.win);
+    assert.ok(studio.doc.querySelector('[role="dialog"][aria-label="Choose a model"]'), 'Home click opens the model picker');
+    assert.equal(loads, 0, 'Home controls do not wait for the graph projection');
+  } finally {studio.close();}
+});
+
+test('BOOT2 Settings Studio card loads the deferred graph before showing its canvas', async () => {
+  const {settingsNavigator} = require('./settings_navigation_helpers.cjs');
+  const captured = JSON.parse(read('tests_js/fixtures/clean-canvas-fresh-runtime.json'));
+  const node = captured.nodes[0];
+  const shown = {id:node.id, title:node.label, cat:node.category || 'Definitions',
+    x:0, y:0, w:220, h:110, ins:[], outs:[], params:[], live:true};
+  let calls = 0;
+  let snapshot = {canvas:{projection:'home', graph_id:'graph-a', root:'scope-a', revision:7,
+    authorization:{subject:'owner-a',session:'view-a'}, scope:{current:'scope-a'}, nodes:[]},
+    graph:{nodes:[],wires:[]}, library:[], workshops:[]};
+  const listeners = new Set();
+  const authority = {getSnapshot:() => snapshot, subscribe:fn => {listeners.add(fn);return () => listeners.delete(fn);},
+    load:async () => {
+      calls += 1;
+      snapshot = {...snapshot, canvas:{...snapshot.canvas, projection:undefined, nodes:[node]},
+        graph:{nodes:[shown],wires:[]}};
+      listeners.forEach(fn => fn());
+      return snapshot.canvas;
+    }};
+  const studio = await mountStudio({home:true, authority, hub:{ok:true,waiting:[],tools:[
+    {id:'studio',label:'Studio',state:'running',description:'Canvas, chats and graph sessions.'},
+  ]}, models:{ok:true,groups:[],selected_route:'',default_route:'',readiness:NO_MODEL}});
+  try {
+    await settle(studio.win);
+    click(studio, studio.doc.querySelector('[title="Settings"]'));
+    await settle(studio.win);
+    const nav = settingsNavigator({doc:studio.doc, flush:studio.flush, settle:() => settle(studio.win)});
+    const hub = await nav.tab('Hub');
+    click(studio, hub.querySelector('[data-tool-card="studio"]'));
+    await settle(studio.win); await settle(studio.win);
+    assert.equal(calls, 1, 'Studio tool path reads the real graph once');
+    assert.equal(studio.doc.querySelector('[data-home-page]'), null);
+    assert.ok(studio.doc.body.textContent.includes(node.label), 'the loaded graph node is visible');
+  } finally {studio.close();}
+});
+
+test('BOOT2 cold Home opens Docs lazily with refusal, Retry, and source tutorials', async () => {
+  let calls = 0, rejectRead;
+  let snapshot = {canvas:{projection:'home', graph_id:'graph-a', root:'scope-a', revision:7,
+    authorization:{subject:'owner-a',session:'view-a'}, scope:{current:'scope-a'}, nodes:[]},
+    graph:{nodes:[],wires:[]}, library:[], workshops:[]};
+  const listeners = new Set();
+  const authority = {getSnapshot:() => snapshot, subscribe:fn => {listeners.add(fn);return () => listeners.delete(fn);},
+    load:() => {
+      calls += 1;
+      if (calls === 1) return new Promise((resolve, reject) => {rejectRead = reject;});
+      snapshot = {...snapshot, canvas:{...snapshot.canvas, projection:undefined, documentation:{tutorials:[
+        {id:'getting-started', title:'Fixture source tutorial', text:'Returned by the authority reader.'},
+      ]}}};
+      listeners.forEach(fn => fn());
+      return Promise.resolve(snapshot.canvas);
+    }};
+  const studio = await mountStudio({home:true, authority,
+    models:{ok:true,groups:[],selected_route:'',default_route:'',readiness:NO_MODEL}});
+  try {
+    await settle(studio.win);
+    assert.equal(calls, 0, 'Home does not prefetch Docs or the full graph');
+    click(studio, studio.doc.querySelector('[data-rail-panel="Docs"]'));
+    await settle(studio.win);
+    assert.equal(calls, 1, 'Docs opens the existing clean authority reader');
+    const dialog = () => studio.doc.querySelector('[role="dialog"][aria-label="Documentation"]');
+    assert.match(dialog().textContent, /Reading documentation/);
+    rejectRead(new Error('Fixture documentation read refused.'));
+    await settle(studio.win);
+    assert.match(dialog().textContent, /Fixture documentation read refused/);
+    click(studio, buttonIn(dialog(), 'Retry'));
+    await settle(studio.win); await settle(studio.win);
+    assert.equal(calls, 2, 'Retry performs one fresh read');
+    assert.match(dialog().textContent, /Fixture source tutorial/);
+    assert.match(dialog().textContent, /Returned by the authority reader/);
+    assert.doesNotMatch(dialog().textContent, /Documentation is loading/);
+  } finally {studio.close();}
+});
 
 test('Home boot with no route shows an explicit No model state and boot detail', async () => {
   const studio = await mountStudio({home:true,

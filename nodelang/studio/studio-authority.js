@@ -147,7 +147,7 @@
         x:Number.isFinite(canvas.session_x) ? canvas.session_x : -280,
         y:Number.isFinite(canvas.session_y) ? canvas.session_y : -180,
         w:260, h:150, live:true, color:'#7dd3fc', status:'idle',
-        result:baseNodes.length + ' nodes', ins:[], outs:[], params:sessionParamRows(sessionSettings),
+        result:canvas.projection === 'home' ? 'Open graph' : baseNodes.length + ' nodes', ins:[], outs:[], params:sessionParamRows(sessionSettings),
         openable:true, composition:false, memberCount:baseNodes.length,
         contains:[...new Set([...workshops.map(row => row.root), ...baseNodes.map(row => row.id)])],
         session_settings:sessionSettings,
@@ -159,7 +159,7 @@
       if (workshop && (workshop.scope_root !== canvas.root ||
           !workshops.some(row => row.root === workshop.root))) workshop = null;
       const sessions = [{id:sessionSettings.id, title:sessionSettings.name, state:'idle',
-        file:'Revision ' + canvas.revision, last:baseNodes.length + ' nodes',
+        file:'Revision ' + canvas.revision, last:canvas.projection === 'home' ? 'Open graph' : baseNodes.length + ' nodes',
         model:sessionSettings.model, relay_mode:sessionSettings.relay_mode, settings:sessionSettings,
         node:sessionNode.id, contains:sessionNode.contains}];
       snapshot = {canvas, graph: {nodes, wires}, library: [...groups.values()], workshops, workshop, sessions,
@@ -372,7 +372,7 @@
         return readWorkshop(root, workshop.next_before);
       },
       showLatestWorkshop: root => readWorkshop(root, null),
-      load: () => enqueue(() => get('/api/universal/canvas')),
+      load: ({home = false} = {}) => enqueue(() => get('/api/universal/canvas' + (home ? '?screen=home' : ''))),
       create(spec) {
         const intent = ++focusIntent;
         return enqueue(() => {
@@ -650,7 +650,7 @@
       return rawFetch(input, {...(init || {}), headers: headersIn});
     };
     if (session) {
-      const probe = await rawFetch('/api/universal/canvas', {headers: headers()});
+      const probe = await rawFetch('/api/universal/boot', {headers: headers()});
       if (!probe.ok) session = null;
     }
     if (session) global.__archhubSession = session;
@@ -683,7 +683,7 @@
       return result;
     }
     const api = create({get: url => request(url), post: (url, body) => request(url, body)});
-    await api.load();
+    await api.load({home:true});
     global.ARCHHUB_STUDIO_AUTHORITY = api;
     global.__archhubSession = session;
     // A held session the server refuses (403) is replaced once by a fresh sign-in.
@@ -692,6 +692,26 @@
       return signIn();
     };
     global.ARCHHUB_GET_CANVAS = () => api.load();
+    // Reuse the Studio's existing on-open library hook. Home does not load it.
+    let libraryFlight = null;
+    global.AH_LOAD_LIBRARY = (refresh = false) => {
+      if (libraryFlight) return libraryFlight;
+      if (global.AH_LIBRARY_LOADED && !refresh) return Promise.resolve(api.getSnapshot().library);
+      global.AH_LIBRARY_LOADING = true;
+      global.AH_LIBRARY_ERROR = '';
+      libraryFlight = api.load().then(() => {
+        global.AH_LIBRARY_LOADED = true;
+        return api.getSnapshot().library;
+      }).catch(error => {
+        global.AH_LIBRARY_ERROR = error?.message || 'The node library is unavailable.';
+        throw error;
+      }).finally(() => {
+        libraryFlight = null;
+        global.AH_LIBRARY_LOADING = false;
+        global.dispatchEvent?.(new Event('archhub:library-refresh'));
+      });
+      return libraryFlight;
+    };
     global.ARCHHUB_NODE_CREATE = spec => api.create(spec);
     global.ARCHHUB_SET_NODE_PROP = async (root, label, value) => {
       const result = await api.setProperty(root, label, value);

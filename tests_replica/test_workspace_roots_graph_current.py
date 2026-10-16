@@ -31,6 +31,11 @@ from tests_replica.test_workspace_roots_catalogue import _Key
 
 @pytest.fixture()
 def graph(tmp_path, monkeypatch):
+    # The court can run with --basetemp inside the source tree. Keep its fake
+    # built-in workspace separate from the fake client, just as on an instance.
+    built_in = tmp_path / "built-in-archhub"
+    built_in.mkdir()
+    monkeypatch.setattr(roots, "built_in_path", lambda: str(built_in))
     built, provider = _provision_clean_runtime(tmp_path, root_name="graph-current")
     authority = built.location.authority
     keys = WindowsDpapiCallerKeyStore(tmp_path / "graph-current" / "callers.dpapi.json")

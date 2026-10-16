@@ -19,6 +19,32 @@
 <body>
 <div id="root"></div>
 <div id="studio-boot">CONNECTING TO THE GRAPH&hellip;</div>
+<div id="studio-ready-status" role="status" aria-live="polite" hidden
+  style="position:fixed;bottom:16px;right:24px;z-index:100;padding:10px 16px;border:1px solid #303038;border-radius:8px;background:#17171c;color:#ece8e0;font-size:13px"></div>
+<script>
+let runtimeReadinessChecks = 0;
+async function watchRuntimeReadiness() {
+  const status = document.getElementById('studio-ready-status');
+  try {
+    const response = await fetch('/api/universal/boot', {
+      headers:{'X-ArchHub-Session':window.__archhubSession?.token || ''}, cache:'no-store',
+    });
+    if (!response.ok) throw new Error('Readiness is unavailable');
+    const state = await response.json();
+    if (!['almost_ready', 'ready', 'failed'].includes(state.state)) throw new Error('Invalid readiness');
+    status.hidden = state.state === 'ready';
+    status.textContent = state.message;
+    status.dataset.state = state.state;
+    if (state.state === 'almost_ready') {
+      if (++runtimeReadinessChecks < 120) setTimeout(watchRuntimeReadiness, 500);
+      else status.textContent = 'Tools are taking longer to prepare. Reopen ArchHub to check again.';
+    }
+  } catch (_) {
+    status.hidden = false;
+    status.textContent = 'Tool readiness is unavailable. Reopen ArchHub to check again.';
+  }
+}
+</script>
 <script src="/studio/vendor/react.js"></script>
 <script src="/studio/vendor/react-dom.js"></script>
 <script src="/studio/studio-authority.js"></script>
@@ -125,6 +151,7 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       const authority = await window.ArchHubStudioAuthority.boot(window.ARCHHUB_AUTHORITY);
       window.ARCHHUB_THEME = authority.getSnapshot()?.canvas?.configuration?.theme ?? null;
       await mountStudio();
+      watchRuntimeReadiness();
       return;
     }
     let session = window.ARCHHUB_BOOT;

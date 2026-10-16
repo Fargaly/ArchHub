@@ -79,6 +79,8 @@ def test_boot_reads_the_catalogue_once_and_the_first_click_reads_none(
     counts = _count_cold_catalogue_reads(monkeypatch, authority)
     server = _start_clean_server(built, provider)
     try:
+        assert server._boot_ready.wait(15), "background catalogue warm-up did not finish"
+        assert server._boot_error is None
         assert authority.store.revision == revision_before, (
             "an owner opens -- it never writes at boot"
         )
@@ -195,6 +197,8 @@ def test_disk_warmed_flag_does_not_skip_process_store_warm(
     counts = _count_cold_catalogue_reads(monkeypatch, authority)
     server = _start_clean_server(built, provider)
     try:
+        assert server._boot_ready.wait(15)
+        assert server._boot_error is None
         assert counts["read_definition"] > 0
     finally:
         server.close()
@@ -207,6 +211,8 @@ def test_disk_warmed_flag_does_not_skip_process_store_warm(
     )
     second = _start_clean_server(built, provider)
     try:
+        assert second._boot_ready.wait(15)
+        assert second._boot_error is None
         boot_reads = counts["read_definition"]
         assert boot_reads > 0, "disk warmed=true is not a process/store memo"
         counts.update(read_definition=0, prefetch_catalogue=0)

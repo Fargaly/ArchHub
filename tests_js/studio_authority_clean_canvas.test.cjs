@@ -66,7 +66,7 @@ test('the hosted session is one the Chats panel can show', async () => {
     sessionStorage: {getItem: key => held.get(key) ?? null, setItem: (key, value) => held.set(key, value),
       removeItem: key => held.delete(key)},
     fetch: async url => ({ok: true, json: async () => {
-      assert.equal(url, '/api/universal/canvas');
+      assert.equal(url, '/api/universal/canvas?screen=home');
       return captured;
     }})});
   vm.runInContext(source, context);

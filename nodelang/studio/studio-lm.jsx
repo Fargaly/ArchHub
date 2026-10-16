@@ -684,6 +684,11 @@ const StudioLM = () => {
   // in the tab strip so one click reopens it.
   // A deep link (ARCHHUB_BOOT.open_graph) is the only way to start inside a graph.
   const [openId, setOpenId] = React.useState(window.ARCHHUB_BOOT?.open_graph || null);
+  React.useEffect(() => {
+    if (!window.ARCHHUB_BOOT?.open_graph && document.querySelector('[data-home-page]')) {
+      window.dispatchEvent(new CustomEvent('archhub-home-ready'));
+    }
+  }, []);
   const [openTabs, setOpenTabs] = React.useState(() => [window.ARCHHUB_LIVE?.currentGraph || LM_SESSIONS[0]?.id].filter(Boolean));
   const [, refreshLiveProjection] = React.useState(0);
   const [sessionOpenError, setSessionOpenError] = React.useState('');
@@ -795,7 +800,7 @@ const StudioLM = () => {
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [settingsTab, setSettingsTab] = React.useState('hub');
   const [account, setAccount] = React.useState(() => acLoad());
-  const [booting, setBooting] = React.useState(true);
+  const [booting, setBooting] = React.useState(() => window.ARCHHUB_STUDIO_AUTHORITY?.getSnapshot?.()?.canvas?.projection !== 'home');
   const [signUpOpen, setSignUpOpen] = React.useState(false);
   // Readiness is read again whenever what it depends on may have changed: a new
   // pick, or a sign-in (the account dialogs closing, or the Chat state's own
@@ -1071,12 +1076,15 @@ const StudioLM = () => {
     workshopState?.canvas?.root || '',
     (workshopState?.topology?.canvas || workshopState?.canvas)?.authorization?.subject || '',
     (workshopState?.topology?.canvas || workshopState?.canvas)?.authorization?.session || '']);
-  const openSessionView = (id, view) => {
+  const openSessionView = async (id, view) => {
     setLocalFocusId(null);
-    if (id && !window.ARCHHUB_GRAPH_OPEN) {
+    if (id && (window.ARCHHUB_GRAPH_OPEN || authorityState?.canvas?.projection === 'home')) {
+      const opened = await openSession(id);
+      if (!opened?.ok) return;
+    } else if (id) {
       if (!openTabs.includes(id)) setOpenTabs(t => [...t, id]);
       setOpenId(id);
-    } else if (id) openSession(id);
+    }
     setWorkspaceSelection({...view, notice:'', scope:viewScopeForSession(id), pending:false});
   };
   const openTool = (tool, options = {}) => {
@@ -1247,6 +1255,15 @@ const StudioLM = () => {
     const viewFor = targetId => isSystem ? {...canvasWorkspaceView(viewScopeForSession(targetId || id)), mode:'system'} :
       canvasWorkspaceView(viewScopeForSession(targetId || id));
     setToolView(null);
+    if (rootCanvas?.projection === 'home' && window.ARCHHUB_STUDIO_AUTHORITY?.load) {
+      try {
+        await studioRefreshCanvasInPlace();
+        if (generation !== navGeneration.current) return {ok:false, stale:true};
+      } catch (error) {
+        if (generation === navGeneration.current) setSessionOpenError(error?.message || 'Graph opening was refused.');
+        return {ok:false};
+      }
+    }
     setWorkspaceSelection(viewFor(id));
     setSessionOpenError('');
     if (graphId && window.ARCHHUB_GRAPH_OPEN) {
@@ -3228,9 +3245,17 @@ const ToolMainView = ({ view, account, setAccount, onSignOut, onSettings, onHome
 };
 
 // ──────────────────────── WORKSPACE ────────────────────────
-const useDeferredCanvas = () => {
-  const loader = window.ARCHHUB_LOAD_CANVAS;
-  const deferred = window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot()?.topology?.canvas?.canvas_deferred === true;
+const useDeferredCanvas = (needsDocumentation = false) => {
+  const signed = window.ARCHHUB_STUDIO_AUTHORITY;
+  const signedLoader = React.useCallback(() => {
+    const held = signed.getSnapshot()?.canvas;
+    return held?.projection !== 'home' && (!needsDocumentation || held?.documentation?.tutorials?.length)
+      ? Promise.resolve(held) : signed.load();
+  }, [signed, needsDocumentation]);
+  const loader = signed ? signedLoader : window.ARCHHUB_LOAD_CANVAS;
+  const held = signed?.getSnapshot()?.canvas;
+  const deferred = signed ? held?.projection === 'home' || needsDocumentation && !held?.documentation?.tutorials?.length
+    : window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot()?.topology?.canvas?.canvas_deferred === true;
   const [state, setState] = React.useState(() => ({pending:!!loader && deferred, error:''}));
   const [attempt, setAttempt] = React.useState(0);
   React.useEffect(() => {
@@ -3239,7 +3264,7 @@ const useDeferredCanvas = () => {
     setState({pending:deferred, error:''});
     const timer = deferred ? setTimeout(() => {
       if (active) setState({pending:false, error:'The canvas did not answer. Check the connection and retry.'});
-    }, 1900) : null;
+    }, signed ? 30000 : 1900) : null;
     Promise.resolve().then(loader).then(() => {
       clearTimeout(timer);
       if (active) setState({pending:false, error:''});
@@ -3248,7 +3273,7 @@ const useDeferredCanvas = () => {
       if (active) setState({pending:false, error:error?.message || 'Canvas reading was refused.'});
     });
     return () => {active = false; clearTimeout(timer);};
-  }, [loader, deferred, attempt]);
+  }, [loader, deferred, attempt, signed]);
   return {...state, retry:() => setAttempt(value => value + 1)};
 };
 // Loading this face is the only point where its code enters Studio.
@@ -11820,6 +11845,7 @@ const docsBuild = () => {
 
 const Docs = ({ onClose, onHome }) => {
   const [sec, setSec] = React.useState('start');
+  const canvasRead = useDeferredCanvas(true);
   const build = docsBuild();
   const authorityState = useStudioProjection();
   useLiveCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS);
@@ -11931,11 +11957,16 @@ const Docs = ({ onClose, onHome }) => {
         </div>
         <div className="ah-scroll" style={{ gridColumn:'2', gridRow:'2', overflow:'auto', padding:`20px ${LM.sp.xl}px ${LM.sp.xl}px` }}>
           {build && <DP data-docs-build="">Build {build}</DP>}
+          {canvasRead.pending || canvasRead.error || !tutorials.length ? <window.AH_DS.EmptyState
+            title={canvasRead.pending ? 'Reading documentation…' : 'Documentation unavailable'}
+            error={!!canvasRead.error} detail={canvasRead.error}
+            onRetry={canvasRead.pending ? undefined : canvasRead.retry}/> : <>
           {sec === 'start'      && <DocsTutorial page={tutorial('getting-started')}/>}
           {sec === 'canvas'     && <DocsCanvas nodeGroups={projection.nodeGroups} page={tutorial('composer-canvas')}/>}
           {sec === 'connectors' && <DocsConnectors connectorRows={projection.connectorRows} page={tutorial('connectors')}/>}
           {sec === 'brain'      && <DocsTutorial page={tutorial('brain')}/>}
           {!['start', 'canvas', 'connectors', 'brain'].includes(sec) && <DocsTutorial page={tutorial(sec)}/>}
+          </>}
         </div>
       </div>
     </div>

@@ -24,6 +24,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from .agent_session_catalogue import (
     AgentSessionBundle,
+    AgentSessionCatalogue,
     AgentSessionProjection,
     create_agent_session,
     install_agent_session_catalogue,
@@ -33,6 +34,7 @@ from .clean_agent_coordination import BoundAgentSession, GraphAgentCoordinator
 from .clean_runtime_bootstrap import BOOTSTRAP_NAMESPACE
 from .coordination_workshop import (
     CoordinationMessageProjection,
+    WorkshopCatalogue,
     install_workshop_catalogue,
 )
 from .runtime_caller_capability import WindowsDpapiCallerKeyStore
@@ -324,6 +326,23 @@ def _base_catalogue_reconciliation_decision(
     return bool(missing or effective_changed), effective_changed
 
 
+def _boot_catalogue_source_hash() -> str | None:
+    """Installer and resolver changes invalidate disposable boot reuse."""
+    from pathlib import Path
+    from .base_universal_catalogue import base_universal_catalogue_hash
+
+    digest = hashlib.sha256(base_universal_catalogue_hash().encode("ascii"))
+    try:
+        for name in (
+            "agent_session_catalogue.py", "coordination_workshop.py", "base_universal_catalogue.py",
+            "clean_coordination_host.py", "unified_authority.py",
+        ):
+            digest.update((Path(__file__).parent / name).read_bytes())
+    except OSError:
+        return None  # Source unavailable: use the existing presence installers.
+    return digest.hexdigest()
+
+
 class CleanCoordinationHost:
     """Single authority owner for authenticated provider adapters."""
 
@@ -353,45 +372,65 @@ class CleanCoordinationHost:
         self._founder = key_store.bind_bootstrap(authority, "founder.bootstrap")
         _boot_note("bind_bootstrap %.1fs" % (time.monotonic() - _t), runtime_root)
         _t = time.monotonic()
-        self._sessions = install_agent_session_catalogue(
-            authority,
-            operation_id=str(uuid.uuid5(
-                BOOTSTRAP_NAMESPACE,
-                "agent-session-catalogue:v1",
-            )),
-            caller=self._founder,
-        )
-        _boot_note("agent session catalogue %.1fs" % (time.monotonic() - _t), runtime_root)
-        _t = time.monotonic()
-        self._workshop = install_workshop_catalogue(
-            authority,
-            operation_id=str(uuid.uuid5(
-                BOOTSTRAP_NAMESPACE,
-                "workshop-catalogue:v1",
-            )),
-            caller=self._founder,
-        )
-        _boot_note("workshop catalogue %.1fs" % (time.monotonic() - _t), runtime_root)
-        _t = time.monotonic()
-        from .base_universal_catalogue import (
-            BASE_CATALOGUE,
-            base_universal_catalogue_hash,
-            install_base_universal_catalogue,
-        )
+        from .unified_authority import published_definition_named
         from .stability_runtime import (
-            catalogue_refresh_required,
-            read_generation_state,
-            write_generation_state,
+            catalogue_refresh_required, read_generation_state, write_generation_state,
         )
-        source_hash = base_universal_catalogue_hash()
+        from .base_universal_catalogue import (
+            BASE_CATALOGUE, base_universal_catalogue_hash, install_base_universal_catalogue,
+        )
+        installer_hash = _boot_catalogue_source_hash()
+        source_hash = installer_hash or base_universal_catalogue_hash()
+        state = read_generation_state(runtime_root) if runtime_root else {}
+        changed, generation = catalogue_refresh_required(
+            runtime_root or ".", authority, source_hash=source_hash,
+        )
+        unchanged = bool(runtime_root and state and installer_hash and not changed)
+        session_root = published_definition_named(
+            authority, "Agent session state", caller=self._founder,
+        ) if unchanged else None
+        if session_root is not None:
+            self._sessions = AgentSessionCatalogue(session_root)
+        else:
+            self._sessions = install_agent_session_catalogue(
+                authority,
+                operation_id=str(uuid.uuid5(
+                    BOOTSTRAP_NAMESPACE, "agent-session-catalogue:v1",
+                )),
+                caller=self._founder,
+            )
+        _boot_note("agent session catalogue %.1fs (%s)" % (
+            time.monotonic() - _t,
+            "unchanged skipped" if session_root is not None else "installed/present",
+        ), runtime_root)
+        _t = time.monotonic()
+        workshop_roots = tuple(
+            published_definition_named(authority, name, caller=self._founder)
+            for name in ("Coordination plan", "Work assignment", "Work evidence",
+                         "Independent review", "Coordination message")
+        ) if unchanged else ()
+        if workshop_roots and all(workshop_roots):
+            self._workshop = WorkshopCatalogue(*workshop_roots)
+        else:
+            self._workshop = install_workshop_catalogue(
+                authority,
+                operation_id=str(uuid.uuid5(
+                    BOOTSTRAP_NAMESPACE, "workshop-catalogue:v1",
+                )),
+                caller=self._founder,
+            )
+        _boot_note("workshop catalogue %.1fs (%s)" % (
+            time.monotonic() - _t,
+            "unchanged skipped" if workshop_roots and all(workshop_roots)
+            else "installed/present",
+        ), runtime_root)
+        _t = time.monotonic()
         changed, generation = catalogue_refresh_required(
             runtime_root or ".",
             authority,
             source_hash=source_hash,
         )
-        state = read_generation_state(runtime_root) if runtime_root else {}
         names = tuple(entry["name"] for entry in BASE_CATALOGUE)
-        from .unified_authority import published_definition_named
         existing = {
             name: published_definition_named(authority, name, caller=self._founder)
             for name in names
@@ -423,13 +462,6 @@ class CleanCoordinationHost:
             self._base_catalogue = {
                 name: root for name, root in existing.items() if root is not None
             }
-            if runtime_root and not state:
-                write_generation_state(
-                    runtime_root,
-                    source_hash=source_hash,
-                    generation=generation,
-                    warmed=False,
-                )
             verdict = "unchanged skipped"
         # An owner does not write to the founder's graph at boot. The
         # expression cells and any visual-system upgrade are migrations

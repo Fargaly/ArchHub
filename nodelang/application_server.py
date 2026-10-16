@@ -1289,8 +1289,7 @@ class _CleanAuthorityHttpServer:
         self.authority_key_provider = authority_key_provider
         from .private_root_grants import PrivateRootGrantStore
         self.private_root_grants = PrivateRootGrantStore(
-            private_root_grants_path,
-            provider=private_root_grant_provider or authority_key_provider,
+            private_root_grants_path, provider=private_root_grant_provider or authority_key_provider,
         )
         self.clean_caller = scope_caller
         self.clean_scope_root = scope_root
@@ -1298,141 +1297,14 @@ class _CleanAuthorityHttpServer:
         # local program can type. Minted per boot, embedded in the page
         # this desktop renders, and required to sign in.
         self.clean_canvas_key = secrets.token_urlsafe(32)
-        # The interaction set is derived from the scope tree and the
-        # published catalogue -- the same facts the persisted table merely
-        # repeats (equivalence court: test_derived_interactions_equivalence).
-        # Deriving here means a publish no longer has to rewrite the table
-        # for every scope, and a graph whose table was retired still serves
-        # every control. The persisted table, where present, remains the
-        # source of interaction CELLS for reads; the derivation is the
-        # source of the binding map.
-        import time as _time
-        _d0 = _time.perf_counter()
-        # Only the scope in front of the founder, and the children it can
-        # open. Expanding the whole tree derived 31,480 bindings over 318
-        # scopes -- 1,290,811 cells, 12.7s of every start -- to serve one
-        # screen. A scope is expanded when it is stood in.
-        self._derived_scope_roots = (scope_root,)
-        try:
-            derived, derived_cells = derive_clean_scope_interactions(
-                authority,
-                browser_authority,
-                scope_root,
-                caller=scope_caller,
-                roots=self._derived_scope_roots,
-                depth=1,
-            )
-        except InvalidCell:
-            # A scope root the graph does not hold, or one this caller
-            # may not read, derives nothing. The server still stands and
-            # every request against that scope is refused where it always
-            # was -- at the request, with a 403 that names the scope --
-            # rather than the process dying at construction.
-            derived, derived_cells = None, ()
-        try:
-            installed = open_clean_scope_interactions(
-                authority,
-                caller=scope_caller,
-            )
-        except Exception:
-            installed = None
-        # The table covers the whole tree, so its staleness is judged
-        # against the whole tree -- never against the one scope this
-        # server built cells for, which would call every table stale.
-        whole_digest = None
-        if installed is not None:
-            try:
-                whole_digest = clean_scope_source_digest(
-                    authority, scope_root, caller=scope_caller,
-                )
-            except InvalidCell:
-                whole_digest = None
-        if installed is not None and (
-            whole_digest is None or installed.source_digest != whole_digest
-        ):
-            # The table was written for an older scope tree or catalogue.
-            # The derivation reads the graph as it is now; the stale table
-            # would refuse controls for everything added since. Serving the
-            # derivation is serving the graph.
-            installed = None
-        # WHICH set is being served decides which digest a rebase must
-        # compare against: the installed table's digest describes the whole
-        # scope tree, the derivation's describes the scopes actually
-        # expanded. Comparing one against the other refused every rebase
-        # ("projection_lease_expired" on a click after any unrelated
-        # commit), because the two can never be equal.
-        self._interactions_are_installed = installed is not None
-        self.clean_scope_interactions = installed or derived
-        self._derived_interaction_cells = (
-            () if installed is not None else derived_cells
-        )
-        self._record_gesture_timing(
-            "boot: derive interactions + open table %.1fs "
-            "(derived cells=%d scopes=%d bindings=%d)"
-            % (
-                _time.perf_counter() - _d0, len(derived_cells or ()),
-                len(getattr(derived, "bindings", {}) or {}),
-                sum(
-                    len(controls)
-                    for controls in (
-                        getattr(derived, "bindings", {}) or {}
-                    ).values()
-                ),
-            )
-        )
-        # The first click after a boot paid the whole cold catalogue: GET
-        # canvas 79.5s on 2026-08-27, 58.1s of it the lens reading every
-        # published definition, because the lens memos are process memory
-        # and a boot filled none of them. Read the catalogue once here,
-        # before any surface answers. The definition memos are kept by
-        # read set, so the browser's sign-in commit does not discard them.
-        # A read only -- an owner opens, never installs -- and a graph
-        # without a catalogue, or a caller it refuses, costs nothing here
-        # and is refused where it always was: at the request.
-        _w0 = _time.perf_counter()
-        try:
-            import os as _os
-            from pathlib import Path as _Path
-            from .base_universal_catalogue import base_universal_catalogue_hash
-            from .stability_runtime import (
-                catalogue_refresh_required,
-                write_generation_state,
-            )
-            runtime_root = (
-                _Path(_os.environ.get("LOCALAPPDATA", ""))
-                / "ArchHub" / "unified-authority"
-            )
-            source_hash = base_universal_catalogue_hash()
-            refresh, generation = catalogue_refresh_required(
-                runtime_root,
-                authority,
-                source_hash=source_hash,
-                require_warmed=True,
-            )
-            if not refresh and _catalogue_memo_warmed(authority, scope_caller):
-                warmed = 0
-                warm_verdict = "unchanged skipped"
-            else:
-                from .unified_application_lens import _catalogue as _warm_catalogue
-                warmed = len(_warm_catalogue(authority, scope_caller))
-                write_generation_state(
-                    runtime_root,
-                    source_hash=source_hash,
-                    generation=generation,
-                    warmed=True,
-                )
-                warm_verdict = "changed warmed"
-        except Exception as exc:
-            warmed = -1
-            try:
-                from .stability_runtime import root_cause_line
-                warm_verdict = "failed at " + root_cause_line(exc)
-            except Exception:
-                warm_verdict = "failed"
-        self._record_gesture_timing(
-            "boot: warm catalogue %.1fs (definitions=%d; %s)"
-            % (_time.perf_counter() - _w0, warmed, warm_verdict)
-        )
+        self._boot_started = time.perf_counter()
+        self._boot_ready = threading.Event()
+        self._boot_error = None
+        self._boot_warmup_started = False
+        self._derived_scope_roots = ()
+        self._interactions_are_installed = False
+        self.clean_scope_interactions = None
+        self._derived_interaction_cells = ()
         self.clean_interaction_broker = InteractionProjectionBroker()
         self._clean_projection_handles: dict[str, object] = {}
         self._clean_projection_cache: dict[tuple, tuple] = {}
@@ -1459,6 +1331,115 @@ class _CleanAuthorityHttpServer:
         )
         self.httpd = QuietThreadingHTTPServer((host, port), self._make_handler())
         self.thread = None
+
+    def _prepare_clean_interactions(self):
+        authority = self.clean_authority
+        browser_authority = self.clean_browser_authority
+        scope_caller = self.clean_caller
+        scope_root = self.clean_scope_root
+        # Derive binding maps; an installed table remains the Cell read source.
+        import time as _time
+        _d0 = _time.perf_counter()
+        # Expand further scopes only when opened.
+        self._derived_scope_roots = (scope_root,)
+        try:
+            derived, derived_cells = derive_clean_scope_interactions(
+                authority, browser_authority, scope_root, caller=scope_caller,
+                roots=self._derived_scope_roots, depth=1,
+            )
+        except InvalidCell:
+            # Invalid scopes still refuse at request admission.
+            derived, derived_cells = None, ()
+        try:
+            installed = open_clean_scope_interactions(authority, caller=scope_caller)
+        except Exception:
+            installed = None
+        # Judge a persisted whole-tree table against the whole-tree digest.
+        whole_digest = None
+        if installed is not None:
+            try:
+                whole_digest = clean_scope_source_digest(
+                    authority, scope_root, caller=scope_caller,
+                )
+            except InvalidCell:
+                whole_digest = None
+        if installed is not None and (
+            whole_digest is None or installed.source_digest != whole_digest
+        ):
+            # Stale tables must never replace current derived bindings.
+            installed = None
+        # Rebase against the digest of the interaction set actually served.
+        self._interactions_are_installed = installed is not None
+        self.clean_scope_interactions = installed or derived
+        self._derived_interaction_cells = (
+            () if installed is not None else derived_cells
+        )
+        self._record_gesture_timing(
+            "boot: derive interactions + open table %.1fs "
+            "(derived cells=%d scopes=%d bindings=%d)"
+            % (
+                _time.perf_counter() - _d0, len(derived_cells or ()),
+                len(getattr(derived, "bindings", {}) or {}),
+                sum(
+                    len(controls) for controls in (getattr(derived, "bindings", {}) or {}).values()
+                ),
+            )
+        )
+
+    def _warm_clean_runtime(self):
+        """One read-only warm-up, owned/drained by the existing server lifecycle."""
+        try:
+            self._prepare_clean_interactions()
+            started = time.perf_counter()
+            from .unified_application_lens import _catalogue
+            skipped = _catalogue_memo_warmed(self.clean_authority, self.clean_caller)
+            warmed = 0 if skipped else len(_catalogue(self.clean_authority, self.clean_caller))
+            self._record_gesture_timing(
+                "boot: warm catalogue %.3fs (definitions=%d; %s)" % (
+                    time.perf_counter() - started, warmed,
+                    "unchanged skipped" if skipped else "changed warmed",
+                )
+            )
+        except Exception as exc:
+            self._boot_error = exc
+            self._record_gesture_timing("boot: warm-up failed at " + type(exc).__name__)
+        finally:
+            self._boot_ready.set()
+            self._record_gesture_timing(
+                "boot: warm-up complete %.3fs (%s)" % (
+                    time.perf_counter() - self._boot_started, self._boot_status()["state"],
+                )
+            )
+
+    def _boot_status(self):
+        if self._boot_error is not None:
+            return {"state": "failed", "message": "Some tools are unavailable. Reopen ArchHub to try again."}
+        if self._boot_ready.is_set():
+            return {"state": "ready", "message": "Ready"}
+        return {"state": "almost_ready", "message": "Almost ready — preparing your tools."}
+
+    def _await_clean_warmup(self):
+        if not self._boot_ready.wait(30.0) or self._boot_error is not None:
+            raise InvalidCell("Graph tools are unavailable while warm-up is incomplete or refused")
+
+    def _home(self, binding):
+        """Authenticated Home metadata; graph/catalogue work waits for an open."""
+        from .unified_authority import _authorize_semantic_read, _label_for, COMMAND_BUDGET
+        scope = self._standing_scope(binding)
+        snapshot = self.clean_store.snapshot()
+        _authorize_semantic_read(
+            self.clean_authority, snapshot, self.clean_caller,
+            object_root=scope, scope_root=scope, budget=COMMAND_BUDGET,
+        )
+        label = _label_for(self.clean_authority, snapshot, scope)
+        self._record_gesture_timing("boot: home ready %.3fs" % (time.perf_counter() - self._boot_started))
+        return {"ok": True, "projection": "home", "revision": snapshot.revision,
+                "graph_id": self.clean_authority.manifest.graph_id,
+                "application_root": self.clean_authority.manifest.application_root,
+                "root": scope, "scope": {"current": scope, "current_label": label},
+                "authorization": {"subject": binding.subject_root, "session": binding.view_root},
+                "nodes": [], "wires": [], "catalog": [], "selected": [],
+                "warmup": self._boot_status()}
 
     def _check_workspace_roots(self):
         from .workspace_roots_catalogue import (
@@ -3521,6 +3502,10 @@ class _CleanAuthorityHttpServer:
                 daemon=True,
             )
             self.thread.start()
+        if not self._boot_warmup_started:
+            self._boot_warmup_started = True
+            _start_background_refresh(self, target=self._warm_clean_runtime,
+                                      name="archhub-clean-warmup")
         return self
 
     def close(self):
@@ -3697,15 +3682,12 @@ class _CleanAuthorityHttpServer:
         scope_root: str | None = None,
         at_revision: int | None = None,
     ) -> dict[str, object]:
+        self._await_clean_warmup()
         root_id = self.clean_scope_root if scope_root is None else scope_root
         snapshot = self.authority.store.snapshot()
         if type(root_id) is not str or root_id not in snapshot.cells:
             raise AuthorizationDenied("clean scope root is invalid")
-        # A projection is a function of the graph, the scope and the view.
-        # Drawing fifteen nodes walks three thousand relations, so reading
-        # the same unchanged revision twice paid that twice. The result is
-        # kept per revision; any write moves the revision and the next read
-        # rebuilds, so a reader after a writer never sees the old graph.
+        # Disposable projection cache: immutable snapshot, scope and view.
         lease_key = (
             id(snapshot.cells),
             snapshot.revision,
@@ -3718,10 +3700,7 @@ class _CleanAuthorityHttpServer:
         if held is not None:
             cells, cached = held
             if cells is snapshot.cells:
-                # The cached projection is plain JSON data, and a fresh copy
-                # of it is cheaper to parse than to deep-copy: the lease is
-                # stamped into what the caller receives, so the cached value
-                # must never be the object handed out.
+                # Lease stamping must never mutate the cached projection.
                 import time as _time
                 _c0 = _time.perf_counter()
                 payload = json.loads(cached)
@@ -3734,17 +3713,13 @@ class _CleanAuthorityHttpServer:
                     % (snapshot.revision, _c1 - _c0, _c2 - _c1)
                 )
                 return payload
-        # SPEC 11.14 puts numbers on gestures; the owner records what one
-        # projection actually cost, phase by phase, so the number a court
-        # judges is measured here rather than guessed from outside.
+        # Record the actual gesture phases (SPEC 11.14).
         import time as _time
         _t0 = _time.perf_counter()
-        # Standing in a scope is what makes its controls needed, so this is
-        # where a scope entered for the first time is derived.
+        # Derive only the scope being opened.
         self._expand_scope_interactions(root_id)
         _e1 = _time.perf_counter()
-        # One statement warms this scope's region; without it the first
-        # projection after a start pays a round trip per cell.
+        # Prefetch this scope in one statement.
         warm = getattr(self.authority.store.snapshot().cells, "prefetch_region", None)
         if warm is not None:
             warm(root_id)
@@ -3754,31 +3729,19 @@ class _CleanAuthorityHttpServer:
         )
         lens = scope_lens_payload(
             project_unified_scope(
-                self.clean_authority,
-                root_id,
-                caller=self.clean_caller,
-                view_root=binding.view_root,
-                at_revision=at_revision,
+                self.clean_authority, root_id, caller=self.clean_caller,
+                view_root=binding.view_root, at_revision=at_revision,
             )
         )
         _t1 = _time.perf_counter()
-        visual = open_clean_visual_system(
-            self.clean_authority,
-            caller=self.clean_caller,
-        )
+        visual = open_clean_visual_system(self.clean_authority, caller=self.clean_caller)
         _t2 = _time.perf_counter()
         payload = project_clean_visual_canvas(
-            self.clean_authority,
-            visual,
-            lens,
-            caller=self.clean_caller,
-            session_root=binding.session_root,
-            subject_root=binding.subject_root,
+            self.clean_authority, visual, lens, caller=self.clean_caller,
+            session_root=binding.session_root, subject_root=binding.subject_root,
             interactions=self.clean_scope_interactions,
             door_root=self.clean_scope_root,
-            # getattr, not attribute access: this projection is built on
-            # more than one owner shape, and an AttributeError here is
-            # swallowed by the reuse path's except and retried forever.
+            # Other consumer shapes need not hold undo state.
             can_undo=getattr(self, "_undo_entry", None) is not None,
             can_redo=getattr(self, "_redo_entry", None) is not None,
             door_label=self._door_label(snapshot),
@@ -4264,13 +4227,7 @@ class _CleanAuthorityHttpServer:
 
             def _json(self, status: int, payload: Mapping[str, object]):
                 raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-                # A canvas answer is three quarters of a megabyte of highly
-                # repetitive JSON -- the same keys, the same shapes, once per
-                # node and once per port -- and it was going over the wire
-                # whole. Compressing it changes no fact the caller receives,
-                # only how many bytes carry them, and every browser asks for
-                # it. Small answers are left alone: framing them costs more
-                # than it saves.
+                # Compress repetitive large answers only when the browser accepts gzip and it saves bytes.
                 encoding = None
                 if len(raw) >= 2048:
                     accepted = (self.headers.get("Accept-Encoding") or "")
@@ -4293,13 +4250,7 @@ class _CleanAuthorityHttpServer:
                 self.wfile.write(raw)
 
             def _token(self) -> str:
-                # Header only, deliberately. A cookie would be ambient
-                # authority -- any request carrying it authenticates itself
-                # -- and cookies are NOT port-scoped, so every other
-                # loopback service on this host shares the jar and could
-                # both read the token and set one of its own. The browser
-                # keeps its session in origin-scoped storage and sends it
-                # here explicitly.
+                # Use explicit, origin-scoped session storage; cookies would grant ambient cross-port authority.
                 token = self.headers.get("X-ArchHub-Session", "")
                 if type(token) is not str:
                     return ""
@@ -4349,6 +4300,16 @@ class _CleanAuthorityHttpServer:
             def do_GET(self):
                 if not self._admit_local_request():
                     return
+                if self.path == "/api/universal/boot" or self.path == "/api/universal/canvas?screen=home":
+                    try:
+                        binding = owner._resolve_binding(self._token())
+                        payload = (owner._boot_status() if self.path == "/api/universal/boot"
+                                   else owner._home(binding))
+                    except (AuthorizationDenied, InvalidCell) as exc:
+                        self._json(403, {"ok": False, "error": str(exc)})
+                        return
+                    self._json(200, payload)
+                    return
                 if self.path == "/api/universal/browser-handoff":
                     self._json(403, {
                         "ok": False,
@@ -4356,10 +4317,7 @@ class _CleanAuthorityHttpServer:
                     })
                     return
                 if self.path == "/api/universal/stylesheet":
-                    # Appearance changes with a revision, not with a read.
-                    # Shipping it inside every canvas projection put forty
-                    # kilobytes on the wire for each open and rebuilt it
-                    # every time.
+                    # Serve revision-held appearance separately from canvas projections.
                     try:
                         sheet = owner._clean_stylesheet()
                     except Exception as exc:  # noqa: BLE001
@@ -4393,16 +4351,7 @@ class _CleanAuthorityHttpServer:
                     self.wfile.write(body)
                     return
                 if request_path in ("/", "/index.html", "/studio", "/studio/", "/studio/studio.html"):
-                    # Pure. A safe method must not write: any local page
-                    # could force a signed graph command with an <img> tag,
-                    # and every reload would mint another session in an
-                    # append-only graph. The page carries the bootstrap
-                    # script; signing in is an explicit POST.
-                    #
-                    # Handing the page out freely would hand out the canvas
-                    # key printed inside it, and with it the founder's
-                    # session -- so the page is served only to whoever was
-                    # given the URL this desktop printed.
+                    # GET is pure. Only the desktop page-key holder may receive the founder session bootstrap.
                     from urllib.parse import parse_qs as _parse_qs
                     from urllib.parse import urlparse as _urlparse
                     presented = (_parse_qs(
@@ -4445,10 +4394,7 @@ class _CleanAuthorityHttpServer:
                     return
                 if request_path == "/api/universal/models":
                     try:
-                        # Discovery must never wait on canvas work: both reads
-                        # here read an immutable snapshot, and the recheck that
-                        # the scope did not change is unchanged below. See
-                        # _brief_mutation_lock.
+                        # Immutable-snapshot model discovery must not wait behind canvas writes.
                         with owner._brief_mutation_lock():
                             binding = owner._resolve_binding(self._token())
                             scope = owner._standing_scope(binding)
@@ -4456,17 +4402,13 @@ class _CleanAuthorityHttpServer:
                                                       live_model_groups)
                         from .model_router import default_cloud_session
                         session = default_cloud_session()
-                        # What is already held answers at once and is refreshed
-                        # behind the answer; only a machine with nothing held
-                        # pays the three-source read here.
+                        # Answer held models immediately; refresh independently.
                         held = held_model_groups(session)
                         payload = (groups_with_routes(held) if held is not None
                                    else groups_with_routes(live_model_groups(session)))
                         payload['source_errors'] = {name: 'Provider catalogue unavailable'
                             for name in payload.get('source_errors', {})}
-                        # payload['source_notes'] is the catalogue's own fixed
-                        # vocabulary, never exception text, so it goes out as
-                        # it stands: the cloud group can say to sign in again.
+                        # source_notes is fixed catalogue vocabulary; exception text must not reach the page.
                         with owner._brief_mutation_lock():
                             current = owner._resolve_binding(self._token())
                             if current.session_root != binding.session_root or owner._standing_scope(current) != scope:
@@ -4567,6 +4509,11 @@ class _CleanAuthorityHttpServer:
                     return
                 self._json(200, {"ok": True, **payload})
 
+            def _write_binding(self, csrf_token):
+                return owner._resolve_binding(
+                    self._token(), csrf_token=csrf_token, require_csrf=True,
+                )
+
             def do_POST(self):
                 if not self._admit_local_request():
                     return
@@ -4578,14 +4525,14 @@ class _CleanAuthorityHttpServer:
                 try:
                     body = self._body()
                     csrf_token = self._csrf()
+                    if self.path != "/api/universal/session":
+                        owner._await_clean_warmup()
                     if self.path == "/api/universal/agent":
                         from .clean_agent_conversation import run_clean_agent_conversation
                         with owner._mutation_lock:
-                            binding = owner._resolve_binding(self._token(),
-                                csrf_token=csrf_token, require_csrf=True)
+                            binding = self._write_binding(csrf_token)
                         def current_authority():
-                            current = owner._resolve_binding(self._token(),
-                                csrf_token=csrf_token, require_csrf=True)
+                            current = self._write_binding(csrf_token)
                             if (current.session_root, current.view_root) != (binding.session_root, binding.view_root):
                                 raise AuthorizationDenied('Browser binding changed during conversation')
                         payload = run_clean_agent_conversation(owner, binding, body,
@@ -4600,11 +4547,7 @@ class _CleanAuthorityHttpServer:
                     if self.path == "/api/universal/gesture":
                         try:
                             with owner._mutation_lock:
-                                binding = owner._resolve_binding(
-                                    self._token(),
-                                    csrf_token=csrf_token,
-                                    require_csrf=True,
-                                )
+                                binding = self._write_binding(csrf_token)
                                 payload = owner._clean_gesture(binding, body)
                         except CleanGestureRefused as exc:
                             self._json(403, {"ok": False, "error": str(exc)})
@@ -4613,30 +4556,19 @@ class _CleanAuthorityHttpServer:
                         return
                     if self.path == "/api/universal/connect":
                         with owner._mutation_lock:
-                            binding = owner._resolve_binding(
-                                self._token(),
-                                csrf_token=csrf_token,
-                                require_csrf=True,
-                            )
+                            binding = self._write_binding(csrf_token)
                             payload = owner._clean_connect(binding, body)
                         self._json(200, {"ok": True, **payload})
                         return
                     if self.path == "/api/universal/run-graph":
-                        # Both Studios press Run on this one route. Here it
-                        # is the scope's signed Run control, exactly what the
-                        # interaction route admits for it; nothing else runs,
-                        # and effects run outside the graph lock.
+                        # Both Studios use the same signed Run control; effects run outside the graph lock.
                         payload = owner._clean_run_graph(
                             self._token(), csrf_token, body)
                         self._json(200, {"ok": True, **payload})
                         return
                     if self.path == "/api/universal/execute-adapter":
                         with owner._mutation_lock:
-                            binding = owner._resolve_binding(
-                                self._token(),
-                                csrf_token=csrf_token,
-                                require_csrf=True,
-                            )
+                            binding = self._write_binding(csrf_token)
                             payload = owner._clean_execute_adapter(
                                 binding, body
                             )
@@ -4644,11 +4576,7 @@ class _CleanAuthorityHttpServer:
                         return
                     if self.path == "/api/universal/workspace-roots":
                         with owner._mutation_lock:
-                            owner._resolve_binding(
-                                self._token(),
-                                csrf_token=csrf_token,
-                                require_csrf=True,
-                            )
+                            self._write_binding(csrf_token)
                         # Signing may wait on the owner's prompt, so the
                         # graph lock is taken inside, never held across it.
                         payload = owner._clean_workspace_roots(body)
@@ -4656,11 +4584,7 @@ class _CleanAuthorityHttpServer:
                         return
                     if self.path == "/api/universal/host-enabled":
                         with owner._mutation_lock:
-                            binding = owner._resolve_binding(
-                                self._token(),
-                                csrf_token=csrf_token,
-                                require_csrf=True,
-                            )
+                            binding = self._write_binding(csrf_token)
                             if binding.subject_root != owner.clean_caller.actor_root:
                                 raise AuthorizationDenied(
                                     "only this instance owner changes host connectors"
@@ -4691,11 +4615,7 @@ class _CleanAuthorityHttpServer:
                         return
                     if self.path == "/api/universal/focus":
                         with owner._mutation_lock:
-                            binding = owner._resolve_binding(
-                                self._token(),
-                                csrf_token=csrf_token,
-                                require_csrf=True,
-                            )
+                            binding = self._write_binding(csrf_token)
                             owner._standing_scope(binding, expected_scope=body.get("expected_scope"))
                             scope_root = body.get("scope_root", owner.clean_scope_root)
                             if type(scope_root) is not str or not scope_root:
@@ -4746,11 +4666,7 @@ class _CleanAuthorityHttpServer:
                         with owner._mutation_lock:
                             # Execute is the same Run as /api/universal/
                             # run-graph: effects run outside the graph lock.
-                            owner._resolve_binding(
-                                self._token(),
-                                csrf_token=csrf_token,
-                                require_csrf=True,
-                            )
+                            self._write_binding(csrf_token)
                             executes = owner._clean_control_capability(
                                 body.get("control")
                             ) == CAPABILITY_EXECUTE
@@ -4760,15 +4676,8 @@ class _CleanAuthorityHttpServer:
                             self._json(200, {"ok": True, **payload})
                             return
                         with owner._mutation_lock:
-                            # A control does what the graph says it does.
-                            # Execute is not a scope-open, and answering it
-                            # with one would open a scope the founder never
-                            # asked for instead of running what was pressed.
-                            probe = owner._resolve_binding(
-                                self._token(),
-                                csrf_token=csrf_token,
-                                require_csrf=True,
-                            )
+                            # Dispatch the declared capability: executing must not silently open a scope.
+                            probe = self._write_binding(csrf_token)
                             owner._standing_scope(probe, expected_scope=body.get("expected_scope"))
                             capability = owner._clean_control_capability(
                                 body.get("control")
@@ -4800,22 +4709,13 @@ class _CleanAuthorityHttpServer:
                                     raise InvalidCell("history control operation is not admitted")
                                 self._json(200, {"ok": True, **payload})
                                 return
-                            binding = owner._resolve_binding(
-                                self._token(),
-                                csrf_token=csrf_token,
-                                require_csrf=True,
-                            )
+                            binding = self._write_binding(csrf_token)
                             revision = body.get("revision")
                             if type(revision) is not int:
                                 raise InvalidCell(
                                     "interaction request revision is invalid"
                                 )
-                            # One snapshot for the gate, the lease and the
-                            # submit. Reading the head, then snapshotting
-                            # later, let another client's commit land in
-                            # between: the request rebased onto 916, the
-                            # lease was minted at 917, and the submit refused
-                            # its own rebase ("expected 916, projected 917").
+                            # Use one immutable snapshot for gate, lease and submit; concurrent commits must not split them.
                             snapshot = owner.authority.store.snapshot()
                             current = snapshot.revision
                             is_remove_member = (
@@ -4824,25 +4724,13 @@ class _CleanAuthorityHttpServer:
                                 == "app:control:canvas:remove-member"
                             )
                             if revision != current:
-                                # The client's revision is the head it last
-                                # SAW. Refusing every click because the graph
-                                # moved anywhere at all -- a viewport pan, a
-                                # session mint -- is a global lock, not
-                                # conflict detection (SPEC 8: conflicts are
-                                # about what changed). A scope-open interaction
-                                # reads the scope tree and the catalogue; if
-                                # neither moved since the client's revision,
-                                # the request rebases onto the current head.
-                                # If they did move, the refusal stands and the
-                                # client re-projects.
+                                # Rebase only if the scope/catalogue readset is unchanged (SPEC 8); otherwise re-project.
                                 if owner._interaction_read_set_unchanged(
                                     revision, current
                                 ):
                                     revision = current
                                 else:
-                                    # Same recovery as an expired lease:
-                                    # the client re-projects once and
-                                    # retries against the head it now sees.
+                                    # The client must re-project before retrying.
                                     self._json(409, {
                                         "ok": False,
                                         "error": "expected revision %s, current revision is %s"
@@ -4862,20 +4750,11 @@ class _CleanAuthorityHttpServer:
                                     raise InvalidCell(
                                         "scope interaction %s is invalid" % label
                                     )
-                            # The scope this interaction is taken FROM is a
-                            # fact of the interaction itself (its first
-                            # input), not always the door: a click inside an
-                            # entered domain -- the way back, a nested open --
-                            # belongs to that domain's interaction set. Leasing
-                            # the door's set for it refused every such click
-                            # as "not admitted for the projected control".
+                            # Read the source scope from the interaction itself, even for nested-scope controls.
                             scope_root = owner._scope_of_interaction(
                                 interaction_root
                             )
-                            # Renew the interaction lease from the graph-held
-                            # interaction set. Rebuilding the whole visual
-                            # canvas to recover one scope identity would cost
-                            # a second full projection for no added authority.
+                            # Renew from graph-held interactions without rendering a second full canvas.
                             owner._issue_scope_lease(
                                 binding,
                                 snapshot,
@@ -4955,18 +4834,8 @@ class _CleanAuthorityHttpServer:
                         })
                         return
                     if self.path == "/api/universal/session":
-                        # The custom header proves the caller is not a
-                        # cross-ORIGIN page. It proves nothing about which
-                        # PROCESS is calling: any program on this host can
-                        # set a header, and this reply hands back a session
-                        # bound to the founder that unlocks /execute-adapter
-                        # -- the founder's open Revit models and Office
-                        # documents. On a shared or RDP machine that is
-                        # another signed-in person, not a hypothetical.
-                        #
-                        # So the caller must also prove it is the page this
-                        # desktop itself rendered, by returning the key that
-                        # only that page was given.
+                        # The header blocks cross-origin pages but cannot identify local processes.
+                        # Require the desktop page key before issuing founder authority.
                         if not self.headers.get("X-ArchHub-Sign-In"):
                             self._json(403, {
                                 "ok": False,

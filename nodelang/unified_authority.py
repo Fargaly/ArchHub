@@ -1749,6 +1749,19 @@ def create_unified_authority(
     snapshot = store.snapshot()
     if snapshot.revision != 0 or set(snapshot.cells) != {NULL_CELL_ID}:
         raise InvalidCell("clean authority creation requires an empty Cell store")
+    return _initialize_unified_authority(store, key_provider, key_id=key_id,
+        application_label=application_label, principal_label=principal_label,
+        bootstrap_session_label=bootstrap_session_label,
+        bootstrap_session_public_key=bootstrap_session_public_key,
+        composition_labels=composition_labels)
+
+
+def _initialize_unified_authority(store, key_provider, *, key_id,
+        application_label, principal_label, bootstrap_session_label,
+        bootstrap_session_public_key, composition_labels, adoption=None,
+        precommit_guard=None):
+    """Shared bootstrap planner; adoption is admitted by the existing owner gate."""
+    snapshot = store.snapshot()
     labels = tuple(label.strip() for label in composition_labels)
     try:
         Ed25519PublicKey.from_public_bytes(bytes(bootstrap_session_public_key))
@@ -1830,7 +1843,8 @@ def create_unified_authority(
             (role_ids["lifecycle"], state_ids["published"]),
         ),
     ))
-    cells.extend(labelled_relation(roots["principal"], principal_label))
+    cells.extend(labelled_relation(roots["principal"], principal_label,
+        () if adoption is None else ((role_ids["actor"], adoption["owner_root"]),)))
     cells.extend(labelled_relation(
         roots["bootstrap_session"],
         bootstrap_session_label,
@@ -2146,7 +2160,22 @@ def create_unified_authority(
         ),
     ))
     cells.extend(labelled_relation(roots["catalogue"], "Catalogue"))
-    cells.extend(labelled_relation(roots["history"], "History"))
+    adoption_members = ()
+    if adoption is not None:
+        from .authority_adoption import application_adoption_root
+        adoption_root = application_adoption_root(roots["application"])
+        vocabulary_authority = UnifiedAuthority(store, None, role_ids, state_ids,
+            {CODEC_NAME: codec_root}, shape_ids, key_provider, None)
+        properties = []
+        for name, value in adoption.items():
+            property_root, property_cells = _build_property(vocabulary_authority,
+                name, value, owner_root=adoption_root)
+            cells.extend(property_cells)
+            properties.append((role_ids['property'], property_root))
+        cells.extend(_typed_relation_cells(adoption_root, role_ids['conforms-to'],
+            shape_ids['map'], properties))
+        adoption_members = ((role_ids["evidence"], adoption_root),)
+    cells.extend(labelled_relation(roots["history"], "History", adoption_members))
     head_label, head_label_cells = _build_value(
         role_ids,
         codec_root,
@@ -2187,17 +2216,20 @@ def create_unified_authority(
                 *composition_roots,
                 roots["protocol"],
                 roots["policy"],
+                *((adoption["application_root"],) if adoption is not None else ()),
             )),
         ),
     ))
 
     ids = tuple(cell.id for cell in cells)
-    if len(ids) != len(set(ids)) or set(ids).intersection(snapshot.cells):
+    if len(ids) != len(set(ids)) or any(cell_id in snapshot.cells for cell_id in ids):
         raise InvalidCell("bootstrap Cell identity collision")
-    accepted_revision = snapshot.revision + 1
-    expected_cells = dict(snapshot.cells)
-    expected_cells.update((cell.id, cell) for cell in cells)
-    expected = Snapshot(accepted_revision, MappingProxyType(expected_cells))
+    accepted_revision = snapshot.revision + 1 if adoption is None else snapshot.revision
+    accepted_digest = snapshot_digest(snapshot)
+    if adoption is None:
+        expected_cells = dict(snapshot.cells)
+        expected_cells.update((cell.id, cell) for cell in cells)
+        accepted_digest = snapshot_digest(Snapshot(accepted_revision, MappingProxyType(expected_cells)))
     reference = key_provider.current_reference(key_id)
     unsigned = BootstrapManifest(
         MANIFEST_FORMAT,
@@ -2205,7 +2237,7 @@ def create_unified_authority(
         roots["application"],
         NULL_CELL_ID,
         accepted_revision,
-        snapshot_digest(expected),
+        accepted_digest,
         roots["application"],
         roots["protocol"],
         roots["policy"],
@@ -2225,7 +2257,19 @@ def create_unified_authority(
         reference.version,
         _manifest_payload(unsigned),
     ))
-    store.commit(snapshot.revision, create=tuple(cells))
+    if adoption is not None:
+        # The accepted snapshot is the ORIGINAL head. The existing planner
+        # signs bootstrap + adoption + first head together, above that head.
+        # No unsigned bootstrap window or second migration commit exists.
+        planned_authority = replace(vocabulary_authority, manifest=manifest)
+        plan = _prepare_signed_change(planned_authority, snapshot,
+            create=tuple(cells), replace_cells=())
+        store.commit(plan.base_revision, create=plan.create, replace=plan.replace,
+            precommit_guard=precommit_guard)
+        authority = open_unified_authority(store, manifest, key_provider)
+        bind_signed_commit_owner(authority)
+        return authority
+    store.commit(snapshot.revision, create=tuple(cells), precommit_guard=precommit_guard)
     authority = open_unified_authority(store, manifest, key_provider)
     _commit_signed_change(
         authority,
@@ -2337,6 +2381,10 @@ def open_unified_authority(
     _mark("required roots")
     authority = _resolve_protocol(store, manifest, key_provider)
     _mark("resolve protocol")
+    if manifest.accepted_revision > 1:
+        from .authority_adoption import verify_application_adoption
+        verify_application_adoption(authority)
+        _mark("adoption prefix")
     if not roots_are_reachable(
         store.snapshot(), manifest.application_root, required, store=store
     ):

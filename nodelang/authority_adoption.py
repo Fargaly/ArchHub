@@ -1,9 +1,8 @@
 """Transient, existing-owner authorization for a later graph adoption.
 
-This does not adopt, activate, grant successor rights, or consume a request.
-The eventual adopter must verify immediately before its revision-checked commit
-and record the request's consumption. Local history is not an external rollback
-anchor. Snapshot hashing is deliberate full-source work, never a startup read.
+The local migration executor consumes an existing-owner authorization in one
+revision-checked bootstrap commit. Local history is not an external rollback
+anchor. Snapshot hashing is deliberate adoption work, never a routine read.
 """
 from __future__ import annotations
 
@@ -237,3 +236,94 @@ def verify_authority_adoption_authorization(statement, relationship_broker, stor
     _fresh(store, statement)
     _verify_successor_binding(statement, successor_key_provider, successor_key_id)
     return statement.source_revision
+
+
+def application_adoption_root(graph_id):
+    """One immutable checkpoint identity within the newly admitted authority."""
+    return str(uuid.uuid5(uuid.UUID(graph_id), 'application-authority-adoption/v1'))
+
+
+def adopt_application_authority(store, key_provider, *, source_history_digest):
+    """Anchor the receipt-owning application's retained history, without rewriting it.
+
+    This is the trusted local migration owner, not a request endpoint. Its
+    authenticated context comes only from the original receipt/key restoration.
+    Publication of the unselected physical generation remains the migrator's job.
+    """
+    from types import SimpleNamespace
+    from . import universal_application as application, commit_intent
+    from .runtime_caller_capability import WindowsDpapiCallerKeyStore
+    from .unified_authority import _initialize_unified_authority
+    from .universal_cell import InvalidCell
+
+    with store._lock:
+        head = store.snapshot_transition()
+        if head.snapshot.revision < 1 or head.chain_digest != source_history_digest:
+            raise InvalidCell('application adoption history hash mismatch')
+        if getattr(store, '_signed_commit_authority', None) is not None:
+            raise InvalidCell('application adoption already has a signed owner')
+        try:
+            authorization = application._restore_application_authorization(store, key_provider)
+            protocol = application.open_agent_body_protocol(head.snapshot,
+                prefix=application._AGENT_BODY_PROTOCOL_PREFIX)
+            body = application.read_agent_body(head.snapshot, protocol, authorization.protocol,
+                application._AGENT_BODY_ROOT)
+            session = application.read_agent_session(head.snapshot, protocol, authorization.protocol,
+                application._AGENT_SESSION_ROOT)
+            receipts = application._verify_application_agent_receipts(store, authorization,
+                SimpleNamespace(protocol=protocol, body=body, session=session))
+            if not receipts:
+                raise InvalidCell('application adoption receipts are missing')
+        except (InvalidCell, ValueError) as exc:
+            raise InvalidCell('application adoption receipts invalid: ' + str(exc)) from exc
+        gate = ApplicationAdoptionGate(store, SimpleNamespace(
+            authorization=authorization, application_root='app:archhub'))
+        context = authorization.session.context()
+        key_id, _version = authorization.relationship_broker.current_key_reference()
+        public_key = WindowsDpapiCallerKeyStore(
+            WindowsDpapiCallerKeyStore.default_path()).ensure('founder.bootstrap')
+        arguments = dict(authentication_context=context, successor_public_key=public_key,
+            successor_key_provider=key_provider, successor_key_id=key_id)
+        statement = gate.authorize(**arguments, request_id=str(uuid.uuid4()))
+        if statement.source_history_digest != source_history_digest:
+            raise InvalidCell('application adoption history hash changed')
+
+        def admitted():
+            gate.verify(statement, **arguments)
+
+        admitted()
+        with commit_intent.declare(commit_intent.MIGRATION, actor='app:archhub',
+                reason='anchor original application receipts and history under its signed owner'):
+            return _initialize_unified_authority(store, key_provider, key_id=key_id,
+                application_label='ArchHub', principal_label='Application owner',
+                bootstrap_session_label='Founder bootstrap',
+                bootstrap_session_public_key=public_key, composition_labels=(),
+                adoption=asdict(statement), precommit_guard=admitted)
+
+
+def verify_application_adoption(authority):
+    """Recheck the signed original history prefix, including superseded Cells."""
+    from .universal_cell import InvalidCell
+    from .unified_authority import _property_values
+    store, manifest, key_provider = authority.store, authority.manifest, authority.key_provider
+    accepted = store.at(manifest.accepted_revision + 1)
+    try:
+        statement = AuthorityAdoptionAuthorization(**_property_values(authority, accepted,
+            application_adoption_root(manifest.graph_id)))
+    except (InvalidCell, TypeError, ValueError) as exc:
+        raise InvalidCell('application adoption record is missing or invalid') from exc
+    if (statement.version != 2 or statement.source_revision != manifest.accepted_revision
+            or statement.application_root != 'app:archhub'
+            or statement.owner_root not in accepted.cells
+            or (statement.successor_authority_key_id, statement.successor_authority_key_version,
+                statement.successor_authority_key_fingerprint) !=
+                (manifest.key_id, manifest.key_version, manifest.key_fingerprint)
+            or not key_provider.verify(statement.key_id, statement.key_version,
+                _payload(statement), statement.signature)):
+        raise InvalidCell('application adoption owner signature or binding is invalid')
+    if store.revision_chain_digest(statement.source_revision) != statement.source_history_digest:
+        raise InvalidCell('application adoption history hash mismatch')
+    # open_unified_authority already verifies this exact accepted snapshot.
+    # The signed checkpoint must name its digest; hashing it again adds no proof.
+    if statement.source_snapshot_digest != manifest.accepted_snapshot_digest:
+        raise InvalidCell('application adoption source snapshot hash mismatch')

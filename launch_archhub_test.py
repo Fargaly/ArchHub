@@ -26,17 +26,61 @@ _log_dir = Path(
 )
 _log_dir.mkdir(parents=True, exist_ok=True)
 _log_path = _log_dir / "launcher.log"
+_bootstrap_log = open(_log_path, "a", encoding="utf-8", buffering=1)
+_log = _bootstrap_log
+sys.stdout = _log
+sys.stderr = _log
+_boot_deadline = None
+
+
+def _arm_boot_watchdog():
+    if _boot_deadline is not None:
+        faulthandler.dump_traceback_later(
+            max(0.001, _boot_deadline - time.monotonic()), file=_log, exit=True)
+
+
+def _start_boot_phase(label, *, timeout_seconds=90.0):
+    global _boot_deadline
+    print("  startup    : begin %s (deadline %.1fs)" % (label, timeout_seconds), flush=True)
+    _boot_deadline = time.monotonic() + timeout_seconds
+    _arm_boot_watchdog()
+
+
+def _finish_boot_phase(label):
+    global _boot_deadline
+    faulthandler.cancel_dump_traceback_later()
+    _boot_deadline = None
+    print("  startup    : finished " + label, flush=True)
+
+
+def _follow_boot_log_rotation(stream):
+    faulthandler.enable(file=stream)
+    # Rotation must never leave the current launcher.log empty, even if the
+    # boot stops before the next ordinary print. Keep the original deadline.
+    stream.write("  startup    : log continued after rotation\n")
+    stream.flush()
+    _arm_boot_watchdog()
+
+
+# Imports and profile preflight used to run before the first logged line.
+# A deadline leaves the stack in this same log; SQLite keeps its crash recovery.
+_start_boot_phase("prepare desktop")
 # Size-capped with three older copies (launcher.log.1..3); it grew forever.
 try:
     from nodelang.log_rotation import LAUNCHER_LOG_BYTES, LOG_KEEP, RotatingLog, rotate as _rotate_log
-    _log = RotatingLog(_log_path)
+    _log = RotatingLog(_log_path, on_rotate=_follow_boot_log_rotation)
     # brain.log has no writer in this release; an old one is capped, never grown.
     _rotate_log(_log_dir / "brain.log", LAUNCHER_LOG_BYTES, LOG_KEEP)
 except Exception:
     # A half-applied update still leaves a log to read (the check below names it).
-    _log = open(_log_path, "a", encoding="utf-8", buffering=1)
+    _log = _bootstrap_log
 sys.stdout = _log
 sys.stderr = _log
+if _log is not _bootstrap_log:
+    faulthandler.cancel_dump_traceback_later()
+    _bootstrap_log.close()
+    _arm_boot_watchdog()
+print("  startup    : prepare desktop logging ready", flush=True)
 
 
 def _require_complete_local_update(app_dir):
@@ -131,8 +175,6 @@ def _tell_the_person(kind, value, tb):
 sys.excepthook = _tell_the_person
 print("=== launch", time.strftime("%Y-%m-%d %H:%M:%S"), "===")
 faulthandler.enable(file=_log)
-if hasattr(_log, "on_rotate"):
-    _log.on_rotate = lambda stream: faulthandler.enable(file=stream)
 
 def _windows_desktop_name():
     """Read this thread's desktop; do not switch or close its borrowed handle."""
@@ -408,12 +450,24 @@ def _saved_graph_exists(directory, database):
     """
     import sqlite3
 
-    names = {os.path.normcase(name) for name in os.listdir(directory)}
+    names = {os.path.normcase(name) for name in os.listdir(database.parent)} if database.parent.is_dir() else set()
     database_name = os.path.normcase(database.name)
     if database_name not in names:
-        if any(name.startswith(database_name) for name in names) or any(
-            name in names for name in ("runtime-descriptor.json", "backups")
-        ):
+        if any(name.startswith(database_name) for name in names):
+            raise RuntimeError(
+                "The saved graph database is missing but recovery files remain. "
+                "All files are kept in place; restore the saved graph before opening."
+            )
+        # 2230 wrote the old desktop journal name. Its descriptor/backups are
+        # evidence of that journal, not damage to the new filename. Validate
+        # it read-only before the existing owner performs the backed-up merge.
+        from nodelang.persistence import legacy_application_sources
+        previous = [path for path in legacy_application_sources(directory)
+                    if path.name in {"archhub-test.universal.sqlite3",
+                                     "node-native-wip.json.gz.universal.sqlite3"}]
+        if previous:
+            return all(_saved_graph_exists(path.parent, path) for path in previous)
+        if any((directory / name).exists() for name in ("runtime-descriptor.json", "backups")):
             raise RuntimeError(
                 "The saved graph database is missing but recovery files remain. "
                 "All files are kept in place; restore the saved graph before opening."
@@ -462,7 +516,7 @@ print("ArchHub")
 print("  graph store :", state_path)
 print("  booting ...", flush=True)
 
-from nodelang.application_server import ApplicationServer
+from nodelang.application_server import ApplicationServer, _start_background_refresh
 from nodelang.cell_secret_keys import MemorySigningKeyProvider
 from nodelang.pipeline_engines import PIPELINE_ENGINES
 
@@ -571,6 +625,16 @@ def _boot():
     return profile_boot(_boot_unsampled, state_dir=state_dir, on_sample=_boot_step_seen)
 
 def _boot_unsampled():
+    global state_path, backup_dir, first_boot
+    from nodelang.persistence import prepare_application_database
+    print("  migration  : checking complete application journal", flush=True)
+    migration = prepare_application_database(state_dir, state_path, key_provider=machine_key_provider)
+    state_path = application_database_path(state_dir)
+    backup_dir = state_dir / "backups"
+    first_boot = not _saved_graph_exists(state_dir, state_path)
+    print("  graph store :", state_path, flush=True)
+    print("  first boot  :", first_boot, flush=True)
+    print("  migration  : " + migration['state'], flush=True)
     from nodelang.desktop import create_workshop_transport, create_social_execution_arguments
     from nodelang.existing_workshop_native_host import ExistingWorkshopNativeHost
     from nodelang.model_execution_broker import (
@@ -607,7 +671,8 @@ def _boot_unsampled():
     bind_settings_owner(server.universal_store)
     from nodelang.desktop import bind_coordination_surface
     try:
-        bind_coordination_surface(server, state_dir)
+        if bind_coordination_surface(server, state_dir) is not None:
+            print('  coordination: bound signed owner', flush=True)
     except Exception as refused:
         server._coordination_surface_error = type(refused).__name__
         print("  coordination: unavailable (%s); account sign-in is independent of transport key recovery" %
@@ -995,8 +1060,10 @@ def _boot_step_seen(stack):
 
 
 def _boot_phase(index, finished=False):
+    from nodelang.clean_boot_surface import BOOT_PHASES
+    label = BOOT_PHASES[index]
+    (_finish_boot_phase if finished else _start_boot_phase)(label)
     if _boot_surface is not None:
-        label = BOOT_PHASES[index]
         (_boot_surface.progress.finish if finished else _boot_surface.progress.begin)(label)
 
 
@@ -1005,6 +1072,8 @@ def _open_saved_graph(*, max_wait_seconds=45.0, sleep_seconds=1.0):
     try:
         server = _boot()
     except Exception as refusal:
+        import traceback
+        traceback.print_exc()
         boot_refusal = refusal
         import gc
 
@@ -1045,6 +1114,7 @@ def _open_saved_graph(*, max_wait_seconds=45.0, sleep_seconds=1.0):
     return server, boot_refusal
 
 
+_finish_boot_phase("prepare desktop")
 _boot_phase(0)
 server, boot_refusal = _off_the_qt_thread(_open_saved_graph)
 _boot_phase(0, finished=True)
@@ -1056,6 +1126,7 @@ if boot_refusal is not None:
     print("  the saved graph is KEPT IN PLACE. No replacement graph was created.", flush=True)
     _refuse_boot_without_living(boot_refusal)
 print(f"  booted in {time.perf_counter()-started:.0f}s", flush=True)
+_boot_phase(1)
 
 # Brain and Workshop belong to the application owner opened above.
 # Do not start, poll, replace or kill a separate legacy Brain on a fixed port.
@@ -1152,9 +1223,48 @@ def _held_guard(owner, authority, context):
         yield
 
 
+def _startup_pipeline_state(owner):
+    """Only this graph's unfinished first-run install may resume on reopen."""
+    import json
+    from nodelang.universal_cell import NULL_CELL_ID
+    cell = owner.universal_store.snapshot().cells.get("app:startup:pipeline-install:v1")
+    if cell is None:
+        return None
+    value = json.loads(cell.atom)
+    if (cell.link0 != NULL_CELL_ID or cell.link1 != NULL_CELL_ID
+            or value not in ({"state": "pending"}, {"state": "complete"})):
+        raise ValueError("first-run pipeline install intent needs recovery")
+    return value["state"]
+
+
+def _record_startup_pipeline_intent(owner, *, first_boot, complete=False):
+    from nodelang import commit_intent
+    from nodelang.universal_cell import Cell, NULL_CELL_ID
+    state = _startup_pipeline_state(owner)
+    if state == "complete" or (state is None and not first_boot):
+        return False
+    authority = owner.universal_registry.authorization
+    context = authority.session.context(minimum_validity_seconds=5)
+    with owner.mutation_lock, authority.broker.live_context(context):
+        state = _startup_pipeline_state(owner)
+        if state == "complete" or (state is None and not first_boot):
+            return False
+        if state == "pending" and not complete:
+            return True
+        cell = Cell("app:startup:pipeline-install:v1", NULL_CELL_ID, NULL_CELL_ID,
+                    b'{"state":"complete"}' if complete else b'{"state":"pending"}')
+        snapshot = owner.universal_store.snapshot()
+        with commit_intent.declare(commit_intent.MIGRATION,
+                actor=owner.universal_registry.application_root,
+                reason="record the resumable first-run pipeline install"):
+            owner.universal_store.commit(snapshot.revision,
+                **({"create": (cell,)} if state is None else {"replace": (cell,)}))
+        return not complete
+
+
 def _initialize_startup_pipeline(owner, *, first_boot):
-    """Seed a new graph only; opening an application never invokes its effects."""
-    if not first_boot:
+    """Resume an admitted new-graph install; never reseed other saved graphs."""
+    if not _record_startup_pipeline_intent(owner, first_boot=first_boot):
         return None
     from nodelang import commit_intent
     from nodelang.universal_pipeline import seed_wall_pipeline
@@ -1173,11 +1283,13 @@ def _initialize_startup_pipeline(owner, *, first_boot):
                         actor=owner.universal_registry.application_root,
                         reason="install the first-run pipeline seed of a new graph",
                     ):
-                return seed_wall_pipeline(owner.universal_store, owner.universal_registry,
+                result = seed_wall_pipeline(owner.universal_store, owner.universal_registry,
                     authentication_context=context,
                     # Held already, and both locks re-enter: the migration
                     # inside the seed commits under the same guard.
                     settle_guard=lambda: _held_guard(owner, authority, context))
+            _record_startup_pipeline_intent(owner, first_boot=first_boot, complete=True)
+            return result
         except Exception as clash:
             # Only idempotent graph seeding may retry a revision conflict.
             # An engine invocation cannot safely be repeated on that evidence.
@@ -1197,7 +1309,6 @@ def _settle_canvas_content(owner):
     commits nothing (nodelang/universal_pipeline.py settle_canvas_content).
     """
     import contextlib
-    import threading
 
     def run():
         from nodelang import commit_intent
@@ -1224,7 +1335,7 @@ def _settle_canvas_content(owner):
         except Exception as refusal:
             print("  canvas     : content not moved -- %s" % refusal, flush=True)
 
-    threading.Thread(target=run, name="canvas-content-migration", daemon=True).start()
+    _start_background_refresh(owner, run, name="canvas-content-migration")
 
 
 # first_boot comes from the validated saved-graph check, not a UI marker.
@@ -1232,10 +1343,13 @@ def _settle_canvas_content(owner):
 # seeding and execution remain available through their admitted application routes.
 # The Studio reads the same check (ARCHHUB_BOOT.first_run) to mount its onboarding.
 server.studio_first_run = first_boot is True
-_boot_phase(1)
+# Record intent before admitting Home, so closing it before the worker starts
+# cannot turn an unfinished new-graph install into an ordinary saved graph.
+_off_the_qt_thread(lambda: _record_startup_pipeline_intent(server, first_boot=first_boot))
 
 
 def _prepare_pipeline():
+    print("  pipeline   : preparing optional canvas content", flush=True)
     try:
         _initialize_startup_pipeline(server, first_boot=first_boot)
         print("  pipeline   : %s; execution awaits an admitted Run" % (
@@ -1251,9 +1365,38 @@ def _prepare_pipeline():
               flush=True)
 
 
-_off_the_qt_thread(_prepare_pipeline)
+_pipeline_start = {"started": False}
+
+
+def _prepare_pipeline_after_home(held):
+    """Admit optional work only after the real first screen has mounted."""
+    if _pipeline_start["started"]:
+        return
+    from PyQt6.QtCore import QTimer
+
+    def observed(ready):
+        if _pipeline_start["started"]:
+            return
+        if not ready:
+            QTimer.singleShot(250, lambda: _prepare_pipeline_after_home(held))
+            return
+        _pipeline_start["started"] = True
+        _boot_phase_finish_all(held)
+        _start_background_refresh(server, _prepare_pipeline, name="archhub-pipeline-after-home")
+
+    view.page().runJavaScript("""(() => {
+      const root = document.getElementById('root');
+      if (!root?.children.length) return false;
+      const home = [...document.querySelectorAll('[data-home-page],[data-home-tools]')]
+        .some(element => element.getBoundingClientRect().width > 0);
+      const onboarding = document.querySelector('[data-studio-screen="onboarding"]');
+      const explicitGraph = window.ARCHHUB_BOOT?.open_graph && window.ARCHHUB_LIVE?.graph;
+      return Boolean((home && document.querySelectorAll('button').length > 5) || onboarding || explicitGraph);
+    })()""", observed)
 
 if os.environ.get("ARCHHUB_TEST_NO_OPEN"):
+    _off_the_qt_thread(_prepare_pipeline)
+    _boot_phase(1, finished=True)
     try:
         while True:
             time.sleep(5)
@@ -1350,6 +1493,7 @@ def _revive(_status, _code):
         QUrl(server.public_url + "/studio")))
 view.page().renderProcessTerminated.connect(_revive)
 def _boot_phase_finish_all(held):
+    _finish_boot_phase(BOOT_PHASES[1])
     for label in BOOT_PHASES:
         held.progress.finish(label)
     save_phase_durations(held.progress, state_dir)
@@ -1359,11 +1503,11 @@ def _release_boot_surface(ok):
     """The window has left the boot page: its port is released (off the Qt thread)."""
     global _boot_surface
     held = _boot_surface
-    if held is None or view.url().port() == _boot_port:
+    if not ok or held is None or view.url().port() == _boot_port:
         return
     _boot_surface = None
     # This start's phase seconds become the next start's expectation.
-    _boot_phase_finish_all(held)
+    _prepare_pipeline_after_home(held)
     import threading as _release_threading
     _release_threading.Thread(target=held.hand_over, name="archhub-boot-release", daemon=True).start()
 if _boot_surface is not None:

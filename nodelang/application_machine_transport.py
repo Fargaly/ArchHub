@@ -45,6 +45,7 @@ from .universal_cell import (
     ReadOnlyJournalError,
     inspect_read_only_cell_journal,
     load_bounded_read_only_cell_snapshot,
+    open_read_only_cell_journal,
     read_only_revision_chain_digest,
 )
 from .windows_cng_signing_provider import WindowsCngSigningAuthorityProvider
@@ -987,18 +988,15 @@ def read_runtime_owner_generation(database: str, application_root: str) -> tuple
         return None
     deadline = time.monotonic() + _GENERATION_READ_BUDGET
     try:
-        from urllib.request import pathname2url
         # Read-only URI + query_only: this read can never take the store's
         # write lock. Busy waits and the query itself share one bounded budget;
         # past it the answer is "unreadable" (fail closed), never a guess.
-        connection = sqlite3.connect(
-            "file:%s?mode=ro" % pathname2url(str(Path(database).resolve())),
-            uri=True, timeout=_GENERATION_READ_BUDGET,
+        connection = open_read_only_cell_journal(
+            database, timeout=_GENERATION_READ_BUDGET, isolation_level="",
         )
     except sqlite3.Error:
         return None
     try:
-        connection.execute("PRAGMA query_only = ON")
         connection.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 1000)
         rows = connection.execute(
             "SELECT state, payload FROM operational_records "
@@ -1590,12 +1588,8 @@ def _project_stopped_runtime_offline_activity(
         return {"available": False, "reason": "trusted checkpoint is unavailable"}
     try:
         descriptor = _read_descriptor(Path(path), key_provider)
-        connection = sqlite3.connect(
-            Path(descriptor.database).expanduser().resolve().as_uri() + "?mode=ro",
-            uri=True, timeout=1.0, isolation_level=None,
-        )
+        connection = open_read_only_cell_journal(descriptor.database)
         try:
-            connection.execute("PRAGMA query_only=ON")
             connection.execute("BEGIN")
             indexed = connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' "

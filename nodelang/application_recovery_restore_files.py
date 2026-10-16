@@ -21,6 +21,7 @@ from .application_recovery_files import (
     _check_stage_files, _cleanup_stage, _create_file, _file_evidence,
     _json_bytes, _require_disk_reserve,
 )
+from .universal_cell import open_read_only_cell_journal
 
 
 _SIDE_SUFFIXES = ("-journal", "-wal", "-shm")
@@ -175,14 +176,16 @@ def _copy_exact(source, destination, expected, identity, check_budget):
     check_budget()
 
 
-def _verify_sqlite_readonly(path, check_budget):
+def _verify_sqlite_readonly(path, check_budget, *, graph=False):
     with path.open("rb") as stream:
         header = stream.read(100)
     if (len(header) != 100 or header[:16] != b"SQLite format 3\x00"
             or header[18:20] != b"\x01\x01"):
         raise ValueError("restore requires a self-contained rollback-journal SQLite file")
-    with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True,
-                                  timeout=0.1, isolation_level=None)) as database:
+    connection = (open_read_only_cell_journal(path, timeout=0.1) if graph else
+                  sqlite3.connect(path.as_uri() + "?mode=ro", uri=True,
+                                  timeout=0.1, isolation_level=None))
+    with closing(connection) as database:
         def progress():
             try:
                 check_budget()
@@ -211,7 +214,7 @@ def _verify_staged(copies, manifest, stage, parent, check_budget):
     for role, path in copies.items():
         _check_file(path, stage, parent)
         _file_identity(path)
-        _verify_sqlite_readonly(path, check_budget)
+        _verify_sqlite_readonly(path, check_budget, graph=(role == "graph"))
         evidence = _file_evidence(path, check_budget)
         expected = manifest["files"][role]
         if any(evidence[key] != expected[key] for key in ("size_bytes", "sha256")):

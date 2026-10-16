@@ -34,9 +34,10 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler
 from typing import Callable, Optional
 
+from .http_server import HTTPServer
 REDIRECT_PORT = 48720
 REDIRECT_PATH = "/linkedin/callback"
 REDIRECT_URI = "http://127.0.0.1:%d%s" % (REDIRECT_PORT, REDIRECT_PATH)

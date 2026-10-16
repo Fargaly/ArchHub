@@ -16,6 +16,7 @@ import pytest
 
 from nodelang import workspace_roots_catalogue as roots
 from nodelang.clean_coordination_service import build_bound_service
+from nodelang.clean_coordination_host import CoordinationIdentity
 from nodelang.runtime_caller_capability import WindowsDpapiCallerKeyStore
 from tests_replica.test_workspace_roots_graph_current import graph  # noqa: F401
 
@@ -48,7 +49,8 @@ def wire(graph, tmp_path, monkeypatch):
 
 
 def test_an_owner_refusal_over_http_reaches_the_window_with_its_reason(graph, wire):
-    def refuse(body):
+    def refuse(body, *, admission):
+        assert admission == {"principal": CoordinationIdentity(*roots.SETTINGS_IDENTITY).normalized().key_id}
         raise roots.WorkspaceRootRefused(REFUSAL)
     graph["host"].bind_workspace_settings(graph["authority"], refuse)
     wire(build_bound_service(graph["host"], port=0))
@@ -59,7 +61,10 @@ def test_an_owner_refusal_over_http_reaches_the_window_with_its_reason(graph, wi
 
 
 def test_an_answer_over_http_still_comes_back(graph, wire):
-    graph["host"].bind_workspace_settings(graph["authority"], lambda body: {"prepared": {"needs_key": True}})
+    def answer(body, *, admission):
+        assert admission == {"principal": CoordinationIdentity(*roots.SETTINGS_IDENTITY).normalized().key_id}
+        return {"prepared": {"needs_key": True}}
+    graph["host"].bind_workspace_settings(graph["authority"], answer)
     wire(build_bound_service(graph["host"], port=0))
     assert roots.forward_workspace_settings(
         {"action": "prepare", "change": {"action": "register"}}) == {"prepared": {"needs_key": True}}

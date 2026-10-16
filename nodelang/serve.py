@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import json
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 
+from .http_server import create_http_server
 from .laws_surface import render
 
 _PAGE = ('<!doctype html><html><head><meta charset="utf-8">'
@@ -70,7 +71,7 @@ class NodeServer:
                 self._send(200, 'application/json',
                            json.dumps({'ok': True, 'id': out}).encode('utf-8'))
 
-        self.httpd = ThreadingHTTPServer((host, port), Handler)
+        self.httpd = create_http_server((host, port), Handler, threaded=True)
         self._thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
 
     @property

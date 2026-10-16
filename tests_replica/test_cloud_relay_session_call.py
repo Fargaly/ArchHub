@@ -159,14 +159,8 @@ def test_remote_archhub_session_uses_real_application_conversation_store(tmp_pat
     keys = MemorySigningKeyProvider("archhub.local.relationship-authority", secrets.token_bytes(32))
     keys.add_key("archhub.local.court-attestation", secrets.token_bytes(32))
     calls = []
-    discovery_calls = []
     created_deliveries = []
     fixture_model = "nvidia/nemotron-3.5-lightning:free"
-    # Discover and prove the fake route through the same free/tool metadata contract.
-    # Isolate the process cache so this court never depends on another court's discovery.
-    monkeypatch.setattr(model_router, "_OPENROUTER_FREE_TOOL_CATALOGUE_FETCHED", False)
-    monkeypatch.setattr(model_router, "_OPENROUTER_FREE_TOOL_CATALOGUE_CACHE_AT", 0.0)
-    monkeypatch.setattr(model_router, "_OPENROUTER_FREE_TOOL_CATALOGUE_CACHE_MODELS", ())
     real_start = workshop_session_start.start_workshop_session
 
     def captured_start(*args, **kwargs):
@@ -177,18 +171,19 @@ def test_remote_archhub_session_uses_real_application_conversation_store(tmp_pat
     monkeypatch.setattr(workshop_session_start, "start_workshop_session", captured_start)
 
     def provider(request: Request, timeout):
-        if request.get_method() == "GET" and request.full_url.endswith("/models"):
-            discovery_calls.append(request.full_url)
-            return BytesIO(json.dumps({"data": [{
-                "id": fixture_model, "name": "Fixture free tool model", "context_length": 32768,
-                "pricing": {"prompt": "0", "completion": "0", "request": "0", "image": "0"},
-                "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
-                "supported_parameters": ["tools", "tool_choice"],
-            }]}).encode())
         assert request.get_method() == "POST", request.full_url
         payload = json.loads(request.data)
-        assert payload["model"] == fixture_model
-        prompt = payload["messages"][-1]["content"].rsplit("FOUNDER: ", 1)[1]
+        # Plain chat sends the free router alias; its answer names the concrete model.
+        assert payload["model"] == "openrouter/free"
+        assert payload["provider"] == {
+            "max_price": {"prompt": 0, "completion": 0, "request": 0, "image": 0},
+            "allow_fallbacks": False,
+        }
+        assert [row["role"] for row in payload["messages"]] == ["system", "user"]
+        assert "tools" not in payload and "tool_choice" not in payload
+        content = payload["messages"][-1]["content"]
+        assert isinstance(content, str) and "\n\nUser: " in content
+        prompt = content.rsplit("\n\nUser: ", 1)[1]
         calls.append(prompt)
         answer = json.dumps({"actions": [], "answer": "fake model reply: " + prompt})
         return BytesIO(json.dumps({"model": fixture_model, "choices": [{"message": {"content": answer}}]}).encode())
@@ -222,7 +217,7 @@ def test_remote_archhub_session_uses_real_application_conversation_store(tmp_pat
         created = caller("owner-a@example.com", "new_session",
                          {"title": "Remote hello", "mode": "ask"}, "task-create-1")
         assert created_deliveries and created_deliveries[0]["state"] == "replied", created_deliveries
-        assert discovery_calls, "the fake free tool model was proven by catalogue discovery"
+        assert calls == ["Remote hello"]
         created_retry = caller("owner-a@example.com", "new_session",
                                {"title": "Remote hello", "mode": "ask"}, "task-create-1")
         listed = caller("owner-a@example.com", "list_sessions", {})

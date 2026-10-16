@@ -2,7 +2,14 @@
 from __future__ import annotations
 
 import sys
-from http.server import ThreadingHTTPServer
+from http.server import HTTPServer, ThreadingHTTPServer
+
+
+def create_http_server(address, handler, *, threaded=False):
+    """Construct local transport, preserving each caller's concurrency policy."""
+    if threaded:
+        return ThreadingHTTPServer(address, handler)
+    return HTTPServer(address, handler)
 
 
 class QuietThreadingHTTPServer(ThreadingHTTPServer):
@@ -14,9 +21,6 @@ class QuietThreadingHTTPServer(ThreadingHTTPServer):
                               ConnectionResetError)):
             return
         super().handle_error(request, client_address)
-
-
-__all__ = ["QuietThreadingHTTPServer"]
 
 
 def local_browser_admission_error(headers, expected_port: int) -> str | None:
@@ -48,4 +52,5 @@ def local_browser_admission_error(headers, expected_port: int) -> str | None:
     return None
 
 
-__all__ = ["QuietThreadingHTTPServer", "local_browser_admission_error"]
+__all__ = ["create_http_server", "HTTPServer", "ThreadingHTTPServer",
+           "QuietThreadingHTTPServer", "local_browser_admission_error"]

@@ -19,7 +19,7 @@ from .conversation_migration import _reconcile_database
 from .conversation_pages import (PAGE_FIELDS, PAGE_PROTECTION_VERSION, TRACKING_FIELDS,
                                  normalize_schema_sql, page_schema_statements)
 from .conversation_migration_activation import _authorize, _configured_target
-from .universal_cell import InvalidCell, _SqliteJournal
+from .universal_cell import InvalidCell, _SqliteJournal, open_read_only_cell_journal
 
 
 _MESSAGE_COLUMNS = ("rowid,id,conversation_id,sequence,author,content,category,recipients,"
@@ -289,8 +289,8 @@ def prepare_owner_recovery_restore(service, recovery_directory, destination, *,
                         revision = metadata["graph_revision"]
                         if type(revision) is not int or not 0 <= revision <= current.revision:
                             raise InvalidCell("application restore graph revision is outside the retained history")
-                        with closing(sqlite3.connect(paths["graph"].as_uri() + "?mode=ro",
-                                uri=True, timeout=0.2)) as recovered:
+                        with closing(open_read_only_cell_journal(paths["graph"],
+                                timeout=0.2, isolation_level="")) as recovered:
                             recovered.execute("PRAGMA cache_size=-1024")
                             recovered.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
                             snapshot = _copied_snapshot(recovered, revision)

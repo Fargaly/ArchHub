@@ -147,63 +147,10 @@ def revit_sessions(params: Mapping[str, object], feeds: Mapping[str, object]):
     return {"out": sessions}, "%d session(s): %s" % (len(sessions), label)
 
 
-_BUILD_WALLS = """
-var data = %s;
-var levelName = %s;
-double heightMm = %s;
-Level level = null;
-foreach (Level lv in new FilteredElementCollector(Doc).OfClass(typeof(Level)))
-    if (level == null || lv.Name == levelName) { if (lv.Name == levelName || level == null) level = lv; }
-if (level == null) throw new Exception("no level in the model");
-var built = new List<int>();
-// The broker (RevitMCPCore.ExecAsync) runs this inside the transaction named
-// by transaction_name and commits it; a second Transaction.Start here throws.
-foreach (var seg in data) {
-    double x1 = seg[0] / 304.8, y1 = seg[1] / 304.8;
-    double x2 = seg[2] / 304.8, y2 = seg[3] / 304.8;
-    if (Math.Abs(x2-x1) < 1e-6 && Math.Abs(y2-y1) < 1e-6) continue;
-    var line = Line.CreateBound(new XYZ(x1, y1, 0), new XYZ(x2, y2, 0));
-    var wall = Wall.Create(Doc, line, level.Id, false);
-    var hp = wall.get_Parameter(BuiltInParameter.WALL_USER_HEIGHT_PARAM);
-    if (hp != null) hp.Set(heightMm / 304.8);
-    built.Add(wall.Id.IntegerValue);
-}
-result = built;
-"""
-
-
-def revit_build_walls(params: Mapping[str, object],
-                      feeds: Mapping[str, object]):
-    """Build one wall per wired line segment inside the live session."""
-    from .clean_revit_adapter import _call, _session_for, live_sessions
-
-    lines = _lines_of(feeds.get("in"))
-    if not lines:
-        raise ValueError("no lines are wired in; nothing to build")
-    sessions = [s for s in live_sessions() if s.get("revit_version")]
-    wanted = str(params.get("session") or "").strip()
-    if not wanted:
-        listed = ", ".join(
-            "%s (%s)" % (s["port"], s.get("document") or "no document")
-            for s in sessions) or "none listening"
-        raise ValueError(
-            "set the session parameter to the Revit port to build into"
-            " -- live: %s" % listed)
-    session = _session_for(wanted, sessions)
-    script = _BUILD_WALLS % (
-        json.dumps([[float(v) for v in line[:4]] for line in lines]),
-        json.dumps(str(params.get("level") or "")),
-        json.dumps(float(params.get("height_mm") or 3000.0)),
-    )
-    answer = _call(session["port"], "/exec", {
-        "code": script, "transaction_name": "ArchHub build walls"})
-    if answer.get("status") != "ok":
-        raise ValueError("Revit refused: %s" % answer.get("error"))
-    built = answer.get("result") or []
-    return {"out": built}, "built %d walls on %s" % (
-        len(built), session.get("document") or session["port"])
-
-
+def revit_build_walls(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Build one wall per wired line through the one Revit adapter."""
+    from .clean_revit_adapter import build_walls
+    return build_walls(params, _lines_of(feeds.get("in")))
 
 
 class BrainSilent(Exception):

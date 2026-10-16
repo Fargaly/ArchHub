@@ -20,7 +20,7 @@ from nodelang.cell_adapters import (
     grant_permission,
     release_adapter_definition,
 )
-from nodelang.cell_baboom_model_execution import (
+from nodelang.cell_model_execution import (
     bootstrap_baboom_model_execution_protocol,
     create_model_delegation,
     create_model_execution_grant,

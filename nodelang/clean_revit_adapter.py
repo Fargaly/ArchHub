@@ -1094,6 +1094,94 @@ def broker_call(service: str, route: str, body: Mapping[str, object] | None = No
             "document": rows[0].get("document"), **answer}
 
 
+def _execute(session: Mapping[str, object], script: str, transaction: str,
+             *, timeout: float | None = None) -> dict:
+    """The one script transport; callers retain their admission and result contracts."""
+    body = {"code": script, "transaction_name": transaction}
+    if timeout is None:
+        return _call(session["port"], "/exec", body)
+    return _call(session["port"], "/exec", body, timeout=timeout)
+
+
+_BUILD_WALLS = """
+var data = %s;
+var levelName = %s;
+double heightMm = %s;
+Level level = null;
+foreach (Level lv in new FilteredElementCollector(Doc).OfClass(typeof(Level)))
+    if (level == null || lv.Name == levelName) { if (lv.Name == levelName || level == null) level = lv; }
+if (level == null) throw new Exception("no level in the model");
+var built = new List<int>();
+// The broker (RevitMCPCore.ExecAsync) runs this inside the transaction named
+// by transaction_name and commits it; a second Transaction.Start here throws.
+foreach (var seg in data) {
+    double x1 = seg[0] / 304.8, y1 = seg[1] / 304.8;
+    double x2 = seg[2] / 304.8, y2 = seg[3] / 304.8;
+    if (Math.Abs(x2-x1) < 1e-6 && Math.Abs(y2-y1) < 1e-6) continue;
+    var line = Line.CreateBound(new XYZ(x1, y1, 0), new XYZ(x2, y2, 0));
+    var wall = Wall.Create(Doc, line, level.Id, false);
+    var hp = wall.get_Parameter(BuiltInParameter.WALL_USER_HEIGHT_PARAM);
+    if (hp != null) hp.Set(heightMm / 304.8);
+    built.Add(wall.Id.IntegerValue);
+}
+result = built;
+"""
+
+
+def build_walls(params: Mapping[str, object], lines: list):
+    """Build one wall per wired line segment inside the live session."""
+    if not lines:
+        raise ValueError("no lines are wired in; nothing to build")
+    sessions = [s for s in live_sessions() if s.get("revit_version")]
+    wanted = str(params.get("session") or "").strip()
+    if not wanted:
+        listed = ", ".join(
+            "%s (%s)" % (s["port"], s.get("document") or "no document")
+            for s in sessions) or "none listening"
+        raise ValueError(
+            "set the session parameter to the Revit port to build into"
+            " -- live: %s" % listed)
+    session = _session_for(wanted, sessions)
+    script = _BUILD_WALLS % (
+        json.dumps([[float(v) for v in line[:4]] for line in lines]),
+        json.dumps(str(params.get("level") or "")),
+        json.dumps(float(params.get("height_mm") or 3000.0)),
+    )
+    answer = _execute(session, script, "ArchHub build walls")
+    if answer.get("status") != "ok":
+        raise ValueError("Revit refused: %s" % answer.get("error"))
+    built = answer.get("result") or []
+    return {"out": built}, "built %d walls on %s" % (
+        len(built), session.get("document") or session["port"])
+
+
+
+
+def sole_session():
+    """The one live Revit session, or (None, why): two sessions means a wrong-model risk."""
+    sessions = [s for s in live_sessions() if s.get("revit_version")]
+    if not sessions:
+        return None, "no Revit session is listening"
+    if len(sessions) > 1:
+        ports = ", ".join(str(s.get("port")) for s in sessions)
+        return None, "%d Revit sessions are open (ports %s); close the others so the act lands in one model" % (len(sessions), ports)
+    return sessions[0], ""
+
+
+def authoring(script: str, transaction: str, params: Mapping[str, object], *, timeout: float = 30.0):
+    """One /exec against the one live Revit session; (session, answer) or (None, why)."""
+    session, why = sole_session()
+    if session is None:
+        return None, why
+    try:
+        answer = _execute(session, script, transaction, timeout=timeout)
+    except Exception as failed:
+        return None, "Revit did not answer: %s" % str(failed)[:160]
+    if not isinstance(answer, Mapping) or answer.get("status") != "ok":
+        return None, "Revit refused: %s" % (answer.get("error") if isinstance(answer, Mapping) else answer)
+    return session, answer.get("result") if isinstance(answer.get("result"), Mapping) else {}
+
+
 def invoke(op_id: str, arguments: Mapping[str, object]) -> dict:
     """Carry out one declared Revit operation against a live session."""
     write_grant = _require_write_grant(op_id, arguments) if op_id in _REVIT_WRITE_OPS else None
@@ -1104,10 +1192,7 @@ def invoke(op_id: str, arguments: Mapping[str, object]) -> dict:
             "this adapter does not yet carry out %s" % op_id
         )
     session = _session_for(arguments.get("instance"), sessions)
-    answer = _call(
-        session["port"], "/exec",
-        {"code": script, "transaction_name": "ArchHub write" if write_grant else "ArchHub read"},
-    )
+    answer = _execute(session, script, "ArchHub write" if write_grant else "ArchHub read")
     if answer.get("status") != "ok":
         raise RevitUnreachable(
             "Revit refused %s: %s" % (op_id, answer.get("error"))

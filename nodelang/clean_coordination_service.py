@@ -10,11 +10,12 @@ import sys
 import threading
 import time
 from pathlib import Path
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 import json
 from typing import Type
 
 from .cell_secret_keys import WindowsDpapiSigningKeyProvider
+from .http_server import ThreadingHTTPServer
 from .clean_coordination_host import (
     CleanCoordinationHost,
     SignedCoordinationRequest,

@@ -3007,6 +3007,8 @@ def test_baboom_capability_route_projects_only_released_graph_adapters(tmp_path)
             "facebook.pages", "facebook.feed", "facebook.comments",
             "facebook.page_post", "facebook.comment",
             "instagram.account", "instagram.comments", "instagram.reply",
+            "instagram.container_create", "instagram.container_status", "instagram.media_publish",
+            "whatsapp.message", "x.post", "x.reply", "tiktok.video_post",
         }
         assert "GET /api/universal/baboom-capabilities" in report["routes"]
         assert "POST /api/universal/model-delegation-execute" in report["routes"]

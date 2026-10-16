@@ -25,6 +25,8 @@ import urllib.request
 import webbrowser
 from collections.abc import Callable, Mapping
 
+from .http_server import create_http_server
+
 MCP_URL = "https://mcp.notion.com/mcp"
 AUTHORIZE_URL = "https://mcp.notion.com/authorize"
 TOKEN_URL = "https://mcp.notion.com/token"
@@ -138,7 +140,7 @@ def connect(*, timeout: float = 300.0, open_browser: Callable[[str], object] = w
         def log_message(self, *args):  # silence
             return
 
-    server = http.server.HTTPServer(("127.0.0.1", 0), Callback)
+    server = create_http_server(("127.0.0.1", 0), Callback)
     redirect_uri = "http://127.0.0.1:%d%s" % (server.server_address[1], CALLBACK_PATH)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

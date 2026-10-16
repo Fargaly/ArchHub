@@ -10,7 +10,7 @@ import pytest
 from nodelang.cell_adapters import UserConsentBroker, verify_adapter_catalog
 from nodelang.cell_agent_body import read_agent_body, read_agent_session
 from nodelang.cell_agent_cognition import read_cognition_budget, read_model_descriptor
-from nodelang.cell_baboom_model_execution import read_model_delegation
+from nodelang.cell_model_execution import read_model_delegation
 from nodelang.map_import import resolve_map_path
 from nodelang.universal_cell import InvalidCell
 from tests_replica.workshop_gate_support import open_execution_gate_in_graph

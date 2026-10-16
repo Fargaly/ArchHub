@@ -27,7 +27,7 @@ from nodelang.cell_connector_execution import (  # noqa: E402
     create_connector_execution_receipt,
     read_connector_execution_receipt,
 )
-from nodelang.cell_baboom_model_execution import (  # noqa: E402
+from nodelang.cell_model_execution import (  # noqa: E402
     bootstrap_baboom_model_execution_protocol,
     create_model_delegation,
     create_model_execution_grant,

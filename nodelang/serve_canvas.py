@@ -9,10 +9,10 @@ page is not a picture of the graph; it drives the real engine over HTTP.
 from __future__ import annotations
 
 import json
-from .http_server import local_browser_admission_error
+from .http_server import create_http_server, local_browser_admission_error
 import os
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 
 from .graph_api import level_view
 
@@ -100,7 +100,7 @@ class CanvasServer:
                     resp['id'] = out
                 return self._json(resp)
 
-        self.httpd = ThreadingHTTPServer((host, port), H)
+        self.httpd = create_http_server((host, port), H, threaded=True)
         self._thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
 
     def edit(self, payload):

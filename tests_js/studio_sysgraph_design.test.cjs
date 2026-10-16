@@ -77,8 +77,9 @@ test('S3/S4: selection bar offers grouping, selected arrange, and connected sele
 
 test('S5: one current rail replaces the retired rail; tool engines stay off the handoff catalogue', () => {
   const rail = fs.readFileSync(path.join(root, 'nodelang/studio/shared-data.jsx'), 'utf8').slice(fs.readFileSync(path.join(root, 'nodelang/studio/shared-data.jsx'), 'utf8').indexOf('window.ARCHHUB_APP_RAIL ='));
-  for (const name of ['Home', 'Workshop', 'Canvas', 'Library', 'Settings']) assert.match(rail, new RegExp(name));
-  for (const name of ['Chats', 'Skills', 'Search', 'Documentation', 'Brain', 'BABOOM', 'Connectors', 'Cloud']) assert.doesNotMatch(rail, new RegExp(name));
+  for (const name of ['Home', 'Chats', 'Workshop', 'Canvas', 'Library', 'Docs', 'Settings', 'Account']) assert.match(rail, new RegExp(name));
+  assert.match(studio, /Chats:\s*onChats/, 'the current rail opens the existing Chats route');
+  for (const name of ['Skills', 'Search', 'Documentation', 'Brain', 'BABOOM', 'Connectors', 'Cloud']) assert.doesNotMatch(rail, new RegExp(name));
   assert.match(library, /\(\("tool\.",\), "tools"\)/, 'System tool engines retain their Tools category while the handoff catalogue uses canonical rows');
   for (const id of ['studio', 'workshop', 'brain', 'baboom', 'connectors', 'cloud']) {
     assert.match(library, new RegExp('"tool_' + id + '"'));
@@ -96,7 +97,7 @@ test('S6: Settings BABOOM and the BABOOM node share one parameter source and Set
   assert.doesNotMatch(settings, /baboomMaxSpeaks|Speech budget|Speaks at most/, 'no unenforced speech-budget surface');
   assert.match(library, /"tool_baboom": \{"engine": "tool\.baboom"/);
   assert.match(library, /"start_with_archhub": True/);
-  assert.match(library, /"speech_budget_per_hour": 2/);
+  assert.doesNotMatch(library, /["']speech_budget_per_hour["']:/, "dead speech budget is absent from the catalogue");
 });
 
 test('S7: System graph states cover loading, empty scope, error, and refused action', () => {

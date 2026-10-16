@@ -2336,6 +2336,31 @@ class _SqliteHistoryReader:
         self._head_revision = revision
 
 
+def open_read_only_cell_journal(
+    path: str | os.PathLike[str],
+    *,
+    timeout: float = 1.0,
+    isolation_level: str | None = None,
+) -> sqlite3.Connection:
+    """Open a physical observer through the journal owner, without an owner lock.
+
+    Recovery copies and ownership probes share this boundary; callers retain
+    their budgets and transactions and must close the returned connection.
+    ``mode=ro`` cannot create a missing journal, and ``query_only`` prohibits
+    writes even when the writable owner remains connected.
+    """
+    connection = sqlite3.connect(
+        Path(path).expanduser().resolve().as_uri() + "?mode=ro",
+        uri=True, timeout=timeout, isolation_level=isolation_level,
+    )
+    try:
+        connection.execute("PRAGMA query_only=ON")
+    except BaseException:
+        connection.close()
+        raise
+    return connection
+
+
 def inspect_read_only_cell_journal(
     path: str | os.PathLike[str],
     *,
@@ -2361,13 +2386,7 @@ def inspect_read_only_cell_journal(
         database = Path(path).expanduser().resolve(strict=True)
         if not database.is_file():
             raise ReadOnlyJournalError("read-only journal path is not a file")
-        connection = sqlite3.connect(
-            database.as_uri() + "?mode=ro",
-            uri=True,
-            timeout=1.0,
-            isolation_level=None,
-        )
-        connection.execute("PRAGMA query_only=ON")
+        connection = open_read_only_cell_journal(database)
         connection.execute("BEGIN")
         revisions_columns = {
             str(row[1])
@@ -2454,13 +2473,7 @@ def load_bounded_read_only_cell_snapshot(
         database = Path(path).expanduser().resolve(strict=True)
         if not database.is_file():
             raise ReadOnlyJournalError("read-only journal path is not a file")
-        connection = sqlite3.connect(
-            database.as_uri() + "?mode=ro",
-            uri=True,
-            timeout=1.0,
-            isolation_level=None,
-        )
-        connection.execute("PRAGMA query_only=ON")
+        connection = open_read_only_cell_journal(database)
         connection.execute("BEGIN")
         revisions_columns = {
             str(row[1])
@@ -2560,13 +2573,7 @@ def read_only_revision_chain_digest(
         database = Path(path).expanduser().resolve(strict=True)
         if not database.is_file():
             raise ReadOnlyJournalError("read-only journal path is not a file")
-        connection = sqlite3.connect(
-            database.as_uri() + "?mode=ro",
-            uri=True,
-            timeout=1.0,
-            isolation_level=None,
-        )
-        connection.execute("PRAGMA query_only=ON")
+        connection = open_read_only_cell_journal(database)
         connection.execute("BEGIN")
         revision_count, first_revision, latest_revision = connection.execute(
             "SELECT COUNT(*), MIN(revision), MAX(revision) FROM revisions"
@@ -4246,6 +4253,7 @@ __all__ = [
     "MatchBudgetExceeded",
     "dense_read_snapshot",
     "overlay_read_snapshot",
+    "open_read_only_cell_journal",
     "inspect_read_only_cell_journal",
     "load_bounded_read_only_cell_snapshot",
     "read_only_revision_chain_digest",

@@ -10,13 +10,14 @@ completes sign-in.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 import threading
 import time
 from urllib.parse import parse_qsl, parse_qs, urlsplit
 
 import httpx
 
+from .http_server import ThreadingHTTPServer
 from .cell_cloud_sessions import CloudSessionBroker, IssuedCloudSession
 from .cell_federated_identity import FederatedIdentityBroker
 from .cell_native_auth import (

@@ -16,6 +16,7 @@ EXECUTION_FLOOR_MODULES = {
     # journal's own record of what moved and knows nothing about any
     # product, which is what puts it on the floor rather than in a lens.
     "cell_read_memo.py",
+    "cell_brain_sync.py",
     # Nine modules shipped unclassified, which is the one thing this court
     # exists to prevent -- an unlisted module is a module no rule was ever
     # applied to. Each is placed by what it IS: bounded machinery over the
@@ -102,9 +103,7 @@ GRAPH_ASSEMBLY_OR_LENS_MODULES = {
     "cell_website.py",
     "cell_activity.py",
     "cell_agent_body_catalog.py",
-    "cell_baboom_connector_execution.py",
     "cell_baboom_meeting_note_publication.py",
-    "cell_baboom_model_execution.py",
     "cell_baboom_steward.py",
     "cell_canvas_card_view.py",
     "cell_canvas_heading_view.py",
@@ -141,6 +140,29 @@ GRAPH_ASSEMBLY_OR_LENS_MODULES = {
     "cell_roma_requirements.py",
     "cell_work_claim_transfer.py",
     "cell_work_handoff.py",
+    "cell_accessibility.py",
+    "cell_accounts.py",
+    "cell_brain_community.py",
+    "cell_brain_explorer.py",
+    "cell_brain_fanout.py",
+    "cell_brain_federation.py",
+    "cell_brain_governance.py",
+    "cell_brain_groups.py",
+    "cell_brain_legacy_import.py",
+    "cell_brain_memory.py",
+    "cell_brain_ownership.py",
+    "cell_brain_recall.py",
+    "cell_brain_reflexion.py",
+    "cell_brain_secrets.py",
+    "cell_brain_skills.py",
+    "cell_capabilities.py",
+    "cell_model_providers.py",
+    "cell_selfext_intent.py",
+    "cell_session_state.py",
+    "cell_theme_sets.py",
+    "cell_users_seats.py",
+    "cell_voice.py",
+    "cell_website_meta.py",
 }
 
 REVIEWED_CORE_EXECUTORS = {
@@ -316,6 +338,28 @@ def _is_windows_platform_predicate(
     )
 
 
+def _is_sqlite_backup_integrity_predicate(
+    path: Path, node: ast.Constant, parent: ast.AST | None,
+    parents: dict[ast.AST, ast.AST],
+) -> bool:
+    """Admit only SQLite's physical integrity result in its backup owner."""
+    return bool(
+        path.name == "universal_cell.py"
+        and _enclosing_function_name(node, parents) == "_backup_to_unlocked"
+        and node.value == "ok"
+        and isinstance(parent, ast.Compare)
+        and len(parent.ops) == 1
+        and isinstance(parent.ops[0], ast.NotEq)
+        and len(parent.comparators) == 1
+        and parent.comparators[0] is node
+        and isinstance(parent.left, ast.Subscript)
+        and isinstance(parent.left.value, ast.Name)
+        and parent.left.value.id == "integrity"
+        and isinstance(parent.left.slice, ast.Constant)
+        and parent.left.slice.value == 0
+    )
+
+
 def _raw_dispatch_violations(path: Path) -> list[tuple[int, str, str]]:
     """Reject semantic dispatch shapes without guessing feature vocabulary."""
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -331,9 +375,8 @@ def _raw_dispatch_violations(path: Path) -> list[tuple[int, str, str]]:
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             parent = parents.get(node)
             if (
-                _enclosing_function_name(node, parents) != "backup_to"
-                and
-                not _is_graph_identity_lookup(node, parent)
+                not _is_sqlite_backup_integrity_predicate(path, node, parent, parents)
+                and not _is_graph_identity_lookup(node, parent)
                 and not _is_graph_vocabulary_subscript(node, parent)
                 and not _is_record_field_lookup(node, parent)
                 and not _is_windows_platform_predicate(node, parent)
@@ -397,6 +440,31 @@ def test_windows_locking_exception_is_narrow_and_not_a_dispatch_escape_hatch():
     assert not _is_windows_platform_predicate(
         denied_node, _parent_map(denied_tree)[denied_node]
     )
+
+
+def test_sqlite_backup_integrity_exception_does_not_admit_product_dispatch(tmp_path):
+    path = tmp_path / "universal_cell.py"
+    physical = (
+        'def _backup_to_unlocked():\n'
+        '    if integrity is None or integrity[0] != "ok":\n'
+        '        raise RuntimeError("failed")\n'
+    )
+    path.write_text(physical, encoding="utf-8")
+    assert _raw_dispatch_violations(path) == []
+
+    # Neither a generic success token nor a backup-named method is a way
+    # to introduce semantic dispatch into the physical floor.
+    for source in (
+        'def _backup_to_unlocked():\n    if mode == "ok":\n        pass\n',
+        'def _backup_to_unlocked():\n    if product == "brain":\n        pass\n',
+        'def backup_to():\n    if product == "brain":\n        pass\n',
+    ):
+        path.write_text(source, encoding="utf-8")
+        assert _raw_dispatch_violations(path), source
+
+    other = tmp_path / "other_module.py"
+    other.write_text(physical, encoding="utf-8")
+    assert _raw_dispatch_violations(other)
 
 
 def test_application_presentation_lens_does_not_import_retired_typed_runtime():

@@ -4,6 +4,9 @@ from pathlib import Path
 import threading
 import uuid
 
+from nodelang.cell_run_view import RUN_TEMPLATE_ROOT, compose_run_template
+from nodelang.cell_result_view import RESULT_TEMPLATE_ROOT, compose_result_template
+
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -364,6 +367,18 @@ EXPECTED_TEMPLATES = {
 
 CANONICAL_EQUIVALENCE_CASES = (
     (
+        "run",
+        compose_run_template,
+        RUN_TEMPLATE_ROOT,
+        {"selected": "selected-node", "operation": "model.inspect"},
+    ),
+    (
+        "result",
+        compose_result_template,
+        RESULT_TEMPLATE_ROOT,
+        {"operation": "model.inspect", "rows": ["first result", "second result"]},
+    ),
+    (
         "properties",
         compose_field_list_template,
         FIELD_LIST_TEMPLATE_ROOT,
@@ -510,7 +525,7 @@ def test_rejected_parallel_shell_and_browser_tokens_are_unreachable():
         source = path.read_text(encoding="utf-8")
         assert "clean_application_server" not in source
         assert "clean_application_view" not in source
-    assert rejected <= set(root.glob("*.py"))
+    assert rejected.isdisjoint(root.glob("*.py")), "rejected parallel shells must be deleted"
 
 
 def test_visual_templates_install_once_in_the_clean_graph_and_match_existing():

@@ -895,20 +895,18 @@ for _wired_now in ("i_think", "i_match", "i_embed", "o_email", "o_notify"):
 
 LIBRARY_ITEM_ENGINES.update({
     "tool_studio": {"engine": "tool.studio",
-                    "params": {"tool": "studio", "default_view": "canvas"}},
+                    "params": {"tool": "studio"}},
     "tool_workshop": {"engine": "tool.workshop",
-                      "params": {"tool": "workshop", "default_tab": "tasks",
-                                 "stale_claim_after_idle_minutes": "30",
+                      "params": {"tool": "workshop", "stale_claim_after_idle_minutes": "30",
                                  "archive_after_idle_days": "20"}},
     "tool_brain": {"engine": "tool.brain",
-                   "params": {"tool": "brain", "default_tab": "memory"}},
+                   "params": {"tool": "brain"}},
     "tool_baboom": {"engine": "tool.baboom",
-                    "params": {"tool": "baboom", "start_with_archhub": True,
-                               "speech_budget_per_hour": 2}},
+                    "params": {"tool": "baboom", "start_with_archhub": True}},
     "tool_connectors": {"engine": "tool.connectors",
-                        "params": {"tool": "connectors", "default_tab": "hosts"}},
+                        "params": {"tool": "connectors"}},
     "tool_cloud": {"engine": "tool.cloud",
-                   "params": {"tool": "cloud", "default_tab": "account"}},
+                   "params": {"tool": "cloud"}},
 })
 
 
@@ -986,8 +984,8 @@ def publish_pdf(params: Mapping[str, object], feeds: Mapping[str, object]):
     import json
     import os
     import time
-    from .clean_revit_adapter import _call
-    session, why = _revit_session()
+    from .clean_revit_adapter import _execute, sole_session
+    session, why = sole_session()
     if session is None:
         return {"out": []}, why
     held = _wired(feeds, "in", "sheets")
@@ -1005,7 +1003,7 @@ def publish_pdf(params: Mapping[str, object], feeds: Mapping[str, object]):
     script = _EXPORT_PDF % (json.dumps(folder), ", ".join(json.dumps(number) for number in wanted))
     try:
         # A sheet set takes longer than a read: three minutes before "did not answer".
-        answer = _call(session["port"], "/exec", {"code": script, "transaction_name": "ArchHub publish pdf"}, timeout=180.0)
+        answer = _execute(session, script, "ArchHub publish pdf", timeout=180.0)
     except Exception as failed:
         return {"out": []}, "Revit did not answer: %s" % str(failed)[:160]
     if not isinstance(answer, Mapping) or answer.get("status") != "ok":
@@ -1026,33 +1024,6 @@ LIBRARY_ITEMS_WITHOUT_ENGINE.pop("o_pdf", None)
 # Three cards that write into the open model through the same broker the
 # wall cards use. Each runs in one named transaction, skips what is already
 # done, and answers with counts the model itself reported.
-
-def _revit_session():
-    """The one live Revit session, or (None, why): two sessions means a wrong-model risk."""
-    from .clean_revit_adapter import live_sessions
-    sessions = [s for s in live_sessions() if s.get("revit_version")]
-    if not sessions:
-        return None, "no Revit session is listening"
-    if len(sessions) > 1:
-        ports = ", ".join(str(s.get("port")) for s in sessions)
-        return None, "%d Revit sessions are open (ports %s); close the others so the act lands in one model" % (len(sessions), ports)
-    return sessions[0], ""
-
-
-def _revit_exec(script: str, transaction: str, params: Mapping[str, object], *, timeout: float = 30.0):
-    """One /exec against the one live Revit session; (session, answer) or (None, why)."""
-    from .clean_revit_adapter import _call
-    session, why = _revit_session()
-    if session is None:
-        return None, why
-    try:
-        answer = _call(session["port"], "/exec", {"code": script, "transaction_name": transaction}, timeout=timeout)
-    except Exception as failed:
-        return None, "Revit did not answer: %s" % str(failed)[:160]
-    if not isinstance(answer, Mapping) or answer.get("status") != "ok":
-        return None, "Revit refused: %s" % (answer.get("error") if isinstance(answer, Mapping) else answer)
-    return session, answer.get("result") if isinstance(answer.get("result"), Mapping) else {}
-
 
 _TAG_ROOMS = """
 var view = Doc.ActiveView;
@@ -1076,7 +1047,8 @@ result = new Dictionary<string, object>{ {"tagged", tagged}, {"skipped", skipped
 
 def tag_rooms(params: Mapping[str, object], feeds: Mapping[str, object]):
     """A room tag on every untagged room of the active view, placed at the room point."""
-    session, result = _revit_exec(_TAG_ROOMS, "ArchHub tag rooms", params)
+    from .clean_revit_adapter import authoring
+    session, result = authoring(_TAG_ROOMS, "ArchHub tag rooms", params)
     if session is None:
         return {"out": []}, str(result)
     return {"out": result, "tagged": result.get("tagged")}, "%s room(s) tagged, %s skipped, in %s of %s" % (
@@ -1113,7 +1085,8 @@ def place_tags(params: Mapping[str, object], feeds: Mapping[str, object]):
     category = _text(params, "category", "Doors")
     leader = _text(params, "leader", "true").casefold() in ("1", "true", "yes", "on")
     script = _PLACE_TAGS % (json.dumps(category), "true" if leader else "false")
-    session, result = _revit_exec(script, "ArchHub place tags", params)
+    from .clean_revit_adapter import authoring
+    session, result = authoring(script, "ArchHub place tags", params)
     if session is None:
         return {"out": []}, str(result)
     return {"out": result, "tagged": result.get("tagged")}, "%s %s tagged, %s skipped, in %s" % (
@@ -1161,7 +1134,8 @@ def place_on_sheet(params: Mapping[str, object], feeds: Mapping[str, object]):
     if not names:
         return {"out": []}, "no view named, nothing wired in"
     script = _PLACE_ON_SHEET % (json.dumps(number), ", ".join(json.dumps(name) for name in names))
-    session, result = _revit_exec(script, "ArchHub place on sheet", params)
+    from .clean_revit_adapter import authoring
+    session, result = authoring(script, "ArchHub place on sheet", params)
     if session is None:
         return {"out": []}, str(result)
     placed = as_list(result.get("placed"))
@@ -1819,14 +1793,13 @@ LEGACY_LIBRARY_ITEM_ENGINES = {'a_dims': {'engine': 'library.dimensions', 'param
  't_setp': {'engine': 'library.set_field', 'params': {'field': '', 'value': ''}},
  't_sort': {'engine': 'library.sort_by', 'params': {'by': '', 'direction': 'asc'}},
  'tool_baboom': {'engine': 'tool.baboom',
-                 'params': {'speech_budget_per_hour': 2, 'start_with_archhub': True, 'tool': 'baboom'}},
- 'tool_brain': {'engine': 'tool.brain', 'params': {'default_tab': 'memory', 'tool': 'brain'}},
- 'tool_cloud': {'engine': 'tool.cloud', 'params': {'default_tab': 'account', 'tool': 'cloud'}},
- 'tool_connectors': {'engine': 'tool.connectors', 'params': {'default_tab': 'hosts', 'tool': 'connectors'}},
- 'tool_studio': {'engine': 'tool.studio', 'params': {'default_view': 'canvas', 'tool': 'studio'}},
+                 'params': {'start_with_archhub': True, 'tool': 'baboom'}},
+ 'tool_brain': {'engine': 'tool.brain', 'params': {'tool': 'brain'}},
+ 'tool_cloud': {'engine': 'tool.cloud', 'params': {'tool': 'cloud'}},
+ 'tool_connectors': {'engine': 'tool.connectors', 'params': {'tool': 'connectors'}},
+ 'tool_studio': {'engine': 'tool.studio', 'params': {'tool': 'studio'}},
  'tool_workshop': {'engine': 'tool.workshop',
                    'params': {'archive_after_idle_days': '20',
-                              'default_tab': 'tasks',
                               'stale_claim_after_idle_minutes': '30',
                               'tool': 'workshop'}}}
 LEGACY_LIBRARY_PRESENTATION = (('host',

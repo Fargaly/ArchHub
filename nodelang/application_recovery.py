@@ -27,6 +27,7 @@ from .conversation_migration_activation import (
 )
 from .universal_cell import (
     InvalidCell, Snapshot, _HeadRowReader, _LazyHeadCellMap, _SqliteJournal,
+    open_read_only_cell_journal,
 )
 
 
@@ -227,8 +228,8 @@ def backup_application_recovery(service, directory, *, authentication_context,
                             released = True
 
                         def verify(paths, check_copy):
-                            with closing(sqlite3.connect(Path(paths["graph"]).as_uri() + "?mode=ro",
-                                    uri=True, timeout=0.2)) as copied_graph:
+                            with closing(open_read_only_cell_journal(paths["graph"],
+                                    timeout=0.2, isolation_level="")) as copied_graph:
                                 copied_graph.execute("PRAGMA cache_size=-1024")
                                 copied_graph.set_progress_handler(
                                     lambda: int(time.monotonic() >= deadline), 1000)

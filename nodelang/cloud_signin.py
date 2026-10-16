@@ -22,12 +22,13 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from .cloud_relay import DEFAULT_BASE, SIGN_IN_AGAIN as _SIGN_IN_AGAIN, pinned_cloud_base
+from .http_server import create_http_server
 
 WAIT_SECONDS = 300.0
 METHODS = ("google",)
@@ -196,7 +197,7 @@ class SignIn:
         verifier, challenge = pkce_pair()
         state = secrets.token_urlsafe(16)
         try:
-            server = HTTPServer(("127.0.0.1", free_port()), _Callback)
+            server = create_http_server(("127.0.0.1", free_port()), _Callback)
         except OSError as failed:
             self._set(phase="failed", error=f"no loopback port: {failed}")
             return

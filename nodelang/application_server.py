@@ -94,7 +94,7 @@ from .model_execution_broker import ModelExecutionBroker
 from .baboom_owner_grants import GRANT_ARGUMENT_KEY, baboom_owner_grant_checker
 from .cell_capabilities import CAPABILITIES, missing_capabilities
 from .cell_agent_body import read_agent_session
-from .cell_baboom_model_execution import read_model_delegation
+from .cell_model_execution import read_model_delegation
 from .cell_deliberation import (
     append_deliberation_entry,
     append_deliberation_value_entry,

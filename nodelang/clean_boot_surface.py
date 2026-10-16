@@ -15,10 +15,11 @@ import json
 import re
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 from .application import THEME
+from .http_server import ThreadingHTTPServer
 
 # The phases clean_coordination_service begins, in order. A court reads that
 # file's _begin(...) calls and holds this list equal to them, so the page's

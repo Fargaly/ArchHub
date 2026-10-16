@@ -9,12 +9,13 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Callable, Optional
 
 from .cloud_relay import DEFAULT_BASE, pinned_cloud_base
 from .cloud_signin import cloud_session_path, read_cloud_session
+from .http_server import create_http_server
 
 WAIT_SECONDS = 600.0
 _CURRENT: dict[str, "CloudSocialAttempt"] = {}
@@ -205,7 +206,7 @@ class CloudSocialAttempt:
 
     def _run_exchange(self) -> None:
         try:
-            server = HTTPServer(("127.0.0.1", self._port), _ReturnHandler)
+            server = create_http_server(("127.0.0.1", self._port), _ReturnHandler)
         except OSError:
             self._fail("local social grant return port is busy; retry")
             return

@@ -10,7 +10,8 @@
     "canvas_lm_graph_state": {
       "why": "one persisted shape holds the whole graph",
       "tests": [
-        "tests_replica/test_forcing_one_table.py"
+        "tests_replica/test_forcing_one_table.py",
+        "tests_replica/test_recomp_http_transport.py"
       ]
     },
     "canvas_wire_layer": {
@@ -133,7 +134,8 @@
     "nodes_config_schema": {
       "why": "knobs are projected from the graph, with real widgets",
       "tests": [
-        "tests_replica/test_universal_properties_presentation.py"
+        "tests_replica/test_universal_properties_presentation.py",
+        "tests_replica/test_recomp_revit_adapter.py::test_dead_catalogue_params_are_removed_without_hiding_live_controls"
       ]
     },
     "nodes_library_search": {
@@ -376,7 +378,8 @@
       "why": "an adapter is reached through one brokered seam, not ad hoc",
       "tests": [
         "tests_replica/test_cell_adapters.py",
-        "tests_replica/test_cell_baboom_connector_execution.py"
+        "tests_replica/test_cell_baboom_connector_execution.py",
+        "tests_replica/test_recomp_revit_adapter.py"
       ]
     },
     "connectors_registry": {

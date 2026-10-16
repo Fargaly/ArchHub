@@ -126,8 +126,8 @@ def export_clean_workshop_archive(authority, *, caller):
     Runs inside the clean graph's owner (the caller is that owner's founder bootstrap
     caller). TEMPORARY: retires with the clean service in S5.
     """
-    import sqlite3
-    from pathlib import Path
+    from contextlib import closing
+    from .universal_cell import open_read_only_cell_journal
     from .unified_authority import composition_root
     from .workshop_conversation import read_workshop_conversation
 
@@ -148,8 +148,8 @@ def export_clean_workshop_archive(authority, *, caller):
         raise InvalidCell("the clean Workshop has no delivered messages to preserve")
     created = sorted({row["created_revision"] for row in page["messages"]})
     # The store keeps each revision's commit time in its own journal; read it read-only.
-    database = Path(store.database_path)
-    with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as journal:
+    with closing(open_read_only_cell_journal(store.database_path,
+            timeout=5.0, isolation_level="")) as journal:
         times = dict(journal.execute(
             "SELECT revision, committed_at FROM revisions WHERE revision IN (%s)"
             % ",".join("?" * len(created)), created).fetchall())

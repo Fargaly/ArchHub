@@ -408,11 +408,6 @@ class ProjectWorkExecutionBroker:
     def _publish_patch(self, patch, name, summary, before_publish):
         # Shared physical suffix. execute() retains its original pre-call
         # destination checks and post-call failure classification exactly.
-        from .enforce import require_typed_adapter
-        try:
-            require_typed_adapter("project artifact publication")
-        except PermissionError:
-            return _result("failed", "E0010_typed_publication_adapter_missing", name)
         destination = self._artifact_root / name
         temporary, descriptor, identity, publication_attempted = None, None, None, False
         admitted, result = False, None

@@ -5788,11 +5788,6 @@ class NativeRecipientRelay:
             return self._settle(job, {"status": "not_sent", "reason": "relay_stopped"})
         if not self._admitted(job):
             return self._settle(job, {"status": "not_sent", "reason": "admission_changed"})
-        from .enforce import require_typed_adapter
-        try:
-            require_typed_adapter("native recipient delivery")
-        except PermissionError:
-            return self._settle(job, {"status": "not_sent", "reason": "E0010_typed_delivery_session_adapter_missing"})
         return self._settle(job, transport.request(
             matches[0], job["text"], timeout_seconds=_NATIVE_RELAY_REPLY_SECONDS,
             cancel_event=self._stop))

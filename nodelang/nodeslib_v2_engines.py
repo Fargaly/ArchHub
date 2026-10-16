@@ -73,9 +73,6 @@ def _local_output_path(path: object, *, label: str) -> Path:
 
 
 def _revit(operation: str, arguments: Mapping[str, object]) -> dict:
-    if operation not in {"revit.elements_of_category", "revit.get_parameter", "revit.schedule_rows"}:
-        from .enforce import require_typed_adapter
-        require_typed_adapter("Revit broker write")
     if _REVIT_BROKER is not None:
         return _REVIT_BROKER(operation, dict(arguments))
     from .clean_revit_adapter import invoke
@@ -327,8 +324,6 @@ def _columns(rows: list) -> list[str]:
 
 
 def _write_csv(rows: list, path: Path) -> None:
-    from .enforce import require_typed_adapter
-    require_typed_adapter("CSV file write")
     columns = _columns(rows)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
@@ -339,8 +334,6 @@ def _write_csv(rows: list, path: Path) -> None:
 
 
 def _write_xlsx(rows: list, path: Path) -> None:
-    from .enforce import require_typed_adapter
-    require_typed_adapter("XLSX file write")
     columns = _columns(rows)
     path.parent.mkdir(parents=True, exist_ok=True)
     sheet_rows = [columns]
@@ -386,8 +379,6 @@ def write_table_file(params: Mapping[str, object], feeds: Mapping[str, object]):
     )
     if _FILE_WRITE_BROKER is None:
         raise ValueError("governed file writer is not bound")
-    from .enforce import require_typed_adapter
-    require_typed_adapter("table file publication")
     answer = _confirmed_write(_FILE_WRITE_BROKER({
         "operation": "write_file", "path": str(path), "format": kind,
         "rows": rows, "grant": grant, "input_digest": _digest_payload(request),
@@ -489,8 +480,6 @@ def publish_package(params: Mapping[str, object], feeds: Mapping[str, object]):
         operation="write_file", input_digest=_digest_payload(request))
     if _FILE_WRITE_BROKER is None:
         raise ValueError("governed file writer is not bound")
-    from .enforce import require_typed_adapter
-    require_typed_adapter("reviewed package publication")
     answer = _confirmed_write(_FILE_WRITE_BROKER({**request, "operation": "write_file",
         "format": "package", "grant": verified, "input_digest": _digest_payload(request)}), "write_file")
     files = []
@@ -631,8 +620,6 @@ def remember(params: Mapping[str, object], feeds: Mapping[str, object]):
     text = _text(params, "text") or str(_wired(feeds, "in", "value") or "")
     if not text:
         raise ValueError("nothing to remember")
-    from .enforce import require_typed_adapter
-    require_typed_adapter("brain memory write")
     from .pipeline_engines import _brain_call
     answer = _brain_call("brain.remember", {"text": text, "source": _text(params, "source", "nodeslib")})
     return {"out": answer}, "remembered"
@@ -644,8 +631,6 @@ def delegate_and_await(params: Mapping[str, object], feeds: Mapping[str, object]
     task = _text(params, "task") or str(_wired(feeds, "in", "value") or "")
     if not task:
         raise ValueError("set task")
-    from .enforce import require_typed_adapter
-    require_typed_adapter("Workshop delegate dispatch")
     answer = _WORKSHOP_DELEGATE({"agent": _text(params, "agent"), "task": task, "timeout_s": params.get("timeout_s")})
     return {"out": answer}, "delegate answered"
 

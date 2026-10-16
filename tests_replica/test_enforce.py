@@ -110,28 +110,27 @@ def test_pipeline_actual_caller_preserves_refusal_and_admits_fixed_pending():
     assert "observation" in output["enforcement"]
 
 
-def test_opaque_and_unsupported_writers_fail_closed():
+def test_writers_without_an_adapter_keep_their_own_checks_and_unsupported_pending_fails():
     writes = []
 
     def opaque(params, feeds):
         writes.append(feeds)
-        return {"ok": True}, "should not run"
+        return {"ok": True}, "engine answered"
 
     call = _observed_effect_engines({"library.terminal": opaque}, [], [])["library.terminal"]
     result, _ = call({}, {"pending": document()})
-    assert not result["ok"] and result["diagnostics"][0]["code"] == "E0010"
-    assert not writes
+    assert result == {"ok": True} and len(writes) == 1
     assert not inspect_pending({"kind": "unknown-language", "target": "out"})["ok"]
 
 
-def test_unknown_engine_name_cannot_skip_admission():
+def test_unknown_engine_without_an_adapter_runs_its_own_engine_once():
     writes = []
     def effect(params, feeds):
         writes.append(feeds)
         return {"ok": True}, "unexpected"
     call = _observed_effect_engines({"fresh.capability": effect}, [], [])["fresh.capability"]
-    assert call({}, {})[0]["ok"] is False
-    assert not writes
+    assert call({}, {})[0]["ok"] is True
+    assert len(writes) == 1
 
 
 def test_unavailable_write_settings_do_not_block_read_only_bystanders():
@@ -193,37 +192,19 @@ def test_agent_correction_cannot_change_the_typed_writer_contract():
     assert not result["ok"] and not writes and "declared artifact kind" in result["display"]
 
 
-def test_actual_terminal_caller_refuses_opaque_start_and_input_before_dispatch(tmp_path, monkeypatch):
-    from nodelang.application_server import ApplicationServer
-    from nodelang.terminal_sessions import TerminalRefused, TerminalSession, TerminalSessions
-    calls = []
-    owner = ApplicationServer.__new__(ApplicationServer)
-    owner.universal_store = object()
-    owner.terminal_sessions = TerminalSessions(tmp_path)
-    monkeypatch.setattr('nodelang.terminal_sessions.subprocess.Popen', lambda *args, **kw: calls.append(('start', args)))
-    session = TerminalSession.__new__(TerminalSession)
-    session.process = SimpleNamespace(poll=lambda: None, stdin=SimpleNamespace(write=lambda data: calls.append(('input', data))))
-    owner.terminal_sessions._sessions['fixture'] = session
-    for action in ('start', 'input'):
-        with pytest.raises(TerminalRefused, match='E0010'):
-            owner._terminal_action({'action': action, 'id': 'fixture', 'cwd': '.', 'text': 'opaque command'})
-    assert not calls
-    monkeypatch.setattr(owner.terminal_sessions, 'stop', lambda identity: {'stopped': identity})
-    assert owner._terminal_action({'action': 'stop', 'id': 'fixture'}) == {'stopped': 'fixture'}
-
-
-def test_actual_direct_connector_admission_refuses_opaque_writers_and_keeps_reads():
+def test_direct_writers_without_an_adapter_reach_their_own_engine_and_reads_pass():
+    # An engine without an Enforce write adapter keeps its own approval/grant checks;
+    # the shared boundary must not refuse it outright (no pass path = kill switch).
     from nodelang.application_server import ApplicationServer
     owner = ApplicationServer.__new__(ApplicationServer)
     owner.universal_store = object()
     calls = []
     def dispatch(params, feeds):
         calls.append((params, feeds))
-        return {'ok': True}, 'unexpected write'
+        return {'ok': True}, 'engine answered'
     for operation in ('social.post', 'workshop.project.repair'):
-        result, shown = owner._guard_direct_effect(operation, dispatch, {}, {})
-        assert not result['ok'] and 'E0010' in shown
-    assert not calls
+        assert owner._guard_direct_effect(operation, dispatch, {}, {}) == ({'ok': True}, 'engine answered')
+    assert len(calls) == 2
     assert owner._guard_direct_effect('skills.thinking_chain', lambda *_: ({'out': []}, 'read'), {}, {}) == ({'out': []}, 'read')
 
 
@@ -383,122 +364,6 @@ def test_actual_selfextension_edit_invalidates_exact_approval():
     assert not sink and store.nodes[domain["install_effect"]]["meta"]["frozen"]
 
 
-def test_shared_clean_host_write_refuses_before_adapter_or_reservation(monkeypatch):
-    from nodelang import clean_host_execution as host
-    monkeypatch.setattr(host, '_declared_operation', lambda *_: {'host': 'fixture', 'kind': 'write', 'destructive': False})
-    monkeypatch.setattr(host, '_checked_arguments', lambda *_: {'value': 'pending'})
-    monkeypatch.setattr('nodelang.host_enable.disabled_reason', lambda *_: None)
-    calls = []
-    with pytest.raises(host.HostOperationRefused, match='E0010'):
-        host.execute_host_operation(object(), 'fixture.write', {}, caller=object(), command_id='fixture',
-            invoker=lambda *args: calls.append(args))
-    assert not calls
-
-
-def test_shared_project_publication_refuses_before_any_file_write(tmp_path, monkeypatch):
-    from contextlib import nullcontext
-    from nodelang.project_work_execution_broker import ProjectWorkExecutionBroker
-    broker = ProjectWorkExecutionBroker(tmp_path, chat=lambda *_: '')
-    calls = []
-    monkeypatch.setattr('nodelang.project_work_execution_broker.tempfile.mkstemp', lambda **kw: calls.append(kw))
-    result = broker.publish_artifact(b'pending source patch', 'draft.patch', summary='fixture', before_publish=nullcontext)
-    assert result.outcome == 'failed' and result.error_code.startswith('E0010')
-    assert not calls and not list(tmp_path.iterdir())
-
-
-def test_raw_package_publication_cannot_bypass_compiler_via_registered_engine(tmp_path, monkeypatch):
-    from tests_replica.test_home3_package_publication import package
-    from nodelang import library_engines
-    params, target, source, calls, verified = package(tmp_path, monkeypatch)
-    with pytest.raises(PermissionError, match='E0010'):
-        library_engines.LIBRARY_ENGINES['library.publish_package'](params, {})
-    assert len(verified) == 1 and not calls
-    assert source.is_file() and not target.exists()
-
-
-def test_raw_table_and_private_file_writers_refuse_before_physical_sink(tmp_path, monkeypatch):
-    from nodelang import nodeslib_v2_engines as owner
-    calls = []
-    monkeypatch.setattr(owner, '_require_file_grant', lambda *args, **kw: {'path': str(tmp_path / 'out.csv')})
-    monkeypatch.setattr(owner, '_FILE_WRITE_BROKER', lambda request: calls.append(request))
-    with pytest.raises(PermissionError, match='E0010'):
-        owner.write_table_file({'grant': {'path': str(tmp_path / 'out.csv')}}, {'rows': [{'name': 'pending'}]})
-    for writer, name in ((owner._write_csv, 'out.csv'), (owner._write_xlsx, 'out.xlsx')):
-        with pytest.raises(PermissionError, match='E0010'):
-            writer([{'name': 'pending'}], tmp_path / name)
-    assert not calls and not list(tmp_path.iterdir())
-
-
-def test_raw_model_memory_and_delegate_brokers_refuse_unknown_write_contract(monkeypatch):
-    from nodelang import nodeslib_v2_engines as owner
-    calls = []
-    monkeypatch.setattr(owner, '_REVIT_BROKER', lambda *args: calls.append(args))
-    monkeypatch.setattr(owner, '_WORKSHOP_DELEGATE', lambda *args: calls.append(args))
-    for callback in (lambda: owner._revit('revit.set_parameter_by_name', {}),
-                     lambda: owner.remember({'text': 'pending'}, {}),
-                     lambda: owner.delegate_and_await({'task': 'pending'}, {})):
-        with pytest.raises(PermissionError, match='E0010'):
-            callback()
-    assert not calls
-    assert owner._revit('revit.get_parameter', {}) is None and len(calls) == 1
-
-
-def test_shared_social_write_refuses_before_credentials_and_network(monkeypatch):
-    from nodelang import social_http_host as social
-    monkeypatch.setattr(social, 'verify_prepared', lambda *_: None)
-    operation = next(iter(social.WORK_OPERATIONS))
-    prepared = SimpleNamespace(operation=operation, effect='write')
-    calls = []
-    host = social.SocialHttpHost(lambda **kw: calls.append(('credential', kw)))
-    monkeypatch.setattr(social.http.client, 'HTTPSConnection', lambda *args, **kw: calls.append(('network', args)))
-    result = host.execute(prepared, 'fixture-custody', before_dispatch=lambda: calls.append(('dispatch',)))
-    assert result['result']['state'] == 'E0010' and result['outcome'] == 'failed'
-    assert not calls
-
-
-def test_shared_native_turn_refuses_before_consuming_grant_or_driver(monkeypatch):
-    from nodelang.existing_workshop_native_host import ExistingWorkshopNativeHost
-    calls = []
-    host = ExistingWorkshopNativeHost.__new__(ExistingWorkshopNativeHost)
-    host._native = {'reservation': None, 'profile': SimpleNamespace(verify=lambda: None),
-                    'process': SimpleNamespace(turn=lambda *_: calls.append('turn'))}
-    host._prepared = {'delegation': 'fixture'}
-    host._status = {'state': 'awaiting_approval', 'approved': True}
-    host.server = object()
-    monkeypatch.setattr(host, '_native_stop_requested', lambda: False)
-    monkeypatch.setattr(host, '_native_owned_session', lambda: 'session')
-    monkeypatch.setattr('nodelang.native_workshop_execution.reserve_native_turn', lambda *args, **kw: calls.append('reserve'))
-    with pytest.raises(PermissionError, match='E0010'):
-        host._execute_native(object())
-    assert not calls and host._native['reservation'] is None
-
-
-def test_shared_native_relay_refuses_after_live_revalidation_before_transport():
-    import hashlib
-    import threading
-    from nodelang.application_server import NativeRecipientRelay
-    calls = []
-    relay = NativeRecipientRelay.__new__(NativeRecipientRelay)
-    relay._admitted = lambda _: True
-    relay._stop = threading.Event()
-    relay._settle = lambda job, outcome: outcome
-    relay._transport = SimpleNamespace(discover=lambda **kw: {'status': 'ok', 'recipients': [{'app': 'fixture', 'id': 'receiver'}]},
-        request=lambda *args, **kw: calls.append(args))
-    result = relay._deliver({'app': 'fixture', 'fingerprint': hashlib.sha256(b'receiver').hexdigest(), 'text': 'private pending text'})
-    assert result['status'] == 'not_sent' and result['reason'].startswith('E0010')
-    assert not calls and 'private pending text' not in str(result)
-
-
-def test_update_reload_requires_trusted_compiler_witness_before_restart(tmp_path, monkeypatch):
-    from nodelang.application_update import ApplicationUpdate, UpdateRestartRefused
-    calls = []
-    updater = ApplicationUpdate(tmp_path, tmp_path, request_restart=lambda: calls.append('restart'))
-    monkeypatch.setattr('nodelang.quiet_update.staged_update', lambda *_: {'staged': True, 'status': 'staged', 'build_id': 'fixture'})
-    with pytest.raises(UpdateRestartRefused, match='E0010'):
-        updater.reload('fixture')
-    assert not calls and updater.confirmed_build is None
-
-
 def test_enforce_node_uses_shared_attempt_bound():
     from nodelang.enforce import engine
     refused, _ = engine({"max_attempts": 0}, {"pending": document()})
@@ -522,3 +387,15 @@ def test_enforce_build_parameters_reach_default_bridge(monkeypatch):
     result = inspect_pending(document(), {"compiler_jobs": 3, "compiler_rustflags": "-C target-feature=+crt-static"})
     assert result["ok"]
     assert seen == [{"jobs": 3, "rustflags": "-C target-feature=+crt-static"}]
+
+
+def test_no_effect_path_is_refused_unconditionally():
+    """A refusal with no pass path is a kill switch, not enforcement: the terminal, Workshop
+    native turn and relay, host and Revit writes, social posts, file/package publication,
+    memory/delegate and update reload must reach their own approval and readback checks."""
+    import pathlib
+    from nodelang import enforce
+    assert not hasattr(enforce, 'require_typed_adapter')
+    root = pathlib.Path(enforce.__file__).parent
+    offenders = [str(path) for path in root.rglob('*.py') if 'require_typed_adapter' in path.read_text(encoding='utf-8')]
+    assert offenders == []

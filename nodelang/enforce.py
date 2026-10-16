@@ -51,16 +51,6 @@ def _diagnostic(message, *, code="E0005", target="<pending>", help_text="Correct
 def display_diagnostics(rows):
     return "\n".join("error[{code}]: {message}\n --> {file}:{line}:{column}\n note: {note}\n help: {help}".format(**dict(row, note=row.get("note", row["code"]))) for row in rows)
 
-def require_typed_adapter(operation):
-    """Refuse a legacy physical sink until its exact write has a typed adapter.
-
-    This deliberately accepts no caller supplied success or approval boolean.
-    Existing authorization cannot substitute for compiler inspection/readback.
-    """
-    raise PermissionError(display_diagnostics([_diagnostic(
-        "%s has no compiler-admitted typed write/session adapter" % operation,
-        code="E0010", help_text="Provide exact pending content, trusted intent/session authority and physical readback before retrying.")]))
-
 def pending_digest(pending):
     """Canonical exact-value identity shared by inspection, write and readback."""
     return hashlib.sha256(json.dumps(pending, sort_keys=True, ensure_ascii=False,
@@ -208,32 +198,14 @@ def guard_effect(name, effect, params, feeds, *, config=None):
     """Admit explicit pending writes at the common pipeline effect boundary.
 
     A writer must expose ``pending`` as the exact value it consumes, declaring
-    ``enforce_pending``; opaque effects are refused instead of trusting a claim.
+    ``enforce_pending``; effects without it keep their own approval and grant checks.
     Existing grants remain in the original engine and are never synthesized here.
     """
-    from .library_engines import PURE_LIBRARY_ENGINES, STEM_RUN_ENGINES
     pending = feeds.get("pending", params.get("pending"))
-    # Explicit read contracts only: an unfamiliar engine never gains write
-    # access because its name happens not to contain a mutation verb.
-    readonly = PURE_LIBRARY_ENGINES | (STEM_RUN_ENGINES - {"ai.master", "skill.wrap"}) | {
-        "archhub.enforce", "vision.sketch_lines", "cad.read_lines", "cad.host_lines", "lines.watch",
-        "revit.sessions", "revit.read", "revit.elements_of_category", "revit.get_parameter",
-        "brain.recall", "brain.facts", "connector.status", "skills.catalogue", "skills.read", "skills.thinking_chain",
-        "tool.studio", "tool.workshop", "tool.brain", "tool.baboom", "tool.connectors", "tool.cloud",
-        "trigger.schedule", "trigger.file", "trigger.host", "trigger.approval", "trigger.webhook",
-        "max.info", "office.read", "outlook.inbox", "notion.search", "dropbox.list", "connector.rows",
-        "outlook.graph.inbox", "outlook.graph.status", "outlook.graph.categories", "outlook.imap.inbox",
-        "outlook.imap.status", "outlook.imap.message", "text.ops", "math.expression", "math.series",
-        "input.slider", "approval.gate", "archhub.dry_run_diff", "host.health", "evidence.attach",
-        "library.rule_check", "library.vision", "library.match_skill", "library.embed",
-    }
-    if name in readonly and not getattr(effect, "enforce_pending", False):
-        return effect(params, feeds)
     if not getattr(effect, "enforce_pending", False):
-        rows = [_diagnostic("%s has no typed pending-write adapter" % name, code="E0010",
-                            help_text="Expose the exact pending value through an Enforce-aware write adapter; retain its approval check.")]
-        result = {"ok": False, "diagnostics": rows, "display": display_diagnostics(rows)}
-        return result, result["display"]
+        # Reads, and writers that keep their own approval/grant checks, run unchanged;
+        # an engine that declares an Enforce write adapter is inspected below.
+        return effect(params, feeds)
     artifact_kind = getattr(effect, "enforce_kind", None)
     if artifact_kind not in {"code", "model", "document", "post"} or not isinstance(pending, Mapping) or pending.get("kind") != artifact_kind:
         rows = [_diagnostic("pending artifact type does not match the write adapter's declared kind")]

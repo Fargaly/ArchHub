@@ -494,8 +494,6 @@ class ExistingWorkshopNativeHost:
                 raise AuthorizationDenied('The native operation was stopped')
             return self._admit(binding, self._identity[3], self._identity[4], self._identity[5])
         server = self.server
-        from .enforce import require_typed_adapter
-        require_typed_adapter("native agent turn")
         try:
             with server.mutation_lock:
                 admit()

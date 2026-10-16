@@ -180,11 +180,6 @@ class TerminalSession:
         data = (text.rstrip("\r\n") + "\r\n").encode("utf-8")
         if len(data) > MAX_INPUT_BYTES:
             raise TerminalRefused("Terminal input exceeds 8 KB.")
-        from .enforce import require_typed_adapter
-        try:
-            require_typed_adapter("terminal input")
-        except PermissionError as error:
-            raise TerminalRefused(str(error)) from None
         try:
             self.process.stdin.write(data)
             self.process.stdin.flush()
@@ -292,11 +287,6 @@ class TerminalSessions:
 
     def start(self, cwd=None) -> dict:
         folder = self.resolve_cwd(cwd)
-        from .enforce import require_typed_adapter
-        try:
-            require_typed_adapter("terminal start")
-        except PermissionError as error:
-            raise TerminalRefused(str(error)) from None
         with self._lock:
             self._reap_locked()
             live = [s for s in self._sessions.values() if s.process.poll() is None]

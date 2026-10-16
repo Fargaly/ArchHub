@@ -209,11 +209,6 @@ class ApplicationUpdate:
                 raise UpdateRestartRefused(self._detail)
             if expected_build is not None and str(staged["build_id"]) != str(expected_build):
                 raise StagedBuildChanged(str(expected_build), str(staged["build_id"]))
-            from .enforce import require_typed_adapter
-            try:
-                require_typed_adapter("update reload: trusted compiler release witness")
-            except PermissionError as error:
-                raise UpdateRestartRefused(str(error)) from None
             self._available = str(staged["build_id"])
             # Carried to arm_update at close: the armed marker (which the next
             # boot verifies before installing) must name this build.

@@ -33,17 +33,18 @@ namespace Autodesk.Revit.DB
         public IEnumerator<View> GetEnumerator() => doc.Views.GetEnumerator();
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }
-    public enum TransactionStatus { Started, Committed, RolledBack }
+    public enum TransactionStatus { Started, Committed, RolledBack, Pending }
     public class Transaction : IDisposable
     {
         public static int Starts, Commits, Rollbacks;
         public static bool RefuseStart;
+        public static TransactionStatus StartResult = TransactionStatus.Started, CommitResult = TransactionStatus.Committed;
         private Document doc; private bool started;
         public Transaction(Document d, string name) { doc = d ?? throw new Exception("null transaction document"); }
-        public void Start() { if (RefuseStart) throw new Exception("fixture start refused"); Starts++; started = doc.IsModifiable = true; }
+        public TransactionStatus Start() { if (RefuseStart) throw new Exception("fixture start refused"); if (StartResult != TransactionStatus.Started) return StartResult; Starts++; started = doc.IsModifiable = true; return StartResult; }
         public bool HasStarted() => started;
         public TransactionStatus GetStatus() => started ? TransactionStatus.Started : TransactionStatus.Committed;
-        public void Commit() { Commits++; started = doc.IsModifiable = false; }
+        public TransactionStatus Commit() { Commits++; started = doc.IsModifiable = false; return CommitResult; }
         public void RollBack() { Rollbacks++; started = doc.IsModifiable = false; }
         public void Dispose() { if (started) RollBack(); }
     }

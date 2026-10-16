@@ -460,7 +460,15 @@ namespace RevitMCPCore
             // transaction:false explicitly admits application-level API calls.
             using (var tx = transaction && ctx.Doc != null ? new Transaction(ctx.Doc, txName) : null)
             {
-                try { tx?.Start(); }
+                try
+                {
+                    if (tx != null)
+                    {
+                        var started = tx.Start();
+                        if (started != TransactionStatus.Started)
+                            return JsonError("Transaction did not start (" + started + "); the script was not run.");
+                    }
+                }
                 catch (Exception ex) { return JsonError("Transaction start failed: " + ex.Message); }
                 ScriptResult sr;
                 try
@@ -482,7 +490,13 @@ namespace RevitMCPCore
                 if (sr.Status == "ok")
                 {
                     if (tx != null && tx.HasStarted() && tx.GetStatus() == TransactionStatus.Started)
-                        tx.Commit();
+                    {
+                        // Commit can fail without throwing: RolledBack (Revit rejected the
+                        // change) or Pending (failure handling still open). Neither is success.
+                        var committed = tx.Commit();
+                        if (committed != TransactionStatus.Committed)
+                            return JsonError("Revit did not commit the change (" + committed + "); the model was not modified.");
+                    }
                     var resultJson = SerializeResult(ctx.result ?? sr.Result);
                     return "{\"status\":\"ok\",\"result\":" + resultJson
                          + ",\"compiler\":\"subprocess_csc\""

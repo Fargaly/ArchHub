@@ -55,6 +55,8 @@ internal static class Program
             app.ActiveUIDocument.Document.IsModifiable = modifiable.GetBoolean();
         app.FailOpen = input.TryGetProperty("fail_open", out var fail) && fail.GetBoolean();
         Transaction.RefuseStart = input.TryGetProperty("fail_start", out var start) && start.GetBoolean();
+        Transaction.StartResult = input.TryGetProperty("start_status", out var ss) ? Enum.Parse<TransactionStatus>(ss.GetString()) : TransactionStatus.Started;
+        Transaction.CommitResult = input.TryGetProperty("commit_status", out var cs) ? Enum.Parse<TransactionStatus>(cs.GetString()) : TransactionStatus.Committed;
         var route = typeof(CoreEntry).GetMethod("RouteAsync", BindingFlags.NonPublic | BindingFlags.Instance);
         var task = (Task<string>)route.Invoke(Create(app), new object[] {
             input.GetProperty("route").GetString(), input.GetProperty("body").GetRawText(),

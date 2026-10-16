@@ -162,3 +162,17 @@ def test_real_core_http_auth_admits_signed_open_and_refuses_unsigned_browser_and
     finally:
         process.stdin.close()
         process.wait(timeout=10)
+
+
+@pytest.mark.parametrize("status", ["RolledBack", "Pending"])
+def test_commit_that_revit_did_not_complete_is_reported_as_failure(fixture_exe, status):
+    # Broker review R2: Commit can return RolledBack/Pending without throwing; never report ok.
+    result = run(fixture_exe, "/exec", {"code": "probe"}, active=True, commit_status=status)
+    assert result["answer"]["status"] == "error" and status in result["answer"]["error"]
+    assert result["Calls"] == 1 and result["Commits"] == 1
+
+
+def test_transaction_that_did_not_start_never_runs_the_script(fixture_exe):
+    result = run(fixture_exe, "/exec", {"code": "probe"}, active=True, start_status="RolledBack")
+    assert result["answer"]["status"] == "error" and "did not start" in result["answer"]["error"]
+    assert result["Calls"] == result["Starts"] == result["Commits"] == 0

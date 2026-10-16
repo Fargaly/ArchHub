@@ -236,7 +236,7 @@ function Read-CandidateManifest([string]$Path) {
         'selected/nodelang/session_link/vendor/LICENSE',
         'selected/nodelang/session_link/vendor/PROVENANCE.md',
         'selected/nodelang/studio/studio.html', 'selected/nodelang/studio/vendor/babel.js',
-        'selected/nodelang/studio/tokens.jsx', 'selected/nodelang/studio/design-canvas.jsx',
+        'selected/nodelang/studio/tokens.jsx', 'selected/nodelang/studio/ds/index.jsx', 'selected/nodelang/studio/design-canvas.jsx',
         'selected/nodelang/studio/shared-data.jsx', 'selected/nodelang/studio/studio-suite.jsx',
         'selected/nodelang/studio/param-types.jsx', 'selected/nodelang/studio/studio-params.jsx',
         'selected/nodelang/studio/studio-mobile.jsx', 'selected/nodelang/studio/studio-account.jsx',

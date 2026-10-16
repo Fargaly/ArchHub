@@ -3,7 +3,7 @@ const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const vm = require('node:vm');
+const vm = require('./studio_ds_context.cjs');
 
 const source = fs.readFileSync(process.env.ARCHHUB_WORKSPACE_TEST_PATH ||
   path.join(__dirname, '../nodelang/studio/studio-lm.jsx'), 'utf8');
@@ -55,8 +55,7 @@ test('the rail says where hidden Work lives and disables the button without a Wo
   const oldWindow = global.window, oldDocument = global.document;
   global.window = dom.window; global.document = dom.window.document;
   global.IS_REACT_ACT_ENVIRONMENT = true;
-  const HoverBtn = ({onClick, disabled, children}) => React.createElement('button', {onClick, disabled}, children);
-  const context = vm.createContext({React, LM, HoverBtn});
+  const context = vm.createContext({React, LM, window:dom.window});
   vm.runInContext(transformSync(slice('const graphInspectorNode =', '// ─── Conversation rail') + '\nglobalThis.Rail = NodeRail;',
     {loader:'jsx', format:'cjs'}).code, context);
   const root = createRoot(dom.window.document.getElementById('root'));

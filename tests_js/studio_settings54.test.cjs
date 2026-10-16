@@ -23,15 +23,16 @@ function systemProjection() {
       ins:[{id:'speech', label:'speech', t:'number'}], params:[{k:'permission_store', label:'Permission store', v:'backend', editable:false}]},
     {id:'sys_appearance', application:true, title:'UI & Design System', group:'Appearance', cat:'display', x:20, y:252, w:260,
       outs:[{id:'theme', label:'theme', t:'view'}], params:[
-        {k:'theme', label:'Theme', v:'dark', options:['dark', 'light', 'system']},
-        {k:'density', label:'Density', v:'comfortable', options:['comfortable', 'compact', 'spacious']},
-        {k:'text_size', label:'Text size', v:14, type:'number', unit:'px'},
+        {k:'theme', label:'Theme', v:'dark', type:'menu', editable:true, options:['dark', 'light', 'system']},
+        {k:'density', label:'Density', v:'comfortable', type:'menu', editable:true, options:['comfortable', 'compact', 'spacious']},
+        {k:'text_size', label:'Text size', v:14, type:'number', editable:true, unit:'px'},
       ]},
     {id:'sys_storage', application:true, title:'Storage & About', group:'Storage & About', cat:'data', x:620, y:252, w:240,
       ins:[{id:'theme', label:'theme', t:'view'}], params:[{k:'release_channel', label:'Version', v:'b1', editable:false}]},
   ];
   return {
-    canvas:{graph_id:'app', application_root:'app', root:'app', revision:7, authorization:{system_view:true}},
+    canvas:{graph_id:'app', application_root:'app', canvas_root:'canvas-root', root:'app', scope:{current:'app',trail:[{root:'canvas-root',label:'Root canvas'},{root:'app',label:'Application'}]},
+      revision:7, authorization:{subject:'owner-a',session:'view-a',system_view:true}},
     graph:{nodes, wires:[
       {id:'w-theme-storage', from:['sys_appearance', 'theme'], to:['sys_storage', 'theme']},
       {id:'w-relay-ai', from:['sys_connections', 'relay'], to:['sys_ai', 'relay']},
@@ -62,9 +63,10 @@ async function openSettings({permissionRows, permissionReadFails = false, expose
     {actor:'Cloud relay consent', kind:'consent', read:'Allow', write:'Ask', send:'Ask'},
     {actor:'Social approval queue', kind:'approval', read:'Allow', write:'Ask', send:'Ask'},
   ];
-  const calls = {setNodeProp:[], moveMany:[], readPermissionRows:0, setPermission:[], cloudConsent:[], socialDecision:[], socialRemove:[]};
+  const calls = {setNodeProp:[], moveMany:[], graphOpen:[], readPermissionRows:0, setPermission:[], cloudConsent:[], socialDecision:[], socialRemove:[]};
   win.ARCHHUB_EXISTING_WORKSHOP = {
-    getSnapshot:() => ({applicationUpdate:{state:'idle', current_build:'b1'}, theme:{configuration:{theme:{...seed}, binding_mode:'personal-wip', state:'WIP', history:[], personal_wip_heads:['head-a']}}, pending:false, error:''}),
+    getSnapshot:() => ({canvas:projection.canvas,topology:projection,workshops:[],
+      applicationUpdate:{state:'idle', current_build:'b1'}, theme:{configuration:{theme:{...seed}, binding_mode:'personal-wip', state:'WIP', history:[], personal_wip_heads:['head-a']}}, pending:false, error:''}),
     subscribe:fn => { listeners.add(fn); return () => listeners.delete(fn); },
     readProviders:async () => [{id:'openrouter', name:'OpenRouter', state:'keyed'}],
     watchApplicationUpdate:() => () => {},
@@ -87,8 +89,9 @@ async function openSettings({permissionRows, permissionReadFails = false, expose
     };
   }
   win.ARCHHUB_STUDIO_AUTHORITY = {
-    getSnapshot:() => ({...projection, applicationUpdate:{state:'idle', current_build:'b1'}, pending:false, error:''}),
+    getSnapshot:() => ({...projection, workshops:[], applicationUpdate:{state:'idle', current_build:'b1'}, pending:false, error:''}),
     subscribe:fn => { listeners.add(fn); return () => listeners.delete(fn); },
+    load:async()=>projection,
     moveMany:async (positions, revision, expected, placement) => {
       calls.moveMany.push({positions, revision, expected, placement});
       for (const node of projection.graph.nodes) if (positions[node.id]) Object.assign(node, positions[node.id]);
@@ -106,11 +109,22 @@ async function openSettings({permissionRows, permissionReadFails = false, expose
       return {ok:true};
     };
   }
-  win.ARCHHUB_LIVE = {sessions:[], currentGraph:null, hosts:[], connectors:[], graph:projection.graph, memory:[], skills:[]};
+  const sessions=[{id:'canvas-root',title:'Root canvas',state:'idle',host:'archhub',file:'Graph composition'}];
+  win.ARCHHUB_GRAPH_OPEN=async id=>{
+    calls.graphOpen.push(id);
+    assert.equal(id,'canvas-root','System opens the admitted canvas graph, not the application-root id');
+    return {ok:true,current_graph:id,graphs:sessions,canvas:projection.canvas};
+  };
+  win.ARCHHUB_LIVE = {sessions, currentGraph:null, hosts:[], connectors:[], graph:projection.graph, memory:[], skills:[]};
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
   for (const file of manifest.files) {
-    if (file.source !== 'mount.jsx') win.eval(read('nodelang/studio/compiled/' + file.output));
+    if (file.source !== 'mount.jsx') {
+      let code=read('nodelang/studio/compiled/' + file.output);
+      if(file.source==='studio-lm.jsx') code=code.replace(/window\.StudioLM\s*=\s*StudioLM\s*;/,
+        'window.StudioLM = StudioLM; window.__settings54Court = {Select:Settings54Select,writer:settings54ParamWriter};');
+      win.eval(code);
+    }
   }
   win.eval('window.__studioRoot=ReactDOM.createRoot(document.getElementById("root")); ReactDOM.flushSync(()=>window.__studioRoot.render(React.createElement(StudioLM)));');
   const doc = win.document;
@@ -120,11 +134,19 @@ async function openSettings({permissionRows, permissionReadFails = false, expose
   assert.ok(opener, 'actual Settings control exists');
   flush(() => opener.click());
   await settle();
-  // Graph-specific courts explicitly enter the graph; the Settings landing has controls.
-  flush(() => [...doc.querySelectorAll('[data-settings54-shell] button')].find(b => b.textContent.trim() === 'System graph').click());
-  await settle();
+  // Settings owns capability controls; the header System graph action opens a separate workspace.
   const close = () => { try { if (win.__studioRoot) flush(() => win.__studioRoot.unmount()); } finally { dom.window.close(); } };
-  return {win, doc, flush, settle, calls, close};
+  return {win, doc, flush, settle, calls, projection, close};
+}
+
+async function findSetting(s, text) {
+  const find=s.doc.querySelector('input[aria-label="Find a setting"]');
+  assert.ok(find,'Settings search is visible');
+  s.flush(()=>{
+    Object.getOwnPropertyDescriptor(s.win.HTMLInputElement.prototype,'value').set.call(find,text);
+    find.dispatchEvent(new s.win.Event('input',{bubbles:true}));
+  });
+  await s.settle();
 }
 
 async function openSettingsCapability(s, groupLabel, capabilityLabel) {
@@ -150,16 +172,21 @@ test('SETTINGS-54 p3: Settings shell renders admitted System nodes and real endp
     assert.ok(shell, 'Settings renders the SETTINGS-54 shell');
     assert.deepEqual([...shell.querySelectorAll('[data-settings54-group-title]')].map(node => node.textContent.trim()),
       ['Account', 'Connections', 'AI', 'Permissions', 'Appearance', 'Storage & About']);
-    const cards = [...shell.querySelectorAll('[data-settings54-node-card]')];
-    assert.ok(cards.length >= 6, 'real projected System nodes render');
-    assert.ok(cards.every(card => card.getAttribute('data-settings54-node-id')?.startsWith('sys_')), 'cards carry projected ids');
-    const ports = new Set([...shell.querySelectorAll('[data-settings54-port]')].map(port => port.getAttribute('data-settings54-port')));
-    const wires = [...shell.querySelectorAll('[data-settings54-wire]')].map(wire => wire.getAttribute('data-settings54-wire'));
-    assert.deepEqual(wires, ['sys_appearance:theme->sys_storage:theme', 'sys_connections:relay->sys_ai:relay', 'sys_ai:speech->sys_permissions:speech']);
-    for (const wire of wires) {
-      const [from, to] = wire.split('->');
-      assert.ok(ports.has(from), 'wire source port exists: ' + from);
-      assert.ok(ports.has(to), 'wire target port exists: ' + to);
+    await openSettingsCapability(s,'Appearance','System');
+    const cards = [...shell.querySelectorAll('[data-system-mini-node]')];
+    assert.equal(cards.length,6,'the real System preview renders every projected node');
+    assert.deepEqual(cards.map(card=>card.getAttribute('data-system-mini-node')),s.projection.graph.nodes.map(node=>node.id));
+    const wires=[...shell.querySelectorAll('[data-system-mini-wire]')];
+    assert.equal(wires.length,3,'every projected relation renders');
+    for(const [index,wire]of s.projection.graph.wires.entries()) {
+      const from=cards.find(card=>card.getAttribute('data-system-mini-node')===wire.from[0]).querySelector('rect');
+      const to=cards.find(card=>card.getAttribute('data-system-mini-node')===wire.to[0]).querySelector('rect');
+      const start=[+from.getAttribute('x')+ +from.getAttribute('width'),+from.getAttribute('y')+ +from.getAttribute('height')/2];
+      const end=[+to.getAttribute('x'),+to.getAttribute('y')+ +to.getAttribute('height')/2];
+      assert.ok(wires[index].getAttribute('d').startsWith('M'+start.join(',')),'wire source is its projected node');
+      assert.ok(wires[index].getAttribute('d').endsWith(end.join(',')),'wire target is its projected node');
+      assert.ok(s.projection.graph.nodes.find(node=>node.id===wire.from[0]).outs.some(port=>port.id===wire.from[1]));
+      assert.ok(s.projection.graph.nodes.find(node=>node.id===wire.to[0]).ins.some(port=>port.id===wire.to[1]));
     }
     assert.equal(shell.textContent.includes('Add node'), false, 'Settings has no Add node chrome');
     assert.match(shell.textContent, /Connected/);
@@ -170,23 +197,45 @@ test('SETTINGS-54 p3: find focuses matches and inspector controls post real Syst
   const s = await openSettings();
   try {
     const shell = s.doc.querySelector('[data-settings54-shell]');
-    const find = shell.querySelector('input[aria-label="Find a setting"]');
-    s.flush(() => { find.value = 'Density'; find.dispatchEvent(new s.win.Event('input', {bubbles:true})); });
-    await s.settle();
-    assert.equal(shell.querySelector('[data-settings54-graph]').getAttribute('data-settings54-focus'), 'sys_appearance');
-    const properties = [...shell.querySelectorAll('button')].find(button => button.textContent.trim() === 'Properties');
-    s.flush(() => properties.click());
-    await s.settle();
-    const density = [...shell.querySelectorAll('[data-settings54-param-row]')].find(row => row.textContent.includes('Density')).querySelector('select');
-    s.flush(() => { density.value = 'compact'; density.dispatchEvent(new s.win.Event('change', {bubbles:true})); });
+    await findSetting(s,'Density');
+    const inspector=shell.querySelector('[data-application-parameters="sys_appearance"]');
+    assert.ok(inspector,'search selects the actual application node inspector');
+    const density=inspector.querySelector('[data-param-key="density"]');
+    assert.ok(density,'Density parameter is visible');
+    const picker=density.querySelector('[data-param-control] select');
+    assert.ok(picker,'the actual application inspector uses its fixed menu control');
+    s.flush(()=>{picker.value='compact';picker.dispatchEvent(new s.win.Event('change',{bubbles:true}));});
     await s.settle();
     assert.deepEqual(s.calls.setNodeProp.at(-1), {id:'sys_appearance', key:'density', value:'compact'});
-    const reread = [...shell.querySelectorAll('[data-settings54-param-row]')].find(row => row.textContent.includes('Density')).querySelector('select');
-    assert.equal(reread.value, 'compact', 're-read projection shows the written value');
-    const arrange = [...shell.querySelectorAll('button')].find(button => button.textContent.trim() === 'Arrange');
-    s.flush(() => arrange.click());
+    assert.equal(inspector.querySelector('[data-param-key="density"] [data-param-control] select').value,'compact','re-read projection shows the written value');
+    const open=[...shell.querySelectorAll('button')].find(button=>button.textContent.trim()==='System graph');
+    s.flush(()=>open.click());
     await s.settle();
-    assert.equal(s.calls.moveMany.at(-1).placement, 'arrange');
+    assert.equal(s.doc.querySelector('[data-settings54-shell]'),null,'System graph opens in its own workspace');
+    assert.ok(s.doc.querySelector('[data-system-graph]'),'the actual System workspace renders: '+JSON.stringify({
+      workspacePending:!!s.doc.querySelector('[data-workspace-canvas-loading]'),
+      nodes:s.doc.querySelectorAll('[data-node-id]').length,
+      text:s.doc.getElementById('root').textContent.replace(/\s+/g,' ').slice(0,350),
+      ownerCanvas:s.win.ARCHHUB_EXISTING_WORKSHOP.getSnapshot().canvas,
+    }));
+    assert.deepEqual(s.calls.graphOpen,['canvas-root'],'navigation uses the real root-graph open protocol');
+    const arrange=s.doc.querySelector('button[aria-label="Arrange"]');
+    assert.ok(arrange,'the workspace exposes Arrange');
+    assert.equal(arrange.disabled,false,'the admitted owner supports arranging this canvas');
+    // jsdom does not perform layout. The real Arrange guard requires measured
+    // mounted card sizes, as in studio_canvas_user_layout's Arrange harness.
+    const cards=[...s.doc.querySelectorAll('.lm-node[data-node-id]')];
+    assert.equal(cards.length,s.projection.graph.nodes.length,'all admitted System cards are mounted');
+    for(const card of cards) {
+      const node=s.projection.graph.nodes.find(row=>row.id===card.dataset.nodeId);
+      assert.ok(node,'each measured card belongs to the owner projection');
+      Object.defineProperty(card,'offsetWidth',{configurable:true,value:node.w});
+      Object.defineProperty(card,'offsetHeight',{configurable:true,value:180});
+    }
+    const previousWrites=s.calls.moveMany.length;
+    s.flush(()=>arrange.click());await s.settle();
+    assert.equal(s.calls.moveMany.length,previousWrites+1,'one explicit Arrange click writes one owner layout');
+    assert.equal(s.calls.moveMany.at(-1)?.placement, 'arrange');
   } finally { s.close(); }
 });
 
@@ -239,9 +288,13 @@ test('SETTINGS-54 p4: every former Settings capability has a visible click path 
     ];
     for (const [group, label] of paths) await openSettingsCapability(s, group, label);
     await openSettingsCapability(s, 'Appearance', 'Theme');
-    assert.equal(shell.querySelector('[data-settings54-graph]').getAttribute('data-settings54-focus'), 'sys_appearance',
-      'full projection still selects the real Appearance node');
-    assert.equal(shell.querySelectorAll('[style*="display: none"]').length, 0, 'Settings shell has no hidden compatibility DOM');
+    await findSetting(s,'Density');
+    assert.ok(shell.querySelector('[data-application-parameters="sys_appearance"]'),'full projection selects the real Appearance node');
+    const hidden=[...shell.querySelectorAll('[style*="display: none"]')];
+    const fixedActionSlot=node=>node.parentElement?.matches('[data-param-row]') &&
+      node===node.parentElement.lastElementChild && node.childElementCount===0;
+    assert.equal(hidden.filter(node=>!fixedActionSlot(node)).length,0,'Settings shell has no hidden compatibility DOM');
+    assert.ok(hidden.every(fixedActionSlot),'only empty fixed application parameter action slots are hidden');
     const source = read('nodelang/studio/studio-lm.jsx');
     assert.doesNotMatch(source, /compatTabs|compatPanel/);
   } finally { s.close(); }
@@ -254,12 +307,10 @@ test('SETTINGS-54 p5: sparse projection keeps group capabilities reachable witho
   const s = await openSettings({projectionOverride:sparse});
   try {
     const shell = await openSettingsCapability(s, 'Appearance', 'Theme');
-    assert.equal(shell.querySelector('[data-settings54-graph]').getAttribute('data-settings54-focus'), '',
-      'Appearance does not select the fallback Account node');
-    assert.match(shell.textContent, /No live node for Appearance yet/);
+    assert.equal(shell.querySelector('[data-application-parameters="sys_account"]'),null,'Appearance does not select the fallback Account node');
+    assert.ok(shell.querySelector('[data-settings54-capability="Theme"]'),'Appearance shows its real capability owner');
     await openSettingsCapability(s, 'Appearance', 'Shortcuts');
-    assert.equal(shell.querySelector('[data-settings54-graph]').getAttribute('data-settings54-focus'), '',
-      'Shortcuts stays on empty node selection when Appearance has no live node');
+    assert.equal(shell.querySelector('[data-application-parameters="sys_account"]'),null,'Shortcuts does not fabricate a selected node');
   } finally { s.close(); }
 });
 
@@ -279,8 +330,7 @@ test('SETTINGS-54 p5: empty projection still exposes every group capability', as
     ];
     for (const [group, label] of paths) {
       const shell = await openSettingsCapability(s, group, label);
-      assert.equal(shell.querySelector('[data-settings54-graph]').getAttribute('data-settings54-focus'), '',
-        label + ' does not fabricate a selected node');
+      assert.equal(shell.querySelector('[data-application-parameters]'),null,label+' does not fabricate a selected node');
     }
   } finally { s.close(); }
 });
@@ -321,22 +371,32 @@ test('SETTINGS-54 p4: Permissions keeps existing consent, social disconnect and 
 
 test('SETTINGS-54 p4: parameter controls are disabled with a reason when no writer route exists', async () => {
   const s = await openSettings({exposeParamWriter:false});
+  let consumerRoot;
   try {
     const shell = s.doc.querySelector('[data-settings54-shell]');
-    const find = shell.querySelector('input[aria-label="Find a setting"]');
-    s.flush(() => { find.value = 'Density'; find.dispatchEvent(new s.win.Event('input', {bubbles:true})); });
-    await s.settle();
-    const properties = [...shell.querySelectorAll('button')].find(button => button.textContent.trim() === 'Properties');
-    s.flush(() => properties.click());
-    await s.settle();
-    const density = [...shell.querySelectorAll('[data-settings54-param-row]')].find(row => row.textContent.includes('Density'));
-    assert.ok(density, 'Density parameter row is visible');
-    assert.ok(density.querySelector('select:disabled'), 'unsupported parameter writer disables the control');
-    assert.match(density.textContent, /Parameter writer is not available in this runtime/);
-    s.flush(() => density.querySelector('select').dispatchEvent(new s.win.Event('change', {bubbles:true})));
-    await s.settle();
+    const row=s.projection.graph.nodes.find(node=>node.id==='sys_appearance').params.find(row=>row.k==='density');
+    const writer=s.win.__settings54Court.writer(row);
+    assert.equal(writer.ok,false,'the real writer resolver refuses absent authority');
+    assert.match(writer.reason,/Parameter writer is not available in this runtime/);
+    const host=s.doc.createElement('div');s.doc.body.appendChild(host);
+    consumerRoot=s.win.ReactDOM.createRoot(host);
+    let writes=0;
+    s.flush(()=>consumerRoot.render(s.win.React.createElement('span',{title:writer.reason},
+      s.win.React.createElement(s.win.__settings54Court.Select,{label:'Density',value:row.v,options:row.options,
+        disabled:!writer.ok,onChange:()=>writes++}))));
+    assert.ok(host.querySelector('select:disabled'),'the shared Settings selector disables unsupported writes');
+    assert.match(host.firstElementChild.title,/Parameter writer is not available in this runtime/);
+    s.flush(()=>host.querySelector('select').click());
+    assert.equal(writes,0,'disabled selector cannot activate a writer');
+    // The routed inspector replaced the embedded Settings selector; it reports a failed write visibly.
+    await findSetting(s,'Density');
+    const density=shell.querySelector('[data-application-parameters="sys_appearance"] [data-param-key="density"]');
+    assert.ok(density,'the routed inspector still shows the projected parameter');
+    const select=density.querySelector('[data-param-control] select');assert.ok(select);
+    s.flush(()=>{select.value='compact';select.dispatchEvent(new s.win.Event('change',{bubbles:true}));});await s.settle();
+    assert.ok(shell.querySelector('[data-sysnode-param="density"] [role="alert"]'),'unsupported routed write has a visible refusal');
     assert.equal(s.calls.setNodeProp.length, 0);
-  } finally { s.close(); }
+  } finally {if(consumerRoot)s.flush(()=>consumerRoot.unmount());s.close(); }
 });
 
 test('SETTINGS-54 p3: source contains no decorative graph constants or permission localStorage fallback', () => {

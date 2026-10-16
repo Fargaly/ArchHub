@@ -1,6 +1,6 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const vm=require('node:vm');
+const vm=require('./studio_ds_context.cjs');
 const React=require('react');
 const {transformSync}=require('esbuild');
 const {fixture}=require('./workshop72_fixture.cjs');
@@ -25,7 +25,8 @@ test('PASS4 DONE TODAY shows the graph result and completion clock, then updates
     node.result_summary='6 findings';node.completed_at=at;
     await ui.render();assert.match(section(),new RegExp('6 findings · '+clock(at)));
     assert.doesNotMatch(text(ui.doc.querySelector('[data-workshop-task-row="work:done0042"]')),/5 findings|\bdone\b/i);
-    node.result_summary=undefined;await ui.render();assert.match(section(),/Not available yet/);
+    node.result_summary=undefined;await ui.render();assert.match(section(),/Unavailable/);
+    assert.doesNotMatch(section(),/Not available yet/);
   }finally{await ui.close();}
 });
 

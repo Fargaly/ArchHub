@@ -109,14 +109,14 @@ const Crumb = ({ items }) => <span style={{ fontSize:12, color:LM.inkSoft }}>
 const PanelHead = ({ title, children }) => (
   <div style={{ display:'flex', alignItems:'center', gap:8, height:44, padding:'0 12px',
     borderBottom:`1px solid ${LM.lineSoft}` }}>
-    <span style={{ fontSize:16, fontWeight:600 }}>{title}</span><span style={{ flex:1 }}/>{children}
+    <span style={{ fontSize:16, fontWeight:600 }}>{title}</span><span style={window.AH_DS.styles.fill}/>{children}
   </div>
 );
 const Search = ({ ph, children }) => (
   <div style={{ margin:'10px 12px', height:32, borderRadius:5, background:LM.bgSoft,
     border:`1px solid ${LM.line}`, display:'flex', alignItems:'center', gap:8, padding:'0 10px',
     fontSize:13, color:LM.inkSoft }}>
-    <span>⌕</span>{children || <span>{ph}</span>}<span style={{ flex:1 }}/><span style={{ fontSize:11 }}>Ctrl K</span>
+    <span>⌕</span>{children || <span>{ph}</span>}<span style={window.AH_DS.styles.fill}/><span style={{ fontSize:11 }}>Ctrl K</span>
   </div>
 );
 const Frame = ({ rail, left, top, children, insp, status, onHome, onPanel, onSettings, onWorkshop, onCanvas, onChats, onDocs, onAccount, account, workshopWindow = false }) => {
@@ -223,10 +223,10 @@ const HistoryBody = ({ n }) => {
         <span style={{ color:row.state === 'applied' ? LM.ok : LM.inkSoft }}>{row.state || 'kept'}</span>
       </div>
     )) : <div role="status" style={{ fontSize:11, color:LM.inkSoft }}>No graph actions yet.</div>}
-    {rows.length > preview.length && <button type="button" onClick={openInspector} style={{ border:0, padding:0, background:'transparent',
+    {rows.length > preview.length && <window.AH_DS.Btn type="button" onClick={openInspector} style={{ border:0, padding:0, background:'transparent',
       textAlign:'left', cursor:'pointer', fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', color:LM.inkSoft }}>
       +{rows.length - preview.length} more
-    </button>}
+    </window.AH_DS.Btn>}
   </div>;
 };
 
@@ -312,7 +312,7 @@ const CommandBar = ({ open, onClose, addNodeFromLibrary, onOpenSession, onChats 
         background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:8, boxShadow:LM.shadow.dialog,
         overflow:'hidden', color:LM.ink }}>
         <div style={{ height:44, display:'flex', alignItems:'center', gap:9, padding:'0 14px', borderBottom:`1px solid ${LM.lineSoft}` }}>
-          <span style={{ color:LM.inkSoft }}>⌕</span>
+          <span style={window.AH_DS.styles.muted}>⌕</span>
           <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={onKeyDown}
             placeholder="Search" aria-label="Search commands" style={{ flex:1, minWidth:0, border:0, outline:0,
             background:'transparent', color:LM.ink, fontFamily:LM.sans, fontSize:13 }}/>
@@ -324,7 +324,7 @@ const CommandBar = ({ open, onClose, addNodeFromLibrary, onOpenSession, onChats 
             <div key={group}>
               <div style={{ padding:'0 9px 5px', color:LM.inkSoft, fontSize:11 }}>{group}</div>
               {groupRows.map((row, index) => (
-                <button type="button" key={group + ':' + row.label + ':' + index} onClick={() => activate(row)}
+                <window.AH_DS.Btn type="button" key={group + ':' + row.label + ':' + index} onClick={() => activate(row)}
                   style={{ width:'100%', height:32, display:'flex', alignItems:'center', gap:9, padding:'0 9px',
                     border:0, borderRadius:5, background:index === 0 && group === Object.keys(grouped)[0] ? LM.bgHover : 'transparent',
                     color:LM.ink, fontFamily:LM.sans, textAlign:'left', cursor:'pointer' }}>
@@ -334,7 +334,7 @@ const CommandBar = ({ open, onClose, addNodeFromLibrary, onOpenSession, onChats 
                     fontSize:13, fontWeight:600 }}>{row.label}</span>
                   <span style={{ color:LM.inkSoft, fontSize:12, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{row.meta}</span>
                   {row.hint && <span style={{ color:LM.inkSoft, fontSize:11, marginLeft:6 }}>{row.hint}</span>}
-                </button>
+                </window.AH_DS.Btn>
               ))}
             </div>
           ))}
@@ -362,10 +362,10 @@ const AppToast = ({ toast }) => {
       color:LM.ink, fontFamily:LM.sans, fontSize:13,
     }}>
       <span style={{ color:isErr ? LM.err : toast.tone === 'run' ? LM.accent : LM.ok }}>{icon}</span>
-      <span style={{ flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontWeight:600 }}>{toast.text}</span>
-      {toast.actionLabel && <button type="button" onClick={toast.action} style={{
+      <span style={{ flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontWeight:600 }}>{isErr ? window.AH_DS.errorText(toast.text) : toast.text}</span>
+      {toast.actionLabel && <window.AH_DS.Btn type="button" onClick={toast.action} style={{
         border:0, background:'transparent', color:LM.ink, fontFamily:LM.sans, fontSize:13, fontWeight:700, cursor:'pointer',
-      }}>{toast.actionLabel}</button>}
+      }}>{toast.actionLabel}</window.AH_DS.Btn>}
     </div>
   );
 };
@@ -387,8 +387,8 @@ const DestructiveDialog = ({ confirming, onCancel, onConfirm }) => {
           {noun(nodes, 'node') + ' and ' + noun(wires, 'wire') + ' go with it. Undo brings them back.'}
         </p>
         <div style={{ display:'flex', justifyContent:'flex-end', gap:12 }}>
-          <button type="button" autoFocus onClick={onCancel} style={{...toolBtn(), color:LM.ink, border:'1px solid transparent'}}>Cancel</button>
-          <button type="button" onClick={onConfirm} style={{...toolBtn(), background:LM.err, border:`1px solid ${LM.err}`, color:LM.onFill}}>Delete</button>
+          <window.AH_DS.Btn type="button" autoFocus onClick={onCancel} style={{...window.AH_DS.styles.button("ghost", true), color:LM.ink, border:'1px solid transparent'}}>Cancel</window.AH_DS.Btn>
+          <window.AH_DS.Btn type="button" onClick={onConfirm} style={{...window.AH_DS.styles.button("ghost", true), background:LM.err, border:`1px solid ${LM.err}`, color:LM.onFill}}>Delete</window.AH_DS.Btn>
         </div>
       </div>
     </div>
@@ -1134,6 +1134,7 @@ const StudioLM = () => {
     if (tool === 'studio') {
       setToolView(null);
       if (firstSession) openSessionView(firstSession, {mode:'canvas', conversationRoot:'', target:''});
+      else { setOpenId(null); setToolView({id:'studio', tab:'canvas'}); }
       return;
     }
     // No graph exists at all yet: the Workshop tool page still opens (never a silent no-op on Home).
@@ -1404,7 +1405,7 @@ const StudioLM = () => {
     session ? 'Canvas' : 'Home';
   return (
     <Frame workshopWindow={(!!session && workspaceView.mode === 'chat' && !!workspaceView.conversationRoot) || (!session && toolView?.id === 'workshop')}
-      rail={frameRail} onHome={goHome} onPanel={value => { beginNavigation(); setSettingsOpen(false); setDocsOpen(false); setLibraryOpen(false); setPanel(value); }}
+      rail={frameRail} onHome={goHome} onPanel={value => { beginNavigation(); setSettingsOpen(false); setDocsOpen(false); setLibraryOpen(false); setToolView(null); setPanel(value); }}
       onSettings={() => openSettings(true)} onAccount={() => openSettings(true,'account')} account={account}
       onChats={() => { goHome(); setPanel('chats'); }}
       onDocs={() => openDocs(true)}
@@ -1423,7 +1424,7 @@ const StudioLM = () => {
       {session && sessionOpenError && <div role="alert" style={{position:'absolute', top:56, left:'50%', transform:'translateX(-50%)',
         zIndex:40, maxWidth:560, padding:'8px 12px', background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md,
         color:LM.warn, fontFamily:LM.sans, fontSize:12.5}}>{sessionOpenError}
-        {' '}<button type="button" onClick={() => window.location.reload()}>Refresh graphs</button></div>}
+        {' '}<window.AH_DS.Btn type="button" onClick={() => window.location.reload()}>Refresh graphs</window.AH_DS.Btn></div>}
       {toolView && !session
         ? <ToolMainView view={toolView} account={account} setAccount={setAccount} onSignOut={signOut} onSettings={openSettings}
             onHome={goHome} onChats={() => { goHome(); setPanel('chats'); }} onCockpit={() => openTool('cockpit')} onDocs={() => openDocs(true)} onLibrary={() => setLibraryOpen(true)} updateView={setToolView}/>
@@ -1445,7 +1446,11 @@ const StudioLM = () => {
             onNewSession={createSessionGraphInPlace}
             onSettings={() => openSettings(true, 'system')}
             onAccount={() => openSettings(true, 'account')}/>
-        : <Home onOpen={openSession} sessions={visibleSessions} model={model} native={homeNative}
+        : panel ? <main data-rail-workspace={panel} style={{height:'100%',display:'grid',placeItems:'center'}}>
+            <window.AH_DS.EmptyState title={panel === 'chats' ? 'Choose a chat' : 'Build your graph'}
+              detail={panel === 'chats' ? 'Open a session from Chats to continue its conversation.' : 'Choose a node in the Library, or open a graph to add it to your canvas.'}
+              action={panel !== 'chats' ? <window.AH_DS.Btn onClick={() => setLibraryOpen(true)}>Add node</window.AH_DS.Btn> : undefined}/>
+          </main> : <Home onOpen={openSession} sessions={visibleSessions} model={model} native={homeNative}
             readiness={readiness} onModelReadRetry={readInitialModel} setPickerOpen={setPickerOpen}
             setLibraryOpen={setLibraryOpen} setPanel={setPanel}
             onOpenTool={openTool} onOpenToolGraph={openToolGraph} workshopState={workshopState} account={account}
@@ -1535,13 +1540,13 @@ const Sidebar = ({ panel, setPanel, openId, onOpen, onHome, onSettings, onAccoun
         ['skills', 'Skills'],
         ['search', 'Search'],
       ].map(([id, label]) => (
-        <button key={id} type="button" title={label} data-library-tab={id} aria-current={panel === id ? 'true' : undefined}
+        <window.AH_DS.Btn key={id} type="button" title={label} data-library-tab={id} aria-current={panel === id ? 'true' : undefined}
           onClick={() => setPanel(id)} style={{
             height:28, border:0, borderRadius:LM.rad.sm,
             background:panel === id ? LM.bgHover : 'transparent',
             color:panel === id ? LM.ink : LM.inkSoft,
             fontFamily:LM.sans, fontSize:12, fontWeight:600, cursor:'pointer',
-          }}>{label}</button>
+          }}>{label}</window.AH_DS.Btn>
       ))}
     </div>}
     {railOnly ? null : <>
@@ -1556,11 +1561,11 @@ const Sidebar = ({ panel, setPanel, openId, onOpen, onHome, onSettings, onAccoun
 );
 
 const PanelHomeButton = ({ onHome }) => (
-  <button onClick={onHome} aria-label="Home" data-home-button style={{
+  <window.AH_DS.Btn onClick={onHome} aria-label="Home" data-home-button style={{
     height:26, padding:'0 9px', border:`1px solid ${LM.line}`,
     background:LM.bg, color:LM.inkSoft, borderRadius:LM.rad.sm,
     fontFamily:LM.sans, fontSize:12, fontWeight:500, cursor:'pointer',
-  }}>Home</button>
+  }}>Home</window.AH_DS.Btn>
 );
 
 const ToolOffPanelFromOwners = ({ panel, account }) => {
@@ -1571,10 +1576,7 @@ const ToolOffPanelFromOwners = ({ panel, account }) => {
   return <ToolOffPanel tool={tool}/>;
 };
 
-const inlineTextButton = () => ({
-  padding:0, border:0, background:'transparent', color:LM.accent,
-  font: 'inherit', cursor:'pointer',
-});
+
 
 const ToolGlyph = ({ id }) => {
   const stroke = 'currentColor';
@@ -1973,7 +1975,7 @@ const WaitingButton = ({ items = [], variant = 'strip', onOpenTask }) => {
   };
   const label = variant === 'home' ? 'Waiting for you' : `${liveItems.length} waiting for you`;
   return <span style={{position:'relative', display:variant === 'home' ? 'block' : 'inline-flex'}}>
-    <button type="button" data-waiting-trigger={variant} onClick={() => setOpen(value => !value)} style={{
+    <window.AH_DS.Btn type="button" data-waiting-trigger={variant} onClick={() => setOpen(value => !value)} style={{
       width:variant === 'home' ? '100%' : 'auto', textAlign:'left', padding:variant === 'home' ? '8px 10px' : '0 4px',
       border:variant === 'home' ? `1px solid ${LM.lineSoft}` : 0, borderRadius:variant === 'home' ? LM.rad.sm : 0,
       background:variant === 'home' ? LM.bg : 'transparent', color:LM.inkSoft, cursor:'pointer',
@@ -1981,7 +1983,7 @@ const WaitingButton = ({ items = [], variant = 'strip', onOpenTask }) => {
     }}>
       <span style={{color:LM.warn}}>{label}</span>
       {variant === 'home' && <span style={{color:LM.ink, marginLeft:8}}>{waitingLine(liveItems[0])}</span>}
-    </button>
+    </window.AH_DS.Btn>
     {open && <div data-waiting-popover="" style={{
       position:'absolute', zIndex:20, bottom:variant === 'strip' ? 22 : 'auto', top:variant === 'home' ? '100%' : 'auto',
       left:0, width:480, maxWidth:'calc(100vw - 40px)', maxHeight:'70vh', overflow:'auto',
@@ -2010,14 +2012,14 @@ const WaitingButton = ({ items = [], variant = 'strip', onOpenTask }) => {
             onApprove:() => decide(item,'approve'),onDecline:() => decide(item,'reject')})}
           <div style={{display:'flex', gap:6, alignItems:'center', marginTop:8, flexWrap:'wrap'}}>
             {item.producer === 'workshop_gate' ? (
-              <button type="button" onClick={() => onOpenTask ? onOpenTask(item) :
-                setStatus(state => ({...state, [item.id]:'Approvals view is unavailable.'}))} style={smallBtn(true)}>
+              <window.AH_DS.Btn type="button" onClick={() => onOpenTask ? onOpenTask(item) :
+                setStatus(state => ({...state, [item.id]:'Approvals view is unavailable.'}))} style={window.AH_DS.styles.button(true ? 'primary' : 'secondary', true)}>
                 {item.open_label || 'Open in Approvals'}
-              </button>
+              </window.AH_DS.Btn>
             ) : null}
             {(item.host_ids || item.ids || []).length > 0 && window.ARCHHUB_CONNECTORS?.highlight &&
-              <button type="button" onClick={() => showHost(item)} style={smallBtn()}>Show in host</button>}
-            {onOpenTask && item.producer !== 'workshop_gate' && <button type="button" onClick={() => onOpenTask(item)} style={smallBtn()}>Open task</button>}
+              <window.AH_DS.Btn type="button" onClick={() => showHost(item)} style={window.AH_DS.styles.button("secondary", true)}>Show in host</window.AH_DS.Btn>}
+            {onOpenTask && item.producer !== 'workshop_gate' && <window.AH_DS.Btn type="button" onClick={() => onOpenTask(item)} style={window.AH_DS.styles.button("secondary", true)}>Open task</window.AH_DS.Btn>}
             {item.second_approval && <span style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft}}>Needs {item.ask_member || 'member'}</span>}
             {status[item.id] && status[item.id] !== 'pending' && <span style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft}}>{status[item.id]}</span>}
           </div>
@@ -2111,11 +2113,11 @@ const ToolOffPanel = ({ tool }) => {
     <div style={{padding:'10px 0 0'}}>
       <h2 style={{fontFamily:LM.sans, fontSize:15, fontWeight:400, margin:'0 0 8px', color:LM.ink}}>{tool.emptyTitle}</h2>
       <p style={{fontFamily:LM.sans, fontSize:13, color:LM.inkSoft, margin:'0 0 14px'}}>{tool.emptyLine}</p>
-      {tool.turnOn && <button type="button" onClick={tool.turnOn} style={{
+      {tool.turnOn && <window.AH_DS.Btn type="button" onClick={tool.turnOn} style={{
         padding:'7px 11px', border:0, borderRadius:LM.rad.sm, background:LM.accent,
         color:(window.AH && window.AH.onFill) || '#180f08', fontFamily:LM.sans,
         fontSize:12.5, fontWeight:600, cursor:'pointer',
-      }}>Turn on</button>}
+      }}>Turn on</window.AH_DS.Btn>}
     </div>
   </div>;
 };
@@ -2124,9 +2126,9 @@ const ChatsPanel = ({ openId, onOpen, onNew, onHome, account, onAccount }) => (
   <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
     <PanelHead title="Chats">
       <PanelHomeButton onHome={onHome || onNew}/>
-      <button title="New chat" onClick={onNew} style={panelIconBtn()}>
+      <window.AH_DS.Btn title="New chat" onClick={onNew} style={window.AH_DS.styles.button("ghost", true)}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
-      </button>
+      </window.AH_DS.Btn>
     </PanelHead>
 
     <Search ph="Search chats..."/>
@@ -2137,7 +2139,7 @@ const ChatsPanel = ({ openId, onOpen, onNew, onHome, account, onAccount }) => (
         const a = openId === s.id;
         const sm = LM_STATE_META[s.state];
         return (
-          <button key={s.id} onClick={() => onOpen(s.id)} style={{
+          <window.AH_DS.Btn key={s.id} onClick={() => onOpen(s.id)} style={{
             width:'100%', padding:'7px 9px', borderRadius:LM.rad.sm, border:0,
             background: a ? LM.bgSoft : 'transparent', color: a ? LM.ink : LM.inkSoft,
             cursor:'pointer', textAlign:'left', position:'relative',
@@ -2153,7 +2155,7 @@ const ChatsPanel = ({ openId, onOpen, onNew, onHome, account, onAccount }) => (
             }}/>
             <span style={{ flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontWeight: a ? 500 : 400 }}>{s.title}</span>
             {a && <span style={{ fontFamily:LM.sans, fontSize:14, color:LM.inkSoft, lineHeight:0.5 }}>···</span>}
-          </button>
+          </window.AH_DS.Btn>
         );
       })}
     </div>
@@ -2171,7 +2173,7 @@ const AccountChip = ({ account, onOpen }) => {
   const name = email ? String(account.name || email.split('@')[0]) : '';
   const tier = email ? String(account.graphTier || '').toUpperCase() : '';
   return (
-    <button type="button" aria-label="Account" title={email || 'Sign in'} onClick={onOpen} style={{
+    <window.AH_DS.Btn type="button" aria-label="Account" title={email || 'Sign in'} onClick={onOpen} style={{
       margin:LM.sp.sm, padding:'7px 10px', borderRadius:LM.rad.md,
       background:LM.bgSoft, border:`1px solid ${LM.line}`,
       display:'flex', alignItems:'center', gap:9, textAlign:'left',
@@ -2182,18 +2184,18 @@ const AccountChip = ({ account, onOpen }) => {
         <div style={{ fontSize:12, fontWeight:500, color:name ? LM.ink : LM.accent, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{name || 'Sign in'}</div>
         {tier && <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.08em' }}>{tier}</div>}
       </div>
-    </button>
+    </window.AH_DS.Btn>
   );
 };
 
-const panelIconBtn = () => ({
-  width:22, height:22, padding:0, border:0, background:'transparent',
-  borderRadius:4, cursor:'pointer', color:LM.inkSoft,
-  display:'grid', placeItems:'center',
-});
+
 
 const useNodeLibrary = (enabled = true) => {
   const [, refresh] = React.useState(0);
+  const [attempt, setAttempt] = React.useState(0);
+  const [timedOut, setTimedOut] = React.useState(false);
+  const pending = enabled && (window.AH_LIBRARY_LOADING === true ||
+    (typeof window.AH_LOAD_LIBRARY === 'function' && !window.AH_LIBRARY_LOADED && !window.AH_LIBRARY_ERROR));
   React.useEffect(() => {
     const changed = () => refresh(value => value + 1);
     window.addEventListener('archhub:library-refresh', changed);
@@ -2202,11 +2204,17 @@ const useNodeLibrary = (enabled = true) => {
   React.useEffect(() => {
     if (enabled && typeof window.AH_LOAD_LIBRARY === 'function') window.AH_LOAD_LIBRARY().catch(() => {});
   }, [enabled]);
+  React.useEffect(() => {
+    setTimedOut(false);
+    if (!pending) return;
+    const timer = setTimeout(() => setTimedOut(true), 1900);
+    return () => clearTimeout(timer);
+  }, [pending, attempt]);
   const retry = React.useCallback(() => {
+    setAttempt(value => value + 1);
     if (typeof window.AH_LOAD_LIBRARY === 'function') window.AH_LOAD_LIBRARY(true).catch(() => {});
   }, []);
-  return {loading:enabled && (window.AH_LIBRARY_LOADING === true ||
-    (typeof window.AH_LOAD_LIBRARY === 'function' && !window.AH_LIBRARY_LOADED && !window.AH_LIBRARY_ERROR)), retry};
+  return {loading:pending && !timedOut, error:timedOut ? 'The node library did not answer. Check the connection and try again.' : window.AH_LIBRARY_ERROR || '', retry};
 };
 
 // ─── Library panel — primary drag source ───
@@ -2301,7 +2309,7 @@ const libraryPortSummary = item => {
   return rows;
 };
 const LibraryTile = ({ cat, group, open, onToggle }) => (
-  <button type="button" onClick={onToggle} data-library-category={String(group.cat || '')} style={{
+  <window.AH_DS.Btn type="button" onClick={onToggle} data-library-category={String(group.cat || '')} style={{
     width:'100%', height:30, padding:'0 6px', border:0, borderRadius:5,
     background:open ? LM.bgHover : 'transparent', color:LM.ink, cursor:'pointer',
     display:'flex', alignItems:'center', gap:8, fontFamily:LM.sans, fontSize:13, textAlign:'left',
@@ -2311,7 +2319,7 @@ const LibraryTile = ({ cat, group, open, onToggle }) => (
       display:'grid', placeItems:'center', fontSize:11, fontWeight:600, flex:'none' }}>{cat.icon}</span>
     <span style={{ flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{cat.label[0] + cat.label.slice(1).toLowerCase()}</span>
     <span style={{ color:LM.inkSoft, fontSize:11 }}>{(group.items || []).length}</span>
-  </button>
+  </window.AH_DS.Btn>
 );
 const NodesPanel = ({ addNodeFromLibrary, onHome, account, onAccount, onSwitchPanel, onOpenRuns }) => {
   const libraryRead = useNodeLibrary();
@@ -2331,7 +2339,7 @@ const NodesPanel = ({ addNodeFromLibrary, onHome, account, onAccount, onSwitchPa
   const groups = libraryVisibleGroups(library, family, q);
   return (
     <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
-      <PanelHead title="Nodes"><PanelHomeButton onHome={onHome}/><button title="Collapse all" onClick={() => setOpenCats({})} style={panelIconBtn()}>−</button></PanelHead>
+      <PanelHead title="Nodes"><PanelHomeButton onHome={onHome}/><window.AH_DS.Btn title="Collapse all" onClick={() => setOpenCats({})} style={window.AH_DS.styles.button("ghost", true)}>−</window.AH_DS.Btn></PanelHead>
       <div style={{ display:'flex', gap:4, padding:'10px 10px 0' }}>
         {[
           ['Library', 'nodes', () => onSwitchPanel && onSwitchPanel('nodes')],
@@ -2339,12 +2347,12 @@ const NodesPanel = ({ addNodeFromLibrary, onHome, account, onAccount, onSwitchPa
           ['Skills', 'skills', () => onSwitchPanel && onSwitchPanel('skills')],
           ['Runs', 'runs', () => onOpenRuns ? onOpenRuns() : onSwitchPanel && onSwitchPanel('runs')],
         ].map(([tab, route, act]) => (
-          <button key={tab} type="button" data-library-tab={route} onClick={act} style={{ height:28, display:'inline-flex', alignItems:'center', gap:5, padding:'0 7px',
+          <window.AH_DS.Btn key={tab} type="button" data-library-tab={route} onClick={act} style={{ height:28, display:'inline-flex', alignItems:'center', gap:5, padding:'0 7px',
             borderRadius:5, fontFamily:LM.sans, fontSize:13,
             background:route === 'nodes' ? LM.accentDim : 'transparent',
             color:route === 'nodes' ? LM.accent : LM.inkSoft, border:0, cursor:'pointer' }}>
             {tab}{tab === 'Runs' && runsWaiting > 0 && <span style={{ fontSize:11, background:LM.bgHover, color:LM.ink, borderRadius:999, padding:'0 6px' }}>{runsWaiting}</span>}
-          </button>
+          </window.AH_DS.Btn>
         ))}
       </div>
 
@@ -2377,13 +2385,8 @@ const NodesPanel = ({ addNodeFromLibrary, onHome, account, onAccount, onSwitchPa
       </div>
 
       <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'0 6px 8px', minHeight:0 }}>
-        {libraryRead.loading && <div role="status" style={{padding:'8px 12px'}}>Loading nodes…</div>}
-        {!library.length && window.AH_LIBRARY_ERROR && (
-          <div role="alert" style={{ padding:'8px 12px', fontFamily:LM.sans, fontSize:12, color:LM.err, lineHeight:1.5 }}>
-            {'The node library could not be loaded: ' + window.AH_LIBRARY_ERROR}
-            {' '}<button type="button" onClick={libraryRead.retry}>Retry</button>
-          </div>
-        )}
+        {(libraryRead.loading || libraryRead.error || !library.length) && <window.AH_DS.EmptyState glyph={null} title={libraryRead.loading ? "Reading nodes…" : libraryRead.error ? "Library unavailable" : !library.length ? "No nodes yet" : ""} error={!!libraryRead.error} detail={libraryRead.error} onRetry={libraryRead.error || !library.length ? libraryRead.retry : undefined}/>}
+
         <NodeLibraryGroups library={groups} q={q} openCats={openCats} onToggle={toggleCat} onAdd={addFromLibrary}
           selectedId={selectedId} onSelect={setSelectedId}/>
       </div>
@@ -2435,7 +2438,7 @@ const NodeLibItem = ({ it, cat, catId, selected = false, onAdd }) => {
   const ports = libraryPortSummary(it);
   const outlined = h || selected;
   return (
-    <button type="button"
+    <window.AH_DS.Btn type="button"
       draggable="true"
       onDragStart={onDragStart}
       onDragEnd={() => { delete window.__archhubDraggingLibraryTitle; }}
@@ -2463,7 +2466,7 @@ const NodeLibItem = ({ it, cat, catId, selected = false, onAdd }) => {
           color:LM.inkSoft, fontSize:12, flexShrink:0 }}>
         {ports.slice(0, 4).map((port, index) => <span key={port.dir + port.name + index}>{port.glyph}</span>)}
       </span>
-    </button>
+    </window.AH_DS.Btn>
   );
 };
 
@@ -2534,7 +2537,7 @@ const withLiveCatalogue = (loaderName, items, View) => props => {
   // One element: the Sidebar grid is "44px 1fr", so a loading line beside the panel would push the panel into the rail column.
   return <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
     {status.loading && !status.read && <p role="status" style={{ margin:0, padding:'8px 12px 0', fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft }}>Loading catalogue…</p>}
-    {status.error && <p role="alert" style={{ margin:0, padding:'8px 12px 0', fontSize:12, color:LM.inkSoft }}>{status.error} <button onClick={() => loadCatalogue(loaderName, items)}>Retry</button></p>}
+    {status.error && <p role="alert" style={{ margin:0, padding:'8px 12px 0', fontSize:12, color:LM.inkSoft }}>{status.error} <window.AH_DS.Btn onClick={() => loadCatalogue(loaderName, items)}>Retry</window.AH_DS.Btn></p>}
     <View {...props} catalogue={status}/>
   </div>;
 };
@@ -2557,13 +2560,13 @@ const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, ({
   <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
     <PanelHead title="Skills">
       <span data-skills-count="" style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.08em' }}>
-        {catalogue.read ? LM_SAVED_SKILLS.length + ' SAVED' : catalogue.error ? 'NOT READ' : 'READING\u2026'}</span>
+        {catalogue.read ? LM_SAVED_SKILLS.length + ' SAVED' : catalogue.error ? 'UNAVAILABLE' : 'READING\u2026'}</span>
       <PanelHomeButton onHome={onHome}/>
     </PanelHead>
     <Search ph="Search saved skills..."/>
     <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'0 6px 8px' }}>
       {LM_SAVED_SKILLS.map((s, index) => (
-        <button key={s.id || s.path || ((s.source || '') + ':' + (s.name || index))} type="button"
+        <window.AH_DS.Btn key={s.id || s.path || ((s.source || '') + ':' + (s.name || index))} type="button"
         data-skill-row="" aria-label={'Open skill ' + (s.name || 'Skill')} title={s.path || undefined} draggable="true" style={{
           display:'block', width:'100%', padding:'7px 9px', borderRadius:LM.rad.sm, cursor:'pointer', marginBottom:1,
           background:'transparent', border:'0', borderLeft:`2px solid transparent`, textAlign:'left', fontFamily:LM.sans,
@@ -2580,7 +2583,7 @@ const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, ({
           </div>
           {s.description && <div style={{ fontSize:11, color:LM.inkSoft, paddingLeft:18, marginTop:2, lineHeight:1.4,
             display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', overflow:'hidden' }}>{s.description}</div>}
-        </button>
+        </window.AH_DS.Btn>
       ))}
       {!LM_SAVED_SKILLS.length && catalogue.read && <div data-skills-empty="" role="status" style={{
         padding:'14px 10px', fontFamily:LM.serif, fontStyle:'italic', fontSize:13.5, color:LM.inkSoft, lineHeight:1.45 }}>
@@ -2602,12 +2605,12 @@ const RunsPanel = ({ onHome, onOpenTask }) => {
       <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Runs</span>
       <span data-runs-count="" style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.08em' }}>
         {items.length ? items.length + ' WAITING' : 'NONE WAITING'}</span>
-      <div style={{ flex:1 }}/>
+      <div style={window.AH_DS.styles.fill}/>
       <PanelHomeButton onHome={onHome}/>
     </div>
     <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'0 6px 8px' }}>
       {items.map((item, index) => (
-        <button key={item.id || item.label || index} type="button" data-run-waiting-row="" onClick={() => onOpenTask && onOpenTask(item)} style={{
+        <window.AH_DS.Btn key={item.id || item.label || index} type="button" data-run-waiting-row="" onClick={() => onOpenTask && onOpenTask(item)} style={{
           display:'block', width:'100%', padding:'7px 9px', borderRadius:LM.rad.sm, cursor:'pointer', marginBottom:1,
           background:'transparent', border:'0', borderLeft:`2px solid transparent`, textAlign:'left', fontFamily:LM.sans,
         }}
@@ -2618,7 +2621,7 @@ const RunsPanel = ({ onHome, onOpenTask }) => {
             <span style={{ flex:1, minWidth:0, fontSize:12.5, color:LM.ink, overflowWrap:'anywhere' }}>{waitingLine(item)}</span>
           </div>
           <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, paddingLeft:18, marginTop:3 }}>{waitingMeta(item)}</div>
-        </button>
+        </window.AH_DS.Btn>
       ))}
       {!items.length && <div data-runs-empty="" role="status" style={{
         padding:'14px 10px', fontFamily:LM.sans, fontSize:13, color:LM.inkSoft, lineHeight:1.45 }}>
@@ -2655,7 +2658,7 @@ const SearchPanel = ({ onHome }) => {
         ['files',  'Revit / Rhino / Speckle', null],
         ['hosts',  'connectors',           count(live.connectors)],
       ].map(([k, sub, n]) => (
-        <button key={k} style={{
+        <window.AH_DS.Btn key={k} style={{
           padding:'6px 10px', borderRadius:LM.rad.sm, background:'transparent', border:0,
           cursor:'pointer', textAlign:'left',
           display:'flex', alignItems:'center', gap:LM.sp.sm,
@@ -2665,7 +2668,7 @@ const SearchPanel = ({ onHome }) => {
           <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.ink, width:54 }}>{k}</span>
           <span style={{ flex:1, fontSize:11, color:LM.inkSoft }}>{sub}</span>
           {n != null && <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft }}>{n}</span>}
-        </button>
+        </window.AH_DS.Btn>
       ))}
     </div>
   </div>
@@ -2952,9 +2955,9 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null,
         ? `Your agents are finishing ${mission.inFlight.length} things for you` : 'No tasks in flight'}</h1>
         <div style={{fontSize:13.5,color:LM.inkSoft,marginTop:4}}>{mission.unavailable ? 'Some Workshop updates are unavailable' :
           `${mission.approvals.length ? mission.approvals.length + ' needs your OK' : 'Nothing needs you'} · ${mission.agents.filter(row=>row.working).length} working`}</div></div>
-      <span style={{flex:1}}/>{mission.agents.length > 0 && <div data-home-presence="" style={{...surface,display:'flex',alignItems:'center',gap:10,padding:'8px 12px',fontSize:13}}>
+      <span style={window.AH_DS.styles.fill}/>{mission.agents.length > 0 && <div data-home-presence="" style={{...surface,display:'flex',alignItems:'center',gap:10,padding:'8px 12px',fontSize:13}}>
         {mission.agents.slice(0,3).map(row=><span key={row.id} title={row.name}>{face(row)}</span>)}
-        <span style={{color:LM.inkSoft}}>{mission.agents.filter(row=>row.working).length} working</span></div>}
+        <span style={window.AH_DS.styles.muted}>{mission.agents.filter(row=>row.working).length} working</span></div>}
     </header>
     <section data-home-results="" aria-label="Your agents' work" style={{display:'grid',gridTemplateColumns:'minmax(0,1.45fr) minmax(0,1fr)',gap:16}}>
       <div style={{minWidth:0}}>{card ? <ApprovalCard key={card.id + ':' + (card.input_digest || card.workflow?.digest || '')} approval={card}
@@ -2964,15 +2967,15 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null,
         onApprove={()=>decide('approve')} onDecline={()=>decide('decline')}/>
         : <div data-home-empty-approval="" style={{...surface,padding:18,fontSize:14,color:LM.inkSoft}}>Nothing needs your approval.</div>}
         {decisionStatus?.identity===identity && <div data-home-decision-receipt="" role={decisionStatus.warning ? 'alert' : 'status'} style={{fontSize:13,color:decisionStatus.warning ? LM.warn : LM.ok,marginTop:12}}>{decisionStatus.text}</div>}
-        {mission.approvals.length > 1 && <button type="button" title="More approvals · Ctrl+K" onClick={()=>openWork(card)} style={{...action,marginTop:10}}>View {mission.approvals.length - 1} more in Workshop</button>}</div>
+        {mission.approvals.length > 1 && <window.AH_DS.Btn type="button" title="More approvals · Ctrl+K" onClick={()=>openWork(card)} style={{...action,marginTop:10}}>View {mission.approvals.length - 1} more in Workshop</window.AH_DS.Btn>}</div>
       <div style={{display:'grid',gap:12,alignContent:'start',minWidth:0}}>
         {mission.results.slice(0,2).map(row=><article key={row.work} data-home-result={row.work} style={{...surface,padding:14,display:'grid',gridTemplateColumns:'30px minmax(0,1fr) auto',gap:12,alignItems:'center'}}>
           {face(mission.agents.find(agent=>agent.id===row.owner))}<div><div style={{fontSize:14.5,fontWeight:700}}>{row.title}</div>
           <div style={{fontSize:12.5,color:LM.inkSoft,marginTop:2}}>{row.result_summary || row.latest?.text || row.state}</div></div>
-          <button type="button" title="Open result · Ctrl+K" onClick={()=>openWork(row)} style={action}>Open result</button></article>)}
+          <window.AH_DS.Btn type="button" title="Open result · Ctrl+K" onClick={()=>openWork(row)} style={action}>Open result</window.AH_DS.Btn></article>)}
         {!mission.results.length && <div data-home-empty-results="" style={{...surface,padding:14,fontSize:13,color:LM.inkSoft}}>No completed results yet.</div>}
-        {mission.inFlight.filter(row=>!mission.approvals.some(a=>a.work===row.work)).slice(0,1).map(row=><button key={row.work} type="button" data-home-finishing={row.work}
-          title="Open work · Ctrl+K" onClick={()=>openWork(row)} style={{...action,height:'auto',textAlign:'left',borderStyle:'dashed',background:'transparent',padding:'12px 14px',fontWeight:400,color:LM.inkSoft}}>{row.title} · {row.state}</button>)}
+        {mission.inFlight.filter(row=>!mission.approvals.some(a=>a.work===row.work)).slice(0,1).map(row=><window.AH_DS.Btn key={row.work} type="button" data-home-finishing={row.work}
+          title="Open work · Ctrl+K" onClick={()=>openWork(row)} style={{...action,height:'auto',textAlign:'left',borderStyle:'dashed',background:'transparent',padding:'12px 14px',fontWeight:400,color:LM.inkSoft}}>{row.title} · {row.state}</window.AH_DS.Btn>)}
       </div>
     </section>
     <section data-home-templates="" style={{display:'grid',gap:12,alignContent:'start'}}>
@@ -2981,23 +2984,23 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null,
       {templateError && <div role="alert" style={{color:LM.warn}}>{templateError}</div>}
       <div style={{display:'grid',gridTemplateColumns:'repeat(3, minmax(0,1fr))',gap:12}}>
         {templates.map(template=><article key={template.id} data-home-template={template.id} style={{...surface,padding:14,display:'grid',gap:10}}>
-          <div style={{display:'flex',alignItems:'baseline',gap:8}}><strong style={{fontSize:14.5,flex:1}}>{template.title}</strong><span data-template-runs="" style={{fontSize:12,color:LM.inkSoft}}>ran {template.run_count}×</span></div>
+          <div style={{display:'flex',alignItems:'baseline',gap:8}}><strong style={{fontSize:14.5,flex:1}}>{template.title}</strong><span data-template-runs="" style={{fontSize:12,color:LM.inkSoft}}>{template.run_count > 0 ? `ran ${template.run_count}×` : <window.AH_DS.EmptyState compact glyph={null} title="Not run yet" style={{padding:0,gap:0}}/>}</span></div>
           <div style={{display:'flex',alignItems:'center',gap:4,overflow:'hidden',whiteSpace:'nowrap'}}>{template.children.slice(0,4).map((child,index)=><React.Fragment key={child.id || index}>
             {index > 0 && <i style={{width:10,height:2,background:LM.accent,opacity:.6,flex:'none'}}/>}<span style={{height:24,padding:'0 8px',borderRadius:6,background:LM.bgHover,fontSize:12,display:'inline-flex',alignItems:'center'}}>{child.title || child.engine}</span></React.Fragment>)}
             {template.child_count > 4 && <span style={{fontSize:12,color:LM.inkSoft}}>+{template.child_count - 4}</span>}</div>
-          <div style={{display:'flex',alignItems:'center',gap:8}}><span style={{fontSize:12.5,color:LM.inkSoft,flex:1}}>{template.sub || `${template.child_count} steps`}</span>
-            <button type="button" data-template-edit={template.id} disabled={startingTemplate !== null} title={'Edit '+template.title+' · Ctrl+K'} aria-expanded={editingTemplate?.id===template.id && editingTemplate?.identity===identity}
-              onClick={()=>setEditingTemplate(editingTemplate?.id===template.id ? null : {...template,identity,children:template.children.map(child=>({...child,params:{...child.params}}))})} style={action}>Edit</button>
-            <button type="button" data-template-start={template.id} disabled={startingTemplate !== null} title={'Start '+template.title+' · Ctrl+K'} onClick={()=>startTemplate(template)} style={action}>{startingTemplate===template.id ? 'Starting…' : 'Start'}</button></div>
+          <div style={window.AH_DS.styles.flex}><span style={{fontSize:12.5,color:LM.inkSoft,flex:1}}>{template.sub || `${template.child_count} steps`}</span>
+            <window.AH_DS.Btn type="button" data-template-edit={template.id} disabled={startingTemplate !== null} title={'Edit '+template.title+' · Ctrl+K'} aria-expanded={editingTemplate?.id===template.id && editingTemplate?.identity===identity}
+              onClick={()=>setEditingTemplate(editingTemplate?.id===template.id ? null : {...template,identity,children:template.children.map(child=>({...child,params:{...child.params}}))})} style={action}>Edit</window.AH_DS.Btn>
+            <window.AH_DS.Btn type="button" data-template-start={template.id} disabled={startingTemplate !== null} title={'Start '+template.title+' · Ctrl+K'} onClick={()=>startTemplate(template)} style={action}>{startingTemplate===template.id ? 'Starting…' : 'Start'}</window.AH_DS.Btn></div>
           {editingTemplate?.id===template.id && editingTemplate.identity===identity && <form data-template-editor="" onSubmit={event=>{event.preventDefault();editTemplate(template,{update:{title:editingTemplate.title,children:editingTemplate.children}});}}
             onKeyDown={event=>{if(event.key==='Escape')setEditingTemplate(null);}} style={{display:'grid',gap:8}}>
             <label style={{fontSize:12,display:'grid',gap:4}}>Template name<input aria-label="Template name" style={{background:LM.bgPanel,color:LM.ink,border:`1px solid ${LM.line}`,borderRadius:6,padding:7,fontFamily:LM.sans}} value={editingTemplate.title} onChange={event=>setEditingTemplate({...editingTemplate,title:event.target.value})}/></label>
             {editingTemplate.children.map((child,index)=><fieldset key={index} style={{border:`1px solid ${LM.line}`,borderRadius:6,display:'grid',gap:6}}><legend>{child.title}</legend>
               {Object.entries(child.params).map(([name,value])=><label key={name} style={{fontSize:12,display:'grid',gap:4}}>{name.replaceAll('_',' ')}<input aria-label={child.title+' '+name} style={{background:LM.bgPanel,color:LM.ink,border:`1px solid ${LM.line}`,borderRadius:6,padding:7,fontFamily:LM.sans}} value={value}
                 onChange={event=>setEditingTemplate({...editingTemplate,children:editingTemplate.children.map((row,i)=>i===index ? {...row,params:{...row.params,[name]:event.target.value}} : row)})}/></label>)}</fieldset>)}
-            <div style={{display:'flex',gap:8}}><button type="submit" disabled={startingTemplate!==null} title="Save template · Ctrl+K / Enter" style={action}>Save</button>
-              <button type="button" disabled={startingTemplate!==null} title="Delete template · Ctrl+K" data-template-delete={template.id} onClick={()=>editTemplate(template,{delete:true})} style={action}>Delete</button>
-              <button type="button" onClick={()=>setEditingTemplate(null)} title="Cancel · Ctrl+K / Escape" style={action}>Cancel</button></div>
+            <div style={{display:'flex',gap:8}}><window.AH_DS.Btn type="submit" disabled={startingTemplate!==null} title="Save template · Ctrl+K / Enter" style={action}>Save</window.AH_DS.Btn>
+              <window.AH_DS.Btn type="button" disabled={startingTemplate!==null} title="Delete template · Ctrl+K" data-template-delete={template.id} onClick={()=>editTemplate(template,{delete:true})} style={action}>Delete</window.AH_DS.Btn>
+              <window.AH_DS.Btn type="button" onClick={()=>setEditingTemplate(null)} title="Cancel · Ctrl+K / Escape" style={action}>Cancel</window.AH_DS.Btn></div>
           </form>}
         </article>)}
       </div>{!templates.length && !templateError && <div style={{color:LM.inkSoft,fontSize:13}}>No saved composite templates.</div>}
@@ -3010,12 +3013,12 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null,
       <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.warn, letterSpacing:'0.14em' }}>
         {READINESS_LABELS[blocked.state] || 'NO MODEL'}</span>
       <span style={{ fontSize:12.5, lineHeight:1.45, color:LM.ink, flex:'1 1 240px' }}>{blocked.message}</span>
-      {offers.has('retry_models') && <button type="button" onClick={() => typeof onModelReadRetry === 'function' && onModelReadRetry()} style={{
+      {offers.has('retry_models') && <window.AH_DS.Btn type="button" onClick={() => typeof onModelReadRetry === 'function' && onModelReadRetry()} style={{
         padding:'4px 9px', background:'transparent', color:LM.ink, border:`1px solid ${LM.line}`,
-        borderRadius:LM.rad.sm, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Retry</button>}
-      {offers.has('choose_model') && <button type="button" onClick={() => typeof setPickerOpen === 'function' && setPickerOpen(true)} style={{
+        borderRadius:LM.rad.sm, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Retry</window.AH_DS.Btn>}
+      {offers.has('choose_model') && <window.AH_DS.Btn type="button" onClick={() => typeof setPickerOpen === 'function' && setPickerOpen(true)} style={{
         padding:'4px 9px', background:'transparent', color:LM.ink, border:`1px solid ${LM.line}`,
-        borderRadius:LM.rad.sm, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Choose a model</button>}
+        borderRadius:LM.rad.sm, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Choose a model</window.AH_DS.Btn>}
     </div>}
     <form onSubmit={startSession} style={{
       background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.xl,
@@ -3042,37 +3045,37 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null,
               background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
               padding:4, minWidth:190, boxShadow:'0 12px 24px rgba(0,0,0,.22)',
             }}>
-              {liveHosts.length > 0 ? liveHosts.map(host => <button key={host.id || host.name} type="button" role="menuitem"
+              {liveHosts.length > 0 ? liveHosts.map(host => <window.AH_DS.Btn key={host.id || host.name} type="button" role="menuitem"
                 onClick={() => { appendDraftToken('#' + host.name); setHostMenuOpen(false); }}
                 style={{display:'block', width:'100%', textAlign:'left', padding:'5px 8px',
                   background:'transparent', border:0, color:LM.ink, fontFamily:LM.sans,
-                  fontSize:12, cursor:'pointer'}}>{host.name}</button>) :
-                knownHosts.map(host => <button key={hostStartName(host)} type="button" role="menuitem"
+                  fontSize:12, cursor:'pointer'}}>{host.name}</window.AH_DS.Btn>) :
+                knownHosts.map(host => <window.AH_DS.Btn key={hostStartName(host)} type="button" role="menuitem"
                   onClick={() => startKnownHost(host)}
                   style={{display:'flex', width:'100%', alignItems:'center', justifyContent:'space-between', gap:14,
                     textAlign:'left', padding:'5px 8px', background:'transparent', border:0,
                     color:LM.ink, fontFamily:LM.sans, fontSize:12, cursor:'pointer'}}>
                   <span>{hostDisplayName(host)}</span>
                   <span style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.accent, letterSpacing:'0.06em', textTransform:'uppercase'}}>Start</span>
-                </button>)}
+                </window.AH_DS.Btn>)}
             </div>}
             {attachments.map(file => <Chip key={file.name + ':' + file.size} mono>{file.name}</Chip>)}
           </div>
         </div>
-        <button type="submit" disabled={starting || !draft.trim()} style={{
+        <window.AH_DS.Btn type="submit" disabled={starting || !draft.trim()} style={{
           padding:'7px 12px', background:LM.bgHover, color:LM.ink,
           border:`1px solid ${LM.line}`, borderRadius:8, fontFamily:LM.sans, fontSize:13, fontWeight:600,
           cursor:'pointer', display:'inline-flex', alignItems:'center', gap:7, flexShrink:0,
         }}>
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={LM.ink} strokeWidth="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
           {starting ? 'Starting\u2026' : 'Send'}
-        </button>
+        </window.AH_DS.Btn>
       </div>
       {startError && <p role="alert" style={{color:LM.warn,marginBottom:0}}>{startError}</p>}
       {attachmentError && <p role="alert" style={{color:LM.warn,marginBottom:0}}>{attachmentError}</p>}
     </form>
     </div>
-    {sessionError && <p role="alert" style={{color:LM.warn,margin:0}}>{sessionError} <button type="button" onClick={()=>window.location.reload()}>Refresh graphs</button></p>}
+    {sessionError && <p role="alert" style={{color:LM.warn,margin:0}}>{sessionError} <window.AH_DS.Btn type="button" onClick={()=>window.location.reload()}>Refresh graphs</window.AH_DS.Btn></p>}
   </main>
   );
 };
@@ -3087,12 +3090,12 @@ const Chip = ({ children, mono }) => (
 );
 
 const HomeChip = ({ children, mono, onClick }) => (
-  <button type="button" onClick={onClick} style={{
+  <window.AH_DS.Btn type="button" onClick={onClick} style={{
     display:'inline-flex', alignItems:'center', gap:5, padding:'3px 9px',
     background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
     color:LM.inkSoft, fontFamily: mono ? LM.mono : LM.sans, fontSize: mono ? 10.5 : 11.5,
     letterSpacing: mono ? '0.04em' : 'normal', cursor:'pointer',
-  }}>{children}</button>
+  }}>{children}</window.AH_DS.Btn>
 );
 
 const ToolCard = ({ tool, onOpen }) => (
@@ -3115,15 +3118,15 @@ const ToolCard = ({ tool, onOpen }) => (
       <span style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:tool.color, letterSpacing:'0.08em', textTransform:'uppercase'}}>
         {tool.stateWord || toolStateWord(tool.state)}
       </span>
-      <span style={{flex:1}}/>
-      {tool.canToggle && <button type="button" role="switch" aria-checked={!!tool.toggleChecked} title={tool.toggleChecked ? 'Turn off' : 'Turn on'}
+      <span style={window.AH_DS.styles.fill}/>
+      {tool.canToggle && <window.AH_DS.Btn type="button" role="switch" aria-checked={!!tool.toggleChecked} title={tool.toggleChecked ? 'Turn off' : 'Turn on'}
         onClick={event => { event.stopPropagation(); tool.toggleChecked ? tool.turnOff?.() : tool.turnOn?.(); }} style={{
         width:28, height:16, padding:2, border:0, borderRadius:8,
         background:tool.toggleChecked ? LM.ok : LM.line, cursor:'pointer',
       }}>
         <span style={{display:'block', width:12, height:12, borderRadius:'50%', background:LM.bg,
           transform:tool.toggleChecked ? 'translateX(12px)' : 'translateX(0)'}}/>
-      </button>}
+      </window.AH_DS.Btn>}
     </div>
     <div style={{display:'flex', alignItems:'center', gap:8, minWidth:0}}>
       <span aria-hidden="true" style={{width:24, height:24, borderRadius:LM.rad.sm, display:'grid', placeItems:'center',
@@ -3150,8 +3153,8 @@ const SettingsBaboom = ({ onOpenToolGraph, onClose }) => {
       <BaboomStartupRow first/>
     </div>
     <div style={{display:'flex', alignItems:'center', gap:10}}>
-      <span style={{flex:1}}/>
-      <button type="button" onClick={() => openToolGraphFromSettings('baboom')} style={smallBtn(false)}>Open as node ↗</button>
+      <span style={window.AH_DS.styles.fill}/>
+      <window.AH_DS.Btn type="button" onClick={() => openToolGraphFromSettings('baboom')} style={window.AH_DS.styles.button(false ? 'primary' : 'secondary', true)}>Open as node ↗</window.AH_DS.Btn>
     </div>
   </div>;
 };
@@ -3179,8 +3182,8 @@ const SettingsCloudStatus = ({ toolRow, account, onSettings }) => {
       ))}
     </div>
     <div>
-      <button type="button" onClick={() => onSettings && onSettings(true, 'account')}
-        style={{...smallBtn(), padding:'4px 10px', fontStyle:'normal'}}>Manage account in Settings › Account</button>
+      <window.AH_DS.Btn type="button" onClick={() => onSettings && onSettings(true, 'account')}
+        style={{...window.AH_DS.styles.button("secondary", true), padding:'4px 10px', fontStyle:'normal'}}>Manage account in Settings › Account</window.AH_DS.Btn>
     </div>
   </div>;
 };
@@ -3234,33 +3237,50 @@ const useDeferredCanvas = () => {
     if (typeof loader !== 'function') return;
     let active = true;
     setState({pending:deferred, error:''});
+    const timer = deferred ? setTimeout(() => {
+      if (active) setState({pending:false, error:'The canvas did not answer. Check the connection and retry.'});
+    }, 1900) : null;
     Promise.resolve().then(loader).then(() => {
+      clearTimeout(timer);
       if (active) setState({pending:false, error:''});
     }, error => {
+      clearTimeout(timer);
       if (active) setState({pending:false, error:error?.message || 'Canvas reading was refused.'});
     });
-    return () => {active = false;};
-  }, [loader, attempt]);
+    return () => {active = false; clearTimeout(timer);};
+  }, [loader, deferred, attempt]);
   return {...state, retry:() => setAttempt(value => value + 1)};
 };
 // Loading this face is the only point where its code enters Studio.
 const LazyWorkshopWindow = props => {
   const [View, setView] = React.useState(() => window.WorkshopView || null);
   const [error, setError] = React.useState('');
+  const [attempt, setAttempt] = React.useState(0);
   React.useEffect(() => {
     if (View) return undefined;
     let live = true;
+    setError('');
+    const timer = setTimeout(() => { if (live) setError('Workshop did not answer. Retry opening it.'); }, 1900);
     const load = window.ARCHHUB_LOAD_WORKSHOP;
-    if (typeof load !== 'function') { setError('Not available yet'); return undefined; }
+    if (typeof load !== 'function') {
+      clearTimeout(timer); setError('Workshop could not be opened. Refresh the application and try again.');
+      return () => {live = false;};
+    }
     Promise.resolve().then(load).then(component => {
+      clearTimeout(timer);
       if (live) setView(() => component);
-    }).catch(reason => { if (live) setError(reason?.message || 'Not available yet'); });
-    return () => { live = false; };
-  }, [View]);
-  return View ? <View {...props}/> : <div data-workshop-loading="" role="status"
-    style={{gridColumn:'1 / -1', gridRow:'1 / -1', display:'grid', placeItems:'center',
-      background:LM.bgDeep, color:LM.inkSoft, fontFamily:LM.sans, fontSize:13}}>{error || 'Opening Workshop…'}</div>;
+    }).catch(reason => {
+      clearTimeout(timer);
+      if (live) setError(reason?.message || 'Workshop could not be opened. Retry opening it.');
+    });
+    return () => { live = false; clearTimeout(timer); };
+  }, [View, attempt]);
+  return View ? <View {...props}/> : <window.AH_DS.EmptyState data-workshop-loading="" error={!!error}
+    title={error ? 'Workshop unavailable' : 'Opening Workshop…'} detail={error}
+    onRetry={error ? () => setAttempt(value => value + 1) : undefined}
+    style={{gridColumn:'1 / -1',gridRow:'1 / -1',background:LM.bgDeep}}/>;
 };
+
 const Workspace = ({ session, account, model, readiness = null, onReadinessStale, onModelReadRetry, openTabs, sessionRows = LM_SESSIONS, setOpenId, closeTab, setPickerOpen, setLibraryOpen, focusId, setFocusId, pendingCanvasReveal, requestCanvasReveal, clearPendingCanvasReveal, userNodes, addNodeFromLibrary, themeEpoch = 0, onHome, onChats, onCockpit, onDocs, onNewSession, onSettings, onAccount, view, updateView, wsSel, setWsSel, updateCanvasViewport }) => {
   const canvasRead = useDeferredCanvas();
   useNodeLibrary();
@@ -3290,8 +3310,8 @@ const Workspace = ({ session, account, model, readiness = null, onReadinessStale
   const graphScopeKey = JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas)]);
   const workshopWindow = effectiveMode === 'chat' && !!workshop;
   if (canvasRead.pending || canvasRead.error) return <main data-workspace-canvas-loading="" style={{gridColumn:'2', gridRow:'1', padding:24, color:LM.inkSoft}}>
-    {canvasRead.error ? <><p role="alert">The canvas could not be loaded: {canvasRead.error}</p>
-      <button onClick={canvasRead.retry}>Retry</button></> : <p role="status">Loading your workspace…</p>}
+    <window.AH_DS.EmptyState title={canvasRead.error ? 'Canvas unavailable' : 'Reading your workspace…'} error={!!canvasRead.error}
+      detail={canvasRead.error} onRetry={canvasRead.error ? canvasRead.retry : undefined}/>
   </main>;
   if (view.pending) return <main style={{gridColumn:'2', gridRow:'1', padding:24, color:LM.inkSoft}}>
     <p role="status">{view.notice}</p>
@@ -3674,21 +3694,21 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
                   {READINESS_LABELS[blocked.state] || 'NO MODEL'}</div>
                 <div style={{ fontSize:14, lineHeight:1.55, color:LM.ink, marginBottom:10 }}>{blocked.message}</div>
                 <div style={{ display:'flex', gap:8 }}>
-                      {offers.has('sign_in') && <button type="button" onClick={() => {
+                      {offers.has('sign_in') && <window.AH_DS.Btn type="button" onClick={() => {
                         if (typeof onAccount === 'function') onAccount();
                         else if (typeof onReadinessStale === 'function') onReadinessStale();
                       }} style={{
                         padding:'7px 14px', background:LM.accent, color:(window.AH && window.AH.onFill) || '#180f08', border:0,
                         borderRadius:LM.rad.sm, fontSize:12.5, fontWeight:500, cursor:'pointer',
-                      }}>Sign in</button>}
-                      {offers.has('retry_models') && <button type="button" onClick={() => typeof onModelReadRetry === 'function' && onModelReadRetry()} style={{
+                      }}>Sign in</window.AH_DS.Btn>}
+                      {offers.has('retry_models') && <window.AH_DS.Btn type="button" onClick={() => typeof onModelReadRetry === 'function' && onModelReadRetry()} style={{
                         padding:'6px 13px', background:'transparent', color:LM.ink, border:`1px solid ${LM.line}`,
                         borderRadius:LM.rad.sm, fontSize:12.5, fontWeight:500, cursor:'pointer',
-                      }}>Retry</button>}
-                      {offers.has('choose_model') && <button type="button" onClick={() => typeof onPickModel === 'function' && onPickModel()} style={{
+                      }}>Retry</window.AH_DS.Btn>}
+                      {offers.has('choose_model') && <window.AH_DS.Btn type="button" onClick={() => typeof onPickModel === 'function' && onPickModel()} style={{
                         padding:'6px 13px', background:'transparent', color:LM.ink, border:`1px solid ${LM.line}`,
                         borderRadius:LM.rad.sm, fontSize:12.5, fontWeight:500, cursor:'pointer',
-                      }}>Choose a model</button>}
+                      }}>Choose a model</window.AH_DS.Btn>}
                     </div>
               </div>
             )}
@@ -3703,7 +3723,7 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
             <div style={{ display:'flex', alignItems:'center', gap:6 }}>
               <Chip mono>@ skill</Chip>
               <Chip>＋ sketch</Chip>
-              <button type="button" aria-label="Open the Workshop" aria-disabled={workshopRoom && openWorkshop ? undefined : 'true'}
+              <window.AH_DS.Btn type="button" aria-label="Open the Workshop" aria-disabled={workshopRoom && openWorkshop ? undefined : 'true'}
                 onClick={() => {
                   if (workshopRoom && openWorkshop) { setWorkshopRefusal(''); openWorkshop(workshopRoom); }
                   else setWorkshopRefusal(workshopUnavailableText(workshopUnavailable));
@@ -3714,25 +3734,25 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
                 border: workshopRoom ? `1px solid ${LM.accentSoft}` : `1px dashed ${LM.line}`, borderRadius:LM.rad.sm,
                 color: workshopRoom ? LM.accent : LM.inkSoft, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, letterSpacing:'0.04em',
                 cursor: workshopRoom ? 'pointer' : 'default',
-              }}>◆ workshop</button>
+              }}>◆ workshop</window.AH_DS.Btn>
               {workshopRefusal && <span role="alert" style={{fontSize:11, color:LM.ink, maxWidth:260, overflow:'hidden',
                 textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={workshopRefusal}>{workshopRefusal}</span>}
-              <button onClick={() => setMode('canvas')} style={{
+              <window.AH_DS.Btn onClick={() => setMode('canvas')} style={{
                 display:'inline-flex', alignItems:'center', gap:5, padding:'3px 9px',
                 background:'transparent', border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
                 color:LM.inkSoft, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, letterSpacing:'0.04em', cursor:'pointer',
-              }}>⌗ open as nodes</button>
+              }}>⌗ open as nodes</window.AH_DS.Btn>
               <span aria-hidden="true" style={{ flex:'1 1 0', minWidth:0, textAlign:'right', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}/>
               {/* While an answer is out Send is disabled: a dashed border, never alpha (DECISIONS.md). */}
-              {routed ? <button onClick={send} disabled={busy} style={{
+              {routed ? <window.AH_DS.Btn onClick={send} disabled={busy} style={{
                 padding: busy ? '6px 13px' : '7px 14px', background: busy ? 'transparent' : LM.accent,
                 color: busy ? LM.inkSoft : onFill, border: busy ? `1px dashed ${LM.line}` : 0,
                 borderRadius:LM.rad.sm, fontSize:12.5, fontWeight:500, cursor: busy ? 'default' : 'pointer',
-              }}>Send ↵</button> : <button type="button" onClick={() => typeof onPickModel === 'function' && onPickModel()}
+              }}>Send ↵</window.AH_DS.Btn> : <window.AH_DS.Btn type="button" onClick={() => typeof onPickModel === 'function' && onPickModel()}
                 title="No model is picked: choose one to send" style={{
                 padding:'6px 13px', background:'transparent', color:LM.ink, border:`1px dashed ${LM.line}`,
                 borderRadius:LM.rad.sm, fontSize:12.5, fontWeight:500, cursor:'pointer',
-              }}>Choose a model</button>}
+              }}>Choose a model</window.AH_DS.Btn>}
             </div>
           </div>
         </div>
@@ -3783,7 +3803,7 @@ const InferenceInspector = ({ model, setPickerOpen }) => {
     {/* model */}
     <div style={{ padding:'14px 16px', borderBottom:`1px solid ${LM.lineSoft}` }}>
       <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.14em', marginBottom:8 }}>MODEL</div>
-      <button data-model-indicator="" onClick={() => setPickerOpen(true)} style={{
+      <window.AH_DS.Btn data-model-indicator="" onClick={() => setPickerOpen(true)} style={{
         width:'100%', display:'flex', alignItems:'center', gap:10, padding:'8px 10px',
         background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, cursor:'pointer', color:LM.ink,
       }}>
@@ -3793,7 +3813,7 @@ const InferenceInspector = ({ model, setPickerOpen }) => {
           <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft }}>{model.vendor}{model.ctx ? ' · ctx ' + model.ctx : ''}</div>
         </div>
         <span style={{ color:LM.inkSoft, fontSize:11 }}>▾</span>
-      </button>
+      </window.AH_DS.Btn>
     </div>
 
     {/* parametric chain -- the LIVE wired pipeline, stage by stage */}
@@ -3902,9 +3922,7 @@ const ApplicationUpdateControls = ({compact = false}) => {
   // The dashed border replaces the whole border shorthand: a borderStyle longhand beside smallBtn's border
   // would be removed on re-enable and leave the browser's outset button border behind.
   const waiting = 'Waiting for the current update request to finish';
-  const buttonStyle = disabled => ({...smallBtn(), fontSize:compact ? 11 : 12, flexShrink:0,
-    ...(compact ? {width:28, height:28, padding:0, display:'grid', placeItems:'center'} : {}),
-    ...(disabled ? {background:'transparent', border:`1px dashed ${LM.line}`, color:LM.inkSoft, cursor:'default'} : {})});
+
   return <section aria-label="Application release updates" style={compact ? {
     display:'flex', alignItems:'center', gap:6, flexShrink:0, paddingLeft:6,
   } : {marginTop:16, padding:'14px 16px', border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg}}>
@@ -3925,21 +3943,21 @@ const ApplicationUpdateControls = ({compact = false}) => {
         status?.state === 'ready' ? 'ready' : active ? 'reload' : 'status'}/>
         <span style={visuallyHiddenStyle}>{error || label}</span></> : error || [label, status?.detail].filter(Boolean).join('\n')}
     </span>
-    {status?.state === 'ready' && !error && <button disabled={pending || !status.restart_supported}
+    {status?.state === 'ready' && !error && <window.AH_DS.Btn disabled={pending || !status.restart_supported}
       onClick={compact ? restart : () => act('reload')}
       title={compact && warning || (pending ? waiting : status.restart_supported ?
         'Install the ready release through the desktop restart' : 'Desktop restart is unavailable in this session')}
       aria-label={compact && warning || 'Update and reload'}
-      style={{...(pending || !status.restart_supported ? buttonStyle(true) : {...buttonStyle(false), color:LM.accent}),
+      style={{...(pending || !status.restart_supported ? ({...window.AH_DS.styles.button('secondary', true), fontSize:compact ? 11 : 12, flexShrink:0, ...(compact ? {width:28,height:28,padding:0,display:'grid',placeItems:'center'} : {})}) : {...({...window.AH_DS.styles.button('secondary', true), fontSize:compact ? 11 : 12, flexShrink:0, ...(compact ? {width:28,height:28,padding:0,display:'grid',placeItems:'center'} : {})}), color:LM.accent}),
         ...(compact && warning ? {background:LM.accent, border:`1px solid ${LM.accent}`, color:LM.bg} : {})}}>
-      {compact ? <StudioHeaderIcon name="reload"/> : 'Update and reload'}</button>}
-    {(!active && status?.state !== 'ready' && !error) && <button disabled={pending || !status}
+      {compact ? <StudioHeaderIcon name="reload"/> : 'Update and reload'}</window.AH_DS.Btn>}
+    {(!active && status?.state !== 'ready' && !error) && <window.AH_DS.Btn disabled={pending || !status}
       onClick={() => act('check')} title={pending ? waiting : !status ? 'Reading release status\u2026' : 'Check and download'}
-      aria-label="Check and download" style={buttonStyle(pending || !status)}>
-      {compact ? <StudioHeaderIcon name="download"/> : 'Check and download'}</button>}
-    {error && <button disabled={pending} onClick={() => act('read')} title={pending ? waiting : 'Read status'}
-      aria-label="Read status" style={buttonStyle(pending)}>
-      {compact ? <StudioHeaderIcon name="reload"/> : 'Read status'}</button>}
+      aria-label="Check and download" style={({...window.AH_DS.styles.button('secondary', true), fontSize:compact ? 11 : 12, flexShrink:0, ...(compact ? {width:28,height:28,padding:0,display:'grid',placeItems:'center'} : {})})}>
+      {compact ? <StudioHeaderIcon name="download"/> : 'Check and download'}</window.AH_DS.Btn>}
+    {error && <window.AH_DS.Btn disabled={pending} onClick={() => act('read')} title={pending ? waiting : 'Read status'}
+      aria-label="Read status" style={({...window.AH_DS.styles.button('secondary', true), fontSize:compact ? 11 : 12, flexShrink:0, ...(compact ? {width:28,height:28,padding:0,display:'grid',placeItems:'center'} : {})})}>
+      {compact ? <StudioHeaderIcon name="reload"/> : 'Read status'}</window.AH_DS.Btn>}
     {status?.state === 'ready' && !status.restart_supported && <span style={{fontSize:11, color:LM.inkSoft}}>
       {compact ? 'Desktop restart unavailable' : 'Desktop restart is unavailable in this session.'}
     </span>}
@@ -3996,14 +4014,14 @@ const WorkshopStorageReview = ({root, label}) => {
       An open record can remain after a browser closes; it does not prove a running session.</p>
     <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
       <strong>Protected editors</strong>
-      <button disabled={busy} onClick={() => read()} style={control} aria-label="Refresh protected editors"
-        title="Refresh protected editors"><StudioHeaderIcon name="reload"/></button>
+      <window.AH_DS.Btn disabled={busy} onClick={() => read()} style={control} aria-label="Refresh protected editors"
+        title="Refresh protected editors"><StudioHeaderIcon name="reload"/></window.AH_DS.Btn>
     </div>
     {review?.pages.map(page => <div key={page.page_id} style={{padding:'10px 0', borderBottom:`1px solid ${LM.lineSoft}`}}>
       <div style={{display:'flex', gap:8, alignItems:'center'}}>
-        <span title={page.page_id} style={{flex:1}}>{page.editor_label}</span>
-        <button disabled={busy} onClick={() => setConfirmPage(page)} style={control}
-          aria-label={'Review release of editor ' + page.page_id.slice(-8)} title="Review release of cleanup protection">⋯</button>
+        <span title={page.page_id} style={window.AH_DS.styles.fill}>{page.editor_label}</span>
+        <window.AH_DS.Btn disabled={busy} onClick={() => setConfirmPage(page)} style={control}
+          aria-label={'Review release of editor ' + page.page_id.slice(-8)} title="Review release of cleanup protection">⋯</window.AH_DS.Btn>
       </div>
       <div style={{color:LM.inkSoft, marginTop:4}}>{page.state === 'open' ? 'Open record' : 'Closed record'} ·
         {page.draft_state === 'dirty' ? ' draft pending' : page.draft_state === 'unknown' ? ' draft state not recorded' : ' no pending draft'}</div>
@@ -4013,26 +4031,26 @@ const WorkshopStorageReview = ({root, label}) => {
       {confirmPage === page && <div style={{marginTop:8}}>
         <p style={{lineHeight:1.5}}>Release this editor’s protection only after saving or discarding its unsent work.
           Unsent text is not stored in this record. This action does not delete conversation messages or graph nodes.</p>
-        <button disabled={busy} onClick={release} style={control}>Release protection</button>
-        <button disabled={busy} onClick={() => setConfirmPage(null)} style={{...control, marginLeft:6}}>Cancel</button>
+        <window.AH_DS.Btn disabled={busy} onClick={release} style={control}>Release protection</window.AH_DS.Btn>
+        <window.AH_DS.Btn disabled={busy} onClick={() => setConfirmPage(null)} style={{...control, marginLeft:6}}>Cancel</window.AH_DS.Btn>
       </div>}
     </div>)}
     {review && review.pages.length === 0 && <p>No protected editor records in this conversation.</p>}
-    {review?.protection.tracking_state === 'unknown' && <div style={{color:LM.inkSoft}}>
+    {review?.protection.tracking_state === 'unknown' && <div style={window.AH_DS.styles.muted}>
       <p>Earlier draft activity is not recorded yet. Automatic cleanup remains protected.</p>
-      {!confirmTracking ? <button disabled={busy} style={control} onClick={() => setConfirmTracking(true)}>Review earlier activity…</button> : <>
+      {!confirmTracking ? <window.AH_DS.Btn disabled={busy} style={control} onClick={() => setConfirmTracking(true)}>Review earlier activity…</window.AH_DS.Btn> : <>
         <p>Confirm that you have saved or discarded any earlier unsent drafts in this conversation.
           This starts its inactivity period now. Existing protected editor records stay protected.</p>
-        <button disabled={busy} style={control} onClick={() => changeConversation('resolveConversationTracking')}>Confirm drafts resolved</button>
-        <button disabled={busy} style={{...control, marginLeft:6}} onClick={() => setConfirmTracking(false)}>Cancel</button>
+        <window.AH_DS.Btn disabled={busy} style={control} onClick={() => changeConversation('resolveConversationTracking')}>Confirm drafts resolved</window.AH_DS.Btn>
+        <window.AH_DS.Btn disabled={busy} style={{...control, marginLeft:6}} onClick={() => setConfirmTracking(false)}>Cancel</window.AH_DS.Btn>
       </>}
     </div>}
     {review && <div style={{marginTop:10}}>
       {review.retention.archived_at !== null ? <p>Archived {new Date(review.retention.archived_at * 1000).toLocaleString()}. Saved graph nodes are preserved.</p> :
-        <button disabled={busy || review.protection.protected} style={control} onClick={() => changeConversation('archiveConversation')}>Archive conversation</button>}
-      {review.protection.protected && <p style={{color:LM.inkSoft}}>Close or resolve protected editors before archiving. Running or unresolved Work also prevents archiving.</p>}
+        <window.AH_DS.Btn disabled={busy || review.protection.protected} style={control} onClick={() => changeConversation('archiveConversation')}>Archive conversation</window.AH_DS.Btn>}
+      {review.protection.protected && <p style={window.AH_DS.styles.muted}>Close or resolve protected editors before archiving. Running or unresolved Work also prevents archiving.</p>}
     </div>}
-    {review?.next_page_id && <button disabled={busy} onClick={() => read(review.next_page_id)} style={{...control, marginTop:8}}>More editors</button>}
+    {review?.next_page_id && <window.AH_DS.Btn disabled={busy} onClick={() => read(review.next_page_id)} style={{...control, marginTop:8}}>More editors</window.AH_DS.Btn>}
     {notice && <p role="status">{notice}</p>}
     {error && <p role="alert" style={{color:LM.err}}>{error}</p>}
     {busy && <p role="status">Updating storage review…</p>}
@@ -4108,30 +4126,30 @@ const WorkshopConversationMenu = ({workshops, conversationRoot, setConversationR
   const control = {background:LM.bg, color:LM.ink, border:`1px solid ${LM.line}`,
     borderRadius:LM.rad.sm, padding:'7px 9px', fontFamily:LM.sans, fontSize:12};
   return <div ref={menu} style={{position:'relative', minWidth:0}}>
-    <button ref={button} onClick={toggle} aria-label="Conversations" aria-haspopup="dialog" aria-expanded={open}
+    <window.AH_DS.Btn ref={button} onClick={toggle} aria-label="Conversations" aria-haspopup="dialog" aria-expanded={open}
       title={selected?.label || 'Conversations'} style={{...control, border:0, maxWidth:180,
         overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', cursor:'pointer'}}>
       {selected?.label || 'Conversations'} <span aria-hidden="true">⌄</span>
-    </button>
+    </window.AH_DS.Btn>
     {open && <div role="dialog" aria-label="Workshop conversations" style={{position:'absolute', top:'calc(100% + 6px)',
       right:0, zIndex:300, width:340, maxWidth:'calc(100vw - 70px)', maxHeight:'min(70vh, 600px)', overflowY:'auto',
       background:LM.bgPanel, color:LM.ink, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md,
       boxShadow:'0 12px 32px #0008', padding:12, fontSize:12}}>
       <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8}}>
         <strong>Conversations</strong>
-        {anchor && <button disabled={busy} onClick={() => read()} title="Refresh conversations" aria-label="Refresh conversations"
-          style={{...control, display:'grid', placeItems:'center', padding:5}}><StudioHeaderIcon name="reload"/></button>}
+        {anchor && <window.AH_DS.Btn disabled={busy} onClick={() => read()} title="Refresh conversations" aria-label="Refresh conversations"
+          style={{...control, display:'grid', placeItems:'center', padding:5}}><StudioHeaderIcon name="reload"/></window.AH_DS.Btn>}
       </div>
       <p style={{color:LM.inkSoft, margin:'0 0 10px', lineHeight:1.5}}>Saved rooms and their participants. A saved room does not mean its agents are running.</p>
       <div style={{display:'grid', gap:4}}>
-        <button disabled={busy} onClick={() => choose('')} aria-current={!conversationRoot ? 'true' : undefined}
+        <window.AH_DS.Btn disabled={busy} onClick={() => choose('')} aria-current={!conversationRoot ? 'true' : undefined}
           style={{...control, textAlign:'left', cursor:'pointer', background:!conversationRoot ? LM.accentDim : LM.bg}}>
           Current conversation
-        </button>
+        </window.AH_DS.Btn>
         {(catalog?.conversations || workshops.map(row => ({root:row.root, title:row.label}))).map(row => {
           const visible = workshops.some(item => item.root === row.root);
           const reachable = visible || path.length > 0;
-          return <button key={row.root} disabled={!reachable || busy}
+          return <window.AH_DS.Btn key={row.root} disabled={!reachable || busy}
             onClick={() => visible ? choose(row.root) : reach(row.root)}
             aria-current={conversationRoot === row.root ? 'true' : undefined}
             title={visible ? row.title : reachable ? 'Open the Workshop canvas and this conversation'
@@ -4139,14 +4157,14 @@ const WorkshopConversationMenu = ({workshops, conversationRoot, setConversationR
             style={{...control, textAlign:'left', overflowWrap:'anywhere', cursor:reachable ? 'pointer' : 'default',
               background:conversationRoot === row.root ? LM.accentDim : LM.bg}}>
             <div>{row.title}</div>
-            {row.participant_roots && <small style={{color:LM.inkSoft}}>{row.participant_roots.length} participants{!visible ? ' · on Workshop canvas' : ''}</small>}
-          </button>;
+            {row.participant_roots && <small style={window.AH_DS.styles.muted}>{row.participant_roots.length} participants{!visible ? ' · on Workshop canvas' : ''}</small>}
+          </window.AH_DS.Btn>;
         })}
       </div>
-      {catalog?.page_after && <button disabled={busy} onClick={() => read('showFirstConversationPage')} style={{...control, marginTop:8}}>First page</button>}
-      {catalog?.has_more && <button disabled={busy} onClick={() => read('loadNextConversationPage')} style={{...control, margin:'8px 0 0 6px'}}>More conversations</button>}
-      {catalog?.can_create && !creating && <button disabled={busy} onClick={() => { setCreating(true); setChosen([]); }}
-        style={{...control, width:'100%', marginTop:12, cursor:'pointer'}}>＋ New conversation</button>}
+      {catalog?.page_after && <window.AH_DS.Btn disabled={busy} onClick={() => read('showFirstConversationPage')} style={{...control, marginTop:8}}>First page</window.AH_DS.Btn>}
+      {catalog?.has_more && <window.AH_DS.Btn disabled={busy} onClick={() => read('loadNextConversationPage')} style={{...control, margin:'8px 0 0 6px'}}>More conversations</window.AH_DS.Btn>}
+      {catalog?.can_create && !creating && <window.AH_DS.Btn disabled={busy} onClick={() => { setCreating(true); setChosen([]); }}
+        style={{...control, width:'100%', marginTop:12, cursor:'pointer'}}>＋ New conversation</window.AH_DS.Btn>}
       {creating && <form onSubmit={create} style={{marginTop:12, borderTop:`1px solid ${LM.line}`, paddingTop:12}}>
         <label style={{display:'block'}}>Conversation name
           <input autoFocus required disabled={busy || creation?.accepted} value={title} maxLength={512}
@@ -4162,14 +4180,14 @@ const WorkshopConversationMenu = ({workshops, conversationRoot, setConversationR
             {row.label}{row.root === catalog.self ? ' (you)' : ''}
           </label>)}
         </fieldset>
-        {!creation?.accepted && <button type="submit" disabled={busy || !catalog?.can_create || !title.trim()}
-          style={{...control, marginTop:6}}>{busy ? 'Saving…' : error ? 'Retry creation' : 'Create conversation'}</button>}
+        {!creation?.accepted && <window.AH_DS.Btn type="submit" disabled={busy || !catalog?.can_create || !title.trim()}
+          style={{...control, marginTop:6}}>{busy ? 'Saving…' : error ? 'Retry creation' : 'Create conversation'}</window.AH_DS.Btn>}
         {creation?.accepted && <div role="status" style={{marginTop:8, lineHeight:1.5}}>
           Saved: {creation.title}. {creation.error || creation.notice || creation.warning}
-          {workshops.some(row => row.root === creation.root) && <button type="button" onClick={() => choose(creation.root)}
-            style={{...control, margin:'6px 0'}}>Open conversation</button>}
-          <button type="button" onClick={() => { setSaved(null); setTitle(''); setChosen([]); setCreating(false); }}
-            style={{...control, margin:'6px'}}>Done</button>
+          {workshops.some(row => row.root === creation.root) && <window.AH_DS.Btn type="button" onClick={() => choose(creation.root)}
+            style={{...control, margin:'6px 0'}}>Open conversation</window.AH_DS.Btn>}
+          <window.AH_DS.Btn type="button" onClick={() => { setSaved(null); setTitle(''); setChosen([]); setCreating(false); }}
+            style={{...control, margin:'6px'}}>Done</window.AH_DS.Btn>
         </div>}
       </form>}
       {(catalog?.can_create || state?.workshop?.root === (selected || anchor)?.root && state.workshop.can_manage_history) &&
@@ -4212,7 +4230,7 @@ const WsHeader = ({ session, model, openTabs, sessionRows = LM_SESSIONS, setOpen
     borderBottom:`1px solid ${LM.line}`, background:LM.bgDeep,
     padding:'0 10px 0 6px', display:'flex', alignItems:'center', gap:7, minWidth:0,
   }}>
-    <button onClick={onHome} title="All sessions" aria-label="Home" data-home-button style={{
+    <window.AH_DS.Btn onClick={onHome} title="All sessions" aria-label="Home" data-home-button style={{
       height:26, padding:'0 8px 0 6px', border:0, borderRadius:LM.rad.sm,
       background:'transparent', color:LM.inkSoft, cursor:'pointer',
       display:'flex', alignItems:'center', gap:6, flexShrink:0,
@@ -4220,14 +4238,14 @@ const WsHeader = ({ session, model, openTabs, sessionRows = LM_SESSIONS, setOpen
     }}>
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
       <span>Home</span>
-    </button>
+    </window.AH_DS.Btn>
     <span style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft}}>›</span>
-    <button type="button" onClick={onSettings} style={crumbBtn()}>Settings</button>
+    <window.AH_DS.Btn type="button" onClick={onSettings} style={({...window.AH_DS.styles.button('ghost', true), color:undefined ? LM.ink : LM.inkSoft, borderColor:undefined ? LM.accent : LM.line})}>Settings</window.AH_DS.Btn>
     <span style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft}}>›</span>
-    <button type="button" onClick={onSettings} style={crumbBtn()}>System</button>
+    <window.AH_DS.Btn type="button" onClick={onSettings} style={({...window.AH_DS.styles.button('ghost', true), color:undefined ? LM.ink : LM.inkSoft, borderColor:undefined ? LM.accent : LM.line})}>System</window.AH_DS.Btn>
     <span style={{fontFamily:LM.mono, fontSize:11, color:LM.inkSoft}}>›</span>
-    <span style={{...crumbBtn(true), cursor:'default'}}>ArchHub application</span>
-    <div style={{flex:1}}/>
+    <span style={{...({...window.AH_DS.styles.button('ghost', true), color:true ? LM.ink : LM.inkSoft, borderColor:true ? LM.accent : LM.line}), cursor:'default'}}>ArchHub application</span>
+    <div style={window.AH_DS.styles.fill}/>
     {systemArrangeSummary && <span style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.ok, border:`1px solid ${LM.ok}55`, borderRadius:LM.rad.sm, padding:'3px 8px'}}>
       arranged · {systemArrangeSummary.cards} nodes · {systemArrangeSummary.overlaps} overlaps · {systemArrangeSummary.clipped} clipped · {systemArrangeSummary.crossings} ≈ crossings
     </span>}
@@ -4242,7 +4260,7 @@ const WsHeader = ({ session, model, openTabs, sessionRows = LM_SESSIONS, setOpen
     borderBottom:`1px solid ${LM.line}`, background:LM.bgDeep,
     padding:'0 10px 0 6px', display:'flex', alignItems:'center', gap:6, minWidth:0,
   }}>
-    <button onClick={onHome} title="All sessions" aria-label="Home" data-home-button style={{
+    <window.AH_DS.Btn onClick={onHome} title="All sessions" aria-label="Home" data-home-button style={{
       height:26, padding:'0 8px 0 6px', border:0, borderRadius:LM.rad.sm,
       background:'transparent', color:LM.inkSoft, cursor:'pointer',
       display:'flex', alignItems:'center', gap:6, flexShrink:0,
@@ -4252,7 +4270,7 @@ const WsHeader = ({ session, model, openTabs, sessionRows = LM_SESSIONS, setOpen
     onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
       <span>Home</span>
-    </button>
+    </window.AH_DS.Btn>
 
     <div style={{ flex:1, minWidth:0, display:'flex', alignItems:'center', gap:2, overflow:'hidden' }}>
       {openTabs.map(id => {
@@ -4263,13 +4281,13 @@ const WsHeader = ({ session, model, openTabs, sessionRows = LM_SESSIONS, setOpen
         return <WsTab key={id} s={s} a={a} sm={sm} onClick={() => setOpenId(id)} onClose={(e) => { e.stopPropagation(); closeTab(id); }}/>;
       })}
       {/* New session after the tabs (design studio-lm.jsx:1123-1129). */}
-      <button type="button" onClick={onNewSession || onHome} title="New session" aria-label="New session" style={{
+      <window.AH_DS.Btn type="button" onClick={onNewSession || onHome} title="New session" aria-label="New session" style={{
         width:26, height:26, padding:0, border:0, borderRadius:LM.rad.sm,
         background:'transparent', color:LM.inkSoft, cursor:'pointer', flexShrink:0,
         display:'grid', placeItems:'center', fontSize:14,
       }}
       onMouseEnter={e => e.currentTarget.style.background = LM.bgSoft}
-      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>+</button>
+      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>+</window.AH_DS.Btn>
     </div>
 
     {conversationNotice && <span role="status" title={conversationNotice} style={{fontSize:11,
@@ -4282,11 +4300,7 @@ const WsHeader = ({ session, model, openTabs, sessionRows = LM_SESSIONS, setOpen
   );
 };
 
-const crumbBtn = here => ({
-  padding:'3px 9px', border:`1px solid ${here ? LM.accent : LM.line}`, borderRadius:LM.rad.sm,
-  background:here ? LM.accentDim : 'transparent', color:here ? LM.ink : LM.inkSoft,
-  fontFamily:LM.mono, fontSize:11, cursor:'pointer',
-});
+
 
 const WsTab = ({ s, a, sm, onClick, onClose }) => {
   const [h, setH] = React.useState(false);
@@ -4317,52 +4331,28 @@ const WsTab = ({ s, a, sm, onClick, onClose }) => {
         fontWeight: a ? 500 : 400,
         maxWidth:160, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
       }}>{s.title}</span>
-      <button onClick={onClose} title="Close tab" style={{
+      <window.AH_DS.Btn onClick={onClose} title="Close tab" style={{
         width:14, height:14, padding:0, border:0, borderRadius:LM.rad.xs,
         background:'transparent', color:LM.inkSoft, cursor:'pointer',
         display: a || h ? 'grid' : 'none', placeItems:'center',
         opacity: a ? 1 : 0.7, fontSize:11, lineHeight:1,
       }}
       onMouseEnter={e => { e.currentTarget.style.background = LM.bgHover; e.currentTarget.style.color = LM.ink; }}
-      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = LM.inkSoft; }}>×</button>
+      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = LM.inkSoft; }}>×</window.AH_DS.Btn>
     </div>
   );
 };
 
-const smallBtn = (primary) => ({
-  padding:`${LM.sp.xs}px ${LM.sp.md}px`, borderRadius:LM.rad.control, fontFamily:LM.sans, fontSize:LM.fs.bodySm.sz,
-  border:`1px solid ${primary ? LM.accent : LM.line}`,
-  background: primary ? LM.accent : 'transparent',
-  color: primary ? ((window.AH && window.AH.onFill) || '#180f08') : LM.inkSoft, cursor:'pointer', fontWeight: primary ? LM.fs.bodySmStrong.wt : LM.fs.bodySm.wt,
-  transition:`filter ${LM.dur.fast}ms, background ${LM.dur.fast}ms, border-color ${LM.dur.fast}ms`,
-});
+
 
 // Hoverable button wrappers (cards style — actually responsive)
-const HoverBtn = ({ primary, onClick, children, style, disabled, title, 'aria-label':ariaLabel }) => {
-  const [h, setH] = React.useState(false);
-  return (
-    <button
-      disabled={disabled} title={title} aria-label={ariaLabel}
-      onClick={onClick}
-      onMouseEnter={() => setH(true)}
-      onMouseLeave={() => setH(false)}
-      style={{
-        ...smallBtn(primary),
-        ...(primary
-          ? { filter: h ? 'brightness(1.12)' : 'none' }
-          : { background: h ? LM.bgHover : 'transparent', borderColor: h ? LM.accent+'66' : LM.line, color: h ? LM.ink : LM.inkSoft }),
-        ...style,
-        // Disabled controls use a dashed border, never alpha (design DECISIONS.md, node-logic section).
-        ...(disabled ? {background:'transparent', borderColor:LM.line, borderStyle:'dashed', color:LM.inkSoft, cursor:'default', filter:'none'} : {}),
-      }}>{children}</button>
-  );
-};
+
 
 const ModelStrip = ({ model, setPickerOpen, compact, inline }) => {
   const label = inline && (model.unknown || !model.name || model.name.includes('/')) ? 'Choose model' : model.name;
   const [hover, setHover] = React.useState(false);
   return (
-  <button
+  <window.AH_DS.Btn
     onClick={(e) => { e.stopPropagation(); setPickerOpen(true); }}
     onMouseEnter={() => setHover(true)}
     onMouseLeave={() => setHover(false)}
@@ -4388,7 +4378,7 @@ const ModelStrip = ({ model, setPickerOpen, compact, inline }) => {
     {/* Draw or omit: no latency dot until a latency was measured. */}
     {model.latency != null && <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.ok, letterSpacing:'0.08em' }}>{'\u25cf ' + model.latency + 'ms'}</span>}
     <span style={{ color:LM.inkSoft, fontSize:11, marginLeft:2 }}>▾</span>
-  </button>
+  </window.AH_DS.Btn>
   );
 };
 
@@ -4428,7 +4418,7 @@ const canvasAgentRecord = node => {
   const graph = state.topology?.graph || state.graph || {};
   const task = (graph.nodes || []).find(row => row.id === assignment?.work);
   return {...agent, taskTitle:task?.title || task?.name || '',
-    modelLabel:window.ARCHHUB_WORKSHOP_AGENT_MODEL?.(agent, state) || 'Not available yet'};
+    modelLabel:window.ARCHHUB_WORKSHOP_AGENT_MODEL?.(agent, state) || 'Unavailable'};
 };
 
 // Ports sit in a band BELOW the card's content (never over its title, summary or
@@ -4841,7 +4831,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       if (authority) await authority.connect(source, output.id, target, input.id);
       else await normal.connectTopology(source, output.id, target, input.id);
       setWireStartState(null);
-    } catch (error) { setWireError(error.message || 'The connection was refused.'); }
+    } catch (error) { setWireError(window.AH_DS.errorText(error.message || 'The connection was refused.')); }
   };
   const actionCanvas = authorityState?.canvas || {};
   const historyDecorator = typeof decorateHistoryNode === 'function' ? decorateHistoryNode : node => node;
@@ -5132,13 +5122,13 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
   const [menuBusy, setMenuBusy] = React.useState(false);
   const menuBusyRef = React.useRef(false);
   const [ctxMenu, setCtxMenu] = React.useState(null);
-  const CanvasToast = typeof AppToast === 'function' ? AppToast : ({toast}) => toast ? <div data-app-toast="" data-no-pan="" role={toast.tone === 'err' ? 'alert' : 'status'}>{toast.text}{toast.actionLabel && <button onClick={toast.action}>{toast.actionLabel}</button>}</div> : null;
+  const CanvasToast = typeof AppToast === 'function' ? AppToast : ({toast}) => toast ? <div data-app-toast="" data-no-pan="" role={toast.tone === 'err' ? 'alert' : 'status'}>{toast.tone === 'err' ? window.AH_DS.errorText(toast.text) : toast.text}{toast.actionLabel && <window.AH_DS.Btn onClick={toast.action}>{toast.actionLabel}</window.AH_DS.Btn>}</div> : null;
   const CanvasDestructiveDialog = typeof DestructiveDialog === 'function' ? DestructiveDialog : ({confirming, onCancel, onConfirm}) => {
     if (!confirming) return null;
     return <div data-no-pan="" role="presentation"><div role="alertdialog" aria-label="Confirm delete">
       <h2>{confirming.kind === 'clear' ? 'Delete all nodes?' : 'Delete “' + confirming.title + '”?'}</h2>
       <p>{(confirming.ids?.length || 0) + ' nodes and ' + (confirming.wires || 0) + ' wires go with it. Undo brings them back.'}</p>
-      <button autoFocus onClick={onCancel}>Cancel</button><button onClick={onConfirm}>Delete</button>
+      <window.AH_DS.Btn autoFocus onClick={onCancel}>Cancel</window.AH_DS.Btn><window.AH_DS.Btn onClick={onConfirm}>Delete</window.AH_DS.Btn>
     </div></div>;
   };
   const closeContextMenu = () => {
@@ -5680,7 +5670,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       const result = canvasFitBounds(ids, positions, sizes, wrapRef.current.getBoundingClientRect(), maxZoom);
       setZoom(result.zoom); setPan(result.pan); closeContextMenu();
       return true;
-    } catch (error) { if (!silent) setLayoutError(error.message); }
+    } catch (error) { if (!silent) setLayoutError(window.AH_DS.errorText(error.message)); }
     return false;
   };
   const revealIds = (ids, silent = false) => {
@@ -5691,7 +5681,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       const result = canvasRevealBounds(ids, positions, sizes, wrapRef.current.getBoundingClientRect(), zoom, pan);
       setZoom(result.zoom); setPan(result.pan); closeContextMenu();
       return true;
-    } catch (error) { if (!silent) setLayoutError(error.message); }
+    } catch (error) { if (!silent) setLayoutError(window.AH_DS.errorText(error.message)); }
     return false;
   };
   React.useEffect(() => {
@@ -5803,7 +5793,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       }
       return true;
     } catch (error) {
-      if (scopeStillCurrent()) setLayoutError(error.message || 'Arrange could not be confirmed.');
+      if (scopeStillCurrent()) setLayoutError(window.AH_DS.errorText(error.message || 'Arrange could not be confirmed.'));
       return false;
     } finally {
       arrangeRunning.current = false;
@@ -5874,7 +5864,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
         const fit = canvasFitBounds(allIds, {...positions, ...next}, sizes, wrapRef.current.getBoundingClientRect());
         summaryZoom = fit.zoom; summaryPan = fit.pan;
         setZoom(fit.zoom); setPan(fit.pan);
-      } catch (error) { if (!options.silent) setLayoutError(error.message); }
+      } catch (error) { if (!options.silent) setLayoutError(window.AH_DS.errorText(error.message)); }
     }
     // Ping v4c item 2: success only when the layout write is confirmed; a refused, busy or
     // stale save restores the confirmed layout, publishes no summary and lets auto-arrange retry.
@@ -5960,7 +5950,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
       else if (normal) await normal.refreshTopologyCanvas();
       else return;
       if (scopeStillCurrent()) { setLayoutError(''); setWireError(''); setLayoutNeedsRefresh(false); }
-    } catch (error) { if (scopeStillCurrent()) setLayoutError(error.message || 'The canvas could not be refreshed.'); }
+    } catch (error) { if (scopeStillCurrent()) setLayoutError(window.AH_DS.errorText(error.message || 'The canvas could not be refreshed.')); }
   };
   React.useEffect(() => {
     const text = layoutError || authorityState?.error || wireError || menuNotice;
@@ -6295,8 +6285,8 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
         <summary role="status">{unresolvedWires.length} connections cannot be drawn with their supplied endpoints</summary>
         <p>The connections remain in the graph. Their display needs endpoint projection support.</p>
         <ul style={{paddingLeft:16, overflowWrap:'anywhere'}}>{unresolvedWires.slice(0, 20).map(wire =>
-          <li key={wire.i}>{wire.id ? <button onClick={() => setFocusId(authorityState ? wire.id : 'wire:' + wire.i)}
-            style={{...smallBtn(), overflowWrap:'anywhere', textAlign:'left', maxWidth:'100%'}}>{wire.id}</button> :
+          <li key={wire.i}>{wire.id ? <window.AH_DS.Btn onClick={() => setFocusId(authorityState ? wire.id : 'wire:' + wire.i)}
+            style={{...window.AH_DS.styles.button("secondary", true), overflowWrap:'anywhere', textAlign:'left', maxWidth:'100%'}}>{wire.id}</window.AH_DS.Btn> :
             'Unnamed connection'}: {wire.reason}</li>)}</ul>
         {unresolvedWires.length > 20 && <p>{unresolvedWires.length - 20} more connections are affected.</p>}
       </details>}
@@ -6312,7 +6302,7 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
         position:'absolute', left:14, bottom:14, zIndex:6, display:'flex', gap:8, alignItems:'center',
         background:LM.bgPanel, border:`1px solid ${LM.line}`, padding:'5px 8px 5px 10px', borderRadius:6, fontSize:12, color:LM.inkSoft}}>
         {overlapCount} cards overlap
-        <button type="button" onClick={() => arrangeIds(allNodes.map(node => node.id))} style={{...smallBtn()}}>Arrange</button>
+        <window.AH_DS.Btn type="button" onClick={() => arrangeIds(allNodes.map(node => node.id))} style={{...window.AH_DS.styles.button("secondary", true)}}>Arrange</window.AH_DS.Btn>
       </div>}
       {(layoutBusy || burstPending || authorityState?.pending || wireStart || unwrittenLayout || menuBusy) &&
       <div data-no-pan style={{position:'absolute', top:118, right:14, zIndex:5,
@@ -6325,9 +6315,9 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
               Object.keys(unwrittenLayout.next).length + '). Move them again to save them.' :
             (wireStart.reverse ? 'Choose an output for ' : 'Choose an input for ') + wireStart.port.label}
         </span>
-        {wireStart && <button disabled={blocked} onClick={() => setWireStartState(null)} title="Cancel wire" aria-label="Cancel wire" style={toolBtn()}>✕</button>}
-        <button disabled={layoutBusy || !!authorityState?.pending || (!authority && !normal)} onClick={refreshCanvas}
-          title="Refresh canvas" aria-label="Refresh canvas" style={toolBtn()}>↻</button>
+        {wireStart && <window.AH_DS.Btn disabled={blocked} onClick={() => setWireStartState(null)} title="Cancel wire" aria-label="Cancel wire" style={window.AH_DS.styles.button("ghost", true)}>✕</window.AH_DS.Btn>}
+        <window.AH_DS.Btn disabled={layoutBusy || !!authorityState?.pending || (!authority && !normal)} onClick={refreshCanvas}
+          title="Refresh canvas" aria-label="Refresh canvas" style={window.AH_DS.styles.button("ghost", true)}>↻</window.AH_DS.Btn>
       </div>}
       {/* Drop-target ghost */}
       {dropTarget && (
@@ -6346,14 +6336,14 @@ const NodeCanvas = ({ focusId, setFocusId, pendingReveal = null, clearPendingRev
         background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md,
         boxShadow:'0 10px 24px rgba(0,0,0,.35)',
       }}>
-        <button type="button" onClick={composeCurrentSelection}
-          disabled={!composer || layoutBusy || layoutNeedsRefresh || authorityState?.requires_refresh || menuBusy} style={smallBtn(false)}>
+        <window.AH_DS.Btn type="button" onClick={composeCurrentSelection}
+          disabled={!composer || layoutBusy || layoutNeedsRefresh || authorityState?.requires_refresh || menuBusy} style={window.AH_DS.styles.button(false ? 'primary' : 'secondary', true)}>
           Group {selected.size} nodes <kbd style={kbd()}>Ctrl+G</kbd>
-        </button>
-        <button type="button" onClick={() => arrangeIds([...selected])}
-          disabled={layoutNeedsRefresh || !canSaveLayout} style={smallBtn(false)}>Arrange selected</button>
-        <button type="button" onClick={() => selectConnected(true)}
-          style={smallBtn(false)}>Select connected</button>
+        </window.AH_DS.Btn>
+        <window.AH_DS.Btn type="button" onClick={() => arrangeIds([...selected])}
+          disabled={layoutNeedsRefresh || !canSaveLayout} style={window.AH_DS.styles.button(false ? 'primary' : 'secondary', true)}>Arrange selected</window.AH_DS.Btn>
+        <window.AH_DS.Btn type="button" onClick={() => selectConnected(true)}
+          style={window.AH_DS.styles.button(false ? 'primary' : 'secondary', true)}>Select connected</window.AH_DS.Btn>
       </div>}
 
       <CanvasToolbar onRun={() => menuRun()} runDisabled={typeof window.ARCHHUB_RUN !== 'function' || menuBusy || blocked}
@@ -6434,7 +6424,7 @@ const CanvasMenu = ({ x, y, maxHeight, opener, items, label, onClose }) => {
       {items.map((it, i) => it.sep ? (
         <div key={i} style={{ height:1, background:LM.lineSoft, margin:'4px 4px' }}/>
       ) : (
-        <button key={i} role={it.toggle ? 'menuitemcheckbox' : 'menuitem'} aria-checked={it.toggle ? !!it.on : undefined}
+        <window.AH_DS.Btn key={i} role={it.toggle ? 'menuitemcheckbox' : 'menuitem'} aria-checked={it.toggle ? !!it.on : undefined}
           disabled={!!it.disabled} aria-label={it.t.replace(/…$/, '')}
           title={it.disabled ? it.why || it.t + ' is not available right now' : it.t}
           onClick={() => { if (!it.disabled && typeof it.action === 'function') { dismiss(); it.action(); } }} style={{
@@ -6447,7 +6437,7 @@ const CanvasMenu = ({ x, y, maxHeight, opener, items, label, onClose }) => {
         onMouseEnter={e => { if (!it.disabled) e.currentTarget.style.background = LM.bgHover; }}
         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
           <span style={{ width:14, color: it.danger ? LM.err : LM.inkSoft, fontFamily:LM.mono, fontSize:11, textAlign:'center' }}>{it.i}</span>
-          <span style={{ flex:1 }}>{it.t}</span>
+          <span style={window.AH_DS.styles.fill}>{it.t}</span>
           {it.toggle && (
             <span style={{
               width:22, height:12, borderRadius:999,
@@ -6457,7 +6447,7 @@ const CanvasMenu = ({ x, y, maxHeight, opener, items, label, onClose }) => {
             </span>
           )}
           {it.k && <kbd style={kbd()}>{it.k}</kbd>}
-        </button>
+        </window.AH_DS.Btn>
       ))}
     </div>
   );
@@ -6635,14 +6625,14 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
         </div>
         {groupCard && Number.isSafeInteger(n.memberCount) && <span data-member-count={n.memberCount} style={{
           fontFamily:LM.sans, fontSize:LM_FS_LABEL.sz, fontWeight:LM_FS_LABEL.wt, color:LM.inkSoft, whiteSpace:'nowrap'}}>{n.memberCount} {n.memberCount === 1 ? 'node' : 'nodes'}</span>}
-        {onExpand && groupCard && <button type="button" aria-label={'Expand ' + (n.title || 'group')} title="Expand the group back into its nodes"
+        {onExpand && groupCard && <window.AH_DS.Btn type="button" aria-label={'Expand ' + (n.title || 'group')} title="Expand the group back into its nodes"
           onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onExpand(); }} style={{
           padding:`0 ${LM.sp.sm}px`, border:`1px solid ${LM.line}`, borderRadius:LM.rad.control, background:'transparent',
-          color:LM.inkSoft, fontFamily:LM.sans, fontSize:LM_FS_LABEL.sz, cursor:'pointer'}}>⊞ expand</button>}
+          color:LM.inkSoft, fontFamily:LM.sans, fontSize:LM_FS_LABEL.sz, cursor:'pointer'}}>⊞ expand</window.AH_DS.Btn>}
         {n.state && <NodeStateDot s={n.state}/>}
         {n.ms && !n.state && <span style={{ fontFamily:LM.sans, fontSize:LM_FS_LABEL.sz, color:LM.inkSoft }}>{n.ms}</span>}
         {isAi && !agent && (
-          <button onClick={(e) => { e.stopPropagation(); onToggleExpand(); }} title={expanded ? 'Collapse' : 'Expand & search'} aria-label={expanded ? 'Collapse' : 'Expand & search'} style={{
+          <window.AH_DS.Btn onClick={(e) => { e.stopPropagation(); onToggleExpand(); }} title={expanded ? 'Collapse' : 'Expand & search'} aria-label={expanded ? 'Collapse' : 'Expand & search'} style={{
             width:18, height:18, padding:0, border:0, borderRadius:LM.rad.xs,
             background:'transparent', color:LM.inkSoft, cursor:'pointer',
             display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:LM_FS_DATASM.sz, marginLeft:2,
@@ -6650,7 +6640,7 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
           onMouseEnter={e => { e.currentTarget.style.background = LM.bgHover; e.currentTarget.style.color = LM.ink; }}
           onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = LM.inkSoft; }}>
             {expanded ? '↖' : '⤢'}
-          </button>
+          </window.AH_DS.Btn>
         )}
       </div>
 
@@ -6685,7 +6675,7 @@ const NodeRenderer = ({ n: held, x = held.x, y = held.y, selected, focused, dimm
             (n.preview.kind === 'image' && n.preview.state === 'ready' ? <WatchImage value={n.preview.value}/> : <WatchPreview node={n} actions={watchActions}/>)}
           {agent && !n.preview && n.result != null && <span style={{fontSize:12.5,color:LM.inkSoft}}>{typeof n.result === 'object' ? JSON.stringify(n.result) : String(n.result)}</span>}
           {!n.application && !nodeIsWatch(n) && !n.preview && !n.result && !(n.params || []).some(row=>!window.ARCHHUB_INTERNAL_PARAM_KEYS?.has(row.k)) && !n.status && !(window.ARCHHUB_LAST_RUN?.lines?.[n.id]?.length) &&
-            <span aria-disabled="true" style={{fontSize:12.5, color:LM.inkSoft}}>Not available yet</span>}
+            <span aria-disabled="true" style={{fontSize:12.5, color:LM.inkSoft}}>Unavailable</span>}
         </div>
       </div>
 
@@ -6745,7 +6735,7 @@ const Socket = ({ id, side, i, t, label, list = false, onUse, onDragStart, half 
       flexDirection: side === 'in' ? 'row' : 'row-reverse',
       pointerEvents: onUse ? 'auto' : 'none',
     }}>
-      <button type="button" aria-label={(side === 'out' ? 'Connect output ' : 'Connect input ') + label}
+      <window.AH_DS.Btn type="button" aria-label={(side === 'out' ? 'Connect output ' : 'Connect input ') + label}
         title={(side === 'out' ? 'Connect output ' : 'Connect input ') + label}
         data-studio-socket={onUse ? 'true' : undefined}
         data-socket-side={side}
@@ -6861,7 +6851,7 @@ const InlineAsk = ({ placeholder, model, node, onAnswer, scale, before }) => {
           marginLeft: S.lead || 0,
           color: state ? LM.accent : LM.ink }}/>
       {before || null}
-      <button onClick={ask} disabled={needsNode || asking || !text.trim()} style={{ padding:S.send.padding, background:node||scale==='node'?'#26262d':LM.accent, color:node||scale==='node'?LM.ink:(window.AH && window.AH.onFill) || '#180f08', border:node||scale==='node'?`1px solid ${LM.line}`:0, borderRadius:S.send.radius, fontSize:S.send.size, fontWeight:500, cursor:'pointer' }}>{asking ? 'Waiting…' : 'Send ↵'}</button>
+      <window.AH_DS.Btn onClick={ask} disabled={needsNode || asking || !text.trim()} style={{ padding:S.send.padding, background:node||scale==='node'?'#26262d':LM.accent, color:node||scale==='node'?LM.ink:(window.AH && window.AH.onFill) || '#180f08', border:node||scale==='node'?`1px solid ${LM.line}`:0, borderRadius:S.send.radius, fontSize:S.send.size, fontWeight:500, cursor:'pointer' }}>{asking ? 'Waiting…' : 'Send ↵'}</window.AH_DS.Btn>
     </>
   );
 };
@@ -6892,11 +6882,7 @@ const WATCH_MODES = [
 ];
 const WATCH_FS_DATA = LM.fs?.dataSm || {sz:11, ln:14};
 const WATCH_FS_LABEL = LM.fs?.label || {sz:10, ln:12};
-const watchSmallBtn = () => ({
-  border:`1px solid ${LM.lineSoft}`, background:'transparent', color:LM.inkSoft,
-  borderRadius:4, padding:'2px 7px', fontFamily:LM.sans, fontSize:12.5,
-  cursor:'pointer'
-});
+
 
 const watchCellText = value => value === null || value === undefined ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);
 
@@ -7019,10 +7005,10 @@ const WatchPreview = ({ node, inspector = false, actions = {} }) => {
   const state = watchState(safePreview, mode);
   return <div data-watch-preview="" style={{display:'grid', gap:6, marginTop:6}}>
     {inspector && <div data-watch-show-as="" style={{display:'flex', gap:4, flexWrap:'wrap'}}>
-      {WATCH_MODES.map(([key, label]) => <button key={key} type="button" onClick={() => setModePersisted(key)} style={{
+      {WATCH_MODES.map(([key, label]) => <window.AH_DS.Btn key={key} type="button" onClick={() => setModePersisted(key)} style={{
         border:`1px solid ${key === mode ? LM.accent : LM.lineSoft}`, background:key === mode ? LM.accent + '22' : 'transparent',
         color:key === mode ? LM.ink : LM.inkSoft, borderRadius:4, padding:'2px 6px', fontFamily:LM.mono, fontSize:WATCH_FS_LABEL.sz, cursor:'pointer'
-      }}>{label}</button>)}
+      }}>{label}</window.AH_DS.Btn>)}
     </div>}
     <WatchWell node={node} preview={safePreview} mode={mode} state={state} inspector={inspector} actions={actions}/>
   </div>;
@@ -7055,7 +7041,7 @@ const WatchState = ({ state, preview, actions = {} }) => {
   const handler = state === 'empty' ? actions.addInput : state === 'error' ? actions.retry : state === 'too-big' ? actions.showAll : null;
   return <div data-watch-state={state} style={{padding:10, display:'grid', gap:7, placeItems:'center', minHeight:70, fontFamily:LM.mono, fontSize:WATCH_FS_DATA.sz, color:LM.inkSoft}}>
     <span>{preview?.error || (state === 'loading' ? 'loading' : state)}</span>
-    {label && handler ? <button data-watch-state-action="" type="button" onClick={handler} style={watchSmallBtn()}>{label}</button> : null}
+    {label && handler ? <window.AH_DS.Btn data-watch-state-action="" type="button" onClick={handler} style={window.AH_DS.styles.button("secondary", true)}>{label}</window.AH_DS.Btn> : null}
   </div>;
 };
 
@@ -7089,7 +7075,7 @@ const WatchFoot = ({ node, preview, mode, state, actions = {} }) => {
   return <div data-watch-actions="" style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:6, padding:'5px 6px', borderTop:`1px solid ${LM.lineSoft}`}}>
     <span data-watch-caption="" style={{fontFamily:LM.sans, fontSize:13, color:LM.inkMuted}}>{watchFootText(preview, mode, state)}</span>
     <span style={{display:'flex', gap:4, flexWrap:'wrap', justifyContent:'flex-end'}}>
-      {actionList.map(([label, handler]) => <button key={label} type="button" onClick={handler} style={watchSmallBtn()}>{label}</button>)}
+      {actionList.map(([label, handler]) => <window.AH_DS.Btn key={label} type="button" onClick={handler} style={window.AH_DS.styles.button("secondary", true)}>{label}</window.AH_DS.Btn>)}
     </span>
   </div>;
 };
@@ -7268,15 +7254,15 @@ const GraphWorkshopFace = ({ n, onDragStart, bandRef, onSocket, onSocketDrag, st
         boxShadow:`0 0 0 2px ${color}`, display:'grid', placeItems:'center', fontStyle:'normal', fontSize:15, flex:'none'}}>◎</i>
       <div style={{flex:1, minWidth:0}}><div style={{fontSize:14, fontWeight:700}}>Workshop</div>
         <div data-workshop-node-title="" style={{fontSize:12, color:LM.inkSoft, overflow:'hidden',
-          textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{model?.title || 'Not available yet'}</div></div>
+          textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{model?.title || 'Unavailable'}</div></div>
       <span data-workshop-node-agent-stack="" style={{display:'flex',gap:6}}>{members.map((member, index) => {
         const participant = member.row?.root || member.root || member.id;
         const id = member.graph_member_id || participant;
         const canDrag = !!startMemberDrag && canMoveMember && !!member.graph_member_id && member.graph_group_id === n.id;
-        const name = member.name || member.label || member.row?.label || 'Not available yet';
+        const name = member.name || member.label || member.row?.label || 'Unavailable';
         return <i key={id} data-workshop-node-member={id} data-member-drag={memberDragTrace[id] || undefined}
           data-workshop-participant-root={participant} data-workshop-member-draggable={canDrag ? 'true' : 'false'}
-          title={canDrag ? name : name + ' · Not available yet'} role="img" aria-label={name} aria-disabled={!canDrag} draggable={false} onDragStart={event => event.preventDefault()}
+          title={canDrag ? name : name + ' · Unavailable'} role="img" aria-label={name} aria-disabled={!canDrag} draggable={false} onDragStart={event => event.preventDefault()}
           onPointerDown={canDrag ? event => startMemberDrag({...member, id}, event) : undefined}
           onMouseDown={event => {event.stopPropagation(); if (canDrag) startMemberDrag({...member, id}, event);}}
           data-agent-presence={member.presence || member.liveState || 'unavailable'}
@@ -7295,10 +7281,10 @@ const GraphWorkshopFace = ({ n, onDragStart, bandRef, onSocket, onSocketDrag, st
         return <div key={step.id || step.root || index} data-workshop-node-step={step.id || step.root || index}
           style={{display:'grid', gridTemplateColumns:'18px 1fr auto', gap:8, padding:'6px 10px',
             borderTop:index ? `1px solid ${LM.lineSoft}` : 0, fontSize:13}}>
-          <span style={{color:stepColor}}>{done ? '✓' : waits ? '⏸' : '○'}</span><span>{step.title || 'Not available yet'}</span>
+          <span style={{color:stepColor}}>{done ? '✓' : waits ? '⏸' : '○'}</span><span>{step.title || 'Unavailable'}</span>
           <span style={{color:stepColor,fontSize:12}}>{step.result ?? (waits ? 'needs you' : step.duration || '')}</span>
         </div>;
-      }) : <div aria-disabled="true" style={{padding:'8px 10px',fontSize:12.5,color:LM.inkSoft}}>Not available yet</div>}
+      }) : <div aria-disabled="true" style={{padding:'8px 10px',fontSize:12.5,color:LM.inkSoft}}>Unavailable</div>}
     </div>
     {rows > 0 && <div ref={bandRef} data-port-band="" data-workshop-node-ports=""
       style={{position:'relative', height:PORT_BAND_PAD * 2 + rows * SOCKET_STEP}}>
@@ -7313,11 +7299,11 @@ const GraphWorkshopFace = ({ n, onDragStart, bandRef, onSocket, onSocketDrag, st
     </div>}
     <footer style={{display:'flex', alignItems:'center', gap:8, padding:'10px 14px', borderTop:`1px solid ${LM.lineSoft}`}}>
       <i aria-hidden="true" style={{width:8, height:8, borderRadius:'50%', background:color, flex:'none'}}/>
-      <span data-workshop-node-status="" style={{fontSize:13.5, fontWeight:600, color, flex:1}}>{approval && Number.isSafeInteger(model?.count) ? `${model.count}${model.output_label ? ' ' + model.output_label : ''} wait for you` : <>{model?.status?.text || 'Not available yet'}{outputCount}</>}</span>
-      {approval && <button type="button" data-workshop-node-review="" onMouseDown={event => event.stopPropagation()}
+      <span data-workshop-node-status="" style={{fontSize:13.5, fontWeight:600, color, flex:1}}>{approval && Number.isSafeInteger(model?.count) ? `${model.count}${model.output_label ? ' ' + model.output_label : ''} wait for you` : <>{model?.status?.text || 'Unavailable'}{outputCount}</>}</span>
+      {approval && <window.AH_DS.Btn type="button" data-workshop-node-review="" onMouseDown={event => event.stopPropagation()}
         onClick={event => openWindow(event, true)} disabled={!descriptor?.root || !(approval.work || approval.id)}
         style={{border:reviewPrimary?0:`1px solid ${LM.line}`, borderRadius:8, background:reviewPrimary?`linear-gradient(180deg, ${LM.accentHi || LM.accent}, ${LM.accent})`:'#26262d', color:reviewPrimary?'#fff':LM.ink,boxShadow:reviewPrimary?`0 1px 0 rgba(255,255,255,.25) inset, 0 4px 14px ${LM.accent}44`:'none',
-          height:30, display:'inline-flex', alignItems:'center', fontFamily:LM.sans, fontSize:13, fontWeight:600, padding:'0 12px', cursor:'pointer'}}>Review</button>}
+          height:30, display:'inline-flex', alignItems:'center', fontFamily:LM.sans, fontSize:13, fontWeight:600, padding:'0 12px', cursor:'pointer'}}>Review</window.AH_DS.Btn>}
     </footer>
   </section>;
 };
@@ -7458,10 +7444,10 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
           }}/>
           <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft }}>{filtered.length}/{total}</span>
           {q && (
-            <button onClick={() => setQ('')} title="Clear conversation search" aria-label="Clear conversation search" style={{
+            <window.AH_DS.Btn onClick={() => setQ('')} title="Clear conversation search" aria-label="Clear conversation search" style={{
               width:14, height:14, padding:0, border:0, background:'transparent',
               color:LM.inkSoft, cursor:'pointer', fontSize:11, lineHeight:1,
-            }}>×</button>
+            }}>×</window.AH_DS.Btn>
           )}
         </div>
 
@@ -7511,7 +7497,7 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
   return (
     <div style={{ marginTop:9, display:'flex', flexDirection:'column', gap:9 }}>
       {total > 2 && (
-        <button onClick={(e) => { e.stopPropagation(); onToggleExpand && onToggleExpand(); }} style={{
+        <window.AH_DS.Btn onClick={(e) => { e.stopPropagation(); onToggleExpand && onToggleExpand(); }} style={{
           fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, letterSpacing:'0.08em',
           padding:'4px 9px', background:LM.bgDeep, border:`1px solid ${LM.lineSoft}`, borderRadius:4,
           display:'flex', alignItems:'center', gap:6, cursor:'pointer', textAlign:'left',
@@ -7520,9 +7506,9 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
         onMouseLeave={e => e.currentTarget.style.borderColor = LM.lineSoft}>
           <span style={{ color:LM.accent }}>↑</span>
           <span>{total - 2} earlier messages</span>
-          <span style={{ flex:1 }}/>
+          <span style={window.AH_DS.styles.fill}/>
           <span style={{ color:LM.accent }}>expand + search ⤢</span>
-        </button>
+        </window.AH_DS.Btn>
       )}
       {recent.map((m, i) => {
         const isLast = i === recent.length - 1;
@@ -7543,13 +7529,13 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
                 )}
               </div>
               {isAssistant && isLast && (
-                <button onClick={(e) => { e.stopPropagation(); setShowReasoning(s => !s); }} style={{
+                <window.AH_DS.Btn onClick={(e) => { e.stopPropagation(); setShowReasoning(s => !s); }} style={{
                   background:'transparent', border:0, padding:'3px 0', color:LM.inkSoft,
                   fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, letterSpacing:'0.06em', cursor:'pointer',
                   display:'flex', alignItems:'center', gap:LM.sp.xs, marginTop:3,
                 }}>
                   <span>{showReasoning ? '▾' : '▸'}</span> reasoning · 4 steps
-                </button>
+                </window.AH_DS.Btn>
               )}
               {isAssistant && isLast && showReasoning && (
                 <div style={{
@@ -7683,7 +7669,7 @@ const AnnotateBody = ({ n }) => (
       <>
         <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:6 }}>
           <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.accent, letterSpacing:'0.06em' }}>{n.runtime}</span>
-          <div style={{ flex:1 }}/>
+          <div style={window.AH_DS.styles.fill}/>
           <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft }}>{Math.round(n.progress*100)}%</span>
         </div>
         <div style={{ height:3, background:LM.bgDeep, borderRadius:2, overflow:'hidden', marginBottom:10 }}>
@@ -7716,7 +7702,7 @@ const OutputBody = ({ n }) => (
       </div>
     ))}
     <div style={{ display:'flex', gap:6, marginTop:LM.sp.xs }}>
-      <button onClick={async (e) => {
+      <window.AH_DS.Btn onClick={async (e) => {
         const b = e.currentTarget;
         b.textContent = 'running…';
         try {
@@ -7726,8 +7712,8 @@ const OutputBody = ({ n }) => (
           ).slice(0, 30);
         } catch (error) { b.textContent = 'refused'; }
         setTimeout(() => { b.textContent = 'preview'; }, 6000);
-      }} style={smallBtn()}>preview</button>
-      <button onClick={async (e) => {
+      }} style={window.AH_DS.styles.button("secondary", true)}>preview</window.AH_DS.Btn>
+      <window.AH_DS.Btn onClick={async (e) => {
         const b = e.currentTarget;
         b.textContent = 'saving…';
         try {
@@ -7735,7 +7721,7 @@ const OutputBody = ({ n }) => (
           b.textContent = 'saved to the graph';
         } catch (error) { b.textContent = 'refused'; }
         setTimeout(() => { b.textContent = 'save'; }, 5000);
-      }} style={smallBtn(true)}>save</button>
+      }} style={window.AH_DS.styles.button(true ? 'primary' : 'secondary', true)}>save</window.AH_DS.Btn>
     </div>
   </div>
 );
@@ -7798,41 +7784,38 @@ const CanvasToolbar = ({ zoom, setZoom, onFit, fitLabel, onArrange, arrangeDisab
     display:'flex',alignItems:'center',gap:14,padding:'0 24px',borderBottom:`1px solid ${LM.lineSoft}`,background:'#0f0f13'}}>
     {project&&<span style={{fontSize:13,color:LM.inkSoft}}>{project} ›</span>}<span style={{fontSize:17,fontWeight:700}}>{title}</span>
     {status&&<span data-canvas-live-state="" style={{borderRadius:999,padding:'4px 9px',background:LM.accent+'1f',color:LM.accent,fontSize:12,fontWeight:600}}>{status}</span>}
-    {waiting>0&&<span data-canvas-needs-user="" style={{borderRadius:999,padding:'4px 9px',background:LM.warn+'1f',color:LM.warn,fontSize:12,fontWeight:600}}>{waiting} needs you</span>}<span style={{flex:1}}/>
-    <button disabled={arrangeDisabled} onClick={event => {event.stopPropagation(); onArrange();}}
-      title={arrangeDisabled ? arrangeWhy : 'Arrange'} aria-label="Arrange" style={{...smallBtn(),height:30,fontSize:13}}>Arrange</button>
-    <button data-canvas-run-primary="" disabled={runDisabled} onClick={event => {event.stopPropagation(); onRun?.();}}
-      style={{height:30,padding:'0 12px',border:waiting>0?`1px solid ${LM.line}`:0,borderRadius:8,fontFamily:LM.sans,fontSize:13,fontWeight:600,color:waiting>0?LM.ink:'#fff',background:waiting>0?'#26262d':`linear-gradient(180deg, ${LM.accentHi || LM.accent}, ${LM.accent})`,boxShadow:waiting>0?'0 1px 0 rgba(255,255,255,.06) inset':`0 1px 0 rgba(255,255,255,.25) inset, 0 4px 14px ${LM.accent}44`,cursor:'pointer'}}>{runDisabled ? 'Not available yet' : '▶ Run'}</button>
+    {waiting>0&&<span data-canvas-needs-user="" style={{borderRadius:999,padding:'4px 9px',background:LM.warn+'1f',color:LM.warn,fontSize:12,fontWeight:600}}>{waiting} needs you</span>}<span style={window.AH_DS.styles.fill}/>
+    <window.AH_DS.Btn disabled={arrangeDisabled} onClick={event => {event.stopPropagation(); onArrange();}}
+      title={arrangeDisabled ? arrangeWhy : 'Arrange'} aria-label="Arrange" style={{...window.AH_DS.styles.button("secondary", true),height:30,fontSize:13}}>Arrange</window.AH_DS.Btn>
+    <window.AH_DS.Btn data-canvas-run-primary="" disabled={runDisabled} onClick={event => {event.stopPropagation(); onRun?.();}}
+      style={{height:30,padding:'0 12px',border:waiting>0?`1px solid ${LM.line}`:0,borderRadius:8,fontFamily:LM.sans,fontSize:13,fontWeight:600,color:waiting>0?LM.ink:'#fff',background:waiting>0?'#26262d':`linear-gradient(180deg, ${LM.accentHi || LM.accent}, ${LM.accent})`,boxShadow:waiting>0?'0 1px 0 rgba(255,255,255,.06) inset':`0 1px 0 rgba(255,255,255,.25) inset, 0 4px 14px ${LM.accent}44`,cursor:'pointer'}}>{'▶ Run'}</window.AH_DS.Btn>
   </div>
   <div data-no-pan style={{
     position:'absolute', left:40, bottom:28, display:'flex', gap:LM.sp.xs,
     ...canvasCardSurface(), border:`1px solid ${LM.line}`, borderRadius:10, padding:LM.sp.xs,
   }}>
-    <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.max(0.3, +(z - 0.1).toFixed(2))); }} title="Zoom out" aria-label="Zoom out" style={{...toolBtn(),width:'auto',padding:'0 6px',fontFamily:LM.sans,fontSize:13}}>Zoom out</button>
-    <div data-canvas-zoom="" style={{ ...toolBtn(), width:48, color:LM.ink, background:LM.bg, fontFamily:LM.sans, fontSize:13, cursor:'default' }}>
+    <window.AH_DS.Btn onClick={(e) => { e.stopPropagation(); setZoom(z => Math.max(0.3, +(z - 0.1).toFixed(2))); }} title="Zoom out" aria-label="Zoom out" style={{...window.AH_DS.styles.button("ghost", true),width:'auto',padding:'0 6px',fontFamily:LM.sans,fontSize:13}}>Zoom out</window.AH_DS.Btn>
+    <div data-canvas-zoom="" style={{ ...window.AH_DS.styles.button("ghost", true), width:48, color:LM.ink, background:LM.bg, fontFamily:LM.sans, fontSize:13, cursor:'default' }}>
       {Math.round(zoom * 100)}%
     </div>
-    <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.min(2, +(z + 0.1).toFixed(2))); }} title="Zoom in" aria-label="Zoom in" style={{...toolBtn(),width:'auto',padding:'0 6px',fontFamily:LM.sans,fontSize:13}}>Zoom in</button>
-    <button onClick={(e) => { e.stopPropagation(); onFit(); }} title={fitLabel} aria-label={fitLabel} style={{...toolBtn(),width:'auto',padding:'0 6px',fontFamily:LM.sans,fontSize:13}}>Fit</button>
+    <window.AH_DS.Btn onClick={(e) => { e.stopPropagation(); setZoom(z => Math.min(2, +(z + 0.1).toFixed(2))); }} title="Zoom in" aria-label="Zoom in" style={{...window.AH_DS.styles.button("ghost", true),width:'auto',padding:'0 6px',fontFamily:LM.sans,fontSize:13}}>Zoom in</window.AH_DS.Btn>
+    <window.AH_DS.Btn onClick={(e) => { e.stopPropagation(); onFit(); }} title={fitLabel} aria-label={fitLabel} style={{...window.AH_DS.styles.button("ghost", true),width:'auto',padding:'0 6px',fontFamily:LM.sans,fontSize:13}}>Fit</window.AH_DS.Btn>
     <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
     {[['Undo', '\u21b6', undo], ['Redo', '\u21b7', redo]].filter(([, , held]) => held).map(([label, icon, held]) => (
-      <button key={label} disabled={held.disabled} onClick={(e) => { e.stopPropagation(); held.run(); }}
+      <window.AH_DS.Btn key={label} disabled={held.disabled} onClick={(e) => { e.stopPropagation(); held.run(); }}
         title={label} aria-label={label} aria-description={held.disabled ? held.why : undefined}
-        style={{...toolBtn(), cursor:held.disabled ? 'default' : 'pointer', color:held.disabled ? LM.inkSoft : LM.inkSoft}}>{icon}</button>
+        style={{...window.AH_DS.styles.button("ghost", true), cursor:held.disabled ? 'default' : 'pointer', color:held.disabled ? LM.inkSoft : LM.inkSoft}}>{icon}</window.AH_DS.Btn>
     ))}
     <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
-    <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} title="Add node" aria-label="Add node" style={{
+    <window.AH_DS.Btn onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} title="Add node" aria-label="Add node" style={{
       padding:'0 10px', height:22, border:0, background:'transparent', cursor:'pointer',
       color:LM.accent, fontFamily:LM.sans, fontSize:12, fontWeight:600, letterSpacing:0,
       display:'flex', alignItems:'center', gap:LM.sp.xs,
-    }}>{'\uff0b add node'}</button>
+    }}>{'\uff0b add node'}</window.AH_DS.Btn>
   </div></>
 );
 
-const toolBtn = () => ({
-  width:LM.icon.ui.box, height:LM.icon.ui.box, padding:0, border:0, background:'transparent',
-  color:LM.inkSoft, borderRadius:LM.rad.control, cursor:'pointer', fontSize:LM.icon.ui.size,
-});
+
 
 // ─── floating composer (BOTTOM CENTER — always-bottom anchor) ───
 // This box used to ignore the model picker and drop the answer on the floor:
@@ -7843,7 +7826,7 @@ const FloatingComposer = ({ setLibraryOpen, model, node }) => {
   // The drawn caret stands in for an idle field; once the field has focus its own caret is the only one.
   const [typing, setTyping] = React.useState(false);
   return (
-    <div data-no-pan onFocus={() => setTyping(true)} onBlur={() => setTyping(false)} style={{
+    <window.AH_DS.Composer data-no-pan onFocus={() => setTyping(true)} onBlur={() => setTyping(false)} style={{
       position:'absolute', left:'50%', bottom:14, transform:'translateX(-50%)',
       width:620, maxWidth:'82%',
       background:LM.bgPanel, border:`1px solid ${LM.accent}66`,
@@ -7865,9 +7848,9 @@ const FloatingComposer = ({ setLibraryOpen, model, node }) => {
             rightmost control - the placeholder names the affordance drawn
             beside it again (2026-09-07). */}
         <InlineAsk scale="composer" placeholder={node ? 'Ask ' + node.title + '…' : 'Reply, or type / to add a node…'} model={model} node={node} onAnswer={setAnswer}
-          before={<button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} style={{ ...smallBtn(), padding:'3px 9px' }}>library</button>}/>
+          before={<window.AH_DS.Btn onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} style={{ ...window.AH_DS.styles.button("secondary", true), padding:'3px 9px' }}>library</window.AH_DS.Btn>}/>
       </div>
-    </div>
+    </window.AH_DS.Composer>
   );
 };
 
@@ -7892,7 +7875,7 @@ const CanvasAddBox = ({ setLibraryOpen }) => {
         onChange={e => setQ(e.target.value)}
         onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); open(); } else if (e.key === 'Escape') setQ(''); }}
         style={{ flex:1, minWidth:0, background:'transparent', border:0, outline:'none', color:LM.ink, fontFamily:LM.sans, fontSize:13 }}/>
-      <button type="button" aria-label="Open node library" onClick={e => { e.stopPropagation(); setLibraryOpen(true); }} style={{fontFamily:LM.sans,fontSize:11,color:LM.inkSoft,border:`1px solid ${LM.line}`,borderRadius:4,padding:'1px 5px',background:'transparent',cursor:'pointer'}}>Ctrl K</button>
+      <window.AH_DS.Btn type="button" aria-label="Open node library" onClick={e => { e.stopPropagation(); setLibraryOpen(true); }} style={{fontFamily:LM.sans,fontSize:11,color:LM.inkSoft,border:`1px solid ${LM.line}`,borderRadius:4,padding:'1px 5px',background:'transparent',cursor:'pointer'}}>Ctrl K</window.AH_DS.Btn>
     </div>
   );
 };
@@ -7981,15 +7964,15 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary, initialQuery = '' }) => {
         <div style={{ gridColumn:'1 / -1', gridRow:'1', borderBottom:`1px solid ${LM.line}`, padding:'0 14px', display:'flex', alignItems:'center', gap:10 }}>
           <span style={{ fontFamily:LM.sans, fontSize:15, fontWeight:600 }}>Library</span>
           <span style={{ fontFamily:LM.sans, fontSize:12, color:LM.inkSoft }}>{libraryTotal(library)} nodes</span>
-          <div style={{ flex:1 }}/>
+          <div style={window.AH_DS.styles.fill}/>
           <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search nodes" style={{
             padding:'6px 11px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
             color:LM.ink, fontFamily:LM.sans, fontSize:12.5, outline:'none', width:280,
           }}/>
-          <button onClick={onClose} style={{
+          <window.AH_DS.Btn onClick={onClose} style={{
             width:24, height:24, padding:0, border:`1px solid ${LM.line}`, background:'transparent',
             borderRadius:LM.rad.control, cursor:'pointer', color:LM.inkSoft, fontSize:LM.icon.ui.size,
-          }}>✕</button>
+          }}>✕</window.AH_DS.Btn>
         </div>
 
         {/* Categories */}
@@ -8003,11 +7986,8 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary, initialQuery = '' }) => {
         </div>
 
         <div className="ah-scroll" style={{ gridColumn:'2', gridRow:'2', overflow:'auto', padding:'14px 18px' }}>
-          {libraryRead.loading && <div role="status">Loading nodes…</div>}
-          {!library.length && window.AH_LIBRARY_ERROR && <div role="alert">
-            {'The node library could not be loaded: ' + window.AH_LIBRARY_ERROR}
-            {' '}<button type="button" onClick={libraryRead.retry}>Retry</button>
-          </div>}
+          {(libraryRead.loading || libraryRead.error || !library.length) && <window.AH_DS.EmptyState glyph={null} title={libraryRead.loading ? "Reading nodes…" : libraryRead.error ? "Library unavailable" : !library.length ? "No nodes yet" : ""} error={!!libraryRead.error} detail={libraryRead.error} onRetry={libraryRead.error || !library.length ? libraryRead.retry : undefined}/>}
+
           <NodeLibraryGroups library={groups} q={q} openCats={openCats} onToggle={toggleCat} onAdd={addFromLibrary}/>
         </div>
       </div>
@@ -8016,7 +7996,7 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary, initialQuery = '' }) => {
 };
 
 const LibCatBtn = ({ id, label, icon, col, active, onSelect }) => (
-  <button onClick={() => onSelect(id)} style={{
+  <window.AH_DS.Btn onClick={() => onSelect(id)} style={{
     width:'100%', padding:`${LM.sp.sm}px ${LM.sp.md}px`, borderRadius:LM.rad.control, border:0,
     background: active ? LM.bgSoft : 'transparent',
     color: active ? LM.ink : LM.inkSoft,
@@ -8024,8 +8004,8 @@ const LibCatBtn = ({ id, label, icon, col, active, onSelect }) => (
     display:'flex', alignItems:'center', gap:LM.sp.sm, marginBottom:1,
   }}>
     {icon && <span style={{ color:col, width:LM.icon.category.box, textAlign:'center', fontFamily:LM.sans, fontSize:LM.icon.category.size }}>{icon}</span>}
-    <span style={{ flex:1 }}>{label}</span>
-  </button>
+    <span style={window.AH_DS.styles.fill}>{label}</span>
+  </window.AH_DS.Btn>
 );
 
 // ──────────────────────── NODE RAIL ────────────────────────
@@ -8143,7 +8123,7 @@ const NodeModelConversation = ({node, scope = '', openConversation, active = tru
     <div style={{ display:'flex', alignItems:'center', gap:7 }}>
       <span style={{ color:cat.col }}>{cat.icon}</span>
       <span style={{ fontFamily:LM.sans, fontSize:11, fontWeight:600, color:LM.inkSoft, letterSpacing:0 }}>Conversation</span>
-      <div style={{ flex:1 }}/>
+      <div style={window.AH_DS.styles.fill}/>
       {model ? (
         <p title={route || undefined} style={{ margin:0, maxWidth:170, fontFamily:LM.sans, fontSize:11, fontWeight:600, color:LM.inkSoft, letterSpacing:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
           {route || 'Choose a model for this node'}</p>
@@ -8168,8 +8148,8 @@ const NodeModelConversation = ({node, scope = '', openConversation, active = tru
     ) : null}
     {bound && hasOlder ? (
       <div>
-        <HoverBtn onClick={() => { if (openConversation) openConversation(node.conversation_root); }} disabled={!openConversation}>
-          Full history in the Workshop →</HoverBtn>
+        <window.AH_DS.Btn onClick={() => { if (openConversation) openConversation(node.conversation_root); }} disabled={!openConversation}>
+          Full history in the Workshop →</window.AH_DS.Btn>
       </div>
     ) : null}
     {answer && <p role="status" style={{ margin:0, whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontFamily:LM.serif, fontSize:14, lineHeight:1.55, color:LM.ink, letterSpacing:'-0.003em' }}>{answer}</p>}
@@ -8189,7 +8169,7 @@ const NodeTranscriptRow = ({ row }) => (
       {row.kind && row.kind !== 'message' ? (
         <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.1em', textTransform:'uppercase' }}>{row.kind}</span>
       ) : null}
-      <div style={{ flex:1 }}/>
+      <div style={window.AH_DS.styles.fill}/>
       <time dateTime={row.time} style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft }}>{formatNodeConversationTime(row.time)}</time>
     </div>
     <div style={{ fontFamily:LM.serif, fontSize:13, lineHeight:1.5, color:LM.ink, whiteSpace:'pre-wrap', overflowWrap:'anywhere', maxHeight:150, overflow:'auto' }}>{row.text}</div>
@@ -8415,11 +8395,11 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
     })}
     {savedDrafts.map((saved, index) => <div key={index} role="status" data-saved-draft style={{fontSize:12, whiteSpace:'pre-wrap', overflowWrap:'anywhere'}}>
       <span>{saved.raw}</span>{' '}
-      <button type="button" onClick={() => {
+      <window.AH_DS.Btn type="button" onClick={() => {
         const current = {raw:draftRef.current, retry:pendingSend.current};
         setSavedDrafts(held => held.flatMap((row, i) => i !== index ? [row] : current.raw ? [current] : []));
         draftRef.current = saved.raw; setText(saved.raw); pendingSend.current = saved.retry;
-      }} style={smallBtn()}>Restore draft</button>
+      }} style={window.AH_DS.styles.button("secondary", true)}>Restore draft</window.AH_DS.Btn>
     </div>)}
     {state && <div role="status" data-chat-turn="error" style={{ margin:0, display:'flex', alignItems:'flex-start', gap:8, maxHeight:120, overflow:'auto',
       whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontFamily:LM.serif, fontSize:13, lineHeight:1.45, color:LM.ink }}>
@@ -8427,9 +8407,9 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
         {stateModel && <span style={{ display:'block', fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.06em', marginBottom:3 }}>{stateModel}</span>}
         <span>{state}</span>
       </div>
-      {(pendingSend.current || pausedRequest.current) && <button type="button" onClick={retryOriginal} disabled={asking} style={{
-        ...smallBtn(), flexShrink:0, padding:'4px 9px',
-      }}>{asking ? 'Waiting...' : 'Retry'}</button>}
+      {(pendingSend.current || pausedRequest.current) && <window.AH_DS.Btn type="button" onClick={retryOriginal} disabled={asking} style={{
+        ...window.AH_DS.styles.button("secondary", true), flexShrink:0, padding:'4px 9px',
+      }}>{asking ? 'Waiting...' : 'Retry'}</window.AH_DS.Btn>}
     </div>}
     {blocked && <div data-chat-no-model="" role="status" style={{
       background:LM.bgPanel, border:`1px solid ${LM.line}`, borderLeft:`3px solid ${LM.warn}`,
@@ -8439,45 +8419,45 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
         {READINESS_LABELS[blocked.state] || 'NO MODEL'}</div>
       <div style={{ fontSize:12.5, lineHeight:1.45, color:LM.ink }}>{blocked.message}</div>
       <div style={{ display:'flex', gap:7, flexWrap:'wrap' }}>
-        {offers.has('sign_in') && <button type="button" onClick={() => {
+        {offers.has('sign_in') && <window.AH_DS.Btn type="button" onClick={() => {
           if (typeof onAccount === 'function') onAccount();
           else if (typeof onReadinessStale === 'function') onReadinessStale();
         }} style={{ padding:'5px 10px', background:LM.accent, color:(window.AH && window.AH.onFill) || '#180f08',
-          border:0, borderRadius:LM.rad.sm, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Sign in</button>}
-        {offers.has('retry_models') && <button type="button" onClick={() => typeof onModelReadRetry === 'function' && onModelReadRetry()} style={{
+          border:0, borderRadius:LM.rad.sm, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Sign in</window.AH_DS.Btn>}
+        {offers.has('retry_models') && <window.AH_DS.Btn type="button" onClick={() => typeof onModelReadRetry === 'function' && onModelReadRetry()} style={{
           padding:'4px 9px', background:'transparent', color:LM.ink, border:`1px solid ${LM.line}`,
-          borderRadius:LM.rad.sm, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Retry</button>}
-        {offers.has('choose_model') && <button type="button" onClick={() => typeof setPickerOpen === 'function' && setPickerOpen(true)} style={{
+          borderRadius:LM.rad.sm, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Retry</window.AH_DS.Btn>}
+        {offers.has('choose_model') && <window.AH_DS.Btn type="button" onClick={() => typeof setPickerOpen === 'function' && setPickerOpen(true)} style={{
           padding:'4px 9px', background:'transparent', color:LM.ink, border:`1px solid ${LM.line}`,
-          borderRadius:LM.rad.sm, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Choose a model</button>}
+          borderRadius:LM.rad.sm, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Choose a model</window.AH_DS.Btn>}
       </div>
     </div>}
-    <button type="button" data-model-indicator="" onClick={() => setPickerOpen && setPickerOpen(true)}
+    <window.AH_DS.Btn type="button" data-model-indicator="" onClick={() => setPickerOpen && setPickerOpen(true)}
       title={'→ ' + target.name + ' · ' + modelName}
       style={{ alignSelf:'flex-start', maxWidth:'100%', minWidth:0, display:'flex', alignItems:'center', gap:6, padding:'5px 9px',
         background:LM.bg, border:`1px solid ${LM.accent}66`, borderRadius:LM.rad.sm, color:LM.accent,
         fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, cursor:'pointer' }}>
       <span style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{'→ ' + target.name + ' · ' + modelName}</span>
       <span aria-hidden="true">▾</span>
-    </button>
+    </window.AH_DS.Btn>
     <div style={{ display:'flex', alignItems:'center', gap:7, background:LM.bg, border:`1px solid ${LM.accent}66`, borderRadius:7, padding:'8px 10px' }}>
       <input data-sysnodes-chat={target.kind === 'graph' || target.node?.application ? '' : undefined} aria-label="Ask selection" value={text} onChange={e => updateText(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter') ask(); }} placeholder={placeholder}
         style={{ flex:1, minWidth:0, background:'transparent', border:0, outline:0, color:LM.ink,
           fontFamily:LM.serif, fontSize:13, fontStyle:'italic' }}/>
-      <button onClick={ask} disabled={!text.trim()} style={{ padding:'4px 11px', background:LM.accent,
+      <window.AH_DS.Btn onClick={ask} disabled={!text.trim()} style={{ padding:'4px 11px', background:LM.accent,
         color:(window.AH && window.AH.onFill) || '#180f08', border:0, borderRadius:LM.rad.sm,
-        fontSize:11.5, fontWeight:500, cursor:!text.trim() ? 'default' : 'pointer' }}>{asking ? (text.trim() ? 'Queue' : 'Waiting…') : 'Send'}</button>
+        fontSize:11.5, fontWeight:500, cursor:!text.trim() ? 'default' : 'pointer' }}>{asking ? (text.trim() ? 'Queue' : 'Waiting…') : 'Send'}</window.AH_DS.Btn>
     </div>
   </div>;
 };
 const InspectorTabs = ({ labels, active, onSelect }) => <div role="tablist" aria-label="Selection inspector tabs" style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
   {labels.map(label => {
     const selected = active === label;
-    return <button key={label} type="button" role="tab" aria-selected={selected ? 'true' : 'false'}
+    return <window.AH_DS.Btn key={label} type="button" role="tab" aria-selected={selected ? 'true' : 'false'}
       onClick={() => onSelect(label)} style={{
       padding:'4px 9px', border:0, borderRadius:LM.rad.sm, background:selected ? LM.accentDim : 'transparent',
-      color:selected ? LM.accent : LM.inkSoft, fontFamily:LM.sans, fontSize:11.5, cursor:'pointer' }}>{label}</button>;
+      color:selected ? LM.accent : LM.inkSoft, fontFamily:LM.sans, fontSize:11.5, cursor:'pointer' }}>{label}</window.AH_DS.Btn>;
   })}
 </div>;
 const InspectorRuns = ({ node, graph }) => {
@@ -8504,7 +8484,7 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
       <div style={{ fontFamily:LM.serif, fontSize:19, lineHeight:1.1, color:LM.ink }}>Selected Work is in the Workshop</div>
       <div style={{ fontSize:12, lineHeight:1.5, color:LM.inkSoft }}>
         {workshopRoom ? 'Work is reviewed and edited in the Workshop, not on this canvas.' : 'No Workshop conversation is in this scope.'}</div>
-      <div><HoverBtn primary disabled={!workshopRoom} onClick={onOpenWorkshop}>Open the Workshop</HoverBtn></div>
+      <div><window.AH_DS.Btn primary disabled={!workshopRoom} onClick={onOpenWorkshop}>Open the Workshop</window.AH_DS.Btn></div>
     </aside>
   );
   const inspectedNode = node ? aiNodeWithMovedParams(node) : graphInspectorNode(canvas, graph, session, sessionRows);
@@ -8537,9 +8517,9 @@ const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop,
       <CalmRow key={dir + ':' + port.id} k={dir + ' · ' + (port.label || port.name || port.id)} v={dir === 'in' ? '→ Request' : 'Commit →'}/>
     ))}
     <div style={{display:'flex', gap:8, flexWrap:'wrap', marginTop:4}}>
-      <HoverBtn primary disabled={!authority?.open} onClick={openInspectedGroup}>Open</HoverBtn>
-      <HoverBtn disabled={!authority?.composition} onClick={ungroupInspectedGroup}>Ungroup</HoverBtn>
-      <HoverBtn disabled={!authority?.setProperty} onClick={renameInspectedGroup}>Rename</HoverBtn>
+      <window.AH_DS.Btn primary disabled={!authority?.open} onClick={openInspectedGroup}>Open</window.AH_DS.Btn>
+      <window.AH_DS.Btn disabled={!authority?.composition} onClick={ungroupInspectedGroup}>Ungroup</window.AH_DS.Btn>
+      <window.AH_DS.Btn disabled={!authority?.setProperty} onClick={renameInspectedGroup}>Rename</window.AH_DS.Btn>
     </div>
   </section>;
   const groupParameters = <section aria-label="Exposed parameters"><window.NodeInspector key={inspectedNode.id + ':group-params'} node={inspectedNode} onFork={forkThroughCanvas}/></section>;
@@ -8602,7 +8582,7 @@ const ConversationRail = ({ node }) => {
         <div style={{ display:'flex', alignItems:'center', gap:7 }}>
           <span style={{ color:cat.col }}>{cat.icon}</span>
           <span style={{ fontFamily:LM.sans, fontSize:11, fontWeight:600, color:LM.inkSoft, letterSpacing:0 }}>Conversation</span>
-          <div style={{ flex:1 }}/>
+          <div style={window.AH_DS.styles.fill}/>
           <span style={{ fontFamily:LM.sans, fontSize:11, fontWeight:600, color:LM.inkSoft, letterSpacing:0 }}>
             {node.messages.length} msgs
           </span>
@@ -8661,7 +8641,7 @@ const ConversationRail = ({ node }) => {
             <ChatAction># host</ChatAction>
             <ChatAction>+ attach</ChatAction>
             <ChatAction>/remember</ChatAction>
-            <div style={{ flex:1 }}/>
+            <div style={window.AH_DS.styles.fill}/>
             <span>sonnet 4.5 · ~412ms</span>
           </div>
         </div>
@@ -8669,7 +8649,7 @@ const ConversationRail = ({ node }) => {
           <span>↵ send</span>
           <span>⇧↵ newline</span>
           <span>⌘↑ edit last</span>
-          <span style={{ flex:1 }}/>
+          <span style={window.AH_DS.styles.fill}/>
           <span>session auto-saves</span>
         </div>
       </div>
@@ -8701,13 +8681,13 @@ const ChatTurn = ({ m, isLast }) => {
         </div>
         {isAssistant && (
           <>
-            <button onClick={() => setShowReasoning(s => !s)} style={{
+            <window.AH_DS.Btn onClick={() => setShowReasoning(s => !s)} style={{
               background:'transparent', border:0, padding:'3px 0', color:LM.inkSoft,
               fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, letterSpacing:'0.06em', cursor:'pointer',
               display:'flex', alignItems:'center', gap:LM.sp.xs, marginTop:3,
             }}>
               <span>{showReasoning ? '▾' : '▸'}</span> reasoning
-            </button>
+            </window.AH_DS.Btn>
             {showReasoning && (
               <div style={{
                 marginTop:3, padding:'5px 8px', background:LM.bgDeep,
@@ -8725,7 +8705,7 @@ const ChatTurn = ({ m, isLast }) => {
               <ChatAction>⎘ branch</ChatAction>
               <ChatAction>✎ edit</ChatAction>
               <ChatAction>⧉ copy</ChatAction>
-              <div style={{ flex:1 }}/>
+              <div style={window.AH_DS.styles.fill}/>
               <span>312 → 184 tok</span>
             </div>
           </>
@@ -8736,10 +8716,10 @@ const ChatTurn = ({ m, isLast }) => {
 };
 
 const ChatAction = ({ children }) => (
-  <button onClick={e => e.stopPropagation()} style={{
+  <window.AH_DS.Btn onClick={e => e.stopPropagation()} style={{
     padding:'1px 5px', background:'transparent', border:`1px solid ${LM.lineSoft}`,
     borderRadius:LM.rad.xs, color:LM.inkSoft, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, cursor:'pointer',
-  }}>{children}</button>
+  }}>{children}</window.AH_DS.Btn>
 );
 
 
@@ -8820,11 +8800,8 @@ const useLiveCatalogue = (loaderName, items) => {
   return {loading:!!status.loading, error:status.error || '', retry:() => loadCatalogue(loaderName, items)};
 };
 const SettingsEmpty = ({ children, role = 'status', action }) => (
-  <div role={role} style={{ padding:'12px 14px', fontFamily:LM.serif, fontStyle:'italic', fontSize:13.5, color:LM.inkSoft,
-    display:'flex', alignItems:'center', gap:10 }}>
-    <span style={{ flex:1, minWidth:0 }}>{children}</span>
-    {action}
-  </div>
+  <window.AH_DS.EmptyState title="" glyph={null} error={role === 'alert'} action={action}
+    style={{padding:'12px 14px',fontSize:13,color:LM.inkSoft}}>{React.Children.map(children, child => typeof child === 'string' ? window.AH_DS.errorText(child) : child)}</window.AH_DS.EmptyState>
 );
 
 // Single source for "what is this item's current state?" — used by BOTH the sidebar badges and
@@ -8897,12 +8874,7 @@ const settings54NodeView = (node, index) => {
   };
 };
 const settings54GroupSub = group => ({account:'Account · Profile · Team', connections:'Hosts · AI accounts · apps', ai:'Models · Brain', permissions:'what agents may do · Workspaces', appearance:'Theme · Shortcuts', storage:'disk · version · updates'})[group.id];
-const settings54Button = (active=false, extra={}) => ({
-  border:`1px solid ${active ? LM.accent : LM.line}`, background:active ? LM.bgHover : 'transparent',
-  color:active ? LM.ink : LM.inkSoft, borderRadius:LM.rad.control, cursor:'pointer',
-  fontFamily:LM.sans, fontSize:12, fontWeight:500, padding:'0 10px', height:26,
-  display:'inline-flex', alignItems:'center', justifyContent:'center', gap:6, whiteSpace:'nowrap', ...extra,
-});
+
 const Settings54Tile = ({ glyph, color, size=20 }) => (
   <span aria-hidden="true" style={{ width:size, height:size, borderRadius:size === 30 ? 8 : 5, background:color, color:LM.onFill,
     display:'grid', placeItems:'center', fontFamily:LM.sans, fontSize:size === 30 ? 15 : 11, fontWeight:600, flex:'none' }}>{glyph}</span>
@@ -8910,10 +8882,10 @@ const Settings54Tile = ({ glyph, color, size=20 }) => (
 const Settings54Seg = ({ value, options=['Ask', 'Allow', 'Off'], onChange, ariaLabel, disabled=false }) => (
   <span data-seg-control="" aria-label={ariaLabel} style={{ display:'inline-flex', border:`1px solid ${LM.line}`, borderRadius:LM.rad.control,
     overflow:'hidden', height:26, fontFamily:LM.sans }}>
-    {options.map((option, index) => <button key={option} type="button" disabled={disabled} onClick={() => onChange && onChange(option)}
+    {options.map((option, index) => <window.AH_DS.Btn key={option} type="button" disabled={disabled} onClick={() => onChange && onChange(option)}
       style={{ border:0, borderLeft:index ? `1px solid ${LM.line}` : 0, background:option === value ? LM.accentSoft : 'transparent',
         color:option === value ? LM.accentHi : LM.ink, padding:'0 8px', minWidth:42, fontFamily:LM.sans, fontSize:12,
-        cursor:disabled ? 'default' : 'pointer', opacity:disabled ? .55 : 1 }}>{option}</button>)}
+        cursor:disabled ? 'default' : 'pointer', opacity:disabled ? .55 : 1 }}>{option}</window.AH_DS.Btn>)}
   </span>
 );
 const Settings54Select = ({ label, value, onChange, options = [], disabled=false }) => (
@@ -8927,12 +8899,7 @@ const Settings54Select = ({ label, value, onChange, options = [], disabled=false
   </select>
 );
 const Settings54Switch = ({ on, disabled, onClick, label }) => (
-  <button type="button" role="switch" aria-checked={!!on} aria-label={label} disabled={disabled} onClick={onClick}
-    style={{ width:30, height:18, borderRadius:999, background:on ? LM.accent : LM.bgHover,
-      border:`1px solid ${on ? LM.accent : LM.line}`, position:'relative', padding:0, cursor:disabled ? 'default' : 'pointer',
-      opacity:disabled ? .5 : 1 }}>
-    <span style={{ position:'absolute', top:2, left:on ? 14 : 2, width:12, height:12, borderRadius:'50%', background:on ? LM.onFill : LM.inkSoft }}/>
-  </button>
+  <window.AH_DS.Toggle on={on} disabled={disabled} onClick={onClick} label={label}/>
 );
 const Settings54Num = ({ value, unit, onChange, label, disabled=false }) => (
   <span style={{ display:'inline-flex', alignItems:'center', gap:6 }}>
@@ -8963,27 +8930,12 @@ const settings54ParamWriter = row => {
   return { ok:false, reason:'Parameter writer is not available in this runtime.' };
 };
 const Settings54ParamRow = ({ label, children, changed, hint, onReset }) => (
-  <div data-settings54-param-row="" style={{ display:'grid', gridTemplateColumns:'96px minmax(0, 1fr) auto',
-    alignItems:'center', gap:8, minHeight:32, padding:'0 12px', borderTop:`1px solid ${LM.lineSoft}`, fontFamily:LM.sans }}>
-    <span style={{ fontSize:13, color:LM.inkSoft, display:'flex', alignItems:'center', gap:6 }}>
-      {changed && <span style={{ width:6, height:6, borderRadius:'50%', background:LM.accent }}/>}
-      {label}
-    </span>
-    <span style={{ display:'grid', gap:2, padding:'4px 0' }}>
-      <span style={{ display:'flex', alignItems:'center', gap:8, minWidth:0 }}>{children}</span>
-      {hint && <span style={{ fontSize:11, color:LM.inkSoft }}>{hint}</span>}
-    </span>
-    {changed && onReset ? <button type="button" onClick={onReset}
-      style={settings54Button(false, {border:'1px solid transparent', textDecoration:'underline', color:LM.inkSoft})}>Reset</button> : <span/>}
-  </div>
+  <window.AH_DS.Row data-settings54-param-row="" label={label} changed={changed && !!onReset} hint={hint} onReset={onReset}
+    style={{gridTemplateColumns:'96px minmax(0, 1fr) auto',fontFamily:LM.sans}}>
+    <span style={window.AH_DS.styles.flex}>{children}</span>
+  </window.AH_DS.Row>
 );
-const Settings54Socket = ({ t = 'any', list, filled }) => {
-  const color = t === 'view' ? LM.cyan : t === 'boolean' ? LM.purple : t === 'number' ? LM.warn : t === 'event' ? LM.cyan : t === 'text' ? LM.inkSoft : LM.inkSoft;
-  if (t === 'event') return <span style={{ width:0, height:0, borderTop:'6px solid transparent', borderBottom:'6px solid transparent', borderLeft:`10px solid ${color}` }}/>;
-  if (t === 'any') return <span style={{ width:11, height:11, borderRadius:'50%', border:`2px dashed ${color}`, boxSizing:'border-box' }}/>;
-  return <span style={{ width:11, height:11, borderRadius:list ? 2 : '50%', transform:list ? 'rotate(45deg) scale(.86)' : 'none',
-    background:filled ? color : LM.bgPanel, border:`2px solid ${color}`, boxSizing:'border-box' }}/>;
-};
+const Settings54Socket = props => <window.AH_DS.Socket {...props}/>;
 const settings54PortLabel = port => port?.label || port?.l || port?.id || '';
 const settings54PortId = port => port?.id || port?.k || port?.label || port?.l || '';
 const Settings54Card = ({ node, view, selected, connected, action }) => {
@@ -9025,9 +8977,9 @@ const Settings54Card = ({ node, view, selected, connected, action }) => {
 const Settings = props => {
   const canvasRead = useDeferredCanvas();
   if (canvasRead.pending || canvasRead.error) return <div data-settings-canvas-loading="" role="dialog" style={{position:'absolute', top:0, bottom:22, left:64, right:0, zIndex:60, padding:24, background:LM.bg, color:LM.ink}}>
-    {canvasRead.error ? <><p role="alert">The canvas could not be loaded: {canvasRead.error}</p>
-      <button onClick={canvasRead.retry}>Retry</button></> : <p role="status">Loading your settings…</p>}
-    <button onClick={props.onClose}>Close</button>
+    <window.AH_DS.EmptyState title={canvasRead.error ? 'Settings unavailable' : 'Reading your settings…'} error={!!canvasRead.error}
+      detail={canvasRead.error} onRetry={canvasRead.error ? canvasRead.retry : undefined}/>
+    <window.AH_DS.Btn onClick={props.onClose}>Close</window.AH_DS.Btn>
   </div>;
   return <SettingsLoaded {...props}/>;
 };
@@ -9152,7 +9104,7 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
   };
   const writeParam = async (node, row, value) => {
     const key = settings54ParamKey(row);
-    if (!node || !key) throw new Error('Not available yet');
+    if (!node || !key) throw new Error('Unavailable');
     const writer = settings54ParamWriter(row);
     if (!writer.ok) { setStatusMessage(writer.reason); return; }
     setStatusMessage('');
@@ -9206,7 +9158,7 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
     try {
       if (window.ARCHHUB_STUDIO_AUTHORITY?.moveMany) await window.ARCHHUB_STUDIO_AUTHORITY.moveMany(changed, revision, before, 'arrange');
       else if (window.ARCHHUB_EXISTING_WORKSHOP?.moveTopologyNodes) await window.ARCHHUB_EXISTING_WORKSHOP.moveTopologyNodes(changed, revision, before, 'arrange');
-      else throw new Error('Not available yet');
+      else throw new Error('Unavailable');
       setStatusMessage('Arranged ' + Object.keys(changed).length + ' System nodes');
     } catch (error) {
       setStatusMessage(error.message || 'Arrange failed.');
@@ -9283,7 +9235,7 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
               {visibleGroups.map(group => {
                 const active = group.id === selectedGroup.id;
                 return <div key={group.id} style={{ borderRadius:6, background:active ? LM.bgHover : 'transparent', padding:4 }}>
-                  <button type="button" onClick={() => chooseGroup(group)} style={{ width:'100%', minHeight:34, border:0, background:'transparent',
+                  <window.AH_DS.Btn type="button" onClick={() => chooseGroup(group)} style={{ width:'100%', minHeight:34, border:0, background:'transparent',
                     color:active ? LM.ink : LM.inkSoft, display:'grid', gridTemplateColumns:'20px 1fr', gap:10, alignItems:'center',
                     textAlign:'left', cursor:'pointer', fontFamily:LM.sans, padding:4 }}>
                     <Settings54Tile glyph={group.glyph} color={group.color}/>
@@ -9291,17 +9243,17 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
                       <span data-settings54-group-title="" style={{ display:'block', fontSize:13, fontWeight:active ? 600 : 400, color:active ? LM.ink : LM.inkSoft }}>{group.title}</span>
                       <span style={{ display:'block', fontSize:11, color:LM.inkSoft, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{settings54GroupSub(group)}</span>
                     </span>
-                  </button>
+                  </window.AH_DS.Btn>
                   {(active || group.id === 'appearance') && <div data-settings54-capability-nav={group.id} style={{ display:'flex', flexWrap:'wrap', gap:4, padding:'0 4px 4px 34px' }}>
                     {(active ? group.items : []).map(item => <React.Fragment key={item}>
-                      <button type="button" onClick={() => chooseCapability(group, item)}
-                        style={settings54Button(activeCapability === item, {height:22, padding:'0 7px', fontSize:11, maxWidth:'100%'})}>{item}</button>
+                      <window.AH_DS.Btn type="button" onClick={() => chooseCapability(group, item)}
+                        style={({...window.AH_DS.styles.button('secondary', true), borderColor:activeCapability === item ? LM.accent : LM.line, ...{height:22, padding:'0 7px', fontSize:11, maxWidth:'100%'}})}>{item}</window.AH_DS.Btn>
                       {item === 'Hosts' && <span data-settings-host-total={hostTally().total} style={{fontSize:11, color:LM.inkSoft, alignSelf:'center'}}>
                         {hostTally().read ? hostTally().running + '/' + hostTally().total + ' running' : 'checking hosts'}
                       </span>}
                     </React.Fragment>)}
-                    {group.id === 'appearance' && <button type="button" onClick={() => chooseCapability(group, 'System')}
-                      style={settings54Button(activeCapability === 'System', {height:22, padding:'0 7px', fontSize:11})}>System</button>}
+                    {group.id === 'appearance' && <window.AH_DS.Btn type="button" onClick={() => chooseCapability(group, 'System')}
+                      style={({...window.AH_DS.styles.button('secondary', true), borderColor:activeCapability === 'System' ? LM.accent : LM.line, ...{height:22, padding:'0 7px', fontSize:11}})}>System</window.AH_DS.Btn>}
                   </div>}
                 </div>;
               })}
@@ -9310,12 +9262,12 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
           <main style={{ display:'grid', gridTemplateRows:'36px 1fr', minHeight:0, borderRight:`1px solid ${LM.line}` }}>
             <div style={{ display:'flex', alignItems:'center', gap:10, padding:'0 12px', borderBottom:`1px solid ${LM.lineSoft}`, background:LM.bg }}>
               <span style={{ fontSize:12, color:LM.inkSoft }}>Settings <span style={{ margin:'0 6px' }}>›</span><span style={{ color:LM.ink }}>{activeCapability === 'Properties' ? 'System' : activeCapability || selectedGroup.title}</span></span>
-              <span style={{ fontSize:11, color:canOpenSystem ? LM.ok : LM.warn }}>{canOpenSystem ? 'Connected · live' : 'System graph unavailable'}</span><span style={{ flex:1 }}/>
+              <span style={{ fontSize:11, color:canOpenSystem ? LM.ok : LM.warn }}>{canOpenSystem ? 'Connected · live' : 'System graph unavailable'}</span><span style={window.AH_DS.styles.fill}/>
               {statusMessage && <span role="status" style={{ fontSize:11, color:LM.inkSoft, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:260 }}>{statusMessage}</span>}
-              {graphOpen && <button type="button" onClick={arrangeSystem} style={settings54Button(false, {border:'1px solid transparent', color:LM.ink})}>Arrange</button>}
-              <button type="button" onClick={openSystemGraph} style={settings54Button(false)}>System graph</button>
-              <button type="button" onClick={onHome} title="Home (Alt+Home)" style={settings54Button(false)}>Home</button>
-              <button type="button" aria-label="Close" data-close-button="" onClick={onClose} style={settings54Button(false)}>Close</button>
+              {graphOpen && <window.AH_DS.Btn type="button" onClick={arrangeSystem} style={({...window.AH_DS.styles.button('secondary', true), borderColor:false ? LM.accent : LM.line, ...{border:'1px solid transparent', color:LM.ink}})}>Arrange</window.AH_DS.Btn>}
+              <window.AH_DS.Btn type="button" onClick={openSystemGraph} style={({...window.AH_DS.styles.button('secondary', true), borderColor:false ? LM.accent : LM.line, ...{}})}>System graph</window.AH_DS.Btn>
+              <window.AH_DS.Btn type="button" onClick={onHome} title="Home (Alt+Home)" style={({...window.AH_DS.styles.button('secondary', true), borderColor:false ? LM.accent : LM.line, ...{}})}>Home</window.AH_DS.Btn>
+              <window.AH_DS.Btn type="button" aria-label="Close" data-close-button="" onClick={onClose} style={({...window.AH_DS.styles.button('secondary', true), borderColor:false ? LM.accent : LM.line, ...{}})}>Close</window.AH_DS.Btn>
             </div>
             {!graphOpen ? <div data-settings54-landing="" className="ah-scroll" style={{overflow:'auto', padding:'20px 24px 24px', background:LM.bgPanel}}>{inspectorRows()}</div> : <div ref={graphPane} data-settings54-graph="" data-settings54-focus={selectedId} style={{ position:'relative', background:LM.bgCanvas || LM.bgDeep, overflow:'hidden',
               backgroundImage:`radial-gradient(${LM.line} 1px, transparent 1px)`, backgroundSize:'24px 24px' }}>
@@ -9354,10 +9306,10 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
             <div style={{ display:'flex', gap:2, padding:'0 12px', borderBottom:`1px solid ${LM.line}` }}>
               {['Properties'].map((tabName, index) => {
                 const active = tabName === 'Properties' && (activeCapability === 'Properties' || !!query.trim());
-                return <button key={tabName} type="button" disabled={tabName === 'Chat'} onClick={() => { if (tabName === 'Properties') { userSelection.current = {tab:initialTab, manual:true}; setActiveCapability('Properties'); } }}
+                return <window.AH_DS.Btn key={tabName} type="button" disabled={tabName === 'Chat'} onClick={() => { if (tabName === 'Properties') { userSelection.current = {tab:initialTab, manual:true}; setActiveCapability('Properties'); } }}
                   style={{ height:32, display:'grid', placeItems:'center', padding:'0 10px', fontSize:13, fontFamily:LM.sans,
                     color:active ? LM.ink : LM.inkSoft, border:0, borderBottom:`2px solid ${active ? LM.accent : 'transparent'}`,
-                    background:'transparent', cursor:tabName === 'Properties' ? 'pointer' : 'default', opacity:tabName === 'Chat' ? .65 : 1 }}>{tabName}</button>;
+                    background:'transparent', cursor:tabName === 'Properties' ? 'pointer' : 'default', opacity:tabName === 'Chat' ? .65 : 1 }}>{tabName}</window.AH_DS.Btn>;
               })}
             </div>
             {settings54NodeGroup(selectedNode) !== 'permissions' && <div style={{ display:'flex', gap:6, padding:'8px 12px' }}>
@@ -9448,20 +9400,20 @@ const SettingsMods = ({ compact=false }) => {
     try { await window.ARCHHUB_REFRESH_NODE_LIBRARY?.(); }
     catch (_) { window.dispatchEvent(new CustomEvent('archhub:library-refresh')); }
   };
-  React.useEffect(() => { call({action:'state'}).catch(error => setToast(error.message || String(error))); }, []);
+  React.useEffect(() => { call({action:'state'}).catch(error => setToast(window.AH_DS.errorText(error.message || String(error)))); }, []);
   const toggle = async row => {
     try {
       await call({action:'enable', id:row.id, enabled:!row.enabled});
       await reloadLibrary();
     } catch (error) {
-      setToast(error.message || String(error));
+      setToast(window.AH_DS.errorText(error.message || String(error)));
     }
   };
   const updateParam = async (row, key, value) => {
     try {
       await call({action:'param', id:row.id, param:key, value});
     } catch (error) {
-      setToast(error.message || String(error));
+      setToast(window.AH_DS.errorText(error.message || String(error)));
     }
   };
   const rows = state?.rows || [];
@@ -9473,7 +9425,7 @@ const SettingsMods = ({ compact=false }) => {
   }}>
     <div style={{display:'flex', alignItems:'center', gap:10, padding:'12px 12px', borderBottom:`1px solid ${LM.line}`}}>
       <div style={{width:20, height:20, display:'grid', placeItems:'center', borderRadius:5, background:LM.accent, color:LM.bg, fontSize:13}}>⌘</div>
-      <div style={{flex:1}}>
+      <div style={window.AH_DS.styles.fill}>
         <div style={{fontFamily:LM.sans, fontSize:20, lineHeight:1.1, fontWeight:700}}>Mods</div>
         <div style={{fontSize:13, color:LM.inkSoft}}>{state.built_in || 0} built in · {state.installed || 0} installed · {state.failed || 0} did not load</div>
       </div>
@@ -9497,10 +9449,10 @@ const SettingsMods = ({ compact=false }) => {
             {(row.nodes || []).flatMap(n => Object.entries(n.params || {})).slice(0, 2).map(([k, v]) =>
               <span key={k} style={{fontSize:13, color:LM.ink, marginRight:10}}>{k.replace(/_/g, ' ')}: <input value={String(v)} onChange={event => updateParam(row, k, event.target.value)} style={{width:58, background:LM.bg, color:LM.ink, border:`1px solid ${LM.line}`, borderRadius:5, fontSize:13, padding:'2px 4px'}}/></span>)}
           </div>
-          <button type="button" role="switch" aria-checked={!!row.enabled} onClick={() => toggle(row)} style={{
+          <window.AH_DS.Btn type="button" role="switch" aria-checked={!!row.enabled} onClick={() => toggle(row)} style={{
             width:34, height:18, border:0, borderRadius:18, background:row.enabled ? LM.accent : LM.inkMuted,
             padding:2, cursor:'pointer',
-          }}><span style={{display:'block', width:14, height:14, borderRadius:14, background:LM.bg, marginLeft:row.enabled ? 16 : 0}}/></button>
+          }}><span style={{display:'block', width:14, height:14, borderRadius:14, background:LM.bg, marginLeft:row.enabled ? 16 : 0}}/></window.AH_DS.Btn>
         </div>;
       })}
       {toast && <div role="status" style={{fontSize:13, color:LM.inkSoft}}>{toast}</div>}
@@ -9534,11 +9486,11 @@ const SettingsSystem = ({ graph, projection, onClose, onOpenToolGraph, onBackToS
     <SHead title="System" sub="The application is itself a node. Its parts, tools and wiring are this graph; open it to inspect or change what you are permitted to."/>
     <SystemMiniGraph graph={graph}/>
     <div style={{display:'flex', alignItems:'center', gap:10}}>
-      <div style={{flex:1}}>
+      <div style={window.AH_DS.styles.fill}>
         <div style={{fontSize:13, color:LM.ink}}>ArchHub application <span style={{fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft}}>· {count} nodes · {(graph?.wires || []).length} relations · WIP head</span></div>
         <div style={{fontSize:11.5, color:LM.inkSoft, marginTop:4}}>Opens over this window in its own scope. Esc or the breadcrumb returns here, then to where you were. It is never a Studio session tab.</div>
       </div>
-      <HoverBtn primary onClick={open}>Open the System graph</HoverBtn>
+      <window.AH_DS.Btn primary onClick={open}>Open the System graph</window.AH_DS.Btn>
     </div>
     <SettingsMods/>
     {openError && <p role="status" style={{margin:0, color:LM.warn, fontSize:12.5}}>{openError}</p>}
@@ -9550,9 +9502,9 @@ const SettingsSystem = ({ graph, projection, onClose, onOpenToolGraph, onBackToS
 const SystemGraphStates = ({ state, error = '', pinnedCount = 0, movedCount = 0, onReadAgain, onBackToSettings, onAddNode, onUnpinAndArrange }) => (
   <div data-system-graph-states style={{display:'grid', gridTemplateColumns:'1fr', gap:10}}>
     {state === 'loading' && <section data-system-loading><h3>Reading the application graph...</h3><p>The canvas draws as soon as the graph answers. Cards appear in place; nothing jumps when they arrive.</p></section>}
-    {state === 'empty' && <section data-system-empty><h3>This group has no nodes yet.</h3><p>A group is a node made of smaller nodes. Add nodes here, or select nodes on the parent canvas and press Group (Ctrl+G).</p><button onClick={onAddNode}>Add node</button><button onClick={onBackToSettings}>Back to ArchHub application</button></section>}
-    {state === 'error' && <section data-system-error><h3>The application graph could not be read.</h3><p>{error || 'Nothing was changed. The last arranged layout is kept.'}</p><button onClick={onReadAgain}>Read again</button><button onClick={onBackToSettings}>Back to Settings</button></section>}
-    {state === 'refused' && <section data-system-refused><h3>Arrange kept {pinnedCount} pinned {pinnedCount === 1 ? 'card' : 'cards'} in place.</h3><p>{pinnedCount} {pinnedCount === 1 ? 'card is' : 'cards are'} hand-placed. Arrange moved {movedCount}.</p><button onClick={onUnpinAndArrange}>Open System graph</button><button onClick={onBackToSettings}>Keep</button></section>}
+    {state === 'empty' && <section data-system-empty><h3>This group has no nodes yet.</h3><p>A group is a node made of smaller nodes. Add nodes here, or select nodes on the parent canvas and press Group (Ctrl+G).</p><window.AH_DS.Btn onClick={onAddNode}>Add node</window.AH_DS.Btn><window.AH_DS.Btn onClick={onBackToSettings}>Back to ArchHub application</window.AH_DS.Btn></section>}
+    {state === 'error' && <section data-system-error><h3>The application graph could not be read.</h3><p>{error || 'Nothing was changed. The last arranged layout is kept.'}</p><window.AH_DS.Btn onClick={onReadAgain}>Read again</window.AH_DS.Btn><window.AH_DS.Btn onClick={onBackToSettings}>Back to Settings</window.AH_DS.Btn></section>}
+    {state === 'refused' && <section data-system-refused><h3>Arrange kept {pinnedCount} pinned {pinnedCount === 1 ? 'card' : 'cards'} in place.</h3><p>{pinnedCount} {pinnedCount === 1 ? 'card is' : 'cards are'} hand-placed. Arrange moved {movedCount}.</p><window.AH_DS.Btn onClick={onUnpinAndArrange}>Open System graph</window.AH_DS.Btn><window.AH_DS.Btn onClick={onBackToSettings}>Keep</window.AH_DS.Btn></section>}
   </div>
 );
 const SettingsHub = ({ toolRows, onClose, onOpenTool, onOpenToolGraph, columns }) => {
@@ -9594,9 +9546,9 @@ const SettingsHub = ({ toolRows, onClose, onOpenTool, onOpenToolGraph, columns }
       boxShadow:'0 12px 24px rgba(0,0,0,.22)',
     }}>
       <span>Switch {confirmOff.label} off? Tools asking it will see '{confirmOff.label} is off'. · </span>
-      <button type="button" onClick={() => { confirmOff.turnOff?.(); setConfirmOff(null); }} style={inlineTextButton()}>Yes</button>
+      <window.AH_DS.Btn type="button" onClick={() => { confirmOff.turnOff?.(); setConfirmOff(null); }} style={window.AH_DS.styles.button("ghost", true)}>Yes</window.AH_DS.Btn>
       <span> · </span>
-      <button type="button" onClick={() => setConfirmOff(null)} style={inlineTextButton()}>No</button>
+      <window.AH_DS.Btn type="button" onClick={() => setConfirmOff(null)} style={window.AH_DS.styles.button("ghost", true)}>No</window.AH_DS.Btn>
     </div>}
   </div>;
 };
@@ -9605,11 +9557,11 @@ const SHead = ({ title, sub, onClose, showClose = false }) => (
   <div style={{ marginBottom:14 }}>
     <div style={{ display:'flex', alignItems:'center', gap:12 }}>
       <div style={{ fontFamily:LM.serif, fontSize:22, letterSpacing:'-0.01em', flex:1 }}>{title}</div>
-      {showClose && <button onClick={onClose} aria-label="Close" data-close-button style={{
+      {showClose && <window.AH_DS.Btn onClick={onClose} aria-label="Close" data-close-button style={{
         height:28, padding:'0 10px', border:`1px solid ${LM.line}`,
         background:'transparent', borderRadius:LM.rad.sm, cursor:'pointer',
         color:LM.inkSoft, fontFamily:LM.sans, fontSize:12, fontWeight:500,
-      }}>Close</button>}
+      }}>Close</window.AH_DS.Btn>}
     </div>
     {sub && <div style={{ fontFamily:LM.sans, fontSize:13, color:LM.inkSoft, marginTop:3, lineHeight:1.5 }}>{sub}</div>}
   </div>
@@ -9684,7 +9636,7 @@ const SettingsMemory = ({ store, patch }) => {
 
     {/* A failed read is said once, above the strata, whatever facts are already on screen. */}
     {catalogue.error && !catalogue.loading && (
-      <SettingsEmpty role="alert" action={<button onClick={catalogue.retry} style={{ ...smallBtn(), padding:'3px 9px', fontStyle:'normal' }}>read again</button>}>
+      <SettingsEmpty role="alert" action={<window.AH_DS.Btn onClick={catalogue.retry} style={{ ...window.AH_DS.styles.button("secondary", true), padding:'3px 9px', fontStyle:'normal' }}>read again</window.AH_DS.Btn>}>
         {/not answering/i.test(catalogue.error) ? 'Brain not answering. Nothing here is lost; read again when it is back.' : 'The brain was not read: ' + catalogue.error}
       </SettingsEmpty>
     )}
@@ -9728,26 +9680,26 @@ const SettingsMemory = ({ store, patch }) => {
                       <span title="The ontology could not place this, so it defaults to sealed &#x2014; there is no release path at all."
                         style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.err, letterSpacing:'0.08em' }}>&#x2298; sealed</span>
                       {window.ARCHHUB_BRAIN_PUBLISH && (
-                        <button title="Share this with the ArchHub community. It is reviewed before other members see it; a fact that names the client folder or a project code is refused."
+                        <window.AH_DS.Btn title="Share this with the ArchHub community. It is reviewed before other members see it; a fact that names the client folder or a project code is refused."
                           onClick={() => share(f)}
-                          style={{ ...smallBtn(), padding:'3px 8px' }}>share</button>
+                          style={{ ...window.AH_DS.styles.button("secondary", true), padding:'3px 8px' }}>share</window.AH_DS.Btn>
                       )}
-                      <button title={'Forget: ' + f.text}
+                      <window.AH_DS.Btn title={'Forget: ' + f.text}
                         onClick={() => forget(f)}
-                        style={{ ...smallBtn(), padding:'3px 8px', color:LM.err, borderColor:LM.lineSoft }}>forget</button>
+                        style={{ ...window.AH_DS.styles.button("secondary", true), padding:'3px 8px', color:LM.err, borderColor:LM.lineSoft }}>forget</window.AH_DS.Btn>
                     </div>
                   );
                 })}
                 {mine.length === 0 && (
                   <div style={{ padding:`${LM.sp.md}px ${LM.sp.lg}px`, borderTop:`1px solid ${LM.lineSoft}`, fontFamily:LM.sans, fontSize:LM.fs.bodySm.sz, lineHeight:LM.fs.bodySm.ln + 'px', color:LM.inkSoft,
                     display:'flex', alignItems:'center', gap:LM.sp.md }}>
-                    <span role={reading ? (catalogue.error ? 'alert' : 'status') : undefined} style={{ flex:1 }}>
+                    <span role={reading ? (catalogue.error ? 'alert' : 'status') : undefined} style={window.AH_DS.styles.fill}>
                       {!reading ? 'Nothing at this stratum yet.'
                         : catalogue.loading ? 'Reading the brain\u2026'
-                        : 'The brain was not read (see above).'}
+                        : 'Brain facts are unavailable. Try reading again.'}
                     </span>
                     {reading && catalogue.error && !catalogue.loading &&
-                      <button onClick={catalogue.retry} style={{ ...smallBtn(), padding:'3px 9px', fontStyle:'normal' }}>read again</button>}
+                      <window.AH_DS.Btn onClick={catalogue.retry} style={{ ...window.AH_DS.styles.button("secondary", true), padding:'3px 9px', fontStyle:'normal' }}>read again</window.AH_DS.Btn>}
                   </div>
                 )}
               </div>
@@ -9824,7 +9776,7 @@ const SettingsMemory = ({ store, patch }) => {
       <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
         <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, letterSpacing:'0.12em' }}>EXPORT</span>
         <span style={{ flex:1, fontSize:12, color:LM.inkSoft, minWidth:180 }}>Take the whole brain with you &#x2014; strata, facts, consent record.</span>
-        <button onClick={async (e) => {
+        <window.AH_DS.Btn onClick={async (e) => {
           const b = e.currentTarget;
           b.textContent = 'reading…';
           try {
@@ -9841,8 +9793,8 @@ const SettingsMemory = ({ store, patch }) => {
             b.textContent = 'refused';
           }
           setTimeout(() => { b.textContent = 'export'; }, 4000);
-        }} style={smallBtn()}>export</button>
-        <button onClick={(e) => {
+        }} style={window.AH_DS.styles.button("secondary", true)}>export</window.AH_DS.Btn>
+        <window.AH_DS.Btn onClick={(e) => {
           // Forgetting everything is not a button press away. The brain
           // is the founder's memory; erasing it needs the real path, in
           // the folder, with his own hands.
@@ -9850,7 +9802,7 @@ const SettingsMemory = ({ store, patch }) => {
           b.textContent = 'open the folder to remove it';
           window.ARCHHUB_REVEAL?.('brain');
           setTimeout(() => { b.textContent = 'forget all'; }, 6000);
-        }} style={{ ...smallBtn(), color:LM.err }}>forget all</button>
+        }} style={{ ...window.AH_DS.styles.button("secondary", true), color:LM.err }}>forget all</window.AH_DS.Btn>
       </div>
     </div>
   </div>
@@ -9869,7 +9821,7 @@ const SettingsTeam = ({ account, onAccount }) => {
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden', marginBottom:LM.sp.sm }}>
       {!signedIn && <div role="status" style={{ padding:'12px 14px', display:'flex', alignItems:'center', gap:10 }}>
         <span style={{ flex:1, minWidth:0, fontFamily:LM.sans, fontSize:LM.fs.bodySm.sz, lineHeight:LM.fs.bodySm.ln + 'px', color:LM.inkSoft }}>Sign in to see your team</span>
-        <button type="button" onClick={onAccount} style={{...smallBtn(true), padding:'4px 10px'}}>Sign in</button>
+        <window.AH_DS.Btn type="button" onClick={onAccount} style={{...window.AH_DS.styles.button(true ? 'primary' : 'secondary', true), padding:'4px 10px'}}>Sign in</window.AH_DS.Btn>
       </div>}
       {signedIn && <div style={{ padding:'12px 14px', display:'grid', gridTemplateColumns:'minmax(0,1fr) auto', gap:12, alignItems:'center' }}>
         <div style={{ minWidth:0 }}>
@@ -9884,7 +9836,7 @@ const SettingsTeam = ({ account, onAccount }) => {
         <div style={{ flex:1, minWidth:0, fontSize:12, color:LM.inkSoft, lineHeight:1.6 }}>
           Manage your account.
         </div>
-        {signedIn && <button type="button" onClick={onAccount} style={{...smallBtn(), padding:'4px 10px'}}>Manage account</button>}
+        {signedIn && <window.AH_DS.Btn type="button" onClick={onAccount} style={{...window.AH_DS.styles.button("secondary", true), padding:'4px 10px'}}>Manage account</window.AH_DS.Btn>}
       </div>
     </div>
   </div>
@@ -9905,7 +9857,7 @@ const SettingsProfile = () => (
         Saved as a brain fact that begins with SYSTEM PROMPT. Preview asks the current session which instruction it is working under.
       </div>
       <div style={{ display:'flex', gap:6, marginTop:LM.sp.sm }}>
-        <button onClick={async (e) => {
+        <window.AH_DS.Btn onClick={async (e) => {
           const said = window.prompt('The instruction every agent inherits');
           if (!said || !said.trim()) return;
           const b = e.currentTarget;
@@ -9915,8 +9867,8 @@ const SettingsProfile = () => (
             b.textContent = 'saved to the brain';
           } catch (error) { b.textContent = 'refused'; }
           setTimeout(() => { b.textContent = 'edit raw prompt'; }, 5000);
-        }} style={smallBtn()}>edit raw prompt</button>
-        <button onClick={async (e) => {
+        }} style={window.AH_DS.styles.button("secondary", true)}>edit raw prompt</window.AH_DS.Btn>
+        <window.AH_DS.Btn onClick={async (e) => {
           const b = e.currentTarget;
           b.textContent = 'asking…';
           try {
@@ -9925,7 +9877,7 @@ const SettingsProfile = () => (
             b.textContent = agentAnswerText(answer).slice(0, 48);
           } catch (error) { b.textContent = 'refused'; }
           setTimeout(() => { b.textContent = 'preview with this session'; }, 8000);
-        }} style={smallBtn()}>preview with this session</button>
+        }} style={window.AH_DS.styles.button("secondary", true)}>preview with this session</window.AH_DS.Btn>
       </div>
     </div>
   </div>
@@ -9938,7 +9890,7 @@ const SField = ({ label, value }) => (
       padding:'7px 10px', background:LM.bg, border:`1px solid ${LM.line}`,
       borderRadius:LM.rad.sm, fontSize:12.5, color:LM.ink, display:'flex', alignItems:'center', gap:6,
     }}>
-      <span style={{ flex:1 }}>{value}</span>
+      <span style={window.AH_DS.styles.fill}>{value}</span>
     </div>
   </div>
 );
@@ -9974,7 +9926,7 @@ const SettingsPermissions = ({ account, onTab, compact=false }) => {
     const row = rows[index];
     if (!row || busy) return;
     if (!hasPermissionBackend || !transport?.setSettingsPermission) {
-      setMessage('Per-agent permissions: not available yet');
+      setMessage('Per-agent permissions: Unavailable');
       return;
     }
     const next = rows.map((item, idx) => idx === index ? {...item, [col.toLowerCase()]:value} : item);
@@ -10006,7 +9958,7 @@ const SettingsPermissions = ({ account, onTab, compact=false }) => {
     </div>}
     {message && <div role="alert" style={{ display:'flex', alignItems:'center', gap:8, padding:'8px 12px', color:LM.err, fontSize:12, borderBottom:`1px solid ${LM.lineSoft}` }}>
       <span style={{ flex:1, minWidth:0, overflowWrap:'anywhere' }}>{message}</span>
-      {hasPermissionBackend && <button type="button" onClick={readRows} style={settings54Button(false, {background:LM.bgHover, color:LM.ink})}>Retry</button>}
+      {hasPermissionBackend && <window.AH_DS.Btn type="button" onClick={readRows} style={({...window.AH_DS.styles.button('secondary', true), borderColor:false ? LM.accent : LM.line, ...{background:LM.bgHover, color:LM.ink}})}>Retry</window.AH_DS.Btn>}
     </div>}
     {hasPermissionBackend && rows.map((row, index) => <div key={row.actor + index} data-permission-row="" style={{ display:'grid',
       gridTemplateColumns:'minmax(0, 1fr) repeat(3, auto)', gap:8, alignItems:'center', minHeight:32,
@@ -10194,9 +10146,9 @@ const SettingsConnectedSocialAccounts = ({transport}) => {
             <span style={{display:'block', fontSize:12.5, fontWeight:500}}>{view.name}</span>
             <span style={{display:'block', fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, overflowWrap:'anywhere'}}>{display || account.vault_entry}</span>
           </span>
-          <button type="button" disabled={!!busy || !transport?.removeLocalSocialAccount} onClick={() => disconnect(account)} style={smallBtn()}>
+          <window.AH_DS.Btn type="button" disabled={!!busy || !transport?.removeLocalSocialAccount} onClick={() => disconnect(account)} style={window.AH_DS.styles.button("secondary", true)}>
             Disconnect
-          </button>
+          </window.AH_DS.Btn>
         </div>;
       })}
     </div>
@@ -10251,10 +10203,10 @@ const SettingsMcpClientRow = ({provider}) => {
   };
   return <SocialConnectionRow icon={target.icon} name={target.name} detail="ArchHub remote MCP"
     control={<div style={{display:'flex', flexDirection:'column', alignItems:'flex-end', gap:6}}>
-      <button type="button" disabled={busy} onClick={() => connect()} style={smallBtn(true)}>
+      <window.AH_DS.Btn type="button" disabled={busy} onClick={() => connect()} style={window.AH_DS.styles.button(true ? 'primary' : 'secondary', true)}>
         {busy ? 'Opening...' : target.button}
-      </button>
-      {provider === 'notion' && <button type="button" disabled={busy || !transport?.connectNotion} onClick={() => connect('workspace')} style={smallBtn()}>Connect Notion</button>}
+      </window.AH_DS.Btn>
+      {provider === 'notion' && <window.AH_DS.Btn type="button" disabled={busy || !transport?.connectNotion} onClick={() => connect('workspace')} style={window.AH_DS.styles.button("secondary", true)}>Connect Notion</window.AH_DS.Btn>}
       {message && <span role={failed ? 'alert' : 'status'} style={{fontSize:11.5, color:failed ? LM.err : LM.ok, maxWidth:240, textAlign:'right'}}>{message}</span>}
     </div>}/>;
 };
@@ -10340,12 +10292,12 @@ const SocialProviderConnection = ({network, initial, transport}) => {
         {waitingReview && <span role="status" style={{display:'block',marginTop:3,color:LM.inkSoft}}>Waiting for {network.name} approval</span>}
         {(row.blocker || row.publish_blocker) && <span role="status" style={{display:'block',marginTop:3,color:LM.inkSoft,overflowWrap:'anywhere'}}>{row.blocker || row.publish_blocker}</span>}</span>}
       control={<div style={{display:'flex',flexDirection:'column',gap:6,alignItems:'flex-end'}}>
-        <button type="button" onClick={connect} disabled={pending || blocked || row.state === 'loading'}
+        <window.AH_DS.Btn type="button" onClick={connect} disabled={pending || blocked || row.state === 'loading'}
           title={(row.blocker && blocked ? row.blocker + ' · ' : '') + 'Connect ' + network.name + ' · Ctrl+K / Enter'}
-          aria-label={label + ' ' + network.name} style={{...smallBtn(!blocked),minWidth:94}}>{label}</button>
-        {pending && <button type="button" onClick={cancel} title={'Cancel '+network.name+' sign-in · Ctrl+K / Enter'} style={smallBtn()}>Cancel</button>}
-        {row.state === 'choosing' && (row.accounts || []).map(account => <button type="button" key={account.account_id || account.id}
-          onClick={() => choose(account)} title={'Use '+(account.name || account.display_name)+' · Ctrl+K / Enter'} style={smallBtn(true)}>Use {account.name || account.display_name}</button>)}
+          aria-label={label + ' ' + network.name} style={{...window.AH_DS.styles.button(!blocked ? 'primary' : 'secondary', true),minWidth:94}}>{label}</window.AH_DS.Btn>
+        {pending && <window.AH_DS.Btn type="button" onClick={cancel} title={'Cancel '+network.name+' sign-in · Ctrl+K / Enter'} style={window.AH_DS.styles.button("secondary", true)}>Cancel</window.AH_DS.Btn>}
+        {row.state === 'choosing' && (row.accounts || []).map(account => <window.AH_DS.Btn type="button" key={account.account_id || account.id}
+          onClick={() => choose(account)} title={'Use '+(account.name || account.display_name)+' · Ctrl+K / Enter'} style={window.AH_DS.styles.button(true ? 'primary' : 'secondary', true)}>Use {account.name || account.display_name}</window.AH_DS.Btn>)}
       </div>}/>
   </div>;
 };
@@ -10413,8 +10365,8 @@ const ProviderManage = ({ p, providers, onTab }) => {
   };
   const box = { padding:`${LM.sp.md}px ${LM.sp.lg}px ${LM.sp.md}px`, borderTop:`1px solid ${LM.lineSoft}`, background:LM.bgDeep };
   const line = { fontSize:LM.fs.caption.sz, color:LM.inkSoft, lineHeight:LM.fs.caption.ln + 'px' };
-  const refresh = <button type="button" disabled={saving || providers.loading} onClick={providers.refresh} style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>
-    {providers.loading ? 'Reading status…' : 'Refresh provider status'}</button>;
+  const refresh = <window.AH_DS.Btn type="button" disabled={saving || providers.loading} onClick={providers.refresh} style={{ ...window.AH_DS.styles.button("secondary", true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>
+    {providers.loading ? 'Reading status…' : 'Refresh provider status'}</window.AH_DS.Btn>;
   const useOpenCode = async () => {
     if (savingRef.current) return;
     savingRef.current = true; setSaving(true); setErr(''); setSaved('');
@@ -10447,9 +10399,9 @@ const ProviderManage = ({ p, providers, onTab }) => {
       <div style={box}>
         <div style={line}>{providerDetail(p)}. Chat uses local-cli/opencode with the approved free OpenRouter model.</div>
         <div style={{ display:'flex', gap:LM.sp.sm, marginTop:LM.sp.sm, flexWrap:'wrap' }}>
-          <button type="button" disabled={saving || p.state !== 'installed'} onClick={useOpenCode}
-            style={saving || p.state !== 'installed' ? { ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px`, borderStyle:'dashed', cursor:'default' } : { ...smallBtn(true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>
-            {saving ? 'Selecting…' : 'Use OpenCode'}</button>
+          <window.AH_DS.Btn type="button" disabled={saving || p.state !== 'installed'} onClick={useOpenCode}
+            style={saving || p.state !== 'installed' ? { ...window.AH_DS.styles.button("secondary", true), padding:`${LM.sp.xs}px ${LM.sp.md}px`, borderStyle:'dashed', cursor:'default' } : { ...window.AH_DS.styles.button(true ? 'primary' : 'secondary', true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>
+            {saving ? 'Selecting…' : 'Use OpenCode'}</window.AH_DS.Btn>
           {refresh}
         </div>
         {saved && <p role="status" style={{ fontSize:LM.fs.caption.sz, color:LM.ok, margin:`${LM.sp.sm}px 0 0` }}>{saved}</p>}
@@ -10466,7 +10418,7 @@ const ProviderManage = ({ p, providers, onTab }) => {
         : p.sets ? 'Sign in or connect this provider, then read the status again.'
         : 'Start ' + p.name + ' on this machine (' + p.source + '), then read the status again.'}</div>
       <div style={{ display:'flex', gap:LM.sp.sm, marginTop:LM.sp.sm, flexWrap:'wrap' }}>
-        {p.id === 'cloud' && <button type="button" onClick={() => onTab && onTab('account')} style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Open Account</button>}
+        {p.id === 'cloud' && <window.AH_DS.Btn type="button" onClick={() => onTab && onTab('account')} style={{ ...window.AH_DS.styles.button("secondary", true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Open Account</window.AH_DS.Btn>}
         {refresh}
       </div>
     </div>
@@ -10486,7 +10438,7 @@ const SettingsProviders = ({ providers, onTab }) => {
   <div>
     <SHead title="Providers" sub={'BYO keys. Local models live in Ollama or LM Studio. ' + (rows
       ? keyed + ' connected key' + (keyed === 1 ? '' : 's') + ' \u00b7 ' + running + ' local provider' + (running === 1 ? '' : 's') + ' connected.'
-      : error ? 'Not read.' : 'Reading this machine\u2026')}/>
+      : error ? 'Unavailable.' : 'Reading this machine\u2026')}/>
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
       {(rows || []).map((p, i) => (
         <div key={p.id} style={{ borderTop: i===0 ? 'none' : `1px solid ${LM.lineSoft}` }}>
@@ -10495,7 +10447,7 @@ const SettingsProviders = ({ providers, onTab }) => {
             <div style={{ flex:1, minWidth:0, lineHeight:LM.fs.caption.ln + 'px' }}>
               <div style={{ fontSize:LM.fs.bodySm.sz, fontWeight:LM.fs.bodySmStrong.wt, color: off(p.state) ? LM.inkSoft : LM.ink }}>{p.name}</div>
               <div style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.inkSoft, marginTop:LM.sp.xs, letterSpacing:LM.fs.label.letter }}>
-                <span title={p.state === 'keyed' ? 'Stored keys are never shown' : undefined} style={{ color:LM.inkSoft }}>
+                <span title={p.state === 'keyed' ? 'Stored keys are never shown' : undefined} style={window.AH_DS.styles.muted}>
                   {providerDetail(p)}
                 </span>
               </div>
@@ -10505,14 +10457,14 @@ const SettingsProviders = ({ providers, onTab }) => {
               background: off(p.state) ? LM.bgSoft : tone(p.state) + '14',
               color:       warn(p.state) ? LM.err : tone(p.state),
             }}>{providerStateWord(p)}</span>
-            <button aria-expanded={managing === p.id} onClick={() => setManaging(managing === p.id ? null : p.id)}
-              style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.sm}px` }}>{off(p.state) || warn(p.state) ? 'connect' : 'manage'}</button>
+            <window.AH_DS.Btn aria-expanded={managing === p.id} onClick={() => setManaging(managing === p.id ? null : p.id)}
+              style={{ ...window.AH_DS.styles.button("secondary", true), padding:`${LM.sp.xs}px ${LM.sp.sm}px` }}>{off(p.state) || warn(p.state) ? 'connect' : 'manage'}</window.AH_DS.Btn>
           </div>
           {managing === p.id && <ProviderManage p={p} providers={providers} onTab={onTab}/>}
         </div>
       ))}
       {!rows && <SettingsEmpty role={error ? 'alert' : 'status'}
-        action={error && <button onClick={providers.refresh} disabled={loading} style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>read again</button>}>
+        action={error && <window.AH_DS.Btn onClick={providers.refresh} disabled={loading} style={{ ...window.AH_DS.styles.button("secondary", true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>read again</window.AH_DS.Btn>}>
         {error ? 'Provider status was not read: ' + error : 'Reading the providers on this machine\u2026'}</SettingsEmpty>}
       {rows && rows.length === 0 && <SettingsEmpty>No provider is registered on this machine.</SettingsEmpty>}
     </div>
@@ -10691,14 +10643,14 @@ const BaboomStartupRow = ({ first }) => {
         fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, padding:`2px ${LM.sp.sm}px`, borderRadius:LM.rad.chip,
         background: col + '14', color: col, letterSpacing:LM.fs.label.letter, textTransform:'uppercase',
       }}>{!setting || unreadable ? 'unread' : on ? 'on start' : 'off'}</span>
-      <button type="button" role="switch" aria-checked={on} aria-label="Start BABOOM when ArchHub opens"
+      <window.AH_DS.Btn type="button" role="switch" aria-checked={on} aria-label="Start BABOOM when ArchHub opens"
         title={enabled ? (on ? 'Do not start BABOOM when ArchHub opens' : 'Start BABOOM when ArchHub opens') : 'BABOOM startup cannot be changed from this view'}
         disabled={!enabled} onClick={change} style={{width:30, height:16, borderRadius:LM.rad.pill, padding:1, flexShrink:0,
           position:'relative', border:0, background:on ? LM.accent : LM.lineSoft, transition:`background ${LM.dur.fast}ms`,
           cursor:enabled ? 'pointer' : 'default', ...(enabled ? {} : {outline:`1px dashed ${LM.line}`, outlineOffset:1})}}>
         <span style={{position:'absolute', top:1, left:on ? 14 : 1, width:14, height:14,
           borderRadius:'50%', background:'#fff', transition:`left ${LM.dur.fast}ms`}}/>
-      </button>
+      </window.AH_DS.Btn>
     </div>
   );
 };
@@ -10718,10 +10670,10 @@ const PersonalThemeHistory = () => {
   const [error, setError] = React.useState('');
   return <div style={{marginTop:12}}>{(state?.configuration?.history || []).slice(0,10).map(entry =>
     <div key={entry.revision} style={{padding:8, fontSize:12}}>{entry.reason || entry.state}
-      {!entry.current && entry.restore_control && <button style={smallBtn()} onClick={async () => {
+      {!entry.current && entry.restore_control && <window.AH_DS.Btn style={window.AH_DS.styles.button("secondary", true)} onClick={async () => {
         try { await api.restoreThemeRevision(entry.revision); setError(''); }
         catch (failure) { setError(failure.message); }
-      }}>Restore</button>}</div>)}{error && <p role="alert">{error}</p>}</div>;
+      }}>Restore</window.AH_DS.Btn>}</div>)}{error && <p role="alert">{error}</p>}</div>;
 };
 const SettingsPersonalTheme = () => {
   const state = usePersonalTheme(), api = window.ARCHHUB_EXISTING_WORKSHOP;
@@ -10775,7 +10727,7 @@ const SettingsPersonalTheme = () => {
       <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, overflow:'hidden' }}>
         <div style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, padding:`${LM.sp.sm}px ${LM.sp.md}px` }}>
           <span title="Current graph accent" style={{ width:16, height:16, borderRadius:LM.rad.chip, background:saved, border:`1px solid ${LM.lineSoft}` }}/>
-          <div style={{ flex:1 }}>
+          <div style={window.AH_DS.styles.fill}>
             <div style={{ fontSize:LM.fs.caption.sz }}>Accent colour</div>
             <div style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', color:LM.inkSoft, marginTop:1 }}>{saved} &#xb7; {config ? 'saved in Personal Settings' : 'Personal Settings not read'}</div>
           </div>
@@ -10785,10 +10737,10 @@ const SettingsPersonalTheme = () => {
         </div>
         {editAccent && <div style={{ padding:`${LM.sp.md}px ${LM.sp.md}px ${LM.sp.md}px`, borderTop:`1px solid ${LM.lineSoft}`, background:LM.bgDeep }}>
           <div style={{display:'flex', alignItems:'center', gap:LM.sp.sm, fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.inkSoft, letterSpacing:LM.fs.label.letter}}>
-            <span style={{flex:1}}>{config ? `${config.binding_mode} · ${config.state}` :
+            <span style={window.AH_DS.styles.fill}>{config ? `${config.binding_mode} · ${config.state}` :
               !api && window.ArchHubTheme?.source === 'graph' ? 'Graph theme · read-only in this view' : 'Personal Settings not read'}</span>
-            <button title="Refresh Personal Settings" aria-label="Refresh Personal Settings" disabled={!api || state?.pending}
-              style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.sm}px` }} onClick={() => run(() => api.refreshTheme())}>&#x21bb;</button>
+            <window.AH_DS.Btn title="Refresh Personal Settings" aria-label="Refresh Personal Settings" disabled={!api || state?.pending}
+              style={{ ...window.AH_DS.styles.button("secondary", true), padding:`${LM.sp.xs}px ${LM.sp.sm}px` }} onClick={() => run(() => api.refreshTheme())}>&#x21bb;</window.AH_DS.Btn>
           </div>
           <div style={{fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.inkSoft, margin:`${LM.sp.sm}px 0`}}>Check text and control contrast after changing colours; automatic contrast adjustment is not available.</div>
           {config && config.binding_mode !== 'personal-wip' && <div style={{fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.warn, marginBottom:LM.sp.sm}}>
@@ -10800,8 +10752,8 @@ const SettingsPersonalTheme = () => {
               style={{width:28, height:24, padding:0, border:`1px solid ${LM.line}`, borderRadius:LM.rad.control, background:'transparent'}}/>
             <input aria-label="Accent hex colour" value={accent} maxLength={7} style={{...fieldStyle, width:100}}
               onChange={event => {setAccent(event.target.value); setDirty(true);}} disabled={!!state?.pending}/>
-            <button style={{ ...smallBtn(true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }} disabled={unavailable || !/^#[0-9a-fA-F]{6}$/.test(accent) || accent.toLowerCase() === config?.theme?.accent?.toLowerCase()}
-              onClick={() => run(() => api.previewThemeToken('accent', accent), true)}>{state?.pending ? 'Applying\u2026' : 'Apply accent'}</button>
+            <window.AH_DS.Btn style={{ ...window.AH_DS.styles.button(true ? 'primary' : 'secondary', true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }} disabled={unavailable || !/^#[0-9a-fA-F]{6}$/.test(accent) || accent.toLowerCase() === config?.theme?.accent?.toLowerCase()}
+              onClick={() => run(() => api.previewThemeToken('accent', accent), true)}>{state?.pending ? 'Applying\u2026' : 'Apply accent'}</window.AH_DS.Btn>
           </div>
           {config && !oneDraft && <div style={{fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.warn, marginTop:LM.sp.sm}}>
             {config.personal_wip_heads.length > 1 ? 'Multiple theme drafts exist; merging is not linked yet.' : 'No personal theme draft is available.'}
@@ -10811,8 +10763,8 @@ const SettingsPersonalTheme = () => {
             {versions.map(entry => <div key={entry.revision} style={{display:'flex', gap:LM.sp.sm, alignItems:'center', padding:`${LM.sp.sm}px 0`, borderBottom:`1px solid ${LM.lineSoft}`}}>
               <span style={{flex:1, fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.inkSoft}}>{entry.reason || entry.state} {entry.current ? '· current' : ''}
                 <small style={{display:'block', fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', color:LM.inkSoft}}>{entry.timestamp || 'Time unavailable'} · {entry.state} · {entry.digest ? entry.digest.slice(0,10) : String(entry.revision).slice(-10)}</small></span>
-              {!entry.current && entry.restore_control && <button style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }} disabled={unavailable}
-                onClick={() => run(() => api.restoreThemeRevision(entry.revision))}>Restore</button>}
+              {!entry.current && entry.restore_control && <window.AH_DS.Btn style={{ ...window.AH_DS.styles.button("secondary", true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }} disabled={unavailable}
+                onClick={() => run(() => api.restoreThemeRevision(entry.revision))}>Restore</window.AH_DS.Btn>}
             </div>)}
           </div>}
         </div>}
@@ -10898,7 +10850,7 @@ const SettingsRetention = () => {
       {state.loading && !data && <SettingsEmpty>Reading the retention policy…</SettingsEmpty>}
       {/* retry only where a read exists to retry: never an inert action */}
       {state.error && <SettingsEmpty role="alert" action={window.ARCHHUB_CONVERSATION_RETENTION
-        ? <button onClick={load} style={smallBtn()}>retry</button> : null}>{state.error}</SettingsEmpty>}
+        ? <window.AH_DS.Btn onClick={load} style={window.AH_DS.styles.button("secondary", true)}>retry</window.AH_DS.Btn> : null}>{state.error}</SettingsEmpty>}
       {policy && (
         <div style={{ padding:`${LM.sp.md}px ${LM.sp.lg}px`, background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.panel, fontSize:LM.fs.bodySm.sz, lineHeight:LM.fs.bodySm.ln + 'px', color:LM.inkSoft }}>
           <div style={{ color:LM.ink }}>
@@ -10926,8 +10878,8 @@ const SettingsRetention = () => {
               {row.archived_at ? 'archived on ' + (retentionWhen(row.archived_at) || 'a date not recorded') : 'restored'} · {row.removed_messages} in the archive file{row.archive_exists ? '' : ' · file missing'}
             </div>
           </div>
-          <button disabled={!!busy || !row.archive_exists} onClick={() => act('open', row)} style={smallBtn()}>open archive</button>
-          <button disabled={!!busy || !row.archive_exists} onClick={() => act('restore', row)} style={smallBtn(true)}>{busy === 'restore:' + row.conversation ? 'restoring…' : 'restore'}</button>
+          <window.AH_DS.Btn disabled={!!busy || !row.archive_exists} onClick={() => act('open', row)} style={window.AH_DS.styles.button("secondary", true)}>open archive</window.AH_DS.Btn>
+          <window.AH_DS.Btn disabled={!!busy || !row.archive_exists} onClick={() => act('restore', row)} style={window.AH_DS.styles.button(true ? 'primary' : 'secondary', true)}>{busy === 'restore:' + row.conversation ? 'restoring…' : 'restore'}</window.AH_DS.Btn>
         </div>
       ))}
       {data && data.more && <SettingsEmpty>More archived conversations are in the archive folder.</SettingsEmpty>}
@@ -10962,18 +10914,18 @@ const SettingsStorage = () => (
         ['Brain folder', 'the brain on this machine', 'brain'],
       ].map(([t, sub, target]) => (
         <div key={t} style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, padding:`${LM.sp.md}px ${LM.sp.md}px`, background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md }}>
-          <div style={{ flex:1 }}>
+          <div style={window.AH_DS.styles.fill}>
             <div style={{ fontSize:LM.fs.bodySm.sz, color:LM.ink }}>{t}</div>
             <div style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.inkSoft, marginTop:LM.sp.xs }}>{sub}</div>
           </div>
-          <button onClick={async (e) => {
+          <window.AH_DS.Btn onClick={async (e) => {
             const b = e.currentTarget;
             try {
               const answer = await window.ARCHHUB_REVEAL(target);
               b.textContent = answer && answer.ok ? 'opened' : 'refused';
             } catch (error) { b.textContent = 'refused'; }
             setTimeout(() => { b.textContent = 'open folder'; }, 4000);
-          }} style={smallBtn()}>open folder</button>
+          }} style={window.AH_DS.styles.button("secondary", true)}>open folder</window.AH_DS.Btn>
         </div>
       ))}
     </div>
@@ -10999,11 +10951,11 @@ const SettingsAbout = ({ providers, release }) => {
   <div>
     <SHead title="About" sub="ArchHub Studio · the AEC stack with one foot in your model and one in the LLM."/>
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, padding:`${LM.sp.lg}px ${LM.sp.lg}px`, fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, lineHeight:LM.fs.dataSm.ln + 'px', color:LM.inkSoft }}>
-      <div><span style={{ color:LM.inkSoft }}>version    </span> {release?.current_build || 'reading\u2026'}</div>
-      <div><span style={{ color:LM.inkSoft }}>server     </span> {window.location.host || window.location.origin} &#xb7; running</div>
-      <div data-about-host-total={hosts.total}><span style={{ color:LM.inkSoft }}>hosts      </span> {hosts.read ? <>{hosts.total} configured &#xb7; {hosts.running} live</> : 'checking hosts'}</div>
-      <div><span style={{ color:LM.inkSoft }}>providers  </span> {rows ? (answering.length ? answering.join(', ') : 'none connected') : providers?.error ? 'not read' : 'reading\u2026'}</div>
-      <div><span style={{ color:LM.inkSoft }}>updated    </span> {release?.updated_to ? 'to ' + release.updated_to : (label || 'reading\u2026')} &#xb7; <span role="button" tabIndex={0} aria-expanded={updates}
+      <div><span style={window.AH_DS.styles.muted}>version    </span> {release?.current_build || 'reading\u2026'}</div>
+      <div><span style={window.AH_DS.styles.muted}>server     </span> {window.location.host || window.location.origin} &#xb7; running</div>
+      <div data-about-host-total={hosts.total}><span style={window.AH_DS.styles.muted}>hosts      </span> {hosts.read ? <>{hosts.total} configured &#xb7; {hosts.running} live</> : 'checking hosts'}</div>
+      <div><span style={window.AH_DS.styles.muted}>providers  </span> {rows ? (answering.length ? answering.join(', ') : 'none connected') : providers?.error ? 'not read' : 'reading\u2026'}</div>
+      <div><span style={window.AH_DS.styles.muted}>updated    </span> {release?.updated_to ? 'to ' + release.updated_to : (label || 'reading\u2026')} &#xb7; <span role="button" tabIndex={0} aria-expanded={updates}
         onClick={toggle} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } }}
         style={{ color:LM.inkSoft, cursor:'pointer' }}>{updates ? 'hide updates' : 'updates →'}</span></div>
     </div>
@@ -11095,22 +11047,22 @@ const SettingsAssistants = () => {
             {c.hooks && !c.hooks.available && <div style={{fontSize:LM.fs.caption.sz, color:LM.inkSoft}}>{c.hooks.state === 'per_session' ? 'Connects when you open a session' : c.hooks.state === 'unsupported' ? 'Not supported yet' : c.hooks.state === 'not_installed' ? 'Not installed' : c.hooks.state === 'install_required' ? 'Open the installed ArchHub to connect this assistant.' : 'Settings could not be read. Repair the assistant installation first.'}</div>}
           </div>
           {c.hooks && c.hooks.available && (
-            <button onClick={() => previewHooks(c.client)} disabled={!!busy}
+            <window.AH_DS.Btn onClick={() => previewHooks(c.client)} disabled={!!busy}
               title="Review what Repair will change before applying it"
-              style={{...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px`}}>
+              style={{...window.AH_DS.styles.button("secondary", true), padding:`${LM.sp.xs}px ${LM.sp.md}px`}}>
               Repair
-            </button>
+            </window.AH_DS.Btn>
           )}
 
           {c.state === 'ready_to_register' && (
-            <button onClick={() => connect(c.client)} disabled={!!busy}
+            <window.AH_DS.Btn onClick={() => connect(c.client)} disabled={!!busy}
               title={'Adds one ArchHub entry to ' + (ASSISTANT_NAMES[c.client] || 'Assistant') + "'s connection settings"}
-              style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>{busy === c.client ? 'Connecting…' : 'Connect'}</button>
+              style={{ ...window.AH_DS.styles.button("secondary", true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>{busy === c.client ? 'Connecting…' : 'Connect'}</window.AH_DS.Btn>
           )}
           {c.state === 'migration_available' && (
-            <button onClick={() => connect(c.client)} disabled={!!busy}
+            <window.AH_DS.Btn onClick={() => connect(c.client)} disabled={!!busy}
               title={c.client === 'claude-code' ? "Registers this install in Claude Code and retires only ArchHub's old development coordination entry through Claude Code's own command" : "Replaces only ArchHub's old entry in " + (ASSISTANT_NAMES[c.client] || 'Assistant') + "'s settings and keeps an encrypted copy of the file"}
-              style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>{busy === c.client ? 'Replacing…' : 'Replace'}</button>
+              style={{ ...window.AH_DS.styles.button("secondary", true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>{busy === c.client ? 'Replacing…' : 'Replace'}</window.AH_DS.Btn>
           )}
         </div>
       ))}
@@ -11118,8 +11070,8 @@ const SettingsAssistants = () => {
         <div role="region" aria-label="Review assistant safety settings" style={{padding:`${LM.sp.md}px ${LM.sp.lg}px`, borderTop:'1px solid '+LM.lineSoft}}>
           <div>{ASSISTANT_NAMES[hookPreview.client] || 'Assistant'}: {hookPreview.migration ? 'Repair: move the end-of-turn check to this install' : hookPreview.changed ? 'Repair: add the end-of-turn check' : 'Already set; nothing to change'}</div>
           <p>{hookPreview.description || 'Adds ArchHub\'s end-of-turn check while keeping your other settings and an encrypted backup. The assistant may still need to approve and load the changes.'}</p>
-          <button onClick={repairHooks} disabled={!!busy || !hookPreview.changed} style={smallBtn()}>Apply reviewed repair</button>
-          <button onClick={() => setHookPreview(null)} disabled={!!busy} style={smallBtn()}>Cancel</button>
+          <window.AH_DS.Btn onClick={repairHooks} disabled={!!busy || !hookPreview.changed} style={window.AH_DS.styles.button("secondary", true)}>Apply reviewed repair</window.AH_DS.Btn>
+          <window.AH_DS.Btn onClick={() => setHookPreview(null)} disabled={!!busy} style={window.AH_DS.styles.button("secondary", true)}>Cancel</window.AH_DS.Btn>
         </div>
       )}
       {hookNotice && <div role="status" style={{padding:`${LM.sp.md}px ${LM.sp.lg}px`}}>{hookNotice}</div>}
@@ -11271,10 +11223,10 @@ const SettingsWorkspaces = () => {
       {mismatch && (
         <div role="alert" style={{ padding:`${LM.sp.md}px ${LM.sp.lg}px`, border:`1px solid ${LM.warn}`, borderRadius:LM.rad.panel,
           background:LM.warn + '12', display:'flex', alignItems:'center', gap:LM.sp.md, fontSize:LM.fs.bodySm.sz }}>
-          <span style={{ flex:1 }}>The registry the governance hooks read does not match the graph (start-up check: {boot}; now: {view.projection}). Changes are paused until it is republished.</span>
+          <span style={window.AH_DS.styles.fill}>The registry the governance hooks read does not match the graph (start-up check: {boot}; now: {view.projection}). Changes are paused until it is republished.</span>
           {view.key_pinned && (
-            <button disabled={!!busy} onClick={() => { if (!busy && mismatch && view.key_pinned) run(WORKSPACE_CHANGE, { action:'republish' }); }}
-              style={{ ...smallBtn(true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Republish</button>
+            <window.AH_DS.Btn disabled={!!busy} onClick={() => { if (!busy && mismatch && view.key_pinned) run(WORKSPACE_CHANGE, { action:'republish' }); }}
+              style={{ ...window.AH_DS.styles.button(true ? 'primary' : 'secondary', true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Republish</window.AH_DS.Btn>
           )}
         </div>
       )}
@@ -11311,40 +11263,40 @@ const SettingsWorkspaces = () => {
               )}
             </div>
             <span style={chip(r.privacy === 'private' ? LM.ok : LM.warn)}>{r.privacy}</span>
-            <button disabled={!!busy || !ready} onClick={() => { if (ready && !busy) setConfirming(r); }}
-              style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Remove</button>
+            <window.AH_DS.Btn disabled={!!busy || !ready} onClick={() => { if (ready && !busy) setConfirming(r); }}
+              style={{ ...window.AH_DS.styles.button("secondary", true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Remove</window.AH_DS.Btn>
           </div>
         ))}
         {view && !registered.length && <SettingsEmpty>No workspace is registered yet.</SettingsEmpty>}
         {!view && !error && <SettingsEmpty>Reading the workspace registry{'\u2026'}</SettingsEmpty>}
-        {!view && error && workspaceGraphOwnerDown(error) && <SettingsEmpty action={<button disabled={!!busy} onClick={() => { setOwnerReadRetries(0); read(); }} style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Retry</button>}>Starting ArchHub's graph service{'\u2026'} {'\u00b7'}</SettingsEmpty>}
-        {!view && error && !workspaceGraphOwnerDown(error) && <SettingsEmpty role="alert" action={<button disabled={!!busy} onClick={read} style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Read again</button>}>The workspace registry was not read: {error}</SettingsEmpty>}
+        {!view && error && workspaceGraphOwnerDown(error) && <SettingsEmpty action={<window.AH_DS.Btn disabled={!!busy} onClick={() => { setOwnerReadRetries(0); read(); }} style={{ ...window.AH_DS.styles.button("secondary", true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Retry</window.AH_DS.Btn>}>Starting ArchHub's graph service{'\u2026'} {'\u00b7'}</SettingsEmpty>}
+        {!view && error && !workspaceGraphOwnerDown(error) && <SettingsEmpty role="alert" action={<window.AH_DS.Btn disabled={!!busy} onClick={read} style={{ ...window.AH_DS.styles.button("secondary", true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Read again</window.AH_DS.Btn>}>The workspace registry is unavailable: {error}</SettingsEmpty>}
       </div>
       {confirming && (
         <div role="dialog" style={{ padding:`${LM.sp.md}px ${LM.sp.lg}px`, border:`1px solid ${LM.line}`, borderRadius:LM.rad.panel, background:LM.bgSoft, fontSize:LM.fs.bodySm.sz, display:'flex', flexDirection:'column', gap:LM.sp.sm }}>
           <div>Stop governing <b>{confirming.root_id}</b> ({confirming.path})?</div>
-          <div style={{ color:LM.inkSoft }}>{WORKSPACE_PROMISE}</div>
+          <div style={window.AH_DS.styles.muted}>{WORKSPACE_PROMISE}</div>
           <div style={{ display:'flex', gap:LM.sp.sm, justifyContent:'flex-end' }}>
-            <button onClick={() => setConfirming(null)} style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Keep it</button>
-            <button disabled={!!busy || !ready} onClick={async () => { if (!ready || busy) return; const r = confirming; setConfirming(null);
+            <window.AH_DS.Btn onClick={() => setConfirming(null)} style={{ ...window.AH_DS.styles.button("secondary", true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Keep it</window.AH_DS.Btn>
+            <window.AH_DS.Btn disabled={!!busy || !ready} onClick={async () => { if (!ready || busy) return; const r = confirming; setConfirming(null);
               await run(WORKSPACE_CHANGE, { action:'unregister', id:r.root_id }); }}
-              style={{ ...smallBtn(true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Stop governing</button>
+              style={{ ...window.AH_DS.styles.button(true ? 'primary' : 'secondary', true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Stop governing</window.AH_DS.Btn>
           </div>
         </div>
       )}
       <div style={{ display:'grid', gridTemplateColumns:ready ? '1fr auto 150px 110px auto' : '1fr auto 150px 110px', gap:LM.sp.sm, alignItems:'center' }}>
         <input value={path} onChange={e => setPath(e.target.value)} placeholder="Folder, e.g. D:\Clients\Project"
           aria-label="Workspace folder" style={field}/>
-        <button disabled={!!busy} onClick={browse} aria-label="Browse for a folder"
-          style={{ ...smallBtn(false), padding:`${LM.sp.sm}px ${LM.sp.md}px` }}>Browse…</button>
+        <window.AH_DS.Btn disabled={!!busy} onClick={browse} aria-label="Browse for a folder"
+          style={{ ...window.AH_DS.styles.button(false ? 'primary' : 'secondary', true), padding:`${LM.sp.sm}px ${LM.sp.md}px` }}>Browse…</window.AH_DS.Btn>
         <input value={rootId} onChange={e => setRootId(e.target.value)} placeholder={workspaceSlug(path) || 'name'}
           aria-label="Workspace name" style={field}/>
         <select value={privacy} onChange={e => setPrivacy(e.target.value)} aria-label="Privacy" style={field}>
           <option value="private">Private</option>
           <option value="public">Public</option>
         </select>
-        {ready && <button disabled={!!busy || !path.trim()} title={!path.trim() ? 'Choose a folder first' : undefined}
-          onClick={add} style={{ ...smallBtn(true), padding:`${LM.sp.sm}px ${LM.sp.md}px` }}>Add</button>}
+        {ready && <window.AH_DS.Btn disabled={!!busy || !path.trim()} title={!path.trim() ? 'Choose a folder first' : undefined}
+          onClick={add} style={{ ...window.AH_DS.styles.button(true ? 'primary' : 'secondary', true), padding:`${LM.sp.sm}px ${LM.sp.md}px` }}>Add</window.AH_DS.Btn>}
       </div>
       {!ready && (
         <div style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.inkSoft }}>
@@ -11423,7 +11375,7 @@ const HostEnableSwitch = ({ hostId, enabled, enabledState, enabledFreshness, dis
   };
   return (
     <span style={{ display:'inline-flex', alignItems:'center', gap:LM.sp.sm, minWidth:0 }}>
-      <button type="button" role="switch" aria-checked={checked ? 'true' : 'false'} aria-label={'Turn ' + name + ' on/off' + (switchDisabledReason ? ': ' + switchDisabledReason : '')}
+      <window.AH_DS.Btn type="button" role="switch" aria-checked={checked ? 'true' : 'false'} aria-label={'Turn ' + name + ' on/off' + (switchDisabledReason ? ': ' + switchDisabledReason : '')}
         title={switchDisabledReason || ''}
         disabled={switchDisabled} onClick={toggle} style={{
           width:34, height:18, borderRadius:LM.rad.pill, border:`1px solid ${confirmedOn ? LM.ok : LM.line}`,
@@ -11431,11 +11383,11 @@ const HostEnableSwitch = ({ hostId, enabled, enabledState, enabledFreshness, dis
           justifyContent:checked ? 'flex-end' : 'flex-start', alignItems:'center', cursor:pending ? 'wait' : switchDisabled ? 'not-allowed' : 'pointer',
         }}>
         <span aria-hidden="true" style={{ width:12, height:12, borderRadius:'50%', background:checked ? '#fff' : LM.inkSoft, display:'block' }}/>
-      </button>
+      </window.AH_DS.Btn>
       {unavailable && <span role="status" style={{ fontSize:LM.fs.label.sz, color:LM.inkSoft, lineHeight:LM.fs.label.ln + 'px', maxWidth:220 }}>Unavailable. {unavailableReason}</span>}
-      {unavailable && <button type="button" onClick={refreshRows}
+      {unavailable && <window.AH_DS.Btn type="button" onClick={refreshRows}
         style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, fontWeight:LM.fs.label.wt, color:LM.ink, background:LM.bgHover, border:`1px solid ${LM.line}`,
-          borderRadius:LM.rad.control, padding:`${LM.sp.xs}px ${LM.sp.sm}px`, cursor:'pointer' }}>Retry</button>}
+          borderRadius:LM.rad.control, padding:`${LM.sp.xs}px ${LM.sp.sm}px`, cursor:'pointer' }}>Retry</window.AH_DS.Btn>}
       {writeDisabledReason && <span role="status" style={{ fontSize:LM.fs.label.sz, color:LM.inkSoft, lineHeight:LM.fs.label.ln + 'px', maxWidth:220 }}>{writeDisabledReason}</span>}
       {stateStatus && <span role="status" style={{ fontSize:LM.fs.label.sz, color:LM.inkSoft, lineHeight:LM.fs.label.ln + 'px', maxWidth:220 }}>{stateStatus}</span>}
       {!unknown && !checked && <span role="status" style={{ fontSize:LM.fs.label.sz, color:LM.inkSoft, lineHeight:LM.fs.label.ln + 'px', maxWidth:220 }}>{reason}</span>}
@@ -11484,12 +11436,12 @@ const SettingsHosts = () => {
         background:LM.bgPanel, borderBottom:`1px solid ${LM.line}` }}>
         <b style={{ fontWeight:LM.fs.bodySmStrong.wt, fontSize:LM.fs.bodySm.sz }}>Connectors</b>
         <span data-host-total={tally.total} style={tagStyle(LM.inkSoft)}>{running}/{builtRows.length} running{coming ? ` \u00b7 ${coming} coming` : ''}</span>
-        <span style={{ flex:1 }}/>
+        <span style={window.AH_DS.styles.fill}/>
         {speckle && <span style={tagStyle(LM.inkSoft)}>Speckle {'·'} {hostDetail(speckle)}</span>}
         {/* a live control on every state: re-read the hosts probe (never an inert action) */}
-        <button type="button" onClick={catalogue.retry} disabled={catalogue.loading}
+        <window.AH_DS.Btn type="button" onClick={catalogue.retry} disabled={catalogue.loading}
           style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, fontWeight:LM.fs.label.wt, color:LM.ink, background:LM.bgHover, border:`1px ${catalogue.loading ? 'dashed' : 'solid'} ${LM.line}`,
-            borderRadius:LM.rad.control, padding:`${LM.sp.xs}px ${LM.sp.md}px`, cursor: catalogue.loading ? 'default' : 'pointer' }}>{catalogue.loading ? 'Checking\u2026' : 'Check again'}</button>
+            borderRadius:LM.rad.control, padding:`${LM.sp.xs}px ${LM.sp.md}px`, cursor: catalogue.loading ? 'default' : 'pointer' }}>{catalogue.loading ? 'Checking\u2026' : 'Check again'}</window.AH_DS.Btn>
       </div>
       <div style={{ display:'grid', gap:LM.sp.sm, padding:LM.sp.lg }}>
       {connectorRows.flatMap(h => {
@@ -11504,20 +11456,20 @@ const SettingsHosts = () => {
               <div style={{ fontWeight:LM.fs.bodySmStrong.wt, fontSize:LM.fs.bodySm.sz, color:LM.ink }}>{h.name}</div>
               <div style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, color:LM.inkSoft }}>{h.officeEnabledSummary ? h.officeEnabledSummary + ' · ' : ''}{h.officeDetail || hostDetail(h)}</div>
             </div>
-            <span style={{ flex:1 }}/>
+            <span style={window.AH_DS.styles.fill}/>
             <span data-host-state="" style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, color:col }}>{word}</span>
             {built && hostOpenPhrase(h) && word !== 'Running' && (
-              <button type="button" onClick={e => startHost(h, e.currentTarget)}
-                style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Start</button>
+              <window.AH_DS.Btn type="button" onClick={e => startHost(h, e.currentTarget)}
+                style={{ ...window.AH_DS.styles.button("secondary", true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Start</window.AH_DS.Btn>
             )}
             {built && !h.officeAggregate && <HostEnableSwitch hostId={h.id} enabled={h.enabled}
               enabledState={h.enabled_state} enabledFreshness={h.enabled_freshness_seconds}
               disabledReason={h.enable_disabled_reason || h.write_disabled_reason || ''}
               authorityReading={catalogue.loading}
               onChange={row => { Object.assign(h, row); setHostRowsRevision(v => v + 1); catalogueChanged(); }}/>}
-            {h.officeAggregate && <button type="button" aria-expanded={officeExpanded ? 'true' : 'false'} aria-label="Show Office host controls"
+            {h.officeAggregate && <window.AH_DS.Btn type="button" aria-expanded={officeExpanded ? 'true' : 'false'} aria-label="Show Office host controls"
               onClick={() => setOfficeExpanded(!officeExpanded)}
-              style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>{officeExpanded ? 'Hide' : 'Show'}</button>}
+              style={{ ...window.AH_DS.styles.button("secondary", true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>{officeExpanded ? 'Hide' : 'Show'}</window.AH_DS.Btn>}
           </div>
         )];
         if (h.officeAggregate && officeExpanded) {
@@ -11532,11 +11484,11 @@ const SettingsHosts = () => {
                   <div style={{ fontWeight:LM.fs.bodySmStrong.wt, fontSize:LM.fs.bodySm.sz, color:LM.ink }}>{child.name || child.id}</div>
                   <div style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, color:LM.inkSoft }}>{hostDetail(child)}</div>
                 </div>
-                <span style={{ flex:1 }}/>
+                <span style={window.AH_DS.styles.fill}/>
                 <span data-host-state="" style={{ fontFamily:LM.sans, fontSize:LM.fs.caption.sz, color:childCol }}>{childWord}</span>
                 {hostOpenPhrase(child) && childWord !== 'Running' && (
-                  <button type="button" onClick={e => startHost(child, e.currentTarget)}
-                    style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Start</button>
+                  <window.AH_DS.Btn type="button" onClick={e => startHost(child, e.currentTarget)}
+                    style={{ ...window.AH_DS.styles.button("secondary", true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>Start</window.AH_DS.Btn>
                 )}
                 <HostEnableSwitch hostId={child.id} enabled={child.enabled}
                   enabledState={child.enabled_state} enabledFreshness={child.enabled_freshness_seconds}
@@ -11550,7 +11502,7 @@ const SettingsHosts = () => {
         return rows;
       })}
       {!connectorRows.length && <SettingsEmpty role={catalogue.error ? 'alert' : 'status'}
-        action={catalogue.error && !catalogue.loading && <button onClick={catalogue.retry} style={{ ...smallBtn(), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>read again</button>}>
+        action={catalogue.error && !catalogue.loading && <window.AH_DS.Btn onClick={catalogue.retry} style={{ ...window.AH_DS.styles.button("secondary", true), padding:`${LM.sp.xs}px ${LM.sp.md}px` }}>read again</window.AH_DS.Btn>}>
         {catalogue.loading ? 'Reading the programs on this machine…' : catalogue.error ? 'Connected programs: ' + catalogue.error + '.' : 'No connected program found yet.'}</SettingsEmpty>}
       </div>
     </div>
@@ -11708,7 +11660,7 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
             {sessions.map(row => {
               const enabled = !saving && row.connected === true && row.selectable !== false && row.reason !== 'ambiguous_endpoint';
               return (
-                <button type="button" key={JSON.stringify([row.app,row.session_id])} disabled={!enabled}
+                <window.AH_DS.Btn type="button" key={JSON.stringify([row.app,row.session_id])} disabled={!enabled}
                   onClick={() => chooseNative(row)} style={pickerRow(enabled, false)} {...pickerHover(enabled)}>
                   <span style={pickerSwatch(LM.inkSoft, onFill)}>{String(row.app || '?')[0].toUpperCase()}</span>
                   <div style={{ flex:1, lineHeight:LM.fs.bodySm.ln + 'px', minWidth:0 }}>
@@ -11721,21 +11673,21 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
                     </div>
                   </div>
                   <span style={pickerTag('')}>{String(row.app || '').toUpperCase()}</span>
-                </button>
+                </window.AH_DS.Btn>
               );
             })}
           </div>}
           <div data-picker-options="" style={{ marginTop:LM.sp.sm }}>
             <div style={pickerGroupLabel()}>OPTIONS</div>
-            <button type="button" disabled={saving} onClick={() => {setLive(null); setNative(null); setDiscovery(value => value + 1);}}
+            <window.AH_DS.Btn type="button" disabled={saving} onClick={() => {setLive(null); setNative(null); setDiscovery(value => value + 1);}}
               style={pickerRow(!saving, false)} {...pickerHover(!saving)}>
               <span style={pickerSwatch(LM.bgSoft, LM.inkSoft)}>↻</span>
               <div style={{ flex:1, lineHeight:LM.fs.bodySm.ln + 'px', minWidth:0 }}>
                 <div style={{ fontSize:LM.fs.bodySm.sz }}>Refresh</div>
                 <div style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', color:LM.inkSoft, letterSpacing:LM.fs.label.letter, fontWeight:LM.fs.label.wt }}>Discover models and open agent sessions again</div>
               </div>
-            </button>
-            {selectedRoute && <button type="button" disabled={saving} aria-label="Clear this model selection"
+            </window.AH_DS.Btn>
+            {selectedRoute && <window.AH_DS.Btn type="button" disabled={saving} aria-label="Clear this model selection"
               onClick={() => choose({name:'Choose a model', route:'', routed:''})}
               style={pickerRow(!saving, false)} {...pickerHover(!saving)}>
               <span style={pickerSwatch(LM.bgSoft, LM.inkSoft)}>×</span>
@@ -11743,7 +11695,7 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
                 <div style={{ fontSize:LM.fs.bodySm.sz }}>Clear selection</div>
                 <div style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', color:LM.inkSoft, letterSpacing:LM.fs.label.letter, fontWeight:LM.fs.label.wt, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{selectedRoute}</div>
               </div>
-            </button>}
+            </window.AH_DS.Btn>}
           </div>
         </div>
       </div>
@@ -11947,12 +11899,12 @@ const Docs = ({ onClose, onHome }) => {
         <div style={{ gridColumn:'1 / -1', gridRow:'1', borderBottom:`1px solid ${LM.line}`, display:'flex', alignItems:'center', gap:LM.sp.md, padding:`0 ${LM.sp.lg}px` }}>
           <span style={{ fontFamily:LM.sans, fontSize:LM.fs.title.sz, lineHeight:LM.fs.title.ln + 'px', fontWeight:LM.fs.title.wt }}>Documentation</span>
           <span style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, color:LM.inkSoft, letterSpacing:LM.fs.label.letter, fontWeight:LM.fs.label.wt }}>STUDIO{build ? ' · ' + build : ''}</span>
-          <div style={{ flex:1 }}/>
-          <button onClick={onHome} aria-label="Home" data-home-button style={{
+          <div style={window.AH_DS.styles.fill}/>
+          <window.AH_DS.Btn onClick={onHome} aria-label="Home" data-home-button style={{
             height:28, padding:'0 10px', border:`1px solid ${LM.line}`,
             background:'transparent', borderRadius:LM.rad.sm, cursor:'pointer',
             color:LM.inkSoft, fontFamily:LM.sans, fontSize:12, fontWeight:500,
-          }}>Home</button>
+          }}>Home</window.AH_DS.Btn>
           <div style={{ position:'relative', width:260 }}>
             <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={onKey}
               placeholder="Search the docs…" style={{
@@ -11972,7 +11924,7 @@ const Docs = ({ onClose, onHome }) => {
                       No match. Try <b style={{ color:LM.ink }}>wire</b>, <b style={{ color:LM.ink }}>skill</b> or <b style={{ color:LM.ink }}>brain</b>.
                     </div>
                   : hits.map((h, i) => (
-                      <button key={h.s + h.k + h.t} onMouseEnter={() => setCur(i)} onClick={() => jump(h)} style={{
+                      <window.AH_DS.Btn key={h.s + h.k + h.t} onMouseEnter={() => setCur(i)} onClick={() => jump(h)} style={{
                         width:'100%', display:'flex', alignItems:'center', gap:LM.sp.sm, padding:`${LM.sp.sm}px ${LM.sp.md}px`,
                         border:0, borderTop: i === 0 ? 'none' : `1px solid ${LM.lineSoft}`,
                         background: i === cur ? LM.bgSoft : 'transparent', cursor:'pointer', textAlign:'left',
@@ -11984,7 +11936,7 @@ const Docs = ({ onClose, onHome }) => {
                         <span style={{ flex:1, minWidth:0, fontFamily: h.k === 'cli' || h.k === 'key' ? LM.mono : LM.sans,
                           fontSize:LM.fs.caption.sz, lineHeight:LM.fs.caption.ln + 'px', color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{h.t}</span>
                         <span style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', color:LM.inkSoft, flexShrink:0 }}>{h.d}</span>
-                      </button>
+                      </window.AH_DS.Btn>
                     ))}
                 {hits.length > 0 && (
                   <div style={{ padding:`${LM.sp.sm}px ${LM.sp.md}px`, borderTop:`1px solid ${LM.lineSoft}`, fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, color:LM.inkSoft, letterSpacing:LM.fs.label.letter }}>
@@ -11994,20 +11946,20 @@ const Docs = ({ onClose, onHome }) => {
               </div>
             )}
           </div>
-          <button onClick={onClose} style={{ width:24, height:24, padding:0, border:`1px solid ${LM.line}`, background:'transparent', borderRadius:LM.rad.control, cursor:'pointer', color:LM.inkSoft, fontSize:LM.icon.ui.size }}>✕</button>
+          <window.AH_DS.Btn onClick={onClose} style={{ width:24, height:24, padding:0, border:`1px solid ${LM.line}`, background:'transparent', borderRadius:LM.rad.control, cursor:'pointer', color:LM.inkSoft, fontSize:LM.icon.ui.size }}>✕</window.AH_DS.Btn>
         </div>
         <div style={{ gridColumn:'1', gridRow:'2', borderRight:`1px solid ${LM.line}`, padding:'10px 8px', overflow:'auto' }}>
           {projection.sections.map(([id, label, badge]) => (
-            <button key={id} onClick={() => setSec(id)} style={{
+            <window.AH_DS.Btn key={id} onClick={() => setSec(id)} style={{
               width:'100%', padding:`${LM.sp.sm}px ${LM.sp.md}px`, borderRadius:LM.rad.control, border:0,
               background: sec === id ? LM.bgSoft : 'transparent',
               color: sec === id ? LM.ink : LM.inkSoft,
               textAlign:'left', cursor:'pointer', fontFamily:LM.sans, fontSize:LM.fs.bodySm.sz,
               display:'flex', alignItems:'center', gap:LM.sp.sm, marginBottom:1,
             }}>
-              <span style={{ flex:1 }}>{label}</span>
+              <span style={window.AH_DS.styles.fill}>{label}</span>
               {badge && <span style={{ fontFamily:LM.sans, fontSize:LM.fs.label.sz, color:LM.inkSoft, letterSpacing:LM.fs.label.letter, fontWeight:LM.fs.label.wt }}>{badge}</span>}
-            </button>
+            </window.AH_DS.Btn>
           ))}
         </div>
         <div className="ah-scroll" style={{ gridColumn:'2', gridRow:'2', overflow:'auto', padding:`20px ${LM.sp.xl}px ${LM.sp.xl}px` }}>
@@ -12204,16 +12156,16 @@ const ApplicationUpdateNotice = () => {
       fontFamily:LM.sans, fontSize:LM.fs.label.sz, letterSpacing:LM.fs.label.letter, fontWeight:LM.fs.label.wt, color:message ? LM.err : LM.accent}}>
     <span aria-hidden="true">{'\u25cf'}</span>
     <span style={{minWidth:0, overflow:'hidden', textOverflow:'ellipsis'}}>{message || label}</span>
-    {state === 'ready' && offered && !message && restartSupported && <button type="button" disabled={!!pending}
+    {state === 'ready' && offered && !message && restartSupported && <window.AH_DS.Btn type="button" disabled={!!pending}
       onClick={restart} title={warning ? 'Click again to restart into build ' + build : 'Restart into build ' + build}
       style={warning ? {...action(!!pending), background:LM.accent, color:LM.bg} : action(!!pending)}>
-      {warning || 'Restart to update'}</button>}
-    {state === 'ready' && offered && !message && !restartSupported && <span style={{color:LM.inkSoft}}>
+      {warning || 'Restart to update'}</window.AH_DS.Btn>}
+    {state === 'ready' && offered && !message && !restartSupported && <span style={window.AH_DS.styles.muted}>
       restart ArchHub to install</span>}
-    {!offered && !message && <button type="button" disabled={!!pending} onClick={() => act('acknowledge')}
-      title="Hide this confirmation" style={action(!!pending)}>Dismiss</button>}
-    {message && (state === 'ready' || !offered) && <button type="button" disabled={!!pending}
-      onClick={() => act('read')} style={action(!!pending)}>Read status</button>}
+    {!offered && !message && <window.AH_DS.Btn type="button" disabled={!!pending} onClick={() => act('acknowledge')}
+      title="Hide this confirmation" style={action(!!pending)}>Dismiss</window.AH_DS.Btn>}
+    {message && (state === 'ready' || !offered) && <window.AH_DS.Btn type="button" disabled={!!pending}
+      onClick={() => act('read')} style={action(!!pending)}>Read status</window.AH_DS.Btn>}
     <span aria-hidden="true" style={{color:LM.inkDim, padding:`0 ${LM.sp.xs}px`}}>{'\u00b7'}</span>
   </div>;
 };
@@ -12280,9 +12232,9 @@ const StatusBar = ({ session, model, setDocsOpen, onOpenWaitingTask }) => {
     };
     if (!onClick) return <span style={style}>{children}</span>;
     return (
-      <button onClick={onClick}
+      <window.AH_DS.Btn onClick={onClick}
         onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
-        style={style}>{children}</button>
+        style={style}>{children}</window.AH_DS.Btn>
     );
   };
   return (
@@ -12297,7 +12249,7 @@ const StatusBar = ({ session, model, setDocsOpen, onOpenWaitingTask }) => {
         {hostLabel && <><span style={{ color:LM.inkDim, padding:`0 ${LM.sp.xs}px` }}>·</span><StripItem>{hostLabel}</StripItem></>}
         {documentLabel && <><span style={{ color:LM.inkDim, padding:`0 ${LM.sp.xs}px` }}>·</span><StripItem>{documentLabel}</StripItem></>}
       </> : hostStripState === 'checking' ? (
-        <StripItem><span style={{ color:LM.inkSoft }}>○</span> Checking programs…</StripItem>
+        <StripItem><span style={window.AH_DS.styles.muted}>○</span> Checking programs…</StripItem>
       ) : hostStripState === 'failed' && connectedHost ? (
         <>
           <StripItem>{'Last known: ' + [hostLabel, documentLabel].filter(Boolean).join(' · ')}</StripItem>
@@ -12310,10 +12262,10 @@ const StatusBar = ({ session, model, setDocsOpen, onOpenWaitingTask }) => {
           <span style={{ color:LM.inkDim, padding:`0 ${LM.sp.xs}px` }}>·</span>
           <StripItem onClick={() => loadCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS)}>Retry</StripItem>
         </>
-      ) : <StripItem><span style={{ color:LM.inkSoft }}>○</span> No program connected</StripItem>}
+      ) : <StripItem><span style={window.AH_DS.styles.muted}>○</span> No program connected</StripItem>}
       {runningCount > 0 && <><span style={{ color:LM.inkDim, padding:`0 ${LM.sp.xs}px` }}>·</span><StripItem>{plural(runningCount, 'running', 'running')}</StripItem></>}
       {waitingCount > 0 && <><span style={{ color:LM.inkDim, padding:`0 ${LM.sp.xs}px` }}>·</span><StripItem>{waitingCount + ' waits for you'}</StripItem></>}
-      <div style={{ flex:1 }}/>
+      <div style={window.AH_DS.styles.fill}/>
       <ApplicationUpdateNotice/>
       <WaitingButton variant="strip" items={waitingItems} onOpenTask={item => onOpenWaitingTask && onOpenWaitingTask(
         item.producer === 'social_approve' ? 'cloud' : 'workshop',

@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const studio = path.join(__dirname, '../nodelang/studio');
+const studio = path.join(__dirname, '../nodelang/studio/archive');
 const html = fs.readFileSync(path.join(studio, 'cockpit.html'), 'utf8');
 const bootScript = html.slice(html.indexOf('<script>') + '<script>'.length, html.indexOf('</script>'));
 
@@ -20,7 +20,7 @@ function bootCockpit(session, fetchImpl) {
 
 function renderWirePanel(window) {
   const Babel = {};
-  vm.runInNewContext(fs.readFileSync(path.join(studio, 'vendor/babel.js'), 'utf8'), {exports: Babel, module: {exports: Babel}});
+  vm.runInNewContext(fs.readFileSync(path.join(studio, '../vendor/babel.js'), 'utf8'), {exports: Babel, module: {exports: Babel}});
   const code = Babel.transform(fs.readFileSync(path.join(studio, 'atlas-panels.jsx'), 'utf8'), {presets: ['env', 'react']}).code;
   const any = new Proxy(function () { return null; }, {get: (_t, key) => key === Symbol.toPrimitive ? () => 'x' : any});
   const React = {createElement: (type, props, ...children) => ({type, props: props || {}, children}), Fragment: 'frag', useState: v => [v, () => {}], useEffect: () => {}, useRef: v => ({current: v}), useMemo: f => f()};

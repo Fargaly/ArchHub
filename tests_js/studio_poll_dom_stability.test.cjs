@@ -62,7 +62,7 @@ async function mountStudio() {
 
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
-  for (const file of ['tokens.jsx', 'design-canvas.jsx', 'shared-data.jsx', 'studio-suite.jsx',
+  for (const file of ['tokens.jsx', 'ds/index.jsx', 'design-canvas.jsx', 'shared-data.jsx', 'studio-suite.jsx',
     'param-types.jsx', 'studio-params.jsx', 'studio-mobile.jsx', 'studio-account.jsx',
     'node-registry.jsx', 'brain-model.jsx', 'workshop-board.jsx', 'studio-workshop.jsx', 'studio-lm.jsx']) {
     win.eval(transformSync(read('nodelang/studio/' + file), {loader:'jsx', target:'es2020'}).code);
@@ -124,7 +124,7 @@ test('identical Workshop polls preserve the single thread and status headers; ch
 });
 
 test('the Workshop projection does not publish when a poll repeats the same scope values', () => {
-  const vm = require('node:vm');
+  const vm = require('./studio_ds_context.cjs');
   const context = vm.createContext({URLSearchParams, TextEncoder});
   vm.runInContext(read('nodelang/studio/studio-existing-workshop.js'), context);
   const api = context.ArchHubExistingWorkshop.create({get:async () => ({}), post:async () => ({})});

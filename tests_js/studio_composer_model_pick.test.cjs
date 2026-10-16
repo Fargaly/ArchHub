@@ -7,9 +7,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const vm = require('node:vm');
+const vm = require('./studio_ds_context.cjs');
 const jsx = fs.readFileSync(path.join(__dirname, '../nodelang/studio/studio-lm.jsx'), 'utf8');
-const html = fs.readFileSync(path.join(__dirname, '../nodelang/studio/studio.html'), 'utf8');
+const html = fs.readFileSync(path.join(__dirname, '../nodelang/studio/studio.html'), 'utf8').replace(/\r\n/g,'\n');
 const workshopSource = fs.readFileSync(path.join(__dirname, '../nodelang/studio/studio-existing-workshop.js'), 'utf8');
 const foundation = {
   fs:{bodySm:{sz:13}, bodySmStrong:{wt:500}, caption:{sz:12, ln:16}, label:{sz:11, ln:14, wt:500, letter:'.04em'}, data:{sz:12, ln:16, wt:400}, dataSm:{sz:11, ln:14, wt:400}},
@@ -85,11 +85,14 @@ test('studio.html saves the pick through the Workshop transport, beside the comp
   assert.ok(bridge > html.indexOf('window.ARCHHUB_AGENT ='), 'defined beside the composer bridge');
   const source = slice('window.ARCHHUB_AGENT_SELECT = ', '\n    };\n', html) + '\n    };';
   const calls = [];
-  const context = vm.createContext({window:{ARCHHUB_EXISTING_WORKSHOP:{setComposerModel:async value => {
-    calls.push(value); return {configuration_state:{composer_model:{value}}}; }}}, Error});
+  const order=[];
+  const context = vm.createContext({window:{ARCHHUB_LOAD_CANVAS:async()=>{order.push('load');},
+    ARCHHUB_EXISTING_WORKSHOP:{setComposerModel:async value => {
+    order.push('save');calls.push(value); return {configuration_state:{composer_model:{value}}}; }}}, Error});
   vm.runInContext(source, context);
   assert.equal(await context.window.ARCHHUB_AGENT_SELECT('openrouter/free'), 'openrouter/free');
   assert.deepEqual(calls, ['openrouter/free']);
+  assert.deepEqual(order,['load','save'],'the real bridge loads canvas authority before saving the owner-held selection');
   context.window.ARCHHUB_EXISTING_WORKSHOP = null;
   await assert.rejects(context.window.ARCHHUB_AGENT_SELECT('openrouter/free'), /cannot save a model selection/);
 });

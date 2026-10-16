@@ -19,6 +19,7 @@ async function mount({rows, statuses = {}, start, node = false, nodeParams = []}
   w.eval(read('nodelang/studio/vendor/react.js'));
   w.eval(read('nodelang/studio/vendor/react-dom.js'));
   w.eval(compile(read('nodelang/studio/tokens.jsx')));
+  w.eval(compile(read('nodelang/studio/ds/index.jsx')));
   const calls = {start:[],finish:[],cancel:[],params:[]};
   w.ARCHHUB_EXISTING_WORKSHOP = {
     listSocialConnections:async () => rows || providers.map((provider,i) => ({provider,name:names[i],state:'not_connected'})),

@@ -29,7 +29,8 @@ test('DSYS077 empty uses live agent/model chips and exactly one addressed compos
     assert.equal(f.calls.find(c=>c[0]==='workshopAction')[4].target,'agent-b');
     f.state.workshop=null;await ui.render();
     assert.doesNotMatch(text(ui.doc.querySelector('[data-workshop72-list]')),/No tasks yet/);
-    assert.match(text(ui.doc.querySelector('[data-workshop72-list] [role=status]')),/Not available yet/);
+    assert.match(text(ui.doc.querySelector('[data-workshop72-list] [role=status]')),/Unavailable/);
+    assert.doesNotMatch(text(ui.doc.body),/Not available yet/,'missing authority uses product-safe copy');
   }finally{await ui.close();}
 });
 

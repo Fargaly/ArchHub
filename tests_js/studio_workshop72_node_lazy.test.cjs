@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const vm = require('node:vm');
+const vm = require('./studio_ds_context.cjs');
 const {createHash, webcrypto} = require('node:crypto');
 const {mountWorkshopNode, read, slice} = require('./workshop72_node_helpers.cjs');
 function fixture({count=7, input='elements', output='labels'} = {}) {
@@ -101,7 +101,8 @@ test('WORKSHOP-72 unavailable authority never invents counts, participants, appr
   const fx=fixture();fx.state.workshop=null;fx.state.nativeWork=null;fx.state.topology.graph.nodes=[fx.node];
   const ui=await mountWorkshopNode(fx);
   try {
-    assert.equal(ui.doc.querySelector('[data-workshop-node-status]').textContent,'Not available yet');
+    assert.equal(ui.doc.querySelector('[data-workshop-node-status]').textContent,'Unavailable');
+    assert.doesNotMatch(ui.doc.querySelector('[data-workshop-node-face]').textContent,/Not available yet/);
     assert.equal(ui.doc.querySelectorAll('[data-workshop-node-member],[data-workshop-node-review],textarea').length,0);
     assert.doesNotMatch(ui.doc.querySelector('[data-workshop-node-face]').textContent,/\d+ (?:tags|labels)/);
   } finally {await ui.close();}
@@ -115,7 +116,7 @@ async function loaderFixture({stale=false}={}) {
   const sources=new Map(),scripts=[],fetches=[];
   const files=names.map(source=>{
     const bytes=Buffer.from('// '+source),hash=digest(bytes),compiled=Buffer.from('/* '+source+' */');sources.set(source,bytes);
-    return {source,output:source.replace(/\.jsx$/,'.js'),source_bytes:bytes.length,source_sha256:hash,
+    return {source,output:source.replace(/\//g,'-').replace(/\.jsx$/,'.js'),source_bytes:bytes.length,source_sha256:hash,
       bytes:compiled.length,sha256:digest(compiled),integrity:'sha256-'+createHash('sha256').update(compiled).digest('base64')};
   });
   if(stale)sources.set('studio-workshop.jsx',Buffer.from('// changed'));
@@ -260,7 +261,8 @@ test('WORKSHOP-72 a connection without the existing moveMember capability keeps 
   try{
     delete ui.win.ARCHHUB_EXISTING_WORKSHOP.moveMember;await ui.draw();
     const tile=ui.doc.querySelector('[data-workshop-node-member]');
-    assert.equal(tile.dataset.workshopMemberDraggable,'false');assert.match(tile.title,/Not available yet/);
+    assert.equal(tile.dataset.workshopMemberDraggable,'false');assert.match(tile.title,/Unavailable/);
+    assert.doesNotMatch(tile.title,/Not available yet/);
     await ui.mouse(tile,'mousedown',40,40);await ui.mouse(ui.doc,'mousemove',500,200);await ui.mouse(ui.doc,'mouseup',500,200);
     assert.equal(ui.calls.length,0);
   }finally{await ui.close();}

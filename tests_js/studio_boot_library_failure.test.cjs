@@ -80,6 +80,6 @@ test('a failed first read can retry, and MODS refresh updates all catalogue inde
 test('the Nodes panel says why the library is empty', () => {
   const lm = fs.readFileSync(path.join(studio, 'studio-lm.jsx'), 'utf8');
   const panel = lm.slice(lm.indexOf('const NodesPanel = '), lm.indexOf('{library.map(group => {', lm.indexOf('const NodesPanel = ')));
-  assert.match(panel, /!library\.length && window\.AH_LIBRARY_ERROR/);
-  assert.match(panel, /The node library could not be loaded: /);
+  assert.match(panel, /libraryRead\.loading \|\| libraryRead\.error \|\| !library\.length/);
+  assert.match(panel, /detail=\{libraryRead\.error\}[\s\S]*onRetry=\{libraryRead\.error \|\| !library\.length \? libraryRead\.retry/);
 });

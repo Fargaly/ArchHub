@@ -64,7 +64,7 @@ test('parameter rows use DSYS 4.6 one-row controls and hide internal params', ()
   assert.match(params, /const PARAM_LABEL_COL = 96;/);
   assert.match(params, /const PARAM_ROW_H = 32;/);
   assert.match(paramRow, /data-param-row="true"/);
-  assert.match(paramRow, /gridTemplateColumns:`\$\{PARAM_LABEL_COL\}px minmax\(0,1fr\) auto`/);
+  assert.match(paramRow, /gridTemplateColumns:spec\.fixed \? [^\n]+ : `\$\{PARAM_LABEL_COL\}px minmax\(0,1fr\) auto`/);
   assert.match(paramRow, /minHeight:PARAM_ROW_H/);
   assert.match(paramRow, /humanParamLabel/);
   assert.match(paramRow, /data-param-control="true"/);

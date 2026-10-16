@@ -21,6 +21,7 @@ async function mount() {
   await page.addScriptTag({content:transformSync(`
     const LM={bgDeep:'#0c0c0e',bg:'#111',bgPanel:'#151515',bgHover:'#222',ink:'#eee',inkSoft:'#999',sans:'Arial',lineSoft:'#222',line:'#333',accent:'#e88',warn:'#fa0',rad:{sm:5,md:8},fs:{dataSm:{sz:11}},userAv:'#cba',onUserAv:'#111',elev:{e1:'none'}};
     window.AH=LM; const useWorkshopProjection=()=>({}); const workshopWaitingItems=()=>[];
+    ${read('nodelang/studio/ds/index.jsx')}
     ${rail}
     ${part(source,'// DSYS-060 app frame parts.','const isHistoryNode =')}
     ${part(source,'const WsHeader =','const ContextMenu =') .split('const WsTab =')[0]}

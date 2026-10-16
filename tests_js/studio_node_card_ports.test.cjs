@@ -8,7 +8,7 @@ const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const vm = require('node:vm');
+const vm = require('./studio_ds_context.cjs');
 
 const source = fs.readFileSync(path.join(__dirname, '../nodelang/studio/studio-lm.jsx'), 'utf8');
 const tokens = fs.readFileSync(path.join(__dirname, '../nodelang/studio/tokens.jsx'), 'utf8');
@@ -126,7 +126,8 @@ test('sockets sit in a port band below the title and summary, one row per port, 
       assert.ok(element, 'the card is drawn: ' + node.id);
       const band = element.querySelector('[data-port-band]');
       assert.ok(band && band.parentElement === element, 'the card has its own port band: ' + node.id);
-      assert.equal(band, element.lastElementChild.previousElementSibling, 'the band follows the title/body and precedes the live status footer');
+      const footer = element.querySelector('[data-node-footer-status]');
+      assert.equal(band.nextElementSibling, footer, 'band is last for an unmeasured state, or immediately precedes its supplied status footer');
       const rows = Math.max(node.ins.length, node.outs.length);
       assert.equal(band.style.height, (PAD * 2 + rows * STEP) + 'px', 'one row per port pair: ' + node.id);
       const sides = [['in', node.ins, 'left'], ['out', node.outs, 'right']];

@@ -1,5 +1,7 @@
 {
   "counts": {
+    "local_button_helpers": 10,
+    "inline_styles": 2011,
     "http_servers": 5,
     "graph_authorities": 1,
     "revit_adapters": 2,
@@ -10,9 +12,11 @@
     "unimported_modules": 39,
     "placeholder_strings": 53,
     "dead_params_known": 4,
-    "loc_nodelang": 323132
+    "loc_nodelang": 319360
   },
   "definitions": {
+    "local_button_helpers": "style-returning const arrow factories with Btn/Button in the name, plus HoverBtn, in studio/*.jsx; ds/ is the shared owner",
+    "inline_styles": "literal JSX style={{...}} attributes in studio/*.jsx; ds/ is the shared owner",
     "http_servers": "modules that construct an HTTP server (HTTPServer/ThreadingHTTPServer/uvicorn.run/web.run_app)",
     "graph_authorities": "modules that open the universal graph sqlite store directly (sqlite3.connect on a *universal*.sqlite3 path or class *GraphStore/*CellStore)",
     "revit_adapters": "modules defining Revit execution adapters (def/class names with 'revit' + exec/adapter/bridge)",

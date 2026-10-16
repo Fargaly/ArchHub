@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.join(__dirname, '..');
-const read = file => fs.readFileSync(path.join(root, 'nodelang/studio', file), 'utf8');
+const read = file => fs.readFileSync(path.join(root, 'nodelang/studio/archive', file), 'utf8');
 
 test('atlas geometry polls pause while the document is hidden', () => {
   for (const file of ['atlas-engine.jsx', 'atlas-cockpit.jsx']) {

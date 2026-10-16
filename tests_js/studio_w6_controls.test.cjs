@@ -15,10 +15,16 @@ function slice(open, close) {
 
 test("W6 Settings Theme rows are real pickers and instant accent controls", () => {
   const theme = slice("const SettingsTheme = ", "const SettingsShortcuts = ");
-  for (const label of ["Editor font", "Display font", "Density"]) {
-    assert.match(theme, new RegExp("<select aria-label=\"" + label + "\"[\\s\\S]*onChange=\\{e => applyAppearance"));
-  }
+  // The b16 baseline already delegates application cells to their real parameter
+  // owner; the former hand-written font/density select markup was retired.
+  assert.match(theme, /const projection = useStudioProjection\(\)/);
+  assert.match(theme, /node\.application[\s\S]*row\.k === 'accent' && row\.editable === true/);
+  assert.match(theme, /<window\.ApplicationNodeParameters node=\{node\}\/>/);
+  assert.match(theme, /: <SettingsPersonalTheme\/>/);
   assert.match(theme, /<input aria-label="Choose accent colour" type="color"/);
+  assert.match(theme, /onChange=\{event => \{setAccent\(event\.target\.value\); setDirty\(true\);\}\}/);
+  assert.match(theme, /onClick=\{\(\) => run\(\(\) => api\.previewThemeToken\('accent', accent\), true\)\}/);
+  assert.match(theme, /Apply accent/);
   assert.equal(theme.includes("Save accent"), false, "accent applies from the swatch flow, not a form save");
 });
 
@@ -53,9 +59,9 @@ test("W6 no visible button is left without an action in the swept shell areas", 
   const shell = slice("const Frame = ", "const isHistoryNode = ");
   assert.equal(shell.includes("Share · not available"), false);
   const chats = slice("const ChatsPanel = ", "const NodesPanel = ");
-  assert.equal(/<button title="More"[^>]*>/.test(chats), false);
+  assert.equal(/<(?:button|window\.AH_DS\.Btn) title="More"[^>]*>/.test(chats), false);
   const skills = slice("const SkillsPanel = ", "const SearchPanel = ");
-  assert.equal(/<button title="New skill"[^>]*>/.test(skills), false);
+  assert.equal(/<(?:button|window\.AH_DS\.Btn) title="New skill"[^>]*>/.test(skills), false);
   const header = slice("const WsHeader = ", "const WsTab = ");
   assert.equal(header.includes(">fork<"), false);
   assert.equal(header.includes(">save as skill<"), false);
@@ -91,12 +97,16 @@ test("W6b Settings renders no developer-only capability or no-wire host prose", 
 
 test("W6b Settings has no global disabled edit or dash-grid Team placeholders", () => {
   const chat = slice("const ChatView = ", "const ChatTurn = ");
-  assert.equal(chat.includes(">edit</button>"), false, "system prompt edit is removed until it has a handler");
+  assert.equal(/>edit<\/(?:button|window\.AH_DS\.Btn)>/.test(chat), false, "system prompt edit is removed until it has a handler");
   const team = slice("const SettingsTeam = ", "// ── Profile:");
   for (const placeholder of ["FIRM", "SEATS", "USED", "YOUR ROLE", "\\u2014"]) {
     assert.equal(team.includes(placeholder), false, placeholder + " placeholder is not rendered");
   }
-  assert.match(team, /Members you invite will appear here/);
+  // b16 already shows the signed-in owner rather than an invented invitation roster.
+  assert.match(team, /const signedIn = !!account\?\.signedIn/);
+  assert.match(team, /Sign in to see your team/);
+  assert.match(team, /\{signedIn && <div[\s\S]*\{name \|\| email\}[\s\S]*>Owner<\/span>/);
+  assert.match(team, /onClick=\{onAccount\}[\s\S]*>Manage account<\/window\.AH_DS\.Btn>/);
 });
 
 test("W6b Account and Workspaces hide or explain disabled crawl targets", () => {
@@ -111,9 +121,9 @@ test("W6b Account and Workspaces hide or explain disabled crawl targets", () => 
   assert.equal(identityBranch.includes("Not signed in"), false, "signed-out Account has no duplicate identity card");
   assert.equal(identityBranch.includes("Signed in as "), true, "signed-in identity row names the account (design #cloud)");
   const workspaces = slice("const SettingsWorkspaces = ", "const SettingsHosts = ");
-  assert.match(workspaces, /\{ready && <button[\s\S]*>Add<\/button>\}/);
+  assert.match(workspaces, /\{ready && <window\.AH_DS\.Btn[\s\S]*onClick=\{add\}[\s\S]*>Add<\/window\.AH_DS\.Btn>\}/);
   assert.match(workspaces, /Workspaces are added in Settings > Workspaces after the workspace registry check passes/);
-  const addForm = workspaces.slice(workspaces.indexOf("{ready && <button"), workspaces.indexOf("</button>}", workspaces.indexOf("{ready && <button")));
+  const addForm = workspaces.slice(workspaces.indexOf("{ready && <window.AH_DS.Btn"), workspaces.indexOf("</window.AH_DS.Btn>}", workspaces.indexOf("{ready && <window.AH_DS.Btn")));
   assert.match(addForm, /title=\{!path\.trim\(\) \? 'Choose a folder first'/);
 });
 
@@ -132,7 +142,7 @@ test("W6d Settings detail strings are product-safe and short", () => {
   }
   assert.equal(/no key \\u00b7 set|ARCHHUB_CLOUD_TOKEN|127\.0\.0\.1|localhost:/.test(providers), false);
   assert.match(hosts, /hostDetail\(h\)/);
-  assert.match(hosts, /Start<\/button>/);
+  assert.match(hosts, /onClick=\{e => startHost\(h, e\.currentTarget\)\}[\s\S]*Start<\/window\.AH_DS\.Btn>/);
   for (const safe of ["Start 3ds Max from ArchHub when needed", "Start Rhino from ArchHub when needed", "Start Blender from ArchHub when needed", "Manager not found"]) {
     assert.match(source, new RegExp(safe.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }

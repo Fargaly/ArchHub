@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const vm = require('node:vm');
+const vm = require('./studio_ds_context.cjs');
 const {mounted, read} = require('./workshop72_regression_helpers.cjs');
 const {fixture} = require('./workshop72_fixture.cjs');
 

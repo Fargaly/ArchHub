@@ -73,7 +73,7 @@ test('rail panels, docs and settings expose labelled navigation controls', async
       if (title === 'Skills' || title === 'Search') ui.flush(() => ui.doc.querySelector('[data-rail-panel="Library"]').click());
       const icon = title === 'Skills' || title === 'Search'
         ? ui.doc.querySelector('[data-library-tab="' + title.toLowerCase() + '"]')
-        : ui.doc.querySelector(`[title="${title}"]`);
+        : ui.doc.querySelector(`[data-rail-panel="${title}"]`);
       assert.ok(icon, title + ' navigation control exists');
       ui.flush(() => icon.click());
       if (title === 'Library') assert.ok(ui.doc.querySelector('input[placeholder^="Search"]'), 'Library panel has search');

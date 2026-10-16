@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const vm = require('node:vm');
+const vm = require('./studio_ds_context.cjs');
 const {mountWorkshopNode, read, slice} = require('./workshop72_node_helpers.cjs');
 
 function fixture() {
@@ -96,7 +96,10 @@ test('DSYS-076 free agent model label refuses a paid registry route', async () =
   fx.state.workshop.participants[0].free_only = true;
   const ui = await mountWorkshopNode({...fx,node:agent});
   try {
-    assert.equal(ui.doc.querySelector('[data-node-card-subtitle]').textContent,'Not available yet');
+    assert.equal(ui.win.ARCHHUB_WORKSHOP_AGENT_MODEL(fx.state.workshop.participants[0],fx.state),null,
+      'free-only model selection rejects the paid registry entry');
+    assert.equal(ui.doc.querySelector('[data-node-card-subtitle]').textContent,'Unavailable');
+    assert.doesNotMatch(ui.doc.querySelector('[data-node-card-subtitle]').textContent,/Not available yet/);
     fx.state.models.items[0].free = true;
     await ui.draw({state:fx.state});
     assert.equal(ui.doc.querySelector('[data-node-card-subtitle]').textContent,'Registry supplied model');
@@ -150,6 +153,10 @@ test('DSYS-078 Settings system canvas mounts the same skin, preview, 30px ring, 
   const container = ui.doc.createElement('div');ui.doc.body.appendChild(container);const root = createRoot(container);
   try {
     const source = read('nodelang/studio/studio-lm.jsx'), {transformSync} = require('esbuild');
+    vm.runInContext(transformSync(read('nodelang/studio/param-types.jsx'),{loader:'jsx'}).code,ui.context);
+    // Keep the real parameter module's local bindings isolated from the canvas source slice,
+    // while retaining its actual ApplicationNodeParameters export and readonly row behavior.
+    vm.runInContext(transformSync('(function(){\n'+read('nodelang/studio/studio-params.jsx')+'\n})();',{loader:'jsx'}).code,ui.context);
     const helpers = ['settings54NodeTitle','settings54ParamKey','settings54ParamLabel','settings54ParamValue']
       .map(name => source.match(new RegExp('const ' + name + ' = [^\\n]+'))[0]).join('\n');
     vm.runInContext(transformSync(helpers + '\n' + slice(source,'const Settings54Tile =','const Settings54Seg =') +

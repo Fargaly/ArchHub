@@ -41,7 +41,7 @@ async function mounted(state, authority, extra = {}) {
   const context = vm.createContext({React, window:win, document:win.document, setTimeout, clearTimeout, console,
     URL, Blob, TextEncoder, CustomEvent:win.CustomEvent, AbortController:win.AbortController, fetch:(...args) => win.fetch(...args)});
   vm.runInContext(read('nodelang/studio/tokens.jsx'), context);
-  for (const source of ['workshop-board.jsx','shared-data.jsx','studio-workshop.jsx']) {
+  for (const source of ['ds/index.jsx','workshop-board.jsx','shared-data.jsx','studio-workshop.jsx']) {
     vm.runInContext(transformSync(read('nodelang/studio/' + source), {loader:'jsx'}).code, context);
   }
   win.ARCHHUB_EXISTING_WORKSHOP = authority;

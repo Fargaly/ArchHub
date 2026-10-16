@@ -10,7 +10,7 @@ const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const vm = require('node:vm');
+const vm = require('./studio_ds_context.cjs');
 
 const root = path.resolve(__dirname, '..');
 const sourcePath = process.env.ARCHHUB_WORKSPACE_TEST_PATH ||

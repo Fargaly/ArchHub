@@ -34,7 +34,7 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
     // compiler, polling, or automatic rebuild; npm run build:studio is explicit.
     if (studioMount) return studioMount;
     studioMount = (async () => {
-      const names = ['tokens.jsx','design-canvas.jsx','shared-data.jsx',
+      const names = ['tokens.jsx','ds/index.jsx','design-canvas.jsx','shared-data.jsx',
         'studio-suite.jsx','param-types.jsx','studio-params.jsx',
         'studio-mobile.jsx','studio-account.jsx','node-registry.jsx','brain-model.jsx','workshop-board.jsx','studio-workshop.jsx','studio-lm.jsx','mount.jsx'];
       const refusal = message => { throw new Error(message + ' Run npm run build:studio, or install a complete release.'); };
@@ -68,7 +68,7 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       let sourceBytes = 0, outputBytes = 0;
       for (let index = 0; index < names.length; index += 1) {
         const file = manifest.files[index];
-        if (!file || file.source !== names[index] || file.output !== names[index].replace(/\.jsx$/, '.js') ||
+        if (!file || file.source !== names[index] || file.output !== names[index].replace(/\//g, '-').replace(/\.jsx$/, '.js') ||
             !/^[a-f0-9]{64}$/.test(file.source_sha256) || !/^[a-f0-9]{64}$/.test(file.sha256) ||
             !Number.isSafeInteger(file.source_bytes) || file.source_bytes < 0 || file.source_bytes > 1048576 ||
             !Number.isSafeInteger(file.bytes) || file.bytes < 1 || file.bytes > 2097152) {

@@ -423,7 +423,7 @@ test('F2R owner decisions: unsupported waiting producers are refused and not mar
     assert.ok(studio.doc.querySelector('[data-home-results] [data-approval-component="shared"]'));
     const approve=studio.button('Approve');
     assert.equal(approve.disabled,true,'unknown producer has no admitted decision route');
-    assert.equal(approve.title,'Not available yet');
+    assert.equal(approve.title,'Unavailable');
     studio.win.ReactDOM.flushSync(() => approve.click());
     await studio.settle();
     assert.equal(studio.doc.querySelector('[data-approval-component="shared"]')!==null,true,'refusal is visible through the single approval component');
@@ -596,6 +596,7 @@ test('Home composer chips call their existing handlers', async () => {
     studio.win.ReactDOM.flushSync(() => studio.button('@ skill').click());
     assert.ok(studio.doc.body.textContent.includes('Search saved skills'),
       '@ skill opens the existing Skills panel');
+    studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-rail-panel="Home"]').click());
     studio.win.ReactDOM.flushSync(() => studio.button('# host').click());
     assert.ok(studio.doc.querySelector('[role="menu"] button')?.textContent.includes('Revit 2025'),
       '# host opens a live host picker');

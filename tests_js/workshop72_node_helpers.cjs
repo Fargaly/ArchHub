@@ -1,6 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const vm = require('node:vm');
+const vm = require('./studio_ds_context.cjs');
 const assert = require('node:assert/strict');
 const studioRoot = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(studioRoot, file), 'utf8');

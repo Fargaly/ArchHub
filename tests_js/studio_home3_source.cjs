@@ -1,7 +1,7 @@
 const fs=require('node:fs'),path=require('node:path'),{createHash}=require('node:crypto');
 const root=path.resolve(__dirname,'..'),studio=path.join(root,'nodelang','studio');
 const originalRead=fs.readFileSync;
-const sources=['tokens.jsx','design-canvas.jsx','shared-data.jsx','studio-suite.jsx','param-types.jsx','studio-params.jsx','studio-mobile.jsx','studio-account.jsx','node-registry.jsx','brain-model.jsx','workshop-board.jsx','studio-workshop.jsx','studio-lm.jsx','mount.jsx'];
+const sources=['tokens.jsx','ds/index.jsx','design-canvas.jsx','shared-data.jsx','studio-suite.jsx','param-types.jsx','studio-params.jsx','studio-mobile.jsx','studio-account.jsx','node-registry.jsx','brain-model.jsx','workshop-board.jsx','studio-workshop.jsx','studio-lm.jsx','mount.jsx'];
 const files=sources.map(source=>({source,output:source.replace(/\.jsx$/,'.js'),source_sha256:createHash('sha256').update(originalRead(path.join(studio,source))).digest('hex')}));
 const cache=new Map();
 fs.readFileSync=function(file,options){

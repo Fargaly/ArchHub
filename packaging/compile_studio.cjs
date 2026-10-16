@@ -8,7 +8,7 @@ const {createHash, randomUUID} = require('node:crypto');
 const root = path.resolve(__dirname, '..');
 const studio = path.join(root, 'nodelang', 'studio');
 const output = path.join(studio, 'compiled');
-const names = ['tokens.jsx', 'design-canvas.jsx', 'shared-data.jsx', 'studio-suite.jsx',
+const names = ['tokens.jsx', 'ds/index.jsx', 'design-canvas.jsx', 'shared-data.jsx', 'studio-suite.jsx',
   'param-types.jsx', 'studio-params.jsx', 'studio-mobile.jsx', 'studio-account.jsx',
   'node-registry.jsx', 'brain-model.jsx', 'workshop-board.jsx', 'studio-workshop.jsx', 'studio-lm.jsx', 'mount.jsx'];
 const version = '7.29.0';
@@ -42,7 +42,7 @@ function inputs() {
 function sourceFiles() {
   const files = names.map(source => {
     const bytes = readFile(path.join(studio, source), 1024 * 1024);
-    return {source, output:source.replace(/\.jsx$/, '.js'), source_bytes:bytes.length,
+    return {source, output:source.replace(/\//g, '-').replace(/\.jsx$/, '.js'), source_bytes:bytes.length,
       source_sha256:digest(bytes), text:new TextDecoder('utf-8', {fatal:true}).decode(bytes)};
   });
   requireThat(files.reduce((sum, file) => sum + file.source_bytes, 0) <= 2 * 1024 * 1024,
@@ -55,7 +55,7 @@ function generatedDirectory(create) {
   requireThat(info.isDirectory() && !info.isSymbolicLink(), 'Studio compiled output must be a real directory.');
 }
 function writeAtomic(name, bytes) {
-  requireThat(name === 'manifest.json' || names.some(source => source.replace(/\.jsx$/, '.js') === name),
+  requireThat(name === 'manifest.json' || names.some(source => source.replace(/\//g, '-').replace(/\.jsx$/, '.js') === name),
     'Unexpected generated Studio filename.');
   const filename = path.join(output, name);
   const temporary = path.join(output, '.' + name + '.' + randomUUID() + '.tmp');

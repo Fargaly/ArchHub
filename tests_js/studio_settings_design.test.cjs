@@ -130,10 +130,11 @@ test('the Settings sidebar is the DSYS-065 six-group graph rail and retains the 
     assert.equal(dialog.getAttribute('aria-label'), 'Settings');
     assert.deepEqual([...dialog.querySelectorAll('[data-settings54-group-title]')].map(node => node.textContent.trim()),
       ['Account', 'Connections', 'AI', 'Permissions', 'Appearance', 'Storage & About']);
-    s.flush(() => [...dialog.querySelectorAll('button')].find(b => b.textContent.trim() === 'System graph').click());
-    await s.settle();
-    assert.equal(dialog.querySelectorAll('[data-settings54-node-card]').length >= 5, true,
-      'System graph cards are the visible Settings surface');
+    await s.tab('System');
+    assert.equal(dialog.querySelectorAll('[data-system-mini-node]').length,6,
+      'System capability previews every projected application node');
+    assert.ok([...dialog.querySelectorAll('button')].some(button=>button.textContent.trim()==='Open the System graph'),
+      'the full System graph has its own explicit workspace route');
     assert.deepEqual([dialog.style.width, dialog.style.height], ['100%', '100%'],
       'the full-page Settings shell grows with the window');
     assert.ok(dialog.querySelector('[data-settings54-nav]').classList.contains('ah-scroll'),

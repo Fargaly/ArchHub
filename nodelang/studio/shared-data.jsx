@@ -86,7 +86,7 @@ const workshopTaskItems = (messages, nodes, plannedItems) => {
     const latest = wsText(card.events[card.events.length - 1]);
     card.state = (WORKSHOP_TASK_STATES.find(([pattern]) => pattern.test(latest)) || [null, 'open'])[1];
     const [kind, id] = card.work.split(':');
-    card.title = card.node?.title || 'Not available yet';
+    card.title = card.node?.title || null;
     card.owner = wsSender(card.events[card.events.length - 1]);
   });
   (Array.isArray(plannedItems) ? plannedItems : []).forEach(row => {
@@ -122,7 +122,7 @@ const wsTasks = (items, nodes, wires, native, names) => {
     const node = nodes.find(row => row.id === native.work) || null;
     const [kind, id] = String(native.work).split(':');
     const card = {kind:'task', work:native.work, node, events:[], state:'open', owner:null, nativeOnly:true,
-      title:node?.title || 'Not available yet'};
+      title:node?.title || null};
     cards.push(card); items.push(card);
   }
   const titles = new Map(nodes.map(node => [node.id, node.title || node.id]));
@@ -257,7 +257,7 @@ const workshopPresentationIdentity = (state = {}) => {
 };
 window.ARCHHUB_WORKSHOP_AGENT_MODEL = (agent = {}, state = {}) => {
   const identity = workshopPresentationIdentity(state), account = identity.subject;
-  if (identity.conflict) return 'Not available yet';
+  if (identity.conflict) return null;
   const presentation = state.workshopPresentation;
   const bound = !!presentation && typeof account === 'string' && account.length > 0 && presentation.subject === account && presentation.graph_id === identity.graph;
   const registry = (bound ? presentation.models : null) || state.models || state.model_registry;
@@ -268,7 +268,7 @@ window.ARCHHUB_WORKSHOP_AGENT_MODEL = (agent = {}, state = {}) => {
   const freeOnly = agent.free_only === true || agent.free === true || /opencode|openrouter/.test(String(agent.runtime || agent.row?.runtime || ''));
   const row = models.find(model => [model.id,model.route,model.model].includes(id) &&
     (!freeOnly || model.free === true || model.is_free === true || /(?:^openrouter\/free$|:free$)/.test(String(model.route || model.id || ''))));
-  return row?.name || row?.label || 'Not available yet';
+  return row?.name || row?.label || null;
 };
 window.ARCHHUB_WORKSHOP_MODEL = ({state = {}, descriptor = {}, selected, hostLine = '', modelChip = ''} = {}) => {
   const root = descriptor.root || '';
@@ -309,7 +309,7 @@ window.ARCHHUB_WORKSHOP_MODEL = ({state = {}, descriptor = {}, selected, hostLin
         /^Runtime-/i.test(row.label || '') ? '' : row.label;
       return {...row, id:row.root, label:name, name, row, col, ink:window.AH.onFill, verified,
         modelLabel:window.ARCHHUB_WORKSHOP_AGENT_MODEL(row,state),
-        liveState:row.state || row.connection_status || (verified ? 'connected' : 'Not available yet'),
+        liveState:row.state || row.connection_status || (verified ? 'connected' : 'Unavailable'),
         presence:verified ? 'online' : 'unknown', progress:Number.isFinite(row.progress) ? row.progress : null,
         graph_member_id:graphMemberId(row), graph_group_id:groupRoot,
         live_roots:verified ? [row.root] : [],
@@ -390,7 +390,7 @@ window.ARCHHUB_WORKSHOP_MODEL = ({state = {}, descriptor = {}, selected, hostLin
   const ready = roster.filter(row => row.verified);
   const node = (graph.nodes || []).find(row => row.id === groupRoot);
   const status = approval ? 'Waits for you' : operation?.state === 'awaiting_approval' && operation.approved === true ? 'Approved' : operation?.state ? operation.state.replaceAll('_', ' ') :
-    active?.status || active?.nodeStatus || active?.state || held?.state || 'Not available yet';
+    active?.status || active?.nodeStatus || active?.state || held?.state || 'Unavailable';
   const needsUser = task => task.approving || pendingProposal(task) || ['review','submitted','needs-user','needs_user','awaiting_approval'].includes(task.state);
   const waiting = unique.filter(task=>!['done','archived','cancelled'].includes(task.state) && needsUser(task)).length;
   const today = new Date().toDateString();
@@ -409,8 +409,8 @@ window.ARCHHUB_WORKSHOP_MODEL = ({state = {}, descriptor = {}, selected, hostLin
     .map(event=>({root:event.root,title:event.step_title || active.title,state:source.eventState(event),duration:event.duration}));
   const steps = stepSource.map(step => {
     const live = graph.nodes.find(node => node.id === (step.root || step.id));
-    return {...step,title:step.title || step.label || live?.label || 'Not available yet',
-      state:live?.state || live?.status || step.state || step.status || 'Not available yet',
+    return {...step,title:step.title || step.label || live?.label || 'Unavailable',
+      state:live?.state || live?.status || step.state || step.status || 'Unavailable',
       duration:live?.duration ?? live?.elapsed ?? step.duration ?? step.elapsed,
       result:live?.result_word ?? live?.result ?? step.result_word ?? step.result ?? step.output_label};
   });
@@ -654,7 +654,7 @@ window.ARCHHUB_APPROVAL_CARD = function ApprovalCard({approval = {}, onApprove, 
     <header style={{display:'flex',alignItems:'center',gap:12,padding:'16px 18px'}}>
       {approval.host && <span data-approval-host="" style={{width:36,height:36,borderRadius:9,background:'linear-gradient(180deg,#3f7be0,#2b5fb8)',
         color:'#fff',display:'grid',placeItems:'center',fontWeight:800,fontSize:15}}>{Array.from(approval.host)[0]}</span>}
-      <div style={{flex:1}}><div style={{fontSize:16,fontWeight:700}}>{approval.title || 'Not available yet'}</div>
+      <div style={{flex:1}}><div style={{fontSize:16,fontWeight:700}}>{approval.title || 'Unavailable'}</div>
         {subline && <div data-approval-meta="" style={{fontSize:13,color:A.inkSoft,marginTop:2}}>{subline}</div>}</div>
       {approval.writes_to_model === true && <span data-approval-writes-model="" style={{display:'inline-flex',alignItems:'center',gap:6,height:24,
         padding:'0 9px',borderRadius:999,background:`${markColour}1f`,color:markColour,fontSize:12,fontWeight:600}}>Writes to your model</span>}
@@ -670,27 +670,27 @@ window.ARCHHUB_APPROVAL_CARD = function ApprovalCard({approval = {}, onApprove, 
         <strong style={{fontSize:22,fontWeight:700}}>{total} {approval.unit || 'changes'}</strong>
         <span style={{fontSize:13,color:A.inkSoft}}>Spatial preview unavailable</span>
       </div>}
-      {previewKind === 'post' ? <div data-approval-post="" style={{whiteSpace:'pre-wrap',fontSize:14}}>{approval.post?.text || approval.post_text || approval.preview?.text || 'Not available yet'}</div> :
+      {previewKind === 'post' ? <div data-approval-post="" style={{whiteSpace:'pre-wrap',fontSize:14}}>{approval.post?.text || approval.post_text || approval.preview?.text || 'Unavailable'}</div> :
         previewKind === 'email' ? <div data-approval-email="" style={{fontSize:14,whiteSpace:'pre-wrap'}}>
           {[approval.email?.to,approval.email?.subject,approval.email?.body].filter(Boolean).map((value,i) => <div key={i}>{value}</div>)}
           {(approval.email?.attachments || []).map((attachment,i) => <div data-approval-attachment="" key={attachment.id || i}>{attachment.name || attachment.filename}</div>)}
-        </div> : previewKind === 'sign-in' ? <div data-approval-sign-in="" style={{fontSize:14}}>{approval.sign_in?.line || approval.preview?.line || 'Not available yet'}</div> :
+        </div> : previewKind === 'sign-in' ? <div data-approval-sign-in="" style={{fontSize:14}}>{approval.sign_in?.line || approval.preview?.line || 'Unavailable'}</div> :
         rows.length ? <div data-approval-diff="" style={{borderRadius:10,border:`1px solid ${A.lineSoft}`,overflow:'hidden'}}>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',padding:'6px 14px',fontSize:12,color:A.inkSoft,fontWeight:600,background:'#15151a'}}><span>{approval.item_label || 'Item'}</span><span>Now</span><span>After</span></div>
           {(expanded ? rows : rows.slice(0,3)).map((row,i) => <div data-workshop-change-row="" key={row.id || i} style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',padding:'7px 14px',borderTop:`1px solid ${A.lineSoft}`,fontSize:14,fontWeight:500}}>
-            <span>{String(row.label ?? row.element ?? row.id ?? 'Not available yet')}</span><span style={{color:A.inkSoft}}>{String(row.now ?? row.before ?? '—')}</span><span style={{color:A.ok,fontWeight:600}}>{String(row.after ?? 'Not available yet')}</span></div>)}
+            <span>{String(row.label ?? row.element ?? row.id ?? 'Unavailable')}</span><span style={{color:A.inkSoft}}>{String(row.now ?? row.before ?? '—')}</span><span style={{color:A.ok,fontWeight:600}}>{String(row.after ?? 'Unavailable')}</span></div>)}
           {rows.length > 3 && <button type="button" data-approval-more="" aria-expanded={expanded}
             onClick={() => setExpandedKey(expanded ? null : key)} style={{display:'block',width:'100%',textAlign:'left',padding:'7px 14px',
               background:'transparent',border:0,borderTop:`1px solid ${A.lineSoft}`,fontFamily:A.sans,fontSize:13,color:A.inkSoft,cursor:'pointer'}}>
             {expanded ? 'Show fewer' : `+ ${rows.length - 3} more${approval.unit ? ` ${approval.unit}` : ''}`}</button>}
-        </div> : <div data-approval-summary="" style={{fontSize:14,lineHeight:'22px',whiteSpace:'pre-wrap'}}>{approval.summary || approval.description || approval.intent || approval.title || 'Not available yet'}</div>}
+        </div> : <div data-approval-summary="" style={{fontSize:14,lineHeight:'22px',whiteSpace:'pre-wrap'}}>{approval.summary || approval.description || approval.intent || approval.title || 'Unavailable'}</div>}
     </div>
     {/* Change detail is disclosed apart from the spatial preview: on every preview kind, a count above the supplied rows says so. */}
     {total > rows.length && <div data-approval-missing="" style={{padding:'0 18px 14px',fontSize:13,color:A.inkSoft}}>{total - rows.length} {total - rows.length === 1 ? 'change' : 'changes'} not supplied by the host</div>}
     <footer style={{display:'flex',alignItems:'center',gap:10,padding:'14px 18px',background:'#16161b',borderTop:`1px solid ${A.lineSoft}`}}>
-      <button type="button" data-workshop-primary="approve" disabled={busy || pending || held.current.settled || !canApprove || !onApprove} title={!canApprove || !onApprove ? 'Not available yet' : undefined}
+      <button type="button" data-workshop-primary="approve" disabled={busy || pending || held.current.settled || !canApprove || !onApprove} title={!canApprove || !onApprove ? 'Unavailable' : undefined}
         onClick={() => decide(onApprove,canApprove)} style={button(accent)}>{approveLabel}</button>
-      <button type="button" data-workshop-primary="decline" disabled={busy || pending || held.current.settled || !canDecline || !onDecline} title={!canDecline || !onDecline ? 'Not available yet' : undefined}
+      <button type="button" data-workshop-primary="decline" disabled={busy || pending || held.current.settled || !canDecline || !onDecline} title={!canDecline || !onDecline ? 'Unavailable' : undefined}
         onClick={() => decide(onDecline,canDecline)} style={button(false)}>Decline</button>
       <span style={{flex:1}}/>{approval.undo_available === true && <span data-approval-undo="" style={{fontSize:13,color:A.inkSoft}}>You can undo this</span>}
     </footer>
@@ -727,11 +727,11 @@ window.ARCHHUB_APP_RAIL = ({active = 'Home', waiting = 0, account = {}, workshop
     <span style={{fontSize:compact ? 10 : 11,fontWeight:active===label?600:500}}>{label}</span>
     {label==='Workshop'&&waiting>0&&<b style={{position:'absolute',top:3,right:10,minWidth:18,height:18,borderRadius:9,background:W.warn,color:W.onFill,fontSize:11,fontWeight:700,display:'grid',placeItems:'center'}}>{waiting}</b>}
   </button>;
-  return <nav data-app-rail="" data-workshop72-rail={workshop ? '' : undefined} aria-label="Main navigation"
+  return <window.AH_DS.Rail data-app-rail="" data-workshop72-rail={workshop ? '' : undefined} aria-label="Main navigation"
     style={{width:compact ? 44 : 64,boxSizing:'border-box',background:W.bg,borderRight:`1px solid ${W.lineSoft}`,display:'grid',gridTemplateRows:'auto 1fr auto',paddingTop:compact ? 6 : 12,justifyItems:'center',gridColumn:'1',gridRow:workshop && !persistent ? undefined : '1 / span 2'}}>
     <div style={{display:'grid',gap:4}}>{[['⌂','Home'],['◌','Chats'],['◎','Workshop'],['⬡','Canvas'],['▦','Library'],['?','Docs']].map(([g,l])=>item(g,l))}</div><span/>
     <div style={{paddingBottom:10,display:'grid',gap:4,justifyItems:'center'}}>{item('⚙','Settings')}
       <button type="button" data-rail-panel="Account" aria-current={active === 'Account' ? 'true' : undefined} data-workshop-account-avatar={workshop ? '' : undefined} aria-label="Account" title={account.email || 'Account'} onClick={()=>onNavigate?.('Account')}
         style={{width:32,height:32,padding:0,border:0,borderRadius:'50%',background:account.colour||account.color||account.avatar_color||W.userAv,color:W.onUserAv,display:'grid',placeItems:'center',fontFamily:W.sans,fontSize:12,fontWeight:700,cursor:'pointer'}}>{initials}</button>
-    </div></nav>;
+    </div></window.AH_DS.Rail>;
 };

@@ -3326,12 +3326,12 @@ class _CleanAuthorityHttpServer:
     def _clean_studio_asset(self, name):
         """Read only the public assets used by the existing Studio entry point."""
         admitted = {
-            "studio.html", "studio-authority.js", "tokens.jsx", "design-canvas.jsx",
+            "studio.html", "studio-authority.js", "tokens.jsx", "ds/index.jsx", "design-canvas.jsx",
             "shared-data.jsx", "studio-suite.jsx", "param-types.jsx", "studio-params.jsx",
             "studio-mobile.jsx", "studio-account.jsx", "node-registry.jsx", "brain-model.jsx", "workshop-board.jsx", "studio-workshop.jsx",
             "studio-lm.jsx", "mount.jsx",
             "vendor/react.js", "vendor/react-dom.js", "vendor/babel.js",
-            "compiled/manifest.json", "compiled/tokens.js", "compiled/design-canvas.js",
+            "compiled/manifest.json", "compiled/tokens.js", "compiled/ds-index.js", "compiled/design-canvas.js",
             "compiled/shared-data.js", "compiled/studio-suite.js", "compiled/param-types.js",
             "compiled/studio-params.js", "compiled/studio-mobile.js", "compiled/studio-account.js",
             "compiled/node-registry.js", "compiled/brain-model.js", "compiled/workshop-board.js", "compiled/studio-workshop.js",

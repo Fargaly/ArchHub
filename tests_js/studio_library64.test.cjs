@@ -81,7 +81,7 @@ test('LIBRARY-64 rows show human names only and never engine ids as chrome text'
 
 test('LIBRARY-64 every row adds a node in one click and keeps drag payloads', () => {
   const item = slice('const NodeLibItem = ({ it, cat, catId, selected = false, onAdd }) => {', '// ─── Skills panel');
-  assert.match(item, /<button type="button"/);
+  assert.match(item, /<window\.AH_DS\.Btn type="button"/);
   assert.match(item, /onClick=\{onAdd\}/);
   assert.doesNotMatch(item, /onDoubleClick/);
   assert.match(item, /draggable="true"/);

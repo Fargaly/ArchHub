@@ -1,6 +1,6 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const vm=require('node:vm');
+const vm=require('./studio_ds_context.cjs');
 const {fixture}=require('./workshop72_fixture.cjs');
 const {mounted,text,read}=require('./workshop72_regression_helpers.cjs');
 const {mountWorkshopNode,slice}=require('./workshop72_node_helpers.cjs');
@@ -67,7 +67,11 @@ test('PASS6 canvas Review owns the accent; labelled zoom and history retain thei
     Object.assign(ui.context,{ASK_SCALE:{node:{field:13,send:{padding:'0 8px',radius:6,size:13}}},modelRoute:()=>null,nodeModelRoute:()=>null});
     vm.runInContext(transformSync(slice(source,'const InlineAsk =','const useLastRunEpoch =')+'\nglobalThis.P6InlineAsk=InlineAsk;', {loader:'jsx'}).code,ui.context);
     await ui.act(()=>root.render(React.createElement(ui.context.P6InlineAsk,{scale:'node'})));
-    assert.equal(holder.querySelector('button').style.backgroundColor,'rgb(38, 38, 45)');assert.equal(accents(ui.doc).length,1);
+    const emptySend=holder.querySelector('button');
+    assert.equal(emptySend.disabled,true,'an empty node composer cannot submit');
+    assert.equal(emptySend.style.backgroundColor,'transparent','shared plate disabled buttons have transparent fill');
+    assert.equal(emptySend.style.borderStyle,'dashed','shared plate disabled buttons have a dashed border');
+    assert.equal(accents(ui.doc).length,1);
     assert.match(source,/title=\{expanded \? 'Collapse' : 'Expand & search'\} aria-label=\{expanded \? 'Collapse' : 'Expand & search'\}/);
     assert.match(source,/title="Clear conversation search" aria-label="Clear conversation search"/);
     f.state.nativeWork=null;f.state.workshop.workflows=[];await ui.draw({state:f.state});await paint(0);

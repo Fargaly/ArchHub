@@ -11,7 +11,11 @@ import pathlib
 import re
 import sys
 
+BUTTON_HELPER = re.compile(r"\bconst\s+(\w*(?:[Bb]tn|[Bb]utton)\w*)\s*=\s*(?:\([^;]*?\)|\w+)\s*=>\s*\(\s*\{")
+
 DEFS = {
+    "local_button_helpers": "style-returning const arrow factories with Btn/Button in the name, plus HoverBtn, in studio/*.jsx; ds/ is the shared owner",
+    "inline_styles": "literal JSX style={{...}} attributes in studio/*.jsx; ds/ is the shared owner",
     "http_servers": "modules that construct an HTTP server (HTTPServer/ThreadingHTTPServer/uvicorn.run/web.run_app)",
     "graph_authorities": "modules that open the universal graph sqlite store directly (sqlite3.connect on a *universal*.sqlite3 path or class *GraphStore/*CellStore)",
     "revit_adapters": "modules defining Revit execution adapters (def/class names with 'revit' + exec/adapter/bridge)",
@@ -70,6 +74,9 @@ def measure(root):
     studio = root / "nodelang" / "studio"
     for p in list(studio.glob("*.jsx")) + list(studio.glob("*.js")):
         loc += p.read_text(encoding="utf-8", errors="replace").count("\n")
+    jsx = "\n".join(p.read_text(encoding="utf-8") for p in studio.glob("*.jsx"))
+    c["local_button_helpers"] = len(BUTTON_HELPER.findall(jsx)) + len(re.findall(r"\bconst HoverBtn\s*=", jsx))
+    c["inline_styles"] = len(re.findall(r"\bstyle\s*=\s*\{\s*\{", jsx))
     c["loc_nodelang"] = loc
     return c
 
@@ -95,6 +102,9 @@ if __name__ == "__main__":
     else:
         base = json.loads(pathlib.Path(sys.argv[3]).read_text(encoding="utf-8"))["counts"]
         print(table(counts, base))
-        grew = [k for k in DEFS if counts[k] > base.get(k, counts[k])]
+        missing = [k for k in DEFS if k not in base]
+        if missing:
+            raise SystemExit("RATCHET FAIL: baseline missing " + ", ".join(missing))
+        grew = [k for k in DEFS if counts[k] > base[k]]
         print("RATCHET FAIL: " + ", ".join(grew) if grew else "RATCHET PASS")
         sys.exit(1 if grew else 0)

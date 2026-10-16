@@ -19,7 +19,7 @@ test('APP-FRAME p3: mounted workspace row owns the viewport height between top a
   const oldWindow = global.window, oldDocument = global.document;
   global.window = dom.window; global.document = dom.window.document;
   try {
-    const vm = require('node:vm');
+    const vm = require('./studio_ds_context.cjs');
     const context = vm.createContext({
       React, window:dom.window, document:dom.window.document,
       LM:{bgDeep:'#000', ink:'#fff', sans:'Inter, sans-serif', bg:'#111', lineSoft:'#222', bgHover:'#333',
@@ -167,7 +167,7 @@ test('DSYS-060 command bar is the one Ctrl K and slash search route', () => {
 test('DSYS-060 toast and destructive dialog contracts are centralized', () => {
   assert.match(source, /const AppToast = \(/, 'one app toast component is present');
   assert.match(source, /setTimeout\(toast\.close, 6000\)/, 'toast lifetime is 6 seconds');
-  assert.match(source, /toast\.actionLabel && <button/, 'toast renders at most one action');
+  assert.match(source, /toast\.actionLabel && <window\.AH_DS\.Btn/, 'toast renders at most one action');
   assert.match(source, /const DestructiveDialog = \(/, 'destructive dialog component is present');
   assert.match(source, /width:400/, 'dialog is 400 wide');
   assert.match(source, /rgba\(0,0,0,\.5\)/, 'dialog scrim is .5');

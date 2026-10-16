@@ -600,7 +600,7 @@ const WorkshopView = ({ state, descriptor, target = '', setTarget = () => {}, se
   const taskReply = aliases.find(row=>row.target===taskAgent)?.target || '';
   const replyTarget = target || (activeTask ? taskReply : aliases.find(row=>row.target===lead?.id)?.target || aliases[0]?.target) ||
     (!activeTask && modelAgent ? 'model:' + modelAgent.root : !activeTask && contacts.find(row => row.connected === true) ? 'contact:' + contacts.find(row => row.connected === true).root : '');
-  const replyName = aliases.find(row => row.target === replyTarget)?.label || 'Not available yet';
+  const replyName = aliases.find(row => row.target === replyTarget)?.label || 'Unavailable';
   const selectTask = task => { if (creating) authority?.cancelWorkshopTask?.(descriptor.root); ownSelect(task.work); setSel?.({agent:null, task:task.work,review:false});
     const assigned = transcript?.assignments?.find(row => row.work === task.work)?.agent_session || task.owner;
     setTarget(assigned && aliases.some(row => row.target === assigned) ? assigned : '');
@@ -628,7 +628,7 @@ const WorkshopView = ({ state, descriptor, target = '', setTarget = () => {}, se
     if (!draft.trim() || transcript?.can_send !== true || (!replyTarget && !draft.trim().startsWith('@'))) return;
     const address = wsResolveAddress(draft, replyTarget, aliases);
     if (creating) {
-      if (typeof authority?.createWorkshopTask !== 'function') throw new Error('Task creation is not available yet.');
+      if (typeof authority?.createWorkshopTask !== 'function') throw new Error('Task creation is unavailable.');
       const result = await authority.createWorkshopTask(descriptor.root,{message:address.message,target:address.target});
       if (current()) {setTarget(address.target);setDraft('');ownSelect(result.created_root);setSel?.({agent:null,task:result.created_root,review:false});}
       return;
@@ -688,11 +688,11 @@ const WorkshopView = ({ state, descriptor, target = '', setTarget = () => {}, se
     ['run','running','open','working'].includes(row.state) ? W.accent : W.inkSoft;
   const statusLine = row => row.approving || row.state === 'needs-user' || (row.proposal && row.state === 'block') ?
     row.work === model.approval?.work && Number.isSafeInteger(model.count) ? `Approve ${model.count}${model.output_label ? ' ' + model.output_label : ''}` : 'waits for you' :
-    row.boardLane === 'done' ? [row.result_summary || row.latest?.result_summary || 'Not available yet',
+    row.boardLane === 'done' ? [row.result_summary || row.latest?.result_summary || 'Unavailable',
       wsClockText(row.completed_at ?? row.done_at ?? row.updated_at ?? row.latest?.created_at)].filter(Boolean).join(' · ') :
     isPlanned(row) ? row.depends_on?.length ? 'starts after ' + row.depends_on.map(id=>tasks.find(task=>task.work===id)?.title||graphNodes.find(node=>node.id===id)?.title||id).join(', ') : 'ready to start' :
     /^claimed$/i.test(row.status || row.nodeStatus || '') ? 'ready to start' :
-    String(row.statusLine || row.status || row.nodeStatus || row.latest?.state || row.state || 'Not available yet').replaceAll('_',' ');
+    String(row.statusLine || row.status || row.nodeStatus || row.latest?.state || row.state || 'Unavailable').replaceAll('_',' ');
   const presence = row => row?.presence === 'needs-user' ? W.warn : row?.presence === 'working' ? W.accent : null;
   const tile = (row, size = 28, ring = presence(row)) => <span data-workshop-avatar={row?.id || ''}
     style={{position:'relative',width:size,height:size,flex:'none',display:'inline-block'}}>
@@ -716,7 +716,7 @@ const WorkshopView = ({ state, descriptor, target = '', setTarget = () => {}, se
   const plainText = message => {
     const structured = wsPlanReply(message.agent_text || wsText(message));
     const body = structured ? structured.prose : message.agent_text || message.body || '';
-    if (isWorkProposal(message)) return model.tasks.find(row => row.proposal === (message.message_id || message.root))?.intent || 'Not available yet';
+    if (isWorkProposal(message)) return model.tasks.find(row => row.proposal === (message.message_id || message.root))?.intent || 'Unavailable';
     return String(body).replace(/\b(?:assembly-instance|work|app|room):[A-Za-z0-9_.:@-]+/g,
       id => graphNodes.find(row => row.id === id)?.title || model.tasks.find(row => row.work === id)?.title || 'task');
   };
@@ -736,7 +736,7 @@ const WorkshopView = ({ state, descriptor, target = '', setTarget = () => {}, se
       const c=done?W.ok:waits?W.warn:W.inkSoft;
       return <div key={step.root||step.id||index} data-workshop-plan-step={step.root||step.id||''} style={{display:'grid',gridTemplateColumns:'28px 1fr auto auto',gap:12,alignItems:'center',padding:'7px 14px',borderTop:`1px solid ${W.lineSoft}`}}>
         <span style={{width:26,height:26,borderRadius:7,background:`${c}22`,color:c,display:'grid',placeItems:'center',fontSize:13}}>{done?'✓':waits?'⏸':'○'}</span>
-        <span data-workshop-step-title="" style={{fontSize:14,color:W.ink}}>{wsCleanTitle(step.title||step.t||node?.title,'Not available yet')}</span>
+        <span data-workshop-step-title="" style={{fontSize:14,color:W.ink}}>{wsCleanTitle(step.title||step.t||node?.title,'Unavailable')}</span>
         <span style={{fontSize:12.5,color:W.inkSoft}}>{step.duration ?? node?.duration ?? ''}</span>
         <span data-workshop-step-result="" style={{fontSize:12.5,color:c,textAlign:'right'}}>{done||waits?chip(step.result||node?.result_summary||(done?'done':'waits for you'),c):step.result||node?.result_summary||'next'}</span>
       </div>;})}</div>;
@@ -777,7 +777,7 @@ const WorkshopView = ({ state, descriptor, target = '', setTarget = () => {}, se
         onDecline={async()=>{if(await decide('decline',card,taskModel.native)===false)throw new Error('Decline could not be confirmed.');}}/></div>;};
   const layout=[1,2,4].includes(model.layout)?model.layout:1;
   const setLayout=value=>run(async()=>{ if(typeof authority?.setWorkshopLayout!=='function')return; await authority.setWorkshopLayout(descriptor.root,value); });
-  const modelLabel=a=>a?.modelLabel||(a?window.ARCHHUB_WORKSHOP_AGENT_MODEL?.(a.row||a,state):null)||'Not available yet';
+  const modelLabel=a=>a?.modelLabel||(a?window.ARCHHUB_WORKSHOP_AGENT_MODEL?.(a.row||a,state):null)||'Unavailable';
   const selectedTiles=[activeTask,...tasks.filter(t=>t.work!==activeTask?.work)].filter(Boolean).slice(0,layout);
   const composer=<div data-workshop72-composer="" style={{width:hasThread?K.thread:640,maxWidth:'calc(100% - 48px)',margin:'0 auto',borderRadius:14,background:W.surf2,boxShadow:W.elev.e2,border:`1px solid ${W.line}`,padding:'14px 16px',display:'grid',gap:12}}>
     <textarea aria-label="Workshop message" placeholder={`Reply to ${replyName}, or @ another agent…`} value={draft} disabled={busy||transcript?.can_send!==true}
@@ -800,13 +800,13 @@ const WorkshopView = ({ state, descriptor, target = '', setTarget = () => {}, se
           <span>⌕</span><input ref={searchRef} aria-label="Search tasks" placeholder="Search tasks" value={search} onChange={e=>setSearch(e.target.value)} style={{minWidth:0,flex:1,border:0,background:'transparent',color:W.ink,fontFamily:W.sans,fontSize:13.5,outline:'none'}}/>
           <span style={{fontSize:11,border:`1px solid ${W.line}`,borderRadius:4,padding:'1px 5px'}}>Ctrl K</span></div>
         <div className="ah-scroll" data-workshop72-sections="" style={{overflowY:'auto',flex:1,minHeight:0}}>{tasks.length>0&&(model.viewSections||[]).map(renderSection)}
-          {!tasks.length&&<div role="status" aria-disabled={transcript?.ok!==true} style={{padding:'24px 16px',fontSize:13,color:W.inkSoft}}>{transcript?.ok===true?'No tasks yet.':'Not available yet'}</div>}</div>
+          {!tasks.length&&<div role="status" aria-disabled={transcript?.ok!==true} style={{padding:'24px 16px',fontSize:13,color:W.inkSoft}}>{transcript?.ok===true?'No tasks yet.':'Unavailable'}</div>}</div>
         <div data-workshop-agents="" style={{margin:12,padding:'12px 14px',borderRadius:10,background:W.surf,boxShadow:W.elev.e1,display:'grid',gap:10}}>
           {agents.map(a=><div key={a.id} style={{display:'flex',alignItems:'center',gap:10,fontSize:13,minWidth:0}}>{tile(a,22)}
             <span style={{fontWeight:600,whiteSpace:'nowrap',flexShrink:0}}>{a.name}</span>
             <span title={modelLabel(a)} style={{color:W.inkSoft,fontSize:12,whiteSpace:'nowrap',minWidth:0,overflow:'hidden',textOverflow:'ellipsis',flex:1}}>{modelLabel(a)}</span>
-            <span style={{fontSize:12,color:presence(a)||W.inkSoft,whiteSpace:'nowrap',flexShrink:0}}>{a.liveState||'Not available yet'}</span></div>)}
-          {!agents.length&&<span aria-disabled="true" style={{fontSize:13,color:W.inkSoft}}>Not available yet</span>}</div></aside>
+            <span style={{fontSize:12,color:presence(a)||W.inkSoft,whiteSpace:'nowrap',flexShrink:0}}>{a.liveState||'Unavailable'}</span></div>)}
+          {!agents.length&&<span aria-disabled="true" style={{fontSize:13,color:W.inkSoft}}>Unavailable</span>}</div></aside>
       <section data-workshop72-main="" style={{display:'grid',gridTemplateRows:hasThread?`${K.header}px 1fr auto`:'1fr',minHeight:0,background:K.threadBackground}}>
         {hasThread?<><header style={{display:'flex',alignItems:'center',gap:16,padding:'0 36px',borderBottom:`1px solid ${W.lineSoft}`}}>
           <div style={{display:'grid',gap:4,minWidth:0}}><span data-workshop-head="" style={{fontSize:22,fontWeight:700,letterSpacing:'-.01em'}}>{activeTask?.title||model.title}</span>
@@ -818,7 +818,7 @@ const WorkshopView = ({ state, descriptor, target = '', setTarget = () => {}, se
             aria-disabled={typeof authority?.setWorkshopLayout!=='function'||busy} tabIndex={0} onClick={()=>setLayout(n)} onKeyDown={e=>(e.key==='Enter'||e.key===' ')&&setLayout(n)}
             style={{width:32,height:26,display:'grid',placeItems:'center',fontSize:12,background:layout===n?K.buttonBackground:'transparent',color:layout===n?W.ink:W.inkSoft,cursor:'pointer',borderLeft:n===1?0:`1px solid ${W.line}`}}>{n}</span>)}</span>
           {approval&&chip(<>{dot(W.warn)}Waiting for you</>,W.warn)}<button type="button" data-workshop-primary="" disabled={descriptor.unavailable||!state?.canvas?.graph_id||!authority||!setMode}
-            title={descriptor.unavailable?'Not available yet':undefined} onClick={openCanvas} style={button(false,true)}>Open on canvas</button></header>
+            title={descriptor.unavailable?'Unavailable':undefined} onClick={openCanvas} style={button(false,true)}>Open on canvas</button></header>
         {layout===1?<div ref={viewport} className="ah-scroll" aria-label="Workshop conversation" onScroll={e=>scroll.current.scroll(e.currentTarget)} style={{overflowY:'auto',overflowX:'hidden',padding:'18px 0',minHeight:0}}>
           <div ref={content} data-workshop72-thread="" style={{width:K.thread,maxWidth:'calc(100% - 48px)',margin:'0 auto',display:'grid',gap:14}}>
             {visibleMessages.map(message=>{const sender=wsSender(message),a=agents.find(row=>row.id===sender),self=sender===transcript?.self;
@@ -831,7 +831,7 @@ const WorkshopView = ({ state, descriptor, target = '', setTarget = () => {}, se
                     <span style={{fontSize:12.5,color:W.inkSoft}}>{messageMeta.join(' · ')}</span><time dateTime={String(message.created_at||'')} style={{fontSize:12.5,color:W.inkSoft}}>{wsClockText(message.created_at)}</time></div>
                   <div style={{fontSize:15,lineHeight:'24px',whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{plainText(message)}</div>{message.root===planAnchor&&planElement}</div></>}
               </article>;})}{!planAnchor&&planElement&&<div style={{marginLeft:46}}>{planElement}</div>}{approvalElement()}
-            {!transcript&&<div role="status" style={{fontSize:13,color:W.inkSoft}}>{descriptor.unavailable?'Not available yet':'Loading messages…'}</div>}</div></div>
+            {!transcript&&<div role="status" style={{fontSize:13,color:W.inkSoft}}>{descriptor.unavailable?'Unavailable':'Loading messages…'}</div>}</div></div>
           :<div data-workshop-tiles={layout} style={{display:'grid',gridTemplateColumns:'1fr 1fr',gridTemplateRows:layout===4?'1fr 1fr':'1fr',gap:12,padding:16,minHeight:0}}>
             {selectedTiles.map(task=>{const tm=window.ARCHHUB_WORKSHOP_MODEL({state,descriptor,selected:task.work}),a=agentFor(task),
               taskLines=(task.events?.length?task.events:tm.messages.filter(m=>m.work_root===task.work||m.task_root===task.work||m.root===task.workflow?.source_message)).filter(m=>!window.ARCHHUB_WORKSHOP_TASK_SOURCE.lifecycle(m)),
@@ -840,14 +840,14 @@ const WorkshopView = ({ state, descriptor, target = '', setTarget = () => {}, se
                 style={{background:W.surf,border:`1px solid ${task.work===activeTask?.work?W.accent:W.line}`,borderRadius:12,display:'grid',gridTemplateRows:'44px 1fr',minHeight:0,overflow:'auto',boxShadow:W.elev.e2}}>
                 <div style={{display:'flex',alignItems:'center',gap:10,padding:'0 14px',borderBottom:`1px solid ${W.lineSoft}`}}>{tile(a,20)}<span style={{fontSize:14,fontWeight:600,flex:1}}>{task.title}</span><span style={{fontSize:12.5,color:c}}>{statusLine(task)}</span>{dot(c)}</div>
                 <div style={{padding:14,display:'grid',gap:10,alignContent:'start'}}>{lines.map((line,i)=><div key={i} style={{fontSize:13,lineHeight:'19px',color:i===lines.length-1?W.ink:W.inkSoft}}>{line}</div>)}
-                  {!lines.length&&<div aria-disabled="true" style={{fontSize:13,color:W.inkSoft}}>Not available yet</div>}
+                  {!lines.length&&<div aria-disabled="true" style={{fontSize:13,color:W.inkSoft}}>Unavailable</div>}
                   {tm.approval&&<div onClick={e=>e.stopPropagation()}>{approvalElement(tm.approval,tm,true)}</div>}</div></div>;})}</div>}
         <div style={{padding:'0 0 22px'}}>{composer}</div></>:<div data-workshop-empty="" style={{display:'grid',alignContent:'center',justifyItems:'center',gap:18,padding:24}}>
           <div style={{fontSize:22,fontWeight:600}}>What should the agents do?</div><div style={{display:'flex',gap:8}}>{agents.map(a=><span key={a.id} role="radio" aria-checked={replyTarget===a.id} tabIndex={0}
             onClick={()=>setTarget(a.id)} onKeyDown={e=>e.key==='Enter'&&setTarget(a.id)} style={{display:'inline-flex',alignItems:'center',gap:8,height:32,padding:'0 12px 0 6px',border:`1px solid ${replyTarget===a.id?W.accent:W.line}`,borderRadius:999,background:replyTarget===a.id?W.accentSoft:'transparent',fontSize:13,cursor:'pointer'}}>
               {tile(a,20,null)}{a.name}<span style={{color:W.inkSoft,fontSize:12}}>{modelLabel(a)}</span></span>)}</div>{composer}</div>}</section></div>
     {!embedded && <footer data-workshop-s1-status="" data-workshop72-status="" style={{height:K.status,boxSizing:'border-box',display:'flex',alignItems:'center',gap:18,padding:'0 16px',fontSize:12,color:W.inkSoft,borderTop:`1px solid ${W.lineSoft}`,background:K.railBackground}}>
-      <span style={{display:'flex',alignItems:'center',gap:6,color:model.status.connected?W.ok:W.inkSoft}}>{dot(model.status.connected?W.ok:W.inkSoft)}{model.status.connected?'Connected':'Not available yet'}</span><span>{hostLine}</span>
+      <span style={{display:'flex',alignItems:'center',gap:6,color:model.status.connected?W.ok:W.inkSoft}}>{dot(model.status.connected?W.ok:W.inkSoft)}{model.status.connected?'Connected':'Unavailable'}</span><span>{hostLine}</span>
       {model.viewSections?.find(s=>s.id==='working')?.rows.length>0&&<span style={{color:W.accent}}>{model.viewSections.find(s=>s.id==='working').rows.length} working</span>}
       {model.status.waiting>0&&<span style={{color:W.warn}}>{model.status.waiting} need you</span>}<span style={{flex:1}}/><span>{modelLabel(lead)}</span></footer>}
     <style>{`[data-workshop72] * {box-sizing:content-box;} [data-workshop72] button {box-sizing:border-box;} [data-workshop-send]::after {content:'↵';} [data-workshop72] button:disabled {cursor:default;} [data-workshop72] input::placeholder, [data-workshop72] textarea::placeholder {color:${W.inkSoft};opacity:1;}`}</style></main>;

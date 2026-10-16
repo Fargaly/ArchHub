@@ -9,7 +9,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const vm = require('node:vm');
+const vm = require('./studio_ds_context.cjs');
 const root = path.resolve(__dirname, '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 
@@ -85,6 +85,7 @@ async function mountSource(server, source, element, props) {
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
   win.eval(esbuild.transformSync(read('nodelang/studio/tokens.jsx'), {loader:'jsx', target:'es2020'}).code);
+    win.eval(esbuild.transformSync(read('nodelang/studio/ds/index.jsx'), {loader:'jsx', target:'es2020'}).code);
   // React captured its own timer at load; only the restart confirmation window is observed here.
   const armed = [], setTimer = win.setTimeout.bind(win);
   win.setTimeout = (fn, ms, ...rest) => { if (ms === 5000) armed.push({fn, ms}); return setTimer(fn, ms, ...rest); };
@@ -134,7 +135,7 @@ async function mountHeaderControls(server) {
   assert.match(header, /<ApplicationUpdateControls compact\/>/,
     'the Workspace header draws the compact update icons (founder, 2026-09-18)');
   assert.match(definition(jsx, 'SettingsAbout'), /<ApplicationUpdateControls\/>/, 'Settings > About carries the update controls');
-  const names = ['smallBtn', 'visuallyHiddenStyle', 'StudioHeaderIcon', 'ApplicationUpdateControls'];
+  const names = ['visuallyHiddenStyle', 'StudioHeaderIcon', 'ApplicationUpdateControls'];
   if (jsx.includes('\nconst useRestartConfirmation = ')) names.unshift('useRestartConfirmation');
   return mountSource(server, names.map(name => definition(jsx, name)).join('\n'), 'ApplicationUpdateControls', {compact:true});
 }

@@ -1,7 +1,7 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const vm = require('node:vm');
+const vm = require('./studio_ds_context.cjs');
 const {transformSync} = require('esbuild');
 const read = name => fs.readFileSync('nodelang/studio/' + name, 'utf8');
 
@@ -13,6 +13,7 @@ test('UIFIX: persistent rail and status survive every destination and a delayed 
   global.window = dom.window; global.document = dom.window.document;
   global.IS_REACT_ACT_ENVIRONMENT = true;
   const context = vm.createContext({React, window:dom.window, document:dom.window.document,
+    setTimeout:dom.window.setTimeout.bind(dom.window),clearTimeout:dom.window.clearTimeout.bind(dom.window),
     useWorkshopProjection:() => ({}), workshopWaitingItems:() => []});
   vm.runInContext(read('tokens.jsx'), context);
   context.LM = dom.window.AH;

@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const vm = require('node:vm');
+const vm = require('./studio_ds_context.cjs');
 const {read,transport,plain} = require('./workshop72_regression_helpers.cjs');
 
 async function mount(approval,callbacks={}) {
@@ -152,20 +152,20 @@ test('agent model labels resolve only live registry entries and free-only agents
   vm.runInNewContext(source.slice(0,source.indexOf('const HOSTS =')),{window:win});
   const state={canvas:{graph_id:'graph-a',authorization:{subject:'owner-a'}},workshopPresentation:{graph_id:'graph-a',subject:'owner-a',models:{groups:[{items:[{id:'free-id:free',name:'Live free name'},{id:'paid-id',name:'Live paid name'}]}]}}};
   assert.equal(win.ARCHHUB_WORKSHOP_AGENT_MODEL({model:'free-id:free',runtime:'opencode'},state),'Live free name');
-  assert.equal(win.ARCHHUB_WORKSHOP_AGENT_MODEL({model:'paid-id',runtime:'opencode'},state),'Not available yet');
+  assert.equal(win.ARCHHUB_WORKSHOP_AGENT_MODEL({model:'paid-id',runtime:'opencode'},state),null);
   assert.equal(win.ARCHHUB_WORKSHOP_AGENT_MODEL({model:'paid-id',runtime:'claude'},state),'Live paid name');
-  assert.equal(win.ARCHHUB_WORKSHOP_AGENT_MODEL({model:'invented'},state),'Not available yet');
+  assert.equal(win.ARCHHUB_WORKSHOP_AGENT_MODEL({model:'invented'},state),null);
   state.workshopPresentation.subject='another-account';
-  assert.equal(win.ARCHHUB_WORKSHOP_AGENT_MODEL({model:'paid-id',runtime:'claude'},state),'Not available yet');
+  assert.equal(win.ARCHHUB_WORKSHOP_AGENT_MODEL({model:'paid-id',runtime:'claude'},state),null);
   state.workshopPresentation.subject='owner-a';state.workshopPresentation.graph_id='another-graph';
-  assert.equal(win.ARCHHUB_WORKSHOP_AGENT_MODEL({model:'paid-id',runtime:'claude'},state),'Not available yet');
+  assert.equal(win.ARCHHUB_WORKSHOP_AGENT_MODEL({model:'paid-id',runtime:'claude'},state),null);
   state.models={items:[{id:'paid-id',name:'Current account registry'}]};
   assert.equal(win.ARCHHUB_WORKSHOP_AGENT_MODEL({model:'paid-id',runtime:'claude'},state),'Current account registry');
   state.workshopPresentation.graph_id='graph-a';state.workshopPresentation.layout=4;
   state.topology={canvas:{application_root:'graph-a',authorization:{subject:'another-account'}}};
-  assert.equal(win.ARCHHUB_WORKSHOP_AGENT_MODEL({model:'paid-id',runtime:'claude'},state),'Not available yet');
+  assert.equal(win.ARCHHUB_WORKSHOP_AGENT_MODEL({model:'paid-id',runtime:'claude'},state),null);
   state.topology.canvas.authorization.subject='owner-a';state.topology.canvas.application_root='another-graph';
-  assert.equal(win.ARCHHUB_WORKSHOP_AGENT_MODEL({model:'paid-id',runtime:'claude'},state),'Not available yet');
+  assert.equal(win.ARCHHUB_WORKSHOP_AGENT_MODEL({model:'paid-id',runtime:'claude'},state),null);
   assert.equal(win.ARCHHUB_WORKSHOP_MODEL({state}).layout,1);
 });
 
@@ -176,7 +176,7 @@ test('missing account presentation is null-safe and confirmed native approval cl
   vm.runInContext(source.slice(0,source.indexOf('const HOSTS =')),context);
   assert.equal(win.ARCHHUB_WORKSHOP_MODEL().layout,1);
   assert.equal(win.ARCHHUB_WORKSHOP_MODEL({state:{workshopPresentation:{layout:4}}}).layout,1);
-  assert.equal(win.ARCHHUB_WORKSHOP_AGENT_MODEL(), 'Not available yet');
+  assert.equal(win.ARCHHUB_WORKSHOP_AGENT_MODEL(), null);
   const f=require('./workshop72_fixture.cjs').fixture();
   const before=win.ARCHHUB_WORKSHOP_MODEL({state:f.state,descriptor:f.state.workshops[0]});
   assert.equal(before.tasks.find(row=>row.work===f.work).approving,true);

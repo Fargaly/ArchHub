@@ -13,6 +13,7 @@ test('SOCIAL3 mounted shared approval card sends exact approve and deny decision
   w.eval(read('nodelang/studio/vendor/react.js'));
   w.eval(read('nodelang/studio/vendor/react-dom.js'));
   w.eval(compile(read('nodelang/studio/tokens.jsx')));
+  w.eval(compile(read('nodelang/studio/ds/index.jsx')));
   w.eval(compile(read('nodelang/studio/shared-data.jsx')));
   const source = read('nodelang/studio/studio-lm.jsx');
   const start = source.indexOf('const SettingsSocialApprovals =');

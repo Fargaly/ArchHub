@@ -60,7 +60,7 @@ function StudioMobile() {
   }, []);
 
   const decide = async (approval,ok) => {
-    if (approval.kind !== 'native') throw new Error('Not available yet');
+    if (approval.kind !== 'native') throw new Error('Unavailable');
     if (ok) await authority.approveNativeWork(descriptor.root,approval.input_digest);
     else await authority.nativeWorkAction(descriptor.root,'stop_native',approval.work);
     await authority.refreshNativeWork(descriptor.root);

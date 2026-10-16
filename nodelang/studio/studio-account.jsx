@@ -664,7 +664,7 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
           <span style={{ fontSize: 13, fontWeight: 500, color: AC.ink, minWidth: 86 }}>Brain access</span>
           <span style={{ padding: '3px 8px', borderRadius: AC.rad.sm, border: `1px solid ${AC.ok}`, color: AC.ok, fontFamily: AC.mono, fontSize: AC.fs.label.sz, letterSpacing: '0.12em' }}>LOCAL</span>
           <span style={{ fontFamily: AC.mono, fontSize: 11.5, color: AC.ink, flex: 1, minWidth: 0 }}>Private on this machine</span>
-          <span style={{ fontFamily: AC.mono, fontSize: AC.fs.dataSm.sz, color: AC.inkSoft }}>{facts ? facts + ' facts read' : 'facts not read yet'}</span>
+          <span style={{ fontFamily: AC.mono, fontSize: AC.fs.dataSm.sz, color: AC.inkSoft }}>{facts ? facts + ' facts read' : 'Brain facts unavailable'}</span>
         </div>
         <div style={{ fontSize: 12, color: AC.inkSoft, marginTop: 9, lineHeight: 1.55 }}>
           Sharing needs approval and never includes client folders.

@@ -7,7 +7,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const vm = require('node:vm');
+const vm = require('./studio_ds_context.cjs');
 
 const lmPath = process.env.ARCHHUB_WORKSPACE_TEST_PATH ||
   path.join(__dirname, '../nodelang/studio/studio-lm.jsx');

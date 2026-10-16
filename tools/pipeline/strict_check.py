@@ -475,6 +475,11 @@ def change_context(root, selected, candidate, revision, context, *, patch_scope=
             if ledger_text is None:
                 ledger_text = git(root, "show", f"{revision}:tasks.json").decode("utf-8")
             ledger = json.loads(ledger_text or "{}")
+            if isinstance(ledger, list):  # GVS5H ledger: a list of tasks; the next one is the first not done
+                pending = [t for t in ledger if isinstance(t, dict) and str(t.get("state", "")).lower() not in ("done", "pass", "landed")]
+                ledger = {"next_task": (pending[0].get("id") if pending else None), "owner": None}
+            elif not isinstance(ledger, dict):
+                ledger = {}
             events.append({"kind": "lane_result", "done": bool(re.search(r"(?mi)^State:\s*DONE\s*$", after)),
                 "ledger": {"next_task": ledger.get("next_task"), "owner": ledger.get("owner")}})
     if events is not None and events:

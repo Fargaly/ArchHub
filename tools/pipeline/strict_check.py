@@ -18,6 +18,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 
 
 class CompilerFailure(RuntimeError):
@@ -177,7 +178,8 @@ def _command(root, options=None):
     manifest = owner / "tools" / "archhub-compiler" / "Cargo.toml"
     if not manifest.is_file():
         raise CompilerFailure(f"missing compiler source: {manifest}")
-    cargo = owner.parent / "rust" / "cargo" / "bin" / ("cargo.exe" if os.name == "nt" else "cargo")
+    cargo_home = Path(os.environ.get("CARGO_HOME", str(owner.parent / "rust" / "cargo")))
+    cargo = cargo_home / "bin" / ("cargo.exe" if os.name == "nt" else "cargo")
     if not cargo.is_file():
         raise CompilerFailure(f"missing supplied Cargo toolchain: {cargo}")
     options = compiler_options(options)
@@ -208,7 +210,8 @@ def _environment(compiler_command=None, owner=None, options=None):
         if result.returncode:
             raise CompilerFailure("compiler MSVC environment initialization failed")
         env.update(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line and not line.startswith("="))
-    env.update(CARGO_HOME=str(rust / "cargo"), RUSTUP_HOME=str(rust / "rustup"))
+    env.setdefault("CARGO_HOME", str(rust / "cargo"))
+    env.setdefault("RUSTUP_HOME", str(rust / "rustup"))
     linker = rust / "rustup" / "toolchains" / "stable-x86_64-pc-windows-msvc" / "lib" / "rustlib" / "x86_64-pc-windows-msvc" / "bin" / "rust-lld.exe"
     if os.name == "nt" and setup.is_file() and linker.is_file():
         env["CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER"] = str(linker)
@@ -337,15 +340,17 @@ def check_artifact(root, pending, context=None, *, compiler_command=None, timeou
     root = Path(root).resolve()
     timeout = node_timeout(timeout)
     command = list(compiler_command) if compiler_command is not None else _command(root, build_options)
-    historical_path = root / "evidence" / "acompiler-baseline.json"
-    historical = json.loads(historical_path.read_text(encoding="utf-8")) if historical_path.is_file() else {}
+    from tools.pipeline.record_observation import load_history, reserve_notices
+    historical = load_history(root)
     prepared = _machine_context(root, context)
     if "rules" in prepared:
         prepared["artifact_rules"] = prepared.pop("rules")
     for key in ("scope", "rules", "history", "deviation_state", "metrics"):
         prepared.pop(key, None)
     prepared.update(files=[str(pending.get("target", ""))], history=historical.get("history", []),
-                    deviation_state=historical.get("authors", {}).get(prepared.get("author", ""), {}).get("deviation_state", {}))
+                    deviation_state=historical.get("authors", {}).get(prepared.get("author", ""), {}).get("deviation_state", {}),
+                    day=datetime.now(timezone.utc).date().isoformat())
+    prepared["alert_state"] = prepared["deviation_state"].get("alert_state", {})
     prepared["metrics"] = {"files": len(prepared["files"]), "lines": len(json.dumps(pending.get("content"), ensure_ascii=False, indent=2).splitlines()),
                            "tests_removed": 0, "languages": len({pending.get("format", pending.get("kind", ""))}),
                            "scope_spread": len({str(pending.get("target", "")).split(":", 1)[0]})}
@@ -356,7 +361,8 @@ def check_artifact(root, pending, context=None, *, compiler_command=None, timeou
             with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".json", delete=False) as stream:
                 paths.append(Path(stream.name))
                 json.dump(value, stream, ensure_ascii=False)
-        command += ["artifact", "--payload", str(paths[0]), "--context", str(paths[1]), "--json", "--report-only"]
+        command += ["artifact", "--payload", str(paths[0]), "--context", str(paths[1]),
+                    "--authority-root", str(root), "--authority-revision", "HEAD", "--json", "--report-only"]
         result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True, encoding="utf-8", errors="strict", timeout=timeout)
         if result.returncode:
             raise CompilerFailure(f"artifact compiler exited {result.returncode}: {result.stderr.strip()}")
@@ -364,8 +370,12 @@ def check_artifact(root, pending, context=None, *, compiler_command=None, timeou
             report = _validate_report(json.loads(result.stdout), root, artifact=True)
         except ValueError as exc:
             raise CompilerFailure("artifact compiler returned invalid JSON") from exc
+        prepared["metrics"].update(rule_hits=sum(row["code"] not in {"E0100", "E0101", "E0102", "E0200"} for row in report["diagnostics"]),
+                                   ratchet_deltas=sum(sum(languages.values()) for code, languages in report["counts"].items()
+                                                     if code not in {"E0100", "E0101", "E0102", "E0200"}))
+        reserve_notices(root, prepared, report.get("observation"))
         return {"ok": not report["diagnostics"], "diagnostics": report["diagnostics"], "counts": report["counts"],
-                "observation": report.get("observation")}
+                "observation": report.get("observation"), "context": prepared}
     except (OSError, UnicodeError, subprocess.SubprocessError) as exc:
         raise CompilerFailure(f"artifact compiler invocation failed: {exc}") from exc
     finally:
@@ -405,8 +415,8 @@ def change_context(root, selected, candidate, revision, context, *, patch_scope=
                 tests_removed += bool(re.match(r"\s*(?:async\s+)?def\s+test_|\s*(?:test|it)\s*\(", line[1:]))
         if patch_scope is not None:
             patch_scope[path] = {"new": not present, "ranges": ranges}
-    history_path = "evidence/acompiler-baseline.json"
-    historical = json.loads(git(root, "show", f"{revision}:{history_path}").decode("utf-8")) if git(root, "ls-tree", "-z", revision, "--", history_path) else {}
+    from tools.pipeline.record_observation import load_history
+    historical = load_history(root, revision)
     # Scopes and machine rules are resolved by the binary's authoritative
     # rules.json, never a caller-provided permission list.
     for key in ("scope", "rules", "history", "deviation_state", "metrics"):
@@ -416,7 +426,9 @@ def change_context(root, selected, candidate, revision, context, *, patch_scope=
                  "languages": len({Path(path).suffix.lower() for path in selected}),
                  "scope_spread": len({path.split("/", 1)[0] for path in selected})},
         history=historical.get("history", []),
-        deviation_state=historical.get("authors", {}).get(author, {}).get("deviation_state", {}))
+        deviation_state=historical.get("authors", {}).get(author, {}).get("deviation_state", {}),
+        day=datetime.now(timezone.utc).date().isoformat())
+    supplied["alert_state"] = supplied["deviation_state"].get("alert_state", {})
     return supplied
 
 
@@ -500,6 +512,8 @@ def check_files(root, paths, overlay=None, *, revision="HEAD", context=None, com
     prepared_context["metrics"]["rule_hits"] = sum(item["file"] in selected_set for item in report["diagnostics"])
     prepared_context["metrics"]["ratchet_deltas"] = sum(max(0, count - original["counts"].get(code, {}).get(language, 0))
         for code, languages in report["counts"].items() for language, count in languages.items())
+    from tools.pipeline.record_observation import reserve_notices
+    reserve_notices(root, prepared_context, report.get("observation"))
     return {"ok": not diagnostics and not file_regressions and not regressions,
             "selected": selected, "diagnostics": diagnostics, "counts": report["counts"],
             "file_regressions": file_regressions, "regressions": regressions,
@@ -583,6 +597,7 @@ def print_diagnostics(result):
     for diagnostic in result["diagnostics"]:
         print(f"error[{diagnostic['code']}]: {diagnostic['message']}\n"
               f" --> {diagnostic['file']}:{diagnostic['line']}:{diagnostic['column']}\n"
+              f" note: {diagnostic.get('note', diagnostic['code'])}\n"
               f" help: {diagnostic['help']}")
         if diagnostic.get("caused_by"):
             print(" note: introduced by owned changes: " + ", ".join(diagnostic["caused_by"]))

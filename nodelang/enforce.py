@@ -46,10 +46,10 @@ def defaults():
 
 def _diagnostic(message, *, code="E0005", target="<pending>", help_text="Correct the pending value and retry."):
     return {"code": code, "language": "product", "file": str(target), "line": 1,
-            "column": 1, "message": message, "help": help_text}
+            "column": 1, "message": message, "note": "pending-value admission", "help": help_text}
 
 def display_diagnostics(rows):
-    return "\n".join("error[{code}]: {message}\n --> {file}:{line}:{column}\n help: {help}".format(**row) for row in rows)
+    return "\n".join("error[{code}]: {message}\n --> {file}:{line}:{column}\n note: {note}\n help: {help}".format(**dict(row, note=row.get("note", row["code"]))) for row in rows)
 
 def require_typed_adapter(operation):
     """Refuse a legacy physical sink until its exact write has a typed adapter.
@@ -71,7 +71,7 @@ def inspect_pending(pending, params=None, *, compiler=None, artifact_compiler=No
     config = {**defaults(), **dict(params or {})}
     diagnostics = []
     build_options = {"jobs": config["compiler_jobs"], "rustflags": config["compiler_rustflags"]}
-    observation = None
+    report = None
     root = Path(str(config["repo_root"]) or str(Path(__file__).resolve().parents[1])).resolve()
     context = {key: config[key] for key in ("intent", "author", "why", "daily_alert_budget", "intent_rule_set", "rules", "post_limit", "rule_set")}
     try:
@@ -99,7 +99,6 @@ def inspect_pending(pending, params=None, *, compiler=None, artifact_compiler=No
             elif any(Path(path).suffix.lower() in NON_CODE for path in changes):
                 diagnostics.append(_diagnostic("an asserted code write has a path without a source language rule set", code="E0010", target=target))
             else:
-                root = Path(str(config["repo_root"]) or str(Path(__file__).resolve().parents[1])).resolve()
                 if any(Path(path).is_absolute() or root not in (root / path).resolve().parents for path in changes):
                     diagnostics.append(_diagnostic("pending source path leaves the selected repository", target=target))
                 else:
@@ -108,10 +107,6 @@ def inspect_pending(pending, params=None, *, compiler=None, artifact_compiler=No
                             from tools.pipeline.strict_check import check_files
                             compiler = partial(check_files, build_options=build_options)
                         report = compiler(root, list(changes), overlay=dict(changes), timeout=float(config["compiler_timeout"]), context=context)
-                        observation = report.get("observation")
-                        diagnostics.extend(report["diagnostics"])
-                        if not report["ok"] and not diagnostics:
-                            diagnostics.append(_diagnostic("compiler refused without diagnostics", target=target))
                     except Exception as error:
                         diagnostics.append(_diagnostic("compiler unavailable: %s" % error, code="E0010", target=target,
                                                        help_text="Restore the compiler, then retry this same pending write."))
@@ -125,16 +120,17 @@ def inspect_pending(pending, params=None, *, compiler=None, artifact_compiler=No
                     from tools.pipeline.strict_check import check_artifact
                     artifact_compiler = partial(check_artifact, build_options=build_options)
                 report = artifact_compiler(root, dict(pending), context=context, timeout=float(config["compiler_timeout"]))
-                observation = report.get("observation")
-                diagnostics.extend(report["diagnostics"])
-                if not report["ok"] and not diagnostics:
-                    diagnostics.append(_diagnostic("artifact compiler refused without diagnostics", target=target))
             except Exception as error:
                 diagnostics.append(_diagnostic("artifact compiler refused: %s" % error, code="E0010", target=target))
+    if report is not None:
+        diagnostics.extend(report["diagnostics"])
+        if not report["ok"] and not diagnostics:
+            diagnostics.append(_diagnostic("compiler refused without diagnostics", target=pending["target"]))
     return {"ok": not diagnostics, "diagnostics": diagnostics, "display": display_diagnostics(diagnostics),
-            "pending": copy.deepcopy(pending), "context": context, "observation": observation}
+            "pending": copy.deepcopy(pending), "context": context, "observation": report.get("observation") if report else None,
+            "measured_context": report.get("context") if report else None, "history_root": str(root)}
 
-def guarded_write(pending, writer, *, readback=None, params=None, correct=None, compiler=None, artifact_compiler=None, graph_validator=None, expected_kind=None):
+def guarded_write(pending, writer, *, readback=None, params=None, correct=None, compiler=None, artifact_compiler=None, graph_validator=None, expected_kind=None, record_effect=True):
     """Bounded agent correction; the writer receives exactly the checked value once.
 
     ``correct`` only proposes new content. It never receives the write callback.
@@ -171,6 +167,9 @@ def guarded_write(pending, writer, *, readback=None, params=None, correct=None, 
                     result.update(ok=False, diagnostics=[_diagnostic("write refused: %s" % receipt.get("error", "no receipt"))])
                     result["display"] = display_diagnostics(result["diagnostics"])
                 result["receipt"] = receipt
+                if record_effect and result["ok"] and result.get("measured_context") is not None and candidate.get("kind") != "code":
+                    from tools.pipeline.record_observation import record_action
+                    record_action(result["history_root"], candidate, result)
                 return result
             if not callable(correct) or attempt == attempts:
                 return result
@@ -191,7 +190,7 @@ def engine(params, feeds):
     # The node and effect adapters use the same bounded admission loop. Its
     # local writer only returns the admitted value; approval remains separate.
     result = guarded_write(pending, lambda candidate: {"pending": copy.deepcopy(candidate)},
-                           readback=lambda candidate, receipt: receipt["pending"], params=config)
+                           readback=lambda candidate, receipt: receipt["pending"], params=config, record_effect=False)
     return {**result, "out": result, "admitted": result["pending"] if result["ok"] else None}, result["display"] or "Enforce passed; approval is still required"
 
 def graph_parameters(store):

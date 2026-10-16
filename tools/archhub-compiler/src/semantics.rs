@@ -32,6 +32,17 @@ struct Signature {
     positional: Vec<String>,
     keyword_variadic: bool,
     required: BTreeSet<String>,
+    types: BTreeMap<String, String>,
+}
+#[derive(Clone)]
+struct Call {
+    name: String,
+    scope: usize,
+    count: usize,
+    keywords: Vec<String>,
+    arguments: Vec<(Option<String>, Option<String>)>,
+    line: usize,
+    col: usize,
 }
 struct Pass<'a> {
     file: &'a str,
@@ -41,13 +52,14 @@ struct Pass<'a> {
     bindings: Vec<Binding>,
     refs: Vec<(String, usize, usize, usize)>,
     signatures: Vec<Signature>,
-    calls: Vec<(String, usize, usize, Vec<String>, usize, usize)>,
+    calls: Vec<Call>,
     diagnostics: Vec<Diagnostic>,
 }
 impl Pass<'_> {
     fn diag(&mut self, code: &str, line: usize, col: usize, message: String, help: &str) {
         self.diagnostics.push(Diagnostic {
             code: code.into(),
+            note: crate::explain(code).unwrap_or("semantic pass").into(),
             language: self.language.into(),
             file: self.file.into(),
             line,
@@ -160,8 +172,19 @@ impl Pass<'_> {
         }
     }
     fn function(&mut self, node: Node<'_>, scope: usize) {
-        let name = node.child_by_field_name("name");
-        if let Some(n) = name {
+        let declared = node.child_by_field_name("name");
+        // Assigned lambdas/arrows have their name on the declarator, not on
+        // the function node. The declarator still owns the single binding.
+        let assigned = node
+            .parent()
+            .filter(|p| matches!(p.kind(), "assignment" | "variable_declarator"))
+            .and_then(|p| {
+                p.child_by_field_name("left")
+                    .or_else(|| p.child_by_field_name("name"))
+            })
+            .filter(|n| n.kind() == "identifier");
+        let name = assigned.or(declared);
+        if let Some(n) = declared {
             self.bind(n, scope, "function");
         }
         let id = self.scopes.len();
@@ -191,6 +214,7 @@ impl Pass<'_> {
             let mut positional = vec![];
             let mut keyword_only = false;
             let mut required = BTreeSet::new();
+            let mut types = BTreeMap::new();
             for p in parts {
                 if p.kind() == "keyword_separator" {
                     keyword_only = true;
@@ -211,6 +235,15 @@ impl Pass<'_> {
                     keyword_only = true;
                 } else {
                     if let Some(name) = parameter_name(p, self.source) {
+                        if let Some(annotation) = p.child_by_field_name("type") {
+                            types.insert(
+                                name.clone(),
+                                text(annotation, self.source)
+                                    .trim_start_matches(':')
+                                    .trim()
+                                    .to_string(),
+                            );
+                        }
                         parameter_names.push(name.clone());
                         if !keyword_only {
                             positional.push(name.clone());
@@ -230,11 +263,16 @@ impl Pass<'_> {
                     scope,
                     name: text(name, self.source).into(),
                     min,
-                    max: if variadic { None } else { Some(positional.len()) },
+                    max: if variadic {
+                        None
+                    } else {
+                        Some(positional.len())
+                    },
                     parameters: parameter_names,
                     positional,
                     keyword_variadic,
                     required,
+                    types,
                 });
             }
         }
@@ -346,9 +384,16 @@ impl Pass<'_> {
             return;
         }
         if matches!(k, "nonlocal_statement" | "global_statement") {
-            for name in children(node).into_iter().filter(|n| n.kind() == "identifier") {
+            for name in children(node)
+                .into_iter()
+                .filter(|n| n.kind() == "identifier")
+            {
                 let value = text(name, self.source);
-                let parent = if k == "global_statement" { 0 } else { self.scopes[scope].parent.unwrap_or(0) };
+                let parent = if k == "global_statement" {
+                    0
+                } else {
+                    self.scopes[scope].parent.unwrap_or(0)
+                };
                 if let Some(binding) = self.resolve(value, parent) {
                     self.scopes[scope].bindings.insert(value.into(), binding);
                 }
@@ -547,22 +592,37 @@ impl Pass<'_> {
                         )
                     })
                 {
-                    self.calls.push((
-                        text(fun, self.source).into(),
+                    self.calls.push(Call {
+                        name: text(fun, self.source).into(),
                         scope,
-                        children(args)
+                        count: children(args)
                             .iter()
                             .filter(|a| a.kind() != "keyword_argument")
                             .count(),
-                        children(args)
+                        keywords: children(args)
                             .iter()
                             .filter(|a| a.kind() == "keyword_argument")
                             .filter_map(|a| a.child_by_field_name("name"))
                             .map(|n| text(n, self.source).to_string())
                             .collect(),
-                        node.start_position().row + 1,
-                        node.start_position().column + 1,
-                    ));
+                        arguments: children(args)
+                            .into_iter()
+                            .map(|arg| {
+                                let keyword = arg
+                                    .child_by_field_name("name")
+                                    .filter(|_| arg.kind() == "keyword_argument")
+                                    .map(|n| text(n, self.source).to_string());
+                                let value = if keyword.is_some() {
+                                    arg.child_by_field_name("value").unwrap_or(arg)
+                                } else {
+                                    arg
+                                };
+                                (keyword, literal_type(value).map(str::to_string))
+                            })
+                            .collect(),
+                        line: node.start_position().row + 1,
+                        col: node.start_position().column + 1,
+                    });
                 }
             }
         }
@@ -581,10 +641,10 @@ impl Pass<'_> {
                         | "member_expression"
                         | "jsx_attribute"
                 ) && (p.kind() != "pair" || self.language != "python")
-                  && (p.child_by_field_name("key") == Some(node)
-                    || p.child_by_field_name("attribute") == Some(node)
-                    || p.child_by_field_name("property") == Some(node)
-                    || p.child_by_field_name("name") == Some(node))
+                    && (p.child_by_field_name("key") == Some(node)
+                        || p.child_by_field_name("attribute") == Some(node)
+                        || p.child_by_field_name("property") == Some(node)
+                        || p.child_by_field_name("name") == Some(node))
             });
             let is_type = parent.is_some_and(|p| {
                 matches!(
@@ -649,13 +709,23 @@ impl Pass<'_> {
                 );
             }
         }
-        for (name, scope, count, keywords, line, col) in self.calls.clone() {
+        for Call {
+            name,
+            scope,
+            count,
+            keywords,
+            arguments,
+            line,
+            col,
+        } in self.calls.clone()
+        {
             if let Some(binding) = self.resolve(&name, scope) {
                 let owner = self.bindings[binding].scope;
                 if let Some(sig) = self
                     .signatures
                     .iter()
                     .find(|s| s.name == name && s.scope == owner)
+                    .cloned()
                 {
                     let assigned: BTreeSet<_> = sig
                         .positional
@@ -670,10 +740,7 @@ impl Pass<'_> {
                     }) || keywords.iter().collect::<BTreeSet<_>>().len()
                         != keywords.len();
                     let missing = sig.required.iter().any(|key| !assigned.contains(key));
-                    if missing
-                        || keyword_error
-                        || sig.max.is_some_and(|max| count > max)
-                    {
+                    if missing || keyword_error || sig.max.is_some_and(|max| count > max) {
                         self.diag(
                             "E0025",
                             line,
@@ -687,6 +754,17 @@ impl Pass<'_> {
                             ),
                             "match the function's declared parameters",
                         );
+                    }
+                    for (index, (keyword, actual)) in arguments.iter().enumerate() {
+                        let parameter = keyword.as_ref().or_else(|| sig.positional.get(index));
+                        if let (Some(expected), Some(actual)) =
+                            (parameter.and_then(|p| sig.types.get(p)), actual)
+                        {
+                            if !compatible(expected, actual) {
+                                self.diag("E0026", line, col, format!("call `{name}` argument type `{actual}` does not match `{expected}`"),
+                                    "pass a value of the declared parameter type");
+                            }
+                        }
                     }
                 }
             }

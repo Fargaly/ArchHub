@@ -262,3 +262,58 @@ fn python_mapping_keys_nonlocal_and_variadic_keyword_calls() {
     assert!(has("E0025", "a.py", "def f(*args):\n    return args\nf(wrong=1)\n"));
     assert!(has("E0020", "a.py", "def f():\n    print(x)\n    x = 1\n    return x\n"));
 }
+
+#[test]
+fn assigned_functions_enforce_arity_red_green() {
+    for (file, bad, good) in [
+        ("a.js", "const f=(x)=>x; console.log(f());", "const f=(x)=>x; console.log(f(1));"),
+        ("a.py", "f = lambda x: x\nprint(f())\n", "f = lambda x: x\nprint(f(1))\n"),
+    ] {
+        assert!(has("E0025", file, bad), "{file}: assigned function escaped arity");
+        assert!(!has("E0025", file, good));
+    }
+}
+
+#[test]
+fn typed_calls_enforce_declared_parameter_red_green() {
+    assert!(has("E0026", "a.ts", "function f(n:number):number{return n;} console.log(f('bad'));"));
+    assert!(!has("E0026", "a.ts", "function f(n:number):number{return n;} console.log(f(1));"));
+}
+
+#[test]
+fn alert_budget_batches_at_break_and_resets_without_admitting_errors() {
+    let mut c = deviation_context();
+    c["day"] = json!("2026-10-16");
+    c["daily_alert_budget"] = json!(1);
+    let first = deviation::observe(&c);
+    assert_eq!(first["notices"].as_array().unwrap().len(), 1);
+    assert_eq!(first["notices"][0]["deliver_at"], "natural_break");
+    c["alert_state"] = first["alert_state"].clone();
+    assert!(deviation::observe(&c)["notices"].as_array().unwrap().is_empty());
+    assert!(!deviation::check(&c).is_empty());
+    c["day"] = json!("2026-10-17");
+    assert_eq!(deviation::observe(&c)["notices"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn intent_rules_inspect_source_without_voluntary_vendor_or_panel_flags() {
+    let mut c = context();
+    c["files"] = json!(["vendor/product/main.js"]);
+    assert!(intent::check(&c, &[("vendor/product/main.js".into(), "export const ready=true;".into())])
+        .iter().any(|d| d.code == "E0102"));
+    c["files"] = json!(["nodelang/presentation.jsx"]);
+    assert!(intent::check(&c, &[("nodelang/presentation.jsx".into(), "export const Surface=()=> <Panel/>;".into())])
+        .iter().any(|d| d.code == "E0102"));
+    assert!(!intent::check(&c, &[("nodelang/presentation.jsx".into(), "export const Surface=()=> <Graph/>;".into())])
+        .iter().any(|d| d.code == "E0102"));
+}
+
+#[test]
+fn html_intent_rules_use_html_ast_text_attributes_and_tags() {
+    let mut c = context();
+    c["files"] = json!(["index.html"]);
+    for source in ["<p>coming soon</p>", "<button title='coming soon'>Open</button>", "<iframe src='/x'></iframe>"] {
+        assert!(intent::check(&c, &[("index.html".into(), source.into())]).iter().any(|d| d.code == "E0102"), "{source}");
+    }
+    assert!(!intent::check(&c, &[("index.html".into(), "<p>Ready</p>".into())]).iter().any(|d| d.code == "E0102"));
+}

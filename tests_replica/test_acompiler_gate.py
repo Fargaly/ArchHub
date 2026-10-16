@@ -467,6 +467,7 @@ def test_installed_closure_rejects_missing_lock_proof_and_dynamic_crt(tmp_path):
 
 @pytest.mark.parametrize("tamper", [False, True])
 def test_static_package_uses_snapshot_and_freezes_source_closure(tmp_path, monkeypatch, tamper):
+    monkeypatch.setenv("CARGO_TARGET_DIR", str(tmp_path / "cargo-target"))
     root = tmp_path / "snapshot"
     origin = tmp_path / "origin"
     for name in set(strict_check.RUNTIME_FILES) | set(strict_check.COMPILER_SOURCES):
@@ -489,6 +490,7 @@ def test_static_package_uses_snapshot_and_freezes_source_closure(tmp_path, monke
             assert "--locked" in command
             assert str(root / "tools" / "archhub-compiler" / "Cargo.toml") in command
             target = Path(command[command.index("--target-dir") + 1]) / "release" / "archhub-compiler.exe"
+            assert target.parent.parent == tmp_path / "cargo-target" / "package-static"
             target.parent.mkdir(parents=True)
             target.write_bytes(b"built compiler fixture")
             if tamper:
@@ -733,7 +735,7 @@ def test_real_static_snapshot_package_runs_verified_installed_binary_without_car
             check=True, timeout=strict_check.node_timeout())
         assert "E0001" in explanation.stdout
         receipt = {"schema_version": 1, "source_sha256": provenance["source_sha256"],
-            "executable_sha256": provenance["executable_sha256"], "rustflags": provenance["rustflags"],
+            "executable_sha256": provenance["executable_sha256"], "observed_build_options": provenance["rustflags"],
             "windows_dlls": provenance["windows_dlls"], "runtime_files": provenance["runtime_files"],
             "licenses_sha256": provenance["licenses_sha256"], "source_unchanged": True,
             "installed_command": "runtime/acompiler/archhub-compiler.exe --explain E0001",

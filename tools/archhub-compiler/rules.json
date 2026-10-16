@@ -1,9 +1,50 @@
 {
   "schema_version": 1,
   "authority": "BRIEF-ACOMPILER.md Addendum 2; DELIVERY-STATUS row 1 HEART and 1b HEART v2; plan.md owned paths",
-  "source_sha256": "9604ff1812dea1b27f8511d8121427e7a0f9c00f4ad9ad96362f0b74b2b03b76",
-  "intent_gap": "No Fnn compiler ledger row exists; ACOMPILER is the authorized session-record intent, never an invented founder row.",
+  "source_sha256": "6662455cc0f55648d29a95f21278cb6946a1630f370b43bde6f6e4fcf3cb140a",
   "intents": {
+    "ACOMPILER2B": {
+      "source": "BRIEF-ACOMPILER2B.md; DELIVERY-STATUS.md rows 1b HEART v2, F62, F76",
+      "scope": [
+        "tools/archhub-compiler/",
+        "tools/pipeline/strict_check.py",
+        "tools/pipeline/pre_commit.py",
+        "tools/pipeline/record_observation.py",
+        "nodelang/enforce.py",
+        "tests_replica/test_acompiler_gate.py",
+        "tests_replica/test_enforce.py",
+        "tests_replica/test_acompiler2b.py",
+        "NOTICE",
+        "READ-PROOF.md",
+        "plan.md",
+        "tasks.json",
+        "notes.md",
+        "PROGRESS.md",
+        "RESULT-ACOMPILER2B.md",
+        "ACOMPILER2B.patch",
+        "ACOMPILER2B.patch.sha256",
+        "evidence/acompiler2b-run.ps1",
+        "evidence/acompiler2b-red.txt",
+        "evidence/acompiler2b-authority-red.txt",
+        "evidence/acompiler2b-rust.txt",
+        "evidence/acompiler2b-python.txt",
+        "evidence/acompiler2b-build.txt",
+        "evidence/acompiler2b-collection.txt",
+        "evidence/acompiler2b-own.json",
+        "evidence/acompiler2b-finish.txt",
+        "evidence/acompiler2b-review.md",
+        "evidence/acompiler2b-zero-idle.txt",
+        "evidence/acompiler2b-enforcer-hook.patch",
+        "evidence/acompiler2b-enforcer-hook.sha256",
+        "evidence/acompiler2b-sources.md",
+        "evidence/acompiler2b-verify.py",
+        "evidence/acompiler2b-tests.json",
+        "tools/pipeline/package_compiler.py",
+        "evidence/acompiler2b-package.txt",
+        "evidence/acompiler-package-proof.json",
+        "evidence/acompiler-intents.json"
+      ]
+    },
     "ACOMPILER": {
       "source": "BRIEF-ACOMPILER.md",
       "scope": [
@@ -152,7 +193,10 @@
       "facts not read yet"
     ],
     "forbidden_frame_elements": [
-      "iframe"
+      "iframe",
+      "Panel",
+      "Frame",
+      "SidePanel"
     ],
     "hand_listed_settings_names": [
       "SETTINGS54_GROUPS",
@@ -160,7 +204,12 @@
       "SETTINGS_ROWS"
     ],
     "unmodified_vendor_refused": true,
-    "example_as_scope_refused": true
+    "example_as_scope_refused": true,
+    "vendor_product_roots": [
+      "vendor/",
+      "vendored/",
+      "third_party/products/"
+    ]
   },
   "deviation": {
     "minimum_history": 5,
@@ -192,5 +241,6 @@
       "license": "Apache-2.0",
       "fit": "checkTypeAssignableTo, hasCorrectArity and getMinArgumentCount learned from pinned source; explicit primitive contracts and arity, no external tsc"
     }
-  ]
+  ],
+  "intent_registration": "F62/F76 compiler ledger rows are registered by evidence/acompiler-intents.json; ACOMPILER remains a legacy session-record identity."
 }

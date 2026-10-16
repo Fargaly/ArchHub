@@ -1,5 +1,6 @@
 use archhub_compiler::{
-    analyze_artifact, apply_context, compile, explain, language_name, Diagnostic, SourceFile,
+    analyze_artifact, apply_context_with_authority, compile, explain, intent, language_name,
+    Diagnostic, SourceFile,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -24,6 +25,8 @@ fn run() -> Result<bool, String> {
         let mut context = None;
         let mut json = false;
         let mut report_only = false;
+        let mut authority_root = None;
+        let mut authority_revision = "HEAD".to_string();
         let mut i = 1;
         while i < args.len() {
             match args[i].as_str() {
@@ -34,6 +37,14 @@ fn run() -> Result<bool, String> {
                 "--context" => {
                     i += 1;
                     context = args.get(i).cloned();
+                }
+                "--authority-root" => {
+                    i += 1;
+                    authority_root = args.get(i).map(PathBuf::from);
+                }
+                "--authority-revision" => {
+                    i += 1;
+                    authority_revision = args.get(i).ok_or("missing authority revision")?.clone();
                 }
                 "--json" => json = true,
                 "--report-only" => report_only = true,
@@ -50,7 +61,11 @@ fn run() -> Result<bool, String> {
         )
         .map_err(|e| e.to_string())?;
         let mut report = analyze_artifact(&payload, &context);
-        apply_context(&mut report, &context, &[]);
+        let authority = match authority_root {
+            Some(root) => intent::repository_authority(&root, &authority_revision)?,
+            None => intent::authority(),
+        };
+        apply_context_with_authority(&mut report, &context, &[], &authority);
         if json {
             println!(
                 "{}",
@@ -111,6 +126,7 @@ fn run() -> Result<bool, String> {
         BTreeMap::new()
     };
     let mut pending = BTreeMap::new();
+    let authority = intent::repository_authority(&root, revision.as_deref().unwrap_or("HEAD"))?;
     let mut failures: Vec<(String, String)> = vec![];
     let removed: BTreeSet<_> = overrides
         .iter()
@@ -265,6 +281,7 @@ fn run() -> Result<bool, String> {
             .or_default() += 1;
         report.diagnostics.push(Diagnostic {
             code: "E0010".into(),
+            note: "source inventory must be complete before admission".into(),
             file,
             language,
             line: 1,
@@ -274,7 +291,7 @@ fn run() -> Result<bool, String> {
         });
     }
     if let Some(context) = context.as_ref() {
-        apply_context(&mut report, context, &sources);
+        apply_context_with_authority(&mut report, context, &sources, &authority);
     }
     if json {
         println!(

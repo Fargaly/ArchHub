@@ -139,8 +139,27 @@ pub fn observe(context: &Value) -> Value {
             }
         }
     }
+    let budget = context["daily_alert_budget"]
+        .as_u64()
+        .unwrap_or_else(|| rules["daily_alert_budget"].as_u64().unwrap_or(5));
+    let day = context["day"].as_str().unwrap_or("");
+    let used = if context["alert_state"]["day"].as_str() == Some(day) {
+        context["alert_state"]["used"].as_u64().unwrap_or(0)
+    } else {
+        0
+    };
+    // One episode produces at most one batched offer at the next natural break.
+    // Budgeting never removes diagnostics or admits an unexplained deviation.
+    let notice = (!outliers.is_empty() || !changed.is_empty()) && used < budget;
+    let notices = if notice {
+        vec![
+            json!({"author":author,"outliers":outliers,"method_changes":changed,"deliver_at":"natural_break"}),
+        ]
+    } else {
+        vec![]
+    };
     json!({"schema_version":1,"author":author,"metrics":metrics,"method_changes":changed,"outliers":outliers,
-        "daily_alert_budget":context["daily_alert_budget"].as_u64().unwrap_or_else(||rules["daily_alert_budget"].as_u64().unwrap_or(5)),
+        "daily_alert_budget":budget,"notices":notices,"alert_state":{"day":day,"used":used+u64::from(notice)},
         "notification_only_budget":true,"history_samples":history.len()})
 }
 pub fn check(context: &Value) -> Vec<Diagnostic> {
@@ -156,7 +175,7 @@ pub fn check(context: &Value) -> Vec<Diagnostic> {
         .copied()
         .collect();
     if !missing.is_empty() && context["files"].as_array().is_some_and(|a| !a.is_empty()) {
-        return vec![Diagnostic{code:"E0200".into(),language:crate::language_name(anchor).into(),file:anchor.into(),line:1,column:1,
+        return vec![Diagnostic{code:"E0200".into(),note:"unknown metrics cannot establish a personal baseline".into(),language:crate::language_name(anchor).into(),file:anchor.into(),line:1,column:1,
             message:format!("change has no measured deviation metrics: {}",missing.join(", ")),
             help:"derive every current metric from the pending change and compiler report; unknown history stays absent rather than invented".into()}];
     }
@@ -172,7 +191,7 @@ pub fn check(context: &Value) -> Vec<Diagnostic> {
         .and_then(Value::as_str)
         .unwrap_or("COMMIT_EDITMSG");
     observation["outliers"].as_array().map(|rows|rows.iter().map(|row|Diagnostic{
-        code:"E0200".into(),language:crate::language_name(anchor).into(),file:anchor.into(),line:1,column:1,
+        code:"E0200".into(),note:"a deviation is a request for an explicit reason, not a judgment about the author".into(),language:crate::language_name(anchor).into(),file:anchor.into(),line:1,column:1,
         message:format!("author change metric `{}` is outside its median/MAD band ({} versus median {})",row["metric"].as_str().unwrap_or(""),row["value"],row["median"]),
         help:"provide a Why: explanation; persistent measured shifts are recorded as a new author method, never excused by an alert budget".into()
     }).collect()).unwrap_or_default()

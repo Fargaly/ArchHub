@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -94,8 +95,8 @@ def package(root, toolchain_root):
     env["RUSTFLAGS"] = str(node_parameter("compiler_rustflags"))
     if env["RUSTFLAGS"] != "-C target-feature=+crt-static":
         raise CompilerFailure("installer compiler node flags must produce a static CRT")
-    cargo = toolchain_root.parent / "rust" / "cargo" / "bin" / "cargo.exe"
-    target = toolchain_root / "tools" / "archhub-compiler" / "target" / "package-static"
+    cargo = Path(env.get("CARGO_HOME", str(toolchain_root.parent / "rust" / "cargo"))) / "bin" / "cargo.exe"
+    target = Path(os.environ["CARGO_TARGET_DIR"]) / "package-static" if os.environ.get("CARGO_TARGET_DIR") else toolchain_root / "tools" / "archhub-compiler" / "target" / "package-static"
     jobs = int(node_parameter("compiler_jobs"))
     if jobs <= 0:
         raise CompilerFailure("compiler jobs node parameter must be positive")

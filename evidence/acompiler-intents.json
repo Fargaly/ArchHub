@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "intents": {
+    "F62": {
+      "source": "70.HANDOFFS/archhub-integrated-repair-20260909/DELIVERY-STATUS.md#F62",
+      "scope": [
+        "tools/archhub-compiler/",
+        "tools/pipeline/",
+        "nodelang/enforce.py",
+        "tests_replica/test_acompiler_gate.py",
+        "tests_replica/test_enforce.py",
+        "tests_replica/test_acompiler2b.py",
+        "evidence/acompiler-intents.json",
+        "evidence/acompiler-baseline.json",
+        "evidence/acompiler.json",
+        "NOTICE"
+      ]
+    },
+    "F76": {
+      "source": "70.HANDOFFS/archhub-integrated-repair-20260909/DELIVERY-STATUS.md#F76",
+      "scope": [
+        "tools/archhub-compiler/",
+        "tools/pipeline/",
+        "nodelang/enforce.py",
+        "tests_replica/test_acompiler_gate.py",
+        "tests_replica/test_enforce.py",
+        "tests_replica/test_acompiler2b.py",
+        "evidence/acompiler-intents.json",
+        "evidence/acompiler-baseline.json",
+        "evidence/acompiler.json",
+        "NOTICE"
+      ]
+    }
+  }
+}

@@ -50,13 +50,15 @@ pub struct Diagnostic {
     pub line: usize,
     pub column: usize,
     pub message: String,
+    #[serde(default)]
+    pub note: String,
     pub help: String,
 }
 impl Diagnostic {
     pub fn render(&self) -> String {
         format!(
-            "error[{}]: {}\n  --> {}:{}:{}\n  help: {}",
-            self.code, self.message, self.file, self.line, self.column, self.help
+            "error[{}]: {}\n  --> {}:{}:{}\n  note: {}\n  help: {}",
+            self.code, self.message, self.file, self.line, self.column, self.note, self.help
         )
     }
 }
@@ -193,6 +195,9 @@ fn restore_locations(report: &mut Report, locations: &BTreeMap<String, (String, 
     report.extend(vec![]);
 }
 pub fn apply_context(report: &mut Report, context: &Value, sources: &[(String, String)]) {
+    apply_context_with_authority(report, context, sources, &intent::authority());
+}
+pub fn apply_context_with_authority(report: &mut Report, context: &Value, sources: &[(String, String)], authority: &Value) {
     let mut context = context.clone();
     if !context.is_object() {
         context = serde_json::json!({});
@@ -216,7 +221,7 @@ pub fn apply_context(report: &mut Report, context: &Value, sources: &[(String, S
         }
     }
     context["metrics"]["ratchet_deltas"] = serde_json::json!(deltas);
-    report.extend(intent::check(&context, sources));
+    report.extend(intent::check_with_authority(&context, sources, authority));
     report.extend(deviation::check(&context));
     report.observation = Some(deviation::observe(&context));
 }
@@ -232,6 +237,7 @@ impl Span {
     fn diagnostic(&self, code: &str, message: impl Into<String>, help: &str) -> Diagnostic {
         Diagnostic {
             code: code.into(),
+            note: explain(code).unwrap_or("compiler input refusal").into(),
             file: self.file.clone(),
             language: self.language.clone(),
             line: self.line,
@@ -2644,6 +2650,10 @@ pub fn analyze_artifact(pending: &Value, context: &Value) -> Report {
         );
     } else {
         let content = &pending["content"];
+        if (target.starts_with("revit://") || target.starts_with("autocad://") || pending.get("host").is_some())
+            && (pending["kind"] != "model" || pending["format"] != "host-parameter-edit-v1") {
+            emit("E0010", "a host target cannot be disguised as another artifact kind");
+        }
         match pending["kind"].as_str() {
             Some("model") if pending["format"] == "archhub-graph-v1" => {
                 let action = content["action"].as_str().unwrap_or("");
@@ -2686,6 +2696,28 @@ pub fn analyze_artifact(pending: &Value, context: &Value) -> Report {
                 }
             }
             Some("model") => {
+                let hosted = pending["format"] == "host-parameter-edit-v1"
+                    || target.starts_with("revit://") || target.starts_with("autocad://") || pending.get("host").is_some();
+                if hosted {
+                    if pending["format"] != "host-parameter-edit-v1" {
+                        emit("E0010", "a host target requires its supported typed host edit format");
+                    }
+                    let host = &pending["host"];
+                    let program = host["program"].as_str().unwrap_or("");
+                    let document = host["document"].as_str().unwrap_or("");
+                    let elements = content["elements"].as_array();
+                    let element = elements.and_then(|a| if a.len() == 1 { a.first() } else { None });
+                    let id = element.and_then(|e| e["id"].as_str()).unwrap_or("");
+                    if !matches!(program, "revit" | "autocad") || host["operation"] != "set_parameters"
+                        || document.is_empty() || document.contains(['/', '\\', ':', '%'])
+                        || id.is_empty() || id.contains(['/', '\\', ':', '%'])
+                        || target != format!("{program}://{document}/element/{id}") {
+                        emit("E0009", "host parameter edit must bind its supported operation, document, element and exact target");
+                    }
+                    if !rules["model"]["parameters"].as_object().is_some_and(|p| !p.is_empty()) {
+                        emit("E0010", "host parameter edit requires the selected firm parameter standard");
+                    }
+                }
                 if let Some(elements) = content["elements"].as_array().filter(|a| !a.is_empty()) {
                     let mut ids = BTreeSet::new();
                     for element in elements {
@@ -2701,7 +2733,7 @@ pub fn analyze_artifact(pending: &Value, context: &Value) -> Report {
                         if let Some(parameters) =
                             element["parameters"].as_object().filter(|p| !p.is_empty())
                         {
-                            for parameter in parameters.values() {
+                            for (name, parameter) in parameters {
                                 let typ = parameter["type"].as_str().unwrap_or("");
                                 let val = &parameter["value"];
                                 let typed = match typ {
@@ -2721,6 +2753,24 @@ pub fn analyze_artifact(pending: &Value, context: &Value) -> Report {
                                         "E0009",
                                         "model parameter has an unsupported or mismatched type",
                                     );
+                                }
+                                if hosted {
+                                    let standard = &rules["model"]["parameters"][name];
+                                    if !standard.is_object() || standard["type"] != parameter["type"] {
+                                        emit("E0009", "host parameter is absent from the firm standard or has the wrong declared type");
+                                    }
+                                    for bound in ["min", "max"] {
+                                        if let Some(limit) = standard.get(bound) {
+                                            let within = limit.as_f64().zip(val.as_f64()).is_some_and(|(limit, value)|
+                                                if bound == "min" { value >= limit } else { value <= limit });
+                                            if !within { emit("E0009", "host parameter value violates a firm numeric bound"); }
+                                        }
+                                    }
+                                    if let Some(allowed) = standard.get("enum") {
+                                        if !allowed.as_array().is_some_and(|a| a.contains(val)) {
+                                            emit("E0009", "host parameter value violates the firm allowed values");
+                                        }
+                                    }
                                 }
                             }
                         } else {

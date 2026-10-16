@@ -24,3 +24,5 @@ Ruff and Oxc (MIT), Pyright (MIT), TypeScript (Apache-2.0) are learned from
 official source for bounded lexical, flow, arity and explicit-type checks.
 No external Ruff/Pyright/tsc checker is invoked by the product compiler.
 See tools/archhub-compiler/rules.json for exact learned source provenance.
+
+ACOMPILER2B: bounded scope, flow and explicit call/type rules are learned from Ruff (MIT), Oxc (MIT), Pyright (MIT), TypeScript (Apache-2.0) and rustc (MIT/Apache-2.0). No checker implementation source copied and no checker executables invoked. Source/license URLs and fallback decision: evidence/acompiler2b-sources.md.

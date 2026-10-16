@@ -2693,7 +2693,10 @@ const Home = ({ onOpen, sessions = LM_SESSIONS, model, native, readiness = null,
     const prompt = startPrompt();
     if (!draft.trim() || startBusy.current) return;
     if (prompt.length > 12000) { setStartError('The request and attachments exceed the session start limit.'); return; }
-    if (!native && !modelRoute(model)) { setPickerOpen(true); return; }
+    if (!native && !modelRoute(model)) {
+      setStartError('Choose a model before sending. Your text is still here.');
+      return;
+    }
     startBusy.current = true; setStarting(true); setStartError('');
     try {
       const owner = window.ARCHHUB_EXISTING_WORKSHOP;
@@ -6263,7 +6266,11 @@ const NodeRenderer = ({ libraryMode = false, n: held, x = held.x, y = held.y, se
       if (finished) return;
       finished = true;
       ev?.preventDefault?.(); ev?.stopPropagation?.();
-      if (Number.isFinite(ev?.clientX) && Number.isFinite(ev?.clientY)) last = {x:ev.clientX, y:ev.clientY};
+      if (Number.isFinite(ev?.clientX) && Number.isFinite(ev?.clientY)) {
+        last = {x:ev.clientX, y:ev.clientY};
+        // Native shells can coalesce all movement into the release event.
+        if (Math.hypot(last.x - sx, last.y - sy) >= 8) moved = true;
+      }
       for (const target of [document, window]) {
         target.removeEventListener('mousemove', move, true);
         target.removeEventListener('mouseup', up, true);
@@ -7903,7 +7910,6 @@ const ScopeComposer = ({ target, model, setPickerOpen, readiness = null, onReadi
     if (!window.ARCHHUB_AGENT) { setState('Sending is unavailable in this view. Your text is still here.'); return; }
     if (!retry && ((blocked && blocked.state !== 'unknown') || !route)) {
       setState(blocked?.message || 'Choose a model before sending. Your text is still here.');
-      if (typeof setPickerOpen === 'function') setPickerOpen(true);
       return;
     }
     if (typeof onSend === 'function') onSend();

@@ -1024,9 +1024,14 @@ def test_group_and_ungroup_toolbar_bindings_preserve_selected_root_identities():
 def test_group_member_drag_out_persists_reload_and_authority_undo_restores():
     server = ApplicationServer().start()
     try:
+        # Group user WIP cards, as the Studio does; System domains cannot be
+        # detached through the user's remove-member control.
+        from nodelang.universal_pipeline import seed_wall_pipeline
+        seed_wall_pipeline(server.universal_store, server.universal_registry)
         status, before = _json(server, "/api/universal/canvas")
         assert status == 200
-        roots = [node["id"] for node in before["nodes"][:2]]
+        cards = {node["label"]: node["id"] for node in before["nodes"]}
+        roots = [cards["Sketch Lines"], cards["CAD Lines"]]
         status, selected = _json(server, "/api/universal/gesture", {
             "roots": roots,
             "focus": roots[-1],
@@ -1039,7 +1044,13 @@ def test_group_member_drag_out_persists_reload_and_authority_undo_restores():
         assert status == 200
         group_root = grouped["created_root"]
 
-        status, moved = _json(server, "/api/universal/gesture", {
+        # Use the same admitted remove-member interaction as both Studio clients.
+        binding = _interaction_binding(grouped, "app:control:canvas:remove-member")
+        status, moved = _json(server, "/api/universal/interaction", {
+            "interaction": binding["interaction"],
+            "control": binding["control"],
+            "event": binding["event"],
+            "revision": grouped["revision"],
             "expected_scope": grouped["scope"]["current"],
             "membership": {
                 "member": roots[0],

@@ -478,7 +478,7 @@ function Read-StudioBuild {
     if ((Get-Item -LiteralPath $manifestPath).Length -gt 32KB) { throw 'Studio compiler manifest exceeds 32 KiB.' }
     $bytes = [IO.File]::ReadAllBytes($manifestPath)
     $manifest = $utf8.GetString($bytes) | ConvertFrom-Json
-    if ($manifest.format -ne 1 -or $manifest.files.Count -ne 14) { throw 'Unsupported Studio compiler manifest.' }
+    if ($manifest.format -ne 1 -or $manifest.files.Count -ne $names.Count) { throw 'Unsupported Studio compiler manifest.' }
     # --check has reconciled source inputs, options and output bytes. Also bind
     # the exact physical output inventory here before handing it to Inno.
     [long]$total = 0

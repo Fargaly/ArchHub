@@ -81,7 +81,7 @@ test('Send without a route retains the draft and only the model control opens th
   } finally {ui.close();}
 });
 
-for (const action of ['button','Enter']) test('Home '+action+' submits through existing session owner, never picker',async()=>{
+for (const homeAction of ['button','Enter']) test('Home '+homeAction+' submits through existing session owner, never picker',async()=>{
   const ui=await browser(),calls=[],picks=[],replies=[];
   const state={canvas:{graph_id:'graph-a'},topology:{canvas:{authorization:{subject:'owner',session:'view'}}},workshops:[]};
   ui.win.ARCHHUB_EXISTING_WORKSHOP={getSnapshot:()=>state,subscribe:()=>()=>{},readHomeTemplates:async()=>({templates:[]}),
@@ -90,7 +90,7 @@ for (const action of ['button','Enter']) test('Home '+action+' submits through e
     ui.render('Home',{model,workshopState:state,account:{name:'Owner'},setPickerOpen:v=>picks.push(v),
       onStarted:async result=>replies.push(result.delivery)});
     const input=ui.doc.querySelector('[aria-label="Start a new session"]');ui.type(input,'start a real session');
-    ui.flush(()=>action==='button' ? button(ui,'Send').click() : input.dispatchEvent(new ui.win.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true})));
+    ui.flush(()=>homeAction==='button' ? button(ui,'Send').click() : input.dispatchEvent(new ui.win.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true})));
     await ui.settle();assert.equal(calls.length,1);assert.equal(calls[0].model,model.routed);
     assert.equal(replies[0].state,'replied');assert.deepEqual(picks,[]);assert.equal(input.value,'');
   } finally {ui.close();}
@@ -126,7 +126,7 @@ for(const stream of ['pointer','mouse']) test('group drag-out '+stream+' commits
 });
 
 // Independent supplementary courts; the original RED assertions above stay intact.
-for (const action of ['button','Enter']) test('Home without route '+action+' keeps draft and picker closed',async()=>{
+for (const noRouteAction of ['button','Enter']) test('Home without route '+noRouteAction+' keeps draft and picker closed',async()=>{
   const ui=await browser(),calls=[],picks=[];
   const state={canvas:{graph_id:'graph-a'},topology:{canvas:{authorization:{subject:'owner',session:'view'}}},workshops:[]};
   ui.win.ARCHHUB_EXISTING_WORKSHOP={getSnapshot:()=>state,subscribe:()=>()=>{},readHomeTemplates:async()=>({templates:[]}),
@@ -134,7 +134,7 @@ for (const action of ['button','Enter']) test('Home without route '+action+' kee
   try {
     ui.render('Home',{model:{name:'Choose a model'},workshopState:state,account:{name:'Owner'},setPickerOpen:v=>picks.push(v)});
     const input=ui.doc.querySelector('[aria-label="Start a new session"]');ui.type(input,'retain home request');
-    ui.flush(()=>action==='button' ? button(ui,'Send').click() : input.dispatchEvent(new ui.win.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true})));
+    ui.flush(()=>noRouteAction==='button' ? button(ui,'Send').click() : input.dispatchEvent(new ui.win.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true})));
     await ui.settle();assert.deepEqual(calls,[]);assert.deepEqual(picks,[]);
     assert.equal(input.value,'retain home request');assert.match(ui.doc.body.textContent,/Choose a model before sending/);
     const picker=[...ui.doc.querySelectorAll('[data-home-composer] button')].find(row=>row.textContent.includes('Choose a model')&&row.textContent.includes('▾'));

@@ -119,7 +119,8 @@ def test_google_sign_in_lands_the_account_in_cloud_json(cloud, tmp_path):
                                   opener=_browser_that_follows).start()
     state = _wait(attempt)
     assert state["phase"] == "done" and state["email"] == "ahmed@example.com", state
-    held = json.loads(record.read_text(encoding="utf-8"))
+    held = cloud_signin.read_cloud_session(record)
+    assert "token" not in json.loads(record.read_text(encoding="utf-8"))
     assert held["token"].startswith("ah_") and held["email"] == "ahmed@example.com"
     assert held["user_id"] == "u-42" and held["cloud_base_url"] == base
     assert signed_in_cloud_account(record) == "ahmed@example.com"

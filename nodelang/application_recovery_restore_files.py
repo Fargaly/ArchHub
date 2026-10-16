@@ -86,7 +86,8 @@ def _read_manifest(directory):
     for role, description in files.items():
         if type(description) is not dict or set(description) != {"name", "size_bytes", "sha256"}:
             raise ValueError("restore manifest file fields are invalid")
-        if description["name"] != _FILE_NAMES[role]:
+        shared_content = role == 'content' and description == files.get('graph')
+        if description["name"] != _FILE_NAMES[role] and not shared_content:
             raise ValueError("restore manifest source filename is invalid")
         if type(description["size_bytes"]) is not int or description["size_bytes"] < 100:
             raise ValueError("restore manifest file size is invalid")
@@ -243,7 +244,16 @@ def prepare_application_restore(recovery_directory, destination, *, output_names
     directory_identity = _directory_identity(source)
     manifest, manifest_digest, manifest_identity = _read_manifest(source)
     roles = tuple(role for role in _FILE_NAMES if role in manifest["files"])
-    names = _output_names(output_names, roles)
+    if type(output_names) is not dict or set(output_names) != set(roles):
+        raise ValueError('restore output names must match the exact source roles')
+    shared = manifest['files'].get('content') == manifest['files'].get('graph')
+    if shared:
+        if output_names['content'] != output_names['graph']:
+            raise ValueError('shared graph and content require one restore filename')
+        names = _output_names({'graph': output_names['graph']}, ('graph',))
+        names['content'] = names['graph']
+    else:
+        names = _output_names(output_names, roles)
     destination = _plain_path(destination)
     if os.path.lexists(destination):
         raise FileExistsError("restore destination already exists: %s" % destination)
@@ -261,7 +271,7 @@ def prepare_application_restore(recovery_directory, destination, *, output_names
         identities[description["name"]] = identity
     required_names = set(identities)
     _check_source(source, directory_identity, identities, required_names)
-    required_bytes = sum(manifest["files"][role]["size_bytes"] for role in roles)
+    required_bytes = sum(manifest["files"][role]["size_bytes"] for role in roles if not (shared and role == 'content'))
     _require_disk_reserve(parent, required_bytes)
     check_budget()
     stage = parent / (".application-recovery-restore-" + uuid.uuid4().hex)
@@ -272,6 +282,9 @@ def prepare_application_restore(recovery_directory, destination, *, output_names
         remaining = required_bytes
         for role in roles:
             check_budget()
+            if shared and role == 'content':
+                copies[role] = copies['graph']
+                continue
             _require_disk_reserve(parent, remaining)
             description = manifest["files"][role]
             path = stage / names[role]

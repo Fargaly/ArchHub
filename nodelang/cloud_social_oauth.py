@@ -96,10 +96,12 @@ class _ReturnHandler(BaseHTTPRequestHandler):
 class CloudSocialAttempt:
     def __init__(self, provider: str, token: str, base: str, *,
                  opener=None, http: Callable[..., tuple[int, dict]] = _request,
-                 port: Optional[int] = None, wait_seconds: float = WAIT_SECONDS) -> None:
+                 port: Optional[int] = None, wait_seconds: float = WAIT_SECONDS,
+                 session_path: Optional[Path] = None) -> None:
         self.provider = provider
         self._token, self._base, self._opener, self._http = token, base, opener, http
         self._port, self._wait = port or _free_port(), wait_seconds
+        self._session_path = session_path or cloud_session_path()
         self._device_session = secrets.token_urlsafe(24)
         self._nonce = secrets.token_urlsafe(24)
         self._lock = threading.Lock()
@@ -125,11 +127,13 @@ class CloudSocialAttempt:
 
     @property
     def active(self) -> bool:
-        return self.status()["phase"] in ("starting", "waiting", "exchanging")
+        return self.status()["phase"] in ("starting", "signing_in", "waiting", "exchanging")
 
     def cancel(self) -> None:
         self._cancel = True
         self._fail("cancelled")
+        from .cloud_signin import wake_status_waiters
+        wake_status_waiters()
 
     def start(self) -> "CloudSocialAttempt":
         self.thread = threading.Thread(target=self._run, name="archhub-social-oauth-" + self.provider, daemon=True)
@@ -193,6 +197,8 @@ class CloudSocialAttempt:
 
     def _run(self) -> None:
         try:
+            if not self._token and not self._sign_in():
+                return
             self._run_exchange()
         except Exception:
             # Never expose urllib exception strings: they can contain a grant
@@ -203,6 +209,27 @@ class CloudSocialAttempt:
             if self._server is not None:
                 self._server.server_close()
                 self._server = None
+
+    def _sign_in(self) -> bool:
+        """Carry the account prerequisite inside this same provider click."""
+        from . import cloud_signin
+        self._set(phase="signing_in")
+        cloud_signin.begin("google", path=self._session_path, opener=self._opener)
+        deadline = time.monotonic() + self._wait
+        while not self._cancel and time.monotonic() < deadline:
+            state = cloud_signin.current_status()
+            token, base = _session(self._session_path)
+            if token:
+                self._token, self._base = token, base
+                self._set(phase="starting")
+                return True
+            if state.get("phase") in ("failed", "cancelled", "done"):
+                self._fail("ArchHub sign-in did not complete; retry Connect")
+                return False
+            cloud_signin.wait_for_change(state, timeout=max(0, deadline - time.monotonic()),
+                cancelled=lambda: self._cancel)
+        self._fail("cancelled" if self._cancel else "ArchHub sign-in timed out; retry Connect")
+        return False
 
     def _run_exchange(self) -> None:
         try:
@@ -300,7 +327,9 @@ class CloudSocialAttempt:
 
 def _session(path: Optional[Path]) -> tuple[str, str]:
     held = read_cloud_session(path or cloud_session_path())
-    token = str(held.get("token") or "")
+    expires = held.get("expires_at")
+    lapsed = (type(expires) in (int, float) and expires <= time.time()) or held.get("refused_at")
+    token = "" if lapsed else str(held.get("token") or "")
     if not token:
         return "", pinned_cloud_base(DEFAULT_BASE)
     return token, pinned_cloud_base(held.get("cloud_base_url") or DEFAULT_BASE)
@@ -309,8 +338,10 @@ def _session(path: Optional[Path]) -> tuple[str, str]:
 def status(provider: str, *, path: Optional[Path] = None,
            http: Callable[..., tuple[int, dict]] = _request) -> dict:
     token, base = _session(path)
-    if provider not in PROVIDERS or not token:
-        return {"state": "missing", "blocker": "Sign in to the ArchHub cloud first."}
+    if provider not in PROVIDERS:
+        return {"state": "missing", "blocker": "Choose a supported social network"}
+    if not token:
+        return {"state": "signin_required"}
     code, payload = http("GET", f"{base}/oauth/{provider}/status", bearer=token)
     if code != 200 or payload.get("state") != "configured":
         return {"state": payload.get("state", "missing"), "blocker": payload.get("blocker") or "Cloud social OAuth broker unavailable",
@@ -324,12 +355,12 @@ def status(provider: str, *, path: Optional[Path] = None,
 def start(provider: str, *, path: Optional[Path] = None,
           opener=None, http: Callable[..., tuple[int, dict]] = _request) -> dict:
     token, base = _session(path)
-    if provider not in PROVIDERS or not token:
-        return {"phase": "failed", "error": "Sign in to the ArchHub cloud first."}
+    if provider not in PROVIDERS:
+        return {"phase": "failed", "error": "Choose a supported social network"}
     current = _CURRENT.get(provider)
     if current and current.active:
         return current.status()
-    attempt = CloudSocialAttempt(provider, token, base, opener=opener, http=http)
+    attempt = CloudSocialAttempt(provider, token, base, opener=opener, http=http, session_path=path)
     _register_local_attempt(provider, attempt)
     attempt.start()
     _CURRENT[provider] = attempt

@@ -120,7 +120,8 @@ def _owned_sources(owner, authentication_context, deadline):
             check()
         history = None
         if instance_id is None:
-            if service._history is not None or service._path is not None and service._path.exists():
+            if service._history is not None or (service._path is not None and service._path.exists()
+                    and not service._embedded):
                 raise InvalidCell("unadmitted ordinary history requires migration recovery")
         else:
             if service._path is None or not service._path.is_file():
@@ -128,14 +129,16 @@ def _owned_sources(owner, authentication_context, deadline):
             if service._history is None:
                 service._history = ConversationHistoryStore(service._path,
                     instance_id=instance_id, create=False,
+                    store=store if service._embedded else None,
                     busy_timeout_seconds=min(0.2, max(0, deadline - time.monotonic())))
             history = service._history
             stack.enter_context(_lock_before(history._lock, deadline))
             _configured_target(service, history)
             if history.instance_id != instance_id or history._db.in_transaction:
                 raise InvalidCell("recovery close requires its idle admitted content handle")
-            stack.enter_context(_budgeted_sql(history._db,
-                lambda: service._history is history and not service._closed, deadline))
+            if history._db is not graph:
+                stack.enter_context(_budgeted_sql(history._db,
+                    lambda: service._history is history and not service._closed, deadline))
             _history_heads(history._db, instance_id, bindings, check)
         check()
         yield service, registry, store, graph, history
@@ -194,20 +197,28 @@ def finalize_recovery_close(owner, directory, *, authentication_context, timeout
                 or ownership[1] != owner._runtime_holder_root
                 or ownership[2] not in ("draining", "released")):
             raise InvalidCell("recovery close requires this owner's drained runtime")
-        # Workers are quiesced. Release the auxiliary same-database connection
-        # before reserving the graph's exclusive recovery lock. Keep the main
-        # graph/content handles and ownership fence on preservation failure.
+        _authorize(service, store.snapshot(), authentication_context)
+        # Record release while operational storage is still open. The runtime
+        # fence and owner locks stay held through verified backup and teardown.
+        # Closing leases earlier causes the ownership read to reopen them.
+        if ownership[2] == 'draining':
+            owner._release_runtime_ownership()
+        lease_storage = getattr(store, '_runtime_presence_lease_storage', None)
+        if lease_storage is not None:
+            lease_storage.close()
+        # Preservation failure retains EXCLUSIVE. Subsequent ownership reads
+        # and an authorized retry borrow this same connection instead of
+        # opening a second handle that would block against our reservation.
+        store._recovery_close_uses_owner_storage = True
+        # No auxiliary same-database handle may block the exclusive reservation.
         cde_storage = getattr(store, "_cde_operational_storage", None)
         if cde_storage is not None:
             cde_storage.close()
         _reserve_graph(graph, store.revision)
-        if history is not None:
+        if history is not None and history._db is not graph:
             # The inner backup sees EXCLUSIVE as its previous mode, so its
             # normal release cannot reopen a writer gap before handle closure.
             _reserve(history)
-        _check(deadline)
-        _authorize(service, store.snapshot(), authentication_context)
-        owner._release_runtime_ownership()
         _check(deadline)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -252,4 +263,5 @@ def finalize_recovery_close(owner, directory, *, authentication_context, timeout
                 + "; shutdown teardown incomplete. The owner may be partially closed; "
                 "ordinary retry is not guaranteed.")
             raise
+        owner._close_completed = True
         return recovery

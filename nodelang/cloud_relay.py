@@ -413,13 +413,15 @@ def pinned_cloud_base(value: object) -> str:
     return base if base in PINNED_BASES else DEFAULT_BASE
 
 
-def load_cloud_session(appdata: Path) -> Optional[dict]:
+def load_cloud_session(appdata: Path | None = None) -> Optional[dict]:
     """The founder's cloud session as the brain recorded it, or None."""
-    cloud = Path(appdata) / "ArchHub" / "brain" / "cloud.json"
+    from .cloud_session import cloud_session_path
+    cloud = cloud_session_path() if appdata is None else Path(appdata) / "ArchHub" / "brain" / "cloud.json"
     if not cloud.is_file():
         return None
     try:
-        held = json.loads(cloud.read_text(encoding="utf-8"))
+        from .cloud_signin import read_cloud_session
+        held = read_cloud_session(cloud)
     except (OSError, ValueError):
         return None
     token = held.get("token") if isinstance(held, Mapping) else None
@@ -428,7 +430,7 @@ def load_cloud_session(appdata: Path) -> Optional[dict]:
     return {"token": str(token), "base_url": pinned_cloud_base(held.get("cloud_base_url"))}
 
 
-def cockpit_url(appdata: Path) -> str:
+def cockpit_url(appdata: Path | None = None) -> str:
     """The cockpit address for THIS machine, opened on the app's own session.
 
     One hand-off, written once in cloud_signin.cockpit_link: the app spends
@@ -438,7 +440,7 @@ def cockpit_url(appdata: Path) -> str:
     """
     from . import cloud_signin
 
-    record = Path(appdata) / "ArchHub" / "brain" / "cloud.json"
+    record = cloud_signin.cloud_session_path() if appdata is None else Path(appdata) / "ArchHub" / "brain" / "cloud.json"
     link = cloud_signin.cockpit_link(record)
     if link.get("ok"):
         return str(link["url"])
@@ -822,10 +824,14 @@ class CloudRelay:
         """Claim one instruction, answer it, post the answer. None when idle."""
         if self._stop.is_set():
             return None  # stopping: claim nothing new
-        if callable(self.consent) and not self.consent():
-            self._stop.set()
-            self.last_error = "cloud publish consent withdrawn; relay stopped"
-            return None
+        if callable(self.consent):
+            allowed = self.consent()
+            if allowed is None:
+                return None  # identity proof pending/unreachable: claim nothing, retain worker
+            if not allowed:
+                self._stop.set()
+                self.last_error = "cloud publish consent withdrawn; relay stopped"
+                return None
         kinds = (list(self.app_kinds) +
                  ([WORKSHOP_CALL] if callable(self.workshop_caller) else []) +
                  ([SESSION_CALL] if callable(self.session_caller) else []))
@@ -918,6 +924,8 @@ class CloudRelay:
     def push_map(self, *, force: bool = False, min_interval: float = 60.0) -> Optional[dict]:
         """Re-publish the live projection when it changed (or on demand)."""
         if self._stop.is_set() or self.map_script is None:
+            return None
+        if callable(self.consent) and self.consent() is not True:
             return None
         now = time.monotonic()
         if not force and now - self._map_pushed_at < min_interval:
@@ -1077,7 +1085,7 @@ class CloudRelay:
 
 def start_cloud_relay(
     *,
-    appdata: Path,
+    appdata: Path | None = None,
     state_dir: Path,
     respond: Callable[[str], Mapping[str, object]],
     execute: Callable[[str], Mapping[str, object]],
@@ -1099,14 +1107,17 @@ def start_cloud_relay(
     stops at its next poll.
     """
     from .cloud_publish_consent import cloud_publish_allowed
-    from .cloud_session import signed_in_cloud_account
+    from .cloud_session import cloud_session_path, signed_in_cloud_account
 
-    session_path = Path(appdata) / "ArchHub" / "brain" / "cloud.json"
+    session_path = cloud_session_path() if appdata is None else Path(appdata) / "ArchHub" / "brain" / "cloud.json"
 
-    def consented() -> bool:
-        return cloud_publish_allowed(state_dir, signed_in_cloud_account(session_path))
+    pending = object()
 
-    if not consented():
+    def consented() -> bool | None:
+        account = signed_in_cloud_account(session_path, pending=pending)
+        return None if account is pending else cloud_publish_allowed(state_dir, account)
+
+    if consented() is False:
         return None
     session = load_cloud_session(appdata)
     if session is None:

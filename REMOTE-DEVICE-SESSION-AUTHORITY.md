@@ -1,3 +1,5 @@
+> Supersession, founder R72 / STAGE2B (2026-10-16): account identity is issued by the verified cloud/OIDC session. Device custody, returning-device bindings and enrollment below are historical and do not gate login. PKCE, issuer/nonce validation, request proof, tenant membership and explicit session revocation remain active.
+
 # Remote Device and Session Authority
 
 Status: WIP returning-device authority implemented; transport and pairing unreleased

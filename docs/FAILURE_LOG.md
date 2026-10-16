@@ -179,3 +179,8 @@ Status legend:
 - **claim**: the lane runs its heavy verification sequentially.
 - **gap**: the initial source diagnostic and compiler-build diagnostic overlapped in the shared two-slot queue. No worker was stopped or replayed.
 - **resolution**: both ended naturally; all subsequent LANDOLD2 heavy runs are sequential. Queue labels and diagnostic evidence are retained under `evidence/landold/round2-*`. Final acceptance uses the frozen runs only.
+### 2026-10-16 - STAGE2B old CLI court entered the source launcher
+- **status**: closed
+- **claim**: no installed/host launch was authorized; fixture-only execution was intended.
+- **gap**: the old application_server.main CLI court mocked the retired constructor; the new entry delegate entered launch_archhub_test.py instead and exited on its existing-instance mutex (SystemExit 0). Normal launcher logging/foreground notification may have occurred. No installed executable or host was intentionally launched; effects on the existing window were not verified.
+- **resolution**: old independent-owner flags now fail before entry delegation; CLI courts assert that refusal with a constructor spy, entry aliases use runpy fakes, and all subsequent courts redirect LOCALAPPDATA/APPDATA/TEMP into the lane's evidence/court-state. Evidence: stage2b-boot-storage.txt. Real installed acceptance remains unclaimed.

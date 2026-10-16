@@ -183,7 +183,7 @@ def render_baboom_native_sprite(
     # fault is gone. The two live colours come from the product THEME.
     if orb is not None and state in ("lit", "down"):
         from PyQt6.QtGui import QColor, QRadialGradient
-        from .application import THEME
+        from .universal_presentation_seed import THEME
         colour = QColor(THEME["cyan"] if state == "lit" else THEME["err"])
         radius = max(6, round(image.width() * 0.09))
         glow = QRadialGradient(orb[0], orb[1], radius)
@@ -604,7 +604,7 @@ FACE_MAX_CHARS = 72
 # read), the disabled row is THEME['ink_soft'] (5.54:1) not a faint grey, and a
 # drop shadow lifts the menu instead of a 1px hairline border.
 def _compose_menu_style() -> str:
-    from .application import THEME
+    from .universal_presentation_seed import THEME
     return (
         "QMenu {{ background: {bg}; color: {ink}; border: none;"
         " border-radius: 8px; padding: 5px; }}"
@@ -846,7 +846,7 @@ def create_baboom_native_companion_window(
             # module load). No colour is hand-typed in this file. THEME['bg_raised']
             # is the one companion surface -- report, reply box and act panel -- so
             # nothing behind the words is ever the desktop showing through.
-            from .application import THEME as _theme
+            from .universal_presentation_seed import THEME as _theme
             self._theme = _theme
             self._report = QLabel(self)
             self._report.setFont(self._companion_font)
@@ -1512,10 +1512,7 @@ def create_baboom_native_companion_window(
             "Open the cockpit on the app's own session, never on a sign-in page."
             import webbrowser
             from .cloud_relay import cockpit_url
-            from .cloud_signin import cloud_session_path
-            # cloud.json lives under APPDATA (Settings > Account writes it);
-            # the local (non-roaming) folder held no session, so the link never carried one.
-            webbrowser.open(cockpit_url(cloud_session_path().parents[2]))
+            webbrowser.open(cockpit_url())
 
         def _open_archhub(self) -> None:
             if on_open is not None:

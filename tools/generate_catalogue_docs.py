@@ -15,6 +15,9 @@ from nodelang.library_engines import STEM_RUN_ENGINES, library_catalogue
 from nodelang.pipeline_engines import PIPELINE_ENGINES
 from nodelang.stem_graph_evaluation import run_stem_operation
 from nodelang.universal_cell import CellStore, open_read_only_cell_journal
+from nodelang.universal_application import _APPLICATION_SETTING_SPECS, _application_setting_default
+from nodelang.backup_retention import backup_policy
+from nodelang.persistence import application_database_path, migrate_local_truths
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,11 +63,29 @@ def render():
         ("Installed application HTTP routes", ApplicationServer),
         ("HTTP transport construction", create_http_server),
         ("Universal graph journal", CellStore),
+        ("Selected desktop database", application_database_path),
+        ("Retired local truth migration", migrate_local_truths),
+        ("Backup policy read by recovery", backup_policy),
         ("Read-only graph observers", open_read_only_cell_journal),
         ("Revit operations", invoke),
         ("Model delegation records", read_model_delegation),
     ):
         rows.append(f"| {job} | {_source(owner)} |")
+    rows += [
+        "",
+        "## Application Settings parameters",
+        "",
+        "Settings, card parameters and recovery read these same graph properties. "
+        "Backup count defaults to 3. The byte budget covers recovery copies; a new "
+        "copy larger than its budget is refused. Armed update recovery is protected. "
+        "Migration snapshots preserve their original sources and reuse an exact "
+        "failed-attempt backup on retry. No legacy source data is deleted.",
+        "",
+        "| Parameter | Default | Bounds |",
+        "|---|---|---|",
+    ]
+    for key, (_editor, bounds) in _APPLICATION_SETTING_SPECS.items():
+        rows.append(f"| {key} | {_application_setting_default(key)} | {_text(json.dumps(bounds, sort_keys=True))} |")
     rows += [
         "",
         "## Node catalogue",

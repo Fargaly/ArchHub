@@ -8,23 +8,39 @@ This describes this source tree. It makes no installed or release claim. Hidden 
 
 | Job | Owner |
 |---|---|
-| Installed application HTTP routes | [ApplicationServer](../nodelang/application_server.py#L6183) |
+| Installed application HTTP routes | [ApplicationServer](../nodelang/application_server.py#L6059) |
 | HTTP transport construction | [create_http_server](../nodelang/http_server.py#L8) |
-| Universal graph journal | [CellStore](../nodelang/universal_cell.py#L2709) |
-| Read-only graph observers | [open_read_only_cell_journal](../nodelang/universal_cell.py#L2339) |
+| Universal graph journal | [CellStore](../nodelang/universal_cell.py#L2712) |
+| Selected desktop database | [application_database_path](../nodelang/persistence.py#L30) |
+| Retired local truth migration | [migrate_local_truths](../nodelang/persistence.py#L488) |
+| Backup policy read by recovery | [backup_policy](../nodelang/backup_retention.py#L91) |
+| Read-only graph observers | [open_read_only_cell_journal](../nodelang/universal_cell.py#L2342) |
 | Revit operations | [invoke](../nodelang/clean_revit_adapter.py#L1185) |
 | Model delegation records | [read_model_delegation](../nodelang/cell_model_execution.py#L440) |
+
+## Application Settings parameters
+
+Settings, card parameters and recovery read these same graph properties. Backup count defaults to 3. The byte budget covers recovery copies; a new copy larger than its budget is refused. Armed update recovery is protected. Migration snapshots preserve their original sources and reuse an exact failed-attempt backup on retry. No legacy source data is deleted.
+
+| Parameter | Default | Bounds |
+|---|---|---|
+| stale_claim_after_idle_minutes | 30 | {"max": 1440, "min": 1, "step": 1} |
+| archive_after_idle_days | 20 | {"max": 3650, "min": 1, "step": 1} |
+| tick_cadence_minutes | 5 | {"max": 1440, "min": 1, "step": 1} |
+| backup_count | 3 | {"max": 100, "min": 1, "step": 1} |
+| backup_budget_bytes | 10737418240 | {"max": 1099511627776, "min": 1048576, "step": 1048576} |
+| keep_running_in_tray | 0 | {"max": 1, "min": 0, "step": 1} |
 
 ## Node catalogue
 
 | Group | Node | Engine | Defaults | Implementation | Visibility |
 |---|---|---|---|---|---|
-| trigger | tr_manual | trigger.emit | {} | [trigger_emit](../nodelang/pipeline_engines.py#L46) | visible |
-| trigger | tr_schedule | trigger.schedule | {"daily_at": "08:00", "every_seconds": "300", "schedule": "every day 08:00"} | [trigger_emit](../nodelang/pipeline_engines.py#L46) | visible |
-| trigger | tr_file | trigger.file | {"debounce_seconds": "5", "folder": "", "pattern": "*.*"} | [trigger_emit](../nodelang/pipeline_engines.py#L46) | visible |
-| trigger | tr_host | trigger.host | {"event": "revit.document_saved"} | [trigger_emit](../nodelang/pipeline_engines.py#L46) | visible |
-| trigger | tr_approval | trigger.approval | {"grant_id": "revit-write"} | [trigger_emit](../nodelang/pipeline_engines.py#L46) | visible |
-| trigger | tr_webhook | trigger.webhook | {"token": "", "url": ""} | [trigger_emit](../nodelang/pipeline_engines.py#L46) | visible |
+| trigger | tr_manual | trigger.emit | {} | [trigger_emit](../nodelang/pipeline_engines.py#L69) | visible |
+| trigger | tr_schedule | trigger.schedule | {"daily_at": "08:00", "every_seconds": "300", "schedule": "every day 08:00"} | [trigger_emit](../nodelang/pipeline_engines.py#L69) | visible |
+| trigger | tr_file | trigger.file | {"debounce_seconds": "5", "folder": "", "pattern": "*.*"} | [trigger_emit](../nodelang/pipeline_engines.py#L69) | visible |
+| trigger | tr_host | trigger.host | {"event": "revit.document_saved"} | [trigger_emit](../nodelang/pipeline_engines.py#L69) | visible |
+| trigger | tr_approval | trigger.approval | {"grant_id": "revit-write"} | [trigger_emit](../nodelang/pipeline_engines.py#L69) | visible |
+| trigger | tr_webhook | trigger.webhook | {"token": "", "url": ""} | [trigger_emit](../nodelang/pipeline_engines.py#L69) | visible |
 | input | n_number | data.constant | {"max": "", "min": "", "value": "0"} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | visible |
 | input | n_text | data.constant | {"value": ""} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | visible |
 | input | n_list | data.list | {"value": "[1, 2, 3]"} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | visible |
@@ -32,17 +48,17 @@ This describes this source tree. It makes no installed or release claim. Hidden 
 | input | n_file | data.constant | {"extensions": "", "value": ""} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | visible |
 | input | n_colour | data.constant | {"value": "#d97757"} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | visible |
 | input | n_parameter | input.parameter | {"default": "", "name": "parameter", "type": "any"} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | visible |
-| input | n_slider | input.slider | {"max": "100", "min": "0", "step": "1", "value": "50"} | [slider](../nodelang/nodeslib_v2_engines.py#L587) | visible |
-| input | n_run | trigger.emit | {} | [trigger_emit](../nodelang/pipeline_engines.py#L46) | visible |
-| host | h_read | host.read | {"host": "Revit", "operation": "List walls", "view": "active"} | [host_read](../nodelang/library_engines.py#L1287) | visible |
+| input | n_slider | input.slider | {"max": "100", "min": "0", "step": "1", "value": "50"} | [slider](../nodelang/nodeslib_v2_engines.py#L598) | visible |
+| input | n_run | trigger.emit | {} | [trigger_emit](../nodelang/pipeline_engines.py#L69) | visible |
+| host | h_read | host.read | {"host": "Revit", "operation": "List walls", "view": "active"} | [host_read](../nodelang/library_engines.py#L1289) | visible |
 | host | r_xl_range | office.read | {"file": "", "operation": "excel.read_range", "range": "A1:B10", "sheet": "Sheet1"} | [office_read](../nodelang/host_brokers.py#L461) | visible |
-| host | b_all_category | revit.elements_of_category | {"category": "Walls", "scope": "document"} | [revit_elements_of_category](../nodelang/nodeslib_v2_engines.py#L197) | visible |
-| host | b_get_parameter | revit.get_parameter | {} | [revit_get_parameter](../nodelang/nodeslib_v2_engines.py#L210) | visible |
-| host | b_set_parameter | revit.set_parameter_by_name | {} | [revit_set_parameter](../nodelang/nodeslib_v2_engines.py#L227) | visible |
-| host | b_create_sheets | revit.create_sheets | {} | [revit_create_sheets](../nodelang/nodeslib_v2_engines.py#L254) | visible |
-| host | b_renumber | revit.renumber_rename | {} | [revit_renumber_rename](../nodelang/nodeslib_v2_engines.py#L268) | visible |
-| host | h_revit | revit.sessions | {} | [revit_sessions](../nodelang/pipeline_engines.py#L134) | hidden |
-| host | h_autocad | cad.host_lines | {} | [cad_lines_from_host](../nodelang/pipeline_engines.py#L279) | hidden |
+| host | b_all_category | revit.elements_of_category | {"category": "Walls", "scope": "document"} | [revit_elements_of_category](../nodelang/nodeslib_v2_engines.py#L200) | visible |
+| host | b_get_parameter | revit.get_parameter | {} | [revit_get_parameter](../nodelang/nodeslib_v2_engines.py#L213) | visible |
+| host | b_set_parameter | revit.set_parameter_by_name | {} | [revit_set_parameter](../nodelang/nodeslib_v2_engines.py#L230) | visible |
+| host | b_create_sheets | revit.create_sheets | {} | [revit_create_sheets](../nodelang/nodeslib_v2_engines.py#L257) | visible |
+| host | b_renumber | revit.renumber_rename | {} | [revit_renumber_rename](../nodelang/nodeslib_v2_engines.py#L271) | visible |
+| host | h_revit | revit.sessions | {} | [revit_sessions](../nodelang/pipeline_engines.py#L157) | hidden |
+| host | h_autocad | cad.host_lines | {} | [cad_lines_from_host](../nodelang/pipeline_engines.py#L302) | hidden |
 | host | h_max | max.exec | {"code": ""} | [max_exec](../nodelang/host_brokers.py#L395) | hidden |
 | host | h_rhino | rhino.exec | {"code": ""} | [rhino_exec](../nodelang/host_brokers.py#L435) | hidden |
 | host | h_blender | blender.exec | {"code": ""} | [blender_exec](../nodelang/host_brokers.py#L448) | hidden |
@@ -52,7 +68,7 @@ This describes this source tree. It makes no installed or release claim. Hidden 
 | host | h_outlook | outlook.inbox | {"count": "20"} | [outlook_inbox](../nodelang/host_brokers.py#L485) | hidden |
 | host | h_notion | notion.search | {"query": ""} | [notion_search](../nodelang/host_brokers.py#L537) | hidden |
 | host | h_dropbox | dropbox.list | {"path": ""} | [dropbox_list](../nodelang/host_brokers.py#L562) | hidden |
-| host | h_speckle | library.push_speckle | {"branch": "archhub/main", "message": "ArchHub push", "project": "", "server": ""} | [push_speckle](../nodelang/library_engines.py#L1242) | hidden |
+| host | h_speckle | library.push_speckle | {"branch": "archhub/main", "message": "ArchHub push", "project": "", "server": ""} | [push_speckle](../nodelang/library_engines.py#L1244) | hidden |
 | shape | s_filter | shape.filter | {"mode": "keep", "predicate": "item.height > 3000"} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | visible |
 | shape | s_map | shape.map | {"expression": "item"} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | visible |
 | shape | s_sort | shape.sort | {"by": "name", "direction": "asc"} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | visible |
@@ -74,53 +90,54 @@ This describes this source tree. It makes no installed or release claim. Hidden 
 | transform | t_group | shape.group | {"by": ""} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | hidden |
 | transform | t_sort | shape.sort | {"by": "", "direction": "asc"} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | hidden |
 | logic | l_if_handoff | control.if | {"condition": ""} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | visible |
-| logic | l_foreach | control.foreach | {"items": ""} | [control_foreach](../nodelang/pipeline_engines.py#L52) | visible |
+| logic | l_foreach | control.foreach | {"items": ""} | [control_foreach](../nodelang/pipeline_engines.py#L75) | visible |
 | logic | l_switch_handoff | control.switch | {"cases": "a, b, c", "key": "a"} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | visible |
-| logic | l_loop_handoff | control.foreach | {} | [control_foreach](../nodelang/pipeline_engines.py#L52) | visible |
+| logic | l_loop_handoff | control.foreach | {} | [control_foreach](../nodelang/pipeline_engines.py#L75) | visible |
 | logic | l_merge_handoff | control.merge | {} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | visible |
 | logic | l_if | control.if | {"condition": ""} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | hidden |
 | logic | l_switch | control.switch | {"cases": "a, b, c", "key": "a"} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | hidden |
-| logic | l_loop | control.foreach | {} | [control_foreach](../nodelang/pipeline_engines.py#L52) | hidden |
+| logic | l_loop | control.foreach | {} | [control_foreach](../nodelang/pipeline_engines.py#L75) | hidden |
 | logic | l_merge | control.merge | {} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | hidden |
 | document | d_add_text | library.add_text | {"text": "", "x": "0", "y": "0"} | [add_text](../nodelang/library_engines.py#L460) | visible |
 | document | d_dimensions | library.dimensions | {"offset": "0", "style": "aligned"} | [dimensions](../nodelang/library_engines.py#L477) | visible |
-| document | d_tag_rooms | library.tag_rooms | {} | [tag_rooms](../nodelang/library_engines.py#L1048) | visible |
-| document | d_place_tags | library.place_tags | {"category": "Doors", "leader": "true"} | [place_tags](../nodelang/library_engines.py#L1082) | visible |
-| document | d_place_sheet | library.place_on_sheet | {"sheet": "", "views": ""} | [place_on_sheet](../nodelang/library_engines.py#L1125) | visible |
+| document | d_tag_rooms | library.tag_rooms | {} | [tag_rooms](../nodelang/library_engines.py#L1050) | visible |
+| document | d_place_tags | library.place_tags | {"category": "Doors", "leader": "true"} | [place_tags](../nodelang/library_engines.py#L1084) | visible |
+| document | d_place_sheet | library.place_on_sheet | {"sheet": "", "views": ""} | [place_on_sheet](../nodelang/library_engines.py#L1127) | visible |
 | document | d_schedule | library.build_schedule | {"columns": ""} | [build_schedule](../nodelang/library_engines.py#L525) | visible |
 | document | d_legend | library.make_legend | {"by": "type"} | [make_legend](../nodelang/library_engines.py#L543) | visible |
 | file | f_write_table | excel.write_range | {"format": "xlsx", "range": "A1", "sheet": "Sheet1"} | [excel_write_range](../nodelang/host_brokers.py#L476) | visible |
-| text | text_ops | text.ops | {"fill": " ", "operation": "replace", "pattern": "", "replacement": "", "separator": ",", "template": "{value}", "text": "", "width": "0"} | [text_ops](../nodelang/nodeslib_v2_engines.py#L517) | visible |
-| math | math_expression | math.expression | {"a": "0", "b": "0", "expression": "a + b"} | [expression](../nodelang/nodeslib_v2_engines.py#L561) | visible |
-| math | math_series | math.series | {"count": "10", "start": "0", "step": "1"} | [series](../nodelang/nodeslib_v2_engines.py#L577) | visible |
-| ai | ai_master | ai.master | {"action": "think", "model": "", "prompt": ""} | [ai_master](../nodelang/library_engines.py#L1442) | visible |
-| ai | ai_recall | brain.recall | {"limit": "5", "query": ""} | [brain_recall](../nodelang/pipeline_engines.py#L181) | visible |
+| text | text_ops | text.ops | {"fill": " ", "operation": "replace", "pattern": "", "replacement": "", "separator": ",", "template": "{value}", "text": "", "width": "0"} | [text_ops](../nodelang/nodeslib_v2_engines.py#L528) | visible |
+| math | math_expression | math.expression | {"a": "0", "b": "0", "expression": "a + b"} | [expression](../nodelang/nodeslib_v2_engines.py#L572) | visible |
+| math | math_series | math.series | {"count": "10", "start": "0", "step": "1"} | [series](../nodelang/nodeslib_v2_engines.py#L588) | visible |
+| ai | ai_master | ai.master | {"action": "think", "model": "", "prompt": ""} | [ai_master](../nodelang/library_engines.py#L1447) | visible |
+| ai | ai_recall | brain.recall | {"limit": "5", "query": ""} | [brain_recall](../nodelang/pipeline_engines.py#L204) | visible |
 | ai | i_think | library.think | {"max_tokens": "600", "model": "", "prompt": ""} | [think](../nodelang/library_engines.py#L744) | hidden |
 | ai | i_match | library.match_skill | {"count": "3", "intent": ""} | [match_skill](../nodelang/library_engines.py#L772) | hidden |
 | ai | i_embed | library.embed | {"query": ""} | [embed](../nodelang/library_engines.py#L796) | hidden |
-| ai | i_vis | library.vision | {"image_path": "", "max_tokens": "600", "model": "", "prompt": ""} | [vision](../nodelang/library_engines.py#L917) | hidden |
-| governance | g_remember | brain.remember | {"source": "nodeslib", "text": ""} | [remember](../nodelang/nodeslib_v2_engines.py#L619) | visible |
-| governance | g_dryrun_diff | archhub.dry_run_diff | {"changes": "[]"} | [dry_run_diff](../nodelang/nodeslib_v2_engines.py#L638) | visible |
-| governance | g_host_health | host.health | {"host": ""} | [host_health](../nodelang/nodeslib_v2_engines.py#L645) | visible |
-| governance | g_evidence_attach | evidence.attach | {"path": ""} | [evidence_attach](../nodelang/nodeslib_v2_engines.py#L652) | visible |
-| governance | g_approval_gate | approval.gate | {"operation": "revit.write", "scope": "revit.write"} | [approval_gate](../nodelang/nodeslib_v2_engines.py#L598) | visible |
+| ai | i_vis | library.vision | {"image_path": "", "max_tokens": "600", "model": "", "prompt": ""} | [vision](../nodelang/library_engines.py#L919) | hidden |
+| governance | g_remember | brain.remember | {"source": "nodeslib", "text": ""} | [remember](../nodelang/nodeslib_v2_engines.py#L630) | visible |
+| governance | g_dryrun_diff | archhub.dry_run_diff | {"changes": "[]"} | [dry_run_diff](../nodelang/nodeslib_v2_engines.py#L653) | visible |
+| governance | g_host_health | host.health | {"host": ""} | [host_health](../nodelang/nodeslib_v2_engines.py#L660) | visible |
+| governance | g_evidence_attach | evidence.attach | {"path": ""} | [evidence_attach](../nodelang/nodeslib_v2_engines.py#L667) | visible |
+| governance | g_approval_gate | approval.gate | {"operation": "revit.write", "scope": "revit.write"} | [approval_gate](../nodelang/nodeslib_v2_engines.py#L609) | visible |
 | governance | g_rule_check | library.rule_check | {"operator": ">", "parameter": "height", "value": "3000"} | [rule_check](../nodelang/library_engines.py#L191) | visible |
 | watch | w_watch | watch.preview | {"as": "table"} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | visible |
 | output | o_result | output.parameter | {"name": "result"} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | visible |
 | output | o_skill_handoff | library.save_skill | {"description": "", "name": "", "path": ""} | [save_skill](../nodelang/library_engines.py#L581) | visible |
-| output | o_pdf_handoff | library.publish_pdf | {"folder": "", "sheets": ""} | [publish_pdf](../nodelang/library_engines.py#L982) | visible |
+| output | o_pdf_handoff | library.publish_pdf | {"folder": "", "sheets": ""} | [publish_pdf](../nodelang/library_engines.py#L984) | visible |
 | output | o_email_handoff | library.draft_email | {"subject": "", "to": ""} | [draft_email](../nodelang/library_engines.py#L852) | visible |
 | output | o_notify_handoff | library.notify | {"message": "", "notice_title": "ArchHub"} | [notify](../nodelang/library_engines.py#L824) | visible |
-| output | o_speckle_send | speckle.send | {"branch": "main", "project": ""} | [push_speckle](../nodelang/library_engines.py#L1242) | visible |
+| output | o_speckle_send | speckle.send | {"branch": "main", "project": ""} | [push_speckle](../nodelang/library_engines.py#L1244) | visible |
 | output | o_skill | library.save_skill | {"description": "", "name": "", "path": ""} | [save_skill](../nodelang/library_engines.py#L581) | hidden |
 | output | o_email | library.draft_email | {"body": "", "subject": "", "to": ""} | [draft_email](../nodelang/library_engines.py#L852) | hidden |
 | output | o_notify | library.notify | {"message": "", "notice_title": "ArchHub"} | [notify](../nodelang/library_engines.py#L824) | hidden |
-| output | o_pdf | library.publish_pdf | {"folder": "", "sheets": ""} | [publish_pdf](../nodelang/library_engines.py#L982) | hidden |
-| output | o_spk | library.push_speckle | {"branch": "archhub/main", "message": "ArchHub push", "project": "", "server": ""} | [push_speckle](../nodelang/library_engines.py#L1242) | hidden |
-| output | o_term | library.terminal | {"command": "", "cwd": ""} | [terminal_unbound](../nodelang/library_engines.py#L1361) | hidden |
+| output | o_pdf | library.publish_pdf | {"folder": "", "sheets": ""} | [publish_pdf](../nodelang/library_engines.py#L984) | hidden |
+| output | o_spk | library.push_speckle | {"branch": "archhub/main", "message": "ArchHub push", "project": "", "server": ""} | [push_speckle](../nodelang/library_engines.py#L1244) | hidden |
+| output | o_term | library.terminal | {"command": "", "cwd": ""} | [terminal_unbound](../nodelang/library_engines.py#L1363) | hidden |
 | note | n_note | note | {"text": ""} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | visible |
 | note | n_reroute | reroute | {} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | visible |
-| skill | sk_skill | skill.wrap | {"name": "untitled skill"} | [skill_wrap](../nodelang/library_engines.py#L1462) | visible |
+| skill | sk_skill | skill.wrap | {"name": "untitled skill"} | [skill_wrap](../nodelang/library_engines.py#L1467) | visible |
+| enforce | archhub_enforce | archhub.enforce | {"author": "", "compiler_jobs": 2, "compiler_rustflags": "-C target-feature=+crt-static", "compiler_timeout": 240, "daily_alert_budget": 5, "intent": "", "intent_rule_set": "tools/archhub-compiler/rules.json", "max_attempts": 3, "post_limit": 3000, "repo_root": "", "rule_set": "product-v1", "rules": "{\"document\":{\"block_types\":[\"paragraph\",\"heading\"]},\"model\":{\"value_types\":[\"string\",\"number\",\"integer\",\"boolean\",\"object\",\"list\"]},\"post\":{\"platforms\":[\"web\"]}}", "why": ""} | [engine](../nodelang/enforce.py#L182) | visible |
 | filter | f_type | shape.filter | {"mode": "keep", "predicate": "item.type == ''"} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | hidden |
 | filter | f_cat | shape.filter | {"mode": "keep", "predicate": "item.category == ''"} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | hidden |
 | filter | f_level | shape.filter | {"mode": "keep", "predicate": "item.level == ''"} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | hidden |
@@ -128,13 +145,13 @@ This describes this source tree. It makes no installed or release claim. Hidden 
 | filter | f_pred | shape.filter | {"mode": "keep", "predicate": ""} | [run_stem_operation](../nodelang/stem_graph_evaluation.py#L849) | hidden |
 | annotate | a_text | library.add_text | {"text": "", "x": "0", "y": "0"} | [add_text](../nodelang/library_engines.py#L460) | hidden |
 | annotate | a_dims | library.dimensions | {"offset": "0", "style": "aligned"} | [dimensions](../nodelang/library_engines.py#L477) | hidden |
-| annotate | a_rooms | library.tag_rooms | {} | [tag_rooms](../nodelang/library_engines.py#L1048) | hidden |
-| annotate | a_tags | library.place_tags | {"category": "Doors", "leader": "true"} | [place_tags](../nodelang/library_engines.py#L1082) | hidden |
+| annotate | a_rooms | library.tag_rooms | {} | [tag_rooms](../nodelang/library_engines.py#L1050) | hidden |
+| annotate | a_tags | library.place_tags | {"category": "Doors", "leader": "true"} | [place_tags](../nodelang/library_engines.py#L1084) | hidden |
 | compose | c_sched | library.build_schedule | {"columns": ""} | [build_schedule](../nodelang/library_engines.py#L525) | hidden |
 | compose | c_legend | library.make_legend | {"by": "type"} | [make_legend](../nodelang/library_engines.py#L543) | hidden |
-| compose | c_sheet | library.place_on_sheet | {"sheet": "", "views": ""} | [place_on_sheet](../nodelang/library_engines.py#L1125) | hidden |
+| compose | c_sheet | library.place_on_sheet | {"sheet": "", "views": ""} | [place_on_sheet](../nodelang/library_engines.py#L1127) | hidden |
 | tools | tool_studio | tool.studio | {"tool": "studio"} | [tool_settings](../nodelang/pipeline_engines.py#L38) | hidden |
-| tools | tool_workshop | tool.workshop | {"archive_after_idle_days": "20", "stale_claim_after_idle_minutes": "30", "tool": "workshop"} | [tool_settings](../nodelang/pipeline_engines.py#L38) | hidden |
+| tools | tool_workshop | tool.workshop | {"archive_after_idle_days": "20", "backup_budget_bytes": 10737418240, "backup_count": 3, "keep_running_in_tray": false, "stale_claim_after_idle_minutes": "30", "tick_cadence_minutes": 5, "tool": "workshop"} | [tool_settings](../nodelang/pipeline_engines.py#L38) | hidden |
 | tools | tool_brain | tool.brain | {"tool": "brain"} | [tool_settings](../nodelang/pipeline_engines.py#L38) | hidden |
 | tools | tool_baboom | tool.baboom | {"start_with_archhub": true, "tool": "baboom"} | [tool_settings](../nodelang/pipeline_engines.py#L38) | hidden |
 | tools | tool_connectors | tool.connectors | {"tool": "connectors"} | [tool_settings](../nodelang/pipeline_engines.py#L38) | hidden |
@@ -142,14 +159,14 @@ This describes this source tree. It makes no installed or release claim. Hidden 
 | workshop | w_workshop | workshop.conversation | {"conversation": ""} | [approval_required](../nodelang/workshop_workflow.py#L73) | hidden |
 | workshop | w_agent | agent.session | {"agent": "", "message": ""} | [approval_required](../nodelang/workshop_workflow.py#L73) | hidden |
 | workshop | w_review | workshop.review | {"reviewer": ""} | [approval_required](../nodelang/workshop_workflow.py#L73) | hidden |
-| read | r_walls | revit.read | {"operation": "revit.list_walls"} | [revit_read](../nodelang/pipeline_engines.py#L253) | hidden |
-| read | r_doors | revit.read | {"operation": "revit.list_doors"} | [revit_read](../nodelang/pipeline_engines.py#L253) | hidden |
-| read | r_windows | revit.read | {"operation": "revit.list_windows"} | [revit_read](../nodelang/pipeline_engines.py#L253) | hidden |
-| read | r_sheets | revit.read | {"operation": "revit.list_sheets"} | [revit_read](../nodelang/pipeline_engines.py#L253) | hidden |
-| read | r_views | revit.read | {"operation": "revit.list_views"} | [revit_read](../nodelang/pipeline_engines.py#L253) | hidden |
-| read | r_levels | revit.read | {"operation": "revit.list_levels"} | [revit_read](../nodelang/pipeline_engines.py#L253) | hidden |
-| read | r_selection | revit.read | {"operation": "revit.get_selection"} | [revit_read](../nodelang/pipeline_engines.py#L253) | hidden |
-| read | r_warnings | revit.read | {"operation": "revit.list_warnings"} | [revit_read](../nodelang/pipeline_engines.py#L253) | hidden |
+| read | r_walls | revit.read | {"operation": "revit.list_walls"} | [revit_read](../nodelang/pipeline_engines.py#L276) | hidden |
+| read | r_doors | revit.read | {"operation": "revit.list_doors"} | [revit_read](../nodelang/pipeline_engines.py#L276) | hidden |
+| read | r_windows | revit.read | {"operation": "revit.list_windows"} | [revit_read](../nodelang/pipeline_engines.py#L276) | hidden |
+| read | r_sheets | revit.read | {"operation": "revit.list_sheets"} | [revit_read](../nodelang/pipeline_engines.py#L276) | hidden |
+| read | r_views | revit.read | {"operation": "revit.list_views"} | [revit_read](../nodelang/pipeline_engines.py#L276) | hidden |
+| read | r_levels | revit.read | {"operation": "revit.list_levels"} | [revit_read](../nodelang/pipeline_engines.py#L276) | hidden |
+| read | r_selection | revit.read | {"operation": "revit.get_selection"} | [revit_read](../nodelang/pipeline_engines.py#L276) | hidden |
+| read | r_warnings | revit.read | {"operation": "revit.list_warnings"} | [revit_read](../nodelang/pipeline_engines.py#L276) | hidden |
 | read | r_xl_sheets | office.read | {"operation": "excel.list_worksheets"} | [office_read](../nodelang/host_brokers.py#L461) | hidden |
 | read | r_doc_paras | office.read | {"operation": "word.list_paragraphs"} | [office_read](../nodelang/host_brokers.py#L461) | hidden |
 | read | r_ppt_slides | office.read | {"operation": "powerpoint.list_slides"} | [office_read](../nodelang/host_brokers.py#L461) | hidden |

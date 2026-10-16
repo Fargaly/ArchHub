@@ -14,11 +14,21 @@ const root = path.resolve(__dirname, "..");
 const read = name => fs.readFileSync(path.join(root, name), "utf8");
 const seedText = read("nodelang/universal_presentation_seed.py").match(/^THEME = \{([\s\S]*?)^\}/m)[1];
 const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)].map(m => [m[1], m[2]]));
+const defaultPermissionRows = ['Claude Code','Codex','OpenCode','BABOOM'].map(actor =>
+  ({actor, kind:'agent', read:'Ask', write:'Ask', send:'Ask'}));
 
-async function openSettings({account = null, connectors = [], hosts = [], memory = null, session = undefined, models = undefined,
-  providers = [], socialAccounts = [], socialApprovals = [],
-  permissionRows = ['Claude Code','Codex','OpenCode','BABOOM'].map(actor =>
-    ({actor, kind:'agent', read:'Ask', write:'Ask', send:'Ask'}))} = {}) {
+async function openSettings(options = {}) {
+  const account = options.account === undefined ? null : options.account;
+  const connectors = options.connectors === undefined ? [] : options.connectors;
+  const hosts = options.hosts === undefined ? [] : options.hosts;
+  const memory = options.memory === undefined ? null : options.memory;
+  const session = options.session;
+  const models = options.models;
+  const providers = options.providers === undefined ? [] : options.providers;
+  const socialAccounts = options.socialAccounts === undefined ? [] : options.socialAccounts;
+  const socialApprovals = options.socialApprovals === undefined ? [] : options.socialApprovals;
+  const topology = options.topology === undefined ? null : options.topology;
+  const permissionRows = options.permissionRows === undefined ? defaultPermissionRows : options.permissionRows;
   const manifest = JSON.parse(read("nodelang/studio/compiled/manifest.json"));
   for (const source of ["studio-lm.jsx", "studio-account.jsx"]) {
     const held = manifest.files.find(file => file.source === source);
@@ -37,7 +47,7 @@ async function openSettings({account = null, connectors = [], hosts = [], memory
   win.ARCHHUB_THEME = {...seed};
   win.matchMedia = () => ({matches:false, addEventListener() {}, removeEventListener() {}});
   if (account) win.localStorage.setItem("archhub.account.v1", JSON.stringify(account));
-  const calls = {consent:[], reveal:[], memory:0, modelSelect:[], socialRemovals:[], approvals:[], permissions:[]};
+  const calls = {consent:[], reveal:[], memory:0, modelSelect:[], socialRemovals:[], approvals:[], permissions:[], properties:[]};
   win.ARCHHUB_AGENT_SELECT = async route => { calls.modelSelect.push(route); return route; };
   if (memory) win.ARCHHUB_LOAD_MEMORY = async () => { calls.memory += 1; return memory(); };
   let consent = {allowed:false, account:""};
@@ -49,8 +59,9 @@ async function openSettings({account = null, connectors = [], hosts = [], memory
         signed_in:held.signed_in ?? (held.state === "signed_in")};
     };
   win.ARCHHUB_REVEAL = async what => { calls.reveal.push(what); return {ok:true, opened:"C:/x/" + what}; };
+  win.ARCHHUB_SET_PROP = async (relation, value) => { calls.properties.push({relation, value}); return {ok:true}; };
   const listeners = new Set();
-  const snapshot = {canvas:null, workshops:[], applicationUpdate:{state:"idle", current_build:"b1"},
+  const snapshot = {canvas:null, workshops:[], topology, applicationUpdate:{state:"idle", current_build:"b1"},
     theme:{configuration:{theme:{...seed}, binding_mode:"personal-wip", state:"WIP", history:[], personal_wip_heads:["head-a"],
       baboom_startup:{value:"on", source:"default", revision:null, available:true, control:"c", event_fact_input:"i"}}, pending:false, error:""}};
   win.ARCHHUB_EXISTING_WORKSHOP = {
@@ -311,5 +322,29 @@ test("Settings opens without asking the brain; the Brain tab reads it and says w
     await s.settle();
     assert.equal(s.calls.memory, 1, "the Brain tab reads the brain");
     assert.match(brain.textContent, /Brain not answering\. Nothing here is lost/);
+  } finally { s.close(); }
+});
+
+
+test("Storage edits the graph owner's backup count and byte budget through existing property bindings", async () => {
+  const params = [
+    {k:'backup_count', v:3, type:'number', editable:true, rel:'fixture:count', constraints:{min:1,max:100,step:1}, setting:{kind:'property',key:'backup_count'}},
+    {k:'backup_budget_bytes', v:10737418240, type:'number', editable:true, rel:'fixture:budget', constraints:{min:1048576,max:1099511627776,step:1048576}, setting:{kind:'property',key:'backup_budget_bytes'}},
+  ];
+  const s = await openSettings({topology:{graph:{nodes:[{id:'fixture:workshop', application:true, title:'Workshop', params}], wires:[]}}});
+  try {
+    const panel = await s.tab('Storage');
+    for (const [key, expected, value] of [['backup_count','fixture:count','5'], ['backup_budget_bytes','fixture:budget','2097152']]) {
+      const row = panel.querySelector('[data-sysnode-param="' + key + '"]');
+      assert.ok(row, key + ' is visible in Storage');
+      const input = row.querySelector('input');
+      assert.ok(input, key + ' has a real parameter editor');
+      const setter = Object.getOwnPropertyDescriptor(s.win.HTMLInputElement.prototype, 'value').set;
+      s.flush(() => { setter.call(input, value); input.dispatchEvent(new s.win.Event('input', {bubbles:true})); });
+      s.flush(() => input.dispatchEvent(new s.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
+      await s.settle();
+      assert.ok(s.calls.properties.some(call => call.relation === expected && call.value === value), JSON.stringify(s.calls.properties));
+    }
+    assert.equal(s.win.localStorage.getItem('backup_count'), null);
   } finally { s.close(); }
 });

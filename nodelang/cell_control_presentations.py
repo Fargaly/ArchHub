@@ -220,8 +220,21 @@ def ensure_archhub_control_catalog(
         project_icon(snapshot, icon_catalog.protocol, icon_root)
         token = specification.owner_root.removeprefix("app:control:")
         control_root = "app:control-presentation:%s" % token
+        # The clean authority already declares these command identities as
+        # literal command atoms. Their display label lives below, separately.
+        # Reuse that exact admitted leaf when adding the desktop presentation;
+        # never rewrite an interaction identity merely to change its label.
+        owner_label = specification.label
+        if specification.owner_root in (
+            "app:control:canvas:run", "app:control:canvas:group",
+            "app:control:canvas:ungroup", "app:control:canvas:remove-member",
+        ):
+            declared = snapshot.cells.get(specification.owner_root)
+            command = specification.owner_root.rsplit(':', 1)[1]
+            if declared == Cell(specification.owner_root, NULL_CELL_ID, NULL_CELL_ID, command.encode('utf-8')):
+                owner_label = command
         owner_root = _leaf(
-            expected, specification.owner_root, specification.label
+            expected, specification.owner_root, owner_label
         )
         label_root = _leaf(
             expected, control_root + ":label", specification.label

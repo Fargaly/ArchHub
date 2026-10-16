@@ -139,17 +139,6 @@ class TenantAdmissionVerifier(Protocol):
         """Return current release evidence, or deny the subject and tenant."""
 
 
-class DeviceCustodyVerifier(Protocol):
-    """Trusted graph verifier for one device's active key custody."""
-
-    def verify(
-        self,
-        snapshot: Snapshot,
-        *,
-        device_root: str,
-        now: float,
-    ) -> str:
-        """Return one active custody root, or deny the device."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1103,9 +1092,9 @@ def verify_cloud_session_manifest(
         raise CloudSessionDenied("cloud session manifest digest drifted")
     if _atom(snapshot, expected_root) != digest:
         raise CloudSessionDenied("cloud session manifest evidence drifted")
-    if session.device_root != device_root_for_thumbprint(
+    if session.device_root not in (session.subject_root, device_root_for_thumbprint(
         _atom(snapshot, session.proof_key_thumbprint_root)
-    ):
+    )):
         raise CloudSessionDenied("cloud session device binding drifted")
     return session
 
@@ -1125,7 +1114,6 @@ class CloudSessionBroker:
             ProofReplayPolicyAuthorityVerifier
         ),
         tenant_admission_verifier: TenantAdmissionVerifier,
-        device_custody_verifier: DeviceCustodyVerifier,
         session_issuer_root: str,
         proof_replay_retention_seconds: float | None = None,
     ) -> None:
@@ -1169,9 +1157,6 @@ class CloudSessionBroker:
             replay_policy_authority_verifier
         )
         self._tenant_admission_verifier = tenant_admission_verifier
-        if not hasattr(device_custody_verifier, "verify"):
-            raise TypeError("cloud session requires device custody verification")
-        self._device_custody_verifier = device_custody_verifier
         self._session_issuer_root = session_issuer_root
         self._proof_replay_retention_seconds = float(retention)
 
@@ -1248,76 +1233,6 @@ class CloudSessionBroker:
             )
         return evidence
 
-    def _verified_device_binding(
-        self,
-        snapshot: Snapshot,
-        *,
-        device_root: str,
-        subject_root: str,
-        tenant_root: str,
-        audience_root: str,
-        now: float,
-    ) -> str:
-        matches = []
-        for member in read_relation(
-            snapshot, self._identity_protocol.root_id, budget=100_000
-        ):
-            if member.role_id != self._identity_protocol.roles[
-                "relationship-member"
-            ]:
-                continue
-            try:
-                relationship = verify_authority_relationship(
-                    snapshot,
-                    self._identity_protocol,
-                    self._relationship_broker,
-                    member.participant_id,
-                    now=now,
-                )
-            except (RelationshipAuthorityDenied, InvalidCell, KeyError):
-                continue
-            if (
-                relationship.kind_root
-                == self._identity_protocol.kinds["audience-binding"]
-                and relationship.source_root == device_root
-                and relationship.target_root == subject_root
-                and relationship.tenant_root == tenant_root
-                and relationship.scope_root == audience_root
-            ):
-                matches.append(relationship.root_id)
-        if len(matches) != 1:
-            raise CloudSessionDenied(
-                "device requires one active subject/audience binding"
-            )
-        return matches[0]
-
-    def _verified_device_custody(
-        self,
-        snapshot: Snapshot,
-        *,
-        device_root: str,
-        now: float,
-    ) -> str:
-        try:
-            custody_root = self._device_custody_verifier.verify(
-                snapshot,
-                device_root=device_root,
-                now=now,
-            )
-        except Exception as exc:
-            raise CloudSessionDenied(
-                "cloud session device custody is inactive"
-            ) from exc
-        if (
-            not isinstance(custody_root, str)
-            or not custody_root
-            or custody_root not in snapshot.cells
-        ):
-            raise CloudSessionDenied(
-                "cloud session device custody evidence drifted"
-            )
-        return custody_root
-
     def issue(
         self,
         store: CellStore,
@@ -1375,20 +1290,9 @@ class CloudSessionBroker:
             subject_root=authentication.subject_root,
             now=current,
         )
-        device_root = device_root_for_thumbprint(proof_key_thumbprint)
-        device_custody_root = self._verified_device_custody(
-            snapshot,
-            device_root=device_root,
-            now=current,
-        )
-        device_binding_root = self._verified_device_binding(
-            snapshot,
-            device_root=device_root,
-            subject_root=authentication.subject_root,
-            tenant_root=authentication.tenant_root,
-            audience_root=authentication.audience_root,
-            now=current,
-        )
+        # Account subject is identity. The DPoP key proves this short-lived
+        # session's requests; it neither enrolls nor identifies a machine.
+        device_root = authentication.subject_root
         external_expiry = float(authentication.claims["expires_at"])
         expires_at = min(current + lifetime_seconds, external_expiry)
         if expires_at <= current:
@@ -1433,8 +1337,6 @@ class CloudSessionBroker:
             value_cells["proof-key-thumbprint"].id,
             (
                 authentication.evidence_root,
-                device_custody_root,
-                device_binding_root,
                 tenant_admission.published_revision_root,
                 replay_policy_release.published_revision_root,
             ),
@@ -1466,8 +1368,6 @@ class CloudSessionBroker:
             (self._session_protocol.role("token-digest"), value_cells["token-digest"].id),
             (self._session_protocol.role("proof-key-thumbprint"), value_cells["proof-key-thumbprint"].id),
             (self._session_protocol.role("evidence"), authentication.evidence_root),
-            (self._session_protocol.role("evidence"), device_custody_root),
-            (self._session_protocol.role("evidence"), device_binding_root),
             (self._session_protocol.role("evidence"), tenant_admission.published_revision_root),
             (
                 self._session_protocol.role("evidence"),
@@ -1519,12 +1419,10 @@ class CloudSessionBroker:
             action_roots=actions,
             administrator_root=self._session_issuer_root,
             expires_at=expires_at,
-            reason="device-bound federated cloud session",
+            reason="account-bound federated cloud session",
             evidence_roots=(
                 manifest_root,
                 authentication.evidence_root,
-                device_custody_root,
-                device_binding_root,
                 tenant_admission.published_revision_root,
                 replay_policy_release.published_revision_root,
             ),
@@ -1585,26 +1483,6 @@ class CloudSessionBroker:
             or session.manifest_digest_root not in relationship.evidence_roots
         ):
             raise CloudSessionDenied("cloud session authority scope drifted")
-        device_custody_root = self._verified_device_custody(
-            snapshot,
-            device_root=session.device_root,
-            now=now,
-        )
-        if (
-            device_custody_root not in session.evidence_roots
-            or device_custody_root not in relationship.evidence_roots
-        ):
-            raise CloudSessionDenied(
-                "cloud session device custody evidence changed"
-            )
-        self._verified_device_binding(
-            snapshot,
-            device_root=session.device_root,
-            subject_root=session.subject_root,
-            tenant_root=session.tenant_root,
-            audience_root=session.audience_root,
-            now=now,
-        )
         tenant_admission = self._tenant_admission(
             snapshot,
             tenant_root=session.tenant_root,
@@ -1899,7 +1777,6 @@ __all__ = [
     "TenantAdmissionEvidence",
     "TenantAdmissionVerifier",
     "CloudSessionProtocol",
-    "DeviceCustodyVerifier",
     "CloudSessionProjection",
     "ProofReplayPolicyProjection",
     "ProofReplayWindowProjection",

@@ -41,6 +41,29 @@ def tool_settings(params: Mapping[str, object], feeds: Mapping[str, object]):
     if not tool:
         raise ValueError("set the tool parameter")
     held = {str(key): value for key, value in params.items()}
+    if tool == 'workshop':
+        from .universal_application import _APPLICATION_SETTING_SPECS, _application_setting_default
+        values = {
+            'stale_claim_after_idle_minutes': params.get('stale_claim_after_idle_minutes'),
+            'archive_after_idle_days': params.get('archive_after_idle_days'),
+            'tick_cadence_minutes': params.get('tick_cadence_minutes'),
+            'backup_count': params.get('backup_count'),
+            'backup_budget_bytes': params.get('backup_budget_bytes'),
+            'keep_running_in_tray': params.get('keep_running_in_tray'),
+        }
+        for key, supplied in values.items():
+            value = feeds[key] if key in feeds else supplied
+            if value is None:
+                value = _application_setting_default(key)
+            editor, bounds = _APPLICATION_SETTING_SPECS[key]
+            if editor == 'boolean':
+                if type(value) not in (bool, int) or value not in (0, 1):
+                    raise ValueError('%s must be a boolean' % key)
+                held[key] = bool(value)
+            else:
+                if isinstance(value, bool) or str(value) != str(int(value)) or not bounds['min'] <= int(value) <= bounds['max']:
+                    raise ValueError('%s is outside its Settings bounds' % key)
+                held[key] = int(value)
     return {"out": held}, "%s settings node" % tool
 
 def trigger_emit(params: Mapping[str, object], feeds: Mapping[str, object]):

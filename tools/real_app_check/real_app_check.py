@@ -588,10 +588,9 @@ def main(argv=None) -> int:
         report["graph_owner"] = owner_module.launch_graph_owner(desktop, owner_plan, str(python), app,
                                                                 runner=JobRunner(job))
         env = owner_plan["env"]
-        log = out / "launcher-stdout.log"
-        owner = desktop.spawn('cmd.exe /d /c ""%s" -B "%s" > "%s" 2>&1"' % (python, app / "launch_archhub_test.py", log),
-                              env=env, cwd=str(run_dir))
-        report["owner_pid"] = int(owner.pid)
+        # launch_graph_owner already started the Qt desktop and its graph.
+        # The rig observes that same process instead of opening another app.
+        report["owner_pid"] = report["graph_owner"]["pid"]
         started = time.monotonic()
         while time.monotonic() - started < args.boot_seconds:
             try:

@@ -147,9 +147,10 @@ A row is clicked only once it is enabled: rows are disabled while the menu reads
 
 ## The run's own graph owner
 
-Settings > Workspaces reads its registry from ArchHub's graph owner, the clean coordination service.
-Every run starts its own owner through `graph_owner.launch_graph_owner`, from the same code it
-launches (`--app`, or the labelled candidate copy), before the app starts.
+Settings > Workspaces reads its registry from the desktop owner's bound coordination surface.
+Every run starts one desktop through `graph_owner.launch_graph_owner`, using `-m nodelang.desktop`
+from the selected app source (`--app`, or the labelled candidate copy). That delegates to the
+same launcher the installer uses; the rig never starts a second application server.
 
 The launch is refused, and the run fails with the reasons in `report.json` (`graph_owner_refused`),
 unless all three gates pass at the spawn itself, in this order:
@@ -158,8 +159,9 @@ unless all three gates pass at the spawn itself, in this order:
    and the environment's endpoint is the run's own. Nothing is provisioned otherwise.
 2. **Provisioning read-back.** After provisioning, `CURRENT` in the run's runtime root selects the
    provisioned graph, and that generation opens (signature checked) from inside the run.
-3. **Pinned endpoint.** The planned endpoint, the spawn environment and the owner's `--port`,
-   `--canvas-port` and `--root` all name the run's own ports and root, and both ports are still free.
+3. **Pinned endpoint.** The exact module entry, `ARCHHUB_COORDINATION_ENDPOINT`,
+   `ARCHHUB_TEST_HTTP_PORT` and `ARCHHUB_TEST_STATE_DIR` name the run's own ports and root,
+   and both ports are still free.
 
 The owner is accepted only when `/health` on the run's port answers with the provisioned graph id.
 

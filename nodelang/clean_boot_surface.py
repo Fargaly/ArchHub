@@ -18,12 +18,11 @@ import time
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
-from .application import THEME
+from .universal_presentation_seed import THEME
 from .http_server import ThreadingHTTPServer
 
-# The phases clean_coordination_service begins, in order. A court reads that
-# file's _begin(...) calls and holds this list equal to them, so the page's
-# "phase k of n" cannot drift from what the boot actually runs.
+# The installed launcher begins these phases by index. Both its Qt boot page
+# and phase timing read this plan; there is no independent service boot plan.
 BOOT_PHASES: tuple[str, ...] = (
     "open authority and bind coordination",
     "stand the canvas surface",

@@ -17,15 +17,12 @@ Brain does not model -- and a second run changes nothing.
 """
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import sqlite3
-import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import commit_intent
 from .cell_brain_legacy_import import (
     _epoch_ms,
     _skip_reason,
@@ -308,28 +305,3 @@ def port_legacy_brain(store, protocol, source_path, *, owner_users,
     report.tables = _account_tables(source_path, fragments_outcome, skills_outcome,
                                     len(wiring), report.graph_wiring)
     return report
-
-
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--source", required=True, help="legacy brain.db (opened mode=ro)")
-    parser.add_argument("--state", required=True, help="the application graph sqlite path")
-    parser.add_argument("--owner-user", action="append", required=True,
-                        help="a legacy owner_user that is the founder (repeat)")
-    args = parser.parse_args(argv)
-    from .application_server import ApplicationServer
-    server = ApplicationServer(universal_state_path=Path(args.state))
-    try:
-        with commit_intent.declare(commit_intent.MIGRATION, actor="app:archhub",
-                                   reason="port the retired personal Brain store"):
-            report = port_legacy_brain(server.universal_store,
-                                       server.universal_registry.assembly_protocol,
-                                       args.source, owner_users=args.owner_user)
-    finally:
-        server.close()
-    print(json.dumps({**asdict(report), "accounted": report.accounted()}, sort_keys=True))
-    return 0 if all(report.accounted().values()) else 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())

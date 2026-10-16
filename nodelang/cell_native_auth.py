@@ -991,12 +991,11 @@ class NativeAuthorizationBroker:
             raise ValueError("native callback port must be a bound unprivileged port")
         if lifetime_seconds <= 0 or lifetime_seconds > 600:
             raise ValueError("native authorization lifetime must be within ten minutes")
-        device_root = device_root_for_thumbprint(device_thumbprint)
+        device_root_for_thumbprint(device_thumbprint)  # Validate the session proof key's format only.
         snapshot = store.snapshot()
-        if device_root not in snapshot.cells:
-            raise NativeAuthenticationDenied(
-                "native authorization device is not provisioned"
-            )
+        # This legacy relation field names the admitted public client. A login
+        # has no account identity until OIDC completes and needs no machine Cell.
+        device_root = registration_root
         registration = read_native_client_registration(
             snapshot, protocol, registration_root
         )
@@ -1472,6 +1471,119 @@ def issue_native_cloud_session(
         now=now,
     )
 
+
+
+class RemoteNativeCloudLoginBroker:
+    """Issue an account Cloud Session from verified OIDC identity."""
+
+    def __init__(
+        self,
+        *,
+        store: CellStore,
+        protocol: NativeAuthenticationProtocol,
+        registration_root: str,
+        native_authorization_broker: NativeAuthorizationBroker,
+        federated_identity_broker: FederatedIdentityBroker,
+        cloud_session_broker: CloudSessionBroker,
+        client_admission_verifier: NativeClientAdmissionVerifier,
+        allowed_action_roots: tuple[str, ...],
+    ) -> None:
+        if not isinstance(store, CellStore):
+            raise TypeError("remote native login requires one Cell store")
+        if not isinstance(protocol, NativeAuthenticationProtocol):
+            raise TypeError("remote native login requires native protocol")
+        if not registration_root:
+            raise ValueError("remote native login registration is invalid")
+        if not isinstance(
+            native_authorization_broker, NativeAuthorizationBroker
+        ):
+            raise TypeError(
+                "remote native login requires native authorization broker"
+            )
+        if not isinstance(federated_identity_broker, FederatedIdentityBroker):
+            raise TypeError(
+                "remote native login requires federated identity broker"
+            )
+        if not isinstance(cloud_session_broker, CloudSessionBroker):
+            raise TypeError("remote native login requires Cloud Session broker")
+        if not hasattr(client_admission_verifier, "verify"):
+            raise TypeError(
+                "remote native login requires client admission verifier"
+            )
+        if (
+            not allowed_action_roots
+            or any(not isinstance(root, str) or not root for root in allowed_action_roots)
+        ):
+            raise ValueError("remote native login requires released actions")
+        self._store = store
+        self._protocol = protocol
+        self._registration_root = registration_root
+        self._native_authorization_broker = native_authorization_broker
+        self._federated_identity_broker = federated_identity_broker
+        self._cloud_session_broker = cloud_session_broker
+        self._client_admission_verifier = client_admission_verifier
+        self._allowed_action_roots = tuple(allowed_action_roots)
+
+    def start(
+        self,
+        *,
+        device_thumbprint: str,
+        redirect_port: int,
+        lifetime_seconds: float = 300.0,
+        now: float | None = None,
+    ) -> StartedNativeAuthorization:
+        """Create a PKCE transaction; identity is established by the OIDC callback."""
+        return self._native_authorization_broker.start(
+            self._store,
+            self._protocol,
+            self._registration_root,
+            redirect_port=redirect_port,
+            device_thumbprint=device_thumbprint,
+            lifetime_seconds=lifetime_seconds,
+            now=now,
+        )
+
+    def complete_and_issue(
+        self,
+        transaction_root: str,
+        *,
+        state: str,
+        response_issuer: str,
+        authorization_code: str,
+        token_client: httpx.Client | None = None,
+        session_lifetime_seconds: float = 900.0,
+        now: float | None = None,
+    ) -> IssuedCloudSession:
+        """Consume one callback and return one sender-constrained session."""
+        authorization = self._native_authorization_broker.complete(
+            self._store,
+            self._protocol,
+            transaction_root,
+            state=state,
+            response_issuer=response_issuer,
+            authorization_code=authorization_code,
+            now=now,
+        )
+        assertion = exchange_native_authorization_code(
+            authorization,
+            client=token_client,
+        )
+        return issue_native_cloud_session(
+            self._store,
+            assertion,
+            federated_identity_broker=self._federated_identity_broker,
+            cloud_session_broker=self._cloud_session_broker,
+            client_admission_verifier=self._client_admission_verifier,
+            allowed_action_roots=self._allowed_action_roots,
+            lifetime_seconds=session_lifetime_seconds,
+            now=now,
+        )
+
+
+__all__ = [
+    "RemoteNativeCloudLoginBroker",
+    "RemoteNativeCloudLoginBroker",
+]
 
 __all__ = [
     "DEFAULT_MAX_PENDING_PER_DEVICE",

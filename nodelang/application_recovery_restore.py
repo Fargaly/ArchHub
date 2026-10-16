@@ -246,7 +246,8 @@ def prepare_owner_recovery_restore(service, recovery_directory, destination, *,
                         _authorize(service, current, authentication_context, space_root=root)
                         check()
                     if instance_id is None:
-                        if service._history is not None or service._path is not None and service._path.exists():
+                        if service._history is not None or (service._path is not None and service._path.exists()
+                                and not service._embedded):
                             raise InvalidCell("unadmitted ordinary history requires migration recovery")
                     else:
                         if service._path is None or not service._path.is_file():
@@ -259,12 +260,13 @@ def prepare_owner_recovery_restore(service, recovery_directory, destination, *,
                         history = service._history
                         stack.enter_context(_lock_before(history._lock, deadline))
                         _configured_target(service, history)
-                        if history.instance_id != instance_id or history._db.in_transaction:
+                        if history.instance_id != instance_id or (history._db.in_transaction and history._db is not graph):
                             raise InvalidCell("application restore requires its idle admitted history handle")
-                        sources.append(history._db)
-                        history._db.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
-                        history._db.execute("BEGIN")
-                        pinned.append(history._db)
+                        if history._db is not graph:
+                            sources.append(history._db)
+                            history._db.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
+                            history._db.execute("BEGIN")
+                            pinned.append(history._db)
                         _history_heads(history._db, instance_id, bindings, check)
                         output_names["content"] = service._path.name
 

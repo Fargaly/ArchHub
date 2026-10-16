@@ -7,6 +7,7 @@ had got, although /api/universal/boot already reported every phase.
 from __future__ import annotations
 
 import json
+import ast
 import re
 import shutil
 import subprocess
@@ -35,10 +36,17 @@ def test_the_wordmark_reads_archhub_as_on_the_website():
 
 
 def test_the_phase_plan_is_the_one_the_boot_runs():
-    source = Path(clean_boot_surface.__file__).with_name(
-        "clean_coordination_service.py").read_text(encoding="utf-8")
-    begun = tuple(dict.fromkeys(re.findall(r'_begin\("([^"]+)"\)', source)))
-    assert begun == BOOT_PHASES
+    source = Path(clean_boot_surface.__file__).resolve().parents[1] / 'launch_archhub_test.py'
+    tree = ast.parse(source.read_text(encoding='utf-8'))
+    definitions = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == '_boot_phase']
+    progress = BootProgress()
+    surface = type('Surface', (), {'progress': progress})()
+    scope = {'_boot_surface': surface, 'BOOT_PHASES': BOOT_PHASES}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=definitions, type_ignores=[])), str(source), 'exec'), scope)
+    for index in range(len(BOOT_PHASES)):
+        scope['_boot_phase'](index)
+        scope['_boot_phase'](index, finished=True)
+    assert tuple(row['label'] for row in progress.payload()['phases']) == BOOT_PHASES
 
 
 def test_the_boot_answer_carries_the_phase_total():

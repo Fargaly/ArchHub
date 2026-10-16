@@ -12,6 +12,7 @@ SETTINGS_FILE = APP_DIR / "settings.json"
 # Writers of secrets.dat also hold its cross-process named mutex
 # (credential_lock.py beside this file) and refuse an observed outside change.
 _SAVE_LOCK = threading.RLock()
+_SETTINGS_OWNER = None
 _UNCHECKED = object()
 _CREDENTIAL_LOCK_MODULE = None
 # Legacy pad: only ever used to READ a file written before the DPAPI
@@ -125,20 +126,61 @@ def _write_file(data: dict, expected=_UNCHECKED) -> None:
     payload = _DPAPI_MARK + base64.b64encode(_dpapi(json.dumps(data).encode("utf-8"), protect=True))
     _replace_bytes(SECRETS_FILE, payload, expected)
 
+def bind_settings_owner(store):
+    """Bind only the running application's owner; no second database is opened."""
+    global _SETTINGS_OWNER
+    with _SAVE_LOCK:
+        if _SETTINGS_OWNER is not None and _SETTINGS_OWNER is not store:
+            raise OSError("another application already owns Settings")
+        _SETTINGS_OWNER = store
+
+
+def unbind_settings_owner(store):
+    global _SETTINGS_OWNER
+    with _SAVE_LOCK:
+        if _SETTINGS_OWNER is store:
+            _SETTINGS_OWNER = None
+
+
 def _read_settings() -> dict:
-    if not SETTINGS_FILE.exists(): return {}
-    try:
-        data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-        if type(data) is not dict:
-            raise ValueError("invalid settings entries")
-        return data
-    except (OSError, ValueError):
-        raise OSError("saved settings are unreadable; existing file preserved") from None
+    from nodelang.persistence import IMPORTED_SETTINGS_ROOT
+    if _SETTINGS_OWNER is None:
+        # Provisioning may read a retired file before the owner boots. It never
+        # writes it, and normal runtime readers are bound above after migration.
+        if not SETTINGS_FILE.exists():
+            return {}
+        try:
+            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            raise OSError("saved settings are unreadable; existing file preserved") from error
+    else:
+        cell = _SETTINGS_OWNER.snapshot().cells.get(IMPORTED_SETTINGS_ROOT)
+        data = {} if cell is None else json.loads(cell.atom)
+    if type(data) is not dict:
+        raise OSError("saved settings are unreadable; existing file preserved")
+    return data
+
 
 def save_setting(key: str, value) -> None:
+    from nodelang import commit_intent
+    from nodelang.persistence import IMPORTED_SETTINGS_ROOT, _safe_settings
+    from nodelang.universal_cell import Cell, NULL_CELL_ID
     with _SAVE_LOCK:
-        data = _read_settings(); data[key] = value
-        _replace_bytes(SETTINGS_FILE, json.dumps(data, indent=2).encode("utf-8"))
+        store = _SETTINGS_OWNER
+        if store is None:
+            raise OSError("open ArchHub before changing application Settings")
+        with store._lock:
+            snapshot = store.snapshot()
+            data = _read_settings()
+            data[key] = value
+            encoded = json.dumps(_safe_settings(data), sort_keys=True).encode('utf-8')
+            previous = snapshot.cells.get(IMPORTED_SETTINGS_ROOT)
+            if previous is not None and previous.atom == encoded:
+                return
+            cell = Cell(IMPORTED_SETTINGS_ROOT, NULL_CELL_ID, NULL_CELL_ID, encoded)
+            with commit_intent.declare(commit_intent.USER_ACTION, actor='app:archhub', reason='update application Settings'):
+                store.commit(snapshot.revision, **({'create': (cell,)} if previous is None else {'replace': (cell,)}))
+
 
 def load_setting(key: str):
     return _read_settings().get(key)
@@ -194,6 +236,75 @@ def _file_delete(provider: str) -> None:
         known = _updated_provider_index(provider, remove=True)
         data.pop(provider, None); _write_file(data, expected=raw)
         save_setting("known_providers", known)
+
+
+def _session_secret(reference: str, value=_UNCHECKED):
+    """One session backend, fresh reads and the existing cross-process lock."""
+    prefixes = ("archhub-account-session:v1:", "archhub-account-session:v0:")
+    suffix = next((reference[len(prefix):] for prefix in prefixes
+                   if isinstance(reference, str) and reference.startswith(prefix)), "")
+    if len(suffix) != 64 or any(character not in "0123456789abcdef" for character in suffix):
+        raise ValueError("invalid account session reference")
+    with _SAVE_LOCK:
+        if os_store_refused():
+            if value is _UNCHECKED:
+                return _MEMORY_KEYS.get(reference)
+            if value is None:
+                _MEMORY_KEYS.pop(reference, None)
+            else:
+                _MEMORY_KEYS[reference] = value
+            return value
+        keyring = _try_keyring()
+        backend = None
+        if keyring is not None:
+            from keyring.backends.Windows import WinVaultKeyring
+            backend = keyring.get_keyring()
+            if type(backend) is not WinVaultKeyring:
+                raise OSError("account session requires Windows Credential Manager")
+        with _exclusive_secrets_file():
+            raw, cached = _read_file_state()
+            if backend is None:
+                if value is _UNCHECKED:
+                    return cached.get(reference)
+                if value is None:
+                    cached.pop(reference, None)
+                else:
+                    cached[reference] = value
+                if raw is not None or value is not None:
+                    _write_file(cached, expected=raw)
+                return value
+            current = backend.get_password(SERVICE, reference)
+            chosen = (current if current is not None else cached.get(reference)) if value is _UNCHECKED else value
+            if chosen is not None:
+                if chosen != current:
+                    backend.set_password(SERVICE, reference, chosen)
+                if backend.get_password(SERVICE, reference) != chosen:
+                    raise OSError("account session secure save could not be verified")
+            elif current is not None:
+                backend.delete_password(SERVICE, reference)
+                if backend.get_password(SERVICE, reference) is not None:
+                    raise OSError("account session secure deletion could not be verified")
+            if reference in cached:
+                del cached[reference]
+                _write_file(cached, expected=raw)
+            return chosen
+
+
+def save_session_secret(reference: str, value: str) -> None:
+    if not isinstance(value, str) or not value:
+        raise ValueError("account session bearer is empty")
+    _session_secret(reference, value)
+
+
+def load_session_secret(reference: str) -> str | None:
+    value = _session_secret(reference)
+    if value is not None and (not isinstance(value, str) or not value):
+        raise OSError("protected account session is unreadable")
+    return value
+
+
+def delete_session_secret(reference: str) -> None:
+    _session_secret(reference, None)
 
 def save_api_key(provider: str, api_key: str) -> None:
     if isinstance(provider, str) and provider.startswith("social-"):

@@ -1,35 +1,20 @@
-"""Normal-window desktop host for the persistent node-native application."""
+"""Desktop entry aliases and physical dependencies for the installed launcher.
+
+Every supported launch executes launch_archhub_test.py, including module callers.
+Importing this module never constructs an application or opens a window.
+"""
 from __future__ import annotations
 
-import sys
-import json
 import os
-import socket
 from pathlib import Path
-import urllib.request
-from urllib.parse import urlsplit
-
-from .application_machine_transport import (
-    MachineTransportError,
-    UniversalRuntimeClient,
-    default_runtime_descriptor_path,
-    current_process_is_desktop_launch,
-    inspect_runtime_descriptor,
-    recover_stale_runtime_descriptor,
-    stopped_runtime_restart_database,
-)
-from .application_server import ApplicationServer
-from .persistence import default_state_path
-from .universal_application import UNIVERSAL_APPLICATION_SCHEMA_VERSION
-from .runtime_credentials import BrowserCredentialVault
-from .runtime_compliance_adapter import run_physical_runtime_compliance_court
-from .cell_secret_keys import WindowsDpapiSigningKeyProvider
-from .runtime_gateway import GatewayError, RuntimeGateway
+import runpy
+import sys
+from .clean_boot_surface import BootSurface
 
 
-def runtime_lock_path():
-    return default_state_path().with_name('desktop.lock')
-
+def create_boot_surface(host, port, *, expected):
+    """Compose the one desktop boot transport before its application owner opens."""
+    return BootSurface(host, port, expected=expected)
 
 def create_workshop_transport(state_directory):
     """Compose the packaged transport without starting a worker or another owner."""
@@ -65,591 +50,59 @@ def create_social_execution_arguments():
             'social_account_binding_verifier': social_account_binding_verifier}
 
 
-class DesktopRuntime:
-    def __init__(self, state_path=None, preferred_url='http://127.0.0.1:8482'):
-        self.server = None
-        self.gateway = None
-        self._url = None
-        self._external_bootstrap_url = None
-        self._external_schema_version = None
-        self._activation_candidate = None
-        self._server_kwargs = None
-        vault_path = (
-            BrowserCredentialVault.default_path()
-            if state_path is None
-            else Path(state_path).with_name("browser-session-v1.dpapi")
-        )
-        credentials = BrowserCredentialVault(vault_path).load_or_create()
-        restart_database = None
-        if state_path is None and self._attach_machine_authority():
-            pass
-        elif state_path is None:
-            self._recover_stale_machine_authority()
-            if self._active_machine_authority_present():
-                raise RuntimeError(
-                    "a signed Universal authority exists but cannot provide a "
-                    "visible browser handoff; recover or restart that authority "
-                    "before opening a new normal-window session"
-                )
-            restart_database = self._stopped_machine_authority_database()
-            if (
-                restart_database is None
-                and self._machine_authority_descriptor_present()
-            ):
-                raise RuntimeError(
-                    "a Universal authority descriptor exists but is invalid, "
-                    "failed, or lacks a trusted stopped checkpoint"
-                )
-            if restart_database is None and self._endpoint_is_listening(
-                preferred_url
-            ):
-                raise RuntimeError(
-                    "the visible ArchHub endpoint is occupied by an unverified "
-                    "or legacy host; complete a controlled authority handoff "
-                    "before starting a second node-native owner"
-                )
-            universal_database = (
-                restart_database
-                if restart_database is not None
-                else default_state_path().with_name(
-                    default_state_path().name + ".universal.sqlite3"
-                )
-            )
-            self._server_kwargs = dict(
-                host='127.0.0.1',
-                port=0,
-                state_path=None,
-                universal_state_path=universal_database,
-                live_watch=True,
-                enable_machine_transport=True,
-                # The owner record lives beside its graph; the machine path
-                # holds only a signed pointer to it (never a copy).
-                machine_descriptor_path=Path(universal_database).with_name(
-                    Path(universal_database).name + ".runtime-descriptor.json"
-                ),
-                machine_pointer_path=default_runtime_descriptor_path(),
-                browser_session_credentials=credentials,
-                runtime_compliance_runner=run_physical_runtime_compliance_court,
-                enable_cloud_relay=True,
-            )
-            self.server = self._new_server()
-            parsed = urlsplit(preferred_url)
-            gateway_port = int(parsed.port or 0)
-            try:
-                self.gateway = RuntimeGateway(
-                    host='127.0.0.1',
-                    port=gateway_port,
-                    admission_timeout=120.0,
-                    backend_timeout=60.0,
-                    activation_verifier=self._verify_gateway_activation,
-                )
-            except OSError:
-                self.gateway = RuntimeGateway(
-                    host='127.0.0.1',
-                    port=0,
-                    admission_timeout=120.0,
-                    backend_timeout=60.0,
-                    activation_verifier=self._verify_gateway_activation,
-                )
-        else:
-            machine_descriptor_path = (
-                Path(state_path).with_name("active-universal-runtime.json")
-                if state_path is not None else None
-            )
-            self._server_kwargs = dict(
-                host='127.0.0.1', port=0,
-                state_path=state_path or default_state_path(), live_watch=True,
-                enable_machine_transport=True,
-                machine_descriptor_path=machine_descriptor_path,
-                browser_session_credentials=credentials,
-                runtime_compliance_runner=run_physical_runtime_compliance_court,
-                enable_cloud_relay=True,
-            )
-            self.server = self._new_server()
-            parsed = urlsplit(preferred_url)
-            gateway_port = (
-                int(parsed.port or 0) if state_path is None else 0
-            )
-            try:
-                self.gateway = RuntimeGateway(
-                    host='127.0.0.1',
-                    port=gateway_port,
-                    admission_timeout=120.0,
-                    backend_timeout=60.0,
-                    activation_verifier=self._verify_gateway_activation,
-                )
-            except OSError:
-                self.gateway = RuntimeGateway(
-                    host='127.0.0.1',
-                    port=0,
-                    admission_timeout=120.0,
-                    backend_timeout=60.0,
-                    activation_verifier=self._verify_gateway_activation,
-                )
 
-    def _new_server(self):
-        if self._server_kwargs is None:
-            raise RuntimeError("desktop runtime is attached to an external host")
-        arguments = dict(self._server_kwargs)
-        state_file = (arguments.get('universal_state_path') or
-                      arguments.get('state_path') or default_state_path())
-        transport = create_workshop_transport(Path(state_file).resolve().parent)
-        if transport is not None:
-            arguments['session_link_transport'] = transport
-        try:
-            arguments.update(create_social_execution_arguments())
-            return ApplicationServer(**arguments)
-        except BaseException:
-            if transport is not None:
-                transport.close()
-            raise
+def bind_coordination_surface(server, state_directory):
+    """Attach the old coordination API to this owner's very same CellStore.
 
-    def _verify_gateway_activation(self, backend):
-        candidate = self._activation_candidate
-        if candidate is None:
-            raise GatewayError("desktop has no candidate runtime worker")
-        if candidate.prove_runtime_backend_generation() != backend:
-            raise GatewayError("candidate runtime proof does not match activation")
-
-    @staticmethod
-    def _healthy(url, token):
-        try:
-            state = DesktopRuntime.read_state(url, token=token)
-            health = DesktopRuntime.read_universal_health(url, token=token)
-            return (
-                state.get('ok') is True
-                and state.get('valid') is True
-                and health.get('ok') is True
-                and health.get('runtime') == 'app:archhub'
-            )
-        except Exception:
-            return False
-
-    @staticmethod
-    def _endpoint_is_listening(url: str) -> bool:
-        """Observe a local endpoint without attaching to or changing its host."""
-        parsed = urlsplit(url)
-        if (
-            parsed.scheme != "http"
-            or parsed.hostname not in {"127.0.0.1", "localhost"}
-            or parsed.port is None
-        ):
-            return False
-        try:
-            with socket.create_connection(
-                (parsed.hostname, parsed.port), timeout=0.35
-            ):
-                return True
-        except OSError:
-            return False
-
-    def _attach_machine_authority(self):
-        if not current_process_is_desktop_launch():
-            return False
-        try:
-            client = UniversalRuntimeClient(
-                default_runtime_descriptor_path(),
-                WindowsDpapiSigningKeyProvider(
-                    WindowsDpapiSigningKeyProvider.default_path()
-                ),
-            )
-            handoff = client.browser_handoff()
-        except (MachineTransportError, OSError, ValueError):
-            return False
-        if (
-            handoff.get('application') != 'app:archhub'
-            or type(handoff.get('server_url')) is not str
-            or type(handoff.get('document_url')) is not str
-            or type(handoff.get('schema_version')) is not str
-            or '?bootstrap=' not in handoff['document_url']
-        ):
-            return False
-        parsed = urlsplit(handoff['server_url'])
-        if parsed.scheme != 'http' or parsed.hostname != '127.0.0.1':
-            return False
-        self._url = handoff['server_url']
-        self._external_bootstrap_url = handoff['document_url']
-        self._external_schema_version = handoff['schema_version']
-        return True
-
-    @staticmethod
-    def _active_machine_authority_present():
-        try:
-            provider = WindowsDpapiSigningKeyProvider(
-                WindowsDpapiSigningKeyProvider.default_path()
-            )
-            inspection = inspect_runtime_descriptor(
-                default_runtime_descriptor_path(),
-                provider,
-            )
-        except (OSError, ValueError):
-            return False
-        return (
-            inspection.get('verified') is True
-            and inspection.get('active') is True
-        )
-
-    @staticmethod
-    def _recover_stale_machine_authority():
-        provider = WindowsDpapiSigningKeyProvider(
-            WindowsDpapiSigningKeyProvider.default_path()
-        )
-        try:
-            inspection = inspect_runtime_descriptor(
-                default_runtime_descriptor_path(),
-                provider,
-            )
-            if not (
-                inspection.get('verified') is True
-                and inspection.get('active') is True
-                and inspection.get('owner_alive') is False
-            ):
-                return False
-            recover_stale_runtime_descriptor(
-                default_runtime_descriptor_path(),
-                provider,
-            )
-            return True
-        except (MachineTransportError, OSError, ValueError):
-            return False
-
-    @staticmethod
-    def _stopped_machine_authority_database():
-        provider = WindowsDpapiSigningKeyProvider(
-            WindowsDpapiSigningKeyProvider.default_path()
-        )
-        try:
-            return stopped_runtime_restart_database(
-                default_runtime_descriptor_path(),
-                provider,
-            )
-        except MachineTransportError as exc:
-            raise RuntimeError(
-                "the signed stopped Universal authority cannot be restarted "
-                "from its trusted checkpoint"
-            ) from exc
-
-    @staticmethod
-    def _machine_authority_descriptor_present():
-        return default_runtime_descriptor_path().exists()
-
-    @staticmethod
-    def read_state(url, token=None):
-        headers = {}
-        if token:
-            headers['X-ArchHub-Session'] = token
-        request = urllib.request.Request(
-            url + '/api/state', headers=headers
-        )
-        return json.loads(urllib.request.urlopen(
-            request, timeout=1.0).read())
-
-    @staticmethod
-    def read_universal_health(url, token=None):
-        headers = {}
-        if token:
-            headers['X-ArchHub-Session'] = token
-        request = urllib.request.Request(
-            url + '/api/universal/health', headers=headers
-        )
-        return json.loads(urllib.request.urlopen(
-            request, timeout=1.0).read())
-
-    def start(self):
-        if self.server is not None:
-            self.server.start()
-            self._activation_candidate = self.server
-            try:
-                self.gateway.start()
-                self.gateway.activate(
-                    self.server.prove_runtime_backend_generation()
-                )
-            except Exception:
-                self.server.close()
-                self.gateway.close()
-                raise
-        return self
-
-    @property
-    def url(self):
-        return self._url or self.gateway.url
-
-    @property
-    def document_url(self):
-        try:
-            token = (
-                self.server.browser_session_token
-                if self.server is not None else None
-            )
-            schema = self.read_state(
-                self.url, token=token
-            ).get('schema_version')
-        except Exception:
-            schema = None
-        return self.document_url_for(
-            schema or UNIVERSAL_APPLICATION_SCHEMA_VERSION
-        )
-
-    @property
-    def schema_version(self):
-        if self._external_schema_version is not None:
-            return self._external_schema_version
-        token = (
-            self.server.browser_session_token
-            if self.server is not None else None
-        )
-        return self.read_state(self.url, token=token).get(
-            'schema_version', UNIVERSAL_APPLICATION_SCHEMA_VERSION
-        )
-
-    def document_url_for(self, schema):
-        if self._external_bootstrap_url is not None:
-            base = self._external_bootstrap_url
-            self._external_bootstrap_url = None
-        else:
-            base = (
-                self.url + '/?bootstrap=' + self.server.browser_bootstrap_token
-                if self.server is not None and self.server.browser_bootstrap_token
-                else self.url + '/'
-            )
-        separator = '&' if '?' in base else '?'
-        return base + separator + 'schema=' + str(schema)
-
-    def handoff(self):
-        """Replace the worker while preserving URL, session, and sole ownership."""
-        if self.server is None or self.gateway is None:
-            raise RuntimeError("external desktop runtime cannot be handed off here")
-        active = self.server.prove_runtime_backend_generation()
-        self.gateway.gate.begin_drain(active.generation, timeout=60.0)
-        previous = self.server
-        previous.close(preserve_browser_session=True)
-        replacement = self._new_server().start()
-        self._activation_candidate = replacement
-        self.gateway.activate(replacement.prove_runtime_backend_generation())
-        self.server = replacement
-        return self
-
-    def close(self):
-        # Founder 2026-10-13: the window X must end the app. A request still in flight
-        # (a long poll) never holds the process: the drain is brief, and a watchdog ends
-        # the process if shutdown stalls after that.
-        import threading
-        import time as _time
-        threading.Thread(
-            target=lambda: (_time.sleep(3.0), os._exit(0)), daemon=True
-        ).start()
-        if self.server is not None:
-            backend = self.gateway.gate.backend if self.gateway is not None else None
-            if backend is not None:
-                try:
-                    self.gateway.gate.begin_drain(backend.generation, timeout=2.0)
-                except GatewayError:
-                    pass
-            self.server.close()
-        if self.gateway is not None:
-            self.gateway.close()
+    There is no second opener or ApplicationServer. Transport keys secure
+    commands; cloud_session remains the source of signed-in account identity.
+    """
+    import threading
+    from urllib.parse import urlsplit
+    from .persistence import selected_application_generation
+    if not selected_application_generation(server.universal_state_path):
+        return None
+    from .runtime_caller_capability import WindowsDpapiCallerKeyStore
+    from .clean_coordination_host import CleanCoordinationHost
+    from .clean_coordination_service import build_bound_service
+    from .clean_office_adapter import invoke as office
+    from .clean_revit_adapter import invoke as revit
+    from .clean_model_adapter import CleanModelAdapter
+    database = Path(server.universal_state_path)
+    generation = database.parent
+    authority = getattr(server.universal_store, '_signed_commit_authority', None)
+    if authority is None:
+        raise ValueError('selected application has no bound signed commit owner')
+    adapters = {'revit': revit, 'word': office, 'excel': office, 'powerpoint': office,
+                'model': CleanModelAdapter(server.model_execution_broker)}
+    def reach_host(operation, arguments):
+        host = str(operation).split('.', 1)[0]
+        if host not in adapters:
+            raise ValueError('this runtime declares no adapter for ' + host)
+        return adapters[host](operation, arguments)
+    from . import commit_intent
+    with commit_intent.declare(commit_intent.MIGRATION, actor='app:archhub',
+            reason='install changed coordination catalogue in the one application owner'):
+        graph_host = CleanCoordinationHost(authority,
+            WindowsDpapiCallerKeyStore(WindowsDpapiCallerKeyStore.default_path()),
+            host_invoker=reach_host, runtime_root=generation.parent.parent)
+    endpoint = os.environ.get('ARCHHUB_COORDINATION_ENDPOINT', 'http://127.0.0.1:8474/coordination')
+    parsed = urlsplit(endpoint)
+    if parsed.hostname != '127.0.0.1' or parsed.scheme != 'http' or parsed.path != '/coordination':
+        raise ValueError('coordination endpoint must be a declared loopback endpoint')
+    service = build_bound_service(graph_host, port=parsed.port if parsed.port is not None else 8474)
+    server._coordination_surface = service
+    thread = threading.Thread(target=service.serve_forever, name='ArchHub coordination surface', daemon=True)
+    thread.start()
+    server._coordination_thread = thread
+    return service
 
 
 def main():
-    from PyQt6.QtCore import QAbstractNativeEventFilter, QLockFile, Qt, QTimer, QUrl
-    from PyQt6.QtWidgets import QApplication, QMainWindow, QStackedWidget
-    from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
-    from PyQt6.QtWebEngineWidgets import QWebEngineView
-
-    app = QApplication(sys.argv)
-    app.setApplicationName('ArchHub')
-    app.setOrganizationName('ArchHub')
-    lock_path = runtime_lock_path()
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    lock = QLockFile(str(lock_path))
-    lock.setStaleLockTime(0)
-    if not lock.tryLock(100):
-        from .desktop_supervisor import write_lifecycle
-        write_lifecycle('already-running')
-        return 0
-
-    from .desktop_supervisor import write_lifecycle
-    write_lifecycle('running')
-
-    profile_root = lock_path.parent / 'web-profile'
-    profile_root.mkdir(parents=True, exist_ok=True)
-    profile = QWebEngineProfile.defaultProfile()
-    profile.setPersistentStoragePath(str(profile_root))
-    profile.setCachePath(str(profile_root / 'cache'))
-
-    runtime = DesktopRuntime().start()
-    close_started = {'value': False}
-
-    def quit_from_window(widget=None):
-        if close_started['value']:
-            return
-        close_started['value'] = True
-        import threading
-        import time as _time
-        threading.Thread(
-            target=lambda: (_time.sleep(3.0), os._exit(0)), daemon=True
-        ).start()
-        try:
-            app.closeAllWindows()
-            for top in app.topLevelWidgets():
-                top.deleteLater()
-        except Exception:
-            if widget is not None:
-                try:
-                    widget.close()
-                    widget.deleteLater()
-                except Exception:
-                    pass
-        QTimer.singleShot(0, app.quit)
-
-    class _WindowsCloseFilter(QAbstractNativeEventFilter):
-        def nativeEventFilter(self, event_type, message):
-            if sys.platform != 'win32' or event_type not in (
-                b'windows_generic_MSG', b'windows_dispatcher_MSG',
-                'windows_generic_MSG', 'windows_dispatcher_MSG',
-            ):
-                return False, 0
-            import ctypes
-            from ctypes import wintypes
-            class MSG(ctypes.Structure):
-                _fields_ = [
-                    ('hwnd', wintypes.HWND), ('message', wintypes.UINT),
-                    ('wParam', wintypes.WPARAM), ('lParam', wintypes.LPARAM),
-                    ('time', wintypes.DWORD), ('pt', wintypes.POINT),
-                ]
-            msg = MSG.from_address(int(message))
-            if msg.message != 0x0010:
-                return False, 0
-            ctypes.windll.user32.GetAncestor.restype = wintypes.HWND
-            ctypes.windll.user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
-            root = ctypes.windll.user32.GetAncestor(msg.hwnd, 2) or msg.hwnd
-            length = ctypes.windll.user32.GetWindowTextLengthW(root)
-            title = ctypes.create_unicode_buffer(length + 1)
-            ctypes.windll.user32.GetWindowTextW(root, title, length + 1)
-            if title.value.startswith('ArchHub'):
-                quit_from_window(window if 'window' in locals() else None)
-                return True, 0
-            return False, 0
-
-    class _ArchHubWindow(QMainWindow):
-        """The window X ends the app (founder 2026-10-13): hide at once, quit the
-        loop, and let a 3 s watchdog end the process if shutdown stalls."""
-
-        def closeEvent(self, event):
-            event.accept()
-            quit_from_window(self)
-
-    window = _ArchHubWindow()
-    close_filter = _WindowsCloseFilter()
-    app.installNativeEventFilter(close_filter)
-    app._archhub_native_close_filter = close_filter
-    window.setWindowTitle('ArchHub')
-    window.resize(1480, 920)
-    window.setMinimumSize(960, 640)
-    stack = QStackedWidget(window)
-    window.setCentralWidget(stack)
-    window.show()
-
-    loaded_schema = {'value': None}
-    pending_schema = {'value': None}
-    current_view = {'value': None}
-    opened_windows = []
-
-    class _AppPage(QWebEnginePage):
-        """window.open from the studio opens an ArchHub window.
-
-        Settings > Account opens the founder cockpit this way, on the
-        one-time link the app minted from its own session: the cockpit is a
-        lens of the app, inside the app, with no browser and no sign-in."""
-
-        def createWindow(self, _kind):
-            view = QWebEngineView()
-            view.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-            view.setPage(_AppPage(profile, view))
-            view.setWindowTitle('ArchHub cockpit')
-            view.resize(1400, 900)
-            opened_windows.append(view)
-            view.destroyed.connect(
-                lambda *_: opened_windows.remove(view)
-                if view in opened_windows else None
-            )
-            view.show()
-            return view.page()
-
-    def stage_schema(schema):
-        if not schema or pending_schema['value'] == schema:
-            return
-        pending_schema['value'] = schema
-        candidate = QWebEngineView(stack)
-        candidate.setPage(_AppPage(profile, candidate))
-        stack.addWidget(candidate)
-
-        def finished(ok):
-            if pending_schema['value'] != schema:
-                stack.removeWidget(candidate)
-                candidate.deleteLater()
-                return
-            pending_schema['value'] = None
-            if not ok:
-                stack.removeWidget(candidate)
-                candidate.deleteLater()
-                return
-            previous = current_view['value']
-            current_view['value'] = candidate
-            loaded_schema['value'] = schema
-            stack.setCurrentWidget(candidate)
-            if previous is not None:
-                stack.removeWidget(previous)
-                previous.deleteLater()
-
-        candidate.loadFinished.connect(finished)
-
-        def terminated(_status, _code):
-            if current_view['value'] is candidate:
-                loaded_schema['value'] = None
-                QTimer.singleShot(250, lambda: stage_schema(schema))
-
-        candidate.page().renderProcessTerminated.connect(terminated)
-        candidate.load(QUrl(runtime.document_url_for(schema)))
-
-    initial_schema = runtime.schema_version
-    stage_schema(initial_schema)
-
-    schema_timer = QTimer(window)
-    schema_timer.setInterval(5000)
-
-    def refresh_schema():
-        try:
-            schema = runtime.schema_version
-        except Exception:
-            return
-        if schema and schema != loaded_schema['value']:
-            stage_schema(schema)
-
-    schema_timer.timeout.connect(refresh_schema)
-    schema_timer.start()
-
-    app.aboutToQuit.connect(runtime.close)
-    try:
-        code = app.exec()
-        write_lifecycle('clean', exit_code=code)
-        return code
-    except Exception as exc:
-        write_lifecycle('failed', exit_code=1, detail=type(exc).__name__)
-        raise
-    finally:
-        lock.unlock()
+    runpy.run_path(str(Path(__file__).resolve().parents[1] / "launch_archhub_test.py"),
+                   run_name="__main__")
+    return 0
 
 
-if __name__ == '__main__':
-    try:
-        raise SystemExit(main())
-    except Exception as exc:
-        from .desktop_supervisor import write_lifecycle
-
-        write_lifecycle(
-            'failed',
-            exit_code=1,
-            detail=f'{type(exc).__name__}: {exc}',
-        )
-        raise
+if __name__ == "__main__":
+    raise SystemExit(main())

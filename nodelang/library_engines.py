@@ -898,7 +898,9 @@ LIBRARY_ITEM_ENGINES.update({
                     "params": {"tool": "studio"}},
     "tool_workshop": {"engine": "tool.workshop",
                       "params": {"tool": "workshop", "stale_claim_after_idle_minutes": "30",
-                                 "archive_after_idle_days": "20"}},
+                                 "archive_after_idle_days": "20", "tick_cadence_minutes": 5,
+                                 "backup_count": 3, "backup_budget_bytes": 10737418240,
+                                 "keep_running_in_tray": False}},
     "tool_brain": {"engine": "tool.brain",
                    "params": {"tool": "brain"}},
     "tool_baboom": {"engine": "tool.baboom",
@@ -1372,6 +1374,9 @@ LIBRARY_ITEMS_WITHOUT_ENGINE.pop("o_term", None)
 # (universal_pipeline._ensure_pipeline_node_interfaces mints them), so what
 # the library says a card does is what can be wired to it.
 ENGINE_SOCKETS = {
+    "tool.workshop": {"source": ("out",), "target": (
+        "tool", "stale_claim_after_idle_minutes", "archive_after_idle_days",
+        "tick_cadence_minutes", "backup_count", "backup_budget_bytes", "keep_running_in_tray")},
     "data.constant": {"source": ("value",), "target": ()},
     "data.list": {"source": ("value",), "target": ()},
     "input.parameter": {"source": ("value",), "target": ()},

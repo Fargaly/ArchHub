@@ -4,11 +4,11 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import nodelang.remote_native_cloud_login as remote_login
+import nodelang.cell_native_auth as remote_login
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "nodelang" / "remote_native_cloud_login.py"
+SOURCE = ROOT / "nodelang" / "cell_native_auth.py"
 PLAN = ROOT / "REMOTE-DEVICE-SESSION-AUTHORITY.md"
 
 
@@ -28,7 +28,7 @@ def test_remote_login_reads_one_caller_store_without_a_shadow_authority():
     assert "sqlite" not in source.lower()
     assert "postgres" not in source.lower()
     assert remote_login.RemoteNativeCloudLoginBroker.__module__ == (
-        "nodelang.remote_native_cloud_login"
+        "nodelang.cell_native_auth"
     )
 
 

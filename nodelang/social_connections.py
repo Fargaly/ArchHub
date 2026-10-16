@@ -48,14 +48,14 @@ def connection(provider, *, accounts=None, attempt=None):
         row.update(state="choosing", accounts=current.get("accounts", []))
     elif phase == "ready":
         row.update(state="ready")
-    elif phase in ("starting", "waiting", "opening", "exchanging"):
+    elif phase in ("starting", "signing_in", "waiting", "opening", "exchanging"):
         row.update(state="connecting")
     elif phase == "failed":
         row.update(state="blocked", blocker=current.get("error") or "Provider sign-in failed")
     config = broker.status(provider)
-    row["can_connect"] = config.get("state") in ("saved", "configured")
+    row["can_connect"] = config.get("state") in ("saved", "configured", "signin_required")
     blocker = config.get("blocker")
-    if not blocker and config.get("state") not in ("saved", "configured"):
+    if not blocker and config.get("state") not in ("saved", "configured", "signin_required"):
         blocker = "ArchHub cloud connection status unavailable"
     if blocker:
         row.update(state="blocked", blocker=blocker)

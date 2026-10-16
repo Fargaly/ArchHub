@@ -396,8 +396,10 @@ def test_the_owner_is_started_only_through_the_runs_desktop_and_job(tmp_path):
             return "spawned"
     assert owner.start_graph_owner(Desktop(), plan, "python.exe", tmp_path) == "spawned"
     (command, env, cwd), = calls
-    assert "nodelang.clean_coordination_service" in command and "--port %d" % plan["coordination_port"] in command
-    assert "--root" in command and env == plan["env"]
+    assert command.endswith('-B -m nodelang.desktop')
+    assert env == plan['env']
+    assert env['ARCHHUB_TEST_HTTP_PORT'] == str(plan['canvas_port'])
+    assert Path(env['ARCHHUB_TEST_STATE_DIR']) == Path(plan['runtime_root']).parent
 
 
 # (v4) The launch gate: refused unless plan, provisioning read-back and pinned endpoint pass at spawn. --
@@ -563,11 +565,9 @@ def test_an_endpoint_that_is_not_pinned_at_the_spawn_refuses_it(tmp_path, drift,
         plan["env"]["ARCHHUB_COORDINATION_ENDPOINT"] = "http://127.0.0.1:8474/coordination"
         runner = _runner(owner, plan, endpoint=plan["endpoint"])    # even if the plan read had passed
     elif drift == "port":
-        args = plan["service_args"]
-        args[args.index("--port") + 1] = "8474"
+        plan['env']['ARCHHUB_TEST_HTTP_PORT'] = '8475'
     elif drift == "root":
-        args = plan["service_args"]
-        args[args.index("--root") + 1] = os.environ.get("LOCALAPPDATA", r"C:\outside")
+        plan['env']['ARCHHUB_TEST_STATE_DIR'] = os.environ.get('LOCALAPPDATA', r'C:\outside')
     else:
         port_free = lambda port: port != plan["coordination_port"]
     with pytest.raises(owner.OwnerRefused) as refused:

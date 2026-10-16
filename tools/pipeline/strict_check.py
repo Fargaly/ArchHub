@@ -547,7 +547,13 @@ def check_files(root, paths, overlay=None, *, revision="HEAD", context=None, com
         # A changed reader/socket can cause a diagnostic in an unchanged
         # catalogue/wire. Compare semantic identities, not shifted line numbers.
         def identity(item):
-            return tuple(item[key] for key in ("code", "language", "file", "message"))
+            import re
+            message = item['message']
+            if item['code'] == 'E0001':
+                owner = re.fullmatch(r'multiple owners of `([^`]+)` \(other: .+:\d+\)', message)
+                if owner is not None:
+                    message = 'multiple owners of `%s`' % owner[1]
+            return item['code'], item['language'], item['file'], message
         existing = Counter(identity(item) for item in original["diagnostics"])
         for item in outside:
             key = identity(item)

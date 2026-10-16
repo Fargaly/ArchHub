@@ -1,246 +1,55 @@
-import os
-import subprocess
-import sys
-import textwrap
-import time
-import ctypes
-from ctypes import wintypes
+"""Exercise the installed launcher's exact close path with fake Qt objects."""
+import ast
 from pathlib import Path
-
-import pytest
+from types import SimpleNamespace
+import threading
+import time
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WM_CLOSE = 0x0010
 
 
-def test_launcher_tray_wiring_keeps_main_window_close_as_quit():
-    source = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
-    assert "keeps running in the background" not in source
-    assert "Closing any ArchHub top-level window quits" in source
-    assert "app.setQuitOnLastWindowClosed(True)" in source
-
-
-def _visible_archhub_windows_for_pid(pid):
-    user32 = ctypes.windll.user32
-    handles = []
-    enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-
-    @enum_proc
-    def collect(hwnd, _):
-        owner = wintypes.DWORD()
-        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
-        if owner.value != pid or not user32.IsWindowVisible(hwnd):
-            return True
-        length = user32.GetWindowTextLengthW(hwnd)
-        title = ctypes.create_unicode_buffer(length + 1)
-        user32.GetWindowTextW(hwnd, title, length + 1)
-        if title.value.startswith("ArchHub"):
-            handles.append((hwnd, title.value))
-        return True
-
-    user32.EnumWindows(collect, 0)
-    return handles
-
-
-def _kill_process(pid):
-    kernel32 = ctypes.windll.kernel32
-    kernel32.OpenProcess.restype = wintypes.HANDLE
-    handle = kernel32.OpenProcess(0x0001, False, pid)
-    if handle:
-        try:
-            kernel32.TerminateProcess(handle, 0)
-        finally:
-            kernel32.CloseHandle(handle)
-
-
-def _job_kill_on_close(process_handle):
-    kernel32 = ctypes.windll.kernel32
-    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
-    kernel32.SetInformationJobObject.argtypes = [
-        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
-    ]
-    kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
-    job = kernel32.CreateJobObjectW(None, None)
-    if not job:
-        return None
-
-    class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
-        _fields_ = [
-            ("PerProcessUserTimeLimit", ctypes.c_longlong),
-            ("PerJobUserTimeLimit", ctypes.c_longlong),
-            ("LimitFlags", wintypes.DWORD),
-            ("MinimumWorkingSetSize", ctypes.c_size_t),
-            ("MaximumWorkingSetSize", ctypes.c_size_t),
-            ("ActiveProcessLimit", wintypes.DWORD),
-            ("Affinity", ctypes.c_size_t),
-            ("PriorityClass", wintypes.DWORD),
-            ("SchedulingClass", wintypes.DWORD),
-        ]
-
-    class IO_COUNTERS(ctypes.Structure):
-        _fields_ = [
-            ("ReadOperationCount", ctypes.c_ulonglong),
-            ("WriteOperationCount", ctypes.c_ulonglong),
-            ("OtherOperationCount", ctypes.c_ulonglong),
-            ("ReadTransferCount", ctypes.c_ulonglong),
-            ("WriteTransferCount", ctypes.c_ulonglong),
-            ("OtherTransferCount", ctypes.c_ulonglong),
-        ]
-
-    class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
-        _fields_ = [
-            ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
-            ("IoInfo", IO_COUNTERS),
-            ("ProcessMemoryLimit", ctypes.c_size_t),
-            ("JobMemoryLimit", ctypes.c_size_t),
-            ("PeakProcessMemoryUsed", ctypes.c_size_t),
-            ("PeakJobMemoryUsed", ctypes.c_size_t),
-        ]
-
-    info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
-    info.BasicLimitInformation.LimitFlags = 0x00002000
-    if not kernel32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):
-        kernel32.CloseHandle(job)
-        return None
-    if not kernel32.AssignProcessToJobObject(job, process_handle):
-        kernel32.CloseHandle(job)
-        return None
-    return job
-
-
-def _child_process_ids(pid):
-    kernel32 = ctypes.windll.kernel32
-    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
-    snapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
-    if snapshot == wintypes.HANDLE(-1).value:
-        return []
-
-    class PROCESSENTRY32W(ctypes.Structure):
-        _fields_ = [
-            ("dwSize", wintypes.DWORD),
-            ("cntUsage", wintypes.DWORD),
-            ("th32ProcessID", wintypes.DWORD),
-            ("th32DefaultHeapID", ctypes.c_void_p),
-            ("th32ModuleID", wintypes.DWORD),
-            ("cntThreads", wintypes.DWORD),
-            ("th32ParentProcessID", wintypes.DWORD),
-            ("pcPriClassBase", wintypes.LONG),
-            ("dwFlags", wintypes.DWORD),
-            ("szExeFile", wintypes.WCHAR * 260),
-        ]
-
-    entry = PROCESSENTRY32W()
-    entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
-    children = []
-    try:
-        ok = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
-        while ok:
-            if entry.th32ParentProcessID == pid:
-                children.append(entry.th32ProcessID)
-            ok = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
-    finally:
-        kernel32.CloseHandle(snapshot)
-    return children
-
-
-def _owned_process_ids(pid):
-    result = {pid}
-    pending = [pid]
-    while pending:
-        for child in _child_process_ids(pending.pop()):
-            if child not in result:
-                result.add(child)
-                pending.append(child)
-    return result
-
-
-def _kill_descendants_of(pid):
-    for child in _child_process_ids(pid):
-        _kill_descendants_of(child)
-        _kill_process(child)
-
-
-def test_launcher_real_shell_wm_close_exits_subprocess_within_10s(tmp_path):
-    if sys.platform != "win32":
-        pytest.skip("real WM_CLOSE court is Windows-only")
-    pytest.importorskip("PyQt6")
-    script = textwrap.dedent(
-        """
-        import os
-        import sys
-        from pathlib import Path
-        from nodelang import desktop
-
-        class FakeRuntime:
-            schema_version = 1
-
-            def start(self):
-                from PyQt6.QtCore import QTimer
-                QTimer.singleShot(0, lambda: (
-                    Path(os.environ["ARCHHUB_TEST_STATE_DIR"]) / "event-loop-ready"
-                ).write_text("ready", encoding="utf-8"))
-                return self
-
-            def document_url_for(self, _schema):
-                page = Path(os.environ["ARCHHUB_TEST_STATE_DIR"]) / "fake-studio.html"
-                page.write_text("<!doctype html><title>ArchHub fake</title><main>fake gateway</main>", encoding="utf-8")
-                return page.as_uri()
-
-            def close(self):
-                pass
-
-        desktop.DesktopRuntime = FakeRuntime
-        desktop.runtime_lock_path = lambda: Path(os.environ["ARCHHUB_TEST_STATE_DIR"]) / "desktop.lock"
-        raise SystemExit(desktop.main())
-        """
-    )
-    env = {
-        **os.environ,
-        "ARCHHUB_TEST_STATE_DIR": str(tmp_path),
-        "LOCALAPPDATA": str(tmp_path),
-        "QTWEBENGINE_CHROMIUM_FLAGS": "--disable-gpu --single-process --no-sandbox",
-        "QT_OPENGL": "software",
-        # The companion courts use offscreen in this pytest process. This
-        # subprocess owns only FakeRuntime and must expose its own HWND.
-        "QT_QPA_PLATFORM": "windows",
-    }
-    proc = subprocess.Popen([sys.executable, "-c", script], cwd=ROOT, env=env)
-    job = _job_kill_on_close(int(proc._handle))
-    windows = []
-    try:
-        try:
-            deadline = time.monotonic() + 10.0
-            while time.monotonic() < deadline:
-                # A Windows venv executable may delegate to its base Python.
-                # Only this owned process tree may supply the fake window.
-                windows = [window for pid in _owned_process_ids(proc.pid)
-                           for window in _visible_archhub_windows_for_pid(pid)]
-                if windows and (tmp_path / "event-loop-ready").is_file():
-                    break
-                if proc.poll() is not None:
-                    raise AssertionError("real shell exited before an ArchHub HWND appeared")
-                time.sleep(0.1)
-            assert windows, "real shell did not expose a visible ArchHub HWND"
-            assert (tmp_path / "event-loop-ready").is_file(), "fake shell event loop did not start"
-            started = time.monotonic()
-            post_message = ctypes.windll.user32.PostMessageW
-            post_message.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
-            post_message.restype = wintypes.BOOL
-            for hwnd, _title in windows:
-                assert post_message(hwnd, WM_CLOSE, 0, 0), "owned HWND refused WM_CLOSE"
-            code = proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            titles = ", ".join(title for _, title in windows) if windows else "none"
-            raise AssertionError("WM_CLOSE left the launcher subprocess alive after 10s; hwnd titles: " + titles)
-        elapsed = time.monotonic() - started
-        assert code == 0
-        assert elapsed <= 10.0
-    finally:
-        _kill_descendants_of(proc.pid)
-        if proc.poll() is None:
-            proc.kill()
-            proc.wait(timeout=5)
-        if job:
-            ctypes.windll.kernel32.CloseHandle(job)
-        _kill_descendants_of(proc.pid)
+def test_window_close_requests_quit_and_arms_a_bounded_watchdog(monkeypatch):
+    source = ast.parse((ROOT / 'launch_archhub_test.py').read_text(encoding='utf-8'))
+    definitions = [next(n for n in ast.walk(source) if isinstance(n, ast.FunctionDef) and n.name == '_quit_from_window'),
+        next(n for n in ast.walk(source) if isinstance(n, ast.ClassDef) and n.name == '_ArchHubWindow')]
+    callbacks, timers, sleeps, exits = [], [], [], []
+    class FakeThread:
+        def __init__(self, *, target, daemon):
+            assert daemon is True
+            callbacks.append(target)
+        def start(self):
+            pass
+    class FakeWindow:
+        deleted = 0
+        def hide(self):
+            raise AssertionError('window close must never hide to tray')
+        def deleteLater(self):
+            self.deleted += 1
+    class FakeApp:
+        closes = quits = 0
+        def closeAllWindows(self):
+            self.closes += 1
+        def topLevelWidgets(self):
+            return [window]
+        def quit(self):
+            self.quits += 1
+    app = FakeApp()
+    namespace = dict(QMainWindow=FakeWindow, app=app, _hide_in_tray_if_enabled=lambda widget: False,
+        QTimer=SimpleNamespace(singleShot=lambda delay, callback: timers.append((delay, callback))),
+        os=SimpleNamespace(_exit=lambda code: exits.append(code)), _window_quit_started={'value': False})
+    monkeypatch.setattr(threading, 'Thread', FakeThread)
+    monkeypatch.setattr(time, 'sleep', lambda duration: sleeps.append(duration))
+    exec(compile(ast.Module(body=definitions, type_ignores=[]), 'installed-close-path', 'exec'), namespace)
+    window = namespace['_ArchHubWindow']()
+    events = []
+    window.closeEvent(SimpleNamespace(accept=lambda: events.append('accepted')))
+    assert events == ['accepted'] and window.quitting is True
+    assert app.closes == 1 and window.deleted == 1
+    assert len(timers) == 1 and timers[0][0] == 0
+    timers[0][1]()
+    assert app.quits == 1 and len(callbacks) == 1
+    callbacks[0]()
+    assert sleeps == [3.0] and exits == [0]
+    window.closeEvent(SimpleNamespace(accept=lambda: events.append('accepted')))
+    assert app.closes == 1 and len(callbacks) == 1

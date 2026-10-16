@@ -164,7 +164,7 @@ def _file_evidence(path, check_budget):
 
 
 def publish_application_recovery(sources, directory, *, verify_copies,
-                                 before_publish, deadline):
+                                 before_publish, deadline, max_bytes=None):
     """Copy frozen sources and atomically rename one complete recovery folder.
 
     ``deadline`` is an absolute monotonic timestamp. ``verify_copies`` receives
@@ -197,14 +197,20 @@ def publish_application_recovery(sources, directory, *, verify_copies,
     if os.path.lexists(destination):
         raise FileExistsError("recovery destination already exists: %s" % destination)
     roles = tuple(role for role in _FILE_NAMES if role in sources)
+    shared = sources.get('content') is sources['graph']
     logical_sizes = {}
     for role in roles:
         check_budget()
+        if shared and role == 'content':
+            logical_sizes[role] = 0
+            continue
         pages = sources[role].execute("PRAGMA page_count").fetchone()[0]
         page_size = sources[role].execute("PRAGMA page_size").fetchone()[0]
         if type(pages) is not int or pages < 0 or type(page_size) is not int or page_size <= 0:
             raise ValueError("recovery source page metadata is invalid")
         logical_sizes[role] = pages * page_size
+    if max_bytes is not None and sum(logical_sizes.values()) + _MANIFEST_BYTES > max_bytes:
+        raise ValueError('new recovery exceeds the configured backup disk budget')
     _require_disk_reserve(parent, sum(logical_sizes.values()))
     check_budget()
     stage = parent / (".application-recovery-" + uuid.uuid4().hex)
@@ -215,6 +221,9 @@ def publish_application_recovery(sources, directory, *, verify_copies,
         remaining = sum(logical_sizes.values())
         for role in roles:
             check_budget()
+            if shared and role == 'content':
+                copies[role] = copies['graph']
+                continue
             _require_disk_reserve(parent, remaining)
             path = stage / _FILE_NAMES[role]
             _check_file(path, stage, parent)
@@ -233,6 +242,9 @@ def publish_application_recovery(sources, directory, *, verify_copies,
         metadata = json.loads(_json_bytes(metadata, _METADATA_BYTES))
         files = {}
         for role, path in copies.items():
+            if shared and role == 'content':
+                files[role] = files['graph']
+                continue
             _check_file(path, stage, parent)
             _require_sqlite_header(path)
             with _copy_connection(path, check_budget) as database:
@@ -246,6 +258,9 @@ def publish_application_recovery(sources, directory, *, verify_copies,
         _check_file(manifest_path, stage, parent)
         _create_file(manifest_path, owned_paths)
         manifest = _json_bytes({"format": 1, "files": files, "metadata": metadata}, _MANIFEST_BYTES)
+        physical_bytes = sum(path.stat().st_size for path in set(copies.values())) + len(manifest)
+        if max_bytes is not None and physical_bytes > max_bytes:
+            raise ValueError('verified recovery exceeds the configured backup disk budget')
         with manifest_path.open("r+b") as stream:
             stream.write(manifest)
             stream.flush()

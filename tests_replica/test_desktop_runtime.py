@@ -1,400 +1,157 @@
-"""The normal-window host must drive the same persistent application server."""
+"""Single-entry desktop ownership and persistence, without opening any UI."""
 from __future__ import annotations
 
+import importlib
 import json
-import sys
-from types import SimpleNamespace
-import urllib.request
 from pathlib import Path
+import runpy
+import uuid
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from nodelang.desktop import DesktopRuntime, runtime_lock_path  # noqa: E402
-import nodelang.desktop as desktop_module  # noqa: E402
-from nodelang.universal_application import (  # noqa: E402
-    UNIVERSAL_APPLICATION_SCHEMA_VERSION,
-)
-from nodelang.desktop_supervisor import (  # noqa: E402
-    classify_worker_exit,
-    crash_history_path,
-    lifecycle_path,
-    supervisor_lock_path,
-)
+from nodelang import desktop, persistence
+from nodelang.conversation_history import ConversationHistoryStore
+from nodelang.universal_cell import Cell, CellStore, DatabaseOwnerConflict, NULL_CELL_ID
 
 
-def test_desktop_runtime_hosts_the_same_valid_persistent_graph(tmp_path):
-    runtime = DesktopRuntime(state_path=tmp_path / 'desktop-state.json.gz').start()
-    try:
-        token = runtime.server.browser_session_token
-        state = json.loads(urllib.request.urlopen(urllib.request.Request(
-            runtime.url + '/api/state',
-            headers={'X-ArchHub-Session': token},
-        ), timeout=10).read())
-        document_url = runtime.document_url
-        page = urllib.request.urlopen(document_url, timeout=10).read().decode('utf-8')
-        assert state['valid'] is True and state['persistent'] is True
-        assert state['legacy_parallel_runtime'] is False
-        assert 'class="archhub-app"' in page
-        assert document_url.endswith(
-            '&schema=' + UNIVERSAL_APPLICATION_SCHEMA_VERSION
-        )
-        assert '?bootstrap=' in document_url
-        assert runtime.document_url_for('future-schema').endswith(
-            '/?schema=future-schema')
-        response = urllib.request.urlopen(urllib.request.Request(
-            runtime.url + '/', headers={'X-ArchHub-Session': token}
-        ), timeout=10)
-        assert response.headers['Cache-Control'] == 'no-store'
-    finally:
-        runtime.close()
+def _cell(name, value=b'user work'):
+    return Cell(name, NULL_CELL_ID, NULL_CELL_ID, value)
 
 
-def test_desktop_runtime_handoff_keeps_public_url_and_browser_authority(tmp_path):
-    runtime = DesktopRuntime(
-        state_path=tmp_path / 'desktop-handoff-state.json.gz'
-    ).start()
-    try:
-        stable_url = runtime.url
-        token = runtime.server.browser_session_token
-        session_root = runtime.server.browser_session_root
-        first = runtime.server.prove_runtime_backend_generation()
-        runtime.handoff()
-        second = runtime.server.prove_runtime_backend_generation()
-
-        response = urllib.request.urlopen(urllib.request.Request(
-            stable_url + '/api/state',
-            headers={'X-ArchHub-Session': token},
-        ), timeout=30)
-        state = json.loads(response.read())
-        assert runtime.url == stable_url
-        assert runtime.server.browser_session_token == token
-        assert runtime.server.browser_session_root == session_root
-        assert first.generation == 1
-        assert second.generation == 2
-        assert first.ownership_root != second.ownership_root
-        assert response.headers['X-ArchHub-Runtime-Generation'] == '2'
-        assert state['universal_runtime_ownership'] == second.ownership_root
-    finally:
-        runtime.close()
+def _generation(root, ident=None):
+    ident = ident or str(uuid.uuid4())
+    selected = root / 'unified-authority' / 'generations' / ident
+    selected.mkdir(parents=True)
+    database = selected / 'authority.sqlite3'
+    with CellStore(database):
+        pass
+    (selected / 'bootstrap.json').write_text(json.dumps({'graph_id': ident}), encoding='utf-8')
+    (root / 'unified-authority' / 'CURRENT').write_text(ident, encoding='ascii')
+    return database
 
 
-def test_desktop_health_rejects_legacy_state_without_universal_health(monkeypatch):
+def test_the_selected_application_graph_survives_reopen(tmp_path):
+    database = persistence.application_database_path(tmp_path)
+    with CellStore(database) as owner:
+        owner.commit(owner.revision, create=(_cell('test:saved-user-work'),))
+    with CellStore(database) as owner:
+        assert owner.read('test:saved-user-work').atom == b'user work'
+        assert owner.database_path == str(database)
+
+
+def test_closing_history_cannot_close_the_running_graph_owner(tmp_path):
+    with CellStore(tmp_path / 'authority.sqlite3') as owner:
+        history = ConversationHistoryStore(owner.database_path, instance_id='account', store=owner)
+        history.ensure_conversation('room')
+        history.append('room', author='person', content='survives', idempotency_key='message')
+        history.close()
+        owner.commit(owner.revision, create=(_cell('test:still-open'),))
+        assert owner.read('test:still-open').atom == b'user work'
+
+
+def test_invalid_current_pointer_refuses_without_creating_a_replacement(tmp_path):
+    current = tmp_path / 'unified-authority' / 'CURRENT'
+    current.parent.mkdir()
+    current.write_text('../somewhere-else', encoding='ascii')
+    with pytest.raises(ValueError):
+        persistence.application_database_path(tmp_path)
+    assert not (tmp_path / 'authority.sqlite3').exists()
+
+
+def test_current_selects_one_generation_without_choosing_the_latest_folder(tmp_path):
+    selected = _generation(tmp_path)
+    unrelated = selected.parent.parent / str(uuid.uuid4())
+    unrelated.mkdir()
+    assert persistence.application_database_path(tmp_path) == selected
+    assert persistence.selected_application_generation(selected)
+
+
+def test_missing_selected_graph_never_falls_back_to_a_retired_copy(tmp_path):
+    selected = _generation(tmp_path)
+    selected.unlink()
+    with CellStore(tmp_path / 'archhub-test.universal.sqlite3'):
+        pass
+    with pytest.raises(ValueError, match='missing'):
+        persistence.application_database_path(tmp_path)
+    assert not (tmp_path / 'authority.sqlite3').exists()
+
+
+def test_explicit_profile_keeps_all_state_inside_its_declared_folder(tmp_path, monkeypatch):
+    selected = tmp_path / 'profile'
+    monkeypatch.setenv('ARCHHUB_TEST_STATE_DIR', str(selected))
+    assert persistence.application_database_path() == selected / 'authority.sqlite3'
+    from nodelang.unified_authority_runtime import default_runtime_root
+    assert default_runtime_root() == selected / 'unified-authority'
+
+
+def test_normal_state_no_longer_defaults_to_node_native_wip(tmp_path, monkeypatch):
+    monkeypatch.delenv('ARCHHUB_TEST_STATE_DIR', raising=False)
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path))
+    assert persistence.application_database_path() == tmp_path / 'ArchHub' / 'authority.sqlite3'
+
+
+def test_a_second_owner_of_the_same_graph_is_refused(tmp_path):
+    database = tmp_path / 'authority.sqlite3'
+    with CellStore(database) as owner:
+        owner.commit(owner.revision, create=(_cell('test:active'),))
+        with pytest.raises(DatabaseOwnerConflict):
+            CellStore(database)
+        assert owner.read('test:active').atom == b'user work'
+
+
+def test_a_retired_store_is_an_import_source_and_never_a_default_head(tmp_path):
+    old = tmp_path / 'archhub-test.universal.sqlite3'
+    with CellStore(old):
+        pass
+    assert old in persistence.legacy_application_sources(tmp_path)
+    assert persistence.application_database_path(tmp_path) == tmp_path / 'authority.sqlite3'
+
+
+def test_retired_graph_merge_is_idempotent_and_preserves_unique_work(tmp_path):
+    source, target = tmp_path / 'old.sqlite3', tmp_path / 'authority.sqlite3'
+    with CellStore(source) as old:
+        old.commit(old.revision, create=(_cell('test:old-work'),))
+    original = source.read_bytes()
+    with CellStore(target) as owner:
+        owner.commit(owner.revision, create=(_cell('test:current-work'),))
+        result = persistence.migrate_graph_source(owner, source)
+        revision = owner.revision
+        assert result['state'] == 'migrated' and Path(result['backup_path']).is_dir()
+        assert owner.read('test:old-work').atom == b'user work'
+        assert owner.read('test:current-work').atom == b'user work'
+        assert persistence.migrate_graph_source(owner, source)['state'] == 'already_migrated'
+        assert owner.revision == revision
+    assert source.read_bytes() == original
+
+
+def test_conflicting_retired_graph_never_overwrites_or_discards_current_work(tmp_path):
+    source = tmp_path / 'old.sqlite3'
+    with CellStore(source) as old:
+        old.commit(old.revision, create=(_cell('test:shared', b'old'),))
+    with CellStore(tmp_path / 'authority.sqlite3') as owner:
+        owner.commit(owner.revision, create=(_cell('test:shared', b'current'),))
+        revision = owner.revision
+        with pytest.raises(ValueError, match='conflicting truth'):
+            persistence.migrate_graph_source(owner, source)
+        assert owner.revision == revision and owner.read('test:shared').atom == b'current'
+
+
+def test_historical_server_entry_routes_to_the_installed_desktop(monkeypatch):
+    from nodelang import application_server
     calls = []
-
-    def read_state(url, token=None):
-        calls.append(('state', url, token))
-        return {'ok': True, 'valid': True}
-
-    def read_universal_health(url, token=None):
-        calls.append(('health', url, token))
-        raise RuntimeError('legacy host has no Universal Cell health')
-
-    monkeypatch.setattr(DesktopRuntime, 'read_state', staticmethod(read_state))
-    monkeypatch.setattr(
-        DesktopRuntime,
-        'read_universal_health',
-        staticmethod(read_universal_health),
-    )
-
-    assert DesktopRuntime._healthy('http://127.0.0.1:8482', 'session-token') is False
-    assert calls == [
-        ('state', 'http://127.0.0.1:8482', 'session-token'),
-        ('health', 'http://127.0.0.1:8482', 'session-token'),
-    ]
+    monkeypatch.setattr(desktop, 'main', lambda: calls.append('desktop') or 37)
+    assert application_server.main() == 37
+    assert calls == ['desktop']
 
 
-def test_desktop_health_accepts_only_authorized_universal_authority(monkeypatch):
-    calls = []
-
-    def read_state(url, token=None):
-        calls.append(('state', url, token))
-        return {'ok': True, 'valid': True}
-
-    def read_universal_health(url, token=None):
-        calls.append(('health', url, token))
-        return {'ok': True, 'runtime': 'app:archhub'}
-
-    monkeypatch.setattr(DesktopRuntime, 'read_state', staticmethod(read_state))
-    monkeypatch.setattr(
-        DesktopRuntime,
-        'read_universal_health',
-        staticmethod(read_universal_health),
-    )
-
-    assert DesktopRuntime._healthy('http://127.0.0.1:8482', 'session-token') is True
-    assert calls == [
-        ('state', 'http://127.0.0.1:8482', 'session-token'),
-        ('health', 'http://127.0.0.1:8482', 'session-token'),
-    ]
-
-
-def test_desktop_health_rejects_non_archhub_universal_runtime(monkeypatch):
-    monkeypatch.setattr(
-        DesktopRuntime,
-        'read_state',
-        staticmethod(lambda _url, token=None: {'ok': True, 'valid': True}),
-    )
-    monkeypatch.setattr(
-        DesktopRuntime,
-        'read_universal_health',
-        staticmethod(lambda _url, token=None: {'ok': True, 'runtime': 'other'}),
-    )
-
-    assert DesktopRuntime._healthy('http://127.0.0.1:8482', 'session-token') is False
-
-
-def test_desktop_attaches_to_machine_authority_when_preferred_host_is_not_authority(
-    monkeypatch,
-):
-    def attach_machine_authority(runtime):
-        runtime._url = 'http://127.0.0.1:61663'
-        runtime._external_bootstrap_url = (
-            'http://127.0.0.1:61663/?bootstrap=handoff'
-        )
-        runtime._external_schema_version = 'schema-a'
-        return True
-
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_healthy',
-        staticmethod(lambda _url, _token: True),
-    )
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_attach_machine_authority',
-        attach_machine_authority,
-    )
-
-    runtime = DesktopRuntime()
-
-    assert runtime.server is None
-    assert runtime.gateway is None
-    assert runtime.url == 'http://127.0.0.1:61663'
-    assert runtime.schema_version == 'schema-a'
-    assert runtime.document_url_for('schema-a') == (
-        'http://127.0.0.1:61663/?bootstrap=handoff&schema=schema-a'
-    )
-    assert runtime.document_url_for('schema-b') == (
-        'http://127.0.0.1:61663/?schema=schema-b'
-    )
-
-
-def test_desktop_refuses_second_owner_when_bridge_lacks_browser_handoff(
-    monkeypatch,
-):
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_healthy',
-        staticmethod(lambda _url, _token: False),
-    )
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_attach_machine_authority',
-        lambda _self: False,
-    )
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_active_machine_authority_present',
-        staticmethod(lambda: True),
-    )
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_recover_stale_machine_authority',
-        staticmethod(lambda: False),
-    )
-
-    with pytest.raises(RuntimeError, match='signed Universal authority'):
-        DesktopRuntime()
-
-
-def test_desktop_refuses_stale_signed_authority_instead_of_starting_old_graph(
-    monkeypatch,
-):
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_healthy',
-        staticmethod(lambda _url, _token: False),
-    )
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_attach_machine_authority',
-        lambda _self: False,
-    )
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_active_machine_authority_present',
-        staticmethod(lambda: True),
-    )
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_recover_stale_machine_authority',
-        staticmethod(lambda: False),
-    )
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_endpoint_is_listening',
-        staticmethod(lambda _url: False),
-    )
-
-    with pytest.raises(RuntimeError, match='recover or restart'):
-        DesktopRuntime()
-
-
-def test_desktop_refuses_a_legacy_visible_endpoint_before_starting_a_sidecar(
-    monkeypatch,
-):
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_healthy',
-        staticmethod(lambda _url, _token: False),
-    )
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_attach_machine_authority',
-        lambda _self: False,
-    )
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_active_machine_authority_present',
-        staticmethod(lambda: False),
-    )
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_recover_stale_machine_authority',
-        staticmethod(lambda: False),
-    )
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_stopped_machine_authority_database',
-        staticmethod(lambda: None),
-    )
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_machine_authority_descriptor_present',
-        staticmethod(lambda: False),
-    )
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_endpoint_is_listening',
-        staticmethod(lambda _url: True),
-    )
-
-    with pytest.raises(RuntimeError, match='controlled authority handoff'):
-        DesktopRuntime()
-
-
-def test_desktop_restarts_only_the_signed_stopped_authority_database(
-    monkeypatch, tmp_path,
-):
-    database = tmp_path / "released-universal.sqlite3"
-    database.write_bytes(b"released")
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_attach_machine_authority',
-        lambda _self: False,
-    )
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_active_machine_authority_present',
-        staticmethod(lambda: False),
-    )
-    recovered = []
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_recover_stale_machine_authority',
-        staticmethod(lambda: recovered.append(True) or True),
-    )
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_stopped_machine_authority_database',
-        staticmethod(lambda: database),
-    )
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_endpoint_is_listening',
-        staticmethod(lambda _url: False),
-    )
-    monkeypatch.setattr(
-        DesktopRuntime,
-        '_new_server',
-        lambda _self: SimpleNamespace(),
-    )
-    monkeypatch.setattr(
-        desktop_module,
-        'RuntimeGateway',
-        lambda **kwargs: SimpleNamespace(kwargs=kwargs),
-    )
-
-    runtime = DesktopRuntime()
-
-    assert runtime._server_kwargs["state_path"] is None
-    assert runtime._server_kwargs["universal_state_path"] == database
-    assert runtime._server_kwargs["machine_descriptor_path"] is not None
-    assert recovered == [True]
-    assert runtime._server_kwargs["runtime_compliance_runner"] is (
-        desktop_module.run_physical_runtime_compliance_court
-    )
-
-
-def test_desktop_recovers_only_a_verified_active_dead_authority(monkeypatch):
-    calls = []
-
-    class Provider:
-        @staticmethod
-        def default_path():
-            return Path("signing-keys.json")
-
-        def __init__(self, path):
-            self.path = path
-
-    monkeypatch.setattr(desktop_module, "WindowsDpapiSigningKeyProvider", Provider)
-    monkeypatch.setattr(
-        desktop_module,
-        "inspect_runtime_descriptor",
-        lambda path, provider: {
-            "verified": True,
-            "active": True,
-            "owner_alive": False,
-        },
-    )
-    monkeypatch.setattr(
-        desktop_module,
-        "recover_stale_runtime_descriptor",
-        lambda path, provider: calls.append((path, provider.path)),
-    )
-
-    assert DesktopRuntime._recover_stale_machine_authority() is True
-    assert calls == [
-        (desktop_module.default_runtime_descriptor_path(), Path("signing-keys.json"))
-    ]
-
-    monkeypatch.setattr(
-        desktop_module,
-        "inspect_runtime_descriptor",
-        lambda path, provider: {
-            "verified": True,
-            "active": True,
-            "owner_alive": True,
-        },
-    )
-    assert DesktopRuntime._recover_stale_machine_authority() is False
-    assert len(calls) == 1
-
-
-def test_desktop_lock_and_state_live_outside_the_repository():
-    assert runtime_lock_path().parent == Path.home() / 'AppData' / 'Local' / 'ArchHub'
-    assert supervisor_lock_path().parent == runtime_lock_path().parent
-    assert lifecycle_path().parent == runtime_lock_path().parent
-    assert crash_history_path().parent == runtime_lock_path().parent
-
-
-def test_supervisor_restarts_silent_or_failed_exits_and_respects_clean_close():
-    attempt = 'attempt-1'
-    assert classify_worker_exit({}, attempt, 0) == 'restart'
-    assert classify_worker_exit({'attempt': 'stale', 'status': 'clean'}, attempt, 0) == 'restart'
-    assert classify_worker_exit({'attempt': attempt, 'status': 'running'}, attempt, 0) == 'restart'
-    assert classify_worker_exit({'attempt': attempt, 'status': 'failed'}, attempt, 1) == 'restart'
-    assert classify_worker_exit({'attempt': attempt, 'status': 'clean'}, attempt, 0) == 'stop'
-    assert classify_worker_exit({'attempt': attempt, 'status': 'already-running'}, attempt, 0) == 'stop'
+def test_import_does_not_construct_an_owner_or_open_qt_and_main_preserves_refusal(monkeypatch):
+    from nodelang import application_server
+    def forbidden(*args, **kwargs):
+        pytest.fail('import constructed a second application')
+    monkeypatch.setattr(application_server, 'ApplicationServer', forbidden)
+    importlib.reload(desktop)
+    def refused(*args, **kwargs):
+        raise RuntimeError('fixture boot refusal')
+    monkeypatch.setattr(runpy, 'run_path', refused)
+    with pytest.raises(RuntimeError, match='fixture boot refusal'):
+        desktop.main()

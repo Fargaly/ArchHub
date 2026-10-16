@@ -554,13 +554,11 @@ def _application_secrets_store():
     module_path = Path(__file__).resolve().parents[1] / "app" / "secrets_store.py"
     if not module_path.is_file():
         raise ProviderCredentialError("secure_store_unavailable")
-    # Do not select another installed application's code or a cached `app`
-    # package. The credential bytes still belong to the current Windows user.
-    spec = importlib.util.spec_from_file_location("_archhub_application_secrets", module_path)
-    if spec is None or spec.loader is None:
+    # The desktop binds Settings to its graph on this module. Re-executing the
+    # file would create an unbound settings reader for the same application.
+    store = importlib.import_module("app.secrets_store")
+    if Path(store.__file__).resolve() != module_path:
         raise ProviderCredentialError("secure_store_unavailable")
-    store = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(store)
     return store
 
 
@@ -1194,13 +1192,10 @@ def composer_readiness(route: object, *, environ=None, secrets_loader=None,
 
 def default_cloud_session() -> Optional[dict]:
     """The founder's recorded cloud session, or nothing on a machine without one."""
-    appdata = os.environ.get("APPDATA", "")
-    if not appdata:
-        return None
     try:
         from .cloud_relay import load_cloud_session  # noqa: PLC0415
 
-        return load_cloud_session(Path(appdata))
+        return load_cloud_session()
     except Exception:
         return None
 

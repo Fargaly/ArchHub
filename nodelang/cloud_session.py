@@ -1,33 +1,103 @@
 """The account signed in to the cloud on THIS machine.
 
-Identity is an email account, never a machine. The only proof of an email on
-this machine is the cloud session the person opened with Google: it lives in
-%APPDATA%/ArchHub/brain/cloud.json and names the account it was issued to.
-Local account routes trust that record and nothing typed into a box.
+Identity is an email account, never a machine. The canonical profile record
+locates its OS-protected session. Only the pinned cloud verifies its identity;
+local graph requests reuse that bearer-bound proof without waiting on a network.
 """
 from __future__ import annotations
 
 import json
 import os
+import hashlib
+import threading
+import time
 from pathlib import Path
+
+_ACCOUNT_PENDING = object()
+_account_verdicts: dict[str, tuple[float, object]] = {}
+_account_checks: set[str] = set()
+_account_lock = threading.Lock()
+
+
+def _account_key(held):
+    return hashlib.sha256((_pinned_base(held) + "|" + held["token"]).encode()).hexdigest()
+
+
+def remember_verified_account(held, status, me):
+    """Remember only an authenticated /v1/me answer, never editable file identity."""
+    email = me.get("email") if isinstance(me, dict) else None
+    value = email.strip().casefold() if status == 200 and isinstance(email, str) and "@" in email else None
+    with _account_lock:
+        now = time.monotonic()
+        for key in tuple(_account_verdicts):
+            if _account_verdicts[key][0] <= now:
+                del _account_verdicts[key]
+        answer = value if status in (200, 401, 403) else _ACCOUNT_PENDING
+        _account_verdicts[_account_key(held)] = (now + (600 if value else 60), answer)
+    return value
 
 
 def cloud_session_path() -> Path:
-    return Path(os.environ.get("APPDATA", "")) / "ArchHub" / "brain" / "cloud.json"
+    isolated = os.environ.get('ARCHHUB_TEST_STATE_DIR')
+    if isolated:
+        return Path(isolated).resolve() / 'brain' / 'cloud.json'
+    return _roaming_directory() / 'ArchHub' / 'brain' / 'cloud.json'
 
 
-def signed_in_cloud_account(path: Path | None = None) -> str | None:
-    """The email the cloud session on this machine was issued to, or None."""
+def _roaming_directory() -> Path:
+    """Ask Windows for the user's folder; agent APPDATA overrides are not identity."""
+    if os.name != 'nt':
+        configured = os.environ.get('APPDATA')
+        if not configured:
+            raise OSError('the account profile directory is unavailable')
+        return Path(configured).resolve()
+    import ctypes
+    from ctypes import wintypes
+    buffer = ctypes.create_unicode_buffer(260)
+    locate = ctypes.WinDLL('shell32', use_last_error=True).SHGetFolderPathW
+    locate.argtypes = (wintypes.HWND, ctypes.c_int, wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR)
+    locate.restype = ctypes.c_long
+    if locate(None, 0x001a, None, 0, buffer) != 0 or not buffer.value:
+        raise OSError('Windows account profile directory lookup failed')
+    return Path(buffer.value)
+
+
+def signed_in_cloud_account(path: Path | None = None, *, fetch=None, pending=None):
+    """Resolve the protected bearer at the pin; local metadata is not identity."""
     record = path or cloud_session_path()
     try:
-        held = json.loads(record.read_text(encoding="utf-8"))
+        from .cloud_signin import read_cloud_session
+        held = read_cloud_session(record)
     except (OSError, ValueError):
         return None
-    email = held.get("email") if isinstance(held, dict) else None
     token = held.get("token") if isinstance(held, dict) else None
-    if not isinstance(email, str) or "@" not in email or not token:
+    if not isinstance(token, str) or not token.strip():
         return None
-    return email.strip().casefold()
+    expires = held.get("expires_at")
+    if held.get("refused_at") or (type(expires) in (int, float) and expires <= time.time()):
+        return None
+    if fetch is not None:
+        return remember_verified_account(held, *fetch(_pinned_base(held) + ME_PATH, token))
+    key = _account_key(held)
+    with _account_lock:
+        cached = _account_verdicts.get(key)
+        if cached is not None and cached[0] > time.monotonic():
+            return pending if cached[1] is _ACCOUNT_PENDING else cached[1]
+        if key in _account_checks:
+            return pending
+        _account_checks.add(key)
+
+    def verify():
+        try:
+            remember_verified_account(held, *_cloud_get(_pinned_base(held) + ME_PATH, token))
+        except Exception:
+            remember_verified_account(held, None, None)
+        finally:
+            with _account_lock:
+                _account_checks.discard(key)
+
+    threading.Thread(target=verify, name="archhub-account-check", daemon=True).start()
+    return pending
 
 
 # Where the founder question goes is the ONE cloud pin (cloud_relay's
@@ -93,7 +163,8 @@ def signed_in_founder_account(path: Path | None = None, *, fetch=None) -> str | 
     """
     record = path or cloud_session_path()
     try:
-        held = json.loads(record.read_text(encoding="utf-8"))
+        from .cloud_signin import read_cloud_session
+        held = read_cloud_session(record)
     except (OSError, ValueError):
         return None
     if not isinstance(held, dict):

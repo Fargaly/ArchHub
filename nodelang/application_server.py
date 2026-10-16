@@ -1,7 +1,6 @@
 """HTTP host for the node-native ArchHub application super-node."""
 from __future__ import annotations
 
-import argparse
 from contextlib import contextmanager
 import contextlib
 from contextvars import ContextVar
@@ -107,7 +106,6 @@ from .cell_deliberation import (
 )
 from .cell_value_graph import read_value_graph
 from .cell_device_custody import (
-    ActiveDeviceCustodyVerifier,
     read_device_custody,
 )
 from .cell_cloud_sessions import CloudSessionBroker, device_root_for_thumbprint
@@ -129,7 +127,8 @@ from .laws_relation import (append_stage, attach_payload, build_aead_stage,
                              build_json_codec_stage, build_payload_envelope,
                              set_relation_parameter)
 from .map_import import resolve_map_path
-from .persistence import (default_state_path, export_subgraph, load_snapshot,
+from .persistence import (export_subgraph, load_snapshot, legacy_application_sources,
+                           migrate_graph_source, migrate_local_truths, bind_selected_application_authority,
                            registry_from_store, save_snapshot,
                            save_snapshot_cooperative)
 from .ui_runtime import activate_ui, edit_ui_binding, project_document
@@ -463,7 +462,6 @@ from .universal_cell import (
 )
 from .universal_view import project_universal_document
 from .runtime_credentials import (
-    BrowserCredentialVault,
     BrowserSessionCredentials,
 )
 from .runtime_compliance_adapter import run_physical_runtime_compliance_court
@@ -5114,8 +5112,12 @@ def brain_remember_ops(said, fragment_id=None):
     import secrets as _secrets
 
     from .cloud_session import signed_in_cloud_account
-    # The person signed in on this machine, never a fixed account.
-    rememberer = signed_in_cloud_account() or 'local'
+    # Pending cloud proof must never turn a signed-in person's fact into local data.
+    waiting = object()
+    rememberer = signed_in_cloud_account(pending=waiting)
+    if rememberer is waiting:
+        raise AuthorizationDenied('Checking your account. Try Remember again shortly; no fact was written.')
+    rememberer = rememberer or 'local'
     return [{
         'op': 'add',
         'fragment': {
@@ -6114,6 +6116,7 @@ class ApplicationServer:
         # it ensures commit only when they change (the store compares first);
         # operational paths inside it stay refused. After construction every
         # graph commit needs its own closed-set intent (commit_intent.py).
+        self._close_completed = False
         with commit_intent.declare(
             commit_intent.MIGRATION,
             actor="app:archhub",
@@ -6129,6 +6132,7 @@ class ApplicationServer:
                  universal_store=None, universal_registry=None,
                   universal_state_path=None,
                   conversation_history_path=None,
+                  legacy_state_directory=None,
                   universal_runtime_fence_lease:
                   RuntimeFenceLease | None = None,
                   universal_checkpoint_path=None,
@@ -6167,6 +6171,7 @@ class ApplicationServer:
                  session_link_transport=None,
                  social_execution_host=None,
                  social_account_binding_verifier=None):
+        migrate_legacy_sources = legacy_state_directory is not None
         runtime_compliance_runner = (
             runtime_compliance_runner or run_physical_runtime_compliance_court
         )
@@ -6407,6 +6412,15 @@ class ApplicationServer:
             Path(universal_state_path).expanduser().resolve()
             if universal_state_path is not None else None
         )
+        self._ephemeral_state = None
+        physical_state = self.universal_state_path or requested_state_path
+        if physical_state is None and universal_store is not None and universal_store.database_path is not None:
+            physical_state = Path(universal_store.database_path)
+        if physical_state is None:
+            import tempfile
+            self._ephemeral_state = tempfile.TemporaryDirectory(prefix='archhub-memory-')
+            physical_state = Path(self._ephemeral_state.name) / 'authority.sqlite3'
+        self._physical_state_base = physical_state.parent
         self.mods_root = (
             self.universal_state_path.with_suffix(self.universal_state_path.suffix + ".mods")
             if self.universal_state_path is not None else Path.cwd() / ".archhub-mods"
@@ -6420,8 +6434,7 @@ class ApplicationServer:
         if universal_workspace_root is not None:
             self.terminal_sessions = TerminalSessions(self.universal_workspace_root)
         else:
-            instance_state = (self.universal_state_path or requested_state_path
-                              or default_state_path())
+            instance_state = physical_state
             self.terminal_sessions = TerminalSessions(
                 Path(instance_state).parent / "workspace", create=True)
         if "library.terminal" in self.pipeline_effect_engines:
@@ -6433,12 +6446,17 @@ class ApplicationServer:
         )
         content_path = conversation_history_path
         if content_path is None and self.universal_state_path is not None:
-            content_path = str(self.universal_state_path) + '.conversations.sqlite3'
+            content_path = self.universal_state_path
         new_file_backed_graph = bool(universal_store is None
             and self.universal_state_path is not None
             and not os.path.lexists(self.universal_state_path))
         if new_file_backed_graph:
-            # Refuse unknown content custody before CellStore creates a graph.
+            # Refuse unknown historical content before creating a graph.
+            if conversation_history_path is None:
+                from .conversation_content import _content_artifacts
+                retired_content = Path(str(self.universal_state_path) + '.conversations.sqlite3')
+                if any(os.path.lexists(path) for path in _content_artifacts(retired_content)):
+                    preflight_fresh_content_path(self.universal_state_path, retired_content)
             preflight_fresh_content_path(self.universal_state_path, content_path)
         self.universal_checkpoint_guard = None
         self.universal_checkpoint_signing_authority = None
@@ -6523,6 +6541,19 @@ class ApplicationServer:
                     universal_key_provider = WindowsDpapiSigningKeyProvider(
                         WindowsDpapiSigningKeyProvider.default_path()
                     )
+                try:
+                    bind_selected_application_authority(universal_store, universal_key_provider)
+                except Exception:
+                    universal_store.close()
+                    raise
+                if migrate_legacy_sources:
+                    local_root = Path(legacy_state_directory).resolve()
+                    try:
+                        for legacy_source in legacy_application_sources(local_root):
+                            migrate_graph_source(universal_store, legacy_source)
+                    except Exception:
+                        universal_store.close()
+                        raise
                 persisted_application = (
                     "app:archhub" in universal_store.snapshot().cells
                 )
@@ -6538,12 +6569,15 @@ class ApplicationServer:
                     if persisted_application and bootstrap is not None and bootstrap['state'] == 'pending':
                         require_fresh_bootstrap_custody(universal_store, bootstrap, content_path)
                     if not persisted_application:
-                        if bootstrap is not None or not new_file_backed_graph:
+                        from .persistence import selected_application_generation
+                        selected_region = selected_application_generation(self.universal_state_path)
+                        if bootstrap is not None or (not new_file_backed_graph and not migrate_legacy_sources and not selected_region):
                             raise InvalidCell('fresh conversation recovery required: incomplete or unmarked existing graph; application construction cannot resume')
                         # The same graph records intent before any kernel build
                         # commit, so a later constructor cannot mistake a failed
                         # first boot for an ordinary restored legacy instance.
-                        record_fresh_content_bootstrap(universal_store, content_path)
+                        record_fresh_content_bootstrap(universal_store, content_path,
+                            allow_existing_region=migrate_legacy_sources or selected_region)
                     # Existing bytes and the selected external authority are
                     # checked before restore-time migrations are allowed to
                     # publish a successor revision. The checkpoint is not
@@ -6676,6 +6710,31 @@ class ApplicationServer:
             )
         self.universal_store = universal_store
         self.universal_registry = universal_registry
+        if self.universal_state_path is not None and conversation_history_path is None:
+            legacy_history = Path(str(self.universal_state_path) + '.conversations.sqlite3')
+            if not legacy_history.is_file() and migrate_legacy_sources:
+                candidates = [Path(str(path) + '.conversations.sqlite3') for path in
+                    legacy_application_sources(legacy_state_directory)]
+                candidates = [path for path in candidates if path.is_file()]
+                if len(candidates) > 1:
+                    raise InvalidCell('multiple retired histories require explicit reconciliation; all files preserved')
+                if candidates:
+                    legacy_history = candidates[0]
+            from app.secrets_store import SETTINGS_FILE
+            legacy_settings = (Path(legacy_state_directory) if migrate_legacy_sources else self.universal_state_path.parent) / SETTINGS_FILE.name
+            sources = {}
+            if legacy_history.is_file():
+                sources['history_path'] = legacy_history
+            if legacy_settings.is_file():
+                sources['settings_path'] = legacy_settings
+            if sources:
+                try:
+                    migrate_local_truths(universal_store, **sources)
+                except Exception:
+                    if owns_universal_store:
+                        universal_store.close()
+                    raise
+
         if universal_store is not None and universal_registry is not None:
             # The application's own Brain answers from this graph (app_brain).
             from . import app_brain
@@ -6751,17 +6810,17 @@ class ApplicationServer:
         self._steward_briefing_outside_lock = True
         content_path = conversation_history_path
         if content_path is None and self.universal_store.database_path is not None:
-            content_path = self.universal_store.database_path + '.conversations.sqlite3'
+            content_path = self.universal_store.database_path
         self.conversation_content = ApplicationConversationContent(self, content_path)
         self._fresh_content_bootstrap = False
         # The reused Session Link transport is optional; absent, sends are unchanged.
         self.native_recipient_relay = NativeRecipientRelay(self, session_link_transport)
         self._cloud_relay_enabled = bool(enable_cloud_relay)
         self._cloud_relay_transport = session_link_transport
-        self._cloud_relay_appdata = Path(os.environ.get('APPDATA', ''))
+        self._cloud_relay_appdata = None  # cloud_relay's canonical account locator; explicit fixtures may override.
         state_base = Path(
             os.environ.get('ARCHHUB_STATE_DIR', '')
-            or (self.universal_state_path or requested_state_path or default_state_path())
+            or self._physical_state_base
         ).resolve()
         if state_base.suffix:
             state_base = state_base.parent
@@ -8821,7 +8880,13 @@ class ApplicationServer:
                             if binding.subject_root != owner.universal_registry.authorization.subject_root:
                                 raise AuthorizationDenied('Cloud publish consent belongs to this application owner')
                             from .cloud_session import signed_in_cloud_account
-                            account = signed_in_cloud_account() or ''
+                            waiting = object()
+                            account = signed_in_cloud_account(pending=waiting)
+                            if allow and account is waiting:
+                                self._json(409, {'ok': False, 'code': 'account_verification_pending',
+                                    'error': 'Checking your account. Try again shortly.'})
+                                return
+                            account = '' if account is waiting else account or ''
                             if allow:
                                 if '@' not in account:
                                     self._json(409, {'ok': False, 'error': 'Sign in before allowing cloud publish.'})
@@ -9970,7 +10035,11 @@ class ApplicationServer:
                                     signed_in_founder_account,
                                 )
                                 wanted = str(body.get('email') or '').strip().casefold()
-                                if not wanted or wanted != signed_in_cloud_account():
+                                waiting = object()
+                                account = signed_in_cloud_account(pending=waiting)
+                                if account is waiting:
+                                    raise AuthorizationDenied('Checking your account. Try again shortly.')
+                                if not wanted or wanted != account:
                                     raise AuthorizationDenied(
                                         'sign in to the cloud with this account first')
                                 # The founder is recorded only when THIS account is one;
@@ -10000,7 +10069,7 @@ class ApplicationServer:
                                 )
                                 from .cloud_session import signed_in_founder_account
                                 # Refuse first: a refused request writes nothing.
-                                owner._require_founder_machine()
+                                owner._require_founder_account()
                                 ensure_accounts(
                                     owner.universal_store,
                                     founder_email=signed_in_founder_account(),
@@ -10014,7 +10083,7 @@ class ApplicationServer:
                                 return
                             elif self.path == '/api/universal/account-tier':
                                 from .cell_accounts import set_tier
-                                owner._require_founder_machine()
+                                owner._require_founder_account()
                                 tier = set_tier(
                                     owner.universal_store,
                                     body.get('email'),
@@ -12840,7 +12909,7 @@ class ApplicationServer:
         )
         return session_root, observation.root_id, evidence_root
 
-    def _require_founder_machine(self) -> None:
+    def _require_founder_account(self) -> None:
         """Account administration is the founder's alone: the cloud session on
         this machine must be the founder's own account."""
         # The cloud account decides, never the graph: a graph can hold no
@@ -14152,8 +14221,7 @@ class ApplicationServer:
                 readiness = None
         try:
             from .cloud_relay import load_cloud_session
-            appdata = os.environ.get('APPDATA', '')
-            session = load_cloud_session(Path(appdata)) if appdata else None
+            session = load_cloud_session()
             if not models:
                 from .model_router import provider_rows
                 states = self._local_runtime_states()
@@ -16114,8 +16182,14 @@ class ApplicationServer:
                 if self.universal_checkpoint_guard is not None:
                     self.universal_checkpoint_guard.require_healthy()
                 self.require_universal_http_route(method, path, authentication_context=context)
-                operation = continuation_status if path == STATUS else reconcile_enrollment
-                return operation(self, request, peer_context[2])
+                if path == STATUS:
+                    return continuation_status(self, request, peer_context[2])
+            def revalidate_reconciliation():
+                if self.universal_checkpoint_guard is not None:
+                    self.universal_checkpoint_guard.require_healthy()
+                self.require_universal_http_route(method, path,
+                    authentication_context=context, revalidate=True)
+            return reconcile_enrollment(self, request, peer_context[2], read_guard=revalidate_reconciliation)
         if method == "POST" and path in {"/api/universal/agent-session-release", "/api/universal/agent-session-release-status"}:
             from .native_session_release import release_session
             peer_context = _VERIFIED_MACHINE_PEER_CONTEXT.get()
@@ -20658,9 +20732,7 @@ class ApplicationServer:
                 authorization.identity_protocol,
                 authorization.relationship_broker,
             ),
-            device_custody_verifier=ActiveDeviceCustodyVerifier(
-                registry.device_custody_protocol
-            ),
+
             session_issuer_root=authorization.subject_root,
         )
         nonce_provider = nonce_key_provider or WindowsDpapiSigningKeyProvider(
@@ -20755,6 +20827,8 @@ class ApplicationServer:
         Preparing that pair for a later startup is explicit: it adds a second
         physical copy and owner-prefix verification within the recovery budget.
         """
+        if self._close_completed:
+            return None
         for name in ('_snapshot_stop', '_live_stop', '_projection_prewarm_stop'):
             event = getattr(self, name, None)
             if event is not None:
@@ -20764,6 +20838,13 @@ class ApplicationServer:
         from . import brain_cloud_runner
         brain_cloud_runner.stop()
         app_brain.unbind(getattr(self, 'universal_store', None))
+        from app.secrets_store import unbind_settings_owner
+        unbind_settings_owner(getattr(self, 'universal_store', None))
+        coordination = getattr(self, '_coordination_surface', None)
+        if coordination is not None:
+            coordination.shutdown()
+            coordination.server_close()
+            self._coordination_surface = None
         if recovery_directory is not None:
             from .application_recovery_close import preflight_recovery_close
             preflight_recovery_close(self, recovery_directory,
@@ -20874,8 +20955,6 @@ class ApplicationServer:
         # requests and workers drain and this owner's release is recorded.
         lease_storage = getattr(self, "runtime_presence_lease_storage", None)
         if recovery_directory is not None:
-            if self._owns_universal_store and lease_storage is not None:
-                lease_storage.close()
             from .application_recovery_close import finalize_recovery_close
             return finalize_recovery_close(self, recovery_directory,
                 authentication_context=recovery_authentication_context,
@@ -20902,139 +20981,19 @@ class ApplicationServer:
             and self.universal_checkpoint_signing_authority is not None
         ):
             self.universal_checkpoint_signing_authority.store.close()
+        if self._ephemeral_state is not None:
+            self._ephemeral_state.cleanup()
+            self._ephemeral_state = None
+        self._close_completed = True
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--host', default='127.0.0.1')
-    parser.add_argument('--port', type=int, default=8482)
-    parser.add_argument(
-        '--public-server-url',
-        default=os.environ.get('ARCHHUB_PUBLIC_SERVER_URL'),
-        help='stable numeric loopback gateway origin advertised to the browser',
-    )
-    parser.add_argument(
-        '--supervisor-control-stdio',
-        action='store_true',
-        help='use inherited parent-child pipes for the gateway drain handshake',
-    )
-    parser.add_argument('--state-path', default=os.environ.get('ARCHHUB_STATE_PATH')
-                        or str(default_state_path()))
-    parser.add_argument('--fresh', action='store_true')
-    parser.add_argument(
-        '--universal-state-path',
-        default=os.environ.get('ARCHHUB_UNIVERSAL_STATE_PATH'),
-    )
-    parser.add_argument(
-        '--universal-checkpoint-path',
-        default=os.environ.get('ARCHHUB_UNIVERSAL_CHECKPOINT_PATH'),
-    )
-    parser.add_argument(
-        '--universal-checkpoint-authority-path',
-        default=os.environ.get('ARCHHUB_UNIVERSAL_CHECKPOINT_AUTHORITY_PATH'),
-    )
-    parser.add_argument('--cloud-host', default='127.0.0.1')
-    parser.add_argument('--cloud-port', type=int, default=8484)
-    parser.add_argument(
-        '--enable-universal-cloud-gateway',
-        action='store_true',
-        help=(
-            'serve the graph-owned DPoP Universal cloud gateway over direct TLS'
-        ),
-    )
-    parser.add_argument(
-        '--cloud-resource-origin',
-        default=os.environ.get('ARCHHUB_UNIVERSAL_CLOUD_RESOURCE_ORIGIN'),
-        help='required HTTPS origin for the Universal cloud gateway',
-    )
-    parser.add_argument(
-        '--cloud-tls-certificate-file',
-        default=os.environ.get('ARCHHUB_UNIVERSAL_CLOUD_TLS_CERTIFICATE_FILE'),
-        help='required direct-TLS certificate path when the cloud gateway is enabled',
-    )
-    parser.add_argument(
-        '--cloud-tls-private-key-file',
-        default=os.environ.get('ARCHHUB_UNIVERSAL_CLOUD_TLS_PRIVATE_KEY_FILE'),
-        help='required direct-TLS private-key path when the cloud gateway is enabled',
-    )
-    parser.add_argument(
-        '--machine-transport',
-        action='store_true',
-        help=(
-            'make this ApplicationServer the single owner of the signed '
-            'Universal machine transport'
-        ),
-    )
-    parser.add_argument(
-        '--machine-descriptor-path',
-        default=os.environ.get('ARCHHUB_MACHINE_DESCRIPTOR_PATH', ''),
-        help='optional signed machine-transport descriptor path',
-    )
-    args = parser.parse_args(argv)
-    runtime_drain_coordinator = None
-    if args.supervisor_control_stdio:
-        from .runtime_supervisor import RuntimeDrainPipe
-        runtime_drain_coordinator = RuntimeDrainPipe(
-            reader=sys.stdin,
-            writer=sys.stdout,
-        ).begin_drain
-    server = ApplicationServer(args.host, args.port, state_path=args.state_path,
-                               fresh=args.fresh, live_watch=True,
-                               public_server_url=args.public_server_url,
-                               runtime_drain_coordinator=(
-                                   runtime_drain_coordinator
-                               ),
-                               universal_state_path=args.universal_state_path,
-                               universal_checkpoint_path=(
-                                   args.universal_checkpoint_path
-                               ),
-                               universal_checkpoint_authority_path=(
-                                   args.universal_checkpoint_authority_path
-                               ),
-                               browser_session_credentials=(
-                                   BrowserCredentialVault(
-                                       BrowserCredentialVault.default_path()
-                                   ).load_or_create()
-                               ),
-                               cloud_host=args.cloud_host,
-                               cloud_port=args.cloud_port,
-                               enable_machine_transport=args.machine_transport,
-                               enable_universal_cloud_gateway=(
-                                   args.enable_universal_cloud_gateway
-                               ),
-                               cloud_resource_origin=args.cloud_resource_origin,
-                               cloud_tls_certificate_file=(
-                                   args.cloud_tls_certificate_file
-                               ),
-                               cloud_tls_private_key_file=(
-                                   args.cloud_tls_private_key_file
-                               ),
-                                machine_descriptor_path=(
-                                    args.machine_descriptor_path or None
-                                ),
-                                runtime_compliance_runner=(
-                                    run_physical_runtime_compliance_court
-                                    if args.machine_transport else None
-                                )).start()
-    # The unauthenticated root is deliberately denied. Hand the launcher the
-    # one-use bootstrap URL instead of advertising an unusable bare address.
-    # The bootstrap token is a bearer credential; the console and any log
-    # tee of it are not. Print the origin only.
-    print('Node-native ArchHub: %s' % server.bootstrap_url.split('?', 1)[0], flush=True)
-    try:
-        while (
-            server.thread.is_alive()
-            and not server._runtime_handoff_exit.wait(0.25)
-        ):
-            pass
-    except KeyboardInterrupt:
-        pass
-    finally:
-        if server.runtime_handoff_exit_requested:
-            server.close(preserve_browser_session=True)
-        else:
-            server.close()
+    """Route historical module launches to the one installed desktop entry."""
+    if argv:
+        raise ValueError("independent server launch flags are retired; use the installed desktop")
+    from .desktop import main as desktop_main
+    return desktop_main()
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

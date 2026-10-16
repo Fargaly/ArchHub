@@ -26,7 +26,7 @@ from .cell_control_presentations import (
     ensure_archhub_control_catalog,
     project_control_catalog,
 )
-from .application import STYLESHEET, THEME
+from .universal_presentation_seed import STYLESHEET, THEME
 from .cell_icons import ensure_archhub_icon_catalog, project_icon_catalog
 from .cell_protocols import read_relation
 from .universal_cell import NULL_CELL_ID, InvalidCell

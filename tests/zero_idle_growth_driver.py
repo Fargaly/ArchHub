@@ -120,12 +120,15 @@ COMMITS = []
 def trace_commits(phase):
     original = universal_cell.CellStore.commit
 
-    def traced(self, expected_revision, *, create=(), replace=(), precommit_guard=None):
+    def traced(self, expected_revision, *, create=(), replace=(), precommit_guard=None,
+               physical_write=None):
         create, replace = tuple(create), tuple(replace)
+        physical = {} if physical_write is None else {'physical_write': physical_write}
         before = self._revision
         revision = original(
             self, expected_revision, create=create, replace=replace,
             precommit_guard=precommit_guard,
+            **physical,
         )
         if revision != before:
             frames = [

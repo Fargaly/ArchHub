@@ -77,7 +77,7 @@ def continuation_status(owner, request, peer):
         return {**base,"outcome":"confirmed","result":{**held["result"],"session_token":binding["token"]}}
 
 
-def reconcile_enrollment(owner, request, peer):
+def reconcile_enrollment(owner, request, peer, *, read_guard=None):
     from .application_server import _agent_body_catalog_entry_for_runtime
     body = request.get("body")
     if (type(peer) is not MachinePipePeer or request.get("method") != "POST"
@@ -96,6 +96,8 @@ def reconcile_enrollment(owner, request, peer):
         raise AuthorizationDenied("native reconciliation requires exact unbound identity and local peer")
     fingerprint = hashlib.sha256(body["external_session_id"].encode("utf-8")).hexdigest()
     with owner.mutation_lock, owner._machine_agent_session_lock:
+        if read_guard is not None:
+            read_guard()
         entry = _agent_body_catalog_entry_for_runtime(owner.universal_store.snapshot(),
             owner.universal_registry, body["runtime"])
         if entry.credential_mode != "machine-transport":
@@ -124,49 +126,73 @@ def reconcile_enrollment(owner, request, peer):
             "active_operations":owner._machine_agent_active_requests.get(actor.root_id,0),
             "revision":owner.universal_store.revision,
             "historical_attempt_outcome":"unknown","continuation_authorized":False}
-        if body.get("projection") == "effects":
-            from .native_session_release import read_pending_effects
-            from .universal_cell import NULL_CELL_ID
-            cache = getattr(owner, "_native_effects_read_cursors", None)
-            if cache is None:
-                cache = owner._native_effects_read_cursors = {}
-            now = time.monotonic()
-            for key in tuple(cache):
-                if cache[key]["until"] <= now:
-                    del cache[key]
-            start = None
-            remaining = None
-            cursor = body.get("cursor")
-            if cursor is not None:
-                held = cache.get(cursor) if type(cursor) is str else None
-                if (held is None or held["actor"] != actor.root_id or held["peer"] != peer
-                        or held["revision"] != owner.universal_store.revision):
-                    raise AuthorizationDenied("Native effects cursor custody or revision changed")
-                start = held["chain"]
-                remaining = held["remaining"]
-            # Receipts are disclosed only to the bound peer; a page never stops on
-            # evidence the caller would not see (it then looked empty, live 717).
-            page = read_pending_effects(owner.universal_store.snapshot(),
-                owner.universal_registry.cde_write_authority_protocol, actor.root_id, start=start, remaining=remaining,
-                disclose_receipts=same_peer is True)
-            following = page.pop("_next_chain")
-            next_remaining = page.pop("_next_remaining")
-            if same_peer is not True:
-                page["pending_permits"] = [{key:row[key] for key in ("permit","state","issued_at","expires_at")}
-                    for row in page["pending_permits"]]
-                page["receipt_references"] = []
-            page["disclosure"] = "bound-peer" if same_peer is True else "minimal"
-            page["next_cursor"] = None
-            if following != NULL_CELL_ID:
-                if cursor is None and len(cache) >= 16:
-                    raise AuthorizationDenied("Native effects cursor capacity is occupied")
-                token = secrets.token_hex(16)
-                cache[token] = {"actor":actor.root_id,"peer":peer,"revision":page["revision"],
-                    "chain":following,"remaining":next_remaining,"until":now+60.0}
-                page["next_cursor"] = token
-            if cursor is not None:
-                cache.pop(cursor, None)
-            result["effects"] = page
-            if len(json.dumps(result, ensure_ascii=True).encode("utf-8")) > 65536:
-                raise AuthorizationDenied("Native effects inspection exceeds its bounded projection")
+        if body.get("projection") != "effects":
+            return result
+    return _effects_projection(owner, request, peer, result, read_guard)
+
+
+def _effects_projection(owner, request, peer, result, read_guard):
+    from .native_session_release import read_pending_effects
+    from .universal_cell import NULL_CELL_ID
+    actor, body = result["agent_session"], request["body"]
+    same_peer = result["binding_matches_caller"]
+    with owner.mutation_lock, owner._machine_agent_session_lock:
+        snapshot = owner.universal_store.snapshot()
+        if snapshot.revision != result["revision"]:
+            raise AuthorizationDenied("Native effects revision changed before projection")
+        binding = owner._machine_agent_sessions.get(actor)
+        binding = dict(binding) if binding is not None else None
+        cache = getattr(owner, "_native_effects_read_cursors", None)
+        if cache is None:
+            cache = owner._native_effects_read_cursors = {}
+        now = time.monotonic()
+        for key in tuple(cache):
+            if cache[key]["until"] <= now:
+                del cache[key]
+        start = remaining = held = None
+        cursor = body.get("cursor")
+        if cursor is not None:
+            held = cache.get(cursor) if type(cursor) is str else None
+            if (held is None or held["actor"] != actor or held["peer"] != peer
+                    or held["revision"] != snapshot.revision):
+                raise AuthorizationDenied("Native effects cursor custody or revision changed")
+            start, remaining = held["chain"], held["remaining"]
+    # The existing scan finds the first visible evidence even behind a large
+    # foreign registry. It must not hold either desktop admission lock while
+    # doing so. Nothing is disclosed or settled until revalidation below.
+    page = read_pending_effects(snapshot, owner.universal_registry.cde_write_authority_protocol,
+        actor, start=start, remaining=remaining, disclose_receipts=same_peer is True)
+    following = page.pop("_next_chain")
+    next_remaining = page.pop("_next_remaining")
+    with owner.mutation_lock, owner._machine_agent_session_lock:
+        if (owner.universal_store.revision != snapshot.revision
+                or owner._machine_agent_sessions.get(actor) != binding):
+            raise AuthorizationDenied("Native effects revision or custody changed during projection")
+        identity = reconcile_enrollment(owner, {**request, "body": {key: body[key]
+            for key in ("runtime", "external_session_id", "expected_agent_session")}}, peer)
+        if any(identity[key] != result[key] for key in
+                ("agent_session", "runtime", "binding_status", "binding_matches_caller", "revision")):
+            raise AuthorizationDenied("Native effects authority changed during projection")
+        if read_guard is not None:
+            read_guard()
+        now = time.monotonic()
+        if cursor is not None and (cache.get(cursor) is not held or held["until"] <= now):
+            raise AuthorizationDenied("Native effects cursor changed during projection")
+        if same_peer is not True:
+            page["pending_permits"] = [{key: row[key] for key in ("permit", "state", "issued_at", "expires_at")}
+                for row in page["pending_permits"]]
+            page["receipt_references"] = []
+        page["disclosure"] = "bound-peer" if same_peer is True else "minimal"
+        token = secrets.token_hex(16) if following != NULL_CELL_ID else None
+        page["next_cursor"] = token
+        result["effects"] = page
+        if len(json.dumps(result, ensure_ascii=True).encode("utf-8")) > 65536:
+            raise AuthorizationDenied("Native effects inspection exceeds its bounded projection")
+        if token is not None:
+            if cursor is None and len(cache) >= 16:
+                raise AuthorizationDenied("Native effects cursor capacity is occupied")
+            cache[token] = {"actor": actor, "peer": peer, "revision": page["revision"],
+                "chain": following, "remaining": next_remaining, "until": now + 60.0}
+        if cursor is not None:
+            cache.pop(cursor, None)
         return result

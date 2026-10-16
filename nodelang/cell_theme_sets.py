@@ -19,6 +19,8 @@ from typing import Mapping
 from .cell_protocols import prepare_append_relation_members, read_relation
 from .universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell, Snapshot
 
+from .universal_presentation_seed import THEME
+
 ACTIVE_THEME_ROOT = "app:design-token:active-theme"
 
 # The founder's three, by the surface each one paints.
@@ -53,7 +55,6 @@ _VELLUM_EXTRAS: Mapping[str, str] = MappingProxyType({
 
 
 def _theme_source() -> Mapping[str, str]:
-    from .application import THEME
     return THEME
 
 

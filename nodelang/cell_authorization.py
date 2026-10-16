@@ -415,6 +415,7 @@ class AuthenticationBroker:
         *,
         create: Iterable[Cell] = (),
         replace: Iterable[Cell] = (),
+        physical_write=None,
     ) -> int:
         """Commit while the opaque context is live and cannot be revoked."""
         with self._lock:
@@ -424,6 +425,7 @@ class AuthenticationBroker:
                 create=create,
                 replace=replace,
                 precommit_guard=lambda: self.resolve(handle),
+                **({} if physical_write is None else {"physical_write": physical_write}),
             )
 
 

@@ -7,9 +7,9 @@ The plan:
      (<run>\\LOCALAPPDATA\\ArchHub\\unified-authority), the authority DPAPI provider and the caller key
      store all resolve inside the run folder. Sources are pinned by sha256: SPEC.md from this
      repository and owner_grand_map.json shipped with this tool.
-  2. Start `nodelang.clean_coordination_service --root <runtime root> --port <free> --canvas-port
-     <free>` through the run's HiddenDesktop, so the run's Job owns it and ends it.
-  3. Point the desktop at it: ARCHHUB_COORDINATION_ENDPOINT=http://127.0.0.1:<port>/coordination.
+  2. Start `python -m nodelang.desktop` through the run's HiddenDesktop.
+     It is both the Qt window and the one graph owner, owned by the run's Job.
+  3. The same process binds the plan's isolated coordination and canvas ports.
 
 Never :8474/:8475, never the founder's DPAPI files, descriptor or agent-discovery roots: every path
 the owner and the desktop derive is resolved under the planned environment and must lie in the run.
@@ -56,14 +56,15 @@ def plan_graph_owner(run_dir: Path, app_env: dict, *, repo: Path = REPO, ports=N
     if coordination in LIVE_PORTS or canvas in LIVE_PORTS or coordination == canvas:
         raise ValueError("the run's graph owner needs its own two ports, never the live owner's")
     endpoint = "http://127.0.0.1:%d/coordination" % coordination
-    env = dict(app_env, ARCHHUB_COORDINATION_ENDPOINT=endpoint)
-    runtime_root = Path(env["LOCALAPPDATA"]) / "ArchHub" / "unified-authority"
+    env = dict(app_env, ARCHHUB_COORDINATION_ENDPOINT=endpoint,
+        ARCHHUB_TEST_STATE_DIR=str(app_env.get('ARCHHUB_TEST_STATE_DIR') or Path(run_dir) / 'state'),
+        ARCHHUB_TEST_HTTP_PORT=str(canvas))
+    runtime_root = Path(env['ARCHHUB_TEST_STATE_DIR']) / 'unified-authority'
     return {
         "run_dir": str(run_dir), "env": env, "endpoint": endpoint,
         "coordination_port": coordination, "canvas_port": canvas, "runtime_root": str(runtime_root),
         "sources": {"specification": pinned_source(repo / "SPEC.md"), "grand_map": pinned_source(OWNER_MAP)},
-        "service_args": ["-B", "-m", "nodelang.clean_coordination_service", "--root", str(runtime_root),
-                         "--port", str(coordination), "--canvas-port", str(canvas)],
+        "service_args": ["-B", "-m", "nodelang.desktop"],
     }
 
 
@@ -202,8 +203,6 @@ def endpoint_problems(plan: dict, *, port_free=_port_free) -> list:
     pinned = "http://127.0.0.1:%d/coordination" % port
     args = list(plan["service_args"])
 
-    def given(flag):
-        return args[args.index(flag) + 1] if args.count(flag) == 1 and args.index(flag) + 1 < len(args) else None
     problems = []
     if port in LIVE_PORTS or canvas in LIVE_PORTS or port == canvas:
         problems.append("the owner's ports are not the run's own two: %r" % ((port, canvas),))
@@ -211,10 +210,12 @@ def endpoint_problems(plan: dict, *, port_free=_port_free) -> list:
         problems.append("the planned endpoint %r is not pinned to the run's port" % plan["endpoint"])
     if plan["env"].get("ARCHHUB_COORDINATION_ENDPOINT") != pinned:
         problems.append("the spawn environment points elsewhere: %r" % plan["env"].get("ARCHHUB_COORDINATION_ENDPOINT"))
-    if given("--port") != str(port) or given("--canvas-port") != str(canvas):
-        problems.append("the owner would bind %r/%r, not the pinned ports" % (given("--port"), given("--canvas-port")))
-    if given("--root") != plan["runtime_root"]:
-        problems.append("the owner would open %r, not the run's runtime root" % given("--root"))
+    if args != ['-B', '-m', 'nodelang.desktop']:
+        problems.append('the rig must execute the installed desktop entry')
+    if plan['env'].get('ARCHHUB_TEST_HTTP_PORT') != str(canvas):
+        problems.append('the canvas port is not the pinned ports declaration')
+    if Path(plan['env'].get('ARCHHUB_TEST_STATE_DIR', '')).resolve() != Path(plan['runtime_root']).parent.resolve():
+        problems.append("the desktop state is not the run's runtime root")
     for taken in (p for p in (port, canvas) if not port_free(p)):
         problems.append("port %d is already taken: something else would answer the run's endpoint" % taken)
     return problems

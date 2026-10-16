@@ -1,9 +1,9 @@
 """ArchHub desktop launcher, with persistent state for this Windows user.
 
-The existing application uses %LOCALAPPDATA%/ArchHub-Test for historical
-compatibility. That directory contains live user data. Explicit isolated runs
-select ARCHHUB_TEST_STATE_DIR and keep the machine's active runtime unchanged.
-Closing the window leaves ArchHub in its tray; Quit closes the application.
+This is the sole installed Qt entry. Normal state is selected beneath
+%LOCALAPPDATA%/ArchHub. Historical stores are migration inputs only.
+Explicit fixture runs select ARCHHUB_TEST_STATE_DIR and never publish the
+machine's active pointer. Closing quits by default; Settings can keep it in the tray.
 """
 import faulthandler
 import contextlib
@@ -16,13 +16,13 @@ from pathlib import Path
 os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu")
 os.environ.setdefault("QT_OPENGL", "software")
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # pythonw has no console: stdout/stderr vanish and a crash is invisible.
 # Everything this launcher says goes to a file the founder can open.
 _log_dir = Path(
     os.environ.get("ARCHHUB_TEST_STATE_DIR")
-    or (Path(os.environ["LOCALAPPDATA"]) / "ArchHub-Test")
+    or (Path(os.environ["LOCALAPPDATA"]) / "ArchHub")
 )
 _log_dir.mkdir(parents=True, exist_ok=True)
 _log_path = _log_dir / "launcher.log"
@@ -179,16 +179,18 @@ def _require_desktop_state_custody(selected_state, normal_state):
 
 state_dir = Path(
     os.environ.get("ARCHHUB_TEST_STATE_DIR")
-    or (Path(os.environ["LOCALAPPDATA"]) / "ArchHub-Test")
+    or (Path(os.environ["LOCALAPPDATA"]) / "ArchHub")
 )
 try:
     _require_desktop_state_custody(
-        state_dir, Path(os.environ["LOCALAPPDATA"]) / "ArchHub-Test")
+        state_dir, Path(os.environ["LOCALAPPDATA"]) / "ArchHub")
 except Exception as refusal:
     print("  desktop    : launch refused: %s" % refusal, flush=True)
     raise SystemExit(4)
 state_dir.mkdir(parents=True, exist_ok=True)
-state_path = state_dir / "archhub-test.universal.sqlite3"
+from nodelang.persistence import application_database_path
+state_path = application_database_path(state_dir)
+backup_dir = state_path.parent / "backups"
 
 def _force_foreground(handle) -> bool:
     """Make Windows actually bring our window forward.
@@ -288,8 +290,81 @@ def _held_port_outcome(port, front_running_archhub, tell_the_person):
             "to recover the existing instance without changing its lock port" % port)
 
 
-# ONE app. A second double-click fronts nothing and starts nothing --
-# the socket is the cheapest cross-process mutex Windows respects.
+def _verified_launch_owner(port):
+    """Refuse argv delivery unless the listener is this user's exact launcher."""
+    import psutil
+    from nodelang.application_machine_transport import _observe_machine_process, _desktop_launch_is_admitted
+    try:
+        current = psutil.Process()
+        for connection in psutil.net_connections(kind='tcp'):
+            if (connection.status != psutil.CONN_LISTEN or not connection.pid
+                    or connection.laddr != ('127.0.0.1', port)):
+                continue
+            owner = psutil.Process(connection.pid)
+            if owner.username() != current.username():
+                return None
+            observed = _observe_machine_process(connection.pid)
+            if observed is not None and _desktop_launch_is_admitted(observed,
+                    product_root=Path(__file__).resolve().parent):
+                return owner
+    except (psutil.Error, OSError, ValueError):
+        return None
+    return None
+
+
+def _forward_launch_arguments(port, arguments):
+    """Deliver a second launch to the existing process without opening a store."""
+    import json
+    import socket
+    payload = json.dumps(list(arguments), ensure_ascii=False).encode('utf-8') + b'\n'
+    if len(payload) > 8192:
+        return False
+    owner = _verified_launch_owner(port)
+    if owner is None:
+        return False
+    try:
+        with socket.create_connection(('127.0.0.1', port), 0.5) as connection:
+            verified = _verified_launch_owner(port)
+            if verified != owner or not owner.is_running():
+                return False
+            connection.sendall(payload)
+        return True
+    except OSError:
+        return False  # An older launcher still has the same exclusive guard.
+
+
+def _serve_launch_requests(listener, on_launch):
+    """Blocking, bounded IPC; only the Qt thread may activate its window."""
+    import json
+    import time as ipc_time
+    while True:
+        try:
+            connection, _ = listener.accept()
+        except OSError:
+            return
+        try:
+            with connection:
+                deadline = ipc_time.monotonic() + 0.5
+                payload = b''
+                while not payload.endswith(b'\n') and len(payload) <= 8192:
+                    remaining = deadline - ipc_time.monotonic()
+                    if remaining <= 0:
+                        raise ValueError('launch request expired')
+                    connection.settimeout(remaining)
+                    chunk = connection.recv(8193 - len(payload))
+                    if not chunk:
+                        break
+                    payload += chunk
+                arguments = json.loads(payload)
+                if (len(payload) > 8192 or type(arguments) is not list or len(arguments) > 128
+                        or any(type(value) is not str for value in arguments)):
+                    raise ValueError('invalid launch request')
+                on_launch(arguments)
+        except (OSError, ValueError, UnicodeError):
+            continue
+
+
+# ONE app. The exclusive socket also carries subsequent launches to Qt.
 import socket as _socket
 _lock_port = int(os.environ.get("ARCHHUB_TEST_LOCK_PORT", "48611"))
 _instance_lock = _socket.socket()
@@ -314,10 +389,13 @@ else:
     # leaves an orphan header, reads as a crash, and gives the person nothing
     # to act on.
     print("  lock       : port %d is already held" % _lock_port, flush=True)
+    _forward_launch_arguments(_lock_port, sys.argv[1:])
     print("  window     : %s"
           % _held_port_outcome(_lock_port, _front_running_archhub, _message_box),
           flush=True)
     sys.exit(0)
+
+_instance_lock.listen(8)
 
 _require_complete_local_update(Path(__file__).resolve().parent)
 
@@ -362,7 +440,10 @@ def _saved_graph_exists(directory, database):
             if connection.execute(
                 "SELECT 1 FROM current_cells WHERE cell_id = ? LIMIT 1", ("app:archhub",)
             ).fetchone() is None:
-                raise RuntimeError("The saved application root is missing; files are kept in place.")
+                from nodelang.persistence import selected_application_generation
+                if not selected_application_generation(database):
+                    raise RuntimeError("The saved application root is missing; files are kept in place.")
+                return False
         finally:
             connection.close()
     except sqlite3.Error as error:
@@ -377,7 +458,7 @@ os.environ["ARCHHUB_STATE_DIR"] = str(state_dir)
 # Their owner takes the bounded recovery snapshot after construction below.
 # This does not replace the separately verified pre-update recovery copy.
 
-print("ArchHub TEST")
+print("ArchHub")
 print("  graph store :", state_path)
 print("  booting ...", flush=True)
 
@@ -421,10 +502,11 @@ try:
         raise SystemExit(1)
     if _staged.get("staged") and _staged.get("status") == "staged":
         from nodelang.application_update_recovery import validate_update_ready
-        _update_content = Path(str(state_path) + ".conversations.sqlite3")
+        from nodelang.persistence import application_content_path
+        _update_content = application_content_path(state_path)
         _applied = _apply_staged(state_dir, Path(__file__).resolve().parent,
             before_apply=lambda: validate_update_ready(state_dir, Path(__file__).resolve().parent,
-                state_path, _update_content if _update_content.is_file() else None))
+                state_path, _update_content))
         if _applied.get("applied"):
             print("  update     : installed build %s; relaunching" % _applied.get("build_id"), flush=True)
             import subprocess as _sp
@@ -456,7 +538,7 @@ _STARTUP_BACKUP_MAX_BYTES = 64 * 1024 * 1024
 
 def _startup_backup_bytes(*paths):
     total = 0
-    for path in paths:
+    for path in dict.fromkeys(paths):
         if path is None:
             continue
         for suffix in ("", "-wal"):
@@ -466,22 +548,19 @@ def _startup_backup_bytes(*paths):
                 pass
     return total
 
-def _prune_backups(directory, verified):
-    """After a new verified backup: keep only the last three days of backups.
-
-    Founder 2026-09-23: backups piled to 220 GB. Age is the date in each
-    folder name; undated folders, the new backup and staging folders stay.
-    A retention failure never fails the backup or the shutdown it belongs to.
-    """
+def _prune_backups(directory, verified, owner=None, policy=None):
+    """Apply the graph's count and byte policy after verifying a new backup."""
     try:
         from nodelang.backup_retention import prune_backups
-        result = prune_backups(directory, keep=verified)
+        from nodelang.backup_retention import backup_policy, protected_update_backups
+        policy = policy if policy is not None else backup_policy(owner.universal_store.snapshot(), owner.universal_registry)
+        result = prune_backups(directory, keep=verified, **policy,
+            protected_names=protected_update_backups(state_dir, directory))
     except Exception as refusal:
         print("  backup     : retention not applied (%s); every backup kept" % type(refusal).__name__, flush=True)
         return
-    print("  backup     : kept the last 3 days (from %s); removed %d older backup(s)%s" % (
-        result["kept_from"], len(result["removed"]),
-        "; %d undated kept" % len(result["undated_kept"]) if result["undated_kept"] else ""), flush=True)
+    print("  backup     : kept %d recovery copies, %d bytes; removed %d; budget exceeded=%s" % (
+        len(result["kept"]), result["retained_bytes"], len(result["removed"]), result["budget_exceeded"]), flush=True)
 
 
 def _boot():
@@ -508,6 +587,8 @@ def _boot_unsampled():
         print("  workshop   : native transport unavailable; declare SESSION_LINK_NODE or install the bundled runtime", flush=True)
     server = ApplicationServer(
         universal_state_path=state_path,
+        port=int(os.environ.get('ARCHHUB_TEST_HTTP_PORT', '0')),
+        legacy_state_directory=state_dir,
         pipeline_effect_engines=PIPELINE_ENGINES,
         enable_machine_transport=True,
         enable_brain_cloud_sync=True,
@@ -522,6 +603,15 @@ def _boot_unsampled():
         ),
         **workshop_arguments,
     )
+    from app.secrets_store import bind_settings_owner
+    bind_settings_owner(server.universal_store)
+    from nodelang.desktop import bind_coordination_surface
+    try:
+        bind_coordination_surface(server, state_dir)
+    except Exception as refused:
+        server._coordination_surface_error = type(refused).__name__
+        print("  coordination: unavailable (%s); account sign-in is independent of transport key recovery" %
+              type(refused).__name__, flush=True)
     # Chat through a signed-in local assistant (model route local-cli/<name>)
     # runs through this same broker's host process, never a second runner.
     from nodelang import model_router as _model_router
@@ -533,11 +623,11 @@ def _boot_unsampled():
                                              _STARTUP_BACKUP_MAX_BYTES // 1048576), flush=True)
     else:
         try:
-            recovery = server.conversation_content.backup_recovery(state_dir / "backups",
+            recovery = server.conversation_content.backup_recovery(backup_dir,
                 authentication_context=server.universal_registry.authorization.session.context(),
                 timeout_seconds=2.0)
             print("  backup     : checked post-construction recovery saved: " + recovery.name, flush=True)
-            _prune_backups(state_dir / "backups", recovery)
+            _prune_backups(backup_dir, recovery, owner=server)
         except Exception as refusal:
             print("  backup     : not completed (%s); existing backups retained" % type(refusal).__name__, flush=True)
             if isinstance(refusal, TimeoutError):
@@ -702,12 +792,33 @@ def _refuse_boot_without_living(refusal, *, quit_event=None, notice_seconds=45.0
         _refusal_time.sleep(0.2)
     _exit_process(1)
 
+def _hide_in_tray_if_enabled(widget):
+    """Only an explicit graph setting and a live tray can keep the app open."""
+    tray = getattr(widget, "_tray", None)
+    owner = globals().get("server")
+    if (getattr(widget, "quitting", False) or owner is None
+            or tray is None or not tray.isVisible()):
+        return False
+    try:
+        from nodelang.universal_application import read_universal_keep_running_in_tray
+        enabled = read_universal_keep_running_in_tray(
+            owner.universal_store.snapshot(), owner.universal_registry)
+    except Exception as refusal:
+        print("  tray       : setting unreadable (%s); window close quits" % type(refusal).__name__, flush=True)
+        return False
+    if not enabled:
+        return False
+    widget.hide()
+    print("  tray       : window hidden (Keep running in tray is on; Quit ArchHub is in the menu)", flush=True)
+    return True
+
+
 # The window stands before the graph opens and shows the boot's own progress
 # page ("phase k of n"); the graph opens off the Qt thread so the window keeps
 # painting. A launch used to show nothing at all until the boot had finished.
 _boot_surface = None
 if not os.environ.get("ARCHHUB_TEST_NO_OPEN"):
-    from PyQt6.QtCore import QAbstractNativeEventFilter, QTimer, QUrl
+    from PyQt6.QtCore import QAbstractNativeEventFilter, QTimer, QUrl, QObject, pyqtSignal
     from PyQt6.QtWidgets import QApplication, QMainWindow
     from PyQt6.QtWebEngineCore import QWebEngineProfile
     from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -774,7 +885,8 @@ if not os.environ.get("ARCHHUB_TEST_NO_OPEN"):
             title = _close_ctypes.create_unicode_buffer(length + 1)
             _close_ctypes.windll.user32.GetWindowTextW(root, title, length + 1)
             if title.value.startswith("ArchHub"):
-                _quit_from_window(window if "window" in locals() else None)
+                if not _hide_in_tray_if_enabled(window):
+                    _quit_from_window(window)
                 return True, 0
             return False, 0
 
@@ -783,12 +895,30 @@ if not os.environ.get("ARCHHUB_TEST_NO_OPEN"):
         quitting = False
 
         def closeEvent(self, event):
+            if _hide_in_tray_if_enabled(self):
+                event.ignore()
+                return
             self.quitting = True
             event.accept()
             _quit_from_window(self)
 
 
     window = _ArchHubWindow()
+    class _LaunchSignal(QObject):
+        requested = pyqtSignal(list)
+    _launch_signal = _LaunchSignal(app)
+    app.setProperty('archhubLaunchArguments', sys.argv[1:])
+    def _resume_from_launch(arguments):
+        app.setProperty('archhubLaunchArguments', arguments)
+        window.showNormal()
+        window.raise_()
+        window.activateWindow()
+    _launch_signal.requested.connect(_resume_from_launch)
+    import threading as _instance_threading
+    _instance_threading.Thread(target=_serve_launch_requests,
+        args=(_instance_lock, _launch_signal.requested.emit),
+        name='ArchHub launch activation', daemon=True).start()
+    app.aboutToQuit.connect(_instance_lock.close)
     _native_close_filter = _WindowsCloseFilter()
     app.installNativeEventFilter(_native_close_filter)
     app._archhub_native_close_filter = _native_close_filter
@@ -796,13 +926,14 @@ if not os.environ.get("ARCHHUB_TEST_NO_OPEN"):
     # The brand icon, and a distinct AppUserModelID so the taskbar shows
     # ArchHub rather than grouping under python's default.
     import ctypes
-    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ArchHub.Test")
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ArchHub")
     from PyQt6.QtGui import QIcon
     # Source and installer use the same owned asset beside this launcher.
     _icon_path = Path(__file__).resolve().parent / "archhub.ico"
     if _icon_path.is_file():
-        app.setWindowIcon(QIcon(str(_icon_path)))
-        window.setWindowIcon(QIcon(str(_icon_path)))
+        _brand_icon = QIcon(str(_icon_path))
+        app.setWindowIcon(_brand_icon)
+        window.setWindowIcon(_brand_icon)
     window.resize(1480, 920)
     window.setMinimumSize(960, 640)
     view = QWebEngineView(window)
@@ -813,8 +944,9 @@ if not os.environ.get("ARCHHUB_TEST_NO_OPEN"):
     from PyQt6.QtGui import QColor
     from nodelang.application import THEME as _BOOT_THEME
     from nodelang.clean_boot_surface import (
-        BOOT_PHASES, BootSurface, boot_step_label, load_expected_phases, save_phase_durations,
+        BOOT_PHASES, boot_step_label, load_expected_phases, save_phase_durations,
     )
+    from nodelang.desktop import create_boot_surface
     # The dark page colour before the first paint: never a white or blank window.
     view.page().setBackgroundColor(QColor(_BOOT_THEME["bg"]))
     _boot_probe = _socket.socket()
@@ -822,7 +954,7 @@ if not os.environ.get("ARCHHUB_TEST_NO_OPEN"):
     _boot_port = _boot_probe.getsockname()[1]
     _boot_probe.close()
     # The last start's phase seconds let the bar move within a long phase.
-    _boot_surface = BootSurface(
+    _boot_surface = create_boot_surface(
         "127.0.0.1", _boot_port, expected=load_expected_phases(state_dir)).start()
     view.load(QUrl("http://127.0.0.1:%d/" % _boot_port))
     window.show()
@@ -946,12 +1078,12 @@ def _publish_map_to_cloud():
     from nodelang.cloud_publish_consent import cloud_publish_allowed
     if not cloud_publish_allowed(state_dir):
         return "off (no consent recorded; nothing left this machine)"
-    cloud = (
-        Path(os.environ["APPDATA"]) / "ArchHub" / "brain" / "cloud.json"
-    )
+    from nodelang.cloud_session import cloud_session_path
+    cloud = cloud_session_path()
     if not cloud.is_file():
         return "no cloud session on this machine"
-    held = json.loads(cloud.read_text(encoding="utf-8"))
+    from nodelang.cloud_signin import read_cloud_session
+    held = read_cloud_session(cloud)
     token = held.get("token")
     from nodelang.cloud_relay import pinned_cloud_base
     base = pinned_cloud_base(held.get("cloud_base_url"))
@@ -1420,7 +1552,7 @@ if QSystemTrayIcon.isSystemTrayAvailable():
     _notifier.asked.connect(lambda title, message: _tray.showMessage(title, message))
     set_notify_surface(lambda title, message: _notifier.asked.emit(str(title), str(message)))
     app.setQuitOnLastWindowClosed(True)
-    print("  tray       : icon shown (window close quits; Quit is in the menu)", flush=True)
+    print("  tray       : icon shown (window close quits by default; Keep running in tray is in Settings; Quit is in the menu)", flush=True)
 else:
     print("  tray       : no system tray on this desktop", flush=True)
 # A window that opens BEHIND the founder's other windows reads as "the
@@ -1724,7 +1856,7 @@ try:
         _mcp_workshop_caller = None
         print("  workshop   : MCP agents unavailable (%s)" % type(refusal).__name__, flush=True)
     cloud_relay = _start_relay(
-        appdata=Path(os.environ["APPDATA"]), state_dir=state_dir,
+        appdata=None, state_dir=state_dir,
         respond=_cockpit_respond, execute=_cockpit_execute,
         map_script=lambda: _atlas(server.universal_store, server.universal_registry),
         hosts=lambda: server._host_rows(),
@@ -1849,6 +1981,11 @@ def _stage_update_quietly():
             return
         now = time.monotonic()
         if now >= next_renewal:
+            from nodelang.cloud_signin import refresh_session
+            try:
+                refresh_session()
+            except Exception as refusal:
+                print("  cloud session : renewal deferred (%s)" % type(refusal).__name__, flush=True)
             _renew_desktop_session()
             if not _update_stop.is_set():
                 _maintain_conversations()
@@ -1921,13 +2058,15 @@ def _finish_application_shutdown():
         if _restart_after_shutdown:
             from nodelang.application_update_recovery import arm_update
             content_path = server.conversation_content._path
-            recovery = server.close(recovery_directory=state_dir / "backups",
+            from nodelang.backup_retention import backup_policy
+            shutdown_policy = backup_policy(server.universal_store.snapshot(), server.universal_registry)
+            recovery = server.close(recovery_directory=backup_dir,
                 recovery_authentication_context=server.universal_registry.authorization.session.context(),
                 recovery_timeout_seconds=300.0)
             arm_update(state_dir, Path(__file__).resolve().parent, state_path,
                 content_path if content_path is not None and content_path.is_file() else None, recovery,
                 expected_build=server.application_update.confirmed_build)
-            _prune_backups(state_dir / "backups", recovery)
+            _prune_backups(backup_dir, recovery, policy=shutdown_policy)
         else:
             server.close()
     except Exception as refusal:

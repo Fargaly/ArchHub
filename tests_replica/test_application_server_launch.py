@@ -6,66 +6,20 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 import nodelang.application_server as application_server
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class _CompletedThread:
-    def join(self) -> None:
-        return None
-
-    def is_alive(self) -> bool:
-        return False
-
-
-class _FakeCredentialVault:
-    @staticmethod
-    def default_path():
-        return "court-browser-session.dpapi"
-
-    def __init__(self, _path) -> None:
-        return None
-
-    def load_or_create(self):
-        return object()
-
-
-def test_primary_server_cli_can_own_signed_machine_transport(tmp_path, monkeypatch):
-    captured = {}
-
-    class FakeServer:
-        runtime_handoff_exit_requested = False
-
-        def __init__(self, *args, **kwargs):
-            captured["args"] = args
-            captured["kwargs"] = kwargs
-            self.thread = _CompletedThread()
-            self.bootstrap_url = "http://127.0.0.1:8482/?bootstrap=court"
-
-        def start(self):
-            return self
-
-        def close(self):
-            captured["closed"] = True
-
-    monkeypatch.setattr(application_server, "ApplicationServer", FakeServer)
-    monkeypatch.setattr(application_server, "BrowserCredentialVault", _FakeCredentialVault)
-
-    descriptor = tmp_path / "active-universal-runtime.json"
-    application_server.main([
-        "--state-path", str(tmp_path / "state.json.gz"),
-        "--machine-transport",
-        "--machine-descriptor-path", str(descriptor),
-    ])
-
-    assert captured["kwargs"]["enable_machine_transport"] is True
-    assert captured["kwargs"]["machine_descriptor_path"] == str(descriptor)
-    assert captured["kwargs"]["runtime_compliance_runner"] is (
-        application_server.run_physical_runtime_compliance_court
-    )
-    assert captured["closed"] is True
+def test_primary_server_cli_refuses_a_second_machine_transport_owner(monkeypatch):
+    calls = []
+    monkeypatch.setattr(application_server, "ApplicationServer", lambda *a, **k: calls.append(k))
+    with pytest.raises(ValueError, match="independent server launch flags are retired"):
+        application_server.main(['--machine-transport'])
+    assert calls == []
 
 
 def test_universal_server_boot_does_not_load_the_retired_typed_runtime():
@@ -93,7 +47,9 @@ finally:
         text=True,
         timeout=30,
     )
-    proof = json.loads(result.stdout)
+    records = [json.loads(line) for line in result.stdout.splitlines() if line.startswith('{')]
+    assert len(records) == 1, result.stdout
+    proof = records[0]
     assert proof["legacy_module_loaded"] is False
     assert proof["legacy_runtime_enabled"] is False
     assert proof["universal_revision"] > 0
@@ -108,108 +64,25 @@ def test_constructed_server_can_release_before_http_thread_starts():
     assert server.httpd.socket.fileno() == -1
 
 
-def test_primary_server_cli_leaves_machine_transport_off_without_explicit_flag(
-    tmp_path,
-    monkeypatch,
-):
-    captured = {}
-
-    class FakeServer:
-        thread = _CompletedThread()
-        bootstrap_url = "http://127.0.0.1:8482/?bootstrap=court"
-        runtime_handoff_exit_requested = False
-
-        def __init__(self, *args, **kwargs):
-            captured["kwargs"] = kwargs
-
-        def start(self):
-            return self
-
-        def close(self):
-            return None
-
-    monkeypatch.setattr(application_server, "ApplicationServer", FakeServer)
-    monkeypatch.setattr(application_server, "BrowserCredentialVault", _FakeCredentialVault)
-
-    application_server.main(["--state-path", str(tmp_path / "state.json.gz")])
-
-    assert captured["kwargs"]["enable_machine_transport"] is False
-    assert captured["kwargs"]["machine_descriptor_path"] is None
+def test_primary_server_cli_refuses_a_retired_state_selection(monkeypatch):
+    calls = []
+    monkeypatch.setattr(application_server, "ApplicationServer", lambda *a, **k: calls.append(k))
+    with pytest.raises(ValueError, match="independent server launch flags are retired"):
+        application_server.main(['--state-path', 'retired-state'])
+    assert calls == []
 
 
-def test_primary_server_cli_passes_the_stable_public_gateway_origin(
-    tmp_path,
-    monkeypatch,
-):
-    captured = {}
-
-    class FakeServer:
-        thread = _CompletedThread()
-        bootstrap_url = "http://127.0.0.1:8495/?bootstrap=court"
-        runtime_handoff_exit_requested = False
-
-        def __init__(self, *args, **kwargs):
-            captured["kwargs"] = kwargs
-
-        def start(self):
-            return self
-
-        def close(self, **_kwargs):
-            return None
-
-    monkeypatch.setattr(application_server, "ApplicationServer", FakeServer)
-    monkeypatch.setattr(application_server, "BrowserCredentialVault", _FakeCredentialVault)
-
-    application_server.main([
-        "--state-path", str(tmp_path / "state.json.gz"),
-        "--public-server-url", "http://127.0.0.1:8495",
-        "--supervisor-control-stdio",
-    ])
-
-    assert captured["kwargs"]["public_server_url"] == "http://127.0.0.1:8495"
-    assert callable(captured["kwargs"]["runtime_drain_coordinator"])
+def test_primary_server_cli_refuses_a_second_gateway_owner(monkeypatch):
+    calls = []
+    monkeypatch.setattr(application_server, "ApplicationServer", lambda *a, **k: calls.append(k))
+    with pytest.raises(ValueError, match="independent server launch flags are retired"):
+        application_server.main(['--public-server-url', 'http://127.0.0.1:8495'])
+    assert calls == []
 
 
-def test_primary_server_cli_passes_explicit_graph_cloud_gateway_configuration(
-    tmp_path,
-    monkeypatch,
-):
-    captured = {}
-
-    class FakeServer:
-        thread = _CompletedThread()
-        bootstrap_url = "http://127.0.0.1:8482/?bootstrap=court"
-        runtime_handoff_exit_requested = False
-
-        def __init__(self, *args, **kwargs):
-            captured["kwargs"] = kwargs
-
-        def start(self):
-            return self
-
-        def close(self):
-            return None
-
-    monkeypatch.setattr(application_server, "ApplicationServer", FakeServer)
-    monkeypatch.setattr(application_server, "BrowserCredentialVault", _FakeCredentialVault)
-
-    application_server.main([
-        "--state-path", str(tmp_path / "state.json.gz"),
-        "--enable-universal-cloud-gateway",
-        "--cloud-host", "127.0.0.1",
-        "--cloud-port", "9443",
-        "--cloud-resource-origin", "https://gateway.archhub.test",
-        "--cloud-tls-certificate-file", str(tmp_path / "certificate.pem"),
-        "--cloud-tls-private-key-file", str(tmp_path / "private-key.pem"),
-    ])
-
-    assert captured["kwargs"]["enable_universal_cloud_gateway"] is True
-    assert captured["kwargs"]["cloud_resource_origin"] == (
-        "https://gateway.archhub.test"
-    )
-    assert captured["kwargs"]["cloud_tls_certificate_file"] == str(
-        tmp_path / "certificate.pem"
-    )
-    assert captured["kwargs"]["cloud_tls_private_key_file"] == str(
-        tmp_path / "private-key.pem"
-    )
+def test_primary_server_cli_refuses_an_independent_cloud_desktop_mode(monkeypatch):
+    calls = []
+    monkeypatch.setattr(application_server, "ApplicationServer", lambda *a, **k: calls.append(k))
+    with pytest.raises(ValueError, match="independent server launch flags are retired"):
+        application_server.main(['--enable-universal-cloud-gateway'])
+    assert calls == []

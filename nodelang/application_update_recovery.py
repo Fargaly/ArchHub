@@ -168,12 +168,13 @@ def _capture(state_dir, app_dir, graph_path, content_path, recovery_path):
 
     sources = {"graph": _source(graph_path)}
     if content_path is not None:
-        sources["content"] = _source(content_path)
+        sources["content"] = sources['graph'] if Path(content_path).resolve() == Path(graph_path).resolve() else _source(content_path)
     all_source_paths = {
         Path(value["path"] + suffix)
         for value in sources.values() for suffix in (*_DURABLE_SUFFIXES, "-shm")
     }
-    if len(all_source_paths) != 4 * len(sources):
+    expected_sources = 1 if sources.get('content') is sources['graph'] else len(sources)
+    if len(all_source_paths) != 4 * expected_sources:
         raise ValueError("update database paths or sidecars overlap")
 
     recovery = _plain_path(recovery_path)

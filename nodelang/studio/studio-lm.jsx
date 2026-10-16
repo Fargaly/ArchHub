@@ -10313,9 +10313,15 @@ const SettingsRetention = () => {
 
 // Storage (design studio-lm.jsx:3039-3072). The session count is the graph index; nothing measures
 // sizes, a training queue or a model cache, so those unsupported tiles are omitted.
-const SettingsStorage = () => (
+const SettingsStorage = () => {
+  const projection = useStudioProjection();
+  const backupOwner = projection?.graph?.nodes?.find(node => node.application &&
+    (node.params || []).some(row => row.setting?.key === 'backup_count'));
+  return (
   <div>
     <SHead title="Storage" sub="Saved sessions and the folders that hold your data."/>
+    {backupOwner && <window.ApplicationNodeParameters node={{...backupOwner, actions:[],
+      params:backupOwner.params.filter(row => ['backup_count', 'backup_budget_bytes'].includes(row.setting?.key))}}/>}
     <SettingsRetention/>
     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10, marginBottom:14 }}>
       {[
@@ -10354,6 +10360,7 @@ const SettingsStorage = () => (
     </div>
   </div>
 );
+};
 
 // About (design studio-lm.jsx:3074-3086). Each line reads what answers it: the release transport
 // for the build and its update state, this page's own server, the host catalogue and the provider

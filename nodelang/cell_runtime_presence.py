@@ -51,7 +51,8 @@ def ensure_store_lease_storage(
         if lease_storage is not None:
             storage = lease_storage
         else:
-            storage = RuntimePresenceLeaseStorage(store.database_path)
+            storage = RuntimePresenceLeaseStorage(store.database_path,
+                owner=store if getattr(store, '_recovery_close_uses_owner_storage', False) else None)
         store._runtime_presence_lease_storage = storage
     return storage
 

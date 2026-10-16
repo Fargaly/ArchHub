@@ -52,7 +52,9 @@ def default_runtime_root() -> Path:
     local = os.environ.get("LOCALAPPDATA")
     if not local:
         raise InvalidCell("LOCALAPPDATA is unavailable")
-    return Path(local) / "ArchHub" / "unified-authority"
+    declared = os.environ.get('ARCHHUB_TEST_STATE_DIR')
+    state = Path(declared) if declared else Path(local) / 'ArchHub'
+    return state / 'unified-authority'
 
 
 def _canonical_root(path: str | os.PathLike[str]) -> Path:

@@ -180,7 +180,8 @@ def backup_application_recovery(service, directory, *, authentication_context,
                             _authorize(service, snapshot, authentication_context, space_root=root)
                             check()
                         if instance_id is None:
-                            if service._history is not None or service._path is not None and service._path.exists():
+                            if service._history is not None or (service._path is not None and service._path.exists()
+                                    and not service._embedded):
                                 raise InvalidCell("unadmitted ordinary history requires migration recovery")
                             heads = {}
                         else:
@@ -189,7 +190,8 @@ def backup_application_recovery(service, directory, *, authentication_context,
                             if service._history is None:
                                 service._history = ConversationHistoryStore(service._path,
                                     instance_id=instance_id, create=False,
-                                    busy_timeout_seconds=min(0.2, max(0, deadline - time.monotonic())))
+                                    busy_timeout_seconds=min(0.2, max(0, deadline - time.monotonic())),
+                                    store=store if service._embedded else None)
                                 check()
                             history = service._history
                             stack.enter_context(_lock_before(history._lock, deadline))
@@ -203,13 +205,14 @@ def backup_application_recovery(service, directory, *, authentication_context,
                             previous_busy = history._db.execute("PRAGMA busy_timeout").fetchone()[0]
                             history._db.execute("PRAGMA busy_timeout=%d" % max(1,
                                 min(200, int((deadline - time.monotonic()) * 1000))))
-                            previous_mode = history._db.execute("PRAGMA main.locking_mode").fetchone()[0]
+                            previous_mode = None if service._embedded else history._db.execute("PRAGMA main.locking_mode").fetchone()[0]
                             history._db.set_progress_handler(
                                 lambda: int(time.monotonic() >= deadline), 1000)
-                            _reserve(history)
+                            if not service._embedded:
+                                _reserve(history)
                             sources["content"] = history._db
                             heads = _history_heads(history._db, instance_id, bindings, check)
-                        for source in sources.values():
+                        for source in dict.fromkeys(sources.values()):
                             source.execute("BEGIN")
                             source.execute("SELECT 1 FROM sqlite_schema LIMIT 1").fetchone()
                         check()
@@ -271,8 +274,14 @@ def backup_application_recovery(service, directory, *, authentication_context,
                         # The date in the name is what backup retention reads.
                         from .backup_retention import backup_name_stamp
                         target = directory / ("application-recovery-%s-%s" % (backup_name_stamp(), uuid.uuid4().hex))
+                        from .backup_retention import backup_policy, protected_backup_bytes
+                        from .persistence import application_state_directory
+                        policy = backup_policy(snapshot, registry)
+                        protected_bytes = protected_backup_bytes(
+                            application_state_directory(store.database_path), directory)
                         return publish_application_recovery(sources, target,
-                            verify_copies=verify, before_publish=before_publish, deadline=deadline)
+                            verify_copies=verify, before_publish=before_publish, deadline=deadline,
+                            max_bytes=policy['max_bytes'] - protected_bytes)
                     except sqlite3.OperationalError as error:
                         # SQLite reports our cooperative deadline as INTERRUPT,
                         # not TimeoutError. Keep unrelated lock/I/O failures

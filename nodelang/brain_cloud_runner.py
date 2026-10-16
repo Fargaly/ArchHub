@@ -37,7 +37,7 @@ from .brain_cloud_sync import SyncCursor, sync_once
 from .brain_community_sync import CommunityCursor, community_sync_once
 from .cell_brain_governance import firms_of, solo_firm_root
 from .cloud_relay import load_cloud_session
-from .cloud_session import signed_in_cloud_account
+from .cloud_session import cloud_session_path, signed_in_cloud_account
 
 SYNC_PATH = "/v1/brain/sync"
 HEARTBEAT_PATH = "/v1/devices/heartbeat"
@@ -55,12 +55,12 @@ def community_id() -> str:
     return os.environ.get("ARCHHUB_DEFAULT_COMMUNITY_ID", DEFAULT_COMMUNITY_ID).strip()
 
 
-def _appdata(appdata=None) -> Path:
-    return Path(appdata or os.environ.get("APPDATA", ""))
+def _session_path(appdata=None) -> Path:
+    return cloud_session_path() if appdata is None else Path(appdata) / "ArchHub" / "brain" / "cloud.json"
 
 
 def device_path(appdata=None) -> Path:
-    return _appdata(appdata) / "ArchHub" / "brain" / "device.json"
+    return _session_path(appdata).with_name("device.json")
 
 
 def device_id(appdata=None) -> str:
@@ -100,7 +100,7 @@ def device_name(appdata=None) -> str:
 
 
 def cursor_path(appdata=None) -> Path:
-    return _appdata(appdata) / "ArchHub" / "brain" / "sync-cursor.json"
+    return _session_path(appdata).with_name("sync-cursor.json")
 
 
 def _tuples(value):
@@ -147,8 +147,8 @@ def _firm_root(store, owner):
 
 def sync_now(*, appdata=None, post=None) -> dict:
     """One pass for the signed-in account over the bound application Brain."""
-    session = load_cloud_session(_appdata(appdata))
-    email = signed_in_cloud_account(_appdata(appdata) / "ArchHub" / "brain" / "cloud.json")
+    session = load_cloud_session(appdata)
+    email = signed_in_cloud_account(_session_path(appdata))
     if session is None or email is None:
         return {"ok": False, "reason": "signed out"}
     post = post or http_post(session["base_url"], session["token"])
@@ -176,8 +176,8 @@ def sync_now(*, appdata=None, post=None) -> dict:
 
 def heartbeat_now(*, appdata=None, post=None) -> dict:
     """Say this device is alive, for the signed-in account only."""
-    session = load_cloud_session(_appdata(appdata))
-    email = signed_in_cloud_account(_appdata(appdata) / "ArchHub" / "brain" / "cloud.json")
+    session = load_cloud_session(appdata)
+    email = signed_in_cloud_account(_session_path(appdata))
     if session is None or email is None:
         return {"ok": False, "reason": "signed out"}
     post = post or http_post(session["base_url"], session["token"], timeout=10.0,

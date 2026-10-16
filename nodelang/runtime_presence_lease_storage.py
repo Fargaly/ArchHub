@@ -20,7 +20,7 @@ import sqlite3
 import threading
 from typing import Any
 
-from .universal_cell import InvalidCell
+from .universal_cell import CellStore, InvalidCell
 
 
 # SPEC 3.3: operational instances live in bounded indexed records in the same
@@ -47,7 +47,7 @@ _OPERATIONAL_EVENT_LIMIT = 4_096
 class RuntimePresenceLeaseStorage:
     """Explicit instance-owned lease storage backed by SQLite or an in-memory fallback."""
 
-    def __init__(self, database_path: str | os.PathLike[str] | None = None) -> None:
+    def __init__(self, database_path: str | os.PathLike[str] | None = None, *, owner: CellStore | None = None) -> None:
         self._lock = threading.RLock()
         self._closed = False
         self._database_path: str | None = (
@@ -56,6 +56,7 @@ class RuntimePresenceLeaseStorage:
             else None
         )
         self._connection: sqlite3.Connection | None = None
+        self._shared = owner is not None
         self._memory_leases: dict[str, dict[str, Any]] = {}
         self._memory_tombstones: set[str] = set()
         self._memory_migrated: bool = False
@@ -64,7 +65,14 @@ class RuntimePresenceLeaseStorage:
         self._memory_events: list[dict[str, Any]] = []
         self._memory_event_sequence = 0
 
-        if self._database_path is not None:
+        if owner is not None:
+            if self._database_path != str(Path(owner.database_path).resolve()):
+                raise InvalidCell('recovery operational storage belongs to another graph')
+            self._connection, self._lock = owner.sqlite_storage()
+            # Recovery borrows already initialized operational tables under the
+            # quiesced owner's fence; it must not open another SQLite handle.
+            self._connection.execute('SELECT 1 FROM runtime_presence_leases LIMIT 0')
+        elif self._database_path is not None:
             self._connection = sqlite3.connect(
                 self._database_path,
                 timeout=30.0,
@@ -1079,7 +1087,8 @@ class RuntimePresenceLeaseStorage:
             if self._closed:
                 return
             if self._connection is not None:
-                self._connection.close()
+                if not self._shared:
+                    self._connection.close()
                 self._connection = None
             self._closed = True
 

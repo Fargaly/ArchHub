@@ -12,6 +12,7 @@ into a box standing in for an identity.
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -28,6 +29,7 @@ from typing import Callable, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from .cloud_relay import DEFAULT_BASE, SIGN_IN_AGAIN as _SIGN_IN_AGAIN, pinned_cloud_base
+from .cloud_session import cloud_session_path
 from .http_server import create_http_server
 
 WAIT_SECONDS = 300.0
@@ -55,11 +57,12 @@ def free_port() -> int:
         return sock.getsockname()[1]
 
 
-def cloud_session_path() -> Path:
-    return Path(os.environ.get("APPDATA", "")) / "ArchHub" / "brain" / "cloud.json"
+_SESSION_WRITE_LOCK = threading.RLock()
+_REFRESH_ATTEMPTS: dict[str, float] = {}
+_REFRESH_LEAD_SECONDS = 7 * 86400
 
 
-def read_cloud_session(path: Path) -> dict:
+def _session_metadata(path: Path) -> dict:
     try:
         held = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -67,23 +70,136 @@ def read_cloud_session(path: Path) -> dict:
     return held if isinstance(held, dict) else {}
 
 
-def write_cloud_session(path: Path, patch: dict) -> dict:
+def _session_file_lock(path: Path):
+    from app.credential_lock import exclusive
+    return exclusive(path) if os.name == "nt" else contextlib.nullcontext()
+
+
+def _session_reference(held: dict) -> str:
+    account = str(held.get("email") or held.get("user_id") or "").strip().casefold()
+    account = account or str(held.get("token") or "")
+    return "archhub-account-session:v1:" + hashlib.sha256(
+        (pinned_base(held) + "|" + account).encode("utf-8")).hexdigest()
+
+
+def _decode_session_secret(value: str) -> dict:
+    try:
+        result = json.loads(value)
+    except (ValueError, TypeError):
+        raise OSError("saved account session is unreadable") from None
+    if type(result) is not dict or not isinstance(result.get("token"), str) or not result["token"]:
+        raise OSError("saved account session is incomplete")
+    return result
+
+
+def read_cloud_session(path: Path) -> dict:
+    """Reload the one protected session; cloud.json carries metadata only."""
+    from app import secrets_store
+    with _SESSION_WRITE_LOCK, _session_file_lock(path):
+        held = _session_metadata(path)
+        reference = held.get("token_ref")
+        if reference:
+            secret = secrets_store.load_session_secret(reference)
+            if secret is None:
+                raise OSError("saved account session is unavailable in protected storage")
+            merged = {**held, **_decode_session_secret(secret)}
+            if reference != _session_reference(merged) or "token" in held:
+                return _persist_cloud_session(path, merged, reference)
+            return merged
+        if held.get("token"):
+            # A stale legacy file must never overwrite a newer account record.
+            existing = secrets_store.load_session_secret(_session_reference(held))
+            if existing is not None:
+                held.update(_decode_session_secret(existing))
+            return _persist_cloud_session(path, held, None)
+        return held
+
+
+def write_cloud_session(path: Path, patch: dict, *, expected_token: str | None = None) -> dict:
     """Merge patch into cloud.json atomically; keys set to None are dropped."""
+    with _SESSION_WRITE_LOCK, _session_file_lock(path):
+        return _write_cloud_session(path, patch, expected_token=expected_token)
+
+
+def _write_cloud_session(path: Path, patch: dict, *, expected_token: str | None) -> dict:
     held = read_cloud_session(path)
+    previous_reference = held.get("token_ref")
+    if expected_token is not None and held.get("token") != expected_token:
+        return held
     for key, value in patch.items():
         if value is None:
             held.pop(key, None)
         else:
             held[key] = value
+    return _persist_cloud_session(path, held, previous_reference)
+
+
+def _persist_cloud_session(path: Path, held: dict, previous_reference: str | None) -> dict:
+    from app import secrets_store
+    document = {key: value for key, value in held.items() if key not in ("token_ref", "session_format")}
+    reference = _session_reference(document) if document.get("token") else None
+    previous = secrets_store.load_session_secret(reference) if reference else None
+    if reference:
+        secrets_store.save_session_secret(reference, json.dumps(document, sort_keys=True))
+    metadata = {key: value for key, value in document.items()
+                if key not in ("token", "access_token", "refresh_token", "id_token")}
+    metadata["session_format"] = 2
+    if reference:
+        metadata["token_ref"] = reference
+    try:
+        _write_session_metadata(path, metadata)
+    except OSError:
+        if reference:
+            if previous is None:
+                secrets_store.delete_session_secret(reference)
+            else:
+                secrets_store.save_session_secret(reference, previous)
+        raise
+    if previous_reference and previous_reference != reference:
+        secrets_store.delete_session_secret(previous_reference)
+    return {**metadata, **document}
+
+
+def _write_session_metadata(path: Path, metadata: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
         mode="w", encoding="utf-8", delete=False, dir=str(path.parent),
         prefix=path.name + ".", suffix=".tmp",
     ) as handle:
-        json.dump(held, handle, indent=2, sort_keys=True)
+        json.dump(metadata, handle, indent=2, sort_keys=True)
         tmp = handle.name
-    os.replace(tmp, path)
-    return held
+    try:
+        os.replace(tmp, path)
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
+def refresh_session(path: Optional[Path] = None, *, now: Optional[float] = None,
+                    http=None) -> dict:
+    """Renew the current account before expiry, without another browser or store."""
+    record = path or cloud_session_path()
+    moment = time.time() if now is None else now
+    held = read_cloud_session(record)
+    bearer, expires = str(held.get("token") or ""), held.get("expires_at")
+    if (not bearer or held.get("refused_at") or not isinstance(expires, (int, float))
+            or isinstance(expires, bool) or not moment < expires <= moment + _REFRESH_LEAD_SECONDS):
+        return sign_in_state(record, now=moment)
+    fingerprint = hashlib.sha256((str(record) + "|" + bearer).encode("utf-8")).hexdigest()
+    with _SESSION_WRITE_LOCK:
+        if moment - _REFRESH_ATTEMPTS.get(fingerprint, 0) < 60:
+            return sign_in_state(record, now=moment)
+        _REFRESH_ATTEMPTS[fingerprint] = moment
+    try:
+        status, payload = (http or http_json)("POST", pinned_base(held) + "/v1/auth/refresh",
+            body={}, headers={"Authorization": "Bearer " + bearer})
+    except (OSError, ValueError):
+        return sign_in_state(record, now=moment)
+    renewed = payload.get("expires_at")
+    if status == 200 and type(renewed) in (int, float) and renewed > expires:
+        write_cloud_session(record, {"expires_at": renewed}, expected_token=bearer)
+    elif _session_invalid(status, payload):
+        record_refusal(record, bearer, now=moment)
+    return sign_in_state(record, now=moment)
 
 
 def http_json(method: str, url: str, *, body: Optional[dict] = None,
@@ -159,7 +275,7 @@ class SignIn:
         self._on_complete = on_complete
         self._wait = wait_seconds
         self._cancel = False
-        self._lock = threading.Lock()
+        self._lock = threading.Condition()
         self._state = {"phase": "starting", "method": method, "email": "", "error": "", "url": ""}
         self.thread: Optional[threading.Thread] = None
 
@@ -182,6 +298,7 @@ class SignIn:
     def _set(self, **patch) -> None:
         with self._lock:
             self._state.update(patch)
+            self._lock.notify_all()
 
     def auth_url(self, *, challenge: str, state: str, redirect: str) -> str:
         query = urlencode({"code_challenge": challenge, "redirect": redirect,
@@ -261,19 +378,26 @@ class SignIn:
             _status, me = self._http("GET", f"{self.base_url}/v1/me",
                                      headers={"Authorization": f"Bearer {token}"})
         except Exception:
+            _status = None
             me = {}
         email = str(me.get("email") or payload.get("email") or "").strip().casefold()
         if "@" not in email:
             self._set(phase="failed", error="the cloud did not name the account")
             return
-        write_cloud_session(self.path, {
-            "token": token,
-            "expires_at": payload.get("expires_at"),
-            "email": email,
-            "user_id": me.get("user_id") or payload.get("user_id"),
-            "cloud_base_url": self.base_url,
-            "refused_at": None,
-        })
+        try:
+            write_cloud_session(self.path, {
+                "token": token,
+                "expires_at": payload.get("expires_at"),
+                "email": email,
+                "user_id": me.get("user_id") or payload.get("user_id"),
+                "cloud_base_url": self.base_url,
+                "refused_at": None,
+            })
+        except (OSError, ValueError):
+            self._set(phase="failed", error="Secure account storage is unavailable. Retry sign-in.")
+            return
+        from .cloud_session import remember_verified_account
+        remember_verified_account({"token": token, "cloud_base_url": self.base_url}, _status, me)
         if self._on_complete is not None:
             try:
                 self._on_complete(email)
@@ -290,6 +414,23 @@ def current_status() -> dict:
     """The attempt the studio is polling, or idle."""
     attempt = _CURRENT.get("attempt")
     return attempt.status() if attempt is not None else dict(_IDLE)
+
+
+def wait_for_change(previous: dict, *, timeout: float, cancelled) -> dict:
+    """Wait on the existing attempt's status notification, without a polling loop."""
+    attempt = _CURRENT.get("attempt")
+    if attempt is None:
+        return dict(_IDLE)
+    with attempt._lock:
+        attempt._lock.wait_for(lambda: attempt._state != previous or cancelled(), timeout=timeout)
+        return dict(attempt._state)
+
+
+def wake_status_waiters() -> None:
+    attempt = _CURRENT.get("attempt")
+    if attempt is not None:
+        with attempt._lock:
+            attempt._lock.notify_all()
 
 
 def begin(method: str, **options) -> dict:
@@ -327,7 +468,7 @@ def sign_out(path: Optional[Path] = None, *, http: Callable[..., tuple[int, dict
             threading.Thread(target=_tell_cloud, name="archhub-cloud-signout", daemon=True).start()
     if held:
         write_cloud_session(record, {"token": None, "expires_at": None,
-                                     "email": None, "user_id": None, "refused_at": None})
+                                     "email": None, "user_id": None, "refused_at": None}, expected_token=token)
     attempt = _CURRENT.get("attempt")
     if attempt is not None and not attempt.active:
         _CURRENT["attempt"] = None
@@ -380,7 +521,7 @@ def record_refusal(path: Optional[Path], refused_bearer: str, *,
     record = path or cloud_session_path()
     held = read_cloud_session(record)
     if refused_bearer and _held_bearer(held) == refused_bearer:
-        write_cloud_session(record, {"refused_at": int(now if now is not None else time.time())})
+        write_cloud_session(record, {"refused_at": int(now if now is not None else time.time())}, expected_token=refused_bearer)
 
 
 def sign_in_state(path: Optional[Path] = None, *, now: Optional[float] = None) -> dict:
@@ -433,6 +574,8 @@ def confirm_with_cloud(path: Optional[Path], *, now: Optional[float] = None,
         record_refusal(record, bearer, now=now)
         return "expired"
     if status == 200:
+        from .cloud_session import remember_verified_account
+        remember_verified_account(held, status, me)
         owns = me.get("founder")
         if not isinstance(owns, bool):
             # A cloud without the /v1/me field: its founder-only route decides.
@@ -515,5 +658,6 @@ def cockpit_link(path: Optional[Path] = None, *, now: Optional[float] = None,
 __all__ = [
     "METHODS", "SignIn", "begin", "cloud_session_path", "cockpit_link", "confirm_with_cloud", "current_status",
     "free_port", "http_json", "pkce_pair", "pinned_base", "read_cloud_session", "record_refusal",
-    "session_summary", "sign_in_state", "sign_out", "write_cloud_session",
+    "refresh_session", "session_summary", "sign_in_state", "sign_out", "write_cloud_session",
+    "wait_for_change", "wake_status_waiters",
 ]

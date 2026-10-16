@@ -120,7 +120,6 @@ Source: "..\tools\pipeline\build.py"; DestDir: "{app}\tools\pipeline"; Flags: ig
 Source: "..\tools\pipeline\land.py"; DestDir: "{app}\tools\pipeline"; Flags: ignoreversion
 Source: "..\launch_archhub_test.py"; DestDir: "{app}"; Flags: ignoreversion
 ; The graph owner task is re-registered from the installed copy (RefreshCleanCoordinationTask).
-Source: "..\packaging\windows\install_clean_coordination_task.ps1"; DestDir: "{app}\packaging\windows"; Flags: ignoreversion
 ; Generated once for this exact build; pairs with BUILD_ID after installation.
 Source: "{#BuildMetadataPath}"; DestDir: "{app}"; DestName: "BUILD_METADATA.json"; Flags: ignoreversion
 ; Public credential-store code only. Every user's protected data stays local.
@@ -182,6 +181,22 @@ Type: files; Name: "{app}\nodelang\__pycache__\serve_reality.*.pyc"
 Type: files; Name: "{app}\nodelang\runtime_announcement.py"
 Type: files; Name: "{app}\nodelang\__pycache__\runtime_announcement.*.pyc"
 ; The wheelhouse is this build's alone; an older build's wheels never mix in.
+; STAGE2B retires executable copies as well as their scheduled registrations.
+; Exact paths only: never sweep user state or third-party host files.
+Type: files; Name: "{app}\desktop\clean_shell.py"
+Type: files; Name: "{app}\desktop\__pycache__\clean_shell.*.pyc"
+Type: files; Name: "{app}\nodelang\desktop_supervisor.py"
+Type: files; Name: "{app}\nodelang\runtime_supervisor.py"
+Type: files; Name: "{app}\nodelang\authority_bridge.py"
+Type: files; Name: "{app}\nodelang\remote_native_cloud_login.py"
+Type: files; Name: "{app}\nodelang\__pycache__\desktop_supervisor.*.pyc"
+Type: files; Name: "{app}\nodelang\__pycache__\runtime_supervisor.*.pyc"
+Type: files; Name: "{app}\nodelang\__pycache__\authority_bridge.*.pyc"
+Type: files; Name: "{app}\nodelang\__pycache__\remote_native_cloud_login.*.pyc"
+Type: files; Name: "{app}\packaging\windows\install_clean_coordination_task.ps1"
+Type: files; Name: "{app}\packaging\windows\install_runtime_task.ps1"
+Type: files; Name: "{app}\packaging\windows\entrypoint.py"
+Type: files; Name: "{app}\packaging\windows\Launch-ArchHub.vbs"
 Type: files; Name: "{app}\wheelhouse\*.whl"
 
 [UninstallDelete]
@@ -331,36 +346,20 @@ end;
 
 const
   CleanCoordinationTask = 'ArchHub Clean Coordination';
+  UniversalRuntimeTask = 'ArchHub Universal Runtime';
 
-{ A machine that runs the clean graph owner as a logon task (it was registered
-  for this user before) gets it pointed at THIS installed tree and its private
-  environment, then restarted on the new code. Setup never creates the task, and
-  a failure here never fails setup: the owner is then left as it was. }
-procedure RefreshCleanCoordinationTask();
+{ The old task is removed at the next installed upgrade. It must never start
+  a second application owner. No task is created or refreshed. }
+procedure RemoveRetiredRuntimeTask(TaskName: String);
 var
   Code: Integer;
-  Script: String;
 begin
-  if (not Exec(ExpandConstant('{sys}\schtasks.exe'), '/Query /TN "' + CleanCoordinationTask + '"', '',
-                SW_HIDE, ewWaitUntilTerminated, Code)) or (Code <> 0) then
-    exit;
-  { Only onto a runtime that exists: before the first open has made the private
-    environment, the task is neither re-registered nor ended (it keeps running
-    as it was, and the next setup after the first open refreshes it). }
-  if not FileExists(ExpandConstant('{app}\.venv\Scripts\pythonw.exe')) then
-    exit;
-  Script := ExpandConstant('{app}\packaging\windows\install_clean_coordination_task.ps1');
-  if Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-          '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + Script + '" -AllowPendingRuntime',
-          '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0) then
-  begin
-    Exec(ExpandConstant('{sys}\schtasks.exe'), '/End /TN "' + CleanCoordinationTask + '"', '',
-         SW_HIDE, ewWaitUntilTerminated, Code);
-    Exec(ExpandConstant('{sys}\schtasks.exe'), '/Run /TN "' + CleanCoordinationTask + '"', '',
-         SW_HIDE, ewWaitUntilTerminated, Code);
-  end
-  else
-    Log('The clean coordination task was not refreshed (exit ' + IntToStr(Code) + ').');
+  Exec(ExpandConstant('{sys}\schtasks.exe'), '/End /TN "' + TaskName + '"', '',
+       SW_HIDE, ewWaitUntilTerminated, Code);
+  Exec(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "' + TaskName + '" /F', '',
+       SW_HIDE, ewWaitUntilTerminated, Code);
+  if Code <> 0 then
+    Log('Retired runtime task absent or unavailable (exit ' + IntToStr(Code) + ').');
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -392,7 +391,8 @@ begin
     if not SaveStringToFile(ExpandConstant('{app}\BUILD_ID'), '{#BuildId}', False) then
       RaiseException('The ArchHub build identity could not be saved. Run setup again.');
     { After BUILD_ID: the task script recognises an installed tree by it. }
-    RefreshCleanCoordinationTask();
+    RemoveRetiredRuntimeTask(CleanCoordinationTask);
+    RemoveRetiredRuntimeTask(UniversalRuntimeTask);
     { The "Connect my AI assistants" choice; the first open honours it once. }
     if WizardIsTaskSelected('connectassistants') then
     begin

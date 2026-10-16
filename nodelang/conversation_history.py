@@ -4,7 +4,7 @@ The caller must authorize the current graph node/instance and derive principal
 and read_all. Neither an ID nor read_all is a credential. Legacy migration,
 cutover, and application integration remain separate work. No workers or replay.
 """
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -102,7 +102,7 @@ def validate_message_fields(conversation_id, *, author, content, category="note"
 
 class ConversationHistoryStore(ConversationPageProtection):
     def __init__(self, path, *, instance_id, create=True, busy_timeout_seconds=2.0,
-                 retention_clock=None):
+                 retention_clock=None, store=None):
         self.instance_id = _text(instance_id, "instance")
         if retention_clock is not None and not callable(retention_clock):
             raise TypeError("retention clock must be a trusted callable")
@@ -112,6 +112,8 @@ class ConversationHistoryStore(ConversationPageProtection):
         if (type(busy_timeout_seconds) not in (int, float)
                 or not 0 <= busy_timeout_seconds <= 30):
             raise ValueError("invalid history lock wait budget")
+        if store is not None and Path(store.database_path).resolve() != Path(path).resolve():
+            raise ValueError("history must share its owner's graph journal")
         if not create:
             existing = Path(path).resolve()
             if not existing.is_file():
@@ -119,11 +121,17 @@ class ConversationHistoryStore(ConversationPageProtection):
             # mode=rw prevents a deletion between the check and connect from
             # silently creating replacement content. No URI comes from a request.
             path = existing.as_uri() + "?mode=rw"
+        self._embedded = store is not None
         self._lock = threading.RLock()
+        self._journal_lock = nullcontext()
         self._operation_cancelled = None
-        self._db = sqlite3.connect(path, timeout=busy_timeout_seconds, isolation_level=None,
-                                   check_same_thread=False, cached_statements=64,
-                                   uri=not create)
+        if self._embedded:
+            self._db, self._lock = store.sqlite_storage()
+            self._journal_lock = store._journal._io_lock
+        else:
+            self._db = sqlite3.connect(path, timeout=busy_timeout_seconds, isolation_level=None,
+                                       check_same_thread=False, cached_statements=64,
+                                       uri=not create)
         self._db.row_factory = sqlite3.Row
         self._database_uri = None
         try:
@@ -133,9 +141,7 @@ class ConversationHistoryStore(ConversationPageProtection):
             self._db.execute("PRAGMA foreign_keys=ON")
             self._db.execute("PRAGMA cache_size=-2048")
             with self._transaction(write=True):
-                objects = self._db.execute(
-                    "SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' LIMIT 32"
-                ).fetchall()
+                objects = self._schema_objects()
                 app_id = self._db.execute("PRAGMA application_id").fetchone()[0]
                 version = self._db.execute("PRAGMA user_version").fetchone()[0]
                 if create and not objects and app_id == 0 and version == 0:
@@ -157,8 +163,20 @@ class ConversationHistoryStore(ConversationPageProtection):
                         "('conversation_pages','conversation_page_tracking','conversation_pages_protected') LIMIT 1").fetchone():
                     raise ValueError('page protection objects have an older schema version')
         except BaseException:
-            self._db.close()
+            if not self._embedded:
+                self._db.close()
             raise
+
+    def _schema_objects(self):
+        sql = "SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
+        if self._embedded:
+            # Only physical journal machinery shares this database. Unknown
+            # history objects remain an error, as in the standalone importer.
+            sql += (" AND tbl_name NOT IN ('revisions','cell_versions','current_cells',"
+                "'runtime_presence_leases','runtime_presence_tombstones','runtime_presence_migration',"
+                "'baboom_activities','operational_records','operational_events','cde_write_permits',"
+                "'cde_write_receipts','cde_write_settlements')")
+        return self._db.execute(sql + " LIMIT 65").fetchall()
 
     @staticmethod
     def _base_schema_statements():
@@ -191,7 +209,7 @@ class ConversationHistoryStore(ConversationPageProtection):
         if (not callable(cancelled) or type(deadline) not in (int, float)
                 or not math.isfinite(deadline)):
             raise ValueError('invalid history operation budget')
-        with self._lock:
+        with self._lock, self._journal_lock:
             if self._operation_cancelled is not None or self._db.in_transaction:
                 raise ValueError('history operation budget requires an idle connection')
             previous_busy = self._db.execute('PRAGMA busy_timeout').fetchone()[0]
@@ -210,7 +228,7 @@ class ConversationHistoryStore(ConversationPageProtection):
 
     @contextmanager
     def _transaction(self, *, write=False, before_commit=None):
-        with self._lock:
+        with self._lock, self._journal_lock:
             remaining = 2000
 
             def budget():
@@ -223,26 +241,32 @@ class ConversationHistoryStore(ConversationPageProtection):
             try:
                 if self._operation_cancelled is not None and self._operation_cancelled():
                     raise TimeoutError('history operation budget exhausted')
-                self._db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
+                nested = self._db.in_transaction
+                self._db.execute("SAVEPOINT history_write" if nested else ("BEGIN IMMEDIATE" if write else "BEGIN"))
                 try:
                     yield
                     if before_commit is not None:
                         before_commit()
                     if self._operation_cancelled is not None and self._operation_cancelled():
                         raise TimeoutError('history operation budget exhausted')
-                    self._db.execute("COMMIT")
+                    self._db.execute("RELEASE history_write" if nested else "COMMIT")
                 except BaseException:
                     self._db.set_progress_handler(None, 0)
                     if self._db.in_transaction:
-                        self._db.execute("ROLLBACK")
+                        if nested:
+                            self._db.execute("ROLLBACK TO history_write")
+                            self._db.execute("RELEASE history_write")
+                        else:
+                            self._db.execute("ROLLBACK")
                     raise
             finally:
                 self._db.set_progress_handler(self._operation_cancelled,
                     1000 if self._operation_cancelled is not None else 0)
 
     def close(self):
-        with self._lock:
-            self._db.close()
+        with self._lock, self._journal_lock:
+            if not self._embedded:
+                self._db.close()
 
     def __enter__(self):
         return self
@@ -307,8 +331,7 @@ class ConversationHistoryStore(ConversationPageProtection):
         # Schema metadata only: no message scan, sample-based trust or implicit
         # repair. The upgraded-v2 variant retains its historical message table
         # and supplies the v3 recipient FK target with an explicit unique index.
-        objects = self._db.execute("SELECT type,name,sql FROM sqlite_master "
-            "WHERE name NOT LIKE 'sqlite_%' LIMIT 65").fetchall()
+        objects = self._schema_objects()
         if len(objects) > 64 or any(row["type"] not in ("table", "index") for row in objects):
             raise ValueError("unsupported retention source schema objects")
         declarations = {row["name"]: row for row in objects}

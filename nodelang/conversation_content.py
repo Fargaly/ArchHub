@@ -38,6 +38,8 @@ def _content_artifacts(path):
 def preflight_fresh_content_path(graph_path, content_path):
     """Refuse existing content custody before creating a new graph authority."""
     graph, content = Path(graph_path).resolve(), Path(content_path).resolve()
+    if content == graph:
+        return  # Indexed content and graph share the owner's one transaction.
     if content in _content_artifacts(graph) or graph in _content_artifacts(content):
         raise InvalidCell("fresh conversation recovery required: graph and content paths overlap")
     if any(os.path.lexists(path) for path in _content_artifacts(content)):
@@ -90,13 +92,17 @@ def read_fresh_content_bootstrap(snapshot):
         raise InvalidCell("fresh conversation recovery required: invalid graph bootstrap intent") from exc
 
 
-def record_fresh_content_bootstrap(store, content_path):
+def record_fresh_content_bootstrap(store, content_path, *, allow_existing_region=False):
     """Reserve first-boot intent in the new graph before building its application."""
     from .universal_cell import NULL_CELL_ID
     snapshot = store.snapshot()
-    if store.database_path is None or snapshot.revision != 0 or set(snapshot.cells) != {NULL_CELL_ID}:
+    if store.database_path is None or (not allow_existing_region and
+            (snapshot.revision != 0 or set(snapshot.cells) != {NULL_CELL_ID})) or 'app:archhub' in snapshot.cells:
         raise InvalidCell("fresh conversation recovery required: graph is not a new empty authority")
     preflight_fresh_content_path(store.database_path, content_path)
+    if allow_existing_region and snapshot.revision:
+        from .persistence import _migration_backup
+        _migration_backup(store, {}, 'application-cutover')
     value = dict(version=1, state="pending", bootstrap_id=uuid.uuid4().hex,
         graph_path=str(Path(store.database_path).resolve()), content_path=str(Path(content_path).resolve()),
         authority=store.authority_identity, graph_file_id=_physical_file_id(store.database_path))
@@ -317,6 +323,8 @@ class ApplicationConversationContent:
         self._pending_activation_lock_mode = None
         self._activation_unresolved = False
         self._pending_backup_lock_mode = None
+        graph = owner.universal_store.database_path
+        self._embedded = self._path is not None and graph is not None and self._path == Path(graph).resolve()
 
     def close(self):
         with self._owner.mutation_lock:
@@ -354,6 +362,8 @@ class ApplicationConversationContent:
             registry, store = owner.universal_registry, owner.universal_store
             if not fresh_content_bootstrap_pending(store, registry, self._path):
                 raise InvalidCell("fresh conversation initialization requires a pending graph intent")
+            if self._embedded:
+                return self._initialize_embedded_workshop()
             authority = registry.authorization
             context = authority.session.context()
             history = None
@@ -423,6 +433,47 @@ class ApplicationConversationContent:
                 owner._fresh_content_bootstrap = False
                 if history is not None:
                     history.close()
+            return None
+
+    def _initialize_embedded_workshop(self):
+        from .conversation_history import ConversationHistoryStore
+        from .universal_application import _require_application_authorization
+        owner = self._owner
+        store, registry = owner.universal_store, owner.universal_registry
+        authority = registry.authorization
+        context = authority.session.context()
+        snapshot = store.snapshot()
+        intent = read_fresh_content_bootstrap(snapshot)
+        _require_empty_bootstrap(snapshot, registry)
+        for root in (registry.application_root, registry.workshop_root):
+            _require_application_authorization(snapshot, registry, "edit", root,
+                authentication_context=context, resource_lineage_roots=(registry.application_root,))
+        prepared = prepare_empty_content_binding(snapshot, registry.deliberation_protocol,
+            application_root=registry.application_root, space_root=registry.workshop_root)
+        settled = dict(version=1, state="bound", bootstrap_id=intent["bootstrap_id"],
+            binding_root=prepared.binding.root_id, instance_id=prepared.binding.instance_id)
+        created_history = []
+        def initialize(connection):
+            history = ConversationHistoryStore(self._path,
+                instance_id=prepared.binding.instance_id, store=store)
+            if history._db is not connection:
+                raise InvalidCell('embedded content must publish on its graph transaction')
+            created_history.append(history)
+            history.ensure_conversation(registry.workshop_root)
+            history.initialize_retention()
+            history.initialize_page_protection()
+            history.track_new_conversation(registry.workshop_root)
+        try:
+            authority.broker.commit_authenticated(context, store, prepared.expected_revision,
+                create=prepared.create, replace=prepared.replace + (_bootstrap_cell(settled),),
+                physical_write=initialize)
+            self._adopt_activation_history(created_history[0])
+        except BaseException:
+            for history in created_history:
+                history.close()
+            raise
+        finally:
+            owner._fresh_content_bootstrap = False
 
     def _require_live_owner(self, *, allow_activation_recovery=False):
         from .cell_authorization import AuthorizationDenied
@@ -493,7 +544,8 @@ class ApplicationConversationContent:
         if self._path is None or not self._path.is_file():
             raise FileNotFoundError("admitted conversation database is missing")
         if self._history is None:
-            history = ConversationHistoryStore(self._path, instance_id=binding.instance_id, create=False)
+            history = ConversationHistoryStore(self._path, instance_id=binding.instance_id, create=False,
+                store=self._owner.universal_store if self._embedded else None)
             try:
                 history.conversation_head(binding.space_root)
             except BaseException:

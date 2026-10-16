@@ -324,7 +324,8 @@ def test_first_boot_http_workshop_send_and_same_binding_after_reopen(tmp_path, m
         binding = read_content_binding(server.universal_store.snapshot(), registry.deliberation_protocol,
             application_root=registry.application_root, space_root=registry.workshop_root)
         content_path = server.conversation_content._path
-        assert str(content_path) == str(database) + ".conversations.sqlite3"
+        assert content_path == database
+        assert server.conversation_content._embedded is True
         assert content_path.is_file()
         assert server.conversation_content._history.instance_id == binding.instance_id
         browser = server._resolve_browser_session(server.browser_session_token)

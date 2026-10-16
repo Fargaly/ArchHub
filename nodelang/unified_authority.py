@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 from collections import ChainMap
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -1242,6 +1243,8 @@ def _verify_authority_head(
     authority: UnifiedAuthority,
     snapshot: Snapshot,
     head_root: str,
+    *,
+    candidate_changes=None,
 ) -> None:
     projection = validate_composition(authority, snapshot, head_root)
     if projection.protocol_root != authority.shape("authority-head"):
@@ -1273,12 +1276,13 @@ def _verify_authority_head(
         or values["key-fingerprint"] != authority.manifest.key_fingerprint
     ):
         raise InvalidCell("current authority head signing identity does not match")
-    expected_digest = _expected_head_digest(
-        authority,
-        snapshot,
-        (payload_roots["snapshot-digest"], payload_roots["signature"]),
-        values["snapshot-digest"],
-    )
+    blank = (payload_roots["snapshot-digest"], payload_roots["signature"])
+    if candidate_changes is not None and _is_v2_digest(values['snapshot-digest']):
+        base, created, replaced = candidate_changes
+        expected_digest = _committed_head_digest(authority, base,
+            create=created, replace=replaced, blank_atom_roots=blank)
+    else:
+        expected_digest = _expected_head_digest(authority, snapshot, blank, values['snapshot-digest'])
     if values["snapshot-digest"] != expected_digest:
         raise InvalidCell("current authority head snapshot digest does not match")
     payload = _head_payload(
@@ -1455,6 +1459,76 @@ def verify_exact_authority_head(
         authority,
         authority.store.snapshot() if snapshot is None else snapshot,
     )
+
+
+def bind_signed_commit_owner(authority: UnifiedAuthority) -> None:
+    """Use this authority's existing signer for every effective owner commit.
+
+    Application and native protocols share one physical journal and head chain.
+    Authorization guards and indexed-history writes remain in the kernel's
+    original atomic commit; the signed digest covers Cells, not history tables.
+    """
+    store = authority.store
+    with store._lock:
+        held = getattr(store, '_signed_commit_authority', None)
+        if held is authority:
+            return
+        if held is not None or getattr(store, '_commit_transform', None) is not None:
+            raise InvalidCell('another authority already owns the signed commit boundary')
+        verify_exact_authority_head(authority)
+        protected_heads, protected_records = set(), set()
+
+        def preserve_head_records(snapshot, member):
+            root = None if member is None else member.participant_id
+            value_roles = {authority.role(name) for name in (
+                'parent-head-digest', 'head-revision', 'snapshot-digest',
+                'key-id', 'key-version', 'key-fingerprint', 'signature')}
+            while root is not None and root not in protected_heads:
+                protected_heads.add(root)
+                protected_records.update(_relation_chain_ids(snapshot, root, budget=COMMAND_BUDGET))
+                parent = None
+                for item in read_relation(snapshot, root, budget=COMMAND_BUDGET):
+                    protected_records.add(item.incidence_id)
+                    if item.role_id == authority.role('parent-head'):
+                        parent = item.participant_id
+                    if item.role_id in value_roles:
+                        value = item.participant_id
+                        protected_records.update(_relation_chain_ids(snapshot, value, budget=COMMAND_BUDGET))
+                        for part in read_relation(snapshot, value, budget=COMMAND_BUDGET):
+                            protected_records.add(part.incidence_id)
+                            if part.role_id == authority.role('payload'):
+                                protected_records.add(part.participant_id)
+                root = parent
+
+        def prepare(snapshot, created, replaced):
+            verify_exact_authority_head(authority, snapshot)
+            before = _current_head_member(authority, snapshot)
+            preserve_head_records(snapshot, before)
+            if any(cell.id in protected_records and snapshot.cells[cell.id] != cell for cell in replaced):
+                raise InvalidCell('signed authority head records are immutable')
+            candidate = Snapshot(snapshot.revision + 1, MappingProxyType(ChainMap(
+                {cell.id: cell for cell in created}, {cell.id: cell for cell in replaced}, snapshot.cells)))
+            after = _current_head_member(authority, candidate)
+            if after is not None and (before is None or after.participant_id != before.participant_id):
+                root = after.participant_id
+                projection = validate_composition(authority, candidate, root)
+                parents = tuple(member.participant_id for member in projection.members
+                    if member.role_id == authority.role('parent-head'))
+                expected_parents = () if before is None else (before.participant_id,)
+                expected_digest = '0' * 64 if before is None else _stored_head_record_digest(
+                    authority, snapshot, before.participant_id)
+                parent_digest = _decode_value(authority, candidate,
+                    _single_member(candidate, root, authority.role('parent-head-digest')))
+                if parents != expected_parents or parent_digest != expected_digest:
+                    raise InvalidCell('prepared head does not descend from the current owner')
+                _verify_authority_head(authority, candidate, root,
+                    candidate_changes=(snapshot, created, replaced))
+                return created, replaced
+            plan = _prepare_signed_change(authority, snapshot, create=created, replace_cells=replaced)
+            return plan.create, plan.replace
+
+        store._signed_commit_authority = authority
+        store._commit_transform = prepare
 
 
 @dataclass(frozen=True, slots=True)
@@ -4049,17 +4123,27 @@ def _commit_with_receipts(
         metadata.extend((*proof_cells, *command_cells, *receipt_cells))
     history_patch = _append_relation_members(snapshot, authority.manifest.history_root,
         tuple((authority.role("receipt"), root) for root in receipt_roots))
-    revision = _commit_signed_change(
-        authority,
-        snapshot,
-        create=(
-            *resource_create,
-            *metadata,
-            *history_patch.create,
-        ),
-        replace_cells=(*resource_replace, *history_patch.replace),
-        head_root=head_root,
-    )
+    from . import commit_intent
+    declaration = nullcontext()
+    if (getattr(authority.store, '_signed_commit_authority', None) is authority
+            and commit_intent.current_declaration() is None):
+        # These exact actor/scope/intent fields have independently signed
+        # requests and graph policy proofs above. Pure reads never reach this
+        # mutation boundary; operational contexts still refuse kernel commits.
+        declaration = commit_intent.declare(commit_intent.AGENT_WORK,
+            actor=primary.actor_root, work=primary.scope_root, reason=primary.intent)
+    with declaration:
+        revision = _commit_signed_change(
+            authority,
+            snapshot,
+            create=(
+                *resource_create,
+                *metadata,
+                *history_patch.create,
+            ),
+            replace_cells=(*resource_replace, *history_patch.replace),
+            head_root=head_root,
+        )
     return CommandResult(
         result_root,
         revision,

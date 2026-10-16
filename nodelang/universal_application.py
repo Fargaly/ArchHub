@@ -20293,6 +20293,9 @@ _APPLICATION_SETTING_SPECS = {
     "stale_claim_after_idle_minutes": ("number", {"min": 1, "max": 1440, "step": 1}),
     "archive_after_idle_days": ("number", {"min": 1, "max": 3650, "step": 1}),
     "tick_cadence_minutes": ("number", {"min": 1, "max": 1440, "step": 1}),
+    "backup_count": ("number", {"min": 1, "max": 100, "step": 1}),
+    "backup_budget_bytes": ("number", {"min": 1048576, "max": 1099511627776, "step": 1048576}),
+    "keep_running_in_tray": ("boolean", {"min": 0, "max": 1, "step": 1}),
 }
 
 # Each edge names an actual reader of an owner object. Imported Grand Map
@@ -20342,11 +20345,8 @@ def _application_reader_relations(registry, visible_roots):
 
 
 def _application_setting_default(key: str) -> int:
-    return {
-        "stale_claim_after_idle_minutes": _WORKSHOP_BOARD_DEFAULT_STALE_CLAIM_MINUTES,
-        "archive_after_idle_days": _WORKSHOP_BOARD_DEFAULT_ARCHIVE_DAYS,
-        "tick_cadence_minutes": _WORKSHOP_BOARD_DEFAULT_TICK_CADENCE_MINUTES,
-    }[key]
+    from .library_engines import LIBRARY_ITEM_ENGINES
+    return int(LIBRARY_ITEM_ENGINES['tool_workshop']['params'][key])
 
 
 def _project_application_node_settings(
@@ -20366,9 +20366,9 @@ def _project_application_node_settings(
             for key, (editor, constraints) in _APPLICATION_SETTING_SPECS.items():
                 relation, value_root = _workshop_board_property_root(str(node["id"]), key)
                 node["params"].append({
-                    "label": key, "value": _workshop_board_int_param(
+                    "label": key, "value": (bool if editor == 'boolean' else int)(_workshop_board_int_param(
                         snapshot, registry, key, default=_application_setting_default(key),
-                        lower=constraints["min"], upper=constraints["max"]),
+                        lower=constraints["min"], upper=constraints["max"])),
                     "owner": node["id"], "relation": relation,
                     "value_root": value_root, "cell_id": value_root if _workshop_board_override_active(snapshot, registry, relation) else None,
                     "editable": True, "editor": editor, "constraints": constraints,
@@ -37382,6 +37382,13 @@ def _workshop_board_int_param(
     return value
 
 
+def read_universal_keep_running_in_tray(snapshot: Snapshot, registry: UniversalApplicationRegistry) -> bool:
+    """The desktop close behavior reads its same graph-owned Settings toggle."""
+    _, bounds = _APPLICATION_SETTING_SPECS['keep_running_in_tray']
+    return bool(_workshop_board_int_param(snapshot, registry, 'keep_running_in_tray',
+        default=_application_setting_default('keep_running_in_tray'), lower=bounds['min'], upper=bounds['max']))
+
+
 def _set_workshop_board_int_param(
     store: CellStore,
     registry: UniversalApplicationRegistry,
@@ -52623,6 +52630,10 @@ def edit_universal_property(
         visible, _relations, _properties = _session_canvas_roots(snapshot, registry, view_session)
         if owner not in visible:
             raise InvalidCell("property relation is outside the application lens")
+        if _editor == 'boolean':
+            if value not in {'true', 'false'}:
+                raise InvalidCell('application toggle requires true or false')
+            value = '1' if value == 'true' else '0'
         try:
             number = int(value)
         except ValueError as exc:

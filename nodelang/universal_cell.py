@@ -1647,6 +1647,7 @@ class _SqliteJournal:
         expected_revision: int,
         next_revision: int,
         changed: Iterable[Cell],
+        *, physical_write=None,
     ) -> None:
         changed = tuple(changed)
         committed = False
@@ -1667,6 +1668,8 @@ class _SqliteJournal:
             )
             self._insert_versions(next_revision, changed)
             self._upsert_current(next_revision, changed)
+            if physical_write is not None:
+                physical_write(self._connection)
             self._fault("before_commit")
             self._connection.commit()
             committed = True
@@ -3010,6 +3013,16 @@ class CellStore:
                 raise InvalidCell("an in-memory CellStore has no SQLite backup")
             return self._journal.backup_to(destination)
 
+    def sqlite_storage(self):
+        """Owner-only physical handle for adapters sharing this SQLite journal.
+
+        Adapters retain this store's lock and never close the shared connection.
+        Semantic graph mutations still pass through commit and its intent gate.
+        """
+        if self._closed or not isinstance(self._journal, _SqliteJournal):
+            raise InvalidCell("shared physical storage requires a live SQLite owner")
+        return self._journal._connection, self._lock
+
     def __enter__(self) -> "CellStore":
         return self
 
@@ -3414,7 +3427,10 @@ class CellStore:
         create: Iterable[Cell] = (),
         replace: Iterable[Cell] = (),
         precommit_guard: Callable[[], None] | None = None,
+        physical_write=None,
     ) -> int:
+        if physical_write is not None and (not callable(physical_write) or not isinstance(self._journal, _SqliteJournal)):
+            raise InvalidCell("atomic physical writes require a local SQLite owner and callable")
         created = tuple(create)
         replaced = tuple(replace)
         listeners: tuple[Callable[[CommitEvent], None], ...]
@@ -3429,6 +3445,11 @@ class CellStore:
                     "expected revision %s, current revision is %s"
                     % (expected_revision, self._revision)
                 )
+
+            transform = getattr(self, '_commit_transform', None)
+            if transform is not None and (created or any(
+                    self._cells.get(cell.id) != cell for cell in replaced)):
+                created, replaced = transform(Snapshot(self._revision, self._cells), created, replaced)
 
             base = self._cells
             if (
@@ -3566,10 +3587,14 @@ class CellStore:
             snapshot = Snapshot(next_revision, published)
             if self._journal is not None:
                 try:
+                    physical_options = {} if physical_write is None else {"physical_write": physical_write}
+                    if physical_write is not None and not isinstance(self._journal, _SqliteJournal):
+                        raise InvalidCell("atomic physical writes require a local SQLite owner")
                     self._journal.append(
                         expected_revision,
                         next_revision,
                         tuple(created) + tuple(replaced),
+                        **physical_options,
                     )
                 except Conflict:
                     self._adopt_journal_state(self._load_journal_state())

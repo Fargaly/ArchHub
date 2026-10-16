@@ -1,105 +1,57 @@
-"""Forcing tests for the non-destructive Windows packaging contract."""
+"""Contracts of the sole colleague installer; no install or app is launched."""
 from __future__ import annotations
 
-import json
-import os
-import re
-import subprocess
 from pathlib import Path
-
+import os
+import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGE = ROOT / "packaging" / "windows"
+PACKAGE = ROOT / 'packaging' / 'windows'
 
 
-def _read(name):
-    return (PACKAGE / name).read_text(encoding="utf-8")
+def test_one_package_uses_the_current_product_version_and_canonical_state():
+    from nodelang.persistence import application_database_path
+    assert (ROOT / 'VERSION').read_text(encoding='utf-8').strip()
+    assert application_database_path(Path('fixture-profile')).name == 'authority.sqlite3'
+    assert not (PACKAGE / 'package-manifest.json').exists()
 
 
-def test_package_metadata_matches_the_universal_application_schema_and_is_versioned():
-    manifest = json.loads(_read("package-manifest.json"))
-    application = (ROOT / "nodelang" / "universal_application.py").read_text(
-        encoding="utf-8"
-    )
-    schema = re.search(
-    r"UNIVERSAL_APPLICATION_SCHEMA_VERSION\s*=\s*['\"]([^'\"]+)", application
-    ).group(1)
-    assert manifest["format"] == "archhub-windows-package-v2"
-    assert re.fullmatch(r"\d+\.\d+\.\d+", manifest["product_version"])
-    assert manifest["runtime"] == "universal-cell"
-    assert manifest["universal_application_schema_version"] == schema
-    assert "application_schema_version" not in manifest
-    assert manifest["state_path"] == r"%LOCALAPPDATA%\ArchHub\node-native-wip.json.gz"
+def test_installed_launcher_uses_only_its_private_pythonw_and_same_entry():
+    launcher = (ROOT / 'installer/ArchHub.vbs').read_text(encoding='utf-8')
+    assert 'launch_archhub_test.py' in launcher
+    assert '\\.venv\\Scripts\\pythonw.exe' in launcher
+    assert 'C:\\Users\\' not in launcher
+    assert 'args, 0, True' in launcher
+    assert not (PACKAGE / 'Launch-ArchHub.vbs').exists()
 
 
-def test_launcher_is_portable_quiet_and_uses_only_the_bundled_runtime(tmp_path):
-    launcher = _read("Launch-ArchHub.vbs")
-    assert "ArchHub.exe" in launcher
-    assert "python" not in launcher.lower()
-    assert "C:\\Users\\" not in launcher
-    assert 'shell.Run command, 0, False' in launcher
-    env = os.environ.copy()
-    env["LOCALAPPDATA"] = str(tmp_path / "Local App Data")
-    result = subprocess.run(
-        ["cscript.exe", "//nologo", str(PACKAGE / "Launch-ArchHub.vbs"), "--dry-run"],
-        check=True,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    assert f"executable={PACKAGE / 'ArchHub.exe'}" in result.stdout
-    assert f"state_path={tmp_path / 'Local App Data' / 'ArchHub' / 'node-native-wip.json.gz'}" in result.stdout
-    assert "window_style=0" in result.stdout and "wait=false" in result.stdout
+def test_the_single_runtime_ships_qt_webengine_and_host_dependencies():
+    requirements = (ROOT / 'requirements.txt').read_text(encoding='utf-8')
+    assert 'PyQt6>=' in requirements and 'PyQt6-WebEngine>=' in requirements
+    assert 'pywin32==311' in requirements
+    assert not (PACKAGE / 'ArchHub.spec').exists()
+    assert not (PACKAGE / 'entrypoint.py').exists()
 
 
-def test_pyinstaller_bundle_is_windowed_onedir_and_collects_runtime_dependencies():
-    spec = _read("ArchHub.spec")
-    requirements = [
-        line for line in _read("requirements-build.txt").splitlines() if line
-    ]
-    assert "console=False" in spec
-    assert "COLLECT(" in spec
-    assert "target_arch=\"x86_64\"" in spec
-    assert "PyQt6.QtWebEngineWidgets" in spec
-    assert "cryptography.hazmat.primitives.ciphers.aead" in spec
-    assert "win32com.client" in spec
-    assert "pythoncom" in spec
-    assert "nodelang.baboom_native_runtime" in spec
-    assert "spritesheet.png" in spec
-    assert "public_runtime_map.json" in spec
-    assert all(re.fullmatch(r"[A-Za-z0-9_-]+==[^=\s]+", line) for line in requirements)
-    assert any(line.startswith("PyInstaller==") for line in requirements)
-    assert any(line.startswith("PyQt6-WebEngine==") for line in requirements)
-    assert "pywin32==311" in requirements
+def test_per_user_shortcuts_all_use_the_same_application_icon_and_launcher():
+    source = (ROOT / 'installer/ArchHub.iss').read_text(encoding='utf-8')
+    assert 'PrivilegesRequired=lowest' in source
+    assert 'DefaultDirName={localappdata}\\ArchHub' in source
+    shortcuts = source.split('[Icons]', 1)[1].split('[', 1)[0]
+    assert shortcuts.count('Filename: "{app}\\{#AppExe}"') == 2
+    assert shortcuts.count('IconFilename: "{app}\\archhub.ico"') == 2
+    uninstall = source.split('[UninstallDelete]', 1)[1].split('[', 1)[0]
+    assert '{localappdata}' not in uninstall
 
 
-def test_inno_contract_installs_per_user_with_shortcuts_and_preserves_wip():
-    setup = _read("setup.iss")
-    assert "PrivilegesRequired=lowest" in setup
-    assert r"DefaultDirName={localappdata}\Programs\{#AppName}" in setup
-    assert r'Name: "{userprograms}\{#AppName}"' in setup
-    assert r'Name: "{userdesktop}\{#AppName}"' in setup
-    assert "UninstallDisplayName={#AppName}" in setup
-    assert "UninstallDisplayIcon={app}\\ArchHub.exe" in setup
-    assert "[UninstallDelete]" not in setup
-    assert r"{localappdata}\ArchHub\node-native-wip.json.gz" not in setup
-    assert "Launch-ArchHub.vbs" in setup
-    assert "{app}" not in setup.split("[Code]", 1)[1]
-
-
-def test_build_outputs_stay_outside_the_repository_and_signing_uses_cert_store():
-    build = _read("build.ps1")
-    signing = _read("sign.ps1")
-    assert 'Join-Path $env:LOCALAPPDATA "ArchHub\\packaging\\$version"' in build
-    assert "requirements-build.txt" in build and "ArchHub.spec" in build
-    assert "Test-SourcePortability.ps1" in build
-    assert "nodelang\\universal_application.py" in build
-    assert "UNIVERSAL_APPLICATION_SCHEMA_VERSION" in build
-    assert "nodelang\\application.py" not in build
-    assert "ARCHHUB_SIGN_CERT_SHA1" in signing
-    assert "/sha1" in signing
-    assert ".pfx" not in signing.lower()
-    assert "/p " not in signing.lower()
+def test_build_requires_an_explicit_output_and_signing_uses_the_os_certificate_store():
+    build = (ROOT / 'installer/build_release.ps1').read_text(encoding='utf-8')
+    signing = (PACKAGE / 'sign.ps1').read_text(encoding='utf-8')
+    assert '[string]$OutputDirectory' in build
+    assert 'ARCHHUB_SIGN_CERT_SHA1' in signing and '/sha1' in signing
+    assert '.pfx' not in signing.lower() and '/p ' not in signing.lower()
+    assert not (PACKAGE / 'build.ps1').exists()
 
 
 def test_source_portability_gate_accepts_portable_input_and_rejects_private_absolute_paths(tmp_path):
@@ -127,7 +79,6 @@ def test_source_portability_gate_accepts_portable_input_and_rejects_private_abso
         leaked_result.stdout + leaked_result.stderr
     )
 
-
 def test_all_packaging_powershell_scripts_parse():
     for script in PACKAGE.glob("*.ps1"):
         env = os.environ.copy()
@@ -147,17 +98,7 @@ def test_all_packaging_powershell_scripts_parse():
         assert result.returncode == 0, f"{script.name}: {result.stderr}"
 
 
-def test_validate_only_runs_the_complete_preflight_and_reports_tooling():
-    result = subprocess.run(
-        ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
-         "-File", str(PACKAGE / "build.ps1"), "-ValidateOnly"],
-        check=True, capture_output=True, text=True,
-    )
-    start = result.stdout.find("{")
-    report = json.loads(result.stdout[start:])
-    assert report["runtime"] == "universal-cell"
-    assert report["universal_application_schema_version"] == "universal-cell-v1"
-    assert report["source_portable"] is True
-    assert set(report) >= {
-        "pyinstaller_installed", "inno_setup_installed", "signtool_installed"
-    }
+def test_the_module_entry_can_be_imported_without_loading_qt_or_an_application():
+    code = "import sys; import nodelang.desktop; assert 'PyQt6.QtWidgets' not in sys.modules"
+    done = subprocess.run([sys.executable, '-c', code], cwd=ROOT, capture_output=True, text=True, timeout=30)
+    assert done.returncode == 0, done.stderr

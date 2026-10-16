@@ -406,6 +406,8 @@ namespace RevitMCPCore
                 UIDoc = app.ActiveUIDocument,
                 Doc   = app.ActiveUIDocument?.Document,
             };
+            // Script execution needs an open model; the /open route opens one first.
+            if (ctx.Doc == null) return JsonError("No active document. Open a model first with the open route.");
 
             // AgDR-0031 — pass EVERY loaded assembly as a reference, not a
             // hardcoded 6-entry list.  On .NET 8 (Revit 2025+) csc enforces

@@ -93,17 +93,25 @@ def test_open_failure_is_structured_and_does_not_write(fixture_exe, state):
     assert result["answer"]["error"] and result["Opens"] == result["Starts"] == 0
 
 
-@pytest.mark.parametrize("active,transaction,starts", [(False, True, 0), (False, False, 0),
-                                                     (True, False, 0), (True, True, 1)])
-def test_exec_home_and_explicit_app_mode_keep_model_transaction_default(fixture_exe, active, transaction, starts):
-    result = run(fixture_exe, "/exec", {"code": "probe", "transaction": transaction}, active=active)
+@pytest.mark.parametrize("transaction,starts", [(False, 0), (True, 1)])
+def test_exec_explicit_app_mode_keeps_model_transaction_default(fixture_exe, transaction, starts):
+    result = run(fixture_exe, "/exec", {"code": "probe", "transaction": transaction}, active=True)
     assert result["answer"]["status"] == "ok" and result["Calls"] == 1
     assert result["Starts"] == result["Commits"] == starts
-    assert result["answer"]["result"] == {"doc_null": not active, "uidoc_null": not active,
+    assert result["answer"]["result"] == {"doc_null": False, "uidoc_null": False,
                                             "modifiable": bool(starts)}
 
 
-@pytest.mark.parametrize("active", [False, True])
+@pytest.mark.parametrize("transaction", [True, False])
+def test_exec_without_a_model_never_runs_user_code(fixture_exe, transaction):
+    # Broker review R1: no-document exec would hand arbitrary C# the full UIApplication
+    # (create/save documents). Opening a first model is the /open route's job.
+    result = run(fixture_exe, "/exec", {"code": "probe", "transaction": transaction}, active=False)
+    assert result["answer"]["status"] == "error" and "No active document" in result["answer"]["error"]
+    assert result["Calls"] == result["Starts"] == result["Opens"] == 0
+
+
+@pytest.mark.parametrize("active", [True])
 def test_app_script_can_switch_documents(fixture_exe, active):
     result = run(fixture_exe, "/exec", {"code": "open", "transaction": False}, active=active)
     assert result["answer"]["status"] == "ok" and result["Opens"] == 1 and result["Starts"] == 0

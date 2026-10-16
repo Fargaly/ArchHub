@@ -302,6 +302,16 @@ const pmEdit = (id, defs) => {
 // These are disposable drafts and acknowledgements, not another parameter store.
 let pmWriteTail = Promise.resolve();
 let pmGraphRunning = false;
+const pmRunListeners = new Set();
+function useInspectorRun(id) {
+  const [, refresh] = React.useState(0);
+  React.useEffect(() => {
+    const notify = () => refresh(value => value + 1);
+    pmRunListeners.add(notify);
+    return () => pmRunListeners.delete(notify);
+  }, [id]);
+  return PM_EDITS.get(id)?.persistence?.execution || null;
+}
 const pmPersistence = rec => {
   if (!rec.persistence) rec.persistence = {
     drafts: new Map(), queued: new Set(), pending: new Set(), errors: new Map(),
@@ -310,7 +320,10 @@ const pmPersistence = rec => {
   return rec.persistence;
 };
 const pmNotify = state => state.listeners.forEach(notify => notify());
-const pmNotifyAll = () => PM_EDITS.forEach(rec => pmNotify(pmPersistence(rec)));
+const pmNotifyAll = () => {
+  PM_EDITS.forEach(rec => pmNotify(pmPersistence(rec)));
+  pmRunListeners.forEach(notify => notify());
+};
 
 async function pmPersistValue(node, key, value) {
   const row = (node.params || []).find(row => row.k === key);
@@ -931,8 +944,47 @@ function ApplicationNodeParameters({node, compact = false}) {
   </div>;
 }
 function ApplicationAwareInspector(props) {
-  return props.node.application ? <ApplicationNodeParameters node={props.node}/> : <CoreNodeInspector {...props}/>;
+  const properties = props.node.application ? <ApplicationNodeParameters node={props.node}/> : <CoreNodeInspector {...props}/>;
+  return window.ArchHubHistory?.isNode(props.node)
+    ? <>{properties}<HistoryInspector node={props.node}/></> : properties;
 }
+const HistoryInspector = ({ node }) => {
+  const [filter, setFilter] = React.useState('all');
+  const rows = Array.isArray(node.history_rows) ? node.history_rows : [];
+  const visible = rows.filter(row => filter === 'all' || (/founder|owner|user|mine|me/i.test(String(row.actor || row.capability || '')) ? 'mine' : 'agents') === filter);
+  const newestAppliedRoot = rows.find(row => row.state === 'applied')?.root;
+  return <section aria-label="History rows" data-history-inspector="true" style={{ borderTop:`1px solid ${PM.lineHair}`, padding:'10px 0 0', marginTop:10 }}>
+    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, marginBottom:8 }}>
+      <div style={{ fontFamily:PM.sans, fontSize:12, fontWeight:600, color:PM.ink }}>History</div>
+      <div role="tablist" aria-label="History filter" style={{ display:'flex', gap:5 }}>
+        {['all','mine','agents'].map(key => <window.AH_DS.Btn key={key} type="button" onClick={() => setFilter(key)}
+          sm kind={filter === key ? 'primary' : 'secondary'}>{key === 'all' ? 'All' : key === 'mine' ? 'Mine' : 'Agents'}</window.AH_DS.Btn>)}
+      </div>
+    </div>
+    <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+      {visible.length ? visible.map(row => <div key={row.root || row.timestamp || row.operation} data-history-row={row.root || ''} style={{
+        display:'grid', gridTemplateColumns:'minmax(0,1fr) auto', gap:8, alignItems:'center', fontSize:PM_FS.dataSm.sz,
+        border:`1px solid ${PM.lineHair}`, borderRadius:PM.rad.sm, padding:'7px 8px', background:PM.bgSoft }}>
+        <div style={{ minWidth:0 }}>
+          <div style={{ fontFamily:PM.mono, fontSize:PM_FS.dataSm.sz, color:PM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+            {window.ArchHubHistory.shortTime(row.timestamp)} · {row.actor || row.capability || 'Graph'} · {row.operation || 'Graph change'}
+          </div>
+          <div style={{ fontFamily:PM.sans, fontSize:PM_FS.dataSm.sz, color:PM.inkSoft, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+            {window.ArchHubHistory.targetLabel(row)} · {row.state || 'kept'}
+          </div>
+        </div>
+        <div style={{ display:'flex', gap:5 }}>
+          {row.target_root && <window.AH_DS.Btn type="button" sm
+            onClick={() => window.__archhubSelectNodeById?.(row.target_root)}>Jump to</window.AH_DS.Btn>}
+          {row.root === newestAppliedRoot && node.action_history?.can_undo === true && typeof window.ARCHHUB_HISTORY === 'function' &&
+            <window.AH_DS.Btn type="button" sm onClick={() => window.ARCHHUB_HISTORY('undo')}>Undo last</window.AH_DS.Btn>}
+        </div>
+      </div>) : <div role="status" style={{ fontFamily:PM.sans, fontSize:12, color:PM.inkSoft }}>No rows for this filter.</div>}
+    </div>
+  </section>;
+};
+
+
 function NodeInspector({ node, onFork, watchActions = {}, plate = false, preview, onExport }) {
   const visibleParams = React.useMemo(() => (node.params || []).filter(row =>
     !INTERNAL_PARAM_KEYS.has(String(row.k || row.label || '').toLowerCase()) &&
@@ -987,6 +1039,8 @@ function NodeInspector({ node, onFork, watchActions = {}, plate = false, preview
     persistence.running = true;
     persistence.runError = '';
     persistence.result = '';
+    // The Runs tab observes this attempt even when the node has no wires/status.
+    const execution = persistence.execution = {running:true, result:'', error:''};
     pmNotifyAll();
     try {
       await pmFlushParameters();
@@ -1011,9 +1065,12 @@ function NodeInspector({ node, onFork, watchActions = {}, plate = false, preview
       }
       const waiting = Object.keys(result.pending || {}).length;
       if (waiting) persistence.result += ' · ' + waiting + ' node(s) did not complete';
+      execution.result = persistence.result;
     } catch (error) {
       persistence.runError = error?.message || 'Graph execution failed.';
+      execution.error = persistence.runError;
     } finally {
+      execution.running = false;
       persistence.running = false;
       pmGraphRunning = false;
       pmNotifyAll();
@@ -1128,11 +1185,16 @@ function NodeInspector({ node, onFork, watchActions = {}, plate = false, preview
     onPromote:()=>setWired(w=>({...w,[spec.k]:'graph input'})),onUnwire:()=>setWired(w=>{const n={...w};delete n[spec.k];return n;}),
     onRename:lbl=>setLabels(l=>({...l,[spec.k]:lbl})),onDelete:()=>discardCustom(spec.k)});
   return (
-    plate ? <window.AH_DS.Properties params={onPage} parameterRows={<>{pages.length>1&&<div role="group" aria-label="Parameter pages" style={{display:'flex',gap:4,padding:8}}>{pages.map(pg=><window.AH_DS.Btn sm key={pg} aria-pressed={page===pg} onClick={()=>setPage(pg)}>{pg}</window.AH_DS.Btn>)}</div>}{onPage.map(renderParam)}</>}
+    plate ? <div data-node-inspector="true"><window.AH_DS.Properties params={onPage} parameterRows={<>{pages.length>1&&<div role="group" aria-label="Parameter pages" style={{display:'flex',gap:4,padding:8}}>{pages.map(pg=><window.AH_DS.Btn sm key={pg} aria-pressed={page===pg} onClick={()=>setPage(pg)}>{pg}</window.AH_DS.Btn>)}</div>}{onPage.map(renderParam)}</>}
     ports={[...(node.ins||[]).map(p=>({...p,side:'in'})),...(node.outs||[]).map(p=>({...p,side:'out'}))]}
     preview={preview} onExport={onExport} examples={node.examples || []}
     error={persistence.runError || Array.from(persistence.errors.values()).join(' · ')}
-    actions={{...watchActions,retry:()=>{for(const key of persistence.errors.keys())set(key,rec.vals[key]);}}}/> :
+    actions={{...watchActions,retry:()=>{for(const key of persistence.errors.keys())set(key,rec.vals[key]);}}}/>
+      {persistence.result && <p role="status">{persistence.result}</p>}
+      <div role="group" aria-label="Node actions">
+        <window.AH_DS.Btn disabled={pmGraphRunning} onClick={runGraph} title="Rerun graph">{pmGraphRunning ? 'Running…' : 'Rerun'}</window.AH_DS.Btn>
+        <window.AH_DS.Btn onClick={forkNode} aria-label="Fork" data-fork-button title="Fork this node onto the canvas">Fork</window.AH_DS.Btn>
+      </div></div> :
     <div data-node-inspector="true" style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       {node.endpointError && <div role="alert" style={{fontSize:12, color:PM.warn, overflowWrap:'anywhere'}}>
         {node.endpointError} Endpoint compatibility cannot be determined from this projection.
@@ -1317,4 +1379,4 @@ const pmBtn = () => ({
 // Classic-script function bindings alias window properties. Retain the core
 // before exporting its wrapper, so ordinary nodes delegate to the same editor.
 const CoreNodeInspector = NodeInspector;
-Object.assign(window, { NodeInspector:ApplicationAwareInspector, ApplicationNodeParameters, wireAsNode, pmPersistValue });
+Object.assign(window, { NodeInspector:ApplicationAwareInspector, ApplicationNodeParameters, wireAsNode, pmPersistValue, useInspectorRun });

@@ -2020,6 +2020,64 @@ impl Extractor<'_> {
         if !body_text.contains("fetch(") && !body_text.contains("useEffect(") {
             return;
         }
+        // Unknown effects still require request states, including calls through
+        // helpers. Exempt only a locally proven, synchronous confirmation timer.
+        let mut pending = vec![body];
+        let mut setters = BTreeSet::new();
+        let mut effects = vec![];
+        while let Some(node) = pending.pop() {
+            if node.kind() == "variable_declarator" {
+                if let (Some(name), Some(value)) = (node.child_by_field_name("name"), node.child_by_field_name("value")) {
+                    if name.kind() == "array_pattern" && value.kind() == "call_expression" {
+                        if let Some(function) = value.child_by_field_name("function") {
+                            if matches!(text(function, self.source), "useState" | "React.useState") {
+                                if let Some(setter) = children(name).get(1) {
+                                    setters.insert(text(*setter, self.source).to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if node.kind() == "call_expression" {
+                if let Some(function) = node.child_by_field_name("function") {
+                    if matches!(text(function, self.source), "useEffect" | "React.useEffect") {
+                        effects.push(node);
+                    }
+                }
+            }
+            pending.extend(children(node));
+        }
+        let timers_only = !effects.is_empty() && effects.iter().all(|effect| {
+            let Some(arguments) = effect.child_by_field_name("arguments") else { return false; };
+            let Some(callback) = children(arguments).first().copied() else { return false; };
+            let mut pending = vec![callback];
+            let (mut timer, mut cleanup) = (false, false);
+            while let Some(node) = pending.pop() {
+                if node.kind() == "await_expression" || text(node, self.source).trim_start().starts_with("async ") {
+                    return false;
+                }
+                if node.kind() == "call_expression" {
+                    let Some(function) = node.child_by_field_name("function") else { return false; };
+                    match text(function, self.source) {
+                        "setTimeout" => {
+                            let Some(arguments) = node.child_by_field_name("arguments") else { return false; };
+                            let Some(handler) = children(arguments).first().copied() else { return false; };
+                            if !matches!(handler.kind(), "arrow_function" | "function_expression") { return false; }
+                            timer = true;
+                        }
+                        "clearTimeout" => cleanup = true,
+                        name if setters.contains(name) => {},
+                        _ => return false,
+                    }
+                }
+                pending.extend(children(node));
+            }
+            timer && cleanup
+        });
+        if !body_text.contains("fetch(") && timers_only {
+            return;
+        }
         let mut states: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut actionable_error = false;
         let mut stack = vec![body];

@@ -24199,6 +24199,8 @@ def _project_session_action_history(
     rows = []
     for transaction_root in reversed(tuple(transactions)):
         transaction = transactions[transaction_root]
+        scope_roots = tuple(sorted(transaction.scope_roots))
+        target_root = scope_roots[0] if scope_roots else ""
         route = route_keys.get(transaction.operation_root, "")
         path = route.split(" ", 1)[-1] if route else ""
         operation = (
@@ -24228,6 +24230,15 @@ def _project_session_action_history(
             "capability": (
                 _text(snapshot, transaction.authority_root)
                 if transaction.authority_root is not None else "legacy"
+            ),
+            "actor": (
+                _text(snapshot, transaction.authority_root)
+                if transaction.authority_root is not None else "legacy"
+            ),
+            "target_root": target_root,
+            "target_label": (
+                _scope_label(snapshot, registry, target_root)
+                if target_root else ""
             ),
             "scope_count": len(transaction.scope_roots),
             "interface": transaction.interface_root,

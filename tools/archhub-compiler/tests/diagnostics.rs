@@ -503,3 +503,22 @@ fn retirement_tokens_and_descriptive_metric_labels_are_not_paths_or_controls() {
     assert!(has(&report("a.py", "timeout = 5\n"), "E0007"));
     assert!(has(&report("a.py", "RETIRED = ['old.py']\nvisit('old.py')\n"), "E0006"));
 }
+
+#[test]
+fn synchronous_timer_effect_is_not_a_request() {
+    let r = report("hub.jsx", "const Hub = () => { const [open,setOpen]=useState(false); useEffect(() => { if(!open) return; const timer=setTimeout(() => setOpen(false),6000); return () => clearTimeout(timer); },[open]); return <div>{open ? 'Confirm' : 'Ready'}</div>; };");
+    assert!(!has(&r, "E0003") && !has(&r, "E0004"), "timer effect is synchronous UI state: {:?}", r.diagnostics);
+}
+#[test]
+fn request_effects_still_need_rendered_request_states() {
+    for source in [
+        "const Screen = () => {useEffect(() => { fetch('/items'); }, []); return <div>ready</div>;};",
+        "const Screen = () => {useEffect(async () => {await loadItems();}, []); return <div>ready</div>;};",
+        "const Screen = () => {useEffect(() => {loadItems().then(setItems);}, []); return <div>ready</div>;};",
+        "const loadItems = () => fetch('/items'); const Screen = () => {useEffect(() => {loadItems();}, []); return <div>ready</div>;};",
+        "const Screen = () => {useEffect(() => {const timer=setTimeout(() => fetch('/items'), delay); return () => clearTimeout(timer);}, []); return <div>ready</div>;};",
+    ] {
+        let r = report("screen.jsx", source);
+        assert!(has(&r, "E0003") && has(&r, "E0004"), "request effect escaped: {:?}", r.diagnostics);
+    }
+}

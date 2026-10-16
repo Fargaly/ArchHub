@@ -62,6 +62,18 @@ const canvases = {
   ], 11, {description:'Graph Alpha description'}),
   'graph-b': canvas('graph-b', 'Graph Beta', {id:'node-b', label:'Beta node', x:80, y:90}, 12),
   'graph-c': canvas('graph-c', 'Created Graph', {id:'node-c', label:'Created node', x:120, y:130}, 13),
+  'history': canvas('history', 'History Graph', [
+    {id:'node-h', label:'Target node', x:70, y:90},
+    {id:'history-node', label:'History', x:330, y:90, engine:'app:history', kind:'history', history_node:true},
+    {id:'history-title-only', label:'History', x:590, y:90},
+  ], 21, {action_history:{root:'history-root', can_undo:true, can_redo:false, transactions:[
+    {root:'tx-6', timestamp:new Date(new Date().setHours(10,5,0,0)).toISOString(), actor:'agent:codex', operation:'Move member', target_root:'node-h', target_label:'Target node', state:'applied'},
+    {root:'tx-5', timestamp:new Date(new Date().setHours(10,4,0,0)).toISOString(), actor:'founder', operation:'Place node', target_root:'node-h', target_label:'Target node', state:'undone'},
+    {root:'tx-4', timestamp:new Date(new Date().setHours(10,3,0,0)).toISOString(), actor:'agent:claude', operation:'Move', target_root:'node-h', target_label:'Target node', state:'applied'},
+    {root:'tx-3', timestamp:new Date(new Date().setHours(10,2,0,0)).toISOString(), actor:'agent:opencode', operation:'Wire', target_root:'node-h', target_label:'Target node', state:'discarded'},
+    {root:'tx-2', timestamp:new Date(new Date().setHours(10,1,0,0)).toISOString(), actor:'founder', operation:'Undo', target_root:'node-h', target_label:'Target node', state:'undo'},
+    {root:'tx-1', timestamp:new Date(new Date().setHours(10,0,0,0)).toISOString(), actor:'agent:codex', operation:'Place node', target_root:'node-h', target_label:'Target node', state:'applied'},
+  ]}}),
   'fresh': canvas('fresh', 'Fresh Profile Graph', [
     {id:'sketch-lines', label:'Sketch Lines', x:40, y:60},
     {id:'line-watcher', label:'Line Watcher', x:300, y:60},
@@ -78,6 +90,7 @@ const graphRows = {
   'graph-a': {id:'graph-a', title:'Graph Alpha', state:'idle', host:'archhub', when:'saved', file:'Graph composition', last:'1 node', model:''},
   'graph-b': {id:'graph-b', title:'Graph Beta', state:'idle', host:'archhub', when:'saved', file:'Graph composition', last:'1 node', model:''},
   'graph-c': {id:'graph-c', title:'Created Graph', state:'idle', host:'archhub', when:'saved', file:'Graph composition', last:'1 node', model:''},
+  'history': {id:'history', title:'History Graph', state:'idle', host:'archhub', when:'saved', file:'Graph composition', last:'2 nodes', model:''},
   'fresh': {id:'fresh', title:'Fresh Profile Graph', state:'idle', host:'archhub', when:'saved', file:'Graph composition', last:'5 nodes', model:''},
 };
 
@@ -97,6 +110,7 @@ function projectStudioCanvas(canvas) {
       id:n.id, cat:CATS(engine), title:n.label || n.id, sub:engine || 'Graph node',
       engine, assembly:n.assembly || '', kind:n.kind || n.assembly || '',
       openable:n.openable === true, composition:n.composition === true,
+      history_node:n.history_node === true,
       has_conversation:n.has_conversation === true, conversation_root:n.conversation_root || '',
       memberCount:Number.isSafeInteger(n.member_count) ? n.member_count : null,
       x:Number.isFinite(n.x) ? n.x : 200, y:Number.isFinite(n.y) ? n.y : 200,
@@ -140,7 +154,7 @@ async function mountStudio(options = {}) {
       ? {width:1000, height:760, left:0, top:0, right:1000, bottom:760}
       : {width:220, height:110, left:0, top:0, right:220, bottom:110};
   };
-  const calls = {open:[], create:[], nodeCreate:[], canvas:0, refresh:0, alerts:[], agent:[]};
+  const calls = {open:[], create:[], nodeCreate:[], history:[], canvas:0, refresh:0, alerts:[], agent:[]};
   let current = options.current || 'graph-a';
   const extraCanvases = options.canvases || {};
   const extraRows = options.graphRows || {};
@@ -193,9 +207,10 @@ async function mountStudio(options = {}) {
     }
     return currentCanvas();
   };
+  let initializingCanvas = true;
   win.ARCHHUB_GRAPH_OPEN = async id => {
     calls.open.push(id);
-    if (typeof options.openGraph === 'function') {
+    if (!initializingCanvas && typeof options.openGraph === 'function') {
       return options.openGraph(id, {
         setCurrent:value => { current = value; },
         sessions, graphRows:allRows, receiptCanvas:mountedReceiptCanvas,
@@ -242,6 +257,7 @@ async function mountStudio(options = {}) {
     conversation_root:String(node).startsWith('graph:') ? 'graph-room' : (node === 'session-a' ? 'room-a' : null),
     rows:node === 'session-a' ? [{id:'m1', who:'Agent', text:'Session conversation lives here.', time:'2026-10-10T10:00:00Z', kind:'message'}] : [],
     has_older:false});
+  win.ARCHHUB_HISTORY = async operation => { calls.history.push(operation); return {ok:true}; };
   win.AH_LIBRARY = [{cat:'logic', items:[{id:'test-node', title:'Test node', sub:'Noop node', engine:'engine:noop'}]}];
   win.ARCHHUB_LIVE = {sessions, currentGraph:current, hosts:[], connectors:[],
     graph:win.ARCHHUB_EXISTING_WORKSHOP.getSnapshot().topology.graph, memory:[], skills:[]};
@@ -252,7 +268,12 @@ async function mountStudio(options = {}) {
     if (file.source !== 'mount.jsx') win.eval(read('nodelang/studio/compiled/' + file.output));
   }
   win.eval('window.__studioRoot=ReactDOM.createRoot(document.getElementById("root")); ReactDOM.flushSync(()=>window.__studioRoot.render(React.createElement(StudioLM)));');
+  // This court exercises Canvas; boot now opens the distinct SCREENS1 Library.
+  win.ReactDOM.flushSync(() => win.document.querySelector('[data-app-rail] [data-rail-panel="Canvas"]').click());
   const settle = () => new Promise(resolve => win.setTimeout(resolve, 80));
+  await settle();
+  calls.open.length = 0; calls.canvas = 0;
+  initializingCanvas = false;
   const close = () => { try { win.ReactDOM.flushSync(() => win.__studioRoot.unmount()); } finally { dom.window.close(); } };
   const button = label => [...win.document.querySelectorAll('button')].find(node => node.textContent.trim() === label);
   const buttonIncludes = label => [...win.document.querySelectorAll('button')].find(node => node.textContent.includes(label));
@@ -346,6 +367,61 @@ test('opening a session from Home applies the graph-open receipt in place: one c
     assert.equal(studio.navigationErrors.length, 0, 'no reload/assign/replace navigation');
     assert.match(studio.doc.body.textContent, /Graph Beta/);
     assert.match(studio.doc.body.textContent, /Beta node/);
+  } finally { studio.close(); }
+});
+
+test('History node projects action history rows, filters, jumps, and uses existing undo', async () => {
+  const studio = await mountStudio({current:'history', sessions:[graphRows.history]});
+  try {
+    showCanvas(studio);
+    await studio.settle();
+    studio.click(studio.doc.querySelector('[data-canvas-add] button[aria-label="Open node library"]'));
+    await studio.settle();
+    assert.match(studio.doc.body.textContent, /App/);
+    assert.match(studio.doc.body.textContent, /History/);
+    studio.click(studio.doc.querySelector('button[aria-label="Close library"]'));
+    await studio.settle();
+    const historyCard = studio.doc.querySelector('.lm-node[data-node-id="history-node"]');
+    assert.ok(historyCard, 'History is a real canvas node');
+    assert.equal(historyCard.querySelectorAll('[data-history-row]').length, 5, 'card shows latest five rows');
+    const cardRows = [...historyCard.querySelectorAll('[data-history-row]')];
+    assert.ok(cardRows.every(row => Number.parseFloat(row.style.fontSize) >= 11), 'History card rows stay at least 11px');
+    assert.ok(cardRows.every(row => row.style.fontFamily), 'History card rows use mono sizing tokens');
+    assert.ok(cardRows.every(row => !/inkMuted/i.test(row.getAttribute('style') || '')), 'History card rows do not use inkMuted');
+    assert.doesNotMatch(historyCard.textContent, /node-h/, 'History card never renders raw target_root ids');
+    assert.doesNotMatch(historyCard.textContent, /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/, 'History card uses short timestamps');
+    assert.match(historyCard.textContent, /\d{2}:\d{2} · today/, 'History card shows today timestamps as short local time');
+    const moreButton = [...historyCard.querySelectorAll('button')].find(button => button.textContent.trim() === '+1 more');
+    assert.ok(moreButton, '+N more is an inspector-opening button');
+    studio.click(moreButton);
+    await studio.settle();
+    assert.ok(studio.doc.querySelector('[data-history-inspector="true"]'), '+N more opens the History inspector');
+    assert.equal(studio.doc.querySelector('.lm-node[data-node-id="history-node"]')?.getAttribute('data-selected'), 'true');
+    studio.click(historyCard);
+    await studio.settle();
+    let inspector = studio.doc.querySelector('[data-history-inspector="true"]');
+    assert.ok(inspector, 'inspector shows the full History list');
+    assert.equal(inspector.querySelectorAll('[data-history-row]').length, 6);
+    assert.ok(studio.doc.querySelector('[data-node-inspector] [data-fork-button]'), 'History preserves the existing node Properties and actions');
+    assert.ok([...inspector.querySelectorAll('[data-history-row]')].every(row => Number.parseFloat(row.style.fontSize) >= 11), 'History inspector rows stay at least 11px');
+    assert.doesNotMatch(inspector.textContent, /node-h/, 'History inspector never renders raw target_root ids');
+    assert.doesNotMatch(inspector.textContent, /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/, 'History inspector uses short timestamps');
+    assert.match(inspector.textContent, /\d{2}:\d{2} · today/, 'History inspector shows today timestamps as short local time');
+    const undoButtons = [...inspector.querySelectorAll('button')].filter(button => button.textContent.trim() === 'Undo last');
+    assert.equal(undoButtons.length, 1, 'only newest applied transaction exposes Undo last');
+    studio.click([...inspector.querySelectorAll('button')].find(button => button.textContent === 'Agents'));
+    await studio.settle();
+    inspector = studio.doc.querySelector('[data-history-inspector="true"]');
+    assert.equal(inspector.querySelectorAll('[data-history-row]').length, 4);
+    studio.click([...inspector.querySelectorAll('button')].find(button => button.textContent === 'Undo last'));
+    await studio.settle();
+    assert.deepEqual(studio.calls.history, ['undo']);
+    studio.click([...studio.doc.querySelectorAll('[data-history-inspector="true"] button')].find(button => button.textContent === 'Jump to'));
+    await studio.settle();
+    assert.equal(studio.doc.querySelector('.lm-node[data-node-id="node-h"]')?.getAttribute('data-selected'), 'true');
+    const titleOnly = studio.doc.querySelector('.lm-node[data-node-id="history-title-only"]');
+    assert.ok(titleOnly, 'fixture includes a user node titled History');
+    assert.equal(titleOnly.querySelector('[data-history-card="true"]'), null, 'user node titled History is not app History');
   } finally { studio.close(); }
 });
 
@@ -603,7 +679,11 @@ test('creating a node pans it into view without zooming in past the current view
     const before = studio.transform();
     const beforeZoom = Number(before.match(/scale\(([^)]+)\)/)?.[1]);
     assert.ok(Number.isFinite(beforeZoom), 'canvas zoom is readable before node create: ' + before);
-    studio.click(studio.byTitle('Add node'));
+    studio.click(studio.doc.querySelector('[data-canvas-add] button[aria-label="Open node library"]'));
+    await studio.settle();
+    const search = studio.doc.querySelector('[data-node-library-overlay] input[placeholder^="Search"]');
+    assert.ok(search, 'current Library search field is mounted');
+    studio.type(search, 'Test node');
     await studio.settle();
     studio.click(studio.buttonIncludes('Test node'));
     for (let i = 0; i < 12; i += 1) await studio.settle();

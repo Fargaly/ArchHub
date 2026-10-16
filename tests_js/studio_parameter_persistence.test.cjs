@@ -341,17 +341,23 @@ test('an uncertain wire-property write cannot be silently discarded', async () =
   assert.equal(panel.rec.persistence.errors.size,1);
 });
 
-test('another caller cannot start or adopt an in-flight graph execution request', async () => {
-  const html = fs.readFileSync(path.join(path.dirname(sourcePath), 'studio.html'), 'utf8');
-  const start = html.indexOf('let graphRunPromise = null;');
-  const end = html.indexOf('window.ARCHHUB_SET_PROP', start);
+// Exercise the same admitted runner installed by the current authority boot.
+function runOwner(run) {
+  const owner = fs.readFileSync(path.join(path.dirname(sourcePath), 'studio-authority.js'), 'utf8');
+  const start = owner.indexOf('    let running = null;');
+  const end = owner.indexOf('    global.ARCHHUB_RETRACT', start);
   assert.ok(start >= 0 && end > start);
+  const window = {};
+  vm.runInNewContext(owner.slice(start, end), {global:window, api:{run}});
+  return window;
+}
+
+test('another caller cannot start or adopt an in-flight graph execution request', async () => {
   let calls = 0, finish;
-  const ctx = {window:{ARCHHUB_LOAD_CANVAS:async()=>{}},jpost: () => { calls++; return new Promise(resolve => finish=resolve); }};
-  vm.runInNewContext(html.slice(start,end),ctx);
+  const ctx = {window:runOwner(() => { calls++; return new Promise(resolve => finish=resolve); })};
   const first = ctx.window.ARCHHUB_RUN();
   const second = ctx.window.ARCHHUB_RUN();
-  await assert.rejects(second,/already running/);
+  await assert.rejects(second,/already in progress/);
   assert.equal(calls,1);
   finish({display:{}}); await first;
   const later = ctx.window.ARCHHUB_RUN();
@@ -361,12 +367,8 @@ test('another caller cannot start or adopt an in-flight graph execution request'
 });
 
 test('inspector cannot mark newer saved parameters executed by another controls older run', async () => {
-  const html = fs.readFileSync(path.join(path.dirname(sourcePath), 'studio.html'), 'utf8');
-  const start = html.indexOf('let graphRunPromise = null;');
-  const end = html.indexOf('window.ARCHHUB_SET_PROP', start);
   let finish;
-  const ctx = {window:{ARCHHUB_LOAD_CANVAS:async()=>{}},jpost: () => new Promise(resolve => finish=resolve)};
-  vm.runInNewContext(html.slice(start,end),ctx);
+  const ctx = {window:runOwner(() => new Promise(resolve => finish=resolve))};
   const olderRun = ctx.window.ARCHHUB_RUN();
   ctx.window.ARCHHUB_SET_PROP = async () => ({ok:true});
   const {panel} = harness(ctx.window);
@@ -374,7 +376,7 @@ test('inspector cannot mark newer saved parameters executed by another controls 
   await panel.runGraph();
   assert.equal(panel.rec.ran,0);
   assert.equal(panel.rec.cooked.value,'old');
-  assert.match(panel.rec.persistence.runError,/already running/);
+  assert.match(panel.rec.persistence.runError,/already in progress/);
   finish({display:{'node-a':'older result'},pending:{}}); await olderRun;
   assert.equal(panel.rec.ran,0);
 });

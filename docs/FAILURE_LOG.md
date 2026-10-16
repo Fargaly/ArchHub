@@ -173,3 +173,9 @@ Status legend:
 - **claim**: Enforce admission preserves the existing approved self-extension success path while rejecting invalid writes.
 - **gap**: on frozen source db2e7c12, `test_green_approved_install_has_audited_reversible_plan` fails at `nodelang/domains/selfext.py:1376` with `E0100: change has no registered intent and identified author` for `10.PRODUCT/13.NODE-LANGUAGE`. Actual Rust transport succeeds; the sink remains unchanged. Evidence: `evidence/acompiler-product-first-failure.txt`, 1 failed in103.58s. Isolated mocked artifact courts do not prove the real adapter works.
 - **required repair**: a trusted proposal/session authority adapter supplies verified author and registered intent/scope bound to the exact pending and approval digests. Preserve the existing positive assertion; never suppress E0100 or substitute this implementation lane's ACOMPILER identity. Other opaque write adapters, runtime author persistence and own-gate violations remain open in RESULT-ACOMPILER.md. **CLASS-OF-FAILURE: a new mandatory gate without the legitimate caller's authority adapter disables an existing successful workflow.**
+
+### 2026-10-16 · LANDOLD2 diagnostic queue overlap
+- **status**: closed
+- **claim**: the lane runs its heavy verification sequentially.
+- **gap**: the initial source diagnostic and compiler-build diagnostic overlapped in the shared two-slot queue. No worker was stopped or replayed.
+- **resolution**: both ended naturally; all subsequent LANDOLD2 heavy runs are sequential. Queue labels and diagnostic evidence are retained under `evidence/landold/round2-*`. Final acceptance uses the frozen runs only.

@@ -19,6 +19,8 @@ from nodelang.universal_application import (
     claim_universal_governed_work,
     create_universal_governed_work,
     dry_run_workshop_board_sweep,
+    edit_universal_property,
+    project_universal_canvas,
     project_universal_governed_work_status,
     restore_archived_workshop_board_task,
     sweep_workshop_board_tasks,
@@ -115,6 +117,135 @@ def _state(store, registry, work_root):
         item["operational"]["current_state_label"].casefold()
         for item in status["items"] if item["root"] == work_root
     )
+
+
+def _workshop_archive_param(store, registry):
+    canvas = project_universal_canvas(
+        store,
+        registry,
+        authentication_context=_context(registry),
+    )
+    node = next(
+        row for row in canvas["nodes"]
+        if row["id"] == ua._system_tool_canvas_root("tool_workshop")
+    )
+    return next(
+        row for row in node["params"]
+        if row["label"] == "archive_after_idle_days"
+    )
+
+
+def test_board_backend_archive_days_property_round_trips_to_node_and_owner(tmp_path):
+    store, registry = _application(tmp_path)
+    param = _workshop_archive_param(store, registry)
+    assert param["value"] == 20
+
+    edit_universal_property(
+        store,
+        registry,
+        param["relation"],
+        "30",
+        mutation_route="/api/universal/set-property",
+        authentication_context=_context(registry),
+    )
+
+    reloaded = _workshop_archive_param(store, registry)
+    report = dry_run_workshop_board_sweep(
+        store,
+        registry,
+        authentication_context=_context(registry),
+    )
+    assert reloaded["value"] == 30
+    assert report["archive_after_idle_days"] == 30
+
+    # The accepted history fields follow the same real admitted owner change.
+    history = project_universal_canvas(
+        store, registry, authentication_context=_context(registry),
+    )["action_history"]["transactions"]
+    action = next(row for row in history
+                  if row["route"] == "POST /api/universal/set-property"
+                  and row["state"] == "applied")
+    assert action["actor"] == "catalog.configure"
+    assert action["target_root"] == ua._system_tool_canvas_root("tool_workshop")
+    assert action["target_label"] == "Workshop"
+
+
+def test_board_backend_tick_archives_idle_done_only_and_restore_returns_done(
+    tmp_path,
+    monkeypatch,
+):
+    store, registry = _application(tmp_path)
+    server = ApplicationServer(
+        universal_store=store,
+        universal_registry=registry,
+        runtime_compliance_runner=_green_runtime_compliance,
+    )
+    archive_param = _workshop_archive_param(store, registry)
+    edit_universal_property(
+        store,
+        registry,
+        archive_param["relation"],
+        "30",
+        mutation_route="/api/universal/set-property",
+        authentication_context=_context(registry),
+    )
+    monkeypatch.setattr("nodelang.universal_application.time.time", lambda: 120_000.0)
+    done = _work(store, registry, "tick old done archive")
+    done_session, done_compliance = _session(store, registry, "tick-done")
+    _claim(store, registry, done, done_session, done_compliance)
+    transition_universal_governed_work(
+        store,
+        registry,
+        done,
+        "submit",
+        agent_session_root=done_session,
+        evidence_payload="artifact is ready",
+        authentication_context=_context(registry),
+    )
+    adjudicate_universal_governed_work(
+        store,
+        registry,
+        done,
+        requesting_agent_session_root=done_session,
+        workspace_root=tmp_path,
+        authentication_context=_context(registry),
+    )
+    review = _work(store, registry, "tick live review kept")
+    review_session, review_compliance = _session(store, registry, "tick-review")
+    _claim(store, registry, review, review_session, review_compliance)
+    transition_universal_governed_work(
+        store,
+        registry,
+        review,
+        "submit",
+        agent_session_root=review_session,
+        evidence_payload="artifact needs review",
+        authentication_context=_context(registry),
+    )
+    assert _state(store, registry, done) == "complete"
+    assert _state(store, registry, review) == "review"
+
+    tick_time = 120_000.0 + (31 * 86400)
+    _live_presence(store, registry, review_session, now=tick_time)
+    monkeypatch.setattr("nodelang.universal_application.time.time", lambda: tick_time)
+    tick = server.dispatch_universal_machine_route({
+        "method": "POST",
+        "path": "/api/universal/workshop-board/tick",
+        "body": {},
+    })
+    assert tick["archive_after_idle_days"] == 30
+    assert done in tick["archived"]
+    assert review not in tick["archived"]
+    assert _state(store, registry, done) == "cancelled"
+    assert _state(store, registry, review) == "review"
+
+    restored = server.dispatch_universal_machine_route({
+        "method": "POST",
+        "path": "/api/universal/workshop-board/restore-archived",
+        "body": {"root": done},
+    })
+    assert restored["state"] == "complete"
+    assert _state(store, registry, done) == "complete"
 
 
 def _live_presence(store, registry, session_root, now):

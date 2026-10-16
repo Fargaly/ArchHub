@@ -60,7 +60,6 @@ const useWorkshopProjection = () => {
 };
 const studioCanvasScope = canvas => JSON.stringify([canvas?.graph_id || canvas?.application_root || '',
   canvas?.root || canvas?.scope?.current || '', canvas?.authorization?.subject || '', canvas?.authorization?.session || '']);
-const systemSessionOpenId = id => String(id || '').startsWith('system:') ? String(id).slice(7) : id;
 const systemAllowed = (canvas, graph) => canvas?.authorization?.system_view === true &&
   (graph?.nodes || []).some(node => node.application === true);
 const systemSessionId = (rootCanvas, gateCanvas, graph) => {
@@ -86,11 +85,6 @@ const studioCreatedNodeId = (result, refreshed, beforeIds) => {
 };
 let LM_SESSIONS = (window.ARCHHUB_LIVE?.sessions) || [];
 const LM_HOSTS = (window.ARCHHUB_LIVE?.hosts) || [];
-const LM_HOST_META = window.ArchHubTheme.derive((LM) => ({
-  revit:{name:'Revit',col:LM.cyan},     blender:{name:'Blender',col:LM.accent},
-  speckle:{name:'Speckle',col:LM.purple}, rhino:{name:'Rhino',col:LM.ok},
-  autocad:{name:'AutoCAD',col:LM.err},  outlook:{name:'Outlook',col:LM.blue},
-}));
 const LM_STATE_META = window.ArchHubTheme.derive((LM) => ({
   idle:     { label:'saved',       col:LM.inkSoft },
   running:  { label:'running',     col:LM.accent, pulse:true },
@@ -171,6 +165,7 @@ const historyShortTime = timestamp => {
   return date.toLocaleDateString([], {year:date.getFullYear() === now.getFullYear() ? undefined : 'numeric', month:'short', day:'numeric'});
 };
 const historyTargetLabel = row => row?.target_label || row?.operation_type || row?.type || row?.operation || 'graph';
+window.ArchHubHistory = {isNode:isHistoryNode, shortTime:historyShortTime, targetLabel:historyTargetLabel};
 const historyRowsFromCanvas = canvas => Array.isArray(canvas?.action_history?.transactions)
   ? canvas.action_history.transactions : [];
 const decorateHistoryNode = (node, canvas) => {
@@ -397,181 +392,7 @@ const DestructiveDialog = ({ confirming, onCancel, onConfirm }) => {
 
 // ─── The active graph for "walls" session — typed AEC nodes
 let LM_GRAPH = (window.ARCHHUB_LIVE?.graph) || { nodes: [], wires: [] };
-const _SEED_GRAPH = {
-  nodes: [
-    { id:'revit', cat:'host', x:24, y:48, w:220, h:124,
-      title:'Revit', sub:'Live model from host',
-      outs:[
-        { id:'view', label:'active view', t:'view', val:'L03 · 1:50' },
-        { id:'sel',  label:'selection',   t:'selection', val:'23 walls' },
-      ],
-    },
-    { id:'ai_intent', cat:'ai', x:24, y:200, w:300, h:188,
-      title:'Conversation', sub:'Claude Sonnet 4.5 · 412ms',
-      ins: [{ id:'ctx', label:'context', t:'view' }],
-      outs:[{ id:'intent', label:'intent', t:'intent', val:'dim ≥800mm, ext first' }],
-      messages:[
-        { who:'F', me:true, time:'14:31', text:'Open Tower-A_central.rvt and go to Level 03.' },
-        { who:'C', time:'14:31', text:'Opened. 47 walls, 12 doors, 8 windows on this level.' },
-        { who:'F', me:true, time:'14:32', text:'Dimension all walls in active view at 1:50. Exterior first, then partitions ≥ 800 mm.' },
-        { who:'C', time:'14:32', text:'Filtering exterior first, then interior ≥ 800. Skipping shorter ones — noise floor on Level 03.' },
-        { who:'F', me:true, time:'14:33', text:'Use the outer face as snap anchor, 240 mm offset is fine.' },
-        { who:'C', time:'14:33', text:'Noted — snap_to=outer_face, offset_mm=240. Starting exterior pass.' },
-        { who:'F', me:true, time:'14:34', text:'Also: skip the short bathroom partitions even if they\'re over 800.' },
-        { who:'C', time:'14:34', text:'Got it — also excluding category=plumbing_fixture neighbors. Filter updated.' },
-      ],
-    },
-    { id:'read_walls', cat:'read', x:360, y:60, w:220, h:96,
-      title:'list_walls', sub:'revit.list_walls(view)',
-      result:'47 walls', ms:'120ms',
-      ins:[{ id:'view', label:'view', t:'view' }],
-      outs:[{ id:'walls', label:'walls', t:'walls' }],
-    },
-    { id:'filter_ext', cat:'filter', x:360, y:190, w:220, h:118,
-      title:'where exterior', sub:'predicate · element.is_exterior',
-      result:'23 of 47', ms:'40ms',
-      ins:[
-        { id:'in',   label:'walls', t:'walls' },
-        { id:'rule', label:'rule',  t:'intent' },
-      ],
-      outs:[{ id:'out', label:'matches', t:'walls' }],
-    },
-    { id:'filter_long', cat:'filter', x:360, y:340, w:220, h:90,
-      title:'where length ≥ 800', sub:'predicate · length_mm ≥ 800',
-      result:'14 of 24', ms:'18ms',
-      ins:[{ id:'in', label:'walls', t:'walls' }],
-      outs:[{ id:'out', label:'matches', t:'walls' }],
-    },
-    { id:'annotate', cat:'annotate', x:620, y:48, w:360, h:340,
-      title:'Place exterior dimensions',
-      sub:'revit.create_dimensions · stage 1 of 2',
-      state:'running', progress:0.74, runtime:'3.1 / 4.2s',
-      ins:[
-        { id:'walls', label:'walls', t:'walls' },
-        { id:'view',  label:'view',  t:'view' },
-      ],
-      outs:[{ id:'dims', label:'dimensions', t:'dims', val:'17 / 23 placed' }],
-      params:[
-        { k:'scale',     v:'1:50',       type:'select' },
-        { k:'align',     v:'parallel',   type:'select' },
-        { k:'offset_mm', v:240, min:60, max:600, step:10, type:'slider' },
-        { k:'snap_to',   v:'outer face', type:'select' },
-      ],
-    },
-    { id:'annotate2', cat:'annotate', x:620, y:420, w:240, h:110,
-      title:'Place interior dimensions',
-      sub:'stage 2 of 2 · queued',
-      state:'queued',
-      ins:[{ id:'walls', label:'walls (≥800)', t:'walls' }],
-      outs:[{ id:'dims', label:'dimensions', t:'dims' }],
-    },
-    { id:'save', cat:'output', x:1010, y:170, w:260, h:160,
-      title:'Save as Skill',
-      sub:'2 stages · 4 tool calls · 8.9s',
-      ins:[
-        { id:'trace', label:'trace', t:'trace' },
-        { id:'dims',  label:'dims',  t:'dims' },
-      ],
-      params:[
-        { k:'name',      v:'Dimension active walls', type:'text' },
-        { k:'arguments', v:'scale, min_length',      type:'text' },
-      ],
-    },
-    // ─── category showcase ─ transform / logic / compose ───
-    { id:'tx_marks', cat:'transform', x:620, y:560, w:260, h:122,
-      title:'set wall marks', sub:'revit.set_param · "Mark" = auto',
-      ins:[{ id:'walls', label:'walls', t:'walls' }],
-      outs:[{ id:'walls', label:'walls', t:'walls' }],
-      params:[
-        { k:'parameter', v:'Mark', type:'select' },
-        { k:'pattern',   v:'W-···', type:'text' },
-      ],
-    },
-    { id:'lg_if', cat:'logic', x:1010, y:360, w:260, h:118,
-      title:'if review needed', sub:'predicate · issues > 0',
-      result:'→ yes · 8 issues', ms:'2ms',
-      ins:[{ id:'in', label:'result', t:'dims' }],
-      outs:[
-        { id:'yes', label:'yes', t:'dims' },
-        { id:'no',  label:'no',  t:'dims' },
-      ],
-    },
-    { id:'cm_sched', cat:'compose', x:1300, y:60, w:280, h:204,
-      title:'build wall schedule', sub:'revit.create_schedule',
-      result:'24 rows · 6 columns', ms:'140ms',
-      ins:[{ id:'walls', label:'walls', t:'walls' }],
-      outs:[{ id:'sheet', label:'sheet', t:'sheets' }],
-      params:[
-        { k:'group_by',  v:'type',                  type:'select' },
-        { k:'sort_by',   v:'length desc',           type:'select' },
-        { k:'columns',   v:'type, level, length…',  type:'text' },
-        { k:'totals',    v:'area, count',           type:'text' },
-      ],
-    },
-    { id:'cm_pdf', cat:'output', x:1300, y:300, w:280, h:118,
-      title:'publish PDF set', sub:'→ Dropbox / project-share',
-      ins:[
-        { id:'sheet', label:'sheet', t:'sheets' },
-        { id:'dims',  label:'review', t:'dims' },
-      ],
-      params:[
-        { k:'destination', v:'Dropbox · /Tower-A/issues', type:'text' },
-        { k:'name',        v:'L03_walls_2026-05-13.pdf',  type:'text' },
-      ],
-    },
-    // ─── second conversation ─ demonstrates concurrent AI sessions in one workspace
-    { id:'ai_qa', cat:'ai', x:1640, y:340, w:300, h:188,
-      title:'QA review conversation', sub:'Claude Sonnet 4.5 · ~520ms',
-      ins:[
-        { id:'ctx',  label:'context', t:'sheets' },
-        { id:'dims', label:'dims',    t:'dims' },
-      ],
-      outs:[{ id:'intent', label:'review', t:'intent', val:'7 issues, 2 high' }],
-      messages:[
-        { who:'C', time:'14:35', text:'Reviewing the new schedule against the dimension run…' },
-        { who:'C', time:'14:35', text:'2 walls in the table have length 0 — likely deleted but still tagged. Flagging.' },
-        { who:'F', me:true, time:'14:35', text:'Drop those rows, keep the rest.' },
-        { who:'C', time:'14:36', text:'Updated schedule → 24 rows, totals re-computed.' },
-      ],
-    },
-    // ─── second host ─ demonstrates host→host wiring
-    { id:'spk', cat:'host', x:1640, y:60, w:240, h:140,
-      title:'Speckle', sub:'tower-a/main',
-      ins:[
-        { id:'sheet', label:'sheet',  t:'sheets' },
-        { id:'view',  label:'model',  t:'view' },
-      ],
-      outs:[
-        { id:'commit', label:'commit',  t:'trace', val:'cbb8e2 · 14 files' },
-        { id:'url',    label:'permalink',t:'file' },
-      ],
-    },
-  ],
-  wires: [
-    { from:['revit','view'],         to:['ai_intent','ctx']   },
-    { from:['revit','view'],         to:['read_walls','view'] },
-    { from:['read_walls','walls'],   to:['filter_ext','in']   },
-    { from:['ai_intent','intent'],   to:['filter_ext','rule'] },
-    { from:['filter_ext','out'],     to:['filter_long','in']  },
-    { from:['filter_ext','out'],     to:['annotate','walls']  },
-    { from:['revit','view'],         to:['annotate','view']   },
-    { from:['filter_long','out'],    to:['annotate2','walls'] },
-    { from:['annotate','dims'],      to:['save','dims']       },
-    { from:['filter_long','out'],    to:['save','trace']      },
-    // showcase wires
-    { from:['filter_ext','out'],     to:['tx_marks','walls']  },
-    { from:['tx_marks','walls'],     to:['cm_sched','walls']  },
-    { from:['cm_sched','sheet'],     to:['cm_pdf','sheet']    },
-    { from:['annotate','dims'],      to:['lg_if','in']        },
-    { from:['lg_if','yes'],          to:['cm_pdf','dims']     },
-    // second conversation — fed by schedule + dimensions
-    { from:['cm_sched','sheet'],     to:['ai_qa','ctx']       },
-    { from:['annotate','dims'],      to:['ai_qa','dims']      },
-    // host → host — Revit's view + the published sheet flow into Speckle
-    { from:['cm_sched','sheet'],     to:['spk','sheet']       },
-    { from:['revit','view'],         to:['spk','view']        },
-  ],
-};
+
 
 // The insertable nodes: one definition, served by the graph (library_engines).
 // Served by the graph (studio.html sets it from /api/universal/node-library); never typed here.
@@ -1466,9 +1287,9 @@ const StudioLM = () => {
             onSettings={() => openSettings(true, 'system')}
             onAccount={() => openSettings(true, 'account')}/>
         : panel ? <main data-rail-workspace={panel} style={{height:'100%',display:'grid',placeItems:'center'}}>
-            <window.AH_DS.EmptyState title={panel === 'chats' ? 'Choose a chat' : 'Build your graph'}
-              detail={panel === 'chats' ? 'Open a session from Chats to continue its conversation.' : 'Choose a node in the Library, or open a graph to add it to your canvas.'}
-              action={panel !== 'chats' ? <window.AH_DS.Btn onClick={() => setLibraryOpen(true)}>Add node</window.AH_DS.Btn> : undefined}/>
+            <window.AH_DS.EmptyState title={sessionOpenError ? 'Graph could not be read' : panel === 'chats' ? 'Choose a chat' : 'Build your graph'}
+              detail={sessionOpenError || (panel === 'chats' ? 'Open a session from Chats to continue its conversation.' : 'Choose a node in the Library, or open a graph to add it to your canvas.')}
+              action={sessionOpenError ? <window.AH_DS.Btn onClick={() => window.location.reload()}>Refresh graphs</window.AH_DS.Btn> : panel !== 'chats' ? <window.AH_DS.Btn onClick={() => setLibraryOpen(true)}>Add node</window.AH_DS.Btn> : undefined}/>
           </main> : <Home onOpen={openSession} sessions={visibleSessions} model={model} native={homeNative}
             readiness={readiness} onModelReadRetry={readInitialModel} setPickerOpen={setPickerOpen}
             setLibraryOpen={setLibraryOpen} setPanel={setPanel}
@@ -2056,7 +1877,6 @@ const FRAME_TOOL_DEFAULTS = [
 ].map(([id, label, state, description, statLine, offSentence, wireSummary, emptyTitle, emptyLine]) => ({
   id, label, state, description, stat_line:statLine, off_sentence:offSentence, wire_summary:wireSummary, emptyTitle, emptyLine,
 }));
-const toolTitle = id => (FRAME_TOOL_DEFAULTS.find(row => row.id === id)?.label || String(id || 'Tool'));
 const toolRowsFromOwners = ({workshopState, account, personal, hub}) => {
   const liveHosts = LM_HOSTS.filter(host => hostState(host) === 'connected');
   const connectorHostWord = hostStateWord(liveHosts[0] || {state:'off'});
@@ -2502,14 +2322,7 @@ const NodeLibItem = ({ it, cat, catId, selected = false, onAdd, disabled = false
 
 // ─── Skills panel — saved templates the user has accrued ───
 const LM_SAVED_SKILLS = (window.ARCHHUB_LIVE?.skills) || [];
-const _SEED_SKILLS = [
-  { id:'dim_walls',   name:'Dimension walls in active view',  runs:14, args:'scale, min_length', when:'2 days ago' },
-  { id:'door_qa',     name:'Door schedule QA',                runs:38, args:'level',             when:'today' },
-  { id:'mass_extract',name:'Sketch \u2192 mass',              runs:6,  args:'floor_count, height',when:'last week' },
-  { id:'pdf_set',     name:'Publish sheet set to Dropbox',    runs:21, args:'sheets, destination',when:'today' },
-  { id:'panel_study', name:'Facade panel variations',         runs:3,  args:'count, seed',       when:'2 weeks ago' },
-  { id:'morning',     name:'Morning Outlook triage',          runs:42, args:'\u2014',             when:'daily' },
-];
+
 
 const catalogueStates = new Map(), catalogueListeners = new Set();
 const CATALOGUE_TIMEOUT_MS = 15000;
@@ -3878,15 +3691,6 @@ const InferenceInspector = ({ model, setPickerOpen }) => {
   );
 };
 
-const CalmSlider = ({ k, v, min, max, step, int, unit }) => (
-  <div style={{ marginBottom:9 }}>
-    <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
-      <span style={{ fontFamily:LM.mono, fontSize:LM.fs.dataSm.sz, color:LM.inkSoft, flex:1 }}>{k}</span>
-      <span style={{ fontFamily:LM.mono, fontSize:11.5, color:LM.ink, fontWeight:500 }}>{int ? v : v.toFixed(2)}{unit && <span style={{ color:LM.inkSoft, marginLeft:2, fontSize:LM.fs.label.sz }}> {unit}</span>}</span>
-    </div>
-    <input type="range" defaultValue={v} min={min} max={max} step={step} style={{ width:'100%', accentColor:LM.accent, marginTop:3 }}/>
-  </div>
-);
 const CalmRow = ({ k, v }) => (
   <div style={{ display:'flex', alignItems:'center', gap:8, padding:'3px 0' }}>
     <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkSoft, flex:1 }}>{k}</span>
@@ -4426,13 +4230,9 @@ const NODE_CARD_W = 224;
 const SOCKET_STEP = 22;
 const SOCKET_R = 5.5;
 const LM_CANVAS_TOKENS = typeof LM !== 'undefined' ? LM : {};
-const LM_CATEGORY_ICON = (LM_CANVAS_TOKENS.icon && typeof LM_CANVAS_TOKENS.icon === 'object' && LM_CANVAS_TOKENS.icon.category) || {size:12, box:20};
 const LM_FS_SOURCE = LM_CANVAS_TOKENS.fs && typeof LM_CANVAS_TOKENS.fs === 'object' ? LM_CANVAS_TOKENS.fs : {};
 const LM_FS_LABEL = LM_FS_SOURCE.label || {sz:11, ln:14, wt:500, letter:'.04em'};
 const LM_FS_DATASM = LM_FS_SOURCE.dataSm || {sz:11, ln:14, wt:400};
-const LM_FS_CAPTION = LM_FS_SOURCE.caption || {sz:12, ln:16, wt:400};
-const LM_FS_BODYSM = LM_FS_SOURCE.bodySm || {sz:13, ln:18, wt:400};
-const LM_FS_BODYSM_STRONG = LM_FS_SOURCE.bodySmStrong || {sz:13, ln:18, wt:500};
 // DSYS-078 is a thin skin on every real graph card; content and handlers stay graph-owned.
 const canvasCardSurface = (needsUser = false) => ({background:LM.surf,
   boxShadow:needsUser ? `${LM.elev.e2}, ${LM.glow.warn}` : LM.elev.e2, borderRadius:12});
@@ -4541,8 +4341,6 @@ const canvasDimmedIds = (nodeIds, wires, focusId, selectedIds = []) => {
   if (!lit.size) return new Set();
   return new Set(nodeIds.filter(id => !lit.has(id)));
 };
-const ARRANGE_ALL_PINNED = 'Every chosen card was placed by hand. Arrange leaves hand-placed cards where they are.';
-const SYSTEM_ARRANGE_TOAST = 'Arranged 24 nodes · 6 layers · 0 overlaps · 0 clipped · ≈ crossings · Undo';
 const pinnedArrangeMessage = (pinnedCount, movedCount = 0) => pinnedCount === 1
   ? `Arrange kept 1 pinned card in place${movedCount ? ` and moved ${movedCount}.` : '.'}`
   : `Arrange kept ${pinnedCount} pinned cards in place${movedCount ? ` and moved ${movedCount}.` : '.'}`;
@@ -8170,9 +7968,9 @@ const graphInspectorNode = (canvas, graph, session, sessionRows = []) => {
 // A session node is a node of the session kind; an ordinary node that has chatted is still an ordinary node.
 const isSessionInspectorNode = node => /^session$/i.test(String(node?.kind || node?.assembly || node?.cat || '')) ||
   /session/i.test(String(node?.sub || node?.engine || ''));
-const hasRunsPanel = (node, graph) => {
+const hasRunsPanel = (node, graph, execution = null) => {
   if (!node || node.graphNode) return false;
-  return !!(node.last_run || node.run || node.status || (graph?.wires || []).some(wire =>
+  return !!(execution || node.last_run || node.run || node.status || (graph?.wires || []).some(wire =>
     wire.from?.[0] === node.id || wire.to?.[0] === node.id));
 };
 // One chat, two parts of one panel: the composer announces each turn; the target's Conversation section shows it.
@@ -8436,10 +8234,13 @@ const InspectorTabs = ({ labels, active, onSelect, plate = false }) => <div role
       color:selected ? plate?LM.ink:LM.accent : LM.inkSoft, fontFamily:LM.sans, fontSize:11.5, cursor:'pointer' }}>{label}</window.AH_DS.Btn>;
   })}
 </div>;
-const InspectorRuns = ({ node, graph }) => {
+const InspectorRuns = ({ node, graph, execution }) => {
   const wires = (graph?.wires || []).filter(wire => wire.from?.[0] === node.id || wire.to?.[0] === node.id);
-  if (!hasRunsPanel(node, graph)) return null;
+  if (!hasRunsPanel(node, graph, execution)) return null;
   return <section aria-label="Runs" style={{ display:'flex', flexDirection:'column', gap:7 }}>
+    {execution?.running && <div role="status">Running…</div>}
+    {execution?.error && <div role="alert">{execution.error}</div>}
+    {execution?.result && <CalmRow k="result" v={execution.result}/>}
     {node.status && <CalmRow k="last run" v={node.status}/>}
     {wires.map((wire, index) => <CalmRow key={wire.id || index} k={wire.from?.[0] === node.id ? 'out' : 'in'}
       v={wire.id || [wire.from?.[0], wire.to?.[0]].filter(Boolean).join(' → ')}/>)}
@@ -8464,12 +8265,13 @@ const NodeRail = ({ libraryMode = false, node, hiddenWork = false, workshopRoom 
     </aside>
   );
   const inspectedNode = node ? aiNodeWithMovedParams(node) : graphInspectorNode(canvas, graph, session, sessionRows);
+  const execution = window.useInspectorRun ? window.useInspectorRun(inspectedNode.id) : null;
   const sessionNode = isSessionInspectorNode(inspectedNode);
   const cat = studioCategory(inspectedNode.cat);
   const groupNode = !!inspectedNode.composition && !inspectedNode.application;
-  const labels = groupNode ? ['Interface', 'Exposed parameters', 'Chat'] : libraryMode ? ['Chat','Properties'] : [sessionNode || inspectedNode.graphNode ? 'Chat' : 'Properties',
+  const labels = groupNode ? ['Interface', 'Exposed parameters', 'Chat'] : libraryMode ? ['Chat','Properties', ...(hasRunsPanel(inspectedNode, graph, execution) ? ['Runs'] : [])] : [sessionNode || inspectedNode.graphNode ? 'Chat' : 'Properties',
     sessionNode || inspectedNode.graphNode ? 'Properties' : 'Chat',
-    ...(hasRunsPanel(inspectedNode, graph) ? ['Runs'] : [])];
+    ...(hasRunsPanel(inspectedNode, graph, execution) ? ['Runs'] : [])];
   const roomConversationNode = inspectedNode.cat === 'ai' && inspectedNode.has_conversation && !nodeModelRow(inspectedNode);
   const defaultInspectorTab = groupNode ? 'Interface' :
     sessionNode || inspectedNode.graphNode || roomConversationNode ? 'Chat' : 'Properties';
@@ -8532,7 +8334,7 @@ const NodeRail = ({ libraryMode = false, node, hiddenWork = false, workshopRoom 
         {visibleTab === 'Exposed parameters' && groupParameters}
         <div hidden={visibleTab !== 'Chat'}>{chat}</div>
         {visibleTab === 'Properties' && properties}
-        {visibleTab === 'Runs' && <InspectorRuns node={inspectedNode} graph={graph}/>}
+        {visibleTab === 'Runs' && <InspectorRuns node={inspectedNode} graph={graph} execution={execution}/>}
       </div>
       {(!libraryMode || visibleTab==='Chat') && <ScopeComposer target={target} model={model} setPickerOpen={setPickerOpen} readiness={readiness} onSend={() => setActiveTab('Chat')}
         onReadinessStale={onReadinessStale} onModelReadRetry={onModelReadRetry} onAccount={onAccount}/>}
@@ -9167,7 +8969,7 @@ const SettingsLoaded = ({ onClose, onHome = onClose, account, setAccount, onSign
     if (showingProperties && selectedNode?.application) return <window.NodeInspector node={selectedNode}/>;
     const capabilityPanel = () => {
       if (showingProperties) return null;
-      if (activeCapability === 'Hub') return <SettingsHub toolRows={toolRows} onClose={onClose} onOpenTool={onOpenTool} onOpenToolGraph={onOpenToolGraph} columns={3}/>;
+      if (activeCapability === 'Hub') return <SettingsHub toolRows={toolRows} onClose={onClose} onOpenTool={onOpenTool} columns={3}/>;
       if (activeCapability === 'System') return <SettingsSystem graph={authorityState?.graph || LM_GRAPH} projection={authorityState} onClose={onClose} onOpenToolGraph={onOpenToolGraph} onBackToSettings={() => openCompatibilityTab('hub')}/>;
       if (activeCapability === 'Account') return <SettingsAccount account={account} setAccount={setAccount} onSignOut={onSignOut}/>;
       if (activeCapability === 'Brain') return <SettingsMemory store={store} patch={patch}/>;
@@ -9487,7 +9289,7 @@ const SystemGraphStates = ({ state, error = '', pinnedCount = 0, movedCount = 0,
     {state === 'refused' && <section data-system-refused><h3>Arrange kept {pinnedCount} pinned {pinnedCount === 1 ? 'card' : 'cards'} in place.</h3><p>{pinnedCount} {pinnedCount === 1 ? 'card is' : 'cards are'} hand-placed. Arrange moved {movedCount}.</p><window.AH_DS.Btn onClick={onUnpinAndArrange}>Open System graph</window.AH_DS.Btn><window.AH_DS.Btn onClick={onBackToSettings}>Keep</window.AH_DS.Btn></section>}
   </div>
 );
-const SettingsHub = ({ toolRows, onClose, onOpenTool, onOpenToolGraph, columns }) => {
+const SettingsHub = ({ toolRows, onClose, onOpenTool, columns }) => {
   const [confirmOff, setConfirmOff] = React.useState(null);
   React.useEffect(() => {
     if (!confirmOff) return undefined;
@@ -9505,18 +9307,12 @@ const SettingsHub = ({ toolRows, onClose, onOpenTool, onOpenToolGraph, columns }
     onClose?.();
     onOpenTool?.(id);
   };
-  const openToolGraphFromHub = id => {
-    onClose?.();
-    onOpenToolGraph?.(id);
-  };
   return <div style={{position:'relative'}}>
     <div data-tool-grid style={{ display:'grid', gap:8,
       gridTemplateColumns:columns ? `repeat(${columns}, minmax(0, 1fr))` : 'repeat(auto-fill, minmax(180px, 1fr))' }}>
       {toolRows.map(tool => <div key={tool.id} style={{display:'flex', minWidth:0}}
         onContextMenu={event => { event.preventDefault(); requestOff(tool); }}>
-        <ToolCard tool={tool}
-          onOpen={() => openToolFromHub(tool.id)}
-          onWire={() => openToolGraphFromHub(tool.id)}/>
+        <ToolCard tool={tool} onOpen={() => openToolFromHub(tool.id)}/>
       </div>)}
     </div>
     {confirmOff && <div data-tool-off-confirm={confirmOff.id} style={{

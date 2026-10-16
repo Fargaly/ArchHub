@@ -93,25 +93,6 @@ const HAvatar = ({ name, size = 26 }) => {
     display: 'grid', placeItems: 'center', flexShrink: 0, fontFamily: HB.mono, fontSize: size * 0.36, fontWeight: 600 }}>{initials}</span>;
 };
 
-const HField = ({ label, value, onChange, placeholder, type = 'text', full, area }) => (
-  <label style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: full ? 1 : 'none' }}>
-    {label && <span style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.inkMute, letterSpacing: '0.12em', textTransform: 'uppercase' }}>{label}</span>}
-    {area
-      ? <textarea value={value ?? ''} rows={3} onChange={e => onChange && onChange(e.target.value)} placeholder={placeholder} style={hInput()}/>
-      : <input value={value ?? ''} type={type} onChange={e => onChange && onChange(e.target.value)} placeholder={placeholder} style={hInput()}/>}
-  </label>
-);
-const hInput = () => ({ padding: '9px 11px', borderRadius: HB.rad.sm, border: `1px solid ${HB.line}`, background: HB.cardHi, color: HB.ink, fontSize: 13.5, fontFamily: HB.sans, outline: 'none', width: '100%', resize: 'vertical' });
-
-const HSelect = ({ label, value, onChange, options, full }) => (
-  <label style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: full ? 1 : 'none' }}>
-    {label && <span style={{ fontFamily: HB.mono, fontSize: HB.fs.label.sz, color: HB.inkMute, letterSpacing: '0.12em', textTransform: 'uppercase' }}>{label}</span>}
-    <select value={value} onChange={e => onChange && onChange(e.target.value)} style={{ ...hInput(), cursor: 'pointer' }}>
-      {options.map(o => { const [v, l] = Array.isArray(o) ? o : [o, o]; return <option key={v} value={v}>{l}</option>; })}
-    </select>
-  </label>
-);
-
 const HToggle = ({ value, onChange }) => (
   <button onClick={() => onChange && onChange(!value)} style={{ width: 38, height: 22, borderRadius: 999, border: 'none', padding: 2, flexShrink: 0,
     background: value ? HB.accent : HB.line, cursor: 'pointer', position: 'relative', transition: 'background .15s' }}>
@@ -201,4 +182,4 @@ const hbInjectCSS = () => {
 };
 const applyHBTheme = (mode) => { const src = mode === 'light' ? HB_LIGHT : HB_DARK; Object.keys(src).forEach(k => { HB[k] = src[k]; }); hbInjectCSS(); };
 
-Object.assign(window, { HB, HSTAT, hsc, HBtn, HIconBtn, HPill, HDot, HAvatar, HField, HSelect, HToggle, HModal, HHead, applyHBTheme });
+Object.assign(window, { HB, HSTAT, hsc, HBtn, HIconBtn, HPill, HDot, HAvatar, HToggle, HModal, HHead, applyHBTheme });

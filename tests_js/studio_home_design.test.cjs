@@ -596,7 +596,7 @@ test('Home composer chips call their existing handlers', async () => {
     studio.win.ReactDOM.flushSync(() => studio.button('@ skill').click());
     assert.ok(studio.doc.body.textContent.includes('Search saved skills'),
       '@ skill opens the existing Skills panel');
-    studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-rail-panel="Home"]').click());
+    studio.win.ReactDOM.flushSync(() => studio.doc.querySelector('[data-app-rail] [data-rail-panel="Home"]').click());
     studio.win.ReactDOM.flushSync(() => studio.button('# host').click());
     assert.ok(studio.doc.querySelector('[role="menu"] button')?.textContent.includes('Revit 2025'),
       '# host opens a live host picker');

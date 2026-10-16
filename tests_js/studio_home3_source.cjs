@@ -7,7 +7,7 @@ const cache=new Map();
 fs.readFileSync=function(file,options){
  const normalized=String(file).replaceAll('\\','/');
  if(normalized.includes('/nodelang/studio/compiled/')){
-  const name=path.basename(String(file));let text;
+  const name=normalized.split('/nodelang/studio/compiled/')[1];let text;
   if(name==='manifest.json')text=JSON.stringify({files});
   else {const row=files.find(row=>row.output===name);if(!row)return originalRead.apply(this,arguments);
    if(!cache.has(name))cache.set(name,require('esbuild').transformSync(originalRead(path.join(studio,row.source),'utf8'),{loader:'jsx',minifyWhitespace:true}).code);

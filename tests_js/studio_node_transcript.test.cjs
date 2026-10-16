@@ -79,7 +79,7 @@ async function mountEnv(fn, opts = {}) {
   const componentSlice = opts.withRail ? railSlice() : conversationSlice();
   const exports = opts.withRail ? '\nglobalThis.Conv = NodeModelConversation; globalThis.Rail = NodeRail;'
     : '\nglobalThis.Conv = NodeModelConversation;';
-  const helpers = opts.withRail ? RAIL_HELPERS : REAL_HELPERS;
+  const helpers = opts.withRail ? source.slice(source.indexOf('const watchPreviewFor ='), source.indexOf('const WATCH_TABLE_ROWS =')) + RAIL_HELPERS : REAL_HELPERS;
   vm.runInContext(transformSync(helpers + componentSlice + exports,
     {loader:'jsx', format:'cjs'}).code, context);
   const root = createRoot(win.document.getElementById('root'));
@@ -163,7 +163,7 @@ async function mountForkRail(kind, createResult) {
   const render = async ({canvas = true} = {}) => React.act(async () => root.render(React.createElement(React.Fragment, null,
     canvas && React.createElement(context.NodeCanvas, {focusId:'node-a', setFocusId:() => {}, setLibraryOpen:() => {},
       userNodes:[], addNodeFromLibrary:() => {}, model:null}),
-    React.createElement(Component, {node, scope:'scope-a', openConversation:()=>{}}))));
+    React.createElement(Component, {libraryMode:kind === 'library', node, scope:'scope-a', openConversation:()=>{}}))));
   await render();
   const clickFork = async () => {
     let button = [...win.document.querySelectorAll('button')].find(b => b.getAttribute('title') === 'Fork this node onto the canvas' || b.textContent === '⑂');
@@ -184,7 +184,7 @@ async function mountForkRail(kind, createResult) {
 }
 
 test('NodeRail and ConversationRail Fork use the canvas duplicate operation and select the confirmed node', async () => {
-  for (const kind of ['node', 'conversation']) {
+  for (const kind of ['node', 'library', 'conversation']) {
     const view = await mountForkRail(kind, {ok:true, id:'node-copy'});
     try {
       await view.clickFork();

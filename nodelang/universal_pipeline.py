@@ -224,7 +224,7 @@ def last_pipeline_run() -> dict[str, object]:
     return held
 
 
-def _observed_effect_engines(engines, failed, refused):
+def _observed_effect_engines(engines, failed, refused, *, enforce_parameters=None):
     """Wrap each effect engine to note a raise (failed) or an ok=False answer (refused).
 
     A Workshop card refusing the ungated canvas Run is the designed answer, not
@@ -235,7 +235,8 @@ def _observed_effect_engines(engines, failed, refused):
     def observed(name, effect):
         def run(params, feeds):
             try:
-                produced, shown = effect(params, feeds)
+                from .enforce import guard_effect
+                produced, shown = guard_effect(name, effect, params, feeds, config=enforce_parameters)
             except Exception:
                 failed.append(name)
                 raise
@@ -368,6 +369,8 @@ def run_universal_pipeline(
     with held_lock:
         stem_nodes, stem_wires, graph_engines = _pipeline_plan(
             store, registry, authentication_context, only_roots)
+        from .enforce import graph_parameters
+        enforce_parameters = lambda: graph_parameters(store)
     failed_engines: list[str] = []
     refused_engines: list[str] = []
     evaluation = evaluate_stem_graph(
@@ -375,6 +378,7 @@ def run_universal_pipeline(
         _observed_effect_engines(
             {**graph_engines, **dict(effect_engines)},
             failed_engines, refused_engines,
+            enforce_parameters=enforce_parameters,
         ),
     )
     with held_lock:
@@ -452,6 +456,10 @@ def _pipeline_plan(store, registry, authentication_context, only_roots):
     engine_roots = {node.root_id for node in stem_nodes}
     stem_wires = []
     for wire in projection.get("wires", ()):
+        # These generated, non-connectable relations describe Settings reads;
+        # they are not executable socket connections.
+        if str(wire.get("id", "")).startswith("app:relation:setting-reader:") and wire.get("reader"):
+            continue
         source = str(wire.get("source") or "")
         target = str(wire.get("target") or "")
         if source in engine_roots and target in engine_roots:

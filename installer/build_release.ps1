@@ -30,6 +30,27 @@ $GooseArchivePath = (Resolve-Path -LiteralPath $GooseArchivePath).Path
 $utf8 = [Text.UTF8Encoding]::new($false, $true)
 $builtAt = [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture)
 $selectedRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
+# ACOMPILER is admission, before candidate/output creation and packaging effects.
+# Resolve the selected build interpreter early; the later packaging logic still
+# owns its Python/dependency validation.
+$compilerPython = if ($PythonPath) { $PythonPath } else { 'python' }
+& $compilerPython (Join-Path $selectedRoot 'tools/pipeline/build.py') --root $selectedRoot
+if ($LASTEXITCODE -ne 0) { throw "ACOMPILER refused release build (exit $LASTEXITCODE)." }
+$compilerSourceRoot = $selectedRoot
+$acompilerInputs = @(
+    'NOTICE', 'tools/__init__.py', 'tools/ratchet.py', 'tools/pipeline/__init__.py',
+    'tools/pipeline/strict_check.py', 'tools/pipeline/build.py', 'tools/pipeline/land.py',
+    'tools/pipeline/pre_commit.py', 'tools/pipeline/install_hooks.py', 'tools/pipeline/record_observation.py',
+    'tools/pipeline/package_compiler.py', 'tools/archhub-compiler/Cargo.toml', 'tools/archhub-compiler/Cargo.lock',
+    'tools/archhub-compiler/rules.json', 'tools/archhub-compiler/src/lib.rs', 'tools/archhub-compiler/src/main.rs',
+    'tools/archhub-compiler/src/semantics.rs', 'tools/archhub-compiler/src/intent.rs', 'tools/archhub-compiler/src/deviation.rs',
+    'tools/archhub-compiler/THIRD_PARTY.md',
+    'tools/archhub-compiler/licenses/tree-sitter-html-0.23.2-LICENSE.txt',
+    'tools/archhub-compiler/licenses/tree-sitter-json-0.24.8-LICENSE.txt',
+    'tools/archhub-compiler/licenses/tree-sitter-sequel-0.3.11-LICENSE.txt',
+    'tools/archhub-compiler/licenses/tree-sitter-toml-ng-0.7.0-LICENSE.txt',
+    'tools/archhub-compiler/licenses/tree-sitter-typescript-0.23.2-LICENSE.txt'
+)
 $selectedInputs = @(
     'nodelang', 'nodelang/outlook_graph.ps1', 'launch_archhub_test.py', 'colleague_setup.py',
     'requirements.txt', 'installer', 'packaging/windows/Test-SourcePortability.ps1',
@@ -38,7 +59,7 @@ $selectedInputs = @(
     'app/secrets_store.py', 'app/credential_lock.py', 'app/__init__.py', 'bridges', 'archhub.ico',
     'packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',
     'packaging/windows/licenses/ArchHub-components-MIT.txt'
-)
+) + $acompilerInputs
 
 function Assert-TrackedInputs([string]$Checkout, [string[]]$Inputs) {
     foreach ($relative in $Inputs) {
@@ -101,7 +122,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
     foreach ($part in $Path.Split('/')) {
         if (-not $part -or $part.StartsWith('.') -or $part.EndsWith('.') -or
             $part -match '^(?i:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)' -or
-            $part -match '^(?i:__pycache__|node_modules|build|dist|state|backups|sessions|tests|tests_replica|venv|archive)$') {
+            $part -match '^(?i:__pycache__|node_modules|build|dist|state|backups|sessions|tests|tests_replica|venv)$') {
             return $false
         }
     }
@@ -109,6 +130,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
         return $false
     }
     if ($Source -ceq 'selected') {
+        if ($acompilerInputs -ccontains $Path) { return $true }
         # Generated scripts must come from this build's verified snapshot.
         # The generic JavaScript allowlist must never admit stale compiled files.
         if ($Path.StartsWith('nodelang/studio/compiled/', [StringComparison]::OrdinalIgnoreCase)) { return $false }
@@ -117,7 +139,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
             'NOTICE', 'packaging/windows/goose-pin.json', 'packaging/windows/stage_goose.py',
             'package.json', 'packaging/compile_studio.cjs',
             'installer/ArchHub.iss', 'installer/ArchHub.bat', 'installer/ArchHub.vbs',
-            'installer/legacy_sweep.iss', 'installer/legacy_v1_files.iss', 'installer/legacy_doc_files.iss', 'installer/host_file_staging.iss',
+            'installer/legacy_sweep.iss', 'installer/legacy_v1_files.iss', 'installer/host_file_staging.iss',
             'installer/build_release.ps1', 'packaging/windows/Test-SourcePortability.ps1',
             'packaging/windows/install_clean_coordination_task.ps1',
             'packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',
@@ -236,7 +258,7 @@ function Read-CandidateManifest([string]$Path) {
         'selected/nodelang/session_link/vendor/LICENSE',
         'selected/nodelang/session_link/vendor/PROVENANCE.md',
         'selected/nodelang/studio/studio.html', 'selected/nodelang/studio/vendor/babel.js',
-        'selected/nodelang/studio/tokens.jsx', 'selected/nodelang/studio/ds/index.jsx', 'selected/nodelang/studio/design-canvas.jsx',
+        'selected/nodelang/studio/tokens.jsx', 'selected/nodelang/studio/design-canvas.jsx',
         'selected/nodelang/studio/shared-data.jsx', 'selected/nodelang/studio/studio-suite.jsx',
         'selected/nodelang/studio/param-types.jsx', 'selected/nodelang/studio/studio-params.jsx',
         'selected/nodelang/studio/studio-mobile.jsx', 'selected/nodelang/studio/studio-account.jsx',
@@ -247,6 +269,7 @@ function Read-CandidateManifest([string]$Path) {
         'selected/archhub.ico', 'selected/app/secrets_store.py', 'selected/app/credential_lock.py', 'selected/app/__init__.py',
         'selected/packaging/windows/licenses/ArchHub-components-MIT.txt'
     )
+    $required += @($acompilerInputs | ForEach-Object { "selected/$_" })
     foreach ($name in $required) {
         if (-not $seen.Contains($name)) { throw "Candidate manifest omits required input: $name" }
     }
@@ -655,6 +678,16 @@ Assert-BuildSnapshot $snapshot
 $studioBuild = Read-StudioBuild
 [IO.File]::WriteAllBytes((Join-Path $output 'studio-build.json'), $studioBuild.Bytes)
 $candidateClock.Stop()
+# Build the one compiler from this verified snapshot. Only its inspected static
+# runtime closure enters the installer; no Cargo, Rustup or target tree ships.
+$compilerPackager = Join-Path $selectedRoot 'tools/pipeline/package_compiler.py'
+& $PythonPath $compilerPackager --root $selectedRoot --toolchain-root $compilerSourceRoot
+if ($LASTEXITCODE -ne 0) { throw 'Static ACOMPILER packaging failed; retain source evidence only.' }
+& $PythonPath $compilerPackager --root $selectedRoot --verify
+if ($LASTEXITCODE -ne 0) { throw 'Generated ACOMPILER runtime closure failed verification.' }
+$compilerProvenance = Join-Path $selectedRoot 'runtime/acompiler/provenance.json'
+$compilerProvenanceSha = (Get-FileHash -LiteralPath $compilerProvenance -Algorithm SHA256).Hash.ToLowerInvariant()
+$compilerPayload = Get-Content -LiteralPath $compilerProvenance -Raw | ConvertFrom-Json
 [IO.File]::WriteAllText((Join-Path $output $statusName), "COMPILING INSTALLER: source inputs and generated Studio output verified.`n", $utf8)
 $requirementsSha = (Get-FileHash -LiteralPath (Join-Path $selectedRoot 'requirements.txt') -Algorithm SHA256).Hash.ToLowerInvariant()
 $buildMetadataPath = Join-Path $output 'BUILD_METADATA.json'
@@ -721,6 +754,10 @@ if ((Get-FileHash -LiteralPath $node -Algorithm SHA256).Hash.ToLowerInvariant() 
 
 & $node --max-old-space-size=256 $studioCompiler --check
 if ($LASTEXITCODE -ne 0) { throw 'Studio output changed during installer compilation.' }
+& $PythonPath $compilerPackager --root $selectedRoot --verify
+if ($LASTEXITCODE -ne 0 -or (Get-FileHash -LiteralPath $compilerProvenance -Algorithm SHA256).Hash.ToLowerInvariant() -cne $compilerProvenanceSha) {
+    throw 'ACOMPILER runtime/provenance changed during installer compilation.'
+}
 $candidateClock.Start()
 Assert-BuildSnapshot $snapshot
 $finalStudioBuild = Read-StudioBuild
@@ -749,6 +786,9 @@ if ($candidate) {
         payload_files = $candidate.Rows.Count
         payload_bytes = $candidate.TotalBytes
         requirements_sha256 = $requirementsSha
+        acompiler_provenance_sha256 = $compilerProvenanceSha
+        acompiler_executable_sha256 = $compilerPayload.executable_sha256
+        acompiler_source_sha256 = $compilerPayload.source_sha256
         studio_manifest = 'studio-build.json'
         studio_manifest_sha256 = $studioBuild.Sha256
         studio_files = $studioBuild.Files
@@ -772,6 +812,9 @@ $metadata = [ordered]@{
     build_metadata_sha256 = $buildMetadataSha
     source_revision = $sourceRevision
     requirements_sha256 = $requirementsSha
+    acompiler_provenance_sha256 = $compilerProvenanceSha
+    acompiler_executable_sha256 = $compilerPayload.executable_sha256
+    acompiler_source_sha256 = $compilerPayload.source_sha256
     payload_manifest = $sourceManifestName
     payload_manifest_sha256 = $snapshot.Sha256
     payload_files = $snapshot.Rows.Count

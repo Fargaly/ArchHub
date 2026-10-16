@@ -35,6 +35,9 @@
 #ifndef GoosePayloadPath
 #error Build with installer/build_release.ps1: pinned GoosePayloadPath is required.
 #endif
+#ifndef CompilerPayloadPath
+#error Build with installer/build_release.ps1: verified CompilerPayloadPath is required.
+#endif
 ; Every desktop wheel for CPython 3.14 win_amd64, fetched by build_release.ps1
 ; from requirements.txt; colleague_setup.py installs from it with --no-index.
 #ifndef WheelhousePath
@@ -101,6 +104,20 @@ Source: "..\NOTICE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\packaging\windows\licenses\Goose-Apache-2.0.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
 Source: "..\packaging\windows\licenses\Hermes-MIT.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
 Source: "..\nodelang\*"; DestDir: "{app}\nodelang"; Excludes: "{#PayloadExcludes}"; Flags: recursesubdirs ignoreversion
+Source: "{#CompilerPayloadPath}\archhub-compiler.exe"; DestDir: "{app}\runtime\acompiler"; Flags: ignoreversion
+Source: "{#CompilerPayloadPath}\provenance.json"; DestDir: "{app}\runtime\acompiler"; Flags: ignoreversion
+Source: "{#CompilerPayloadPath}\rules.json"; DestDir: "{app}\runtime\acompiler"; Flags: ignoreversion
+Source: "{#CompilerPayloadPath}\NOTICE"; DestDir: "{app}\runtime\acompiler"; Flags: ignoreversion
+Source: "{#CompilerPayloadPath}\LICENSES.txt"; DestDir: "{app}\runtime\acompiler"; Flags: ignoreversion
+Source: "..\tools\__init__.py"; DestDir: "{app}\tools"; Flags: ignoreversion
+Source: "..\tools\ratchet.py"; DestDir: "{app}\tools"; Flags: ignoreversion
+Source: "..\tools\pipeline\__init__.py"; DestDir: "{app}\tools\pipeline"; Flags: ignoreversion
+Source: "..\tools\pipeline\strict_check.py"; DestDir: "{app}\tools\pipeline"; Flags: ignoreversion
+Source: "..\tools\pipeline\pre_commit.py"; DestDir: "{app}\tools\pipeline"; Flags: ignoreversion
+Source: "..\tools\pipeline\install_hooks.py"; DestDir: "{app}\tools\pipeline"; Flags: ignoreversion
+Source: "..\tools\pipeline\record_observation.py"; DestDir: "{app}\tools\pipeline"; Flags: ignoreversion
+Source: "..\tools\pipeline\build.py"; DestDir: "{app}\tools\pipeline"; Flags: ignoreversion
+Source: "..\tools\pipeline\land.py"; DestDir: "{app}\tools\pipeline"; Flags: ignoreversion
 Source: "..\launch_archhub_test.py"; DestDir: "{app}"; Flags: ignoreversion
 ; The graph owner task is re-registered from the installed copy (RefreshCleanCoordinationTask).
 Source: "..\packaging\windows\install_clean_coordination_task.ps1"; DestDir: "{app}\packaging\windows"; Flags: ignoreversion
@@ -136,16 +153,6 @@ Type: files; Name: "{app}\ArchHub-silent.cmd"
 Type: files; Name: "{app}\installer\install_gui.ps1"
 Type: files; Name: "{app}\installer\make_shortcuts.ps1"
 Type: files; Name: "{app}\installer\setup.iss"
-; The public website has one owner: cell_website + site_export. Retire the
-; unused legacy marketing builder when upgrading an existing installation.
-Type: files; Name: "{app}\nodelang\website.py"
-Type: files; Name: "{app}\nodelang\website.pyc"
-Type: files; Name: "{app}\nodelang\website.pyo"
-Type: files; Name: "{app}\nodelang\__pycache__\website.*.pyc"
-Type: files; Name: "{app}\nodelang\website_docs_text.py"
-Type: files; Name: "{app}\nodelang\website_docs_text.pyc"
-Type: files; Name: "{app}\nodelang\website_docs_text.pyo"
-Type: files; Name: "{app}\nodelang\__pycache__\website_docs_text.*.pyc"
 ; Exact retired implementation only. Keep the current connector owner,
 ; credentials, databases and unrelated installed files intact on upgrade.
 Type: files; Name: "{app}\nodelang\cell_baboom_connector_execution.py"
@@ -368,9 +375,6 @@ begin
   begin
     { v1.x left its whole code tree beside this one; sweep it once, guarded. }
     SweepLegacyV1(ExpandConstant('{app}'));
-    { These stale files were never payloads of this package. Preserve exact
-      known v1 bytes in an archive; do not remove unknown/user-edited docs. }
-    ArchiveLegacyDocs(ExpandConstant('{app}'));
     { A running Revit/AutoCAD/3ds Max holds its broker: set it aside, never abort. }
     RetireLockedHostFiles(ExpandConstant('{app}'), '{#BuildId}');
     ReadyPath := ExpandConstant('{app}\.archhub-ready');

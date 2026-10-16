@@ -217,6 +217,12 @@ def execute_host_operation(
         raise HostOperationRefused(
             "this runtime was given no adapter, so it can reach no host"
         )
+    if operation.get("kind") != "read":
+        from .enforce import require_typed_adapter
+        try:
+            require_typed_adapter("host operation " + op_id)
+        except PermissionError as error:
+            raise HostOperationRefused(str(error)) from None
     if subject_root is not None and (
         type(subject_root) is not str or not subject_root.strip()
     ):

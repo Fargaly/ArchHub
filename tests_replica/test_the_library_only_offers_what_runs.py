@@ -78,6 +78,8 @@ _PLACEMENTS = {
     "library.push_speckle": ({"project": "abc123"}, _ROWS),
     "host.read": ({"host": "Revit", "operation": "List walls"}, {}),
     "speckle.send": ({"project": "abc123"}, _ROWS),
+    "archhub.enforce": ({"pending": {"kind": "document", "target": "fixture-notes", "content": {
+        "blocks": [{"type": "paragraph", "text": "Issued notes"}]}}}, None),
 }
 
 # Engines whose input is a stream: with nothing wired they must answer an
@@ -94,7 +96,7 @@ _STREAM_ENGINES = [
                     "library.notify", "library.draft_email", "library.vision",
                     "library.publish_pdf", "library.publish_package", "library.tag_rooms",
                     "library.place_tags", "library.place_on_sheet",
-                    "host.read")
+                    "host.read", "archhub.enforce")
 ]
 
 
@@ -210,10 +212,11 @@ def test_every_library_card_either_runs_or_says_it_cannot():
         ("transform", 4), ("logic", 5), ("document", 7), ("file", 1),
         ("text", 1), ("math", 2), ("ai", 2), ("governance", 6),
         ("watch", 1), ("output", 6), ("note", 2), ("skill", 1),
+        ("enforce", 1),
     ]
-    assert len(items) == 70, len(items)
+    assert len(items) == 71, len(items)
     wired = {item for item, engine in items.items() if engine}
-    assert len(wired) == 70, sorted(wired)
+    assert len(wired) == 71, sorted(wired)
     assert "h_write" not in items
     assert "h_read" in items
     for host_item in ("b_all_category", "b_get_parameter", "b_set_parameter",

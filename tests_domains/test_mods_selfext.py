@@ -51,7 +51,7 @@ def test_built_in_mod_settings_persist_without_claiming_write_hooks(tmp_path):
     root = _store(tmp_path)
     state = mods_rows(root)
     assert state["installed"] == 0
-    assert state["built_in"] == 2
+    assert state["built_in"] == 3
 
     element = next(row for row in state["rows"] if row["id"] == "element-limit")
     assert element["enabled"] is True

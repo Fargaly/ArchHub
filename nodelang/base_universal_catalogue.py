@@ -30,6 +30,7 @@ from .unified_authority import (
     published_definition_named,
 )
 from .stability_runtime import stable_json_hash
+from .enforce import catalogue_entry as _enforce_catalogue_entry
 
 PROVENANCE = {
     "source": "docs/NODE_GRAMMAR.md (1.4 palette, ✓ rows)",
@@ -133,6 +134,7 @@ BASE_CATALOGUE: tuple[dict, ...] = (
      "parameters": {}, "interfaces": {"in": _in("any", required=True), "out": _out("any")}, "engine": "reroute"},
     {"name": "Skill", "category": "Skill", "description": "A graph you built, as one node.",
      "parameters": {"name": _text("untitled skill")}, "interfaces": {"trace": _in("trace"), "result": _out("any")}, "engine": "skill.wrap"},
+    _enforce_catalogue_entry(),
 )
 
 

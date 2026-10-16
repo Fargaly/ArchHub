@@ -51,6 +51,12 @@ class SocialHttpHost:
                 or len(vault_entry.encode("utf-8")) > 512 or "\0" in vault_entry
                 or not callable(before_dispatch)):
             raise Refusal("invalid_input", "social custody or dispatch callback is invalid")
+        if prepared.effect != "read":
+            from .enforce import require_typed_adapter
+            try:
+                require_typed_adapter("social provider write")
+            except PermissionError:
+                return _failure("E0010", "A compiler-admitted typed post/session adapter is required before dispatch.")
         headers = {}
         allowed = {"accept", "content-type", "linkedin-version", "x-restli-protocol-version"}
         for name, value in prepared.headers:

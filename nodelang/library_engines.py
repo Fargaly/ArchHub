@@ -2067,3 +2067,13 @@ approval_gate = _nodeslib.approval_gate
 # existing file broker remain mandatory, including when run from Workshop.
 LIBRARY_ENGINES["library.publish_package"] = _nodeslib.publish_package
 ENGINE_SOCKETS["library.publish_package"] = {"source": ("out", "folder", "receipt"), "target": ("grant",)}
+
+# Appended identities keep every existing saved catalogue placement stable.
+from .enforce import engine as _enforce_engine, defaults as _enforce_defaults
+LIBRARY_ENGINES["archhub.enforce"] = _enforce_engine
+LIBRARY_ITEM_ENGINES["archhub_enforce"] = {"engine": "archhub.enforce", "params": _enforce_defaults()}
+ENGINE_SOCKETS["archhub.enforce"] = {
+    "source": ("admitted", "diagnostics", "out"),
+    "target": ("pending", *_enforce_defaults()),
+}
+LIBRARY_PRESENTATION = LIBRARY_PRESENTATION + (("enforce", (("archhub_enforce", "Enforce", "Check pending writes; correct compiler diagnostics before approval"),)),)

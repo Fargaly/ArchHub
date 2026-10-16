@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "authority": "BRIEF-ACOMPILER.md Addendum 2; DELIVERY-STATUS row 1 HEART and 1b HEART v2; plan.md owned paths",
+  "source_sha256": "9604ff1812dea1b27f8511d8121427e7a0f9c00f4ad9ad96362f0b74b2b03b76",
+  "intent_gap": "No Fnn compiler ledger row exists; ACOMPILER is the authorized session-record intent, never an invented founder row.",
+  "intents": {
+    "ACOMPILER": {
+      "source": "BRIEF-ACOMPILER.md",
+      "scope": [
+        "tools/archhub-compiler/",
+        "tools/pipeline/",
+        "tools/ratchet.py",
+        "nodelang/enforce.py",
+        "nodelang/application_server.py",
+        "nodelang/library_engines.py",
+        "nodelang/pipeline_engines.py",
+        "nodelang/universal_pipeline.py",
+        "nodelang/base_universal_catalogue.py",
+        "nodelang/domains/selfext.py",
+        "tests_domains/test_mods_selfext.py",
+        "tests_replica/test_the_library_only_offers_what_runs.py",
+        "tests_replica/test_acompiler_gate.py",
+        "tests_replica/test_enforce.py",
+        "evidence/acompiler.json",
+        "evidence/acompiler-baseline.json",
+        "installer/build_release.ps1",
+        "NOTICE",
+        ".gitignore",
+        "READ-PROOF.md",
+        "plan.md",
+        "tasks.json",
+        "notes.md",
+        "PROGRESS.md",
+        "RESULT-ACOMPILER.md",
+        "ACOMPILER.patch",
+        "ACOMPILER.patch.sha256",
+        "BRIEF-ACOMPILER.md",
+        "installer/ArchHub.iss",
+        "nodelang/clean_host_execution.py",
+        "nodelang/existing_workshop_native_host.py",
+        "nodelang/project_work_execution_broker.py",
+        "nodelang/application_update.py",
+        "nodelang/connector_operation_evidence.py",
+        "evidence/acompiler-test-inventory.json",
+        "evidence/acompiler-governance-hooks.patch",
+        "nodelang/terminal_sessions.py",
+        "nodelang/social_http_host.py",
+        "evidence/acompiler-build.log",
+        "evidence/acompiler-gate-courts.txt",
+        "evidence/acompiler-gate-final.txt",
+        "evidence/acompiler-gate-final2.txt",
+        "evidence/acompiler-product-courts.txt",
+        "evidence/acompiler-product-final.txt",
+        "evidence/acompiler-rust-courts-lld.log",
+        "evidence/acompiler-rust-courts-rustlld.log",
+        "evidence/acompiler-rust-courts-shortpath.log",
+        "evidence/acompiler-rust-courts.log",
+        "evidence/acompiler-rust-final.txt",
+        "evidence/acompiler-product-final2.txt",
+        "evidence/acompiler-gate-final3.txt",
+        "evidence/acompiler-runtime-build.txt",
+        "evidence/acompiler-own-gate.json",
+        "evidence/acompiler-duplicate-court.json",
+        "evidence/acompiler-current.json",
+        "evidence/acompiler-freeze.json",
+        "evidence/acompiler-review.md",
+        "evidence/acompiler-package-proof.json",
+        "evidence/acompiler-measure.txt",
+        "evidence/acompiler-gate-final4.txt",
+        "evidence/acompiler-product-final3.txt",
+        "evidence/acompiler-product-x.txt",
+        "evidence/acompiler-package.txt",
+        "evidence/acompiler-gate-package-courts.txt",
+        "evidence/acompiler-product-first-failure.txt",
+        "nodelang/nodeslib_v2_engines.py",
+        "evidence/acompiler-enforce-final.txt",
+        "docs/FAILURE_LOG.md"
+      ]
+    }
+  },
+  "machine_rules": {
+    "banned_user_text": [
+      "Not available yet",
+      "coming soon",
+      "Unversioned build",
+      "facts not read yet"
+    ],
+    "forbidden_frame_elements": [
+      "iframe"
+    ],
+    "hand_listed_settings_names": [
+      "SETTINGS54_GROUPS",
+      "SETTINGS_PAGES",
+      "SETTINGS_ROWS"
+    ],
+    "unmodified_vendor_refused": true,
+    "example_as_scope_refused": true
+  },
+  "deviation": {
+    "minimum_history": 5,
+    "mad_multiplier": 6.0,
+    "cusum_drift": 0.5,
+    "cusum_threshold": 8.0,
+    "minimum_shift_samples": 4,
+    "daily_alert_budget": 5
+  },
+  "notification_policy": "daily_alert_budget limits alerts only; it never changes compiler admission",
+  "learned_sources": [
+    {
+      "url": "https://github.com/astral-sh/ruff",
+      "license": "MIT",
+      "fit": "lexical bindings and undefined references; independent tree-sitter implementation"
+    },
+    {
+      "url": "https://github.com/oxc-project/oxc",
+      "license": "MIT",
+      "fit": "lexical unresolved references and semantic passes; independent tree-sitter implementation"
+    },
+    {
+      "url": "https://github.com/microsoft/pyright",
+      "license": "MIT",
+      "fit": "flow and explicit return contracts; independent bounded type pass"
+    },
+    {
+      "url": "https://github.com/microsoft/TypeScript/blob/v5.9.3/src/compiler/checker.ts",
+      "license": "Apache-2.0",
+      "fit": "checkTypeAssignableTo, hasCorrectArity and getMinArgumentCount learned from pinned source; explicit primitive contracts and arity, no external tsc"
+    }
+  ]
+}

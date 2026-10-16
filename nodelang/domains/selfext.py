@@ -19,6 +19,7 @@ from typing import Any
 
 from ..core import Store
 from ..laws_effect import apply_effect
+from ..enforce import defaults as _enforce_defaults
 from ..universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell, Snapshot
 
 
@@ -91,6 +92,14 @@ SHIPPED_MOD_ROWS = (
         "author": "ArchHub", "enabled": True, "status": "built-in", "error": "",
         "description": "blocks governed writes that exceed the configured element count",
         "permissions": ["observe settings"], "nodes": [{"id": "limit", "title": "Element limit", "params": {"Limit": 100}}],
+        "tutorials": [], "hooks": ["before_write"], "fired_today": 0, "shipped": True,
+    },
+    {
+        "id": "enforce", "name": "Enforce", "version": "1",
+        "author": "ArchHub", "enabled": True, "status": "built-in", "error": "",
+        "description": "compiler admission of the exact pending code, model, document or post before approval",
+        "permissions": ["observe settings"],
+        "nodes": [{"id": "enforce", "title": "Enforce", "params": _enforce_defaults()}],
         "tutorials": [], "hooks": ["before_write"], "fired_today": 0, "shipped": True,
     },
 )
@@ -503,6 +512,17 @@ def _blast_radius(arguments: Mapping[str, Any], element_count: int) -> dict[str,
 
 
 def before_write_hooks(mods_store: CellStore | None, op_id: str, arguments: Mapping[str, Any]) -> list[dict[str, Any]]:
+    # An opaque host command cannot prove the exact pending value. Refuse it
+    # before host invocation; an unbound store must never disable enforcement.
+    from ..enforce import inspect_pending, graph_parameters, display_diagnostics
+    pending = arguments.get("pending_write")
+    actual = {key: value for key, value in arguments.items()
+              if key not in {"grant", "approval", "permit", "instance", "mods_store", "pending_write"}}
+    if not isinstance(pending, Mapping) or pending.get("operation") != op_id or pending.get("content") != actual:
+        raise PermissionError("error[E0010]: %s has no exact typed pending-write adapter\nhelp: bind the actual host arguments, then retry" % op_id)
+    result = inspect_pending(pending, graph_parameters(mods_store))
+    if not result["ok"]:
+        raise PermissionError(display_diagnostics(result["diagnostics"]))
     if mods_store is None:
         return []
     rows = mods_rows(mods_store)["rows"]
@@ -885,7 +905,8 @@ def build_self_extension_domain(
     approved = _param(store, "Installation approved", False, actor)
     approver = _param(store, "Installation approver", "", actor)
     approved_at = _param(store, "Installation approved at", "", actor)
-    approval_inner = [approved, approver, approved_at]
+    approved_digest = _param(store, "Installation approved content SHA-256", "", actor)
+    approval_inner = [approved, approver, approved_at, approved_digest]
     approved_true = _op(
         store, "Approval is explicit", {"op": "compare", "cmp": "=="},
         [approved, true_node], approval_inner, all_relations, actor,
@@ -906,7 +927,7 @@ def build_self_extension_domain(
     approval_group = store.add(
         "group", "Founder approval", inner=approval_inner,
         params={"approved": approved, "approver": approver,
-                "approved_at": approved_at}, actor=actor,
+                "approved_at": approved_at, "content_sha256": approved_digest}, actor=actor,
     )
 
     installed = _param(store, "Extension installed", False, actor)
@@ -957,7 +978,8 @@ def build_self_extension_domain(
     rollback_approved = _param(store, "Rollback approved", False, actor)
     rollback_approver = _param(store, "Rollback approver", "", actor)
     rollback_approved_at = _param(store, "Rollback approved at", "", actor)
-    rollback_inner = [rollback_approved, rollback_approver, rollback_approved_at]
+    rollback_digest = _param(store, "Rollback approved content SHA-256", "", actor)
+    rollback_inner = [rollback_approved, rollback_approver, rollback_approved_at, rollback_digest]
     rollback_true = _op(
         store, "Rollback approval is explicit",
         {"op": "compare", "cmp": "=="},
@@ -985,7 +1007,7 @@ def build_self_extension_domain(
     rollback_approval_group = store.add(
         "group", "Rollback approval", inner=rollback_inner,
         params={"approved": rollback_approved, "approver": rollback_approver,
-                "approved_at": rollback_approved_at}, actor=actor,
+                "approved_at": rollback_approved_at, "content_sha256": rollback_digest}, actor=actor,
     )
 
     rollback_target = _param(
@@ -1093,6 +1115,7 @@ def build_self_extension_domain(
         "approval": approval_group,
         "approval_params": {
             "approved": approved, "approver": approver, "approved_at": approved_at,
+            "content_sha256": approved_digest,
         },
         "approval_gate": approval_gate,
         "installed": installed,
@@ -1104,6 +1127,7 @@ def build_self_extension_domain(
         "rollback_approval_params": {
             "approved": rollback_approved, "approver": rollback_approver,
             "approved_at": rollback_approved_at,
+            "content_sha256": rollback_digest,
         },
         "rollback_gate": rollback_gate,
         "rollback": rollback_group,
@@ -1167,7 +1191,9 @@ def set_install_approval(
     actor: str = "founder",
 ) -> list[str]:
     params = domain["approval_params"]
+    from ..enforce import pending_digest
     values = {
+        "content_sha256": pending_digest(_selfext_pending(store, domain, str(domain["install_effect"]))) if approved else "",
         "approved": bool(approved),
         "approver": _text(approver, "approver", allow_empty=not approved),
         "approved_at": _text(
@@ -1188,7 +1214,9 @@ def set_rollback_approval(
     actor: str = "founder",
 ) -> list[str]:
     params = domain["rollback_approval_params"]
+    from ..enforce import pending_digest
     values = {
+        "content_sha256": pending_digest(_selfext_pending(store, domain, str(domain["rollback_effect"]))) if approved else "",
         "approved": bool(approved),
         "approver": _text(approver, "rollback approver", allow_empty=not approved),
         "approved_at": _text(
@@ -1201,6 +1229,154 @@ def set_rollback_approval(
 
 def _gate_is_open(store: Store, node_id: str) -> bool:
     return bool(store.pull(node_id))
+
+
+def _selfext_pending(store, domain, effect):
+    """Read only the generated graph's actual pure dependency closure.
+
+    The existing one-table validator supplies parameter/reference/port types.
+    Effectful or unfamiliar primitives in a generated manifest are refused
+    before pull, so inspecting a proposal cannot itself invoke a host.
+    """
+    from ..core import validate_node, relation_sources, relation_targets, relation_stages
+    visited = set()
+
+    def visit(root):
+        if root in visited:
+            return
+        visited.add(root)
+        node = store.nodes[root]
+        validate_node(store.nodes, node)
+        body = node["body"]
+        if "floor" in body and body["floor"]["op"] not in {"value", "merge"}:
+            raise ValueError("generated graph has no pure rule for primitive %s" % body["floor"]["op"])
+        for child in [*node["params"].values(), *body.get("inner", ())]:
+            visit(child)
+        for relation_id in node["relations"]:
+            relation = store.nodes[relation_id]
+            validate_node(store.nodes, relation)
+            if any(end["node_id"] == root for end in relation_targets(store.nodes, relation)):
+                endpoints = [*relation_sources(store.nodes, relation), *relation_targets(store.nodes, relation)]
+                if any(end.get("port_id") != "value" or end.get("cardinality") != "one" for end in endpoints):
+                    raise ValueError("generated relation has an unsupported socket type or cardinality")
+                for endpoint in relation_sources(store.nodes, relation):
+                    visit(endpoint["node_id"])
+                for stage in relation_stages(store.nodes, relation):
+                    visit(stage["node_id"])
+
+    generated = str(domain["generated"])
+    manifest = str(domain["generated_manifest"])
+    visit(generated)
+    if store.nodes[generated]["kind"] != "group" or manifest not in store.nodes[generated]["body"].get("inner", ()):
+        raise ValueError("generated manifest is not owned by its subgraph")
+    records = []
+    for group, parameters in zip(domain["generated_groups"], domain["generated_params"], strict=True):
+        if group not in store.nodes[generated]["body"]["inner"] or store.nodes[group]["params"] != parameters:
+            raise ValueError("generated component has mismatched parameter ownership")
+        record = {}
+        for key, parameter in parameters.items():
+            node = store.nodes[parameter]
+            if node["kind"] != "param" or node["body"].get("floor", {}).get("op") != "value":
+                raise ValueError("generated component parameter is not a typed value node")
+            record[key] = copy.deepcopy(node["body"]["floor"]["value"])
+        records.append(record)
+    records = _validated_generated(records)
+    for record in records:
+        primitive, configuration = record["primitive"], record["configuration"]
+        if primitive == "value":
+            if set(configuration) != {"value"}:
+                raise ValueError("value primitive requires exactly its value parameter")
+        elif primitive == "merge":
+            if set(configuration) != {"fn"} or configuration["fn"] not in {"first", "list", "record", "sum", "concat"}:
+                raise ValueError("merge primitive has an unsupported function signature")
+        else:
+            raise ValueError("generated primitive %s has no type rule" % primitive)
+    if store.pull(manifest) != records:
+        raise ValueError("computed manifest differs from its typed parameter nodes")
+    validate_node(store.nodes, store.nodes[effect])
+    def literal_parameter(name):
+        node = store.nodes[store.nodes[effect]["params"][name]]
+        validate_node(store.nodes, node)
+        if node["kind"] != "param" or node["body"].get("floor", {}).get("op") != "value":
+            raise ValueError("effect %s is not a typed value parameter" % name)
+        return copy.deepcopy(node["body"]["floor"]["value"])
+    target = literal_parameter("target")
+    change = literal_parameter("change")
+    if not isinstance(change, Mapping) or change.get("subgraph") != generated:
+        raise ValueError("effect targets a different generated subgraph")
+    if change.get("action") == "attach_subgraph":
+        if set(change) != {"action", "subgraph", "manifest"} or change["manifest"] != manifest:
+            raise ValueError("installation does not bind the checked manifest")
+    elif change.get("action") == "restore_baseline":
+        if set(change) != {"action", "subgraph", "baseline"}:
+            raise ValueError("rollback has an unsupported baseline signature")
+    else:
+        raise ValueError("self-extension action has no type rule")
+    # Export source evidence, never turn an arbitrary prose intent into an
+    # authorised compiler identity. Rust still needs a trusted session registry.
+    from ..enforce import pending_digest
+    proposal_node = store.nodes[str(domain["proposal"])]
+    validate_node(store.nodes, proposal_node)
+    if proposal_node["kind"] != "proposal" or not proposal_node["meta"]["frozen"]:
+        raise ValueError("self-extension intent source is not a frozen proposal")
+    proposal = {}
+    for key, parameter in domain["proposal_params"].items():
+        node = store.nodes[parameter]
+        validate_node(store.nodes, node)
+        if node["kind"] != "param" or node["body"].get("floor", {}).get("op") != "value":
+            raise ValueError("intent source parameter has no value type")
+        proposal[key] = copy.deepcopy(node["body"]["floor"]["value"])
+    proposal = _validated_proposal(proposal)
+    if proposal_node["params"] != domain["proposal_params"] or proposal["target_scope"] != target:
+        raise ValueError("effect scope differs from its approved proposal source")
+    requirements = _validated_requirements(store.pull(str(domain["requirements_list"])))
+    source = {"proposal_root": str(domain["proposal"]), "requirements_root": str(domain["requirements"]),
+              "session_root": str(domain["session"]), "author": proposal["requested_by"],
+              "intent": proposal["intent"], "scope": [target],
+              "semantic_revision_sha256": pending_digest({"proposal": proposal, "requirements": requirements, "generated": records})}
+    return {"kind": "model", "format": "archhub-graph-v1", "target": target,
+            "content": copy.deepcopy(change), "graph": {"root": generated, "manifest": manifest, "records": records},
+            "intent_source": source}
+
+
+def _enforced_selfext_effect(store, domain, effect, sink, actor):
+    from ..enforce import guarded_write, pending_digest
+    try:
+        pending = _selfext_pending(store, domain, effect)
+    except (ValueError, KeyError, TypeError) as error:
+        raise PermissionError("error[E0009]: %s\nhelp: repair the generated graph before approving again" % error) from error
+
+    def validate(candidate):
+        if pending_digest(_selfext_pending(store, domain, effect)) != pending_digest(candidate):
+            raise ValueError("self-extension proposal changed after inspection")
+
+    def write(candidate):
+        validate(candidate)
+        # Re-read the same real court and approval immediately before mutation.
+        gate = "approval_gate" if effect == domain["install_effect"] else "rollback_gate"
+        approval = "approval_params" if effect == domain["install_effect"] else "rollback_approval_params"
+        if store.pull(domain[approval]["content_sha256"]) != pending_digest(candidate):
+            raise PermissionError("self-extension content changed since exact approval; approve the current diff")
+        if not _gate_is_open(store, str(domain[gate])) or not _gate_is_open(store, str(domain["court_verdict"])):
+            raise PermissionError("self-extension approval or court changed before write")
+        store.apply_op({"op": "unfreeze", "id": effect, "actor": actor})
+        try:
+            store.edit(effect, ["body", "floor", "target"], candidate["target"], actor=actor)
+            return apply_effect(store, effect, sink, actor=actor)
+        finally:
+            store.apply_op({"op": "freeze", "id": effect, "actor": actor})
+
+    def readback(candidate, receipt):
+        current = _selfext_pending(store, domain, effect)
+        current["content"] = copy.deepcopy(sink[candidate["target"]])
+        return current
+
+    checked = guarded_write(pending, write, readback=readback, graph_validator=validate)
+    if not checked["ok"]:
+        raise PermissionError(checked["display"])
+    return {**checked["receipt"], "enforcement": {
+        "content_sha256": checked["content_sha256"], "readback_sha256": checked["readback_sha256"],
+        "rule_context_sha256": checked["rule_context_sha256"], "observation": checked["observation"]}}
 
 
 def apply_installation(
@@ -1216,13 +1392,7 @@ def apply_installation(
     if not _gate_is_open(store, str(domain["court_verdict"])):
         raise PermissionError("installation court gate is closed")
     effect = str(domain["install_effect"])
-    store.apply_op({"op": "unfreeze", "id": effect, "actor": actor})
-    try:
-        target = store.pull(store.nodes[effect]["params"]["target"])
-        store.edit(effect, ["body", "floor", "target"], target, actor=actor)
-        result = apply_effect(store, effect, sink, actor=actor)
-    finally:
-        store.apply_op({"op": "freeze", "id": effect, "actor": actor})
+    result = _enforced_selfext_effect(store, domain, effect, sink, actor)
     store.edit(
         str(domain["installed"]), ["body", "floor", "value"], True, actor=actor
     )
@@ -1242,13 +1412,7 @@ def apply_rollback(
     if not _gate_is_open(store, str(domain["court_verdict"])):
         raise PermissionError("rollback court gate is closed")
     effect = str(domain["rollback_effect"])
-    store.apply_op({"op": "unfreeze", "id": effect, "actor": actor})
-    try:
-        target = store.pull(store.nodes[effect]["params"]["target"])
-        store.edit(effect, ["body", "floor", "target"], target, actor=actor)
-        result = apply_effect(store, effect, sink, actor=actor)
-    finally:
-        store.apply_op({"op": "freeze", "id": effect, "actor": actor})
+    result = _enforced_selfext_effect(store, domain, effect, sink, actor)
     store.edit(
         str(domain["installed"]), ["body", "floor", "value"], False, actor=actor
     )

@@ -1,0 +1,1028 @@
+{
+  "schema_version": 1,
+  "base_revision": "b16bd72f573f8d4c185491bb596e89d1960b1ef5",
+  "history": [
+    {
+      "commit": "1bb24118628b73871ef3dc0d6c53d4fabbcaa06d",
+      "author": "Fargaly",
+      "at": "2026-10-12T16:45:17+04:00",
+      "metrics": {
+        "files": 4,
+        "languages": 3,
+        "scope_spread": 2,
+        "lines": 295
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "ec19607740742a88ad0af4b1fab69b43782b8d5a",
+      "author": "Fargaly",
+      "at": "2026-10-12T16:45:21+04:00",
+      "metrics": {
+        "files": 2,
+        "languages": 2,
+        "scope_spread": 2,
+        "lines": 193
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "dc7f274b9140a9a826913738fd08bcb05bcb3947",
+      "author": "Fargaly",
+      "at": "2026-10-12T17:30:06+04:00",
+      "metrics": {
+        "files": 5,
+        "languages": 1,
+        "scope_spread": 2,
+        "lines": 24
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "25ad763b171bcfafd18559751fef9eee14125f3d",
+      "author": "Fargaly",
+      "at": "2026-10-12T18:27:07+04:00",
+      "metrics": {
+        "files": 16,
+        "languages": 2,
+        "scope_spread": 3,
+        "lines": 463
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "d6fcc6ca9dda7f064e77107b1cc96757c6cc2e57",
+      "author": "Fargaly",
+      "at": "2026-10-12T18:32:56+04:00",
+      "metrics": {
+        "files": 2,
+        "languages": 2,
+        "scope_spread": 2,
+        "lines": 8
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "e1b379c74b86ae077c46bc88af39ff980bceb66c",
+      "author": "Fargaly",
+      "at": "2026-10-12T18:51:32+04:00",
+      "metrics": {
+        "files": 5,
+        "languages": 1,
+        "scope_spread": 2,
+        "lines": 24
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "c3c891eb8bdd2987c29358a0300fd28a751eaa59",
+      "author": "Fargaly",
+      "at": "2026-10-12T19:52:45+04:00",
+      "metrics": {
+        "files": 5,
+        "languages": 2,
+        "scope_spread": 2,
+        "lines": 163
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "f3f3538c267a7dccc24238b682730f89b814f5e3",
+      "author": "Fargaly",
+      "at": "2026-10-12T20:29:49+04:00",
+      "metrics": {
+        "files": 24,
+        "languages": 4,
+        "scope_spread": 4,
+        "lines": 763
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "38784e50e91a7f418362e7ab94761be041887499",
+      "author": "Fargaly",
+      "at": "2026-10-12T21:09:31+04:00",
+      "metrics": {
+        "files": 16,
+        "languages": 3,
+        "scope_spread": 3,
+        "lines": 863
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "9d94b0e9921153b858d63b6530173521ac1d15f7",
+      "author": "Fargaly",
+      "at": "2026-10-12T21:35:31+04:00",
+      "metrics": {
+        "files": 5,
+        "languages": 1,
+        "scope_spread": 2,
+        "lines": 24
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "2ea6d3c844aba9e22aa74f65d587bae3d38166ca",
+      "author": "Fargaly",
+      "at": "2026-10-12T22:25:22+04:00",
+      "metrics": {
+        "files": 4,
+        "languages": 2,
+        "scope_spread": 2,
+        "lines": 133
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "35d3a1131b97f4fa587ebc2ceaea02a0a35557a9",
+      "author": "Fargaly",
+      "at": "2026-10-12T22:30:14+04:00",
+      "metrics": {
+        "files": 2,
+        "languages": 2,
+        "scope_spread": 2,
+        "lines": 76
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "5fe7ea9ae059c40dec65f9887df36965ab8a34a6",
+      "author": "Fargaly",
+      "at": "2026-10-12T23:08:14+04:00",
+      "metrics": {
+        "files": 5,
+        "languages": 1,
+        "scope_spread": 2,
+        "lines": 24
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "b190310956759d7ca1e05ff86653c2f9be9740b6",
+      "author": "Fargaly",
+      "at": "2026-10-12T23:14:04+04:00",
+      "metrics": {
+        "files": 5,
+        "languages": 3,
+        "scope_spread": 3,
+        "lines": 218
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "59e63b91830e55628141c8bb551fe2eac55fd41b",
+      "author": "Fargaly",
+      "at": "2026-10-12T23:51:49+04:00",
+      "metrics": {
+        "files": 3,
+        "languages": 2,
+        "scope_spread": 2,
+        "lines": 97
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "ca4cde64888a05b1aa6b35b0b4be976b67248e70",
+      "author": "Fargaly",
+      "at": "2026-10-12T23:55:21+04:00",
+      "metrics": {
+        "files": 3,
+        "languages": 2,
+        "scope_spread": 2,
+        "lines": 28
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "d72f4131bb6fe34db5f3ae053efe18566731edb4",
+      "author": "Fargaly",
+      "at": "2026-10-13T00:39:28+04:00",
+      "metrics": {
+        "files": 2,
+        "languages": 2,
+        "scope_spread": 2,
+        "lines": 75
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "76a4503fce003f21815e32df64920ac1c3b7fce8",
+      "author": "Fargaly",
+      "at": "2026-10-13T01:14:36+04:00",
+      "metrics": {
+        "files": 5,
+        "languages": 1,
+        "scope_spread": 2,
+        "lines": 24
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "67d8378c5212a1a6cb5ad63e64302a1d2e99e259",
+      "author": "Fargaly",
+      "at": "2026-10-13T01:20:09+04:00",
+      "metrics": {
+        "files": 4,
+        "languages": 2,
+        "scope_spread": 2,
+        "lines": 92
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "673a1f7d19466a891485fffe7e9c9f7a5ec02953",
+      "author": "Fargaly",
+      "at": "2026-10-13T01:40:29+04:00",
+      "metrics": {
+        "files": 11,
+        "languages": 3,
+        "scope_spread": 3,
+        "lines": 791
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "315f3678814c0fa8df8966fc4cc1adc410f293c2",
+      "author": "Fargaly",
+      "at": "2026-10-13T01:51:44+04:00",
+      "metrics": {
+        "files": 9,
+        "languages": 3,
+        "scope_spread": 3,
+        "lines": 673
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "0d79d86fcf59fd78fdad927a5ce00f4a6205e026",
+      "author": "Fargaly",
+      "at": "2026-10-13T02:26:50+04:00",
+      "metrics": {
+        "files": 2,
+        "languages": 2,
+        "scope_spread": 2,
+        "lines": 127
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "601a842505fba372e8ef3d446bffa676a6bb00a4",
+      "author": "Fargaly",
+      "at": "2026-10-13T02:38:22+04:00",
+      "metrics": {
+        "files": 3,
+        "languages": 1,
+        "scope_spread": 2,
+        "lines": 121
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "2d0d9aef46dfa9a9a0515aa70abde562967cc7fd",
+      "author": "Fargaly",
+      "at": "2026-10-13T03:05:29+04:00",
+      "metrics": {
+        "files": 1,
+        "languages": 1,
+        "scope_spread": 1,
+        "lines": 32
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "361e07fdb7d017d77563b54ff3c5846b614f6c42",
+      "author": "Fargaly",
+      "at": "2026-10-13T03:22:45+04:00",
+      "metrics": {
+        "files": 5,
+        "languages": 1,
+        "scope_spread": 2,
+        "lines": 24
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "175440f01121d55f753aca0d4797df9402d15866",
+      "author": "Fargaly",
+      "at": "2026-10-13T09:52:48+04:00",
+      "metrics": {
+        "files": 2,
+        "languages": 2,
+        "scope_spread": 2,
+        "lines": 30
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "f9a54038257f4a002315b3c50ce47e057d1f544e",
+      "author": "Fargaly",
+      "at": "2026-10-13T11:03:48+04:00",
+      "metrics": {
+        "files": 5,
+        "languages": 2,
+        "scope_spread": 2,
+        "lines": 200
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "2c9ae51e8748a05111767873a86d9ec3696c5c89",
+      "author": "Fargaly",
+      "at": "2026-10-13T11:11:44+04:00",
+      "metrics": {
+        "files": 4,
+        "languages": 2,
+        "scope_spread": 2,
+        "lines": 199
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "d7d4b229230ee87cc830fa71d8cdac6af17b18da",
+      "author": "Fargaly",
+      "at": "2026-10-13T11:25:21+04:00",
+      "metrics": {
+        "files": 9,
+        "languages": 3,
+        "scope_spread": 3,
+        "lines": 403
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "e50daeaa395aee099a722b88c5ac21ea1c5f2113",
+      "author": "Fargaly",
+      "at": "2026-10-13T13:01:51+04:00",
+      "metrics": {
+        "files": 40,
+        "languages": 4,
+        "scope_spread": 3,
+        "lines": 2789
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "db43093c2b3ad58926b747a4bf58dc7e655b099d",
+      "author": "Fargaly",
+      "at": "2026-10-13T13:17:16+04:00",
+      "metrics": {
+        "files": 14,
+        "languages": 3,
+        "scope_spread": 2,
+        "lines": 1212
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "a17d8e1acc81103e1cc3753edeab99de95076d2d",
+      "author": "Fargaly",
+      "at": "2026-10-13T13:17:42+04:00",
+      "metrics": {
+        "files": 3,
+        "languages": 1,
+        "scope_spread": 2,
+        "lines": 240
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "f3b86496a056350a397467dad419be06d1c714f3",
+      "author": "Fargaly",
+      "at": "2026-10-13T13:24:50+04:00",
+      "metrics": {
+        "files": 1,
+        "languages": 1,
+        "scope_spread": 1,
+        "lines": 12
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "b3b09c9dd337017b282b8bb7f5e0dd19ac9333b3",
+      "author": "Fargaly",
+      "at": "2026-10-13T14:14:11+04:00",
+      "metrics": {
+        "files": 4,
+        "languages": 2,
+        "scope_spread": 2,
+        "lines": 64
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "b56f091390c4af005c70de7917a1fd5af7de9b62",
+      "author": "Fargaly",
+      "at": "2026-10-13T15:19:03+04:00",
+      "metrics": {
+        "files": 12,
+        "languages": 3,
+        "scope_spread": 3,
+        "lines": 938
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "b2250afcb25f6d5351bd87296051b3ea489519cd",
+      "author": "Fargaly",
+      "at": "2026-10-13T15:46:26+04:00",
+      "metrics": {
+        "files": 6,
+        "languages": 1,
+        "scope_spread": 2,
+        "lines": 1429
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "667e5dc26ebdc5f05426502e1f41dbe18e5742d6",
+      "author": "Fargaly",
+      "at": "2026-10-13T16:10:19+04:00",
+      "metrics": {
+        "files": 15,
+        "languages": 4,
+        "scope_spread": 4,
+        "lines": 1045
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "f2b782585b7cb92fa4ef0fc6635e1f1bbd145421",
+      "author": "Fargaly",
+      "at": "2026-10-13T16:30:00+04:00",
+      "metrics": {
+        "files": 12,
+        "languages": 3,
+        "scope_spread": 3,
+        "lines": 938
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "9a4325537219c0122d30bf4e51b76945a3b2ede2",
+      "author": "Fargaly",
+      "at": "2026-10-13T22:52:04+04:00",
+      "metrics": {
+        "files": 30,
+        "languages": 4,
+        "scope_spread": 4,
+        "lines": 2085
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "4cfb8d877d14b86393cae2258996baca91175fe0",
+      "author": "Fargaly",
+      "at": "2026-10-14T23:45:00+04:00",
+      "metrics": {
+        "files": 72,
+        "languages": 5,
+        "scope_spread": 5,
+        "lines": 8762
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "58f9734b8dc9ca08b244aa3a12b8c0d924f5a29e",
+      "author": "Fargaly",
+      "at": "2026-10-14T23:57:49+04:00",
+      "metrics": {
+        "files": 2,
+        "languages": 1,
+        "scope_spread": 1,
+        "lines": 14
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "e46a0e8e30f41d742a6b62187ed1e4583dd3e99e",
+      "author": "Fargaly",
+      "at": "2026-10-15T03:37:02+04:00",
+      "metrics": {
+        "files": 9,
+        "languages": 4,
+        "scope_spread": 3,
+        "lines": 1040
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "479df6bdf130145ec857332b48d1fd2d230451e3",
+      "author": "Fargaly",
+      "at": "2026-10-15T05:40:34+04:00",
+      "metrics": {
+        "files": 2,
+        "languages": 2,
+        "scope_spread": 2,
+        "lines": 152
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "ea59b646d7b1b17f3161e85ec701d72d01cc813b",
+      "author": "Fargaly",
+      "at": "2026-10-15T10:53:16+04:00",
+      "metrics": {
+        "files": 164,
+        "languages": 8,
+        "scope_spread": 10,
+        "lines": 22766
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "cfb44ce54a22101c27086b8e9533aaeadcc8f8d2",
+      "author": "Fargaly",
+      "at": "2026-10-15T12:29:26+04:00",
+      "metrics": {
+        "files": 40,
+        "languages": 5,
+        "scope_spread": 5,
+        "lines": 7458
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "bf22a3b8befad4228fbabda5e5e5118d8639fad9",
+      "author": "Fargaly",
+      "at": "2026-10-15T13:39:03+04:00",
+      "metrics": {
+        "files": 16,
+        "languages": 2,
+        "scope_spread": 2,
+        "lines": 393
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "bf9c7c1c3994cf38375485492a4b79fdec07fedd",
+      "author": "Fargaly",
+      "at": "2026-10-15T14:48:49+04:00",
+      "metrics": {
+        "files": 21,
+        "languages": 5,
+        "scope_spread": 4,
+        "lines": 539
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "e4996f91dceb506930589ac214e160f7cd2e87b7",
+      "author": "Fargaly",
+      "at": "2026-10-15T15:11:18+04:00",
+      "metrics": {
+        "files": 10,
+        "languages": 3,
+        "scope_spread": 3,
+        "lines": 177
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "a9fdcc78df960bb7afc7d004041e2198980455cd",
+      "author": "Fargaly",
+      "at": "2026-10-15T16:12:40+04:00",
+      "metrics": {
+        "files": 18,
+        "languages": 3,
+        "scope_spread": 3,
+        "lines": 1191
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "aa690eeb9924d12410cab45382281dca147b16a0",
+      "author": "Fargaly",
+      "at": "2026-10-15T16:18:46+04:00",
+      "metrics": {
+        "files": 15,
+        "languages": 2,
+        "scope_spread": 2,
+        "lines": 378
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "05fc486b7f1c7ce1f948c58feb38648cfcd9fa0a",
+      "author": "Fargaly",
+      "at": "2026-10-15T16:45:03+04:00",
+      "metrics": {
+        "files": 4,
+        "languages": 1,
+        "scope_spread": 2,
+        "lines": 498
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "cb3193bb8406b81265e6bd76f4016aeb8514c8cc",
+      "author": "Fargaly",
+      "at": "2026-10-15T17:40:51+04:00",
+      "metrics": {
+        "files": 2,
+        "languages": 2,
+        "scope_spread": 2,
+        "lines": 78
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "7d6b008a1e4a26a67a33908b8782b378570baf39",
+      "author": "Fargaly",
+      "at": "2026-10-15T18:45:28+04:00",
+      "metrics": {
+        "files": 26,
+        "languages": 6,
+        "scope_spread": 6,
+        "lines": 1995
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "7e7435df2e7fa3162633a6fa7c06820d596c3def",
+      "author": "Fargaly",
+      "at": "2026-10-15T20:42:27+04:00",
+      "metrics": {
+        "files": 14,
+        "languages": 7,
+        "scope_spread": 4,
+        "lines": 1451
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "163aeda4a53295faba15537d72eda096fd7c8368",
+      "author": "Fargaly",
+      "at": "2026-10-15T21:22:10+04:00",
+      "metrics": {
+        "files": 4,
+        "languages": 3,
+        "scope_spread": 3,
+        "lines": 501
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "d68f7ace2562d67003dd7cee4ef4d98a8cc22fa7",
+      "author": "Fargaly",
+      "at": "2026-10-15T21:25:54+04:00",
+      "metrics": {
+        "files": 10,
+        "languages": 5,
+        "scope_spread": 4,
+        "lines": 854
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "e41d56aaa1bd23fd154b4b1ccc90ad0430dcebe3",
+      "author": "Fargaly",
+      "at": "2026-10-15T21:54:26+04:00",
+      "metrics": {
+        "files": 2,
+        "languages": 2,
+        "scope_spread": 2,
+        "lines": 5
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "09d36d7b6f341914f8a82354792947eefce58704",
+      "author": "Fargaly",
+      "at": "2026-10-15T23:21:39+04:00",
+      "metrics": {
+        "files": 29,
+        "languages": 6,
+        "scope_spread": 5,
+        "lines": 2374
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "6786ebba865c364fc99516ad973d07222de30a9a",
+      "author": "Fargaly",
+      "at": "2026-10-16T00:43:04+04:00",
+      "metrics": {
+        "files": 29,
+        "languages": 7,
+        "scope_spread": 8,
+        "lines": 1562
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    },
+    {
+      "commit": "b16bd72f573f8d4c185491bb596e89d1960b1ef5",
+      "author": "Fargaly",
+      "at": "2026-10-16T01:20:12+04:00",
+      "metrics": {
+        "files": 2,
+        "languages": 2,
+        "scope_spread": 2,
+        "lines": 128
+      },
+      "unmeasured_metrics": [
+        "ratchet_deltas",
+        "tests_removed",
+        "rule_hits"
+      ],
+      "source": "git show --numstat"
+    }
+  ],
+  "authors": {},
+  "measurement_notes": "Historic rule hits, ratchet deltas and removed test definitions were not measured by this compiler; absent values are not fabricated zeros. Author labels come from Git commits and do not distinguish an agent using a human Git identity."
+}

@@ -134,6 +134,8 @@ EVIDENCE: dict[str, dict[str, str]] = {
     "tool.baboom": {"court": _OWN + "test_tool_nodes_return_their_settings_parameters"},
     "tool.connectors": {"court": _OWN + "test_tool_nodes_return_their_settings_parameters"},
     "tool.cloud": {"court": _OWN + "test_tool_nodes_return_their_settings_parameters"},
+    "library.publish_package": {"court": "tests_replica/test_home3_package_publication.py::test_registered_engine_publishes_reviewed_real_files_once"},
+    "archhub.enforce": {"unavailable": "Source courts: tests_replica/test_enforce.py (isolated fake writes and real graph/readback); tools/archhub-compiler/tests/diagnostics.rs (Rust artifact/type rules). Authenticated installed host/session intent admission is not verified."},
 }
 
 # Which connector row (probe_connectors id) an operation needs, when it needs one.

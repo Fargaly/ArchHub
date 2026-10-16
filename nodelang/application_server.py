@@ -1245,17 +1245,6 @@ def _site_font_asset(name):
     return (BRAND_DIR / FONT_DIR / face).read_bytes(), "font/woff2"
 
 
-def _site_tutorial_asset(path):
-    # Exact public capture only; no filesystem path from the caller is opened.
-    if path != '/assets/tutorials/home-templates.png':
-        raise FileNotFoundError('tutorial screenshot not found')
-    from .site_export import SiteExportError, _brand_bytes
-    try:
-        return _brand_bytes(path.removeprefix('/')), 'image/png'
-    except SiteExportError as exc:
-        raise FileNotFoundError('tutorial screenshot not found') from exc
-
-
 class _CleanAuthorityHttpServer:
     """Bounded clean-graph browser consumer without a second store."""
 
@@ -3318,12 +3307,12 @@ class _CleanAuthorityHttpServer:
     def _clean_studio_asset(self, name):
         """Read only the public assets used by the existing Studio entry point."""
         admitted = {
-            "studio.html", "studio-authority.js", "tokens.jsx", "ds/index.jsx", "design-canvas.jsx",
+            "studio.html", "studio-authority.js", "tokens.jsx", "design-canvas.jsx",
             "shared-data.jsx", "studio-suite.jsx", "param-types.jsx", "studio-params.jsx",
             "studio-mobile.jsx", "studio-account.jsx", "node-registry.jsx", "brain-model.jsx", "workshop-board.jsx", "studio-workshop.jsx",
             "studio-lm.jsx", "mount.jsx",
             "vendor/react.js", "vendor/react-dom.js", "vendor/babel.js",
-            "compiled/manifest.json", "compiled/tokens.js", "compiled/ds-index.js", "compiled/design-canvas.js",
+            "compiled/manifest.json", "compiled/tokens.js", "compiled/design-canvas.js",
             "compiled/shared-data.js", "compiled/studio-suite.js", "compiled/param-types.js",
             "compiled/studio-params.js", "compiled/studio-mobile.js", "compiled/studio-account.js",
             "compiled/node-registry.js", "compiled/brain-model.js", "compiled/workshop-board.js", "compiled/studio-workshop.js",
@@ -4331,12 +4320,10 @@ class _CleanAuthorityHttpServer:
                     self.wfile.write(body)
                     return
                 request_path = self.path.split("?", 1)[0]
-                if (request_path.startswith("/assets/fonts/") or request_path == "/assets/fonts.css"
-                        or request_path == '/assets/tutorials/home-templates.png'):
+                if request_path.startswith("/assets/fonts/") or request_path == "/assets/fonts.css":
                     # Public OFL faces the canvas page and the Studio name; no key, no session.
                     try:
-                        body, kind = (_site_tutorial_asset(request_path)
-                            if request_path == '/assets/tutorials/home-templates.png' else _site_font_asset("fonts.css")
+                        body, kind = (_site_font_asset("fonts.css")
                             if request_path == "/assets/fonts.css" else owner._clean_font_asset(
                                 request_path[len("/assets/fonts/"):]))
                     except FileNotFoundError:
@@ -5801,6 +5788,11 @@ class NativeRecipientRelay:
             return self._settle(job, {"status": "not_sent", "reason": "relay_stopped"})
         if not self._admitted(job):
             return self._settle(job, {"status": "not_sent", "reason": "admission_changed"})
+        from .enforce import require_typed_adapter
+        try:
+            require_typed_adapter("native recipient delivery")
+        except PermissionError:
+            return self._settle(job, {"status": "not_sent", "reason": "E0010_typed_delivery_session_adapter_missing"})
         return self._settle(job, transport.request(
             matches[0], job["text"], timeout_seconds=_NATIVE_RELAY_REPLY_SECONDS,
             cancel_event=self._stop))
@@ -7217,13 +7209,10 @@ class ApplicationServer:
                 if (
                     parsed.path == '/assets/fonts.css'
                     or parsed.path.startswith('/assets/fonts/')
-                    or parsed.path == '/assets/tutorials/home-templates.png'
                 ):
                     # The public OFL faces the Studio names; no session.
                     try:
-                        raw, kind = (_site_tutorial_asset(parsed.path)
-                            if parsed.path == '/assets/tutorials/home-templates.png'
-                            else _site_font_asset(parsed.path[len('/assets/'):]))
+                        raw, kind = _site_font_asset(parsed.path[len('/assets/'):])
                     except FileNotFoundError:
                         self._json(404, {'ok': False, 'error': 'font not found'})
                         return
@@ -8809,14 +8798,7 @@ class ApplicationServer:
                             self._json(403, {'ok': False, 'error': str(denied)})
                             return
                         try:
-                            if action == 'start':
-                                payload = owner.terminal_sessions.start(body.get('cwd'))
-                            elif action == 'input':
-                                payload = owner.terminal_sessions.write(body.get('id'), body.get('text'))
-                            elif action == 'stop':
-                                payload = owner.terminal_sessions.stop(body.get('id'))
-                            else:
-                                raise TerminalRefused('Terminal action must be start, input or stop.')
+                            payload = owner._terminal_action(body)
                         except TerminalRefused as refused:
                             self._json(409, {'ok': False, 'error': str(refused)})
                             return
@@ -9762,7 +9744,8 @@ class ApplicationServer:
                             })
                             return
                         try:
-                            produced, answer = engine(params, {})
+                            engine_id = {'catalogue': 'skills.catalogue', 'read': 'skills.read', 'chain': 'skills.thinking_chain'}[want]
+                            produced, answer = owner._guard_direct_effect(engine_id, engine, params, {})
                             if want == 'catalogue':
                                 from .domains.selfext import mods_rows
                                 out = list(produced.get('out') or [])
@@ -13005,12 +12988,32 @@ class ApplicationServer:
                 held = dict(params or {})
                 held.setdefault('mods_store', self.universal_store)
                 return engine(held, feeds)
+            for contract in ('enforce_pending', 'enforce_kind', 'enforce_readback', 'enforce_correct'):
+                if hasattr(engine, contract):
+                    setattr(run, contract, getattr(engine, contract))
             return run
 
         for name in write_engines:
             if name in engines:
                 engines[name] = bound(engines[name])
         return engines
+
+    def _guard_direct_effect(self, name, effect, params, feeds):
+        """The ordinary Enforce boundary for effects outside canvas evaluation."""
+        from .enforce import guard_effect, graph_parameters
+        return guard_effect(name, effect, params, feeds,
+                            config=lambda: graph_parameters(self.universal_store))
+
+    def _terminal_action(self, body):
+        from .terminal_sessions import TerminalRefused
+        action = body.get('action')
+        if action == 'stop':
+            return self.terminal_sessions.stop(body.get('id'))
+        if action not in ('start', 'input'):
+            raise TerminalRefused('Terminal action must be start, input or stop.')
+        if action == 'start':
+            return self.terminal_sessions.start(body.get('cwd'))
+        return self.terminal_sessions.write(body.get('id'), body.get('text'))
 
 
     def _host_rows(self) -> list:
@@ -19631,8 +19634,6 @@ class ApplicationServer:
                 self.universal_registry, projection,
                 snapshot=self.universal_store.snapshot(), subject_root=binding.subject_root,
                 authentication_context=binding.context)
-            from .site_export import project_documentation
-            projection['documentation'] = project_documentation(catalogue=projection.get('catalog', []))
             projected_binding = _BrowserCanvasProjectionBinding(
                 binding.session_root,
                 binding.subject_root,

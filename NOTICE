@@ -12,3 +12,15 @@ https://github.com/NousResearch/hermes-agent
 Design attribution: task-to-skill creation/refinement and FTS5 session recall.
 No Hermes executable, auto-execute mode or source code is bundled by this patch.
 See licenses/Hermes-MIT.txt in the install, or packaging/windows/licenses/ in source.
+
+ArchHub compiler (ACOMPILER)
+
+Tree-sitter and pinned language grammars are MIT-licensed dependencies.
+All transitive crate versions, source URLs, license declarations and retained
+license texts: tools/archhub-compiler/THIRD_PARTY.md and licenses/.
+Rustc/Clippy diagnostic, ownership and pass-registry designs (MIT/Apache-2.0)
+are learned and independently implemented; no rustc/Clippy source is copied.
+Ruff and Oxc (MIT), Pyright (MIT), TypeScript (Apache-2.0) are learned from
+official source for bounded lexical, flow, arity and explicit-type checks.
+No external Ruff/Pyright/tsc checker is invoked by the product compiler.
+See tools/archhub-compiler/rules.json for exact learned source provenance.

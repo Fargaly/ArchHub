@@ -121,7 +121,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
     foreach ($part in $Path.Split('/')) {
         if (-not $part -or $part.StartsWith('.') -or $part.EndsWith('.') -or
             $part -match '^(?i:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)' -or
-            $part -match '^(?i:__pycache__|node_modules|build|dist|state|backups|sessions|tests|tests_replica|venv)$') {
+            $part -match '^(?i:__pycache__|node_modules|build|dist|state|backups|sessions|tests|tests_replica|venv|archive)$') {
             return $false
         }
     }
@@ -256,7 +256,7 @@ function Read-CandidateManifest([string]$Path) {
         'selected/nodelang/session_link/vendor/LICENSE',
         'selected/nodelang/session_link/vendor/PROVENANCE.md',
         'selected/nodelang/studio/studio.html', 'selected/nodelang/studio/vendor/babel.js',
-        'selected/nodelang/studio/tokens.jsx', 'selected/nodelang/studio/design-canvas.jsx',
+        'selected/nodelang/studio/tokens.jsx', 'selected/nodelang/studio/ds/index.jsx', 'selected/nodelang/studio/design-canvas.jsx',
         'selected/nodelang/studio/shared-data.jsx', 'selected/nodelang/studio/studio-suite.jsx',
         'selected/nodelang/studio/param-types.jsx', 'selected/nodelang/studio/studio-params.jsx',
         'selected/nodelang/studio/studio-mobile.jsx', 'selected/nodelang/studio/studio-account.jsx',
@@ -455,11 +455,11 @@ function Assert-BuildSnapshot($Manifest) {
 function Read-StudioBuild {
     $generated = Join-Path $selectedRoot 'nodelang/studio/compiled'
     Assert-PlainAncestors $generated
-    $names = @('tokens.js', 'design-canvas.js', 'shared-data.js', 'studio-suite.js',
+    $names = @('tokens.js', 'ds-index.js', 'design-canvas.js', 'shared-data.js', 'studio-suite.js',
         'param-types.js', 'studio-params.js', 'studio-mobile.js', 'studio-account.js',
         'node-registry.js', 'brain-model.js', 'workshop-board.js', 'studio-workshop.js', 'studio-lm.js', 'mount.js')
     $entries = @(Get-ChildItem -LiteralPath $generated -Force)
-    if ($entries.Count -ne 15) { throw 'Studio compiler did not produce exactly fourteen scripts and one manifest.' }
+    if ($entries.Count -ne 16) { throw 'Studio compiler did not produce exactly fifteen scripts and one manifest.' }
     foreach ($entry in $entries) {
         if ($entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
             ($entry.Name -cne 'manifest.json' -and $entry.Name -cnotin $names)) {

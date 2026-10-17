@@ -37,6 +37,13 @@ disposable and deleting one may not change meaning.
 - **`current_cells` has no append-only trigger; `cell_versions` and `revisions`
   do.** That does not make the head disposable — it is the journal, not an
   accelerator file. Pruning reachable cells from it breaks §3.1 invariant 7.
+  Exception, founder decision 2026-10-17 (ARCH-DECISIONS-AUDIT #1, "the app
+  stays light and opens fast"; goal: "Conversations are indexed content, not
+  message Cells; apply eligible 20-day inactivity retention"): agent-trace
+  Cells inactive 20+ days MAY leave the live head ONLY after they are copied
+  and read-verified into cold archive custody with their versions, stay
+  resolvable on demand through that archive, and the step is resumable and
+  tamper-checked. Blind pruning or deletion stays forbidden.
 - **The court files bound to the scoreboard are named in
   `evidence/court_bindings.json` AND `evidence/grandmap_bindings.json`.** Run
   only the first and 51 files never execute, which reads as a PASS drop.

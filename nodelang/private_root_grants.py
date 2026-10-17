@@ -30,6 +30,10 @@ _KEY_ID = "archhub.local.private-root-grants"
 _RETIRED_KEY_IDS = ("archhub.unified.bootstrap",)
 
 
+class UnverifiableGrantDocument(InvalidCell):
+    """The grant document exists and was read, but its signature cannot be trusted."""
+
+
 def canonical(value: object) -> bytes:
     try:
         return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
@@ -142,7 +146,7 @@ class PrivateRootGrantStore:
         except (OSError, ValueError) as exc:
             raise InvalidCell("private-root grant document is unreadable") from exc
         if type(document) is not dict or type(document.get("signature")) is not str:
-            raise InvalidCell("private-root grant document is unsigned")
+            raise UnverifiableGrantDocument("private-root grant document is unsigned")
         body = {key: value for key, value in document.items() if key != "signature"}
         signer = body.get("key_id")
         if signer in _RETIRED_KEY_IDS and signer != self.key_id:
@@ -152,12 +156,12 @@ class PrivateRootGrantStore:
                 or type(body.get("key_version")) is not int
                 or type(body.get("key_fingerprint")) is not str
                 or type(body.get("grants")) is not list):
-            raise InvalidCell("private-root grant document is malformed")
+            raise UnverifiableGrantDocument("private-root grant document is malformed")
         if self.provider.key_fingerprint(self.key_id, int(body["key_version"])) != body["key_fingerprint"]:
-            raise InvalidCell("private-root grant signing key is not pinned")
+            raise UnverifiableGrantDocument("private-root grant signing key is not pinned")
         if not self.provider.verify(self.key_id, int(body["key_version"]),
                                     canonical(body), str(document["signature"])):
-            raise InvalidCell("private-root grant document does not verify")
+            raise UnverifiableGrantDocument("private-root grant document does not verify")
         for grant in body["grants"]:
             self._validate_grant(grant)
         return body, False
@@ -169,17 +173,18 @@ class PrivateRootGrantStore:
                 or type(body.get("key_version")) is not int
                 or type(body.get("key_fingerprint")) is not str
                 or type(body.get("grants")) is not list):
-            raise InvalidCell("private-root grant document is malformed")
+            raise UnverifiableGrantDocument("private-root grant document is malformed")
         version = int(body["key_version"])
         try:
             pinned = self.provider.key_fingerprint(signer, version)
         except Exception as exc:
-            raise InvalidCell("private-root grant is signed under retired key %s, which this "
-                              "machine no longer holds; grant the root again" % signer) from exc
+            raise UnverifiableGrantDocument(
+                "private-root grant is signed under retired key %s, which this "
+                "machine no longer holds; grant the root again" % signer) from exc
         if pinned != body["key_fingerprint"]:
-            raise InvalidCell("private-root grant signing key is not pinned")
+            raise UnverifiableGrantDocument("private-root grant signing key is not pinned")
         if not self.provider.verify(signer, version, canonical(body), signature):
-            raise InvalidCell("private-root grant document does not verify")
+            raise UnverifiableGrantDocument("private-root grant document does not verify")
         for grant in body["grants"]:
             self._validate_grant(grant)
         return body
@@ -198,6 +203,24 @@ class PrivateRootGrantStore:
             self._write({**self._header(), "grants": body["grants"]})
         print("  grants     : re-signed %d private-root grant(s) from retired key %s under %s"
               % (len(body["grants"]), signer, self.key_id), flush=True)
+
+    def _set_aside_unverifiable(self, reason: UnverifiableGrantDocument) -> Path:
+        """Move an untrusted grant document aside, byte for byte, under the held lock.
+
+        The bytes are never re-signed, copied into the live document or deleted; the
+        rename is atomic, so the live path holds either the old file or nothing.
+        """
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        target = self.path.with_name("%s.unverifiable-%s.json" % (self.path.stem, stamp))
+        suffix = 1
+        while target.exists():
+            suffix += 1
+            target = self.path.with_name("%s.unverifiable-%s-%d.json" % (self.path.stem, stamp, suffix))
+        before = hashlib.sha256(self.path.read_bytes()).hexdigest()
+        os.replace(self.path, target)
+        print("  grants     : set aside unverifiable grant document (%s) as %s, sha256 %s"
+              % (reason, target.name, before), flush=True)
+        return target
 
     def _write(self, body: dict[str, object]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -231,7 +254,13 @@ class PrivateRootGrantStore:
 
     def grant(self, *, root_id: str, runtime: str, session_id: str, root_digest: str,
               operations: object = None, expires_at: float | None = None,
-              now: float | None = None) -> dict[str, object]:
+              now: float | None = None, replace_unverifiable: bool = False) -> dict[str, object]:
+        """Record one founder grant.
+
+        replace_unverifiable is passed only by the founder's Settings grant: an existing
+        document that cannot be verified is then set aside unchanged and none of its
+        entries is carried over; without it such a document refuses the grant.
+        """
         issued_at = time.time() if now is None else float(now)
         expiry = issued_at + 30 * 24 * 60 * 60 if expires_at is None else float(expires_at)
         grant = {
@@ -248,7 +277,17 @@ class PrivateRootGrantStore:
         }
         self._validate_grant(grant)
         with self._locked_mutation():
-            body = self._read()
+            try:
+                body = self._read()
+            except UnverifiableGrantDocument as exc:
+                if not replace_unverifiable:
+                    raise
+                # Sign the replacement before touching the old file: a signing failure
+                # leaves the old bytes in place. A write failure after the move leaves no
+                # live document, which grants nothing, and the old bytes set aside.
+                self._signed({**self._header(), "grants": [grant]})
+                self._set_aside_unverifiable(exc)
+                body = self._empty()
             grants = [
                 {**item, "revoked": True}
                 if item["root_id"] == grant["root_id"] and item["runtime"] == grant["runtime"]

@@ -1583,6 +1583,7 @@ class _CleanAuthorityHttpServer:
                         root_digest=digest,
                         operations=request.get("operations"),
                         expires_at=request.get("expires_at"),
+                        replace_unverifiable=True,
                     )
                 else:
                     self.private_root_grants.revoke(

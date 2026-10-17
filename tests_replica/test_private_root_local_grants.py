@@ -328,3 +328,100 @@ def test_a_revoke_after_a_stale_retired_read_is_never_overwritten(tmp_path):
     assert writer.revoke(root_id="bbc4") == 1   # another holder revokes in between
     reader._migrate_retired()            # migration decides again under the lock
     assert _status(reader) == {"granted": False, "reason": "grant revoked"}
+
+
+BBC4_SESSION = "app:agent-session:runtime:bbc4-court"
+
+
+def _unverifiable_store(tmp_path):
+    """The live failure class: a document signed by a key no ring on this machine holds."""
+    from nodelang.private_root_grants import PrivateRootGrantStore
+
+    lost = MemorySigningKeyProvider("archhub.unified.bootstrap", b"x" * 32)
+    PrivateRootGrantStore(tmp_path / "private-root-grants.json", provider=lost,
+                          key_id="archhub.unified.bootstrap").grant(
+        root_id="client-a", runtime="claude", session_id=SESSION, root_digest="a" * 64,
+        operations=("write_file",), expires_at=time.time() + 3600)
+    provider = MemorySigningKeyProvider("archhub.unified.bootstrap", b"u" * 32)
+    provider.add_key("archhub.local.private-root-grants", b"l" * 32)
+    return PrivateRootGrantStore(tmp_path / "private-root-grants.json", provider=provider)
+
+
+def _bbc4_grant(store, **extra):
+    return store.grant(root_id="01-personal", runtime="codex", session_id=BBC4_SESSION,
+                       root_digest="b" * 64, operations=("write_file",),
+                       expires_at=time.time() + 3600, **extra)
+
+
+def _bbc4_status(store, session=BBC4_SESSION):
+    return store.status(root_id="01-personal", runtime="codex", session_id=session,
+                        operation="write_file", root_digest="b" * 64)
+
+
+def _set_aside(tmp_path):
+    return [p for p in tmp_path.iterdir() if ".unverifiable-" in p.name]
+
+
+def test_an_unverifiable_document_refuses_reads_and_ordinary_grants_without_moving(tmp_path):
+    from nodelang.universal_cell import InvalidCell
+    import hashlib
+
+    store = _unverifiable_store(tmp_path)
+    path = tmp_path / "private-root-grants.json"
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert _bbc4_status(store)["granted"] is False
+    with pytest.raises(InvalidCell, match="not pinned"):
+        _bbc4_grant(store)
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+    assert not _set_aside(tmp_path)
+
+
+def test_a_settings_grant_sets_the_unverifiable_document_aside_and_trusts_none_of_it(tmp_path):
+    store = _unverifiable_store(tmp_path)
+    before = (tmp_path / "private-root-grants.json").read_bytes()
+    _bbc4_grant(store, replace_unverifiable=True)
+    archived = _set_aside(tmp_path)
+    assert len(archived) == 1 and archived[0].read_bytes() == before
+    assert [(g["root_id"], g["runtime"], g["session_id"]) for g in store.list()] == [
+        ("01-personal", "codex", BBC4_SESSION)]
+    assert _bbc4_status(store)["granted"] is True
+    assert _bbc4_status(store, session="app:agent-session:runtime:other")["granted"] is False
+    assert _status(store)["granted"] is False   # the old client-a/claude entry is not trusted
+
+
+def test_a_verifiable_document_is_never_set_aside(tmp_path):
+    from nodelang.private_root_grants import PrivateRootGrantStore
+
+    provider = MemorySigningKeyProvider("archhub.local.private-root-grants", b"l" * 32)
+    store = PrivateRootGrantStore(tmp_path / "private-root-grants.json", provider=provider)
+    store.grant(root_id="other", runtime="claude", session_id=SESSION, root_digest="c" * 64,
+                operations=("write_file",), expires_at=time.time() + 3600)
+    _bbc4_grant(store, replace_unverifiable=True)
+    assert not _set_aside(tmp_path)
+    assert {g["root_id"] for g in store.list()} == {"other", "01-personal"}
+
+
+def test_a_failed_signature_leaves_the_unverifiable_document_in_place(tmp_path, monkeypatch):
+    store = _unverifiable_store(tmp_path)
+    path = tmp_path / "private-root-grants.json"
+    before = path.read_bytes()
+
+    def refuse(*_args, **_kwargs):
+        raise RuntimeError("signing unavailable")
+
+    monkeypatch.setattr(store.provider, "sign", refuse)
+    with pytest.raises(RuntimeError):
+        _bbc4_grant(store, replace_unverifiable=True)
+    assert path.read_bytes() == before
+    assert not _set_aside(tmp_path)
+
+
+def test_settings_grants_after_set_aside_keep_each_other_and_revoke_wins(tmp_path):
+    store = _unverifiable_store(tmp_path)
+    _bbc4_grant(store, replace_unverifiable=True)
+    store.grant(root_id="01-personal", runtime="claude", session_id=SESSION, root_digest="b" * 64,
+                operations=("write_file",), expires_at=time.time() + 3600, replace_unverifiable=True)
+    assert len(_set_aside(tmp_path)) == 1
+    assert {g["runtime"] for g in store.list()} == {"codex", "claude"}
+    assert store.revoke(root_id="01-personal", runtime="codex") == 1
+    assert _bbc4_status(store) == {"granted": False, "reason": "grant revoked"}

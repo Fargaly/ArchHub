@@ -338,7 +338,6 @@
     "selfext_lens_independence": {
       "why": "the witness is external to the thing it witnesses",
       "tests": [
-        "tests_replica/test_cell_transparency_witness.py",
         "tests_replica/test_external_revision_witness.py"
       ]
     },

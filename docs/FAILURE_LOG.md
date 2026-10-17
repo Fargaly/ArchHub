@@ -190,3 +190,9 @@ Status legend:
 - **claim**: no installed/host launch was authorized; fixture-only execution was intended.
 - **gap**: the old application_server.main CLI court mocked the retired constructor; the new entry delegate entered launch_archhub_test.py instead and exited on its existing-instance mutex (SystemExit 0). Normal launcher logging/foreground notification may have occurred. No installed executable or host was intentionally launched; effects on the existing window were not verified.
 - **resolution**: old independent-owner flags now fail before entry delegation; CLI courts assert that refusal with a constructor spy, entry aliases use runpy fakes, and all subsequent courts redirect LOCALAPPDATA/APPDATA/TEMP into the lane's evidence/court-state. Evidence: stage2b-boot-storage.txt. Real installed acceptance remains unclaimed.
+
+### 2026-10-17 - DEADCODE launcher import entered the existing-instance foreground branch
+- **status**: recorded; further launcher execution stopped.
+- **claim**: the source-only deletion lane uses isolated fixture state for its requested boot-import smoke.
+- **gap**: importing `launch_archhub_test.py` executes module-level startup; redirected LOCALAPPDATA/APPDATA/TEMP did not isolate the default single-instance socket. The probe exited0 at the held-port branch and its own log states that the running ArchHub window was brought forward. Other forwarding/foreground effects were not independently verified; no founder data was deliberately inspected.
+- **resolution**: retain raw `evidence/deadcode/launcher-import-observed.txt`; no full/no-effect launcher-smoke PASS. Capture the two server-module imports separately with a reached marker. Inspect module-level side effects and fake platform/owner boundaries before any future launcher import; changing the fixture directory alone is insufficient. Product/launcher code and retained tests are unchanged.

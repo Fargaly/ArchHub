@@ -63,7 +63,6 @@ EXECUTION_FLOOR_MODULES = {
     "cell_status_ledger.py",
     "cell_tenant_authority.py",
     "cell_transactions.py",
-    "cell_transparency_witness.py",
     "cell_value_graph.py",
     "cell_view_template.py",
 }

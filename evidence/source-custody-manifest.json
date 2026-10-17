@@ -1,8 +1,8 @@
 {
   "authority": "evidence-only",
-  "byte_count": 19529112,
+  "byte_count": 19431144,
   "custody": "T0_PUBLIC",
-  "file_count": 692,
+  "file_count": 690,
   "files": [
     {
       "path": ".claude/launch.json",
@@ -1485,11 +1485,6 @@
       "size": 14224
     },
     {
-      "path": "nodelang/cell_transparency_witness.py",
-      "sha256": "c0ab5bbf24c43cb1b047a6cf808e90d46598c1aa69665c8d9ed323dc8e56b32e",
-      "size": 69970
-    },
-    {
       "path": "nodelang/cell_ui.py",
       "sha256": "6ed2dd2cd975369216224d960052f948f57c494ed964fa321b0b35ad189d2959",
       "size": 8662
@@ -2835,11 +2830,6 @@
       "size": 9610
     },
     {
-      "path": "tests_replica/test_cell_transparency_witness.py",
-      "sha256": "f3ddbcc21f22e5841aea42ab1bbcc2abdff85260bf69f350eff5e60d1e2ad3f8",
-      "size": 27998
-    },
-    {
       "path": "tests_replica/test_cell_ui.py",
       "sha256": "4d385e9da7e44ab04b8703ea4116e24421ff138c10d3b73d4ef9df76572a7fa5",
       "size": 3294
@@ -3466,5 +3456,5 @@
     }
   ],
   "schema": "archhub.source-custody-manifest.v1",
-  "tree_sha256": "c41bd879869f9776a628cd783dff87419380d8cce070a653d0d2b3fdd49871be"
+  "tree_sha256": "553f8949d123dcd1ee8ebd7a07b264618adfe12fa32da79e73625f41ce44d694"
 }

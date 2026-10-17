@@ -3151,7 +3151,8 @@
         "tests_replica/test_site_export.py",
         "docs/FAILURE_LOG.md",
         "tools/archhub-compiler/src/semantics.rs",
-        "RESULT-PRESENCE1-final.md"
+        "RESULT-PRESENCE1-final.md",
+        "docs/DECISIONS.md"
       ]
     }
   }

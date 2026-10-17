@@ -223,6 +223,9 @@ def documentation_pages(*, build_id=None, host_artifacts=None, catalogue=None):
         + "BABOOM uses the packaged Goose %s runtime. " % documentation_goose_version()
         + "Startup checks its package and digest. A missing or changed package is a blocker; repair ArchHub. "
         + "BABOOM accepts free OpenRouter routes or local Ollama models. Its tool can read connected-host state. "
+        + "Presence starts in the tray. Settings > BABOOM > Shows as selects Screen, Tray or Hidden. "
+        + "Screen uses a small edge sprite that yields to your work. Connection status is a dot and tooltip; "
+        + "Open ArchHub is in the tray menu. Click Ask BABOOM for answers in its own window. "
         + "Direct Brain, host and file writes are not exposed by this runtime. "
         + "Outside changes still need the existing Approve flow.\n")
     pages.update(starter_tutorials(stamp))

@@ -20407,6 +20407,14 @@ def _project_application_node_settings(
             "constraints": {"options": ["on", "off"]},
             "setting": {"kind": "baboom", "key": "start_with_archhub"},
         })
+        app_nodes[baboom_root]["params"].append({
+            "label": "Shows as", "value": baboom.get("shows_as", "Tray"),
+            "owner": baboom_root, "relation": baboom.get("control"),
+            "value_root": baboom.get("value_root"), "cell_id": baboom.get("value_root"),
+            "editable": bool(baboom.get("available")), "editor": "select",
+            "constraints": {"options": ["Screen", "Tray", "Hidden"]},
+            "setting": {"kind": "baboom", "key": "shows_as"},
+        })
     models_root = domains.get("models")
     if models_root in app_nodes:
         values = composer.get("generation", dict(_MODEL_DEFAULTS))
@@ -30131,6 +30139,21 @@ def _baboom_startup_roots(view_session_root: str) -> tuple[str, str]:
     )
 
 
+def _baboom_preferences(value: str) -> dict[str, str]:
+    """Old on/off revisions remain valid; appearance shares the same asset."""
+    if value in _BABOOM_STARTUP_VALUES:
+        return {"value": value}
+    try:
+        preference = json.loads(value)
+    except (ValueError, TypeError) as exc:
+        raise InvalidCell("BABOOM startup value is invalid") from exc
+    if (not isinstance(preference, dict) or set(preference) != {"value", "shows_as"}
+        or preference["value"] not in _BABOOM_STARTUP_VALUES
+        or preference["shows_as"] not in ("Screen", "Tray", "Hidden")):
+        raise InvalidCell("BABOOM startup value is invalid")
+    return preference
+
+
 def read_universal_baboom_startup(
     snapshot: Snapshot,
     registry: UniversalApplicationRegistry,
@@ -30199,13 +30222,16 @@ def read_universal_baboom_startup(
     if (
         content.link0 != NULL_CELL_ID
         or content.link1 != NULL_CELL_ID
-        or content.atom not in (b"on", b"off")
     ):
         raise InvalidCell("BABOOM startup value is invalid")
+    try:
+        preferences = _baboom_preferences(content.atom.decode("utf-8"))
+    except UnicodeDecodeError as exc:
+        raise InvalidCell("BABOOM startup value is invalid") from exc
     if revision.actor_root != owner_root:
         raise InvalidCell("BABOOM startup actor drifted")
     return {
-        "value": content.atom.decode("ascii"),
+        **preferences,
         "source": "graph",
         "revision": heads[0],
         "actor": revision.actor_root,
@@ -30239,6 +30265,7 @@ def _project_universal_baboom_startup(
     )
     return {
         "value": current["value"],
+        "shows_as": current.get("shows_as", "Tray"),
         "value_root": (read_revision(snapshot, registry.standard_library.lifecycle_protocol,
                                      current["revision"]).content_root
                        if current.get("revision") else None),
@@ -30269,6 +30296,7 @@ def set_universal_baboom_startup(
     *,
     base_revision_root: str | None = None,
     authentication_context: object | None = None,
+    shows_as: str | None = None,
 ) -> str:
     """Append the instance owner's BABOOM startup choice as a WIP revision.
 
@@ -30299,24 +30327,30 @@ def set_universal_baboom_startup(
     actor_root = registry.authorization.broker.resolve(context).subject_root
     lifecycle = registry.standard_library.lifecycle_protocol
     current = read_universal_baboom_startup(snapshot, registry)
+    mode = shows_as if shows_as is not None else current.get("shows_as", "Tray")
+    if mode not in ("Screen", "Tray", "Hidden"):
+        raise InvalidCell("BABOOM Shows as must be Screen, Tray or Hidden")
+    unchanged = value == current["value"] and mode == current.get("shows_as", "Tray")
+    content = (json.dumps({"value": value, "shows_as": mode}).encode("utf-8")
+               if shows_as is not None or "shows_as" in current else value.encode("ascii"))
     if current["source"] == "graph":
         if base_revision_root != current["revision"]:
             raise InvalidCell("BABOOM startup changed; refresh before saving")
-        if value == current["value"]:
+        if unchanged:
             raise InvalidCell("BABOOM startup is already %s" % value)
         return append_wip_revision(
             store,
             registry.assembly_protocol,
             lifecycle,
             str(current["asset"]),
-            content=value.encode("ascii"),
+            content=content,
             actor_root=actor_root,
             base_revision_root=str(current["revision"]),
             reason="BABOOM startup setting",
         )
     if base_revision_root is not None:
         raise InvalidCell("BABOOM startup changed; refresh before saving")
-    if value == current["value"]:
+    if unchanged:
         raise InvalidCell("BABOOM startup is already %s" % value)
     asset_root, binding_root = _baboom_startup_roots(view_session.root_id)
     if asset_root in snapshot.cells or binding_root in snapshot.cells:
@@ -30335,7 +30369,7 @@ def set_universal_baboom_startup(
             definition_root,
             token=asset_root[len("assembly-instance:"):],
         ),
-        value.encode("ascii"),
+        content,
         actor_root=actor_root,
     )
     if composed.instance.root_id != asset_root:
@@ -42938,6 +42972,7 @@ def project_universal_baboom_context(
     return {
         "cell_native": True,
         "context_lens": _BABOOM_CONTEXT_LENS_VERSION,
+        "shows_as": read_universal_baboom_startup(snapshot, registry).get("shows_as", "Tray"),
         "agents": {"working": agents_working, "count": len(agents_working),
                    # Sessions whose graph presence lease lapsed in the last 15
                    # minutes: the same leases "presence" reads, runtime names only.
@@ -54384,14 +54419,12 @@ def submit_universal_edit_value_interaction(
             authentication_context=context,
         )
     elif baboom_startup_candidate is not None:
-        if value not in _BABOOM_STARTUP_VALUES:
-            raise InvalidCell("BABOOM startup value must be on or off")
-        if value == baboom_startup_candidate.get("value"):
-            raise InvalidCell("BABOOM startup is already %s" % value)
+        preference = _baboom_preferences(value)
         set_universal_baboom_startup(
             store,
             registry,
-            value,
+            str(preference["value"]),
+            shows_as=preference.get("shows_as"),
             base_revision_root=baboom_startup_candidate.get("revision"),
             authentication_context=context,
         )

@@ -8,6 +8,7 @@
  */
 'use strict';
 const test = require('node:test');
+const {settingsNavigator} = require('../tests_js/settings_navigation_helpers.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -34,7 +35,10 @@ const committedDelta = value => ({ok:true, committed_revision:11, revision:11, b
 const refusal = (message, status) => Object.assign(new Error(message), status ? {status} : {});
 const disabled = element => element.disabled === true || element.getAttribute('aria-disabled') === 'true';
 
-function transport({post, setting = startup(), heads = ['draft']}) {
+function transport(options = {}) {
+  const post = options.post;
+  const setting = options.setting === undefined ? startup() : options.setting;
+  const heads = options.heads === undefined ? ['draft'] : options.heads;
   const context = vm.createContext({window:{}, TextEncoder});
   vm.runInContext(read('nodelang/studio/studio-existing-workshop.js'), context);
   const fields = Object.entries(seed).map(([key, value]) => ({key, value, control:'control:'+key,
@@ -130,6 +134,28 @@ test('a second change while one is in flight is refused and only one write is se
   assert.equal(fixture.posts.length, 1);
 });
 
+test('Shows as submits one admitted combined preference and verifies the saved mode', async () => {
+  const t = transport({post:async () => ({...committedDelta('on'),
+    configuration_state:{baboom_startup:startup({shows_as:'Screen', source:'graph'})}})});
+  await t.api.setBaboomShowsAs('Screen');
+  assert.equal(t.posts.length, 1);
+  assert.deepEqual(JSON.parse(t.posts[0].body.event_facts[0].value), {value:'on', shows_as:'Screen'});
+});
+
+test('Shows as renders the three choices in the existing BABOOM row and saves a click', async () => {
+  const calls = [];
+  await withSettingsBaboom({configuration:{baboom_startup:startup({shows_as:'Tray'})}},
+    {setBaboomShowsAs:async value => calls.push(value)}, async (document, act) => {
+      const row = document.querySelector('[aria-label="BABOOM Shows as"]');
+      assert.ok(row);
+      const buttons = [...row.querySelectorAll('button')];
+      assert.deepEqual(buttons.map(button => button.textContent), ['Screen','Tray','Hidden']);
+      assert.equal(buttons[1].getAttribute('aria-pressed'), 'true');
+      await act(async () => buttons[0].click());
+      assert.deepEqual(calls, ['Screen']);
+    });
+});
+
 function loadTokens(theme) {
   const window = {ARCHHUB_THEME:theme};
   vm.runInContext(read('nodelang/studio/tokens.jsx'), vm.createContext({window}));
@@ -150,6 +176,7 @@ async function withSettingsBaboom(state, api, check) {
   global.window = dom.window; global.document = dom.window.document;
   global.IS_REACT_ACT_ENVIRONMENT = true;
   const window = loadTokens(seed);
+  window.AH_DS = {Btn:props => React.createElement('button', props)};
   window.ARCHHUB_EXISTING_WORKSHOP = api;
   const context = vm.createContext({window, React, LM:window.AH, usePersonalTheme:() => state,
     SHead:({title}) => React.createElement('h3', null, title)});
@@ -238,15 +265,14 @@ test('shipped Studio tree carries the BABOOM startup switch in Settings > BABOOM
     const settings = win.document.querySelector('[title="Settings"]');
     assert.ok(settings, 'actual Studio Settings control exists');
     win.ReactDOM.flushSync(() => settings.click());
-    const tabs = [...win.document.querySelectorAll('button')].filter(button => button.firstElementChild?.textContent);
-    assert.equal(tabs.some(button => button.firstElementChild.textContent === 'BABOOM'), true, 'the 2026-10-09 design draws a BABOOM tab');
-    const hosts = tabs.find(button => button.firstElementChild.textContent === 'Hosts');
-    assert.ok(hosts, 'actual Settings Hosts tab exists');
-    win.ReactDOM.flushSync(() => hosts.click());
+    const navigation = settingsNavigator({doc:win.document,
+      flush:action => win.ReactDOM.flushSync(action),
+      settle:async () => { await new Promise(resolve => win.setTimeout(resolve, 0)); }});
+    assert.equal((await navigation.capability('BABOOM')).textContent.trim(), 'BABOOM',
+      'the existing Settings AI group exposes BABOOM');
+    await navigation.tab('Hosts');
     assert.equal(win.document.querySelectorAll(SWITCH).length, 0, 'Hosts does not render the BABOOM startup switch');
-    const baboom = [...win.document.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'BABOOM');
-    assert.ok(baboom, 'actual Settings BABOOM tab exists');
-    win.ReactDOM.flushSync(() => baboom.click());
+    await navigation.tab('BABOOM');
     assert.equal(win.document.querySelectorAll(SWITCH).length, 1, 'the BABOOM startup switch is drawn once');
     const toggle = win.document.querySelector(SWITCH);
     assert.equal(toggle.parentElement.querySelector(':scope > div > div').textContent, 'BABOOM', 'the row names BABOOM');

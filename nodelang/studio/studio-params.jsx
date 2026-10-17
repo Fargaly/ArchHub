@@ -340,7 +340,8 @@ async function pmPersistValue(node, key, value) {
       saved = await owner.previewThemeToken(setting.key, value);
     } else if (setting.kind === 'baboom') {
       if (!owner?.setBaboomStartup) throw new Error('BABOOM settings are unavailable.');
-      saved = await owner.setBaboomStartup(value === true || value === 'on' || value === 'true' ? 'on' : 'off');
+      saved = setting.key === 'shows_as' ? await owner.setBaboomShowsAs(String(value)) :
+        await owner.setBaboomStartup(value === true || value === 'on' || value === 'true' ? 'on' : 'off');
     } else if (setting.kind === 'generation') {
       if (!window.saveModelDefaults) throw new Error('Model settings are unavailable.');
       saved = await window.saveModelDefaults({ ...window.modelGenerationDefaults(), [setting.key]:value });

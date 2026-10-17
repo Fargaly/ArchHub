@@ -215,7 +215,10 @@ def test_native_companion_window_is_transparent_outside_the_sprite_and_report(tm
     atlas_image = QImage(1536, 2288, QImage.Format.Format_ARGB32_Premultiplied)
     atlas_image.fill(QColor(0, 0, 0, 0))
     painter = QPainter(atlas_image)
-    painter.fillRect(240, 50, 96, 120, QColor(28, 187, 171, 255))
+    # Every pose has the same opaque interior and transparent outer margin.
+    for row in range(11):
+        for column in range(8):
+            painter.fillRect(column * 192 + 48, row * 208 + 50, 96, 120, QColor(28, 187, 171, 255))
     painter.end()
     atlas_path = tmp_path / "companion.png"
     assert atlas_image.save(str(atlas_path))
@@ -242,7 +245,7 @@ def test_native_companion_window_is_transparent_outside_the_sprite_and_report(tm
         window.start_projection()
         app.processEvents()
         rendered = window.grab().toImage()
-        assert rendered.width() > 144
+        assert rendered.width() <= 56
         assert rendered.pixelColor(0, rendered.height() - 1).alpha() == 0
         assert any(
             rendered.pixelColor(x, y).alpha() == 255
@@ -290,10 +293,8 @@ def test_native_companion_keeps_reply_available_without_relaying_every_tick(tmp_
         assert window.geometry() == first_geometry
         assert window._projection_timer.interval() >= 500
         assert window._animation_timer.interval() == 900
-        # An ambient companion that sits behind the founder's work is one he
-        # never sees. It stays on top, frameless and click-through outside
-        # its own sprite, which is how every desktop companion behaves.
-        assert bool(
+        # PRESENCE1: a request opens its own window; presence never stays on top.
+        assert not bool(
             window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
         )
         assert bool(
@@ -303,12 +304,8 @@ def test_native_companion_keeps_reply_available_without_relaying_every_tick(tmp_
         assert "border-radius:0" in window._report.styleSheet()
         assert window._report.font().family() == "Segoe UI"
         assert window._input.font().family() == "Segoe UI"
-        assert window._message_rect is not None
-        QTest.mouseClick(
-            window,
-            Qt.MouseButton.LeftButton,
-            pos=window._sprite_rect.center(),
-        )
+        assert window._message_rect is None
+        window._open_interaction()
         app.processEvents()
         assert window._input.isVisible()
         assert window._talk.isVisible()
@@ -377,12 +374,15 @@ def test_native_companion_stays_where_the_founder_puts_it(tmp_path):
     controller = BaboomNativeCompanionController(
         host, atlas, occupied_provider=shifting_windows
     )
+    window = create_baboom_native_companion_window(controller)
+    window._screen_rect = lambda: screen
+    window.refresh()
     homes = {
         (
-            controller.next_frame(screen).layout.sprite.x,
-            controller.next_frame(screen).layout.sprite.y,
+            window.x(), window.y(),
         )
         for _ in range(4)
+        if window.refresh() is None
     }
     assert len(homes) == 1, "the companion re-placed itself as windows changed"
 
@@ -391,11 +391,14 @@ def test_native_companion_stays_where_the_founder_puts_it(tmp_path):
     assert narrow is not None
     assert narrow.layout.sprite.contained_by(Rect(0, 0, 1280, 720))
 
-    # Where the founder drops it is where it lives.
+    # PRESENCE1: a drag re-docks to the nearest edge.
     controller.pin_sprite_origin(410, 260)
-    placed = controller.next_frame(screen)
-    assert (placed.layout.sprite.x, placed.layout.sprite.y) == (410, 260)
-    assert controller.next_frame(screen).layout.sprite.x == 410
+    window.refresh()
+    assert (window.x(), window.y()) == (410, 0)
+    window.refresh()
+    assert window.x() == 410
+    window.stop_projection()
+    window.close()
 
     # And it is remembered across a restart.
     position_path = tmp_path / "baboom-position.json"
@@ -407,8 +410,10 @@ def test_native_companion_stays_where_the_founder_puts_it(tmp_path):
         restarted, position_path=position_path
     )
     try:
-        assert restarted.next_frame(screen).layout.sprite.x == 410
-        assert restarted.next_frame(screen).layout.sprite.y == 260
+        window._screen_rect = lambda: screen
+        window.refresh()
+        assert window.x() == 410
+        assert window.y() == 0
     finally:
         window.close()
         window.deleteLater()
@@ -531,6 +536,7 @@ def test_native_companion_report_box_fits_the_whole_briefing(tmp_path):
         assert height >= needed.height(), "the briefing does not fit its box"
 
         # And the box the layout actually hands the label is that size.
+        window._open_interaction()
         window._transient_report = briefing
         window._transient_revision = None
         window.refresh()

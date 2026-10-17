@@ -64,6 +64,8 @@ def companion(tmp_path, monkeypatch):
     host.connect()
     window = create_baboom_native_companion_window(
         BaboomNativeCompanionController(host, atlas, occupied_provider=lambda: ()))
+    window.start_projection()
+    window._open_interaction()
     yield app, window, executed
     window.close()
     window.deleteLater()

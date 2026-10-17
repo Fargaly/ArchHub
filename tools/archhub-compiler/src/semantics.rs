@@ -875,7 +875,7 @@ fn terminates(node: Node<'_>, source: &str) -> bool {
     }
 }
 fn builtins(language: &str) -> BTreeSet<&'static str> {
-    let py="abs aiter all anext any ascii bin bool breakpoint bytearray bytes callable chr classmethod compile complex delattr dict dir divmod enumerate eval exec filter float format frozenset getattr globals hasattr hash help hex id input int isinstance issubclass iter len list locals map max memoryview min next object oct open ord pow print property range repr reversed round set setattr slice sorted staticmethod str sum super tuple type vars zip __import__ __name__ __file__ __package__ __doc__ __builtins__ True False None Ellipsis NotImplemented BaseException Exception ValueError TypeError RuntimeError KeyError AttributeError ImportError OSError IOError StopIteration NotImplementedError FileNotFoundError FileExistsError PermissionError TimeoutError AssertionError IndexError UnicodeError ZeroDivisionError NameError UnboundLocalError SystemExit GeneratorExit Warning RecursionError ConnectionError SyntaxError EOFError";
+    let py="abs aiter all anext any ascii bin bool breakpoint bytearray bytes callable chr classmethod compile complex delattr dict dir divmod enumerate eval exec filter float format frozenset getattr globals hasattr hash help hex id input int isinstance issubclass iter len list locals map max memoryview min next object oct open ord pow print property range repr reversed round set setattr slice sorted staticmethod str sum super tuple type vars zip __import__ __name__ __file__ __package__ __doc__ __builtins__ True False None Ellipsis NotImplemented BaseException Exception ValueError TypeError RuntimeError KeyError AttributeError ImportError OSError IOError StopIteration NotImplementedError FileNotFoundError FileExistsError PermissionError TimeoutError AssertionError IndexError UnicodeError UnicodeDecodeError ZeroDivisionError NameError UnboundLocalError SystemExit GeneratorExit Warning RecursionError ConnectionError SyntaxError EOFError";
     let js="Array ArrayBuffer Atomics BigInt Boolean Date Error EvalError Function Infinity Intl JSON Map Math NaN Number Object Promise Proxy RangeError ReferenceError Reflect RegExp Set String Symbol SyntaxError TypeError URIError WeakMap WeakSet WeakRef arguments console decodeURI decodeURIComponent encodeURI encodeURIComponent escape eval globalThis isFinite isNaN parseFloat parseInt undefined unescape window document navigator location history localStorage sessionStorage fetch alert confirm prompt setTimeout clearTimeout setInterval clearInterval requestAnimationFrame cancelAnimationFrame URL URLSearchParams Blob File FormData Headers Request Response AbortController Event CustomEvent HTMLElement Node TextEncoder TextDecoder Buffer process module exports require __dirname __filename React";
     if language == "python" { py } else { js }
         .split_whitespace()
@@ -915,4 +915,17 @@ pub fn check(sources: &[(String, String)]) -> Vec<Diagnostic> {
     diagnostics.sort();
     diagnostics.dedup();
     diagnostics
+}
+
+#[cfg(test)]
+mod presence_builtin_tests {
+    #[test]
+    fn python_unicode_decode_error_builtin_without_import() {
+        let valid = "def decode(payload):\n    try:\n        return payload.decode('utf-8')\n    except UnicodeDecodeError:\n        return None\n";
+        let diagnostics = super::check(&[("presence.py".into(), valid.into())]);
+        assert!(!diagnostics.iter().any(|d| d.code == "E0020"), "{diagnostics:?}");
+        let invalid = valid.replace("UnicodeDecodeError", "UnicodeDecodeErorr");
+        let diagnostics = super::check(&[("presence.py".into(), invalid)]);
+        assert!(diagnostics.iter().any(|d| d.code == "E0020" && d.message.contains("UnicodeDecodeErorr")));
+    }
 }

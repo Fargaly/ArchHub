@@ -67,7 +67,8 @@ def test_stale_actionable_report_and_offer_are_suppressed(companion):
     window._transient_report = 'Old unrelated task status'
     window._pending_task_utterance = 'old action'
     window.refresh()
-    assert 'Live state unavailable' in window._report.text()
+    assert not window._report.isVisible()
+    assert 'Reconnecting' in window._tray.toolTip()
     assert window._pending_task_utterance is None
     assert not window._confirm.isVisible()
     assert window._frame.brain_state == 'unknown'

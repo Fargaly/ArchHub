@@ -9980,6 +9980,13 @@ const BaboomStartupRow = ({ first }) => {
     [on ? 'On' : 'Off', setting.source === 'graph' ? 'Saved' : String(setting.source),
       setting.revision ? 'revision ' + String(setting.revision).slice(-10) : ''].filter(Boolean).join(' · ');
   const col = on && !unreadable ? LM.ok : LM.inkSoft;
+  const changePresence = mode => {
+    if (!enabled || busy.current || (setting?.shows_as || 'Tray') === mode) return;
+    busy.current = true; setError('');
+    return Promise.resolve().then(() => api.setBaboomShowsAs(mode))
+      .catch(failure => setError(failure.message || 'BABOOM appearance could not be changed.'))
+      .finally(() => { busy.current = false; });
+  };
   return (
     <div style={{ padding:`${LM.sp.md}px ${LM.sp.lg}px`, display:'flex', alignItems:'center', gap:LM.sp.md,
       borderTop: first ? 'none' : `1px solid ${LM.lineSoft}` }}>
@@ -10002,6 +10009,13 @@ const BaboomStartupRow = ({ first }) => {
         fontFamily:LM.sans, fontSize:LM.fs.label.sz, lineHeight:LM.fs.label.ln + 'px', fontWeight:LM.fs.label.wt, padding:`2px ${LM.sp.sm}px`, borderRadius:LM.rad.chip,
         background: col + '14', color: col, letterSpacing:LM.fs.label.letter, textTransform:'uppercase',
       }}>{!setting || unreadable ? 'unread' : on ? 'on start' : 'off'}</span>
+      <div aria-label="BABOOM Shows as">
+        <span>Shows as: </span>
+        {['Screen', 'Tray', 'Hidden'].map(mode => <window.AH_DS.Btn key={mode} type="button"
+          kind={(setting?.shows_as || 'Tray') === mode ? 'primary' : 'secondary'}
+          aria-pressed={(setting?.shows_as || 'Tray') === mode} disabled={!enabled}
+          title={'Show BABOOM as ' + mode} onClick={() => changePresence(mode)}>{mode}</window.AH_DS.Btn>)}
+      </div>
       <window.AH_DS.Btn type="button" role="switch" aria-checked={on} aria-label="Start BABOOM when ArchHub opens"
         title={enabled ? (on ? 'Do not start BABOOM when ArchHub opens' : 'Start BABOOM when ArchHub opens') : 'BABOOM startup cannot be changed from this view'}
         disabled={!enabled} onClick={change} style={{width:30, height:16, borderRadius:LM.rad.pill, padding:1, flexShrink:0,

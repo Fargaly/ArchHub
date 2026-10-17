@@ -244,12 +244,13 @@
       return {temperature:number('temperature', 0.7), 'top-p':number('top-p', 0.95),
         'max tokens':number('max tokens', 4096)};
     };
-    const changeTheme = (kind, key, value, generation) => {
+    const changeTheme = (kind, key, value, generation = undefined) => {
       if (themeWrite) fail('Wait for the current theme save to finish.');
       if (kind === 'preview' && (typeof value !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(value))) {
         fail('Enter a six-digit hex colour, such as #1177aa.');
       }
       if (kind === 'baboom-startup' && value !== 'on' && value !== 'off') fail('BABOOM startup must be on or off.');
+      if (kind === 'baboom-presence' && !['Screen', 'Tray', 'Hidden'].includes(value)) fail('Shows as must be Screen, Tray or Hidden.');
       if (kind === 'composer-model' && (typeof value !== 'string' || value.length > 200 || /[^\x21-\x7e]/.test(value))) {
         fail('The model route is invalid.');
       }
@@ -260,21 +261,22 @@
         if (identity && topologyIdentity(fresh) !== identity) fail('The view changed. Review its Personal Settings before saving.');
         const base = held ? fresh : acceptTheme(fresh), config = base.configuration;
         acceptedRead = true;
-        if (kind !== 'baboom-startup' && kind !== 'composer-model' && config.personal_wip_heads.length !== 1) fail('Personal Settings needs one draft before Save or Restore.');
+        if (!kind.startsWith('baboom-') && kind !== 'composer-model' && config.personal_wip_heads.length !== 1) fail('Personal Settings needs one draft before Save or Restore.');
         let control, facts = [];
         if (kind === 'preview') {
           const field = config.theme_fields.find(field => field.key === key);
           if (!field) fail('The selected colour is not declared in Personal Settings.');
           control = field.control;
           facts = [{input:field.event_fact_input, value}];
-        } else if (kind === 'baboom-startup') {
+        } else if (kind.startsWith('baboom-')) {
           const setting = config.baboom_startup;
           if (!setting || setting.available !== true || !text(setting.control) || !text(setting.event_fact_input)) {
             fail('BABOOM startup cannot be changed from this view.');
           }
-          if (setting.value === value) fail('BABOOM startup is already ' + value + '.');
+          if (kind === 'baboom-startup' && setting.value === value) fail('BABOOM startup is already ' + value + '.');
+          if (kind === 'baboom-presence' && (setting.shows_as || 'Tray') === value) fail('BABOOM already shows as ' + value + '.');
           control = setting.control;
-          facts = [{input:setting.event_fact_input, value}];
+          facts = [{input:setting.event_fact_input, value:kind === 'baboom-presence' ? JSON.stringify({value:setting.value, shows_as:value}) : value}];
         } else if (kind === 'composer-model') {
           const setting = config.composer_model;
           if (!setting || setting.available !== true || !text(setting.control) || !text(setting.event_fact_input)) {
@@ -306,6 +308,7 @@
             !result.configuration_state || !result.interaction_projection ||
             (kind === 'preview' && result.configuration_state.theme?.[key] !== value) ||
             (kind === 'baboom-startup' && result.configuration_state.baboom_startup?.value !== value) ||
+            (kind === 'baboom-presence' && result.configuration_state.baboom_startup?.shows_as !== value) ||
             (kind === 'composer-model' && result.configuration_state.composer_model?.value !== value) ||
             (kind === 'restore' && result.configuration_state.preview_revision === config.preview_revision)) {
           fail('The theme save needs reconciliation. Refresh Personal Settings before another save.');
@@ -1322,6 +1325,7 @@
       previewThemeToken: (key, value) => changeTheme('preview', key, value),
       restoreThemeRevision: root => changeTheme('restore', root),
       setBaboomStartup: value => changeTheme('baboom-startup', null, value),
+      setBaboomShowsAs: mode => changeTheme('baboom-presence', null, mode),
       setComposerModel: (value, generation) => changeTheme('composer-model', null, value, generation),
       async readHomeTemplates() {
         const heldEpoch = epoch, generation = navGeneration;

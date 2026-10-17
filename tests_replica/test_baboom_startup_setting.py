@@ -103,6 +103,8 @@ def _owner_projection(registry, **changes):
     owner = registry.authorization.subject_root
     return {
         "value": "on",
+        "value_root": None,
+        "shows_as": "Tray",
         "source": "default",
         "revision": None,
         "actor": None,

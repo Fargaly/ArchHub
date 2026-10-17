@@ -212,6 +212,7 @@ def test_native_shared_approval_adapter_executes_exactly_once(tmp_path, monkeypa
         "kind":"remembered", "summary":"Remembered blue in your Brain.", "data":{"written":1}}
     window.start_projection()
     window._submitted_utterance = "remember: blue"
+    window._open_interaction()
     window._apply_response({"command": {"intent": "remember"}, "response": {
         "kind": "remember-ready", "summary": "Remember blue in your Brain?",
         "data": {"requires": "explicit execute", "confirm_utterance": "confirm " + "a" * 32}}})
@@ -239,12 +240,13 @@ def test_native_busy_ask_stays_responsive_after_frame_expiry_and_dismiss_fences_
     app, window = _t13_window(tmp_path, "busy.png")
     window.start_projection()
     host = window.controller._host
+    window._open_interaction()
     window._busy = True
     window._transient_report = "brain.context · running"
     host._latest = replace(host.latest_snapshot, frame_expires_at=time.time() - 60)
     window.refresh()
     assert "running" in window._report.text()
-    assert not window._open.isVisible()
+    assert not hasattr(window, "_open")
     host.connection_state = "reconnecting"
     window._submitted_utterance = "remember: blue"
     window._apply_response({"command": {"intent": "remember"}, "response": {
@@ -377,12 +379,12 @@ def test_closed_app_control_uses_the_installer_shortcut_without_launching(monkey
         host._latest = replace(host.latest_snapshot, frame_expires_at=time.time() - 60)
         host.connection_state = "closed"
         window.start_projection()
-        assert window._open.isVisible()
+        assert not hasattr(window, "_open")
         assert not window._report.isVisible()
-        assert window._connection_status.isVisible()
-        assert window._connection_status.toolTip() == "ArchHub is closed"
-        assert window._open.accessibleName() == "Open ArchHub"
-        window._open.click()
+        assert not window.isVisible()
+        assert "Reconnecting" in window._tray.toolTip()
+        assert window._tray_open.text() == "Open ArchHub"
+        window._tray_open.trigger()
         from pathlib import Path
         assert [Path(value) for value in opened] == [shortcut]
     finally:

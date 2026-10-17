@@ -24,7 +24,6 @@ from .baboom_companion_placement import (
     _clear_message,
     BaboomCompanionLayout,
     Rect,
-    place_baboom_companion,
 )
 from .baboom_native_host import BaboomNativeHost
 from .baboom_native_visual import (
@@ -40,6 +39,43 @@ from .baboom_native_voice import (
 )
 from .baboom_speech import compose_baboom_speech, plain_count, plain_title
 from .baboom_visual_assets import BaboomSpriteAtlas
+
+
+def desktop_input_idle_seconds() -> float:
+    """Read input age only; no hooks, keystrokes or application content."""
+    class LastInput(ctypes.Structure):
+        _fields_ = [("size", wintypes.UINT), ("tick", wintypes.DWORD)]
+    try:
+        info = LastInput(ctypes.sizeof(LastInput), 0)
+        if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+            return 0.0
+        return ((ctypes.windll.kernel32.GetTickCount() - info.tick) & 0xFFFFFFFF) / 1000
+    except (AttributeError, OSError):
+        return float("inf")
+
+
+def foreign_foreground_window() -> bool:
+    """Any foreign process, including applications with no host adapter."""
+    try:
+        process_id = wintypes.DWORD()
+        getter = ctypes.windll.user32.GetForegroundWindow
+        getter.restype = wintypes.HWND
+        handle = getter()
+        ctypes.windll.user32.GetWindowThreadProcessId(ctypes.c_void_p(handle), ctypes.byref(process_id))
+        return bool(handle and process_id.value != os.getpid())
+    except (AttributeError, OSError):
+        return False
+
+
+def set_native_click_through(handle: int, idle: bool) -> None:
+    """Idle layered sprite never consumes another application's input."""
+    if os.name != "nt":
+        return
+    user32 = ctypes.windll.user32
+    get_style = user32.GetWindowLongW
+    set_style = user32.SetWindowLongW
+    style = get_style(ctypes.c_void_p(handle), -20)
+    set_style(ctypes.c_void_p(handle), -20, style | 0x20 if idle else style & ~0x20)
 
 
 def foreground_window_rect_windows() -> Rect | None:
@@ -314,11 +350,6 @@ def compact_baboom_response_report(response: Mapping[str, object]) -> str:
 
 # A poll can land a few seconds late on a busy machine; that is not a dead server.
 _FRAME_GRACE_SECONDS = 20.0
-# Past this much silence the host is really gone (not merely busy); before it
-# the last frame stays on screen so BABOOM never blinks.
-_FRAME_SILENCE_SECONDS = 600.0
-
-
 class BaboomNativeCompanionController:
     """Volatile visual controller; host snapshots remain the only input truth."""
 
@@ -374,7 +405,6 @@ class BaboomNativeCompanionController:
     def pin_sprite_origin(self, x: int, y: int) -> None:
         """The founder put BABOOM here; it stays here until he moves it again."""
         self._user_origin = (int(x), int(y))
-        self._pinned_layout = None
 
     def _occupied_rectangles(self) -> tuple[Rect, ...]:
         raw = self._occupied_provider()
@@ -405,18 +435,7 @@ class BaboomNativeCompanionController:
         snapshot = self._host.latest_snapshot
         if snapshot is None:
             return None
-        # A frame carries the lease the server gave it. When the server is
-        # slow to renew it (a pipeline run, a relay answer, a probe holding
-        # the store) the lease lapses for a few seconds. Hiding on every
-        # lapse made BABOOM blink on the founder's desktop (2026-09-04
-        # "keeps appearing and disappearing"). Presence first: the last
-        # snapshot keeps drawing; the companion only ever disappears when
-        # the host has been silent for a long time.
-        # Presence first, always. The companion used to vanish after ten
-        # minutes of host silence; on the founder's desktop that read as
-        # "appears and disappears" (2026-09-04, and again 2026-09-06 when
-        # only a floating line of text was left). A silent host is said on
-        # the face; the sprite stays.
+        # Keep the revision-bound frame available for click-only details.
         self.host_silent_seconds = max(0.0, time.time() - float(snapshot.frame_expires_at))
         greeting_hour = self._greeting_hour(snapshot.directive)
         frame = project_baboom_native_visual_frame(
@@ -426,83 +445,11 @@ class BaboomNativeCompanionController:
             occupied=self._occupied_rectangles(),
             animation_tick=self._animation_tick,
             greeting_hour=greeting_hour,
+            sprite_size=(52, 56),
         )
         if self.host_silent_seconds > _FRAME_GRACE_SECONDS or self._host.connection_state in {"closed", "reconnecting"}:
             frame = replace(frame, brain_state="unknown", action="", action_label="")
-        # A companion that recomputes its home every 750ms WANDERS: the
-        # founder's foreground windows change, the placement search
-        # answers differently, and the sprite hops around the desktop.
-        # It lives in ONE place until the screen itself changes.
-        user = self._user_origin
-        if user is not None:
-            # The founder dragged it here. His placement outranks every
-            # search: BABOOM sits where he put it, and its report opens
-            # beside it rather than moving it.
-            base = frame.layout
-            sprite = _bounded_rect(
-                screen,
-                width=base.sprite.width,
-                height=base.sprite.height,
-                x=user[0],
-                y=user[1],
-            )
-            message = None
-            if base.message is not None:
-                message = _message_beside(
-                    screen, sprite, base.message.width, base.message.height
-                )
-            layout = replace(
-                base,
-                sprite=sprite,
-                message=message,
-                edge="founder",
-                overlap_area=0,
-                collision_state="clear",
-            )
-            return replace(
-                frame,
-                layout=layout,
-                report=frame.report if message is not None else None,
-            )
-        pinned = getattr(self, "_pinned_layout", None)
-        pinned_screen = getattr(self, "_pinned_screen", None)
-        if pinned is not None:
-            if pinned_screen != screen:
-                # The screen changed shape (a taskbar, a dock, a fullscreen
-                # app). Keep the companion where it already is, clamped
-                # inside the new bounds -- never search for a new home,
-                # which is what made it jump across the desktop.
-                sprite = _bounded_rect(
-                    screen,
-                    width=pinned.sprite.width,
-                    height=pinned.sprite.height,
-                    x=pinned.sprite.x,
-                    y=pinned.sprite.y,
-                )
-                pinned = replace(pinned, sprite=sprite, message=None)
-                self._pinned_layout = pinned
-                self._pinned_screen = screen
-            return replace(frame, layout=pinned)
-        if frame.layout.collision_state == "clear":
-            self._pinned_layout = frame.layout
-            self._pinned_screen = screen
-            return frame
-        # A desktop with a maximised window has NO clear ground, and a
-        # companion that answers that by vanishing is one nobody ever
-        # sees. Every ambient Windows assistant solves this the same way:
-        # sit in a screen corner, above the work, without the panel.
-        # Presence first, politeness second.
-        settled = project_baboom_native_visual_frame(
-            snapshot,
-            self._atlas,
-            screen=screen,
-            occupied=(),
-            animation_tick=self._animation_tick,
-            greeting_hour=greeting_hour,
-        )
-        self._pinned_layout = settled.layout
-        self._pinned_screen = screen
-        return settled
+        return frame
 
     def next_sprite_source(self, motion: str) -> Rect:
         """Advance only the released sprite crop; layout stays stable."""
@@ -755,8 +702,8 @@ def create_baboom_native_companion_window(
         raise ValueError("BABOOM native companion voice input is invalid")
     try:
         from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, QTimer, Qt, QUrl, pyqtSignal, pyqtSlot
-        from PyQt6.QtGui import QFont, QFontDatabase, QImage, QPainter
-        from PyQt6.QtWidgets import QLineEdit, QLabel, QToolButton, QWidget
+        from PyQt6.QtGui import QCursor, QFont, QFontDatabase, QIcon, QImage, QPainter, QPixmap, QColor
+        from PyQt6.QtWidgets import QLineEdit, QLabel, QMenu, QSystemTrayIcon, QToolButton, QWidget
     except ImportError as exc:  # pragma: no cover - exercised by desktop packaging
         raise RuntimeError("BABOOM native companion requires PyQt6") from exc
 
@@ -797,6 +744,10 @@ def create_baboom_native_companion_window(
             super().__init__()
             self._dismissed = False
             self._stopped = False
+            self._shows_as = "Tray"
+            self._details_open = False
+            self._outage_since = None
+            self._hover_since = None
             self._atlas = QImage(str(controller._atlas.path))
             if self._atlas.isNull():
                 raise ValueError("BABOOM native atlas cannot be loaded")
@@ -895,14 +846,6 @@ def create_baboom_native_companion_window(
                 % (_theme["accent"], _theme["on_fill"]))
             self._send.clicked.connect(self._submit_input)
             self._send.hide()
-            self._open = QToolButton(self)
-            self._open.setText("↗")
-            self._open.setAccessibleName("Open ArchHub")
-            self._open.setToolTip("Open ArchHub")
-            self._open.setStyleSheet("background:%s;color:%s;border:0;padding:0;font-size:16px;"
-                % (_theme["accent"], _theme["on_fill"]))
-            self._open.clicked.connect(self._open_archhub)
-            self._open.hide()
             self._connection_status = QLabel("", self)
             self._connection_status.setAccessibleName("ArchHub connection status")
             self._connection_status.setStyleSheet("background:%s;border-radius:4px;" % _theme["warn"])
@@ -936,7 +879,6 @@ def create_baboom_native_companion_window(
             self.setWindowFlags(
                 Qt.WindowType.Tool
                 | Qt.WindowType.FramelessWindowHint
-                | Qt.WindowType.WindowStaysOnTopHint
             )
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
             # Never let Qt or the system paint a background behind the sprite:
@@ -956,15 +898,104 @@ def create_baboom_native_companion_window(
             self.execution_ready.connect(self._apply_execution)
             self.voice_ready.connect(self._apply_voice)
             self.progress_ready.connect(self._apply_progress)
-            # BABOOM's face: the live line and the offer it carries. The
-            # report label doubles as the face when nothing else is said.
-            self._face_offer: str | None = None
             # The last host seen in front, and when: the right-click that opens
             # the menu activates this window, so the menu cannot ask then.
             self._front: tuple[str, str, str] | None = None
             self._front_at = 0.0
-            self._face_showing = False
-            self._report.installEventFilter(self)
+            self._tray = QSystemTrayIcon(self)
+            self._tray_menu = QMenu(self)
+            self._tray_menu.setStyleSheet(_MENU_STYLE)
+            self._tray_open = self._tray_menu.addAction("Open ArchHub", self._open_archhub)
+            self._tray_menu.addAction("Ask BABOOM…", self._open_interaction)
+            self._tray_menu.addAction("BABOOM menu…", self._open_menu)
+            self._tray_menu.addSeparator()
+            self._tray_menu.addAction("Stop BABOOM for this launch", self.stop_baboom)
+            self._tray.setContextMenu(self._tray_menu)
+            self._tray.activated.connect(self._tray_activated)
+
+        def _tray_activated(self, reason) -> None:
+            if reason == QSystemTrayIcon.ActivationReason.Trigger:
+                if self._result_visible and self._transient_report:
+                    self._details_open = True
+                    set_native_click_through(int(self.winId()), False)
+                    self.refresh()
+                else:
+                    self._open_interaction()
+
+        def _open_menu(self) -> None:
+            from PyQt6.QtGui import QContextMenuEvent
+            self.contextMenuEvent(QContextMenuEvent(QContextMenuEvent.Reason.Mouse, QPoint(), QCursor.pos()))
+
+        def _presence(self, frame) -> None:
+            snapshot = controller.latest_snapshot
+            context = snapshot.context if snapshot is not None else {}
+            mode = context.get("shows_as", "Tray")
+            self._shows_as = mode if mode in ("Screen", "Tray", "Hidden") else "Tray"
+            stale = (controller._host.connection_state != "live"
+                     or controller.host_silent_seconds > _FRAME_GRACE_SECONDS)
+            now = time.monotonic()
+            self._outage_since = (self._outage_since if self._outage_since is not None else now) if stale else None
+            pixmap = QPixmap(32, 32)
+            pixmap.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(pixmap)
+            icon = (render_baboom_native_sprite(self._atlas, frame) if frame is not None
+                    else self._atlas.copy(0, 0, controller._atlas.cell_width, controller._atlas.cell_height))
+            painter.drawImage(QRect(0, 0, 32, 32), icon)
+            if stale:
+                painter.setBrush(QColor(self._theme["warn"]))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawEllipse(23, 23, 8, 8)
+            painter.end()
+            self._tray.setIcon(QIcon(pixmap))
+            self._tray.setToolTip("BABOOM · " + ("Reconnecting to ArchHub" if stale else "Connected"))
+            long_outage = self._outage_since is not None and now - self._outage_since >= 300
+            self._tray_open.setText("ArchHub is closed · Open" if long_outage else "Open ArchHub")
+            self._tray.setVisible(self._shows_as != "Hidden")
+            self._connection_status.setVisible(stale and self._shows_as == "Screen" and not self._details_open)
+            self._connection_status.setToolTip(self._tray.toolTip())
+
+        def _idle_presence(self, screen, frame) -> None:
+            # One small glyph, always at an edge; never search through work areas.
+            size = 56
+            x, y = controller._user_origin or (screen.right - size, screen.bottom - size)
+            x = min(max(x, screen.x), screen.right - size)
+            y = min(max(y, screen.y), screen.bottom - size)
+            edge = min(((x - screen.x, "left"), (screen.right - size - x, "right"),
+                        (y - screen.y, "top"), (screen.bottom - size - y, "bottom")))[1]
+            if edge in ("left", "right"):
+                x = screen.x if edge == "left" else screen.right - size
+            else:
+                y = screen.y if edge == "top" else screen.bottom - size
+            sprite = Rect(x, y, size, size)
+            self._layout = replace(frame.layout, sprite=sprite, message=None, edge=edge)
+            self._frame = replace(frame, layout=self._layout, report=None)
+            self._sprite = render_baboom_native_sprite(self._atlas, self._frame)
+            self._sprite_rect = QRect(0, 0, size, size)
+            self._message_rect = None
+            for widget in (self._report, self._input, self._talk, self._send, self._confirm, self._cancel):
+                widget.hide()
+            if self._approval is not None:
+                self._approval.hide()
+            self.setGeometry(x, y, size, size)
+            self._connection_status.setGeometry(size - 12, size - 12, 8, 8)
+            cursor = QCursor.pos()
+            # A visible sprite remains reachable while approached. A hidden one
+            # must not reappear underneath input intended for another program.
+            approaching = self.isVisible() and self.geometry().adjusted(-24, -24, 24, 24).contains(cursor)
+            active = desktop_input_idle_seconds() < 2.0
+            if self._shows_as != "Screen" or (active and foreign_foreground_window() and not approaching):
+                self.hide()
+                return
+            # Deliberate hover wakes the sprite for click/drag; away from it,
+            # WS_EX_TRANSPARENT passes input to the application underneath.
+            hover = self.geometry().contains(cursor)
+            self._hover_since = (self._hover_since if self._hover_since is not None else time.monotonic()) if hover else None
+            idle = self._hover_since is None or time.monotonic() - self._hover_since < .6
+            set_native_click_through(int(self.winId()), idle)
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+            if not self.isVisible():
+                self.show()
+            self.update()
 
         def start_projection(self) -> None:
             """Start paint and bounded projection checks; never start the host."""
@@ -978,6 +1009,7 @@ def create_baboom_native_companion_window(
         def stop_projection(self) -> None:
             self._projection_timer.stop()
             self._animation_timer.stop()
+            self._tray.hide()
 
         def hide_until_next_launch(self) -> None:
             """Dismiss the projection without claiming to stop the host."""
@@ -1111,8 +1143,18 @@ def create_baboom_native_companion_window(
             if screen is None:
                 return
             frame = controller.next_frame(screen)
+            self._presence(frame)
             if frame is None:
                 self.hide()
+                return
+            if self._shows_as == "Hidden":
+                self._details_open = False
+            if not self._details_open:
+                if controller.host_silent_seconds > _FRAME_GRACE_SECONDS or controller._host.connection_state in {"closed", "reconnecting"}:
+                    self._pending_task_utterance = None
+                    self._confirm.hide()
+                    self._cancel.hide()
+                self._idle_presence(screen, frame)
                 return
             if (
                 self._transient_revision is not None
@@ -1139,43 +1181,19 @@ def create_baboom_native_companion_window(
                 if self._response_received_at else float("inf"))
             stale = (controller.host_silent_seconds > _FRAME_GRACE_SECONDS
                 or controller._host.connection_state in {"closed", "reconnecting"}) and response_age > _FRAME_GRACE_SECONDS and not self._busy
-            closed = controller._host.connection_state == "closed"
-            long_outage = stale and not closed and controller.host_silent_seconds >= _FRAME_SILENCE_SECONDS
-            report = (("ArchHub is still reconnecting…" if long_outage else None)
-                      if stale else self._transient_report or frame.report)
-            self._open.setVisible(stale and closed)
-            self._connection_status.setVisible(stale)
-            self._connection_status.setToolTip("ArchHub is closed" if closed else "Reconnecting automatically")
+            report = self._transient_report if not stale else None
             if stale:
                 self._interaction_requested = False
                 self._input.hide()
                 self._pending_task_utterance = None
                 self._confirm.hide()
                 self._cancel.hide()
-                self._face_offer = None
                 if self._approval is not None:
                     self._approval.hide()
                 self._approval_binding = ""
             if report is None and self._interaction_requested:
                 report = "Ask ArchHub…"
-            self._face_showing = False
-            if report is None and not self._input.isVisible() and not stale:
-                # Nothing being said: the face shows the graph, live.
-                snapshot = controller.latest_snapshot
-                context = dict(getattr(snapshot, "context", {}) or {}) if snapshot is not None else {}
-                context["host_silent_seconds"] = getattr(controller, "host_silent_seconds", 0.0)
-                front = foreground_app_windows()
-                if front is not None:
-                    self._front, self._front_at = front, time.monotonic()
-                report, self._face_offer = baboom_face_line(context, front)
-                self._face_showing = True
-                if report == "I'm watching the graph.":
-                    # Quiet idle occupies only the character. The ask surface
-                    # appears on click; an all-clear bubble adds no information.
-                    report = None
-                    self._face_showing = False
-            layout = (replace(frame.layout, message=None) if stale and not long_outage
-                      else self._layout_for_report(frame, screen, report))
+            layout = self._layout_for_report(frame, screen, report)
             self._frame = frame
             self._layout = layout
             self._sprite = render_baboom_native_sprite(self._atlas, frame)
@@ -1197,78 +1215,13 @@ def create_baboom_native_companion_window(
                 bottom = max(bounds.bottom, message.bottom) + 34
             self._origin = QPoint(left, top)
             window_rect = QRect(left, top, right - left, bottom - top)
-            # Qt caches what it last SET; Windows holds what the window really
-            # is. On the founder's desktop those disagreed -- Qt said
-            # 280x245+1582+729 while Windows had 160x28+1120+1004 -- and
-            # because Qt's cache matched the target, nothing ever corrected it
-            # and BABOOM sat shrunk in the wrong corner. Ask the system.
-            # Place on EVERY tick, unconditionally. Comparing first is what
-            # let the window stay lost: Qt's cache matched the target while
-            # Windows had the companion shrunk to 160x28 in another corner, so
-            # the branch was never taken and nothing repaired it for the rest
-            # of the session. setGeometry on an unchanged window costs nothing.
-            drifted = self._native_rect_differs(window_rect)
-            # A MINIMIZED window ignores setGeometry entirely, so the
-            # unconditional placement below never took: Windows had the
-            # companion iconic, shown as its 160x28 minimized caption at the
-            # bottom of the screen (SM_CXMINIMIZED x SM_CYMINIMIZED), with the
-            # face painted into that stub. Un-minimize first, without
-            # stealing focus, then place.
-            self._unminimize()
             self.setGeometry(window_rect)
-            if drifted or self.geometry() != window_rect:
-                # One line per change, so the next "it is not there" can be
-                # read off a file instead of guessed at from a screenshot.
-                try:
-                    receipt = getattr(controller, "geometry_receipt", None)
-                    if receipt is not None:
-                        # What Qt was ASKED for, what Qt then reports, and what
-                        # WINDOWS reports. The founder's companion was asked for
-                        # 280x245+1582+729 and Windows had a 160x28 window at
-                        # 1120,1004: three numbers in one line say which layer
-                        # moved it.
-                        got = self.geometry()
-                        native = ""
-                        try:
-                            import ctypes as _ct
-
-                            class _R(_ct.Structure):
-                                _fields_ = [("l", _ct.c_long), ("t", _ct.c_long),
-                                            ("r", _ct.c_long), ("b", _ct.c_long)]
-
-                            box = _R()
-                            _ct.windll.user32.GetWindowRect(int(self.winId()), _ct.byref(box))
-                            native = "%dx%d+%d+%d" % (box.r - box.l, box.b - box.t, box.l, box.t)
-                        except Exception:
-                            native = "unreadable"
-                        owner = ""
-                        try:
-                            import ctypes as _ct2
-                            GW_OWNER = 4
-                            owner = str(int(_ct2.windll.user32.GetWindow(int(self.winId()), GW_OWNER)))
-                            iconic = bool(_ct2.windll.user32.IsIconic(int(self.winId())))
-                            owner += " iconic=%s" % iconic
-                        except Exception:
-                            owner = "unreadable"
-                        receipt((
-                            "sprite=%dx%d+%d+%d message=%s asked=%dx%d+%d+%d qt=%dx%d+%d+%d win=%s visible=%s sprite_img=%s owner=" + owner) % (
-                                bounds.width, bounds.height, bounds.x, bounds.y,
-                                ("%dx%d+%d+%d" % (layout.message.width, layout.message.height, layout.message.x, layout.message.y)) if layout.message else "none",
-                                window_rect.width(), window_rect.height(), window_rect.x(), window_rect.y(),
-                                got.width(), got.height(), got.x(), got.y(),
-                                native, self.isVisible(),
-                                ("null" if self._sprite is None or self._sprite.isNull()
-                                 else "%dx%d" % (self._sprite.width(), self._sprite.height()))))
-                except Exception:
-                    pass
             sprite_rect = QRect(
                 bounds.x - left, bounds.y - top, bounds.width, bounds.height
             )
             self._sprite_rect = sprite_rect
             self._connection_status.setGeometry(sprite_rect.center().x() + 12, sprite_rect.top() + 12, 8, 8)
-            self._open.setGeometry(sprite_rect.right() - 24, sprite_rect.top() + 4, 24, 24)
             self._connection_status.raise_()
-            self._open.raise_()
             if layout.message is None or report is None:
                 self._report.hide()
                 self._input.hide()
@@ -1329,42 +1282,6 @@ def create_baboom_native_companion_window(
                 self.show()
             self.update()
 
-        def _native_rect_differs(self, target) -> bool:
-            """True when the real window is not where Qt thinks it put it."""
-            try:
-                import ctypes as _ct
-
-                class _R(_ct.Structure):
-                    _fields_ = [("l", _ct.c_long), ("t", _ct.c_long),
-                                ("r", _ct.c_long), ("b", _ct.c_long)]
-
-                box = _R()
-                if not _ct.windll.user32.GetWindowRect(int(self.winId()), _ct.byref(box)):
-                    return False
-                return (
-                    box.l != target.x() or box.t != target.y()
-                    or (box.r - box.l) != target.width()
-                    or (box.b - box.t) != target.height()
-                )
-            except Exception:
-                return False
-
-        def _unminimize(self) -> None:
-            """Restore an iconic window in place, never taking focus."""
-            try:
-                import ctypes as _ct
-
-                user32 = _ct.windll.user32
-                handle = int(self.winId())
-                if user32.IsIconic(handle):
-                    SW_SHOWNOACTIVATE = 4
-                    user32.ShowWindow(handle, SW_SHOWNOACTIVATE)
-                    # Being minimized is how an owner drags us; make sure the
-                    # owner is gone again before the next tick can repeat it.
-                    self._disown()
-            except Exception:
-                pass
-
         def _disown(self) -> None:
             """Stop any window from owning this one.
 
@@ -1419,6 +1336,10 @@ def create_baboom_native_companion_window(
                 return
             if self._busy:
                 return
+            self._details_open = True
+            self.setWindowTitle("BABOOM")
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
+            set_native_click_through(int(self.winId()), False)
             self._interaction_generation += 1
             self._result_visible = False
             if self._approval is not None:
@@ -1440,6 +1361,7 @@ def create_baboom_native_companion_window(
 
         def _close_interaction(self) -> None:
             """Back to the sprite alone: no box, no stale answer."""
+            self._details_open = False
             self._interaction_requested = False
             self._interaction_generation += 1
             self._result_visible = False
@@ -1485,17 +1407,6 @@ def create_baboom_native_companion_window(
                 and event.key() == Qt.Key.Key_Escape
             ):
                 self._close_interaction()
-                return True
-            # A click on the face runs what it offered ("Revit is open: read
-            # the walls?"). The offer is an utterance the graph already
-            # executes; nothing here is a promise the runtime cannot keep.
-            if (
-                obj is self._report
-                and event.type() == QEvent.Type.MouseButtonPress
-                and self._face_showing
-                and self._face_offer
-            ):
-                self._open_interaction()
                 return True
             return super().eventFilter(obj, event)
 
@@ -1650,7 +1561,7 @@ def create_baboom_native_companion_window(
             menu.addAction("Stop BABOOM for this launch", self.stop_baboom)
             # Hold the companion still while the menu is open. refresh()
             # runs every 750ms and moves, reshapes and repaints this window,
-            # which is WindowStaysOnTopHint: each submenu popup opened on
+            # during projection: each submenu popup opened on
             # hover and was immediately restacked underneath the companion,
             # so the founder saw a menu whose rows never opened (2026-09-07).
             self._projection_timer.stop()
@@ -1695,7 +1606,7 @@ def create_baboom_native_companion_window(
                 elif self._input.isVisible() or self._transient_report is not None:
                     self._close_interaction()
                 else:
-                    self._open_interaction()
+                    self._open_archhub()
                 self._press_global = None
                 self._dragged = False
             super().mouseReleaseEvent(event)

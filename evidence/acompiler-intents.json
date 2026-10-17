@@ -3084,7 +3084,8 @@
       "scope": [
         "nodelang/private_root_grants.py",
         "tests_replica/test_private_root_local_grants.py",
-        "evidence/acompiler-intents.json"
+        "evidence/acompiler-intents.json",
+        "nodelang/application_server.py"
       ]
     },
     "TRACEARCHIVE": {

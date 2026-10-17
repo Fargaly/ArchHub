@@ -127,10 +127,18 @@ class PrivateRootGrantStore:
             str(body["key_id"]), int(body["key_version"]), payload)}
 
     def _read(self) -> dict[str, object]:
+        return self._load()[0]
+
+    def _load(self) -> tuple[dict[str, object], bool]:
+        """Verified grant body and whether it is still signed under a retired key id.
+
+        Never writes and never takes the mutation lock, so callers that already
+        hold the lock can use it and readers stay side-effect free.
+        """
         try:
             document = json.loads(self.path.read_text(encoding="utf-8"))
         except FileNotFoundError:
-            return self._empty()
+            return self._empty(), False
         except (OSError, ValueError) as exc:
             raise InvalidCell("private-root grant document is unreadable") from exc
         if type(document) is not dict or type(document.get("signature")) is not str:
@@ -138,7 +146,7 @@ class PrivateRootGrantStore:
         body = {key: value for key, value in document.items() if key != "signature"}
         signer = body.get("key_id")
         if signer in _RETIRED_KEY_IDS and signer != self.key_id:
-            return self._adopt_retired(body, str(document["signature"]))
+            return self._verify_retired(body, str(document["signature"])), True
         if (body.get("schema") != SCHEMA
                 or body.get("key_id") != self.key_id
                 or type(body.get("key_version")) is not int
@@ -152,10 +160,10 @@ class PrivateRootGrantStore:
             raise InvalidCell("private-root grant document does not verify")
         for grant in body["grants"]:
             self._validate_grant(grant)
-        return body
+        return body, False
 
-    def _adopt_retired(self, body: dict[str, object], signature: str) -> dict[str, object]:
-        """Verify a grant document signed under a retired key id, then re-sign it as is."""
+    def _verify_retired(self, body: dict[str, object], signature: str) -> dict[str, object]:
+        """Verify a grant document signed under a retired key id; fail closed otherwise."""
         signer = str(body.get("key_id"))
         if (body.get("schema") != SCHEMA
                 or type(body.get("key_version")) is not int
@@ -174,12 +182,22 @@ class PrivateRootGrantStore:
             raise InvalidCell("private-root grant document does not verify")
         for grant in body["grants"]:
             self._validate_grant(grant)
-        migrated = {**body, **self._header()}
+        return body
+
+    def _migrate_retired(self) -> None:
+        """Re-sign a retired-key document under the current key, deciding under the lock.
+
+        The document is re-read and re-verified while the lock is held, so a grant or
+        revoke that landed after an unlocked read is never overwritten.
+        """
         with self._locked_mutation():
-            self._write(migrated)
+            body, retired = self._load()
+            if not retired:
+                return
+            signer = body["key_id"]
+            self._write({**self._header(), "grants": body["grants"]})
         print("  grants     : re-signed %d private-root grant(s) from retired key %s under %s"
               % (len(body["grants"]), signer, self.key_id), flush=True)
-        return migrated
 
     def _write(self, body: dict[str, object]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -261,7 +279,10 @@ class PrivateRootGrantStore:
                root_digest: str, now: float | None = None,
                include_grant: bool = False) -> dict[str, object]:
         try:
-            body = self._read()
+            body, retired = self._load()
+            if retired:
+                self._migrate_retired()
+                body = self._read()
         except InvalidCell as exc:
             return {"granted": False, "reason": "grant store invalid: %s" % exc}
         moment = time.time() if now is None else float(now)

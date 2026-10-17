@@ -279,3 +279,52 @@ def test_a_tampered_retired_key_grant_is_still_refused(tmp_path):
     result = current.status(root_id="bbc4", runtime="codex", session_id=SESSION,
                             operation="write_file", root_digest="a" * 64)
     assert result["granted"] is False
+
+def _status(store, runtime="claude"):
+    return store.status(root_id="bbc4", runtime=runtime, session_id=SESSION,
+                        operation="write_file", root_digest="a" * 64)
+
+
+def test_a_retired_key_grant_is_preserved_unchanged_by_the_migration(tmp_path):
+    from nodelang.private_root_grants import PrivateRootGrantStore
+    import json
+
+    provider = _legacy_signed_store(tmp_path)
+    path = tmp_path / "private-root-grants.json"
+    before = json.loads(path.read_text(encoding="utf-8"))["grants"]
+    _status(PrivateRootGrantStore(path, provider=provider))
+    assert json.loads(path.read_text(encoding="utf-8"))["grants"] == before
+
+
+def test_revoke_on_retired_key_state_takes_one_lock_and_revokes(tmp_path):
+    from nodelang.private_root_grants import PrivateRootGrantStore
+
+    provider = _legacy_signed_store(tmp_path)
+    current = PrivateRootGrantStore(tmp_path / "private-root-grants.json", provider=provider)
+    assert current.revoke(root_id="bbc4") == 1
+    assert _status(current) == {"granted": False, "reason": "grant revoked"}
+
+
+def test_grant_on_retired_key_state_takes_one_lock_and_keeps_old_grants(tmp_path):
+    from nodelang.private_root_grants import PrivateRootGrantStore
+
+    provider = _legacy_signed_store(tmp_path)
+    current = PrivateRootGrantStore(tmp_path / "private-root-grants.json", provider=provider)
+    current.grant(root_id="other", runtime="claude", session_id=SESSION, root_digest="b" * 64,
+                  operations=("write_file",), expires_at=time.time() + 3600)
+    assert {g["root_id"] for g in current.list()} == {"bbc4", "other"}
+    assert _status(current)["granted"] is True
+
+
+def test_a_revoke_after_a_stale_retired_read_is_never_overwritten(tmp_path):
+    from nodelang.private_root_grants import PrivateRootGrantStore
+
+    provider = _legacy_signed_store(tmp_path)
+    path = tmp_path / "private-root-grants.json"
+    reader = PrivateRootGrantStore(path, provider=provider)
+    writer = PrivateRootGrantStore(path, provider=provider)
+    _, retired = reader._load()          # unlocked read sees the retired document
+    assert retired is True
+    assert writer.revoke(root_id="bbc4") == 1   # another holder revokes in between
+    reader._migrate_retired()            # migration decides again under the lock
+    assert _status(reader) == {"granted": False, "reason": "grant revoked"}

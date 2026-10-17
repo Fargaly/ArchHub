@@ -3093,6 +3093,28 @@
         "CLAUDE.md",
         "evidence/acompiler-intents.json"
       ]
+    },
+    "DEADCODE": {
+      "source": "BRIEF-DEADCODE.md; founder explicit delete >=2000 provably dead nodelang lines against471cf70a; no behavior change, metric/baseline waiver or relocation",
+      "scope": [
+        "nodelang/cell_transparency_witness.py",
+        "tests_replica/test_cell_transparency_witness.py",
+        "tests_replica/test_cell_execution_floor_court.py",
+        "evidence/acompiler-intents.json",
+        "evidence/deadcode/",
+        "READ-PROOF.md",
+        "PROGRESS.md",
+        "plan.md",
+        "tasks.json",
+        "notes.md",
+        "REGISTER.md",
+        "RESULT-DEADCODE.md",
+        "DEADCODE.patch",
+        "DEADCODE.patch.sha256",
+        "evidence/grandmap_bindings.json",
+        "evidence/source-custody-manifest.json",
+        "docs/FAILURE_LOG.md"
+      ]
     }
   }
 }

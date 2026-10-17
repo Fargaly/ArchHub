@@ -223,10 +223,13 @@ class PrivateRootGrantStore:
         return target
 
     def _write(self, body: dict[str, object]) -> None:
+        self._write_signed(self._signed(body))
+
+    def _write_signed(self, document: dict[str, object]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_name(".%s.%s.tmp" % (self.path.name, os.getpid()))
         try:
-            temporary.write_text(json.dumps(self._signed(body), sort_keys=True,
+            temporary.write_text(json.dumps(document, sort_keys=True,
                                             separators=(",", ":")) + "\n", encoding="utf-8")
             os.replace(temporary, self.path)
         finally:
@@ -282,12 +285,14 @@ class PrivateRootGrantStore:
             except UnverifiableGrantDocument as exc:
                 if not replace_unverifiable:
                     raise
-                # Sign the replacement before touching the old file: a signing failure
-                # leaves the old bytes in place. A write failure after the move leaves no
-                # live document, which grants nothing, and the old bytes set aside.
-                self._signed({**self._header(), "grants": [grant]})
+                # Sign the replacement before touching the old file, and write exactly that
+                # signed document: a signing failure leaves the old bytes in place; a write
+                # failure after the move leaves no live document, which grants nothing,
+                # with the old bytes set aside.
+                replacement = self._signed({**self._header(), "grants": [grant]})
                 self._set_aside_unverifiable(exc)
-                body = self._empty()
+                self._write_signed(replacement)
+                return grant
             grants = [
                 {**item, "revoked": True}
                 if item["root_id"] == grant["root_id"] and item["runtime"] == grant["runtime"]

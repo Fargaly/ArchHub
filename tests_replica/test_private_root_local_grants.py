@@ -425,3 +425,84 @@ def test_settings_grants_after_set_aside_keep_each_other_and_revoke_wins(tmp_pat
     assert {g["runtime"] for g in store.list()} == {"codex", "claude"}
     assert store.revoke(root_id="01-personal", runtime="codex") == 1
     assert _bbc4_status(store) == {"granted": False, "reason": "grant revoked"}
+
+
+def test_a_write_failure_after_the_set_aside_grants_nothing_and_keeps_the_old_bytes(tmp_path, monkeypatch):
+    store = _unverifiable_store(tmp_path)
+    before = (tmp_path / "private-root-grants.json").read_bytes()
+    signs = []
+    real_sign = store.provider.sign
+    monkeypatch.setattr(store.provider, "sign", lambda *a, **k: signs.append(1) or real_sign(*a, **k))
+
+    def refuse(self, document):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(type(store), "_write_signed", refuse)
+    with pytest.raises(OSError):
+        _bbc4_grant(store, replace_unverifiable=True)
+    assert len(signs) == 1                      # the pre-signed document is the one written
+    assert not (tmp_path / "private-root-grants.json").exists()
+    archived = _set_aside(tmp_path)
+    assert len(archived) == 1 and archived[0].read_bytes() == before
+    assert _bbc4_status(store) == {"granted": False,
+                                   "reason": "no grant: ask the founder in Settings > Workspaces"}
+    monkeypatch.undo()
+    _bbc4_grant(store, replace_unverifiable=True)      # recoverable by a new founder grant
+    assert _bbc4_status(store)["granted"] is True
+    assert len(_set_aside(tmp_path)) == 1
+
+
+def test_a_set_aside_never_overwrites_an_earlier_one_with_the_same_name(tmp_path, monkeypatch):
+    import nodelang.private_root_grants as grants_module
+
+    monkeypatch.setattr(grants_module.time, "strftime", lambda *_a: "20261018T000000Z")
+    first = _unverifiable_store(tmp_path)
+    first_bytes = (tmp_path / "private-root-grants.json").read_bytes()
+    _bbc4_grant(first, replace_unverifiable=True)
+    (tmp_path / "private-root-grants.json").unlink()
+    second = _unverifiable_store(tmp_path)
+    second_bytes = (tmp_path / "private-root-grants.json").read_bytes()
+    _bbc4_grant(second, replace_unverifiable=True)
+    names = sorted(p.name for p in _set_aside(tmp_path))
+    assert names == ["private-root-grants.unverifiable-20261018T000000Z-2.json",
+                     "private-root-grants.unverifiable-20261018T000000Z.json"]
+    assert (tmp_path / names[1]).read_bytes() == first_bytes
+    assert (tmp_path / names[0]).read_bytes() == second_bytes
+
+
+def test_concurrent_settings_grants_and_a_revoke_lose_no_valid_state(tmp_path):
+    import threading
+    from nodelang.private_root_grants import PrivateRootGrantStore
+
+    _unverifiable_store(tmp_path)
+    provider = MemorySigningKeyProvider("archhub.unified.bootstrap", b"u" * 32)
+    provider.add_key("archhub.local.private-root-grants", b"l" * 32)
+    path = tmp_path / "private-root-grants.json"
+    stores = [PrivateRootGrantStore(path, provider=provider) for _ in range(6)]
+    start = threading.Barrier(len(stores))
+    errors = []
+
+    def run(index, store):
+        try:
+            start.wait()
+            store.grant(root_id="01-personal", runtime="codex", session_id="session-%d" % index,
+                        root_digest="b" * 64, operations=("write_file",),
+                        expires_at=time.time() + 3600, replace_unverifiable=True)
+        except Exception as exc:     # surfaced below, never swallowed
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run, args=(i, s)) for i, s in enumerate(stores)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+    assert len(_set_aside(tmp_path)) == 1
+    assert sorted(g["session_id"] for g in stores[0].list()) == ["session-%d" % i for i in range(6)]
+    revoker = threading.Thread(target=lambda: stores[1].revoke(root_id="01-personal", session_id="session-3"))
+    granter = threading.Thread(target=lambda: stores[2].grant(
+        root_id="01-personal", runtime="codex", session_id="session-9", root_digest="b" * 64,
+        operations=("write_file",), expires_at=time.time() + 3600, replace_unverifiable=True))
+    revoker.start(); granter.start(); revoker.join(); granter.join()
+    state = {g["session_id"]: g["revoked"] for g in stores[0].list()}
+    assert state["session-3"] is True and state["session-9"] is False and len(state) == 7

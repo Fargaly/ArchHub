@@ -18453,6 +18453,13 @@ class ApplicationServer:
                         payload.get("cwd_sha256"),
                         payload.get("git_remote_sha256"),
                     ) if type(payload) is dict else ()
+                    prompt_receipt = (type(payload) is dict and payload.get("operation")
+                                      == "native.hook_user_prompt_submit")
+                    if prompt_receipt:
+                        expected_payload = {"operation", "status", "session_fingerprint",
+                                            "external_session_fingerprint", "prompt_sha256"}
+                        fingerprint = payload.get("external_session_fingerprint")
+                        evidence_hashes = (payload.get("prompt_sha256"), payload.get("session_fingerprint"))
                     if (
                         space_root
                         != self.universal_registry.brain_control_ledger_root
@@ -18462,16 +18469,16 @@ class ApplicationServer:
                         ]
                         or type(payload) is not dict
                         or set(payload) != expected_payload
-                        or payload.get("operation")
-                        != "brain.hook_session_start"
-                        or summary != "Runtime Agent Session wiring"
+                        or payload.get("operation") != (
+                            "native.hook_user_prompt_submit" if prompt_receipt else "brain.hook_session_start")
+                        or summary != (
+                            "Native UserPromptSubmit Completed" if prompt_receipt else "Runtime Agent Session wiring")
                         or not isinstance(fingerprint, str)
                         or re.fullmatch(r"[0-9a-f]{64}", fingerprint) is None
                         or fingerprint != surface.get("session fingerprint")
-                        or payload.get("entry_count") != 0
-                        or payload.get("entries") != []
-                        or payload.get("secret_ref_count") != 0
-                        or payload.get("secret_ref_hashes") != []
+                        or (payload.get("status") != "Completed" if prompt_receipt else (
+                            payload.get("entry_count") != 0 or payload.get("entries") != []
+                            or payload.get("secret_ref_count") != 0 or payload.get("secret_ref_hashes") != []))
                         or any(
                             not isinstance(value, str)
                             or re.fullmatch(r"[0-9a-f]{64}", value) is None
@@ -18535,6 +18542,8 @@ class ApplicationServer:
                             "sequence": held["generation"],
                             "revision": self.universal_store.revision,
                         }
+                    if prompt_receipt:
+                        raise InvalidCell("native prompt receipt requires operational record storage")
                     entry_context = (
                         self.universal_registry.authorization.broker
                         .mint_authenticated_context(

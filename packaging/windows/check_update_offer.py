@@ -37,9 +37,10 @@ from nodelang import quiet_update as qu  # noqa: E402
 REPOSITORY = "Fargaly/ArchHub"
 FILES = ("ArchHub-Setup-0.exe", "release.json", "release-notes.md",
          "source-manifest.tsv", "studio-build.json", "BUILD_METADATA.json")
-# build_release.ps1 Read-StudioBuild records this reviewed count; the former
-# CI publish step refused any other value.
-STUDIO_FILES = 10
+# Count the same source inventory the build compiler consumes, not an old
+# hand-maintained count that rejects every newly compiled installer.
+_compiler = (ROOT / "packaging/compile_studio.cjs").read_text(encoding="utf-8")
+STUDIO_FILES = len(re.findall(r"'[^']+\.jsx'", _compiler.split("const names = [", 1)[1].split("];", 1)[0]))
 _UTC = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 
 

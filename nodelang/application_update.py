@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import tempfile
 import threading
+import time
 
 from .universal_cell import InvalidCell
 
@@ -13,6 +14,37 @@ _NOT_NEWER = "The offered build is not newer than the installed build; no update
 # The build the owner last acknowledged. A different BUILD_ID at boot is an
 # update, however it was installed, and the Studio confirms it once.
 SEEN_BUILD = "last-seen-build"
+
+
+def default_update_policy():
+    from .library_engines import LIBRARY_ITEM_ENGINES
+    params = LIBRARY_ITEM_ENGINES["tool_workshop"]["params"]
+    return {"check_interval_minutes": int(params["update_check_interval_minutes"]),
+            "auto_apply_on_quit": bool(params["update_auto_apply_on_quit"]),
+            "channel": "preview" if params["update_preview_channel"] else "stable"}
+
+
+def restart_block_reason(owner):
+    """Read the existing execution owners; never stop a job to make room."""
+    reservations = getattr(owner, "_native_workshop_reservations", {}) or {}
+    if getattr(owner, "_model_execution_active", False) or any(
+            getattr(reservation, "_settled", None) is None for reservation in reservations.values()):
+        return "A Workshop job is running; restart when it finishes."
+    host = getattr(owner, "_existing_workshop_native_host", None)
+    action = getattr(host, "_action", None)
+    if action is not None and action.locked():
+        return "A Workshop job is running; restart when it finishes."
+    held = getattr(host, "_native", None)
+    state = getattr(host, "_status", {}).get("state")
+    if (isinstance(held, dict) and held.get("reservation") is not None
+            and state not in ("settled", "published", "publication_uncertain", "native_cancelled", "native_stopped")):
+        return "A Workshop job is running; restart when it finishes."
+    lock = getattr(owner, "mutation_lock", None)
+    if lock is not None:
+        if not lock.acquire(blocking=False):
+            return "Save unsaved work before restarting."
+        lock.release()
+    return None
 
 
 class UpdateRestartRefused(InvalidCell):
@@ -89,16 +121,20 @@ def _record_seen_build(state_dir, build):
 
 class ApplicationUpdate:
     def __init__(self, state_dir, app_dir, *, request_restart, initial_stage=None, report=None, on_ready=None,
-                 first_boot=False):
+                 first_boot=False, policy=None, restart_refusal=None):
         from .quiet_update import installed_build_id
         self.state_dir, self.app_dir = Path(state_dir), Path(app_dir)
         self._request_restart = request_restart
+        self._policy = policy or default_update_policy
+        self._restart_refusal = restart_refusal
+        self._next_check = 0.0
         self.confirmed_build = None
         self._report, self._on_ready = report, on_ready
         self._lock = threading.RLock()
         self._worker = None
         self._state, self._detail = "idle", "Check for a new ArchHub release."
         self._available = ""
+        self._restart_reason = ""
         self._closed = False
         self._stop = threading.Event()
         # The launcher already verified staging before opening the graph. Reuse
@@ -124,6 +160,7 @@ class ApplicationUpdate:
             return {"ok": True, "current_build": installed_build_id(self.app_dir) or "Unversioned build",
                 "state": self._state, "available_build": self._available or None,
                 "detail": self._detail,
+                "restart_refusal": self._restart_reason or None,
                 "restart_supported": callable(self._request_restart) and not self._closed,
                 "updated_from": (self._updated[0] or None) if self._updated else None,
                 "updated_to": self._updated[1] if self._updated else None}
@@ -159,6 +196,29 @@ class ApplicationUpdate:
         self._say("check: failed -- " + status["detail"])
         return status
 
+    def check_if_due(self):
+        """The existing maintenance loop calls this at boot and on each tick."""
+        now = time.monotonic()
+        with self._lock:
+            if self._closed or self._state in ("ready", "restarting") or now < self._next_check:
+                return self.status()
+            policy = self._policy()
+            interval = policy["check_interval_minutes"]
+            if type(interval) is not int or not 1 <= interval <= 1440:
+                raise InvalidCell("Update check interval must be 1 to 1440 minutes")
+            self._next_check = now + interval * 60
+        return self.check()
+
+    def apply_on_quit(self):
+        """A normal quit may arm the same verified release, never interrupt work."""
+        return (self._policy()["auto_apply_on_quit"] is True and self._state == "ready"
+                and not (callable(self._restart_refusal) and self._restart_refusal()))
+
+    def refuse_restart(self, reason):
+        with self._lock:
+            self._state, self._detail = "ready", str(reason)
+            self._restart_reason = str(reason)
+
     def _say(self, line):
         # One launcher line per finished check. A log sink never changes the decision.
         if callable(self._report):
@@ -170,7 +230,13 @@ class ApplicationUpdate:
     def _download(self):
         from .quiet_update import installed_build_id, stage_if_newer
         try:
-            result = stage_if_newer(self.state_dir, self.app_dir, cancellation_event=self._stop)
+            if os.name == "nt":
+                import ctypes
+                # Only the download thread is lowered; the desktop keeps its priority.
+                ctypes.windll.kernel32.SetThreadPriority(ctypes.windll.kernel32.GetCurrentThread(), -1)
+            channel = self._policy()["channel"]
+            options = {} if channel == "stable" else {"channel": channel}
+            result = stage_if_newer(self.state_dir, self.app_dir, cancellation_event=self._stop, **options)
         except Exception as error:
             result = {"staged": False, "build_id": "", "status": "unavailable",
                 "reason": "Update download failed (" + type(error).__name__ + "). Check again to retry."}
@@ -203,6 +269,9 @@ class ApplicationUpdate:
                 return self.status()
             if self._worker is not None and self._worker.is_alive():
                 raise UpdateRestartRefused("Wait for the update download to finish")
+            refusal = self._restart_refusal() if callable(self._restart_refusal) else None
+            if refusal:
+                raise UpdateRestartRefused(str(refusal))
             staged = staged_update(self.state_dir, self.app_dir)
             if not staged.get("staged") or staged.get("status") != "staged":
                 self._state, self._detail = "failed", str(staged.get("reason") or "No verified update is ready.")
@@ -210,9 +279,10 @@ class ApplicationUpdate:
             if expected_build is not None and str(staged["build_id"]) != str(expected_build):
                 raise StagedBuildChanged(str(expected_build), str(staged["build_id"]))
             self._available = str(staged["build_id"])
+            self._restart_reason = ""
             # Carried to arm_update at close: the armed marker (which the next
             # boot verifies before installing) must name this build.
-            self.confirmed_build = None if expected_build is None else str(expected_build)
+            self.confirmed_build = str(staged["build_id"])
             try:
                 self._request_restart()
             except Exception as error:

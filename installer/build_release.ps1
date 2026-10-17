@@ -54,6 +54,7 @@ $acompilerInputs = @(
 $selectedInputs = @(
     'nodelang', 'nodelang/outlook_graph.ps1', 'launch_archhub_test.py', 'colleague_setup.py',
     'requirements.txt', 'installer', 'packaging/windows/Test-SourcePortability.ps1',
+    'packaging/windows/publish_release.ps1', 'packaging/windows/check_update_offer.py',
     'package.json', 'packaging/compile_studio.cjs',
     'app/secrets_store.py', 'app/credential_lock.py', 'app/__init__.py', 'bridges', 'archhub.ico',
     'packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',
@@ -150,6 +151,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
             'installer/ArchHub.iss', 'installer/ArchHub.bat', 'installer/ArchHub.vbs',
             'installer/legacy_sweep.iss', 'installer/legacy_doc_files.iss', 'installer/legacy_v1_files.iss', 'installer/host_file_staging.iss',
             'installer/build_release.ps1', 'packaging/windows/Test-SourcePortability.ps1',
+            'packaging/windows/publish_release.ps1', 'packaging/windows/check_update_offer.py',
             'packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',
             'packaging/windows/licenses/ArchHub-components-MIT.txt',
             'packaging/windows/licenses/Goose-Apache-2.0.txt', 'packaging/windows/licenses/Hermes-MIT.txt',
@@ -849,7 +851,16 @@ $notes = @(
 )
 [IO.File]::WriteAllText((Join-Path $output 'release-notes.md'), ($notes -join "`n") + "`n", $utf8)
 [IO.File]::WriteAllText((Join-Path $output $statusName), "COMPILED: source snapshot and Studio output reconciled; nothing installed or published.`n", $utf8)
-Write-Output "Built $assetName with BUILD_ID $BuildId. No release was published."
+if ($env:GITHUB_ACTIONS) {
+    # The workflow's contents:write job publishes this exact retained artifact.
+    Write-Output "Built $assetName with BUILD_ID $BuildId; automatic workflow publication follows."
+} else {
+    # A reviewed local release must not end at a file the founder installs by
+    # hand. Use the same reconciler/publisher as CI; candidates never enter here.
+    & (Join-Path $selectedRoot 'packaging/windows/publish_release.ps1') `
+        -ReleaseDirectory $output -ExpectedSourceRevision $sourceRevision -PythonPath $PythonPath
+    [IO.File]::WriteAllText((Join-Path $output $statusName), "PUBLISHED: exact reviewed release promoted and read back through the installed updater.`n", $utf8)
+}
 }
 } catch {
     if ($buildOutputCreated) {

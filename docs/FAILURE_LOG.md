@@ -2,6 +2,12 @@
      From now on this repository's incidents are logged here. -->
 # FAILURE_LOG
 
+### 2026-10-16 · NATIVEHOOK diagnostic court overlap
+- **status**: closed for scheduling; feature admission remains pending
+- **claim**: the lane runs its heavy verification serially.
+- **gap**: two compiler diagnostic launches were admitted while the lane's regression job was stalled in the Stop-supervisor cleanup court. The shared queue permits two slots.
+- **resolution**: only the exact owned regression run-heavy job 252720 was bounded; no app/service/other-lane process was touched. Subsequent court launches are serial. Raw partial evidence is not a PASS; final evidence follows source freeze. See notes.md and evidence/nativehook-regressions.txt.
+
 Append-only record of "shipped-but-invisible" claims, gaps the founder
 caught, and how they were resolved. Established 2026-05-25 per
 ROLLBACK-PROTOCOL mandate. Read at the start of every `/loop`

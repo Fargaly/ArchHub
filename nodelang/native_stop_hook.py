@@ -25,9 +25,11 @@ UNAVAILABLE = {'decision':'block','reason':'Native Stop authority is unavailable
 # and the owner's bound client. Exact fields only; session and vendor select
 # the owner and are never forwarded.
 _WRITE_NAMES = {'brain.universal_cde_write_permit': 'cde_write_permit',
+                'native.hook_user_prompt_submit': 'user_prompt_submit',
                 'brain.universal_cde_write_receipt': 'cde_write_receipt',
                 'brain.private_root_grant_status': 'private_root_grant_status'}
 _WRITE_OPERATIONS = {
+    'user_prompt_submit': (None, frozenset({'prompt_sha256'})),
     'cde_write_permit': ('issue_cde_write_permit',
                          frozenset({'operation', 'path', 'content_digest', 'request_id', 'nonce'})),
     'cde_write_receipt': ('consume_cde_write_permit',
@@ -200,6 +202,7 @@ class NativeStopHost:
         return self
 
     def _handle_write(self, request):
+        from .native_agent_hooks import PromptHookError
         if (set(request)!={'request_id','fingerprint','operation','arguments'}
                 or request['operation'] not in _WRITE_OPERATIONS or request['fingerprint']!=self.fingerprint
                 or type(request['request_id']) is not str or len(request['request_id'])!=32
@@ -220,12 +223,28 @@ class NativeStopHost:
             with self.owner.bound_client() as client:
                 if client.agent_session_root!=self.record['actor']:
                     raise RuntimeError('the native owner no longer holds the actor this pipe was opened for')
-                result = getattr(client, method)(**arguments, response_timeout_seconds=_WRITE_TIMEOUT_SECONDS)
+                if request['operation'] == 'user_prompt_submit':
+                    from .native_agent_hooks import complete_prompt
+                    from .native_agent_mcp import _OwnedWorkshopClient
+                    status = self.owner.owner_status()
+                    if (status.get('state') != 'bound' or status.get('agent_session') != self.record['actor']
+                            or status.get('pinned', {}).get('instance_digest') != self.record['instance']
+                            or status.get('rebind_pending') or status.get('recovery_required')
+                            or re.fullmatch('[0-9a-f]{64}', arguments['prompt_sha256']) is None):
+                        raise PromptHookError('owner binding changed')
+                    result = complete_prompt(_OwnedWorkshopClient(self.owner, client),
+                        fingerprint=self.fingerprint, external_session_fingerprint=hashlib.sha256(
+                            self.owner._identity.external_session_id.encode("utf-8")).hexdigest(),
+                        prompt_sha256=arguments['prompt_sha256'])
+                else:
+                    result = getattr(client, method)(**arguments, response_timeout_seconds=_WRITE_TIMEOUT_SECONDS)
             if type(result) is not dict:
                 raise RuntimeError('the application write authority result is not one object')
             answer['result'] = result
         except Exception as exc:  # the reason only; never the capability
-            answer['error'] = str(exc)[:600] or type(exc).__name__
+            answer['error'] = ((str(exc) if isinstance(exc, PromptHookError) else 'owner unavailable')
+                               if request['operation'] == 'user_prompt_submit'
+                               else str(exc)[:600] or type(exc).__name__)
         return answer
 
     def _handle(self, request):
@@ -603,8 +622,8 @@ def _live_record(vault, fingerprint):
     return record
 
 
-def owner_write_request(name, arguments, *, vault=None, timeout=_WRITE_TIMEOUT_SECONDS):
-    """The CDE gate's permit or receipt, through this session's live native owner.
+def owner_write_request(name, arguments, *, vault=None, timeout=_WRITE_TIMEOUT_SECONDS, cancelled=None):
+    """CDE writes or prompt context/receipt through this session's live native owner.
 
     Same (name, arguments) contract as the gate's write authority. Never binds,
     renews or retries. OwnerAbsent: nothing was sent (no live owner record, or
@@ -645,6 +664,8 @@ def owner_write_request(name, arguments, *, vault=None, timeout=_WRITE_TIMEOUT_S
             raise OwnerAbsent('the native owner pipe server is unverifiable') from exc
         if held_by!=record['pid']:
             raise OwnerAbsent('the native owner pipe is held by another process')
+        if cancelled is not None and cancelled.is_set():
+            raise OwnerAbsent('native owner request cancelled before dispatch')
         # -- post-dispatch: from here the permit or receipt may exist ----------
         try:
             connection.send_bytes(json.dumps(request).encode())

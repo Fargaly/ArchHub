@@ -61,7 +61,7 @@ def _build_output(folder: Path, build_id: str, built_at: str) -> Path:
         "payload_manifest_sha256": _sha((folder / "source-manifest.tsv").read_bytes()),
         "studio_manifest": "studio-build.json",
         "studio_manifest_sha256": _sha((folder / "studio-build.json").read_bytes()),
-        "studio_files": 10,
+        "studio_files": offer_check.STUDIO_FILES,
         "asset_name": qu.ASSET_NAME, "asset_sha256": _sha(asset), "asset_bytes": len(asset),
     }
     (folder / "release.json").write_text(json.dumps(manifest, indent=4) + "\n", encoding="utf-8")
@@ -336,7 +336,9 @@ def test_live_reads_use_gh_token_when_present_and_are_anonymous_otherwise(monkey
 def test_real_installer_deletes_only_named_application_files_never_user_state():
     iss = (ROOT / "installer" / "ArchHub.iss").read_text(encoding="utf-8")
     assert re.search(r"(?m)^DefaultDirName=\{localappdata\}\\ArchHub\s*$", iss)
-    assert "[UninstallDelete]" not in iss and "filesandordirs" not in iss.lower()
+    uninstall = iss.split('[UninstallDelete]', 1)[1].split('\n[', 1)[0]
+    removed = re.findall(r'(?m)^Type:\s*(\w+);\s*Name:\s*"([^"]+)"', uninstall)
+    assert removed == [('filesandordirs', '{app}\\.retired-host-files')], removed
     section = iss.split("[InstallDelete]", 1)[1].split("\n[", 1)[0]
     entries = re.findall(r'(?m)^Type:\s*(\w+);\s*Name:\s*"([^"]+)"', section)
     assert entries, "InstallDelete section not parsed"
@@ -344,4 +346,5 @@ def test_real_installer_deletes_only_named_application_files_never_user_state():
         assert kind == "files" and name.startswith("{app}\\"), (kind, name)
         assert not re.search(r"(?i)sqlite|graph|settings|credential|ArchHub-Test", name), name
     launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
-    assert '"ArchHub-Test"' in launcher, "user state must live outside the {app} folder the installer owns"
+    assert '"ARCHHUB_TEST_STATE_DIR"' in launcher, "fixture state must remain isolated"
+    assert not {'state', 'updates', 'web-profile'} & set(qu._PAYLOAD_DIRS), "rollback must not own user data"

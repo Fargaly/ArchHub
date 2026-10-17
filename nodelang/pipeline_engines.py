@@ -50,6 +50,9 @@ def tool_settings(params: Mapping[str, object], feeds: Mapping[str, object]):
             'backup_count': params.get('backup_count'),
             'backup_budget_bytes': params.get('backup_budget_bytes'),
             'keep_running_in_tray': params.get('keep_running_in_tray'),
+            'update_check_interval_minutes': params.get('update_check_interval_minutes'),
+            'update_auto_apply_on_quit': params.get('update_auto_apply_on_quit'),
+            'update_preview_channel': params.get('update_preview_channel'),
         }
         for key, supplied in values.items():
             value = feeds[key] if key in feeds else supplied

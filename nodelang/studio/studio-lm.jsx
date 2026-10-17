@@ -244,6 +244,11 @@ const CommandBar = ({ open, onClose, addNodeFromLibrary, onOpenSession, onChats 
   const needle = q.trim().toLowerCase();
   const match = text => !needle || String(text || '').toLowerCase().includes(needle);
   const rows = [];
+  const updateRestart = document.querySelector('[data-update-restart]');
+  if (updateRestart && !updateRestart.disabled && match(updateRestart.textContent)) {
+    rows.push({group:'Application', icon:'↻', color:LM.accent, label:updateRestart.textContent.trim(),
+      meta:'Ctrl+Shift+U', run:()=>updateRestart.click()});
+  }
   for (const button of document.querySelectorAll('[data-social-provider] button')) {
     if (button.disabled) continue;
     const provider = button.closest('[data-social-provider]');
@@ -3702,8 +3707,6 @@ const CalmRow = ({ k, v }) => (
   </div>
 );
 
-const visuallyHiddenStyle = {position:'absolute', width:1, height:1, padding:0, margin:-1, overflow:'hidden',
-  clip:'rect(0, 0, 0, 0)', whiteSpace:'nowrap', border:0};
 const StudioHeaderIcon = ({name}) => <svg aria-hidden="true" focusable="false" width="15" height="15"
   viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
   {name === 'download' ? <><path d="M12 3v12m-5-5 5 5 5-5"/><path d="M4 16v5h16v-5"/></> :
@@ -3714,100 +3717,27 @@ const StudioHeaderIcon = ({name}) => <svg aria-hidden="true" focusable="false" w
     <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>}
 </svg>;
 
-// Restarting loses composer text that was never sent. The first click arms the restart and names that loss;
-// a second click within 5 s restarts. The status strip notice and the Workspace header both confirm here.
-const useRestartConfirmation = (ready, restart) => {
-  const [confirming, setConfirming] = React.useState(false);
-  React.useEffect(() => {
-    if (!confirming) return undefined;
-    const timer = window.setTimeout(() => setConfirming(false), 5000);
-    return () => window.clearTimeout(timer);
-  }, [confirming]);
-  React.useEffect(() => { if (!ready) setConfirming(false); }, [ready]);
-  return [confirming && 'Restart now - unsent text is lost', () => {
-    if (!confirming) { setConfirming(true); return; }
-    setConfirming(false);
-    restart();
-  }];
-};
+const applicationUpdateHasUnsentWork = () => Array.from(
+  document.querySelectorAll('textarea, [contenteditable=true][data-dirty=true]'))
+  .some(e => e.tagName === 'TEXTAREA' ? !e.readOnly && !e.disabled && !!e.value.trim() : true);
+window.ARCHHUB_UPDATE_RESTART_BLOCKED = applicationUpdateHasUnsentWork;
 
-const ApplicationUpdateControls = ({compact = false}) => {
-  const transport = window.ARCHHUB_EXISTING_WORKSHOP;
-  const [snapshot, setSnapshot] = React.useState(() => transport?.getSnapshot() || null);
-  const [localError, setLocalError] = React.useState('');
-  const alive = React.useRef(true);
-  React.useEffect(() => {
-    alive.current = true;
-    if (!transport?.watchApplicationUpdate) return () => { alive.current = false; };
-    const unsubscribe = transport.subscribe(() => setSnapshot(transport.getSnapshot()));
-    const unwatch = transport.watchApplicationUpdate();
-    setSnapshot(transport.getSnapshot());
-    return () => { alive.current = false; unsubscribe(); unwatch(); };
-  }, [transport]);
-  const [warning, restart] = useRestartConfirmation(snapshot?.applicationUpdate?.state === 'ready' &&
-    !snapshot?.applicationUpdateError && !localError, () => act('reload'));
-  if (!transport?.watchApplicationUpdate) return compact ? null :
-    <p style={{fontSize:12, color:LM.inkSoft}}>Release updates are unavailable in this Studio connection.</p>;
-  const status = snapshot?.applicationUpdate;
-  const pending = !!snapshot?.applicationUpdatePending;
-  const error = snapshot?.applicationUpdateError || localError;
-  const active = ['checking', 'downloading', 'restarting'].includes(status?.state);
-  const label = {idle:'No update in progress', checking:'Checking for a release…', downloading:'Downloading update…',
-    ready:'Update ready', restarting:'Restart requested…', failed:'Update failed'}[status?.state] || 'Reading release status…';
-  const act = async action => {
-    setLocalError('');
-    try {
-      if (action === 'read') await transport.refreshApplicationUpdate();
-      else await transport.applicationUpdateAction(action);
-    } catch (failure) {
-      if (alive.current) setLocalError(transport.getSnapshot()?.applicationUpdateError ? '' :
-        failure.message || 'The update request could not be confirmed.');
-    }
+// One admitted restart: unsent text stays in place and a running job is never interrupted.
+const useUpdateRestart = (ready, restart) => {
+  const [refusal, setRefusal] = React.useState('');
+  const run = () => {
+    if (!ready) return;
+    if (applicationUpdateHasUnsentWork()) { setRefusal('Save unsaved work before restarting.'); return; }
+    setRefusal('');
+    return restart();
   };
-  // Disabled controls use a dashed border and say why in their title, never alpha (design DECISIONS.md).
-  // The dashed border replaces the whole border shorthand: a borderStyle longhand beside smallBtn's border
-  // would be removed on re-enable and leave the browser's outset button border behind.
-  const waiting = 'Waiting for the current update request to finish';
-
-  return <section aria-label="Application release updates" style={compact ? {
-    display:'flex', alignItems:'center', gap:6, flexShrink:0, paddingLeft:6,
-  } : {marginTop:16, padding:'14px 16px', border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg}}>
-    {!compact && <>
-      <h3 style={{fontSize:14, margin:'0 0 8px'}}>Application updates</h3>
-      <div style={{fontSize:12, color:LM.inkSoft, overflowWrap:'anywhere'}}>Current build: {status?.current_build || 'Reading…'}</div>
-      {status?.available_build && <div style={{fontSize:12, color:LM.inkSoft, overflowWrap:'anywhere'}}>Available build: {status.available_build}</div>}
-      <p style={{fontSize:12, lineHeight:1.5}}>Check and download fetches a release. Update and reload restarts ArchHub into that release. Save unsubmitted drafts before restarting.</p>
-    </>}
-    <span role={error || status?.state === 'failed' ? 'alert' : 'status'}
-      title={[label, status?.current_build, status?.available_build, error || status?.detail].filter(Boolean).join(' · ')}
-      aria-label={compact ? error || label : undefined} tabIndex={compact ? 0 : undefined}
-      style={{display:compact ? 'inline-block' : 'block', fontSize:compact ? 11 : 12,
-        color:error || status?.state === 'failed' ? LM.err : LM.inkSoft,
-        ...(compact ? {width:24, height:28, display:'grid', placeItems:'center', position:'relative'} :
-          {margin:'10px 0', overflowWrap:'anywhere', whiteSpace:'pre-wrap'})}}>
-      {compact ? <><StudioHeaderIcon name={error || status?.state === 'failed' ? 'error' :
-        status?.state === 'ready' ? 'ready' : active ? 'reload' : 'status'}/>
-        <span style={visuallyHiddenStyle}>{error || label}</span></> : error || [label, status?.detail].filter(Boolean).join('\n')}
-    </span>
-    {status?.state === 'ready' && !error && <window.AH_DS.Btn disabled={pending || !status.restart_supported}
-      onClick={compact ? restart : () => act('reload')}
-      title={compact && warning || (pending ? waiting : status.restart_supported ?
-        'Install the ready release through the desktop restart' : 'Desktop restart is unavailable in this session')}
-      aria-label={compact && warning || 'Update and reload'}
-      style={{...(pending || !status.restart_supported ? ({...window.AH_DS.styles.button('secondary', true), fontSize:compact ? 11 : 12, flexShrink:0, ...(compact ? {width:28,height:28,padding:0,display:'grid',placeItems:'center'} : {})}) : {...({...window.AH_DS.styles.button('secondary', true), fontSize:compact ? 11 : 12, flexShrink:0, ...(compact ? {width:28,height:28,padding:0,display:'grid',placeItems:'center'} : {})}), color:LM.accent}),
-        ...(compact && warning ? {background:LM.accent, border:`1px solid ${LM.accent}`, color:LM.bg} : {})}}>
-      {compact ? <StudioHeaderIcon name="reload"/> : 'Update and reload'}</window.AH_DS.Btn>}
-    {(!active && status?.state !== 'ready' && !error) && <window.AH_DS.Btn disabled={pending || !status}
-      onClick={() => act('check')} title={pending ? waiting : !status ? 'Reading release status\u2026' : 'Check and download'}
-      aria-label="Check and download" style={({...window.AH_DS.styles.button('secondary', true), fontSize:compact ? 11 : 12, flexShrink:0, ...(compact ? {width:28,height:28,padding:0,display:'grid',placeItems:'center'} : {})})}>
-      {compact ? <StudioHeaderIcon name="download"/> : 'Check and download'}</window.AH_DS.Btn>}
-    {error && <window.AH_DS.Btn disabled={pending} onClick={() => act('read')} title={pending ? waiting : 'Read status'}
-      aria-label="Read status" style={({...window.AH_DS.styles.button('secondary', true), fontSize:compact ? 11 : 12, flexShrink:0, ...(compact ? {width:28,height:28,padding:0,display:'grid',placeItems:'center'} : {})})}>
-      {compact ? <StudioHeaderIcon name="reload"/> : 'Read status'}</window.AH_DS.Btn>}
-    {status?.state === 'ready' && !status.restart_supported && <span style={{fontSize:11, color:LM.inkSoft}}>
-      {compact ? 'Desktop restart unavailable' : 'Desktop restart is unavailable in this session.'}
-    </span>}
-  </section>;
+  React.useEffect(() => {
+    const key = e => { if (e.ctrlKey && e.shiftKey && e.code === 'KeyU') { e.preventDefault(); run(); } };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  });
+  React.useEffect(() => { if (!ready) setRefusal(''); }, [ready]);
+  return [refusal, run];
 };
 
 const WorkshopStorageReview = ({root, label}) => {
@@ -4086,7 +4016,7 @@ const WsHeader = ({ toolbarRef, session, model, openTabs, sessionRows = LM_SESSI
       <window.AH_DS.Btn sm kind="ghost" onClick={onNewSession || onHome}>New session</window.AH_DS.Btn>
       <window.AH_DS.Btn sm kind="ghost" onClick={onHome}>Home</window.AH_DS.Btn>
     </window.AH_DS.Card>}
-    <span style={window.AH_DS.styles.fill}/>{conversationNotice && <span role="status">{conversationNotice}</span>}<span ref={toolbarRef}/><ApplicationUpdateControls compact/>
+    <span style={window.AH_DS.styles.fill}/>{conversationNotice && <span role="status">{conversationNotice}</span>}<span ref={toolbarRef}/>
   </window.AH_DS.Frame>;
 };
 
@@ -10372,7 +10302,6 @@ const SettingsStorage = () => {
 // for the build and its update state, this page's own server, the host catalogue and the provider
 // registry. The "updated" line's link opens the release update controls.
 const SettingsAbout = ({ providers, release }) => {
-  const [updates, setUpdates] = React.useState(false);
   const hosts = hostTally();
   React.useEffect(() => {
     const transport = window.ARCHHUB_EXISTING_WORKSHOP;
@@ -10382,7 +10311,6 @@ const SettingsAbout = ({ providers, release }) => {
   const answering = (rows || []).filter(r => r.state === 'keyed' || r.state === 'running').map(r => r.name);
   const label = {idle:'no update in progress', checking:'checking for a release', downloading:'downloading an update',
     ready:'update ready', restarting:'restart requested', failed:'update failed'}[release?.state];
-  const toggle = () => setUpdates(!updates);
   return (
   <div>
     <SHead title="About" sub="ArchHub Studio · the AEC stack with one foot in your model and one in the LLM."/>
@@ -10391,11 +10319,8 @@ const SettingsAbout = ({ providers, release }) => {
       <div><span style={window.AH_DS.styles.muted}>server     </span> {window.location.host || window.location.origin} &#xb7; running</div>
       <div data-about-host-total={hosts.total}><span style={window.AH_DS.styles.muted}>hosts      </span> {hosts.read ? <>{hosts.total} configured &#xb7; {hosts.running} live</> : 'checking hosts'}</div>
       <div><span style={window.AH_DS.styles.muted}>providers  </span> {rows ? (answering.length ? answering.join(', ') : 'none connected') : providers?.error ? 'not read' : 'reading\u2026'}</div>
-      <div><span style={window.AH_DS.styles.muted}>updated    </span> {release?.updated_to ? 'to ' + release.updated_to : (label || 'reading\u2026')} &#xb7; <span role="button" tabIndex={0} aria-expanded={updates}
-        onClick={toggle} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } }}
-        style={{ color:LM.inkSoft, cursor:'pointer' }}>{updates ? 'hide updates' : 'updates →'}</span></div>
+      <div><span style={window.AH_DS.styles.muted}>updated    </span> {release?.updated_to ? 'to ' + release.updated_to : (label || 'reading\u2026')}</div>
     </div>
-    {updates && <ApplicationUpdateControls/>}
   </div>
   );
 };
@@ -11407,7 +11332,7 @@ const applicationUpdateNoticeState = transport => {
   const snapshot = transport?.getSnapshot?.() || null, status = snapshot?.applicationUpdate;
   return JSON.stringify([status?.state || '', status?.available_build || '', status?.restart_supported === true,
     status?.updated_from || '', status?.updated_to || '', snapshot?.applicationUpdatePending || '',
-    snapshot?.applicationUpdateError || '']);
+    snapshot?.applicationUpdateError || '', status?.restart_refusal || '']);
 };
 const ApplicationUpdateNotice = () => {
   const transport = window.ARCHHUB_EXISTING_WORKSHOP;
@@ -11421,9 +11346,9 @@ const ApplicationUpdateNotice = () => {
     setHeld(applicationUpdateNoticeState(transport));
     return () => { unsubscribe(); unwatch(); };
   }, [transport]);
-  const [state, build, restartSupported, updatedFrom, updatedTo, pending, error] = JSON.parse(held);
-  const message = error || refusal;
-  const [warning, restart] = useRestartConfirmation(state === 'ready' && !message, () => act('reload'));
+  const [state, build, restartSupported, updatedFrom, updatedTo, pending, error, desktopRefusal] = JSON.parse(held);
+  const [warning, restart] = useUpdateRestart(state === 'ready', () => act('reload'));
+  const message = error || refusal || warning || desktopRefusal;
   const offered = !!build && ['ready', 'restarting'].includes(state);
   // A first read that failed or never answered stays visible with Read status, so its confirmation is not lost.
   if (!offered && !updatedTo && !(error && !state)) return null;
@@ -11450,15 +11375,15 @@ const ApplicationUpdateNotice = () => {
       fontFamily:LM.sans, fontSize:LM.fs.label.sz, letterSpacing:LM.fs.label.letter, fontWeight:LM.fs.label.wt, color:message ? LM.err : LM.accent}}>
     <span aria-hidden="true">{'\u25cf'}</span>
     <span style={{minWidth:0, overflow:'hidden', textOverflow:'ellipsis'}}>{message || label}</span>
-    {state === 'ready' && offered && !message && restartSupported && <window.AH_DS.Btn type="button" disabled={!!pending}
-      onClick={restart} title={warning ? 'Click again to restart into build ' + build : 'Restart into build ' + build}
-      style={warning ? {...action(!!pending), background:LM.accent, color:LM.bg} : action(!!pending)}>
-      {warning || 'Restart to update'}</window.AH_DS.Btn>}
+    {state === 'ready' && offered && !error && !refusal && restartSupported && <window.AH_DS.Btn type="button" data-update-restart="" disabled={!!pending}
+      onClick={restart} title={'Restart into build ' + build + ' (Ctrl+Shift+U)'}
+      style={action(!!pending)}>
+      {'Update ready — Restart'}</window.AH_DS.Btn>}
     {state === 'ready' && offered && !message && !restartSupported && <span style={window.AH_DS.styles.muted}>
       restart ArchHub to install</span>}
     {!offered && !message && <window.AH_DS.Btn type="button" disabled={!!pending} onClick={() => act('acknowledge')}
       title="Hide this confirmation" style={action(!!pending)}>Dismiss</window.AH_DS.Btn>}
-    {message && (state === 'ready' || !offered) && <window.AH_DS.Btn type="button" disabled={!!pending}
+    {(error || refusal) && (state === 'ready' || !offered) && <window.AH_DS.Btn type="button" disabled={!!pending}
       onClick={() => act('read')} style={action(!!pending)}>Read status</window.AH_DS.Btn>}
     <span aria-hidden="true" style={{color:LM.inkDim, padding:`0 ${LM.sp.xs}px`}}>{'\u00b7'}</span>
   </div>;

@@ -1,6 +1,8 @@
 """Quiet update: stage only a newer, SHA-verified build; apply only at launch; never guess."""
 from __future__ import annotations
 
+import ast
+import runpy
 import hashlib
 import io
 import json
@@ -25,19 +27,26 @@ def _opener(release: dict, asset: bytes):
 
 def _release(build_id: str, asset: bytes, sha: str | None = None):
     sha = sha or hashlib.sha256(asset).hexdigest()
-    return {"tag_name": "v0", "body": "Open beta.\nBUILD_ID: %s\nSHA256 %s: %s (%d bytes)" % (build_id, qu.ASSET_NAME, sha, len(asset)),
-            "assets": [{"name": qu.ASSET_NAME, "browser_download_url": "https://example.invalid/setup.exe"}]}
+    return {"tag_name": "v0", "body": "Open beta.\nBUILD_ID: %s\nBUILT_AT: 2026-09-04T12:00:00Z\nSHA256 %s: %s (%d bytes)" % (build_id, qu.ASSET_NAME, sha, len(asset)),
+            "assets": [{"name": qu.ASSET_NAME, "browser_download_url": "https://github.com/Fargaly/ArchHub/releases/download/v0/" + qu.ASSET_NAME}]}
+
+
+def _metadata(app, build, built_at="2026-09-04T10:00:00Z"):
+    (app / 'BUILD_METADATA.json').write_text(json.dumps(dict(format=1, build_id=build, built_at=built_at)), encoding='utf-8')
+
 
 
 def test_same_build_is_not_staged(tmp_path):
     app = tmp_path / "app"; app.mkdir(); (app / "BUILD_ID").write_text("20260904-1000", encoding="utf-8")
+    _metadata(app, '20260904-1000')
     out = qu.stage_if_newer(tmp_path / "state", app, opener=_opener(_release("20260904-1000", b"setup"), b"setup"))
     assert out == {"staged": False, "reason": "up to date", "build_id": "20260904-1000"}
-    assert not (tmp_path / "state" / "updates").exists()
+    assert not (tmp_path / "state" / "updates" / qu.ASSET_NAME).exists()
 
 
 def test_newer_build_is_downloaded_verified_and_staged_not_applied(tmp_path):
     app = tmp_path / "app"; app.mkdir(); (app / "BUILD_ID").write_text("20260904-1000", encoding="utf-8")
+    _metadata(app, '20260904-1000')
     asset = b"new-setup-bytes"
     out = qu.stage_if_newer(tmp_path / "state", app, opener=_opener(_release("20260904-1200", asset), asset))
     assert out["staged"] and out["build_id"] == "20260904-1200"
@@ -48,29 +57,35 @@ def test_newer_build_is_downloaded_verified_and_staged_not_applied(tmp_path):
 
 def test_a_download_that_does_not_match_the_published_sha_is_refused(tmp_path):
     app = tmp_path / "app"; app.mkdir(); (app / "BUILD_ID").write_text("a", encoding="utf-8")
+    _metadata(app, 'a')
     out = qu.stage_if_newer(tmp_path / "state", app, opener=_opener(_release("b", b"good", sha="0" * 64), b"tampered"))
     assert out["staged"] is False and "SHA-256" in out["reason"]
     assert not (tmp_path / "state" / "updates" / qu.ASSET_NAME).exists()
 
 
-def test_apply_runs_the_staged_installer_silently_and_clears_it(tmp_path):
+def test_apply_runs_the_staged_installer_silently_and_retains_its_receipt(tmp_path):
     app = tmp_path / "app"; app.mkdir(); (app / "BUILD_ID").write_text("old", encoding="utf-8")
+    _metadata(app, 'old')
     updates = tmp_path / "state" / "updates"; updates.mkdir(parents=True)
     asset = b"setup"; (updates / qu.ASSET_NAME).write_bytes(asset)
-    (updates / "staged.json").write_text(json.dumps({"build_id": "new", "sha256": hashlib.sha256(asset).hexdigest()}), encoding="utf-8")
+    (updates / "staged.json").write_text(json.dumps({"build_id": "new", "built_at": "2026-09-04T12:00:00Z", "sha256": hashlib.sha256(asset).hexdigest()}), encoding="utf-8")
     calls = []
     class _Done:
         returncode = 0
-    def runner(argv, timeout=0):
-        calls.append(argv); (app / "BUILD_ID").write_text("new", encoding="utf-8"); return _Done()
+    def runner(argv, timeout=0, **options):
+        calls.append(argv)
+        (app / "BUILD_ID").write_text("new", encoding="utf-8")
+        _metadata(app, 'new', '2026-09-04T12:00:00Z')
+        return _Done()
     out = qu.apply_staged(tmp_path / "state", app, runner=runner)
     assert out["applied"] and out["build_id"] == "new"
-    assert calls and calls[0][1:] == ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=" + str(app)]
-    assert not (updates / qu.ASSET_NAME).exists() and not (updates / "staged.json").exists()
+    assert calls and calls[0][1:] == ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/NOCLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS", "/SP-", "/DIR=" + str(app)]
+    assert (updates / qu.ASSET_NAME).is_file() and qu.staged_update(tmp_path / "state", app)["status"] == "awaiting_boot"
 
 
 def test_apply_refuses_a_staged_file_that_changed_on_disk(tmp_path):
     app = tmp_path / "app"; app.mkdir(); (app / "BUILD_ID").write_text("old", encoding="utf-8")
+    _metadata(app, 'old')
     updates = tmp_path / "state" / "updates"; updates.mkdir(parents=True)
     (updates / qu.ASSET_NAME).write_bytes(b"changed"); (updates / "staged.json").write_text(json.dumps({"build_id": "new", "sha256": "0" * 64}), encoding="utf-8")
     out = qu.apply_staged(tmp_path / "state", app, runner=lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not run")))
@@ -104,23 +119,17 @@ def test_the_server_hands_over_to_a_fresh_launcher_on_restart():
     assert '_answer = result.get("response")' in src
 
 
-def test_the_app_lives_in_the_tray_and_closing_hides_it():
-    """The founder asked where the app is: a tray icon says it is running in the
-    background; close hides; Quit and Restart-to-update live in the tray menu."""
-    src = (Path(__file__).resolve().parents[1] / "launch_archhub_test.py").read_text(encoding="utf-8")
-    assert "QSystemTrayIcon" in src and "class _ArchHubWindow(QMainWindow)" in src
-    assert "event.ignore()" in src and "self.hide()" in src
-    for label in ("Open ArchHub", "Check for updates now", "Restart to install the update", "Quit ArchHub"):
-        assert label in src, label
-    assert 'window.setWindowTitle("ArchHub")' in src
-    assert "app.setQuitOnLastWindowClosed(False)" in src
+def test_the_app_has_one_close_owner_and_optional_tray(monkeypatch):
+    # The accepted STAGE2B owner replaced always-hide with an explicit setting.
+    court = Path(__file__).with_name('test_launcher_close_quits.py')
+    runpy.run_path(str(court))['test_window_close_requests_quit_and_arms_a_bounded_watchdog'](monkeypatch)
 
 
-def test_the_launcher_keeps_the_brain_online_and_keeps_its_words():
-    src = (Path(__file__).resolve().parents[1] / "launch_archhub_test.py").read_text(encoding="utf-8")
-    # 2026-09-05 16:20 the daemon fell over and :8473 stayed dead until the next
-    # app boot; and it died with nothing to read.
-    assert "def _watch_brain()" in src and "\n_watch_brain()\n" in src
-    assert 'brain_log = open(state_dir / "brain.log", "ab")' in src
-    assert "stdout=brain_log, stderr=brain_log" in src
-    assert src.index("_watch_brain()\n") > src.index("def _ensure_brain()")
+def test_the_launcher_keeps_the_one_brain_owner_and_no_retired_daemon():
+    source = (Path(__file__).resolve().parents[1] / 'launch_archhub_test.py').read_text(encoding='utf-8')
+    tree = ast.parse(source)
+    names = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+    assert '_watch_brain' not in names and '_ensure_brain' not in names
+    assert '_stage_update_quietly' in names
+    assert any(isinstance(node, ast.ImportFrom) and node.module == 'nodelang.application_server'
+               for node in ast.walk(tree)), 'the single application server owns the Brain'

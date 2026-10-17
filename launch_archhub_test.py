@@ -440,7 +440,54 @@ else:
 
 _instance_lock.listen(8)
 
+import subprocess as _update_preboot_process
+# Apply only a verified release armed by the preceding owner's final recovery.
+# No synchronous network download belongs on the application startup path.
+_staged = {}
+try:
+    from nodelang.quiet_update import apply_staged as _apply_staged, begin_update_boot
+    _staged = begin_update_boot(state_dir, Path(__file__).resolve().parent)
+    if _staged.get("rolled_back"):
+        try:
+            _instance_lock.close()
+            _update_preboot_process.Popen(["wscript.exe", str(Path(__file__).resolve().parent / "ArchHub.vbs")],
+                close_fds=True, creationflags=getattr(_update_preboot_process, "CREATE_NO_WINDOW", 0))
+        except Exception as _rollback_relaunch_refusal:
+            print("  update     : restored; relaunch failed (%s). Reopen ArchHub; recovery is retained." % type(_rollback_relaunch_refusal).__name__, flush=True)
+            raise SystemExit(1) from None
+        raise SystemExit(0)
+    if _staged.get("status") == "applying":
+        print("  update     : previous installation is unresolved; recovery and installer retained. Startup refused.", flush=True)
+        raise SystemExit(1)
+    if _staged.get("staged") and _staged.get("status") == "staged":
+        from nodelang.application_update_recovery import validate_update_ready
+        from nodelang.persistence import application_content_path
+        _update_content = application_content_path(state_path)
+        _applied = _apply_staged(state_dir, Path(__file__).resolve().parent,
+            before_apply=lambda: validate_update_ready(state_dir, Path(__file__).resolve().parent,
+                state_path, _update_content))
+        if _applied.get("applied") or _applied.get("rolled_back"):
+            print("  update     : installed build %s; relaunching" % _applied.get("build_id"), flush=True)
+            try:
+                _instance_lock.close()
+                _update_preboot_process.Popen(["wscript.exe", str(Path(__file__).resolve().parent / "ArchHub.vbs")], close_fds=True, creationflags=getattr(_update_preboot_process, "CREATE_NO_WINDOW", 0))
+            except Exception as _relaunch_refusal:
+                print("  update     : installed; relaunch failed (%s). Reopen ArchHub; recovery is retained." % type(_relaunch_refusal).__name__, flush=True)
+                raise SystemExit(1) from None
+            raise SystemExit(0)
+        print("  update     : %s" % _applied.get("reason"), flush=True)
+        if _applied.get("status") == "applying":
+            print("  update     : installation is unresolved; saved recovery retained. Startup refused.", flush=True)
+            raise SystemExit(1)
+except SystemExit:
+    raise
+except Exception as _update_refusal:
+    print("  update     : not applied -- %s" % _update_refusal, flush=True)
+
+
+
 _require_complete_local_update(Path(__file__).resolve().parent)
+
 
 def _saved_graph_exists(directory, database):
     """Distinguish a new installation from saved state needing recovery.
@@ -545,41 +592,6 @@ _machine_pointer = (
     None if os.environ.get("ARCHHUB_TEST_STATE_DIR")
     else Path(os.environ["LOCALAPPDATA"]) / "ArchHub" / "active-universal-runtime.json"
 )
-
-# Apply only a verified release armed by the preceding owner's final recovery.
-# No synchronous network download belongs on the application startup path.
-_staged = {}
-try:
-    from nodelang.quiet_update import apply_staged as _apply_staged, staged_update
-    _staged = staged_update(state_dir, Path(__file__).resolve().parent)
-    if _staged.get("status") == "applying":
-        print("  update     : previous installation is unresolved; recovery and installer retained. Startup refused.", flush=True)
-        raise SystemExit(1)
-    if _staged.get("staged") and _staged.get("status") == "staged":
-        from nodelang.application_update_recovery import validate_update_ready
-        from nodelang.persistence import application_content_path
-        _update_content = application_content_path(state_path)
-        _applied = _apply_staged(state_dir, Path(__file__).resolve().parent,
-            before_apply=lambda: validate_update_ready(state_dir, Path(__file__).resolve().parent,
-                state_path, _update_content))
-        if _applied.get("applied"):
-            print("  update     : installed build %s; relaunching" % _applied.get("build_id"), flush=True)
-            import subprocess as _sp
-            try:
-                _instance_lock.close()
-                _sp.Popen(["wscript.exe", str(Path(__file__).resolve().parent / "ArchHub.vbs")], close_fds=True, creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0))
-            except Exception as _relaunch_refusal:
-                print("  update     : installed; relaunch failed (%s). Reopen ArchHub; recovery is retained." % type(_relaunch_refusal).__name__, flush=True)
-                raise SystemExit(1) from None
-            raise SystemExit(0)
-        print("  update     : %s" % _applied.get("reason"), flush=True)
-        if _applied.get("status") == "applying":
-            print("  update     : installation is unresolved; saved recovery retained. Startup refused.", flush=True)
-            raise SystemExit(1)
-except SystemExit:
-    raise
-except Exception as _update_refusal:
-    print("  update     : not applied -- %s" % _update_refusal, flush=True)
 
 first_boot = not _saved_graph_exists(state_dir, state_path)
 print("  first boot  :", first_boot, flush=True)
@@ -910,9 +922,18 @@ if not os.environ.get("ARCHHUB_TEST_NO_OPEN"):
         _window_quit_started["value"] = True
         import threading as _quit_threading
         import time as _quit_time
-        _quit_threading.Thread(
-            target=lambda: (_quit_time.sleep(3.0), os._exit(0)), daemon=True
-        ).start()
+        update = getattr(globals().get("server"), "application_update", None)
+        try:
+            applying_update = update is not None and update.apply_on_quit()
+        except Exception as refusal:
+            print("  update     : quit policy unreadable (%s)" % type(refusal).__name__, flush=True)
+            applying_update = False
+        if not applying_update:
+            _quit_threading.Thread(
+                target=lambda: (_quit_time.sleep(3.0), os._exit(0)), daemon=True
+            ).start()
+        # A ready update uses the existing bounded recovery/installer timeouts;
+        # a three-second hard exit could abandon a live installer mid-write.
         try:
             app.closeAllWindows()
             for top in app.topLevelWidgets():
@@ -988,7 +1009,7 @@ if not os.environ.get("ARCHHUB_TEST_NO_OPEN"):
     _instance_threading.Thread(target=_serve_launch_requests,
         args=(_instance_lock, _launch_signal.requested.emit),
         name='ArchHub launch activation', daemon=True).start()
-    app.aboutToQuit.connect(_instance_lock.close)
+    # The instance fence stays held through final recovery and update apply.
     _native_close_filter = _WindowsCloseFilter()
     app.installNativeEventFilter(_native_close_filter)
     app._archhub_native_close_filter = _native_close_filter
@@ -1441,7 +1462,11 @@ _update_boot = {"pending": _staged.get("status") == "awaiting_boot", "checks": 0
 
 def _acknowledge_update_surface():
     """Acknowledge after the saved graph and Studio have actually mounted."""
-    if not _update_boot["pending"] or _update_boot["checks"] >= 60:
+    if not _update_boot["pending"]:
+        return
+    if _update_boot["checks"] >= 60:
+        _update_boot["pending"] = False
+        _update_rollback_requested.set()
         return
     _update_boot["checks"] += 1
 
@@ -1450,8 +1475,11 @@ def _acknowledge_update_surface():
             _update_boot["pending"] = False
             def confirm():
                 from nodelang.quiet_update import confirm_applied
-                result = confirm_applied(state_dir, Path(__file__).resolve().parent)
+                # File restoration waits for the same final close as every update.
+                result = confirm_applied(state_dir, Path(__file__).resolve().parent, rollback=False)
                 print("  update     : %s" % result.get("reason"), flush=True)
+                if not result.get("confirmed"):
+                    _update_rollback_requested.set()
             import threading as _ack_threading
             _ack_threading.Thread(target=confirm, name="archhub-update-boot-ack", daemon=True).start()
         else:
@@ -1562,14 +1590,12 @@ def _tray_open():
 
     _QT.singleShot(150, _settle)
 
-def _tray_check_updates():
-    server.application_update.check()
-    _tray.showMessage("ArchHub", "Checking for updates. Download status is available inside the app.")
-
 import threading as _restart_threading
 _update_restart_requested = _restart_threading.Event()
+_update_rollback_requested = _restart_threading.Event()
 _restart_after_shutdown = False
-from nodelang.application_update import ApplicationUpdate
+_apply_after_quit = False
+from nodelang.application_update import ApplicationUpdate, restart_block_reason
 from PyQt6.QtCore import (
     QObject as _UpdateObject, Qt as _UpdateQt, pyqtSignal as _update_signal, pyqtSlot as _update_slot,
 )
@@ -1598,17 +1624,18 @@ class _UpdatePush(_UpdateObject):
 
 
 _update_push = _UpdatePush(app, view.page())
+
+
+def _update_policy():
+    from nodelang.universal_application import read_universal_update_policy
+    return read_universal_update_policy(server.universal_store.snapshot(), server.universal_registry)
+
+
 server.application_update = ApplicationUpdate(state_dir, Path(__file__).resolve().parent,
     request_restart=_update_restart_requested.set, initial_stage=_staged, report=_report_update_check,
-    on_ready=_update_push.ready.emit, first_boot=first_boot)
+    on_ready=_update_push.ready.emit, first_boot=first_boot,
+    restart_refusal=lambda: restart_block_reason(server), policy=_update_policy)
 server._desktop_request_update_restart = server.application_update.reload
-
-
-def _tray_restart_to_update():
-    try:
-        server.application_update.reload()
-    except Exception as refusal:
-        _tray.showMessage("ArchHub", str(refusal))
 
 
 def _begin_update_exit():
@@ -1655,9 +1682,21 @@ def _watch_quit_request() -> None:
         pass
 
     def _look():
+        if _update_rollback_requested.is_set():
+            _begin_update_exit()
+            return
         if _update_restart_requested.is_set():
             _update_restart_requested.clear()
-            _begin_update_exit()
+            def admitted(dirty):
+                reason = "Save unsaved work before restarting." if dirty else restart_block_reason(server)
+                if reason:
+                    server.application_update.refuse_restart(reason)
+                    _update_push.ready.emit()
+                else:
+                    _begin_update_exit()
+            view.page().runJavaScript(
+                "typeof window.ARCHHUB_UPDATE_RESTART_BLOCKED !== 'function' || "
+                "window.ARCHHUB_UPDATE_RESTART_BLOCKED()", admitted)
             return
         if shower.is_file():
             try:
@@ -1680,20 +1719,14 @@ def _watch_quit_request() -> None:
     timer.start()
     app._archhub_quit_watch = timer
 
-def _tray_menu_about_to_show():
-    _restart_action.setVisible(server.application_update.status().get("state") == "ready")
-
 _watch_quit_request()
 if QSystemTrayIcon.isSystemTrayAvailable():
     _tray = QSystemTrayIcon(app.windowIcon(), app)
     _tray.setToolTip("ArchHub - running")
     _menu = QMenu()
     _menu.addAction("Open ArchHub", _tray_open)
-    _menu.addAction("Check for updates now", _tray_check_updates)
-    _restart_action = _menu.addAction("Restart to install the update", _tray_restart_to_update)
     _menu.addSeparator()
     _menu.addAction("Quit ArchHub", _tray_quit)
-    _menu.aboutToShow.connect(_tray_menu_about_to_show)
     _tray.setContextMenu(_menu)
     _tray.activated.connect(lambda reason: _tray_open() if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick) else None)
     _tray.show()
@@ -2130,10 +2163,11 @@ def _maintain_conversations():
 
 
 def _stage_update_quietly():
-    # Existing update cadence stays two minutes, then thirty minutes.
-    # A minute cadence for renewal stays within its five-minute lead window.
+    # First check is at startup, off the UI thread. The owner enforces the
+    # catalogue interval; the existing renewal loop stays the only scheduler.
+    _stage_once()
     next_renewal = time.monotonic() + 60
-    next_update = time.monotonic() + 120
+    next_update = time.monotonic() + 60
     while not _update_stop.is_set():
         delay = max(0.0, min(next_renewal, next_update) - time.monotonic())
         if _update_stop.wait(delay):
@@ -2151,11 +2185,11 @@ def _stage_update_quietly():
             next_renewal = time.monotonic() + 60
         if not _update_stop.is_set() and time.monotonic() >= next_update:
             _stage_once()
-            next_update = time.monotonic() + 1800
+            next_update = time.monotonic() + 60
 
 def _stage_once():
     try:
-        server.application_update.check()
+        server.application_update.check_if_due()
     except Exception as refusal:
         print("  update     : check failed -- %s" % refusal, flush=True)
 
@@ -2174,6 +2208,9 @@ def _finish_application_shutdown():
     journal retained for the normal stale-owner/crash-recovery path. Never
     restore another descriptor or close a journal under that live worker.
     """
+    global _apply_after_quit
+    _apply_on_quit = not _update_rollback_requested.is_set() and server.application_update.apply_on_quit()
+    _apply_after_quit = _apply_on_quit
     if cloud_relay is not None:
         cloud_relay.request_stop()
     _baboom_stop.set()
@@ -2214,7 +2251,7 @@ def _finish_application_shutdown():
               "process exit requires stale-owner recovery" % type(refusal).__name__, flush=True)
         return False
     try:
-        if _restart_after_shutdown:
+        if _restart_after_shutdown or _apply_on_quit:
             from nodelang.application_update_recovery import arm_update
             content_path = server.conversation_content._path
             from nodelang.backup_retention import backup_policy
@@ -2222,9 +2259,15 @@ def _finish_application_shutdown():
             recovery = server.close(recovery_directory=backup_dir,
                 recovery_authentication_context=server.universal_registry.authorization.session.context(),
                 recovery_timeout_seconds=300.0)
-            arm_update(state_dir, Path(__file__).resolve().parent, state_path,
-                content_path if content_path is not None and content_path.is_file() else None, recovery,
-                expected_build=server.application_update.confirmed_build)
+            if _update_rollback_requested.is_set():
+                from nodelang.quiet_update import rollback_staged
+                rolled = rollback_staged(state_dir, Path(__file__).resolve().parent)
+                if not rolled.get("rolled_back"):
+                    raise ValueError(rolled.get("reason", "previous build could not be restored"))
+            else:
+                arm_update(state_dir, Path(__file__).resolve().parent, state_path,
+                    content_path if content_path is not None and content_path.is_file() else None, recovery,
+                    expected_build=server.application_update.confirmed_build)
             _prune_backups(backup_dir, recovery, policy=shutdown_policy)
         else:
             server.close()
@@ -2256,6 +2299,16 @@ def _complete_desktop_exit(code):
     """Relaunch only after the current owner and instance lock are released."""
     if not _finish_application_shutdown():
         return 1
+    if code == 0 and _apply_after_quit and not _restart_after_shutdown:
+        from nodelang.quiet_update import apply_staged
+        from nodelang.application_update_recovery import validate_update_ready
+        from nodelang.persistence import application_content_path
+        result = apply_staged(state_dir, Path(__file__).resolve().parent,
+            before_apply=lambda: validate_update_ready(state_dir, Path(__file__).resolve().parent,
+                state_path, application_content_path(state_path)))
+        if not result.get("applied") and not result.get("rolled_back"):
+            print("  update     : quit update refused: %s" % result.get("reason"), flush=True)
+            return 1
     if code != 0 or not _restart_after_shutdown:
         return code
     try:

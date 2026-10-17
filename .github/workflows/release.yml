@@ -1,13 +1,14 @@
 name: Selected ArchHub installer
 
 on:
+  repository_dispatch:
+    types: [archhub-release-approved]
   workflow_dispatch:
     inputs:
-      publish:
-        description: 'Publish this reviewed build as the latest updater release'
+      broker_review:
+        description: 'Independent archhub-broker-review/v1 JSON for this exact revision'
         required: true
-        default: false
-        type: boolean
+        type: string
 
 permissions:
   contents: read
@@ -22,17 +23,33 @@ jobs:
     timeout-minutes: 30
     outputs:
       build_id: ${{ steps.identity.outputs.build_id }}
+      source_revision: ${{ steps.source.outputs.revision }}
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - name: Check out selected runtime and installer
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.client_payload.source_revision || github.sha }}
           path: selected
           persist-credentials: false
           # The zero-idle-growth release court archives the old-graph release
           # 9eefd81 from history; a shallow clone refuses every build.
           fetch-depth: 0
+      - name: Bind the approved source revision and independent broker review
+        id: source
+        shell: pwsh
+        env:
+          APPROVED_REVISION: ${{ github.event.client_payload.source_revision || github.sha }}
+          BROKER_REVIEW: ${{ github.event.client_payload.broker_review || inputs.broker_review }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:APPROVED_REVISION -cnotmatch '^[0-9a-f]{40}$') { throw 'An exact approved revision is required.' }
+          $revision = (git -C selected rev-parse HEAD).Trim()
+          if ($revision -cne $env:APPROVED_REVISION) { throw 'Checkout differs from approved source.' }
+          $review = Join-Path $env:RUNNER_TEMP 'broker-review.json'
+          [IO.File]::WriteAllText($review, $env:BROKER_REVIEW, [Text.UTF8Encoding]::new($false))
+          "revision=$revision" >> $env:GITHUB_OUTPUT
+          "BROKER_REVIEW_PATH=$review" >> $env:GITHUB_ENV
       - name: Use the reviewed Studio build runtime
         uses: actions/setup-node@v7
         with:
@@ -57,8 +74,22 @@ jobs:
         shell: pwsh
         run: |
           $stamp = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')
-          $buildId = "$stamp-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$($env:GITHUB_SHA.Substring(0,12))"
+          $buildId = "$stamp-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-${{ steps.source.outputs.revision }}"
           "build_id=$buildId" >> $env:GITHUB_OUTPUT
+      - name: Verify independent review and fetch the pinned bundled runtime
+        shell: pwsh
+        env:
+          SOURCE_REVISION: ${{ steps.source.outputs.revision }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $probe = 'import sys,runpy;owner=runpy.run_path("selected/nodelang/host_artifact_review.py");owner["load_review"](sys.argv[1],source_revision=sys.argv[2],bridges_root="selected/bridges")'
+          python -c $probe $env:BROKER_REVIEW_PATH $env:SOURCE_REVISION
+          if ($LASTEXITCODE -ne 0) { throw 'Independent broker review does not decide these source bytes.' }
+          $pin = Get-Content selected/packaging/windows/goose-pin.json -Raw | ConvertFrom-Json
+          $archive = Join-Path $env:RUNNER_TEMP 'goose.zip'
+          Invoke-WebRequest -Uri $pin.url -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne $pin.sha256) { throw 'Pinned runtime digest differs.' }
+          "GOOSE_ARCHIVE_PATH=$archive" >> $env:GITHUB_ENV
       - name: Compile Studio and installer from verified source snapshots
         shell: pwsh
         env:
@@ -66,13 +97,14 @@ jobs:
         run: |
           ./selected/installer/build_release.ps1 `
             -BuildId $env:BUILD_ID `
+            -GooseArchivePath $env:GOOSE_ARCHIVE_PATH -BrokerReviewPath $env:BROKER_REVIEW_PATH `
             -OutputDirectory "$env:GITHUB_WORKSPACE/release-output"
       - name: Prove installed users' updater accepts this build (dry run)
         shell: pwsh
         run: |
           ./selected/packaging/windows/publish_release.ps1 `
             -ReleaseDirectory "$env:GITHUB_WORKSPACE/release-output" `
-            -ExpectedSourceRevision $env:GITHUB_SHA -DryRun
+            -ExpectedSourceRevision '${{ steps.source.outputs.revision }}' -DryRun
       - name: Retain exact installer and metadata for review
         id: upload
         uses: actions/upload-artifact@v7
@@ -97,7 +129,6 @@ jobs:
           compression-level: 0
 
   publish:
-    if: ${{ inputs.publish }}
     needs: build
     runs-on: windows-2025
     timeout-minutes: 10
@@ -107,7 +138,7 @@ jobs:
       - name: Check out the publish check at the built revision
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.build.outputs.source_revision }}
           path: selected
           persist-credentials: false
       - uses: actions/setup-python@v6
@@ -127,6 +158,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           BUILD_ID: ${{ needs.build.outputs.build_id }}
+          SOURCE_REVISION: ${{ needs.build.outputs.source_revision }}
         run: |
           $ErrorActionPreference = 'Stop'
           $manifest = Get-Content -LiteralPath release-output/release.json -Raw | ConvertFrom-Json
@@ -134,5 +166,5 @@ jobs:
           # One reconciliation and publish path for CI and local builds: bytes,
           # updater readability, newer than live latest, free tag, pushed source.
           ./selected/packaging/windows/publish_release.ps1 `
-            -ReleaseDirectory release-output -ExpectedSourceRevision $env:GITHUB_SHA `
+            -ReleaseDirectory release-output -ExpectedSourceRevision $env:SOURCE_REVISION `
             -Repository $env:GH_REPO

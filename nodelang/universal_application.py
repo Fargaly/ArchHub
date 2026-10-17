@@ -20296,6 +20296,9 @@ _APPLICATION_SETTING_SPECS = {
     "backup_count": ("number", {"min": 1, "max": 100, "step": 1}),
     "backup_budget_bytes": ("number", {"min": 1048576, "max": 1099511627776, "step": 1048576}),
     "keep_running_in_tray": ("boolean", {"min": 0, "max": 1, "step": 1}),
+    "update_check_interval_minutes": ("number", {"min": 1, "max": 1440, "step": 1}),
+    "update_auto_apply_on_quit": ("boolean", {"min": 0, "max": 1, "step": 1}),
+    "update_preview_channel": ("boolean", {"min": 0, "max": 1, "step": 1}),
 }
 
 # Each edge names an actual reader of an owner object. Imported Grand Map
@@ -37387,6 +37390,19 @@ def read_universal_keep_running_in_tray(snapshot: Snapshot, registry: UniversalA
     _, bounds = _APPLICATION_SETTING_SPECS['keep_running_in_tray']
     return bool(_workshop_board_int_param(snapshot, registry, 'keep_running_in_tray',
         default=_application_setting_default('keep_running_in_tray'), lower=bounds['min'], upper=bounds['max']))
+
+
+def read_universal_update_policy(snapshot: Snapshot, registry: UniversalApplicationRegistry) -> dict:
+    """Same catalogue rows, property writer, sockets and defaults as Settings."""
+    interval = _APPLICATION_SETTING_SPECS["update_check_interval_minutes"][1]
+    auto_apply = _APPLICATION_SETTING_SPECS["update_auto_apply_on_quit"][1]
+    preview = _APPLICATION_SETTING_SPECS["update_preview_channel"][1]
+    return {"check_interval_minutes": _workshop_board_int_param(snapshot, registry, "update_check_interval_minutes",
+                default=_application_setting_default("update_check_interval_minutes"), lower=interval["min"], upper=interval["max"]),
+            "auto_apply_on_quit": bool(_workshop_board_int_param(snapshot, registry, "update_auto_apply_on_quit",
+                default=_application_setting_default("update_auto_apply_on_quit"), lower=auto_apply["min"], upper=auto_apply["max"])),
+            "channel": "preview" if _workshop_board_int_param(snapshot, registry, "update_preview_channel",
+                default=_application_setting_default("update_preview_channel"), lower=preview["min"], upper=preview["max"]) else "stable"}
 
 
 def _set_workshop_board_int_param(

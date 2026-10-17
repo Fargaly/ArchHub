@@ -15,7 +15,7 @@ const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 
 const UPDATE = '/api/universal/application-update';
 const INSTALLED = '20260916-2130-e733a13', NEXT = '20260917-0900-0a1b2c3', PREVIOUS = '20260916-2105-b914892';
-const RESTART = 'Restart to update', CONFIRM = 'Restart now - unsent text is lost';
+const RESTART = 'Update ready — Restart', CONFIRM = 'Restart now - unsent text is lost';
 const status = (state, extra = {}) => ({ok:true, current_build:INSTALLED, state,
   available_build:['ready', 'restarting'].includes(state) ? NEXT : null,
   detail:state === 'idle' ? 'Up to date.' : 'Build ' + NEXT + ' is downloaded and verified. Restart to update.',
@@ -119,7 +119,7 @@ async function mountStrip(server) {
   const catalogue = jsx.slice(jsx.indexOf('\nconst catalogueStates ='), jsx.indexOf('\nconst withLiveCatalogue ='));
   assert.match(catalogue, /const useCatalogueVersion = /, 'the status strip subscribes through the real catalogue owner');
   const shared = toolHub + '\n' + catalogue + '\n' + [
-    'LM_HOSTS', 'hostRunningState', 'isOfficeHost', 'hostConnectorRows', 'hostCatalogueRows', 'hostTally', 'modelRoute', 'useRestartConfirmation',
+    'LM_HOSTS', 'hostRunningState', 'isOfficeHost', 'hostConnectorRows', 'hostCatalogueRows', 'hostTally', 'modelRoute', 'applicationUpdateHasUnsentWork', 'useUpdateRestart',
     'waitingLine', 'waitingMeta', 'WaitingButton', 'smallBtn',
   ].filter(name => jsx.includes('\nconst ' + name + ' = '))
     .map(name => definition(jsx, name)).join('\n');
@@ -129,17 +129,6 @@ async function mountStrip(server) {
 
 // The compact update controls, from the shipped source. The Workspace header draws the design row without them
 // (design studio-lm.jsx:1146-1148); Settings > About and the status strip carry release updates.
-async function mountHeaderControls(server) {
-  const jsx = read('nodelang/studio/studio-lm.jsx');
-  const header = jsx.slice(jsx.indexOf('\nconst WsHeader = '), jsx.indexOf('\nconst WsTab = '));
-  assert.match(header, /<ApplicationUpdateControls compact\/>/,
-    'the Workspace header draws the compact update icons (founder, 2026-09-18)');
-  assert.match(definition(jsx, 'SettingsAbout'), /<ApplicationUpdateControls\/>/, 'Settings > About carries the update controls');
-  const names = ['visuallyHiddenStyle', 'StudioHeaderIcon', 'ApplicationUpdateControls'];
-  if (jsx.includes('\nconst useRestartConfirmation = ')) names.unshift('useRestartConfirmation');
-  return mountSource(server, names.map(name => definition(jsx, name)).join('\n'), 'ApplicationUpdateControls', {compact:true});
-}
-
 const deferred = () => {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -216,28 +205,19 @@ test('nothing is shown while up to date; a pushed ready release appears in the s
   } finally { strip.close(); }
 });
 
-test('Restart to update needs a confirming second click that warns unsent text is lost', async () => {
+test('one click restarts the staged build without a second confirmation', async () => {
   let current = status('ready');
   const strip = await mountStrip({get:() => current, post:(url, body) => {
     assert.equal(url, UPDATE); assert.deepEqual(plain(body), {action:'reload'});
-    current = status('restarting', {detail:'Saving your data and restarting into the update.'});
-    return current;
+    current = status('restarting'); return current;
   }});
   try {
     await strip.click(strip.button(RESTART));
-    assert.deepEqual(strip.posts, [], 'one click never restarts');
+    assert.deepEqual(plain(strip.posts), [{url:UPDATE, body:{action:'reload'}}]);
     assert.equal(strip.button(RESTART), null);
-    assert.ok(strip.button(CONFIRM), 'the first click asks again and names what is lost');
-    assert.deepEqual(strip.armed.map(timer => timer.ms), [5000], 'the confirmation expires on its own');
-    await strip.expire();
-    assert.ok(strip.button(RESTART) && !strip.button(CONFIRM), 'after 5 s the button starts over');
-    assert.deepEqual(strip.posts, []);
-    await strip.click(strip.button(RESTART));
-    await strip.click(strip.button(CONFIRM));
-    assert.deepEqual(plain(strip.posts), [{url:UPDATE, body:{action:'reload'}}], 'the confirming click restarts once');
-    assert.equal(strip.button(RESTART), null);
-    assert.equal(strip.button(CONFIRM), null, 'no second restart request is offered');
-    assert.match(strip.notice().textContent, /Restarting into build 20260917-0900-0a1b2c3/);
+    assert.equal(strip.button(CONFIRM), null);
+    assert.deepEqual(strip.armed, [], 'no second-click timer remains');
+    assert.match(strip.notice().textContent, /Restarting into build/);
   } finally { strip.close(); }
 });
 
@@ -250,7 +230,6 @@ test('a refused restart stays in the strip, names the refusal and reads status a
   }});
   try {
     await strip.click(strip.button(RESTART));
-    await strip.click(strip.button(CONFIRM));
     const notice = strip.notice();
     assert.equal(notice.getAttribute('role'), 'alert');
     assert.ok(notice.textContent.includes('Wait for the update download to finish'), notice.textContent);
@@ -355,32 +334,14 @@ test('a late answer never overrides a newer read, and a failed first read keeps 
   } finally { strip.close(); }
 });
 
-test('the compact update restart needs the same confirming second click as the strip; the Workspace header draws none', async () => {
-  let current = status('ready');
-  const header = await mountHeaderControls({get:() => current, post:(url, body) => {
-    assert.equal(url, UPDATE); assert.deepEqual(plain(body), {action:'reload'});
-    current = status('restarting');
-    return current;
-  }});
+test('the status strip is the only release restart control; retired manual surfaces are gone', async () => {
+  const strip = await mountStrip({get:() => status('ready'), post:() => status('restarting')});
   try {
-    const reload = () => header.doc.querySelector('button[aria-label="Update and reload"]');
-    const confirm = () => header.doc.querySelector('button[aria-label="' + CONFIRM + '"]');
-    assert.ok(reload() && !reload().disabled, 'a ready release offers the compact restart');
-    await header.click(reload());
-    assert.deepEqual(header.posts, [], 'one click on the header never restarts');
-    assert.ok(confirm() && !reload(), 'the first click asks again and names what is lost');
-    assert.equal(confirm().getAttribute('title'), CONFIRM);
-    assert.deepEqual(header.armed.map(timer => timer.ms), [5000], 'the confirmation expires on its own');
-    await header.expire();
-    assert.ok(reload() && !confirm(), 'after 5 s the header button starts over');
-    assert.deepEqual(header.posts, []);
-    await header.click(reload());
-    await header.click(confirm());
-    assert.deepEqual(plain(header.posts), [{url:UPDATE, body:{action:'reload'}}], 'the confirming click restarts once');
+    assert.equal([...strip.doc.querySelectorAll('button')].filter(b => b.textContent === RESTART).length, 1);
     const jsx = read('nodelang/studio/studio-lm.jsx');
-    assert.equal(jsx.split('const useRestartConfirmation = ').length, 2, 'one restart confirmation, defined once');
-    for (const name of ['ApplicationUpdateNotice', 'ApplicationUpdateControls']) {
-      assert.match(definition(jsx, name), /useRestartConfirmation\(/, name + ' confirms through the shared hook');
-    }
-  } finally { header.close(); }
+    assert.doesNotMatch(jsx, /useRestartConfirmation|ApplicationUpdateControls|Check and download/);
+    assert.doesNotMatch(definition(jsx, 'SettingsAbout'), /applicationUpdateAction|aria-expanded/);
+    await strip.click(strip.button(RESTART));
+    assert.deepEqual(plain(strip.posts), [{url:UPDATE, body:{action:'reload'}}]);
+  } finally { strip.close(); }
 });

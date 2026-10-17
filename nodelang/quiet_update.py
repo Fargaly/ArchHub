@@ -10,12 +10,14 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
 import time
 import urllib.parse
 import urllib.request
+import zipfile
 
 RELEASE_API = "https://api.github.com/repos/Fargaly/ArchHub/releases/latest"
 ASSET_NAME = "ArchHub-Setup-0.exe"
@@ -29,6 +31,10 @@ _LEGACY_PUBLIC_RE = re.compile(r"([0-9]{8})-([0-9]{6})-[1-9][0-9]*-[1-9][0-9]*-[
 _RELEASE_BYTES = 2 * 1024 * 1024
 _INSTALLER_BYTES = 1024 * 1024 * 1024
 _THREAD_LOCK = threading.Lock()
+_PAYLOAD_DIRS = ("nodelang", "app", "runtime", "tools", "bridges", "licenses", "wheelhouse")
+_PAYLOAD_FILES = ("BUILD_ID", "BUILD_METADATA.json", "launch_archhub_test.py", "colleague_setup.py",
+                  "requirements.txt", "ArchHub.vbs", "ArchHub.bat", "archhub.ico", "NOTICE", "HOST_ARTIFACTS.json")
+_ROLLBACK_BYTES = 2 * 1024 * 1024 * 1024
 
 
 def installed_build_id(app_dir: Path) -> str:
@@ -118,20 +124,27 @@ def _ordering_refusal(app_dir, data, current):
     return None
 
 
-def read_latest_release(opener=urllib.request.urlopen) -> dict | None:
+def read_latest_release(opener=urllib.request.urlopen, *, channel="stable") -> dict | None:
     """Return validated release identity and build time, or None.
 
     Missing chronology on an opaque old release is returned as built_at=None so
     callers can report unknown ordering without downloading its installer.
     """
     try:
-        request = urllib.request.Request(RELEASE_API, headers={"Accept": "application/vnd.github+json", "User-Agent": "ArchHub"})
+        if channel not in ("stable", "preview"):
+            raise ValueError("update channel must be stable or preview")
+        url = RELEASE_API if channel == "stable" else RELEASE_API.rsplit("/", 1)[0] + "?per_page=20"
+        request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "ArchHub"})
         with opener(request, timeout=15) as response:
             raw = response.read(_RELEASE_BYTES + 1)
         if len(raw) > _RELEASE_BYTES:
             return None
         data = json.loads(raw)
-        if not isinstance(data, dict) or data.get("draft") or data.get("prerelease"):
+        if channel == "preview":
+            if not isinstance(data, list):
+                return None
+            data = next((item for item in data if isinstance(item, dict) and not item.get("draft")), None)
+        if not isinstance(data, dict) or data.get("draft") or (channel == "stable" and data.get("prerelease")):
             return None
         body, assets, tag = data.get("body"), data.get("assets"), data.get("tag_name")
         if (not isinstance(body, str) or not isinstance(assets, list)
@@ -246,6 +259,102 @@ def _digest(path):
     return digest.hexdigest()
 
 
+def _payload_files(app):
+    """Only installer-owned product bytes; never the graph, profile or environment."""
+    app = Path(app)
+    for name in _PAYLOAD_FILES:
+        path = app / name
+        _plain(path)
+        if path.is_file():
+            yield path
+    for name in _PAYLOAD_DIRS:
+        root = app / name
+        _plain(root)
+        for path in sorted(root.rglob("*")) if root.exists() else ():
+            _plain(path)
+            if (path.is_file() and "__pycache__" not in path.parts
+                    and path.suffix.lower() not in (".pyc", ".pyo", ".sqlite3", ".db", ".key", ".pem")
+                    and not path.name.startswith(".env")):
+                yield path
+
+
+def _retain_previous(updates, app):
+    files = list(_payload_files(app))
+    size = sum(path.stat().st_size for path in files)
+    if size > _ROLLBACK_BYTES or shutil.disk_usage(updates).free < size + 256 * 1024 * 1024:
+        raise ValueError("previous build cannot be retained within the update disk budget")
+    target = updates / "previous-build.zip"
+    _plain(target)
+    descriptor, name = tempfile.mkstemp(prefix=".previous-build-", suffix=".tmp", dir=updates)
+    os.close(descriptor)
+    temporary = Path(name)
+    try:
+        with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_STORED) as archive:
+            for path in files:
+                archive.write(path, path.relative_to(app).as_posix())
+        os.replace(temporary, target)
+        digest = _archive_digest(target)
+        return {"build_id": installed_build_id(app), "sha256": digest}
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _archive_digest(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _rollback(updates, app, data, reason):
+    """Restore the retained product, leaving all user data and recovery intact."""
+    previous = data.get("previous")
+    if not isinstance(previous, dict):
+        return {**data, "confirmed": False, "rolled_back": False, "reason": reason}
+    archive_path = updates / "previous-build.zip"
+    _plain(archive_path)
+    if _archive_digest(archive_path) != previous.get("sha256"):
+        raise ValueError("previous build digest changed; rollback refused")
+    app = Path(app)
+    with zipfile.ZipFile(archive_path) as archive:
+        names = archive.namelist()
+        if len(names) != len(set(names)) or sum(entry.file_size for entry in archive.infolist()) > _ROLLBACK_BYTES:
+            raise ValueError("previous build inventory is invalid")
+        for name in names:
+            parts = name.split("/")
+            if (any(part in ("", ".", "..") or ":" in part or "\\" in part for part in parts)
+                    or not (name in _PAYLOAD_FILES or parts[0] in _PAYLOAD_DIRS)):
+                raise ValueError("previous build path is outside the product")
+            _plain(app / name)
+        # Validate the whole archive before the first write.
+        if archive.testzip() is not None or archive.read("BUILD_ID").decode("utf-8").strip() != previous["build_id"]:
+            raise ValueError("previous build identity is invalid")
+        extras = [path for path in _payload_files(app) if path.relative_to(app).as_posix() not in names]
+        for name in names:
+            target = app / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            fd, temporary = tempfile.mkstemp(prefix=".rollback-", dir=target.parent)
+            try:
+                with os.fdopen(fd, "wb") as out, archive.open(name) as source:
+                    shutil.copyfileobj(source, out, 65536)
+                    out.flush()
+                    os.fsync(out.fileno())
+                os.replace(temporary, target)
+            finally:
+                Path(temporary).unlink(missing_ok=True)
+        for path in extras:
+            path.unlink()
+        # Do not reuse bytecode compiled from the failed release.
+        for root in _PAYLOAD_DIRS:
+            for path in (app / root).rglob("*.pyc"):
+                _plain(path)
+                path.unlink()
+    _marker(updates, {**data, "phase": "rolled_back"})
+    return {"staged": False, "confirmed": False, "rolled_back": True, "status": "rolled_back",
+            "build_id": previous["build_id"], "reason": reason + "; previous build restored"}
+
+
 def _status(updates, app_dir, *, verify_confirmed=False):
     marker = updates / "staged.json"
     _plain(marker)
@@ -262,8 +371,11 @@ def _status(updates, app_dir, *, verify_confirmed=False):
             or not re.fullmatch(r"[0-9a-fA-F]{64}", data["sha256"])):
         raise ValueError("staged identity invalid")
     phase = data.get("phase", "staged")
-    if phase not in ("staged", "applying", "awaiting_boot", "confirmed"):
+    if phase not in ("staged", "applying", "awaiting_boot", "confirmed", "rolled_back"):
         raise ValueError("staged phase invalid")
+    if phase == "rolled_back":
+        return {**data, "staged": False, "retained": True, "status": phase,
+                "reason": "Previous build restored after a failed update; waiting for a newer release."}
     target = updates / ASSET_NAME
     current = installed_build_id(app_dir)
     if phase == "applying":
@@ -313,7 +425,7 @@ def staged_update(state_dir: Path, app_dir: Path) -> dict:
         return _failure(exc)
 
 
-def stage_if_newer(state_dir: Path, app_dir: Path, opener=urllib.request.urlopen, *, cancellation_event=None) -> dict:
+def stage_if_newer(state_dir: Path, app_dir: Path, opener=urllib.request.urlopen, *, cancellation_event=None, channel="stable") -> dict:
     """Download bounded bytes under exclusive staging ownership; never install."""
     partial = None
     def check_cancelled():
@@ -326,10 +438,13 @@ def stage_if_newer(state_dir: Path, app_dir: Path, opener=urllib.request.urlopen
             held = _status(updates, app_dir)
             if held["staged"] and held["status"] != "confirmed":
                 return held
-            latest, current = read_latest_release(opener), installed_build_id(app_dir)
+            latest = read_latest_release(opener) if channel == "stable" else read_latest_release(opener, channel=channel)
+            current = installed_build_id(app_dir)
             check_cancelled()
             if latest is None:
                 return {"staged": False, "build_id": "", "reason": "no release information"}
+            if held.get("status") == "rolled_back" and latest["build_id"] == held["build_id"]:
+                return {**held, "staged": False}
             if not current:
                 return {"staged": False, "reason": "Installed build identity is missing; install a versioned ArchHub release first.", "build_id": ""}
             if latest["build_id"] == current:
@@ -407,6 +522,7 @@ def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, befor
             refusal = _ordering_refusal(app_dir, data, installed_build_id(app_dir))
             if refusal:
                 return {**data, "staged": False, "applied": False, "status": "not_ready", "reason": refusal}
+            data = {**data, "previous": _retain_previous(updates, Path(app_dir))}
             _marker(updates, {**data, "phase": "applying"})
             attempted_build = data["build_id"]
             options = {"timeout": 600}
@@ -419,8 +535,7 @@ def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, befor
                              "/NOCLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS",
                              "/SP-", "/DIR=" + str(app_dir)], **options)
             if getattr(result, "returncode", 1) != 0 or not _installed_matches_target(app_dir, data):
-                return {"applied": False, "build_id": data["build_id"], "status": "applying",
-                        "reason": "installer outcome requires reconciliation; package retained"}
+                return {**_rollback(updates, app_dir, data, "installer did not confirm its outcome"), "applied": False}
             _marker(updates, {**data, "phase": "awaiting_boot"})
             return {"applied": True, "build_id": data["build_id"], "status": "awaiting_boot",
                     "reason": "installer completed; successful new boot acknowledgment required"}
@@ -431,26 +546,102 @@ def apply_staged(state_dir: Path, app_dir: Path, runner=subprocess.run, *, befor
         return _failure(exc, applied=False)
 
 
-def confirm_applied(state_dir: Path, app_dir: Path) -> dict:
+def rollback_staged(state_dir: Path, app_dir: Path) -> dict:
+    """Caller has closed the runtime and still holds its instance lock."""
+    try:
+        with _locked(state_dir) as updates:
+            data = json.loads((updates / "staged.json").read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
+            if data.get("phase") not in ("applying", "awaiting_boot"):
+                return {"rolled_back": False, "reason": "no failed installation to roll back"}
+            return _rollback(updates, app_dir, data, "new build did not confirm a successful boot")
+    except (OSError, ValueError, zipfile.BadZipFile) as exc:
+        return _failure(exc, rolled_back=False)
+
+
+def begin_update_boot(state_dir: Path, app_dir: Path) -> dict:
+    """Reserve one boot attempt; the next unconfirmed boot restores the old code."""
+    try:
+        with _locked(state_dir) as updates:
+            data = _status(updates, app_dir)
+            if data.get("previous") and (data.get("status") == "applying" or (
+                    data.get("status") == "awaiting_boot" and data.get("boot_started"))):
+                return _rollback(updates, app_dir, data, "previous update boot did not confirm")
+            if data.get("status") == "awaiting_boot":
+                _marker(updates, {**data, "phase": "awaiting_boot", "boot_started": True})
+            return data
+    except (OSError, ValueError, zipfile.BadZipFile) as exc:
+        # A pending install must never degrade into a normal startup on error.
+        return {**_failure(exc), "status": "applying"}
+
+
+def confirm_applied(state_dir: Path, app_dir: Path, *, rollback=True) -> dict:
     """Call only after successful boot. Confirmed package remains as evidence."""
     try:
         with _locked(state_dir) as updates:
             data = _status(updates, app_dir, verify_confirmed=True)
             if (not data["staged"] or data["installed_build_id"] != data["build_id"]
                     or data["status"] not in ("awaiting_boot", "confirmed")):
+                if rollback and data.get("status") == "awaiting_boot":
+                    return _rollback(updates, app_dir, data, "installed BUILD_ID does not match staged build")
                 return {**data, "confirmed": False, "reason": "installed BUILD_ID does not match staged build"}
             try:
                 matching = _installed_matches_target(app_dir, data)
             except (OSError, ValueError):
                 matching = False
             if not matching:
+                if rollback:
+                    return _rollback(updates, app_dir, data, "installed build metadata does not match the staged release")
                 return {**data, "confirmed": False,
                         "reason": "installed build metadata does not match the staged release; reconciliation required"}
             _marker(updates, {**data, "phase": "confirmed"})
             return {**data, "confirmed": True, "status": "confirmed", "reason": "successful boot acknowledged"}
     except (OSError, ValueError) as exc:
+        if rollback:
+            restored = rollback_staged(state_dir, app_dir)
+            if restored.get("rolled_back"):
+                return restored
         return _failure(exc, confirmed=False)
 
 
+def recover_failed_launch(state_dir: Path, app_dir: Path, *, socket_factory=None) -> dict:
+    """Emergency entry uses stdlib only, before setup or application imports.
+
+    It takes the same exclusive socket as the sole desktop launcher. A failed
+    second launch must never restore files underneath an already running app.
+    """
+    import socket
+    if not (Path(state_dir) / "updates" / "staged.json").is_file():
+        return {"rolled_back": False, "reason": "no pending update"}
+    lock = (socket_factory or socket.socket)()
+    try:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            lock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        lock.bind(("127.0.0.1", int(os.environ.get("ARCHHUB_TEST_LOCK_PORT", "48611"))))
+        return rollback_staged(state_dir, app_dir)
+    except (OSError, ValueError) as exc:
+        return _failure(exc, rolled_back=False)
+    finally:
+        lock.close()
+
+
+def main(argv=None):
+    import argparse
+    parser = argparse.ArgumentParser(description="Recover a failed update with the existing update owner.")
+    parser.add_argument("--recover-failed-launch", type=Path, required=True)
+    parser.add_argument("--state-dir", type=Path, required=True)
+    args = parser.parse_args(argv)
+    result = recover_failed_launch(args.state_dir, args.recover_failed_launch)
+    if not result.get("rolled_back"):
+        return 1
+    subprocess.Popen([str(Path(os.environ["SystemRoot"]) / "System32" / "wscript.exe"),
+                      str(args.recover_failed_launch / "ArchHub.vbs")], close_fds=True,
+                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    return 0
+
+
 __all__ = ["apply_staged", "installed_build_id", "read_latest_release", "stage_if_newer",
-           "staged_update", "confirm_applied", "ASSET_NAME"]
+           "staged_update", "confirm_applied", "begin_update_boot", "rollback_staged", "recover_failed_launch", "ASSET_NAME"]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

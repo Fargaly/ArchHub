@@ -6,7 +6,16 @@ authorization gate, acknowledgement, agent wakeup, or execution mechanism.
 from __future__ import annotations
 
 import json
+import hashlib
+import os
+from pathlib import Path
+import sys
+import threading
 import time
+
+if not globals().get("__package__"):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    __package__ = "nodelang"
 
 from .application_machine_transport import MachineTransportError
 
@@ -239,3 +248,111 @@ def user_prompt_submit_context(control, *, selected=None) -> dict[str, object]:
             data["older_messages_before"] = messages[0]["sequence"] if messages else None
         return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
                                        "additionalContext": context}}
+
+
+class PromptHookError(RuntimeError):
+    """A fixed, content-free failure reason safe for hook stderr."""
+
+
+def complete_prompt(control, *, fingerprint, external_session_fingerprint, prompt_sha256):
+    """Observe context and record a content-free receipt through the same client.
+
+    Completed describes this owned handler, not the vendor's consumption of its
+    output. Only the vendor's own hook event history proves runtime completion.
+    """
+    from .native_stop_hook import _WRITE_TIMEOUT_SECONDS
+    deadline = time.monotonic() + _WRITE_TIMEOUT_SECONDS
+    with control.bound_client() as client:
+        try:
+            result = user_prompt_submit_context(control)
+        except Exception as exc:
+            raise PromptHookError("context unavailable") from exc
+        ledger = "app:brain-control-ledger:v1"
+        category = ledger + ":category:compliance-event"
+        try:
+            receipt = client.request("POST", "/api/universal/deliberation", {
+                "space": ledger, "category": category,
+                "summary": "Native UserPromptSubmit Completed",
+                "payload": {"operation": "native.hook_user_prompt_submit", "status": "Completed",
+                            "session_fingerprint": fingerprint,
+                            "external_session_fingerprint": external_session_fingerprint,
+                            "prompt_sha256": prompt_sha256},
+                "idempotency_key": "native-prompt:" + os.urandom(16).hex(), "created_at": None,
+            }, response_timeout_seconds=_remaining(deadline))
+        except Exception as exc:
+            raise PromptHookError("receipt refused") from exc
+        if (type(receipt) is not dict or receipt.get("ok") is not True
+                or receipt.get("space") != ledger or receipt.get("category_root") != category
+                or type(receipt.get("root")) is not str
+                or not receipt["root"].startswith("app:compliance-event:")
+                or receipt.get("payload_root") != receipt["root"]):
+            raise PromptHookError("receipt unverified")
+        return result
+
+
+def query_prompt(payload, *, vendor, environment=None, vault=None, timeout=15.0):
+    """One bounded IPC request to the Stop host of this exact retained session."""
+    from .native_stop_hook import canonical_runtime, _fingerprint, _STOP_IDENTITY_ENV, owner_write_request
+    if (type(payload) is not dict or type(payload.get("prompt")) is not str
+            or payload.get("hook_event_name", "UserPromptSubmit") != "UserPromptSubmit"):
+        raise ValueError("exact UserPromptSubmit event required")
+    runtime = canonical_runtime(vendor)
+    _fingerprint(runtime, payload.get("session_id"))
+    environment = os.environ if environment is None else environment
+    for name in _STOP_IDENTITY_ENV.get(runtime, ()) + ("ARCHHUB_EXTERNAL_SESSION_ID",):
+        if environment.get(name) and environment[name] != payload["session_id"]:
+            raise ValueError("prompt payload and native environment identities disagree")
+    cancelled, finished = threading.Event(), threading.Event()
+    result, errors = [], []
+    def receive():
+        try:
+            result.append(owner_write_request("native.hook_user_prompt_submit", {
+                "session_id": payload["session_id"], "vendor": vendor,
+                "prompt_sha256": hashlib.sha256(payload["prompt"].encode("utf-8")).hexdigest(),
+            }, vault=vault, timeout=timeout, cancelled=cancelled))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            finished.set()
+    threading.Thread(target=receive, daemon=True, name="native-prompt-query").start()
+    if not finished.wait(timeout):
+        cancelled.set()
+        raise TimeoutError("native prompt owner response unavailable; outcome uncertain")
+    if errors:
+        raise errors[0]
+    value = result[0]
+    specific = value.get("hookSpecificOutput")
+    if (set(value) != {"hookSpecificOutput"} or type(specific) is not dict
+            or set(specific) != {"hookEventName", "additionalContext"}
+            or specific["hookEventName"] != "UserPromptSubmit"
+            or type(specific["additionalContext"]) is not str):
+        raise MachineTransportError("native prompt owner output is invalid")
+    return value
+
+
+def main(argv=None):
+    import argparse
+    from .native_stop_hook import OwnerWriteDenied
+    parser = argparse.ArgumentParser(description="Fail-open native prompt context through the retained owner")
+    parser.add_argument("event", choices=("user-prompt-submit",))
+    parser.add_argument("--vendor", required=True, choices=("codex", "claude-code"))
+    try:
+        args = parser.parse_args(argv)
+        raw = sys.stdin.buffer.read(65537)
+        if len(raw) > 65536:
+            raise ValueError("native prompt input exceeds bound")
+        result = query_prompt(json.loads(raw), vendor=args.vendor)
+    except (Exception, SystemExit) as exc:
+        # Exception messages may contain prompt bytes or transport capabilities.
+        safe = {"context unavailable", "receipt refused", "receipt unverified", "owner binding changed", "owner unavailable"}
+        reason = (str(exc) if isinstance(exc, (PromptHookError, OwnerWriteDenied)) and str(exc) in safe
+                  else type(exc).__name__)
+        print("ArchHub UserPromptSubmit unavailable (" + reason
+              + "): context/receipt unverified; prompt continues.", file=sys.stderr)
+        result = {}
+    sys.stdout.write(json.dumps(result, ensure_ascii=True) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

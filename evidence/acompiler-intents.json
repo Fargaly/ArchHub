@@ -3086,6 +3086,13 @@
         "tests_replica/test_private_root_local_grants.py",
         "evidence/acompiler-intents.json"
       ]
+    },
+    "TRACEARCHIVE": {
+      "source": "Founder 2026-10-17 ARCH-DECISIONS-AUDIT #1 + goal 'Conversations are indexed content, not message Cells; apply eligible 20-day inactivity retention'; reconcile CLAUDE.md:37 journal note that refused the ADOPT archive step",
+      "scope": [
+        "CLAUDE.md",
+        "evidence/acompiler-intents.json"
+      ]
     }
   }
 }

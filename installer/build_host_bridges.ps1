@@ -96,7 +96,17 @@ function Build-Project([string]$Project, [string[]]$Properties, [string]$Payload
 
 function Get-Closure([string]$Payload, [string]$Relative) {
     # Only the loadable closure ships; build byproducts do not.
-    Get-ChildItem -LiteralPath $Payload -File | Where-Object { $_.Extension -in '.pdb', '.xml' } | Remove-Item -Force
+    # A just-compiled .pdb can stay open for a moment (antivirus, indexer), so each
+    # byproduct gets ten one-second retries before the release fails on it.
+    foreach ($byproduct in @(Get-ChildItem -LiteralPath $Payload -File | Where-Object { $_.Extension -in '.pdb', '.xml' })) {
+        for ($attempt = 1; ; $attempt++) {
+            try { Remove-Item -LiteralPath $byproduct.FullName -Force -ErrorAction Stop; break }
+            catch [System.IO.IOException] {
+                if ($attempt -ge 10) { throw }
+                Start-Sleep -Seconds 1
+            }
+        }
+    }
     return @(Get-ChildItem -LiteralPath $Payload -File | Where-Object { $_.Name -ne 'host-artifacts.json' } |
         Sort-Object Name | ForEach-Object {
             $pin = Get-Pin $_.FullName

@@ -2853,6 +2853,26 @@
         "REGISTER.md"
       ],
       "source": "BRIEF-REVITOPEN.md; inputs/founder-blocker.md; founder dispatch 2026-10-16"
+    },
+    "READS": {
+      "source": "BRIEF-READS.md; founder release-blocker request 2026-10-17: own model/template/program/update reads answer and first free-route chat replies or visibly fails within 30 seconds",
+      "scope": [
+        "launch_archhub_test.py",
+        "nodelang/universal_pipeline.py",
+        "tests_replica/test_reads_launcher.py",
+        "tests_replica/test_reads_desktop.py",
+        "BRIEF-READS.md",
+        "READ-PROOF.md",
+        "PROGRESS.md",
+        "plan.md",
+        "tasks.json",
+        "notes.md",
+        "REGISTER.md",
+        "RESULT-READS.md",
+        "READS.patch",
+        "READS.patch.sha256",
+        "evidence/reads/"
+      ]
     }
   }
 }

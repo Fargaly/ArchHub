@@ -927,7 +927,7 @@ def free_scope_slot(snapshot, registry, scope_root: str, size=None,
     )
 
 
-def _persist(write, attempts: int = 5, store=None):
+def _persist(write, attempts: int = 5, store=None, guard=None):
     """Run one governed write, re-reading when its revision went stale.
 
     Placement and property writes each take a snapshot and commit against
@@ -942,7 +942,10 @@ def _persist(write, attempts: int = 5, store=None):
 
     for attempt in range(attempts):
         try:
-            return write()
+            if guard is None:
+                return write()
+            with guard():
+                return write()
         except Exception as clash:
             if attempt == attempts - 1 or "revision" not in str(clash):
                 raise
@@ -957,6 +960,7 @@ def _persist(write, attempts: int = 5, store=None):
                 except Exception:
                     pass
             _time.sleep(0.15)
+    raise InvalidCell("At least one write attempt is required")
 
 
 def create_engine_node(
@@ -1272,7 +1276,42 @@ def read_home_templates(snapshot, registry, *, subject):
     return sorted(templates, key=lambda row: (-row["run_count"], -row["scenario_frequency"]))
 
 
-def seed_wall_pipeline(
+_SEEDING_GUARD = __import__("threading").Lock()
+_SEEDING: "dict" = __import__("weakref").WeakKeyDictionary()
+
+
+def seed_wall_pipeline(store, registry, *, definition_root=None, image_path=None,
+                       authentication_context=None, settle_guard=None):
+    """One seed per owner; a competing repair never queues with a browser lock."""
+    with _SEEDING_GUARD:
+        turn = _SEEDING.get(store)
+        if turn is None:
+            turn = _SEEDING[store] = __import__("threading").Lock()
+    if not turn.acquire(blocking=False):
+        raise InvalidCell("First-run pipeline installation is already in progress; retry when it finishes")
+    try:
+        return _seed_wall_pipeline(store, registry, definition_root=definition_root,
+            image_path=image_path, authentication_context=authentication_context,
+            settle_guard=settle_guard)
+    finally:
+        turn.release()
+
+
+def _complete_seed_property(store, registry, root, label, value, context):
+    """Called under the write guard: a user-filled row always wins the seed."""
+    current = (_owner_properties(store.snapshot(), registry).get(root) or {}).get(label)
+    if current is not None and (current[1].strip() or not value.strip()):
+        return False
+    if current is None:
+        create_universal_property(store, registry, root, label, value,
+            authentication_context=context)
+    else:
+        edit_universal_property(store, registry, current[0], value,
+            authentication_context=context)
+    return True
+
+
+def _seed_wall_pipeline(
     store,
     registry,
     *,
@@ -1390,7 +1429,7 @@ def seed_wall_pipeline(
                         instance_token=_uuid.uuid4().hex,
                         initial_properties=initial,
                     ),
-                    store=store,
+                    store=store, guard=settle_guard,
                 )
                 held = {label: ("", value) for label, value in initial.items()}
                 created.append(title)
@@ -1401,7 +1440,7 @@ def seed_wall_pipeline(
                         title_override=title,
                         authentication_context=authentication_context,
                     ),
-                    store=store,
+                    store=store, guard=settle_guard,
                 )
                 held: dict[str, tuple[str, str]] = {}
                 created.append(title)
@@ -1418,27 +1457,10 @@ def seed_wall_pipeline(
                     current[1].strip() or not value.strip()
                 ):
                     continue
-                if current is None:
-                    _persist(
-                        lambda label=label, value=value: (
-                            create_universal_property(
-                                store, registry, root, label, value,
-                                authentication_context=authentication_context,
-                            )
-                        ),
-                        store=store,
-                    )
-                else:
-                    _persist(
-                        lambda relation=current[0], value=value: (
-                            edit_universal_property(
-                                store, registry, relation, value,
-                                authentication_context=authentication_context,
-                            )
-                        ),
-                        store=store,
-                    )
-                completed.append("%s.%s" % (title, label))
+                if _persist(lambda label=label, value=value: _complete_seed_property(
+                        store, registry, root, label, value, authentication_context),
+                        store=store, guard=settle_guard):
+                    completed.append("%s.%s" % (title, label))
             placed[title] = root
         except Exception as refusal:
             # A card that cannot be seeded is named and counted. It used to
@@ -1448,7 +1470,7 @@ def seed_wall_pipeline(
     for root in placed.values():
         _persist(lambda root=root: _ensure_pipeline_node_interfaces(
             store, registry, root
-        ), store=store)
+        ), store=store, guard=settle_guard)
     fresh = project_universal_canvas(
         store, registry, authentication_context=authentication_context
     )
@@ -1479,7 +1501,7 @@ def seed_wall_pipeline(
             target_interface="app:pipeline-interface:%s:target"
             % t.rsplit(":", 1)[-1],
             authentication_context=authentication_context,
-        ), store=store)
+        ), store=store, guard=settle_guard)
         wired.append((source, target))
     # Every connection between seeded nodes carries the six parameters,
     # whether this run drew it or an earlier one did: a wire the founder
@@ -1492,7 +1514,8 @@ def seed_wall_pipeline(
             str(wire.get("source") or "") in seeded_roots
             and str(wire.get("target") or "") in seeded_roots
         ):
-            _ensure_wire_parameters(store, registry, str(wire["id"]))
+            _persist(lambda wire=wire: _ensure_wire_parameters(
+                store, registry, str(wire["id"])), store=store, guard=settle_guard)
     if "Sketch Lines" in placed:
         snapshot = store.snapshot()
         rows = _owner_properties(snapshot, registry).get(
@@ -1511,10 +1534,13 @@ def seed_wall_pipeline(
             and target_image_path is not None
             and held[1] != target_image_path
         ):
-            edit_universal_property(
-                store, registry, held[0], target_image_path,
-                authentication_context=authentication_context,
-            )
+            def update_image():
+                current = (_owner_properties(store.snapshot(), registry).get(
+                    placed["Sketch Lines"]) or {}).get("image_path")
+                if current == held:
+                    edit_universal_property(store, registry, current[0], target_image_path,
+                        authentication_context=authentication_context)
+            _persist(update_image, store=store, guard=settle_guard)
     # A lens card an earlier seed put on the canvas, a duplicate chain, a
     # contact or a session left on the canvas: one admitted move puts each
     # where it belongs. On a new graph there is nothing to move.

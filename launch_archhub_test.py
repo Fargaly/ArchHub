@@ -1277,16 +1277,14 @@ def _initialize_startup_pipeline(owner, *, first_boot):
     for attempt in range(10):
         try:
             context = authority.session.context(minimum_validity_seconds=5)
-            with owner.mutation_lock, authority.broker.live_context(context), \
-                    commit_intent.declare(
-                        commit_intent.MIGRATION,
-                        actor=owner.universal_registry.application_root,
-                        reason="install the first-run pipeline seed of a new graph",
-                    ):
+            with commit_intent.declare(
+                    commit_intent.MIGRATION,
+                    actor=owner.universal_registry.application_root,
+                    reason="install the first-run pipeline seed of a new graph"):
                 result = seed_wall_pipeline(owner.universal_store, owner.universal_registry,
                     authentication_context=context,
-                    # Held already, and both locks re-enter: the migration
-                    # inside the seed commits under the same guard.
+                    # Preparation reads immutable snapshots. Each seed write
+                    # takes this guard independently so Home reads can answer.
                     settle_guard=lambda: _held_guard(owner, authority, context))
             _record_startup_pipeline_intent(owner, first_boot=first_boot, complete=True)
             return result

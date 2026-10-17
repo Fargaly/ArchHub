@@ -3078,6 +3078,14 @@
         "evidence/bigmigrate2/",
         "evidence/acompiler-intents.json"
       ]
+    },
+    "GRANTFIX": {
+      "source": "Ping/BBC4 2026-10-17: 01-personal private-root grant refused as malformed after the key-id rename; verified retired-key migration, no manual grant edit",
+      "scope": [
+        "nodelang/private_root_grants.py",
+        "tests_replica/test_private_root_local_grants.py",
+        "evidence/acompiler-intents.json"
+      ]
     }
   }
 }

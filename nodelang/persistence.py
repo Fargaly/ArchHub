@@ -4,6 +4,7 @@ from __future__ import annotations
 import gzip
 import json
 import os
+import re
 import copy
 import time
 import threading
@@ -13,12 +14,48 @@ from pathlib import Path
 
 from .core import Store, validate_store
 from .laws_surface import closure
+from .application_recovery_files import _advance
 
 
 # This reader exists only to recover snapshots from the retired typed runtime.
 # Keeping its fixed schema here prevents a Universal Cell process importing that
 # runtime merely to discover its old snapshot marker.
 LEGACY_SNAPSHOT_SCHEMA_VERSION = '2026.07.13.32'
+
+
+class _MigrationProgress:
+    """A stall lease, renewed by real work, never by elapsed-time polling."""
+    def __init__(self, stall_seconds, on_progress):
+        import math
+        if not math.isfinite(stall_seconds) or stall_seconds <= 0:
+            raise ValueError('migration stall timeout must be positive and finite')
+        self.stall_seconds = stall_seconds
+        self.on_progress = on_progress
+        self.last_work = time.monotonic()
+        self.last_report = self.last_work
+        self.stage = None
+
+    def __call__(self):
+        if time.monotonic() - self.last_work >= self.stall_seconds:
+            raise TimeoutError('application journal migration time budget exceeded: '
+                'no progress for %.1fs; saved graph kept in place; retry to restart safely' %
+                self.stall_seconds)
+
+    def advance(self, stage, completed=None, total=None):
+        self()
+        now = time.monotonic()
+        changed = stage != self.stage
+        self.last_work = now
+        if not changed and not (total is not None and completed == total) and now - self.last_report < min(1, self.stall_seconds / 3):
+            return
+        self.stage, self.last_report = stage, now
+        percent = int(100 * completed / total) if total else None
+        label = 'Updating your data' + (' (%d%%)' % percent if percent is not None else '')
+        print('  migration  : %s â€” %s%s' % (label, stage,
+            ' %d/%d' % (completed, total) if total else ''), flush=True)
+        if self.on_progress is not None:
+            self.on_progress({'label': label, 'stage': stage, 'percent': percent,
+                'completed': completed, 'total': total, 'stall_seconds': self.stall_seconds})
 
 
 def default_state_path():
@@ -72,35 +109,38 @@ def _legacy_desktop_journal(root):
 def _application_journal_reader(path, *, check_budget=lambda: None, timeout_seconds=30.0):
     """Observe a fenced journal without creating or changing its WAL read marks.
 
-    A committed WAL needs a private physical read view: SQLite mode=ro still
-    writes shared-memory read marks. This temporary view is never selected or
-    opened as a CellStore; the existing recovery publisher remains the copier.
+    A committed WAL needs private shared-memory read marks. Same-volume hard
+    links give SQLite a read-only view without copying the entire journal just
+    to read its indexed head. Only the view's private SHM can be written.
     """
     import sqlite3
     import tempfile
-    from .application_recovery_files import _require_disk_reserve
     path = Path(path).resolve()
     wal = Path(str(path) + '-wal')
     view, journal = None, None
     try:
         if wal.is_file() and wal.stat().st_size:
-            view = Path(tempfile.mkdtemp(prefix='archhub-journal-read-')).resolve()
-            _require_disk_reserve(view, path.stat().st_size + wal.stat().st_size)
+            view = Path(tempfile.mkdtemp(prefix='archhub-journal-read-', dir=path.parent)).resolve()
             for source, destination in ((path, view / 'graph.sqlite3'),
                                         (wal, view / 'graph.sqlite3-wal')):
-                with source.open('rb') as reader, destination.open('xb') as writer:
-                    while True:
-                        check_budget()
-                        block = reader.read(1024 * 1024)
-                        if not block:
-                            break
+                check_budget()
+                os.link(source, destination)
+            shm = Path(str(path) + '-shm')
+            if shm.is_file():
+                # Reuse the frozen WAL index, keeping all read marks private.
+                with shm.open('rb') as reader, (view / 'graph.sqlite3-shm').open('xb') as writer:
+                    while block := reader.read(1024 * 1024):
                         writer.write(block)
+                        _advance(check_budget, 'Reading WAL index')
             journal = sqlite3.connect((view / 'graph.sqlite3').as_uri() + '?mode=ro',
                 uri=True, isolation_level=None, timeout=timeout_seconds)
         else:
             journal = sqlite3.connect(path.as_uri() + '?mode=ro&immutable=1',
                 uri=True, isolation_level=None, timeout=timeout_seconds)
         yield journal
+    except sqlite3.OperationalError:
+        check_budget()
+        raise
     finally:
         if journal is not None:
             journal.close()
@@ -131,6 +171,7 @@ def _application_journal_candidates(root):
 def _journal_head(path, *, check_budget=lambda: None, timeout_seconds=30.0):
     import math
     check_budget()
+    _advance(check_budget, 'Reading indexed journal head')
     with _application_journal_reader(path, check_budget=check_budget,
                                       timeout_seconds=timeout_seconds) as journal:
         revision, committed = journal.execute(
@@ -141,13 +182,30 @@ def _journal_head(path, *, check_budget=lambda: None, timeout_seconds=30.0):
     return committed, revision
 
 
-def _verify_migrated_application(database, key_provider):
+@contextmanager
+def _migration_store(database, check_budget):
+    """Use the existing journal's admitted loader with observable SQLite work."""
+    from .universal_cell import CellStore, _SqliteJournal
+    journal = None
+    try:
+        journal = _SqliteJournal(database, None, progress_handler=
+            lambda: (_advance(check_budget, 'Reading saved graph'), 0)[1])
+        with CellStore(journal=journal) as store:
+            yield store
+    except Exception:
+        check_budget()
+        raise
+    finally:
+        if journal is not None:
+            journal.close()
+
+
+def _verify_migrated_application(database, key_provider, check_budget=lambda: None):
     """Read the original receipt revisions with their original signing custody."""
     from types import SimpleNamespace
-    from .universal_cell import CellStore
     from . import universal_application as application
     from .cell_secret_keys import WindowsDpapiSigningKeyProvider
-    with CellStore(database) as store:
+    with _migration_store(database, check_budget) as store:
         snapshot = store.snapshot()
         if 'app:authorization-protocol:root' not in snapshot.cells:
             return
@@ -165,7 +223,7 @@ def _verify_migrated_application(database, key_provider):
 
 
 def prepare_application_database(state_directory, database, *, timeout_seconds=30.0,
-                                 key_provider=None):
+                                 key_provider=None, on_progress=None):
     """Preserve the newest committed application's entire journal on upgrade.
 
     A head-only merge into revision one invalidates historical authorization
@@ -173,6 +231,8 @@ def prepare_application_database(state_directory, database, *, timeout_seconds=3
     revision, publish verified copies, and leave the retired source untouched.
     Existing files stay untouched. A stale selected authority is superseded only
     by a read-back-verified new physical generation, never a head-only merge.
+    ``timeout_seconds`` bounds inactivity, not total work. Percentages describe
+    the named byte/page operation; verification reports real work without a fake ETA.
     """
     from .universal_cell import InterprocessOwnerFence
     root, target = Path(state_directory).resolve(), Path(database).resolve()
@@ -183,10 +243,7 @@ def prepare_application_database(state_directory, database, *, timeout_seconds=3
                 return {'state': 'existing', 'backup_path': None, 'database_path': str(target)}
     runtime = root / 'unified-authority'
     runtime.mkdir(exist_ok=True)
-    deadline = time.monotonic() + timeout_seconds
-    def check_budget():
-        if time.monotonic() >= deadline:
-            raise TimeoutError('application journal migration time budget exceeded')
+    check_budget = _MigrationProgress(timeout_seconds, on_progress)
     with ExitStack() as owners:
         owners.callback(InterprocessOwnerFence(str(runtime / '.provision')).close)
         if application_database_path(root) != target:
@@ -199,21 +256,44 @@ def prepare_application_database(state_directory, database, *, timeout_seconds=3
                 raise ValueError('retired application journal must not be a link')
             owners.callback(InterprocessOwnerFence(str(path)).close)
         heads = {path: _journal_head(path, check_budget=check_budget,
-                    timeout_seconds=max(0, deadline - time.monotonic())) for path in paths}
+                    timeout_seconds=timeout_seconds) for path in paths}
         chosen = max(paths, key=heads.__getitem__)
         print('  migration  : candidates ' + '; '.join('%s rev=%d time=%.6f' %
             (path, heads[path][1], heads[path][0]) for path in paths) +
             '; chosen %s (newest committed time, then revision)' % chosen, flush=True)
         if chosen == target:
             return {'state': 'existing', 'backup_path': None, 'database_path': str(target)}
-        return _prepare_application_journal(root, target, chosen, heads, deadline, key_provider)
+        return _prepare_application_journal(root, target, chosen, heads, check_budget, key_provider)
 
 
-def _prepare_application_journal(root, target, source, heads, deadline, key_provider):
+def _discard_migration_stage(stage, names, check_budget):
+    """Under migration fences, discard only exact, unpublished helper files."""
+    if stage.resolve(strict=False) != stage.absolute():
+        raise ValueError('interrupted migration path contains an alias; source preserved')
+    if not os.path.lexists(stage):
+        return
+    if stage.is_symlink() or stage.is_junction() or not stage.is_dir():
+        raise ValueError('interrupted migration stage is not a plain directory; source preserved')
+    paths = list(stage.iterdir())
+    names = set(names)
+    for path in paths:
+        atomic = re.fullmatch(r'\.(adoption\.json|migration\.json)\.[0-9a-f]{32}\.tmp', path.name)
+        if atomic and atomic.group(1) in names:
+            names.add(path.name)
+    if any(path.name not in names or path.is_symlink() or path.is_junction()
+           or not path.is_file() for path in paths):
+        raise ValueError('interrupted migration has unknown files; source preserved')
+    for path in paths:
+        path.unlink()
+        _advance(check_budget, 'Discarding interrupted migration copy')
+    stage.rmdir()
+
+
+def _prepare_application_journal(root, target, source, heads, check_budget, key_provider):
     """The existing recovery/restore cutover, under all candidate owner fences."""
     from types import SimpleNamespace
     from .application_recovery_files import publish_application_recovery
-    from .application_recovery_restore_files import prepare_application_restore
+    from .application_recovery_restore_files import prepare_application_restore, _read_manifest
     from .backup_retention import backup_policy, _backup_bytes
     from .conversation_content import FRESH_CONTENT_BOOTSTRAP_ROOT, read_fresh_content_bootstrap
     from .universal_cell import Cell, Snapshot, _LazyRevisionCellMap
@@ -224,22 +304,22 @@ def _prepare_application_journal(root, target, source, heads, deadline, key_prov
     pointer = current.read_bytes() if current.exists() else None
     promote = target.exists() or pointer is not None
     generation_id = str(uuid.uuid4())
+    # This prefix cannot be selected by CURRENT's UUID-only grammar. A retry
+    # may reclaim it, but never deletes a formerly published UUID generation.
+    staging_id = uuid.uuid5(uuid.NAMESPACE_URL, 'archhub-journal-migration:' +
+        str(source) + ':' + repr(heads[source])).hex
     if promote:
         generations = runtime / 'generations'
         generations.mkdir(exist_ok=True)
-        destination = generations / generation_id
+        destination = generations / ('.journal-migration-prepared-' + staging_id)
     else:
-        destination = root / ('.application-upgrade-' + uuid.uuid4().hex)
-
-    def check_budget():
-        if time.monotonic() >= deadline:
-            raise TimeoutError('application journal migration time budget exceeded')
+        destination = root / ('.application-upgrade-' + staging_id)
 
     def check_target():
         check_budget()
         if ((current.read_bytes() if current.exists() else None) != pointer
                 or any(_journal_head(path, check_budget=check_budget,
-                    timeout_seconds=max(0, deadline - time.monotonic())) != head
+                    timeout_seconds=check_budget.stall_seconds) != head
                     for path, head in heads.items())
                 or (not promote and (target.parent != root or any(
                     os.path.lexists(Path(str(target) + suffix))
@@ -248,6 +328,7 @@ def _prepare_application_journal(root, target, source, heads, deadline, key_prov
 
     check_target()
     with _application_journal_reader(source, check_budget=check_budget) as old:
+        old.set_progress_handler(lambda: (_advance(check_budget, 'Reading journal settings'), 0)[1], 100)
         old.execute('BEGIN')
         if old.execute("SELECT 1 FROM current_cells WHERE cell_id='app:archhub'").fetchone() is None:
             raise ValueError('retired application root is missing; source preserved')
@@ -259,6 +340,21 @@ def _prepare_application_journal(root, target, source, heads, deadline, key_prov
             if value['state'] == 'pending':
                 raise ValueError('fresh conversation recovery required; pending bootstrap custody cannot move')
         revision = old.execute('SELECT MAX(revision) FROM revisions').fetchone()[0]
+        backup_names = {'graph.sqlite3', 'recovery.json'} | {
+            'graph.sqlite3' + suffix for suffix in ('-journal', '-wal', '-shm')}
+        restore_names = {target.name if not promote else 'authority.sqlite3',
+            'restoration.json', 'adoption.json', 'migration.json'}
+        restore_names |= {name + suffix for name in tuple(restore_names) if name.endswith('.sqlite3')
+            for suffix in ('-journal', '-wal', '-shm', '.owner.lock', '.accelerators', '.accelerators-journal', '.accelerators-wal', '.accelerators-shm')}
+        backups = root / 'backups'
+        backups.mkdir(exist_ok=True)
+        if backups.resolve() != backups or destination.parent.resolve() != destination.parent:
+            raise ValueError('migration directories contain an alias; source preserved')
+        for stage in backups.glob('.journal-migration-copy-*'):
+            _discard_migration_stage(stage, backup_names, check_budget)
+        for stage in destination.parent.glob('.journal-migration-restore-*'):
+            _discard_migration_stage(stage, restore_names, check_budget)
+        _discard_migration_stage(destination, restore_names, check_budget)
         digest = _sqlite_source_digest(source, check_budget=check_budget)
 
         def verify(copies, check_budget):
@@ -272,24 +368,36 @@ def _prepare_application_journal(root, target, source, heads, deadline, key_prov
             if _sqlite_source_digest(source, check_budget=check_budget) != digest:
                 raise ValueError('retired application changed during migration; source preserved')
 
-        backups = root / 'backups'
-        backups.mkdir(exist_ok=True)
         # Read the retired graph's actual Settings, without opening a
         # second writable store or materialising its whole head.
         policy = backup_policy(Snapshot(revision,
             _LazyRevisionCellMap(old, threading.RLock(), revision)))
         remaining = policy['max_bytes'] - _backup_bytes(backups)
-        backup = publish_application_recovery({'graph': old},
-            backups / ('journal-migration-' + uuid.uuid4().hex), verify_copies=verify,
-            before_publish=admitted, deadline=deadline, max_bytes=remaining)
+        backup = None
+        for candidate in backups.glob('journal-migration-*'):
+            if candidate.is_symlink() or candidate.is_junction() or not candidate.is_dir():
+                continue
+            manifest, _, _ = _read_manifest(candidate)
+            if manifest['metadata'] == {'source_sha256': digest, 'head_revision': revision}:
+                # A cache hint only: restore verifies manifest bytes and our
+                # logical digest again before this backup can become authority.
+                backup = candidate
+                _advance(check_budget, 'Reusing verified migration recovery')
+                break
+        if backup is None:
+            backup = publish_application_recovery({'graph': old},
+                backups / ('journal-migration-' + uuid.uuid4().hex), verify_copies=verify,
+                before_publish=admitted, deadline=0, max_bytes=remaining, progress=check_budget,
+                stage_prefix='.journal-migration-copy-')
         prepared = prepare_application_restore(backup,
             destination,
             output_names={'graph': 'authority.sqlite3' if promote else target.name},
             verify_copies=lambda copies, manifest, budget: verify(copies, budget),
-            before_publish=admitted, deadline=deadline)
+            before_publish=admitted, deadline=0, progress=check_budget,
+            stage_prefix='.journal-migration-restore-')
         admitted()
         copied = prepared / ('authority.sqlite3' if promote else target.name)
-        _verify_migrated_application(copied, key_provider)
+        _verify_migrated_application(copied, key_provider, check_budget)
         if _sqlite_source_digest(copied, check_budget=check_budget) != digest:
             raise ValueError('application journal readback changed; source preserved')
         if promote:
@@ -297,8 +405,7 @@ def _prepare_application_journal(root, target, source, heads, deadline, key_prov
             # the discarded generation's signed manifest or key identity.
             from .authority_adoption import adopt_application_authority
             from .cell_secret_keys import WindowsDpapiSigningKeyProvider
-            from .universal_cell import CellStore
-            with CellStore(copied) as migrated:
+            with _migration_store(copied, check_budget) as migrated:
                 if 'app:authorization-protocol:root' in migrated.snapshot().cells:
                     keys = key_provider if key_provider is not None else WindowsDpapiSigningKeyProvider(
                         WindowsDpapiSigningKeyProvider.default_path())
@@ -309,18 +416,20 @@ def _prepare_application_journal(root, target, source, heads, deadline, key_prov
             # verifier and signed commit binding as every subsequent boot.
             if (prepared / 'adoption.json').is_file():
                 from .unified_authority import BootstrapManifest, open_unified_authority, bind_signed_commit_owner
-                with CellStore(copied) as readback:
+                with _migration_store(copied, check_budget) as readback:
                     manifest = BootstrapManifest.from_json((prepared / 'adoption.json').read_text(encoding='utf-8'))
                     bind_signed_commit_owner(open_unified_authority(readback, manifest, keys))
-                _verify_migrated_application(copied, keys)
+                _verify_migrated_application(copied, keys, check_budget)
             _atomic_text(prepared / 'migration.json', json.dumps({
                 'format': 'archhub-application-journal-migration/v1',
                 'generation_id': generation_id, 'source_path': str(source),
                 'source_revision': revision, 'source_committed_at': heads[source][0],
                 'source_sha256': digest, 'backup_path': str(backup)}, sort_keys=True))
             admitted()
+            published = generations / generation_id
+            os.rename(prepared, published)
             _atomic_text(current, generation_id)
-            target = copied
+            prepared, target = published, published / 'authority.sqlite3'
         else:
             admitted()
             # Windows rename refuses an existing destination; never replace.
@@ -328,7 +437,7 @@ def _prepare_application_journal(root, target, source, heads, deadline, key_prov
         try:
             (prepared / 'restoration.json').unlink()
             if not promote:
-                prepared.rmdir()
+                _discard_migration_stage(prepared, restore_names, check_budget)
         except OSError as cleanup:
             print('  migration  : verified preparation metadata retained (%s)' %
                   type(cleanup).__name__, flush=True)
@@ -653,10 +762,11 @@ def _sqlite_source_digest(path, *, check_budget=lambda: None):
     result = hashlib.sha256()
     with _application_journal_reader(path, check_budget=check_budget) as database:
         database.execute('BEGIN')
-        database.set_progress_handler(lambda: (check_budget(), 0)[1], 1000)
+        database.set_progress_handler(lambda: (_advance(check_budget, 'Verifying journal rows'), 0)[1], 1000)
         for kind, name, sql in database.execute(
                 "SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"):
             result.update(repr((kind, name, sql)).encode('utf-8'))
+            _advance(check_budget, 'Verifying journal rows')
             if kind != 'table' or sql.upper().startswith('CREATE VIRTUAL TABLE'):
                 continue
             quoted = '"' + name.replace('"','""') + '"'
@@ -669,8 +779,10 @@ def _sqlite_source_digest(path, *, check_budget=lambda: None):
                 encoded = repr(tuple(row)).encode('utf-8')
                 result.update(len(encoded).to_bytes(8, 'big'))
                 result.update(encoded)
+                _advance(check_budget, 'Verifying journal rows')
         result.update(repr((database.execute('PRAGMA application_id').fetchone()[0],
                             database.execute('PRAGMA user_version').fetchone()[0])).encode())
+        _advance(check_budget, 'Verifying journal rows')
     return result.hexdigest()
 
 

@@ -23,6 +23,14 @@ _MANIFEST_BYTES = 128 * 1024
 _FILE_NAMES = {"graph": "graph.sqlite3", "content": "content.sqlite3"}
 
 
+def _advance(check_budget, stage, completed=None, total=None):
+    """Only completed I/O or SQLite work renews a migration's stall lease."""
+    check_budget()
+    advance = getattr(check_budget, 'advance', None)
+    if advance is not None:
+        advance(stage, completed, total)
+
+
 def _json_bytes(value, limit):
     pieces, used = [], 0
     encoder = json.JSONEncoder(ensure_ascii=False, allow_nan=False,
@@ -48,7 +56,7 @@ def _copy_connection(path, check_budget):
 
     def progress():
         try:
-            check_budget()
+            _advance(check_budget, 'Checking SQLite')
         except TimeoutError:
             return 1
         return 0
@@ -89,8 +97,16 @@ def _verify_database(database, check_budget):
 
 def _backup_sqlite(source, path, check_budget):
     with _copy_connection(path, check_budget) as target:
+        previous = None
+        def progress(status, remaining, total):
+            nonlocal previous
+            check_budget()
+            if status in (sqlite3.SQLITE_OK, sqlite3.SQLITE_DONE) and (
+                    previous is None or remaining < previous):
+                _advance(check_budget, 'Copying journal pages', total - remaining, total)
+                previous = remaining
         source.backup(target, pages=64,
-            progress=lambda status, remaining, total: check_budget(), sleep=0.01)
+            progress=progress, sleep=0.01)
         _verify_database(target, check_budget)
 
 
@@ -158,13 +174,15 @@ def _file_evidence(path, check_budget):
                 break
             digest.update(block)
             size += len(block)
+            _advance(check_budget, 'Verifying file bytes', size, path.stat().st_size)
         os.fsync(stream.fileno())
     check_budget()
     return {"name": path.name, "size_bytes": size, "sha256": digest.hexdigest()}
 
 
 def publish_application_recovery(sources, directory, *, verify_copies,
-                                 before_publish, deadline, max_bytes=None):
+                                 before_publish, deadline, max_bytes=None, progress=None,
+                                 stage_prefix='.application-recovery-'):
     """Copy frozen sources and atomically rename one complete recovery folder.
 
     ``deadline`` is an absolute monotonic timestamp. ``verify_copies`` receives
@@ -181,11 +199,14 @@ def publish_application_recovery(sources, directory, *, verify_copies,
         raise TypeError("recovery verification and publication admission must be callable")
     if type(deadline) not in (int, float) or not math.isfinite(deadline):
         raise ValueError("recovery deadline must be a finite monotonic timestamp")
+    if stage_prefix not in ('.application-recovery-', '.journal-migration-copy-'):
+        raise ValueError('invalid recovery stage prefix')
 
-    def check_budget():
+    def deadline_check():
         if time.monotonic() >= deadline:
             raise TimeoutError("application recovery time budget exceeded")
 
+    check_budget = progress if progress is not None else deadline_check
     check_budget()
     destination = Path(directory).absolute()
     if os.path.lexists(destination):
@@ -209,11 +230,12 @@ def publish_application_recovery(sources, directory, *, verify_copies,
         if type(pages) is not int or pages < 0 or type(page_size) is not int or page_size <= 0:
             raise ValueError("recovery source page metadata is invalid")
         logical_sizes[role] = pages * page_size
+        _advance(check_budget, 'Reading journal size')
     if max_bytes is not None and sum(logical_sizes.values()) + _MANIFEST_BYTES > max_bytes:
         raise ValueError('new recovery exceeds the configured backup disk budget')
     _require_disk_reserve(parent, sum(logical_sizes.values()))
     check_budget()
-    stage = parent / (".application-recovery-" + uuid.uuid4().hex)
+    stage = parent / (stage_prefix + uuid.uuid4().hex)
     stage.mkdir(mode=0o700)
     owned_paths = []
     try:

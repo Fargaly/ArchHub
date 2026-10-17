@@ -1219,6 +1219,7 @@ class _SqliteJournal:
         self,
         path: str | os.PathLike[str],
         fault_injector: Callable[[str], None] | None,
+        *, progress_handler: Callable[[], int] | None = None,
     ) -> None:
         self._path = os.path.abspath(os.fspath(path))
         self._fault_injector = fault_injector
@@ -1233,6 +1234,7 @@ class _SqliteJournal:
                 isolation_level=None,
                 check_same_thread=False,
             )
+            self._connection.set_progress_handler(progress_handler, 1000)
             self._connection.execute("PRAGMA journal_mode=WAL")
             self._connection.execute("PRAGMA synchronous=FULL")
             self._connection.execute("PRAGMA foreign_keys=ON")

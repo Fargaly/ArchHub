@@ -19,7 +19,7 @@ import uuid
 from .application_recovery_files import (
     _FILE_NAMES, _MANIFEST_BYTES, _METADATA_BYTES, _check_file,
     _check_stage_files, _cleanup_stage, _create_file, _file_evidence,
-    _json_bytes, _require_disk_reserve,
+    _json_bytes, _require_disk_reserve, _advance,
 )
 from .universal_cell import open_read_only_cell_journal
 
@@ -148,6 +148,7 @@ def _hash_source(path, expected, identity, check_budget):
             if size > expected["size_bytes"]:
                 raise ValueError("restore source file size changed")
             digest.update(block)
+            _advance(check_budget, 'Verifying recovery bytes', size, expected['size_bytes'])
     if (size != expected["size_bytes"] or digest.hexdigest() != expected["sha256"]
             or _file_identity(path) != identity):
         raise ValueError("restore source file does not match its manifest")
@@ -169,6 +170,7 @@ def _copy_exact(source, destination, expected, identity, check_budget):
             if writer.write(block) != len(block):
                 raise OSError("restore copy write was incomplete")
             digest.update(block)
+            _advance(check_budget, 'Preparing journal bytes', size, expected['size_bytes'])
         writer.flush()
         os.fsync(writer.fileno())
     if (size != expected["size_bytes"] or digest.hexdigest() != expected["sha256"]
@@ -189,7 +191,7 @@ def _verify_sqlite_readonly(path, check_budget, *, graph=False):
     with closing(connection) as database:
         def progress():
             try:
-                check_budget()
+                _advance(check_budget, 'Checking restored SQLite')
             except TimeoutError:
                 return 1
             return 0
@@ -226,17 +228,21 @@ def _verify_staged(copies, manifest, stage, parent, check_budget):
 
 
 def prepare_application_restore(recovery_directory, destination, *, output_names,
-                                verify_copies, before_publish, deadline):
+                                verify_copies, before_publish, deadline, progress=None,
+                                stage_prefix='.application-recovery-restore-'):
     """Prepare exact startup filenames in a new folder; never replace live data."""
     if not callable(verify_copies) or not callable(before_publish):
         raise TypeError("restore verification and publication admission must be callable")
     if type(deadline) not in (int, float) or not math.isfinite(deadline):
         raise ValueError("restore deadline must be a finite monotonic timestamp")
+    if stage_prefix not in ('.application-recovery-restore-', '.journal-migration-restore-'):
+        raise ValueError('invalid restore stage prefix')
 
-    def check_budget():
+    def deadline_check():
         if time.monotonic() >= deadline:
             raise TimeoutError("application restore time budget exceeded")
 
+    check_budget = progress if progress is not None else deadline_check
     check_budget()
     source = _plain_path(recovery_directory)
     if source.name.casefold().startswith(".application-recovery-"):
@@ -274,7 +280,7 @@ def prepare_application_restore(recovery_directory, destination, *, output_names
     required_bytes = sum(manifest["files"][role]["size_bytes"] for role in roles if not (shared and role == 'content'))
     _require_disk_reserve(parent, required_bytes)
     check_budget()
-    stage = parent / (".application-recovery-restore-" + uuid.uuid4().hex)
+    stage = parent / (stage_prefix + uuid.uuid4().hex)
     stage.mkdir(mode=0o700)
     owned_paths = []
     try:

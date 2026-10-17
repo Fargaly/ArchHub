@@ -43,6 +43,7 @@ class BootProgress:
         self._phases: list[dict[str, object]] = []
         self._done = False
         self._detail = ""
+        self._migration = None
         self._expected = {
             str(label): float(seconds) for label, seconds in (expected or {}).items()
             if label in BOOT_PHASES and isinstance(seconds, (int, float)) and seconds > 0
@@ -74,6 +75,10 @@ class BootProgress:
         with self._lock:
             self._done = True
 
+    def migration(self, status: dict[str, object] | None) -> None:
+        with self._lock:
+            self._migration = dict(status) if status is not None else None
+
     def durations(self) -> dict[str, float]:
         """The seconds each finished phase took: the next start's expectation."""
         with self._lock:
@@ -88,6 +93,7 @@ class BootProgress:
                 "phases": [dict(phase) for phase in self._phases],
                 "total": len(BOOT_PHASES),
                 "detail": self._detail,
+                "migration": self._migration,
                 "expected": dict(self._expected),
             }
 
@@ -207,6 +213,11 @@ font-size:11px;color:%(ink_muted)s;font-variant-numeric:tabular-nums}
 // stops at 90%% of the phase's share, so the next mark is reached only when
 // the phase really ends.
 function progressView(state){
+  if(state.migration){
+    const m=state.migration;
+    return {determinate:m.percent!==null,fraction:(m.percent||0)/100,
+      text:m.label,detail:' — '+m.stage,estimate:''};
+  }
   const DEFAULT_PHASE_SECONDS=30;
   const phases=state.phases||[];
   const total=Math.max(Number(state.total)||0,phases.length);

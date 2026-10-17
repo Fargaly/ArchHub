@@ -31,6 +31,7 @@ _log = _bootstrap_log
 sys.stdout = _log
 sys.stderr = _log
 _boot_deadline = None
+_migration_status = None
 
 
 def _arm_boot_watchdog():
@@ -628,7 +629,11 @@ def _boot_unsampled():
     global state_path, backup_dir, first_boot
     from nodelang.persistence import prepare_application_database
     print("  migration  : checking complete application journal", flush=True)
-    migration = prepare_application_database(state_dir, state_path, key_provider=machine_key_provider)
+    try:
+        migration = prepare_application_database(state_dir, state_path,
+            key_provider=machine_key_provider, on_progress=_migration_progress)
+    finally:
+        _migration_progress(None)
     state_path = application_database_path(state_dir)
     backup_dir = state_dir / "backups"
     first_boot = not _saved_graph_exists(state_dir, state_path)
@@ -1057,6 +1062,18 @@ def _boot_step_seen(stack):
     """The boot sampler's stack, as the boot page's live step (sampler thread)."""
     if _boot_surface is not None:
         _boot_surface.progress.detail(boot_step_label(stack))
+
+
+def _migration_progress(status):
+    """Renew the boot watchdog only when migration reports completed work."""
+    global _boot_deadline, _migration_status
+    _migration_status = status
+    # A blocked syscall still gets the watchdog's traceback. Ordinary stalls
+    # are refused by the migration checker with a source-preserving message.
+    _boot_deadline = time.monotonic() + (status['stall_seconds'] + 5 if status else 90)
+    _arm_boot_watchdog()
+    if _boot_surface is not None:
+        _boot_surface.progress.migration(status)
 
 
 def _boot_phase(index, finished=False):

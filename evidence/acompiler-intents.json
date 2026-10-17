@@ -3115,6 +3115,44 @@
         "evidence/source-custody-manifest.json",
         "docs/FAILURE_LOG.md"
       ]
+    },
+    "PRESENCE1": {
+      "source": "BRIEF-PRESENCE1.md; founder 2026-10-17: default tray, no obstruction, graph Shows as, connection dot only",
+      "scope": [
+        "nodelang/baboom_native_companion.py",
+        "nodelang/universal_application.py",
+        "nodelang/studio/studio-lm.jsx",
+        "nodelang/studio/studio-existing-workshop.js",
+        "nodelang/studio/studio-params.jsx",
+        "nodelang/site_export.py",
+        "tests_replica/test_presence1.py",
+        "tests_replica/test_presence1_acceptance.py",
+        "tests_replica/test_baboom_native_companion.py",
+        "tests_replica/test_baboom_user_controls.py",
+        "tests_replica/test_baboom_startup_setting.py",
+        "tests_replica/test_baboom5.py",
+        "tests_replica/test_baboom_confirm_names_what_it_does.py",
+        "tests_replica/test_studio_baboom_startup.cjs",
+        "evidence/presence1/",
+        "READ-PROOF.md",
+        "PROGRESS.md",
+        "plan.md",
+        "tasks.json",
+        "notes.md",
+        "REGISTER.md",
+        "RESULT-PRESENCE1.md",
+        "PRESENCE1.patch",
+        "PRESENCE1.patch.sha256",
+        "evidence/acompiler-intents.json",
+        "tests_replica/presence1_native_probe.py",
+        "tests_replica/presence1_final_courts.py",
+        "tmp-base/",
+        "public_site/site-export.json",
+        "tests_replica/test_site_export.py",
+        "docs/FAILURE_LOG.md",
+        "tools/archhub-compiler/src/semantics.rs",
+        "RESULT-PRESENCE1-final.md"
+      ]
     }
   }
 }

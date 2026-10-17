@@ -237,3 +237,45 @@ def test_public_root_still_needs_workshop_work(tmp_path, monkeypatch):
             runtime="claude",
             private_root_grants=grant_store,
         )
+
+
+def _legacy_signed_store(tmp_path, *, forge=False):
+    """A grant written by an earlier build under the retired key id archhub.unified.bootstrap."""
+    from nodelang.private_root_grants import PrivateRootGrantStore
+
+    provider = MemorySigningKeyProvider("archhub.unified.bootstrap", b"u" * 32)
+    provider.add_key("archhub.local.private-root-grants", b"l" * 32)
+    legacy = PrivateRootGrantStore(tmp_path / "private-root-grants.json", provider=provider,
+                                   key_id="archhub.unified.bootstrap")
+    legacy.grant(root_id="bbc4", runtime="claude", session_id=SESSION, root_digest="a" * 64,
+                 operations=("write_file",), expires_at=time.time() + 3600)
+    if forge:
+        import json
+        document = json.loads((tmp_path / "private-root-grants.json").read_text(encoding="utf-8"))
+        document["grants"][0]["runtime"] = "codex"
+        (tmp_path / "private-root-grants.json").write_text(json.dumps(document), encoding="utf-8")
+    return provider
+
+
+def test_a_grant_signed_under_the_retired_key_id_is_verified_and_resigned(tmp_path):
+    from nodelang.private_root_grants import PrivateRootGrantStore
+    import json
+
+    provider = _legacy_signed_store(tmp_path)
+    current = PrivateRootGrantStore(tmp_path / "private-root-grants.json", provider=provider)
+    result = current.status(root_id="bbc4", runtime="claude", session_id=SESSION,
+                            operation="write_file", root_digest="a" * 64)
+    assert result["granted"] is True, result
+    document = json.loads((tmp_path / "private-root-grants.json").read_text(encoding="utf-8"))
+    assert document["key_id"] == "archhub.local.private-root-grants"
+    assert len(document["grants"]) == 1
+
+
+def test_a_tampered_retired_key_grant_is_still_refused(tmp_path):
+    from nodelang.private_root_grants import PrivateRootGrantStore
+
+    provider = _legacy_signed_store(tmp_path, forge=True)
+    current = PrivateRootGrantStore(tmp_path / "private-root-grants.json", provider=provider)
+    result = current.status(root_id="bbc4", runtime="codex", session_id=SESSION,
+                            operation="write_file", root_digest="a" * 64)
+    assert result["granted"] is False

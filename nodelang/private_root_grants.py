@@ -24,6 +24,10 @@ DEFAULT_OPERATIONS = ("edit_file", "apply_patch", "write_file", "create")
 SUPPORTED_OPERATIONS = frozenset(DEFAULT_OPERATIONS)
 _RUNTIMES = frozenset(OPEN_AGENT_RUNTIMES)
 _KEY_ID = "archhub.local.private-root-grants"
+# Key ids earlier builds signed this document with. A document under one of them
+# is accepted only after it verifies with that retired key's pinned fingerprint,
+# then re-signed unchanged under the current key id.
+_RETIRED_KEY_IDS = ("archhub.unified.bootstrap",)
 
 
 def canonical(value: object) -> bytes:
@@ -132,6 +136,9 @@ class PrivateRootGrantStore:
         if type(document) is not dict or type(document.get("signature")) is not str:
             raise InvalidCell("private-root grant document is unsigned")
         body = {key: value for key, value in document.items() if key != "signature"}
+        signer = body.get("key_id")
+        if signer in _RETIRED_KEY_IDS and signer != self.key_id:
+            return self._adopt_retired(body, str(document["signature"]))
         if (body.get("schema") != SCHEMA
                 or body.get("key_id") != self.key_id
                 or type(body.get("key_version")) is not int
@@ -146,6 +153,33 @@ class PrivateRootGrantStore:
         for grant in body["grants"]:
             self._validate_grant(grant)
         return body
+
+    def _adopt_retired(self, body: dict[str, object], signature: str) -> dict[str, object]:
+        """Verify a grant document signed under a retired key id, then re-sign it as is."""
+        signer = str(body.get("key_id"))
+        if (body.get("schema") != SCHEMA
+                or type(body.get("key_version")) is not int
+                or type(body.get("key_fingerprint")) is not str
+                or type(body.get("grants")) is not list):
+            raise InvalidCell("private-root grant document is malformed")
+        version = int(body["key_version"])
+        try:
+            pinned = self.provider.key_fingerprint(signer, version)
+        except Exception as exc:
+            raise InvalidCell("private-root grant is signed under retired key %s, which this "
+                              "machine no longer holds; grant the root again" % signer) from exc
+        if pinned != body["key_fingerprint"]:
+            raise InvalidCell("private-root grant signing key is not pinned")
+        if not self.provider.verify(signer, version, canonical(body), signature):
+            raise InvalidCell("private-root grant document does not verify")
+        for grant in body["grants"]:
+            self._validate_grant(grant)
+        migrated = {**body, **self._header()}
+        with self._locked_mutation():
+            self._write(migrated)
+        print("  grants     : re-signed %d private-root grant(s) from retired key %s under %s"
+              % (len(body["grants"]), signer, self.key_id), flush=True)
+        return migrated
 
     def _write(self, body: dict[str, object]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

@@ -3464,6 +3464,7 @@
         "evidence/mainrel/run_round3.ps1",
         "tests_replica/test_quiet_update.py",
         "installer/rollback-rehearsal-ci/",
+        "tools/rollback-rehearsal-ci/",
         "tests_replica/test_mainrel_ci.py"
       ]
     },

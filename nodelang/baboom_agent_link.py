@@ -1,113 +1,39 @@
-"""BABOOM's link to the agents on this machine.
-
-Every agent (Codex, Claude, Gemini, OpenCode, Antigravity) registers with the
-clean coordination host (:8474) and talks through it. BABOOM is one more
-signed identity on that host, so the founder can list who is online, tell an
-agent something, or interrupt it -- from the companion or from the cockpit.
-"""
+"""BABOOM posts and reads the same Workshop mailbox as every external agent."""
 from __future__ import annotations
-
-import os
-import uuid
-from pathlib import Path
 from typing import Mapping, Optional, Sequence
 
-VENDOR = "archhub"
-MODEL = "baboom"
-_client = None
+
+def _call(method, arguments, mailbox=None):
+    if mailbox is not None:
+        return mailbox(method, arguments)
+    from .native_agent_mcp import _mailbox_call
+    return _mailbox_call(method, arguments, {})
 
 
-def _state_dir() -> Path:
-    held = os.environ.get("ARCHHUB_STATE_DIR")
-    if held:
-        return Path(held)
-    return Path(os.environ.get("LOCALAPPDATA") or ".") / "ArchHub"
-
-
-def session_id(state_dir: Optional[Path] = None) -> str:
-    """One stable coordination identity per install, minted on first use."""
-    marker = Path(state_dir or _state_dir()) / "baboom-coordination-session"
-    try:
-        if marker.is_file():
-            held = marker.read_text(encoding="utf-8").strip()
-            if held:
-                return held
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        fresh = uuid.uuid4().hex
-        marker.write_text(fresh, encoding="utf-8")
-        return fresh
-    except OSError:
-        return uuid.uuid4().hex
-
-
-def client():
-    """The signed coordination client, registered once per process."""
-    global _client
-    if _client is None:
-        from .clean_coordination_host import CoordinationIdentity
-        from .clean_coordination_mcp import DEFAULT_ENDPOINT, LocalCoordinationClient
-
-        endpoint = os.environ.get("ARCHHUB_COORDINATION_ENDPOINT") or DEFAULT_ENDPOINT
-        identity = CoordinationIdentity(VENDOR, session_id(), MODEL)
-        made = LocalCoordinationClient(identity, endpoint=endpoint)
-        made.call("register_session")
-        _client = made
-    return _client
-
-
-def reset() -> None:
-    global _client
-    _client = None
-
-
-def list_agents() -> list[dict]:
-    rows = client().call("list_agents").get("agents") or []
-    return [dict(row) for row in rows if isinstance(row, Mapping)]
+def list_agents(*, mailbox=None) -> list[dict]:
+    """Latest public activity, bounded by the server; no claim of live presence."""
+    page = _call("read", {"since": 0}, mailbox)
+    return [{"session_root": row["label"], "provider": row["label"],
+             "sender_key": row["sender_key"], "runtime": row["runtime"],
+             "status": "observed"} for row in page["peers"]]
 
 
 def resolve_target(name: str, agents: Optional[Sequence[Mapping[str, object]]] = None) -> Optional[dict]:
-    """A full session root matches exactly; aliases match online providers or runtimes."""
-    want = str(name or "").strip().casefold()
-    if not want:
+    target = str(name or "").strip()
+    if not target:
         return None
-    rows = list(agents if agents is not None else list_agents())
-    for row in rows:
-        if str(row.get("session_root", "")).casefold() == want:
+    for row in agents or ():
+        if str(row.get("session_root", "")).casefold() == target.casefold():
             return dict(row)
-
-    def matches(row: Mapping[str, object]) -> bool:
-        return str(row.get("status", "")).casefold() == "online" and any(
-            str(row.get(field, "")).casefold() == want
-            for field in ("provider", "runtime")
-        )
-
-    found = [row for row in rows if matches(row)]
-    found.sort(key=lambda row: int(row.get("revision") or 0), reverse=True)
-    return dict(found[0]) if found else None
+    # A mailbox address is a name, not enrollment or a claim of live presence.
+    return {"session_root": target, "provider": target, "runtime": "mcp", "status": "unknown"}
 
 
-def send_message(target_root: str, message: str) -> dict:
-    return client().call("send_message", {
-        "target": target_root, "message": message,
-        "idempotency_key": str(uuid.uuid4()),
-    })
+def send_message(target_root: str, message: str, *, mailbox=None) -> dict:
+    row = _call("send", {"to": target_root, "text": message}, mailbox)
+    return {**row, "message": {"root_id": row["message_id"], "sequence": row["sequence"]}}
 
 
-def followup_task(target_root: str, message: str) -> dict:
-    return client().call("followup_task", {
-        "target": target_root, "message": message,
-        "idempotency_key": str(uuid.uuid4()),
-    })
-
-
-def interrupt_agent(target_root: str, reason: str) -> dict:
-    return client().call("interrupt_agent", {
-        "target": target_root, "message": reason,
-        "idempotency_key": str(uuid.uuid4()),
-    })
-
-
-__all__ = [
-    "client", "followup_task", "interrupt_agent", "list_agents", "reset",
-    "resolve_target", "send_message", "session_id",
-]
+def interrupt_agent(target_root: str, reason: str, *, mailbox=None) -> dict:
+    """Post a stop request; immediate native interruption has a separate adapter."""
+    return send_message(target_root, "Stop requested: " + reason, mailbox=mailbox)

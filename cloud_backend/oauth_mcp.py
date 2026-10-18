@@ -44,7 +44,7 @@ router = APIRouter()
 
 SCOPE = 'mcp:read'
 # The founder's Workshop, as this client's own agent (brain_mcp WORKSHOP_TOOLS):
-# read and post Workshop messages and claim Work there. Asked for, never implied.
+# claim governed Work there. Asked for, never implied; generic chat uses send/read.
 WORKSHOP_SCOPE = 'mcp:workshop'
 SCOPES = (SCOPE, WORKSHOP_SCOPE)
 ACCESS_TTL = 3600
@@ -591,9 +591,8 @@ def _consent_page(client: dict, redirect_uri: str, pending: str, csrf: str,
                   scope: str = SCOPE) -> HTMLResponse:
     name = html.escape(client.get('client_name') or 'An unnamed application')
     host = html.escape(urllib.parse.urlsplit(redirect_uri).hostname or '')
-    workshop = ('<p><b>Workshop:</b> for the founder, it will also join the Workshop as its own '
-                'agent: read its messages, post messages and claim Work there. It cannot run '
-                'anything on the desktop.</p>') if WORKSHOP_SCOPE in scope.split() else ''
+    workshop = ('<p><b>Workshop:</b> for the founder, it may claim governed Work as its own '
+                'agent. This grants no file writes or desktop execution.</p>') if WORKSHOP_SCOPE in scope.split() else ''
     body = (
         '<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width">'
         '<title>Allow access to ArchHub?</title>'

@@ -66,9 +66,9 @@ def test_entry_is_the_installed_isolated_loader_without_identity_or_development_
     entry = installation.managed_entry(root, state)
     assert entry["command"] == str(root / ".venv" / "Scripts" / "python.exe")
     assert entry["args"] == ["-I", "-B", "-c", installation.LOADER, str(root)]
-    assert entry["env"] == {"ARCHHUB_COORDINATION_VENDOR": "claude",
-                            "SESSION_LINK_STATE_DIR": str(state / "session-link"),
-                            "SESSION_LINK_NODE": str(root / "runtime" / "node.exe")}
+    assert entry["env"] == {"ARCHHUB_COORDINATION_VENDOR": "claude"}
+    (root / "runtime" / "node.exe").unlink()
+    assert installation.managed_entry(root, state) == entry
     text = json.dumps(entry)
     for forbidden in ("PYTHONPATH", "--expected-actor", "--workshop-task", "--stop-hook-ipc",
                       "SESSION_ID", "assembly-instance:", "app:agent-session"):
@@ -77,7 +77,7 @@ def test_entry_is_the_installed_isolated_loader_without_identity_or_development_
 
 def test_missing_installed_file_refuses_instead_of_registering_a_dead_entry(tmp_path):
     root, state, _home, environment = _rig(tmp_path)
-    (root / "runtime" / "node.exe").unlink()
+    (root / ".venv" / "Scripts" / "python.exe").unlink()
     report = installation.register_claude_code(root, state, consent=True,
                                                environment=environment, run=_no_process)
     assert report["claude_code"] == "install_incomplete"

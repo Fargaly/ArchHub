@@ -82,26 +82,20 @@ def _stored(server, path, key):
             principal=registry.authorization.subject_root, read_all=True)
 
 
-def test_founder_tell_stores_one_note_to_one_participant_and_replay_adds_none(owner, monkeypatch):
+def test_founder_tell_stores_one_note_to_one_participant_and_replay_adds_none(owner):
     server, (agent_a, agent_b), path = owner
     _bind_content(server, path)
-    relayed = []
-    monkeypatch.setattr(server.native_recipient_relay, "request",
-                        lambda **call: relayed.append(call) or [{"recipient": agent_a, "state": "started"}])
     founder = server.universal_registry.authorization.subject_root
     revision, count, _digest = _state(server, path)
 
     sent = founder_tell(server, _founder_context(server), target_root=agent_a,
                         text="check the build", idempotency_key="baboom-tell-1")
     assert sent["storage"] == "conversation-content" and sent["target"] == agent_a
-    assert sent["native_delivery"] == [{"recipient": agent_a, "state": "started"}]
+    assert "native_delivery" not in sent
     stored = _stored(server, path, "baboom-tell-1")
     assert stored["id"] == sent["message_id"] and stored["content"] == "check the build"
     # No promotion: the founder authored it; the agent is only its one recipient.
     assert stored["author"] == founder and list(stored["recipients"]) == [agent_a]
-    assert relayed == [{"space_root": server.universal_registry.workshop_root,
-                        "message_id": sent["message_id"], "sender_root": founder,
-                        "recipient_roots": (agent_a,), "text": "check the build"}]
     after = _state(server, path)
     assert after[0] == revision and after[1] == count + 1   # content only, no graph write
 
@@ -166,13 +160,6 @@ def test_an_unbound_workshop_is_never_written_from_the_sink(owner):
     assert _state(server, path) == before
 
 
-def _recording_relay(server, monkeypatch):
-    relayed = []
-    monkeypatch.setattr(server.native_recipient_relay, "request",
-                        lambda **call: relayed.append(call) or [])
-    return relayed
-
-
 def test_a_revocation_from_another_thread_waits_until_the_tell_is_done(owner, monkeypatch):
     """Event-ordered: the revoker starts inside the admission window and is held off by the broker
     lock until the append returns; the next tell with that context is a typed no-effect refusal."""
@@ -180,7 +167,6 @@ def test_a_revocation_from_another_thread_waits_until_the_tell_is_done(owner, mo
     from nodelang import universal_application
     server, (agent_a, _agent_b), path = owner
     _bind_content(server, path)
-    relayed = _recording_relay(server, monkeypatch)
     founder = _founder_context(server)
     broker = server.universal_registry.authorization.broker
     order, attempting = [], threading.Event()
@@ -206,13 +192,13 @@ def test_a_revocation_from_another_thread_waits_until_the_tell_is_done(owner, mo
     sent = founder_tell(server, founder, target_root=agent_a, text="before revoke",
                         idempotency_key="race-1")
     revoker.join(5)
-    assert order == ["appended", "revoked"] and len(relayed) == 1
+    assert order == ["appended", "revoked"]
     assert _stored(server, path, "race-1")["id"] == sent["message_id"]
     monkeypatch.setattr(universal_application, "append_universal_workshop_entry", real_append)
     before = _state(server, path)
     with pytest.raises(RefusedWithoutEffect, match="live session"):
         founder_tell(server, founder, target_root=agent_a, text="after revoke", idempotency_key="race-2")
-    assert _state(server, path) == before and len(relayed) == 1
+    assert _state(server, path) == before
 
 
 def test_a_revocation_inside_the_window_is_a_typed_refusal_at_the_pre_append_boundary(owner, monkeypatch):
@@ -221,7 +207,6 @@ def test_a_revocation_inside_the_window_is_a_typed_refusal_at_the_pre_append_bou
     from nodelang import workshop_founder_sink as sink
     server, (agent_a, _agent_b), path = owner
     _bind_content(server, path)
-    relayed = _recording_relay(server, monkeypatch)
     founder = _founder_context(server)
     broker = server.universal_registry.authorization.broker
     real_read = sink.read_deliberation_space
@@ -238,14 +223,13 @@ def test_a_revocation_inside_the_window_is_a_typed_refusal_at_the_pre_append_bou
         founder_tell(server, founder, target_root=agent_a, text="revoked in the window",
                      idempotency_key="window-1")
     assert events == ["admitted", "revoked"]
-    assert _state(server, path) == before and relayed == []
+    assert _state(server, path) == before
 
 
 def test_a_policy_denial_before_the_append_is_a_typed_refusal(owner, monkeypatch):
     from nodelang import cell_authorization
     server, (agent_a, _agent_b), path = owner
     _bind_content(server, path)
-    relayed = _recording_relay(server, monkeypatch)
 
     def deny(*args, **kwargs):
         raise AuthorizationDenied("conversation policy denies this founder note")
@@ -254,14 +238,13 @@ def test_a_policy_denial_before_the_append_is_a_typed_refusal(owner, monkeypatch
     with pytest.raises(RefusedWithoutEffect, match="policy denies"):
         founder_tell(server, _founder_context(server), target_root=agent_a, text="denied",
                      idempotency_key="policy-1")
-    assert _state(server, path) == before and relayed == []
+    assert _state(server, path) == before
 
 
 def test_an_error_after_the_append_is_never_reported_as_no_effect(owner, monkeypatch):
     from nodelang import universal_application
     server, (agent_a, _agent_b), path = owner
     _bind_content(server, path)
-    relayed = _recording_relay(server, monkeypatch)
     real_append = universal_application.append_universal_workshop_entry
     for failure in (RuntimeError("lost after the commit"), AuthorizationDenied("denied after the commit")):
         def append_then_fail(*args, failure=failure, **kwargs):
@@ -274,22 +257,18 @@ def test_an_error_after_the_append_is_never_reported_as_no_effect(owner, monkeyp
                          idempotency_key=key)
         assert type(raised.value) is type(failure)          # never upgraded to RefusedWithoutEffect
         assert _stored(server, path, key)["content"] == "committed"   # the effect exists
-    assert relayed == []
 
 
-def test_an_idempotency_conflict_never_relays_the_new_text(owner, monkeypatch):
+def test_an_idempotency_conflict_never_relays_the_new_text(owner):
     server, (agent_a, agent_b), path = owner
     _bind_content(server, path)
-    relayed = _recording_relay(server, monkeypatch)
     sent = founder_tell(server, _founder_context(server), target_root=agent_a, text="first text",
                         idempotency_key="conflict-1")
-    assert [call["text"] for call in relayed] == ["first text"]
     after = _state(server, path)
     for target, text in ((agent_a, "second text"), (agent_b, "first text")):
         with pytest.raises(ValueError, match="idempotency conflict"):
             founder_tell(server, _founder_context(server), target_root=target, text=text,
                          idempotency_key="conflict-1")
     assert _state(server, path) == after
-    assert [call["text"] for call in relayed] == ["first text"]
     stored = _stored(server, path, "conflict-1")
     assert stored["id"] == sent["message_id"] and stored["content"] == "first text"

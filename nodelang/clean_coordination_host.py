@@ -1,10 +1,7 @@
-"""Authenticated agent coordination hosted by the one clean graph owner.
+"""Signed internal Workspace Settings and Work effects on the existing graph owner.
 
-MCP stdio adapters obtain caller identity from their process environment as
-required by the MCP transport boundary.  They sign a canonical request with a
-DPAPI-held Ed25519 key.  This host verifies that request, derives the same
-Agent Session identity, and performs the operation through the Universal Cell
-authority.  It owns no message queue, session database, or semantic cache.
+Generic peer message/list/inbox dispatch is retired. MCP send/read uses the
+application's shared Workshop table without entering this Work authorization host.
 """
 
 from __future__ import annotations
@@ -33,7 +30,6 @@ from .agent_session_catalogue import (
 from .clean_agent_coordination import BoundAgentSession, GraphAgentCoordinator
 from .clean_runtime_bootstrap import BOOTSTRAP_NAMESPACE
 from .coordination_workshop import (
-    CoordinationMessageProjection,
     WorkshopCatalogue,
     install_workshop_catalogue,
 )
@@ -57,43 +53,26 @@ _SESSION_NAMESPACE = uuid.UUID("1f02ad35-978e-4020-8524-5010ecaf3d5b")
 _REQUEST_VERSION = "archhub-clean-coordination-v1"
 _METHODS = frozenset({
     "register_session",
-    "list_agents",
     "scope_lens",
-    "workshop_lens",
     "revise_instance",
-    "send_message",
-    "followup_task",
-    "interrupt_agent",
-    "inbox",
-    "mark_message_read",
-    "claim_workshop_message",
     "attach_agent",
     "detach_agent",
     "execute_workshop_task",
     "run_workshop_task",
     "publish_workshop_result",
-    "wait_agent",
     "workspace_roots_state",
     "workspace_roots_settings",
 })
 _METHOD_ALIASES = {
     "coordination.register_session": "register_session",
-    "coordination.list_agents": "list_agents",
     "coordination.scope_lens": "scope_lens",
-    "coordination.workshop_lens": "workshop_lens",
     "coordination.revise_instance": "revise_instance",
-    "coordination.send_message": "send_message",
-    "coordination.followup_task": "followup_task",
-    "coordination.interrupt_agent": "interrupt_agent",
-    "coordination.mark_message_read": "mark_message_read",
-    "coordination.claim_workshop_message": "claim_workshop_message",
     "coordination.attach_agent": "attach_agent",
     "coordination.detach_agent": "detach_agent",
     "coordination.execute_workshop_task": "execute_workshop_task",
     "coordination.run_workshop_task": "run_workshop_task",
     "coordination.publish_workshop_result": "publish_workshop_result",
     "coordination.private_root_grant_status": "private_root_grant_status",
-    "coordination.wait_agent": "wait_agent",
 }
 
 
@@ -294,9 +273,6 @@ def _session_projection(value: AgentSessionProjection) -> dict[str, object]:
         "revision": value.revision,
     }
 
-
-def _message_projection(value: CoordinationMessageProjection) -> dict[str, object]:
-    return asdict(value)
 
 
 def _boot_note(line: str, runtime_root=None) -> None:
@@ -646,14 +622,6 @@ class CleanCoordinationHost:
             finally:
                 with self._changed:
                     self._changed.notify_all()
-        if method == "wait_agent":
-            parameters = dict(request.parameters)
-            return self.wait_for_inbox(
-                request,
-                after_revision=parameters.get("after_revision", 0),
-                timeout_seconds=parameters.get("timeout_seconds", 30.0),
-                target_session_root=parameters.get("target"),
-            )
         with self._changed:
             bundle, coordinator = self._binding(request.identity)
             params = dict(request.parameters)
@@ -665,21 +633,6 @@ class CleanCoordinationHost:
                 return {
                     "ok": True,
                     "self": _session_projection(own),
-                    "revision": self.authority.store.revision,
-                }
-            if method == "list_agents":
-                agents = tuple(coordinator.list_agents())
-                return {
-                    "ok": True,
-                    "self": bundle.session_root,
-                    "agents": [_session_projection(item) for item in agents],
-                    "count": len(agents),
-                    "revision": self.authority.store.revision,
-                }
-            if method == "workshop_lens":
-                return {
-                    "ok": True,
-                    "lens": coordinator.workshop_lens(),
                     "revision": self.authority.store.revision,
                 }
             if method == "scope_lens":
@@ -732,141 +685,8 @@ class CleanCoordinationHost:
                 return {"ok": True, "target": target, "action": method,
                     "accepted_revision": result.revision, "receipt": result.receipt_root,
                     "replayed": result.replayed}
-            if method in {"send_message", "followup_task", "interrupt_agent"}:
-                target = _bounded_text(
-                    params.get("target"), "coordination target", 256
-                )
-                body = _bounded_text(
-                    params.get("message"), "coordination message", 12_000
-                )
-                operation = _uuid(
-                    params.get("idempotency_key"),
-                    "coordination idempotency key",
-                )
-                reply = params.get("reply_to")
-                if reply is not None:
-                    reply = _bounded_text(reply, "coordination reply", 256)
-                if method == "send_message":
-                    message = coordinator.send_message(
-                        target_session_root=target,
-                        body=body,
-                        operation_id=operation,
-                        reply_to_root=reply,
-                    )
-                elif method == "followup_task":
-                    message = coordinator.send_followup(
-                        target_session_root=target,
-                        body=body,
-                        operation_id=operation,
-                        reply_to_root=reply,
-                        execution_root=params.get("execution_root"),
-                    )
-                else:
-                    message = coordinator.request_interrupt(
-                        target_session_root=target,
-                        reason=body,
-                        operation_id=operation,
-                    )
-                self._changed.notify_all()
-                return {
-                    "ok": True,
-                    "message": _message_projection(message),
-                    "revision": self.authority.store.revision,
-                }
-            if method == "inbox":
-                after = params.get("after_revision", 0)
-                if type(after) is not int or after < 0:
-                    raise InvalidCell("coordination revision cursor is invalid")
-                messages = coordinator.inbox(after_revision=after)
-                return {
-                    "ok": True,
-                    "messages": [_message_projection(item) for item in messages],
-                    "count": len(messages),
-                    "revision": self.authority.store.revision,
-                }
-            if method in {"mark_message_read", "claim_workshop_message"}:
-                message_root = _bounded_text(
-                    params.get("message_root"), "coordination message root", 256
-                )
-                command = _uuid(
-                    params.get("idempotency_key"),
-                    "coordination idempotency key",
-                )
-                action = (coordinator.claim_workshop_message
-                    if method == "claim_workshop_message" else coordinator.mark_message_read)
-                result = action(
-                    message_root,
-                    command_id=command,
-                )
-                self._changed.notify_all()
-                return {
-                    "ok": True,
-                    "message_root": result.root_id,
-                    "revision": result.revision,
-                    "replayed": result.replayed,
-                    "receipt": result.receipt_root,
-                }
             raise InvalidCell("coordination method is not implemented")
 
-    def wait_for_inbox(
-        self,
-        request: SignedCoordinationRequest,
-        *,
-        after_revision: int,
-        timeout_seconds: float,
-        target_session_root: object = None,
-    ) -> dict[str, object]:
-        if (
-            type(after_revision) is not int
-            or after_revision < 0
-            or isinstance(timeout_seconds, bool)
-            or not isinstance(timeout_seconds, (int, float))
-            or timeout_seconds < 0
-            or timeout_seconds > 60
-        ):
-            raise InvalidCell("coordination wait boundary is invalid")
-        self.verify_request(request)
-        target = (
-            None
-            if target_session_root is None
-            else _bounded_text(
-                target_session_root,
-                "coordination wait target",
-                256,
-            )
-        )
-        deadline = time.monotonic() + float(timeout_seconds)
-        with self._changed:
-            while True:
-                if self.activity.closing:
-                    return {"ok":True, "status":"shutdown", "messages":[], "count":0}
-                _, coordinator = self._binding(request.identity)
-                messages = coordinator.inbox(after_revision=after_revision)
-                if target is not None:
-                    messages = tuple(
-                        message for message in messages
-                        if message.sender_root == target
-                    )
-                if messages:
-                    return {
-                        "ok": True,
-                        "status": "message",
-                        "messages": [
-                            _message_projection(item) for item in messages
-                        ],
-                        "count": len(messages),
-                        "revision": self.authority.store.revision,
-                    }
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    return {
-                        "ok": True,
-                        "status": "timeout",
-                        "messages": [],
-                        "count": 0,
-                        "revision": self.authority.store.revision,
-                    }
-                self._changed.wait(remaining)
 
 
 __all__ = [

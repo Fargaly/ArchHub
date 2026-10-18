@@ -226,14 +226,16 @@ def project_delivery(messages, replies, *, relay_pending=frozenset(), note_categ
     return states, relayed
 
 
-def relay_pending_digests(owner):
-    """Digests the owner's relay still holds queued or executing; nothing else."""
-    relay = getattr(owner, "native_recipient_relay", None)
-    if relay is None:
-        return frozenset()
-    with relay._channel_lock:
-        return frozenset(relay._pending_jobs)
 
 
-__all__ = ["STATES", "artifact_digest", "project_delivery", "relay_pending_digests",
+__all__ = ["STATES", "artifact_digest", "project_delivery",
            "relayed_reply_text"]
+
+
+def work_pending_digests(owner):
+    """Only in-flight native Work effects; no shared-message relay exists."""
+    delivery = getattr(owner, "native_work_delivery", None)
+    if delivery is None:
+        return frozenset()
+    with delivery._pending_lock:
+        return frozenset(delivery._pending_jobs)

@@ -1,65 +1,18 @@
-# Clean coordination endpoint
+# Shared agent messages
 
-The one clean-graph owner on this machine. Agents enroll and coordinate
-through it. It is not the legacy machine-transport runtime and shares no
-state with it.
+Every supported agent starts the existing `archhub-agent` MCP connector with two ordinary message tools:
 
-## Address
+- `send(to, text)` posts a public addressed note to the existing Workshop thread. `to="*"` addresses everyone. Use a peer's `sender_label` as its stable readable address.
+- `read(since=0)` reads public notes after the sequence cursor. Continue with `next_since` while `more` is true. It also returns bounded recent peer metadata from the latest 100 public notes; this is observed activity, not proof that an agent is online.
 
-    GET  http://127.0.0.1:8474/health
-    POST http://127.0.0.1:8474/coordination
+No native owner binding, registration, rebind, recovery profile, relay or second message store is involved. The MCP connector resolves the application's existing local runtime descriptor and uses the authenticated machine pipe. The same two routes enter the verified request scope, checkpoint guard and existing Workshop route/scope authorization.
 
-Loopback only. `Host` must be `127.0.0.1:8474` or `localhost:8474`, and
-`Origin`, when sent, must be `http://127.0.0.1` or `http://localhost`.
-Anything else is refused before the body is read. Request bodies are
-capped at 64 KB.
+The application records a readable runtime/session label alongside its OS-observed PID/creation-time key in the existing `messages.author`. Host Codex/OpenCode session metadata distinguishes sessions sharing one connector. The generated title uses the observed project folder and a stable session digest; it is not a vendor conversation title. Without host session metadata, the project-based label can be ambiguous. The opaque key remains distinct, and models cannot pass a sender, label, runtime or context in tool arguments.
 
-## Health
+Messages remain public room notes, including addressed notes. `to` accepts the readable label after a connector restart; it is neither a private ACL nor a delivery or execution receipt. Work claims, file permits, effects and approvals retain their separate authority.
 
-    {"ok": true, "graph_id": "<uuid>", "revision": <int>}
+Sending is limited to 30 accepted messages per rolling minute for one OS peer. Changing host session metadata cannot reset that limit. Reads remain available. Read pages contain at most 100 ordinary rows, with a bounded byte budget and public-only recent-peer metadata. BABOOM posts through the same verified path and store; its own posts are excluded from peer discovery.
 
-`graph_id` is the CURRENT generation under the runtime root, and
-`revision` is that graph's live revision. There is no pid file and no
-status field to go stale: liveness is the OS-held owner lock on the
-generation, so the service cannot advertise itself as active while dead.
+The separate signed clean host remains for Workspace Settings and governed host/Work effects. Its implementation is [clean_coordination_host.py](../nodelang/clean_coordination_host.py); it is not the agent mailbox. The deleted LocalCoordinationClient/enrollment API is not a supported integration.
 
-## Signing
-
-Every coordination request is signed with a DPAPI-held caller key.
-
-    from nodelang.clean_coordination_host import CoordinationIdentity
-    from nodelang.clean_coordination_mcp import LocalCoordinationClient
-    from nodelang.runtime_caller_capability import WindowsDpapiCallerKeyStore
-
-    identity = CoordinationIdentity("codex", "<thread-id>")
-    keys = WindowsDpapiCallerKeyStore(WindowsDpapiCallerKeyStore.default_path())
-    client = LocalCoordinationClient(identity, key_store=keys)
-    client.call("register_session", {})
-
-The sender is derived from the signed identity. It cannot be supplied as
-a parameter, so one agent cannot post as another. An unsigned request is
-refused with `coordination request fields are invalid`; a forged
-signature with `coordination request signature is invalid`.
-
-## Methods
-
-    register_session     enroll this provider/thread as an agent session
-    list_agents          enrolled sessions, including your own
-    inbox                messages addressed to you
-    send_message         direct message to one session
-    followup_task        follow-up into an existing session inbox
-    wait_agent           block for a peer response newer than a sequence
-    mark_message_read    acknowledge one delivered message
-    interrupt_agent      cooperative interrupt request
-    scope_lens           projected scope for a root
-    workshop_lens        Workshop projection
-    revise_instance      revise one instance through the signed path
-
-Enrollment is idempotent: repeating it returns the same session rather
-than creating a second one.
-
-## What it does not do
-
-It issues no CDE write permit. `_METHODS` has no permit call, so file
-writes gated on `brain.universal_cde_write_permit` are not served here.
-That permit still routes to the legacy machine-transport runtime.
+Installed activation and two real CLI agents exchanging messages in the visible Workshop thread are release acceptance checks; source fixtures alone do not establish them.

@@ -25,8 +25,7 @@ from test_mcp_oauth import (FOUNDER, REDIRECT, _continue, _google, _mcp, _pkce, 
                             _register, _token, client)
 
 STRANGER = "someone.else@studio.example"
-WORKSHOP = {"workshop.lens", "workshop.agents", "workshop.read", "workshop.message",
-            "workshop.post", "workshop.acknowledge", "work.claim"}
+WORKSHOP = {"work.claim"}
 
 
 @pytest.fixture(autouse=True)
@@ -100,7 +99,7 @@ def test_the_consent_page_names_the_workshop_only_when_it_is_asked_for(client, m
     client_id = _register(client)
     _verifier, challenge = _pkce()
     asked = _authorize(client, client_id, challenge, "mcp:read mcp:workshop")
-    assert asked.status_code == 200 and "join the Workshop as its own agent" in asked.text
+    assert asked.status_code == 200 and "claim governed Work as its own agent" in asked.text
     plain = _authorize(client, client_id, challenge, "mcp:read")
     assert plain.status_code == 200 and "Workshop" not in plain.text
     wider = _authorize(client, client_id, challenge, "mcp:read mcp:admin")
@@ -115,13 +114,12 @@ def test_only_the_founders_client_granted_the_workshop_lists_and_calls_it(client
     assert read_only["scope"] == "mcp:read"
     assert not WORKSHOP & _listed(client, read_only["access_token"])
     status, body = _mcp(client, read_only["access_token"], "tools/call",
-                        {"name": "workshop.read", "arguments": {}})
+                        {"name": "work.claim", "arguments": {"work_root": "assembly-instance:court"}})
     assert body["result"]["isError"] is True and "not granted the Workshop" in body["result"]["content"][0]["text"]
     _, stranger, _ = _grant(client, monkeypatch, scope="mcp:read mcp:workshop", email=STRANGER)
     assert not WORKSHOP & _listed(client, stranger["access_token"])
     status, body = _mcp(client, stranger["access_token"], "tools/call",
-                        {"name": "workshop.post", "arguments": {"target": "x", "message": "m",
-                                                                "idempotency_key": "stranger-1"}})
+                        {"name": "work.claim", "arguments": {"work_root": "assembly-instance:court"}})
     assert body["error"]["message"] == "unknown tool"
     import db
     assert db.count_agent_tasks() == 0, "nothing was queued for a refused call"
@@ -132,18 +130,16 @@ def test_a_post_is_queued_as_this_clients_own_agent_and_answered_by_the_app(clie
     answer = {"ok": True, "actor": "app:agent-session:runtime:" + "a" * 32, "message_id": "m-1",
               "agent_runtime": "mcp-gemini-spark"}
     seen, thread = _play_the_app(answer)
-    status, body = _mcp(client, granted["access_token"], "tools/call", {"name": "workshop.post", "arguments": {
-        "target": "app:agent-session:runtime:" + "b" * 32, "message": "Spark here",
-        "idempotency_key": "spark-post-0001", "extra": "dropped"}})
+    status, body = _mcp(client, granted["access_token"], "tools/call", {"name": "work.claim", "arguments": {
+        "work_root": "assembly-instance:court", "extra": "dropped"}})
     thread.join(timeout=10)
     assert status == 200 and "error" not in body, body
     assert json.loads(body["result"]["content"][0]["text"]) == answer
     task = seen["task"]
     assert task["kind"] == "workshop-call" and task["created_by"] == FOUNDER
     assert json.loads(task["directive"]) == {
-        "agent": {"client_id": client_id, "client_name": "Gemini Spark"}, "method": "send_message",
-        "params": {"target": "app:agent-session:runtime:" + "b" * 32, "message": "Spark here",
-                   "idempotency_key": "spark-post-0001"}}
+        "agent": {"client_id": client_id, "client_name": "Gemini Spark"}, "method": "claim_work",
+        "params": {"work_root": "assembly-instance:court"}}
     import db
     with db.connect() as con:
         stored = json.dumps([dict(r) for r in con.execute("SELECT * FROM agent_tasks")])
@@ -154,7 +150,7 @@ def test_an_offline_app_is_reported_and_the_step_is_never_delivered_later(client
     monkeypatch.setenv("COCKPIT_APP_RELAY_WAIT_S", "1")
     _, granted, _ = _grant(client, monkeypatch, scope="mcp:read mcp:workshop")
     status, body = _mcp(client, granted["access_token"], "tools/call",
-                        {"name": "workshop.read", "arguments": {"limit": 5}})
+                        {"name": "work.claim", "arguments": {"work_root": "assembly-instance:court"}})
     assert body["result"]["isError"] is True and "device_offline" in body["result"]["content"][0]["text"]
     import config
     import db
@@ -164,19 +160,15 @@ def test_an_offline_app_is_reported_and_the_step_is_never_delivered_later(client
 
 def test_bad_arguments_and_overlong_posts_are_refused_before_anything_is_queued(client, monkeypatch):
     _, granted, _ = _grant(client, monkeypatch, scope="mcp:read mcp:workshop")
-    for arguments in ({"target": "x", "message": "m" * 1501, "idempotency_key": "long-post-01"},
-                      {"target": "x", "message": "m"},
-                      {"target": "", "message": "m", "idempotency_key": "empty-target"},
-                      # Every field at its own limit: longer than one task row carries,
-                      # refused rather than cut into JSON the app cannot read.
-                      {"target": "t" * 256, "message": "m" * 1500, "idempotency_key": "k" * 128,
-                       "reply_to": "r" * 256}):
+    for arguments in ({}, {"work_root": ""}, {"work_root": "x" * 257}):
         _status, body = _mcp(client, granted["access_token"], "tools/call",
-                             {"name": "workshop.post", "arguments": arguments})
+                             {"name": "work.claim", "arguments": arguments})
         assert body["result"]["isError"] is True, arguments
-    _status, body = _mcp(client, granted["access_token"], "tools/call",
-                         {"name": "workshop.message", "arguments": {"message_id": "m", "sequence": 0}})
-    assert body["result"]["isError"] is True
+    for name in ("workshop.lens", "workshop.agents", "workshop.read", "workshop.message",
+                 "workshop.post", "workshop.acknowledge"):
+        _status, body = _mcp(client, granted["access_token"], "tools/call",
+                             {"name": name, "arguments": {}})
+        assert body["error"]["message"] == "unknown tool"
     import db
     assert db.count_agent_tasks() == 0
 

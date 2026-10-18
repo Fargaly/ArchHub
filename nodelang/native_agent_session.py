@@ -25,17 +25,12 @@ from .cell_secret_keys import WindowsDpapiSigningKeyProvider
 
 # These are the distinct machine-transport harness bodies in the application
 # catalogue. Device-proof BABOOM and unsupported runtimes are not fallbacks.
-_NATIVE_IDS = {
-    "codex": ("CODEX_THREAD_ID",),
-    "claude": ("CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID"),
-    "gemini": ("GEMINI_SESSION_ID",),
-    "opencode": ("OPENCODE_SESSION_ID",),
-}
+from .agent_runtime_registry import RUNTIMES
+
+_NATIVE_IDS = {name: definition["session_environment"] for name, definition in RUNTIMES.items()}
 _SELECTED_SESSION = "ARCHHUB_COORDINATION_SESSION"
-_RUNTIME_NAMES = {name + suffix: name for name in _NATIVE_IDS
-                  for suffix in ("", ".exe", ".cmd")}
-_RUNTIME_NAMES.update({"claude-code" + suffix: "claude"
-                       for suffix in ("", ".exe", ".cmd")})
+_RUNTIME_NAMES = {executable + suffix: name for name, definition in RUNTIMES.items()
+                  for executable in definition["executables"] for suffix in ("", ".exe", ".cmd")}
 _SESSION_ROOT = re.compile(r"app:agent-session:runtime:[0-9a-f]{32}\Z")
 
 # Which code a long-lived MCP process runs (live 717: 09-26 code on 09-30). This is
@@ -908,24 +903,6 @@ class NativeAgentSession:
                     self._require_bound()
                 finally:
                     self._active_calls -= 1
-
-    def attach_workshop_host(self, connection, *, node_executable,
-                             state_directory, ttl_seconds=300):
-        """Attach the exact existing bridge through this session's bound client."""
-        from .session_link_host import run_host_handoff
-        with self.bound_client() as client:
-            return run_host_handoff(client, node_executable=node_executable,
-                state_directory=state_directory, operation="attach",
-                connection=connection, ttl_seconds=ttl_seconds)
-
-    def detach_workshop_host(self):
-        """Detach through this bound owner, even if local Node is unavailable.
-
-        The application already owns channel cancellation and revocation. No
-        host delegation or child process is necessary to request retirement.
-        """
-        with self.bound_client() as client:
-            return client.detach_session_link()
 
     def close(self):
         """Explicit capability release; preserve identity and uncertain custody."""

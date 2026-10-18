@@ -23,13 +23,9 @@ retain the pending entry and block continuation. No idle hook clears it.
 Supplemental legacy Brain observation is not called: graph permits/receipts
 remain the authority. Migration of general observation/learning is separate.
 
-Agent messages: OpenCode starts MCP servers once per app, never per session, so
-the archhub-agent-coordination MCP cannot know which session calls it and the
-native owner refuses to start without the actual hook session. Messages go through
-the plugin tool `archhub_message` instead, executed once by the same per-session
-direct child as selected Work (nodelang/opencode_coordination_tools.py): list
-agents, send, read, read one, acknowledge. Remove the per-app coordination MCP from
-the OpenCode configuration; it can never hold a session identity.
+Agent messages use the existing agent MCP server's `send(to, text)` and `read(since)` tools from startup. OpenCode's host MCP metadata `ai.opencode/sessionID` distinguishes sessions multiplexed over one MCP process. The application supplies the sender key and registry-based session label; tool arguments cannot impersonate another sender. See [the shared mailbox contract](CLEAN-COORDINATION-ENDPOINT.md).
+
+The retired `archhub_message` plugin tool and its coordination child are removed. The `archhub_work` child remains for selected Work and governed file/host operations; messaging grants none of its authority. The private OpenCode gate companion removes only the old messaging branch and retains the Work gate.
 
 Supported tool mappings: read/glob/grep/list, Write from native write, Edit
 from native edit, and Bash from native bash/powershell. Patch, custom tools

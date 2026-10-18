@@ -156,7 +156,7 @@ test('accepted send stays visible while cached transcript reconcile is pending a
     root:'entry-a', idempotency_key:body.idempotency_key, revision:5,
     native_delivery:[{recipient:'worker-a', state:'started'}]})});
   await fixture.api.openWorkshop('workshop-a');
-  const sending = fixture.api.workshopAction('workshop-a', 'send', null, {target:'', message:'Sent task'});
+  const sending = fixture.api.sendWorkshopMessage('workshop-a', {target:'', message:'Sent task'});
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(JSON.parse(JSON.stringify(fixture.api.getSnapshot().workshop.messages.map(m => [m.root, m.body]))),
     [['m1', 'Cached row'], ['entry-a', 'Sent task']], 'accepted send remains visible before reconcile fetch resolves');

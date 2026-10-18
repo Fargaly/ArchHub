@@ -212,7 +212,7 @@ def start_workshop_session(owner, browser, body, *, browser_guard):
         delivered = send_native_contact(owner, browser, {"root":conversation,
             "scope":registry.workshop_workbench_root, "contact":contact["contact"],
             "binding_digest":contact["binding_digest"], "text":prompt,
-            "idempotency_key":prefix + ":user"}, browser_guard=guard)
+            "idempotency_key":prefix + ":user"}, browser_guard=guard, execute_work=True)
         delivery = delivered["delivery"]
         return response(user, delivery.get("state", delivery.get("status", "unknown")),
             relay=delivery, contact=contact["contact"], execution_authority=False)

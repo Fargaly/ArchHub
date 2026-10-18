@@ -79,7 +79,7 @@ test('PASS3 task references isolate real threads and the registered Work compose
   try{
     assert.equal(ui.doc.querySelector('[data-workshop-message="foreign-ref"]'),null);
     await ui.input('Continue the same task');await ui.click(ui.button('Send'));
-    assert.equal(f.calls.filter(c=>c[0]==='workshopAction').at(-1)[4].work,f.work);
+    assert.equal(f.calls.filter(c=>c[0]==='sendWorkshopMessage').at(-1)[2].work,f.work);
   }finally{await ui.close();}
 });
 

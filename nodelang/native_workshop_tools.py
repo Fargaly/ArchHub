@@ -22,8 +22,6 @@ WORKSHOP_TASK_TOOL_NAMES = (
     'native.work_configure',
     'native.work_request_court', 'native.work_reconcile', 'native.hook_user_prompt_submit',
     'native.hook_stop',
-    'coordination.read_messages', 'coordination.read_message',
-    'coordination.send_message', 'coordination.acknowledge_message',
     'native.work_artifact_material', 'native.work_publish_artifact',
     'native.work_read_artifact', 'native.work_review_artifact',
 )
@@ -512,27 +510,6 @@ def build_workshop_task_server(control, selected_work):
             if current is not None and current['root'] != held.root:
                 _refuse('Prompt context changed to a different Work')
             return result
-
-    @server.tool(name='coordination.read_messages')
-    def read_messages(limit: int = 10, before: int | None = None) -> dict[str, object]:
-        """Read one bounded ordinary Workshop page with its actual audience checks."""
-        return control.call('read_messages',{'limit':limit,'before':before})
-
-    @server.tool(name='coordination.read_message')
-    def read_message(message_id: str, sequence: int) -> dict[str, object]:
-        """Read one exact ordinary message; does not acknowledge it."""
-        return control.call('read_message',{'message_id':message_id,'sequence':sequence})
-
-    @server.tool(name='coordination.send_message')
-    def send_message(target: str, message: str, idempotency_key: str, reply_to: str | None = None) -> dict[str, object]:
-        """Send using a caller-held stable key; no generated key or automatic retry."""
-        return control.call('send_message',{'target':target,'message':message,
-            'idempotency_key':idempotency_key,'reply_to':reply_to})
-
-    @server.tool(name='coordination.acknowledge_message')
-    def acknowledge_message(message_id: str, sequence: int, idempotency_key: str) -> dict[str, object]:
-        """Send an explicit acknowledgement reply for an actually addressed message."""
-        return control.call('acknowledge_message',{'message_id':message_id,'sequence':sequence,'idempotency_key':idempotency_key})
 
     register_artifact_tools(server, control, selected_work=selected_work)
 

@@ -18,7 +18,6 @@ from nodelang.application_machine_transport import MachineTransportError, Univer
 from nodelang.application_server import ApplicationServer
 from nodelang.cell_protocols import compose_relation_cells, prepare_append_relation_member
 from nodelang.cell_secret_keys import MemorySigningKeyProvider
-from nodelang.installed_workshop_coordination import InstalledWorkshopCoordinationClient
 from nodelang.native_agent_mcp import _OwnedWorkshopClient
 from nodelang.native_agent_session import NativeAgentSession
 
@@ -40,6 +39,14 @@ def template(tmp_path_factory):
     return root
 
 
+def _work_note(control, actor, text, key):
+    """Exercise Work effect admission after reconciliation, through its real transport."""
+    with control.bound_client() as client:
+        return client.request("POST", "/api/universal/workshop", {
+            "category": "note", "text": text, "refs": [], "evidence": [], "recipients": [actor],
+            "reply_to": None, "idempotency_key": key, "created_at": None})
+
+
 class World:
     def __init__(self, template, root):
         shutil.copytree(template, root)
@@ -58,8 +65,9 @@ class World:
     def send(self, actor, text, key):
         peer = UniversalRuntimeClient(self.root / "runtime.json", KEY)
         peer.bind_agent_session(runtime="codex", external_session_id="court-peer-" + key)
-        return InstalledWorkshopCoordinationClient(peer).call(
-            "send_message", {"target": actor, "message": text, "idempotency_key": key})
+        return peer.request("POST", "/api/universal/workshop", {
+            "category": "note", "text": text, "refs": [], "evidence": [], "recipients": [actor],
+            "reply_to": None, "idempotency_key": key, "created_at": None})
 
     def legacy_permit(self, actor, name):
         """An expired graph-held permit with no receipt, as in the live graph."""
@@ -121,7 +129,7 @@ def test_reads_survive_an_owner_change_while_writes_stay_blocked(world):
     with pytest.raises(MachineTransportError, match="effect reconciliation"):
         owner.rebind_owner(expected_old_owner=pinned, expected_new_owner=current)
     with pytest.raises(MachineTransportError, match="not bound"):
-        control.call("send_message", {"target": actor, "message": "x", "idempotency_key": "w1"})
+        _work_note(control, actor, 'x', 'w1')
     reader = owner.inbox_reader()
     with pytest.raises(MachineTransportError, match="Replies and file changes are paused"):
         reader.call("send_message", {"target": actor, "message": "x", "idempotency_key": "w1"})
@@ -154,21 +162,6 @@ def test_foreign_actor_or_other_instance_cannot_read(world, tmp_path, template):
         control.call("read_messages", {"limit": 5})
 
 
-def test_recovery_server_reads_inbox_before_activation(monkeypatch):
-    from types import SimpleNamespace as NS
-    from nodelang import native_agent_mcp as mcp
-    from nodelang.native_resume_guard import NativeResumeGuard
-    calls = []
-    reader = NS(call=lambda method, values: calls.append((method, values)) or {"access": "read-only"})
-    owner = NS(owner_status=lambda: {"state": "uncertain"}, needs_inbox_recovery=lambda: True,
-               inbox_reader=lambda: reader)
-    monkeypatch.setattr(NativeResumeGuard, "recover", lambda self: {"status": "recovery_required"})
-    server, activate = mcp.build_recovery_server(owner)
-    assert activate()["status"] == "recovery_required"
-    tools = {tool.name: tool for tool in server._tool_manager.list_tools()}
-    assert tools["coordination.read_messages"].fn(limit=5)["access"] == "read-only"
-    assert calls == [("read_messages", {"limit": 5, "before": None})]
-    assert "coordination.send_message" not in tools
 
 
 def _replayed_capability(world, reader):

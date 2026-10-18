@@ -69,7 +69,6 @@ def _admit_at_boundary(snapshot, registry, authentication_context, founder):
 
 def founder_tell(owner, authentication_context, *, target_root, text, idempotency_key):
     """Store one founder note to one Workshop participant; refuse before any write otherwise."""
-    from .existing_workshop_conversation import _relay_native_recipients
     from .universal_application import (append_universal_workshop_entry,
                                         validate_universal_workshop_entry_content)
     from .conversation_content import workshop_message_identity
@@ -107,12 +106,9 @@ def founder_tell(owner, authentication_context, *, target_root, text, idempotenc
             content=content, idempotency_key=idempotency_key, created_at=None,
             recipient_roots=(target_root,), authentication_context=authentication_context,
             expected_revision=snapshot.revision, content_service=service)
-    # The relay carries the STORED message, never the caller's text.
-    relay = _relay_native_recipients(owner, entry.space_root, entry.message_id, entry.actor_root,
-                                     entry.recipient_roots, entry.content)
     return {"ok": True, "workshop": registry.workshop_root, **workshop_message_identity(entry),
             "storage": "conversation-content", "idempotency_key": entry.idempotency_key,
-            "target": target_root, **relay}
+            "target": target_root}
 
 
 __all__ = ["founder_tell"]

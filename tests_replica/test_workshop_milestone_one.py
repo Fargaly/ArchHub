@@ -121,7 +121,7 @@ def harness(tmp_path, monkeypatch):
             enable_universal_cloud_gateway=False, enable_machine_projection_prewarm=False,
             live_watch=False, pipeline_effect_engines=PIPELINE_ENGINES).start()
         transport = TwoAgentTransport()
-        server.native_recipient_relay._transport = transport
+        server._cloud_relay_transport = server.native_work_delivery._transport = transport
         state.update(server=server, transport=transport)
         return server
 
@@ -145,7 +145,7 @@ def harness(tmp_path, monkeypatch):
         return result
 
     def settle():
-        relay = state['server'].native_recipient_relay
+        relay = state['server'].native_work_delivery
         deadline = time.monotonic() + 10
         while relay._pending_jobs and time.monotonic() < deadline:
             time.sleep(0.02)
@@ -188,9 +188,16 @@ def _states(message):
 
 
 def _send_contact(h, convo, contact, digest, text, key):
-    return h.request('/api/universal/native-contact', {'action': 'send', 'root': convo['root'],
-        'scope': convo['scope'], 'contact': contact, 'binding_digest': digest, 'text': text,
-        'idempotency_key': key})
+    # Fixture Work artifacts use the retained Work transport. Ordinary HTTP
+    # contact messages are shared notes and no longer dispatch native calls.
+    from nodelang.native_contact import send_native_contact
+    server = h.state['server']
+    token = server.browser_session_token
+    browser = server._resolve_browser_session(token)
+    return send_native_contact(server, browser, {'root': convo['root'],
+        'scope': convo['scope'], 'contact': contact, 'binding_digest': digest,
+        'text': text, 'idempotency_key': key},
+        browser_guard=lambda: server._resolve_browser_session(token), execute_work=True)
 
 
 def _opencode_digest(h, convo):
@@ -201,78 +208,6 @@ def _opencode_digest(h, convo):
     return rows[0]['binding_digest']
 
 
-def test_two_native_agents_reply_in_one_workshop_with_distinct_states(harness):
-    h = harness
-    h.start()
-    convo = h.conversation_with_two_agents()
-    root, scope = convo['root'], convo['scope']
-    transport = h.state['transport']
-    opencode_digest = _opencode_digest(h, convo)
-
-    to_claude = _send_contact(h, convo, convo['claude'], convo['claude_digest'],
-        'Claude, please acknowledge this addressed Workshop message.', 'addressed-claude')
-    everyone = h.request('/api/universal/workshop', {'root': root, 'scope': scope, 'category': 'note',
-        'text': 'Everyone: please acknowledge this broadcast.', 'refs': [], 'evidence': [],
-        'recipients': [], 'reply_to': None, 'idempotency_key': 'everyone-one', 'created_at': None})
-    h.settle()
-    assert {row['recipient'] for row in everyone['native_delivery']} == {convo['opencode'], convo['claude']}
-
-    workshop = h.page(root, scope)
-    first = _message(workshop, convo['opencode_first'])
-    assert first['state'] == 'replied' and _states(first) == {convo['opencode']: 'replied'}
-    addressed = _message(workshop, to_claude['message_id'])
-    assert addressed['state'] == 'replied' and _states(addressed) == {convo['claude']: 'replied'}
-    broadcast = _message(workshop, everyone['message_id'])
-    assert broadcast['state'] == 'replied'
-    assert _states(broadcast) == {convo['opencode']: 'replied', convo['claude']: 'replied'}
-
-    # Replies appear in the same Workshop, attributed to the agent that wrote them.
-    replies = [row for row in workshop['messages'] if row.get('relayed_from')]
-    by_agent = {}
-    for row in replies:
-        by_agent.setdefault(row['relayed_from'], []).append(row['agent_text'])
-    assert by_agent[convo['opencode']].count('OpenCode fixture acknowledges.') == 2
-    assert by_agent[convo['claude']].count('Claude fixture acknowledges.') == 2
-    for row in first['delivery'] + addressed['delivery']:
-        assert row['reply_message_id'] in {reply['message_id'] for reply in replies}
-
-    # Unavailable: the native recipient refused. Uncertain: dispatched, no outcome.
-    transport.status['claude'] = 'held'
-    held = _send_contact(h, convo, convo['claude'], convo['claude_digest'], 'Refused fixture message.', 'held-claude')
-    h.settle()
-    transport.status['opencode'] = 'raise'
-    lost = _send_contact(h, convo, convo['opencode'], opencode_digest, 'Lost fixture message.', 'lost-opencode')
-    deadline = time.monotonic() + 10
-    while h.state['server'].native_recipient_relay._pending_jobs and time.monotonic() < deadline:
-        time.sleep(0.02)
-    assert 'fixture transport crash' in h.state['server'].native_recipient_relay.last_error
-    h.state['server'].native_recipient_relay.last_error = None
-    stored =h.request('/api/universal/workshop', {'root': root, 'scope': scope, 'category': 'note',
-        'text': 'A note to myself; nobody is asked to reply.', 'refs': [], 'evidence': [],
-        'recipients': [h.page(root, scope)['self']], 'reply_to': None,
-        'idempotency_key': 'self-note', 'created_at': None})
-    workshop = h.page(root, scope)
-    assert _message(workshop, held['message_id'])['state'] == 'unavailable'
-    assert _message(workshop, lost['message_id'])['state'] == 'uncertain'
-    assert _message(workshop, stored['message_id'])['state'] == 'stored'
-    assert _message(workshop, stored['message_id'])['delivery'] == []
-    # Every relay outcome wording maps to one state (the relay's own templates).
-    outcomes = {}
-    for status, app_name, contact, digest, expected in (
-            ('not_sent', 'claude', convo['claude'], convo['claude_digest'], 'unavailable'),
-            ('uncertain', 'opencode', convo['opencode'], opencode_digest, 'uncertain'),
-            ('cancelled_wait', 'opencode', convo['opencode'], opencode_digest, 'uncertain')):
-        transport.status[app_name] = status
-        sent = _send_contact(h, convo, contact, digest, 'Outcome %s fixture.' % status, 'outcome-' + status)
-        h.settle()
-        outcomes[sent['message_id']] = expected
-    workshop = h.page(root, scope)
-    for message_id, expected in outcomes.items():
-        assert _message(workshop, message_id)['state'] == expected, (message_id, expected)
-    calls = len(transport.calls)
-    # A retried send never relays twice; its state is read, not invented.
-    again = _send_contact(h, convo, convo['opencode'], opencode_digest, 'Lost fixture message.', 'lost-opencode')
-    assert again['message_id'] == lost['message_id'] and len(transport.calls) == calls
 
 
 def test_workshop_and_agent_definitions_run_from_the_catalogue(harness):

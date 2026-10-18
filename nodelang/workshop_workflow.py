@@ -116,7 +116,7 @@ def _append(owner, browser, root, space, content, key, *, reply_to=None, refs=()
 
 def message_states(owner, history, root, message_ids, principal, read_all):
     """Delivery state for exact messages from their own receipts."""
-    from .workshop_delivery_state import project_delivery, relay_pending_digests
+    from .workshop_delivery_state import project_delivery, work_pending_digests
     registry = owner.universal_registry
     rows = [history.get(root, message_id, principal=principal, read_all=read_all)
             for message_id in dict.fromkeys(message_ids)]
@@ -125,7 +125,7 @@ def message_states(owner, history, root, message_ids, principal, read_all):
         return {}, {}
     replies = history.replies_to(root, [row["id"] for row in rows], principal=principal,
                                  read_all=read_all)["messages"]
-    return project_delivery(rows, replies, relay_pending=relay_pending_digests(owner),
+    return project_delivery(rows, replies, relay_pending=work_pending_digests(owner),
         note_category=registry.workshop_category_roots["note"],
         tool_category=registry.workshop_category_roots.get("tool"),
         relay_author=registry.authorization.subject_root)
@@ -714,7 +714,7 @@ def _bound_engines(owner, browser, *, root, scope, anchor, digest, guard, histor
         sent = send_native_contact(owner, browser, {"root": root, "scope": scope, "contact": contact,
             "binding_digest": row["binding_digest"], "text": text,
             "idempotency_key": "workflow:" + _sha(anchor, digest, "agent.session", contact, message)[:64]},
-            browser_guard=guard)
+            browser_guard=guard, execute_work=True)
         states, relayed = message_states(owner, history, root, [sent["message_id"]], principal, read_all)
         entry = states.get(sent["message_id"], {"state": "stored", "delivery": []})
         rows = [item for item in entry["delivery"] if item["recipient"] == contact]
@@ -788,7 +788,7 @@ def request_artifact_review(owner, browser, *, root, scope, artifact, reviewer, 
                   % (digest, producer["label"] if producer else claimant, excerpt))
         sent = send_native_contact(owner, browser, {"root": root, "scope": scope, "contact": reviewer,
             "binding_digest": target["binding_digest"], "text": prompt,
-            "idempotency_key": "review-request:" + _sha(key)[:64]}, browser_guard=guard)
+            "idempotency_key": "review-request:" + _sha(key)[:64]}, browser_guard=guard, execute_work=True)
         value = {"kind": "artifact-review", "version": 1, "artifact_message": artifact, "artifact_digest": digest,
                  "claimed_by": claimant, "judged_by": reviewer, "request_message": sent["message_id"],
                  "workflow": workflow}

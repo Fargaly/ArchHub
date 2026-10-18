@@ -24,7 +24,6 @@ from nodelang.application_machine_transport import MachineTransportError, Univer
 from nodelang.application_server import ApplicationServer
 from nodelang.cell_protocols import compose_relation_cells, prepare_append_relation_member
 from nodelang.cell_secret_keys import MemorySigningKeyProvider
-from nodelang.installed_workshop_coordination import InstalledWorkshopCoordinationClient
 from nodelang.native_agent_mcp import _OwnedWorkshopClient
 from nodelang.native_agent_session import NativeAgentSession
 
@@ -46,6 +45,14 @@ def template(tmp_path_factory):
     root = tmp_path_factory.mktemp("inbox-template")
     _start(root).close()
     return root
+
+
+def _work_note(control, actor, text, key):
+    """Exercise Work effect admission after reconciliation, through its real transport."""
+    with control.bound_client() as client:
+        return client.request("POST", "/api/universal/workshop", {
+            "category": "note", "text": text, "refs": [], "evidence": [], "recipients": [actor],
+            "reply_to": None, "idempotency_key": key, "created_at": None})
 
 
 class World:
@@ -76,8 +83,9 @@ class World:
     def send(self, actor, text, key):
         peer = UniversalRuntimeClient(self.root / "runtime.json", KEY)
         peer.bind_agent_session(runtime="codex", external_session_id="court-peer-" + key)
-        return InstalledWorkshopCoordinationClient(peer).call(
-            "send_message", {"target": actor, "message": text, "idempotency_key": key})
+        return peer.request("POST", "/api/universal/workshop", {
+            "category": "note", "text": text, "refs": [], "evidence": [], "recipients": [actor],
+            "reply_to": None, "idempotency_key": key, "created_at": None})
 
     def legacy_permit(self, actor, name, *, issued_at, content=PLANNED):
         """A graph-held permit as issued before SPEC 3.3 moved new permits to records."""
@@ -168,7 +176,7 @@ def test_expired_unreceipted_permit_blocks_writes_not_reads_until_reconciled(wor
     with pytest.raises(MachineTransportError, match="effect reconciliation"):
         owner.rebind_owner(expected_old_owner=pinned, expected_new_owner=current)
     with pytest.raises(MachineTransportError, match="not bound"):
-        control.call("send_message", {"target": actor, "message": "x", "idempotency_key": "w1"})
+        _work_note(control, actor, 'x', 'w1')
     reader = owner.inbox_reader()
     with pytest.raises(MachineTransportError, match="Replies and file changes are paused"):
         reader.call("send_message", {"target": actor, "message": "x", "idempotency_key": "w1"})
@@ -187,8 +195,8 @@ def test_expired_unreceipted_permit_blocks_writes_not_reads_until_reconciled(wor
     owner.recover_rebind_owner(expected_failed_owner=current, expected_current_owner=current)
     owner.rebind_owner(expected_old_owner=pinned, expected_new_owner=current)
     assert owner.owner_status()["recovery_required"] is False
-    sent = control.call("send_message", {"target": actor, "message": "reviewed", "idempotency_key": "r1"})
-    assert sent["ok"] is True
+    sent = _work_note(control, actor, 'reviewed', 'r1')
+    assert sent["actor"] == actor and sent["message_id"]
     assert "reviewed" in _messages(control.call("read_messages", {"limit": 20}))
 
 
@@ -219,7 +227,7 @@ def test_owner_replaced_twice_recovers_without_guessing(world, monkeypatch):
     owner.settle_effect(expected_owner=third, permit=permit, settlement="reconciled")
     owner.rebind_owner(expected_old_owner=pinned, expected_new_owner=third)
     assert owner.owner_status()["agent_session"] == actor
-    assert control.call("send_message", {"target": actor, "message": "back", "idempotency_key": "b1"})["ok"]
+    assert _work_note(control, actor, 'back', 'b1')["message_id"]
 
 
 @pytest.mark.parametrize("case", ["written-with-crlf", "restored-with-old-mtime", "identical-before-permit"])
@@ -331,41 +339,23 @@ def test_nothing_is_replayed(world):
     assert _messages(control.call("read_messages", {"limit": 20})).count("one message") == 1
 
 
-def test_recovery_server_reads_inbox_before_activation(monkeypatch):
-    from types import SimpleNamespace as NS
-    from nodelang import native_agent_mcp as mcp
-    from nodelang.native_resume_guard import NativeResumeGuard
-    calls = []
-    reader = NS(call=lambda method, values: calls.append((method, values)) or {"access": "read-only"})
-    owner = NS(owner_status=lambda: {"state": "uncertain"}, needs_inbox_recovery=lambda: True,
-               inbox_reader=lambda: reader,
-               settle_effect=lambda **kwargs: calls.append(("settle", kwargs)) or {"outcome": "reconciled-no-replay"})
-    monkeypatch.setattr(NativeResumeGuard, "recover", lambda self: {"status": "recovery_required"})
-    server, activate = mcp.build_recovery_server(owner)
-    assert activate()["status"] == "recovery_required"
-    tools = {tool.name: tool for tool in server._tool_manager.list_tools()}
-    assert tools["coordination.read_messages"].fn(limit=5)["access"] == "read-only"
-    tools["native.owner_settle_effect"].fn(expected_owner="f", permit="p", settlement="reconciled")
-    assert calls == [("read_messages", {"limit": 5, "before": None}),
-                     ("settle", {"expected_owner": "f", "permit": "p", "settlement": "reconciled"})]
-    assert "coordination.send_message" not in tools
 
 
 def test_an_idle_agent_keeps_its_session_past_the_lease(template, tmp_path):
     """Live cause (d): an idle owner became "runtime Agent Session is unknown"."""
-    from nodelang import native_agent_mcp as mcp
     world = World(template, tmp_path / "app", machine_session_lifetime_seconds=20.0)
     try:
         owner = NativeAgentSession(environment={"CLAUDE_CODE_SESSION_ID": "court-idle"},
                                    descriptor_path=world.root / "runtime.json", key_provider=KEY)
-        server = mcp.build_server(session=owner)
+        owner.connect()
+        owner.start_lease_keeper()
+        control = _OwnedWorkshopClient(owner, owner._client)
         actor = owner.owner_status()["agent_session"]
         world.send(actor, "are you there", "court-idle-1")
         revision = world.server.universal_store.revision
         time.sleep(30.0)  # idle for longer than the whole lease
         assert world.server.universal_store.revision == revision  # renewal is no graph write
-        tools = {tool.name: tool for tool in server._tool_manager.list_tools()}
-        inbox = tools["coordination.read_messages"].fn(limit=20)
+        inbox = control.call("read_messages", {"limit": 20})
         assert "are you there" in _messages(inbox)
         assert owner.owner_status()["recovery_required"] is False
         owner.close()
@@ -403,18 +393,17 @@ def test_the_live_restart_state_rebinds_the_same_actor(template, tmp_path, monke
         owner.rebind_owner(expected_old_owner=first, expected_new_owner=current)
         final = owner.owner_status()
         assert final["agent_session"] == actor and final["recovery_required"] is False
-        assert control.call("send_message", {"target": actor, "message": "back after restart",
-                                             "idempotency_key": "court-live-1"})["ok"] is True
+        assert _work_note(control, actor, 'back after restart', 'court-live-1')["message_id"]
     finally:
         world.close()
 
 
 def _kept_owner(template, tmp_path, external):
-    from nodelang import native_agent_mcp as mcp
     world = World(template, tmp_path / "app", machine_session_lifetime_seconds=20.0)
     owner = NativeAgentSession(environment={"CLAUDE_CODE_SESSION_ID": external},
                                descriptor_path=world.root / "runtime.json", key_provider=KEY)
-    mcp.build_server(session=owner)  # starts the lease keeper
+    owner.connect()
+    owner.start_lease_keeper()
     return world, owner
 
 

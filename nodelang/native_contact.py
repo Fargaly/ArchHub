@@ -77,11 +77,11 @@ def retire_stale_native_runtimes(owner, rows, *, hours=DEFAULT_RUNTIME_RETIRE_HO
         raise InvalidCell('Native runtime retirement threshold is invalid')
     records=getattr(owner,'_ownership_record_storage',lambda:None)()
     if records is None:return []
-    relay=getattr(owner,'native_recipient_relay',None)
+    delivery=getattr(owner,'native_work_delivery',None)
     pending=set()
-    if relay is not None:
-        with relay._channel_lock:
-            pending={recipient for _sender,recipient in relay._pending_jobs.values()}
+    if delivery is not None:
+        with delivery._pending_lock:
+            pending={recipient for _sender,recipient in delivery._pending_jobs.values()}
     now=time.time() if now is None else now
     if _number(now) is None:raise InvalidCell('Native runtime retirement time is invalid')
     cutoff=now-float(hours)*3600.0
@@ -137,7 +137,7 @@ def project_native_agent_rows(rows, *, retired_roots=frozenset()):
 
 
 def _discover(owner,apps):
-    relay=getattr(owner,'native_recipient_relay',None)
+    relay=getattr(owner,'native_work_delivery',None)
     if relay is None or relay._transport is None:return {'status':'not_sent','reason':'transport_unavailable'}
     return relay._transport.discover(timeout_seconds=3,apps=list(apps))
 
@@ -302,7 +302,7 @@ def read_contact(owner,browser,contact,binding_digest,root,scope):
         return _endpoint(value['endpoint'])
 
 
-def send_native_contact(owner,browser,body,*,browser_guard):
+def send_native_contact(owner,browser,body,*,browser_guard,execute_work=False):
     fields={'root','scope','contact','binding_digest','text','idempotency_key'}
     if type(body) is not dict or set(body)!=fields:raise InvalidCell('Native contact send fields are invalid')
     if any(type(body[key]) is not str or not body[key] for key in fields):raise InvalidCell('Native contact send values are invalid')
@@ -312,24 +312,32 @@ def send_native_contact(owner,browser,body,*,browser_guard):
         browser_guard()
         return read_contact(owner,browser,body['contact'],body['binding_digest'],body['root'],body['scope'])
     with owner.mutation_lock:
-        endpoint=revalidate()
+        revalidate()
         from .universal_application import validate_universal_workshop_entry_content
         text=validate_universal_workshop_entry_content(body['text'])
         registry=owner.universal_registry
         service=owner.conversation_content
         if service is None or not service.belongs_to(owner.universal_store,registry):raise InvalidCell('Existing conversation owner unavailable')
         result=service.append_authenticated(space_root=body['root'],actor_root=browser.subject_root,
-            category_root=registry.workshop_category_roots['note'],content=text,
-            idempotency_key=body['idempotency_key'],recipient_roots=(browser.subject_root,),
+            category_root=registry.workshop_category_roots['note'],
+            content=text if execute_work else 'To '+body['contact']+':\n'+text,
+            idempotency_key=body['idempotency_key'],
+            recipient_roots=(browser.subject_root,) if execute_work else (),
             reference_roots=(body['contact'],),authentication_context=browser.context,
             expected_revision=owner.universal_store.revision)
         message=result['message']
-        relay=owner.native_recipient_relay.request_contact(space_root=body['root'],message_id=message['id'],
-            sender_root=browser.subject_root,contact_root=body['contact'],endpoint=endpoint,
-            revalidate=revalidate,text=text)
+        if execute_work:
+            delivery = owner.native_work_delivery.request_contact(space_root=body['root'],
+                message_id=message['id'], sender_root=browser.subject_root, contact_root=body['contact'],
+                endpoint=revalidate(), revalidate=revalidate, text=text)
+            return {'ok':True,'root':body['root'],'message_id':message['id'],'contact':body['contact'],
+                'relay':delivery,'delivery':delivery,'storage':'conversation-content','idempotency_key':body['idempotency_key'],
+                'revision':owner.universal_store.revision,'execution_authority':False}
         return {'ok':True,'root':body['root'],'message_id':message['id'],'contact':body['contact'],
-            'relay':relay,'delivery':relay,'storage':'conversation-content','idempotency_key':body['idempotency_key'],
-            'revision':owner.universal_store.revision,'execution_authority':False}
+            'delivery':{'state':'stored','via':'workshop'},'storage':'conversation-content',
+            'idempotency_key':body['idempotency_key'],'revision':owner.universal_store.revision,
+            'execution_authority':False}
+
 
 
 def project_native_contacts(owner,browser,*,root,scope,discovery,maximum=64):

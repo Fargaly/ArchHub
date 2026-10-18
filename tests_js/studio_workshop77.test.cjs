@@ -26,7 +26,7 @@ test('DSYS077 empty uses live agent/model chips and exactly one addressed compos
     assert.equal(ui.doc.querySelectorAll('[data-workshop-section]').length,0);
     await ui.click([...ui.doc.querySelectorAll('[data-workshop-empty] [role=radio]')][1]);
     await ui.input('Ask selected agent');await ui.click(ui.button('Send'));
-    assert.equal(f.calls.find(c=>c[0]==='workshopAction')[4].target,'agent-b');
+    assert.equal(f.calls.find(c=>c[0]==='sendWorkshopMessage')[2].target,'agent-b');
     f.state.workshop=null;await ui.render();
     assert.doesNotMatch(text(ui.doc.querySelector('[data-workshop72-list]')),/No tasks yet/);
     assert.match(text(ui.doc.querySelector('[data-workshop72-list] [role=status]')),/Unavailable/);
@@ -51,7 +51,7 @@ test('DSYS075 chooses durable 1/2/4 state and selected tile owns composer agent 
     const selected=ui.selection().task;
     const agent=f.state.workshop.assignments.find(a=>a.work===selected)?.agent_session || f.state.workshop.workflows.find(a=>a.root===selected)?.proposed_by;
     await ui.input('Read the selected tile');await ui.click(ui.button('Send'));
-    assert.equal(f.calls.filter(c=>c[0]==='workshopAction').at(-1)[4].target,agent);
+    assert.equal(f.calls.filter(c=>c[0]==='sendWorkshopMessage').at(-1)[2].target,agent);
     await ui.click(ui.doc.querySelector('[aria-label="Task layout"] [role=radio]:nth-child(3)'));
     assert.equal(f.state.workshopPresentation.layout,4);
     assert.equal(ui.doc.querySelector('[data-workshop-tiles]').dataset.workshopTiles,'4');

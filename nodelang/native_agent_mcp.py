@@ -1,33 +1,22 @@
-"""Explicit native stdio owner for Work and ordinary Workshop tools.
-
-This entrypoint does not migrate existing clients, proxy Brain authority, wake
-agents, or execute Work. One process owns one graph capability for all tools.
-"""
+"""Shared Workshop mailbox over MCP; Work capabilities retain their separate authority."""
 from __future__ import annotations
 
 from contextlib import contextmanager
-import os
 from pathlib import Path
-from mcp.server.fastmcp import Context
+import os
+import builtins
 
-from .application_machine_transport import MachineTransportError
-from .clean_coordination_mcp import build_server as build_coordination_server
-from .installed_workshop_coordination import (
-    InstalledWorkshopCoordinationClient, InstalledWorkshopInboxReader,
-)
-from .native_agent_session import NativeAgentSession
+from mcp.server.fastmcp import Context, FastMCP
+from mcp.types import ToolAnnotations
+from .application_machine_transport import MachineTransportError, UniversalRuntimeClient
+from .installed_workshop_coordination import InstalledWorkshopCoordinationClient
 from .native_agent_hooks import user_prompt_submit_context, stop_context
-
 
 class _OwnedWorkshopClient(InstalledWorkshopCoordinationClient):
     def __init__(self, owner, client):
         self._native_owner = owner
         self._native_client = client
         self._native_generation = getattr(owner, "generation", None)
-        from .native_resume_guard import NativeResumeGuard
-        self.resume_guard=(NativeResumeGuard(owner) if (
-            getattr(owner, '_expected_agent_session', None) or
-            getattr(owner, '_environment', {}).get('SESSION_LINK_REQUIRED_CONNECTIONS')) else None)
         super().__init__(client)
 
     @contextmanager
@@ -50,114 +39,16 @@ class _OwnedWorkshopClient(InstalledWorkshopCoordinationClient):
             yield current
 
     def call(self, method, parameters=None, **kwargs):
-        if method in InstalledWorkshopInboxReader.READS and _needs_inbox_recovery(self._native_owner):
-            # Same actor, same instance, read-only; writes stay behind the full binding.
+        # Work prompt hooks retain their governed actor's inbox, independently
+        # of the public shared-mailbox connector (which never enters this path).
+        from .installed_workshop_coordination import InstalledWorkshopInboxReader
+        if method in InstalledWorkshopInboxReader.READS and getattr(self._native_owner, "needs_inbox_recovery", lambda: False)():
             return self._native_owner.inbox_reader().call(method, parameters, **kwargs)
         with self.bound_client():
             return super().call(method, parameters, **kwargs)
 
-
-def _with_stop_host(owner, status):
-    """Add the Stop host's own state, so a host that failed is visible, never assumed."""
-    supervisor = getattr(owner, "_stop_supervisor", None)
-    if supervisor is None or type(status) is not dict:
-        return status
-    return {**status, "stop_host": supervisor.status()}
-
-
-def serve(owner, server):
-    """Run the stdio server with this owner's Stop host kept in step with its binding.
-
-    The host follows the binding (launch, recovery, rebind), never a launch flag;
-    it is optional, so its failure is reported and the MCP server stays up.
-    """
-    import sys
-    if getattr(owner, "is_deferred_router", False):
-        # A deferred router has no single process-wide binding; each thread's
-        # session (and its Stop) is its own, resolved per request from _meta, so a
-        # process Stop host that reads one owner lock outside a request does not
-        # apply. Serve directly and release every per-thread binding on shutdown.
-        try:
-            server.run(transport="stdio")
-        finally:
-            closer = getattr(owner, "close", None)
-            if callable(closer):
-                try:
-                    closer()
-                except Exception:
-                    print("Deferred coordination cleanup did not complete.", file=sys.stderr)
-        return
-    supervisor = None
-    try:
-        from .native_stop_hook import StopHostSupervisor
-        supervisor = StopHostSupervisor(owner)
-        try:
-            owner._stop_supervisor = supervisor  # read by native.owner_status
-        except AttributeError:
-            pass
-        state = supervisor.start().status()
-        if state["state"] != "ready":
-            print("Native Stop observation is not ready (%s); native MCP remains active."
-                  % state["reason"], file=sys.stderr)
-    except Exception:
-        print("Optional Native Stop observation unavailable; native MCP remains active.", file=sys.stderr)
-    try:
-        server.run(transport="stdio")
-    finally:
-        if supervisor is not None:
-            try:
-                stopped = supervisor.close()
-            except Exception:
-                stopped = False
-            if not stopped:
-                # Its vault record names this ending process, which Stop treats as unavailable.
-                print("Native Stop host cleanup did not complete.", file=sys.stderr)
-
-
-def _needs_inbox_recovery(owner):
-    check = getattr(owner, "needs_inbox_recovery", None)
-    return callable(check) and check() is True
-
-
-def _inbox_call(owner, method, values):
-    """Read messages through the full binding, or read-only while it is blocked."""
-    if _needs_inbox_recovery(owner):
-        return owner.inbox_reader().call(method, values)
-    with owner.bound_client() as client:
-        return InstalledWorkshopCoordinationClient(client).call(method, values)
-
-
-_SETTLE_DOC = """Close one stale file-write permit of this agent after checking the file.
-
-Use the permit and owner fingerprint shown by native.owner_inspect_effects and
-native.owner_status, with settlement "reconciled". The application records the
-file as it is now and says what that cannot prove: it never claims the write
-happened or did not. The same change is never repeated automatically. Writing
-resumes once no unresolved permit remains.
-"""
-
-
-_RECOVER_DOC = """Settle this agent's retained failed rebind attempt; never enroll or replay a tool.
-
-Copy failed_attempt.owner_fingerprint and current.fingerprint from
-native.owner_status. The answer names the outcome (confirmed, not-enrolled,
-not-sent, owner-retired or unknown) and the one next step in "next". An unknown
-outcome settles only when no live capability of this agent remains and nothing
-is in flight; otherwise it refuses, names what must happen first, and keeps the
-attempt for a later call.
-"""
-
-_CONNECTION_RECOVER_DOC = """Settle this process's failed first connection of its exact agent.
-
-Use current.fingerprint from native.owner_status. A settled attempt leaves the
-process unbound for the same agent; "next" names the one step to take
-(native.owner_settle_effect or native.resume_recover). Nothing is replayed.
-"""
-
-
 def _text(value):
     return type(value) is str and bool(value.strip()) and len(value.encode("utf-8")) <= 512
-
 
 def _validate_index(result, client):
     descriptor = client._pinned_runtime_descriptor
@@ -201,7 +92,6 @@ def _validate_index(result, client):
                 raise MachineTransportError("native Work index interface is invalid")
     return result
 
-
 def attach_workshop_tools(owner, selected_work: str):
     """Attach task tools to an already bound native hook owner.
 
@@ -216,113 +106,164 @@ def attach_workshop_tools(owner, selected_work: str):
         control = _OwnedWorkshopClient(owner, client)
         return build_workshop_task_server(control, selected_work)
 
+class _WorkControl:
+    """Only a Work/host action needs the existing governed Work identity."""
+    def __init__(self, owner=None, environment=None):
+        import threading
+        self.owner = owner
+        self.environment = environment
+        self.fixed = owner is not None or environment is not None
+        self.controls = {}
+        self.lock = threading.RLock()
+        self.control = None
+        self.supervisor = None
 
-def build_server(*, session=None, workshop_task: str | None = None):
-    """Enroll once at explicit construction; every call rechecks that owner."""
+    def selected(self):
+        # This map belongs only to governed Work authority. Mailbox tools never
+        # enter it, enroll an actor, or depend on its lifecycle.
+        if self.fixed:
+            return self
+        from mcp.server.lowlevel.server import request_ctx
+        try:
+            metadata = _session_metadata(request_ctx.get().meta)
+        except builtins.LookupError:
+            return self
+        if not metadata:
+            return self
+        key, identity = next(iter(metadata.items()))
+        runtime = "codex" if key == "threadId" else "opencode"
+        with self.lock:
+            if (runtime, identity) not in self.controls:
+                environment = dict(os.environ)
+                for name in ("CODEX_THREAD_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID", "OPENCODE_SESSION_ID", "GEMINI_SESSION_ID"):
+                    environment.pop(name, None)
+                environment.update(ARCHHUB_AGENT_RUNTIME=runtime, ARCHHUB_EXTERNAL_SESSION_ID=identity)
+                environment["CODEX_THREAD_ID" if runtime == "codex" else "OPENCODE_SESSION_ID"] = identity
+                self.controls[(runtime, identity)] = _WorkControl(environment=environment)
+            return self.controls[(runtime, identity)]
+
+    @contextmanager
+    def bound_client(self):
+        selected = self.selected()
+        if selected is not self:
+            with selected.bound_client() as client:
+                yield client
+            return
+        self.connect()
+        with self.control.bound_client() as client:
+            yield client
+
+    def connect(self):
+        from .native_agent_session import NativeAgentSession
+        if self.owner is None:
+            self.owner = NativeAgentSession(environment=self.environment)
+        if self.control is None:
+            self.control = _OwnedWorkshopClient(self.owner, self.owner.connect())
+            keeper = getattr(self.owner, "start_lease_keeper", None)
+            if callable(keeper):
+                keeper()
+            # Work enforcement retains its Stop IPC; plain mailbox calls do not
+            # construct this owner, start a keeper, or start a Stop host.
+            if isinstance(self.owner, NativeAgentSession):
+                from .native_stop_hook import StopHostSupervisor
+                self.supervisor = StopHostSupervisor(self.owner)
+                self.owner._stop_supervisor = self.supervisor
+                self.supervisor.start()
+
+    def call(self, method, parameters=None, **kwargs):
+        selected = self.selected()
+        if selected is not self:
+            return selected.call(method, parameters, **kwargs)
+        with self.bound_client():
+            return self.control.call(method, parameters, **kwargs)
+
+    def close(self):
+        for control in self.controls.values():
+            control.close()
+        if self.supervisor is not None:
+            self.supervisor.close()
+        if self.control is not None:
+            self.owner.close()
+
+
+def _caller_context(ctx):
+    """Host-supplied MCP session metadata, never model-visible tool arguments."""
+    return _session_metadata(ctx.request_context.meta)
+
+
+def _session_metadata(meta):
+    values = meta.model_dump(by_alias=True) if meta is not None else {}
+    keys = [key for key in ("threadId", "ai.opencode/sessionID") if key in values]
+    if len(keys) > 1:
+        raise ValueError("ambiguous calling session metadata")
+    if not keys:
+        return {}
+    key = keys[0]
+    value = values[key]
+    if type(value) is not str or not value or "\0" in value or len(value.encode("utf-8")) > 256:
+        raise ValueError("calling session metadata is invalid")
+    return {key: value}
+
+
+def _mailbox_call(method, body, context):
+    from .cell_secret_keys import WindowsDpapiSigningKeyProvider
+    local = Path(os.environ["LOCALAPPDATA"]) / "ArchHub"
+    key_path = local / "keys" / "authority-signing-v1.dpapi.json"
+    if not key_path.is_file():
+        raise MachineTransportError("ArchHub is not running: existing signing key unavailable")
+    client = UniversalRuntimeClient(local / "active-universal-runtime.json",
+        WindowsDpapiSigningKeyProvider(key_path))
+    verb = "POST" if method == "send" else "GET"
+    return client.request(verb, "/api/universal/agent-mail/" + method, {**body, "context": context})
+
+
+def build_server(*, session=None, workshop_task=None, mailbox_call=None):
+    """The shared message tools are available before any Work identity is needed."""
+    server = FastMCP("archhub-agent")
+    call = _mailbox_call if mailbox_call is None else mailbox_call
+
+    @server.tool(name="send")
+    def send(to: str, text: str, ctx: Context) -> dict[str, object]:
+        """Post to the shared Workshop room; to='*' addresses everyone.
+
+        Use a peer's sender_label as its readable address across connector restarts.
+        The application records this connection's own name. No sender override,
+        binding, enrollment or relay is accepted. All room members can read it.
+        """
+        return call("send", {"to": to, "text": text}, _caller_context(ctx))
+
+    @server.tool(name="read", annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False))
+    def read(ctx: Context, since: int = 0) -> dict[str, object]:
+        """Read shared Workshop messages after a sequence; use next_since to continue."""
+        return call("read", {"since": since}, _caller_context(ctx))
+
+    control = _WorkControl(session)
+    server.work_control = control
+    if session is not None:
+        # An explicit in-process Work owner is already an authorised Work
+        # composition. The ordinary CLI supplies none and starts unbound.
+        control.connect()
     if workshop_task is not None:
-        from .native_workshop_tools import validate_selected_work
-        validate_selected_work(workshop_task)
-    owner = session if session is not None else NativeAgentSession()
-    deferred = getattr(owner, "is_deferred_router", False)
-    if deferred:
-        # A deferred Codex router binds no session at startup; it resolves one per
-        # threadId on each call from the request _meta. Skip the eager connect and
-        # route coordination through it. A single Work task surface needs a bound
-        # owner, so it is not available to a deferred runtime.
-        if workshop_task is not None:
-            raise MachineTransportError(
-                "a deferred coordination runtime has no single Work task surface")
-        control = owner.control()
+        from .native_workshop_tools import build_workshop_task_server
+        task = build_workshop_task_server(control, workshop_task)
+        for tool in task._tool_manager.list_tools():
+            if server._tool_manager.get_tool(tool.name) is None:
+                server.add_tool(tool.fn, name=tool.name, description=tool.description)
     else:
-        client = owner.connect()
-        keeper = getattr(owner, "start_lease_keeper", None)
-        if callable(keeper):
-            keeper()  # an idle agent keeps its session; renewal is never a graph write
-        if workshop_task is not None:
-            return attach_workshop_tools(owner, workshop_task)
-        control = _OwnedWorkshopClient(owner, client)
-    server = build_coordination_server(client=control)
+        _register_work_tools(server, control)
+    from .native_workshop_tools import forbid_extra_arguments
+    for tool in server._tool_manager.list_tools():
+        forbid_extra_arguments(tool)
+    return server
 
-    @server.tool(name='native.hook_stop')
+
+def _register_work_tools(server, control):
+    attached = {}
+
+    @server.tool(name="native.hook_stop")
     def hook_stop() -> dict[str, object]:
-        """Observe this retained actor's real Work gate; never enroll, submit or execute."""
+        """Observe the current Work gate through its existing Work authority."""
         return stop_context(control)
-
-    @server.tool(name="native.owner_status")
-    def owner_status() -> dict[str, object]:
-        """Inspect verified owner fingerprints while stale; no enrollment or retry."""
-        return _with_stop_host(owner, owner.owner_status())
-
-    @server.tool(name="native.owner_rebind")
-    def owner_rebind(expected_old_owner: str, expected_new_owner: str) -> dict[str, object]:
-        """Recover this session after owner replacement or known lease expiry.
-
-        Copy the two fingerprints from owner_status. Application/database and
-        graph session must continue exactly. No failed tool action is replayed.
-        Equal fingerprints are accepted only after the retained lease expires.
-        An uncertain enrollment remains refused. Private hooks require their
-        registered process custody guard; no capability or action is replayed.
-        """
-        return owner.rebind_owner(expected_old_owner=expected_old_owner,
-                                  expected_new_owner=expected_new_owner)
-
-    @server.tool(name="native.owner_recover", description=_RECOVER_DOC)
-    def owner_recover(expected_failed_owner: str, expected_current_owner: str) -> dict[str, object]:
-        return owner.recover_rebind_owner(expected_failed_owner=expected_failed_owner,
-                                         expected_current_owner=expected_current_owner)
-
-    @server.tool(name='native.connection_recover', description=_CONNECTION_RECOVER_DOC)
-    def connection_recover(expected_owner: str):
-        return owner.recover_connection(expected_owner=expected_owner)
-
-    if os.environ.get("ARCHHUB_NATIVE_MCP_LAUNCHER") == "1":
-        @server.tool(name="native.handoff_release")
-        def handoff_release() -> dict[str, object]:
-            """The stable launcher's own handoff; the agent never sees it (native_mcp_launcher).
-
-            Releases this worker's capability, confirmed by the application, so the worker
-            running newly installed code can continue the same actor. Refused, like any
-            release, during a call, a rebind or an uncertain attempt.
-            """
-            result = owner.close()
-            return {**result, "agent_session": result.get("agent_session")}
-
-    @server.tool(name="native.owner_inspect_effects")
-    def owner_inspect_effects(expected_owner: str, cursor: str | None = None) -> dict[str, object]:
-        """Read this original actor's pending permit evidence; no settlement or grant."""
-        return owner.inspect_enrollment(expected_owner=expected_owner, projection="effects",
-                                       **({"cursor":cursor} if cursor is not None else {}))
-
-    @server.tool(name="native.owner_settle_effect", description=_SETTLE_DOC)
-    def owner_settle_effect(expected_owner: str, permit: str, settlement: str) -> dict[str, object]:
-        return owner.settle_effect(expected_owner=expected_owner, permit=permit, settlement=settlement)
-
-    def host_runtime():
-        # Deployment configuration, never a path supplied by a tool caller.
-        node = os.environ.get("SESSION_LINK_NODE")
-        if not node:
-            bundled = Path(__file__).resolve().parents[1] / "runtime" / "node.exe"
-            node = str(bundled) if bundled.is_file() else None
-        state = os.environ.get("SESSION_LINK_STATE_DIR")
-        if not node or not state:
-            raise MachineTransportError("Existing Session Link host configuration is unavailable")
-        return {"node_executable": node, "state_directory": state}
-
-    @server.tool(name="native.workshop_host_attach")
-    def workshop_host_attach(connection: dict, ttl_seconds: int = 300) -> dict[str, object]:
-        """Attach this agent's exact existing Session Link connection to Workshop.
-
-        Pass its non-secret connection descriptor. This does not create a
-        connection, enroll another session, approve work or execute a workflow.
-        Only status metadata returns; uncertain outcomes must not be retried.
-        """
-        return owner.attach_workshop_host(connection, ttl_seconds=ttl_seconds,
-                                          **host_runtime())
-
-    @server.tool(name="native.workshop_host_detach")
-    def workshop_host_detach() -> dict[str, object]:
-        """Detach this agent's Workshop channel, leaving other agents connected."""
-        return owner.detach_workshop_host()
 
     @server.tool(name="native.hook_user_prompt_submit")
     def hook_user_prompt_submit() -> dict[str, object]:
@@ -501,9 +442,11 @@ def build_server(*, session=None, workshop_task: str | None = None):
             build_workshop_task_server, forbid_extra_arguments, validate_selected_work,
         )
         validate_selected_work(work_root)
+        if control.selected() is not control:
+            raise MachineTransportError('Use a dedicated Work profile for dynamic task tools')
         if attached:
             raise MachineTransportError('Work %s is already attached; detach it first' % attached['held'].root)
-        with owner.bound_client() as client:
+        with control.bound_client() as client:
             actor = client.agent_session_root
             index = _validate_index(client.request('GET', '/api/universal/work', {'projection': 'index'}), client)
         rows = [row for row in index['items'] if row['root'] == work_root]
@@ -534,6 +477,8 @@ def build_server(*, session=None, workshop_task: str | None = None):
         After an uncertain claim, submission or court, run native.work_reconcile
         first; the Work stays attached until it reconciles. Nothing is replayed.
         """
+        if control.selected() is not control:
+            raise MachineTransportError('Use a dedicated Work profile for dynamic task tools')
         if not attached:
             raise MachineTransportError('No Work task surface is attached')
         held = attached['held']
@@ -548,133 +493,19 @@ def build_server(*, session=None, workshop_task: str | None = None):
         await ctx.session.send_tool_list_changed()
         return {'work_root': held.root, 'detached': True}
 
-    if deferred:
-        # A multiplexed deferred server serves many threads over one connection and
-        # one shared tool list; it cannot safely mutate that list per thread (two
-        # threads attaching different Works would collide on identical tool names,
-        # and a dynamically added tool would be visible and callable by every
-        # thread). So the dynamic Work-task surface is not offered here: the shared
-        # `attached` state is never populated, so no thread can detach another's
-        # surface or read another's selected Work. A dedicated per-Work surface
-        # stays available through the isolated one-Work --workshop-task launch.
-        for name in ('native.work_task_attach', 'native.work_task_detach'):
-            server.remove_tool(name)
-
-        @server.tool(name='native.owner_resume')
-        def owner_resume() -> dict[str, object]:
-            """Complete this thread's latched binding after a validated same-owner recovery.
-
-            Run the matching recovery first (native.owner_recover / native.owner_rebind /
-            native.connection_recover). This finishes the remaining stages without
-            re-enrolling and clears the latch only on success; a still-unready owner or a
-            failed completion keeps the original stage and outcome.
-            """
-            return owner.resume()
-    return server
-
-
-_RECOVERY_TOOLS = frozenset({
-    'native.owner_status', 'native.owner_recover', 'native.connection_recover',
-    'native.owner_inspect_effects', 'native.owner_settle_effect',
-    'coordination.read_messages', 'coordination.read_message',
-})
-
-
-def build_recovery_server(owner, *, workshop_task=None):
-    """Keep recovery tools available until the same owner is ready for tools."""
-    from mcp.server.fastmcp import FastMCP
-    from .native_resume_guard import NativeResumeGuard
-    server=FastMCP('ArchHub native recovery')
-    guard=NativeResumeGuard(owner)
-    activated=False
-
-    def activate():
-        nonlocal activated
-        if activated:
-            return {'status':'tools_available','work_admission_required':True}
-        try:
-            restored=guard.recover()
-            if restored.get('status')!='owner_restored':
-                return restored
-            tools=build_server(session=owner,workshop_task=workshop_task)
-            for tool in tools._tool_manager.list_tools():
-                if tool.name not in _RECOVERY_TOOLS:
-                    server.add_tool(tool.fn,name=tool.name,description=tool.description,
-                                    annotations=tool.annotations)
-            activated=True
-            return {'status':'tools_available','work_admission_required':True}
-        except Exception:
-            return {'status':'recovery_required','reason':'existing_owner_recovery_unconfirmed',
-                    'work_admission_required':True}
-
-    @server.tool(name='native.owner_status')
-    def recovery_status():
-        return _with_stop_host(owner, {'owner':owner.owner_status(),'tools_available':activated,
-                                       'work_admission_required':True})
-
-    @server.tool(name='native.owner_inspect_effects')
-    def recovery_inspect_effects(expected_owner: str, cursor: str | None = None):
-        """Inspect exact original-actor evidence before activation; never enroll or replay."""
-        return owner.inspect_enrollment(expected_owner=expected_owner,projection='effects',
-            **({'cursor':cursor} if cursor is not None else {}))
-
-    @server.tool(name='native.owner_settle_effect', description=_SETTLE_DOC)
-    def recovery_settle_effect(expected_owner: str, permit: str, settlement: str):
-        return owner.settle_effect(expected_owner=expected_owner, permit=permit, settlement=settlement)
-
-    @server.tool(name='coordination.read_messages')
-    def recovery_read_messages(limit: int = 50, before: int | None = None):
-        """Read the messages this agent is authorized to see. Works while writing is blocked."""
-        return _inbox_call(owner, 'read_messages', {'limit': limit, 'before': before})
-
-    @server.tool(name='coordination.read_message')
-    def recovery_read_message(message_id: str, sequence: int):
-        """Read one message this agent is authorized to see. Works while writing is blocked."""
-        return _inbox_call(owner, 'read_message', {'message_id': message_id, 'sequence': sequence})
-
-    @server.tool(name='native.resume_recover')
-    async def recovery_retry(ctx: Context):
-        result=activate()
-        if activated:
-            await ctx.session.send_tool_list_changed()
-        return result
-
-    @server.tool(name='native.owner_recover', description=_RECOVER_DOC)
-    def exact_rebind_recovery(expected_failed_owner: str, expected_current_owner: str):
-        return owner.recover_rebind_owner(expected_failed_owner=expected_failed_owner,
-                                         expected_current_owner=expected_current_owner)
-
-    @server.tool(name='native.connection_recover', description=_CONNECTION_RECOVER_DOC)
-    def exact_connection_recovery(expected_owner: str):
-        return owner.recover_connection(expected_owner=expected_owner)
-
-    return server,activate
 
 
 def main():
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--workshop-task', metavar='WORK_ROOT',
-        help='Restrict this MCP server to one configured Work and ordinary Workshop tools')
-    # Retired: the read-only Stop host now follows the owner's binding (serve).
-    # Accepted so an existing launch line keeps working; it changes nothing.
-    parser.add_argument('--stop-hook-ipc',action='store_true',help=argparse.SUPPRESS)
-    parser.add_argument('--expected-actor',help='Original graph actor from the admitted existing task binding')
+    parser.add_argument("--workshop-task")
     args = parser.parse_args()
-    if args.expected_actor:
-        owner=NativeAgentSession(expected_agent_session=args.expected_actor)
-        server,activate=build_recovery_server(owner,workshop_task=args.workshop_task)
-        activate()
-    else:
-        # Existing app-admitted fresh bootstrap precedes Work assignment and
-        # has no original actor or Session Link binding yet.
-        owner=NativeAgentSession()
-        server=build_server(session=owner,workshop_task=args.workshop_task)
-    serve(owner, server)
+    server = build_server(workshop_task=args.workshop_task)
+    try:
+        server.run(transport="stdio")
+    finally:
+        server.work_control.close()
 
 
 if __name__ == "__main__":
-    from .native_mcp_launcher import run_entry
-    # The launched process stays the stable host and runs main() as its worker,
-    # so newly installed code takes over the same actor without a reconnect.
-    run_entry("nodelang.native_agent_mcp", main)
+    main()

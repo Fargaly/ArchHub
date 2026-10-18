@@ -400,7 +400,7 @@ def _read_ordinary_browser_workshop(owner, binding, *, root, scope, expected_rev
                         operational_state_root=space.operational_state_root))
                 # Delivery state comes only from the receipts that reply to each
                 # message (read by the reply index, so newer outcomes count).
-                from .workshop_delivery_state import project_delivery, relay_pending_digests
+                from .workshop_delivery_state import project_delivery, work_pending_digests
                 from .workshop_workflow import project_workshop_extras
                 founder = binding.subject_root == authority.subject_root
                 principal = registry.agent_body.session.root_id if founder else binding.subject_root
@@ -409,7 +409,7 @@ def _read_ordinary_browser_workshop(owner, binding, *, root, scope, expected_rev
                 replies = (history.replies_to(root, page_ids, principal=principal, read_all=founder)["messages"]
                            if page_ids else [])
                 states, relayed = project_delivery(page["messages"], replies,
-                    relay_pending=relay_pending_digests(owner),
+                    relay_pending=work_pending_digests(owner),
                     note_category=registry.workshop_category_roots["note"],
                     tool_category=registry.workshop_category_roots.get("tool"),
                     relay_author=authority.subject_root)
@@ -637,65 +637,8 @@ def _render_canvas_transcript(owner, binding, root, head, page):
             "next_before": page.get("next_before"), "rows": rows}
 
 
-def disconnect_browser_workshop_agent(owner, binding, body, *, browser_guard):
-    """Disconnect one admitted agent's Session Link channel for the application owner.
-
-    Admission and authorization run under the owner lock; the native wait that
-    retires the channel does not, and nothing is written after it. Other agents,
-    the graph and history are unchanged. This revokes only that agent's Session
-    Link grant: it does not end the machine Agent Session enrolment or cancel a
-    request already delivered. A retiring or uncertain channel can be retried.
-    """
-    from .cell_agent_body import read_agent_session
-    from .universal_application import _require_application_authorization
-    if (type(body) is not dict or set(body) != {"action", "root", "scope", "revision", "agent"}
-            or body["action"] != "agent-disconnect"):
-        raise InvalidCell("Workshop agent disconnect fields are invalid")
-    agent, expected = body["agent"], body["revision"]
-    if (type(agent) is not str or not agent.startswith("app:agent-session:runtime:")
-            or type(expected) is not int or expected < 0):
-        raise InvalidCell("Workshop agent disconnect values are invalid")
-    registry = owner.universal_registry
-    relay = getattr(owner, "native_recipient_relay", None)
-    if relay is None:
-        raise InvalidCell("Session Link relay is unavailable")
-    with owner.mutation_lock:
-        browser_guard()
-        snapshot, space = _admit(owner, binding, body["root"], body["scope"])
-        if snapshot.revision != expected:
-            raise AuthorizationDenied("Workshop changed; refresh before disconnecting an agent")
-        if agent not in space.participant_roots:
-            raise AuthorizationDenied("Agent is not a participant of this Workshop")
-        session = read_agent_session(snapshot, registry.agent_body.protocol,
-                                     registry.authorization.protocol, agent)
-        if session.subject_root != registry.authorization.subject_root:
-            raise AuthorizationDenied("Agent Session subject is not admitted")
-        _require_application_authorization(snapshot, registry, "execute", agent,
-                                           authentication_context=binding.context)
-    result = relay.detach_channel(agent)
-    # The outcome comes only from this call's own result, never from an earlier state
-    # read another attach could have overtaken. Only a joined local call counts.
-    settled = result.get("status") == "ok" and result.get("local_call_joined") is True
-    if settled and result.get("detached") is True and result.get("revoked") is True:
-        outcome = "revoked"
-    elif settled and result.get("detached") is True:
-        outcome = "detached_without_revocation"
-    elif settled and result.get("detached") is False and result.get("revoked") is False:
-        outcome = "no_channel"
-    else:
-        outcome = "uncertain"
-    return {"ok": True, "graph_id": registry.application_root, "root": body["root"],
-            "scope_root": body["scope"], "agent": agent, "revision": expected, "disconnect": result,
-            "outcome": outcome, "session_link": relay.channel_states().get(agent, "none")}
 
 
-def _relay_native_recipients(owner, space_root, message_id, sender_root, recipient_roots, text):
-    """Start the owner's native relay for a stored message; no relay, no change."""
-    relay = getattr(owner, "native_recipient_relay", None)
-    rows = None if relay is None else relay.request(space_root=space_root,
-        message_id=message_id, sender_root=sender_root,
-        recipient_roots=tuple(recipient_roots), text=text)
-    return {} if rows is None else {"native_delivery": rows}
 
 
 def _send_browser_workshop_everyone(owner, binding, body, browser_guard):
@@ -704,7 +647,6 @@ def _send_browser_workshop_everyone(owner, binding, body, browser_guard):
     A per-target reservation precedes each call. A crash after that reservation
     is uncertain, never permission to resend. No network call holds the owner lock.
     """
-    from .native_contact import project_native_contacts, read_contact
     from .workshop_session_start import project_workshop_model_agent, send_workshop_model_message
     from .universal_application import validate_universal_workshop_entry_content
     from .conversation_history import _MAX_BODY
@@ -745,63 +687,13 @@ def _send_browser_workshop_everyone(owner, binding, body, browser_guard):
             authentication_context=binding.context, expected_revision=store.revision)['message']
 
     with owner.mutation_lock:
-        snapshot, space = guard()
+        snapshot, _space = guard()
         held = lookup(':targets')
         if held is None:
             targets = []
-            with owner._machine_agent_session_lock:
-                for participant in space.participant_roots:
-                    if participant == binding.subject_root or not participant.startswith('app:agent-session:runtime:'):
-                        continue
-                    native = owner._machine_agent_sessions.get(participant) or {}
-                    expiry = native.get('expires_at')
-                    # Deliver only to sessions bound and live now. A retired runtime
-                    # session keeps its place in the history but has no channel left.
-                    if not native or type(expiry) not in (int, float) or expiry <= time.time():
-                        continue
-                    targets.append({'kind':'session', 'root':participant,
-                        'runtime':native.get('runtime'),
-                        'fingerprint':native.get('external_session_fingerprint')})
-                    if len(targets) > 64:
-                        raise InvalidCell('Workshop broadcast exceeds 64 recipients')
-            contacts = project_native_contacts(owner, binding, root=root, scope=scope,
-                discovery={}, maximum=65)
-            if len(targets) + len(contacts) > 64:
-                raise InvalidCell('Workshop broadcast exceeds 64 recipient bindings')
-            # Multiple graph addresses may point at one native session. Prefer
-            # its user-bound contact and retain aliases; prompt that session once.
-            from .application_server import _NATIVE_RELAY_APPS
-            contact_destinations = {}
-            for row in sorted(contacts, key=lambda item: item['root']):
-                if row['root'] == binding.subject_root:
-                    continue
-                destination = (row['app'], hashlib.sha256(row['session_id'].encode()).hexdigest())
-                if destination in contact_destinations:
-                    contact_destinations[destination]['aliases'].append(row['root'])
-                else:
-                    contact_destinations[destination] = {'kind':'contact', 'root':row['root'],
-                        'binding_digest':row['binding_digest'], 'aliases':[]}
-            distinct_sessions = []
-            session_destinations = {}
-            for target in targets:
-                runtime = target['runtime']
-                native_app = 'codex' if runtime == 'codex' else _NATIVE_RELAY_APPS.get(runtime)
-                destination = (native_app, target['fingerprint'])
-                contact = contact_destinations.get(destination)
-                if contact is not None:
-                    contact['aliases'].append(target['root'])
-                elif native_app and target['fingerprint'] and destination in session_destinations:
-                    session_destinations[destination].setdefault('aliases', []).append(target['root'])
-                else:
-                    distinct_sessions.append(target)
-                    if native_app and target['fingerprint']:
-                        session_destinations[destination] = target
-            targets = distinct_sessions + list(contact_destinations.values())
             model = project_workshop_model_agent(owner, binding, root, scope)
             if model is not None and model['root'] != binding.subject_root:
                 targets.append({'kind':'model', **model})
-            if not targets:
-                raise InvalidCell('Connect an agent to this Workshop before sending to Everyone')
             if len(targets) > 64:
                 raise InvalidCell('Workshop broadcast exceeds 64 recipients')
             encoded = json.dumps({'version':1, 'intent':intent, 'targets':targets,
@@ -813,7 +705,7 @@ def _send_browser_workshop_everyone(owner, binding, body, browser_guard):
             held = append(encoded, ':targets', require_new=True)
         frozen = json.loads(held['content'])
         if (frozen.get('version') != 1 or frozen.get('intent') != intent
-                or type(frozen.get('targets')) is not list or not 1 <= len(frozen['targets']) <= 64):
+                or type(frozen.get('targets')) is not list or not 0 <= len(frozen['targets']) <= 64):
             raise InvalidCell('The saved Workshop broadcast differs from this request')
         targets = frozen['targets']
         # Shared conversation content remains visible to admitted participants;
@@ -837,30 +729,8 @@ def _send_browser_workshop_everyone(owner, binding, body, browser_guard):
             append('Delivery attempt reserved; an unrecorded outcome is uncertain.',
                 suffix + ':started', reply_to=message['id'], require_new=True)
         try:
-            if target['kind'] in ('session', 'contact') and getattr(owner, 'native_recipient_relay', None) is None:
-                delivery = {'state':'not_sent', 'reason':'transport_unavailable'}
-            elif target['kind'] == 'session':
-                with owner.mutation_lock:
-                    _, current_space = guard()
-                    with owner._machine_agent_session_lock:
-                        current = dict(owner._machine_agent_sessions.get(recipient) or {})
-                    if (recipient not in current_space.participant_roots
-                            or current.get('runtime') != target['runtime']
-                            or current.get('external_session_fingerprint') != target['fingerprint']):
-                        raise AuthorizationDenied('Workshop recipient binding changed')
-                    rows = owner.native_recipient_relay.request(space_root=root,
-                        message_id=message['id'], sender_root=binding.subject_root,
-                        recipient_roots=(recipient,), text=text)
-                    delivery = rows[0] if rows else {'state':'not_sent', 'reason':'transport_unavailable'}
-            elif target['kind'] == 'contact':
-                def revalidate(target=target):
-                    guard()
-                    return read_contact(owner, binding, target['root'], target['binding_digest'], root, scope)
-                with owner.mutation_lock:
-                    endpoint = revalidate()
-                    delivery = owner.native_recipient_relay.request_contact(space_root=root,
-                        message_id=message['id'], sender_root=binding.subject_root,
-                        contact_root=recipient, endpoint=endpoint, revalidate=revalidate, text=text)
+            if target['kind'] in ('session', 'contact'):
+                delivery = {'state': 'stored', 'via': 'workshop'}
             elif target['kind'] == 'model':
                 result = send_workshop_model_message(owner, binding, {
                     'root':root, 'scope':scope, 'node':recipient,
@@ -931,11 +801,9 @@ def send_browser_workshop(owner, binding, body, *, browser_guard=None, expected_
             reference_roots=tuple(body['refs']),
             expected_revision=_snapshot.revision)
         message = result["message"]
-        relay = _relay_native_recipients(owner, body["root"], message["id"], message["author"],
-            message["recipients"], message["content"])
         return {"ok":True, "workshop":body["root"], "root":message["id"],
             "message_id":message["id"], "storage":"conversation-content",
-            "idempotency_key":message["idempotency_key"], "revision":result["graph_revision"], **relay}
+            "idempotency_key":message["idempotency_key"], "revision":result["graph_revision"]}
     entry = append_universal_workshop_entry(owner.universal_store, registry,
         actor_root=binding.subject_root, category_root=registry.workshop_category_roots["note"],
         content=validate_universal_workshop_entry_content(body["text"]),
@@ -944,10 +812,8 @@ def send_browser_workshop(owner, binding, body, *, browser_guard=None, expected_
         reference_roots=tuple(body['refs']),
         expected_revision=_snapshot.revision,
         content_service=getattr(owner, "conversation_content", None))
-    relay = (_relay_native_recipients(owner, entry.space_root, entry.message_id, entry.actor_root,
-        entry.recipient_roots, entry.content) if hasattr(entry, "message_id") else {})
     return {"ok":True, "workshop":registry.workshop_root, **workshop_message_identity(entry),
-        "idempotency_key":entry.idempotency_key, "revision":owner.universal_store.revision, **relay}
+        "idempotency_key":entry.idempotency_key, "revision":owner.universal_store.revision}
 
 
 def approve_browser_workshop_model(owner, binding, body, *, _inspect_only=False):

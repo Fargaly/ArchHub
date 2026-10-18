@@ -3554,7 +3554,6 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/agent-session-renew", "execute"),
     ("POST", "/api/universal/agent-session-release", "execute"),
     ("POST", "/api/universal/agent-session-release-status", "read"),
-    ("POST", "/api/universal/agent-session-link", "execute"),
     ("POST", "/api/universal/baboom-command", "read"),
     ("POST", "/api/universal/baboom-command-response", "read"),
     ("POST", "/api/universal/baboom-command-execute", "create"),
@@ -3739,6 +3738,7 @@ _BABOOM_CAPABILITY_ROUTE_KEYS = frozenset({
     ("POST", "/api/universal/workshop-board/sweep"),
 })
 _RETIRED_APPLICATION_HTTP_ROUTE_KEYS = frozenset({
+    "POST /api/universal/agent-session-link",
     "POST /api/universal/group",
     "POST /api/universal/inspector-lens",
     "POST /api/universal/properties-panel",
@@ -10074,6 +10074,7 @@ def execute_universal_baboom_utterance(
     remembered: Callable[[str], bool] | None = None,
     confirmations: BaboomConfirmations | None = None,
     _confirmed_by: Mapping[str, object] | None = None,
+    agent_mail=None,
 ) -> dict[str, object]:
     """Materialize one explicit founder task without a local BABOOM queue.
 
@@ -10158,6 +10159,7 @@ def execute_universal_baboom_utterance(
                 authentication_context=authentication_context, staged_update=staged_update,
                 remember=remember, remembered=remembered,
                 confirmations=confirmations, _confirmed_by=held,
+                agent_mail=agent_mail,
             )
         except BaboomActRefused as refusal:
             confirmations.refuse(nonce, str(refusal))
@@ -10209,10 +10211,12 @@ def execute_universal_baboom_utterance(
             baboom_session_interrupt.route_interrupt(spec, row=target)
         root = str(target.get("session_root") or "")
         if command["intent"] == "agent-message":
-            sent = baboom_agent_link.send_message(root, str(spec.get("message") or ""))
+            sent = baboom_agent_link.send_message(root, str(spec.get("message") or ""),
+                **({"mailbox": agent_mail} if agent_mail is not None else {}))
             kind, verb = "agent-messaged", "Sent to"
         else:
-            sent = baboom_agent_link.interrupt_agent(root, str(spec.get("reason") or "the founder asked you to stop"))
+            sent = baboom_agent_link.interrupt_agent(root, str(spec.get("reason") or "the founder asked you to stop"),
+                **({"mailbox": agent_mail} if agent_mail is not None else {}))
             kind, verb = "agent-interrupted", "Interrupt requested for"
         return {
             "kind": kind,
@@ -10499,6 +10503,7 @@ def respond_universal_baboom_utterance(
     content_service=None,
     read_guard=None,
     confirmations: BaboomConfirmations | None = None,
+    agent_mail=None,
 ) -> dict[str, object]:
     """Resolve one founder utterance to a graph-backed, non-chat response.
 
@@ -10616,11 +10621,12 @@ def respond_universal_baboom_utterance(
     elif intent == "agents-online":
         from . import baboom_agent_link
         try:
-            rows = baboom_agent_link.list_agents()
+            rows = baboom_agent_link.list_agents(
+                **({"mailbox": agent_mail} if agent_mail is not None else {}))
         except Exception as exc:
             response = {
                 "kind": "agents-unavailable",
-                "summary": "The coordination host on this machine is not answering (%s)." % exc,
+                "summary": "The Workshop mailbox is not answering (%s)." % exc,
                 "data": {},
             }
         else:
@@ -10631,9 +10637,9 @@ def respond_universal_baboom_utterance(
             response = {
                 "kind": "agents-online",
                 "summary": (
-                    "%d agent session(s) on this machine: %s." % (
+                    "Observed agent senders on this Workshop page: %d (%s)." % (
                         len(rows), ", ".join("%s x%d" % item for item in sorted(tally.items()))
-                    ) if rows else "No agent sessions are registered on this machine."
+                    ) if rows else "No agent senders are visible on this Workshop page."
                 ),
                 "data": {"agents": [
                     {

@@ -29,13 +29,13 @@ def test_home_prompt_model_reply_persist_in_one_conversation_without_replay(tmp_
     def provider(request, timeout):
         assert not server.mutation_lock._is_owned()
         payload = json.loads(request.data)
-        prompt = payload["messages"][-1]["content"].rsplit("FOUNDER: ", 1)[1]
+        prompt = payload["messages"][-1]["content"].rsplit("\n\nUser: ", 1)[1]
         model = payload["model"]
         calls.append((prompt, model))
-        provider_contexts.append(payload["messages"][-1]["content"].rsplit("FOUNDER: ", 1)[0])
+        provider_contexts.append(payload["messages"][-1]["content"].rsplit("\n\nUser: ", 1)[0])
         if prompt == "Exercise an unknown provider outcome":
             raise URLError("Private provider failure detail")
-        actions = [{"op":"select", "roots":[node]}] if prompt == "Refer to the explanation you just gave me" else []
+        actions = [{"op":"select", "roots":[node]}] if prompt == "Select the Agent node you just described" else []
         content = json.dumps({"actions":actions, "answer":"The provider fixture answered the saved prompt."})
         return BytesIO(json.dumps({"choices":[{"message":{"content":content}}]}).encode())
 
@@ -99,7 +99,7 @@ def test_home_prompt_model_reply_persist_in_one_conversation_without_replay(tmp_
         assert page["model_agent"] == result["model_agent"]
         followup = {"action":"send-model", "root":conversation, "scope":result["scope"], "node":node,
             "binding_digest":page["model_agent"]["binding_digest"],
-            "prompt":"Refer to the explanation you just gave me", "idempotency_key":"model-followup-one"}
+            "prompt":"Select the Agent node you just described", "idempotency_key":"model-followup-one"}
         continued = request("/api/universal/workshop", followup)
         assert continued["delivery"]["state"] == "replied" and continued["root"] == conversation
         assert continued["node"] == node and continued["binding_digest"] == followup["binding_digest"]
@@ -192,7 +192,7 @@ def test_home_prompt_model_reply_persist_in_one_conversation_without_replay(tmp_
         # browser admission, relay scheduling and indexed history stay real.
         from tests_replica.test_native_contact import Transport
         transport = Transport()
-        server.native_recipient_relay._transport = transport
+        server._cloud_relay_transport = server.native_work_delivery._transport = transport
         native_body = {"action":"start-session", "prompt":"Send this exact first native message",
             "native":{"app":"claude", "session_id":"existing-external"},
             "idempotency_key":"home-native-one"}
@@ -200,9 +200,9 @@ def test_home_prompt_model_reply_persist_in_one_conversation_without_replay(tmp_
         assert native["delivery"]["state"] == "started", native
         assert native["contact"] == native["delivery"]["contact"]
         deadline = time.monotonic() + 3
-        while server.native_recipient_relay._pending_jobs and time.monotonic() < deadline:
+        while server.native_work_delivery._pending_jobs and time.monotonic() < deadline:
             time.sleep(.01)
-        assert server.native_recipient_relay.last_error is None
+        assert server.native_work_delivery.last_error is None
         assert len(transport.calls) == 1 and not server._machine_agent_sessions
         native_page = request("/api/universal/workshop?" + urlencode({
             "root":native["root"], "scope":native["scope"]}))

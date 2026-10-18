@@ -935,7 +935,7 @@
               assignment_id:'app:workshop-assignment:' + draft.request});
             draft.assigned = true;
           }
-          await api.workshopAction(root,'send',null,{target,message:message.trim(),work:result.created_root});
+          await api.sendWorkshopMessage(root,{target,message:message.trim(),work:result.created_root});
           if (current(stamp,root) && workshopTaskDraft === draft) {workshopTaskDraft = null;publish();}
           try {await api.refreshTopologyCanvas();} catch (_) { /* accepted task remains in the next graph projection */ }
           return result;
@@ -2863,37 +2863,9 @@
         if (!inspected.approved) await post('/api/universal/workshop-model-approval', {...body, revision:inspected.revision});
         return api.refreshNativeWork(root);
       },
-      async disconnectAgent(root, agent) {
-        // Revokes only this agent's Session Link grant; it never ends its Agent Session
-        // enrolment or cancels work already delivered. A retiring channel can be retried.
+      async sendWorkshopMessage(root, details = {}, commandId = null, editor = null) {
         const stamp = stampFor(root);
-        if (!text(agent) || agent.length > 512 || !agent.startsWith('app:agent-session:runtime:')) {
-          fail('Choose an agent to disconnect.');
-        }
-        const projection = await api.refreshWorkshop(root);
-        if (!current(stamp, root) || !projection || projection.error || projection.root !== root ||
-            !Array.isArray(projection.participants) || !projection.participants.some(row => row.root === agent) ||
-            !revision(projection.revision)) {
-          fail('Refresh the Workshop before disconnecting an agent.');
-        }
-        const result = await post('/api/universal/workshop', {action:'agent-disconnect', root, scope:stamp.scope,
-          revision:projection.revision, agent});
-        if (!result || result.ok === false) fail(result?.error || 'The disconnect was refused.');
-        const outcome = result.disconnect;
-        if (result.ok !== true || result.root !== root || result.agent !== agent || result.scope_root !== stamp.scope ||
-            result.revision !== projection.revision || !outcome || !['ok', 'uncertain'].includes(outcome.status) ||
-            ['detached', 'revoked', 'local_call_joined', 'worker_stopped'].some(key => typeof outcome[key] !== 'boolean') ||
-            !['revoked', 'no_channel', 'detached_without_revocation', 'uncertain'].includes(result.outcome) ||
-            !['none', 'attached', 'attaching', 'retiring'].includes(result.session_link) ||
-            (result.outcome === 'revoked' && !(outcome.status === 'ok' && outcome.detached && outcome.revoked && outcome.local_call_joined))) {
-          fail('The disconnect response could not be reconciled. Refresh before retrying.');
-        }
-        if (current(stamp, root)) await api.refreshWorkshop(root).catch(() => {});
-        return {outcome:result.outcome, session_link:result.session_link, disconnect:{...outcome}};
-      },
-      async workshopAction(root, action, commandId, details = {}, editor = null) {
-        const stamp = stampFor(root);
-        if (action !== 'send' || Object.keys(details).some(key => !['target', 'message', 'work'].includes(key))) {
+        if (Object.keys(details).some(key => !['target', 'message', 'work'].includes(key))) {
           fail('This Workshop exposes messaging only; execution uses its existing agent authority.');
         }
         if (editor && (!editorHandles.has(editor) || editor.root !== root)) fail('Message editor belongs to another conversation.');

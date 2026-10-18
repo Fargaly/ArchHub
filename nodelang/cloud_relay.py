@@ -589,13 +589,9 @@ def host_read(tool: object, arguments: object) -> object:
     return answer
 
 
-# What an MCP client's agent may do in the Workshop: the installed Workshop
-# coordination methods Claude and Codex use (installed_workshop_coordination),
-# nothing that executes, attaches another agent or runs a task.
-WORKSHOP_METHODS = frozenset({
-    "workshop_lens", "list_agents", "read_messages", "read_message",
-    "send_message", "acknowledge_message", "claim_work",
-})
+# The existing remote Work claim keeps its own governed Work authorization.
+# Generic peer messages use native_agent_mcp send/read, without enrollment here.
+WORKSHOP_METHODS = frozenset({"claim_work"})
 MAX_MCP_AGENTS = 8
 _RENEW_MARGIN_SECONDS = 120.0
 _PRESENCE_EVERY_SECONDS = 60.0
@@ -623,13 +619,10 @@ def _compact(value: object, depth: int = 0) -> object:
 
 
 class McpWorkshopAgents:
-    """Each MCP client (by OAuth client_id) is one Workshop agent of its own.
+    """OAuth clients claim governed Work under their own Work actors.
 
-    It is enrolled like any runtime agent (UniversalRuntimeClient.bind_agent_session,
-    runtime mcp-<name>, external session mcp:<client_id>) and every step goes
-    through InstalledWorkshopCoordinationClient: the same allowlisted methods,
-    identity checks and idempotency Claude and Codex use. One process-local
-    capability per client, renewed before it expires; nothing else is kept.
+    This adapter exposes no generic messaging. Work capabilities retain their
+    independent enrollment, renewal and application authorization.
     """
 
     def __init__(self, descriptor_path: Path, key_provider: object, *,

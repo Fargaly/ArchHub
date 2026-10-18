@@ -168,7 +168,7 @@ test('relay-only contact stays visible by its name but cannot be addressed as an
   try{assert.match(text(ui.doc.querySelector('[data-workshop-message="reply-1"]')),/acceptance-claude/);
     await ui.input('@acceptance-claude Please check');await ui.click(ui.button('Send'));
     assert.match(text(ui.doc.querySelector('[role="alert"]')),/Choose an agent listed in this Workshop/);
-    assert.equal(fx.calls.filter(row=>row[0]==='workshopAction'||row[0]==='sendModelConversation'||row[0]==='sendNativeContact').length,0);
+    assert.equal(fx.calls.filter(row=>row[0]==='sendWorkshopMessage'||row[0]==='sendModelConversation'||row[0]==='sendNativeContact').length,0);
     assert.equal(ui.doc.querySelector('[data-workshop-disconnected-toggle]'),null);
   }finally{await ui.close();}
 });

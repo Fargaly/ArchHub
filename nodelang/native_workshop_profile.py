@@ -21,9 +21,11 @@ _MAX_CONFIG_BYTES = 32 * 1024
 # Explicit task-server files only; no recursive installation scan. This binds
 # disk inputs, not an assertion about every loaded module or the whole package.
 TASK_SOURCE_FILES = ('__init__.py', 'native_agent_mcp.py', 'native_agent_session.py',
-    'native_workshop_tools.py', 'native_agent_hooks.py', 'clean_coordination_mcp.py',
+    'native_workshop_tools.py', 'native_agent_hooks.py',
     'installed_workshop_coordination.py', 'application_machine_transport.py',
-    'cell_secret_keys.py', 'native_resume_guard.py', 'native_session_resume.py')
+    'cell_secret_keys.py', 'agent_runtime_registry.py',
+    'agent_runtime_defs/claude.py', 'agent_runtime_defs/codex.py',
+    'agent_runtime_defs/gemini.py', 'agent_runtime_defs/opencode.py')
 _MAX_SOURCE_BYTES = 2 * 1024 * 1024
 _SYSTEM = (
     "You are an agent in the ArchHub Workshop. Your assigned graph Work is the "
@@ -192,7 +194,7 @@ def prepare_claude_workshop_profile(*, install_root, state_root, python_executab
     sources, source_identities = {}, {}
     for name in TASK_SOURCE_FILES:
         path = _path(installed / 'nodelang' / name)
-        _require(path.parent == installed / 'nodelang' and path.stat().st_size <= _MAX_SOURCE_BYTES,
+        _require(path == installed / 'nodelang' / name and path.stat().st_size <= _MAX_SOURCE_BYTES,
                  'Installed native task source exceeds its bound')
         sources[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
         source_identities[str(path)] = _identity(path)
@@ -214,6 +216,8 @@ def prepare_claude_workshop_profile(*, install_root, state_root, python_executab
              and all(type(n) is str and n and len(n) <= 100
                      and all(c.isalnum() or c in "._" for c in n) for n in names),
              "Native task tool inventory is invalid")
+    names += tuple(name for name in ("send", "read") if name not in names)
+    _require(len(names) <= 24, "Native task tool inventory is invalid")
     inherited = dict(os.environ if environment is None else environment)
     _require(all(type(k) is str and type(v) is str and "\x00" not in k + v
                  for k, v in inherited.items()), "Native environment is invalid")
@@ -263,9 +267,7 @@ def prepare_claude_workshop_profile(*, install_root, state_root, python_executab
             "type": "stdio", "command": str(python),
             "args": ["-I", "-B", "-c", loader, str(installed), "--workshop-task", work_root],
             "env": {"ARCHHUB_AGENT_RUNTIME": "claude", "ARCHHUB_EXTERNAL_SESSION_ID": session,
-                    "CLAUDE_CODE_SESSION_ID": session,
-                    "SESSION_LINK_STATE_DIR": str(state / "session-link"),
-                    "SESSION_LINK_NODE": str(installed / "runtime" / "node.exe")},
+                    "CLAUDE_CODE_SESSION_ID": session},
         }}}
         for name, value in (("mcp.json", mcp), ("settings.json", settings)):
             raw = (json.dumps(value, ensure_ascii=True, separators=(",", ":")) + "\n").encode()
@@ -275,8 +277,8 @@ def prepare_claude_workshop_profile(*, install_root, state_root, python_executab
                 stream.write(raw)
             files[str(filename)] = hashlib.sha256(raw).hexdigest()
             identities[str(filename)] = _identity(filename)
-        argv = (str(native), "--print", "--verbose", "--session-id", session,
-                "--input-format", "stream-json", "--output-format", "stream-json",
+        from .agent_runtime_registry import RUNTIMES
+        argv = (str(native), *RUNTIMES["claude"]["stream_arguments"], "--session-id", session,
                 "--model", model, "--max-turns", str(max_turns), "--setting-sources=",
                 "--settings", str(cwd / "settings.json"), "--strict-mcp-config",
                 "--mcp-config", str(cwd / "mcp.json"), "--tools", "",

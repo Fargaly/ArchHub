@@ -153,21 +153,16 @@ def _require_plain(path: Path, kind: str, *, may_be_absent: bool = False):
 
 def managed_entry(install_root, state_root) -> dict:
     """The one user-scope entry for this installation; no session or actor identity."""
-    root, state = Path(install_root), Path(state_root)
+    root = Path(install_root)
     python = root / ".venv" / "Scripts" / "python.exe"
-    node = root / "runtime" / "node.exe"
     _require_plain(python, "file")
     _require_plain(root / "nodelang" / "native_agent_mcp.py", "file")
-    _require_plain(node, "file")
-    _require_plain(state / "session-link", "directory", may_be_absent=True)
     return {
         "type": "stdio",
         "command": str(python),
         "args": ["-I", "-B", "-c", LOADER, str(root)],
         # Claude Code supplies the session identity to its own MCP processes.
-        "env": {"ARCHHUB_COORDINATION_VENDOR": "claude",
-                "SESSION_LINK_STATE_DIR": str(state / "session-link"),
-                "SESSION_LINK_NODE": str(node)},
+        "env": {"ARCHHUB_COORDINATION_VENDOR": "claude"},
     }
 
 

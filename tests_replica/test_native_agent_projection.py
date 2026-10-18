@@ -15,8 +15,8 @@ def _owner(storage):
     return SimpleNamespace(
         universal_registry=SimpleNamespace(application_root="app-root"),
         universal_store=SimpleNamespace(revision=0),
-        native_recipient_relay=SimpleNamespace(
-            _channel_lock=threading.Lock(),
+        native_work_delivery=SimpleNamespace(
+            _pending_lock=threading.Lock(),
             _pending_jobs={},
         ),
         _ownership_record_storage=lambda: storage,

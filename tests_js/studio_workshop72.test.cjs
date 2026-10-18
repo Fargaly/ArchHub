@@ -96,11 +96,11 @@ test('WORKSHOP-72 composer routes @agent and default assigned reply through exac
   try {
     assert.equal(ui.doc.querySelector('textarea').placeholder,'Reply to Claude Code, or @ another agent…');
     await ui.input('@Codex Check labels'); await ui.click(ui.button('Send'));
-    assert.deepEqual(f.calls.filter(row=>row[0]==='workshopAction').at(-1),['workshopAction','room-a','send',null,{target:'agent-b',message:'Check labels'}]);
+    assert.deepEqual(f.calls.filter(row=>row[0]==='sendWorkshopMessage').at(-1),['sendWorkshopMessage','room-a',{target:'agent-b',message:'Check labels'}]);
     await ui.input('@unknown Check labels'); await ui.click(ui.button('Send'));
-    assert.equal(f.calls.filter(row=>row[0]==='workshopAction').length,1); assert.match(text(ui.doc.querySelector('[role=alert]')),/Choose an agent/);
+    assert.equal(f.calls.filter(row=>row[0]==='sendWorkshopMessage').length,1); assert.match(text(ui.doc.querySelector('[role=alert]')),/Choose an agent/);
     await ui.input('@all Read results'); await ui.click(ui.button('Send'));
-    assert.equal(f.calls.filter(row=>row[0]==='workshopAction').at(-1)[4].target,'');
+    assert.equal(f.calls.filter(row=>row[0]==='sendWorkshopMessage').at(-1)[2].target,'');
   } finally {await ui.close();}
 });
 

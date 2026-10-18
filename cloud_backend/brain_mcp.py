@@ -108,52 +108,15 @@ HOST_TOOLS = [
 ]
 HOST_TOOL_NAMES = frozenset(tool["name"] for tool in HOST_TOOLS)
 
-# The founder's Workshop, joined by the calling MCP client as ITS OWN agent (Spark
-# is one agent, Notion another), exactly as Claude and Codex join it locally: the
-# founder's running app binds the client as a runtime Agent Session and answers
-# through the installed Workshop coordination client (nodelang/cloud_relay.py
-# workshop_call). Listed only to a founder account holding an OAuth token with
-# mcp:workshop. Messages and Work claims only; nothing runs on the desktop.
+# Remote governed Work claims retain OAuth consent and their separate Work actor.
+# Generic peer messaging uses the existing agent connector's shared send/read.
 _TEXT_ID = {"type": "string", "minLength": 1, "maxLength": 256}
-_SEQUENCE = {"type": "integer", "minimum": 1}
-_KEY = {"type": "string", "minLength": 8, "maxLength": 128}
-WORKSHOP_MESSAGE_LIMIT = 1500  # one queued task carries 2000 characters
 WORKSHOP_TOOLS = [
-    {"name": "workshop.lens", "inputSchema": _NO_ARGS, "description": (
-        "The founder's Workshop as your agent sees it: its newest messages and "
-        "your own agent id. Needs ArchHub open and signed in on his desktop.")},
-    {"name": "workshop.agents", "inputSchema": _NO_ARGS, "description": (
-        "Agents seen in the Workshop's recent messages, and your own agent id.")},
-    {"name": "workshop.read", "description": (
-        "A page of Workshop messages visible to your agent, newest first; pass "
-        "before=<sequence> for older ones."),
-     "inputSchema": {"type": "object", "properties": {
-         "limit": {"type": "integer", "minimum": 1, "maximum": 20},
-         "before": _SEQUENCE,
-     }, "additionalProperties": False}},
-    {"name": "workshop.message", "description": "One exact Workshop message by id and sequence.",
-     "inputSchema": {"type": "object", "properties": {
-         "message_id": _TEXT_ID, "sequence": _SEQUENCE,
-     }, "required": ["message_id", "sequence"], "additionalProperties": False}},
-    {"name": "workshop.post", "description": (
-        "Post a message in the Workshop as your agent, to one agent id. Reuse the "
-        "same idempotency_key when retrying after a lost reply."),
-     "inputSchema": {"type": "object", "properties": {
-         "target": _TEXT_ID,
-         "message": {"type": "string", "minLength": 1, "maxLength": WORKSHOP_MESSAGE_LIMIT},
-         "idempotency_key": _KEY,
-         "reply_to": _TEXT_ID,
-     }, "required": ["target", "message", "idempotency_key"], "additionalProperties": False}},
-    {"name": "workshop.acknowledge", "description": (
-        "Reply that you read a message addressed to your agent. Does not claim completion."),
-     "inputSchema": {"type": "object", "properties": {
-         "message_id": _TEXT_ID, "sequence": _SEQUENCE, "idempotency_key": _KEY,
-     }, "required": ["message_id", "sequence", "idempotency_key"], "additionalProperties": False}},
     {"name": "work.claim", "description": (
         "Claim one exact Governed Work (for example Work assigned to your agent). "
         "A claim grants no file writes or execution."),
      "inputSchema": {"type": "object", "properties": {"work_root": _TEXT_ID},
-                     "required": ["work_root"], "additionalProperties": False}},
+                     "required": ["work_root"], "additionalProperties": False}}
 ]
 WORKSHOP_TOOL_NAMES = frozenset(tool["name"] for tool in WORKSHOP_TOOLS)
 
@@ -183,12 +146,8 @@ SESSION_TOOLS = [
      }, "required": ["title"], "additionalProperties": False}},
 ]
 SESSION_TOOL_NAMES = frozenset(tool["name"] for tool in SESSION_TOOLS)
-WORKSHOP_METHODS = {
-    "workshop.lens": "workshop_lens", "workshop.agents": "list_agents",
-    "workshop.read": "read_messages", "workshop.message": "read_message",
-    "workshop.post": "send_message", "workshop.acknowledge": "acknowledge_message",
-    "work.claim": "claim_work",
-}
+WORKSHOP_METHODS = {"work.claim": "claim_work"}
+
 WORKSHOP_SCOPE = "mcp:workshop"
 
 
@@ -210,41 +169,8 @@ def _bounded_text(arguments: dict, key: str, limit: int, *, required: bool = Tru
     return value
 
 
-def _sequence(arguments: dict, key: str, *, required: bool = True):
-    value = arguments.get(key)
-    if value is None and not required:
-        return None
-    if type(value) is not int or value < 1:
-        raise ValueError("%s must be a positive message sequence" % key)
-    return value
-
-
 def workshop_arguments(name: str, arguments: dict) -> dict:
     """Only the declared parameters travel to the desktop, checked and bounded."""
-    if name in ("workshop.lens", "workshop.agents"):
-        return {}
-    if name == "workshop.read":
-        limit = arguments.get("limit")
-        kept = {"limit": max(1, min(limit, 20)) if type(limit) is int else 10}
-        before = _sequence(arguments, "before", required=False)
-        if before is not None:
-            kept["before"] = before
-        return kept
-    if name == "workshop.message":
-        return {"message_id": _bounded_text(arguments, "message_id", 256),
-                "sequence": _sequence(arguments, "sequence")}
-    if name == "workshop.post":
-        kept = {"target": _bounded_text(arguments, "target", 256),
-                "message": _bounded_text(arguments, "message", WORKSHOP_MESSAGE_LIMIT),
-                "idempotency_key": _bounded_text(arguments, "idempotency_key", 128)}
-        reply_to = _bounded_text(arguments, "reply_to", 256, required=False)
-        if reply_to is not None:
-            kept["reply_to"] = reply_to
-        return kept
-    if name == "workshop.acknowledge":
-        return {"message_id": _bounded_text(arguments, "message_id", 256),
-                "sequence": _sequence(arguments, "sequence"),
-                "idempotency_key": _bounded_text(arguments, "idempotency_key", 128)}
     if name == "work.claim":
         return {"work_root": _bounded_text(arguments, "work_root", 256)}
     raise KeyError(name)

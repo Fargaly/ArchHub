@@ -237,13 +237,6 @@ def release_session(owner, request, peer):
         # Verified requests retain their actor until the entire dispatch ends,
         # including model/provider calls outside mutation_lock. Another actor's
         # work is not a reason to poison this owner's clean close.
-        relay = owner.native_recipient_relay
-        if relay is not None:
-            with relay._channel_lock:
-                if actor in relay._channels or actor in relay._attaching:
-                    raise AuthorizationDenied("native release requires explicit Session Link detach")
-                if any(actor in peers for peers in relay._pending_jobs.values()):
-                    raise AuthorizationDenied("native release waits for Session Link delivery settlement")
         # Never evict a still-valid recovery receipt to make room for a release.
         receipts = owner._machine_agent_release_receipts
         if len(receipts) >= RECEIPT_LIMIT:

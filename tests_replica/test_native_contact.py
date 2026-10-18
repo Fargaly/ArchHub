@@ -42,7 +42,7 @@ def test_everyone_uses_two_real_graph_contacts_and_one_history_without_replay(ow
         {'app':'opencode','id':'broadcast-opencode','title':'OpenCode'}]
     class TwoTransports(Transport):
         def discover(self, **kwargs):return {'status':'ok','recipients':endpoints}
-    transport=TwoTransports();owner.native_recipient_relay._transport=transport
+    transport=TwoTransports();owner._cloud_relay_transport=owner.native_work_delivery._transport=transport
     browser=owner._resolve_browser_session(owner.browser_session_token)
     registry,store=owner.universal_registry,owner.universal_store
     owner.conversation_content._path=tmp_path/'broadcast-real-history.sqlite3'
@@ -64,23 +64,22 @@ def test_everyone_uses_two_real_graph_contacts_and_one_history_without_replay(ow
         'reply_to':None,'idempotency_key':'everyone-two-contacts','created_at':None}
     revision=store.revision
     sent=send_browser_workshop(owner,browser,body,browser_guard=lambda:None)
-    assert {row['recipient'] for row in sent['native_delivery']}==set(contacts)
-    assert all(row['state']=='started' for row in sent['native_delivery'])
+    assert sent['native_delivery']==[]
     deadline=time.monotonic()+5
-    while owner.native_recipient_relay._pending_jobs and time.monotonic()<deadline:time.sleep(.01)
-    assert owner.native_recipient_relay.last_error is None
-    assert {row[0]['id'] for row in transport.calls}=={row['id'] for row in endpoints}
-    assert len(transport.calls)==2 and store.revision==revision
+    while owner.native_work_delivery._pending_jobs and time.monotonic()<deadline:time.sleep(.01)
+    assert owner.native_work_delivery.last_error is None
+    assert transport.calls==[]
+    assert len(transport.calls)==0 and store.revision==revision
     assert send_browser_workshop(owner,browser,body,browser_guard=lambda:None)==sent
-    assert len(transport.calls)==2
+    assert len(transport.calls)==0
     page=owner.conversation_content.page_for_workshop_browser(owner.browser_session_token,
         binding=browser,space_root=registry.workshop_root)
-    assert 'Fixture reply' in str(page) and 'Review this together' in str(page)
+    assert 'Fixture reply' not in str(page) and 'Review this together' in str(page)
 
 
 
 def test_contact_creates_atomic_user_node_and_relays_once_in_same_content(owner,tmp_path):
-    transport=Transport();owner.native_recipient_relay._transport=transport
+    transport=Transport();owner._cloud_relay_transport=owner.native_work_delivery._transport=transport
     browser=owner._resolve_browser_session(owner.browser_session_token)
     registry=owner.universal_registry
     from nodelang.conversation_content import prepare_empty_content_binding
@@ -109,12 +108,12 @@ def test_contact_creates_atomic_user_node_and_relays_once_in_same_content(owner,
     assert rows[0]['root']==bound['contact'] and rows[0]['connected'] is True
     body={'root':bound['root'],'scope':bound['scope'],'contact':bound['contact'],
         'binding_digest':bound['binding_digest'],'text':'User message','idempotency_key':'contact-one'}
-    result=contact.send_native_contact(owner,browser,body,browser_guard=lambda:None)
+    result=contact.send_native_contact(owner,browser,body,browser_guard=lambda:None,execute_work=True)
     deadline=time.monotonic()+3
-    while owner.native_recipient_relay._pending_jobs and time.monotonic()<deadline:time.sleep(.01)
-    assert owner.native_recipient_relay.last_error is None
+    while owner.native_work_delivery._pending_jobs and time.monotonic()<deadline:time.sleep(.01)
+    assert owner.native_work_delivery.last_error is None
     assert len(transport.calls)==1
-    again=contact.send_native_contact(owner,browser,body,browser_guard=lambda:None)
+    again=contact.send_native_contact(owner,browser,body,browser_guard=lambda:None,execute_work=True)
     assert again['message_id']==result['message_id']
     assert again['relay']['state']=='already_recorded'
     assert len(transport.calls)==1 and not owner._machine_agent_sessions
@@ -122,14 +121,14 @@ def test_contact_creates_atomic_user_node_and_relays_once_in_same_content(owner,
     assert 'Fixture reply' in str(page)
     # A process change after binding may not redirect the persisted contact.
     transport.endpoint={**transport.endpoint,'pid':124}
-    changed=contact.send_native_contact(owner,browser,{**body,'idempotency_key':'changed-endpoint'},browser_guard=lambda:None)
+    contact.send_native_contact(owner,browser,{**body,'idempotency_key':'changed-endpoint'},browser_guard=lambda:None,execute_work=True)
     deadline=time.monotonic()+3
-    while owner.native_recipient_relay._pending_jobs and time.monotonic()<deadline:time.sleep(.01)
+    while owner.native_work_delivery._pending_jobs and time.monotonic()<deadline:time.sleep(.01)
     assert len(transport.calls)==1
     transport.endpoint={**transport.endpoint,'pid':123};transport.status='held'
-    held=contact.send_native_contact(owner,browser,{**body,'idempotency_key':'held-endpoint'},browser_guard=lambda:None)
+    contact.send_native_contact(owner,browser,{**body,'idempotency_key':'held-endpoint'},browser_guard=lambda:None,execute_work=True)
     deadline=time.monotonic()+3
-    while owner.native_recipient_relay._pending_jobs and time.monotonic()<deadline:time.sleep(.01)
+    while owner.native_work_delivery._pending_jobs and time.monotonic()<deadline:time.sleep(.01)
     assert len(transport.calls)==2
     page=owner.conversation_content.page_for_workshop_browser(owner.browser_session_token,binding=browser,space_root=bound['root'])
     assert 'held or refused' in str(page)
@@ -148,12 +147,12 @@ def test_contact_creates_atomic_user_node_and_relays_once_in_same_content(owner,
     transport.status='replied'
     child_body={**body,'root':child['root'],'contact':child_bound['contact'],
         'binding_digest':child_bound['binding_digest'],'idempotency_key':'child-one'}
-    child_sent=contact.send_native_contact(owner,browser,child_body,browser_guard=lambda:None)
+    child_sent=contact.send_native_contact(owner,browser,child_body,browser_guard=lambda:None,execute_work=True)
     deadline=time.monotonic()+3
-    while owner.native_recipient_relay._pending_jobs and time.monotonic()<deadline:time.sleep(.01)
-    assert owner.native_recipient_relay.last_error is None
+    while owner.native_work_delivery._pending_jobs and time.monotonic()<deadline:time.sleep(.01)
+    assert owner.native_work_delivery.last_error is None
     assert len(transport.calls)==3
-    child_retry=contact.send_native_contact(owner,browser,child_body,browser_guard=lambda:None)
+    child_retry=contact.send_native_contact(owner,browser,child_body,browser_guard=lambda:None,execute_work=True)
     assert child_retry['message_id']==child_sent['message_id'] and len(transport.calls)==3
     child_page=owner.conversation_content.page_for_workshop_browser(owner.browser_session_token,
         binding=browser,space_root=child['root'])
@@ -171,7 +170,7 @@ def test_discovery_projection_strips_transport_credentials_and_addresses():
             assert kwargs=={'timeout_seconds':3,'apps':['claude']}
             return {'status':'ok','recipients':[{'app':'claude','id':'session','title':'Chat',
                 'socket':'private-pipe','token':'secret-sentinel','keyPath':'private-key-file'}]}
-    result=contact.discover_native_agents(NS(native_recipient_relay=NS(_transport=Discovery())))
+    result=contact.discover_native_agents(NS(native_work_delivery=NS(_transport=Discovery())))
     assert result['rows'][0]['selectable'] is True
     assert all(value not in str(result) for value in ('secret-sentinel','private-key-file','private-pipe'))
 
@@ -179,7 +178,7 @@ def test_discovery_projection_strips_transport_credentials_and_addresses():
 def test_discovery_ambiguous_identity_cannot_be_selected():
     target={'app':'claude','id':'same','pid':1}
     transport=NS(discover=lambda **kwargs:{'status':'ok','recipients':[target,{**target,'pid':2}]})
-    result=contact.discover_native_agents(NS(native_recipient_relay=NS(_transport=transport)))
+    result=contact.discover_native_agents(NS(native_work_delivery=NS(_transport=transport)))
     assert len(result['rows'])==1 and result['rows'][0]['selectable'] is False
 
 

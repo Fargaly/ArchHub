@@ -44,9 +44,9 @@ test('PASS4 avatar picker is a Send-height chip; keyboard selection routes exact
     await key(ui.doc.activeElement,'Enter');assert.equal(ui.target(),'agent-b');assert.equal(ui.doc.activeElement,chip());
     assert.ok(chip().querySelector('[data-workshop-avatar="agent-b"]'));
     await ui.input('Check the selected labels');await ui.click(ui.button('Send'));
-    assert.deepEqual(plain(f.calls.find(c=>c[0]==='workshopAction')),['workshopAction','room-a','send',null,{message:'Check the selected labels',target:'agent-b'}]);
+    assert.deepEqual(plain(f.calls.find(c=>c[0]==='sendWorkshopMessage')),['sendWorkshopMessage','room-a',{message:'Check the selected labels',target:'agent-b'}]);
     await ui.input('@Claude Code Check again');await ui.click(ui.button('Send'));
-    assert.equal(f.calls.filter(c=>c[0]==='workshopAction').at(-1)[4].target,'agent-a');
+    assert.equal(f.calls.filter(c=>c[0]==='sendWorkshopMessage').at(-1)[2].target,'agent-a');
     await key(chip(),'ArrowUp');assert.equal(text(ui.doc.activeElement),'Codex');
     await key(ui.doc.activeElement,'Home');assert.equal(text(ui.doc.activeElement),'Claude Code');
     await key(ui.doc.activeElement,'ArrowUp');assert.equal(text(ui.doc.activeElement),'Codex');

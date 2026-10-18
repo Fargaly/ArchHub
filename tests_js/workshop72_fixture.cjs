@@ -35,7 +35,7 @@ function fixture() {
     refreshNativeWork:spy('refreshNativeWork'),nativeAgents:async () => ({contacts:[]}),
     approveNativeWork:spy('approveNativeWork'),nativeWorkAction:spy('nativeWorkAction'),
     refreshTopologyCanvas:spy('refreshTopologyCanvas'),workshopWorkflow:spy('workshopWorkflow'),
-    workshopAction:spy('workshopAction'),selectTopology:spy('selectTopology')};
+    sendWorkshopMessage:spy('sendWorkshopMessage'),selectTopology:spy('selectTopology')};
   return {state,node,authority,calls,work};
 }
 

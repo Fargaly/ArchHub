@@ -688,7 +688,7 @@ const WorkshopView = ({ state, descriptor, target = '', setTarget = () => {}, se
     } else if (address.target.startsWith('model:')) {
       if (!modelAgent || address.target !== 'model:' + modelAgent.root) throw new Error('Refresh this model before sending.');
       await authority.sendModelConversation(descriptor.root, modelAgent, address.message);
-    } else await authority.workshopAction(descriptor.root, 'send', null, {target:address.target, message:address.message,
+    } else await authority.sendWorkshopMessage(descriptor.root, {target:address.target, message:address.message,
       ...(address.target && graphNodes.some(node=>node.id===activeTask?.work && node.engine==='work') ? {work:activeTask.work} : {})});
     if (current()) { setTarget(address.target); setDraft(''); }
   });

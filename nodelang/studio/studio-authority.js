@@ -318,52 +318,6 @@
     const api = {
       getSnapshot: () => snapshot,
       subscribe(notify) { listeners.add(notify); return () => listeners.delete(notify); },
-      async workshopAction(root, action, commandId, details = {}) {
-        const scope = canvas?.root, graph = identity, epoch = scopeEpoch;
-        if (!snapshot?.workshops.some(row => row.root === root)) fail('This Workshop is no longer on the canvas.');
-        let storage, pendingKey, records;
-        if (!commandId) {
-          if (!workshop?.owner || !workshop?.view || workshop.root !== root) fail('Refresh the Workshop before sending.');
-          storage = pendingStorage || global.sessionStorage;
-          if (!storage) fail('Session storage is required to preserve pending Workshop actions.');
-          pendingKey = await hash(JSON.stringify({graph, owner:workshop.owner, view:workshop.view,
-            root, action, target:details.target || '', message:details.message || '',
-            execution_root:details.execution_root || ''}));
-          if (scopeEpoch !== epoch || canvas.root !== scope || identity !== graph) fail('The workspace changed before sending.');
-          records = JSON.parse(storage.getItem('archhub.workshop.pending.v1') || '{}');
-          if (!records || Array.isArray(records) || typeof records !== 'object' ||
-              Object.entries(records).some(([key, value]) => !/^[a-f0-9]{64}$/.test(key) ||
-                typeof value !== 'string' || !value || value.length > 128)) fail('Pending Workshop records need recovery.');
-          if (!records[pendingKey] && Object.keys(records).length >= 32) fail('Reconcile pending Workshop actions before creating more.');
-          commandId = records[pendingKey] || uuid();
-          records[pendingKey] = commandId;
-          // Only a request digest and opaque ID persist; no message or credential.
-          storage.setItem('archhub.workshop.pending.v1', JSON.stringify(records));
-        }
-        const result = await post('/api/universal/workshop', {...details,
-          root, scope, action, command_id: commandId});
-        if (result.ok === false) fail(result.error || 'The Workshop action was refused.');
-        let warning = '';
-        if (storage) {
-          try {
-            const current = JSON.parse(storage.getItem('archhub.workshop.pending.v1') || '{}');
-            if (current[pendingKey] === commandId) delete current[pendingKey];
-            storage.setItem('archhub.workshop.pending.v1', JSON.stringify(current));
-          } catch (_) { warning = 'Action accepted. Pending request recovery could not be updated.'; }
-        }
-        const accepted = {...result, accepted:true, original_graph:graph, original_scope:scope, original_workshop:root, warning};
-        if (scopeEpoch !== epoch || canvas.root !== scope || identity !== graph) {
-          workshopNotice = 'Action accepted in the previous workspace. Open it to see the result.';
-          project();
-          return {...accepted, navigated:true};
-        }
-        workshopNotice = warning;
-        // Reconcile the accepted action without waiting on an obsolete poll.
-        pageEpoch += 1; pageTarget = {root, before:null}; workshop = null;
-        project();
-        await api.refreshWorkshop(root).catch(() => {});
-        return accepted;
-      },
       refreshWorkshop: root => readWorkshop(root, pageTarget?.root === root ? pageTarget.before : null),
       openWorkshop: root => readWorkshop(root, pageTarget?.root === root ? pageTarget.before : null, true),
       async loadOlderWorkshop(root) {

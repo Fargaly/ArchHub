@@ -57,7 +57,7 @@ function fixture(waiting=true, setup = () => {}) {
     refreshNativeWork:async() => state.nativeWork, showWorkshopFeed:async() => state.workshop,
     nativeAgents:async() => ({status:'ok', contacts:[]}), sendModelConversation:async() => ({accepted:true}),
     approveNativeWork:async(...args) => { calls.push(['approveNativeWork', ...args]); return {}; },
-    workshopAction:async(...args) => { calls.push(['workshopAction', ...args]); return {}; }};
+    sendWorkshopMessage:async(...args) => { calls.push(['sendWorkshopMessage', ...args]); return {}; }};
   setup({state, authority, calls});
   return {state, authority, calls};
 }

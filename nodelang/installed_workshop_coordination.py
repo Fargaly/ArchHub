@@ -1,14 +1,8 @@
-"""Existing coordination tools over one pre-bound installed Workshop owner.
-
-No enrollment, service startup, provider execution, or new message authority lives
-here. Ordinary message IDs are not graph Work roots. Explicit acknowledgement
-replies record a caller's statement; they do not change read state or settle Work.
-"""
+"""Shared Workshop mailbox plus the separate governed Work reads and claims."""
 
 from collections.abc import Mapping
 import math
 from pathlib import Path
-import re
 import time
 
 from .application_machine_transport import (
@@ -21,11 +15,9 @@ _OWNER_FIELDS = (
     "database", "pipe", "process_id", "started_at", "key_id", "key_version",
 )
 _METHODS = frozenset({
-    "register_session", "list_agents", "workshop_lens", "scope_lens",
-    "send_message", "read_messages", "read_message", "acknowledge_message", "claim_work",
+    "read_messages", "read_message", "claim_work",
     "private_root_grant_status",
 })
-_WORK_REF_RE = re.compile(r"^assembly-instance:[0-9a-f]{32}$")
 
 
 def _text(value, label, maximum=512):
@@ -46,29 +38,8 @@ def _shape(values, required=(), optional=()):
         raise ValueError("installed Workshop operation has invalid parameters")
 
 
-def _category(value):
-    if value not in {"note", "plan", "research"}:
-        raise ValueError("invalid Workshop entry category")
-    return value
-
-
-def _refs(value):
-    if type(value) is not list or len(value) > 8:
-        raise ValueError("invalid Workshop refs")
-    for item in value:
-        if type(item) is not str or not _WORK_REF_RE.fullmatch(item):
-            raise ValueError("invalid Workshop ref")
-    return list(value)
-
-
-def _evidence(value):
-    if type(value) is not list or len(value) > 8:
-        raise ValueError("invalid Workshop evidence")
-    return [_text(item, "Workshop evidence item", 512) for item in value]
-
-
 class InstalledWorkshopCoordinationClient:
-    """A backend for clean_coordination_mcp.build_server(client=...).
+    """The internal governed Work and host adapter for the installed application.
 
     Wiring must supply an exclusively owned client bound from authenticated stdio
     identity. Tool parameters cannot select a caller or enroll another session.
@@ -124,17 +95,14 @@ class InstalledWorkshopCoordinationClient:
             raise MachineTransportError("installed Workshop response is invalid")
         return result
 
-    def _page(self, values, deadline, *, workshop=False):
-        if workshop:
-            result = self._request("GET", "/api/universal/workshop", {}, deadline)
-        else:
-            body = {"space": self._descriptor.workshop_root,
-                    "limit": _integer(values.get("limit", 50), "message limit", 1, 100)}
-            if values.get("before") is not None:
-                body["before"] = _integer(values["before"], "message sequence cursor", 1, 2**63 - 1)
-            result = self._request("GET", "/api/universal/deliberation", body, deadline)
+    def _page(self, values, deadline):
+        body = {"space": self._descriptor.workshop_root,
+                "limit": _integer(values.get("limit", 50), "message limit", 1, 100)}
+        if values.get("before") is not None:
+            body["before"] = _integer(values["before"], "message sequence cursor", 1, 2**63 - 1)
+        result = self._request("GET", "/api/universal/deliberation", body, deadline)
         if (result.get("application") != self._descriptor.application_root
-                or result.get("workshop" if workshop else "space") != self._descriptor.workshop_root
+                or result.get("space") != self._descriptor.workshop_root
                 or result.get("agent_session") != self._session
                 or result.get("storage") != "conversation-content"
                 or type(result.get("entries")) is not list):
@@ -162,37 +130,6 @@ class InstalledWorkshopCoordinationClient:
                 "agent_session": self._session, "storage": "conversation-content",
                 "revision": page["revision"], "message": entries[0]}
 
-    def _send(self, *, target, message, idempotency_key, reply_to, deadline,
-              category="note", refs=None, evidence=None, capture=None):
-        category = _category(category)
-        refs = _refs([] if refs is None else refs)
-        evidence = _evidence([] if evidence is None else evidence)
-        if capture is not None:
-            # The server reads and records the file itself; one research entry, one Work.
-            if (type(capture) is not dict or set(capture) != {"path"}
-                    or type(capture["path"]) is not str or not capture["path"].strip()
-                    or len(capture["path"]) > 1024 or category != "research" or len(refs) != 1):
-                raise ValueError("invalid Workshop source capture")
-            capture = {"path": capture["path"]}
-        target = "" if target == "" and category in {"plan", "research"} else _text(target, "recipient root")
-        recipients = [] if target == "" else [target]
-        body = {"category": category, "text": _text(message, "message", 65536),
-                "refs": refs, "evidence": evidence, "recipients": recipients,
-                "reply_to": None if reply_to is None else _text(reply_to, "ordinary reply message ID"),
-                "idempotency_key": _text(idempotency_key, "idempotency key"), "created_at": None}
-        if capture is not None:
-            body["capture"] = capture
-        result = self._request("POST", "/api/universal/workshop", body, deadline)
-        if (result.get("workshop") != self._descriptor.workshop_root
-                or result.get("storage") != "conversation-content"
-                or result.get("actor") != self._session
-                or result.get("recipients") != recipients
-                or result.get("reply_to") != reply_to
-                or type(result.get("message_id")) is not str or not result["message_id"]
-                or result.get("root") != result["message_id"]):
-            raise MachineTransportError("ordinary Workshop send response identity changed")
-        return {**result, "ok": True}
-
     def call(self, method: str, parameters: Mapping[str, object] | None = None,
              *, timeout_seconds: float = 35.0) -> dict[str, object]:
         if (type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds)
@@ -205,59 +142,19 @@ class InstalledWorkshopCoordinationClient:
                 if method == "wait_agent":
                     raise ValueError("clean graph revision cursors are unsupported; use read_messages with an ordinary sequence cursor")
                 if method == "mark_message_read":
-                    raise ValueError("use acknowledge_message with an exact ordinary message_id and sequence; no read-state transition is available")
+                    raise ValueError("no read-state transition is available; use read_message for the exact ordinary message")
                 if method == "claim_workshop_message":
                     raise ValueError("ordinary messages are not Work; use claim_work with an exact work_root")
                 raise ValueError("this coordination operation is unsupported by the installed Workshop backend")
             if parameters is not None and not isinstance(parameters, Mapping):
                 raise ValueError("Workshop parameters must be a mapping")
             values = dict(parameters or {})
-            if method in {"register_session", "list_agents", "workshop_lens", "scope_lens"}:
-                _shape(values, ("scope_root",) if method == "scope_lens" else ())
-                if method == "scope_lens" and values["scope_root"] != self._descriptor.workshop_root:
-                    raise ValueError("only the existing Workshop scope is supported")
-                page = self._page({}, deadline, workshop=True)
-                if method in {"workshop_lens", "scope_lens"}:
-                    return {**page, "self": self._session, "scope": self._descriptor.workshop_root}
-                base = {"ok": True, "application": page["application"], "self": self._session,
-                        "scope": self._descriptor.workshop_root, "revision": page["revision"]}
-                if method == "register_session":
-                    return {**base, "registration": "existing-bound-session"}
-                observed = {self._session}
-                for entry in page["entries"]:
-                    if type(entry) is dict:
-                        observed.update(root for root in [entry.get("actor"), *(entry.get("recipients") or [])]
-                                        if type(root) is str and root)
-                return {**base, "agents": [{"root": root} for root in sorted(observed)],
-                        "coverage": "bound self and identities observed in this permitted message page",
-                        "complete_roster": False, "presence_verified": False}
             if method == "read_messages":
                 _shape(values, optional=("limit", "before"))
                 return self._page(values, deadline)
-            if method in {"read_message", "acknowledge_message"}:
-                required = ("message_id", "sequence") + (("idempotency_key",) if method == "acknowledge_message" else ())
-                _shape(values, required)
-                if method == "acknowledge_message":
-                    _text(values["idempotency_key"], "idempotency key")
-                read = self._read_message(values, deadline)
-                if method == "read_message":
-                    return read
-                original = read["message"]
-                if self._session not in (original.get("recipients") or []):
-                    raise MachineTransportError("only the addressed session may acknowledge this directed message")
-                result = self._send(target=original["actor"],
-                    message="Read acknowledgement for ordinary message " + values["message_id"],
-                    idempotency_key=values["idempotency_key"], reply_to=values["message_id"], deadline=deadline)
-                return {**result, "acknowledged_message_id": values["message_id"],
-                        "acknowledgement": "explicit-reply", "read_state_changed": False}
-            if method == "send_message":
-                _shape(values, ("target", "message", "idempotency_key"),
-                       ("reply_to", "category", "refs", "evidence", "capture"))
-                return self._send(target=values["target"], message=values["message"],
-                    idempotency_key=values["idempotency_key"], reply_to=values.get("reply_to"),
-                    deadline=deadline, category=values.get("category", "note"),
-                    refs=values.get("refs"), evidence=values.get("evidence"),
-                    capture=values.get("capture"))
+            if method == "read_message":
+                _shape(values, ("message_id", "sequence"))
+                return self._read_message(values, deadline)
             if method == "private_root_grant_status":
                 _shape(values, ("root_id",))
                 root_id = _text(values["root_id"], "private root id", 64)
@@ -304,3 +201,138 @@ class InstalledWorkshopInboxReader(InstalledWorkshopCoordinationClient):
 
 
 __all__ = ["InstalledWorkshopCoordinationClient", "InstalledWorkshopInboxReader"]
+
+
+MAILBOX_ROUTES = frozenset({
+    ("POST", "/api/universal/agent-mail/send"),
+    ("GET", "/api/universal/agent-mail/read"),
+})
+_mailbox_now = time.monotonic
+
+
+def _recent_mailbox_peers(history, space):
+    """One bounded public tail, latest key per display address; never a roster."""
+    import re
+    from .agent_runtime_registry import RUNTIMES
+    peers = {}
+    for row in history._db.execute(
+            "SELECT author,sequence FROM messages WHERE conversation_id=? AND public=1 "
+            "ORDER BY sequence DESC LIMIT 100", (space,)):
+        label, separator, key = row["author"].removesuffix("]").rpartition(" [")
+        if (not separator or label == "BABOOM" or label in peers
+                or not re.fullmatch(r"agent:\d+:\d+(?::[0-9a-f]{64})?", key)):
+            continue
+        runtime = next((name for name, definition in RUNTIMES.items()
+            if label.startswith(definition["label"] + " / ")), "mcp")
+        peers[label] = {"label": label, "sender_key": key, "runtime": runtime,
+                        "sequence": row["sequence"]}
+    return list(peers.values())
+
+
+def dispatch_mailbox(owner, request, peer):
+    """Authenticated local transport only: a public room, never Work authority.
+
+    The OS supplies the connection's identity. Session/body fields cannot select
+    another sender. Public ordinary messages share the existing Workshop table;
+    private messages and other conversations are never included in this API.
+    """
+    from .application_machine_transport import MachinePipePeer
+    from .cell_authorization import AuthorizationDenied
+    from .conversation_content import read_content_binding
+    from .universal_application import _require_application_authorization
+    from uuid import uuid4
+
+    route = (request.get("method"), request.get("path"))
+    if route not in MAILBOX_ROUTES or type(peer) is not MachinePipePeer:
+        raise AuthorizationDenied("shared messages require an authenticated local pipe")
+    if request.get("session") != {}:
+        raise AuthorizationDenied("shared messages do not accept an alternate sender")
+    body = request.get("body")
+    send = route[0] == "POST"
+    fields = {"to", "text"} if send else {"since"}
+    if type(body) is not dict or set(body) not in (fields, fields | {"context"}):
+        raise ValueError("shared message arguments are invalid")
+    name = "agent:%d:%d" % (peer.pid, round(peer.created_at * 1000000))
+    context = body.get("context", {})
+    if type(context) is not dict or (context and (len(context) != 1 or not set(context) <= {"threadId", "ai.opencode/sessionID"})):
+        raise ValueError("calling session metadata is invalid")
+    if context:
+        from hashlib import sha256
+        key, value = next(iter(context.items()))
+        if type(value) is not str or not value or "\0" in value or len(value.encode("utf-8")) > 256:
+            raise ValueError("calling session metadata is invalid")
+        # The peer prefix is always OS-observed. Another process cannot claim
+        # this connector's name, even with identical vendor correlation data.
+        name += ":" + sha256((key + ":" + value).encode("utf-8")).hexdigest()
+    import os
+    from .agent_runtime_registry import mailbox_label
+    label, _runtime = ("BABOOM", "baboom") if peer.pid == os.getpid() else mailbox_label(peer, context)
+    identity = {"sender_key": name, "sender_label": label}
+    name = label + " [" + name + "]"
+    if send:
+        target = _text(body["to"], "recipient name", 512)
+        if "\n" in target or "\r" in target:
+            raise ValueError("recipient name must be one line")
+        text = _text(body["text"], "message", 65536)
+        content = _text("To " + target + ":\n" + text, "addressed message", 65536)
+    else:
+        _integer(body["since"], "message cursor", 0, 2**63 - 1)
+    with owner.mutation_lock:
+        service = owner.conversation_content
+        service._require_live_owner()
+        registry, store = owner.universal_registry, owner.universal_store
+        authority = registry.authorization
+        context = authority.session.context()
+        with authority.broker.live_context(context), store.stable_snapshot() as snapshot:
+            space = registry.workshop_root
+            binding = read_content_binding(snapshot, registry.deliberation_protocol,
+                application_root=registry.application_root, space_root=space)
+            history = service._history_for(binding)
+
+            def guard():
+                service._require_live_owner()
+                authority.broker.resolve(context)
+                if not service.belongs_to(store, registry) or store.revision != snapshot.revision:
+                    raise AuthorizationDenied("Workshop authority changed")
+                _require_application_authorization(snapshot, registry,
+                    "edit" if send else "read", space, authentication_context=context)
+                if owner.universal_checkpoint_guard is not None:
+                    owner.universal_checkpoint_guard.require_healthy()
+                owner.require_universal_http_route("POST" if send else "GET",
+                    "/api/universal/workshop", authentication_context=context)
+
+            guard()
+            if send:
+                from collections import deque
+                now = _mailbox_now()
+                windows = owner._agent_mail_send_windows
+                peer_key = (peer.pid, peer.created_at)
+                if peer_key not in windows and len(windows) >= 1024:
+                    for key in tuple(windows):
+                        if not windows[key] or windows[key][-1] <= now - 60:
+                            del windows[key]
+                    if len(windows) >= 1024:
+                        raise AuthorizationDenied("mailbox peer budget exhausted")
+                window = windows.setdefault(peer_key, deque())
+                while window and window[0] <= now - 60:
+                    window.popleft()
+                if len(window) >= 30:
+                    raise AuthorizationDenied("mailbox permits 30 messages per minute per peer")
+                # Addressing is visible text in the ONE shared room, not a private
+                # recipients ACL or a native delivery/relay promise.
+                row = history.append(space, author=name, content=content,
+                    category=registry.workshop_category_roots["note"], recipients=(), idempotency_key=uuid4().hex,
+                    before_commit=guard)
+                window.append(_mailbox_now())
+                return {**identity, "sender": name, "to": target, "text": text,
+                        "sequence": row["sequence"], "message_id": row["id"]}
+            with history._transaction():
+                cursor = history._db.execute(
+                    "SELECT * FROM messages WHERE conversation_id=? AND public=1 "
+                    "AND sequence>? ORDER BY sequence LIMIT 101", (space, body["since"]))
+                # Reserve room for the bounded recent-peer metadata envelope.
+                rows, more = history._collect(cursor, 100, 180000)
+                peers = _recent_mailbox_peers(history, space)
+                guard()
+            return {**identity, "sender": name, "messages": rows, "peers": peers, "more": more,
+                    "next_since": rows[-1]["sequence"] if rows else body["since"]}

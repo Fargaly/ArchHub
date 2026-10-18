@@ -59,7 +59,7 @@ function fixture({workflow=false, approval=null, notice='', deliveryState=null, 
     refreshNativeWork:async() => state.nativeWork, showWorkshopFeed:async() => state.workshop,
     nativeAgents:async() => ({status:'ok', contacts:[]}), sendModelConversation:async() => ({accepted:true}),
     approveNativeWork:async(...args) => { calls.push(['approveNativeWork', ...args]); return {}; },
-    workshopAction:async(...args) => { calls.push(['workshopAction', ...args]); return {}; },
+    sendWorkshopMessage:async(...args) => { calls.push(['sendWorkshopMessage', ...args]); return {}; },
     workshopWorkflow:async(...args) => { calls.push(['workshopWorkflow', ...args]); return {ok:true}; }};
   if (parameterEdit) authority.workshopWorkflowParam = async (...args) => {
     calls.push(['workshopWorkflowParam', ...args]);
@@ -165,7 +165,7 @@ test('gap6 retained transport reports started only for the exact pending deliver
   for(const [state,word] of [['started','delivery started'],['replied','replied']]){
     const fx=transport({post:(_url,body)=>({ok:true,workshop:body.root,root:'entry-a',idempotency_key:body.idempotency_key,revision:5,
       native_delivery:[{recipient:'agent-a',state}]})});
-    await fx.api.refreshWorkshop('room-a');await fx.api.workshopAction('room-a','send',null,{target:'',message:'Review the result'});
+    await fx.api.refreshWorkshop('room-a');await fx.api.sendWorkshopMessage('room-a',{target:'',message:'Review the result'});
     assert.match(fx.api.getSnapshot().workshopNotice,new RegExp(word));
     if(state==='replied')assert.doesNotMatch(fx.api.getSnapshot().workshopNotice,/delivery started/);
     assert.equal(fx.posts.length,1);

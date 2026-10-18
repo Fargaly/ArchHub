@@ -86,7 +86,7 @@ def test_work_created_without_a_point_takes_a_free_slot_beside_the_other_work():
 def test_a_new_contact_is_drawn_in_the_workbench_not_on_the_canvas(owner, tmp_path):
     from nodelang.conversation_content import prepare_empty_content_binding
     from nodelang.conversation_history import ConversationHistoryStore
-    owner.native_recipient_relay._transport = Transport()
+    owner._cloud_relay_transport = owner.native_work_delivery._transport = Transport()
     browser = owner._resolve_browser_session(owner.browser_session_token)
     registry = owner.universal_registry
     owner.conversation_content._path = tmp_path / "contact-history.sqlite3"

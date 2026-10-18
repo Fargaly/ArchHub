@@ -1277,7 +1277,6 @@ class _CleanAuthorityHttpServer:
         # honestly; one that acquired a default could touch a host nobody
         # chose.
         self.clean_host_invoker = host_invoker
-        self.clean_workshop_owner = None
         from .runtime_activity import RuntimeActivity
         self.activity = RuntimeActivity()
         self.clean_authority = authority
@@ -3518,62 +3517,8 @@ class _CleanAuthorityHttpServer:
         else:
             self.httpd.server_close()
 
-    def bind_workshop_owner(self, coordination_owner):
-        if coordination_owner.authority is not self.clean_authority:
-            raise InvalidCell("Workshop owner must share the application authority")
-        if self.clean_workshop_owner is not None and self.clean_workshop_owner is not coordination_owner:
-            raise InvalidCell("Workshop owner is already bound")
-        self.clean_workshop_owner = coordination_owner
 
-    def _admit_workshop_canvas(self, binding, root, scope):
-        from .workshop_conversation import workshop_descriptors
-        from .unified_authority import read_scope_level
-        if self._standing_scope(binding) != scope:
-            raise AuthorizationDenied("Workshop scope changed; refresh the canvas")
-        level = read_scope_level(self.clean_authority, scope, scope_root=scope, caller=self.clean_caller)
-        descriptors = workshop_descriptors(self.clean_authority,
-            {"scope_root":scope, "nodes":[{"root_id":child} for child in level.composition_roots]},
-            caller=self.clean_caller)
-        if root not in {row["root"] for row in descriptors}:
-            raise AuthorizationDenied("Workshop is no longer on this canvas")
-        if self.clean_store.revision != level.revision:
-            raise AuthorizationDenied("Workshop changed during admission")
-        return level.revision
 
-    def _clean_workshop_action(self, token, csrf, body):
-        from .clean_browser_workshop import attach_browser_participant, resolve_browser_participant
-        from dataclasses import asdict
-        if type(body) is not dict or set(body) - {
-                "action", "root", "scope", "command_id", "target", "message", "execution_root"}:
-            raise InvalidCell("Workshop action fields are invalid")
-        binding = self._resolve_binding(token, csrf_token=csrf, require_csrf=True)
-        root, scope = body.get("root"), body.get("scope")
-        self._admit_workshop_canvas(binding, root, scope)
-        host = self.clean_workshop_owner
-        if host is None:
-            raise InvalidCell("Workshop owner is unavailable")
-        args = (self.clean_authority, host._sessions, host._workshop, host.key_store)
-        def delivery_guard(authority, sender, revision):
-            fresh = self._resolve_binding(token, csrf_token=csrf, require_csrf=True)
-            if fresh != binding or authority is not self.clean_authority:
-                raise AuthorizationDenied("browser Workshop binding changed")
-            current = resolve_browser_participant(*args, caller=self.clean_caller)
-            if current.session_root != sender or self._admit_workshop_canvas(fresh, root, scope) != revision:
-                raise AuthorizationDenied("browser Workshop delivery admission changed")
-        if body.get("action") == "attach":
-            participant, result = attach_browser_participant(*args, caller=self.clean_caller,
-                command_id=body.get("command_id"), _attachment_guard=delivery_guard)
-            return {"participant":participant.session_root, "receipt":result.receipt_root,
-                "accepted_revision":result.revision, "replayed":result.replayed}
-        if body.get("action") != "send":
-            raise InvalidCell("Workshop action is invalid")
-        participant = resolve_browser_participant(*args, caller=self.clean_caller)
-        execution = body.get("execution_root")
-        message = participant.send_message(target_session_root=body.get("target"),
-            body=body.get("message"), operation_id=body.get("command_id"),
-            category="followup" if execution is not None else "message",
-            execution_root=execution, _delivery_guard=delivery_guard)
-        return {"participant":participant.session_root, "message":asdict(message)}
 
     def _resolve_binding(
         self,
@@ -4446,20 +4391,10 @@ class _CleanAuthorityHttpServer:
                             return
                         payload = read_workshop_conversation(owner.clean_authority, root,
                             caller=owner.clean_caller)
-                        payload["can_join"] = owner.clean_workshop_owner is not None
+                        payload["can_join"] = False
                         payload["owner"] = binding.subject_root
                         payload["view"] = binding.view_root
                         payload["self"] = None
-                        if owner.clean_workshop_owner is not None:
-                            from .clean_browser_workshop import resolve_browser_participant
-                            host = owner.clean_workshop_owner
-                            try:
-                                own = resolve_browser_participant(owner.clean_authority,
-                                    host._sessions, host._workshop, host.key_store, caller=owner.clean_caller)
-                                payload["self"] = own.session_root
-                            except InvalidCell as exc:
-                                if str(exc) != "browser Workshop participant has not been attached":
-                                    raise
                         if (payload["revision"] != admission_revision or
                                 owner.clean_store.revision != admission_revision or
                                 owner._standing_scope(binding) != scope):
@@ -4537,11 +4472,6 @@ class _CleanAuthorityHttpServer:
                         payload = run_clean_agent_conversation(owner, binding, body,
                             revalidate=current_authority)
                         self._json(200, payload)
-                        return
-                    if self.path == "/api/universal/workshop":
-                        with owner._mutation_lock:
-                            payload = owner._clean_workshop_action(self._token(), csrf_token, body)
-                        self._json(200, {"ok":True, **payload})
                         return
                     if self.path == "/api/universal/gesture":
                         try:
@@ -5505,27 +5435,56 @@ def _answer_open_question(owner, utterance, context, payload, *, revalidate=None
     return answered
 
 
-# Claude routes use the base transport. A Codex recipient routes only through the
-# channel its own bound Agent Session attached (POST /api/universal/agent-session-link).
+# Native app names retained for the separate Work artifact-review workflow.
 _NATIVE_RELAY_APPS = {"claude": "claude", "opencode": "opencode"}
-_NATIVE_RELAY_CHANNEL_LIMIT = 8
+
+
+
+
+def _founder_baboom_delegate(server, binding) -> bool:
+    """Whether this bound session is the founder's own BABOOM companion.
+
+    The companion holds its own auditable runtime session ("baboom"), never the
+    founder body (35393a5), so founder-only BABOOM routes refused every command
+    it sent (real-app acceptance 2026-10-01). It acts for the founder only
+    through the graph-recorded delegation: the full-access device-proof session
+    of the exact "baboom" catalog entry, bound to a device custody the
+    founder's application committed on this machine (already proven active by
+    _machine_agent_binding_for_request). A session that merely names the
+    runtime, a recovery capability, the baboom-execution worker or any other or
+    wildcard entry, or an unlisted custody is not the delegate.
+    """
+    custody = binding.get("device_custody")
+    if (
+        binding.get("runtime") != "baboom"
+        or binding.get("access") is not None
+        or not isinstance(custody, str)
+    ):
+        return False
+    entry = _agent_body_catalog_entry_for_runtime(
+        server.universal_store.snapshot(), server.universal_registry, "baboom"
+    )
+    return (
+        entry.runtime == "baboom"
+        and entry.credential_mode == "device-proof"
+        and binding.get("catalog_entry") == entry.root_id
+        and custody in entry.device_custody_roots
+    )
+
+
+# Retained solely by native Work execution/review and native session start.
 _NATIVE_RELAY_QUEUE_LIMIT = 16
-_NATIVE_RELAY_DISCOVERY_SECONDS = 20
 _NATIVE_RELAY_REPLY_SECONDS = 180
 _NATIVE_RELAY_STOP_SECONDS = 15.0
 
 
-class NativeRecipientRelay:
-    """Relay a stored Workshop message to its recipient's live native session.
+class NativeWorkDelivery:
+    """Existing native contact effect for Work; the shared mailbox never calls it.
 
-    Session Link is the reused transport; this owner admits, records and
-    settles. A durable started record precedes every external effect, so a
-    replayed send or a restart never relays twice, and nothing is retried.
-    The transport call runs on one worker holding no graph or mutation lock.
-    A reply is the recipient's own text, relayed and labelled as such; it is
-    never Work completion or execution evidence.
+    Generic coordination delivery, bound-session channels and attachment custody
+    were removed. Reservation, exact contact revalidation and uncertain-outcome
+    records remain required by the existing Work execution/review callers.
     """
-
     def __init__(self, owner, transport):
         self._owner = owner
         self._transport = transport
@@ -5534,14 +5493,14 @@ class NativeRecipientRelay:
         self._worker = None
         self._worker_lock = threading.Lock()
         self.last_error = None
-        self._channels = {}
-        self._attaching = {}
         self._pending_jobs = {}
-        self._channel_lock = threading.Lock()
+        self._pending_lock = threading.Lock()
+
 
     @staticmethod
     def _digest(*parts):
         return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
+
 
     def _space(self, space_root):
         from .conversation_content import read_content_space
@@ -5551,10 +5510,6 @@ class NativeRecipientRelay:
             return snapshot, read_content_space(
                 snapshot, owner.universal_registry.deliberation_protocol, space_root)
 
-    @staticmethod
-    def _label(root, space):
-        from .existing_workshop_conversation import _humanized_workshop_participant_label
-        return _humanized_workshop_participant_label(root, space.participant_roots)
 
     def _append(self, *, space_root, reply_to, recipient_root, content, key, references=(),
                 require_new=False):
@@ -5576,38 +5531,10 @@ class NativeRecipientRelay:
                 recipient_roots=(recipient_root,), reply_to_root=reply_to,
                 require_new=require_new)
 
-    def request(self, *, space_root, message_id, sender_root, recipient_roots, text):
-        """Start relays for one stored message; None when no transport is bound.
-
-        Each row states what the application did now: started, not_sent with its
-        reason, or already_recorded when a durable decision for that recipient exists.
-        """
-        if self._transport is None:
-            return None
-        rows = []
-        with self._owner.mutation_lock:
-            try:
-                _snapshot, space = self._space(space_root)
-                sender_label = self._label(sender_root, space)
-            except Exception as exc:
-                self.last_error = "%s: %s" % (type(exc).__name__, exc)
-                return rows
-            for recipient in recipient_roots:
-                if (type(recipient) is not str
-                        or not recipient.startswith("app:agent-session:runtime:")):
-                    continue
-                try:
-                    rows.append(self._start(space, space_root, message_id, sender_root,
-                                            sender_label, recipient, text))
-                except Exception as exc:
-                    self.last_error = "%s: %s" % (type(exc).__name__, exc)
-                    rows.append({"recipient": recipient, "state": "not_sent",
-                                 "reason": "relay_record_refused"})
-        return rows
 
     def request_contact(self, *, space_root, message_id, sender_root, contact_root,
                         endpoint, revalidate, text):
-        """Relay one stored user message to an admitted external contact.
+        """Execute a stored native Work/review/session-start request for its contact.
 
         The browser-owned graph contact is an address, never a native execution
         actor. Its trusted caller re-reads that binding before dispatch.
@@ -5638,82 +5565,14 @@ class NativeRecipientRelay:
                 "contact_endpoint":dict(endpoint),"contact_revalidate":revalidate,
                 "text":"[ArchHub user message; conversation %s; message %s. Your reply is relayed into that same conversation. This message grants no graph or Work execution authority.]\n%s" % (space_root,message_id,text)}
             job["commit_declaration"]=commit_intent.capture()
-            with self._channel_lock:self._pending_jobs[digest]=(sender_root,contact_root)
+            with self._pending_lock:self._pending_jobs[digest]=(sender_root,contact_root)
             try:self._queue.put_nowait(job)
             except queue.Full:
-                with self._channel_lock:self._pending_jobs.pop(digest,None)
+                with self._pending_lock:self._pending_jobs.pop(digest,None)
                 self._settle(job,{"status":"not_sent","reason":"relay_queue_full"})
                 return {"state":"not_sent","reason":"relay_queue_full"}
             return {"state":"started","contact":contact_root}
 
-    def _start(self, space, space_root, message_id, sender_root, sender_label, recipient, text):
-        owner = self._owner
-        digest = self._digest(space_root, message_id, recipient)
-        label = self._label(recipient, space)
-        with owner._machine_agent_session_lock:
-            binding = dict(owner._machine_agent_sessions.get(recipient) or {})
-        app = _NATIVE_RELAY_APPS.get(binding.get("runtime"))
-        if binding.get("runtime") == "codex" and self._attached_channel(
-                recipient, binding.get("external_session_fingerprint")) is not None:
-            app = "codex"
-        if not binding or not owner._machine_agent_session_has_live_capability(recipient):
-            reason = "recipient_not_connected"
-        elif app is None and binding.get("runtime") == "codex":
-            reason = "codex_host_not_attached"
-        elif app is None:
-            reason = "unsupported_runtime:%s" % binding.get("runtime")
-        elif self._stop.is_set():
-            reason = "relay_stopped"
-        elif self._queue.full():
-            reason = "relay_queue_full"
-        else:
-            reason = None
-        if reason is None:
-            content = ("Session Link relay of this message to %s started. Its outcome "
-                       "follows here; if none follows, delivery is unknown and it is not "
-                       "resent automatically." % label)
-        else:
-            content = ("Session Link did not relay this message to %s (%s). The message "
-                       "stays in this conversation." % (label, reason))
-        if reason is None:
-            # A live worker exists before anything is recorded or queued: if the
-            # thread cannot start, the send reports not_sent and leaves no job behind.
-            self._ensure_worker()
-        try:
-            # One decision per message and recipient, refused on any replay inside the
-            # history write transaction. A retried send or a restart finds it, so it
-            # never relays twice and never records a contradicting decision.
-            self._append(space_root=space_root, reply_to=message_id, recipient_root=sender_root,
-                key="session-link:decision:" + digest, content=content,
-                references=(recipient,), require_new=True)
-        except ValueError as exc:
-            if str(exc) not in {"idempotency conflict",
-                                "message identity was removed by conversation retention"}:
-                raise
-            return {"recipient": recipient, "state": "already_recorded"}
-        if reason is not None:
-            return {"recipient": recipient, "state": "not_sent", "reason": reason}
-        job = {
-            "space": space_root, "message_id": message_id, "sender": sender_root,
-            "recipient": recipient, "recipient_label": label, "digest": digest,
-            "app": app, "runtime": binding["runtime"],
-            "fingerprint": binding["external_session_fingerprint"],
-            "text": "[ArchHub Workshop message from %s; conversation %s; message %s. Your "
-                    "reply is relayed back into that conversation.]\n%s"
-                    % (sender_label, space_root, message_id, text)}
-        # Called under mutation_lock. Keep only live effect ownership, not a
-        # second message ledger; queued and executing jobs have the same entry.
-        # The relayed outcome continues the sender's admitted request.
-        job["commit_declaration"] = commit_intent.capture()
-        with self._channel_lock:
-            self._pending_jobs[digest] = (sender_root, recipient)
-        try:
-            self._queue.put_nowait(job)
-        except BaseException:
-            with self._channel_lock:
-                self._pending_jobs.pop(digest, None)
-            raise
-        return {"recipient": recipient, "state": "started"}
 
     def _ensure_worker(self):
         with self._worker_lock:
@@ -5721,6 +5580,7 @@ class NativeRecipientRelay:
                 self._worker = threading.Thread(
                     target=self._run, name="archhub-workshop-native-relay", daemon=True)
                 self._worker.start()
+
 
     def _run(self):
         while not self._stop.is_set():
@@ -5731,6 +5591,7 @@ class NativeRecipientRelay:
             self._guarded(self._deliver, job)
         self._drain()
 
+
     def _drain(self):
         while True:
             try:
@@ -5738,6 +5599,7 @@ class NativeRecipientRelay:
             except queue.Empty:
                 return
             self._guarded(self._settle, job, {"status": "not_sent", "reason": "relay_stopped"})
+
 
     def _guarded(self, action, *args):
         try:
@@ -5747,40 +5609,26 @@ class NativeRecipientRelay:
             # The started record already reads as unknown; nothing is resent.
             self.last_error = "%s: %s" % (type(exc).__name__, exc)
         finally:
-            with self._channel_lock:
+            with self._pending_lock:
                 self._pending_jobs.pop(args[0]["digest"], None)
             self._queue.task_done()
 
+
     def _admitted(self, job):
-        if "contact_endpoint" in job:
-            try:
-                if job["contact_revalidate"]()!=job["contact_endpoint"]:return False
-                _snapshot,space=self._space(job["space"])
-                return job["sender"] in space.participant_roots
-            except (InvalidCell,AuthorizationDenied,KeyError,ValueError):return False
-        owner = self._owner
-        with owner._machine_agent_session_lock:
-            binding = owner._machine_agent_sessions.get(job["recipient"]) or {}
-            same = (binding.get("runtime") == job["runtime"]
-                    and binding.get("external_session_fingerprint") == job["fingerprint"])
-        if not same or not owner._machine_agent_session_has_live_capability(job["recipient"]):
-            return False
         try:
+            if job["contact_revalidate"]() != job["contact_endpoint"]:
+                return False
             _snapshot, space = self._space(job["space"])
-        except (InvalidCell, AuthorizationDenied, KeyError):
+            return job["sender"] in space.participant_roots
+        except (InvalidCell, AuthorizationDenied, KeyError, ValueError):
             return False
-        return {job["sender"], job["recipient"]} <= set(space.participant_roots)
 
     def _deliver(self, job):
         if not self._admitted(job):
             return self._settle(job, {"status": "not_sent", "reason": "admission_changed"})
         transport = self._transport
-        if job["app"] == "codex" and "contact_endpoint" not in job:
-            transport = self._attached_channel(job["recipient"], job["fingerprint"])
-            if transport is None:
-                return self._settle(job, {"status": "not_sent", "reason": "codex_host_detached"})
-        found = (transport.discover(timeout_seconds=3,apps=[job["app"]]) if "contact_endpoint" in job
-                 else transport.discover(timeout_seconds=_NATIVE_RELAY_DISCOVERY_SECONDS))
+        from .native_contact import _discover
+        found = _discover(self._owner, [job["app"]])
         if type(found) is not dict or found.get("status") != "ok":
             reason = (found.get("reason") or found.get("status")) if type(found) is dict else None
             return self._settle(job, {"status": "not_sent",
@@ -5807,6 +5655,7 @@ class NativeRecipientRelay:
         return self._settle(job, transport.request(
             matches[0], job["text"], timeout_seconds=_NATIVE_RELAY_REPLY_SECONDS,
             cancel_event=self._stop))
+
 
     def _settle(self, job, outcome):
         status = outcome.get("status") if type(outcome) is dict else None
@@ -5850,8 +5699,9 @@ class NativeRecipientRelay:
                      key="session-link:outcome:" + job["digest"],
                      references=(job["recipient"],))
 
+
     def close(self, timeout_seconds=_NATIVE_RELAY_STOP_SECONDS):
-        """Stop admissions, cancel and join local calls, detach channels, then close.
+        """Stop admissions, cancel and join owned native Work calls.
 
         Raises while the worker lives, so the caller keeps content and graph
         resources open underneath it rather than tearing them down.
@@ -5860,209 +5710,15 @@ class NativeRecipientRelay:
         # job can be queued after close; the lock is released before the join.
         with self._owner.mutation_lock:
             self._stop.set()
-        with self._channel_lock:
-            entries = list(self._channels.values())
-            for entry in entries:
-                entry["retiring"] = True
-            pending = []
-            for admission in self._attaching.values():
-                admission["cancelled"] = True
-                if admission["channel"] is not None:
-                    pending.append(admission["channel"])
-        channels = [entry["transport"] for entry in entries]
-        for transport in ([self._transport] if self._transport is not None else []) + channels + pending:
-            transport.cancel_pending(timeout_seconds=8)
-        with self._worker_lock:
-            worker = self._worker
-        if worker is not None:
-            worker.join(timeout=timeout_seconds)
+        transport = self._transport
+        if transport is not None:
+            transport.cancel_pending(timeout_seconds=timeout_seconds)
+        worker = self._worker
+        if worker is not None and worker.is_alive():
+            worker.join(timeout_seconds)
             if worker.is_alive():
-                raise RuntimeError("Workshop native relay did not stop; store teardown refused")
-        for entry in entries:
-            if self._retire(entry["transport"])["local_call_joined"]:
-                self._release_entry(entry)
-        if self._transport is not None:
-            self._transport.close()
+                raise RuntimeError("Native Work delivery did not stop; store teardown refused")
         self._drain()
-
-    def channel_states(self):
-        """Routing state per Agent Session for projection; never the capability."""
-        with self._channel_lock:
-            states = {root: "retiring" if entry["retiring"] else "attached"
-                      for root, entry in self._channels.items()}
-            states.update({root: "attaching" for root in self._attaching if root not in states})
-        return states
-
-    def _attached_channel(self, session_root, fingerprint):
-        with self._channel_lock:
-            entry = self._channels.get(session_root)
-            if (entry is None or entry["retiring"] or type(fingerprint) is not str
-                    or entry["fingerprint"] != fingerprint
-                    or entry["expires_at"] <= time.time() * 1000):
-                return None
-            return entry["transport"]
-
-    def _release_entry(self, entry):
-        with self._channel_lock:
-            for root, current in list(self._channels.items()):
-                if current is entry:
-                    self._channels.pop(root, None)
-
-    @staticmethod
-    def _retire(channel):
-        """Cancel and join the channel local call, then revoke and close it.
-
-        Returns the sanitized detach contract. An unjoined call leaves the channel
-        open and owned by its entry; revocation stays uncertain and is not retried.
-        """
-        cancelled = channel.cancel_pending(timeout_seconds=8)
-        joined = type(cancelled) is dict and cancelled.get("local_call_joined") is True
-        result = {"status": "uncertain", "detached": False, "revoked": False,
-                  "local_call_joined": joined,
-                  "worker_stopped": type(cancelled) is dict and cancelled.get("worker_stopped") is True}
-        if not joined:
-            return result
-        revocation = channel.detach_host()
-        channel.close()
-        ok = type(revocation) is dict and revocation.get("status") == "ok"
-        result.update(status="ok" if ok else "uncertain", detached=ok,
-                      revoked=ok and revocation.get("revoked") is True)
-        return result
-
-    def attach_channel(self, session_root, capability, *, instance_id, fingerprint, still_admitted,
-                       native_custody=None):
-        """Give one bound Codex Agent Session its own attached transport channel.
-
-        The capability is validated locally and kept only inside the channel;
-        nothing here returns, logs or persists it. Discovery must find exactly
-        the enrolled destination before the channel is published to the relay.
-        """
-        if self._transport is None:
-            raise InvalidCell("Session Link transport is unavailable")
-        destination = capability.get("destination") if type(capability) is dict else None
-        if (type(destination) is not str or type(fingerprint) is not str
-                or not hmac.compare_digest(
-                    hashlib.sha256(destination.encode("utf-8")).hexdigest(), fingerprint)):
-            raise AuthorizationDenied("Session Link destination is not this Agent Session")
-        if capability.get("instance_id") != instance_id:
-            raise AuthorizationDenied("Session Link attachment scope changed")
-        with self._channel_lock:
-            if self._stop.is_set():
-                raise AuthorizationDenied("Workshop native relay is stopping")
-            if session_root in self._channels or session_root in self._attaching:
-                raise InvalidCell("this Agent Session already holds a Session Link channel; detach first")
-            if len(self._channels) + len(self._attaching) >= _NATIVE_RELAY_CHANNEL_LIMIT:
-                raise InvalidCell("Session Link channel limit reached")
-            admission = {"cancelled": False, "channel": None}
-            self._attaching[session_root] = admission
-
-        def proceed():
-            with self._channel_lock:
-                if self._stop.is_set() or admission["cancelled"]:
-                    raise AuthorizationDenied("Session Link attachment was stopped before it was published")
-
-        channel = None
-        try:
-            channel = self._transport.create_channel()
-            with self._channel_lock:
-                admission["channel"] = channel
-            proceed()
-            try:
-                channel.attach_host(capability, instance_id=instance_id, destination=destination)
-            except ValueError as exc:
-                raise AuthorizationDenied(str(exc)) from None
-            found = channel.discover(timeout_seconds=_NATIVE_RELAY_DISCOVERY_SECONDS)
-            proceed()
-            matches = [
-                descriptor for descriptor in (found.get("recipients") or ()
-                                              if type(found) is dict and found.get("status") == "ok" else ())
-                if type(descriptor) is dict and descriptor.get("app") == "codex"
-                and type(descriptor.get("id")) is str and hmac.compare_digest(
-                    hashlib.sha256(descriptor["id"].encode("utf-8")).hexdigest(), fingerprint)
-            ]
-            if len(matches) != 1:
-                raise InvalidCell("the attached Codex host was not discovered exactly once")
-            still_admitted()
-            with self._channel_lock:
-                if self._stop.is_set() or admission["cancelled"]:
-                    raise AuthorizationDenied("Session Link attachment was stopped before it was published")
-                self._channels[session_root] = {"transport": channel, "instance_id": instance_id,
-                                                "fingerprint": fingerprint, "retiring": False,
-                                                "expires_at": capability["expires_at"],
-                                                "native_custody": dict(native_custody or {})}
-                self._attaching.pop(session_root, None)
-        except BaseException:
-            if channel is not None and not self._retire(channel)["local_call_joined"]:
-                # Still owned: a later detach or close finishes the retirement.
-                with self._channel_lock:
-                    self._channels.setdefault(session_root, {
-                        "transport": channel, "instance_id": instance_id, "fingerprint": fingerprint,
-                        "retiring": True, "expires_at": 0})
-            raise
-        finally:
-            with self._channel_lock:
-                if self._attaching.get(session_root) is admission:
-                    self._attaching.pop(session_root, None)
-        return {"attached": True, "instance_id": instance_id, "expires_at": capability["expires_at"]}
-
-    def detach_channel(self, session_root):
-        """Stop routing to one Agent Session channel and revoke only its grant.
-
-        The entry keeps owning its channel until the local call is joined. A
-        detach during an attach in progress cancels that admission; the attach
-        then retires its own channel instead of publishing it.
-        """
-        with self._channel_lock:
-            admission = self._attaching.get(session_root)
-            pending = admission["channel"] if admission is not None else None
-            if admission is not None:
-                admission["cancelled"] = True
-            entry = self._channels.get(session_root)
-            if entry is not None:
-                entry["retiring"] = True
-        if admission is not None:
-            if pending is not None:
-                pending.cancel_pending(timeout_seconds=8)
-            return {"status": "uncertain", "detached": False, "revoked": False,
-                    "local_call_joined": False, "worker_stopped": False}
-        if entry is None:
-            return {"status": "ok", "detached": False, "revoked": False,
-                    "local_call_joined": True, "worker_stopped": True}
-        result = self._retire(entry["transport"])
-        if result["local_call_joined"]:
-            self._release_entry(entry)
-        return result
-
-
-def _founder_baboom_delegate(server, binding) -> bool:
-    """Whether this bound session is the founder's own BABOOM companion.
-
-    The companion holds its own auditable runtime session ("baboom"), never the
-    founder body (35393a5), so founder-only BABOOM routes refused every command
-    it sent (real-app acceptance 2026-10-01). It acts for the founder only
-    through the graph-recorded delegation: the full-access device-proof session
-    of the exact "baboom" catalog entry, bound to a device custody the
-    founder's application committed on this machine (already proven active by
-    _machine_agent_binding_for_request). A session that merely names the
-    runtime, a recovery capability, the baboom-execution worker or any other or
-    wildcard entry, or an unlisted custody is not the delegate.
-    """
-    custody = binding.get("device_custody")
-    if (
-        binding.get("runtime") != "baboom"
-        or binding.get("access") is not None
-        or not isinstance(custody, str)
-    ):
-        return False
-    entry = _agent_body_catalog_entry_for_runtime(
-        server.universal_store.snapshot(), server.universal_registry, "baboom"
-    )
-    return (
-        entry.runtime == "baboom"
-        and entry.credential_mode == "device-proof"
-        and binding.get("catalog_entry") == entry.root_id
-        and custody in entry.device_custody_roots
-    )
 
 
 class ApplicationServer:
@@ -6312,6 +5968,7 @@ class ApplicationServer:
         self._machine_agent_continuation_receipts = {}
         self._machine_agent_active_requests = {}
         self._machine_agent_session_lock = threading.RLock()
+        self._agent_mail_send_windows = {}
         self._machine_agent_observation_lock = threading.Lock()
         self._machine_agent_observations = {}
         self._machine_agent_challenges = {}
@@ -6828,7 +6485,7 @@ class ApplicationServer:
         self.conversation_content = ApplicationConversationContent(self, content_path)
         self._fresh_content_bootstrap = False
         # The reused Session Link transport is optional; absent, sends are unchanged.
-        self.native_recipient_relay = NativeRecipientRelay(self, session_link_transport)
+        self.native_work_delivery = NativeWorkDelivery(self, session_link_transport)
         self._cloud_relay_enabled = bool(enable_cloud_relay)
         self._cloud_relay_transport = session_link_transport
         self._cloud_relay_appdata = None  # cloud_relay's canonical account locator; explicit fixtures may override.
@@ -9060,18 +8717,6 @@ class ApplicationServer:
                             self._json(200, {'ok':True, 'graph_id':owner.universal_registry.application_root,
                                 'scope_root':body['scope'], 'idempotency_key':body['idempotency_key'], **result})
                             return
-                        if type(body) is dict and body.get('action') == 'agent-disconnect':
-                            from .existing_workshop_conversation import disconnect_browser_workshop_agent
-                            def disconnect_guard():
-                                current, _ = self._browser_session_binding(unsafe=True)
-                                if current != binding:
-                                    raise AuthorizationDenied('Workshop agent disconnect browser changed')
-                                owner.require_universal_http_route('POST', self.path,
-                                    authentication_context=binding.context, revalidate=True)
-                            # Admission holds the owner lock; the channel retirement wait does not.
-                            self._json(200, disconnect_browser_workshop_agent(owner, binding, body,
-                                browser_guard=disconnect_guard))
-                            return
                         from .existing_workshop_conversation import send_browser_workshop
                         def workshop_send_guard():
                             current, current_token = self._browser_session_binding(unsafe=True)
@@ -9129,6 +8774,7 @@ class ApplicationServer:
                                 staged_update=owner._staged_update(),
                                 content_service=owner.conversation_content,
                                 read_guard=current_baboom_binding,
+                                agent_mail=owner.shared_agent_mail,
                             )
                         # Slow host reads (repo status) run after the lock.
                         payload = {'ok': True, **finish_universal_baboom_response(answered)}
@@ -9154,6 +8800,7 @@ class ApplicationServer:
                                     owner.universal_registry,
                                     utterance=body['utterance'],
                                     authentication_context=binding.context,
+                                    agent_mail=owner.shared_agent_mail,
                                 ),
                             }
                         self._json(200, payload)
@@ -12862,8 +12509,6 @@ class ApplicationServer:
                         for root, row in self._machine_agent_sessions.items()}
         with self._machine_agent_observation_lock:
             observations = dict(self._machine_agent_observations)
-        relay = getattr(self, "native_recipient_relay", None)
-        link_states = relay.channel_states() if relay is not None else {}
         result = {}
         for root, binding in bindings.items():
             seen = observations.get(root)
@@ -12874,7 +12519,7 @@ class ApplicationServer:
                 "connection_status": "connected" if active else
                     ("disconnected" if capability_expires <= now else "stale" if seen else "unknown"),
                 "connection_basis": "authenticated-request", "observed_at": seen,
-                "expires_at": expires, "session_link": link_states.get(root, "none")}
+                "expires_at": expires}
         return result
 
     def enable_native_workshop_compliance(self):
@@ -13416,34 +13061,6 @@ class ApplicationServer:
                         or _has_pending_permit(self.universal_store.snapshot(),
                             self.universal_registry.cde_write_authority_protocol,conditional_actor)):
                     refuse_continuation("conditional native enrollment requires effect reconciliation")
-                relay = self.native_recipient_relay
-                if relay is not None:
-                    with relay._channel_lock:
-                        entry_held = relay._channels.get(conditional_actor)
-                        old_binding = self._machine_agent_sessions.get(conditional_actor) or {}
-                        # A quiet channel belongs to this actor and application,
-                        # not its rotating native token. Retain it only for the
-                        # exact original OS process after native lease expiry.
-                        # This neither renews its grant nor touches its transport.
-                        # Expired bindings may already have been pruned. Only
-                        # custody captured by the admitted attachment may stand
-                        # in for that absent record; caller claims never do.
-                        custody = old_binding or (entry_held or {}).get("native_custody") or {}
-                        same_process = (type(peer) is MachinePipePeer
-                            and custody.get("enrollment_peer") == {
-                                "pid": peer.pid, "created_at": peer.created_at})
-                        old_expiry = custody.get("expires_at")
-                        retain_channel = (entry_held is not None and same_process
-                            and type(old_expiry) in (int, float) and math.isfinite(old_expiry)
-                            and old_expiry <= time.time()
-                            and custody.get("runtime") == runtime
-                            and custody.get("external_session_fingerprint") == fingerprint
-                            and entry_held.get("fingerprint") == fingerprint
-                            and entry_held.get("retiring") is False)
-                        if (relay._stop.is_set() or conditional_actor in relay._attaching
-                                or any(conditional_actor in peers for peers in relay._pending_jobs.values())
-                                or entry_held is not None and not retain_channel):
-                            refuse_continuation("conditional native enrollment requires attachment settlement")
             if self._machine_agent_identity_is_currently_bound(
                 prune_expired=conditional_actor is None,
                 runtime=runtime,
@@ -13610,47 +13227,6 @@ class ApplicationServer:
         session_root, _binding = self._machine_agent_binding_for_request(request)
         return session_root
 
-    def _session_link_attachment(self, request, body, direct, context):
-        """Scope, attach or detach the Session Link channel of one bound Codex session.
-
-        The bound machine session is the only identity. The instance scope is
-        bound to the verified backend generation; the capability is passed to the
-        relay channel once and is never returned, logged or persisted.
-        """
-        phases = {"scope": {"phase"}, "attach": {"phase", "capability"}, "detach": {"phase"}}
-        phase = body.get("phase") if type(body) is dict else None
-        if direct or phase not in phases or set(body) != phases[phase]:
-            raise AuthorizationDenied("Session Link attachment requires one bound exact phase")
-        with self.mutation_lock:
-            if self.universal_checkpoint_guard is not None:
-                self.universal_checkpoint_guard.require_healthy()
-            self.require_universal_http_route(
-                "POST", "/api/universal/agent-session-link", authentication_context=context)
-        session_root, binding = self._machine_agent_binding_for_request(request)
-        if binding.get("runtime") != "codex" or binding.get("access") == "recovery-read":
-            raise AuthorizationDenied("Session Link attachment requires a full Codex Agent Session")
-        fingerprint = binding.get("external_session_fingerprint")
-        relay = self.native_recipient_relay
-        if phase == "detach":
-            return relay.detach_channel(session_root)
-        generation = self.prove_runtime_backend_generation()
-        instance_id = hashlib.sha256("\x1f".join((
-            "archhub-session-link-instance", generation.ownership_root,
-            str(generation.generation), session_root)).encode("utf-8")).hexdigest()
-        if phase == "scope":
-            return {"instance_id": instance_id, "destination_fingerprint": fingerprint}
-
-        def still_admitted():
-            current_root, current = self._machine_agent_binding_for_request(request)
-            if (current_root != session_root or current.get("runtime") != "codex"
-                    or current.get("external_session_fingerprint") != fingerprint
-                    or self.prove_runtime_backend_generation() != generation):
-                raise AuthorizationDenied("Session Link attachment admission changed")
-
-        return relay.attach_channel(session_root, body["capability"], instance_id=instance_id,
-                                    fingerprint=fingerprint, still_admitted=still_admitted,
-                                    native_custody={key: binding.get(key) for key in (
-                                        "enrollment_peer", "runtime", "external_session_fingerprint", "expires_at")})
 
     def _verify_work_artifact_review(self, **arguments):
         from .native_workshop_execution import verify_existing_session_artifact_review
@@ -14619,6 +14195,18 @@ class ApplicationServer:
             self._release_runtime_ownership()
             return self._prove_runtime_backend_state("released")
 
+    def shared_agent_mail(self, method, body):
+        """Trusted application caller, same sink/table; no request back into itself."""
+        from .application_machine_transport import _observe_machine_process, _VERIFIED_PIPE_PEER
+        peer = _observe_machine_process(os.getpid())
+        request = {"method": "POST" if method == "send" else "GET",
+            "path": "/api/universal/agent-mail/" + method, "body": body, "session": {}}
+        token = _VERIFIED_PIPE_PEER.set((request, peer))
+        try:
+            return self._dispatch_verified_machine_route(request)
+        finally:
+            _VERIFIED_PIPE_PEER.reset(token)
+
     def _dispatch_verified_machine_route(self, request):
         """Only the authenticated, decoded local pipe calls this wrapper."""
         with commit_intent.request_scope():
@@ -14631,6 +14219,14 @@ class ApplicationServer:
         )
         actor = None
         try:
+            from .installed_workshop_coordination import MAILBOX_ROUTES, dispatch_mailbox
+            if (request.get("method"), request.get("path")) in MAILBOX_ROUTES:
+                # Public chat has no Work binding. It still enters this verified
+                # request scope and shares the existing checkpoint/route guards.
+                with self.mutation_lock:
+                    if self.universal_checkpoint_guard is not None:
+                        self.universal_checkpoint_guard.require_healthy()
+                    return dispatch_mailbox(self, request, _verified_machine_pipe_peer(request))
             session = request.get("session") if type(request) is dict else None
             unbound_enrollment = (
                 type(session) is dict and not session
@@ -14827,7 +14423,6 @@ class ApplicationServer:
             ("POST", "/api/universal/agent-session-renew"),
             ("POST", "/api/universal/agent-session-release"),
             ("POST", "/api/universal/agent-session-release-status"),
-            ("POST", "/api/universal/agent-session-link"),
             ("POST", "/api/universal/baboom-command"),
             ("POST", "/api/universal/baboom-command-response"),
             ("POST", "/api/universal/baboom-command-execute"),
@@ -15670,6 +15265,7 @@ class ApplicationServer:
                     staged_update=self._staged_update(),
                     content_service=self.conversation_content, read_guard=read_guard,
                     confirmations=self._baboom_confirm_ledger(),
+                    agent_mail=self.shared_agent_mail,
                 )
             # This read never restarts: it only says a build is staged. The
             # restart is on the execute route, after the founder confirmed
@@ -15705,6 +15301,7 @@ class ApplicationServer:
                         context, text, fragment_id),
                     remembered=self._baboom_brain_holds,
                     confirmations=self._baboom_confirm_ledger(),
+                    agent_mail=self.shared_agent_mail,
                 )
             _answer = result.get("response") if isinstance(result.get("response"), dict) else result
             if _answer.get("kind") == "update-ready" and (_answer.get("data") or {}).get("restart"):
@@ -16186,10 +15783,7 @@ class ApplicationServer:
             return artifacts.review_existing_session_artifact(self, **common,
                 publication_root=body["publication"], artifact_digest=body["artifact_digest"],
                 idempotency_key=body["idempotency_key"], verdict=body["verdict"], notes=body["notes"])
-        if method == "POST" and path == "/api/universal/agent-session-link":
-            # Discovery waits on the native host, so this route never holds the
-            # graph mutation lock across it.
-            return self._session_link_attachment(request, body, direct, context)
+
         if method == "POST" and path in {"/api/universal/agent-session-reconcile", "/api/universal/agent-session-continuation-status"}:
             from .native_enrollment_reconciliation import reconcile_enrollment, continuation_status, STATUS
             peer_context = _VERIFIED_MACHINE_PEER_CONTEXT.get()
@@ -18763,7 +18357,6 @@ class ApplicationServer:
                     if entry_context is not context:
                         self.universal_registry.authorization.broker.revoke(entry_context)
                 from .conversation_content import workshop_message_identity
-                from .existing_workshop_conversation import _relay_native_recipients
                 try:
                     from . import work_proposals as _work_proposals
                     _work_proposals.parse(entry.content)
@@ -18772,9 +18365,6 @@ class ApplicationServer:
                 else:
                     self._adjust_baboom_pending_founder_approvals_event_count(
                         1, self.universal_store.revision)
-                relay = (_relay_native_recipients(self, entry.space_root, entry.message_id,
-                    entry.actor_root, entry.recipient_roots, entry.content)
-                    if hasattr(entry, "message_id") else {})
                 category_names = {
                     root: name
                     for name, root in (
@@ -18802,7 +18392,6 @@ class ApplicationServer:
                     "created_at": entry.created_at,
                     "idempotency_key": entry.idempotency_key,
                     "revision": self.universal_store.revision,
-                    **relay,
                 }
             if path == "/api/universal/workshop-gate":
                 if set(body) != {"ref", "phase"}:
@@ -20887,10 +20476,9 @@ class ApplicationServer:
         terminals = getattr(self, 'terminal_sessions', None)
         if terminals is not None:
             terminals.close()
-        native_relay = getattr(self, 'native_recipient_relay', None)
-        if native_relay is not None:
-            # Before any drain or teardown: the relay settles into live content.
-            native_relay.close()
+        delivery = getattr(self, 'native_work_delivery', None)
+        if delivery is not None:
+            delivery.close()
         self._stop_cloud_relay()
         with self.mutation_lock:
             self._model_execution_closing = True

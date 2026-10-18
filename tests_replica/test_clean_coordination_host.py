@@ -19,11 +19,7 @@ from nodelang.clean_coordination_host import (
     SignedCoordinationRequest,
     sign_coordination_request,
 )
-from nodelang.clean_coordination_mcp import (
-    LocalCoordinationClient,
-    build_server,
-    identity_from_environment,
-)
+from nodelang.native_agent_mcp import build_server
 from nodelang.clean_coordination_service import (
     MAX_REQUEST_BYTES,
     build_bound_service,
@@ -112,54 +108,6 @@ def _attach(host, key_store, identity, *session_roots):
         }, "attach:" + session_root))
 
 
-def test_signed_sessions_coordinate_in_one_graph_and_replay_zero(tmp_path):
-    opened, keys, host = _host(tmp_path)
-    codex = CoordinationIdentity("codex", "thread-codex", "gpt")
-    reviewer = CoordinationIdentity("reviewer", "thread-reviewer", "reviewer")
-    try:
-        first = host.dispatch(_request(keys, codex, "register_session"))
-        host.dispatch(_request(keys, reviewer, "register_session"))
-        revision = opened.authority.store.revision
-        cell_count = len(opened.authority.store.snapshot().cells)
-        replay = host.dispatch(_request(keys, codex, "register_session"))
-        assert replay["self"]["session_root"] == first["self"]["session_root"]
-        assert opened.authority.store.revision == revision
-        assert len(opened.authority.store.snapshot().cells) == cell_count
-
-        agents = host.dispatch(_request(keys, codex, "list_agents"))
-        assert agents["count"] == 2
-        target = tuple(
-            item["session_root"] for item in agents["agents"]
-            if item["runtime"] == "reviewer"
-        )[0]
-        _attach(host, keys, codex, first["self"]["session_root"], target)
-        operation = str(uuid.uuid4())
-        sent = host.dispatch(_request(
-            keys,
-            codex,
-            "send_message",
-            {
-                "target": target,
-                "message": "Review the accepted clean graph.",
-                "idempotency_key": operation,
-            },
-            "send",
-        ))
-        message = sent["message"]
-        assert message["sender_root"] == first["self"]["session_root"]
-        assert message["recipient_root"] == target
-        inbox = host.dispatch(_request(
-            keys,
-            reviewer,
-            "inbox",
-            {"after_revision": message["created_revision"] - 1},
-            "inbox",
-        ))
-        assert [item["root_id"] for item in inbox["messages"]] == [
-            message["root_id"]
-        ]
-    finally:
-        opened.authority.store.close()
 
 
 def test_request_signature_and_session_key_binding_fail_closed(tmp_path):
@@ -227,6 +175,18 @@ def test_host_releases_no_second_store_or_coordination_ledger():
         assert forbidden not in source
 
 
+class _SignedHostFixture:
+    def __init__(self, identity, *, endpoint, key_store):
+        self.identity, self.endpoint, self.keys = identity, endpoint, key_store
+
+    def call(self, method, parameters=None, **kwargs):
+        request = sign_coordination_request(self.keys, self.identity, method, parameters or {})
+        packet = Request(self.endpoint, data=json.dumps(request.to_payload()).encode(),
+            method="POST", headers={"Content-Type": "application/json"})
+        with urlopen(packet) as response:
+            return json.load(response)
+
+
 def test_loopback_transport_uses_signed_runtime_identity(tmp_path):
     opened, keys, host = _host(tmp_path)
     service = build_bound_service(host)
@@ -235,16 +195,13 @@ def test_loopback_transport_uses_signed_runtime_identity(tmp_path):
     endpoint = "http://127.0.0.1:%s/coordination" % service.server_address[1]
     try:
         identity = CoordinationIdentity("codex", "thread-transport", "gpt")
-        client = LocalCoordinationClient(
+        client = _SignedHostFixture(
             identity,
             endpoint=endpoint,
             key_store=keys,
         )
         registered = client.call("register_session")
         assert registered["self"]["runtime"] == "codex"
-        listed = client.call("list_agents")
-        assert listed["count"] == 1
-        assert listed["self"] == registered["self"]["session_root"]
 
         denied = Request(
             endpoint,
@@ -281,75 +238,6 @@ def test_loopback_transport_uses_signed_runtime_identity(tmp_path):
         opened.authority.store.close()
 
 
-def test_signed_workshop_lens_reads_the_same_graph_and_real_relations(tmp_path):
-    opened, keys, host = _host(tmp_path)
-    service = build_bound_service(host)
-    thread = threading.Thread(target=service.serve_forever, daemon=True)
-    thread.start()
-    origin = "http://127.0.0.1:%s" % service.server_address[1]
-    try:
-        sender = CoordinationIdentity("codex", "thread-lens-sender", "gpt")
-        recipient = CoordinationIdentity(
-            "reviewer", "thread-lens-recipient", "reviewer"
-        )
-        sender_session = host.dispatch(
-            _request(keys, sender, "register_session", label="sender")
-        )["self"]["session_root"]
-        recipient_session = host.dispatch(
-            _request(keys, recipient, "register_session", label="recipient")
-        )["self"]["session_root"]
-        _attach(host, keys, sender, sender_session, recipient_session)
-        sent = host.dispatch(_request(
-            keys,
-            sender,
-            "send_message",
-            {
-                "target": recipient_session,
-                "message": "Review the visible graph-native Workshop lens.",
-                "idempotency_key": "cc8723a5-4f2f-4cdf-bd94-9395798e14f2",
-            },
-            "send-lens-message",
-        ))
-
-        sender_client = LocalCoordinationClient(
-            sender,
-            endpoint=origin + "/coordination",
-            key_store=keys,
-        )
-        payload = sender_client.call("workshop_lens")["lens"]
-        assert payload["graph_id"] == opened.authority.manifest.graph_id
-        assert payload["revision"] == opened.authority.store.revision
-        message_root = sent["message"]["root_id"]
-        message = tuple(
-            node for node in payload["nodes"] if node["root_id"] == message_root
-        )
-        assert len(message) == 1
-        assert message[0]["definition_name"] == "Coordination message"
-        assert message[0]["state"] == "sent"
-        relation_roots = {item["root_id"] for item in payload["relations"]}
-        assert relation_roots
-        assert {port["relation_root"] for port in message[0]["ports"]} == (
-            relation_roots
-        )
-        endpoints = {
-            root
-            for relation in payload["relations"]
-            for _, root in relation["participants"]
-        }
-        assert {message_root, sender_session, recipient_session}.issubset(endpoints)
-        assert {item["name"] for item in payload["catalogue"]}.issuperset({
-            "Coordination message", "Work assignment", "Independent review"
-        })
-
-        denied = Request(origin + "/workshop-lens", method="GET")
-        with pytest.raises(HTTPError) as rejected:
-            urlopen(denied, timeout=5)
-        assert rejected.value.code == 404
-    finally:
-        service.shutdown()
-        service.server_close()
-        thread.join(timeout=5)
-        opened.authority.store.close()
 
 
 def test_signed_generic_lens_revises_exact_instance_and_reopens_same_graph(
@@ -373,7 +261,7 @@ def test_signed_generic_lens_revises_exact_instance_and_reopens_same_graph(
     endpoint = "http://127.0.0.1:%s/coordination" % service.server_address[1]
     command = "fa7df7b8-d504-4819-ab34-7961c586b5a5"
     try:
-        client = LocalCoordinationClient(identity, endpoint=endpoint, key_store=keys)
+        client = _SignedHostFixture(identity, endpoint=endpoint, key_store=keys)
         client.call("register_session")
         before = client.call("scope_lens", {"scope_root": workshop})["lens"]
         assert before["graph_id"] == opened.authority.manifest.graph_id
@@ -461,73 +349,28 @@ def test_signed_generic_lens_revises_exact_instance_and_reopens_same_graph(
         reopened.authority.store.close()
 
 
-def test_stdio_identity_has_no_random_fallback_and_schema_has_no_sender():
-    identity = identity_from_environment({
-        "ARCHHUB_COORDINATION_VENDOR": "codex",
-        "CODEX_THREAD_ID": "thread-exact",
-    })
-    assert identity.session_instance_id == "thread-exact"
-    gemini = identity_from_environment({
-        "ARCHHUB_COORDINATION_VENDOR": "gemini",
-        "GEMINI_SESSION_ID": "gemini-session-exact",
-    })
-    assert gemini.session_instance_id == "gemini-session-exact"
-    with pytest.raises(RuntimeError, match="random fallback is denied"):
-        identity_from_environment({"ARCHHUB_COORDINATION_VENDOR": "codex"})
-    with pytest.raises(RuntimeError, match="random fallback is denied"):
-        identity_from_environment({
-            "ARCHHUB_COORDINATION_VENDOR": "codex",
-            "ARCHHUB_COORDINATION_SESSION_ID": "caller-selected",
-        })
-
-    class _Client:
-        def call(self, method, parameters=None, **_kwargs):
-            return {"ok": True, "method": method, "parameters": parameters or {}}
-
-    server = build_server(_Client())
+def test_mcp_schema_has_only_two_message_tools_and_no_sender():
+    server = build_server()
     tools = asyncio.run(server.list_tools())
     schemas = {tool.name: tool.inputSchema for tool in tools}
-    assert set(schemas) == {
-        "coordination.register_session",
-        "coordination.list_agents",
-        "coordination.scope_lens",
-        "coordination.workshop_lens",
-        "coordination.revise_instance",
-        "coordination.send_message",
-        "coordination.followup_task",
-        "coordination.interrupt_agent",
-        "coordination.wait_agent",
-        "coordination.mark_message_read",
-        # Workshop task tools (326b6579): still no caller-chosen identity.
-        "coordination.claim_workshop_message",
-        "coordination.attach_agent",
-        "coordination.detach_agent",
-        "coordination.execute_workshop_task",
-        "coordination.run_workshop_task",
-        "coordination.publish_workshop_result",
-        "coordination.private_root_grant_status",
-    }
-    for schema in schemas.values():
-        properties = schema["properties"]
-        assert "sender" not in properties
-        assert "vendor" not in properties
-        assert "session_id" not in properties
+    assert {"send", "read"} <= set(schemas)
+    assert not any(name.startswith("coordination.") for name in schemas)
+    for name in ("send", "read"):
+        assert not {"sender", "vendor", "session_id", "context"} & schemas[name]["properties"].keys()
 
 
 def test_coordination_catalogue_names_are_dispatchable_by_the_names_clients_call(tmp_path):
     opened, keys, host = _host(tmp_path)
     identity = CoordinationIdentity("codex", "thread-catalogue-parity", "gpt")
     try:
-        server = build_server(type("Client", (), {"call": lambda self, method, parameters=None, **_kw: {"ok": True}})())
+        server = build_server()
         tools = asyncio.run(server.list_tools())
         aliases = {
             "coordination.register_session": "register_session",
-            "coordination.list_agents": "list_agents",
-            "coordination.workshop_lens": "workshop_lens",
             "coordination.scope_lens": "scope_lens",
         }
         for listed, host_method in aliases.items():
-            assert listed in {tool.name for tool in tools}
+            assert listed not in {tool.name for tool in tools}
             params = {"scope_root": opened.authority.manifest.application_root} if host_method == "scope_lens" else {}
             assert host.dispatch(_request(keys, identity, host_method, params, "plain:" + host_method))["ok"] is True
             assert host.dispatch(_request(keys, identity, listed, params, "dotted:" + host_method))["ok"] is True
@@ -561,15 +404,12 @@ def test_raw_dotted_signed_execute_run_and_wait_use_canonical_handlers(tmp_path,
 
         monkeypatch.setattr(coordinator, "execute_claimed_task", execute)
         monkeypatch.setattr(coordinator, "run_workshop_task", run)
-        monkeypatch.setattr(host, "wait_for_inbox", lambda request, **kwargs: {
-            "ok": True, "method": request.method, "after_revision": kwargs["after_revision"]})
+
 
         assert host.dispatch(_request(keys, identity, "coordination.execute_workshop_task",
             {"message_root": "app:message:execute"}, "dotted-execute"))["effect"] == "app:effect:execute"
         assert host.dispatch(_request(keys, identity, "coordination.run_workshop_task",
             {"message_root": "app:message:run", "idempotency_key": str(uuid.uuid4())}, "dotted-run"))["effect"] == "app:effect:run"
-        assert host.dispatch(_request(keys, identity, "coordination.wait_agent",
-            {"after_revision": 7, "timeout_seconds": 0.0}, "dotted-wait"))["after_revision"] == 7
         assert calls[0][:2] == ("execute", "app:message:execute")
         assert calls[1][:2] == ("run", "app:message:run")
     finally:
@@ -587,45 +427,17 @@ def test_dotted_and_bare_denials_are_equivalent(tmp_path):
         return str(exc.value)
 
     try:
-        bare = _request(keys, identity, "workshop_lens", label="bad-signature-bare")
-        dotted = _request(keys, identity, "coordination.workshop_lens", label="bad-signature-dotted")
+        bare = _request(keys, identity, "scope_lens", label="bad-signature-bare")
+        dotted = _request(keys, identity, "coordination.scope_lens", label="bad-signature-dotted")
         assert refusal(replace(bare, signature="AAAA")) == refusal(replace(dotted, signature="AAAA"))
         assert refusal(replace(bare, identity=outsider)) == refusal(replace(dotted, identity=outsider))
         host.dispatch(_request(keys, identity, "register_session"))
-        assert refusal(_request(keys, identity, "send_message", {}, "refused-bare")) == refusal(
-            _request(keys, identity, "coordination.send_message", {}, "refused-dotted"))
+        assert refusal(_request(keys, identity, "revise_instance", {}, "refused-bare")) == refusal(
+            _request(keys, identity, "coordination.revise_instance", {}, "refused-dotted"))
     finally:
         opened.authority.store.close()
 
 
-def test_workshop_lens_rejects_wrong_session_signature_and_no_founder_substitute(
-    tmp_path,
-):
-    opened, keys, host = _host(tmp_path)
-    identity = CoordinationIdentity("codex", "thread-lens-auth", "gpt")
-    try:
-        host.dispatch(_request(keys, identity, "register_session"))
-        request = _request(keys, identity, "workshop_lens", label="lens-auth")
-        with pytest.raises(InvalidCell, match="signature"):
-            host.dispatch(replace(request, signature="AAAA"))
-        accepted = host.dispatch(request)
-        assert accepted["lens"]["graph_id"] == opened.authority.manifest.graph_id
-        assert accepted["lens"]["revision"] == opened.authority.store.revision
-
-        host_source = (
-            Path(__file__).parents[1]
-            / "nodelang"
-            / "clean_coordination_host.py"
-        ).read_text(encoding="utf-8")
-        coordinator_source = (
-            Path(__file__).parents[1]
-            / "nodelang"
-            / "clean_agent_coordination.py"
-        ).read_text(encoding="utf-8")
-        assert "project_workshop_lens" not in host_source
-        assert "caller=self._binding.caller" in coordinator_source
-    finally:
-        opened.authority.store.close()
 
 
 def test_workspace_settings_handler_typeerror_is_not_replayed_without_admission(tmp_path):

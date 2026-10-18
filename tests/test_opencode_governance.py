@@ -11,6 +11,26 @@ from dataclasses import replace
 import pytest
 
 
+def test_shared_mailbox_needs_no_native_work_owner_or_admission():
+    module=(Path(__file__).resolve().parents[1]/'nodelang/session_link/opencode-governance.mjs').as_uri()
+    code='''import assert from 'node:assert/strict';
+import {createOpenCodeGovernance} from MODULE;
+const hooks=await createOpenCodeGovernance({gateRunner:async()=>{throw Error('Work owner must not be acquired');}})({directory:process.cwd()});
+for(const [tool,args] of [
+ ['archhub_agent_coordination_send',{to:'everyone',text:'hello'}],
+ ['archhub_agent_coordination_read',{since:0}],
+]){
+ const input={sessionID:'ses_fresh',callID:tool,tool},output={args:structuredClone(args)};
+ await hooks['tool.execute.before'](input,output);
+ assert.deepEqual(output.args,args);
+ await hooks['tool.execute.after']({...input,args:output.args},{});
+}
+await hooks.dispose();
+'''.replace('MODULE',json.dumps(module))
+    result=subprocess.run([shutil.which('node'),'--input-type=module'],input=code,text=True,capture_output=True,timeout=10)
+    assert result.returncode==0,result.stderr
+
+
 def test_selected_work_custom_tool_pairs_native_execution_and_receipt():
     module=(Path(__file__).resolve().parents[1]/'nodelang/session_link/opencode-governance.mjs').as_uri()
     code='''import assert from 'node:assert/strict';
@@ -774,7 +794,6 @@ const runner=async e=>{
  if(e.tool_name==='mcp__archhub-hosts__revit_execute_csharp')return {allow:false,reason:'host effect denied by shared gate'};
  if(e.tool_name==='mcp__archhub_agent_coordination__native_work_claim')return {allow:false,reason:'native claim denied by shared gate'};
  if(e.tool_name==='mcp__archhub_agent_coordination__native_work_publish_artifact')return {allow:false,reason:'native publish denied by shared gate'};
- if(e.tool_name==='mcp__archhub_agent_coordination__coordination_send_message')return {allow:false,reason:'coordination send denied by shared gate'};
  return {allow:true};
 };
 const hooks=await createOpenCodeGovernance({gateRunner:runner})({directory:process.cwd()});
@@ -782,10 +801,11 @@ const readHost={sessionID:'ses_mcp',callID:'hosts',tool:'archhub-hosts_hosts_sta
 await hooks['tool.execute.before'](readHost,{args:{}});
 await hooks['tool.execute.after']({...readHost,args:{}},{});
 assert.equal(events.at(-2).tool_name,'mcp__archhub-hosts__hosts_state');
-const readCoord={sessionID:'ses_mcp',callID:'messages',tool:'archhub_agent_coordination_coordination_read_messages'};
-await hooks['tool.execute.before'](readCoord,{args:{limit:10}});
-await hooks['tool.execute.after']({...readCoord,args:{limit:10}},{});
-assert.equal(events.at(-2).tool_name,'mcp__archhub_agent_coordination__coordination_read_messages');
+const readCoord={sessionID:'ses_mcp',callID:'messages',tool:'archhub_agent_coordination_read'};
+const prior=events.length;
+await hooks['tool.execute.before'](readCoord,{args:{since:0}});
+await hooks['tool.execute.after']({...readCoord,args:{since:0}},{});
+assert.equal(events.length,prior);
 const hostPing={sessionID:'ses_mcp',callID:'revit-ping',tool:'archhub-hosts_revit_ping'};
 await hooks['tool.execute.before'](hostPing,{args:{}});
 await hooks['tool.execute.after']({...hostPing,args:{}},{});
@@ -807,9 +827,10 @@ await assert.rejects(
 await assert.rejects(
  hooks['tool.execute.before']({sessionID:'ses_mcp',callID:'publish',tool:'archhub_agent_coordination_native_work_publish_artifact'},{args:{work:'w',material_digest:'d',idempotency_key:'k',patch:'p',summary:'s'}}),
  /prewrite admission denied: native publish denied by shared gate/);
-await assert.rejects(
- hooks['tool.execute.before']({sessionID:'ses_mcp',callID:'send',tool:'archhub_agent_coordination_coordination_send_message'},{args:{target:'a',message:'b'}}),
- /prewrite admission denied: coordination send denied by shared gate/);
+const beforeSend=events.length;
+await hooks['tool.execute.before']({sessionID:'ses_mcp',callID:'send',tool:'archhub_agent_coordination_send'},{args:{to:'a',text:'b'}});
+await hooks['tool.execute.after']({sessionID:'ses_mcp',callID:'send',tool:'archhub_agent_coordination_send',args:{to:'a',text:'b'}},{});
+assert.equal(events.length,beforeSend);
 await hooks['tool.execute.before']({sessionID:'ses_mcp',callID:'unknown',tool:'archhub-hosts_delete_everything'},{args:{}});
 await hooks['tool.execute.after']({sessionID:'ses_mcp',callID:'unknown',tool:'archhub-hosts_delete_everything',args:{}},{});
 assert.equal(events.at(-2).tool_name,'archhub-hosts_delete_everything');

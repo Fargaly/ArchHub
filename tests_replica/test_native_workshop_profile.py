@@ -31,7 +31,9 @@ def inputs(tmp_path):
     installed = tmp_path / "installed"
     (installed / "nodelang").mkdir(parents=True)
     for filename in TASK_SOURCE_FILES:
-        (installed / 'nodelang' / filename).write_text('# fixture source\n')
+        target = installed / 'nodelang' / filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('# fixture source\n')
     state = tmp_path / "state"
     state.mkdir()
     python = tmp_path / "python.exe"
@@ -67,9 +69,7 @@ def test_profile_uses_only_installed_mcp_and_preserves_subscription_auth(tmp_pat
     assert server["args"][-2:] == ["--workshop-task", values["work_root"]]
     assert server["args"][:3] == ["-I", "-B", "-c"]
     assert server["env"] == {"ARCHHUB_AGENT_RUNTIME": "claude", "ARCHHUB_EXTERNAL_SESSION_ID": SESSION,
-        "CLAUDE_CODE_SESSION_ID": SESSION,
-        "SESSION_LINK_STATE_DIR": str(values['state_root'] / 'session-link'),
-        "SESSION_LINK_NODE": str(values['install_root'] / 'runtime' / 'node.exe')}
+        "CLAUDE_CODE_SESSION_ID": SESSION}
     assert str(values["install_root"]) in server["args"]
     profile.verify()
     assert profile.cleanup(process_exited=True) is True

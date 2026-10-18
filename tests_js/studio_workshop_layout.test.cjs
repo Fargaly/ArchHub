@@ -203,10 +203,10 @@ test('WS022 Board and Projects presets now select the same real thread without h
   }finally{await ui.close();}
 });
 test('agent addressing uses exact attached participant ids through @ rather than the removed agents rail',async()=>{
-  const fx=fixture();fx.authority.workshopAction=async(...args)=>{fx.calls.push(['workshopAction',...args]);return{ok:true};};
+  const fx=fixture();fx.authority.sendWorkshopMessage=async(...args)=>{fx.calls.push(['sendWorkshopMessage',...args]);return{ok:true};};
   const ui=await mounted(fx.state,fx.authority);
   try{await ui.input('@Claude Code Check the selected wall');await ui.click(ui.button('Send'));
-    assert.deepEqual(plain(fx.calls.filter(row=>row[0]==='workshopAction')),[['workshopAction','room-a','send',null,{target:fx.ids.claude,message:'Check the selected wall'}]]);
+    assert.deepEqual(plain(fx.calls.filter(row=>row[0]==='sendWorkshopMessage')),[['sendWorkshopMessage','room-a',{target:fx.ids.claude,message:'Check the selected wall'}]]);
     assert.equal(ui.doc.querySelector('[aria-label="Workshop agents"]'),null);assert.equal(ui.doc.querySelectorAll('select').length,0);assert.ok(ui.doc.querySelector('button[data-workshop-agent-picker]'));assert.doesNotMatch(text(ui.doc.querySelector('[data-workshop-agent-picker]')),/Workshop \(everyone\)/);
   }finally{await ui.close();}
 });

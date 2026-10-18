@@ -72,7 +72,7 @@ function fixture() {
     showWorkshopFeed:async() => transcript, nativeAgents:async() => ({status:'ok', contacts:[]}),
     sendModelConversation:async() => ({accepted:true}), approveNativeWork:async(...args) => { calls.push(['approveNativeWork', ...args]); return {}; },
     selectTopology:async() => null, refreshTopologyCanvas:async() => state.topology.canvas,
-    workshopAction:async(...args) => { calls.push(['workshopAction', ...args]); return {}; }};
+    sendWorkshopMessage:async(...args) => { calls.push(['sendWorkshopMessage', ...args]); return {}; }};
   return {state, authority, calls};
 }
 

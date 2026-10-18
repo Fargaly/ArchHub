@@ -26,7 +26,7 @@ from nodelang.laws_surface import (
     SyncError, closure, import_session, make_session, make_wip, render,
     resolve_secret, stage, sync, ui_element,
 )
-from nodelang.serve import NodeServer
+from tools.serve_grandmap import NodeServer
 
 
 def history_count(store):

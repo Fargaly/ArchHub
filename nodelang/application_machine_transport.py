@@ -15,7 +15,6 @@ from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
-import math
 from multiprocessing import AuthenticationError
 from multiprocessing.connection import Client
 import os
@@ -2383,48 +2382,9 @@ class UniversalRuntimeClient:
             self._agent_session_access = "released"
             return result
 
-    def _session_link_request(self, body, *, timeout_seconds):
-        """Use this already-bound client; never enroll or borrow another caller."""
-        with self._request_lock:
-            if (not self.agent_session_root or not self._agent_session_token
-                    or self._agent_session_access != "full"):
-                raise MachineTransportError("Session Link requires a fully bound Agent Session")
-            return self.request("POST", "/api/universal/agent-session-link", body,
-                                response_timeout_seconds=timeout_seconds)
 
-    def session_link_scope(self) -> dict[str, object]:
-        result = self._session_link_request({"phase": "scope"}, timeout_seconds=10)
-        fields = ("instance_id", "destination_fingerprint")
-        if any(type(result.get(key)) is not str
-               or not re.fullmatch(r"[0-9a-f]{64}", result[key]) for key in fields):
-            raise MachineTransportError("Session Link scope response is invalid")
-        return {key: result[key] for key in fields}
 
-    def attach_session_link(self, capability) -> dict[str, object]:
-        """Transfer the host grant only inside the existing authenticated request."""
-        if type(capability) is not dict or type(capability.get("instance_id")) is not str:
-            raise MachineTransportError("Session Link attachment is invalid")
-        result = self._session_link_request(
-            {"phase": "attach", "capability": dict(capability)}, timeout_seconds=35)
-        if (result.get("attached") is not True
-                or result.get("instance_id") != capability["instance_id"]
-                or type(result.get("expires_at")) not in (int, float)
-                or not math.isfinite(result["expires_at"])):
-            raise MachineTransportError("Session Link attachment response is invalid")
-        # Even an unexpected server field cannot echo the bearer capability.
-        return {key: result[key] for key in ("attached", "instance_id", "expires_at")}
 
-    def detach_session_link(self) -> dict[str, object]:
-        result = self._session_link_request({"phase": "detach"}, timeout_seconds=20)
-        if result.get("status") not in {"ok", "uncertain"}:
-            raise MachineTransportError("Session Link detach response is invalid")
-        clean = {"status": result["status"]}
-        for key in ("detached", "revoked", "local_call_joined", "worker_stopped"):
-            if key in result:
-                if type(result[key]) is not bool:
-                    raise MachineTransportError("Session Link detach response is invalid")
-                clean[key] = result[key]
-        return clean
 
     def renew_runtime_presence(self) -> dict[str, object]:
         """Refresh this device-proofed session's indexed runtime presence lease."""

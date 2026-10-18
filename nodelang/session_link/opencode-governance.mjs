@@ -8,9 +8,9 @@ const notDelivered = reason => {throw new NativeNotDelivered('ArchHub OpenCode g
 const object = value => value && typeof value==='object' && !Array.isArray(value);
 const readTools = new Set(['read','glob','grep','list','skill']);
 const shellTools = new Set(['bash','powershell']);
-// Tools the native owner itself executes for this exact session: selected Work,
-// and messages to other agents under the owner's own coordination identity.
-const nativeTools = new Set(['archhub_work','archhub_message']);
+// Only selected Work executes through the native Work owner.
+const nativeTools = new Set(['archhub_work']);
+const mailboxTools = new Set(['archhub_agent_coordination_send','archhub_agent_coordination_read']);
 // Only these tools' effects are fully accounted by the owner's permit/receipt
 // ledger (reads have none; write/edit hold a permit until receipted).
 const stringify = value => JSON.stringify(value, (_key,item)=>object(item)?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
@@ -24,7 +24,7 @@ const toolClassification = new Map([
  ...[...readTools].map(tool=>[tool,'read']),
  ['write','write'],['edit','write'],
  ['bash','execute'],['powershell','execute'],
- ['archhub_work','execute'],['archhub_message','execute'],
+ ['archhub_work','execute'],
  ['archhub-hosts_hosts_state','read'],
  ['archhub-hosts_office_read','read'],
  ['archhub-hosts_outlook_inbox','read'],
@@ -39,15 +39,8 @@ const toolClassification = new Map([
  ['archhub-hosts_max_execute_python','execute'],['archhub-hosts_max_execute_maxscript','execute'],
  ['archhub-hosts_blender_ping','read'],['archhub-hosts_blender_execute_python','execute'],
  ['archhub-hosts_rhino_ping','read'],['archhub-hosts_rhino_execute_python','execute'],
- ['archhub_agent_coordination_coordination_ping','read'],
- ['archhub_agent_coordination_coordination_info','read'],
- ['archhub_agent_coordination_coordination_list_agents','read'],
- ['archhub_agent_coordination_coordination_read_messages','read'],
- ['archhub_agent_coordination_coordination_read_message','read'],
- ['archhub_agent_coordination_native_owner_status','read'],
- ['archhub_agent_coordination_native_owner_inspect_effects','read'],
- ['archhub_agent_coordination_coordination_send_message','execute'],
- ['archhub_agent_coordination_coordination_acknowledge_message','execute'],
+ ['archhub_agent_coordination_read','read'],
+ ['archhub_agent_coordination_send','execute'],
  ['archhub_agent_coordination_native_work_artifact_material','read'],
  ['archhub_agent_coordination_native_work_read_artifact','read'],
  ['archhub_agent_coordination_native_work_assignment','read'],
@@ -66,11 +59,6 @@ const toolClassification = new Map([
  ['archhub_agent_coordination_native_work_review_artifact','execute'],
  ['archhub_agent_coordination_native_work_task_attach','execute'],
  ['archhub_agent_coordination_native_work_task_detach','execute'],
- ['archhub_agent_coordination_native_owner_resume','execute'],
- ['archhub_agent_coordination_native_owner_recover','execute'],
- ['archhub_agent_coordination_native_connection_recover','execute'],
- ['archhub_agent_coordination_native_resume_recover','execute'],
- ['archhub_agent_coordination_native_owner_settle_effect','execute'],
 ]);
 
 function toolClass(tool) {
@@ -460,12 +448,6 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
      description:'Use this native session’s configured Workshop task. Attachment does not grant execution or file permission.',
      args:nativeArgs(),execute:nativeExecute('archhub_work','selected Work'),
     }),
-    // OpenCode starts MCP servers once per app, so a coordination MCP there has no
-    // session identity. Messages go through this session's own native owner instead.
-    archhub_message:workToolFactory({
-     description:'Message other ArchHub agents as this OpenCode session. operation is one of coordination.list_agents, coordination.send_message (target, message, idempotency_key, reply_to?), coordination.read_messages (limit?, before?), coordination.read_message (message_id, sequence), coordination.acknowledge_message (message_id, sequence, idempotency_key); arguments holds its fields. A lost reply is never resent.',
-     args:nativeArgs(),execute:nativeExecute('archhub_message','agent message'),
-    }),
    }}:{}),
    dispose:async()=>{if(pending.size)fail('native receipts remain unresolved');await invoke.close?.();},
     // No idle turn end with open Work: OpenCode cannot block a stop, so a session that
@@ -504,6 +486,9 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
     }
    },
    'tool.execute.before':async(input,output)=>{
+    // These MCP calls authenticate at the shared mailbox, without Work/file
+    // admission, a native owner, or a client-supplied identity stamp.
+    if(mailboxTools.has(input.tool))return;
     const key=identity(input);
     const read=isReadTool(input.tool);
     // OpenCode never runs tool.execute.after for an aborted or failed call. A read
@@ -558,6 +543,7 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
     }
    },
    'tool.execute.after':async(input,_output)=>{
+    if(mailboxTools.has(input.tool))return;
     const key=identity(input),record=pending.get(key);
     const supplied={...input.args};
     if(nativeTools.has(record?.tool)){

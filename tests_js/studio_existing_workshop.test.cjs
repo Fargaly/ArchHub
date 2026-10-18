@@ -31,14 +31,14 @@ function setup(options={}) {
   api.setCanvas(scope());
   return {api,posts,gets,pendingStorage};
 }
-const send = api => api.workshopAction('workshop-a','send',null,{target:'worker-a',message:'Actual task text'});
+const send = api => api.sendWorkshopMessage('workshop-a',{target:'worker-a',message:'Actual task text'});
 
 test('Everyone sends its broadcast marker and surfaces actual mixed delivery outcomes',async()=>{
   const fixture=setup({post:(_url,body)=>({...accepted(body),native_delivery:[
     {recipient:'one',state:'started'}, {recipient:'two',state:'not_sent'},
     {recipient:'three',state:'uncertain'}, {recipient:'four',state:'replied'}]})});
   await fixture.api.refreshWorkshop('workshop-a');
-  await fixture.api.workshopAction('workshop-a','send',null,{target:'',message:'Work together'});
+  await fixture.api.sendWorkshopMessage('workshop-a',{target:'',message:'Work together'});
   assert.deepEqual(plain(fixture.posts[0].body.recipients),[]);
   const notice=fixture.api.getSnapshot().workshopNotice;
   for(const expected of ['1 delivery started','1 not sent','1 delivery uncertain','1 replied'])
@@ -748,7 +748,7 @@ test('editor: message receipt cannot clear a separate repair draft; close preser
   const message=await api.openConversationEditor('workshop-a','document-message');
   const work=await api.openConversationEditor('workshop-a','document-work');
   await message.dirty();await work.dirty();
-  const result=await api.workshopAction('workshop-a','send',null,{target:'worker-a',message:'Task'},message);
+  const result=await api.sendWorkshopMessage('workshop-a',{target:'worker-a',message:'Task'},undefined,message);
   assert.equal(result.accepted,true);assert.equal(result.warning,'');
   assert.equal(pages.get('page-1').draft_state,'clear');
   await work.close();
@@ -852,11 +852,11 @@ test('editor: protection failure prevents physical message sending and preserves
   });
   await api.refreshWorkshop('workshop-a');   // the page the composer sends from (see the receipt test above)
   const editor=await api.openConversationEditor('workshop-a','document');
-  await assert.rejects(api.workshopAction('workshop-a','send',null,{target:'worker-a',message:'Task'},editor),/offline/);
+  await assert.rejects(api.sendWorkshopMessage('workshop-a',{target:'worker-a',message:'Task'},undefined,editor),/offline/);
   assert.equal(posts.filter(row=>row.body.idempotency_key).length,0);
   const pending=[...pendingStorage.data.values()].join(''); assert.match(pending,/message-/);
   refuse=false;await editor.retry();
-  const result=await api.workshopAction('workshop-a','send',null,{target:'worker-a',message:'Task'},editor);
+  const result=await api.sendWorkshopMessage('workshop-a',{target:'worker-a',message:'Task'},undefined,editor);
   assert.equal(result.accepted,true);
   const staged=posts.filter(row=>row.body.change==='dirty'&&row.body.resolution_reference);
   assert.equal(staged[0].body.resolution_reference,result.idempotency_key);
@@ -868,7 +868,7 @@ test('editor: an open editor alone never loads the page; a send before the page 
   const editor=await api.openConversationEditor('workshop-a','document');await editor.dirty();
   assert.equal(api.getSnapshot().workshop,null,'draft protection read its own projection, not the visible page');
   const before=posts.length;
-  await assert.rejects(api.workshopAction('workshop-a','send',null,{target:'worker-a',message:'Task'},editor),
+  await assert.rejects(api.sendWorkshopMessage('workshop-a',{target:'worker-a',message:'Task'},undefined,editor),
     /Refresh the Workshop before sending/);
   assert.equal(posts.length,before);assert.ok(gets.length>0);
 });
@@ -1294,9 +1294,9 @@ test('authorized descriptors and exact guarded legacy message body',async () => 
 
 test('no fake join, execution or sender override',async () => {
   const {api,posts}=setup(); await api.refreshWorkshop('workshop-a');
-  await assert.rejects(api.workshopAction('workshop-a','attach',null,{}),/messaging only/);
-  for(const extra of [{execution_root:'node-a'},{actor:'worker-a'}]) {
-    await assert.rejects(api.workshopAction('workshop-a','send',null,{target:'worker-a',message:'text',...extra}),/messaging only/);
+  assert.equal(api.workshopAction,undefined);
+  for(const extra of [{execution_root:'node-a'},{actor:'worker-a'},{action:'attach'}]) {
+    await assert.rejects(api.sendWorkshopMessage('workshop-a',{target:'worker-a',message:'text',...extra}),/messaging only/);
   }
   assert.equal(posts.length,0);
 });
@@ -1673,46 +1673,6 @@ test('removing and restoring an anchor or changing authenticated view cannot rev
   other.api.setTopologyCanvas({...createdCanvas(4),authorization:{subject:'another-owner',session:'another-view'}});
   slow.resolve(catalogReply());
   assert.equal(await reading,null);assert.equal(other.api.getSnapshot().conversationCatalog,null);
-});
-
-const agentRow = {root:'app:agent-session:runtime:' + 'c'.repeat(32), label:'Codex', attached:true, is_agent:true, connected:true, session_link:'attached'};
-const withAgent = () => ({...transcript(), participants:[...transcript().participants, agentRow]});
-const disconnected = body => ({ok:true, graph_id:'graph-a', root:body.root, scope_root:body.scope, agent:body.agent,
-  revision:body.revision, outcome:'revoked', session_link:'none',
-  disconnect:{status:'ok', detached:true, revoked:true, local_call_joined:true, worker_stopped:true}});
-test('agent disconnect posts the exact browser body and returns the reconciled outcome',async()=>{
-  const {api,posts}=setup({get:withAgent, post:(url,body)=>disconnected(body)});
-  await api.refreshWorkshop('workshop-a');
-  const result=await api.disconnectAgent('workshop-a',agentRow.root);
-  assert.deepEqual(plain(posts.map(row=>[row.url,row.body])),[['/api/universal/workshop',
-    {action:'agent-disconnect',root:'workshop-a',scope:'scope-a',revision:4,agent:agentRow.root}]]);
-  assert.deepEqual(plain(result),{outcome:'revoked',session_link:'none',
-    disconnect:{status:'ok',detached:true,revoked:true,local_call_joined:true,worker_stopped:true}});
-});
-test('agent disconnect never reports a revocation the grant did not confirm',async()=>{
-  const changes=[
-    {disconnect:{status:'ok',detached:true,revoked:false,local_call_joined:true,worker_stopped:true}},
-    {disconnect:{status:'uncertain',detached:false,revoked:false,local_call_joined:false,worker_stopped:false}},
-    {outcome:'gone'}, {session_link:'maybe'}, {agent:'app:agent-session:runtime:' + 'd'.repeat(32)},
-    {disconnect:{status:'ok',detached:'yes',revoked:true,local_call_joined:true,worker_stopped:true}}];
-  for (const change of changes) {
-    const {api}=setup({get:withAgent, post:(url,body)=>({...disconnected(body),...change})});
-    await api.refreshWorkshop('workshop-a');
-    await assert.rejects(api.disconnectAgent('workshop-a',agentRow.root),/could not be reconciled/);
-  }
-  const {api}=setup({get:withAgent, post:(url,body)=>({...disconnected(body),outcome:'uncertain',session_link:'retiring',
-    disconnect:{status:'uncertain',detached:false,revoked:false,local_call_joined:false,worker_stopped:false}})});
-  await api.refreshWorkshop('workshop-a');
-  assert.deepEqual(plain(await api.disconnectAgent('workshop-a',agentRow.root)),{outcome:'uncertain',session_link:'retiring',
-    disconnect:{status:'uncertain',detached:false,revoked:false,local_call_joined:false,worker_stopped:false}});
-});
-test('agent disconnect needs a current participant and surfaces a refused request',async()=>{
-  const {api,posts}=setup({get:withAgent, post:()=>({ok:false,error:'Agent is not a participant of this Workshop'})});
-  await api.refreshWorkshop('workshop-a');
-  await assert.rejects(api.disconnectAgent('workshop-a','app:agent-session:runtime:' + 'e'.repeat(32)),/Refresh the Workshop/);
-  await assert.rejects(api.disconnectAgent('workshop-a','owner-a'),/Choose an agent/);
-  assert.equal(posts.length,0);
-  await assert.rejects(api.disconnectAgent('workshop-a',agentRow.root),/not a participant/);
 });
 
 test('local social removal checks exact identity and never claims provider revocation',async()=>{

@@ -21,7 +21,7 @@ $env:ARCHHUB_INTENT_CONTEXT=$null
 $env:ACOMPILER_REAL_BINARY=Join-Path $root 'tools/archhub-compiler/target/release/archhub-compiler.exe'
 $python='C:/Users/fargaly/AppData/Local/Python/pythoncore-3.14-64/python.exe'
 if($Mode -eq 'fast') {
- & $python -m pytest -q -p no:cacheprovider tests_replica/test_acompiler_gate.py -k 'release_replays or release_refuses_earlier or release_preserves or release_rejects or default_release or release_binary or build_runs or release_history' '--tb=short' *> evidence/mainbuild/fast-tests.txt
+ & $python -m pytest -q -p no:cacheprovider tests_replica/test_acompiler_gate.py -k 'release_replays or release_refuses_earlier or release_preserves or release_rejects or default_release or release_binary or build_runs or release_history or result_context' '--tb=short' *> evidence/mainbuild/fast-tests.txt
  exit $LASTEXITCODE
 }
 if($Mode -eq 'strict') {

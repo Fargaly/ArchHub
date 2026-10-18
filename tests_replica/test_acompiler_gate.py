@@ -955,6 +955,14 @@ def test_release_history_ignores_future_local_observations(repository):
     assert context["deviation_state"] == {}
 
 
+def test_result_context_without_a_root_lane_ledger(repository):
+    text = "State: BLOCKED\nExternal release court is not green.\n"
+    context = strict_check.change_context(repository, ["RESULT-RELEASE.md"], {"RESULT-RELEASE.md": text},
+                                         "HEAD", {"intent": "ACOMPILER"})
+    assert context["conduct_events"] == [{"kind": "lane_result", "done": False,
+                                          "ledger": {"next_task": None, "owner": None}}]
+
+
 @pytest.mark.parametrize("message,why", [
     ("change\n\nThe founder needs the8GB journal adopted in place.\n\nIntent: ADOPT\nCo-Authored-By: Agent <agent@example.invalid>\n", "The founder needs the8GB journal adopted in place."),
     ("change\n\nExisting explanation.\n\nIntent: FIRST\nWhy: explicit reason", "explicit reason"),

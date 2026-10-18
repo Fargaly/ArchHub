@@ -472,7 +472,7 @@ def change_context(root, selected, candidate, revision, context, *, patch_scope=
             events.append({"kind": "report", "channel": "founder", "text": after})
         else:
             ledger_text = candidate.get("tasks.json") if "tasks.json" in selected else None
-            if ledger_text is None:
+            if ledger_text is None and git(root, "ls-tree", "-z", revision, "--", "tasks.json"):
                 ledger_text = git(root, "show", f"{revision}:tasks.json").decode("utf-8")
             ledger = json.loads(ledger_text or "{}")
             if isinstance(ledger, list):  # GVS5H ledger: a list of tasks; the next one is the first not done
